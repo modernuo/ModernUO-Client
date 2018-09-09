@@ -27,12 +27,12 @@ namespace ClassicUO.Game.Gumps
 {
     public class CroppedText : GumpControl
     {
-        private GameText _gameText;
+        private RenderedText _gameText;
         private readonly int _index;
 
         public CroppedText() : base()
         {
-            _gameText = new GameText() { IsPersistent = true };
+            _gameText = new RenderedText();
         }
 
         public CroppedText(string[] parts,  string[] lines) : this()
@@ -63,7 +63,7 @@ namespace ClassicUO.Game.Gumps
 
         public override bool Draw(SpriteBatchUI spriteBatch,  Vector3 position)
         {
-            _gameText.GetView().Draw(spriteBatch, position);
+            _gameText.Draw(spriteBatch, position);
             return base.Draw(spriteBatch, position);
         }
     }
