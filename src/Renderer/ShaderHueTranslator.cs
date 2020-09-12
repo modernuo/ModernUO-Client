@@ -1,4 +1,5 @@
 ﻿#region license
+
 // Copyright (C) 2020 ClassicUO Development Community on Github
 // 
 // This project is an alternative client for the game Ultima Online.
@@ -17,18 +18,15 @@
 // 
 //  You should have received a copy of the GNU General Public License
 //  along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 #endregion
 
-using System;
 using System.Runtime.CompilerServices;
-
-using ClassicUO.IO.Resources;
-
 using Microsoft.Xna.Framework;
 
 namespace ClassicUO.Renderer
 {
-    internal static class ShaderHuesTraslator
+    internal static class ShaderHueTranslator
     {
         public const byte SHADER_NONE = 0;
         public const byte SHADER_HUED = 1;
@@ -64,18 +62,21 @@ namespace ClassicUO.Renderer
             }
 
             if (hue == 0)
+            {
                 partial = false;
+            }
 
             if ((hue & SPECTRAL_COLOR_FLAG) != 0)
+            {
                 type = SHADER_SPECTRAL;
+            }
             else if (hue != 0)
             {
                 hue -= 1;
 
-                if (partial)
-                    type = SHADER_PARTIAL_HUED;
-                else
-                    type = SHADER_HUED;
+                type = partial
+                    ? SHADER_PARTIAL_HUED
+                    : SHADER_HUED;
 
                 if (gump)
                 {
@@ -83,7 +84,9 @@ namespace ClassicUO.Renderer
                 }
             }
             else
+            {
                 type = SHADER_NONE;
+            }
 
             hueVector.X = hue;
             hueVector.Y = type;
