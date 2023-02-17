@@ -45,7 +45,6 @@ namespace ClassicUO
         public static string[] Args;
         public static string[] Plugins;
         public static bool Debug;
-        public static bool Profiler;
         public static bool IsHighDPI;
         public static uint CurrentRefreshRate;
         public static bool SkipLoginScreen;
