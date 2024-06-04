@@ -380,41 +380,7 @@ namespace ClassicUO.Game.Map
 
         public void Destroy()
         {
-            for (int i = 0; i < 8; i++)
-            {
-                for (int j = 0; j < 8; j++)
-                {
-                    GameObject obj = Tiles[i, j];
-
-                    if (obj == null)
-                    {
-                        continue;
-                    }
-
-                    GameObject first = GetHeadObject(i, j);
-
-                    while (first != null)
-                    {
-                        GameObject next = first.TNext;
-
-                        if (!ReferenceEquals(first, _world.Player))
-                        {
-                            first.Destroy();
-                        }
-
-                        first.TPrevious = null;
-                        first.TNext = null;
-                        first = next;
-                    }
-
-                    Tiles[i, j] = null;
-                }
-            }
-
-            if (Node.Next != null || Node.Previous != null)
-            {
-                Node.List?.Remove(Node);
-            }
+            Clear();
 
             IsDestroyed = true;
             //_pool.ReturnOne(this);
