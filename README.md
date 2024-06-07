@@ -4,12 +4,6 @@
 
 An open source implementation of the Ultima Online Classic Client.
 
-Individuals/hobbyists: support continued maintenance and development via the monthly Patreon:
-<br>&nbsp;&nbsp;[![Patreon](https://raw.githubusercontent.com/wiki/ocornut/imgui/web/patreon_02.png)](http://www.patreon.com/classicuo)
-
-Individuals/hobbyists: support continued maintenance and development via PayPal:
-<br>&nbsp;&nbsp;[![PayPal](https://www.paypalobjects.com/en_US/i/btn/btn_donate_LG.gif)](https://www.paypal.com/cgi-bin/webscr?cmd=_s-xclick&hosted_button_id=9ZWJBY6MS99D8)
-
 <a href="https://discord.gg/VdyCpjQ">
 <img src="https://img.shields.io/discord/458277173208547350.svg?logo=discord"
 alt="chat on Discord"></a>
