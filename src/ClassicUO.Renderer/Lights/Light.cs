@@ -12,7 +12,7 @@ namespace ClassicUO.Renderer.Lights
         public Light(GraphicsDevice device)
         {
             _atlas = new TextureAtlas(device, 2048, 2048, SurfaceFormat.Color);
-            _spriteInfos = new SpriteInfo[LightsLoader.Instance.Entries.Length];
+            _spriteInfos = new SpriteInfo[LightsLoader.Instance.GetNumEntries()];
         }
 
         public ref readonly SpriteInfo GetLight(uint idx)

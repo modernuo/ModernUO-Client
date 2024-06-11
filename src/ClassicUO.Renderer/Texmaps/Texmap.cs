@@ -12,7 +12,7 @@ namespace ClassicUO.Renderer.Texmaps
         public Texmap(GraphicsDevice device)
         {
             _atlas = new TextureAtlas(device, 2048, 2048, SurfaceFormat.Color);
-            _spriteInfos = new SpriteInfo[TexmapsLoader.Instance.Entries.Length];
+            _spriteInfos = new SpriteInfo[TexmapsLoader.Instance.GetNumEntries()];
         }
 
         public ref readonly SpriteInfo GetTexmap(uint idx)

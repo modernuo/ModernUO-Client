@@ -17,7 +17,7 @@ namespace ClassicUO.Renderer.Arts
         public Art(GraphicsDevice device)
         {
             _atlas = new TextureAtlas(device, 4096, 4096, SurfaceFormat.Color);
-            _spriteInfos = new SpriteInfo[ArtLoader.Instance.Entries.Length];
+            _spriteInfos = new SpriteInfo[ArtLoader.Instance.GetNumEntries()];
             _realArtBounds = new Rectangle[_spriteInfos.Length];
         }
 
