@@ -156,21 +156,19 @@ namespace ClassicUO.Assets
                         }
                         else if (vh.FileID == 4)
                         {
-                            if (ArtLoader.Instance.IsValidIndex(vh.BlockID))
-                            {
-                                ArtLoader.Instance.Entries[vh.BlockID] = new UOFileIndex
+                            ArtLoader.Instance.PatchEntry(vh.BlockID, new UOFileIndex
                                 (
                                     verdata.StartAddress,
                                     (uint) verdata.Length,
                                     vh.Position,
                                     (int) vh.Length,
                                     0
-                                );
-                            }
+                                )
+                            );
                         }
                         else if (vh.FileID == 12)
                         {
-                            GumpsLoader.Instance.Entries[vh.BlockID] = new UOFileIndex
+                            GumpsLoader.Instance.PatchEntry(vh.BlockID, new UOFileIndex
                             (
                                 verdata.StartAddress,
                                 (uint) verdata.Length,
@@ -179,18 +177,18 @@ namespace ClassicUO.Assets
                                 0,
                                 (short) (vh.GumpData >> 16),
                                 (short) (vh.GumpData & 0xFFFF)
-                            );
+                            ));
                         }
                         else if (vh.FileID == 14 && vh.BlockID < MultiLoader.Instance.Count)
                         {
-                            MultiLoader.Instance.Entries[vh.BlockID] = new UOFileIndex
+                            MultiLoader.Instance.PatchEntry(vh.BlockID, new UOFileIndex
                             (
                                 verdata.StartAddress,
                                 (uint) verdata.Length,
                                 vh.Position,
                                 (int) vh.Length,
                                 0
-                            );
+                            ));
                         }
                         else if (vh.FileID == 16 && vh.BlockID < SkillsLoader.Instance.SkillsCount)
                         {
@@ -360,7 +358,7 @@ namespace ClassicUO.Assets
 
                                 if (currentEntry.IsInvalid() && !checkEntry.IsInvalid())
                                 {
-                                    artLoader.Entries[index] = artLoader.Entries[checkIndex];
+                                    artLoader.PatchEntry((uint)index, checkEntry);
                                 }
                             }
 

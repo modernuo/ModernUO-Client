@@ -74,6 +74,16 @@ namespace ClassicUO.IO
             return Entries != null && index < (uint)Entries.Length;
         }
 
+        public void PatchEntry(uint index, UOFileIndex entry)
+        {
+            if (!IsValidIndex(index))
+            {
+                return;
+            }
+
+            Entries[index] = entry;
+        }
+
         public ref UOFileIndex GetValidRefEntry(int index)
         {
             if (!IsValidIndex(index))
