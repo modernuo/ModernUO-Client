@@ -41,7 +41,7 @@ using System.Threading.Tasks;
 
 namespace ClassicUO.Assets
 {
-    public class MapLoader : UOFileLoader
+    public class MapLoader : IDisposable
     {
         private static MapLoader _instance;
         private DataReader[] _mapDif;
@@ -55,6 +55,11 @@ namespace ClassicUO.Assets
 
         protected MapLoader()
         {
+        }
+
+        public void Dispose()
+        {
+            // TODO implement
         }
 
         public static MapLoader Instance
