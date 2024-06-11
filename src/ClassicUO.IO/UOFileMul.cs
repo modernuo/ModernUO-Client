@@ -44,9 +44,8 @@ namespace ClassicUO.IO
             _patch = patch;
         }
 
-        public UOFileMul(string file) : base(file)
+        public UOFileMul(string file) : base(file, true)
         {
-            Load();
         }
 
         public UOFile IdxFile => _idxFile;
