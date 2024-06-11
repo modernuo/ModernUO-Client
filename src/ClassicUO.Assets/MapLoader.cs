@@ -44,11 +44,11 @@ namespace ClassicUO.Assets
     public class MapLoader : UOFileLoader
     {
         private static MapLoader _instance;
-        private UOFileMul[] _mapDif;
-        private UOFileMul[] _mapDifl;
-        private UOFileMul[] _staDif;
-        private UOFileMul[] _staDifi;
-        private UOFileMul[] _staDifl;
+        private DataReader[] _mapDif;
+        private DataReader[] _mapDifl;
+        private DataReader[] _staDif;
+        private DataReader[] _staDifi;
+        private DataReader[] _staDifl;
 
         // cannot be a const, due to UOLive implementation
         public static int MAPS_COUNT = 6;
@@ -101,20 +101,20 @@ namespace ClassicUO.Assets
         public int[] MapPatchCount { get; private set; }
         public int[] StaticPatchCount { get; private set; }
 
-        protected UOFileMul[] _filesIdxStatics;
-        protected UOFile[] _filesMap;
-        protected UOFileMul[] _filesStatics;
+        protected DataReader[] _filesIdxStatics;
+        protected DataReader[] _filesMap;
+        protected DataReader[] _filesStatics;
 
-        protected static UOFile GetMapFile(int map)
+        protected static DataReader GetMapFile(int map)
         {
             return map < Instance._filesMap.Length ? Instance._filesMap[map] : null;
         }
 
         protected void Initialize()
         {
-            _filesMap = new UOFile[MAPS_COUNT];
-            _filesStatics = new UOFileMul[MAPS_COUNT];
-            _filesIdxStatics = new UOFileMul[MAPS_COUNT];
+            _filesMap = new DataReader[MAPS_COUNT];
+            _filesStatics = new DataReader[MAPS_COUNT];
+            _filesIdxStatics = new DataReader[MAPS_COUNT];
 
             MapPatchCount = new int[MAPS_COUNT];
             StaticPatchCount = new int[MAPS_COUNT];
@@ -122,11 +122,11 @@ namespace ClassicUO.Assets
 
             BlockData = new IndexMap[MAPS_COUNT][];
 
-            _mapDif = new UOFileMul[MAPS_COUNT];
-            _mapDifl = new UOFileMul[MAPS_COUNT];
-            _staDif = new UOFileMul[MAPS_COUNT];
-            _staDifi = new UOFileMul[MAPS_COUNT];
-            _staDifl = new UOFileMul[MAPS_COUNT];
+            _mapDif = new DataReader[MAPS_COUNT];
+            _mapDifl = new DataReader[MAPS_COUNT];
+            _staDif = new DataReader[MAPS_COUNT];
+            _staDifi = new DataReader[MAPS_COUNT];
+            _staDifl = new DataReader[MAPS_COUNT];
         }
 
         public override unsafe Task Load()
@@ -271,9 +271,9 @@ namespace ClassicUO.Assets
             int height = MapBlocksSize[i, 1];
             int maxblockcount = width * height;
             BlockData[i] = new IndexMap[maxblockcount];
-            UOFile file = _filesMap[i];
-            UOFile fileidx = _filesIdxStatics[i];
-            UOFile staticfile = _filesStatics[i];
+            DataReader file = _filesMap[i];
+            DataReader fileidx = _filesIdxStatics[i];
+            DataReader staticfile = _filesStatics[i];
 
             if (fileidx == null && i == 1)
             {
@@ -452,8 +452,8 @@ namespace ClassicUO.Assets
 
                 if (mapPatchesCount != 0)
                 {
-                    UOFileMul difl = _mapDifl[i];
-                    UOFileMul dif = _mapDif[i];
+                    DataReader difl = _mapDifl[i];
+                    DataReader dif = _mapDif[i];
 
                     if (difl == null || dif == null || difl.Length == 0 || dif.Length == 0)
                     {
@@ -482,8 +482,8 @@ namespace ClassicUO.Assets
 
                 if (staticPatchesCount != 0)
                 {
-                    UOFileMul difl = _staDifl[i];
-                    UOFileMul difi = _staDifi[i];
+                    DataReader difl = _staDifl[i];
+                    DataReader difi = _staDifi[i];
 
                     if (difl == null || difi == null || _staDif[i] == null || difl.Length == 0 || difi.Length == 0 || _staDif[i].Length == 0)
                     {
