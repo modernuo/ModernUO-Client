@@ -59,9 +59,19 @@ namespace ClassicUO.IO
         {
         }
 
+        public bool IsValidIndex(int index)
+        {
+            return index >= 0 && Entries != null && index < Entries.Length;
+        }
+
+        public bool IsValidIndex(uint index)
+        {
+            return Entries != null && index < (uint)Entries.Length;
+        }
+
         public ref UOFileIndex GetValidRefEntry(int index)
         {
-            if (index < 0 || Entries == null || index >= Entries.Length)
+            if (!IsValidIndex(index))
             {
                 return ref UOFileIndex.Invalid;
             }

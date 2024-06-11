@@ -103,9 +103,8 @@ namespace ClassicUO.Assets
                         int ingump = defReader.ReadInt();
 
                         if (
-                            ingump < 0
+                            !IsValidIndex(ingump)
                             || ingump >= MAX_GUMP_DATA_INDEX_COUNT
-                            || ingump >= Entries.Length
                             || Entries[ingump].Length > 0
                         )
                         {
@@ -124,9 +123,8 @@ namespace ClassicUO.Assets
                             int checkIndex = group[i];
 
                             if (
-                                checkIndex < 0
+                                !IsValidIndex(checkIndex)
                                 || checkIndex >= MAX_GUMP_DATA_INDEX_COUNT
-                                || checkIndex >= Entries.Length
                                 || Entries[checkIndex].Length <= 0
                             )
                             {

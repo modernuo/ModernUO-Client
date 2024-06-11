@@ -156,7 +156,7 @@ namespace ClassicUO.Assets
                         }
                         else if (vh.FileID == 4)
                         {
-                            if (vh.BlockID < ArtLoader.Instance.Entries.Length)
+                            if (ArtLoader.Instance.IsValidIndex(vh.BlockID))
                             {
                                 ArtLoader.Instance.Entries[vh.BlockID] = new UOFileIndex
                                 (
@@ -353,7 +353,7 @@ namespace ClassicUO.Assets
                                 continue;
                             }
 
-                            if (index < artLoader.Entries.Length && checkIndex < artLoader.Entries.Length)
+                            if (artLoader.IsValidIndex(index) && artLoader.IsValidIndex(checkIndex))
                             {
                                 ref UOFileIndex currentEntry = ref artLoader.GetValidRefEntry(index);
                                 ref UOFileIndex checkEntry = ref artLoader.GetValidRefEntry(checkIndex);

@@ -72,7 +72,7 @@ namespace ClassicUO.Assets
                         {
                             int index = defReader.ReadInt();
 
-                            if (index < 0 || index >= Entries.Length)
+                            if (!IsValidIndex(index))
                             {
                                 continue;
                             }
@@ -88,7 +88,7 @@ namespace ClassicUO.Assets
                             {
                                 int checkindex = group[i];
 
-                                if (checkindex < 0 || checkindex >= Entries.Length)
+                                if (!IsValidIndex(checkindex))
                                 {
                                     continue;
                                 }
