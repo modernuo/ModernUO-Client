@@ -53,7 +53,7 @@ namespace ClassicUO.Assets
 
         public bool UseUOPGumps = false;
 
-        public override Task Load()
+        public Task Load()
         {
             return Task.Run(() =>
             {

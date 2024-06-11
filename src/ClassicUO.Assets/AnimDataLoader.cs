@@ -52,7 +52,7 @@ namespace ClassicUO.Assets
 
         public UOFile AnimDataFile => _file;
 
-        public override Task Load()
+        public Task Load()
         {
             return Task.Run
             (

@@ -59,7 +59,7 @@ namespace ClassicUO.Assets
             return map >= 0 && map < _facets.Length && _facets[map] != null;
         }
 
-        public override Task Load()
+        public Task Load()
         {
             return Task.Run
             (

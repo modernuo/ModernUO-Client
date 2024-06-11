@@ -59,7 +59,7 @@ namespace ClassicUO.Assets
 
         public static SoundsLoader Instance => _instance ?? (_instance = new SoundsLoader());
 
-        public override Task Load()
+        public Task Load()
         {
             return Task.Run
             (

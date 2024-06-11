@@ -476,7 +476,7 @@ namespace ClassicUO.Assets
             return result;
         }
 
-        public override unsafe Task Load()
+        public Task Load()
         {
             return Task.Run(LoadInternal);
         }

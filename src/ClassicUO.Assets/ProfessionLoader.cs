@@ -80,7 +80,7 @@ namespace ClassicUO.Assets
 
         public Dictionary<ProfessionInfo, List<ProfessionInfo>> Professions { get; } = new Dictionary<ProfessionInfo, List<ProfessionInfo>>();
 
-        public override Task Load()
+        public Task Load()
         {
             return Task.Run
             (

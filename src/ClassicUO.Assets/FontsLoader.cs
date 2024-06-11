@@ -122,7 +122,7 @@ namespace ClassicUO.Assets
 
         public bool IsUsingHTML { get; set; }
 
-        public override unsafe Task Load()
+        public unsafe Task Load()
         {
             return Task.Run(() =>
             {
