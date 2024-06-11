@@ -42,7 +42,7 @@ namespace ClassicUO.IO
         private readonly Dictionary<ulong, UOFileIndex> _hashes = new Dictionary<ulong, UOFileIndex>();
         private readonly string _pattern;
 
-        public UOFileUop(string path, string pattern, bool hasextra = false) : base(path)
+        public UOFileUop(string path, string pattern, bool hasextra = false) : base(path, true)
         {
             _pattern = pattern;
             _hasExtra = hasextra;
@@ -54,10 +54,8 @@ namespace ClassicUO.IO
         public Dictionary<ulong, UOFileIndex> Hashes => _hashes;
 
         
-        protected override void Load()
+        private void Load()
         {
-            base.Load();
-
             Seek(0);
 
             if (ReadUInt() != UOP_MAGIC_NUMBER)
