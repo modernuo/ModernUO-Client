@@ -52,7 +52,7 @@ namespace ClassicUO.IO
         public UOFile IdxFile => _idxFile;
 
 
-        public override void FillEntries(ref UOFileIndex[] entries)
+        public void FillEntries(ref UOFileIndex[] entries)
         {
             UOFile file = _idxFile ?? (UOFile) this;
 
@@ -87,10 +87,6 @@ namespace ClassicUO.IO
         private class UOFileIdxMul : UOFile
         {
             public UOFileIdxMul(string idxpath) : base(idxpath, true)
-            {
-            }
-
-            public override void FillEntries(ref UOFileIndex[] entries)
             {
             }
         }

@@ -71,6 +71,7 @@ namespace ClassicUO.Assets
                     {
                         var file = new UOFileUop(path, "build/soundlegacymul/{0:D8}.dat");
                         Entries = new UOFileIndex[Math.Max(file.TotalEntriesCount, MAX_SOUND_DATA_INDEX_COUNT)];
+                        file.FillEntries(ref Entries);
 
                         _file = file;
                     }
@@ -81,15 +82,15 @@ namespace ClassicUO.Assets
 
                         if (File.Exists(path) && File.Exists(idxpath))
                         {
-                            _file = new UOFileMul(path, idxpath, MAX_SOUND_DATA_INDEX_COUNT);
+                            var file = new UOFileMul(path, idxpath, MAX_SOUND_DATA_INDEX_COUNT);
+                            file.FillEntries(ref Entries);
+                            _file = file;
                         }
                         else
                         {
                             throw new FileNotFoundException("no sounds found");
                         }
                     }
-
-                    _file.FillEntries(ref Entries);
 
                     string def = UOFileManager.GetUOFilePath("Sound.def");
 
