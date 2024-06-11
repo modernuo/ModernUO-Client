@@ -34,7 +34,7 @@ using System;
 
 namespace ClassicUO.IO
 {
-    public struct UOFileIndex : IEquatable<UOFileIndex>
+    public struct UOFileIndex
     {
         public UOFileIndex
         (
@@ -84,9 +84,12 @@ namespace ClassicUO.IO
             0
         );
 
-        public bool Equals(UOFileIndex other)
+        /**
+         * Is this the special #Invalid value?
+         */
+        public bool IsInvalid()
         {
-            return (Address, Offset, Length, DecompressedLength) == (other.Address, other.Offset, other.Length, other.DecompressedLength);
+            return Address == IntPtr.Zero;
         }
     }
 
