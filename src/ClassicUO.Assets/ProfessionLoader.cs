@@ -32,6 +32,7 @@
 
 using ClassicUO.IO;
 using ClassicUO.Utility;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
@@ -63,7 +64,7 @@ namespace ClassicUO.Assets
         public List<string> Children { get; set; }
     }
 
-    public class ProfessionLoader : UOFileLoader
+    public class ProfessionLoader : IDisposable
     {
         private static ProfessionLoader _instance;
         private readonly string[] _Keys =
@@ -73,6 +74,10 @@ namespace ClassicUO.Assets
         };
 
         private ProfessionLoader()
+        {
+        }
+
+        public void Dispose()
         {
         }
 

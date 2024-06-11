@@ -39,12 +39,16 @@ using System.Threading.Tasks;
 
 namespace ClassicUO.Assets
 {
-    public class AnimDataLoader : UOFileLoader
+    public class AnimDataLoader : IDisposable
     {
         private static AnimDataLoader _instance;
         private UOFileMul _file;
 
         private AnimDataLoader()
+        {
+        }
+
+        public void Dispose()
         {
         }
 

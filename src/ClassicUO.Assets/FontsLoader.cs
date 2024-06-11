@@ -44,7 +44,7 @@ using System.Threading.Tasks;
 
 namespace ClassicUO.Assets
 {
-    public class FontsLoader : UOFileLoader
+    public class FontsLoader : IDisposable
     {
         private const int UOFONT_SOLID = 0x0001;
         private const int UOFONT_ITALIC = 0x0002;
@@ -111,6 +111,10 @@ namespace ClassicUO.Assets
         private readonly int[] _offsetSymbolTable = { 1, 0, 1, 1, -1, 0, 1, 1, 0, 0 };
 
         private FontsLoader() { }
+
+        public void Dispose()
+        {
+        }
 
         public static FontsLoader Instance => _instance ?? (_instance = new FontsLoader());
 

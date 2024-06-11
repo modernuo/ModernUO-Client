@@ -43,7 +43,7 @@ using System.Threading.Tasks;
 
 namespace ClassicUO.Assets
 {
-    public unsafe class AnimationsLoader : UOFileLoader
+    public unsafe class AnimationsLoader : IDisposable
     {
         public const int MAX_ACTIONS = 80; // gargoyle is like 78
         public const int MAX_DIRECTIONS = 5;
@@ -67,6 +67,10 @@ namespace ClassicUO.Assets
         private readonly Dictionary<int, UopInfo> _uopInfos = new Dictionary<int, UopInfo>();
 
         private AnimationsLoader() { }
+
+        public void Dispose()
+        {
+        }
 
         public static AnimationsLoader Instance =>
             _instance ?? (_instance = new AnimationsLoader());
@@ -972,8 +976,6 @@ namespace ClassicUO.Assets
                     ? AnimationGroupsType.Animal
                     : AnimationGroupsType.Human;
         }
-
-        public override void ClearResources() { }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void GetAnimDirection(ref byte dir, ref bool mirror)
