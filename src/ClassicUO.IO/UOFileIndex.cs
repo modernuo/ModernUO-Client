@@ -70,7 +70,10 @@ namespace ClassicUO.IO
         public ushort Hue;
         public sbyte AnimOffset;
 
-
+        public bool IsValid()
+        {
+            return Offset >= 0 && Length > 0 && Offset != 0x0000_0000_FFFF_FFFF;
+        }
 
         public static UOFileIndex Invalid = new UOFileIndex
         (
