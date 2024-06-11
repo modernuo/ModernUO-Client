@@ -421,7 +421,7 @@ namespace ClassicUO.Game
                         _UL._filesMap = new ULFileMul[MapLoader.MAPS_COUNT];
                         _UL._filesIdxStatics = new ULFileMul[MapLoader.MAPS_COUNT];
                         _UL._filesStatics = new ULFileMul[MapLoader.MAPS_COUNT];
-                        (UOFile[], UOFileMul[], UOFileMul[]) refs = mapLoader.GetFilesReference;
+                        (DataReader[], DataReader[], DataReader[]) refs = mapLoader.GetFilesReference;
 
                         for (int i = 0; i < validMaps.Count; i++)
                         {
@@ -797,7 +797,7 @@ namespace ClassicUO.Game
                 _writerTask = Task.Run(_writer.Loop); // new Thread(_writer.Loop) {Name = "UL_File_Writer", IsBackground = true};
             }
 
-            public (UOFile[], UOFileMul[], UOFileMul[]) GetFilesReference =>
+            public (DataReader[], DataReader[], DataReader[]) GetFilesReference =>
                 (_filesMap, _filesIdxStatics, _filesStatics);
 
             private uint NumMaps { get; }
@@ -917,7 +917,7 @@ namespace ClassicUO.Game
 
                 if (!File.Exists(mapPath))
                 {
-                    UOFile mapFile = GetMapFile(mapId);
+                    var mapFile = GetMapFile(mapId);
 
                     if (mapFile == null)
                     {
@@ -1073,9 +1073,9 @@ namespace ClassicUO.Game
                 int mapBlockSize = sizeof(MapBlock);
                 int staticIdxBlockSize = sizeof(StaidxBlock);
                 int staticblockSize = sizeof(StaticsBlock);
-                UOFile file = _filesMap[map];
-                UOFile fileIdx = _filesIdxStatics[map];
-                UOFile staticFile = _filesStatics[map];
+                DataReader file = _filesMap[map];
+                DataReader fileIdx = _filesIdxStatics[map];
+                DataReader staticFile = _filesStatics[map];
                 ulong staticIdxAddress = (ulong) fileIdx.StartAddress;
                 ulong endStaticIdxAddress = staticIdxAddress + (ulong) fileIdx.Length;
                 ulong staticAddress = (ulong) staticFile.StartAddress;
