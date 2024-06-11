@@ -178,11 +178,6 @@ namespace ClassicUO
         private readonly dCastSpell _castSpell = GameActions.CastSpell;
 
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        delegate IntPtr dGetCliloc(int cliloc, IntPtr args, bool capitalize);
-        [MarshalAs(UnmanagedType.FunctionPtr)]
-        private readonly dGetCliloc _getCliloc;
-
-        [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
         delegate short dGetPacketLength(int id);
         [MarshalAs(UnmanagedType.FunctionPtr)]
         private readonly dGetPacketLength _packetLength = PacketsTable.GetPacketLength;
