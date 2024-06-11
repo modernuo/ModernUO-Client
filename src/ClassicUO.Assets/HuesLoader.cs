@@ -39,11 +39,15 @@ using System.Threading.Tasks;
 
 namespace ClassicUO.Assets
 {
-    public class HuesLoader : UOFileLoader
+    public class HuesLoader : IDisposable
     {
         private static HuesLoader _instance;
 
         private HuesLoader()
+        {
+        }
+
+        public void Dispose()
         {
         }
 

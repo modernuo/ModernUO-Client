@@ -41,7 +41,7 @@ using System.Threading.Tasks;
 
 namespace ClassicUO.Assets
 {
-    public class ClilocLoader : UOFileLoader
+    public class ClilocLoader : IDisposable
     {
         private static ClilocLoader _instance;
         private string _cliloc;
@@ -167,7 +167,7 @@ namespace ClassicUO.Assets
             );
         }
 
-        public override void ClearResources()
+        public void Dispose()
         {
             _entries.Clear();
         }

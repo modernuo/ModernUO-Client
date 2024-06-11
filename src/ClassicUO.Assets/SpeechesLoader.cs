@@ -40,12 +40,16 @@ using System.Threading.Tasks;
 
 namespace ClassicUO.Assets
 {
-    public class SpeechesLoader : UOFileLoader
+    public class SpeechesLoader : IDisposable
     {
         private static SpeechesLoader _instance;
         private SpeechEntry[] _speech;
 
         private SpeechesLoader()
+        {
+        }
+
+        public void Dispose()
         {
         }
 

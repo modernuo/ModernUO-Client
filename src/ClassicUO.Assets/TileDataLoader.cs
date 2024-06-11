@@ -39,7 +39,7 @@ using System.Threading.Tasks;
 
 namespace ClassicUO.Assets
 {
-    public class TileDataLoader : UOFileLoader
+    public class TileDataLoader : IDisposable
     {
         private static TileDataLoader _instance;
 
@@ -47,6 +47,10 @@ namespace ClassicUO.Assets
         private static LandTiles[] _landData;
 
         private TileDataLoader()
+        {
+        }
+
+        public void Dispose()
         {
         }
 
