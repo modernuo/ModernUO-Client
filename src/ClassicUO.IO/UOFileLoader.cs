@@ -59,6 +59,11 @@ namespace ClassicUO.IO
         {
         }
 
+        public int GetNumEntries()
+        {
+            return Entries.Length;
+        }
+
         public bool IsValidIndex(int index)
         {
             return index >= 0 && Entries != null && index < Entries.Length;
