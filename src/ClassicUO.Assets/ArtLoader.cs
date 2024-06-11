@@ -67,10 +67,12 @@ namespace ClassicUO.Assets
 
                 if (UOFileManager.IsUOPInstallation && File.Exists(filePath))
                 {
-                    _file = new UOFileUop(filePath, "build/artlegacymul/{0:D8}.tga");
+                    var file = new UOFileUop(filePath, "build/artlegacymul/{0:D8}.tga");
                     Entries = new UOFileIndex[
-                        Math.Max(((UOFileUop)_file).TotalEntriesCount, MAX_STATIC_DATA_INDEX_COUNT)
+                        Math.Max(file.TotalEntriesCount, MAX_STATIC_DATA_INDEX_COUNT)
                     ];
+
+                    _file = file;
                 }
                 else
                 {

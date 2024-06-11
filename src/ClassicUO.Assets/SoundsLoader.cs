@@ -69,8 +69,10 @@ namespace ClassicUO.Assets
 
                     if (UOFileManager.IsUOPInstallation && File.Exists(path))
                     {
-                        _file = new UOFileUop(path, "build/soundlegacymul/{0:D8}.dat");
-                        Entries = new UOFileIndex[Math.Max(((UOFileUop) _file).TotalEntriesCount, MAX_SOUND_DATA_INDEX_COUNT)];
+                        var file = new UOFileUop(path, "build/soundlegacymul/{0:D8}.dat");
+                        Entries = new UOFileIndex[Math.Max(file.TotalEntriesCount, MAX_SOUND_DATA_INDEX_COUNT)];
+
+                        _file = file;
                     }
                     else
                     {
