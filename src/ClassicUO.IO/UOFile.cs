@@ -108,10 +108,6 @@ namespace ClassicUO.IO
             }
         }
 
-        public virtual void FillEntries(ref UOFileIndex[] entries)
-        {
-        }
-
         public virtual void Dispose()
         {
 #if USE_MMF

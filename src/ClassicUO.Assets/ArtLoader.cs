@@ -71,6 +71,7 @@ namespace ClassicUO.Assets
                     Entries = new UOFileIndex[
                         Math.Max(file.TotalEntriesCount, MAX_STATIC_DATA_INDEX_COUNT)
                     ];
+                    file.FillEntries(ref Entries);
 
                     _file = file;
                 }
@@ -81,11 +82,12 @@ namespace ClassicUO.Assets
 
                     if (File.Exists(filePath) && File.Exists(idxPath))
                     {
-                        _file = new UOFileMul(filePath, idxPath, MAX_STATIC_DATA_INDEX_COUNT);
+                        var file = new UOFileMul(filePath, idxPath, MAX_STATIC_DATA_INDEX_COUNT);
+                        file.FillEntries(ref Entries);
+
+                        _file = file;
                     }
                 }
-
-                _file.FillEntries(ref Entries);
             });
         }
 

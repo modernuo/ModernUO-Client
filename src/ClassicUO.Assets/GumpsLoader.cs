@@ -65,8 +65,9 @@ namespace ClassicUO.Assets
                     Entries = new UOFileIndex[
                         Math.Max(file.TotalEntriesCount, MAX_GUMP_DATA_INDEX_COUNT)
                     ];
+                    file.FillEntries(ref Entries);
 
-                    file = _file;
+                    _file = file;
                     UseUOPGumps = true;
                 }
                 else
@@ -84,12 +85,12 @@ namespace ClassicUO.Assets
                         pathidx = UOFileManager.GetUOFilePath("Gumpidx.mul");
                     }
 
-                    _file = new UOFileMul(path, pathidx, MAX_GUMP_DATA_INDEX_COUNT, 12);
+                    var file = new UOFileMul(path, pathidx, MAX_GUMP_DATA_INDEX_COUNT, 12);
+                    file.FillEntries(ref Entries);
 
+                    _file = file;
                     UseUOPGumps = false;
                 }
-
-                _file.FillEntries(ref Entries);
 
                 string pathdef = UOFileManager.GetUOFilePath("gump.def");
 

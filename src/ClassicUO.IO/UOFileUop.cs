@@ -165,7 +165,7 @@ namespace ClassicUO.IO
             return _hashes.TryGetValue(hash, out data);
         }
 
-        public override void FillEntries(ref UOFileIndex[] entries)
+        public void FillEntries(ref UOFileIndex[] entries)
         {
             for (int i = 0; i < entries.Length; i++)
             {
