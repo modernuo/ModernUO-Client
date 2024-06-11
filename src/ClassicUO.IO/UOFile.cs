@@ -57,7 +57,7 @@ namespace ClassicUO.IO
         protected MemoryMappedFile _file;
 #endif
 
-        protected virtual void Load()
+        private void Load()
         {
             Log.Trace($"Loading file:\t\t{FilePath}");
 
