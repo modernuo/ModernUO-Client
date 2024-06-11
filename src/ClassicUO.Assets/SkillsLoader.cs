@@ -54,7 +54,7 @@ namespace ClassicUO.Assets
         public readonly List<SkillEntry> Skills = new List<SkillEntry>();
         public readonly List<SkillEntry> SortedSkills = new List<SkillEntry>();
 
-        public override unsafe Task Load()
+        public unsafe Task Load()
         {
             return Task.Run
             (

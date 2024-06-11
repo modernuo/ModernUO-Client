@@ -59,7 +59,7 @@ namespace ClassicUO.Assets
             _instance
             ?? (_instance = new ArtLoader(MAX_STATIC_DATA_INDEX_COUNT, MAX_LAND_DATA_INDEX_COUNT));
 
-        public override Task Load()
+        public Task Load()
         {
             return Task.Run(() =>
             {

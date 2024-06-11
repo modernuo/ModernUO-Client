@@ -57,7 +57,7 @@ namespace ClassicUO.Assets
 
         public ushort[] RadarCol { get; private set; }
 
-        public override unsafe Task Load()
+        public unsafe Task Load()
         {
             return Task.Run
             (

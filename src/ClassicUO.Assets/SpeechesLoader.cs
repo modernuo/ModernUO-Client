@@ -51,7 +51,7 @@ namespace ClassicUO.Assets
 
         public static SpeechesLoader Instance => _instance ?? (_instance = new SpeechesLoader());
 
-        public override unsafe Task Load()
+        public unsafe Task Load()
         {
             return Task.Run
             (

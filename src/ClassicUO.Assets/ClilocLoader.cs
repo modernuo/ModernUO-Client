@@ -73,7 +73,7 @@ namespace ClassicUO.Assets
             return Load();
         }
 
-        public override Task Load()
+        public Task Load()
         {
             return Task.Run
             (

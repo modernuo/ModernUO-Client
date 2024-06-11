@@ -50,7 +50,7 @@ namespace ClassicUO.Assets
         public static TexmapsLoader Instance =>
             _instance ?? (_instance = new TexmapsLoader(MAX_LAND_TEXTURES_DATA_INDEX_COUNT));
 
-        public override Task Load()
+        public Task Load()
         {
             return Task.Run(() =>
             {

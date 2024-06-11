@@ -129,7 +129,7 @@ namespace ClassicUO.Assets
             _staDifl = new DataReader[MAPS_COUNT];
         }
 
-        public override unsafe Task Load()
+        public unsafe Task Load()
         {
             return Task.Run
             (

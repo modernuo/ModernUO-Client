@@ -53,8 +53,6 @@ namespace ClassicUO.IO
 
         protected UOFileIndex[] Entries;
 
-        public abstract Task Load();
-
         public virtual void ClearResources()
         {
         }

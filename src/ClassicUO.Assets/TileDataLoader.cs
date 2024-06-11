@@ -55,7 +55,7 @@ namespace ClassicUO.Assets
         public ref LandTiles[] LandData => ref _landData;
         public ref StaticTiles[] StaticData => ref _staticData;
 
-        public override unsafe Task Load()
+        public unsafe Task Load()
         {
             return Task.Run
             (

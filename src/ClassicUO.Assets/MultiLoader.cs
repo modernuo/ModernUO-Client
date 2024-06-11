@@ -56,7 +56,7 @@ namespace ClassicUO.Assets
         public int Offset { get; private set; }
 
 
-        public override unsafe Task Load()
+        public unsafe Task Load()
         {
             return Task.Run
             (
