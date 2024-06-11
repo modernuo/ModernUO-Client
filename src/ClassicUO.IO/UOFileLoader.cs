@@ -84,6 +84,11 @@ namespace ClassicUO.IO
             Entries[index] = entry;
         }
 
+        public void SetAnimOffset(int index, sbyte AnimOffset)
+        {
+            Entries[index].AnimOffset = AnimOffset;
+        }
+
         public ref UOFileIndex GetValidRefEntry(int index)
         {
             if (!IsValidIndex(index))

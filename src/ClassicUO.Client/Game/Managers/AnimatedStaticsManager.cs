@@ -97,7 +97,6 @@ namespace ClassicUO.Game.Managers
             uint next_time = Time.Ticks + 250;
             bool no_animated_field = ProfileManager.CurrentProfile != null && ProfileManager.CurrentProfile.FieldsType != 0;
             long startAddr = file.StartAddress.ToInt64();
-            UOFileIndex[] static_data = ArtLoader.Instance.Entries;
 
             for (int i = 0; i < _staticInfos.Length; i++)
             {
@@ -126,9 +125,9 @@ namespace ClassicUO.Game.Managers
                         o.Time = Time.Ticks + delay;
                     }
 
-                    if (offset < info->FrameCount && o.Index + 0x4000 < static_data.Length)
+                    if (offset < info->FrameCount && ArtLoader.Instance.IsValidIndex(o.Index + 0x4000))
                     {
-                        static_data[o.Index + 0x4000].AnimOffset = info->FrameData[offset++];
+                        ArtLoader.Instance.SetAnimOffset(o.Index + 0x4000, info->FrameData[offset++]);
                     }
 
                     if (offset >= info->FrameCount)
