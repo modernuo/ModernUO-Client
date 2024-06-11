@@ -61,10 +61,12 @@ namespace ClassicUO.Assets
 
                 if (UOFileManager.IsUOPInstallation && File.Exists(path))
                 {
-                    _file = new UOFileUop(path, "build/gumpartlegacymul/{0:D8}.tga", true);
+                    var file = new UOFileUop(path, "build/gumpartlegacymul/{0:D8}.tga", true);
                     Entries = new UOFileIndex[
-                        Math.Max(((UOFileUop)_file).TotalEntriesCount, MAX_GUMP_DATA_INDEX_COUNT)
+                        Math.Max(file.TotalEntriesCount, MAX_GUMP_DATA_INDEX_COUNT)
                     ];
+
+                    file = _file;
                     UseUOPGumps = true;
                 }
                 else
