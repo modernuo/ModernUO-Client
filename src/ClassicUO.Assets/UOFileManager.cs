@@ -358,7 +358,7 @@ namespace ClassicUO.Assets
                                 ref UOFileIndex currentEntry = ref artLoader.GetValidRefEntry(index);
                                 ref UOFileIndex checkEntry = ref artLoader.GetValidRefEntry(checkIndex);
 
-                                if (currentEntry.Equals(UOFileIndex.Invalid) && !checkEntry.Equals(UOFileIndex.Invalid))
+                                if (currentEntry.IsInvalid() && !checkEntry.IsInvalid())
                                 {
                                     artLoader.Entries[index] = artLoader.Entries[checkIndex];
                                 }
