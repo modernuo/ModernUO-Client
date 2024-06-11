@@ -803,8 +803,17 @@ namespace ClassicUO.Game
             private uint NumMaps { get; }
             public readonly AsyncWriterTasked _writer;
 
-            public override void ClearResources()
+            public bool IsDisposed { get; private set; }
+
+            public void Dispose()
             {
+                if (IsDisposed)
+                {
+                    return;
+                }
+
+                IsDisposed = true;
+
                 try
                 {
                     _feedCancel?.Cancel();
@@ -828,7 +837,7 @@ namespace ClassicUO.Game
                 }
             }
 
-            public override Task Load()
+            public Task Load()
             {
                 return Task.Run
                 (
