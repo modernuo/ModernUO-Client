@@ -45,8 +45,8 @@ namespace ClassicUO.Assets
     public class MultiMapLoader : UOFileLoader
     {
         private static MultiMapLoader _instance;
-        private UOFileMul[] _facets;
-        private UOFile _file;
+        private DataReader[] _facets;
+        private DataReader _file;
 
         private MultiMapLoader()
         {
@@ -79,11 +79,11 @@ namespace ClassicUO.Assets
                         .OrderBy(s => s)
                         .ToArray();
 
-                    _facets = new UOFileMul[facetFiles.Length];
+                    _facets = new UOFile[facetFiles.Length];
 
                     for (int i = 0; i < facetFiles.Length; i++)
                     {
-                        _facets[i] = new UOFileMul(facetFiles[i]);
+                        _facets[i] = new UOFile(facetFiles[i], true);
                     }
                 }
             );

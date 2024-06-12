@@ -46,7 +46,7 @@ namespace ClassicUO.Game.Managers
 
         public unsafe void Initialize()
         {
-            UOFile file = AnimDataLoader.Instance.AnimDataFile;
+            DataReader file = AnimDataLoader.Instance.AnimDataFile;
 
             if (file == null)
             {
@@ -85,7 +85,7 @@ namespace ClassicUO.Game.Managers
                 return;
             }
 
-            UOFile file = AnimDataLoader.Instance.AnimDataFile;
+            DataReader file = AnimDataLoader.Instance.AnimDataFile;
 
             if (file == null)
             {

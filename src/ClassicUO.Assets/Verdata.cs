@@ -48,7 +48,7 @@ namespace ClassicUO.Assets
             }
             else
             {
-                File = new UOFileMul(path);
+                File = new UOFile(path, true);
 
                 // the scope of this try/catch is to avoid unexpected crashes if servers redestribuite wrong verdata
                 try
@@ -91,6 +91,6 @@ namespace ClassicUO.Assets
 
         public static UOFileIndex5D[] Patches { get; }
 
-        public static UOFileMul File { get; }
+        public static UOFile File { get; }
     }
 }

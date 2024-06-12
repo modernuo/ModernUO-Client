@@ -69,7 +69,7 @@ namespace ClassicUO.Assets
 
                     FileSystemHelper.EnsureFileExists(path);
 
-                    UOFileMul tileData = new UOFileMul(path);
+                    var tileData = new UOFile(path, true);
 
 
                     bool isold = UOFileManager.Version < ClientVersion.CV_7090;
