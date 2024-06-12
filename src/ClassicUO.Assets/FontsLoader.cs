@@ -130,8 +130,8 @@ namespace ClassicUO.Assets
         {
             return Task.Run(() =>
             {
-                UOFileMul fonts = new UOFileMul(UOFileManager.GetUOFilePath("fonts.mul"));
-                UOFileMul[] uniFonts = new UOFileMul[20];
+                var fonts = new UOFile(UOFileManager.GetUOFilePath("fonts.mul"), true);
+                var uniFonts = new UOFile[20];
 
                 for (int i = 0; i < 20; i++)
                 {
@@ -141,7 +141,7 @@ namespace ClassicUO.Assets
 
                     if (File.Exists(path))
                     {
-                        uniFonts[i] = new UOFileMul(path);
+                        uniFonts[i] = new UOFile(path, true);
 
                         _unicodeFontAddress[i] = uniFonts[i].StartAddress;
 

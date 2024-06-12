@@ -42,7 +42,7 @@ namespace ClassicUO.Assets
     public class AnimDataLoader : IDisposable
     {
         private static AnimDataLoader _instance;
-        private UOFileMul _file;
+        private DataReader _file;
 
         private AnimDataLoader()
         {
@@ -54,7 +54,7 @@ namespace ClassicUO.Assets
 
         public static AnimDataLoader Instance => _instance ?? (_instance = new AnimDataLoader());
 
-        public UOFile AnimDataFile => _file;
+        public DataReader AnimDataFile => _file;
 
         public Task Load()
         {
@@ -66,7 +66,7 @@ namespace ClassicUO.Assets
 
                     if (File.Exists(path))
                     {
-                        _file = new UOFileMul(path);
+                        _file = new UOFile(path, true);
                     }
                 }
             );
