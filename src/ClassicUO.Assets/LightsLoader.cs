@@ -49,8 +49,6 @@ namespace ClassicUO.Assets
         public static LightsLoader Instance =>
             _instance ?? (_instance = new LightsLoader(MAX_LIGHTS_DATA_INDEX_COUNT));
 
-        public UOFileMul File => _file;
-
         public Task Load()
         {
             return Task.Run(() =>
