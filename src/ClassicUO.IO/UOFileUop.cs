@@ -42,7 +42,7 @@ namespace ClassicUO.IO
         private readonly Dictionary<ulong, UOFileIndex> _hashes = new Dictionary<ulong, UOFileIndex>();
         private readonly string _pattern;
 
-        public UOFileUop(string path, string pattern, bool hasextra = false) : base(path, true)
+        public UOFileUop(string path, string pattern, bool hasextra = false) : base(path)
         {
             _pattern = pattern;
             _hasExtra = hasextra;

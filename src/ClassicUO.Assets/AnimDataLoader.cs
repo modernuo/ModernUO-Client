@@ -66,7 +66,7 @@ namespace ClassicUO.Assets
 
                     if (File.Exists(path))
                     {
-                        _file = new UOFile(path, true);
+                        _file = new UOFile(path);
                     }
                 }
             );

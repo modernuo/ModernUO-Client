@@ -48,7 +48,7 @@ namespace ClassicUO.Assets
             }
             else
             {
-                File = new UOFile(path, true);
+                File = new UOFile(path);
 
                 // the scope of this try/catch is to avoid unexpected crashes if servers redestribuite wrong verdata
                 try

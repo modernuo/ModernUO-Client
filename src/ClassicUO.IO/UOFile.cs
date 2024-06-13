@@ -41,14 +41,10 @@ namespace ClassicUO.IO
 {
     public unsafe class UOFile : DataReader
     {
-        public UOFile(string filepath, bool loadFile = false)
+        public UOFile(string filepath)
         {
             FilePath = filepath;
-
-            if (loadFile)
-            {
-                Load();
-            }
+            Load();
         }
 
         public string FilePath { get; }

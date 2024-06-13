@@ -70,7 +70,7 @@ namespace ClassicUO.Assets
                         return;
                     }
 
-                    var file = new UOFile(path, true);
+                    var file = new UOFile(path);
                     List<SpeechEntry> entries = new List<SpeechEntry>();
 
                     while (file.Position < file.Length)
