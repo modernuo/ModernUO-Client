@@ -42,7 +42,6 @@ namespace ClassicUO.Assets
     public class SkillsLoader : UOFileLoader
     {
         private static SkillsLoader _instance;
-        private UOFileMul _file;
 
         private SkillsLoader()
         {
@@ -71,7 +70,7 @@ namespace ClassicUO.Assets
                     FileSystemHelper.EnsureFileExists(path);
                     FileSystemHelper.EnsureFileExists(pathidx);
 
-                    _file = new UOFileMul(path, pathidx, 0, 16);
+                    var _file = new UOFileMul(path, pathidx, 0, 16);
                     _file.FillEntries(ref Entries);
 
                     for (int i = 0, count = 0; i < Entries.Length; i++)
