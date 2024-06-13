@@ -651,7 +651,7 @@ namespace ClassicUO.Game
             return null;
         }
         
-        private class ULFileMul : UOFileMul
+        private class ULFileMul : UOFile
         {
             public ULFileMul(string file, bool isStaticMul) : base(file)
             {
