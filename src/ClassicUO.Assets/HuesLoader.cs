@@ -71,7 +71,7 @@ namespace ClassicUO.Assets
 
                     FileSystemHelper.EnsureFileExists(path);
 
-                    var file = new UOFile(path, true);
+                    var file = new UOFile(path);
                     int groupSize = Marshal.SizeOf<HuesGroup>();
                     int entrycount = (int) file.Length / groupSize;
                     HuesCount = entrycount * 8;
@@ -87,7 +87,7 @@ namespace ClassicUO.Assets
 
                     FileSystemHelper.EnsureFileExists(path);
 
-                    var radarcol = new UOFile(path, true);
+                    var radarcol = new UOFile(path);
                     RadarCol = new ushort[(int)(radarcol.Length >> 1)];
 
                     fixed (ushort* ptr = RadarCol)

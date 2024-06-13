@@ -69,7 +69,7 @@ namespace ClassicUO.Assets
 
                     if (File.Exists(path))
                     {
-                        _file = new UOFile(path, true);
+                        _file = new UOFile(path);
                     }
                     
                     var facetFiles = Directory.GetFiles(UOFileManager.BasePath, "*.mul", SearchOption.TopDirectoryOnly)
@@ -83,7 +83,7 @@ namespace ClassicUO.Assets
 
                     for (int i = 0; i < facetFiles.Length; i++)
                     {
-                        _facets[i] = new UOFile(facetFiles[i], true);
+                        _facets[i] = new UOFile(facetFiles[i]);
                     }
                 }
             );

@@ -44,7 +44,7 @@ namespace ClassicUO.IO
             _patch = patch;
         }
 
-        public UOFileMul(string file) : base(file, true)
+        public UOFileMul(string file) : base(file)
         {
         }
 
@@ -85,7 +85,7 @@ namespace ClassicUO.IO
 
         private class UOFileIdxMul : UOFile
         {
-            public UOFileIdxMul(string idxpath) : base(idxpath, true)
+            public UOFileIdxMul(string idxpath) : base(idxpath)
             {
             }
         }
