@@ -40,7 +40,7 @@ namespace ClassicUO.Assets
     public class LightsLoader : UOFileLoader
     {
         private static LightsLoader _instance;
-        private UOFileMul _file;
+        private DataReader _file;
 
         public const int MAX_LIGHTS_DATA_INDEX_COUNT = 100;
 
@@ -59,8 +59,9 @@ namespace ClassicUO.Assets
                 FileSystemHelper.EnsureFileExists(path);
                 FileSystemHelper.EnsureFileExists(pathidx);
 
-                _file = new UOFileMul(path, pathidx, MAX_LIGHTS_DATA_INDEX_COUNT);
-                _file.FillEntries(ref Entries);
+                var file = new UOFileMul(path, pathidx, MAX_LIGHTS_DATA_INDEX_COUNT);
+                file.FillEntries(ref Entries);
+                _file = file;
             });
         }
 
