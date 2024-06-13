@@ -56,7 +56,8 @@ namespace ClassicUO.Assets
         [ThreadStatic]
         private static byte[] _decompressedData;
 
-        private readonly UOFileMul[] _files = new UOFileMul[5];
+        private readonly DataReader[] _files = new DataReader[5];
+        private readonly DataReader[] _filesIdx = new DataReader[5];
         private readonly UOFileUop[] _filesUop = new UOFileUop[4];
 
         private readonly Dictionary<ushort, Dictionary<ushort, EquipConvData>> _equipConv = new Dictionary<ushort, Dictionary<ushort, EquipConvData>>();
@@ -101,7 +102,8 @@ namespace ClassicUO.Assets
 
                 if (File.Exists(pathmul) && File.Exists(pathidx))
                 {
-                    _files[i] = new UOFileMul(pathmul, pathidx, un[i], i == 0 ? 6 : -1);
+                    _files[i] = new UOFile(pathmul);
+                    _filesIdx[i] = new UOFile(pathidx);
                 }
 
                 if (i > 0 && UOFileManager.IsUOPInstallation)
@@ -365,7 +367,7 @@ namespace ClassicUO.Assets
             if (animType == AnimationGroupsType.Unknown)
                 animType = mobInfo.Type != AnimationGroupsType.Unknown ? mobInfo.Type : CalculateTypeByGraphic(body, fileIndex);
 
-            var fileIdx = _files[fileIndex].IdxFile;
+            var fileIdx = _filesIdx[fileIndex];
             var offsetAddress = CalculateOffset(body, animType, flags, out var actionCount);
 
             var offset = fileIdx.StartAddress.ToInt64() + offsetAddress;
