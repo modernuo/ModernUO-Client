@@ -203,11 +203,11 @@ namespace ClassicUO.Assets
 
                             if (File.Exists(path))
                             {
-                                _mapDifl[i] = new UOFileMul(path);
-                                _mapDif[i] = new UOFileMul(UOFileManager.GetUOFilePath($"mapdif{i}.mul"));
-                                _staDifl[i] = new UOFileMul(UOFileManager.GetUOFilePath($"stadifl{i}.mul"));
-                                _staDifi[i] = new UOFileMul(UOFileManager.GetUOFilePath($"stadifi{i}.mul"));
-                                _staDif[i] = new UOFileMul(UOFileManager.GetUOFilePath($"stadif{i}.mul"));
+                                _mapDifl[i] = new UOFile(path);
+                                _mapDif[i] = new UOFile(UOFileManager.GetUOFilePath($"mapdif{i}.mul"));
+                                _staDifl[i] = new UOFile(UOFileManager.GetUOFilePath($"stadifl{i}.mul"));
+                                _staDifi[i] = new UOFile(UOFileManager.GetUOFilePath($"stadifi{i}.mul"));
+                                _staDif[i] = new UOFile(UOFileManager.GetUOFilePath($"stadif{i}.mul"));
                             }
                         }
 
