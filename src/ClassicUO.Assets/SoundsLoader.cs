@@ -53,6 +53,8 @@ namespace ClassicUO.Assets
 
         private DataReader _file;
 
+        private bool entriesLoaded = false, musicLoaded = false;
+
         private SoundsLoader()
         {
         }
@@ -142,6 +144,16 @@ namespace ClassicUO.Assets
                         Entries[index] = Entries[checkIndex];
                     }
                 }
+            }
+        }
+
+        private void EnsureEntriesLoaded()
+        {
+            if (!entriesLoaded)
+            {
+                entriesLoaded = true;
+                LoadFileEntries();
+                LoadDef();
             }
         }
 
@@ -236,17 +248,12 @@ namespace ClassicUO.Assets
             }
         }
 
-        public Task Load()
+        private void EnsureMusicLoaded()
         {
-            return Task.Run
-            (
-                () =>
-                {
-                    LoadFileEntries();
-                    LoadDef();
-                    LoadMusicData();
-                }
-            );
+            if (!musicLoaded) {
+                musicLoaded = true;
+                LoadMusicData();
+            }
         }
 
         public unsafe bool TryGetSound(int sound, out byte[] data, out string name)
@@ -258,6 +265,8 @@ namespace ClassicUO.Assets
             {
                 return false;
             }
+
+            EnsureEntriesLoaded();
 
             ref UOFileIndex entry = ref GetValidRefEntry(sound);
 
@@ -368,6 +377,8 @@ namespace ClassicUO.Assets
         {
             name = null;
             doesLoop = false;
+
+            EnsureMusicLoaded();
 
             if (_musicData.ContainsKey(index))
             {
