@@ -739,9 +739,14 @@ namespace ClassicUO.Game
                 }
             }
 
-            public override void Dispose()
+            protected override void Dispose(bool disposing)
             {
-                MapLoader.Instance.Dispose();
+                if (disposing)
+                {
+                    MapLoader.Instance.Dispose();
+                }
+
+                base.Dispose(disposing);
             }
 
             public void WriteArray(long position, ArraySegment<byte> seg)

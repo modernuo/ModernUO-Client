@@ -77,10 +77,14 @@ namespace ClassicUO.IO
             }
         }
 
-        public override void Dispose()
+        protected override void Dispose(bool disposing)
         {
-            _idxFile?.Dispose();
-            base.Dispose();
+            if (disposing)
+            {
+                _idxFile?.Dispose();
+            }
+
+            base.Dispose(disposing);
         }
 
         private class UOFileIdxMul : UOFile
