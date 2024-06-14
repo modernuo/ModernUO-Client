@@ -104,14 +104,35 @@ namespace ClassicUO.IO
             }
         }
 
-        public virtual void Dispose()
+        protected override void Dispose(bool disposing)
         {
+            bool hasAcquiredPointer = StartAddress != IntPtr.Zero;
+
+            base.Dispose(disposing);
+
 #if USE_MMF
-            _accessor.SafeMemoryMappedViewHandle.ReleasePointer();
-            _accessor.Dispose();
-            _file.Dispose();
+            if (hasAcquiredPointer) {
+                _accessor.SafeMemoryMappedViewHandle.ReleasePointer();
+            }
 #endif
-            Log.Trace($"Unloaded:\t\t{FilePath}");
+
+            if (disposing)
+            {
+#if USE_MMF
+                if (_accessor != null)
+                {
+                    _accessor.Dispose();
+                    _accessor = null;
+                }
+
+                if (_file != null)
+                {
+                    _file.Dispose();
+                    _file = null;
+                }
+#endif
+                Log.Trace($"Unloaded:\t\t{FilePath}");
+            }
         }
     }
 }

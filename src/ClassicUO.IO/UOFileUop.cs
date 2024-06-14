@@ -151,10 +151,14 @@ namespace ClassicUO.IO
             _hashes.Clear();
         }
 
-        public override void Dispose()
+        protected override void Dispose(bool disposing)
         {
-            ClearHashes();
-            base.Dispose();
+            if (disposing)
+            {
+                ClearHashes();
+            }
+
+            base.Dispose(disposing);
         }
 
 

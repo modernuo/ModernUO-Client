@@ -41,7 +41,7 @@ namespace ClassicUO.IO
     /// <summary>
     ///     A fast Little Endian data reader.
     /// </summary>
-    public unsafe class DataReader
+    public unsafe class DataReader : IDisposable
     {
         private byte* _data;
         private GCHandle _handle;
@@ -56,8 +56,24 @@ namespace ClassicUO.IO
 
         public bool IsEOF => Position >= Length;
 
+        ~DataReader()
+        {
+            Dispose(false);
+        }
+
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
+
+        protected virtual void Dispose(bool disposing)
+        {
+            ReleaseData();
+        }
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void ReleaseData()
+        private void ReleaseData()
         {
             if (_handle.IsAllocated)
             {
