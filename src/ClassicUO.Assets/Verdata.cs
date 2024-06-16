@@ -91,6 +91,6 @@ namespace ClassicUO.Assets
 
         public static UOFileIndex5D[] Patches { get; }
 
-        public static UOFile File { get; }
+        public static DataReader File { get; }
     }
 }

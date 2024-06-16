@@ -41,7 +41,7 @@ namespace ClassicUO.Assets
     public class ArtLoader : UOFileLoader
     {
         private static ArtLoader _instance;
-        private UOFile _file;
+        private DataReader _file;
         private readonly ushort _graphicMask;
 
         [ThreadStatic]
