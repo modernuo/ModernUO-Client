@@ -60,9 +60,12 @@ namespace ClassicUO.Assets
                 FileSystemHelper.EnsureFileExists(path);
                 FileSystemHelper.EnsureFileExists(pathidx);
 
-                var file = new UOFileMul(path, pathidx, MAX_LAND_TEXTURES_DATA_INDEX_COUNT, 10);
-                file.FillEntries(ref Entries);
-                _file = file;
+                _file = new UOFile(path);
+
+                using (var idxFile = new UOFile(pathidx))
+                {
+                    UOFileMul.FillEntries(_file, idxFile, ref Entries);
+                }
 
                 string pathdef = UOFileManager.GetUOFilePath("TexTerr.def");
 

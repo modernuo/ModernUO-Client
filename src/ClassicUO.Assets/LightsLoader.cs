@@ -59,9 +59,12 @@ namespace ClassicUO.Assets
                 FileSystemHelper.EnsureFileExists(path);
                 FileSystemHelper.EnsureFileExists(pathidx);
 
-                var file = new UOFileMul(path, pathidx, MAX_LIGHTS_DATA_INDEX_COUNT);
-                file.FillEntries(ref Entries);
-                _file = file;
+                _file = new UOFile(path);
+
+                using (var idxFile = new UOFile(pathidx))
+                {
+                    UOFileMul.FillEntries(_file, idxFile, ref Entries);
+                }
             });
         }
 
