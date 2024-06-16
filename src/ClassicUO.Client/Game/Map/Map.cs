@@ -72,6 +72,7 @@ namespace ClassicUO.Game.Map
             Index = index;
             BlocksCount = MapLoader.Instance.Maps[Index].BlocksCount;
             ClearBockAccess();
+            MapLoader.Instance.Maps[Index].EnsureLoaded();
         }
 
         public readonly int BlocksCount;
