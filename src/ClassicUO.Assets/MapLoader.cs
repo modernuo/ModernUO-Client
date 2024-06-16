@@ -194,7 +194,7 @@ namespace ClassicUO.Assets
 
                             if (File.Exists(path))
                             {
-                                _filesMap[i] = new UOFileMul(path);
+                                _filesMap[i] = new UOFile(path);
 
                                 foundOneMap = true;
                             }
@@ -215,14 +215,14 @@ namespace ClassicUO.Assets
 
                         if (File.Exists(path))
                         {
-                            _filesStatics[i] = new UOFileMul(path);
+                            _filesStatics[i] = new UOFile(path);
                         }
 
                         path = UOFileManager.GetUOFilePath($"staidx{i}.mul");
 
                         if (File.Exists(path))
                         {
-                            _filesIdxStatics[i] = new UOFileMul(path);
+                            _filesIdxStatics[i] = new UOFile(path);
                         }
                     }
 
