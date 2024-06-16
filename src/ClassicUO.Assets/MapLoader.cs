@@ -571,11 +571,11 @@ namespace ClassicUO.Assets
                     return;
                 }
 
-                if (_filesMap[i] is UOFileMul mul && mul.StartAddress != IntPtr.Zero)
+                if (_filesMap[i] != null && _filesMap[i] is not UOFileUop && _filesMap[i].StartAddress != IntPtr.Zero)
                 {
-                    if (_filesIdxStatics[i] is UOFileMul stIdxMul && stIdxMul.StartAddress != IntPtr.Zero)
+                    if (_filesIdxStatics[i] != null && _filesIdxStatics[i].StartAddress != IntPtr.Zero)
                     {
-                        if (_filesStatics[i] is UOFileMul stMul && stMul.StartAddress != IntPtr.Zero)
+                        if (_filesStatics[i] != null && _filesStatics[i].StartAddress != IntPtr.Zero)
                         {
                             for (int block = 0; block < maxBlockCount; block++)
                             {
