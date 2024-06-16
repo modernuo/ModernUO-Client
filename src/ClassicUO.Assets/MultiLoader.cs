@@ -50,7 +50,7 @@ namespace ClassicUO.Assets
         public static MultiLoader Instance => _instance ?? (_instance = new MultiLoader());
 
         public int Count { get; private set; }
-        public UOFile File { get; private set; }
+        public DataReader File { get; private set; }
 
         public bool IsUOP { get; private set; }
         public int Offset { get; private set; }

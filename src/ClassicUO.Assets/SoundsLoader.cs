@@ -51,7 +51,7 @@ namespace ClassicUO.Assets
 
         public const int MAX_SOUND_DATA_INDEX_COUNT = 0xFFFF;
 
-        private UOFile _file;
+        private DataReader _file;
 
         private SoundsLoader()
         {
