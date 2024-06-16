@@ -30,25 +30,38 @@
 
 #endregion
 
+using System;
+using System.Runtime.InteropServices;
+
 namespace ClassicUO.IO
 {
     public class UOFileMul
     {
-        public static void FillEntries(DataReader dataFile, DataReader idxFile, ref UOFileIndex[] entries)
+        [StructLayout(LayoutKind.Sequential, Pack=1, Size=12)]
+        private struct RawIndexEntry
+        {
+            public uint Offset;
+            public int Length;
+            public uint Size;
+        };
+
+        public static unsafe void FillEntries(DataReader dataFile, DataReader idxFile, ref UOFileIndex[] entries)
         {
             int count = (int) idxFile.Length / 12;
             entries = new UOFileIndex[count];
 
-            for (int i = 0; i < count; i++)
+            var idxPtr = (RawIndexEntry *)idxFile.StartAddress;
+
+            for (int i = 0; i < count; i++, idxPtr++)
             {
                 ref UOFileIndex e = ref entries[i];
                 e.Address = dataFile.StartAddress;   // .mul mmf address
                 e.FileSize = (uint) dataFile.Length; // .mul mmf length
-                e.Offset = idxFile.ReadUInt(); // .idx offset
-                e.Length = idxFile.ReadInt();  // .idx length
+                e.Offset = idxPtr->Offset; // .idx offset
+                e.Length = idxPtr->Length;  // .idx length
                 e.DecompressedLength = 0;   // UNUSED HERE --> .UOP
 
-                int size = idxFile.ReadInt();
+                uint size = idxPtr->Size;
 
                 if (size > 0)
                 {
