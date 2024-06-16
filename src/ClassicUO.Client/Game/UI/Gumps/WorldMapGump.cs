@@ -1448,8 +1448,8 @@ namespace ClassicUO.Game.UI.Gumps
                             int realWidth = MapLoader.Instance.MapsDefaultSize[World.MapIndex, 0];
                             int realHeight = MapLoader.Instance.MapsDefaultSize[World.MapIndex, 1];
 
-                            int fixedWidth = MapLoader.Instance.MapBlocksSize[World.MapIndex, 0];
-                            int fixedHeight = MapLoader.Instance.MapBlocksSize[World.MapIndex, 1];
+                            int fixedWidth = MapLoader.Instance.Maps[World.MapIndex].Width;
+                            int fixedHeight = MapLoader.Instance.Maps[World.MapIndex].Height;
 
                             int size = (realWidth + OFFSET_PIX) * (realHeight + OFFSET_PIX);
 
