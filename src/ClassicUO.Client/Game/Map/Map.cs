@@ -49,16 +49,16 @@ namespace ClassicUO.Game.Map
         {
             int maxX = -1, maxY = -1;
 
-            for (int i = 0; i < MapLoader.Instance.MapBlocksSize.GetLength(0); i++)
+            for (int i = 0; i < MapLoader.Instance.Maps.Length; i++)
             {
-                if (maxX < MapLoader.Instance.MapBlocksSize[i, 0])
+                if (maxX < MapLoader.Instance.Maps[i].Width)
                 {
-                    maxX = MapLoader.Instance.MapBlocksSize[i, 0];
+                    maxX = MapLoader.Instance.Maps[i].Width;
                 }
 
-                if (maxY < MapLoader.Instance.MapBlocksSize[i, 1])
+                if (maxY < MapLoader.Instance.Maps[i].Height)
                 {
-                    maxY = MapLoader.Instance.MapBlocksSize[i, 1];
+                    maxY = MapLoader.Instance.Maps[i].Height;
                 }
             }
 
@@ -70,7 +70,7 @@ namespace ClassicUO.Game.Map
         {
             _world = world;
             Index = index;
-            BlocksCount = MapLoader.Instance.MapBlocksSize[Index, 0] * MapLoader.Instance.MapBlocksSize[Index, 1];
+            BlocksCount = MapLoader.Instance.Maps[Index].BlocksCount;
             ClearBockAccess();
         }
 
@@ -259,7 +259,7 @@ namespace ClassicUO.Game.Map
             int block = GetBlock(blockX, blockY);
             int map = Index;
             MapLoader.Instance.SanitizeMapIndex(ref map);
-            IndexMap[] list = MapLoader.Instance.BlockData[map];
+            IndexMap[] list = MapLoader.Instance.Maps[map].BlockData;
 
             return ref block >= list.Length ? ref IndexMap.Invalid : ref list[block];
         }
@@ -267,7 +267,7 @@ namespace ClassicUO.Game.Map
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private int GetBlock(int blockX, int blockY)
         {
-            return blockX * MapLoader.Instance.MapBlocksSize[Index, 1] + blockY;
+            return blockX * MapLoader.Instance.Maps[Index].Height + blockY;
         }
 
         public IEnumerable<Chunk> GetUsedChunks()

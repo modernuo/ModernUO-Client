@@ -269,7 +269,7 @@ namespace ClassicUO.Game.UI.Gumps
             }
 
             int maxBlockIndex = World.Map.BlocksCount;
-            int mapBlockHeight = MapLoader.Instance.MapBlocksSize[World.MapIndex, 1];
+            int mapBlockHeight = MapLoader.Instance.Maps[World.MapIndex].Height;
             int index = _useLargeMap ? 1 : 0;
 
             _blankGumpsPixels[index].CopyTo(_blankGumpsPixels[index + 2], 0);
