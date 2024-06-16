@@ -43,13 +43,17 @@ namespace ClassicUO.Assets
 {
     public sealed class OneMapLoader : IDisposable
     {
+        private readonly int idx;
+        private readonly OneMapLoader inherit;
+
+        private readonly FileInfo mapFileInfo;
+        public long MapFileLength => mapFileInfo.Length;
+
         private DataReader _fileMap;
         private DataReader _fileStatics;
         private DataReader _fileIdxStatics;
 
         private readonly bool isuop;
-
-        public long MapFileLength => _fileMap.Length;
 
         private DataReader _mapDif;
         private DataReader _mapDifl;
@@ -63,23 +67,71 @@ namespace ClassicUO.Assets
 
         public IndexMap[] BlockData { get; private set; }
 
-        public bool Exists => _fileMap != null && _fileMap.HasData;
-        public bool Valid => Exists && _fileStatics != null && _fileStatics.HasData && _fileIdxStatics != null && _fileIdxStatics.HasData;
+        public bool Exists => mapFileInfo.Exists;
 
-        public OneMapLoader(int i)
+        public bool Valid
         {
+            get
+            {
+                if (!Exists)
+                    return false;
+
+                EnsureOpened();
+                return _fileStatics != null && _fileStatics.StartAddress != IntPtr.Zero && _fileIdxStatics != null && _fileIdxStatics.StartAddress != IntPtr.Zero;
+            }
+        }
+
+        private bool isOpened = false, isLoaded = false;
+
+        private int MapPatchesCountPostponed = 0, StaticPatchesCountPostponed = 0;
+
+        public OneMapLoader(int i, OneMapLoader _inherit)
+        {
+            idx = i;
+            inherit = _inherit;
+
             string path = UOFileManager.GetUOFilePath($"map{i}LegacyMUL.uop");
 
             if (UOFileManager.IsUOPInstallation && File.Exists(path))
             {
                 isuop = true;
-                _fileMap = new UOFileUop(path, $"build/map{i}legacymul/{{0:D8}}.dat");
+                mapFileInfo = new FileInfo(path);
             }
             else
             {
                 path = UOFileManager.GetUOFilePath($"map{i}.mul");
+                mapFileInfo = new FileInfo(path);
+            }
+        }
 
-                if (File.Exists(path))
+        public void Dispose()
+        {
+            _fileMap?.Dispose();
+            _fileStatics?.Dispose();
+            _fileIdxStatics?.Dispose();
+            _mapDif?.Dispose();
+            _mapDifl?.Dispose();
+            _staDifi?.Dispose();
+            _staDifl?.Dispose();
+        }
+
+        public void SetSize(int width, int height)
+        {
+            Width = width;
+            Height = height;
+        }
+
+        private void Open(int i)
+        {
+            string path = mapFileInfo.ToString();
+
+            if (isuop)
+            {
+                _fileMap = new UOFileUop(path, $"build/map{i}legacymul/{{0:D8}}.dat");
+            }
+            else
+            {
+                if (mapFileInfo.Exists)
                 {
                     _fileMap = new UOFile(path);
                 }
@@ -111,22 +163,19 @@ namespace ClassicUO.Assets
             }
         }
 
-        public void Dispose()
+        private void EnsureOpened()
         {
-            _fileMap?.Dispose();
-            _fileStatics?.Dispose();
-            _fileIdxStatics?.Dispose();
-            _mapDif?.Dispose();
-            _mapDifl?.Dispose();
-            _staDifi?.Dispose();
-            _staDifl?.Dispose();
+            if (isOpened)
+            {
+                return;
+            }
+
+            isOpened = true;
+            Open(idx);
         }
 
-        public unsafe void Load(int width, int height, OneMapLoader inherit)
+        public unsafe void Load()
         {
-            Width = width;
-            Height = height;
-
             if (BlockData != null || !Exists)
             {
                 return;
@@ -135,7 +184,7 @@ namespace ClassicUO.Assets
             int mapblocksize = sizeof(MapBlock);
             int staticidxblocksize = sizeof(StaidxBlock);
             int staticblocksize = sizeof(StaticsBlock);
-            int maxblockcount = width * height;
+            int maxblockcount = Width * Height;
             BlockData = new IndexMap[maxblockcount];
             DataReader file = _fileMap;
             DataReader fileidx = _fileIdxStatics;
@@ -145,11 +194,13 @@ namespace ClassicUO.Assets
             {
                 if (fileidx == null)
                 {
+                    inherit.EnsureOpened();
                     fileidx = inherit._fileIdxStatics;
                 }
 
                 if (staticfile == null)
                 {
+                    inherit.EnsureOpened();
                     staticfile = inherit._fileStatics;
                 }
             }
@@ -232,7 +283,28 @@ namespace ClassicUO.Assets
             }
         }
 
-        public unsafe bool ApplyPatches(int mapPatchesCount, int staticPatchesCount)
+        public void EnsureLoaded()
+        {
+            if (isLoaded)
+            {
+                return;
+            }
+
+            EnsureOpened();
+
+            isLoaded = true;
+            Load();
+
+            if (MapPatchesCountPostponed >= 0 && StaticPatchesCountPostponed >= 0)
+            {
+                /* ApplyPatches() was called before the map was loaded */
+                DoApplyPatches(MapPatchesCountPostponed, StaticPatchesCountPostponed);
+                MapPatchesCountPostponed = 0;
+                StaticPatchesCountPostponed = 0;
+            }
+        }
+
+        public unsafe bool DoApplyPatches(int mapPatchesCount, int staticPatchesCount)
         {
             ResetPatchesInBlockTable();
 
@@ -240,6 +312,8 @@ namespace ClassicUO.Assets
             {
                 return false;
             }
+
+            EnsureLoaded();
 
             bool result = false;
 
@@ -337,6 +411,20 @@ namespace ClassicUO.Assets
             }
 
             return result;
+        }
+
+        public bool ApplyPatches(int mapPatchesCount, int staticPatchesCount)
+        {
+            if (!isLoaded)
+            {
+                /* the map is not yet loaded; postpone the operation
+                   until the map is really loaded */
+                MapPatchesCountPostponed = mapPatchesCount;
+                StaticPatchesCountPostponed = staticPatchesCount;
+                return false;
+            }
+
+            return DoApplyPatches(mapPatchesCount, staticPatchesCount);
         }
 
         private void ResetPatchesInBlockTable()
@@ -483,7 +571,7 @@ namespace ClassicUO.Assets
 
                     for (var i = 0; i < MAPS_COUNT; ++i)
                     {
-                        Maps[i] = new OneMapLoader(i);
+                        Maps[i] = new OneMapLoader(i, i == 1 ? Maps[0] : null);
 
                         if (Maps[i].Exists)
                             foundOneMap = true;
@@ -494,19 +582,17 @@ namespace ClassicUO.Assets
                         throw new FileNotFoundException("No maps found.");
                     }
 
+                    for (var i = 0; i < MAPS_COUNT; ++i)
+                    {
+                        Maps[i].SetSize(MapsDefaultSize[i, 0] >> 3,
+                                        MapsDefaultSize[i, 1] >> 3);
+                    }
+
                     // This is an hack to patch correctly all maps when you have to fake map1
                     if (!Maps[1].Exists)
                     {
                         Maps[1] = Maps[0];
                     }
-
-                    var res = Parallel.For(0, MAPS_COUNT, i =>
-                    {
-                        if (Maps[i] != null)
-                            Maps[i].Load(MapsDefaultSize[i, 0] >> 3,
-                                         MapsDefaultSize[i, 1] >> 3,
-                                         i == 1 ? Maps[0] : null);
-                    });
                 }
             );
         }
