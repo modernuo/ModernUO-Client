@@ -89,85 +89,90 @@ namespace ClassicUO.Assets
                     _landData = new LandTiles[ArtLoader.MAX_LAND_DATA_INDEX_COUNT];
                     _staticData = new StaticTiles[staticscount * 32];
 
-                    byte* bufferString = stackalloc byte[20];
-
-                    for (int i = 0; i < 512; i++)
+                    if (isold)
                     {
-                        tileData.Skip(4);
-
-                        for (int j = 0; j < 32; j++)
+                        for (int i = 0, idx = 0; i < LAND_SIZE; i++)
                         {
-                            if (tileData.Position + (isold ? 4 : 8) + 2 + 20 > tileData.Length)
+                            tileData.Skip(4);
+
+                            var landTilesPtr = (LandTilesOld *)tileData.PositionAddress;
+                            tileData.Skip(Marshal.SizeOf<LandTilesOld>() * 32);
+
+                            for (int j = 0; j < 32; j++, idx++, landTilesPtr++)
                             {
-                                goto END;
+                                string name = string.Intern(Encoding.UTF8.GetString(landTilesPtr->Name, 20).TrimEnd('\0'));
+
+                                LandData[idx] = new LandTiles(landTilesPtr->Flags, landTilesPtr->TexID, name);
                             }
+                        }
 
-                            int idx = i * 32 + j;
-                            ulong flags = isold ? tileData.ReadUInt() : tileData.ReadULong();
-                            ushort textId = tileData.ReadUShort();
+                        for (int i = 0, idx = 0; i < staticscount; i++)
+                        {
+                            tileData.Skip(4);
 
-                            for (int k = 0; k < 20; ++k)
+                            var staticTilesPtr = (StaticTilesOld *)tileData.PositionAddress;
+                            tileData.Skip(Marshal.SizeOf<StaticTilesOld>() * 32);
+
+                            for (int j = 0; j < 32; j++, idx++, staticTilesPtr++)
                             {
-                                bufferString[k] = tileData.ReadByte();
+                                string name = string.Intern(Encoding.UTF8.GetString(staticTilesPtr->Name, 20).TrimEnd('\0'));
+
+                                StaticData[idx] = new StaticTiles(
+                                    staticTilesPtr->Flags,
+                                    staticTilesPtr->Weight,
+                                    staticTilesPtr->Layer,
+                                    staticTilesPtr->Count,
+                                    staticTilesPtr->AnimID,
+                                    staticTilesPtr->Hue,
+                                    staticTilesPtr->LightIndex,
+                                    staticTilesPtr->Height,
+                                    name
+                                );
                             }
-
-                            string name = string.Intern(Encoding.UTF8.GetString(bufferString, 20).TrimEnd('\0'));
-
-                            LandData[idx] = new LandTiles(flags, textId, name);
                         }
                     }
-
-                    END:
-
-                    for (int i = 0; i < staticscount; i++)
+                    else
                     {
-                        if (tileData.Position >= tileData.Length)
+                        for (int i = 0, idx = 0; i < LAND_SIZE; i++)
                         {
-                            break;
+                            tileData.Skip(4);
+
+                            var landTilesPtr = (LandTilesNew *)tileData.PositionAddress;
+                            tileData.Skip(Marshal.SizeOf<LandTilesNew>() * 32);
+
+                            for (int j = 0; j < 32; j++, idx++, landTilesPtr++)
+                            {
+                                string name = string.Intern(Encoding.UTF8.GetString(landTilesPtr->Name, 20).TrimEnd('\0'));
+
+                                LandData[idx] = new LandTiles(landTilesPtr->Flags, landTilesPtr->TexID, name);
+                            }
                         }
 
-                        tileData.Skip(4);
-
-                        for (int j = 0; j < 32; j++)
+                        for (int i = 0, idx = 0; i < staticscount; i++)
                         {
-                            if (tileData.Position + (isold ? 4 : 8) + 13 + 20 > tileData.Length)
+                            tileData.Skip(4);
+
+                            var staticTilesPtr = (StaticTilesNew *)tileData.PositionAddress;
+                            tileData.Skip(Marshal.SizeOf<StaticTilesNew>() * 32);
+
+                            for (int j = 0; j < 32; j++, idx++, staticTilesPtr++)
                             {
-                                goto END_2;
+                                string name = string.Intern(Encoding.UTF8.GetString(staticTilesPtr->Name, 20).TrimEnd('\0'));
+
+                                StaticData[idx] = new StaticTiles(
+                                    staticTilesPtr->Flags,
+                                    staticTilesPtr->Weight,
+                                    staticTilesPtr->Layer,
+                                    staticTilesPtr->Count,
+                                    staticTilesPtr->AnimID,
+                                    staticTilesPtr->Hue,
+                                    staticTilesPtr->LightIndex,
+                                    staticTilesPtr->Height,
+                                    name
+                                );
                             }
-
-                            int idx = i * 32 + j;
-
-                            ulong flags = isold ? tileData.ReadUInt() : tileData.ReadULong();
-                            byte weight = tileData.ReadByte();
-                            byte layer = tileData.ReadByte();
-                            int count = tileData.ReadInt();
-                            ushort animId = tileData.ReadUShort();
-                            ushort hue = tileData.ReadUShort();
-                            ushort lightIndex = tileData.ReadUShort();
-                            byte height = tileData.ReadByte();
-
-                            for (int k = 0; k < 20; ++k)
-                            {
-                                bufferString[k] = tileData.ReadByte();
-                            }
-
-                            string name = string.Intern(Encoding.UTF8.GetString(bufferString, 20).TrimEnd('\0'));
-
-                            StaticData[idx] = new StaticTiles
-                            (
-                                flags,
-                                weight,
-                                layer,
-                                count,
-                                animId,
-                                hue,
-                                lightIndex,
-                                height,
-                                name
-                            );
                         }
                     }
-
 
                     //path = Path.Combine(FileManager.UoFolderPath, "tileart.uop");
 
@@ -300,7 +305,6 @@ namespace ClassicUO.Assets
 
                   
 
-                    END_2:
                     tileData.Dispose();
                 }
             );
@@ -405,12 +409,11 @@ namespace ClassicUO.Assets
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public struct LandTilesOld
+    public unsafe struct LandTilesOld
     {
         public uint Flags;
         public ushort TexID;
-        [MarshalAs(UnmanagedType.LPStr, SizeConst = 20)]
-        public string Name;
+        public fixed byte Name[20];
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
@@ -422,7 +425,7 @@ namespace ClassicUO.Assets
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public struct StaticTilesOld
+    public unsafe struct StaticTilesOld
     {
         public uint Flags;
         public byte Weight;
@@ -432,8 +435,7 @@ namespace ClassicUO.Assets
         public ushort Hue;
         public ushort LightIndex;
         public byte Height;
-        [MarshalAs(UnmanagedType.LPStr, SizeConst = 20)]
-        public string Name;
+        public fixed byte Name[20];
     }
 
     // new 
@@ -447,12 +449,11 @@ namespace ClassicUO.Assets
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public struct LandTilesNew
+    public unsafe struct LandTilesNew
     {
-        public TileFlag Flags;
+        public ulong Flags;
         public ushort TexID;
-        [MarshalAs(UnmanagedType.LPStr, SizeConst = 20)]
-        public string Name;
+        public fixed byte Name[20];
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
@@ -464,9 +465,9 @@ namespace ClassicUO.Assets
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public struct StaticTilesNew
+    public unsafe struct StaticTilesNew
     {
-        public TileFlag Flags;
+        public ulong Flags;
         public byte Weight;
         public byte Layer;
         public int Count;
@@ -474,8 +475,7 @@ namespace ClassicUO.Assets
         public ushort Hue;
         public ushort LightIndex;
         public byte Height;
-        [MarshalAs(UnmanagedType.LPStr, SizeConst = 20)]
-        public string Name;
+        public fixed byte Name[20];
     }
 
     [Flags]
