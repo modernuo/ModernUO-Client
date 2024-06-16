@@ -82,10 +82,12 @@ namespace ClassicUO.Assets
 
                     if (File.Exists(filePath) && File.Exists(idxPath))
                     {
-                        var file = new UOFileMul(filePath, idxPath, MAX_STATIC_DATA_INDEX_COUNT);
-                        file.FillEntries(ref Entries);
+                        _file = new UOFile(filePath);
 
-                        _file = file;
+                        using (var idxFile = new UOFile(idxPath))
+                        {
+                            UOFileMul.FillEntries(_file, idxFile, ref Entries);
+                        }
                     }
                 }
             });

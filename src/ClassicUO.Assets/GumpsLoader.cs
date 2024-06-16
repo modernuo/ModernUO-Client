@@ -85,10 +85,13 @@ namespace ClassicUO.Assets
                         pathidx = UOFileManager.GetUOFilePath("Gumpidx.mul");
                     }
 
-                    var file = new UOFileMul(path, pathidx, MAX_GUMP_DATA_INDEX_COUNT, 12);
-                    file.FillEntries(ref Entries);
+                    _file = new UOFile(path);
 
-                    _file = file;
+                    using (var idxFile = new UOFile(pathidx))
+                    {
+                        UOFileMul.FillEntries(_file, idxFile, ref Entries);
+                    }
+
                     UseUOPGumps = false;
                 }
 

@@ -32,65 +32,29 @@
 
 namespace ClassicUO.IO
 {
-    public class UOFileMul : UOFile
+    public class UOFileMul
     {
-        private readonly int _count, _patch;
-        private readonly UOFileIdxMul _idxFile;
-
-        public UOFileMul(string file, string idxfile, int count, int patch = -1) : this(file)
+        public static void FillEntries(DataReader dataFile, DataReader idxFile, ref UOFileIndex[] entries)
         {
-            _idxFile = new UOFileIdxMul(idxfile);
-            _count = count;
-            _patch = patch;
-        }
-
-        public UOFileMul(string file) : base(file)
-        {
-        }
-
-        public UOFile IdxFile => _idxFile;
-
-
-        public void FillEntries(ref UOFileIndex[] entries)
-        {
-            UOFile file = _idxFile ?? (UOFile) this;
-
-            int count = (int) file.Length / 12;
+            int count = (int) idxFile.Length / 12;
             entries = new UOFileIndex[count];
 
             for (int i = 0; i < count; i++)
             {
                 ref UOFileIndex e = ref entries[i];
-                e.Address = StartAddress;   // .mul mmf address
-                e.FileSize = (uint) Length; // .mul mmf length
-                e.Offset = file.ReadUInt(); // .idx offset
-                e.Length = file.ReadInt();  // .idx length
+                e.Address = dataFile.StartAddress;   // .mul mmf address
+                e.FileSize = (uint) dataFile.Length; // .mul mmf length
+                e.Offset = idxFile.ReadUInt(); // .idx offset
+                e.Length = idxFile.ReadInt();  // .idx length
                 e.DecompressedLength = 0;   // UNUSED HERE --> .UOP
 
-                int size = file.ReadInt();
+                int size = idxFile.ReadInt();
 
                 if (size > 0)
                 {
                     e.Width = (short) (size >> 16);
                     e.Height = (short) (size & 0xFFFF);
                 }
-            }
-        }
-
-        protected override void Dispose(bool disposing)
-        {
-            if (disposing)
-            {
-                _idxFile?.Dispose();
-            }
-
-            base.Dispose(disposing);
-        }
-
-        private class UOFileIdxMul : UOFile
-        {
-            public UOFileIdxMul(string idxpath) : base(idxpath)
-            {
             }
         }
     }

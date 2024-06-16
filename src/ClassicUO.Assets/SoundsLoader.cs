@@ -82,9 +82,12 @@ namespace ClassicUO.Assets
 
                         if (File.Exists(path) && File.Exists(idxpath))
                         {
-                            var file = new UOFileMul(path, idxpath, MAX_SOUND_DATA_INDEX_COUNT);
-                            file.FillEntries(ref Entries);
-                            _file = file;
+                            _file = new UOFile(path);
+
+                            using (var idxFile = new UOFile(idxpath))
+                            {
+                                UOFileMul.FillEntries(_file, idxFile, ref Entries);
+                            }
                         }
                         else
                         {
