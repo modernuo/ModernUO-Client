@@ -85,6 +85,23 @@ namespace ClassicUO.Assets
                 new List<(ushort, byte)>()
             };
 
+        private void LoadFile(int i)
+        {
+            string pathmul = UOFileManager.GetUOFilePath(
+                "anim" + (i == 0 ? string.Empty : (i + 1).ToString()) + ".mul"
+                );
+
+            string pathidx = UOFileManager.GetUOFilePath(
+            "anim" + (i == 0 ? string.Empty : (i + 1).ToString()) + ".idx"
+            );
+
+            if (File.Exists(pathmul) && File.Exists(pathidx))
+            {
+                _files[i] = new UOFile(pathmul);
+                _filesIdx[i] = new UOFile(pathidx);
+            }
+        }
+
         private unsafe void LoadInternal()
         {
             bool loaduop = false;
@@ -92,19 +109,7 @@ namespace ClassicUO.Assets
 
             for (int i = 0; i < 5; i++)
             {
-                string pathmul = UOFileManager.GetUOFilePath(
-                    "anim" + (i == 0 ? string.Empty : (i + 1).ToString()) + ".mul"
-                );
-
-                string pathidx = UOFileManager.GetUOFilePath(
-                    "anim" + (i == 0 ? string.Empty : (i + 1).ToString()) + ".idx"
-                );
-
-                if (File.Exists(pathmul) && File.Exists(pathidx))
-                {
-                    _files[i] = new UOFile(pathmul);
-                    _filesIdx[i] = new UOFile(pathidx);
-                }
+                LoadFile(i);
 
                 if (i > 0 && UOFileManager.IsUOPInstallation)
                 {
