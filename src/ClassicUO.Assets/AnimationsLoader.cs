@@ -56,6 +56,7 @@ namespace ClassicUO.Assets
         [ThreadStatic]
         private static byte[] _decompressedData;
 
+        private readonly bool[] filesLoaded = new bool[5];
         private readonly DataReader[] _files = new DataReader[5];
         private readonly DataReader[] _filesIdx = new DataReader[5];
         private readonly UOFileUop[] _filesUop = new UOFileUop[4];
@@ -85,20 +86,42 @@ namespace ClassicUO.Assets
                 new List<(ushort, byte)>()
             };
 
+        private bool FileExists(int i)
+        {
+            string pathmul = UOFileManager.GetUOFilePath(
+                "anim" + (i == 0 ? string.Empty : (i + 1).ToString()) + ".mul"
+            );
+
+            string pathidx = UOFileManager.GetUOFilePath(
+                "anim" + (i == 0 ? string.Empty : (i + 1).ToString()) + ".idx"
+            );
+
+            return File.Exists(pathmul) && File.Exists(pathidx);
+        }
+
         private void LoadFile(int i)
         {
             string pathmul = UOFileManager.GetUOFilePath(
                 "anim" + (i == 0 ? string.Empty : (i + 1).ToString()) + ".mul"
-                );
+            );
 
             string pathidx = UOFileManager.GetUOFilePath(
-            "anim" + (i == 0 ? string.Empty : (i + 1).ToString()) + ".idx"
+                "anim" + (i == 0 ? string.Empty : (i + 1).ToString()) + ".idx"
             );
 
             if (File.Exists(pathmul) && File.Exists(pathidx))
             {
                 _files[i] = new UOFile(pathmul);
                 _filesIdx[i] = new UOFile(pathidx);
+            }
+        }
+
+        private void EnsureFileLoaded(int i)
+        {
+            if (!filesLoaded[i])
+            {
+                filesLoaded[i] = true;
+                LoadFile(i);
             }
         }
 
@@ -109,8 +132,6 @@ namespace ClassicUO.Assets
 
             for (int i = 0; i < 5; i++)
             {
-                LoadFile(i);
-
                 if (i > 0 && UOFileManager.IsUOPInstallation)
                 {
                     string pathuop = UOFileManager.GetUOFilePath($"AnimationFrame{i}.uop");
@@ -366,6 +387,7 @@ namespace ClassicUO.Assets
             if (animType == AnimationGroupsType.Unknown)
                 animType = mobInfo.Type != AnimationGroupsType.Unknown ? mobInfo.Type : CalculateTypeByGraphic(body, fileIndex);
 
+            EnsureFileLoaded(fileIndex);
             var fileIdx = _filesIdx[fileIndex];
             var offsetAddress = CalculateOffset(body, animType, flags, out var actionCount);
 
@@ -612,7 +634,7 @@ namespace ClassicUO.Assets
                             }
                         }
 
-                        if (i >= _files.Length || _files[i] == null)
+                        if (i >= _files.Length || !FileExists(i))
                         {
                             continue;
                         }
@@ -1424,6 +1446,7 @@ namespace ClassicUO.Assets
                 return Span<FrameInfo>.Empty;
             }
             
+            EnsureFileLoaded(fileIndex);
             var file = _files[fileIndex];
 
             if (index.Position + index.Size > file.Length)
