@@ -72,6 +72,12 @@ namespace ClassicUO.Assets
 
         public void Dispose()
         {
+            foreach (var i in _files)
+                i?.Dispose();
+            foreach (var i in _filesIdx)
+                i?.Dispose();
+            foreach (var i in _filesUop)
+                i?.Dispose();
         }
 
         public static AnimationsLoader Instance =>
