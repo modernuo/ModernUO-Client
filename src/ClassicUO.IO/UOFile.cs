@@ -30,8 +30,6 @@
 
 #endregion
 
-#define USE_MMF
-
 using ClassicUO.Utility.Logging;
 using System;
 using System.IO;
@@ -48,10 +46,8 @@ namespace ClassicUO.IO
         }
 
         public string FilePath { get; }
-#if USE_MMF
         protected MemoryMappedViewAccessor _accessor;
         protected MemoryMappedFile _file;
-#endif
 
         private void Load()
         {
@@ -70,7 +66,6 @@ namespace ClassicUO.IO
 
             if (size > 0)
             {
-#if USE_MMF
                 _file = MemoryMappedFile.CreateFromFile
                 (
                     File.Open(fileInfo.FullName, FileMode.Open, FileAccess.Read, FileShare.ReadWrite),
@@ -96,7 +91,6 @@ namespace ClassicUO.IO
 
                     throw new Exception("Something goes wrong...");
                 }
-#endif
             }
             else
             {
@@ -110,15 +104,12 @@ namespace ClassicUO.IO
 
             base.Dispose(disposing);
 
-#if USE_MMF
             if (hasAcquiredPointer) {
                 _accessor.SafeMemoryMappedViewHandle.ReleasePointer();
             }
-#endif
 
             if (disposing)
             {
-#if USE_MMF
                 if (_accessor != null)
                 {
                     _accessor.Dispose();
@@ -130,7 +121,6 @@ namespace ClassicUO.IO
                     _file.Dispose();
                     _file = null;
                 }
-#endif
                 Log.Trace($"Unloaded:\t\t{FilePath}");
             }
         }
