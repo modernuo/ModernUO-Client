@@ -123,27 +123,24 @@ namespace ClassicUO.Game.Map
                 {
                     StaticsBlock* sb = (StaticsBlock*) im.StaticAddress;
 
-                    if (sb != null)
+                    for (int i = 0, count = (int) im.StaticCount; i < count; ++i, ++sb)
                     {
-                        for (int i = 0, count = (int) im.StaticCount; i < count; ++i, ++sb)
+                        if (sb->Color != 0 && sb->Color != 0xFFFF)
                         {
-                            if (sb->Color != 0 && sb->Color != 0xFFFF)
+                            int pos = (sb->Y << 3) + sb->X;
+
+                            if (pos >= 64)
                             {
-                                int pos = (sb->Y << 3) + sb->X;
-
-                                if (pos >= 64)
-                                {
-                                    continue;
-                                }
-
-                                Static staticObject = Static.Create(_world, sb->Color, sb->Hue, pos);
-                                staticObject.X = (ushort) (bx + sb->X);
-                                staticObject.Y = (ushort) (by + sb->Y);
-                                staticObject.Z = sb->Z;
-                                staticObject.UpdateScreenPosition();
-
-                                AddGameObject(staticObject, sb->X, sb->Y);
+                                continue;
                             }
+
+                            Static staticObject = Static.Create(_world, sb->Color, sb->Hue, pos);
+                            staticObject.X = (ushort) (bx + sb->X);
+                            staticObject.Y = (ushort) (by + sb->Y);
+                            staticObject.Z = sb->Z;
+                            staticObject.UpdateScreenPosition();
+
+                            AddGameObject(staticObject, sb->X, sb->Y);
                         }
                     }
                 }
