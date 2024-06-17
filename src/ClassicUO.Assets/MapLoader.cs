@@ -41,7 +41,7 @@ using System.Threading.Tasks;
 
 namespace ClassicUO.Assets
 {
-    public class OneMapLoader : IDisposable
+    public sealed class OneMapLoader : IDisposable
     {
         private DataReader _fileMap;
         private DataReader _fileStatics;
@@ -402,14 +402,14 @@ namespace ClassicUO.Assets
         }
     }
 
-    public class MapLoader : IDisposable
+    public sealed class MapLoader : IDisposable
     {
         private static MapLoader _instance;
 
         // cannot be a const, due to UOLive implementation
         public static int MAPS_COUNT = 6;
 
-        protected MapLoader()
+        private MapLoader()
         {
         }
 
@@ -431,7 +431,7 @@ namespace ClassicUO.Assets
         public static string MapsLayouts { get; set; }
 
         // ReSharper disable RedundantExplicitArraySize
-        public int[,] MapsDefaultSize { get; protected set; } = new int[6, 2]
+        public int[,] MapsDefaultSize { get; private set; } = new int[6, 2]
             // ReSharper restore RedundantExplicitArraySize
             {
                 {
@@ -456,7 +456,7 @@ namespace ClassicUO.Assets
 
         public OneMapLoader[] Maps;
 
-        protected void Initialize()
+        private void Initialize()
         {
             Maps = new OneMapLoader[MAPS_COUNT];
         }
