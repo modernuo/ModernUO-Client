@@ -106,7 +106,7 @@ namespace ClassicUO.IO
 
         protected override void Dispose(bool disposing)
         {
-            bool hasAcquiredPointer = StartAddress != IntPtr.Zero;
+            bool hasAcquiredPointer = HasData;
 
             base.Dispose(disposing);
 

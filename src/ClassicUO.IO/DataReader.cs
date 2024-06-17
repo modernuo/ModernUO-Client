@@ -46,6 +46,8 @@ namespace ClassicUO.IO
         private byte* _data;
         private GCHandle _handle;
 
+        public bool HasData => _data != null;
+
         public long Position { get; set; }
 
         public long Length { get; private set; }
