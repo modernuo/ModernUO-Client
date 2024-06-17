@@ -37,25 +37,22 @@ namespace ClassicUO.IO
 {
     public abstract class UOFileLoader : IDisposable
     {
-        public bool IsDisposed { get; private set; }
-
-        public virtual void Dispose()
+        ~UOFileLoader()
         {
-            if (IsDisposed)
-            {
-                return;
-            }
+            Dispose(false);
+        }
 
-            IsDisposed = true;
+        public void Dispose()
+        {
+            Dispose(true);
+            GC.SuppressFinalize(this);
+        }
 
-            ClearResources();
+        protected virtual void Dispose(bool disposing)
+        {
         }
 
         protected UOFileIndex[] Entries;
-
-        public virtual void ClearResources()
-        {
-        }
 
         public int GetNumEntries()
         {
