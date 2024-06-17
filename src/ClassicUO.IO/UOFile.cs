@@ -37,7 +37,7 @@ using System.IO.MemoryMappedFiles;
 
 namespace ClassicUO.IO
 {
-    public unsafe class UOFile : DataReader
+    public class UOFile : DataReader
     {
         public UOFile(string filepath)
         {
@@ -49,7 +49,7 @@ namespace ClassicUO.IO
         protected MemoryMappedViewAccessor _accessor;
         protected MemoryMappedFile _file;
 
-        private void Load()
+        private unsafe void Load()
         {
             Log.Trace($"Loading file:\t\t{FilePath}");
 
