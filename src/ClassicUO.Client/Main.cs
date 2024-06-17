@@ -448,11 +448,6 @@ namespace ClassicUO
 
                         break;
 
-                    case "use_verdata":
-                        Settings.GlobalSettings.UseVerdata = bool.Parse(value);
-
-                        break;
-
                     case "maps_layouts":
 
                         Settings.GlobalSettings.MapsLayouts = value;

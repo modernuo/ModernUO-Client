@@ -185,21 +185,6 @@ namespace ClassicUO.Assets
         //    return _empty;
         //}
 
-        //public static void SetHuesBlock(int index, IntPtr ptr)
-        //{
-        //    VerdataHuesGroup group = Marshal.PtrToStructure<VerdataHuesGroup>(ptr);
-        //    SetHuesBlock(index, group);
-        //}
-
-        //public static void SetHuesBlock(int index, VerdataHuesGroup group)
-        //{
-        //    if (index < 0 || index >= HuesCount)
-        //        return;
-
-        //    HuesRange[index].Header = group.Header;
-        //    for (int i = 0; i < 8; i++) HuesRange[index].Entries[i].ColorTable = group.Entries[i].ColorTable;
-        //}
-
         public ushort GetColor16(ushort c, ushort color)
         {
             if (color != 0 && color < HuesCount)
@@ -309,27 +294,6 @@ namespace ClassicUO.Assets
         public uint Header;
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 8)]
         public HuesBlock[] Entries;
-    }
-
-    [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public readonly struct VerdataHuesBlock
-    {
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)]
-        public readonly ushort[] ColorTable;
-        public readonly ushort TableStart;
-        public readonly ushort TableEnd;
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 20)]
-        public readonly char[] Name;
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 32)]
-        public readonly ushort[] Unk;
-    }
-
-    [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public readonly struct VerdataHuesGroup
-    {
-        public readonly uint Header;
-        [MarshalAs(UnmanagedType.ByValArray, SizeConst = 8)]
-        public readonly VerdataHuesBlock[] Entries;
     }
 
     public struct FloatHues

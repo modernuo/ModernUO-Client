@@ -6,6 +6,5 @@ namespace ClassicUO.Renderer.Animations
         public uint Size;
         public byte FrameCount;
         public SpriteInfo[] SpriteInfos;
-        public bool IsVerdata;
     }
 }

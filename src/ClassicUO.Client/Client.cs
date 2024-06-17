@@ -145,7 +145,6 @@ namespace ClassicUO
             SkillsLoader.Instance?.Dispose();
             SoundsLoader.Instance?.Dispose();
             SpeechesLoader.Instance?.Dispose();
-            Verdata.File?.Dispose();
             World?.Map?.Destroy();
         }
 
@@ -234,7 +233,7 @@ namespace ClassicUO
             Log.Trace($"Protocol: {Protocol}");
 
             // ok now load uo files
-            UOFileManager.Load(Version, Settings.GlobalSettings.UltimaOnlineDirectory, Settings.GlobalSettings.UseVerdata, Settings.GlobalSettings.Language);
+            UOFileManager.Load(Version, Settings.GlobalSettings.UltimaOnlineDirectory, Settings.GlobalSettings.Language);
             StaticFilters.Load();
 
             BuffTable.Load();

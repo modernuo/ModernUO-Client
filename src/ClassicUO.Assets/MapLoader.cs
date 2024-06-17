@@ -233,37 +233,6 @@ namespace ClassicUO.Assets
             }
         }
 
-        public void PatchMapBlock(ulong block, ulong address)
-        {
-            if (BlocksCount < 1)
-            {
-                return;
-            }
-
-            BlockData[block].OriginalMapAddress = address;
-            BlockData[block].MapAddress = address;
-        }
-
-
-        public unsafe void PatchStaticBlock(ulong block, ulong address, uint count)
-        {
-            if (BlocksCount < 1)
-            {
-                return;
-            }
-
-            BlockData[block].StaticAddress = BlockData[block].OriginalStaticAddress = address;
-
-            count = (uint) (count / (sizeof(StaidxBlockVerdata)));
-
-            if (count > 1024)
-            {
-                count = 1024;
-            }
-
-            BlockData[block].StaticCount = BlockData[block].OriginalStaticCount = count;
-        }
-
         public unsafe bool ApplyPatches(int mapPatchesCount, int staticPatchesCount)
         {
             ResetPatchesInBlockTable();
@@ -543,17 +512,6 @@ namespace ClassicUO.Assets
             );
         }
 
-        public void PatchMapBlock(ulong block, ulong address)
-        {
-            Maps[0].PatchMapBlock(block, address);
-        }
-
-
-        public void PatchStaticBlock(ulong block, ulong address, uint count)
-        {
-            Maps[0].PatchStaticBlock(block, address, count);
-        }
-
         public bool ApplyPatches(ref StackDataReader reader)
         {
             int patchesCount = (int) reader.ReadUInt32BE();
@@ -618,14 +576,6 @@ namespace ClassicUO.Assets
         public readonly uint Position;
         public readonly uint Size;
         public readonly uint Unknown;
-    }
-
-    [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public readonly ref struct StaidxBlockVerdata
-    {
-        public readonly uint Position;
-        public readonly ushort Size;
-        public readonly byte Unknown;
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
