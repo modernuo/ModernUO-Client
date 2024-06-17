@@ -143,11 +143,6 @@ namespace ClassicUO.Assets
         {
             List<SpeechEntry> list = new List<SpeechEntry>();
 
-            if (UOFileManager.Version < ClientVersion.CV_305D)
-            {
-                return list;
-            }
-
             text = text.TrimStart(' ').TrimEnd(' ');
 
             for (int i = 0; i < _speech.Length; i++)
