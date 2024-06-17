@@ -47,6 +47,8 @@ namespace ClassicUO.Assets
         private DataReader _fileStatics;
         private DataReader _fileIdxStatics;
 
+        private readonly bool isuop;
+
         public long MapFileLength => _fileMap.Length;
 
         private DataReader _mapDif;
@@ -70,6 +72,7 @@ namespace ClassicUO.Assets
 
             if (UOFileManager.IsUOPInstallation && File.Exists(path))
             {
+                isuop = true;
                 _fileMap = new UOFileUop(path, $"build/map{i}legacymul/{{0:D8}}.dat");
             }
             else
@@ -153,7 +156,6 @@ namespace ClassicUO.Assets
             ulong endmapaddress = mapddress + (ulong) file.Length;
             ulong uopoffset = 0;
             int fileNumber = -1;
-            bool isuop = file is UOFileUop;
 
             for (int block = 0; block < maxblockcount; block++)
             {
@@ -377,7 +379,7 @@ namespace ClassicUO.Assets
                 return;
             }
 
-            if (_fileMap != null && _fileMap is not UOFileUop && _fileMap.HasData)
+            if (!isuop && _fileMap != null && _fileMap.HasData)
             {
                 if (_fileIdxStatics != null && _fileIdxStatics.HasData)
                 {
