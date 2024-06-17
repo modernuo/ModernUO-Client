@@ -240,7 +240,7 @@ namespace ClassicUO.Assets
                     }
 
                     // This is an hack to patch correctly all maps when you have to fake map1
-                    if (_filesMap[1] == null || _filesMap[1].StartAddress == IntPtr.Zero)
+                    if (_filesMap[1] == null || !_filesMap[1].HasData)
                     {
                         _filesMap[1] = _filesMap[0];
                         _filesStatics[1] = _filesStatics[0];
@@ -438,7 +438,7 @@ namespace ClassicUO.Assets
 
                 //SanitizeMapIndex(ref idx);
 
-                if (_filesMap[idx] == null || _filesMap[idx].StartAddress == IntPtr.Zero)
+                if (_filesMap[idx] == null || !_filesMap[idx].HasData)
                 {
                     reader.Skip(8);
 
@@ -571,11 +571,11 @@ namespace ClassicUO.Assets
                     return;
                 }
 
-                if (_filesMap[i] != null && _filesMap[i] is not UOFileUop && _filesMap[i].StartAddress != IntPtr.Zero)
+                if (_filesMap[i] != null && _filesMap[i] is not UOFileUop && _filesMap[i].HasData)
                 {
-                    if (_filesIdxStatics[i] != null && _filesIdxStatics[i].StartAddress != IntPtr.Zero)
+                    if (_filesIdxStatics[i] != null && _filesIdxStatics[i].HasData)
                     {
-                        if (_filesStatics[i] != null && _filesStatics[i].StartAddress != IntPtr.Zero)
+                        if (_filesStatics[i] != null && _filesStatics[i].HasData)
                         {
                             for (int block = 0; block < maxBlockCount; block++)
                             {
@@ -592,7 +592,7 @@ namespace ClassicUO.Assets
 
         public void SanitizeMapIndex(ref int map)
         {
-            if (map == 1 && (_filesMap[1] == null || _filesMap[1].StartAddress == IntPtr.Zero || _filesStatics[1] == null || _filesStatics[1].StartAddress == IntPtr.Zero || _filesIdxStatics[1] == null || _filesIdxStatics[1].StartAddress == IntPtr.Zero))
+            if (map == 1 && (_filesMap[1] == null || !_filesMap[1].HasData || _filesStatics[1] == null || !_filesStatics[1].HasData || _filesIdxStatics[1] == null || !_filesIdxStatics[1].HasData))
             {
                 map = 0;
             }
