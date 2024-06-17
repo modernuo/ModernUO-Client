@@ -102,10 +102,6 @@ namespace ClassicUO.Assets
                 }
             };
 
-        public int PatchesCount { get; private set; }
-        public int[] MapPatchCount { get; private set; }
-        public int[] StaticPatchCount { get; private set; }
-
         protected DataReader[] _filesIdxStatics;
         protected DataReader[] _filesMap;
         protected DataReader[] _filesStatics;
@@ -120,10 +116,6 @@ namespace ClassicUO.Assets
             _filesMap = new DataReader[MAPS_COUNT];
             _filesStatics = new DataReader[MAPS_COUNT];
             _filesIdxStatics = new DataReader[MAPS_COUNT];
-
-            MapPatchCount = new int[MAPS_COUNT];
-            StaticPatchCount = new int[MAPS_COUNT];
-            MapBlocksSize = new int[MAPS_COUNT, 2];
 
             BlockData = new IndexMap[MAPS_COUNT][];
 
@@ -415,24 +407,21 @@ namespace ClassicUO.Assets
         {
             ResetPatchesInBlockTable();
 
-            PatchesCount = (int) reader.ReadUInt32BE();
+            int patchesCount = (int) reader.ReadUInt32BE();
 
-            if (PatchesCount < 0)
+            if (patchesCount < 0)
             {
-                PatchesCount = 0;
+                patchesCount = 0;
             }
 
-            if (PatchesCount > MAPS_COUNT)
+            if (patchesCount > MAPS_COUNT)
             {
-                PatchesCount = MAPS_COUNT;
+                patchesCount = MAPS_COUNT;
             }
-
-            Array.Clear(MapPatchCount, 0, MapPatchCount.Length);
-            Array.Clear(StaticPatchCount, 0, StaticPatchCount.Length);
 
             bool result = false;
 
-            for (int i = 0; i < PatchesCount; i++)
+            for (int i = 0; i < patchesCount; i++)
             {
                 int idx = i;
 
@@ -446,9 +435,7 @@ namespace ClassicUO.Assets
                 }
 
                 int mapPatchesCount = (int) reader.ReadUInt32BE();
-                MapPatchCount[i] = mapPatchesCount;
                 int staticPatchesCount = (int) reader.ReadUInt32BE();
-                StaticPatchCount[i] = staticPatchesCount;
 
                 int w = MapBlocksSize[i, 0];
                 int h = MapBlocksSize[i, 1];
