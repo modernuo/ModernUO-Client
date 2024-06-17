@@ -379,20 +379,16 @@ namespace ClassicUO.Assets
                 return;
             }
 
-            if (!isuop && _fileMap != null && _fileMap.HasData)
+            if (!isuop && _fileMap != null && _fileMap.HasData &&
+                _fileIdxStatics != null && _fileIdxStatics.HasData &&
+                _fileStatics != null && _fileStatics.HasData)
             {
-                if (_fileIdxStatics != null && _fileIdxStatics.HasData)
+                for (int block = 0; block < maxBlockCount; block++)
                 {
-                    if (_fileStatics != null && _fileStatics.HasData)
-                    {
-                        for (int block = 0; block < maxBlockCount; block++)
-                        {
-                            ref IndexMap index = ref BlockData[block];
-                            index.MapAddress = index.OriginalMapAddress;
-                            index.StaticAddress = index.OriginalStaticAddress;
-                            index.StaticCount = index.OriginalStaticCount;
-                        }
-                    }
+                    ref IndexMap index = ref BlockData[block];
+                    index.MapAddress = index.OriginalMapAddress;
+                    index.StaticAddress = index.OriginalStaticAddress;
+                    index.StaticCount = index.OriginalStaticCount;
                 }
             }
         }
