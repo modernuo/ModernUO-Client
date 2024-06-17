@@ -609,36 +609,36 @@ namespace ClassicUO.Assets
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public ref struct StaticsBlock
+    public readonly ref struct StaticsBlock
     {
-        public ushort Color;
-        public byte X;
-        public byte Y;
-        public sbyte Z;
-        public ushort Hue;
+        public readonly ushort Color;
+        public readonly byte X;
+        public readonly byte Y;
+        public readonly sbyte Z;
+        public readonly ushort Hue;
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public ref struct StaidxBlock
+    public readonly ref struct StaidxBlock
     {
-        public uint Position;
-        public uint Size;
-        public uint Unknown;
+        public readonly uint Position;
+        public readonly uint Size;
+        public readonly uint Unknown;
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public ref struct StaidxBlockVerdata
+    public readonly ref struct StaidxBlockVerdata
     {
-        public uint Position;
-        public ushort Size;
-        public byte Unknown;
+        public readonly uint Position;
+        public readonly ushort Size;
+        public readonly byte Unknown;
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public ref struct MapCells
+    public readonly ref struct MapCells
     {
-        public ushort TileID;
-        public sbyte Z;
+        public readonly ushort TileID;
+        public readonly sbyte Z;
     }
 
     //[StructLayout(LayoutKind.Sequential, Pack = 1)]
@@ -650,10 +650,10 @@ namespace ClassicUO.Assets
     //}
 
     [StructLayout(LayoutKind.Sequential, Pack = 1, Size = 4 + 64 * 3)]
-    public ref struct MapBlock
+    public readonly ref struct MapBlock
     {
-        public uint Header;
-        public unsafe MapCells* Cells;
+        public readonly uint Header;
+        public readonly unsafe MapCells* Cells;
     }
 
     //[StructLayout(LayoutKind.Sequential, Pack = 1, Size = 4 + 64 * 3)]
@@ -664,18 +664,18 @@ namespace ClassicUO.Assets
     //}
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public struct RadarMapcells
+    public readonly struct RadarMapcells
     {
-        public ushort Graphic;
-        public sbyte Z;
-        public bool IsLand;
+        public readonly ushort Graphic;
+        public readonly sbyte Z;
+        public readonly bool IsLand;
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public struct RadarMapBlock
+    public readonly struct RadarMapBlock
     {
         [MarshalAs(UnmanagedType.ByValArray, SizeConst = 64)]
-        public RadarMapcells[,] Cells;
+        public readonly RadarMapcells[,] Cells;
     }
 
     public struct IndexMap
