@@ -371,8 +371,9 @@ namespace ClassicUO.Assets
             return false;
         }
 
-        public override void ClearResources()
+        protected override void Dispose(bool disposing)
         {
+            base.Dispose(disposing);
             _musicData.Clear();
         }
     }
