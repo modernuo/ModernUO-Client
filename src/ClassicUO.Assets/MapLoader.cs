@@ -113,7 +113,13 @@ namespace ClassicUO.Assets
 
         public void Dispose()
         {
-            // TODO implement
+            _fileMap?.Dispose();
+            _fileStatics?.Dispose();
+            _fileIdxStatics?.Dispose();
+            _mapDif?.Dispose();
+            _mapDifl?.Dispose();
+            _staDifi?.Dispose();
+            _staDifl?.Dispose();
         }
 
         public unsafe void Load(int width, int height, OneMapLoader inherit)
@@ -415,7 +421,8 @@ namespace ClassicUO.Assets
 
         public void Dispose()
         {
-            // TODO implement
+            foreach (var m in Maps)
+                m?.Dispose();
         }
 
         public static MapLoader Instance
