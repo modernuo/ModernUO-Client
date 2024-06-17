@@ -297,15 +297,12 @@ namespace ClassicUO.Game.UI.Gumps
 
                     ref IndexMap indexMap = ref World.Map.GetIndex(i, j);
 
-                    if (indexMap.MapAddress == 0)
+                    if (!indexMap.HasMapCells)
                     {
                         break;
                     }
 
-                    MapBlock* mp = (MapBlock*)indexMap.MapAddress;
-                    MapCells* cells = (MapCells*)&mp->Cells;
-                    StaticsBlock* sb = (StaticsBlock*)indexMap.StaticAddress;
-                    uint staticCount = indexMap.StaticCount;
+                    var staticsBlocks = indexMap.StaticsBlocks;
 
                     Chunk block = World.Map.GetChunk(blockIndex);
                     int realBlockX = i << 3;
@@ -317,14 +314,14 @@ namespace ClassicUO.Game.UI.Gumps
 
                         for (int y = 0; y < 8; y++)
                         {
-                            ref MapCells cell = ref cells[(y << 3) + x];
+                            ref MapCells cell = ref indexMap.GetMapCell(x, y);
                             int color = cell.TileID;
                             bool isLand = true;
                             int z = cell.Z;
 
-                            for (int c = 0; c < staticCount; ++c)
+                            for (int c = 0; c < staticsBlocks.Length; ++c)
                             {
-                                ref StaticsBlock stblock = ref sb[c];
+                                ref readonly StaticsBlock stblock = ref staticsBlocks[c];
 
                                 if (
                                     stblock.X == x

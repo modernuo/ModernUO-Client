@@ -596,7 +596,7 @@ namespace ClassicUO.Assets
     }
 
     [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public readonly ref struct StaticsBlock
+    public readonly struct StaticsBlock
     {
         public readonly ushort Color;
         public readonly byte X;
@@ -674,5 +674,31 @@ namespace ClassicUO.Assets
         public ulong StaticAddress;
         public uint StaticCount;
         public static IndexMap Invalid = new IndexMap();
+
+        public bool HasMapCells => MapAddress != 0;
+        public bool HasStaticsBlocks => StaticAddress != 0;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public unsafe ref MapCells GetMapCell(int i)
+        {
+            MapBlock* mp = (MapBlock*) MapAddress;
+            MapCells* cells = (MapCells*) &mp->Cells;
+            return ref cells[i];
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public ref MapCells GetMapCell(int x, int y)
+        {
+            return ref GetMapCell((y << 3) + x);
+        }
+
+        public ReadOnlySpan<StaticsBlock> StaticsBlocks {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get {
+                unsafe {
+                    return new ReadOnlySpan<StaticsBlock>((void *)StaticAddress, (int)StaticCount);
+                }
+            }
+        }
     }
 }

@@ -79,7 +79,7 @@ namespace ClassicUO.Game.Map
         }
 
 
-        public unsafe void Load(int index)
+        public void Load(int index)
         {
             IsDestroyed = false;
 
@@ -87,23 +87,21 @@ namespace ClassicUO.Game.Map
 
             ref IndexMap im = ref GetIndex(index);
 
-            if (im.MapAddress != 0)
+            if (im.HasMapCells)
             {
-                MapBlock* block = (MapBlock*) im.MapAddress;
-                MapCells* cells = (MapCells*) &block->Cells;
                 int bx = X << 3;
                 int by = Y << 3;
 
                 for (int y = 0; y < 8; ++y)
                 {
-                    int pos = y << 3;
                     ushort tileY = (ushort) (by + y);
 
-                    for (int x = 0; x < 8; ++x, ++pos)
+                    for (int x = 0; x < 8; ++x)
                     {
-                        ushort tileID = (ushort) (cells[pos].TileID & 0x3FFF);
+                        ref MapCells cell = ref im.GetMapCell(x, y);
+                        ushort tileID = (ushort) (cell.TileID & 0x3FFF);
 
-                        sbyte z = cells[pos].Z;
+                        sbyte z = cell.Z;
 
                         Land land = Land.Create(_world, tileID);
 
@@ -119,28 +117,28 @@ namespace ClassicUO.Game.Map
                     }
                 }
 
-                if (im.StaticAddress != 0)
+                if (im.HasStaticsBlocks)
                 {
-                    StaticsBlock* sb = (StaticsBlock*) im.StaticAddress;
-
-                    for (int i = 0, count = (int) im.StaticCount; i < count; ++i, ++sb)
+                    var blocks = im.StaticsBlocks;
+                    for (int i = 0, count = blocks.Length; i < count; ++i)
                     {
-                        if (sb->Color != 0 && sb->Color != 0xFFFF)
+                        ref readonly StaticsBlock block = ref blocks[i];
+                        if (block.Color != 0 && block.Color != 0xFFFF)
                         {
-                            int pos = (sb->Y << 3) + sb->X;
+                            int pos = (block.Y << 3) + block.X;
 
                             if (pos >= 64)
                             {
                                 continue;
                             }
 
-                            Static staticObject = Static.Create(_world, sb->Color, sb->Hue, pos);
-                            staticObject.X = (ushort) (bx + sb->X);
-                            staticObject.Y = (ushort) (by + sb->Y);
-                            staticObject.Z = sb->Z;
+                            Static staticObject = Static.Create(_world, block.Color, block.Hue, pos);
+                            staticObject.X = (ushort) (bx + block.X);
+                            staticObject.Y = (ushort) (by + block.Y);
+                            staticObject.Z = block.Z;
                             staticObject.UpdateScreenPosition();
 
-                            AddGameObject(staticObject, sb->X, sb->Y);
+                            AddGameObject(staticObject, block.X, block.Y);
                         }
                     }
                 }

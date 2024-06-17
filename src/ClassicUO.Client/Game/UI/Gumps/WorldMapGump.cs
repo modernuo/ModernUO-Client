@@ -1146,7 +1146,7 @@ namespace ClassicUO.Game.UI.Gumps
         #region Loading
 
 
-        private unsafe void LoadMapChunk(Span<uint> buffer, Span<sbyte> allZ, int chunkX, int chunkY)
+        private void LoadMapChunk(Span<uint> buffer, Span<sbyte> allZ, int chunkX, int chunkY)
         {
             if (World.Map == null)
             {
@@ -1157,47 +1157,41 @@ namespace ClassicUO.Game.UI.Gumps
 
             ref IndexMap indexMap = ref World.Map.GetIndex(chunkX, chunkY);
 
-            if (indexMap.MapAddress == 0)
+            if (!indexMap.HasMapCells)
             {
                 return;
             }
 
             int block = 0;
 
-            MapBlock* mapBlock = (MapBlock*)indexMap.MapAddress;
-            MapCells* cells = (MapCells*)&mapBlock->Cells;
-
             for (int y = 0; y < 8; ++y)
             {
-                int pos = y << 3;
-
-                for (int x = 0; x < 8; ++x, ++pos, ++block)
+                for (int x = 0; x < 8; ++x, ++block)
                 {
-                    ushort color = (ushort)(0x8000 | huesLoader.GetRadarColorData(cells[pos].TileID & 0x3FFF));
+                    ref MapCells cell = ref indexMap.GetMapCell(x, y);
+                    ushort color = (ushort)(0x8000 | huesLoader.GetRadarColorData(cell.TileID & 0x3FFF));
 
                     buffer[block] = HuesHelper.Color16To32(color) | 0xFF_00_00_00;
-                    allZ[block] = cells[pos].Z;
+                    allZ[block] = cell.Z;
                 }
             }
 
-            StaticsBlock* sb = (StaticsBlock*)indexMap.StaticAddress;
-
-            if (sb != null)
+            if (indexMap.HasStaticsBlocks)
             {
-                int count = (int)indexMap.StaticCount;
-
-                for (int c = 0; c < count; ++c, ++sb)
+                var blocks = indexMap.StaticsBlocks;
+                for (int c = 0, count = blocks.Length; c < count; ++c)
                 {
-                    if (sb->Color != 0 && sb->Color != 0xFFFF && GameObject.CanBeDrawn(World, sb->Color))
+                    ref readonly StaticsBlock sb = ref blocks[c];
+                    if (sb.Color != 0 && sb.Color != 0xFFFF && GameObject.CanBeDrawn(World, sb.Color))
                     {
-                        int index = sb->Y * 8 + sb->X;
+                        int index = sb.Y * 8 + sb.X;
 
-                        if (sb->Z >= allZ[index])
+                        if (sb.Z >= allZ[index])
                         {
-                            ushort color = (ushort)(0x8000 | (sb->Hue != 0 ? huesLoader.GetColor16(16384, sb->Hue) : huesLoader.GetRadarColorData(sb->Color + 0x4000)));
+                            ushort color = (ushort)(0x8000 | (sb.Hue != 0 ? huesLoader.GetColor16(16384, sb.Hue) : huesLoader.GetRadarColorData(sb.Color + 0x4000)));
 
                             buffer[index] = HuesHelper.Color16To32(color) | 0xFF_00_00_00;
-                            allZ[index] = sb->Z;
+                            allZ[index] = sb.Z;
                         }
                     }
                 }
@@ -1483,13 +1477,10 @@ namespace ClassicUO.Game.UI.Gumps
                                 {
                                     ref IndexMap indexMap = ref World.Map.GetIndex(bx, by);
 
-                                    if (indexMap.MapAddress == 0)
+                                    if (!indexMap.HasMapCells)
                                     {
                                         continue;
                                     }
-
-                                    MapBlock* mapBlock = (MapBlock*)indexMap.MapAddress;
-                                    MapCells* cells = (MapCells*)&mapBlock->Cells;
 
                                     mapY = by << 3;
 
@@ -1497,36 +1488,33 @@ namespace ClassicUO.Game.UI.Gumps
                                     {
                                         int block = (mapY + y + OFFSET_PIX_HALF) * (realWidth + OFFSET_PIX) + mapX + OFFSET_PIX_HALF;
 
-                                        int pos = y << 3;
-
-                                        for (x = 0; x < 8; ++x, ++pos, ++block)
+                                        for (x = 0; x < 8; ++x, ++block)
                                         {
-                                            ushort color = (ushort)(0x8000 | huesLoader.GetRadarColorData(cells[pos].TileID & 0x3FFF));
+                                            ref MapCells cell = ref indexMap.GetMapCell(x, y);
+                                            ushort color = (ushort)(0x8000 | huesLoader.GetRadarColorData(cell.TileID & 0x3FFF));
 
                                             buffer[block] = HuesHelper.Color16To32(color) | 0xFF_00_00_00;
-                                            allZ[block] = cells[pos].Z;
+                                            allZ[block] = cell.Z;
                                         }
                                     }
 
 
-                                    StaticsBlock* sb = (StaticsBlock*)indexMap.StaticAddress;
-
-                                    if (sb != null)
+                                    if (indexMap.HasStaticsBlocks)
                                     {
-                                        int count = (int)indexMap.StaticCount;
-
-                                        for (int c = 0; c < count; ++c, ++sb)
+                                        var blocks = indexMap.StaticsBlocks;
+                                        for (int c = 0, count = blocks.Length; c < count; ++c)
                                         {
-                                            if (sb->Color != 0 && sb->Color != 0xFFFF && GameObject.CanBeDrawn(World, sb->Color))
+                                            ref readonly StaticsBlock sb = ref blocks[c];
+                                            if (sb.Color != 0 && sb.Color != 0xFFFF && GameObject.CanBeDrawn(World, sb.Color))
                                             {
-                                                int block = (mapY + sb->Y + OFFSET_PIX_HALF) * (realWidth + OFFSET_PIX) + mapX + sb->X + OFFSET_PIX_HALF;
+                                                int block = (mapY + sb.Y + OFFSET_PIX_HALF) * (realWidth + OFFSET_PIX) + mapX + sb.X + OFFSET_PIX_HALF;
 
-                                                if (sb->Z >= allZ[block])
+                                                if (sb.Z >= allZ[block])
                                                 {
-                                                    ushort color = (ushort)(0x8000 | (sb->Hue != 0 ? huesLoader.GetColor16(16384, sb->Hue) : huesLoader.GetRadarColorData(sb->Color + 0x4000)));
+                                                    ushort color = (ushort)(0x8000 | (sb.Hue != 0 ? huesLoader.GetColor16(16384, sb.Hue) : huesLoader.GetRadarColorData(sb.Color + 0x4000)));
 
                                                     buffer[block] = HuesHelper.Color16To32(color) | 0xFF_00_00_00;
-                                                    allZ[block] = sb->Z;
+                                                    allZ[block] = sb.Z;
                                                 }
                                             }
                                         }
