@@ -155,21 +155,12 @@ namespace ClassicUO.Game.Map
 
             ref IndexMap blockIndex = ref GetIndex(x >> 3, y >> 3);
 
-            if (blockIndex.MapAddress == 0)
+            if (!blockIndex.HasMapCells)
             {
                 return -125;
             }
 
-            int mx = x % 8;
-            int my = y % 8;
-
-            unsafe
-            {
-                MapBlock* mp = (MapBlock*) blockIndex.MapAddress;
-                MapCells* cells = (MapCells*) &mp->Cells;
-
-                return cells[(my << 3) + mx].Z;
-            }
+            return blockIndex.GetMapCell(x % 8, y % 8).Z;
         }
 
         public void GetMapZ(int x, int y, out sbyte groundZ, out sbyte staticZ)
