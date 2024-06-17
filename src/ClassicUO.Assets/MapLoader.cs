@@ -468,7 +468,7 @@ namespace ClassicUO.Assets
             Maps = new OneMapLoader[MAPS_COUNT];
         }
 
-        public unsafe Task Load()
+        public Task Load()
         {
             return Task.Run
             (
@@ -524,14 +524,6 @@ namespace ClassicUO.Assets
                     if (!foundOneMap)
                     {
                         throw new FileNotFoundException("No maps found.");
-                    }
-
-
-                    int mapblocksize = sizeof(MapBlock);
-
-                    if (Maps[0].MapFileLength / mapblocksize == 393216 || UOFileManager.Version < ClientVersion.CV_4011D)
-                    {
-                        MapsDefaultSize[0, 0] = MapsDefaultSize[1, 0] = 6144;
                     }
 
                     // This is an hack to patch correctly all maps when you have to fake map1

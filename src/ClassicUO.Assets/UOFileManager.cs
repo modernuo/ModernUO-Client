@@ -126,7 +126,7 @@ namespace ClassicUO.Assets
 
             DataReader verdata = Verdata.File;
 
-            bool forceVerdata = Version < ClientVersion.CV_500A || verdata != null && verdata.Length != 0 && Verdata.Patches.Length != 0;
+            bool forceVerdata = verdata != null && verdata.Length != 0 && Verdata.Patches.Length != 0;
 
             if (!useVerdata && forceVerdata)
             {

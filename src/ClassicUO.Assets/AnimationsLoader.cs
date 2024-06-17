@@ -130,76 +130,73 @@ namespace ClassicUO.Assets
                 LoadUop();
             }
 
-            if (UOFileManager.Version >= ClientVersion.CV_500A)
+            string path = UOFileManager.GetUOFilePath("mobtypes.txt");
+
+            if (File.Exists(path))
             {
-                string path = UOFileManager.GetUOFilePath("mobtypes.txt");
-
-                if (File.Exists(path))
+                var typeNames = new string[5]
                 {
-                    var typeNames = new string[5]
-                    {
-                        "monster",
-                        "sea_monster",
-                        "animal",
-                        "human",
-                        "equipment"
-                    };
+                    "monster",
+                    "sea_monster",
+                    "animal",
+                    "human",
+                    "equipment"
+                };
 
-                    using (var reader = new StreamReader(File.OpenRead(path)))
-                    {
-                        string line;
+                using (var reader = new StreamReader(File.OpenRead(path)))
+                {
+                    string line;
 
-                        while ((line = reader.ReadLine()) != null)
+                    while ((line = reader.ReadLine()) != null)
+                    {
+                        line = line.Trim();
+
+                        if (line.Length == 0 || line[0] == '#' || !char.IsNumber(line[0]))
                         {
-                            line = line.Trim();
+                            continue;
+                        }
 
-                            if (line.Length == 0 || line[0] == '#' || !char.IsNumber(line[0]))
-                            {
-                                continue;
-                            }
+                        string[] parts = line.Split(
+                            new[] { '\t', ' ' },
+                            StringSplitOptions.RemoveEmptyEntries
+                        );
 
-                            string[] parts = line.Split(
-                                new[] { '\t', ' ' },
-                                StringSplitOptions.RemoveEmptyEntries
-                            );
+                        if (parts.Length < 3)
+                        {
+                            continue;
+                        }
 
-                            if (parts.Length < 3)
-                            {
-                                continue;
-                            }
+                        int id = int.Parse(parts[0]);
+                        string testType = parts[1].ToLower();
+                        int commentIdx = parts[2].IndexOf('#');
 
-                            int id = int.Parse(parts[0]);
-                            string testType = parts[1].ToLower();
-                            int commentIdx = parts[2].IndexOf('#');
+                        if (commentIdx > 0)
+                        {
+                            parts[2] = parts[2].Substring(0, commentIdx - 1);
+                        }
+                        else if (commentIdx == 0)
+                        {
+                            continue;
+                        }
 
-                            if (commentIdx > 0)
-                            {
-                                parts[2] = parts[2].Substring(0, commentIdx - 1);
-                            }
-                            else if (commentIdx == 0)
-                            {
-                                continue;
-                            }
+                        uint number = uint.Parse(parts[2], NumberStyles.HexNumber);
 
-                            uint number = uint.Parse(parts[2], NumberStyles.HexNumber);
-
-                            for (int i = 0; i < 5; i++)
-                            {
-                                if (
-                                    testType.Equals(
-                                        typeNames[i],
-                                        StringComparison.InvariantCultureIgnoreCase
-                                    )
+                        for (int i = 0; i < 5; i++)
+                        {
+                            if (
+                                testType.Equals(
+                                    typeNames[i],
+                                    StringComparison.InvariantCultureIgnoreCase
                                 )
+                            )
+                            {
+                                _mobTypes[id] = new MobTypeInfo()
                                 {
-                                    _mobTypes[id] = new MobTypeInfo()
-                                    {
-                                        Type = (AnimationGroupsType)i,
-                                        Flags = (AnimationFlags )(0x80000000 | number)
-                                    };
+                                    Type = (AnimationGroupsType)i,
+                                    Flags = (AnimationFlags )(0x80000000 | number)
+                                };
 
-                                    break;
-                                }
+                                break;
                             }
                         }
                     }
@@ -359,9 +356,6 @@ namespace ClassicUO.Assets
                 body = bodyConvInfo.Graphic;
                 fileIndex = bodyConvInfo.FileIndex;
                 mountHeight = bodyConvInfo.MountHeight;
-
-                if (clientVersion < ClientVersion.CV_500A)
-                    animType = bodyConvInfo.AnimType;
             }
 
             if (animType == AnimationGroupsType.Unknown)
@@ -489,11 +483,6 @@ namespace ClassicUO.Assets
 
         private void ProcessEquipConvDef()
         {
-            if (UOFileManager.Version < ClientVersion.CV_300)
-            {
-                return;
-            }
-
             var file = UOFileManager.GetUOFilePath("Equipconv.def");
 
             if (File.Exists(file))
@@ -536,11 +525,6 @@ namespace ClassicUO.Assets
 
         public void ProcessBodyConvDef(BodyConvFlags flags)
         {
-            if (UOFileManager.Version < ClientVersion.CV_300)
-            {
-                return;
-            }
-
             var file = UOFileManager.GetUOFilePath("Bodyconv.def");
 
             if (!File.Exists(file))
@@ -632,7 +616,6 @@ namespace ClassicUO.Assets
                         {
                             FileIndex = i,
                             Graphic = (ushort)body,
-                            // TODO: fix for UOFileManager.Version < ClientVersion.CV_500A
                             AnimType = CalculateTypeByGraphic((ushort)body, i),
                             MountHeight = mountedHeightOffset
                         };
@@ -643,11 +626,6 @@ namespace ClassicUO.Assets
 
         private void ProcessBodyDef()
         {
-            if (UOFileManager.Version < ClientVersion.CV_300)
-            {
-                return;
-            }
-
             var file = UOFileManager.GetUOFilePath("Body.def");
 
             if (!File.Exists(file))
@@ -687,11 +665,6 @@ namespace ClassicUO.Assets
 
         private void ProcessCorpseDef()
         {
-            if (UOFileManager.Version < ClientVersion.CV_300)
-            {
-                return;
-            }
-
             var file = UOFileManager.GetUOFilePath("Corpse.def");
 
             if (!File.Exists(file))

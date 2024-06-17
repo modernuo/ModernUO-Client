@@ -148,7 +148,7 @@ namespace ClassicUO.Assets
                         }
                     }
 
-                    path = UOFileManager.GetUOFilePath(UOFileManager.Version >= ClientVersion.CV_4011C ?  @"Music/Digital/Config.txt" : @"Music/Config.txt");
+                    path = UOFileManager.GetUOFilePath("Music/Digital/Config.txt");
 
                     if (File.Exists(path))
                     {
