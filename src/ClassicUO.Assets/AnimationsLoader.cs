@@ -43,7 +43,7 @@ using System.Threading.Tasks;
 
 namespace ClassicUO.Assets
 {
-    public sealed unsafe class AnimationsLoader : IDisposable
+    public sealed class AnimationsLoader : IDisposable
     {
         public const int MAX_ACTIONS = 80; // gargoyle is like 78
         public const int MAX_DIRECTIONS = 5;
@@ -316,7 +316,7 @@ namespace ClassicUO.Assets
             return false;
         }
 
-        public ReadOnlySpan<AnimIdxBlock> GetIndices
+        public unsafe ReadOnlySpan<AnimIdxBlock> GetIndices
         (
             ClientVersion clientVersion,
             ushort body,
@@ -727,7 +727,7 @@ namespace ClassicUO.Assets
             }
         }
 
-        private void LoadUop()
+        private unsafe void LoadUop()
         {
             if (UOFileManager.Version <= ClientVersion.CV_60144)
             {
@@ -1274,7 +1274,7 @@ namespace ClassicUO.Assets
             return 0;
         }
 
-        public Span<FrameInfo> ReadUOPAnimationFrames(
+        public unsafe Span<FrameInfo> ReadUOPAnimationFrames(
             ushort animID,
             byte animGroup,
             byte direction,
@@ -1429,7 +1429,7 @@ namespace ClassicUO.Assets
             return frames;
         }
 
-        public Span<FrameInfo> ReadMULAnimationFrames(int fileIndex, AnimIdxBlock index)
+        public unsafe Span<FrameInfo> ReadMULAnimationFrames(int fileIndex, AnimIdxBlock index)
         {
             if (fileIndex < 0 || fileIndex >= _files.Length)
             {
