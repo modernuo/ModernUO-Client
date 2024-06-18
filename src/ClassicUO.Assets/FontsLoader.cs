@@ -1106,7 +1106,7 @@ namespace ClassicUO.Assets
             ushort flags
         )
         {
-            if (font >= 20 || _unicodeFontAddress[font] == IntPtr.Zero || str.IsEmpty)
+            if (!UnicodeFontExists(font) || str.IsEmpty)
             {
                 return string.Empty;
             }
@@ -1194,7 +1194,7 @@ namespace ClassicUO.Assets
 
         public int GetWidthUnicode(byte font, string str)
         {
-            if (font >= 20 || _unicodeFontAddress[font] == IntPtr.Zero || string.IsNullOrEmpty(str))
+            if (!UnicodeFontExists(font) || string.IsNullOrEmpty(str))
             {
                 return 0;
             }
@@ -1204,7 +1204,7 @@ namespace ClassicUO.Assets
 
         private unsafe int GetWidthUnicode(byte font, ReadOnlySpan<char> str)
         {
-            if (font >= 20 || _unicodeFontAddress[font] == IntPtr.Zero || str.IsEmpty)
+            if (!UnicodeFontExists(font) || str.IsEmpty)
             {
                 return 0;
             }
@@ -1238,7 +1238,7 @@ namespace ClassicUO.Assets
 
         public unsafe int GetCharWidthUnicode(byte font, char c)
         {
-            if (font >= 20 || _unicodeFontAddress[font] == IntPtr.Zero || c == 0 || c == '\r')
+            if (!UnicodeFontExists(font) || c == 0 || c == '\r')
             {
                 return 0;
             }
@@ -1269,9 +1269,7 @@ namespace ClassicUO.Assets
             ushort flags
         )
         {
-            if (
-                font >= 20 || _unicodeFontAddress[font] == IntPtr.Zero || string.IsNullOrEmpty(text)
-            )
+            if (!UnicodeFontExists(font) || string.IsNullOrEmpty(text))
             {
                 return 0;
             }
@@ -1319,7 +1317,7 @@ namespace ClassicUO.Assets
             _htmlStatus.BackgroundColor = 0;
             _htmlStatus.Margins = Margin.Empty;
 
-            if (font >= 20 || _unicodeFontAddress[font] == IntPtr.Zero)
+            if (!UnicodeFontExists(font))
             {
                 return null;
             }
@@ -1601,7 +1599,7 @@ namespace ClassicUO.Assets
             bool saveHitmap
         )
         {
-            if (font >= 20 || _unicodeFontAddress[font] == IntPtr.Zero)
+            if (!UnicodeFontExists(font))
             {
                 return FontInfo.Empty;
             }
@@ -3453,7 +3451,7 @@ namespace ClassicUO.Assets
             ushort flags
         )
         {
-            if (font >= 20 || _unicodeFontAddress[font] == IntPtr.Zero || string.IsNullOrEmpty(str))
+            if (!UnicodeFontExists(font) || string.IsNullOrEmpty(str))
             {
                 return 0;
             }
@@ -3512,7 +3510,7 @@ namespace ClassicUO.Assets
                     break;
             }
 
-            if (font >= 20 || _unicodeFontAddress[font] == IntPtr.Zero || string.IsNullOrEmpty(str))
+            if (!UnicodeFontExists(font) || string.IsNullOrEmpty(str))
             {
                 return (x, y);
             }
