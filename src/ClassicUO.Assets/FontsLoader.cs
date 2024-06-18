@@ -44,7 +44,7 @@ using System.Threading.Tasks;
 
 namespace ClassicUO.Assets
 {
-    public class FontsLoader : IDisposable
+    public sealed class FontsLoader : IDisposable
     {
         private const int UOFONT_SOLID = 0x0001;
         private const int UOFONT_ITALIC = 0x0002;
