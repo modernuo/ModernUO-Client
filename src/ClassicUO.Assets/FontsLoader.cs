@@ -103,6 +103,12 @@ namespace ClassicUO.Assets
 
         private HtmlStatus _htmlStatus;
 
+        /* these variables are not actually used; they only exist to
+           hold a reference on the memory mappings to keep the GC from
+           releasing them */
+        private DataReader fonts;
+        private readonly DataReader[] uniFonts = new DataReader[20];
+
         private FontCharacterData[,] _fontData;
         private readonly IntPtr[] _unicodeFontAddress = new IntPtr[20];
         private readonly long[] _unicodeFontSize = new long[20];
@@ -114,6 +120,12 @@ namespace ClassicUO.Assets
 
         public void Dispose()
         {
+            fonts?.Dispose();
+
+            foreach (var uniFont in uniFonts)
+            {
+                uniFont?.Dispose();
+            }
         }
 
         public static FontsLoader Instance => _instance ?? (_instance = new FontsLoader());
@@ -130,8 +142,7 @@ namespace ClassicUO.Assets
         {
             return Task.Run(() =>
             {
-                var fonts = new UOFile(UOFileManager.GetUOFilePath("fonts.mul"));
-                var uniFonts = new UOFile[20];
+                fonts = new UOFile(UOFileManager.GetUOFilePath("fonts.mul"));
 
                 for (int i = 0; i < 20; i++)
                 {
