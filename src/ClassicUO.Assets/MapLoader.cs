@@ -77,7 +77,7 @@ namespace ClassicUO.Assets
             }
             else
             {
-                path = UOFileManager.GetUOFilePath($"map{i}.sag");
+                path = UOFileManager.GetUOFilePath($"map{i}.mul");
 
                 if (File.Exists(path))
                 {
@@ -89,10 +89,10 @@ namespace ClassicUO.Assets
                 if (File.Exists(path))
                 {
                     _mapDifl = new UOFile(path);
-                    _mapDif = new UOFile(UOFileManager.GetUOFilePath($"mapdif{i}.sag"));
-                    _staDifl = new UOFile(UOFileManager.GetUOFilePath($"stadifl{i}.sag"));
-                    _staDifi = new UOFile(UOFileManager.GetUOFilePath($"stadifi{i}.sag"));
-                    _staDif = new UOFile(UOFileManager.GetUOFilePath($"stadif{i}.sag"));
+                    _mapDif = new UOFile(UOFileManager.GetUOFilePath($"mapdif{i}.mul"));
+                    _staDifl = new UOFile(UOFileManager.GetUOFilePath($"stadifl{i}.mul"));
+                    _staDifi = new UOFile(UOFileManager.GetUOFilePath($"stadifi{i}.mul"));
+                    _staDif = new UOFile(UOFileManager.GetUOFilePath($"stadif{i}.mul"));
                 }
             }
 
