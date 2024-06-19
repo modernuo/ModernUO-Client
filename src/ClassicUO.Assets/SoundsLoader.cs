@@ -36,6 +36,7 @@ using ClassicUO.Utility.Logging;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.InteropServices; // for Marshal.Copy()
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading.Tasks;
@@ -270,38 +271,20 @@ namespace ClassicUO.Assets
 
             ref UOFileIndex entry = ref GetValidRefEntry(sound);
 
-            _file.SetData(entry.Address, entry.FileSize);
-            _file.Seek(entry.Offset);
+            const int STRING_BUFFER_SIZE = 40;
 
-            long offset = _file.Position;
-
-            if (offset < 0 || entry.Length <= 0)
+            if (entry.Length <= STRING_BUFFER_SIZE)
             {
                 return false;
             }
 
-            _file.Seek(offset);
+            byte* src = entry.Data;
 
-            const int STRING_BUFFER_SIZE = 40;
-
-            for (int i = 0; i < STRING_BUFFER_SIZE; ++i)
-            {
-                if (_file.ReadByte() == 0)
-                {
-                    name = Encoding.UTF8.GetString((byte*)(_file.StartAddress.ToInt64() + offset), i);
-
-                    break;
-                }
-            }
-
-            _file.Seek(offset + STRING_BUFFER_SIZE);
+            name = ReaderUtil.ReadFixedSizeString(src, STRING_BUFFER_SIZE);
+            src += STRING_BUFFER_SIZE;
 
             data = new byte[entry.Length - STRING_BUFFER_SIZE];
-
-            for (int i = 0; i < data.Length; ++i)
-            {
-                data[i] = _file.ReadByte();
-            }
+            Marshal.Copy((IntPtr)src, data, 0, data.Length);
             
             return true;
         }
