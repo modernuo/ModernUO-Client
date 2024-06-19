@@ -84,19 +84,18 @@ namespace ClassicUO.Assets
                         staticscount = 2048;
                     }
 
-                    tileData.Seek(0);
-
                     _landData = new LandTiles[ArtLoader.MAX_LAND_DATA_INDEX_COUNT];
                     _staticData = new StaticTiles[staticscount * 32];
+
+                    var ptr = (byte*)tileData.StartAddress;
 
                     if (isold)
                     {
                         for (int i = 0, idx = 0; i < LAND_SIZE; i++)
                         {
-                            tileData.Skip(4);
+                            ptr += 4;
 
-                            var landTilesPtr = (LandTilesOld *)tileData.PositionAddress;
-                            tileData.Skip(Marshal.SizeOf<LandTilesOld>() * 32);
+                            var landTilesPtr = (LandTilesOld *)ptr;
 
                             for (int j = 0; j < 32; j++, idx++, landTilesPtr++)
                             {
@@ -104,14 +103,15 @@ namespace ClassicUO.Assets
 
                                 LandData[idx] = new LandTiles(landTilesPtr->Flags, landTilesPtr->TexID, name);
                             }
+
+                            ptr = (byte *)landTilesPtr;
                         }
 
                         for (int i = 0, idx = 0; i < staticscount; i++)
                         {
-                            tileData.Skip(4);
+                            ptr += 4;
 
                             var staticTilesPtr = (StaticTilesOld *)tileData.PositionAddress;
-                            tileData.Skip(Marshal.SizeOf<StaticTilesOld>() * 32);
 
                             for (int j = 0; j < 32; j++, idx++, staticTilesPtr++)
                             {
@@ -129,16 +129,17 @@ namespace ClassicUO.Assets
                                     name
                                 );
                             }
+
+                            ptr = (byte *)staticTilesPtr;
                         }
                     }
                     else
                     {
                         for (int i = 0, idx = 0; i < LAND_SIZE; i++)
                         {
-                            tileData.Skip(4);
+                            ptr += 4;
 
-                            var landTilesPtr = (LandTilesNew *)tileData.PositionAddress;
-                            tileData.Skip(Marshal.SizeOf<LandTilesNew>() * 32);
+                            var landTilesPtr = (LandTilesNew *)ptr;
 
                             for (int j = 0; j < 32; j++, idx++, landTilesPtr++)
                             {
@@ -146,14 +147,15 @@ namespace ClassicUO.Assets
 
                                 LandData[idx] = new LandTiles(landTilesPtr->Flags, landTilesPtr->TexID, name);
                             }
+
+                            ptr = (byte *)landTilesPtr;
                         }
 
                         for (int i = 0, idx = 0; i < staticscount; i++)
                         {
-                            tileData.Skip(4);
+                            ptr += 4;
 
-                            var staticTilesPtr = (StaticTilesNew *)tileData.PositionAddress;
-                            tileData.Skip(Marshal.SizeOf<StaticTilesNew>() * 32);
+                            var staticTilesPtr = (StaticTilesNew *)ptr;
 
                             for (int j = 0; j < 32; j++, idx++, staticTilesPtr++)
                             {
@@ -171,6 +173,8 @@ namespace ClassicUO.Assets
                                     name
                                 );
                             }
+
+                            ptr = (byte *)staticTilesPtr;
                         }
                     }
 
