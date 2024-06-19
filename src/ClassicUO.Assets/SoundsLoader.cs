@@ -42,7 +42,7 @@ using System.Threading.Tasks;
 
 namespace ClassicUO.Assets
 {
-    public class SoundsLoader : UOFileLoader
+    public sealed class SoundsLoader : UOFileLoader
     {
         private static readonly char[] _configFileDelimiters = { ' ', ',', '\t' };
         private static readonly Dictionary<int, Tuple<string, bool>> _musicData = new Dictionary<int, Tuple<string, bool>>();
