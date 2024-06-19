@@ -218,30 +218,6 @@ namespace ClassicUO.Assets
             return _data.AsSpan(0, width * height);
         }
 
-        private bool ReadHeader(
-            DataReader file,
-            ref UOFileIndex entry,
-            out short width,
-            out short height
-        )
-        {
-            if (entry.Length == 0)
-            {
-                width = 0;
-                height = 0;
-
-                return false;
-            }
-
-            file.SetData(entry.Address, entry.FileSize);
-            file.Seek(entry.Offset);
-            file.Skip(4);
-            width = file.ReadShort();
-            height = file.ReadShort();
-
-            return width > 0 && height > 0;
-        }
-
         private unsafe bool ReadData(Span<uint> pixels, int width, int height, DataReader file)
         {
             ushort* ptr = (ushort*)file.PositionAddress;
