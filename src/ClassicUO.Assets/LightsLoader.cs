@@ -94,10 +94,10 @@ namespace ClassicUO.Assets
                 {
                     val = (ushort)(~val & 0x1F);
                 }
-                uint rgb24 = (uint)((val << 19) | (val << 11) | (val << 3));
 
                 if (val != 0)
                 {
+                    uint rgb24 = (uint)((val << 19) | (val << 11) | (val << 3));
                     buffer[i] = rgb24 | 0xFF_00_00_00;
                 }
             }
