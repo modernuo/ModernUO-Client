@@ -1794,7 +1794,7 @@ namespace ClassicUO.Assets
                             {
                                 ofsX = UNICODE_SPACE_WIDTH;
                             }
-                            else if ((table[si] == 0 || table[si] == 0xFFFFFFFF) && si != ' ') { }
+                            else if (table[si] == 0 || table[si] == 0xFFFFFFFF) { }
                             else
                             {
                                 byte* xData = (byte*)((IntPtr)table + (int)table[si]);
