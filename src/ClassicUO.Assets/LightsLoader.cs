@@ -77,28 +77,24 @@ namespace ClassicUO.Assets
                 return default;
             }
 
-            var buffer = new uint[entry.Width * entry.Height];
+            int size = entry.Width * entry.Height;
+            var buffer = new uint[size];
             _file.SetData(entry.Address, entry.FileSize);
             _file.Seek(entry.Offset);
 
-            for (int i = 0; i < entry.Height; i++)
+            for (int i = 0; i < size; i++)
             {
-                int pos = i * entry.Width;
-
-                for (int j = 0; j < entry.Width; j++)
+                ushort val = _file.ReadByte();
+                // Light can be from -31 to 31. When they are below 0 they are bit inverted
+                if (val > 0x1F)
                 {
-                    ushort val = _file.ReadByte();
-                    // Light can be from -31 to 31. When they are below 0 they are bit inverted
-                    if (val > 0x1F)
-                    {
-                        val = (ushort)(~val & 0x1F);
-                    }
-                    uint rgb24 = (uint)((val << 19) | (val << 11) | (val << 3));
+                    val = (ushort)(~val & 0x1F);
+                }
+                uint rgb24 = (uint)((val << 19) | (val << 11) | (val << 3));
 
-                    if (val != 0)
-                    {
-                        buffer[pos + j] = rgb24 | 0xFF_00_00_00;
-                    }
+                if (val != 0)
+                {
+                    buffer[i] = rgb24 | 0xFF_00_00_00;
                 }
             }
 
