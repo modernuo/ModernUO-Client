@@ -83,11 +83,10 @@ namespace ClassicUO.Assets
 
                         if (entry.Length > 0)
                         {
-                            _file.SetData(entry.Address, entry.FileSize);
-                            _file.Seek(entry.Offset);
+                            var src = entry.Data;
                           
-                            bool hasAction = _file.ReadBool();
-                            string name = ReaderUtil.ReadFixedSizeString((byte*)_file.PositionAddress, entry.Length - 1);
+                            bool hasAction = *src++ != 0;
+                            string name = ReaderUtil.ReadFixedSizeString(src, entry.Length - 1);
 
                             Skills.Add(new SkillEntry(count++, name, hasAction));
                         }
