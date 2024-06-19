@@ -263,15 +263,12 @@ namespace ClassicUO.Game.GameObjects
             }
 
             ref UOFileIndex entry = ref MultiLoader.Instance.GetValidRefEntry(Graphic);
-            MultiLoader.Instance.File.SetData(entry.Address, entry.FileSize);
             bool movable = false;
 
             if (MultiLoader.Instance.IsUOP)
             {
                 if (entry.Length > 0 && entry.DecompressedLength > 0)
                 {
-                    MultiLoader.Instance.File.Seek(entry.Offset);
-
                     byte[] buffer = null;
                     Span<byte> span =
                         entry.DecompressedLength <= 1024
@@ -287,7 +284,7 @@ namespace ClassicUO.Game.GameObjects
                         fixed (byte* dataPtr = span)
                         {
                             ZLib.Decompress(
-                                MultiLoader.Instance.File.PositionAddress,
+                                (IntPtr)entry.Data,
                                 entry.Length,
                                 0,
                                 (IntPtr)dataPtr,
@@ -383,14 +380,12 @@ namespace ClassicUO.Game.GameObjects
             }
             else
             {
+                byte *src = entry.Data;
                 int count = entry.Length / MultiLoader.Instance.Offset;
-                MultiLoader.Instance.File.Seek(entry.Offset);
 
-                for (int i = 0; i < count; i++)
+                for (int i = 0; i < count; i++, src += MultiLoader.Instance.Offset)
                 {
-                    MultiBlock* block = (MultiBlock*)(
-                        MultiLoader.Instance.File.PositionAddress + i * MultiLoader.Instance.Offset
-                    );
+                    MultiBlock* block = (MultiBlock*)src;
 
                     if (block->X < minX)
                     {
