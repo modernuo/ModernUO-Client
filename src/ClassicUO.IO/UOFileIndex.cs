@@ -91,6 +91,8 @@ namespace ClassicUO.IO
         {
             return Address == IntPtr.Zero;
         }
+
+        public unsafe byte* Data => (byte *)(Address + Offset);
     }
 
     public struct UOFileIndex5D
