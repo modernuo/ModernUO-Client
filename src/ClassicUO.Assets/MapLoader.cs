@@ -228,8 +228,7 @@ namespace ClassicUO.Assets
 
             if (isuop)
             {
-                // TODO: UOLive needs hashes! we need to find out a better solution, but keep 'em for the moment
-                //((UOFileUop)file)?.ClearHashes();
+                ((UOFileUop)file)?.ClearHashes();
             }
         }
 
