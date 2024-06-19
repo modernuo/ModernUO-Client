@@ -43,7 +43,7 @@ using System.Threading.Tasks;
 
 namespace ClassicUO.Assets
 {
-    public unsafe class AnimationsLoader : IDisposable
+    public sealed unsafe class AnimationsLoader : IDisposable
     {
         public const int MAX_ACTIONS = 80; // gargoyle is like 78
         public const int MAX_DIRECTIONS = 5;
