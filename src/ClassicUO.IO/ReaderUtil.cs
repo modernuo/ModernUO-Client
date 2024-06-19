@@ -13,7 +13,7 @@ namespace ClassicUO.IO
     {
         public static string ReadFixedSizeString(ReadOnlySpan<byte> src)
         {
-            return Encoding.UTF8.GetString(src).TrimEnd('\0');
+            return Encoding.UTF8.GetString(src.TrimEnd((byte)0));
         }
 
         public static unsafe string ReadFixedSizeString(byte* data, int size)
