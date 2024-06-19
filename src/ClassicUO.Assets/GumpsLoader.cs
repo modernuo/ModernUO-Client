@@ -159,14 +159,9 @@ namespace ClassicUO.Assets
 
             ushort color = entry.Hue;
 
-            _file.SetData(entry.Address, entry.FileSize);
-            _file.Seek(entry.Offset);
-
-            IntPtr dataStart = _file.PositionAddress;
-
             var pixels = new uint[entry.Width * entry.Height];
 
-            int* lookuplist = (int*)dataStart;
+            int* lookuplist = (int*)entry.Data;
 
             int gsize;
 
@@ -181,7 +176,7 @@ namespace ClassicUO.Assets
                     gsize = half_len - lookuplist[y];
                 }
 
-                GumpBlock* gmul = (GumpBlock*)(dataStart + (lookuplist[y] << 2));
+                GumpBlock* gmul = (GumpBlock*)(entry.Data + (lookuplist[y] << 2));
 
                 int pos = y * entry.Width;
 
