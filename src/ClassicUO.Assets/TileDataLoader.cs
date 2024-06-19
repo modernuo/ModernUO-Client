@@ -99,7 +99,7 @@ namespace ClassicUO.Assets
 
                             for (int j = 0; j < 32; j++, idx++, landTilesPtr++)
                             {
-                                string name = string.Intern(Encoding.UTF8.GetString(landTilesPtr->Name, 20).TrimEnd('\0'));
+                                string name = string.Intern(ReaderUtil.ReadFixedSizeString(landTilesPtr->Name, 20));
 
                                 LandData[idx] = new LandTiles(landTilesPtr->Flags, landTilesPtr->TexID, name);
                             }
@@ -115,7 +115,7 @@ namespace ClassicUO.Assets
 
                             for (int j = 0; j < 32; j++, idx++, staticTilesPtr++)
                             {
-                                string name = string.Intern(Encoding.UTF8.GetString(staticTilesPtr->Name, 20).TrimEnd('\0'));
+                                string name = string.Intern(ReaderUtil.ReadFixedSizeString(staticTilesPtr->Name, 20));
 
                                 StaticData[idx] = new StaticTiles(
                                     staticTilesPtr->Flags,
@@ -143,7 +143,7 @@ namespace ClassicUO.Assets
 
                             for (int j = 0; j < 32; j++, idx++, landTilesPtr++)
                             {
-                                string name = string.Intern(Encoding.UTF8.GetString(landTilesPtr->Name, 20).TrimEnd('\0'));
+                                string name = string.Intern(ReaderUtil.ReadFixedSizeString(landTilesPtr->Name, 20));
 
                                 LandData[idx] = new LandTiles(landTilesPtr->Flags, landTilesPtr->TexID, name);
                             }
@@ -159,7 +159,7 @@ namespace ClassicUO.Assets
 
                             for (int j = 0; j < 32; j++, idx++, staticTilesPtr++)
                             {
-                                string name = string.Intern(Encoding.UTF8.GetString(staticTilesPtr->Name, 20).TrimEnd('\0'));
+                                string name = string.Intern(ReaderUtil.ReadFixedSizeString(staticTilesPtr->Name, 20));
 
                                 StaticData[idx] = new StaticTiles(
                                     staticTilesPtr->Flags,

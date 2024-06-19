@@ -87,7 +87,7 @@ namespace ClassicUO.Assets
                             _file.Seek(entry.Offset);
                           
                             bool hasAction = _file.ReadBool();
-                            string name = Encoding.UTF8.GetString((byte*)_file.PositionAddress, entry.Length - 1).TrimEnd('\0');
+                            string name = ReaderUtil.ReadFixedSizeString((byte*)_file.PositionAddress, entry.Length - 1);
 
                             Skills.Add(new SkillEntry(count++, name, hasAction));
                         }
