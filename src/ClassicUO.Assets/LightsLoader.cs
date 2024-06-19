@@ -68,7 +68,7 @@ namespace ClassicUO.Assets
             });
         }
 
-        public LightInfo GetLight(uint idx)
+        public unsafe LightInfo GetLight(uint idx)
         {
             ref var entry = ref GetValidRefEntry((int)idx);
 
@@ -83,13 +83,12 @@ namespace ClassicUO.Assets
                 return default;
             }
 
+            byte *src = entry.Data;
             var buffer = new uint[size];
-            _file.SetData(entry.Address, entry.FileSize);
-            _file.Seek(entry.Offset);
 
             for (int i = 0; i < size; i++)
             {
-                ushort val = _file.ReadByte();
+                ushort val = *src++;
                 // Light can be from -31 to 31. When they are below 0 they are bit inverted
                 if (val > 0x1F)
                 {
