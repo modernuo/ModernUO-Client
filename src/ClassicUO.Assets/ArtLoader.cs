@@ -34,6 +34,7 @@ using ClassicUO.IO;
 using ClassicUO.Utility;
 using System;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 
 namespace ClassicUO.Assets
@@ -98,7 +99,7 @@ namespace ClassicUO.Assets
         //         ? Rectangle.Empty
         //         : _spriteInfos[index + 0x4000].ArtBounds;
 
-        private bool LoadData(Span<uint> data, int g, out short width, out short height)
+        private unsafe bool LoadData(Span<uint> data, int g, out short width, out short height)
         {
             ref var entry = ref GetValidRefEntry(g);
 
@@ -109,10 +110,6 @@ namespace ClassicUO.Assets
 
                 return false;
             }
-
-            _file.SetData(entry.Address, entry.FileSize);
-            _file.Seek(entry.Offset);
-            //var flags = _file.ReadUInt();
 
             //if (flags > 0xFFFF || flags == 0)
             if (g < 0x4000)
@@ -132,6 +129,8 @@ namespace ClassicUO.Assets
                  */
                 data.Slice(0, (width * height)).Fill(0);
 
+                var src = (ushort *)entry.Data;
+
                 for (int i = 0; i < 22; ++i)
                 {
                     int start = 22 - (i + 1);
@@ -140,7 +139,7 @@ namespace ClassicUO.Assets
 
                     for (int j = start; j < end; ++j)
                     {
-                        data[pos++] = HuesHelper.Color16To32(_file.ReadUShort()) | 0xFF_00_00_00;
+                        data[pos++] = HuesHelper.Color16To32(*src++) | 0xFF_00_00_00;
                     }
                 }
 
@@ -151,15 +150,15 @@ namespace ClassicUO.Assets
 
                     for (int j = i; j < end; ++j)
                     {
-                        data[pos++] = HuesHelper.Color16To32(_file.ReadUShort()) | 0xFF_00_00_00;
+                        data[pos++] = HuesHelper.Color16To32(*src++) | 0xFF_00_00_00;
                     }
                 }
             }
             else
             {
-                var flags = _file.ReadUInt();
-                width = _file.ReadShort();
-                height = _file.ReadShort();
+                var header = (ArtEntryHeader*)entry.Data;
+                width = header->width;
+                height = header->height;
 
                 if (width <= 0 || height <= 0 || data.Length < (width * height))
                 {
@@ -175,7 +174,7 @@ namespace ClassicUO.Assets
 
                 ushort fixedGraphic = (ushort)(g - 0x4000);
 
-                if (ReadData(data, width, height, _file))
+                if (ReadData(data, width, height, header + 1))
                 {
                     // keep the cursor graphic check to cleanup edges
                     //if ((fixedGraphic >= 0x2053 && fixedGraphic <= 0x2062) || (fixedGraphic >= 0x206A && fixedGraphic <= 0x2079))
@@ -218,9 +217,9 @@ namespace ClassicUO.Assets
             return _data.AsSpan(0, width * height);
         }
 
-        private unsafe bool ReadData(Span<uint> pixels, int width, int height, DataReader file)
+        private unsafe bool ReadData(Span<uint> pixels, int width, int height, void *src)
         {
-            ushort* ptr = (ushort*)file.PositionAddress;
+            ushort* ptr = (ushort*)src;
             ushort* lineoffsets = ptr;
             byte* datastart = (byte*)ptr + height * 2;
             int x = 0;
@@ -360,6 +359,13 @@ namespace ClassicUO.Assets
                 Height = height
             };
         }
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    internal readonly struct ArtEntryHeader
+    {
+        public readonly uint flags;
+        public readonly short width, height;
     }
 
     public ref struct ArtInfo
