@@ -84,7 +84,7 @@ namespace ClassicUO.IO
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void SetData(byte* data, long length)
+        protected void SetData(byte* data, long length)
         {
             ReleaseData();
 
@@ -94,7 +94,7 @@ namespace ClassicUO.IO
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void SetData(byte[] data, long length)
+        protected void SetData(byte[] data, long length)
         {
             //fixed (byte* d = data)
             //    SetData(d, length);
