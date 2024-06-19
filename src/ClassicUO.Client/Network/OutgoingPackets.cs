@@ -4474,46 +4474,6 @@ namespace ClassicUO.Network
         }
 
 
-        public static void Send_UOLive_HashResponse(this NetClient socket, uint block, byte mapIndex, Span<ushort> checksums)
-        {
-            const byte ID = 0x3F;
-
-            int length = PacketsTable.GetPacketLength(ID);
-
-            var writer = new StackDataWriter(length < 0 ? 64 : length);
-
-            writer.WriteUInt8(ID);
-
-            if (length < 0)
-            {
-                writer.WriteZero(2);
-            }
-
-            writer.WriteUInt32BE(block);
-            writer.WriteZero(6);
-            writer.WriteUInt8(0xFF);
-            writer.WriteUInt8(mapIndex);
-
-            for (int i = 0; i < checksums.Length; ++i)
-            {
-                writer.WriteUInt16BE(checksums[i]);
-            }
-
-            if (length < 0)
-            {
-                writer.Seek(1, SeekOrigin.Begin);
-                writer.WriteUInt16BE((ushort)writer.BytesWritten);
-            }
-            else
-            {
-                writer.WriteZero(length - writer.BytesWritten);
-            }
-
-            socket.Send(writer.BufferWritten);
-            writer.Dispose();
-        }
-
-
         public static void Send_ToPlugins_AllSpells(this NetClient socket)
         {
             const byte ID = 0xBF;
