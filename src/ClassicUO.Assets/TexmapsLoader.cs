@@ -106,7 +106,7 @@ namespace ClassicUO.Assets
             });
         }
 
-        public TexmapInfo GetTexmap(uint idx)
+        public unsafe TexmapInfo GetTexmap(uint idx)
         {
             ref UOFileIndex entry = ref GetValidRefEntry((int)idx);
 
@@ -115,11 +115,9 @@ namespace ClassicUO.Assets
                 return default;
             }
 
-            _file.SetData(entry.Address, entry.FileSize);
-            _file.Seek(entry.Offset);
-
             var size = entry.Length == 0x2000 ? 64 : 128;
             var data = new uint[size * size];
+            var src = (ushort*)entry.Data;
 
             for (int i = 0; i < size; ++i)
             {
@@ -127,7 +125,7 @@ namespace ClassicUO.Assets
 
                 for (int j = 0; j < size; ++j)
                 {
-                    data[pos + j] = HuesHelper.Color16To32(_file.ReadUShort()) | 0xFF_00_00_00;
+                    data[pos + j] = HuesHelper.Color16To32(*src++) | 0xFF_00_00_00;
                 }
             }
 
