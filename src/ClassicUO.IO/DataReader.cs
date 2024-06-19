@@ -106,12 +106,6 @@ namespace ClassicUO.IO
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public void SetData(IntPtr data, long length)
-        {
-            SetData((byte*) data, length);
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void Seek(long idx)
         {
             Position = idx;
