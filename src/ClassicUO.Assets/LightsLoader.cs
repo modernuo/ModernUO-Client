@@ -78,6 +78,11 @@ namespace ClassicUO.Assets
             }
 
             int size = entry.Width * entry.Height;
+            if (entry.Length < size)
+            {
+                return default;
+            }
+
             var buffer = new uint[size];
             _file.SetData(entry.Address, entry.FileSize);
             _file.Seek(entry.Offset);
