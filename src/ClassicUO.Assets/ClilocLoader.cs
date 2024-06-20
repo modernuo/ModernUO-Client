@@ -271,7 +271,7 @@ namespace ClassicUO.Assets
             locations[totalArgs - 1].Item1 = trueStart;
             locations[totalArgs - 1].Item2 = i;
 
-            ValueStringBuilder sb = new ValueStringBuilder(baseCliloc.AsSpan());
+            using (ValueStringBuilder sb = new ValueStringBuilder(baseCliloc.AsSpan()))
             {
                 int index, pos = 0;
 
@@ -366,16 +366,14 @@ namespace ClassicUO.Assets
                 }
 
                 baseCliloc = sb.ToString();
-
-                sb.Dispose();
-
-                if (capitalize)
-                {
-                    baseCliloc = StringHelper.CapitalizeAllWords(baseCliloc);
-                }
-
-                return baseCliloc;
             }
+
+            if (capitalize)
+            {
+                baseCliloc = StringHelper.CapitalizeAllWords(baseCliloc);
+            }
+
+            return baseCliloc;
         }
     }
 }

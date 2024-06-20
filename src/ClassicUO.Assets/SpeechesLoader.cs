@@ -70,7 +70,7 @@ namespace ClassicUO.Assets
                         return;
                     }
 
-                    var file = new UOFile(path);
+                    using var file = new UOFile(path);
                     List<SpeechEntry> entries = new List<SpeechEntry>();
 
                     while (file.Position < file.Length)
@@ -87,7 +87,6 @@ namespace ClassicUO.Assets
                     }
 
                     _speech = entries.ToArray();
-                    file.Dispose();
                 }
             );
         }
