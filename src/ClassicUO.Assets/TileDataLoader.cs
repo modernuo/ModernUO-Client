@@ -69,8 +69,7 @@ namespace ClassicUO.Assets
 
                     FileSystemHelper.EnsureFileExists(path);
 
-                    var tileData = new UOFile(path);
-
+                    using var tileData = new UOFile(path);
 
                     bool isold = UOFileManager.Version < ClientVersion.CV_7090;
                     const int LAND_SIZE = 512;
@@ -177,8 +176,6 @@ namespace ClassicUO.Assets
                             ptr = (byte *)staticTilesPtr;
                         }
                     }
-
-                    tileData.Dispose();
                 }
             );
         }

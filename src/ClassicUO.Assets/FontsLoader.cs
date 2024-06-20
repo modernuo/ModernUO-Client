@@ -534,7 +534,7 @@ namespace ClassicUO.Assets
             int strLen = str.Length;
 
             Span<char> span = stackalloc char[strLen];
-            ValueStringBuilder sb = new ValueStringBuilder(span);
+            using ValueStringBuilder sb = new ValueStringBuilder(span);
 
             if (IsUsingHTML)
             {
@@ -583,11 +583,7 @@ namespace ClassicUO.Assets
                 sb.Append("...");
             }
 
-            string ss = sb.ToString();
-
-            sb.Dispose();
-
-            return ss;
+            return sb.ToString();
         }
 
         private unsafe FontInfo GeneratePixelsASCII(
@@ -1159,7 +1155,7 @@ namespace ClassicUO.Assets
             int strLen = str.Length;
 
             Span<char> span = stackalloc char[strLen];
-            ValueStringBuilder sb = new ValueStringBuilder(span);
+            using ValueStringBuilder sb = new ValueStringBuilder(span);
 
             if (IsUsingHTML)
             {
@@ -1214,11 +1210,7 @@ namespace ClassicUO.Assets
                 sb.Append("...");
             }
 
-            string ss = sb.ToString();
-
-            sb.Dispose();
-
-            return ss;
+            return sb.ToString();
         }
 
         public int GetWidthUnicode(byte font, string str)

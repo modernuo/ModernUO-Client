@@ -816,7 +816,7 @@ namespace ClassicUO.Assets
             41300000 anim 1246,1247 , group 0  (jack o lantern)
             */
 
-            var animSeq = new UOFileUop(
+            using var animSeq = new UOFileUop(
                 animationSequencePath,
                 "build/animationsequence/{0:D8}.bin"
             );
@@ -926,8 +926,6 @@ namespace ClassicUO.Assets
                     }
                 }
             }
-
-            animSeq.Dispose();
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
