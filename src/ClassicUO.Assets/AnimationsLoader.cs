@@ -834,8 +834,6 @@ namespace ClassicUO.Assets
                     continue;
                 }
 
-                animSeq.Seek(entry.Offset);
-
                 byte[] buffer = null;
 
                 Span<byte> span =
@@ -852,7 +850,7 @@ namespace ClassicUO.Assets
                     fixed (byte* destPtr = span)
                     {
                         var result = ZLib.Decompress(
-                            animSeq.PositionAddress,
+                            (IntPtr)entry.Data,
                             entry.Length,
                             0,
                             (IntPtr)destPtr,
