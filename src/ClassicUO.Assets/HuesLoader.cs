@@ -55,11 +55,11 @@ namespace ClassicUO.Assets
 
         public HuesGroup[] HuesRange { get; private set; }
 
-        public int HuesCount { get; private set; }
+        private int HuesCount;
 
-        public FloatHues[] Palette { get; private set; }
+        private FloatHues[] Palette;
 
-        public ushort[] RadarCol { get; private set; }
+        private ushort[] RadarCol;
 
         private void LoadHues()
         {
