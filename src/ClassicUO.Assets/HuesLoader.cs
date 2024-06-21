@@ -61,42 +61,52 @@ namespace ClassicUO.Assets
 
         public ushort[] RadarCol { get; private set; }
 
+        private void LoadHues()
+        {
+            string path = UOFileManager.GetUOFilePath("hues.mul");
+
+            FileSystemHelper.EnsureFileExists(path);
+
+            var file = new UOFile(path);
+            int groupSize = Marshal.SizeOf<HuesGroup>();
+            int entrycount = (int) file.Length / groupSize;
+            HuesCount = entrycount * 8;
+            HuesRange = new HuesGroup[entrycount];
+            ulong addr = (ulong) file.StartAddress;
+
+            for (int i = 0; i < entrycount; i++)
+            {
+                HuesRange[i] = Marshal.PtrToStructure<HuesGroup>((IntPtr) (addr + (ulong) (i * groupSize)));
+            }
+
+            file.Dispose();
+        }
+
+        private unsafe void LoadRadarCol()
+        {
+            string path = UOFileManager.GetUOFilePath("radarcol.mul");
+
+            FileSystemHelper.EnsureFileExists(path);
+
+            var radarcol = new UOFile(path);
+            RadarCol = new ushort[(int)(radarcol.Length >> 1)];
+
+            fixed (ushort* ptr = RadarCol)
+            {
+                Unsafe.CopyBlockUnaligned((void*)(byte*)ptr, radarcol.PositionAddress.ToPointer(), (uint)radarcol.Length);
+            }
+                    
+            radarcol.Dispose();
+        }
+
         public unsafe Task Load()
         {
             return Task.Run
             (
                 () =>
                 {
-                    string path = UOFileManager.GetUOFilePath("hues.mul");
-
-                    FileSystemHelper.EnsureFileExists(path);
-
-                    var file = new UOFile(path);
-                    int groupSize = Marshal.SizeOf<HuesGroup>();
-                    int entrycount = (int) file.Length / groupSize;
-                    HuesCount = entrycount * 8;
-                    HuesRange = new HuesGroup[entrycount];
-                    ulong addr = (ulong) file.StartAddress;
-
-                    for (int i = 0; i < entrycount; i++)
-                    {
-                        HuesRange[i] = Marshal.PtrToStructure<HuesGroup>((IntPtr) (addr + (ulong) (i * groupSize)));
-                    }
-
-                    path = UOFileManager.GetUOFilePath("radarcol.mul");
-
-                    FileSystemHelper.EnsureFileExists(path);
-
-                    var radarcol = new UOFile(path);
-                    RadarCol = new ushort[(int)(radarcol.Length >> 1)];
-
-                    fixed (ushort* ptr = RadarCol)
-                    {
-                        Unsafe.CopyBlockUnaligned((void*)(byte*)ptr, radarcol.PositionAddress.ToPointer(), (uint)radarcol.Length);
-                    }
-                    
-                    file.Dispose();
-                    radarcol.Dispose();
+                    LoadHues();
+                    LoadRadarCol();
                 }
             );
         }
