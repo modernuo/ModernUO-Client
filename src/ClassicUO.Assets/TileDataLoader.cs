@@ -111,7 +111,7 @@ namespace ClassicUO.Assets
                         {
                             ptr += 4;
 
-                            var staticTilesPtr = (StaticTilesOld *)tileData.PositionAddress;
+                            var staticTilesPtr = (StaticTilesOld *)ptr;
 
                             for (int j = 0; j < 32; j++, idx++, staticTilesPtr++)
                             {
