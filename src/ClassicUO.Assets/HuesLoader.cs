@@ -49,6 +49,8 @@ namespace ClassicUO.Assets
 
         public void Dispose()
         {
+            RadarCol?.Dispose();
+            RadarCol = null;
         }
 
         public static HuesLoader Instance => _instance ?? (_instance = new HuesLoader());
@@ -59,7 +61,7 @@ namespace ClassicUO.Assets
 
         private FloatHues[] Palette;
 
-        private ushort[] RadarCol;
+        private DataReader RadarCol;
 
         private void LoadHues()
         {
@@ -80,19 +82,13 @@ namespace ClassicUO.Assets
             }
         }
 
-        private unsafe void LoadRadarCol()
+        private void LoadRadarCol()
         {
             string path = UOFileManager.GetUOFilePath("radarcol.mul");
 
             FileSystemHelper.EnsureFileExists(path);
 
-            using var radarcol = new UOFile(path);
-            RadarCol = new ushort[(int)(radarcol.Length >> 1)];
-
-            fixed (ushort* ptr = RadarCol)
-            {
-                Unsafe.CopyBlockUnaligned((void*)(byte*)ptr, radarcol.PositionAddress.ToPointer(), (uint)radarcol.Length);
-            }
+            RadarCol = new UOFile(path);
         }
 
         public unsafe Task Load()
@@ -272,11 +268,11 @@ namespace ClassicUO.Assets
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public ushort GetRadarColorData(int c)
+        public unsafe ushort GetRadarColorData(int c)
         {
-            if (c >= 0 && c < RadarCol.Length)
+            if (c >= 0 && c < RadarCol.Length / 2)
             {
-                return RadarCol[c];
+                return ((ushort*)RadarCol.StartAddress)[c];
             }
 
             return 0;
