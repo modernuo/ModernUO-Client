@@ -71,35 +71,33 @@ namespace ClassicUO.Assets
 
                 if (File.Exists(pathdef))
                 {
-                    using (DefReader defReader = new DefReader(pathdef))
+                    using DefReader defReader = new DefReader(pathdef);
+                    while (defReader.Next())
                     {
-                        while (defReader.Next())
+                        int index = defReader.ReadInt();
+
+                        if (!IsValidIndex(index))
                         {
-                            int index = defReader.ReadInt();
+                            continue;
+                        }
 
-                            if (!IsValidIndex(index))
+                        int[] group = defReader.ReadGroup();
+
+                        if (group == null)
+                        {
+                            continue;
+                        }
+
+                        for (int i = 0; i < group.Length; i++)
+                        {
+                            int checkindex = group[i];
+
+                            if (!IsValidIndex(checkindex))
                             {
                                 continue;
                             }
 
-                            int[] group = defReader.ReadGroup();
-
-                            if (group == null)
-                            {
-                                continue;
-                            }
-
-                            for (int i = 0; i < group.Length; i++)
-                            {
-                                int checkindex = group[i];
-
-                                if (!IsValidIndex(checkindex))
-                                {
-                                    continue;
-                                }
-
-                                Entries[index] = Entries[checkindex];
-                            }
+                            Entries[index] = Entries[checkindex];
                         }
                     }
                 }

@@ -142,64 +142,62 @@ namespace ClassicUO.Assets
                 TileDataLoader tiledataLoader =  TileDataLoader.Instance;
                 ArtLoader artLoader = ArtLoader.Instance;
 
-                using (DefReader reader = new DefReader(pathdef, 1))
+                using DefReader reader = new DefReader(pathdef, 1);
+                while (reader.Next())
                 {
-                    while (reader.Next())
+                    int index = reader.ReadInt();
+
+                    if (index < 0 || index >= ArtLoader.MAX_LAND_DATA_INDEX_COUNT + tiledataLoader.StaticData.Length)
                     {
-                        int index = reader.ReadInt();
+                        continue;
+                    }
 
-                        if (index < 0 || index >= ArtLoader.MAX_LAND_DATA_INDEX_COUNT + tiledataLoader.StaticData.Length)
+                    int[] group = reader.ReadGroup();
+
+                    if (group == null)
+                    {
+                        continue;
+                    }
+
+                    for (int i = 0; i < group.Length; i++)
+                    {
+                        int checkIndex = group[i];
+
+                        if (checkIndex < 0 || checkIndex >= ArtLoader.MAX_LAND_DATA_INDEX_COUNT + tiledataLoader.StaticData.Length)
                         {
                             continue;
                         }
 
-                        int[] group = reader.ReadGroup();
-
-                        if (group == null)
+                        if (artLoader.IsValidIndex(index) && artLoader.IsValidIndex(checkIndex))
                         {
-                            continue;
+                            ref UOFileIndex currentEntry = ref artLoader.GetValidRefEntry(index);
+                            ref UOFileIndex checkEntry = ref artLoader.GetValidRefEntry(checkIndex);
+
+                            if (currentEntry.IsInvalid() && !checkEntry.IsInvalid())
+                            {
+                                artLoader.PatchEntry((uint)index, checkEntry);
+                            }
                         }
 
-                        for (int i = 0; i < group.Length; i++)
+                        if (index < ArtLoader.MAX_LAND_DATA_INDEX_COUNT &&
+                            checkIndex < ArtLoader.MAX_LAND_DATA_INDEX_COUNT &&
+                            checkIndex < tiledataLoader.LandData.Length &&
+                            index < tiledataLoader.LandData.Length &&
+                            !tiledataLoader.LandData[checkIndex].Equals(default) &&
+                            tiledataLoader.LandData[index].Equals(default))
                         {
-                            int checkIndex = group[i];
+                            tiledataLoader.LandData[index] = tiledataLoader.LandData[checkIndex];
 
-                            if (checkIndex < 0 || checkIndex >= ArtLoader.MAX_LAND_DATA_INDEX_COUNT + tiledataLoader.StaticData.Length)
-                            {
-                                continue;
-                            }
+                            break;
+                        }
 
-                            if (artLoader.IsValidIndex(index) && artLoader.IsValidIndex(checkIndex))
-                            {
-                                ref UOFileIndex currentEntry = ref artLoader.GetValidRefEntry(index);
-                                ref UOFileIndex checkEntry = ref artLoader.GetValidRefEntry(checkIndex);
+                        if (index >= ArtLoader.MAX_LAND_DATA_INDEX_COUNT && checkIndex >= ArtLoader.MAX_LAND_DATA_INDEX_COUNT &&
+                            index < tiledataLoader.StaticData.Length && checkIndex < tiledataLoader.StaticData.Length &&
+                            tiledataLoader.StaticData[index].Equals(default) && !tiledataLoader.StaticData[checkIndex].Equals(default))
+                        {
+                            tiledataLoader.StaticData[index] = tiledataLoader.StaticData[checkIndex];
 
-                                if (currentEntry.IsInvalid() && !checkEntry.IsInvalid())
-                                {
-                                    artLoader.PatchEntry((uint)index, checkEntry);
-                                }
-                            }
-
-                            if (index < ArtLoader.MAX_LAND_DATA_INDEX_COUNT &&
-                                checkIndex < ArtLoader.MAX_LAND_DATA_INDEX_COUNT &&
-                                checkIndex < tiledataLoader.LandData.Length &&
-                                index < tiledataLoader.LandData.Length &&
-                                !tiledataLoader.LandData[checkIndex].Equals(default) &&
-                                tiledataLoader.LandData[index].Equals(default))
-                            {
-                                tiledataLoader.LandData[index] = tiledataLoader.LandData[checkIndex];
-
-                                break;
-                            }
-
-                            if (index >= ArtLoader.MAX_LAND_DATA_INDEX_COUNT && checkIndex >= ArtLoader.MAX_LAND_DATA_INDEX_COUNT &&
-                                index < tiledataLoader.StaticData.Length && checkIndex < tiledataLoader.StaticData.Length &&
-                                tiledataLoader.StaticData[index].Equals(default) && !tiledataLoader.StaticData[checkIndex].Equals(default))
-                            {
-                                tiledataLoader.StaticData[index] = tiledataLoader.StaticData[checkIndex];
-
-                                break;
-                            }
+                            break;
                         }
                     }
                 }

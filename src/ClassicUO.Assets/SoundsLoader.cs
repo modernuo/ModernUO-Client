@@ -164,16 +164,14 @@ namespace ClassicUO.Assets
 
             if (File.Exists(path))
             {
-                using (StreamReader reader = new StreamReader(path))
-                {
-                    string line;
+                using StreamReader reader = new StreamReader(path);
 
-                    while ((line = reader.ReadLine()) != null)
+                string line;
+                while ((line = reader.ReadLine()) != null)
+                {
+                    if (TryParseConfigLine(line, out Tuple<int, string, bool> songData))
                     {
-                        if (TryParseConfigLine(line, out Tuple<int, string, bool> songData))
-                        {
-                            _musicData[songData.Item1] = new Tuple<string, bool>(songData.Item2, songData.Item3);
-                        }
+                        _musicData[songData.Item1] = new Tuple<string, bool>(songData.Item2, songData.Item3);
                     }
                 }
             }
