@@ -175,61 +175,59 @@ namespace ClassicUO.Assets
                     "equipment"
                 };
 
-                using (var reader = new StreamReader(File.OpenRead(path)))
+                using var reader = new StreamReader(File.OpenRead(path));
+
+                string line;
+                while ((line = reader.ReadLine()) != null)
                 {
-                    string line;
+                    line = line.Trim();
 
-                    while ((line = reader.ReadLine()) != null)
+                    if (line.Length == 0 || line[0] == '#' || !char.IsNumber(line[0]))
                     {
-                        line = line.Trim();
+                        continue;
+                    }
 
-                        if (line.Length == 0 || line[0] == '#' || !char.IsNumber(line[0]))
-                        {
-                            continue;
-                        }
+                    string[] parts = line.Split(
+                    new[] { '\t', ' ' },
+                    StringSplitOptions.RemoveEmptyEntries
+                    );
 
-                        string[] parts = line.Split(
-                            new[] { '\t', ' ' },
-                            StringSplitOptions.RemoveEmptyEntries
-                        );
+                    if (parts.Length < 3)
+                    {
+                        continue;
+                    }
 
-                        if (parts.Length < 3)
-                        {
-                            continue;
-                        }
+                    int id = int.Parse(parts[0]);
+                    string testType = parts[1].ToLower();
+                    int commentIdx = parts[2].IndexOf('#');
 
-                        int id = int.Parse(parts[0]);
-                        string testType = parts[1].ToLower();
-                        int commentIdx = parts[2].IndexOf('#');
+                    if (commentIdx > 0)
+                    {
+                        parts[2] = parts[2].Substring(0, commentIdx - 1);
+                    }
+                    else if (commentIdx == 0)
+                    {
+                        continue;
+                    }
 
-                        if (commentIdx > 0)
-                        {
-                            parts[2] = parts[2].Substring(0, commentIdx - 1);
-                        }
-                        else if (commentIdx == 0)
-                        {
-                            continue;
-                        }
+                    uint number = uint.Parse(parts[2], NumberStyles.HexNumber);
 
-                        uint number = uint.Parse(parts[2], NumberStyles.HexNumber);
-
-                        for (int i = 0; i < 5; i++)
-                        {
-                            if (
-                                testType.Equals(
-                                    typeNames[i],
-                                    StringComparison.InvariantCultureIgnoreCase
+                    for (int i = 0; i < 5; i++)
+                    {
+                        if (
+                            testType.Equals(
+                                typeNames[i],
+                                StringComparison.InvariantCultureIgnoreCase
                                 )
                             )
-                            {
-                                _mobTypes[id] = new MobTypeInfo()
+                        {
+                            _mobTypes[id] = new MobTypeInfo()
                                 {
                                     Type = (AnimationGroupsType)i,
                                     Flags = (AnimationFlags )(0x80000000 | number)
                                 };
 
-                                break;
-                            }
+                            break;
                         }
                     }
                 }
@@ -239,21 +237,19 @@ namespace ClassicUO.Assets
 
             if (File.Exists(file))
             {
-                using (DefReader defReader = new DefReader(file))
+                DefReader defReader = new DefReader(file);
+                while (defReader.Next())
                 {
-                    while (defReader.Next())
+                    ushort group = (ushort)defReader.ReadInt();
+
+                    if (group == 0xFFFF)
                     {
-                        ushort group = (ushort)defReader.ReadInt();
-
-                        if (group == 0xFFFF)
-                        {
-                            continue;
-                        }
-
-                        int replace = defReader.ReadGroupInt();
-
-                        GroupReplaces[0].Add((group, (byte)replace));
+                        continue;
                     }
+
+                    int replace = defReader.ReadGroupInt();
+
+                    GroupReplaces[0].Add((group, (byte)replace));
                 }
             }
 
@@ -261,21 +257,19 @@ namespace ClassicUO.Assets
 
             if (File.Exists(file))
             {
-                using (DefReader defReader = new DefReader(file))
+                using DefReader defReader = new DefReader(file);
+                while (defReader.Next())
                 {
-                    while (defReader.Next())
+                    ushort group = (ushort)defReader.ReadInt();
+
+                    if (group == 0xFFFF)
                     {
-                        ushort group = (ushort)defReader.ReadInt();
-
-                        if (group == 0xFFFF)
-                        {
-                            continue;
-                        }
-
-                        int replace = defReader.ReadGroupInt();
-
-                        GroupReplaces[1].Add((group, (byte)replace));
+                        continue;
                     }
+
+                    int replace = defReader.ReadGroupInt();
+
+                    GroupReplaces[1].Add((group, (byte)replace));
                 }
             }
 
@@ -520,38 +514,36 @@ namespace ClassicUO.Assets
 
             if (File.Exists(file))
             {
-                using (DefReader defReader = new DefReader(file, 5))
+                using DefReader defReader = new DefReader(file, 5);
+                while (defReader.Next())
                 {
-                    while (defReader.Next())
+                    ushort body = (ushort)defReader.ReadInt();
+                    ushort graphic = (ushort)defReader.ReadInt();
+                    ushort newGraphic = (ushort)defReader.ReadInt();
+                    int gump = defReader.ReadInt();
+
+                    if (gump > ushort.MaxValue)
                     {
-                        ushort body = (ushort)defReader.ReadInt();
-                        ushort graphic = (ushort)defReader.ReadInt();
-                        ushort newGraphic = (ushort)defReader.ReadInt();
-                        int gump = defReader.ReadInt();
-
-                        if (gump > ushort.MaxValue)
-                        {
-                            continue;
-                        }
-
-                        if (gump == 0)
-                        {
-                            gump = graphic;
-                        }
-                        else if (gump == 0xFFFF || gump == -1)
-                        {
-                            gump = newGraphic;
-                        }
-
-                        ushort color = (ushort)defReader.ReadInt();
-
-                        if (!_equipConv.TryGetValue(body, out var dict))
-                        {
-                            _equipConv[body] = (dict = new Dictionary<ushort, EquipConvData>());
-                        }
-
-                        dict[graphic] = new EquipConvData(newGraphic, (ushort)gump, color);
+                        continue;
                     }
+
+                    if (gump == 0)
+                    {
+                        gump = graphic;
+                    }
+                    else if (gump == 0xFFFF || gump == -1)
+                    {
+                        gump = newGraphic;
+                    }
+
+                    ushort color = (ushort)defReader.ReadInt();
+
+                    if (!_equipConv.TryGetValue(body, out var dict))
+                    {
+                        _equipConv[body] = (dict = new Dictionary<ushort, EquipConvData>());
+                    }
+
+                    dict[graphic] = new EquipConvData(newGraphic, (ushort)gump, color);
                 }
             }
         }
@@ -563,96 +555,95 @@ namespace ClassicUO.Assets
             if (!File.Exists(file))
                 return;
 
-            using (var defReader = new DefReader(file))
+            using var defReader = new DefReader(file);
+            while (defReader.Next())
             {
-                while (defReader.Next())
-                {
-                    ushort index = (ushort)defReader.ReadInt();
+                ushort index = (ushort)defReader.ReadInt();
 
-                    for (int i = 1; i < defReader.PartsCount; i++)
+                for (int i = 1; i < defReader.PartsCount; i++)
+                {
+                    int body = defReader.ReadInt();
+                    if (body < 0)
                     {
-                        int body = defReader.ReadInt();
-                        if (body < 0)
+                        continue;
+                    }
+
+
+                    // Ensure the client is allowed to use these new graphics
+                    if (i == 1)
+                    {
+                        if (!flags.HasFlag(BodyConvFlags.Anim1))
                         {
                             continue;
                         }
+                    }
+                    else if (i == 2)
+                    {
+                        if (!flags.HasFlag(BodyConvFlags.Anim2))
+                        {
+                            continue;
+                        }
+                    }
 
-                        // Ensure the client is allowed to use these new graphics
-                        if (i == 1)
+                    // NOTE: for fileindex >= 3 the client automatically accepts body conversion.
+                    //       Probably it ignores the flags
+                    /*else if (i == 3)
+                    {
+                        if (flags.HasFlag(BodyConvFlags.Anim3))
                         {
-                            if (!flags.HasFlag(BodyConvFlags.Anim1))
-                            {
-                                continue;
-                            }
+                            continue;
                         }
-                        else if (i == 2)
+                    }
+                    else if (i == 4)
+                    {
+                        if (flags.HasFlag(BodyConvFlags.Anim4))
                         {
-                            if (!flags.HasFlag(BodyConvFlags.Anim2))
-                            {
-                                continue;
-                            }
+                            continue;
                         }
+                    }
+                    */
 
-                        // NOTE: for fileindex >= 3 the client automatically accepts body conversion.
-                        //       Probably it ignores the flags
-                        /*else if (i == 3)
-                        {
-                            if (flags.HasFlag(BodyConvFlags.Anim3))
-                            {
-                                continue;
-                            }
-                        }
-                        else if (i == 4)
-                        {
-                            if (flags.HasFlag(BodyConvFlags.Anim4))
-                            {
-                                continue;
-                            }
-                        }
-                        */
-
-                        sbyte mountedHeightOffset = 0;
-                        if (i == 1)
-                        {
-                            if (index == 0x00C0 || index == 793)
-                            {
-                                mountedHeightOffset = -9;
-                            }
-                        }
-                        else if (i == 2)
-                        {
-                            if (index == 0x0579)
-                            {
-                                mountedHeightOffset = 9;
-                            }
-                        }
-                        else if (i == 4)
+                    sbyte mountedHeightOffset = 0;
+                    if (i == 1)
+                    {
+                        if (index == 0x00C0 || index == 793)
                         {
                             mountedHeightOffset = -9;
-
-                            if (index == 0x0115 || index == 0x00C0)
-                            {
-                                mountedHeightOffset = 0;
-                            }
-                            else if (index == 0x042D)
-                            {
-                                mountedHeightOffset = 3;
-                            }
                         }
-
-                        if (i >= _files.Length || !FileExists(i))
-                        {
-                            continue;
-                        }
-
-                        _bodyConvInfos[index] = new BodyConvInfo()
-                        {
-                            FileIndex = i,
-                            Graphic = (ushort)body,
-                            AnimType = CalculateTypeByGraphic((ushort)body, i),
-                            MountHeight = mountedHeightOffset
-                        };
                     }
+                    else if (i == 2)
+                    {
+                        if (index == 0x0579)
+                        {
+                            mountedHeightOffset = 9;
+                        }
+                    }
+                    else if (i == 4)
+                    {
+                        mountedHeightOffset = -9;
+
+                        if (index == 0x0115 || index == 0x00C0)
+                        {
+                            mountedHeightOffset = 0;
+                        }
+                        else if (index == 0x042D)
+                        {
+                            mountedHeightOffset = 3;
+                        }
+                    }
+
+                    if (i >= _files.Length || !FileExists(i))
+                    {
+                        continue;
+                    }
+
+                    _bodyConvInfos[index] = new BodyConvInfo()
+                    {
+                        FileIndex = i,
+                        Graphic = (ushort)body,
+                        AnimType = CalculateTypeByGraphic((ushort)body, i),
+                        MountHeight = mountedHeightOffset
+                    };
                 }
             }
         }
@@ -664,35 +655,33 @@ namespace ClassicUO.Assets
             if (!File.Exists(file))
                 return;
 
-            using (var defReader = new DefReader(file, 1))
+            using var defReader = new DefReader(file, 1);
+            while (defReader.Next())
             {
-                while (defReader.Next())
+                int index = defReader.ReadInt();
+
+                if (_bodyInfos.TryGetValue(index, out var info) && info.Graphic != 0)
                 {
-                    int index = defReader.ReadInt();
+                    continue;
+                }
 
-                    if (_bodyInfos.TryGetValue(index, out var info) && info.Graphic != 0)
-                    {
-                        continue;
-                    }
+                int[] group = defReader.ReadGroup();
 
-                    int[] group = defReader.ReadGroup();
+                if (group == null)
+                {
+                    continue;
+                }
 
-                    if (group == null)
-                    {
-                        continue;
-                    }
+                int color = defReader.ReadInt();
 
-                    int color = defReader.ReadInt();
+                //Yes, this is actually how this is supposed to work.
+                var checkIndex = group.Length >= 3 ? group[2] : group[0];
 
-                    //Yes, this is actually how this is supposed to work.
-                    var checkIndex = group.Length >= 3 ? group[2] : group[0];
-
-                    _bodyInfos[index] = new BodyInfo()
+                _bodyInfos[index] = new BodyInfo()
                     {
                         Graphic = (ushort)checkIndex,
                         Hue = (ushort)color
                     };
-                }
             }
         }
 
@@ -703,33 +692,31 @@ namespace ClassicUO.Assets
             if (!File.Exists(file))
                 return;
 
-            using (var defReader = new DefReader(file, 1))
+            using var defReader = new DefReader(file, 1);
+            while (defReader.Next())
             {
-                while (defReader.Next())
+                int index = defReader.ReadInt();
+
+                if (_corpseInfos.TryGetValue(index, out var b) && b.Graphic != 0)
                 {
-                    int index = defReader.ReadInt();
+                    continue;
+                }
 
-                    if (_corpseInfos.TryGetValue(index, out var b) && b.Graphic != 0)
-                    {
-                        continue;
-                    }
+                int[] group = defReader.ReadGroup();
 
-                    int[] group = defReader.ReadGroup();
+                if (group == null)
+                {
+                    continue;
+                }
 
-                    if (group == null)
-                    {
-                        continue;
-                    }
+                int color = defReader.ReadInt();
+                int checkIndex = group.Length >= 3 ? group[2] : group[0];
 
-                    int color = defReader.ReadInt();
-                    int checkIndex = group.Length >= 3 ? group[2] : group[0];
-
-                    _corpseInfos[index] = new BodyInfo()
+                _corpseInfos[index] = new BodyInfo()
                     {
                         Graphic = (ushort)checkIndex,
                         Hue = (ushort)color
                     };
-                }
             }
         }
 
