@@ -42,10 +42,96 @@ using System.Threading.Tasks;
 
 namespace ClassicUO.Assets
 {
+    public sealed class FacetLoader : IDisposable
+    {
+        private readonly DataReader file;
+
+        public bool HasData => file.HasData;
+
+        public FacetLoader(string path)
+        {
+            file = new UOFile(path);
+        }
+
+        public void Dispose()
+        {
+            file.Dispose();
+        }
+
+        public MultiMapInfo Load
+        (
+            int width,
+            int height,
+            int startx,
+            int starty,
+            int endx,
+            int endy
+        )
+        {
+            if (!file.HasData)
+            {
+                return default;
+            }
+
+            file.Seek(0);
+
+            int w = file.ReadShort();
+
+            int h = file.ReadShort();
+
+            if (w < 1 || h < 1)
+            {
+                return default;
+            }
+
+            int startX = startx;
+            int endX = endx <= 0 ? width : endx;
+
+            int startY = starty;
+            int endY = endy <= 0 ? height : endy;
+
+            int pwidth = endX - startX;
+            int pheight = endY - startY;
+
+            var pixels = new uint[pwidth * pheight];
+
+            for (int y = 0; y < h; y++)
+            {
+                int x = 0;
+
+                int colorCount = file.ReadInt() / 3;
+
+                for (int i = 0; i < colorCount; i++)
+                {
+                    int size = file.ReadByte();
+
+                    uint color = HuesHelper.Color16To32(file.ReadUShort()) | 0xFF_00_00_00;
+
+                    for (int j = 0; j < size; j++)
+                    {
+                        if (x >= startX && x < endX && y >= startY && y < endY)
+                        {
+                            pixels[(y - startY) * pwidth + (x - startX)] = color;
+                        }
+
+                        x++;
+                    }
+                }
+            }
+
+            return new MultiMapInfo()
+            {
+                Pixels = pixels,
+                Width = pwidth,
+                Height = pheight,
+            };
+        }
+    }
+
     public sealed class MultiMapLoader : IDisposable
     {
         private static MultiMapLoader _instance;
-        private DataReader[] _facets;
+        private FacetLoader[] _facets;
         private DataReader _file;
 
         private MultiMapLoader()
@@ -91,7 +177,7 @@ namespace ClassicUO.Assets
 
                     for (int i = 0; i < facetFiles.Length; i++)
                     {
-                        _facets[i] = new UOFile(facetFiles[i]);
+                        _facets[i] = new FacetLoader(facetFiles[i]);
                     }
                 }
             );
@@ -261,58 +347,7 @@ namespace ClassicUO.Assets
                 return default;
             }
 
-            _facets[facet].Seek(0);
-
-            int w = _facets[facet].ReadShort();
-
-            int h = _facets[facet].ReadShort();
-
-            if (w < 1 || h < 1)
-            {
-                return default;
-            }
-
-            int startX = startx;
-            int endX = endx <= 0 ? width : endx;
-
-            int startY = starty;
-            int endY = endy <= 0 ? height : endy;
-
-            int pwidth = endX - startX;
-            int pheight = endY - startY;
-
-            var pixels = new uint[pwidth * pheight];
-
-            for (int y = 0; y < h; y++)
-            {
-                int x = 0;
-
-                int colorCount = _facets[facet].ReadInt() / 3;
-
-                for (int i = 0; i < colorCount; i++)
-                {
-                    int size = _facets[facet].ReadByte();
-
-                    uint color = HuesHelper.Color16To32(_facets[facet].ReadUShort()) | 0xFF_00_00_00;
-
-                    for (int j = 0; j < size; j++)
-                    {
-                        if (x >= startX && x < endX && y >= startY && y < endY)
-                        {
-                            pixels[(y - startY) * pwidth + (x - startX)] = color;
-                        }
-
-                        x++;
-                    }
-                }
-            }
-
-            return new MultiMapInfo()
-            {
-                Pixels = pixels,
-                Width = pwidth,
-                Height = pheight,
-            };
+            return _facets[facet].Load(width, height, startx, starty, endx, endy);
         }
 
         public MultiMapInfo LoadFacetOrMap
