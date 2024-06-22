@@ -42,7 +42,7 @@ using System.Threading.Tasks;
 
 namespace ClassicUO.Assets
 {
-    public class MultiMapLoader : UOFileLoader
+    public class MultiMapLoader : IDisposable
     {
         private static MultiMapLoader _instance;
         private DataReader[] _facets;
@@ -50,6 +50,11 @@ namespace ClassicUO.Assets
 
         private MultiMapLoader()
         {
+        }
+
+        public void Dispose()
+        {
+            // TODO implement
         }
 
         public static MultiMapLoader Instance => _instance ?? (_instance = new MultiMapLoader());
