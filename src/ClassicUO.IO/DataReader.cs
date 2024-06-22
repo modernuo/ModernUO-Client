@@ -53,6 +53,7 @@ namespace ClassicUO.IO
         public long Length { get; private set; }
 
         public IntPtr StartAddress => (IntPtr) _data;
+        public IntPtr EndAddress => StartAddress + (IntPtr)Length;
 
         public IntPtr PositionAddress => (IntPtr) (_data + Position);
 
