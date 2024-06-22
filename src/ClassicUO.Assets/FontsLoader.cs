@@ -44,6 +44,11 @@ using System.Threading.Tasks;
 
 namespace ClassicUO.Assets
 {
+    public sealed class ASCIIFont
+    {
+        public readonly FontCharacterData[] characters = new FontCharacterData[224];
+    }
+
     public sealed class UniFont : IDisposable
     {
         public const int SPACE_WIDTH = 8;
@@ -160,7 +165,7 @@ namespace ClassicUO.Assets
         private DataReader fonts;
         private readonly UniFont[] uniFonts = new UniFont[20];
 
-        private FontCharacterData[,] _fontData;
+        private ASCIIFont[] asciiFonts;
         private readonly Dictionary<ushort, WebLink> _webLinks = new Dictionary<ushort, WebLink>();
         private readonly int[] _offsetCharTable = { 2, 0, 2, 2, 0, 0, 2, 2, 0, 0 };
         private readonly int[] _offsetSymbolTable = { 1, 0, 1, 1, -1, 0, 1, 1, 0, 0 };
@@ -185,7 +190,7 @@ namespace ClassicUO.Assets
 
         private bool IsUsingHTML { get; set; }
 
-        private static unsafe FontCharacterData[,] LoadASCIIFonts(DataReader file)
+        private static unsafe ASCIIFont[] LoadASCIIFonts(DataReader file)
         {
             int fontHeaderSize = sizeof(FontHeader);
             int FontCount = 0;
@@ -230,11 +235,12 @@ namespace ClassicUO.Assets
                 return null;
             }
 
-            var fonts = new FontCharacterData[FontCount, 224];
+            var fonts = new ASCIIFont[FontCount];
             file.Seek(0);
 
             for (int i = 0; i < FontCount; i++)
             {
+                fonts[i] = new ASCIIFont();
                 byte header = file.ReadByte();
 
                 for (int j = 0; j < 224; j++)
@@ -247,7 +253,7 @@ namespace ClassicUO.Assets
                     byte w = file.ReadByte();
                     byte h = file.ReadByte();
                     file.Skip(1);
-                    fonts[i, j] = new FontCharacterData(
+                    fonts[i].characters[j] = new FontCharacterData(
                         w,
                         h,
                         (ushort*)file.PositionAddress
@@ -277,7 +283,7 @@ namespace ClassicUO.Assets
                     }
                 }
 
-                _fontData = LoadASCIIFonts(fonts);
+                asciiFonts = LoadASCIIFonts(fonts);
 
                 if (uniFonts[1] == null)
                 {
@@ -288,7 +294,7 @@ namespace ClassicUO.Assets
 
         private bool ASCIIFontExists(byte font)
         {
-            return _fontData != null && font < _fontData.GetLength(0);
+            return asciiFonts != null && font < asciiFonts.Length;
         }
 
         public bool UnicodeFontExists(byte font)
@@ -321,7 +327,7 @@ namespace ClassicUO.Assets
 
             foreach (char c in str)
             {
-                textLength += _fontData[font, GetASCIIIndex(c)].Width;
+                textLength += asciiFonts[font].characters[GetASCIIIndex(c)].Width;
             }
 
             return textLength;
@@ -334,16 +340,18 @@ namespace ClassicUO.Assets
                 return 0;
             }
 
+            var asciiFont = asciiFonts[font];
+
             if (c < NOPRINT_CHARS)
             {
-                return _fontData[font, 0].Width;
+                return asciiFont.characters[0].Width;
             }
 
             int index = c - NOPRINT_CHARS;
 
-            if (index < _fontData.GetLength(1))
+            if (index < asciiFont.characters.Length)
             {
-                return _fontData[font, index].Width;
+                return asciiFont.characters[index].Width;
             }
 
             return 0;
@@ -539,6 +547,7 @@ namespace ClassicUO.Assets
                 return string.Empty;
             }
 
+            var asciiFont = asciiFonts[font];
             int strLen = str.Length;
 
             Span<char> span = stackalloc char[strLen];
@@ -569,14 +578,14 @@ namespace ClassicUO.Assets
 
             if (isCropped)
             {
-                width -= _fontData[font, '.' - NOPRINT_CHARS].Width * 3;
+                width -= asciiFont.characters['.' - NOPRINT_CHARS].Width * 3;
             }
 
             int textLength = 0;
 
             foreach (char c in str)
             {
-                textLength += _fontData[font, GetASCIIIndex(c)].Width;
+                textLength += asciiFont.characters[GetASCIIIndex(c)].Width;
 
                 if (textLength > width)
                 {
@@ -609,6 +618,7 @@ namespace ClassicUO.Assets
                 return FontInfo.Empty;
             }
 
+            var asciiFont = asciiFonts[font];
             int len = str.Length;
 
             if (len == 0)
@@ -708,10 +718,7 @@ namespace ClassicUO.Assets
 
                         int offsY = GetFontOffsetY(font, index);
 
-                        ref FontCharacterData fcd = ref _fontData[
-                            font,
-                            GetASCIIIndex(ptr.Data[i].Item)
-                        ];
+                        ref FontCharacterData fcd = ref asciiFont.characters[GetASCIIIndex(ptr.Data[i].Item)];
 
                         int dw = fcd.Width;
                         int dh = fcd.Height;
@@ -830,6 +837,8 @@ namespace ClassicUO.Assets
                 return null;
             }
 
+            var asciiFont = asciiFonts[font];
+
             MultilinesFontInfo info = new MultilinesFontInfo();
             info.Reset();
             info.Align = align;
@@ -865,7 +874,7 @@ namespace ClassicUO.Assets
                     charCount = 0;
                 }
 
-                ref FontCharacterData fcd = ref _fontData[font, GetASCIIIndex(si)];
+                ref FontCharacterData fcd = ref asciiFont.characters[GetASCIIIndex(si)];
                 int eval = ptr.CharStart;
 
                 if (si == '\n' || ptr.Width + readWidth + fcd.Width > width)
@@ -3631,6 +3640,8 @@ namespace ClassicUO.Assets
                 return (x, y);
             }
 
+            var asciiFont = asciiFonts[font];
+
             if (width == 0)
             {
                 width = GetWidthASCII(font, str);
@@ -3679,7 +3690,7 @@ namespace ClassicUO.Assets
                 {
                     for (int i = 0; i < len; i++)
                     {
-                        x += _fontData[font, GetASCIIIndex(info.Data[i].Item)].Width;
+                        x += asciiFont.characters[GetASCIIIndex(info.Data[i].Item)].Width;
 
                         if (info.CharStart + i + 1 == pos)
                         {
