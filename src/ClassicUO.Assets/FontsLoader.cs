@@ -49,6 +49,37 @@ namespace ClassicUO.Assets
         private const byte NOPRINT_CHARS = 32;
         public readonly FontCharacterData[] characters = new FontCharacterData[224];
 
+        public unsafe bool Load(DataReader file)
+        {
+            byte header = file.ReadByte();
+
+            for (int j = 0; j < 224; j++)
+            {
+                if (file.Position + 3 >= file.Length)
+                {
+                    return false;
+                }
+
+                byte w = file.ReadByte();
+                byte h = file.ReadByte();
+                file.Skip(1);
+
+                if (file.Position + w * h * sizeof(ushort) > file.Length)
+                {
+                    return false;
+                }
+
+                characters[j] = new FontCharacterData(
+                    w,
+                    h,
+                    (ushort*)file.PositionAddress
+                    );
+                file.Skip(w * h * sizeof(ushort));
+            }
+
+            return true;
+        }
+
         /// <summary> Get the index in ASCII fonts of a character. </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static int GetIndex(char c)
@@ -236,76 +267,18 @@ namespace ClassicUO.Assets
 
         private bool IsUsingHTML { get; set; }
 
-        private static unsafe ASCIIFont[] LoadASCIIFonts(DataReader file)
+        private static ASCIIFont[] LoadASCIIFonts(DataReader file)
         {
-            int fontHeaderSize = sizeof(FontHeader);
-            int FontCount = 0;
+            var fonts = Array.Empty<ASCIIFont>();
 
-            while (file.Position < file.Length)
+            while (!file.IsEOF)
             {
-                bool exit = false;
-                file.Skip(1);
-
-                for (int i = 0; i < 224; i++)
-                {
-                    FontHeader* fh = (FontHeader*)file.PositionAddress;
-
-                    if (file.Position + fontHeaderSize >= file.Length)
-                    {
-                        continue;
-                    }
-
-                    file.Skip(fontHeaderSize);
-                    int bcount = fh->Width * fh->Height * 2;
-
-                    if (file.Position + bcount > file.Length)
-                    {
-                        exit = true;
-
-                        break;
-                    }
-
-                    file.Skip(bcount);
-                }
-
-                if (exit)
-                {
+                ASCIIFont font = new ASCIIFont();
+                if (!font.Load(file))
                     break;
-                }
 
-                FontCount++;
-            }
-
-            if (FontCount < 1)
-            {
-                return null;
-            }
-
-            var fonts = new ASCIIFont[FontCount];
-            file.Seek(0);
-
-            for (int i = 0; i < FontCount; i++)
-            {
-                fonts[i] = new ASCIIFont();
-                byte header = file.ReadByte();
-
-                for (int j = 0; j < 224; j++)
-                {
-                    if (file.Position + 3 >= file.Length)
-                    {
-                        continue;
-                    }
-
-                    byte w = file.ReadByte();
-                    byte h = file.ReadByte();
-                    file.Skip(1);
-                    fonts[i].characters[j] = new FontCharacterData(
-                        w,
-                        h,
-                        (ushort*)file.PositionAddress
-                        );
-                    file.Skip(w * h * sizeof(ushort));
-                }
+                Array.Resize(ref fonts, fonts.Length + 1);
+                fonts[fonts.Length - 1] = font;
             }
 
             return fonts;
