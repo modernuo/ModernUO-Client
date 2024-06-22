@@ -185,7 +185,81 @@ namespace ClassicUO.Assets
 
         private bool IsUsingHTML { get; set; }
 
-        public unsafe Task Load()
+        private static unsafe FontCharacterData[,] LoadASCIIFonts(DataReader file)
+        {
+            int fontHeaderSize = sizeof(FontHeader);
+            int FontCount = 0;
+
+            while (file.Position < file.Length)
+            {
+                bool exit = false;
+                file.Skip(1);
+
+                for (int i = 0; i < 224; i++)
+                {
+                    FontHeader* fh = (FontHeader*)file.PositionAddress;
+
+                    if (file.Position + fontHeaderSize >= file.Length)
+                    {
+                        continue;
+                    }
+
+                    file.Skip(fontHeaderSize);
+                    int bcount = fh->Width * fh->Height * 2;
+
+                    if (file.Position + bcount > file.Length)
+                    {
+                        exit = true;
+
+                        break;
+                    }
+
+                    file.Skip(bcount);
+                }
+
+                if (exit)
+                {
+                    break;
+                }
+
+                FontCount++;
+            }
+
+            if (FontCount < 1)
+            {
+                return null;
+            }
+
+            var fonts = new FontCharacterData[FontCount, 224];
+            file.Seek(0);
+
+            for (int i = 0; i < FontCount; i++)
+            {
+                byte header = file.ReadByte();
+
+                for (int j = 0; j < 224; j++)
+                {
+                    if (file.Position + 3 >= file.Length)
+                    {
+                        continue;
+                    }
+
+                    byte w = file.ReadByte();
+                    byte h = file.ReadByte();
+                    file.Skip(1);
+                    fonts[i, j] = new FontCharacterData(
+                        w,
+                        h,
+                        (ushort*)file.PositionAddress
+                        );
+                    file.Skip(w * h * sizeof(ushort));
+                }
+            }
+
+            return fonts;
+        }
+
+        public Task Load()
         {
             return Task.Run(() =>
             {
@@ -203,74 +277,7 @@ namespace ClassicUO.Assets
                     }
                 }
 
-                int fontHeaderSize = sizeof(FontHeader);
-                int FontCount = 0;
-
-                while (fonts.Position < fonts.Length)
-                {
-                    bool exit = false;
-                    fonts.Skip(1);
-
-                    for (int i = 0; i < 224; i++)
-                    {
-                        FontHeader* fh = (FontHeader*)fonts.PositionAddress;
-
-                        if (fonts.Position + fontHeaderSize >= fonts.Length)
-                        {
-                            continue;
-                        }
-
-                        fonts.Skip(fontHeaderSize);
-                        int bcount = fh->Width * fh->Height * 2;
-
-                        if (fonts.Position + bcount > fonts.Length)
-                        {
-                            exit = true;
-
-                            break;
-                        }
-
-                        fonts.Skip(bcount);
-                    }
-
-                    if (exit)
-                    {
-                        break;
-                    }
-
-                    FontCount++;
-                }
-
-                if (FontCount < 1)
-                {
-                    return;
-                }
-
-                _fontData = new FontCharacterData[FontCount, 224];
-                fonts.Seek(0);
-
-                for (int i = 0; i < FontCount; i++)
-                {
-                    byte header = fonts.ReadByte();
-
-                    for (int j = 0; j < 224; j++)
-                    {
-                        if (fonts.Position + 3 >= fonts.Length)
-                        {
-                            continue;
-                        }
-
-                        byte w = fonts.ReadByte();
-                        byte h = fonts.ReadByte();
-                        fonts.Skip(1);
-                        _fontData[i, j] = new FontCharacterData(
-                            w,
-                            h,
-                            (ushort*)fonts.PositionAddress
-                        );
-                        fonts.Skip(w * h * sizeof(ushort));
-                    }
-                }
+                _fontData = LoadASCIIFonts(fonts);
 
                 if (uniFonts[1] == null)
                 {
