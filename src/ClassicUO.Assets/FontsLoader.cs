@@ -179,13 +179,13 @@ namespace ClassicUO.Assets
 
         public static FontsLoader Instance => _instance ?? (_instance = new FontsLoader());
 
-        public int FontCount { get; private set; }
+        private int FontCount;
 
-        public bool UnusePartialHue { get; set; } = false;
+        private bool UnusePartialHue { get; set; } = false;
 
         public bool RecalculateWidthByInfo { get; set; } = false;
 
-        public bool IsUsingHTML { get; set; }
+        private bool IsUsingHTML { get; set; }
 
         public unsafe Task Load()
         {
