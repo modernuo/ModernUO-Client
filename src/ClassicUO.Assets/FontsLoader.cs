@@ -49,35 +49,37 @@ namespace ClassicUO.Assets
         private const byte NOPRINT_CHARS = 32;
         public readonly FontCharacterData[] characters = new FontCharacterData[224];
 
-        public unsafe bool Load(DataReader file)
+        public unsafe IntPtr Load(IntPtr ptr, IntPtr end)
         {
-            byte header = file.ReadByte();
+            ptr += sizeof(ASCIIFontHeader);
+            if (ptr > end)
+            {
+                return ptr;
+            }
 
             for (int j = 0; j < 224; j++)
             {
-                if (file.Position + 3 >= file.Length)
+                var header = (ASCIIFontCharacterHeader *)ptr;
+                ptr = (IntPtr)(header + 1);
+                if (ptr > end)
                 {
-                    return false;
+                    return ptr;
                 }
 
-                byte w = file.ReadByte();
-                byte h = file.ReadByte();
-                file.Skip(1);
+                byte w = header->Width;
+                byte h = header->Height;
 
-                if (file.Position + w * h * sizeof(ushort) > file.Length)
+                var data = (ushort *)ptr;
+                ptr = (IntPtr)(data + w * h);
+                if (ptr > end)
                 {
-                    return false;
+                    return ptr;
                 }
 
-                characters[j] = new FontCharacterData(
-                    w,
-                    h,
-                    (ushort*)file.PositionAddress
-                    );
-                file.Skip(w * h * sizeof(ushort));
+                characters[j] = new FontCharacterData(w, h, data);
             }
 
-            return true;
+            return ptr;
         }
 
         /// <summary> Get the index in ASCII fonts of a character. </summary>
@@ -269,12 +271,16 @@ namespace ClassicUO.Assets
 
         private static ASCIIFont[] LoadASCIIFonts(DataReader file)
         {
+            var ptr = file.StartAddress;
+            var end = file.EndAddress;
+
             var fonts = Array.Empty<ASCIIFont>();
 
-            while (!file.IsEOF)
+            while (ptr < end)
             {
                 ASCIIFont font = new ASCIIFont();
-                if (!font.Load(file))
+                ptr = font.Load(ptr, end);
+                if (ptr > end)
                     break;
 
                 Array.Resize(ref fonts, fonts.Length + 1);
@@ -3738,9 +3744,15 @@ namespace ClassicUO.Assets
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    public ref struct FontHeader
+    public readonly struct ASCIIFontHeader
     {
-        public byte Width,
+        public readonly byte Unknown;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    public readonly struct ASCIIFontCharacterHeader
+    {
+        public readonly byte Width,
             Height,
             Unknown;
     }
