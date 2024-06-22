@@ -54,7 +54,10 @@ namespace ClassicUO.Assets
 
         public void Dispose()
         {
-            // TODO implement
+            _file?.Dispose();
+
+            foreach (var i in _facets)
+                i.Dispose();
         }
 
         public static MultiMapLoader Instance => _instance ?? (_instance = new MultiMapLoader());
