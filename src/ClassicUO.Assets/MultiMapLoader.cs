@@ -256,7 +256,7 @@ namespace ClassicUO.Assets
             int endy
         )
         {
-            if (_file == null || facet < 0 || facet > MapLoader.MAPS_COUNT || facet >= _facets.Length || _facets[facet] == null)
+            if (facet < 0 || facet > MapLoader.MAPS_COUNT || facet >= _facets.Length || _facets[facet] == null)
             {
                 return default;
             }
