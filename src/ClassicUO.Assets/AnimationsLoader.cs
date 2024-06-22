@@ -392,7 +392,7 @@ namespace ClassicUO.Assets
             var offsetAddress = CalculateOffset(body, animType, flags, out var actionCount);
 
             var offset = fileIdx.StartAddress.ToInt64() + offsetAddress;
-            var end = fileIdx.StartAddress.ToInt64() + fileIdx.Length;
+            var end = fileIdx.EndAddress.ToInt64();
 
             if (offset >= end)
             {
