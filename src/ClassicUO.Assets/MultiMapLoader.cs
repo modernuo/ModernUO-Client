@@ -62,7 +62,7 @@ namespace ClassicUO.Assets
 
         public static MultiMapLoader Instance => _instance ?? (_instance = new MultiMapLoader());
 
-        public bool HasFacet(int map)
+        private bool HasFacet(int map)
         {
             return map >= 0 && map < _facets.Length && _facets[map] != null;
         }
@@ -97,7 +97,7 @@ namespace ClassicUO.Assets
             );
         }
 
-        public unsafe MultiMapInfo LoadMap
+        private unsafe MultiMapInfo LoadMap
         (
             int width,
             int height,
@@ -245,7 +245,7 @@ namespace ClassicUO.Assets
             };
         }
 
-        public MultiMapInfo LoadFacet
+        private MultiMapInfo LoadFacet
         (
             int facet,
             int width,
@@ -313,6 +313,22 @@ namespace ClassicUO.Assets
                 Width = pwidth,
                 Height = pheight,
             };
+        }
+
+        public MultiMapInfo LoadFacetOrMap
+        (
+            int? facet,
+            int width,
+            int height,
+            int startx,
+            int starty,
+            int endx,
+            int endy
+        )
+        {
+            return facet.HasValue && HasFacet(facet.Value) ?
+                LoadFacet(facet.Value, width, height, startx, starty, endx, endy) :
+                LoadMap(width, height, startx, starty, endx, endy);
         }
     }
 
