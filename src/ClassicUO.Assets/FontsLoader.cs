@@ -46,7 +46,54 @@ namespace ClassicUO.Assets
 {
     public sealed class ASCIIFont
     {
+        private const byte NOPRINT_CHARS = 32;
         public readonly FontCharacterData[] characters = new FontCharacterData[224];
+
+        /// <summary> Get the index in ASCII fonts of a character. </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static int GetIndex(char c)
+        {
+            byte ch = (byte)c; // ASCII fonts cover only 256 characters
+
+            if (ch < NOPRINT_CHARS)
+            {
+                return 0;
+            }
+
+            return ch - NOPRINT_CHARS;
+        }
+
+        public ref FontCharacterData GetCharacter(char c)
+        {
+            return ref characters[GetIndex(c)];
+        }
+
+        public int GetWidth(string str)
+        {
+            if (string.IsNullOrEmpty(str))
+            {
+                return 0;
+            }
+
+            int textLength = 0;
+
+            foreach (char c in str)
+            {
+                textLength += GetCharacter(c).Width;
+            }
+
+            return textLength;
+        }
+
+        public int GetCharWidth(char c)
+        {
+            if (c == 0 || c == '\r')
+            {
+                return 0;
+            }
+
+            return GetCharacter(c).Width;
+        }
     }
 
     public sealed class UniFont : IDisposable
@@ -115,7 +162,6 @@ namespace ClassicUO.Assets
         private const int UOFONT_CROPTEXTURE = 0x0200;
         private const int UOFONT_FIXEDHEIGHT = 0x0400;
         private const int MAX_HTML_TEXT_HEIGHT = 18;
-        private const byte NOPRINT_CHARS = 32;
         private const float ITALIC_FONT_KOEFFICIENT = 3.3f;
 
         private static FontsLoader _instance;
@@ -302,59 +348,24 @@ namespace ClassicUO.Assets
             return font < 20 && uniFonts[font] != null;
         }
 
-        /// <summary> Get the index in ASCII fonts of a character. </summary>
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private int GetASCIIIndex(char c)
-        {
-            byte ch = (byte)c; // ASCII fonts cover only 256 characters
-
-            if (ch < NOPRINT_CHARS)
-            {
-                return 0;
-            }
-
-            return ch - NOPRINT_CHARS;
-        }
-
         public int GetWidthASCII(byte font, string str)
         {
-            if (!ASCIIFontExists(font) || string.IsNullOrEmpty(str))
+            if (!ASCIIFontExists(font))
             {
                 return 0;
             }
 
-            int textLength = 0;
-
-            foreach (char c in str)
-            {
-                textLength += asciiFonts[font].characters[GetASCIIIndex(c)].Width;
-            }
-
-            return textLength;
+            return asciiFonts[font].GetWidth(str);
         }
 
         public int GetCharWidthASCII(byte font, char c)
         {
-            if (!ASCIIFontExists(font) || c == 0 || c == '\r')
+            if (!ASCIIFontExists(font))
             {
                 return 0;
             }
 
-            var asciiFont = asciiFonts[font];
-
-            if (c < NOPRINT_CHARS)
-            {
-                return asciiFont.characters[0].Width;
-            }
-
-            int index = c - NOPRINT_CHARS;
-
-            if (index < asciiFont.characters.Length)
-            {
-                return asciiFont.characters[index].Width;
-            }
-
-            return 0;
+            return asciiFonts[font].GetCharWidth(c);
         }
 
         public int GetWidthExASCII(
@@ -578,14 +589,14 @@ namespace ClassicUO.Assets
 
             if (isCropped)
             {
-                width -= asciiFont.characters['.' - NOPRINT_CHARS].Width * 3;
+                width -= asciiFont.GetCharacter('.').Width * 3;
             }
 
             int textLength = 0;
 
             foreach (char c in str)
             {
-                textLength += asciiFont.characters[GetASCIIIndex(c)].Width;
+                textLength += asciiFont.GetCharWidth(c);
 
                 if (textLength > width)
                 {
@@ -718,7 +729,7 @@ namespace ClassicUO.Assets
 
                         int offsY = GetFontOffsetY(font, index);
 
-                        ref FontCharacterData fcd = ref asciiFont.characters[GetASCIIIndex(ptr.Data[i].Item)];
+                        ref FontCharacterData fcd = ref asciiFont.GetCharacter(ptr.Data[i].Item);
 
                         int dw = fcd.Width;
                         int dh = fcd.Height;
@@ -874,7 +885,7 @@ namespace ClassicUO.Assets
                     charCount = 0;
                 }
 
-                ref FontCharacterData fcd = ref asciiFont.characters[GetASCIIIndex(si)];
+                ref FontCharacterData fcd = ref asciiFont.GetCharacter(si);
                 int eval = ptr.CharStart;
 
                 if (si == '\n' || ptr.Width + readWidth + fcd.Width > width)
@@ -3644,7 +3655,7 @@ namespace ClassicUO.Assets
 
             if (width == 0)
             {
-                width = GetWidthASCII(font, str);
+                width = asciiFont.GetWidth(str);
             }
 
             MultilinesFontInfo info = GetInfoASCII(font, str, str.Length, align, flags, width);
@@ -3690,7 +3701,7 @@ namespace ClassicUO.Assets
                 {
                     for (int i = 0; i < len; i++)
                     {
-                        x += asciiFont.characters[GetASCIIIndex(info.Data[i].Item)].Width;
+                        x += asciiFont.GetCharWidth(info.Data[i].Item);
 
                         if (info.CharStart + i + 1 == pos)
                         {
