@@ -179,8 +179,6 @@ namespace ClassicUO.Assets
 
         public static FontsLoader Instance => _instance ?? (_instance = new FontsLoader());
 
-        private int FontCount;
-
         private bool UnusePartialHue { get; set; } = false;
 
         public bool RecalculateWidthByInfo { get; set; } = false;
@@ -206,7 +204,7 @@ namespace ClassicUO.Assets
                 }
 
                 int fontHeaderSize = sizeof(FontHeader);
-                FontCount = 0;
+                int FontCount = 0;
 
                 while (fonts.Position < fonts.Length)
                 {
@@ -245,8 +243,6 @@ namespace ClassicUO.Assets
 
                 if (FontCount < 1)
                 {
-                    FontCount = 0;
-
                     return;
                 }
 
@@ -283,6 +279,11 @@ namespace ClassicUO.Assets
             });
         }
 
+        private bool ASCIIFontExists(byte font)
+        {
+            return _fontData != null && font < _fontData.GetLength(0);
+        }
+
         public bool UnicodeFontExists(byte font)
         {
             return font < 20 && uniFonts[font] != null;
@@ -304,7 +305,7 @@ namespace ClassicUO.Assets
 
         public int GetWidthASCII(byte font, string str)
         {
-            if (font >= FontCount || string.IsNullOrEmpty(str))
+            if (!ASCIIFontExists(font) || string.IsNullOrEmpty(str))
             {
                 return 0;
             }
@@ -321,7 +322,7 @@ namespace ClassicUO.Assets
 
         public int GetCharWidthASCII(byte font, char c)
         {
-            if (font >= FontCount || c == 0 || c == '\r')
+            if (!ASCIIFontExists(font) || c == 0 || c == '\r')
             {
                 return 0;
             }
@@ -349,7 +350,7 @@ namespace ClassicUO.Assets
             ushort flags
         )
         {
-            if (font > FontCount || string.IsNullOrEmpty(text))
+            if (!ASCIIFontExists(font) || string.IsNullOrEmpty(text))
             {
                 return 0;
             }
@@ -526,7 +527,7 @@ namespace ClassicUO.Assets
             ushort flags
         )
         {
-            if (font >= FontCount || string.IsNullOrEmpty(str))
+            if (!ASCIIFontExists(font) || string.IsNullOrEmpty(str))
             {
                 return string.Empty;
             }
@@ -596,7 +597,7 @@ namespace ClassicUO.Assets
             bool saveHitmap
         )
         {
-            if (font >= FontCount)
+            if (!ASCIIFontExists(font))
             {
                 return FontInfo.Empty;
             }
@@ -817,7 +818,7 @@ namespace ClassicUO.Assets
             bool countspaces = false
         )
         {
-            if (font >= FontCount)
+            if (!ASCIIFontExists(font))
             {
                 return null;
             }
@@ -3618,7 +3619,7 @@ namespace ClassicUO.Assets
                     break;
             }
 
-            if (font >= FontCount || string.IsNullOrEmpty(str))
+            if (!ASCIIFontExists(font) || string.IsNullOrEmpty(str))
             {
                 return (x, y);
             }
