@@ -148,9 +148,9 @@ namespace ClassicUO.Assets
 
         public static MultiMapLoader Instance => _instance ?? (_instance = new MultiMapLoader());
 
-        private bool HasFacet(int map)
+        private FacetLoader GetFacetLoader(int map)
         {
-            return map >= 0 && map < _facets.Length && _facets[map] != null;
+            return map >= 0 && map < _facets.Length ? _facets[map] : null;
         }
 
         public Task Load()
@@ -331,25 +331,6 @@ namespace ClassicUO.Assets
             };
         }
 
-        private MultiMapInfo LoadFacet
-        (
-            int facet,
-            int width,
-            int height,
-            int startx,
-            int starty,
-            int endx,
-            int endy
-        )
-        {
-            if (facet < 0 || facet > MapLoader.MAPS_COUNT || facet >= _facets.Length || _facets[facet] == null)
-            {
-                return default;
-            }
-
-            return _facets[facet].Load(width, height, startx, starty, endx, endy);
-        }
-
         public MultiMapInfo LoadFacetOrMap
         (
             int? facet,
@@ -361,9 +342,16 @@ namespace ClassicUO.Assets
             int endy
         )
         {
-            return facet.HasValue && HasFacet(facet.Value) ?
-                LoadFacet(facet.Value, width, height, startx, starty, endx, endy) :
-                LoadMap(width, height, startx, starty, endx, endy);
+            if (facet.HasValue)
+            {
+                var facetLoader = GetFacetLoader(facet.Value);
+                if (facetLoader != null)
+                {
+                    return facetLoader.Load(width, height, startx, starty, endx, endy);
+                }
+            }
+
+            return LoadMap(width, height, startx, starty, endx, endy);
         }
     }
 
