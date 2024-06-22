@@ -113,7 +113,6 @@ namespace ClassicUO.Assets
                 TexmapsLoader.Instance.Load(),
                 SpeechesLoader.Instance.Load(),
                 LightsLoader.Instance.Load(),
-                MultiMapLoader.Instance.Load()
             };
 
             if (!Task.WhenAll(tasks).Wait(TimeSpan.FromSeconds(10)))

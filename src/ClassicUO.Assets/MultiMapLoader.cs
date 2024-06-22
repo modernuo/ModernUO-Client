@@ -131,7 +131,7 @@ namespace ClassicUO.Assets
     public sealed class MultiMapLoader : IDisposable
     {
         private static MultiMapLoader _instance;
-        private FacetLoader[] _facets;
+        private FacetLoader[] _facets = Array.Empty<FacetLoader>();
         private DataReader _file;
 
         private MultiMapLoader()
@@ -143,44 +143,35 @@ namespace ClassicUO.Assets
             _file?.Dispose();
 
             foreach (var i in _facets)
-                i.Dispose();
+                i?.Dispose();
         }
 
         public static MultiMapLoader Instance => _instance ?? (_instance = new MultiMapLoader());
 
         private FacetLoader GetFacetLoader(int map)
         {
-            return map >= 0 && map < _facets.Length ? _facets[map] : null;
-        }
+            if (map < 0)
+            {
+                return null;
+            }
 
-        public Task Load()
-        {
-            return Task.Run
-            (
-                () =>
+            if (map >= _facets.Length || _facets[map] == null)
+            {
+                string path = UOFileManager.GetUOFilePath($"facet{map:D2}.mul");
+                if (!File.Exists(path))
                 {
-                    string path = UOFileManager.GetUOFilePath("Multimap.rle");
-
-                    if (File.Exists(path))
-                    {
-                        _file = new UOFile(path);
-                    }
-                    
-                    var facetFiles = Directory.GetFiles(UOFileManager.BasePath, "*.mul", SearchOption.TopDirectoryOnly)
-                        .Select(s => Regex.Match(s, "facet0.*\\.mul", RegexOptions.IgnoreCase))
-                        .Where(s => s.Success)
-                        .Select(s => Path.Combine(UOFileManager.BasePath, s.Value))
-                        .OrderBy(s => s)
-                        .ToArray();
-
-                    _facets = new UOFile[facetFiles.Length];
-
-                    for (int i = 0; i < facetFiles.Length; i++)
-                    {
-                        _facets[i] = new FacetLoader(facetFiles[i]);
-                    }
+                    return null;
                 }
-            );
+
+                if (map >= _facets.Length)
+                {
+                    Array.Resize(ref _facets, map);
+                }
+
+                _facets[map] = new FacetLoader(path);
+            }
+
+            return _facets[map];
         }
 
         private unsafe MultiMapInfo LoadMap
@@ -193,7 +184,18 @@ namespace ClassicUO.Assets
             int endy
         )
         {
-            if (_file == null || _file.Length == 0)
+            if (_file == null)
+            {
+                string path = UOFileManager.GetUOFilePath("Multimap.rle");
+                if (!File.Exists(path))
+                {
+                    return default;
+                }
+
+                _file = new UOFile(path);
+            }
+
+            if (!_file.HasData)
             {
                 Log.Warn("MultiMap.rle is not loaded!");
 
