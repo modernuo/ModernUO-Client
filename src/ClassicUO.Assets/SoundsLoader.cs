@@ -106,7 +106,7 @@ namespace ClassicUO.Assets
             {
                 int index = reader.ReadInt();
 
-                if (index < 0 || index >= MAX_SOUND_DATA_INDEX_COUNT || index >= _file.Length || Entries[index].Length != 0)
+                if (index < 0 || index >= MAX_SOUND_DATA_INDEX_COUNT || index >= Entries.Length || Entries[index].Length != 0)
                 {
                     continue;
                 }
