@@ -55,7 +55,7 @@ namespace ClassicUO.IO
             for (int i = 0; i < count; i++, idxPtr++)
             {
                 ref UOFileIndex e = ref entries[i];
-                e.Address = dataFile.StartAddress;   // .mul mmf address
+                e.FileAddress = dataFile.StartAddress;   // .mul mmf address
                 e.FileSize = (uint) dataFile.Length; // .mul mmf length
                 e.Offset = idxPtr->Offset; // .idx offset
                 e.Length = idxPtr->Length;  // .idx length

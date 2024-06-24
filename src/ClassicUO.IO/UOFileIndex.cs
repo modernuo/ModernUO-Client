@@ -48,7 +48,7 @@ namespace ClassicUO.IO
             ushort hue = 0
         )
         {
-            Address = address;
+            FileAddress = address;
             FileSize = fileSize;
             Offset = offset;
             Length = length;
@@ -60,7 +60,7 @@ namespace ClassicUO.IO
             AnimOffset = 0;
         }
 
-        public IntPtr Address;
+        public IntPtr FileAddress;
         public uint FileSize;
         public long Offset;
         public int Length;
@@ -89,10 +89,10 @@ namespace ClassicUO.IO
          */
         public bool IsInvalid()
         {
-            return Address == IntPtr.Zero;
+            return FileAddress == IntPtr.Zero;
         }
 
-        public unsafe byte* Data => (byte *)(Address + Offset);
+        public unsafe byte* Data => (byte *)(FileAddress + Offset);
     }
 
     public struct UOFileIndex5D
