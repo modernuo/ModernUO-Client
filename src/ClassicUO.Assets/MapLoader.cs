@@ -111,6 +111,7 @@ namespace ClassicUO.Assets
             _fileIdxStatics?.Dispose();
             _mapDif?.Dispose();
             _mapDifl?.Dispose();
+            _staDif?.Dispose();
             _staDifi?.Dispose();
             _staDifl?.Dispose();
         }
