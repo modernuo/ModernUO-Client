@@ -45,7 +45,7 @@ namespace ClassicUO.IO
             public uint Size;
         };
 
-        public static unsafe void FillEntries(DataReader dataFile, DataReader idxFile, ref UOFileIndex[] entries)
+        public static unsafe void FillEntries(PinnedBuffer dataFile, PinnedBuffer idxFile, ref UOFileIndex[] entries)
         {
             int count = (int) idxFile.Length / 12;
             entries = new UOFileIndex[count];
