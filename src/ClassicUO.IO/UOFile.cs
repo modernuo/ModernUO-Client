@@ -37,7 +37,7 @@ using System.IO.MemoryMappedFiles;
 
 namespace ClassicUO.IO
 {
-    public class UOFile : DataReader
+    public class UOFile : PinnedBuffer
     {
         public UOFile(string filepath)
         {

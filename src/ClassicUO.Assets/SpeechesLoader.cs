@@ -71,18 +71,19 @@ namespace ClassicUO.Assets
                     }
 
                     using var file = new UOFile(path);
+                    var reader = new DataReader(file);
                     List<SpeechEntry> entries = new List<SpeechEntry>();
 
-                    while (file.Position < file.Length)
+                    while (!reader.IsEOF)
                     {
-                        int id = file.ReadUShortReversed();
-                        int length = file.ReadUShortReversed();
+                        int id = reader.ReadUShortReversed();
+                        int length = reader.ReadUShortReversed();
 
                         if (length > 0)
                         {
-                            entries.Add(new SpeechEntry(id, string.Intern(Encoding.UTF8.GetString((byte*) file.PositionAddress, length))));
+                            entries.Add(new SpeechEntry(id, string.Intern(Encoding.UTF8.GetString((byte*) reader.PositionAddress, length))));
 
-                            file.Skip(length);
+                            reader.Skip(length);
                         }
                     }
 

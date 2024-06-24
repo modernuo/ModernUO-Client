@@ -56,39 +56,40 @@ namespace ClassicUO.IO
         
         private void Load()
         {
-            Seek(0);
+            var reader = new DataReader(this);
+            reader.Seek(0);
 
-            if (ReadUInt() != UOP_MAGIC_NUMBER)
+            if (reader.ReadUInt() != UOP_MAGIC_NUMBER)
             {
                 throw new ArgumentException("Bad uop file");
             }
 
-            uint version = ReadUInt();
-            uint format_timestamp = ReadUInt();
-            long nextBlock = ReadLong();
-            uint block_size = ReadUInt();
-            int count = ReadInt();
+            uint version = reader.ReadUInt();
+            uint format_timestamp = reader.ReadUInt();
+            long nextBlock = reader.ReadLong();
+            uint block_size = reader.ReadUInt();
+            int count = reader.ReadInt();
 
 
-            Seek(nextBlock);
+            reader.Seek(nextBlock);
             int total = 0;
             int real_total = 0;
 
             do
             {
-                int filesCount = ReadInt();
-                nextBlock = ReadLong();
+                int filesCount = reader.ReadInt();
+                nextBlock = reader.ReadLong();
                 total += filesCount;
 
                 for (int i = 0; i < filesCount; i++)
                 {
-                    long offset = ReadLong();
-                    int headerLength = ReadInt();
-                    int compressedLength = ReadInt();
-                    int decompressedLength = ReadInt();
-                    ulong hash = ReadULong();
-                    uint data_hash = ReadUInt();
-                    short flag = ReadShort();
+                    long offset = reader.ReadLong();
+                    int headerLength = reader.ReadInt();
+                    int compressedLength = reader.ReadInt();
+                    int decompressedLength = reader.ReadInt();
+                    ulong hash = reader.ReadULong();
+                    uint data_hash = reader.ReadUInt();
+                    short flag = reader.ReadShort();
                     int length = flag == 1 ? compressedLength : decompressedLength;
 
                     if (offset == 0)
@@ -101,10 +102,10 @@ namespace ClassicUO.IO
 
                     if (_hasExtra)
                     {
-                        long curpos = Position;
-                        Seek(offset);
-                        short extra1 = (short) ReadInt();
-                        short extra2 = (short) ReadInt();
+                        long curpos = reader.Position;
+                        reader.Seek(offset);
+                        short extra1 = (short) reader.ReadInt();
+                        short extra2 = (short) reader.ReadInt();
 
                         _hashes.Add
                         (
@@ -121,7 +122,7 @@ namespace ClassicUO.IO
                             )
                         );
 
-                        Seek(curpos);
+                        reader.Seek(curpos);
                     }
                     else
                     {
@@ -140,7 +141,7 @@ namespace ClassicUO.IO
                     }
                 }
 
-                Seek(nextBlock);
+                reader.Seek(nextBlock);
             } while (nextBlock != 0);
 
             TotalEntriesCount = real_total;
