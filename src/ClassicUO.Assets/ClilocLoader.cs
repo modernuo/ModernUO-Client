@@ -36,6 +36,7 @@ using ClassicUO.Utility.Logging;
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
 
@@ -73,39 +74,29 @@ namespace ClassicUO.Assets
             return Load();
         }
 
-        private void LoadFile(string path)
+        private unsafe void LoadFile(string path)
         {
-            using var reader = new BinaryReader(new FileStream(path, FileMode.Open, FileAccess.Read));
+            using PinnedBuffer file = new UOFile(path);
 
-            reader.ReadInt32();
-            reader.ReadInt16();
+            var ptr = file.Data;
+            var end = ptr + file.Length;
 
-            byte[] buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(1024);
+            // skip file header
+            ptr += 6;
 
-            try
+            while (true)
             {
-                while (reader.BaseStream.Length != reader.BaseStream.Position)
+                var header = (ClilocRecordHeader*)ptr;
+                ptr = (byte*)(header + 1);
+                if (ptr > end || ptr + header->Length > end)
                 {
-                    int number = reader.ReadInt32();
-                    byte flag = reader.ReadByte();
-                    int length = reader.ReadInt16();
-
-                    if (length > buffer.Length)
-                    {
-                        System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
-
-                        buffer = System.Buffers.ArrayPool<byte>.Shared.Rent((length + 1023) & ~1023);
-                    }
-
-                    reader.Read(buffer, 0, length);
-                    string text = string.Intern(Encoding.UTF8.GetString(buffer, 0, length));
-
-                    _entries[number] = text;
+                    break;
                 }
-            }
-            finally
-            {
-                System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
+
+                string text = string.Intern(Encoding.UTF8.GetString(ptr, header->Length));
+                _entries[header->Number] = text;
+
+                ptr += header->Length;
             }
         }
 
@@ -347,5 +338,13 @@ namespace ClassicUO.Assets
 
             return baseCliloc;
         }
+    }
+
+    [StructLayout(LayoutKind.Sequential, Pack = 1)]
+    internal readonly struct ClilocRecordHeader
+    {
+        public readonly int Number;
+        public readonly byte Flag;
+        public readonly short Length;
     }
 }
