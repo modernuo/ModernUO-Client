@@ -70,6 +70,9 @@ namespace ClassicUO.IO
         public ushort Hue;
         public sbyte AnimOffset;
 
+        public IntPtr StartAddress => FileAddress + (IntPtr)Offset;
+        public IntPtr EndAddress => StartAddress + (IntPtr)Length;
+
         public bool IsValid()
         {
             return Offset >= 0 && Length > 0 && Offset != 0x0000_0000_FFFF_FFFF;
