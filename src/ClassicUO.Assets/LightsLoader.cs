@@ -40,7 +40,7 @@ namespace ClassicUO.Assets
     public class LightsLoader : UOFileLoader
     {
         private static LightsLoader _instance;
-        private DataReader _file;
+        private PinnedBuffer _file;
 
         public const int MAX_LIGHTS_DATA_INDEX_COUNT = 100;
 

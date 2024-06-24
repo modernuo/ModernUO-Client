@@ -132,7 +132,7 @@ namespace ClassicUO.Assets
     public sealed class UniFont : IDisposable
     {
         public const int SPACE_WIDTH = 8;
-        private readonly DataReader file;
+        private readonly PinnedBuffer file;
 
         public UniFont(string path)
         {
@@ -241,7 +241,7 @@ namespace ClassicUO.Assets
         /* these variables are not actually used; they only exist to
            hold a reference on the memory mappings to keep the GC from
            releasing them */
-        private DataReader fonts;
+        private PinnedBuffer fonts;
         private readonly UniFont[] uniFonts = new UniFont[20];
 
         private ASCIIFont[] asciiFonts;
@@ -269,7 +269,7 @@ namespace ClassicUO.Assets
 
         private bool IsUsingHTML { get; set; }
 
-        private static ASCIIFont[] LoadASCIIFonts(DataReader file)
+        private static ASCIIFont[] LoadASCIIFonts(PinnedBuffer file)
         {
             var ptr = file.StartAddress;
             var end = file.EndAddress;

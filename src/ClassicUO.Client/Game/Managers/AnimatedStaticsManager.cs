@@ -46,7 +46,7 @@ namespace ClassicUO.Game.Managers
 
         public unsafe void Initialize()
         {
-            DataReader file = AnimDataLoader.Instance.AnimDataFile;
+            PinnedBuffer file = AnimDataLoader.Instance.AnimDataFile;
 
             if (file == null)
             {
@@ -85,7 +85,7 @@ namespace ClassicUO.Game.Managers
                 return;
             }
 
-            DataReader file = AnimDataLoader.Instance.AnimDataFile;
+            PinnedBuffer file = AnimDataLoader.Instance.AnimDataFile;
 
             if (file == null)
             {

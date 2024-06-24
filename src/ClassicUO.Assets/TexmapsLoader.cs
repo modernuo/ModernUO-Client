@@ -41,7 +41,7 @@ namespace ClassicUO.Assets
     public class TexmapsLoader : UOFileLoader
     {
         private static TexmapsLoader _instance;
-        private DataReader _file;
+        private PinnedBuffer _file;
 
         public const int MAX_LAND_TEXTURES_DATA_INDEX_COUNT = 0x4000;
 

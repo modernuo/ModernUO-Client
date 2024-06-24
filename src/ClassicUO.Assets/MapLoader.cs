@@ -49,14 +49,14 @@ namespace ClassicUO.Assets
         private readonly FileInfo mapFileInfo;
         public long MapFileLength => mapFileInfo.Length;
 
-        private DataReader _fileMap;
-        private DataReader _fileStatics;
-        private DataReader _fileIdxStatics;
+        private PinnedBuffer _fileMap;
+        private PinnedBuffer _fileStatics;
+        private PinnedBuffer _fileIdxStatics;
 
         private readonly bool isuop;
 
-        private DataReader _mapDif;
-        private DataReader _staDif;
+        private PinnedBuffer _mapDif;
+        private PinnedBuffer _staDif;
 
         public int Width { get; private set; }
         public int Height { get; private set; }
@@ -182,9 +182,9 @@ namespace ClassicUO.Assets
             int staticblocksize = sizeof(StaticsBlock);
             int maxblockcount = Width * Height;
             BlockData = new IndexMap[maxblockcount];
-            DataReader file = _fileMap;
-            DataReader fileidx = _fileIdxStatics;
-            DataReader staticfile = _fileStatics;
+            PinnedBuffer file = _fileMap;
+            PinnedBuffer fileidx = _fileIdxStatics;
+            PinnedBuffer staticfile = _fileStatics;
 
             if (inherit != null)
             {
@@ -317,8 +317,8 @@ namespace ClassicUO.Assets
 
             if (mapPatchesCount != 0 && _mapDif != null && _mapDif.HasData)
             {
-                DataReader dif = _mapDif;
-                using DataReader difl = new UOFile(UOFileManager.GetUOFilePath($"mapdifl{idx}.mul"));
+                PinnedBuffer dif = _mapDif;
+                using PinnedBuffer difl = new UOFile(UOFileManager.GetUOFilePath($"mapdifl{idx}.mul"));
                 if (!difl.HasData)
                 {
                     return false;
@@ -345,8 +345,8 @@ namespace ClassicUO.Assets
 
             if (staticPatchesCount != 0 && _staDif != null && _staDif.HasData)
             {
-                using DataReader difl = new UOFile(UOFileManager.GetUOFilePath($"stadifl{idx}.mul"));
-                using DataReader difi = new UOFile(UOFileManager.GetUOFilePath($"stadifi{idx}.mul"));
+                using PinnedBuffer difl = new UOFile(UOFileManager.GetUOFilePath($"stadifl{idx}.mul"));
+                using PinnedBuffer difi = new UOFile(UOFileManager.GetUOFilePath($"stadifi{idx}.mul"));
                 if (!difl.HasData || !difi.HasData)
                 {
                     return false;
