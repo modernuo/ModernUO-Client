@@ -42,7 +42,7 @@ namespace ClassicUO.Assets
     public class ArtLoader : UOFileLoader
     {
         private static ArtLoader _instance;
-        private DataReader _file;
+        private IDisposable _file;
         private readonly ushort _graphicMask;
 
         [ThreadStatic]
@@ -89,12 +89,14 @@ namespace ClassicUO.Assets
 
                     if (File.Exists(filePath) && File.Exists(idxPath))
                     {
-                        _file = new UOFile(filePath);
+                        var file = new UOFile(filePath);
 
                         using (var idxFile = new UOFile(idxPath))
                         {
-                            UOFileMul.FillEntries(_file, idxFile, ref Entries);
+                            UOFileMul.FillEntries(file, idxFile, ref Entries);
                         }
+
+                        _file = file;
                     }
                 }
             });
