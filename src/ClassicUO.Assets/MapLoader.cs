@@ -56,10 +56,7 @@ namespace ClassicUO.Assets
         private readonly bool isuop;
 
         private DataReader _mapDif;
-        private DataReader _mapDifl;
         private DataReader _staDif;
-        private DataReader _staDifi;
-        private DataReader _staDifl;
 
         public int Width { get; private set; }
         public int Height { get; private set; }
@@ -110,10 +107,7 @@ namespace ClassicUO.Assets
             _fileStatics?.Dispose();
             _fileIdxStatics?.Dispose();
             _mapDif?.Dispose();
-            _mapDifl?.Dispose();
             _staDif?.Dispose();
-            _staDifi?.Dispose();
-            _staDifl?.Dispose();
         }
 
         public void SetSize(int width, int height)
@@ -137,15 +131,16 @@ namespace ClassicUO.Assets
                     _fileMap = new UOFile(path);
                 }
 
-                path = UOFileManager.GetUOFilePath($"mapdifl{i}.mul");
-
+                path = UOFileManager.GetUOFilePath($"mapdif{i}.mul");
                 if (File.Exists(path))
                 {
-                    _mapDifl = new UOFile(path);
-                    _mapDif = new UOFile(UOFileManager.GetUOFilePath($"mapdif{i}.mul"));
-                    _staDifl = new UOFile(UOFileManager.GetUOFilePath($"stadifl{i}.mul"));
-                    _staDifi = new UOFile(UOFileManager.GetUOFilePath($"stadifi{i}.mul"));
-                    _staDif = new UOFile(UOFileManager.GetUOFilePath($"stadif{i}.mul"));
+                    _mapDif = new UOFile(path);
+                }
+
+                path = UOFileManager.GetUOFilePath($"stadif{i}.mul");
+                if (File.Exists(path))
+                {
+                    _staDif = new UOFile(path);
                 }
             }
 
@@ -320,19 +315,17 @@ namespace ClassicUO.Assets
 
             int maxBlockCount = BlocksCount;
 
-            if (mapPatchesCount != 0)
+            if (mapPatchesCount != 0 && _mapDif != null && _mapDif.HasData)
             {
-                DataReader difl = _mapDifl;
                 DataReader dif = _mapDif;
-
-                if (difl == null || dif == null || difl.Length == 0 || dif.Length == 0)
+                using DataReader difl = new UOFile(UOFileManager.GetUOFilePath($"mapdifl{idx}.mul"));
+                if (!difl.HasData)
                 {
                     return false;
                 }
 
                 mapPatchesCount = Math.Min(mapPatchesCount, (int) difl.Length >> 2);
 
-                difl.Seek(0);
                 dif.Seek(0);
 
                 for (int j = 0; j < mapPatchesCount; j++)
@@ -350,12 +343,11 @@ namespace ClassicUO.Assets
                 }
             }
 
-            if (staticPatchesCount != 0)
+            if (staticPatchesCount != 0 && _staDif != null && _staDif.HasData)
             {
-                DataReader difl = _staDifl;
-                DataReader difi = _staDifi;
-
-                if (difl == null || difi == null || _staDif == null || difl.Length == 0 || difi.Length == 0 || _staDif.Length == 0)
+                using DataReader difl = new UOFile(UOFileManager.GetUOFilePath($"stadifl{idx}.mul"));
+                using DataReader difi = new UOFile(UOFileManager.GetUOFilePath($"stadifi{idx}.mul"));
+                if (!difl.HasData || !difi.HasData)
                 {
                     return false;
                 }
@@ -363,9 +355,6 @@ namespace ClassicUO.Assets
                 IntPtr startAddress = _staDif.StartAddress;
 
                 staticPatchesCount = Math.Min(staticPatchesCount, (int) difl.Length >> 2);
-
-                difl.Seek(0);
-                difi.Seek(0);
 
                 int sizeOfStaicsBlock = sizeof(StaticsBlock);
                 int sizeOfStaidxBlock = sizeof(StaidxBlock);
