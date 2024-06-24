@@ -40,13 +40,20 @@ namespace ClassicUO.IO
     /// <summary>
     ///     A fast Little Endian data reader.
     /// </summary>
-    public unsafe class DataReader : PinnedBuffer
+    public sealed unsafe class DataReader
     {
+        private readonly PinnedBuffer buffer;
+
         public long Position { get; set; }
 
-        public IntPtr PositionAddress => (IntPtr) (StartAddress + Position);
+        public IntPtr PositionAddress => (IntPtr) (buffer.StartAddress + Position);
 
-        public bool IsEOF => Position >= Length;
+        public bool IsEOF => Position >= buffer.Length;
+
+        public DataReader(PinnedBuffer _buffer)
+        {
+            buffer = _buffer;
+        }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void Seek(long idx)
@@ -74,7 +81,7 @@ namespace ClassicUO.IO
         {
             EnsureSize(1);
 
-            return Data[Position++];
+            return buffer.Data[Position++];
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -160,7 +167,7 @@ namespace ClassicUO.IO
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void EnsureSize(int size)
         {
-            if (Position + size > Length)
+            if (Position + size > buffer.Length)
             {
 #if DEBUG
                 throw new IndexOutOfRangeException();

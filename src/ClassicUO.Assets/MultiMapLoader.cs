@@ -44,7 +44,7 @@ namespace ClassicUO.Assets
 {
     public sealed class FacetLoader : IDisposable
     {
-        private readonly DataReader file;
+        private readonly PinnedBuffer file;
 
         public bool HasData => file.HasData;
 
@@ -73,11 +73,11 @@ namespace ClassicUO.Assets
                 return default;
             }
 
-            file.Seek(0);
+            var reader = new DataReader(file);
 
-            int w = file.ReadShort();
+            int w = reader.ReadShort();
 
-            int h = file.ReadShort();
+            int h = reader.ReadShort();
 
             if (w < 1 || h < 1)
             {
@@ -99,13 +99,13 @@ namespace ClassicUO.Assets
             {
                 int x = 0;
 
-                int colorCount = file.ReadInt() / 3;
+                int colorCount = reader.ReadInt() / 3;
 
                 for (int i = 0; i < colorCount; i++)
                 {
-                    int size = file.ReadByte();
+                    int size = reader.ReadByte();
 
-                    uint color = HuesHelper.Color16To32(file.ReadUShort()) | 0xFF_00_00_00;
+                    uint color = HuesHelper.Color16To32(reader.ReadUShort()) | 0xFF_00_00_00;
 
                     for (int j = 0; j < size; j++)
                     {
@@ -132,7 +132,7 @@ namespace ClassicUO.Assets
     {
         private static MultiMapLoader _instance;
         private FacetLoader[] _facets = Array.Empty<FacetLoader>();
-        private DataReader _file;
+        private PinnedBuffer _file;
 
         private MultiMapLoader()
         {
@@ -202,10 +202,10 @@ namespace ClassicUO.Assets
                 return default;
             }
 
-            _file.Seek(0);
+            var reader = new DataReader(_file);
 
-            int w = _file.ReadInt();
-            int h = _file.ReadInt();
+            int w = reader.ReadInt();
+            int h = reader.ReadInt();
 
             if (w < 1 || h < 1)
             {
@@ -246,9 +246,9 @@ namespace ClassicUO.Assets
             int maxPixelValue = 1;
             int startHeight = starty * pheight;
 
-            while (_file.Position < _file.Length)
+            while (!reader.IsEOF)
             {
-                byte pic = _file.ReadByte();
+                byte pic = reader.ReadByte();
                 byte size = (byte) (pic & 0x7F);
                 bool colored = (pic & 0x80) != 0;
 
