@@ -40,45 +40,13 @@ namespace ClassicUO.IO
     /// <summary>
     ///     A fast Little Endian data reader.
     /// </summary>
-    public unsafe class DataReader : IDisposable
+    public unsafe class DataReader : PinnedBuffer
     {
-        private byte* _data;
-
-        public bool HasData => _data != null;
-
         public long Position { get; set; }
 
-        public long Length { get; private set; }
-
-        public IntPtr StartAddress => (IntPtr) _data;
-        public IntPtr EndAddress => StartAddress + (IntPtr)Length;
-
-        public IntPtr PositionAddress => (IntPtr) (_data + Position);
+        public IntPtr PositionAddress => (IntPtr) (StartAddress + Position);
 
         public bool IsEOF => Position >= Length;
-
-        ~DataReader()
-        {
-            Dispose(false);
-        }
-
-        public void Dispose()
-        {
-            Dispose(true);
-            GC.SuppressFinalize(this);
-        }
-
-        protected virtual void Dispose(bool disposing)
-        {
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        protected void SetData(byte* data, long length)
-        {
-            _data = data;
-            Length = length;
-            Position = 0;
-        }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void Seek(long idx)
@@ -106,7 +74,7 @@ namespace ClassicUO.IO
         {
             EnsureSize(1);
 
-            return _data[Position++];
+            return Data[Position++];
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -126,7 +94,7 @@ namespace ClassicUO.IO
         {
             EnsureSize(2);
 
-            short v = *(short*) (_data + Position);
+            short v = *(short*)PositionAddress;
             Position += 2;
 
             return v;
@@ -137,7 +105,7 @@ namespace ClassicUO.IO
         {
             EnsureSize(2);
 
-            ushort v = *(ushort*) (_data + Position);
+            ushort v = *(ushort*)PositionAddress;
             Position += 2;
 
             return v;
@@ -148,7 +116,7 @@ namespace ClassicUO.IO
         {
             EnsureSize(4);
 
-            int v = *(int*) (_data + Position);
+            int v = *(int*)PositionAddress;
 
             Position += 4;
 
@@ -160,7 +128,7 @@ namespace ClassicUO.IO
         {
             EnsureSize(4);
 
-            uint v = *(uint*) (_data + Position);
+            uint v = *(uint*)PositionAddress;
             Position += 4;
 
             return v;
@@ -171,7 +139,7 @@ namespace ClassicUO.IO
         {
             EnsureSize(8);
 
-            long v = *(long*) (_data + Position);
+            long v = *(long*)PositionAddress;
             Position += 8;
 
             return v;
@@ -182,7 +150,7 @@ namespace ClassicUO.IO
         {
             EnsureSize(8);
 
-            ulong v = *(ulong*) (_data + Position);
+            ulong v = *(ulong*)PositionAddress;
             Position += 8;
 
             return v;
