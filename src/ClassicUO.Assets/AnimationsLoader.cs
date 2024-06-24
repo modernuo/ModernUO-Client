@@ -1301,8 +1301,6 @@ namespace ClassicUO.Assets
                 return Span<FrameInfo>.Empty;
             }
 
-            file.Seek(index.Position);
-
             if (_decompressedData == null || index.Unknown > _decompressedData.Length)
             {
                 _decompressedData = new byte[index.Unknown];
@@ -1311,7 +1309,7 @@ namespace ClassicUO.Assets
             fixed (byte* ptr = _decompressedData.AsSpan())
             {
                 var result = ZLib.Decompress(
-                    file.PositionAddress,
+                    file.StartAddress + (IntPtr)index.Position,
                     (int)index.Size,
                     0,
                     (IntPtr)ptr,
