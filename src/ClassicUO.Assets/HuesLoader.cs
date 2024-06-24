@@ -61,7 +61,7 @@ namespace ClassicUO.Assets
 
         private FloatHues[] Palette;
 
-        private DataReader RadarCol;
+        private PinnedBuffer RadarCol;
 
         private void LoadHues()
         {

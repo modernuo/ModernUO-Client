@@ -57,8 +57,8 @@ namespace ClassicUO.Assets
         private static byte[] _decompressedData;
 
         private readonly bool[] filesLoaded = new bool[5];
-        private readonly DataReader[] _files = new DataReader[5];
-        private readonly DataReader[] _filesIdx = new DataReader[5];
+        private readonly PinnedBuffer[] _files = new PinnedBuffer[5];
+        private readonly PinnedBuffer[] _filesIdx = new PinnedBuffer[5];
         private readonly UOFileUop[] _filesUop = new UOFileUop[4];
 
         private readonly Dictionary<ushort, Dictionary<ushort, EquipConvData>> _equipConv = new Dictionary<ushort, Dictionary<ushort, EquipConvData>>();

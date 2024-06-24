@@ -42,7 +42,7 @@ namespace ClassicUO.Assets
     public class AnimDataLoader : IDisposable
     {
         private static AnimDataLoader _instance;
-        private DataReader _file;
+        private PinnedBuffer _file;
 
         private AnimDataLoader()
         {
@@ -54,7 +54,7 @@ namespace ClassicUO.Assets
 
         public static AnimDataLoader Instance => _instance ?? (_instance = new AnimDataLoader());
 
-        public DataReader AnimDataFile => _file;
+        public PinnedBuffer AnimDataFile => _file;
 
         public Task Load()
         {
