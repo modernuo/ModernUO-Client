@@ -73,6 +73,42 @@ namespace ClassicUO.Assets
             return Load();
         }
 
+        private void LoadFile(string path)
+        {
+            using var reader = new BinaryReader(new FileStream(path, FileMode.Open, FileAccess.Read));
+
+            reader.ReadInt32();
+            reader.ReadInt16();
+
+            byte[] buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(1024);
+
+            try
+            {
+                while (reader.BaseStream.Length != reader.BaseStream.Position)
+                {
+                    int number = reader.ReadInt32();
+                    byte flag = reader.ReadByte();
+                    int length = reader.ReadInt16();
+
+                    if (length > buffer.Length)
+                    {
+                        System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
+
+                        buffer = System.Buffers.ArrayPool<byte>.Shared.Rent((length + 1023) & ~1023);
+                    }
+
+                    reader.Read(buffer, 0, length);
+                    string text = string.Intern(Encoding.UTF8.GetString(buffer, 0, length));
+
+                    _entries[number] = text;
+                }
+            }
+            finally
+            {
+                System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
+            }
+        }
+
         public Task Load()
         {
             return Task.Run
@@ -95,74 +131,10 @@ namespace ClassicUO.Assets
                     if (string.Compare(_cliloc, "cliloc.enu", StringComparison.InvariantCultureIgnoreCase) != 0)
                     { 
                         string enupath = UOFileManager.GetUOFilePath("Cliloc.enu");
-
-                        using (BinaryReader reader = new BinaryReader(new FileStream(enupath, FileMode.Open, FileAccess.Read)))
-                        {
-                            reader.ReadInt32();
-                            reader.ReadInt16();
-
-                            byte[] buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(1024);
-
-                            try
-                            {
-                                while (reader.BaseStream.Length != reader.BaseStream.Position)
-                                {
-                                    int number = reader.ReadInt32();
-                                    byte flag = reader.ReadByte();
-                                    int length = reader.ReadInt16();
-
-                                    if (length > buffer.Length)
-                                    {
-                                        System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
-
-                                        buffer = System.Buffers.ArrayPool<byte>.Shared.Rent((length + 1023) & ~1023);
-                                    }
-
-                                    reader.Read(buffer, 0, length);
-                                    string text = string.Intern(Encoding.UTF8.GetString(buffer, 0, length));
-
-                                    _entries[number] = text;
-                                }
-                            }
-                            finally
-                            {
-                                System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
-                            }
-                        }
+                        LoadFile(enupath);
                     }
 
-                    using (BinaryReader reader = new BinaryReader(new FileStream(path, FileMode.Open, FileAccess.Read)))
-                    {
-                        reader.ReadInt32();
-                        reader.ReadInt16();
-                        byte[] buffer = System.Buffers.ArrayPool<byte>.Shared.Rent(1024);
-
-                        try
-                        {
-                            while (reader.BaseStream.Length != reader.BaseStream.Position)
-                            {
-                                int number = reader.ReadInt32();
-                                byte flag = reader.ReadByte();
-                                int length = reader.ReadInt16();
-
-                                if (length > buffer.Length)
-                                {
-                                    System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
-
-                                    buffer = System.Buffers.ArrayPool<byte>.Shared.Rent((length + 1023) & ~1023);
-                                }
-
-                                reader.Read(buffer, 0, length);
-                                string text = string.Intern(Encoding.UTF8.GetString(buffer, 0, length));
-
-                                _entries[number] = text;
-                            }
-                        }
-                        finally
-                        {
-                            System.Buffers.ArrayPool<byte>.Shared.Return(buffer);
-                        }
-                    }
+                    LoadFile(path);
                 }
             );
         }
