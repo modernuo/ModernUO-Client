@@ -48,6 +48,12 @@ namespace ClassicUO.Assets
 
         private GumpsLoader(int count) { }
 
+        protected override void Dispose(bool disposing)
+        {
+            base.Dispose(disposing);
+            _file?.Dispose();
+        }
+
         public static GumpsLoader Instance =>
             _instance ?? (_instance = new GumpsLoader(MAX_GUMP_DATA_INDEX_COUNT));
 
