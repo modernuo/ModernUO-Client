@@ -212,47 +212,6 @@ namespace ClassicUO.IO
             return v;
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public byte[] ReadArray(int count)
-        {
-            EnsureSize(count);
-
-            byte[] data = new byte[count];
-
-            fixed (byte* ptr = data)
-            {
-                Buffer.MemoryCopy(&_data[Position], ptr, count, count);
-            }
-
-            Position += count;
-
-            return data;
-        }
-
-        public string ReadASCII(int size)
-        {
-            EnsureSize(size);
-
-            Span<char> span = stackalloc char[size];
-            ValueStringBuilder sb = new ValueStringBuilder(span);
-
-            for (int i = 0; i < size; i++)
-            {
-                char c = (char)ReadByte();
-
-                if (c != 0)
-                {
-                    sb.Append(c);
-                }
-            }
-
-            string ss = sb.ToString();
-
-            sb.Dispose();
-
-            return ss;
-        }
-
         [Conditional("DEBUG")]
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void EnsureSize(int size)
