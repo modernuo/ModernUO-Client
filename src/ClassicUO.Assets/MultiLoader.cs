@@ -47,6 +47,12 @@ namespace ClassicUO.Assets
         {
         }
 
+        protected override void Dispose(bool disposing)
+        {
+            base.Dispose(disposing);
+            File?.Dispose();
+        }
+
         public static MultiLoader Instance => _instance ?? (_instance = new MultiLoader());
 
         public int Count { get; private set; }
