@@ -34,7 +34,6 @@ using ClassicUO.Utility;
 using System;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
 
 namespace ClassicUO.IO
 {
@@ -44,7 +43,6 @@ namespace ClassicUO.IO
     public unsafe class DataReader : IDisposable
     {
         private byte* _data;
-        private GCHandle _handle;
 
         public bool HasData => _data != null;
 
@@ -72,34 +70,12 @@ namespace ClassicUO.IO
 
         protected virtual void Dispose(bool disposing)
         {
-            ReleaseData();
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private void ReleaseData()
-        {
-            if (_handle.IsAllocated)
-            {
-                _handle.Free();
-            }
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         protected void SetData(byte* data, long length)
         {
-            ReleaseData();
-
             _data = data;
-            Length = length;
-            Position = 0;
-        }
-
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        protected void SetData(byte[] data, long length)
-        {
-            ReleaseData();
-            _handle = GCHandle.Alloc(data, GCHandleType.Pinned);
-            _data = (byte*) _handle.AddrOfPinnedObject();
             Length = length;
             Position = 0;
         }
