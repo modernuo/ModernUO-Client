@@ -324,22 +324,22 @@ namespace ClassicUO.Assets
                     return false;
                 }
 
+                mapPatchesCount = Math.Min(mapPatchesCount, (int) (dif.Length / sizeof(MapBlock)));
                 mapPatchesCount = Math.Min(mapPatchesCount, (int) difl.Length >> 2);
 
-                dif.Seek(0);
+                var mapBlockPtr = (MapBlock*)dif.StartAddress;
+                var diflPtr = (uint*)difl.StartAddress;
 
-                for (int j = 0; j < mapPatchesCount; j++)
+                for (int j = 0; j < mapPatchesCount; j++, mapBlockPtr++)
                 {
-                    uint blockIndex = difl.ReadUInt();
+                    uint blockIndex = *diflPtr++;
 
                     if (blockIndex < maxBlockCount)
                     {
-                        BlockData[blockIndex].MapAddress = dif.PositionAddress;
+                        BlockData[blockIndex].MapAddress = (IntPtr)mapBlockPtr;
 
                         result = true;
                     }
-
-                    dif.Skip(sizeof(MapBlock));
                 }
             }
 
@@ -354,23 +354,17 @@ namespace ClassicUO.Assets
 
                 IntPtr startAddress = _staDif.StartAddress;
 
+                staticPatchesCount = Math.Min(staticPatchesCount, (int)(difi.Length / sizeof(StaidxBlock)));
                 staticPatchesCount = Math.Min(staticPatchesCount, (int) difl.Length >> 2);
 
                 int sizeOfStaicsBlock = sizeof(StaticsBlock);
-                int sizeOfStaidxBlock = sizeof(StaidxBlock);
 
-                for (int j = 0; j < staticPatchesCount; j++)
+                var sidx = (StaidxBlock*)difi.StartAddress;
+                var diflPtr = (uint*)difl.StartAddress;
+
+                for (int j = 0; j < staticPatchesCount; j++, sidx++)
                 {
-                    if (difl.IsEOF || difi.IsEOF)
-                    {
-                        break;
-                    }
-
-                    uint blockIndex = difl.ReadUInt();
-
-                    StaidxBlock* sidx = (StaidxBlock*) difi.PositionAddress;
-
-                    difi.Skip(sizeOfStaidxBlock);
+                    uint blockIndex = *diflPtr++;
 
                     if (blockIndex < maxBlockCount)
                     {
