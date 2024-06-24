@@ -52,7 +52,7 @@ namespace ClassicUO.Assets
 
         public const int MAX_SOUND_DATA_INDEX_COUNT = 0xFFFF;
 
-        private DataReader _file;
+        private IDisposable _file;
 
         private bool entriesLoaded = false, musicLoaded = false;
 
@@ -81,12 +81,14 @@ namespace ClassicUO.Assets
 
                 if (File.Exists(path) && File.Exists(idxpath))
                 {
-                    _file = new UOFile(path);
+                    var file = new UOFile(path);
 
                     using (var idxFile = new UOFile(idxpath))
                     {
-                        UOFileMul.FillEntries(_file, idxFile, ref Entries);
+                        UOFileMul.FillEntries(file, idxFile, ref Entries);
                     }
+
+                    _file = file;
                 }
                 else
                 {
