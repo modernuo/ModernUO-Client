@@ -377,6 +377,7 @@ namespace ClassicUO.Assets
         {
             base.Dispose(disposing);
             _musicData.Clear();
+            _file?.Dispose();
         }
     }
 }
