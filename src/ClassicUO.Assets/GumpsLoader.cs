@@ -42,7 +42,7 @@ namespace ClassicUO.Assets
     public class GumpsLoader : UOFileLoader
     {
         private static GumpsLoader _instance;
-        private UOFile _file;
+        private IDisposable _file;
 
         public const int MAX_GUMP_DATA_INDEX_COUNT = 0x10000;
 
@@ -91,14 +91,15 @@ namespace ClassicUO.Assets
                         pathidx = UOFileManager.GetUOFilePath("Gumpidx.mul");
                     }
 
-                    _file = new UOFile(path);
+                    var file = new UOFile(path);
 
                     using (var idxFile = new UOFile(pathidx))
                     {
-                        UOFileMul.FillEntries(_file, idxFile, ref Entries);
+                        UOFileMul.FillEntries(file, idxFile, ref Entries);
                     }
 
                     UseUOPGumps = false;
+                    _file = file;
                 }
 
                 string pathdef = UOFileManager.GetUOFilePath("gump.def");
