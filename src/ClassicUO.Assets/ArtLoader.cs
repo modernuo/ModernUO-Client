@@ -56,6 +56,12 @@ namespace ClassicUO.Assets
             _graphicMask = UOFileManager.IsUOPInstallation ? (ushort)0xFFFF : (ushort)0x3FFF;
         }
 
+        protected override void Dispose(bool disposing)
+        {
+            base.Dispose(disposing);
+            _file?.Dispose();
+        }
+
         public static ArtLoader Instance =>
             _instance
             ?? (_instance = new ArtLoader(MAX_STATIC_DATA_INDEX_COUNT, MAX_LAND_DATA_INDEX_COUNT));
