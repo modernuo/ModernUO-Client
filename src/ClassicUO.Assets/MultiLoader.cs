@@ -32,6 +32,7 @@
 
 using ClassicUO.IO;
 using ClassicUO.Utility;
+using System;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 
@@ -56,7 +57,7 @@ namespace ClassicUO.Assets
         public static MultiLoader Instance => _instance ?? (_instance = new MultiLoader());
 
         public int Count { get; private set; }
-        private DataReader File;
+        private IDisposable File;
 
         public bool IsUOP { get; private set; }
         public int Offset { get; private set; }
@@ -86,14 +87,15 @@ namespace ClassicUO.Assets
 
                         if (System.IO.File.Exists(path) && System.IO.File.Exists(pathidx))
                         {
-                            File = new UOFile(path);
+                            var file = new UOFile(path);
 
                             using (var idxFile = new UOFile(pathidx))
                             {
-                                UOFileMul.FillEntries(File, idxFile, ref Entries);
+                                UOFileMul.FillEntries(file, idxFile, ref Entries);
                             }
 
                             Count = Offset = UOFileManager.Version >= ClientVersion.CV_7090 ? sizeof(MultiBlockNew) + 2 : sizeof(MultiBlock);
+                            File = file;
                         }
                     }
                 }
