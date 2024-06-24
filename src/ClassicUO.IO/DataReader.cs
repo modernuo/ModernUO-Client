@@ -97,8 +97,6 @@ namespace ClassicUO.IO
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         protected void SetData(byte[] data, long length)
         {
-            //fixed (byte* d = data)
-            //    SetData(d, length);
             ReleaseData();
             _handle = GCHandle.Alloc(data, GCHandleType.Pinned);
             _data = (byte*) _handle.AddrOfPinnedObject();
