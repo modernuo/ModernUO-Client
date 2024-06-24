@@ -205,18 +205,18 @@ namespace ClassicUO.Assets
                 }
             }
 
-            ulong staticidxaddress = (ulong) fileidx.StartAddress;
-            ulong endstaticidxaddress = staticidxaddress + (ulong) fileidx.Length;
-            ulong staticaddress = (ulong) staticfile.StartAddress;
-            ulong endstaticaddress = staticaddress + (ulong) staticfile.Length;
-            ulong mapddress = (ulong) file.StartAddress;
-            ulong endmapaddress = mapddress + (ulong) file.Length;
-            ulong uopoffset = 0;
+            IntPtr staticidxaddress = fileidx.StartAddress;
+            IntPtr endstaticidxaddress = staticidxaddress + (IntPtr) fileidx.Length;
+            IntPtr staticaddress = staticfile.StartAddress;
+            IntPtr endstaticaddress = staticaddress + (IntPtr) staticfile.Length;
+            IntPtr mapddress = file.StartAddress;
+            IntPtr endmapaddress = mapddress + (IntPtr) file.Length;
+            IntPtr uopoffset = 0;
             int fileNumber = -1;
 
             for (int block = 0; block < maxblockcount; block++)
             {
-                ulong realmapaddress = 0, realstaticaddress = 0;
+                IntPtr realmapaddress = 0, realstaticaddress = 0;
                 uint realstaticcount = 0;
                 int blocknum = block;
 
@@ -236,25 +236,25 @@ namespace ClassicUO.Assets
 
                             if (uop.TryGetUOPData(hash, out var dataIndex))
                             {
-                                uopoffset = (ulong)dataIndex.Offset;
+                                uopoffset = (IntPtr)dataIndex.Offset;
                             }
                         }
                     }
                 }
 
-                ulong address = mapddress + uopoffset + (ulong) (blocknum * mapblocksize);
+                IntPtr address = mapddress + uopoffset + (IntPtr) (blocknum * mapblocksize);
 
                 if (address < endmapaddress)
                 {
                     realmapaddress = address;
                 }
 
-                ulong stidxaddress = staticidxaddress + (ulong) (block * staticidxblocksize);
+                IntPtr stidxaddress = staticidxaddress + (IntPtr) (block * staticidxblocksize);
                 StaidxBlock* bb = (StaidxBlock*) stidxaddress;
 
                 if (stidxaddress < endstaticidxaddress && bb->Size > 0 && bb->Position != 0xFFFFFFFF)
                 {
-                    ulong address1 = staticaddress + bb->Position;
+                    IntPtr address1 = staticaddress + (IntPtr)bb->Position;
 
                     if (address1 < endstaticaddress)
                     {
@@ -340,7 +340,7 @@ namespace ClassicUO.Assets
 
                     if (blockIndex < maxBlockCount)
                     {
-                        BlockData[blockIndex].MapAddress = (ulong) dif.PositionAddress;
+                        BlockData[blockIndex].MapAddress = dif.PositionAddress;
 
                         result = true;
                     }
@@ -359,7 +359,7 @@ namespace ClassicUO.Assets
                     return false;
                 }
 
-                ulong startAddress = (ulong) _staDif.StartAddress;
+                IntPtr startAddress = _staDif.StartAddress;
 
                 staticPatchesCount = Math.Min(staticPatchesCount, (int) difl.Length >> 2);
 
@@ -384,12 +384,12 @@ namespace ClassicUO.Assets
 
                     if (blockIndex < maxBlockCount)
                     {
-                        ulong realStaticAddress = 0;
+                        IntPtr realStaticAddress = 0;
                         int realStaticCount = 0;
 
                         if (sidx->Size > 0 && sidx->Position != 0xFFFF_FFFF)
                         {
-                            realStaticAddress = startAddress + sidx->Position;
+                            realStaticAddress = startAddress + (IntPtr)sidx->Position;
                             realStaticCount = (int) (sidx->Size / sizeOfStaicsBlock);
 
                             if (realStaticCount > 0)
@@ -709,11 +709,11 @@ namespace ClassicUO.Assets
 
     public struct IndexMap
     {
-        public ulong MapAddress;
-        public ulong OriginalMapAddress;
-        public ulong OriginalStaticAddress;
+        public IntPtr MapAddress;
+        public IntPtr OriginalMapAddress;
+        public IntPtr OriginalStaticAddress;
         public uint OriginalStaticCount;
-        public ulong StaticAddress;
+        public IntPtr StaticAddress;
         public uint StaticCount;
         public static IndexMap Invalid = new IndexMap();
 
