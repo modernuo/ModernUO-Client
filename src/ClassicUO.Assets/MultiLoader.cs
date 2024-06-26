@@ -59,7 +59,9 @@ namespace ClassicUO.Assets
         public int Count { get; private set; }
         private IDisposable File;
 
+#if ENABLE_UOP
         public bool IsUOP { get; private set; }
+#endif // ENABLE_UOP
         public int Offset { get; private set; }
 
 
@@ -69,6 +71,7 @@ namespace ClassicUO.Assets
             (
                 () =>
                 {
+#if ENABLE_UOP
                     string uopPath = UOFileManager.GetUOFilePath("MultiCollection.uop");
 
                     if (UOFileManager.IsUOPInstallation && System.IO.File.Exists(uopPath))
@@ -81,6 +84,7 @@ namespace ClassicUO.Assets
                         IsUOP = true;
                     }
                     else
+#endif // ENABLE_UOP
                     {
                         string path = UOFileManager.GetUOFilePath("multi.mul");
                         string pathidx = UOFileManager.GetUOFilePath("multi.idx");

@@ -53,20 +53,28 @@ namespace ClassicUO.Assets
         [ThreadStatic]
         private static FrameInfo[] _frames;
 
+#if ENABLE_UOP
         [ThreadStatic]
         private static byte[] _decompressedData;
+#endif
 
         private readonly bool[] filesLoaded = new bool[5];
         private readonly PinnedBuffer[] _files = new PinnedBuffer[5];
         private readonly PinnedBuffer[] _filesIdx = new PinnedBuffer[5];
+
+#if ENABLE_UOP
         private readonly UOFileUop[] _filesUop = new UOFileUop[4];
+#endif
 
         private readonly Dictionary<ushort, Dictionary<ushort, EquipConvData>> _equipConv = new Dictionary<ushort, Dictionary<ushort, EquipConvData>>();
         private readonly Dictionary<int, MobTypeInfo> _mobTypes = new Dictionary<int, MobTypeInfo>();
         private readonly Dictionary<int, BodyInfo> _bodyInfos = new Dictionary<int, BodyInfo>();
         private readonly Dictionary<int, BodyInfo> _corpseInfos = new Dictionary<int, BodyInfo>();
         private readonly Dictionary<int, BodyConvInfo> _bodyConvInfos = new Dictionary<int, BodyConvInfo>();
+
+#if ENABLE_UOP
         private readonly Dictionary<int, UopInfo> _uopInfos = new Dictionary<int, UopInfo>();
+#endif
 
         private AnimationsLoader() { }
 
@@ -76,8 +84,10 @@ namespace ClassicUO.Assets
                 i?.Dispose();
             foreach (var i in _filesIdx)
                 i?.Dispose();
+#if ENABLE_UOP
             foreach (var i in _filesUop)
                 i?.Dispose();
+#endif
         }
 
         public static AnimationsLoader Instance =>
@@ -133,6 +143,7 @@ namespace ClassicUO.Assets
 
         private unsafe void LoadInternal()
         {
+#if ENABLE_UOP
             bool loaduop = false;
             int[] un = { 0x40000, 0x10000, 0x20000, 0x20000, 0x20000 };
 
@@ -161,6 +172,7 @@ namespace ClassicUO.Assets
             {
                 LoadUop();
             }
+#endif // ENABLE_UOP
 
             string path = UOFileManager.GetUOFilePath("mobtypes.txt");
 
@@ -304,6 +316,7 @@ namespace ClassicUO.Assets
             return false;
         }
 
+#if ENABLE_UOP
         public bool ReplaceUopGroup(ushort body, ref byte group)
         {
             if (_uopInfos.TryGetValue(body, out var uopInfo))
@@ -315,6 +328,7 @@ namespace ClassicUO.Assets
 
             return false;
         }
+#endif // ENABLE_UOP
 
         public unsafe ReadOnlySpan<AnimIdxBlock> GetIndices
         (
@@ -339,6 +353,7 @@ namespace ClassicUO.Assets
 
             flags = mobInfo.Flags;
 
+#if ENABLE_UOP
             if (mobInfo.Flags.HasFlag(AnimationFlags.UseUopAnimation))
             {
                 if (animType == AnimationGroupsType.Unknown)
@@ -375,6 +390,7 @@ namespace ClassicUO.Assets
 
                 return animIndices;
             }
+#endif // ENABLE_UOP
 
             if (_bodyConvInfos.TryGetValue(body, out var bodyConvInfo))
             {
@@ -720,6 +736,7 @@ namespace ClassicUO.Assets
             }
         }
 
+#if ENABLE_UOP
         private unsafe void LoadUop()
         {
             if (UOFileManager.Version <= ClientVersion.CV_60144)
@@ -925,6 +942,7 @@ namespace ClassicUO.Assets
                 }
             }
         }
+#endif // ENABLE_UOP
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static unsafe uint CalculatePeopleGroupOffset(ushort graphic)
@@ -1223,10 +1241,12 @@ namespace ClassicUO.Assets
                         return 2;
                     }
 
+#if ENABLE_UOP
                     if ((animFlags & AnimationFlags.UseUopAnimation) != 0)
                     {
                         return (byte)(second ? 3 : 2);
                     }
+#endif // ENABLE_UOP
 
                     return (byte)(
                         second ? LowAnimationGroup.Die2 : LowAnimationGroup.Die1
@@ -1244,10 +1264,12 @@ namespace ClassicUO.Assets
 
                 case AnimationGroupsType.Monster:
 
+#if ENABLE_UOP
                     if ((animFlags & AnimationFlags.UseUopAnimation) != 0)
                     {
                         return (byte)(second ? 3 : 2);
                     }
+#endif // ENABLE_UOP
 
                     return (byte)(
                         second ? HighAnimationGroup.Die2 : HighAnimationGroup.Die1
@@ -1263,6 +1285,7 @@ namespace ClassicUO.Assets
             return 0;
         }
 
+#if ENABLE_UOP
         public unsafe Span<FrameInfo> ReadUOPAnimationFrames(
             ushort animID,
             byte animGroup,
@@ -1415,6 +1438,7 @@ namespace ClassicUO.Assets
 
             return frames;
         }
+#endif // ENABLE_UOP
 
         public unsafe Span<FrameInfo> ReadMULAnimationFrames(int fileIndex, AnimIdxBlock index)
         {
@@ -1601,6 +1625,7 @@ namespace ClassicUO.Assets
             public uint Unknown;
         }
 
+#if ENABLE_UOP
         [StructLayout(LayoutKind.Sequential, Pack = 1)]
         ref struct UOPAnimationHeader
         {
@@ -1614,6 +1639,7 @@ namespace ClassicUO.Assets
 
             public uint DataOffset;
         }
+#endif // ENABLE_UOP
     }
 
     public enum AnimationGroups
@@ -1739,7 +1765,9 @@ namespace ClassicUO.Assets
         Unknown2000 = 0x02000,
         Unknown4000 = 0x04000,
         Unknown8000 = 0x08000,
+#if ENABLE_UOP
         UseUopAnimation = 0x10000,
+#endif
         Unknown20000 = 0x20000,
         Unknown40000 = 0x40000,
         Unknown80000 = 0x80000,
@@ -1796,6 +1824,7 @@ namespace ClassicUO.Assets
         public sbyte MountHeight;
     }
 
+#if ENABLE_UOP
     unsafe struct UopInfo
     {
         private fixed int _replacedAnim[AnimationsLoader.MAX_ACTIONS];
@@ -1814,6 +1843,7 @@ namespace ClassicUO.Assets
 
         public sbyte HeightOffset;
     }
+#endif // ENABLE_UOP
 
     [Flags]
     public enum BodyConvFlags

@@ -468,6 +468,7 @@ namespace ClassicUO.Game.GameObjects
                     return;
                 }
 
+#if ENABLE_UOP
                 if ((flags & AnimationFlags.UseUopAnimation) != 0)
                 {
                     if (animGroup != AnimationGroups.People)
@@ -498,6 +499,7 @@ namespace ClassicUO.Game.GameObjects
                         return;
                     }
                 }
+#endif // ENABLE_UOP
 
                 int first_value = RandomHelper.GetValue(0, 2);
 

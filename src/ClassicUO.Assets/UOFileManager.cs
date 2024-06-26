@@ -84,7 +84,9 @@ namespace ClassicUO.Assets
 
         public static ClientVersion Version;
         public static string BasePath = "";
+#if ENABLE_UOP
         public static bool IsUOPInstallation;
+#endif
 
         public static void Load(ClientVersion version, string basePath, string lang)
         {
@@ -95,7 +97,9 @@ namespace ClassicUO.Assets
 
             UOFilesOverrideMap.Instance.Load(); // need to load this first so that it manages can perform the file overrides if needed
 
+#if ENABLE_UOP
             IsUOPInstallation = Version >= ClientVersion.CV_7000 && File.Exists(GetUOFilePath("MainMisc.uop"));
+#endif
 
             List<Task> tasks = new List<Task>
             {

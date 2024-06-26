@@ -63,10 +63,12 @@ namespace ClassicUO.Renderer.Animations
         {
             ConvertBodyIfNeeded(ref animID);
 
+#if ENABLE_UOP
             if (uop)
             {
                 AnimationsLoader.Instance.ReplaceUopGroup(animID, ref group);
             }
+#endif
 
             uint packed32 = (uint)((group | (direction << 8) | ((uop ? 0x01 : 0x00) << 16)));
             uint packed32_2 = (uint)((animID | (frame << 16)));
@@ -161,6 +163,7 @@ namespace ClassicUO.Renderer.Animations
 
                     if (!indices.IsEmpty)
                     {
+#if ENABLE_UOP
                         if (index.Flags.HasFlag(AnimationFlags.UseUopAnimation))
                         {
                             index.UopGroups = new AnimationGroupUop[indices.Length];
@@ -174,6 +177,7 @@ namespace ClassicUO.Renderer.Animations
                             }
                         }
                         else
+#endif // ENABLE_UOP
                         {
                             index.Groups = new AnimationGroup[indices.Length / AnimationsLoader.MAX_DIRECTIONS];
                             for (int i = 0; i < index.Groups.Length; i++)
@@ -206,13 +210,17 @@ namespace ClassicUO.Renderer.Animations
                 }
             } while (index == null);
            
+#if ENABLE_UOP
             useUOP = index.Flags.HasFlag(AnimationFlags.UseUopAnimation);
+#endif
             index.Hue = hue;
 
+#if ENABLE_UOP
             if (useUOP)
             {
                 AnimationsLoader.Instance.ReplaceUopGroup(id, ref action);
             }
+#endif
 
             // NOTE:
             // for UOP: we don't call the method index.GetUopGroup(ref x) because the action has been already changed by the method ReplaceAnimationValues
@@ -244,6 +252,7 @@ namespace ClassicUO.Renderer.Animations
 
             if (animDir.FrameCount <= 0 || animDir.SpriteInfos == null)
             {
+#if ENABLE_UOP
                 if (useUOP
                 //animDir.IsUOP ||
                 ///* If it's not flagged as UOP, but there is no mul data, try to load
@@ -269,6 +278,7 @@ namespace ClassicUO.Renderer.Animations
                     );
                 }
                 else
+#endif // ENABLE_UOP
                 {
                     var ff = new AnimationsLoader.AnimIdxBlock()
                     {
@@ -352,7 +362,11 @@ namespace ClassicUO.Renderer.Animations
 
             ushort hue = 0;
 
-            if (_dataIndex[graphic] != null && _dataIndex[graphic].FileIndex == 0 && !_dataIndex[graphic].Flags.HasFlag(AnimationFlags.UseUopAnimation))
+            if (_dataIndex[graphic] != null && _dataIndex[graphic].FileIndex == 0
+#if ENABLE_UOP
+                && !_dataIndex[graphic].Flags.HasFlag(AnimationFlags.UseUopAnimation)
+#endif
+                )
                 _ = isCorpse ? AnimationsLoader.Instance.ReplaceCorpse(ref graphic, ref hue) : AnimationsLoader.Instance.ReplaceBody(ref graphic, ref hue);
         }
 

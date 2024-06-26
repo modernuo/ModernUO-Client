@@ -16,6 +16,10 @@
     <Description>An open source implementation of the Ultima Online Classic Client.</Description>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(ENABLE_UOP)' != 'false'">
+    <DefineConstants>$(DefineConstants);ENABLE_UOP</DefineConstants>
+  </PropertyGroup>
+
   <PropertyGroup Condition="'$(IS_DEV_BUILD)' == 'true'">
     <DefineConstants>$(DefineConstants);DEV_BUILD</DefineConstants>
   </PropertyGroup>

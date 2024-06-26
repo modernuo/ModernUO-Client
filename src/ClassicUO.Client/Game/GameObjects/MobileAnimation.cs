@@ -174,6 +174,7 @@ namespace ClassicUO.Game.GameObjects
                         }
                         else
                         {
+#if ENABLE_UOP
                             if (
                                 (flags & AnimationFlags.UseUopAnimation) != 0
                                 && !mobile.InWarMode
@@ -182,6 +183,7 @@ namespace ClassicUO.Game.GameObjects
                                 result = 25;
                             }
                             else
+#endif // ENABLE_UOP
                             {
                                 result = 1;
                             }
@@ -199,11 +201,13 @@ namespace ClassicUO.Game.GameObjects
                     }
                     else
                     {
+#if ENABLE_UOP
                         if ((flags & AnimationFlags.UseUopAnimation) != 0)
                         {
                             result = 24;
                         }
                         else
+#endif // ENABLE_UOP
                         {
                             result = 0;
                         }
@@ -211,11 +215,13 @@ namespace ClassicUO.Game.GameObjects
                 }
                 else
                 {
+#if ENABLE_UOP
                     if ((flags & AnimationFlags.UseUopAnimation) != 0 && !mobile.InWarMode)
                     {
                         result = 22;
                     }
                     else
+#endif // ENABLE_UOP
                     {
                         result = 0;
                     }
@@ -570,7 +576,9 @@ namespace ClassicUO.Game.GameObjects
             AnimationGroupsType type = Client.Game.UO.Animations.GetAnimType(graphic);
             AnimationFlags  flags = Client.Game.UO.Animations.GetAnimFlags(graphic);
 
+#if ENABLE_UOP
             bool uop = (flags & AnimationFlags.UseUopAnimation) != 0;
+#endif
 
             if (mobile.AnimationFromServer && mobile._animationGroup != 0xFF)
             {
@@ -707,11 +715,14 @@ namespace ClassicUO.Game.GameObjects
                         v13 = 1;
                     }
 
+#if ENABLE_UOP
                     if ((flags & AnimationFlags.UseUopAnimation) != 0)
                     {
                         // do nothing?
                     }
-                    else if (v13 > 21)
+                    else
+#endif // ENABLE_UOP
+                        if (v13 > 21)
                     {
                         v13 = 1;
                     }
@@ -1078,6 +1089,7 @@ namespace ClassicUO.Game.GameObjects
                         {
                             if (result == 0xFF)
                             {
+#if ENABLE_UOP
                                 if ((flags & AnimationFlags.UseUopAnimation) != 0)
                                 {
                                     if (
@@ -1093,6 +1105,7 @@ namespace ClassicUO.Game.GameObjects
                                     }
                                 }
                                 else
+#endif // ENABLE_UOP
                                 {
                                     result = 2;
                                 }
@@ -1100,17 +1113,20 @@ namespace ClassicUO.Game.GameObjects
                         }
                         else if (isRun)
                         {
+#if ENABLE_UOP
                             if ((flags & AnimationFlags.UseUopAnimation) != 0)
                             {
                                 result = 24;
                             }
                             else
+#endif // ENABLE_UOP
                             {
                                 result = Client.Game.UO.Animations.AnimationExists(graphic, 1)
                                     ? (byte)1
                                     : (byte)2;
                             }
                         }
+#if ENABLE_UOP
                         else if (
                             (flags & AnimationFlags.UseUopAnimation) != 0
                             && (
@@ -1121,6 +1137,7 @@ namespace ClassicUO.Game.GameObjects
                         {
                             result = 22;
                         }
+#endif // ENABLE_UOP
                         else
                         {
                             result = 0;
@@ -1198,6 +1215,7 @@ namespace ClassicUO.Game.GameObjects
                                 }
                                 else
                                 {
+#if ENABLE_UOP
                                     if (
                                         uop
                                         && type == AnimationGroupsType.Equipment
@@ -1207,6 +1225,7 @@ namespace ClassicUO.Game.GameObjects
                                         result = 37;
                                     }
                                     else
+#endif // ENABLE_UOP
                                     {
                                         result = 4;
                                     }
@@ -1239,6 +1258,7 @@ namespace ClassicUO.Game.GameObjects
                                     {
                                         if (hand2 != null)
                                         {
+#if ENABLE_UOP
                                             if (
                                                 uop
                                                 && type == AnimationGroupsType.Equipment
@@ -1251,6 +1271,7 @@ namespace ClassicUO.Game.GameObjects
                                                 result = 8;
                                             }
                                             else
+#endif // ENABLE_UOP
                                             {
                                                 result = 7;
                                             }
@@ -1313,6 +1334,7 @@ namespace ClassicUO.Game.GameObjects
                     //}
                     else if (isRun || !mobile.InWarMode || mobile.IsDead)
                     {
+#if ENABLE_UOP
                         if ((flags & AnimationFlags.UseUopAnimation) != 0)
                         {
                             // i'm not sure here if it's necessary the isgargoyle
@@ -1374,6 +1396,7 @@ namespace ClassicUO.Game.GameObjects
                             }
                         }
                         else
+#endif // ENABLE_UOP
                         {
                             if (isRun)
                             {

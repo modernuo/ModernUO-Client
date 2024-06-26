@@ -64,7 +64,10 @@ namespace ClassicUO.Assets
 
         private void LoadFileEntries()
         {
-            string path = UOFileManager.GetUOFilePath("soundLegacyMUL.uop");
+            string path;
+
+#if ENABLE_UOP
+            path = UOFileManager.GetUOFilePath("soundLegacyMUL.uop");
 
             if (UOFileManager.IsUOPInstallation && File.Exists(path))
             {
@@ -75,6 +78,7 @@ namespace ClassicUO.Assets
                 _file = file;
             }
             else
+#endif // ENABLE_UOP
             {
                 path = UOFileManager.GetUOFilePath("sound.mul");
                 string idxpath = UOFileManager.GetUOFilePath("soundidx.mul");

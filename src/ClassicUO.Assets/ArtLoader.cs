@@ -68,7 +68,9 @@ namespace ClassicUO.Assets
         {
             return Task.Run(() =>
             {
-                string filePath = UOFileManager.GetUOFilePath("artLegacyMUL.uop");
+                string filePath;
+#if ENABLE_UOP
+                filePath = UOFileManager.GetUOFilePath("artLegacyMUL.uop");
 
                 if (UOFileManager.IsUOPInstallation && File.Exists(filePath))
                 {
@@ -81,6 +83,7 @@ namespace ClassicUO.Assets
                     _file = file;
                 }
                 else
+#endif // ENABLE_UOP
                 {
                     filePath = UOFileManager.GetUOFilePath("art.mul");
                     string idxPath = UOFileManager.GetUOFilePath("artidx.mul");
