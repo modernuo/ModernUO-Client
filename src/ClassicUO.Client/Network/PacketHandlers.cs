@@ -719,12 +719,14 @@ namespace ClassicUO.Network
                     }
                 }
 
+#if ENABLE_UOASSIST
                 if (mobile == world.Player)
                 {
                     world.UoAssist.SignalHits();
                     world.UoAssist.SignalStamina();
                     world.UoAssist.SignalMana();
                 }
+#endif // ENABLE_UOASSIST
             }
         }
 
@@ -1822,12 +1824,14 @@ namespace ClassicUO.Network
                 mobile.StaminaMax = p.ReadUInt16BE();
                 mobile.Stamina = p.ReadUInt16BE();
 
+#if ENABLE_UOASSIST
                 if (mobile == world.Player)
                 {
                     world.UoAssist.SignalHits();
                     world.UoAssist.SignalStamina();
                     world.UoAssist.SignalMana();
                 }
+#endif // ENABLE_UOASSIST
             }
         }
 
@@ -3429,10 +3433,12 @@ namespace ClassicUO.Network
                 entity.HitsRequest = HitsRequestStatus.Received;
             }
 
+#if ENABLE_UOASSIST
             if (entity == world.Player)
             {
                 world.UoAssist.SignalHits();
             }
+#endif // ENABLE_UOASSIST
         }
 
         private static void UpdateMana(World world, ref StackDataReader p)
@@ -3447,10 +3453,12 @@ namespace ClassicUO.Network
             mobile.ManaMax = p.ReadUInt16BE();
             mobile.Mana = p.ReadUInt16BE();
 
+#if ENABLE_UOASSIST
             if (mobile == world.Player)
             {
                 world.UoAssist.SignalMana();
             }
+#endif // ENABLE_UOASSIST
         }
 
         private static void UpdateStamina(World world, ref StackDataReader p)
@@ -3465,10 +3473,12 @@ namespace ClassicUO.Network
             mobile.StaminaMax = p.ReadUInt16BE();
             mobile.Stamina = p.ReadUInt16BE();
 
+#if ENABLE_UOASSIST
             if (mobile == world.Player)
             {
                 world.UoAssist.SignalStamina();
             }
+#endif // ENABLE_UOASSIST
         }
 
         private static void OpenUrl(World world, ref StackDataReader p)

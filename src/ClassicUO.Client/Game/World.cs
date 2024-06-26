@@ -69,7 +69,9 @@ namespace ClassicUO.Game
             SkillsGroupManager = new SkillsGroupManager(this);
             ChatManager = new ChatManager(this);
             AuraManager = new AuraManager(this);
+#if ENABLE_UOASSIST
             UoAssist = new UoAssist(this);
+#endif
             TargetManager = new TargetManager(this);
             DelayedObjectClickManager = new DelayedObjectClickManager(this);
             BoatMovingManager = new BoatMovingManager(this);
@@ -112,7 +114,9 @@ namespace ClassicUO.Game
 
         public AuraManager AuraManager { get; }
 
+#if ENABLE_UOASSIST
         public UoAssist UoAssist { get; }
+#endif
 
         public TargetManager TargetManager { get; }
 
@@ -201,7 +205,9 @@ namespace ClassicUO.Game
                         Client.Game.UO.GameCursor.Graphic = 0xFFFF;
                     }
 
+#if ENABLE_UOASSIST
                     UoAssist.SignalMapChanged(value);
+#endif
                 }
             }
         }

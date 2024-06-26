@@ -24,6 +24,10 @@
     <DefineConstants>$(DefineConstants);ENABLE_MAPDIF</DefineConstants>
   </PropertyGroup>
 
+  <PropertyGroup Condition="'$(ENABLE_UOASSIST)' != 'false'">
+    <DefineConstants>$(DefineConstants);ENABLE_UOASSIST</DefineConstants>
+  </PropertyGroup>
+
   <PropertyGroup Condition="'$(IS_DEV_BUILD)' == 'true'">
     <DefineConstants>$(DefineConstants);DEV_BUILD</DefineConstants>
   </PropertyGroup>
