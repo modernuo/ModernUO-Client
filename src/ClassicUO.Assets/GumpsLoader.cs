@@ -57,13 +57,19 @@ namespace ClassicUO.Assets
         public static GumpsLoader Instance =>
             _instance ?? (_instance = new GumpsLoader(MAX_GUMP_DATA_INDEX_COUNT));
 
+#if ENABLE_UOP
         public bool UseUOPGumps = false;
+#else
+        public bool UseUOPGumps => false;
+#endif
 
         public Task Load()
         {
             return Task.Run(() =>
             {
-                string path = UOFileManager.GetUOFilePath("gumpartLegacyMUL.uop");
+                string path;
+#if ENABLE_UOP
+                path = UOFileManager.GetUOFilePath("gumpartLegacyMUL.uop");
 
                 if (UOFileManager.IsUOPInstallation && File.Exists(path))
                 {
@@ -77,6 +83,7 @@ namespace ClassicUO.Assets
                     UseUOPGumps = true;
                 }
                 else
+#endif // ENABLE_UOP
                 {
                     path = UOFileManager.GetUOFilePath("gumpart.mul");
                     string pathidx = UOFileManager.GetUOFilePath("gumpidx.mul");
@@ -98,7 +105,9 @@ namespace ClassicUO.Assets
                         UOFileMul.FillEntries(file, idxFile, ref Entries);
                     }
 
+#if ENABLE_UOP
                     UseUOPGumps = false;
+#endif
                     _file = file;
                 }
 

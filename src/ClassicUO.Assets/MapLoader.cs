@@ -53,7 +53,9 @@ namespace ClassicUO.Assets
         private PinnedBuffer _fileStatics;
         private PinnedBuffer _fileIdxStatics;
 
+#if ENABLE_UOP
         private readonly bool isuop;
+#endif
 
         private PinnedBuffer _mapDif;
         private PinnedBuffer _staDif;
@@ -87,7 +89,9 @@ namespace ClassicUO.Assets
             idx = i;
             inherit = _inherit;
 
-            string path = UOFileManager.GetUOFilePath($"map{i}LegacyMUL.uop");
+            string path;
+#if ENABLE_UOP
+            path = UOFileManager.GetUOFilePath($"map{i}LegacyMUL.uop");
 
             if (UOFileManager.IsUOPInstallation && File.Exists(path))
             {
@@ -95,6 +99,7 @@ namespace ClassicUO.Assets
                 mapFileInfo = new FileInfo(path);
             }
             else
+#endif // ENABLE_UOP
             {
                 path = UOFileManager.GetUOFilePath($"map{i}.mul");
                 mapFileInfo = new FileInfo(path);
@@ -120,11 +125,13 @@ namespace ClassicUO.Assets
         {
             string path = mapFileInfo.ToString();
 
+#if ENABLE_UOP
             if (isuop)
             {
                 _fileMap = new UOFileUop(path, $"build/map{i}legacymul/{{0:D8}}.dat");
             }
             else
+#endif // ENABLE_UOP
             {
                 if (mapFileInfo.Exists)
                 {
@@ -208,7 +215,9 @@ namespace ClassicUO.Assets
             IntPtr mapddress = file.StartAddress;
             IntPtr endmapaddress = mapddress + (IntPtr) file.Length;
             IntPtr uopoffset = 0;
+#if ENABLE_UOP
             int fileNumber = -1;
+#endif
 
             for (int block = 0; block < maxblockcount; block++)
             {
@@ -216,6 +225,7 @@ namespace ClassicUO.Assets
                 uint realstaticcount = 0;
                 int blocknum = block;
 
+#if ENABLE_UOP
                 if (isuop)
                 {
                     blocknum &= 4095;
@@ -237,6 +247,7 @@ namespace ClassicUO.Assets
                         }
                     }
                 }
+#endif // ENABLE_UOP
 
                 IntPtr address = mapddress + uopoffset + (IntPtr) (blocknum * mapblocksize);
 
@@ -273,10 +284,12 @@ namespace ClassicUO.Assets
                 data.OriginalStaticCount = realstaticcount;
             }
 
+#if ENABLE_UOP
             if (isuop)
             {
                 ((UOFileUop)file)?.ClearHashes();
             }
+#endif // ENABLE_UOP
         }
 
         public void EnsureLoaded()
@@ -424,6 +437,10 @@ namespace ClassicUO.Assets
             {
                 return;
             }
+
+#if !ENABLE_UOP
+            bool isuop = false;
+#endif
 
             if (!isuop && _fileMap != null && _fileMap.HasData &&
                 _fileIdxStatics != null && _fileIdxStatics.HasData &&

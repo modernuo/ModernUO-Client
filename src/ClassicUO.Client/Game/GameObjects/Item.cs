@@ -265,6 +265,7 @@ namespace ClassicUO.Game.GameObjects
             ref UOFileIndex entry = ref MultiLoader.Instance.GetValidRefEntry(Graphic);
             bool movable = false;
 
+#if ENABLE_UOP
             if (MultiLoader.Instance.IsUOP)
             {
                 if (entry.Length > 0 && entry.DecompressedLength > 0)
@@ -379,6 +380,7 @@ namespace ClassicUO.Game.GameObjects
                 }
             }
             else
+#endif // ENABLE_UOP
             {
                 byte *src = entry.Data;
                 int count = entry.Length / MultiLoader.Instance.Offset;

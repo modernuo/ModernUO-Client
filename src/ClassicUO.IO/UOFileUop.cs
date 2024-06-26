@@ -35,6 +35,7 @@ using System.Collections.Generic;
 
 namespace ClassicUO.IO
 {
+#if ENABLE_UOP
     public class UOFileUop : UOFile
     {
         private const uint UOP_MAGIC_NUMBER = 0x50594D;
@@ -276,4 +277,5 @@ namespace ClassicUO.IO
             return ((ulong) esi << 32) | eax;
         }
     }
+#endif // ENABLE_UOP
 }
