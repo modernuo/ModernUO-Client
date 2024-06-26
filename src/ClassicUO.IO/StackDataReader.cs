@@ -28,6 +28,7 @@ namespace ClassicUO.IO
         public int Position { get; private set; }
         public long Length { get; }
         public readonly int Remaining => (int)(Length - Position);
+        public bool IsEOF => Position >= Length;
 
         public readonly IntPtr StartAddress => (IntPtr)Unsafe.AsPointer(ref GetPinnableReference());
         public readonly IntPtr PositionAddress
