@@ -73,11 +73,11 @@ namespace ClassicUO.Assets
                 return default;
             }
 
-            var reader = new DataReader(file);
+            var reader = new StackDataReader(file.AsSpan());
 
-            int w = reader.ReadShort();
+            int w = reader.ReadInt16LE();
 
-            int h = reader.ReadShort();
+            int h = reader.ReadInt16LE();
 
             if (w < 1 || h < 1)
             {
@@ -99,13 +99,13 @@ namespace ClassicUO.Assets
             {
                 int x = 0;
 
-                int colorCount = reader.ReadInt() / 3;
+                int colorCount = reader.ReadInt32LE() / 3;
 
                 for (int i = 0; i < colorCount; i++)
                 {
-                    int size = reader.ReadByte();
+                    int size = reader.ReadUInt8();
 
-                    uint color = HuesHelper.Color16To32(reader.ReadUShort()) | 0xFF_00_00_00;
+                    uint color = HuesHelper.Color16To32(reader.ReadUInt16LE()) | 0xFF_00_00_00;
 
                     for (int j = 0; j < size; j++)
                     {
@@ -202,10 +202,10 @@ namespace ClassicUO.Assets
                 return default;
             }
 
-            var reader = new DataReader(_file);
+            var reader = new StackDataReader(_file.AsSpan());
 
-            int w = reader.ReadInt();
-            int h = reader.ReadInt();
+            int w = reader.ReadInt32LE();
+            int h = reader.ReadInt32LE();
 
             if (w < 1 || h < 1)
             {
@@ -248,7 +248,7 @@ namespace ClassicUO.Assets
 
             while (!reader.IsEOF)
             {
-                byte pic = reader.ReadByte();
+                byte pic = reader.ReadUInt8();
                 byte size = (byte) (pic & 0x7F);
                 bool colored = (pic & 0x80) != 0;
 
