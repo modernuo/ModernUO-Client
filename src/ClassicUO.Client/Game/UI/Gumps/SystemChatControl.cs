@@ -58,7 +58,9 @@ namespace ClassicUO.Game.UI.Gumps
         Guild,
         Alliance,
         ClientCommand,
+#if ENABLE_UOASSIST
         UOAMChat,
+#endif
         Prompt,
         UOChat
     }
@@ -217,11 +219,13 @@ namespace ClassicUO.Game.UI.Gumps
 
                             break;
 
+#if ENABLE_UOASSIST
                         case ChatMode.UOAMChat:
                             DisposeChatModePrefix();
                             AppendChatModePrefix(ResGumps.UOAM, 83, TextBoxControl.Text);
 
                             break;
+#endif // ENABLE_UOASSIST
 
                         case ChatMode.UOChat:
                             DisposeChatModePrefix();
@@ -465,10 +469,12 @@ namespace ClassicUO.Game.UI.Gumps
                     }
                 }
             }
+#if ENABLE_UOASSIST
             else if (Mode == ChatMode.ClientCommand && TextBoxControl.Text.Length == 1 && TextBoxControl.Text[0] == '-')
             {
                 Mode = ChatMode.UOAMChat;
             }
+#endif // ENABLE_UOASSIST
 
             if (ProfileManager.CurrentProfile.SpeechHue != TextBoxControl.Hue)
             {
@@ -868,10 +874,12 @@ namespace ClassicUO.Game.UI.Gumps
 
                         break;
 
+#if ENABLE_UOASSIST
                     case ChatMode.UOAMChat:
                         _gump.World.UoAssist.SignalMessage(text);
 
                         break;
+#endif // ENABLE_UOASSIST
 
                     case ChatMode.UOChat:
                         NetClient.Socket.Send_ChatMessageCommand(text);

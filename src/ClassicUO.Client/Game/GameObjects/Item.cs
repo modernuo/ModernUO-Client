@@ -504,7 +504,9 @@ namespace ClassicUO.Game.GameObjects
             }
             else if (WantUpdateMulti)
             {
+#if ENABLE_UOASSIST
                 World.UoAssist.SignalAddMulti((ushort)(Graphic | 0x4000), X, Y);
+#endif
 
                 if (
                     MultiDistanceBonus == 0

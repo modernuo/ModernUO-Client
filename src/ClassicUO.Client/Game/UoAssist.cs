@@ -45,6 +45,7 @@ using SDL2;
 
 namespace ClassicUO.Utility.Platforms
 {
+#if ENABLE_UOASSIST
     internal sealed class UoAssist
     {
         private readonly CustomWindow _customWindow;
@@ -621,4 +622,5 @@ namespace ClassicUO.Utility.Platforms
             }
         }
     }
+#endif // ENABLE_UOASSIST
 }
