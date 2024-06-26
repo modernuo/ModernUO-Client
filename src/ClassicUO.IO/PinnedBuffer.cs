@@ -43,4 +43,10 @@ public unsafe class PinnedBuffer : IDisposable
         _data = data;
         Length = length;
     }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public ReadOnlySpan<byte> AsSpan()
+    {
+        return new ReadOnlySpan<byte>(Data, (int)Length);
+    }
 }
