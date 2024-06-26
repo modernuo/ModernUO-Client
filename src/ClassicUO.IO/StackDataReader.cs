@@ -272,6 +272,18 @@ namespace ClassicUO.IO
             return v;
         }
 
+        public ReadOnlySpan<byte> ReadSpan(int readLength)
+        {
+            if (Position + readLength > Length)
+            {
+                return new ReadOnlySpan<byte>();
+            }
+
+            var result = _data.Slice(Position, readLength);
+            Skip(readLength);
+            return result;
+        }
+
         private string ReadRawString(int length, int sizeT, bool safe)
         {
             if (length == 0 || Position + sizeT > Length)
