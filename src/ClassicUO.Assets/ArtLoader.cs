@@ -43,7 +43,6 @@ namespace ClassicUO.Assets
     {
         private static ArtLoader _instance;
         private IDisposable _file;
-        private readonly ushort _graphicMask;
 
         [ThreadStatic]
         private static uint[] _data = null;
@@ -53,7 +52,6 @@ namespace ClassicUO.Assets
 
         private ArtLoader(int staticCount, int landCount)
         {
-            _graphicMask = UOFileManager.IsUOPInstallation ? (ushort)0xFFFF : (ushort)0x3FFF;
         }
 
         protected override void Dispose(bool disposing)
