@@ -57,8 +57,10 @@ namespace ClassicUO.Assets
         private readonly bool isuop;
 #endif
 
+#if ENABLE_MAPDIF
         private PinnedBuffer _mapDif;
         private PinnedBuffer _staDif;
+#endif // ENABLE_MAPDIF
 
         public int Width { get; private set; }
         public int Height { get; private set; }
@@ -82,7 +84,9 @@ namespace ClassicUO.Assets
 
         private bool isOpened = false, isLoaded = false;
 
+#if ENABLE_MAPDIF
         private int MapPatchesCountPostponed = 0, StaticPatchesCountPostponed = 0;
+#endif
 
         public OneMapLoader(int i, OneMapLoader _inherit)
         {
@@ -111,8 +115,10 @@ namespace ClassicUO.Assets
             _fileMap?.Dispose();
             _fileStatics?.Dispose();
             _fileIdxStatics?.Dispose();
+#if ENABLE_MAPDIF
             _mapDif?.Dispose();
             _staDif?.Dispose();
+#endif
         }
 
         public void SetSize(int width, int height)
@@ -138,6 +144,7 @@ namespace ClassicUO.Assets
                     _fileMap = new UOFile(path);
                 }
 
+#if ENABLE_MAPDIF
                 path = UOFileManager.GetUOFilePath($"mapdif{i}.mul");
                 if (File.Exists(path))
                 {
@@ -149,6 +156,7 @@ namespace ClassicUO.Assets
                 {
                     _staDif = new UOFile(path);
                 }
+#endif // ENABLE_MAPDIF
             }
 
             path = UOFileManager.GetUOFilePath($"statics{i}.mul");
@@ -304,6 +312,7 @@ namespace ClassicUO.Assets
             isLoaded = true;
             Load();
 
+#if ENABLE_MAPDIF
             if (MapPatchesCountPostponed >= 0 && StaticPatchesCountPostponed >= 0)
             {
                 /* ApplyPatches() was called before the map was loaded */
@@ -311,8 +320,10 @@ namespace ClassicUO.Assets
                 MapPatchesCountPostponed = 0;
                 StaticPatchesCountPostponed = 0;
             }
+#endif // ENABLE_MAPDIF
         }
 
+#if ENABLE_MAPDIF
         public unsafe bool DoApplyPatches(int mapPatchesCount, int staticPatchesCount)
         {
             ResetPatchesInBlockTable();
@@ -409,9 +420,11 @@ namespace ClassicUO.Assets
 
             return result;
         }
+#endif // ENABLE_MAPDIF
 
         public bool ApplyPatches(int mapPatchesCount, int staticPatchesCount)
         {
+#if ENABLE_MAPDIF
             if (!isLoaded)
             {
                 /* the map is not yet loaded; postpone the operation
@@ -422,6 +435,9 @@ namespace ClassicUO.Assets
             }
 
             return DoApplyPatches(mapPatchesCount, staticPatchesCount);
+#else
+            return false;
+#endif
         }
 
         private void ResetPatchesInBlockTable()
