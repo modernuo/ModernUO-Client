@@ -1820,7 +1820,7 @@ namespace ClassicUO.Assets
         public int FileIndex;
         public AnimationGroupsType AnimType;
         public ushort Graphic;
-        public ushort Hue => 0;
+        public ushort Hue;
         public sbyte MountHeight;
     }
 

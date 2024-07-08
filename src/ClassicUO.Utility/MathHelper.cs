@@ -61,6 +61,19 @@ namespace ClassicUO.Utility
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static ulong Combine(ulong val1, ulong val2)
+        {
+            return val1 | (val2 << 32);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void GetNumbersFromCombine(ulong b, out int val1, out int val2)
+        {
+            val1 = (int) (0xFFFFFFFF & b);
+            val2 = (int) (b >> 32);
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public static int PercetangeOf(int current, int max)
         {
             if (current <= 0 || max <= 0)
