@@ -236,9 +236,6 @@ namespace ClassicUO
 
             BuffTable.Load();
             ChairTable.Load();
-
-            Log.Trace("Network calibration...");
-            PacketsTable.AdjustPacketSizeByVersion(Version);
         }
     }
 
