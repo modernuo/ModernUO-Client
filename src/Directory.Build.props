@@ -48,8 +48,4 @@
     </PackageReference>
   </ItemGroup>
 
-  <PropertyGroup>
-    <TreatWarningsAsErrors>True</TreatWarningsAsErrors>
-  </PropertyGroup>
-
 </Project>

@@ -239,19 +239,6 @@ namespace ClassicUO
 
             Log.Trace("Network calibration...");
             PacketsTable.AdjustPacketSizeByVersion(Version);
-
-            if (Settings.GlobalSettings.Encryption != 0)
-            {
-                Log.Trace("Calculating encryption by client version...");
-                EncryptionHelper.CalculateEncryption(Version);
-                Log.Trace($"encryption: {EncryptionHelper.Type}");
-
-                if (EncryptionHelper.Type != (ENCRYPTION_TYPE) Settings.GlobalSettings.Encryption)
-                {
-                    Log.Warn($"Encryption found: {EncryptionHelper.Type}");
-                    Settings.GlobalSettings.Encryption = (byte) EncryptionHelper.Type;
-                }
-            }
         }
     }
 
