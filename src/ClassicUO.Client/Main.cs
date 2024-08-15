@@ -153,7 +153,7 @@ namespace ClassicUO
                 }
             }
 
-            Settings.GlobalSettings = ConfigurationResolver.Load<Settings>(globalSettingsPath, SettingsJsonContext.RealDefault.Settings);
+            Settings.GlobalSettings = ConfigurationResolver.Load(globalSettingsPath, SettingsJsonContext.RealDefault.Settings);
 
             ReadSettingsFromArgs(args);
 
