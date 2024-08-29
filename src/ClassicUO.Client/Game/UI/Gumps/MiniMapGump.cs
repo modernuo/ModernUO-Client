@@ -50,8 +50,7 @@ namespace ClassicUO.Game.UI.Gumps
         private int _lastMap = -1;
         private long _timeMS;
         private bool _useLargeMap;
-        private ushort _x,
-            _y;
+        private ushort _x, _y;
         private static readonly uint[][] _blankGumpsPixels = new uint[4][];
 
         const ushort SMALL_MAP_GRAPHIC = 5010;
@@ -274,7 +273,7 @@ namespace ClassicUO.Game.UI.Gumps
 
             uint[] data = _blankGumpsPixels[index + 2];
 
-            Point* table = stackalloc Point[2];
+            Span<Point> table = stackalloc Point[2];
             table[0].X = 0;
             table[0].Y = 0;
             table[1].X = 0;
@@ -321,25 +320,19 @@ namespace ClassicUO.Game.UI.Gumps
                             {
                                 ref readonly StaticsBlock stblock = ref staticsBlocks[c];
 
-                                if (
-                                    stblock.X == x
-                                    && stblock.Y == y
-                                    && stblock.Color > 0
-                                    && stblock.Color != 0xFFFF
-                                    && GameObject.CanBeDrawn(World, stblock.Color)
-                                )
+                                if (stblock.X != x || stblock.Y != y || stblock.Color <= 0 || stblock.Color == 0xFFFF || !GameObject.CanBeDrawn(World, stblock.Color) ||
+                                    stblock.Z < z)
                                 {
-                                    if (stblock.Z >= z)
-                                    {
-                                        color =
-                                            stblock.Hue > 0
-                                                ? (ushort)(stblock.Hue + 0x4000)
-                                                : stblock.Color;
-                                        isLand = stblock.Hue > 0;
-
-                                        z = stblock.Z;
-                                    }
+                                    continue;
                                 }
+
+                                color =
+                                    stblock.Hue > 0
+                                        ? (ushort)(stblock.Hue + 0x4000)
+                                        : stblock.Color;
+                                isLand = stblock.Hue > 0;
+
+                                z = stblock.Z;
                             }
 
                             if (block != null)
@@ -421,7 +414,7 @@ namespace ClassicUO.Game.UI.Gumps
             int y,
             int w,
             int h,
-            Point* table,
+            Span<Point> table,
             int count
         )
         {
