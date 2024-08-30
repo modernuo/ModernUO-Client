@@ -315,6 +315,11 @@ namespace ClassicUO.Utility
             return num.ToString();
         }
 
+        public static void SetClipboardText(string text)
+        {
+            SDL.SDL_SetClipboardText(text);
+        }
+
         public static string GetClipboardText(bool multiline)
         {
             if (SDL.SDL_HasClipboardText() != SDL.SDL_bool.SDL_FALSE)

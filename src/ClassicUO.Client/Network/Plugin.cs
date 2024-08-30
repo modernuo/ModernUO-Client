@@ -182,6 +182,134 @@ namespace ClassicUO.Network
             return p;
         }
 
+        public static Plugin CreateRazorDirect()
+        {
+            var plugin = new Plugin("Razor.exe");
+            plugin.DirectLoadRazor();
+            Plugins.Add(plugin);
+            return plugin;
+        }
+
+        public void DirectLoadRazor()
+        {
+            _recv = OnPluginRecv;
+            _send = OnPluginSend;
+            _recv_new = OnPluginRecv_new;
+            _send_new = OnPluginSend_new;
+            _getPacketLength = PacketsTable.GetPacketLength;
+            _getPlayerPosition = GetPlayerPosition;
+            _castSpell = GameActions.CastSpell;
+            _getStaticImage = GetStaticImage;
+            _getUoFilePath = GetUOFilePath;
+            _requestMove = RequestMove;
+            _setTitle = SetWindowTitle;
+            _get_static_data = GetStaticData;
+            _get_tile_data = GetTileData;
+            _get_cliloc = GetCliloc;
+
+            SDL.SDL_SysWMinfo info = new SDL.SDL_SysWMinfo();
+            SDL.SDL_VERSION(out info.version);
+            SDL.SDL_GetWindowWMInfo(Client.Game.Window.Handle, ref info);
+
+            IntPtr hwnd = IntPtr.Zero;
+
+            if (info.subsystem == SDL.SDL_SYSWM_TYPE.SDL_SYSWM_WINDOWS)
+            {
+                hwnd = info.info.win.window;
+            }
+
+            var header = new CUO_API.PluginHeader
+            {
+                ClientVersion = (int)Client.Game.UO.Version,
+                Recv = Marshal.GetFunctionPointerForDelegate(_recv),
+                Send = Marshal.GetFunctionPointerForDelegate(_send),
+                GetPacketLength = Marshal.GetFunctionPointerForDelegate(_getPacketLength),
+                GetPlayerPosition = Marshal.GetFunctionPointerForDelegate(_getPlayerPosition),
+                CastSpell = Marshal.GetFunctionPointerForDelegate(_castSpell),
+                GetStaticImage = Marshal.GetFunctionPointerForDelegate(_getStaticImage),
+                HWND = hwnd,
+                GetUOFilePath = Marshal.GetFunctionPointerForDelegate(_getUoFilePath),
+                RequestMove = Marshal.GetFunctionPointerForDelegate(_requestMove),
+                SetTitle = Marshal.GetFunctionPointerForDelegate(_setTitle),
+                //Recv_new = Marshal.GetFunctionPointerForDelegate(_recv_new),
+                //Send_new = Marshal.GetFunctionPointerForDelegate(_send_new),
+                //SDL_Window = Client.Game.Window.Handle,
+                //GetStaticData = Marshal.GetFunctionPointerForDelegate(_get_static_data),
+                //GetTileData = Marshal.GetFunctionPointerForDelegate(_get_tile_data),
+                //GetCliloc = Marshal.GetFunctionPointerForDelegate(_get_cliloc)
+            };
+
+
+            Assistant.Engine.Install(&header);
+
+            if (header.OnRecv != IntPtr.Zero)
+            {
+                _onRecv = Marshal.GetDelegateForFunctionPointer<OnPacketSendRecv>(header.OnRecv);
+            }
+
+            if (header.OnSend != IntPtr.Zero)
+            {
+                _onSend = Marshal.GetDelegateForFunctionPointer<OnPacketSendRecv>(header.OnSend);
+            }
+
+            if (header.OnHotkeyPressed != IntPtr.Zero)
+            {
+                _onHotkeyPressed = Marshal.GetDelegateForFunctionPointer<OnHotkey>(header.OnHotkeyPressed);
+            }
+
+            if (header.OnMouse != IntPtr.Zero)
+            {
+                _onMouse = Marshal.GetDelegateForFunctionPointer<OnMouse>(header.OnMouse);
+            }
+
+            if (header.OnPlayerPositionChanged != IntPtr.Zero)
+            {
+                _onUpdatePlayerPosition = Marshal.GetDelegateForFunctionPointer<OnUpdatePlayerPosition>(header.OnPlayerPositionChanged);
+            }
+
+            if (header.OnClientClosing != IntPtr.Zero)
+            {
+                _onClientClose = Marshal.GetDelegateForFunctionPointer<OnClientClose>(header.OnClientClosing);
+            }
+
+            if (header.OnInitialize != IntPtr.Zero)
+            {
+                _onInitialize = Marshal.GetDelegateForFunctionPointer<OnInitialize>(header.OnInitialize);
+            }
+
+            if (header.OnConnected != IntPtr.Zero)
+            {
+                _onConnected = Marshal.GetDelegateForFunctionPointer<OnConnected>(header.OnConnected);
+            }
+
+            if (header.OnDisconnected != IntPtr.Zero)
+            {
+                _onDisconnected = Marshal.GetDelegateForFunctionPointer<OnDisconnected>(header.OnDisconnected);
+            }
+
+            if (header.OnFocusGained != IntPtr.Zero)
+            {
+                _onFocusGained = Marshal.GetDelegateForFunctionPointer<OnFocusGained>(header.OnFocusGained);
+            }
+
+            if (header.OnFocusLost != IntPtr.Zero)
+            {
+                _onFocusLost = Marshal.GetDelegateForFunctionPointer<OnFocusLost>(header.OnFocusLost);
+            }
+
+            if (header.Tick != IntPtr.Zero)
+            {
+                _tick = Marshal.GetDelegateForFunctionPointer<OnTick>(header.Tick);
+            }
+
+            IsValid = true;
+
+            if (_onInitialize != null)
+            {
+                _onInitialize();
+            }
+        }
+
         public void Load()
         {
             _recv = OnPluginRecv;

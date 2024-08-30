@@ -1,0 +1,103 @@
+﻿<?xml version="1.0" encoding="utf-8" ?>
+<Directives>
+  <Library>
+    <Assembly Name="FastColoredTextBox">
+      <Type Name="FastColoredTextBoxNS.ServiceColors" Dynamic="Required All" />
+    </Assembly>
+    <Assembly Name="System.Drawing">
+      <Type Name="System.Drawing.Bitmap" Dynamic="Required All" />
+      <Type Name="System.Drawing.Icon" Dynamic="Required All" />
+      <Type Name="System.Drawing.Image" Dynamic="Required All" />
+    </Assembly>
+
+    <Assembly Name="System.Resources.Extensions">
+      <Type Name="System.Resources.Extensions.RuntimeResourceSet" Dynamic="Required All" />
+      <Type Name="System.Resources.Extensions.DeserializingResourceReader" Dynamic="Required All" />
+    </Assembly>
+
+    <Assembly Name="Razor">
+      <Type Name="Assistant.MainForm" Dynamic="Required All" />
+      <Type Name="Assistant.DragDropManager" Dynamic="Required All" />
+      <Type Name="Assistant.Commands" Dynamic="Required All" />
+      <Type Name="Assistant.MemoryHelperThinggie" Dynamic="Required All" />
+      <Type Name="Assistant.ScreenCapManager" Dynamic="Required All" />
+      <Type Name="Assistant.Spell" Dynamic="Required All" />
+      <Type Name="Assistant.Targeting" Dynamic="Required All" />
+      <Type Name="Assistant.HotKey" Dynamic="Required All" />
+      <Type Name="Assistant.SpecialMoves" Dynamic="Required All" />
+      <Type Name="Assistant.PacketHandlers" Dynamic="Required All" />
+      <Type Name="Assistant.Scripts.ScriptManager" Dynamic="Required All" />
+      <Type Name="Assistant.MapUO.MapWindow" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.MacroManager" Dynamic="Required All" />
+      <Type Name="Assistant.HotKeys.CounterHotKeys" Dynamic="Required All" />
+      <Type Name="Assistant.HotKeys.UseHotKeys" Dynamic="Required All" />
+      <Type Name="Assistant.HotKeys.SkillHotKeys" Dynamic="Required All" />
+      <Type Name="Assistant.HotKeys.UndressHotKeys" Dynamic="Required All" />
+      <Type Name="Assistant.Filters.DeathFilter" Dynamic="Required All" />
+      <Type Name="Assistant.Filters.LightFilter" Dynamic="Required All" />
+      <Type Name="Assistant.Filters.LocMessageFilter" Dynamic="Required All" />
+      <Type Name="Assistant.Filters.SoundFilter" Dynamic="Required All" />
+      <Type Name="Assistant.Filters.StaffItemFilter" Dynamic="Required All" />
+      <Type Name="Assistant.Filters.VetRewardGumpFilter" Dynamic="Required All" />
+      <Type Name="Assistant.Filters.WeatherFilter" Dynamic="Required All" />
+      <!--<Type Name="Assistant.Core.MessageManager" Dynamic="Required All" />-->
+      <Type Name="Assistant.Core.SystemMessages" Dynamic="Required All" />
+      <Type Name="Assistant.Core.WaypointManager" Dynamic="Required All" />
+      <Type Name="Assistant.Agents.BuyAgent" Dynamic="Required All" />
+      <Type Name="Assistant.Agents.IgnoreAgent" Dynamic="Required All" />
+      <Type Name="Assistant.Agents.OrganizerAgent" Dynamic="Required All" />
+      <Type Name="Assistant.Agents.RestockAgent" Dynamic="Required All" />
+      <Type Name="Assistant.Agents.ScavengerAgent" Dynamic="Required All" />
+      <Type Name="Assistant.Agents.SearchExemptionAgent" Dynamic="Required All" />
+      <Type Name="Assistant.Agents.SellAgent" Dynamic="Required All" />
+      <Type Name="Assistant.Agents.UseOnceAgent" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.AbsoluteTargetAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.AbsoluteTargetVariableAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.BookCastSpellAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.ClearSysMessages" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.ContextMenuAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.DoubleClickAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.DoubleClickTypeAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.DoubleClickVariableAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.DoWhileAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.DressAction" Dymamic="Required All" />
+      <Type Name="Assistant.Macros.DropAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.DropRelLocAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.ElseAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.EndForAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.EndIfAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.EndWhileAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.ExtCastSpellAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.ForAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.GumpResponseAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.HotKeyAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.IfAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.LastTargetAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.LiftAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.LiftTypeAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.MacroCastSpellAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.MacroComment" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.MacroWaitAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.MenuResponseAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.OverheadMessageAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.PauseAction" Dymamic="Required All" />
+      <Type Name="Assistant.Macros.PromptAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.SetAbilityAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.SetLastTargetAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.SetMacroVariableTargetAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.SpeechAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.StartDoWhileAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.TargetRelLocAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.TargetTypeAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.UnDressAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.UseSkillAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.WaitForGumpAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.WaitForMenuAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.WaitForPromptAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.WaitForStatAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.WaitForTargetAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.WalkAction" Dynamic="Required All" />
+      <Type Name="Assistant.Macros.WhileAction" Dynamic="Required All" />
+    </Assembly>
+  </Library>
+</Directives>

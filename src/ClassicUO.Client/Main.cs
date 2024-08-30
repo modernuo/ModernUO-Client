@@ -76,6 +76,9 @@ namespace ClassicUO
 
         public static void Boot(UnmanagedAssistantHost pluginHost, string[] args)
         {
+            //Needed to be able to run Razor (win forms) when built as NativeAOT
+            ComWrappers.RegisterForMarshalling(WinFormsComInterop.WinFormsComWrappers.Instance);
+
             CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
 
             Log.Start(LogTypes.All);

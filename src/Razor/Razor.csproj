@@ -1,0 +1,25 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <ApplicationIcon>UI\App.ico</ApplicationIcon>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>True</AllowUnsafeBlocks>
+    <UseWindowsForms>True</UseWindowsForms>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
+    <SelfContained>true</SelfContained>
+    <CustomResourceTypesSupport>true</CustomResourceTypesSupport>
+    <PublishAot>true</PublishAot>
+    <!--<PublishSingleFile>true</PublishSingleFile>-->
+    <!--<_SuppressWinFormsTrimError>true</_SuppressWinFormsTrimError>-->
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ClassicUO.Utility\ClassicUO.Utility.csproj" />
+    <ProjectReference Include="..\cuoapi\cuoapi.csproj" />
+    <ProjectReference Include="..\FastColoredTextBox\FastColoredTextBox.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Folder Include="SolutionItems\" />
+  </ItemGroup>
+</Project>

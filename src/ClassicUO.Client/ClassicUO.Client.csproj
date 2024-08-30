@@ -1,11 +1,18 @@
 ﻿<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
+    <OutputType>WinExe</OutputType>
     <ApplicationIcon>cuoicon.ico</ApplicationIcon>
     <AssemblyName>cuo</AssemblyName>
     <RootNamespace>ClassicUO</RootNamespace>
     <PublishAot>true</PublishAot>
+    <PlatformTarget>x64</PlatformTarget>
+    <UseWindowsForms>True</UseWindowsForms>
+    
+    <!--Necessary for Razor NativeAOT -->
+    <_SuppressWinFormsTrimError>true</_SuppressWinFormsTrimError>
+    <CustomResourceTypesSupport>true</CustomResourceTypesSupport>
+    <EnableUnsafeBinaryFormatterSerialization>true</EnableUnsafeBinaryFormatterSerialization>
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(Configuration)'=='Release'">
@@ -35,8 +42,21 @@
     <ProjectReference Include="..\ClassicUO.Assets\ClassicUO.Assets.csproj" />
     <ProjectReference Include="..\ClassicUO.Renderer\ClassicUO.Renderer.csproj" />
     <ProjectReference Include="..\ClassicUO.Utility\ClassicUO.Utility.csproj" />
+    <ProjectReference Include="..\cuoapi\cuoapi.csproj" />
+    <ProjectReference Include="..\Razor\Razor.csproj" />
   </ItemGroup>
 
+
+  <!--Necessary for Razor NativeAOT -->
+  <ItemGroup>
+    <PackageReference Include="WinFormsComInterop" Version="0.5.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <RdXmlFile Include="rd.xml" />
+    <RdXmlFile Include="..\Razor\rd.xml" />
+  </ItemGroup>
+
+  
   <ItemGroup>
     <Compile Update="Resources\ResErrorMessages.Designer.cs">
       <DesignTime>True</DesignTime>
@@ -77,16 +97,12 @@
     <DataFiles_vulkan Include="$(ProjectDir)..\..\external\vulkan\icd.d\*.*" />
   </ItemGroup>
 
-  <ItemGroup>
-    <Reference Include="cuoapi">
-      <HintPath>..\..\external\cuoapi\cuoapi.dll</HintPath>
-    </Reference>
-  </ItemGroup>
 
   <PropertyGroup>
     <_IsWindows Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Windows)))' == 'true'">true</_IsWindows>
     <_IsMacOS Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::OSX)))' == 'true'">true</_IsMacOS>
     <_IsLinux Condition="'$([System.Runtime.InteropServices.RuntimeInformation]::IsOSPlatform($([System.Runtime.InteropServices.OSPlatform]::Linux)))' == 'true'">true</_IsLinux>
+    <TargetFramework>net8.0-windows</TargetFramework>
   </PropertyGroup>
 
   <Target Name="CopyExternalDeps_build" AfterTargets="Build">
