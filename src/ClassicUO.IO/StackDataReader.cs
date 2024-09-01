@@ -9,14 +9,9 @@ namespace ClassicUO.IO
 {
     public unsafe ref struct StackDataReader
     {
-        private const MethodImplOptions IMPL_OPTION = MethodImplOptions.AggressiveInlining
-#if !NETFRAMEWORK && !NETSTANDARD2_0
-                                                      | MethodImplOptions.AggressiveOptimization
-#endif
-                                                      ;
+        private const MethodImplOptions IMPL_OPTION = MethodImplOptions.AggressiveInlining;
 
         private readonly ReadOnlySpan<byte> _data;
-
 
         public StackDataReader(ReadOnlySpan<byte> data)
         {
@@ -178,9 +173,26 @@ namespace ClassicUO.IO
             return v;
         }
 
+        public int Read(Span<byte> buffer)
+        {
+            if (Position + buffer.Length > Length)
+            {
+                return -1;
+            }
 
+            _data.Slice(Position, buffer.Length).CopyTo(buffer);
+            Skip(buffer.Length);
+            return buffer.Length;
+        }
 
-
+        [MethodImpl(IMPL_OPTION)]
+        public T Read<T>() where T : unmanaged
+        {
+            Unsafe.SkipInit<T>(out var v);
+            var p = new Span<byte>(&v, sizeof(T));
+            Read(p);
+            return v;
+        }
 
         [MethodImpl(IMPL_OPTION)]
         public ushort ReadUInt16BE()
