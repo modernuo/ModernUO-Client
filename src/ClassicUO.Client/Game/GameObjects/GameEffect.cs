@@ -2,7 +2,7 @@
 
 // Copyright (c) 2024, andreakarasho
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
 // 1. Redistributions of source code must retain the above copyright
@@ -16,7 +16,7 @@
 // 4. Neither the name of the copyright holder nor the
 //    names of its contributors may be used to endorse or promote products
 //    derived from this software without specific prior written permission.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ''AS IS'' AND ANY
 // EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 // WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -30,12 +30,9 @@
 
 #endregion
 
-using System;
-using System.Collections.Generic;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.Managers;
 using ClassicUO.Assets;
-using ClassicUO.Utility;
 
 namespace ClassicUO.Game.GameObjects
 {
@@ -54,7 +51,7 @@ namespace ClassicUO.Game.GameObjects
             AnimDataFrame = AnimDataLoader.Instance?.CalculateCurrentGraphic(graphic) ?? default;
             IsEnabled = true;
             AnimIndex = 0;
-            
+
 
             speed *= 10;
 
@@ -68,10 +65,10 @@ namespace ClassicUO.Game.GameObjects
                 IntervalInMs = speed;
 
                 // NOTE:
-                // tested on outlands with arrows & bolts 
+                // tested on outlands with arrows & bolts
                 // server sends duration = 50 , a very small amount of time so the arrow will be destroyed suddenly
                 // im not sure if this is the right fix, but keep it atm
-                
+
                 // NOTE 2:
                 // this fix causes issue with other effects. It makes perma effects. So bad
                 //duration = -1;
@@ -102,7 +99,7 @@ namespace ClassicUO.Game.GameObjects
         protected ushort TargetY;
         protected sbyte TargetZ;
 
-      
+
         public override void Update()
         {
             base.Update();

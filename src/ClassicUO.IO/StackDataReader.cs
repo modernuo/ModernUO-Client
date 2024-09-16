@@ -329,7 +329,7 @@ namespace ClassicUO.IO
                     Span<char> buff = stackalloc char[256];
                     ReadOnlySpan<char> chars = result.AsSpan();
 
-                    ValueStringBuilder sb = new ValueStringBuilder(buff);
+                    using var sb = new ValueStringBuilder(buff);
 
                     bool hasDoneAnyReplacements = false;
                     int last = 0;
@@ -353,8 +353,6 @@ namespace ClassicUO.IO
 
                         result = sb.ToString();
                     }
-
-                    sb.Dispose();
                 }
             }
 
@@ -449,7 +447,7 @@ namespace ClassicUO.IO
                 Span<char> buff = stackalloc char[256];
                 ReadOnlySpan<char> chars = result.AsSpan();
 
-                ValueStringBuilder sb = new ValueStringBuilder(buff);
+                using var sb = new ValueStringBuilder(buff);
 
                 bool hasDoneAnyReplacements = false;
                 int last = 0;
@@ -473,8 +471,6 @@ namespace ClassicUO.IO
 
                     result = sb.ToString();
                 }
-
-                sb.Dispose();
             }
 
             Position += Math.Max(size + (!fixedLength && index >= 0 ? sizeT : 0), length * sizeT);

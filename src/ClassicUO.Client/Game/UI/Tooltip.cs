@@ -2,7 +2,7 @@
 
 // Copyright (c) 2024, andreakarasho
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
 // 1. Redistributions of source code must retain the above copyright
@@ -16,7 +16,7 @@
 // 4. Neither the name of the copyright holder nor the
 //    names of its contributors may be used to endorse or promote products
 //    derived from this software without specific prior written permission.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ''AS IS'' AND ANY
 // EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 // WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -30,8 +30,6 @@
 
 #endregion
 
-using System;
-using System.Text;
 using ClassicUO.Configuration;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
@@ -262,52 +260,45 @@ namespace ClassicUO.Game.UI
 
             if (SerialHelper.IsValid(serial) && _world.OPL.TryGetNameAndData(serial, out string name, out string data))
             {
-                ValueStringBuilder sbHTML = new ValueStringBuilder();
+                using var sbHTML = new ValueStringBuilder();
+                using var sb = new ValueStringBuilder();
+                if (!string.IsNullOrEmpty(name))
                 {
-                    ValueStringBuilder sb = new ValueStringBuilder();
+                    if (SerialHelper.IsItem(serial))
                     {
-                        if (!string.IsNullOrEmpty(name))
+                        sbHTML.Append("<basefont color=\"yellow\">");
+                        hasStartColor = true;
+                    }
+                    else
+                    {
+                        Mobile mob = _world.Mobiles.Get(serial);
+
+                        if (mob != null)
                         {
-                            if (SerialHelper.IsItem(serial))
-                            {
-                                sbHTML.Append("<basefont color=\"yellow\">");
-                                hasStartColor = true;
-                            }
-                            else
-                            {
-                                Mobile mob = _world.Mobiles.Get(serial);
-
-                                if (mob != null)
-                                {
-                                    sbHTML.Append(Notoriety.GetHTMLHue(mob.NotorietyFlag));
-                                    hasStartColor = true;
-                                }
-                            }
-
-                            sb.Append(name);
-                            sbHTML.Append(name);
-
-                            if (hasStartColor)
-                            {
-                                sbHTML.Append("<basefont color=\"#FFFFFFFF\">");
-                            }
+                            sbHTML.Append(Notoriety.GetHTMLHue(mob.NotorietyFlag));
+                            hasStartColor = true;
                         }
+                    }
 
-                        if (!string.IsNullOrEmpty(data))
-                        {
-                            sb.Append('\n');
-                            sb.Append(data);
-                            sbHTML.Append('\n');
-                            sbHTML.Append(data);
-                        }
+                    sb.Append(name);
+                    sbHTML.Append(name);
 
-                        htmltext = sbHTML.ToString();
-                        result = sb.ToString();
-
-                        sb.Dispose();
-                        sbHTML.Dispose();
+                    if (hasStartColor)
+                    {
+                        sbHTML.Append("<basefont color=\"#FFFFFFFF\">");
                     }
                 }
+
+                if (!string.IsNullOrEmpty(data))
+                {
+                    sb.Append('\n');
+                    sb.Append(data);
+                    sbHTML.Append('\n');
+                    sbHTML.Append(data);
+                }
+
+                htmltext = sbHTML.ToString();
+                result = sb.ToString();
             }
             return string.IsNullOrEmpty(result) ? null : result;
         }

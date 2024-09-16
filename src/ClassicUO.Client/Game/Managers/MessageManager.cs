@@ -2,7 +2,7 @@
 
 // Copyright (c) 2024, andreakarasho
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
 // 1. Redistributions of source code must retain the above copyright
@@ -16,7 +16,7 @@
 // 4. Neither the name of the copyright holder nor the
 //    names of its contributors may be used to endorse or promote products
 //    derived from this software without specific prior written permission.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ''AS IS'' AND ANY
 // EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 // WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -32,16 +32,13 @@
 
 using System;
 using System.Collections.Generic;
-using System.Text;
 using ClassicUO.Configuration;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
 using ClassicUO.Game.UI.Controls;
 using ClassicUO.Game.UI.Gumps;
 using ClassicUO.Assets;
-using ClassicUO.Renderer;
 using ClassicUO.Utility;
-using ClassicUO.Game.Scenes;
 
 namespace ClassicUO.Game.Managers
 {
@@ -132,31 +129,22 @@ namespace ClassicUO.Game.Managers
                     {
                         if (currentProfile != null && currentProfile.EnabledSpellFormat && !string.IsNullOrWhiteSpace(currentProfile.SpellDisplayFormat))
                         {
-                            ValueStringBuilder sb = new ValueStringBuilder(currentProfile.SpellDisplayFormat.AsSpan());
-                            {
-                                sb.Replace("{power}".AsSpan(), spell.PowerWords.AsSpan());
-                                sb.Replace("{spell}".AsSpan(), spell.Name.AsSpan());
+                            using var sb = new ValueStringBuilder(currentProfile.SpellDisplayFormat.AsSpan());
+                            sb.Replace("{power}", spell.PowerWords);
+                            sb.Replace("{spell}", spell.Name);
 
-                                text = sb.ToString().Trim();
-                            }
-                            sb.Dispose();
+                            text = sb.ToString().Trim();
                         }
 
                         //server hue color per default if not enabled
                         if (currentProfile != null && currentProfile.EnabledSpellHue)
                         {
-                            if (spell.TargetType == TargetType.Beneficial)
+                            hue = spell.TargetType switch
                             {
-                                hue = currentProfile.BeneficHue;
-                            }
-                            else if (spell.TargetType == TargetType.Harmful)
-                            {
-                                hue = currentProfile.HarmfulHue;
-                            }
-                            else
-                            {
-                                hue = currentProfile.NeutralHue;
-                            }
+                                TargetType.Beneficial => currentProfile.BeneficHue,
+                                TargetType.Harmful => currentProfile.HarmfulHue,
+                                _ => currentProfile.NeutralHue
+                            };
                         }
                     }
 
@@ -332,7 +320,7 @@ namespace ClassicUO.Game.Managers
             {
                 fixedColor = 0x7FFF;
             }
-            
+
             textObject.RenderedText = RenderedText.Create
             (
                 msg,

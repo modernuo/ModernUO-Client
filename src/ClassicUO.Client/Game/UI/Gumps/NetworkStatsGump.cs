@@ -2,7 +2,7 @@
 
 // Copyright (c) 2024, andreakarasho
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
 // 1. Redistributions of source code must retain the above copyright
@@ -16,7 +16,7 @@
 // 4. Neither the name of the copyright holder nor the
 //    names of its contributors may be used to endorse or promote products
 //    derived from this software without specific prior written permission.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ''AS IS'' AND ANY
 // EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 // WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -31,7 +31,6 @@
 #endregion
 
 using System;
-using System.Text;
 using System.Xml;
 using ClassicUO.Game.UI.Controls;
 using ClassicUO.Input;
@@ -114,20 +113,18 @@ namespace ClassicUO.Game.UI.Gumps
                 }
 
                 Span<char> span = stackalloc char[128];
-                ValueStringBuilder sb = new ValueStringBuilder(span);
-              
+                using var sb = new ValueStringBuilder(span);
+
                 if (IsMinimized)
                 {
                     sb.Append($"Ping: {_ping} ms");
                 }
                 else
                 {
-                    sb.Append($"Ping: {_ping} ms\n{"In:"} {NetStatistics.GetSizeAdaptive(_deltaBytesReceived),-6} {"Out:"} {NetStatistics.GetSizeAdaptive(_deltaBytesSent),-6}");
+                    sb.Append($"Ping: {_ping} ms\nIn: {NetStatistics.GetSizeAdaptive(_deltaBytesReceived),-6} Out: {NetStatistics.GetSizeAdaptive(_deltaBytesSent),-6}");
                 }
 
                 _cacheText = sb.ToString();
-
-                sb.Dispose();
 
                 Vector2 size = Fonts.Bold.MeasureString(_cacheText);
 
@@ -146,22 +143,13 @@ namespace ClassicUO.Game.UI.Gumps
 
             Vector3 hueVector = ShaderHueTranslator.GetHueVector(0);
 
-            if (_ping < 150)
+            hueVector.X = _ping switch
             {
-                hueVector.X = 0x44; // green
-            }
-            else if (_ping < 200)
-            {
-                hueVector.X = 0x34; // yellow
-            }
-            else if (_ping < 300)
-            {
-                hueVector.X = 0x31; // orange
-            }
-            else
-            {
-                hueVector.X = 0x20; // red
-            }
+                < 150 => 0x44, // green
+                < 200 => 0x34, // yellow
+                < 300 => 0x31, // orange
+                _ => 0x20 // red
+            };
 
             hueVector.Y = 1;
 

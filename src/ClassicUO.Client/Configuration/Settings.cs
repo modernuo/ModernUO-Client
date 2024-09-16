@@ -2,7 +2,7 @@
 
 // Copyright (c) 2024, andreakarasho
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
 // 1. Redistributions of source code must retain the above copyright
@@ -16,7 +16,7 @@
 // 4. Neither the name of the copyright holder nor the
 //    names of its contributors may be used to endorse or promote products
 //    derived from this software without specific prior written permission.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ''AS IS'' AND ANY
 // EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 // WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -30,7 +30,6 @@
 
 #endregion
 
-using System;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -41,7 +40,7 @@ namespace ClassicUO.Configuration
 {
     [JsonSourceGenerationOptions(WriteIndented = true, GenerationMode = JsonSourceGenerationMode.Metadata)]
     [JsonSerializable(typeof(Settings), GenerationMode = JsonSourceGenerationMode.Metadata)]
-    sealed partial class SettingsJsonContext : JsonSerializerContext 
+    sealed partial class SettingsJsonContext : JsonSerializerContext
     {
         // horrible fix: https://github.com/ClassicUO/ClassicUO/issues/1663
         public static SettingsJsonContext RealDefault { get; } = new SettingsJsonContext(
@@ -72,7 +71,7 @@ namespace ClassicUO.Configuration
         [JsonPropertyName("profilespath")] public string ProfilesPath { get; set; } = string.Empty;
 
         [JsonPropertyName("clientversion")] public string ClientVersion { get; set; } = string.Empty;
-        
+
         [JsonPropertyName("lang")] public string Language { get; set; } = "";
 
         [JsonPropertyName("lastservernum")] public ushort LastServerNum { get; set; } = 1;

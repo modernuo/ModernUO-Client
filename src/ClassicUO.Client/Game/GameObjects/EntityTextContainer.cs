@@ -30,7 +30,6 @@
 
 #endregion
 
-using ClassicUO.Assets;
 using ClassicUO.Renderer;
 using ClassicUO.Utility.Collections;
 using Microsoft.Xna.Framework;

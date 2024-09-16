@@ -2,7 +2,7 @@
 
 // Copyright (c) 2024, andreakarasho
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
 // 1. Redistributions of source code must retain the above copyright
@@ -16,7 +16,7 @@
 // 4. Neither the name of the copyright holder nor the
 //    names of its contributors may be used to endorse or promote products
 //    derived from this software without specific prior written permission.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ''AS IS'' AND ANY
 // EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 // WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -33,8 +33,6 @@
 using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
-using System.Security;
-using System.Text;
 using SDL2;
 
 namespace ClassicUO.Utility
@@ -55,18 +53,14 @@ namespace ClassicUO.Utility
 
         public static string Cp1252ToString(ReadOnlySpan<byte> strCp1252)
         {
-            var sb = new ValueStringBuilder(strCp1252.Length);
+            using var sb = new ValueStringBuilder(strCp1252.Length);
 
             for (int i = 0; i < strCp1252.Length; ++i)
             {
                 sb.Append(char.ConvertFromUtf32(Cp1252ToUnicode(strCp1252[i])));
             }
 
-            var str = sb.ToString();
-
-            sb.Dispose();
-
-            return str;
+            return sb.ToString();
         }
 
         /// <summary>
@@ -176,7 +170,7 @@ namespace ClassicUO.Utility
             }
 
             Span<char> span = stackalloc char[str.Length];
-            ValueStringBuilder sb = new ValueStringBuilder(span);
+            using var sb = new ValueStringBuilder(span);
             bool capitalizeNext = true;
 
             for (int i = 0; i < str.Length; i++)
@@ -189,11 +183,7 @@ namespace ClassicUO.Utility
                 }
             }
 
-            string ss = sb.ToString();
-
-            sb.Dispose();
-
-            return ss;
+            return sb.ToString();
         }
 
         public static string CapitalizeWordsByLimitator(string str)
@@ -204,7 +194,7 @@ namespace ClassicUO.Utility
             }
 
             Span<char> span = stackalloc char[str.Length];
-            ValueStringBuilder sb = new ValueStringBuilder(span);
+            using var sb = new ValueStringBuilder(span);
 
             bool capitalizeNext = true;
 
@@ -224,11 +214,7 @@ namespace ClassicUO.Utility
                 }
             }
 
-            string ss = sb.ToString();
-
-            sb.Dispose();
-
-            return ss;
+            return sb.ToString();
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -252,7 +238,7 @@ namespace ClassicUO.Utility
                 return "";
             }
 
-            ValueStringBuilder sb = new ValueStringBuilder(str.Length * 2);
+            using var sb = new ValueStringBuilder(str.Length * 2);
             sb.Append(str[0]);
 
             for (int i = 1, len = str.Length - 1; i <= len; i++)
@@ -268,11 +254,7 @@ namespace ClassicUO.Utility
                 sb.Append(str[i]);
             }
 
-            string s = sb.ToString();
-
-            sb.Dispose();
-
-            return s;
+            return sb.ToString();
         }
 
         public static string RemoveUpperLowerChars(string str, bool removelower = true)
@@ -283,7 +265,7 @@ namespace ClassicUO.Utility
             }
 
             Span<char> span = stackalloc char[str.Length];
-            ValueStringBuilder sb = new ValueStringBuilder(span);
+            using var sb = new ValueStringBuilder(span);
 
             for (int i = 0; i < str.Length; i++)
             {
@@ -293,51 +275,44 @@ namespace ClassicUO.Utility
                 }
             }
 
-            string ss = sb.ToString();
-
-            sb.Dispose();
-
-            return ss;
+            return sb.ToString();
         }
 
         public static string IntToAbbreviatedString(int num)
         {
-            if (num > 999999)
+            return num switch
             {
-                return string.Format("{0}M+", num / 1000000);
-            }
-
-            if (num > 999)
-            {
-                return string.Format("{0}K+", num / 1000);
-            }
-
-            return num.ToString();
+                > 999999 => $"{num / 1000000}M+",
+                > 999 => $"{num / 1000}K+",
+                _ => num.ToString()
+            };
         }
 
         public static string GetClipboardText(bool multiline)
         {
-            if (SDL.SDL_HasClipboardText() != SDL.SDL_bool.SDL_FALSE)
+            if (SDL.SDL_HasClipboardText() == SDL.SDL_bool.SDL_FALSE)
             {
-                string s = multiline ? SDL.SDL_GetClipboardText() : SDL.SDL_GetClipboardText()?.Replace('\n', ' ') ?? null;
-
-                if (!string.IsNullOrEmpty(s))
-                {
-                    if (s.IndexOf('\r') >= 0)
-                    {
-                        s = s.Replace("\r", "");
-                    }
-
-                    if (s.IndexOf('\t') >= 0)
-                    {
-                        return s.Replace("\t", "   ");
-                    }
-
-                    return s;
-                }
+                return null;
             }
 
-            return null;
+            string s = multiline ? SDL.SDL_GetClipboardText() : SDL.SDL_GetClipboardText()?.Replace('\n', ' ');
+
+            if (string.IsNullOrEmpty(s))
+            {
+                return null;
+            }
+
+            if (s.Contains('\r'))
+            {
+                s = s.Replace("\r", "");
+            }
+
+            if (s.Contains('\t'))
+            {
+                return s.Replace("\t", "   ");
+            }
+
+            return s;
         }
 
         public static string GetPluralAdjustedString(string str, bool plural = false)
@@ -352,7 +327,7 @@ namespace ClassicUO.Utility
                 }
 
                 Span<char> span = stackalloc char[str.Length];
-                ValueStringBuilder sb = new ValueStringBuilder(span);
+                using var sb = new ValueStringBuilder(span);
 
                 sb.Append(parts[0]);
 
@@ -379,11 +354,7 @@ namespace ClassicUO.Utility
                     sb.Append(parts[2]);
                 }
 
-                string ss = sb.ToString();
-
-                sb.Dispose();
-
-                return ss;
+                return sb.ToString();
             }
 
             return str;

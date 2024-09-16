@@ -2,7 +2,7 @@
 
 // Copyright (c) 2024, andreakarasho
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
 // 1. Redistributions of source code must retain the above copyright
@@ -16,7 +16,7 @@
 // 4. Neither the name of the copyright holder nor the
 //    names of its contributors may be used to endorse or promote products
 //    derived from this software without specific prior written permission.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ''AS IS'' AND ANY
 // EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 // WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -31,9 +31,7 @@
 #endregion
 
 using System;
-using ClassicUO.Game.Managers;
 using ClassicUO.Input;
-using ClassicUO.Assets;
 using ClassicUO.Renderer;
 using SDL2;
 
@@ -56,11 +54,11 @@ namespace ClassicUO.Game.Scenes
             }
 
             Unload();
-            IsDestroyed = true;          
+            IsDestroyed = true;
         }
 
         public virtual void Update()
-        {           
+        {
             Camera.Update(true, Time.Delta, Mouse.Position);
         }
 
@@ -79,7 +77,7 @@ namespace ClassicUO.Game.Scenes
         {
             IsLoaded = false;
         }
-       
+
 
         internal virtual bool OnMouseUp(MouseButtonType button) => false;
         internal virtual bool OnMouseDown(MouseButtonType button) => false;

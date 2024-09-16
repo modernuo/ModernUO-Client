@@ -31,7 +31,6 @@
 #endregion
 
 using ClassicUO.Network.Encryption;
-using ClassicUO.Utility;
 using ClassicUO.Utility.Logging;
 using System;
 using System.Net;

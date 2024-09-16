@@ -32,7 +32,6 @@
 
 using System;
 using System.Collections.Generic;
-using ClassicUO.Assets;
 using ClassicUO.Renderer;
 using ClassicUO.Utility;
 using Microsoft.Xna.Framework;

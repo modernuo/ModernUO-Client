@@ -199,9 +199,9 @@ namespace ClassicUO.Assets
 
         private static FontsLoader _instance;
 
-        public struct Margin 
-        { 
-            public int X, Y, Width, Height; 
+        public struct Margin
+        {
+            public int X, Y, Width, Height;
 
             public Margin()
             {
@@ -222,7 +222,7 @@ namespace ClassicUO.Assets
                 return (x >= X && x < Right && y >= Y && y < Bottom);
             }
 
-            public static readonly Margin Empty = new Margin(); 
+            public static readonly Margin Empty = new Margin();
         }
 
         struct HtmlStatus
@@ -541,7 +541,7 @@ namespace ClassicUO.Assets
             int strLen = str.Length;
 
             Span<char> span = stackalloc char[strLen];
-            using ValueStringBuilder sb = new ValueStringBuilder(span);
+            using var sb = new ValueStringBuilder(span);
 
             if (IsUsingHTML)
             {
@@ -1162,7 +1162,7 @@ namespace ClassicUO.Assets
             int strLen = str.Length;
 
             Span<char> span = stackalloc char[strLen];
-            using ValueStringBuilder sb = new ValueStringBuilder(span);
+            using var sb = new ValueStringBuilder(span);
 
             if (IsUsingHTML)
             {
