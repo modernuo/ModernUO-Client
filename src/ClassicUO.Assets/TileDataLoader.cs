@@ -34,7 +34,6 @@ using ClassicUO.IO;
 using ClassicUO.Utility;
 using System;
 using System.Runtime.InteropServices;
-using System.Text;
 using System.Threading.Tasks;
 
 namespace ClassicUO.Assets

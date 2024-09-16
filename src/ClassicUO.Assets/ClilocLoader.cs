@@ -2,7 +2,7 @@
 
 // Copyright (c) 2024, andreakarasho
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
 // 1. Redistributions of source code must retain the above copyright
@@ -16,7 +16,7 @@
 // 4. Neither the name of the copyright holder nor the
 //    names of its contributors may be used to endorse or promote products
 //    derived from this software without specific prior written permission.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ''AS IS'' AND ANY
 // EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 // WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -120,7 +120,7 @@ namespace ClassicUO.Assets
                     }
 
                     if (string.Compare(_cliloc, "cliloc.enu", StringComparison.InvariantCultureIgnoreCase) != 0)
-                    { 
+                    {
                         string enupath = UOFileManager.GetUOFilePath("Cliloc.enu");
                         LoadFile(enupath);
                     }
@@ -234,102 +234,94 @@ namespace ClassicUO.Assets
             locations[totalArgs - 1].Item1 = trueStart;
             locations[totalArgs - 1].Item2 = i;
 
-            using (ValueStringBuilder sb = new ValueStringBuilder(baseCliloc.AsSpan()))
+            using var sb = new ValueStringBuilder(baseCliloc.AsSpan());
+
+            int pos = 0;
+
+            while (pos < sb.Length)
             {
-                int index, pos = 0;
+                int poss = pos;
+                pos = sb.RawChars.Slice(pos, sb.Length - pos).IndexOf('~');
 
-                while (pos < sb.Length)
+                if (pos == -1)
                 {
-                    int poss = pos;
-                    pos = sb.RawChars.Slice(pos, sb.Length - pos).IndexOf('~');
+                    break;
+                }
 
-                    if (pos == -1)
+                pos += poss;
+
+                int pos2 = sb.RawChars.Slice(pos + 1, sb.Length - (pos + 1)).IndexOf('~');
+
+                if (pos2 == -1) //non valid arg
+                {
+                    break;
+                }
+
+                pos2 += pos + 1;
+
+                int index = sb.RawChars.Slice(pos + 1, pos2 - (pos + 1)).IndexOf('_');
+
+                if (index == -1)
+                {
+                    //there is no underscore inside the bounds, so we use all the part to get the number of argument
+                    index = pos2;
+                }
+                else
+                {
+                    index += pos + 1;
+                }
+
+                int start = pos + 1;
+                int max = index - start;
+                int count = 0;
+
+                for (; count < max; count++)
+                {
+                    if (!char.IsNumber(sb.RawChars[start + count]))
                     {
                         break;
-                    }
-
-                    pos += poss;
-
-                    int pos2 = sb.RawChars.Slice(pos + 1, sb.Length - (pos + 1)).IndexOf('~');
-
-                    if (pos2 == -1) //non valid arg
-                    {
-                        break;
-                    }
-
-                    pos2 += pos + 1;
-
-                    index = sb.RawChars.Slice(pos + 1, pos2 - (pos + 1)).IndexOf('_');
-
-                    if (index == -1)
-                    {
-                        //there is no underscore inside the bounds, so we use all the part to get the number of argument
-                        index = pos2;
-                    }
-                    else
-                    {
-                        index += pos + 1;
-                    }
-
-                    int start = pos + 1;
-                    int max = index - start;
-                    int count = 0;
-
-                    for (; count < max; count++)
-                    {
-                        if (!char.IsNumber(sb.RawChars[start + count]))
-                        {
-                            break;
-                        }
-                    }
-
-                    if (!int.TryParse(sb.RawChars.Slice(start, count).ToString(), out index))
-                    {
-                        return $"MegaCliloc: error for {clilocNum}";
-                    }
-
-                    --index;
-
-                    var a = index < 0 || index >= totalArgs ? string.Empty.AsSpan() : arg.AsSpan().Slice(locations[index].Item1, locations[index].Item2 - locations[index].Item1);
-
-                    if (a.Length > 1)
-                    {
-                        if (a[0] == '#')
-                        {
-                            if (int.TryParse(a.Slice(1).ToString(), out int id1))
-                            {
-                                var ss = GetString(id1);
-
-                                if (string.IsNullOrEmpty(ss))
-                                {
-                                    a = string.Empty.AsSpan();
-                                }
-                                else
-                                {
-                                    a = ss.AsSpan();
-                                }
-                            }
-                        }
-                        else if (has_arguments && int.TryParse(a.ToString(), out int clil))
-                        {
-                            if (_entries.TryGetValue(clil, out string value) && !string.IsNullOrEmpty(value))
-                            {
-                                a = value.AsSpan();
-                            }
-                        }
-                    }
-
-                    sb.Remove(pos, pos2 - pos + 1);
-                    sb.Insert(pos, a);
-
-                    if (index >= 0 && index < totalArgs)
-                    {
-                        pos += a.Length /*locations[index].Y - locations[index].X*/;
                     }
                 }
 
-                baseCliloc = sb.ToString();
+                if (!int.TryParse(sb.RawChars.Slice(start, count).ToString(), out index))
+                {
+                    return $"MegaCliloc: error for {clilocNum}";
+                }
+
+                --index;
+
+                var a = index < 0 || index >= totalArgs ? string.Empty.AsSpan() : arg.AsSpan().Slice(locations[index].Item1, locations[index].Item2 - locations[index].Item1);
+
+                if (a.Length > 1)
+                {
+                    if (a[0] == '#')
+                    {
+                        if (int.TryParse(a.Slice(1).ToString(), out int id1))
+                        {
+                            var ss = GetString(id1);
+
+                            a = string.IsNullOrEmpty(ss) ? string.Empty.AsSpan() : ss.AsSpan();
+                        }
+                    }
+                    else if (has_arguments && int.TryParse(a.ToString(), out int clil))
+                    {
+                        if (_entries.TryGetValue(clil, out string value) && !string.IsNullOrEmpty(value))
+                        {
+                            a = value.AsSpan();
+                        }
+                    }
+                }
+
+                sb.Remove(pos, pos2 - pos + 1);
+                sb.Insert(pos, a);
+
+                if (index >= 0 && index < totalArgs)
+                {
+                    pos += a.Length /*locations[index].Y - locations[index].X*/;
+                }
             }
+
+            baseCliloc = sb.ToString();
 
             if (capitalize)
             {

@@ -42,7 +42,6 @@ using ClassicUO.Renderer;
 using ClassicUO.Utility;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
-using ClassicUO.Game.Scenes;
 
 namespace ClassicUO.Game.UI.Gumps
 {

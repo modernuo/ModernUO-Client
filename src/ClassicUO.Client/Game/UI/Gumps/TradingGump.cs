@@ -37,10 +37,8 @@ using ClassicUO.Game.UI.Controls;
 using ClassicUO.Input;
 using ClassicUO.Assets;
 using ClassicUO.Network;
-using ClassicUO.Renderer;
 using ClassicUO.Utility;
 using Microsoft.Xna.Framework;
-using ClassicUO.Game.Scenes;
 
 namespace ClassicUO.Game.UI.Gumps
 {

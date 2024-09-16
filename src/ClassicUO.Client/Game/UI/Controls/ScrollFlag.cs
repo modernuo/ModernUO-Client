@@ -31,8 +31,6 @@
 #endregion
 
 using System;
-using ClassicUO.Input;
-using ClassicUO.Assets;
 using ClassicUO.Renderer;
 using Microsoft.Xna.Framework;
 

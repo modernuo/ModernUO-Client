@@ -3,7 +3,6 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using ClassicUO.Utility;
-using ClassicUO.Configuration;
 using ClassicUO.Game.UI.Controls;
 using static ClassicUO.Game.UI.Gumps.WorldMapGump;
 using ClassicUO.Assets;

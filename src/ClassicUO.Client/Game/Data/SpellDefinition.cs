@@ -2,7 +2,7 @@
 
 // Copyright (c) 2024, andreakarasho
 // All rights reserved.
-// 
+//
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
 // 1. Redistributions of source code must retain the above copyright
@@ -16,7 +16,7 @@
 // 4. Neither the name of the copyright holder nor the
 //    names of its contributors may be used to endorse or promote products
 //    derived from this software without specific prior written permission.
-// 
+//
 // THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ''AS IS'' AND ANY
 // EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
 // WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
@@ -32,7 +32,6 @@
 
 using System;
 using System.Collections.Generic;
-using System.Text;
 using ClassicUO.Game.Managers;
 using ClassicUO.Resources;
 using ClassicUO.Utility;
@@ -162,144 +161,60 @@ namespace ClassicUO.Game.Data
 
         public string CreateReagentListString(string separator)
         {
-            ValueStringBuilder sb = new ValueStringBuilder();
+            using var sb = new ValueStringBuilder();
+            for (int i = 0; i < Regs.Length; i++)
             {
-                for (int i = 0; i < Regs.Length; i++)
+                string message = Regs[i] switch
                 {
-                    switch (Regs[i])
-                    {
-                        // britanian reagents
-                        case Reagents.BlackPearl:
-                            sb.Append(ResGeneral.BlackPearl);
+                    // britanian reagents
+                    Reagents.BlackPearl => ResGeneral.BlackPearl,
+                    Reagents.Bloodmoss => ResGeneral.Bloodmoss,
+                    Reagents.Garlic => ResGeneral.Garlic,
+                    Reagents.Ginseng => ResGeneral.Ginseng,
+                    Reagents.MandrakeRoot => ResGeneral.MandrakeRoot,
+                    Reagents.Nightshade => ResGeneral.Nightshade,
+                    Reagents.SulfurousAsh => ResGeneral.SulfurousAsh,
+                    Reagents.SpidersSilk => ResGeneral.SpidersSilk,
 
-                            break;
+                    // pagan reagents
+                    Reagents.BatWing => ResGeneral.BatWing,
+                    Reagents.GraveDust => ResGeneral.GraveDust,
+                    Reagents.DaemonBlood => ResGeneral.DaemonBlood,
+                    Reagents.NoxCrystal => ResGeneral.NoxCrystal,
+                    Reagents.PigIron => ResGeneral.PigIron,
+                    < Reagents.None => StringHelper.AddSpaceBeforeCapital(Regs[i].ToString()),
+                    _ => null
+                };
 
-                        case Reagents.Bloodmoss:
-                            sb.Append(ResGeneral.Bloodmoss);
-
-                            break;
-
-                        case Reagents.Garlic:
-                            sb.Append(ResGeneral.Garlic);
-
-                            break;
-
-                        case Reagents.Ginseng:
-                            sb.Append(ResGeneral.Ginseng);
-
-                            break;
-
-                        case Reagents.MandrakeRoot:
-                            sb.Append(ResGeneral.MandrakeRoot);
-
-                            break;
-
-                        case Reagents.Nightshade:
-                            sb.Append(ResGeneral.Nightshade);
-
-                            break;
-
-                        case Reagents.SulfurousAsh:
-                            sb.Append(ResGeneral.SulfurousAsh);
-
-                            break;
-
-                        case Reagents.SpidersSilk:
-                            sb.Append(ResGeneral.SpidersSilk);
-
-                            break;
-
-                        // pagan reagents
-                        case Reagents.BatWing:
-                            sb.Append(ResGeneral.BatWing);
-
-                            break;
-
-                        case Reagents.GraveDust:
-                            sb.Append(ResGeneral.GraveDust);
-
-                            break;
-
-                        case Reagents.DaemonBlood:
-                            sb.Append(ResGeneral.DaemonBlood);
-
-                            break;
-
-                        case Reagents.NoxCrystal:
-                            sb.Append(ResGeneral.NoxCrystal);
-
-                            break;
-
-                        case Reagents.PigIron:
-                            sb.Append(ResGeneral.PigIron);
-
-                            break;
-
-                        default:
-
-                            if (Regs[i] < Reagents.None)
-                            {
-                                sb.Append(StringHelper.AddSpaceBeforeCapital(Regs[i].ToString()));
-                            }
-
-                            break;
-                    }
-
-                    if (i < Regs.Length - 1)
-                    {
-                        sb.Append(separator);
-                    }
+                if (message != null)
+                {
+                    sb.Append(message);
                 }
 
-                string ss = sb.ToString();
-                sb.Dispose();
-                return ss;
+                if (i < Regs.Length - 1)
+                {
+                    sb.Append(separator);
+                }
             }
+
+            return sb.ToString();
         }
 
         public static SpellDefinition FullIndexGetSpell(int fullidx)
         {
-            if (fullidx < 1 || fullidx > 799)
+            return fullidx switch
             {
-                return EmptySpell;
-            }
-
-            if (fullidx < 100)
-            {
-                return SpellsMagery.GetSpell(fullidx);
-            }
-
-            if (fullidx < 200)
-            {
-                return SpellsNecromancy.GetSpell(fullidx % 100);
-            }
-
-            if (fullidx < 300)
-            {
-                return SpellsChivalry.GetSpell(fullidx % 100);
-            }
-
-            if (fullidx < 500)
-            {
-                return SpellsBushido.GetSpell(fullidx % 100);
-            }
-
-            if (fullidx < 600)
-            {
-                return SpellsNinjitsu.GetSpell(fullidx % 100);
-            }
-
-            if (fullidx < 678)
-            {
-                return SpellsSpellweaving.GetSpell(fullidx % 100);
-            }
-
-            if (fullidx < 700)
-            {
-                return SpellsMysticism.GetSpell((fullidx - 77) % 100);
-            }
-
-            return SpellsMastery.GetSpell(fullidx % 100);
+                < 1 => EmptySpell,
+                > 799 => EmptySpell,
+                < 100 => SpellsMagery.GetSpell(fullidx),
+                < 200 => SpellsNecromancy.GetSpell(fullidx % 100),
+                < 300 => SpellsChivalry.GetSpell(fullidx % 100),
+                < 500 => SpellsBushido.GetSpell(fullidx % 100),
+                < 600 => SpellsNinjitsu.GetSpell(fullidx % 100),
+                < 678 => SpellsSpellweaving.GetSpell(fullidx % 100),
+                < 700 => SpellsMysticism.GetSpell((fullidx - 77) % 100),
+                _ => SpellsMastery.GetSpell(fullidx % 100)
+            };
         }
 
         public static void FullIndexSetModifySpell

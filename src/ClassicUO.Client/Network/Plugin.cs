@@ -33,15 +33,12 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
-using System.Reflection;
 using System.Runtime.InteropServices;
 using ClassicUO.Configuration;
 using ClassicUO.Game;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.Managers;
-using ClassicUO.IO;
 using ClassicUO.Assets;
-using ClassicUO.Renderer;
 using ClassicUO.Renderer.Batching;
 using ClassicUO.Utility.Logging;
 using ClassicUO.Utility.Platforms;
@@ -276,8 +273,8 @@ namespace ClassicUO.Network
                 {
                     Client.Game.PluginHost?.LoadPlugin(PluginPath);
 
-                    //Client.Game.AssistantHost.OnSocketConnected += (o, e) => { 
-                    //    Client.Game.AssistantHost.PluginInitialize(PluginPath); 
+                    //Client.Game.AssistantHost.OnSocketConnected += (o, e) => {
+                    //    Client.Game.AssistantHost.PluginInitialize(PluginPath);
                     //};
                     //Client.Game.AssistantHost.Connect("127.0.0.1", 7777);
 

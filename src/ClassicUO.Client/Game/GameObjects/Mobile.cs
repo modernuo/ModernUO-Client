@@ -40,7 +40,6 @@ using ClassicUO.Resources;
 using ClassicUO.Utility;
 using ClassicUO.Utility.Collections;
 using Microsoft.Xna.Framework;
-using ClassicUO.Game.Scenes;
 
 namespace ClassicUO.Game.GameObjects
 {

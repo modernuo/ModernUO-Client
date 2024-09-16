@@ -33,7 +33,6 @@
 using System.Collections.Generic;
 using ClassicUO.Game.Scenes;
 using ClassicUO.Input;
-using ClassicUO.Assets;
 using ClassicUO.Renderer;
 using ClassicUO.Utility;
 using Microsoft.Xna.Framework;

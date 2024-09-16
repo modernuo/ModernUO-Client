@@ -34,10 +34,6 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
-using System.Runtime.CompilerServices;
-using System.Runtime.InteropServices;
-using System.Runtime.Serialization;
-using System.Runtime.Serialization.Json;
 using System.Threading.Tasks;
 using System.Xml;
 using ClassicUO.Configuration;
@@ -58,7 +54,6 @@ using SDL2;
 using SpriteFont = ClassicUO.Renderer.SpriteFont;
 using System.Text.Json.Serialization;
 using static ClassicUO.Game.UI.Gumps.WorldMapGump;
-using ClassicUO.Game.Scenes;
 
 namespace ClassicUO.Game.UI.Gumps
 {

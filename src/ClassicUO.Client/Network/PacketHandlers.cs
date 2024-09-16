@@ -2631,7 +2631,7 @@ namespace ClassicUO.Network
                             byte lines = p.ReadUInt8();
 
                             Span<char> span = stackalloc char[256];
-                            ValueStringBuilder sb = new ValueStringBuilder(span);
+                            using var sb = new ValueStringBuilder(span);
 
                             for (int i = 0; i < lines; i++)
                             {
@@ -2664,8 +2664,6 @@ namespace ClassicUO.Network
                                     Y = 40
                                 }
                             );
-
-                            sb.Dispose();
                         }
                     }
 
@@ -4269,7 +4267,7 @@ namespace ClassicUO.Network
                     uint next = p.ReadUInt32BE();
 
                     Span<char> span = stackalloc char[256];
-                    ValueStringBuilder strBuffer = new ValueStringBuilder(span);
+                    var strBuffer = new ValueStringBuilder(span);
                     if (next == 0xFFFFFFFD)
                     {
                         crafterNameLen = p.ReadUInt16BE();
@@ -5045,7 +5043,7 @@ namespace ClassicUO.Network
             if (list.Count != 0)
             {
                 Span<char> span = stackalloc char[totalLength];
-                ValueStringBuilder sb = new ValueStringBuilder(span);
+                using var sb = new ValueStringBuilder(span);
 
                 foreach (var s in list)
                 {
@@ -5075,13 +5073,11 @@ namespace ClassicUO.Network
                 }
 
                 data = sb.ToString();
-
-                sb.Dispose();
             }
 
             world.OPL.Add(serial, revision, name, data, namecliloc);
 
-            if (inBuyList && container != null && SerialHelper.IsValid(container.Serial))
+            if (inBuyList && SerialHelper.IsValid(container.Serial))
             {
                 UIManager.GetGump<ShopGump>(container.RootContainer)?.SetNameTo((Item)entity, name);
             }

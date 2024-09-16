@@ -36,7 +36,6 @@ using System.Net;
 using System.Net.NetworkInformation;
 using System.Net.Sockets;
 using System.Text;
-using System.Threading.Tasks;
 using ClassicUO.Configuration;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
@@ -969,7 +968,7 @@ namespace ClassicUO.Game.Scenes
                         (byte) ((entry.Address >> 24) & 0xFF)
                     }
                 );
-                
+
             }
             catch (Exception e)
             {

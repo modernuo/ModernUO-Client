@@ -35,7 +35,6 @@ using System.Collections.Generic;
 using ClassicUO.Utility;
 using ClassicUO.Configuration;
 using ClassicUO.IO.Audio;
-using ClassicUO.Assets;
 using ClassicUO.Utility.Logging;
 using Microsoft.Xna.Framework.Audio;
 

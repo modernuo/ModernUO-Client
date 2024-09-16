@@ -30,10 +30,7 @@
 
 #endregion
 
-using ClassicUO.Game.Managers;
 using ClassicUO.Input;
-using ClassicUO.Assets;
-using ClassicUO.Renderer;
 using Microsoft.Xna.Framework;
 
 namespace ClassicUO.Game.UI.Controls
