@@ -149,9 +149,12 @@ namespace ClassicUO.Renderer
             _basicUOEffect.Brighlight.SetValue(f);
         }
 
-        public void DrawString(SpriteFont spriteFont, string text, int x, int y, Vector3 color)
+        public void DrawString(SpriteFont spriteFont, ReadOnlySpan<char> text, int x, int y, Vector3 color)
+            => DrawString(spriteFont, text, new Vector2(x, y), color);
+
+        public void DrawString(SpriteFont spriteFont, ReadOnlySpan<char> text, Vector2 position, Vector3 color)
         {
-            if (string.IsNullOrEmpty(text))
+            if (text.IsEmpty)
             {
                 return;
             }
@@ -231,17 +234,13 @@ namespace ClassicUO.Renderer
                 Rectangle cGlyph = glyphData[index];
 
                 float offsetX = baseOffset.X + (curOffset.X + cCrop.X) * axisDirX;
-
                 float offsetY = baseOffset.Y + (curOffset.Y + cCrop.Y) * axisDirY;
 
+                var pos = new Vector2(offsetX, offsetY);
                 Draw
                 (
                     textureValue,
-                    new Vector2
-                    (
-                        x + (int)Math.Round(offsetX),
-                        y + (int)Math.Round(offsetY)
-                    ),
+                    position + pos,
                     cGlyph,
                     color
                 );
