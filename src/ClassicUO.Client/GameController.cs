@@ -65,6 +65,7 @@ namespace ClassicUO
         private UltimaBatcher2D _uoSpriteBatch;
         private bool _suppressedDraw;
         private Texture2D _background;
+        private bool _pluginsInitialized = false;
 
         public GameController(IPluginHost pluginHost)
         {
@@ -138,14 +139,12 @@ namespace ClassicUO
             UO.Load(this);
 
             Log.Trace("Loading plugins...");
-
             PluginHost?.Initialize();
-
             foreach (string p in Settings.GlobalSettings.Plugins)
             {
                 Plugin.Create(p);
             }
-
+            _pluginsInitialized = true;
             Log.Trace("Done!");
 
             SetScene(new LoginScene(UO.World));
@@ -519,7 +518,9 @@ namespace ClassicUO
         {
             SDL_Event* sdlEvent = (SDL_Event*)ptr;
 
-            if (Plugin.ProcessWndProc(sdlEvent) != 0)
+            // Don't pass SDL events to the plugin host before the plugins are initialized
+            // or the garbage collector can get screwed up
+            if (_pluginsInitialized && Plugin.ProcessWndProc(sdlEvent) != 0)
             {
                 if (sdlEvent->type == SDL_EventType.SDL_MOUSEMOTION)
                 {
