@@ -4851,6 +4851,11 @@ namespace ClassicUO.Network
                     entity.Name = name;
                 }
             }
+            else
+            {
+                if (type == MessageType.Label)
+                    return;
+            }
 
             world.MessageManager.HandleMessage(
                 entity,
