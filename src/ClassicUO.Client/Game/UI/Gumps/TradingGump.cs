@@ -89,7 +89,7 @@ namespace ClassicUO.Game.UI.Gumps
 
                     if (Client.Game.UO.Version >= ClientVersion.CV_704565)
                     {
-                        _myCoins[0].Text = _gold.ToString();
+                        _myCoins[0].Text = _gold.ToString("N0");
                     }
                 }
             }
@@ -106,7 +106,7 @@ namespace ClassicUO.Game.UI.Gumps
 
                     if (Client.Game.UO.Version >= ClientVersion.CV_704565)
                     {
-                        _myCoins[1].Text = _platinum.ToString();
+                        _myCoins[1].Text = _platinum.ToString("N0");
                     }
                 }
             }
@@ -123,7 +123,7 @@ namespace ClassicUO.Game.UI.Gumps
 
                     if (Client.Game.UO.Version >= ClientVersion.CV_704565)
                     {
-                        _hisCoins[0].Text = _hisGold.ToString();
+                        _hisCoins[0].Text = _hisGold.ToString("N0");
                     }
                 }
             }
@@ -140,7 +140,7 @@ namespace ClassicUO.Game.UI.Gumps
 
                     if (Client.Game.UO.Version >= ClientVersion.CV_704565)
                     {
-                        _hisCoins[1].Text = _hisPlatinum.ToString();
+                        _hisCoins[1].Text = _hisPlatinum.ToString("N0");
                     }
                 }
             }
