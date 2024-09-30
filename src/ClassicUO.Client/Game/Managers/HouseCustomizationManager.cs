@@ -337,6 +337,7 @@ namespace ClassicUO.Game.Managers
                 }
             }
 
+            var validatedFloors = new List<Point>();
             for (int i = 0; i < FloorCount; i++)
             {
                 int minZ = foundationItem.Z + 7 + i * 20;
@@ -344,11 +345,11 @@ namespace ClassicUO.Game.Managers
 
                 for (int j = 0; j < 2; j++)
                 {
-                    List<Point> validatedFloors = new List<Point>();
+                    validatedFloors.Clear();
 
-                    for (int x = StartPos.X; x < EndPos.X + 1; x++)
+                    for (int x = _bounds.X; x < EndPos.X + 1; x++)
                     {
-                        for (int y = StartPos.Y; y < EndPos.Y + 1; y++)
+                        for (int y = _bounds.Y; y < EndPos.Y + 1; y++)
                         {
                             IEnumerable<Multi> multi = house.GetMultiAt(x, y);
 
@@ -428,11 +429,11 @@ namespace ClassicUO.Game.Managers
                             }
                         }
 
-                        for (int x = StartPos.X; x < EndPos.X + 1; x++)
+                        for (int x = _bounds.X; x < EndPos.X + 1; x++)
                         {
                             int minY = 0, maxY = 0;
 
-                            for (int y = StartPos.Y; y < EndPos.Y + 1; y++)
+                            for (int y = _bounds.Y; y < EndPos.Y + 1; y++)
                             {
                                 IEnumerable<Multi> multi = house.GetMultiAt(x, y);
 
@@ -457,7 +458,7 @@ namespace ClassicUO.Game.Managers
                                 }
                             }
 
-                            for (int y = EndPos.Y; y >= StartPos.Y; y--)
+                            for (int y = EndPos.Y; y >= _bounds.Y; y--)
                             {
                                 IEnumerable<Multi> multi = house.GetMultiAt(x, y);
 
@@ -501,12 +502,12 @@ namespace ClassicUO.Game.Managers
                             }
                         }
 
-                        for (int y = StartPos.Y; y < EndPos.Y + 1; y++)
+                        for (int y = _bounds.Y; y < EndPos.Y + 1; y++)
                         {
                             int minX = 0;
                             int maxX = 0;
 
-                            for (int x = StartPos.X; x < EndPos.X + 1; x++)
+                            for (int x = _bounds.X; x < EndPos.X + 1; x++)
                             {
                                 IEnumerable<Multi> multi = house.GetMultiAt(x, y);
 
@@ -531,7 +532,7 @@ namespace ClassicUO.Game.Managers
                                 }
                             }
 
-                            for (int x = EndPos.X; x >= StartPos.X; x--)
+                            for (int x = EndPos.X; x >= _bounds.X; x--)
                             {
                                 IEnumerable<Multi> multi = house.GetMultiAt(x, y);
 
@@ -584,21 +585,14 @@ namespace ClassicUO.Game.Managers
 
             for (int i = 1; i < CurrentFloor; i++)
             {
-                for (int x = StartPos.X; x < EndPos.X; x++)
+                for (int x = _bounds.X; x < EndPos.X; x++)
                 {
-                    for (int y = StartPos.Y; y < EndPos.Y; y++)
+                    for (int y = _bounds.Y; y < EndPos.Y; y++)
                     {
-                        ushort tempColor = color;
-
-                        if (x == StartPos.X || y == StartPos.Y)
-                        {
-                            tempColor++;
-                        }
-
-                        Multi mo = house.Add
+                        var mo = house.Add
                         (
                             0x0496,
-                            tempColor,
+                            (ushort)(x == _bounds.X || y == _bounds.Y ? 0x34 : color),
                             (ushort)(foundationItem.X + (x - foundationItem.X)),
                             (ushort)(foundationItem.Y + (y - foundationItem.Y)),
                             (sbyte) z,
@@ -1052,8 +1046,7 @@ namespace ClassicUO.Game.Managers
                 var minZ = foundationItem.Z + 0 + (CurrentFloor - 1) * 20;
                 var maxZ = minZ + 20;
 
-                var boundsOffset = State != CUSTOM_HOUSE_GUMP_STATE.CHGS_WALL ? 1 : 0;
-                var rect = _bounds;
+                // var boundsOffset = State != CUSTOM_HOUSE_GUMP_STATE.CHGS_WALL ? 1 : 0;
 
                 for (var i = 0; i < list.Count; ++i)
                 {
@@ -1079,7 +1072,7 @@ namespace ClassicUO.Game.Managers
                         }
                     }
 
-                    if (!ValidateItemPlace(rect, item.Graphic, gobj.X + item.X, gobj.Y + item.Y))
+                    if (!ValidateItemPlace(_bounds, item.Graphic, gobj.X + item.X, gobj.Y + item.Y))
                     {
                         return false;
                     }
