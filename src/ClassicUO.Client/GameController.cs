@@ -133,7 +133,6 @@ namespace ClassicUO
             Fonts.Initialize(GraphicsDevice);
             SolidColorTextureCache.Initialize(GraphicsDevice);
             Audio = new AudioManager();
-            Audio.Initialize();
 
             var bytes = Loader.GetBackgroundImage().ToArray();
             using var ms = new MemoryStream(bytes);
@@ -143,6 +142,8 @@ namespace ClassicUO
             SetScene(new MainScene(this));
 #else
             UO.Load(this);
+            Audio.Initialize();
+            
             // TODO: temporary fix to avoid crash when loading plugins
             Settings.GlobalSettings.Encryption = (byte) NetClient.Socket.Load(UO.Version, (EncryptionType) Settings.GlobalSettings.Encryption);
 
