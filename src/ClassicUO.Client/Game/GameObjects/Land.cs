@@ -54,7 +54,11 @@ namespace ClassicUO.Game.GameObjects
         //    }
         //);
 
-        public ref LandTiles TileData => ref TileDataLoader.Instance.LandData[Graphic];
+        public ref LandTiles TileData
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => ref TileDataLoader.Instance.LandData[Graphic];
+        }
         public sbyte AverageZ;
         public bool IsStretched;
         public sbyte MinZ;

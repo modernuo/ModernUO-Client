@@ -33,6 +33,7 @@
 using ClassicUO.Game.Data;
 using ClassicUO.Game.Managers;
 using ClassicUO.Assets;
+using System.Runtime.CompilerServices;
 
 namespace ClassicUO.Game.GameObjects
 {
@@ -55,7 +56,11 @@ namespace ClassicUO.Game.GameObjects
 
         public ushort OriginalGraphic { get; private set; }
 
-        public ref StaticTiles ItemData => ref TileDataLoader.Instance.StaticData[Graphic];
+        public ref StaticTiles ItemData
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => ref TileDataLoader.Instance.StaticData[Graphic];
+        }
 
         public bool IsVegetation;
         public int Index;
