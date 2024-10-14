@@ -109,6 +109,7 @@ namespace ClassicUO.Game.Managers
                 Point p = mobile.RealScreenPosition;
                 p.X += (int)mobile.Offset.X + 22 + 5;
                 p.Y += (int)(mobile.Offset.Y - mobile.Offset.Z) + 22 + 5;
+                var offsetY = 0;
 
                 if (IsEnabled)
                 {
@@ -153,6 +154,7 @@ namespace ClassicUO.Game.Managers
                                 if (mobile.ObjectHandlesStatus == ObjectHandlesStatus.DISPLAYING)
                                 {
                                     p1.Y -= Constants.OBJECT_HANDLES_GUMP_HEIGHT + 5;
+                                    offsetY += Constants.OBJECT_HANDLES_GUMP_HEIGHT + 5;
                                 }
 
                                 if (
@@ -165,6 +167,11 @@ namespace ClassicUO.Game.Managers
                                 )
                                 {
                                     mobile.HitsTexture.Draw(batcher, p1.X, p1.Y);
+                                }
+
+                                if (newTargSystem)
+                                {
+                                    offsetY += mobile.HitsTexture.Height;
                                 }
                             }
                         }
@@ -188,7 +195,7 @@ namespace ClassicUO.Game.Managers
 
                 if ((IsEnabled && mode >= 1) || newTargSystem || forceDraw)
                 {
-                    DrawHealthLine(batcher, mobile, p.X, p.Y, passive, newTargSystem);
+                    DrawHealthLine(batcher, mobile, p.X, p.Y, offsetY, passive, newTargSystem);
                 }
             }
         }
@@ -198,6 +205,7 @@ namespace ClassicUO.Game.Managers
             Entity entity,
             int x,
             int y,
+            int offsetY,
             bool passive,
             bool newTargetSystem
         )
@@ -263,7 +271,7 @@ namespace ClassicUO.Game.Managers
 
                 ref readonly var hueGumpInfo = ref Client.Game.UO.Gumps.GetGump(gumpHue);
                 var targetX = x + BAR_WIDTH_HALF - hueGumpInfo.UV.Width / 2f;
-                var topTargetY = height + centerY + 8 + 22 + (mobile.IsMounted ? 0 : 0);
+                var topTargetY = height + centerY + 8 + 22 + offsetY;
 
                 ref readonly var newTargGumpInfo = ref Client.Game.UO.Gumps.GetGump(topGump);
                 batcher.Draw(
