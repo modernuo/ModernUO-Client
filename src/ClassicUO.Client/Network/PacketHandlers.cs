@@ -337,7 +337,7 @@ namespace ClassicUO.Network
             Handler.Add(0x82, ReceiveLoginRejection);
             Handler.Add(0x85, ReceiveLoginRejection);
             Handler.Add(0x53, ReceiveLoginRejection);
-            Handler.Add(0xFD, ReceiveLoginRejection);
+            Handler.Add(0xFD, LoginDelay);
         }
 
         public static void SendMegaClilocRequests(World world)
@@ -6034,6 +6034,21 @@ namespace ClassicUO.Network
             if (scene != null)
             {
                 scene.ReceiveCharacterList(ref p);
+            }
+        }
+
+        private static void LoginDelay(World world, ref StackDataReader p)
+        {
+            if (world.InGame)
+            {
+                return;
+            }
+
+            LoginScene scene = Client.Game.GetScene<LoginScene>();
+
+            if (scene != null)
+            {
+                scene.HandleLoginDelayPacket(ref p);
             }
         }
 
