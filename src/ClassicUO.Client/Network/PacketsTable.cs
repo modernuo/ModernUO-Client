@@ -418,6 +418,12 @@ namespace ClassicUO.Network
                 _packetsTable[0xFA] = 0x01;
                 _packetsTable[0xFB] = 0x02;
             }
+
+            if (version >= ClientVersion.CV_7010400)
+            {
+                _packetsTable[0xD5] = 0x09;
+                _packetsTable[0xFD] = 2;
+            }
         }
 
         public short GetPacketLength(int id)
