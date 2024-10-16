@@ -690,19 +690,28 @@ namespace ClassicUO.Game.Scenes
             uint seed = p.ReadUInt32BE();
 
             NetClient.Socket.Disconnect();
-            NetClient.Socket.Connect(new IPAddress(ip).ToString(), port);
+            NetClient.Socket.Connected -= OnNetClientConnected;
 
-            if (NetClient.Socket.IsConnected)
+            try
             {
-                NetClient.Socket.Encryption?.Initialize(false, seed);
-                NetClient.Socket.EnableCompression();
-                unsafe
-                {
-                    Span<byte> b = stackalloc byte[4] { (byte)(seed >> 24), (byte)(seed >> 16), (byte)(seed >> 8), (byte)seed };
-                    NetClient.Socket.Send(b, true, true);
-                }
+                NetClient.Socket.Connect(new IPAddress(ip).ToString(), port);
 
-                NetClient.Socket.Send_SecondLogin(Account, Password, seed);
+                if (NetClient.Socket.IsConnected)
+                {
+                    NetClient.Socket.Encryption?.Initialize(false, seed);
+                    NetClient.Socket.EnableCompression();
+                    unsafe
+                    {
+                        Span<byte> b = stackalloc byte[4] { (byte)(seed >> 24), (byte)(seed >> 16), (byte)(seed >> 8), (byte)seed };
+                        NetClient.Socket.Send(b, true, true);
+                    }
+
+                    NetClient.Socket.Send_SecondLogin(Account, Password, seed);
+                }
+            }
+            finally
+            {
+                NetClient.Socket.Connected += OnNetClientConnected;
             }
         }
 
