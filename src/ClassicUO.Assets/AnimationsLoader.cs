@@ -1820,8 +1820,12 @@ namespace ClassicUO.Assets
         public int FileIndex;
         public AnimationGroupsType AnimType;
         public ushort Graphic;
-        public ushort Hue;
+        public ushort Hue = 0;
         public sbyte MountHeight;
+
+        public BodyConvInfo()
+        {
+        }
     }
 
 #if ENABLE_UOP
