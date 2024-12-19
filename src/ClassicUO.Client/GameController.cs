@@ -136,8 +136,8 @@ namespace ClassicUO
             SetScene(new MainScene(this));
 #else
             UO.Load(this);
-            // TODO: temporary fix to avoid crash when laoding plugins
-            Settings.GlobalSettings.Encryption = (byte) NetClient.Socket.Load(UO.FileManager.Version, (EncryptionType) Settings.GlobalSettings.Encryption);
+            // TODO: temporary fix to avoid crash when loading plugins
+            Settings.GlobalSettings.Encryption = (byte) NetClient.Socket.Load(UO.Version, (EncryptionType) Settings.GlobalSettings.Encryption);
 
             Log.Trace("Loading plugins...");
             PluginHost?.Initialize();
