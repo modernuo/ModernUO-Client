@@ -220,6 +220,12 @@ namespace ClassicUO.Renderer.Animations
                 AnimationsLoader.Instance.ReplaceUopGroup(id, ref action);
             }
 #endif
+            
+            // When we are searching for an equipment item we must ignore any other animation which is not equipment
+            if (isEquip && GetAnimType(id) != AnimationGroupsType.Equipment)
+            {
+                return Span<SpriteInfo>.Empty;
+            }
 
             // NOTE:
             // for UOP: we don't call the method index.GetUopGroup(ref x) because the action has been already changed by the method ReplaceAnimationValues
