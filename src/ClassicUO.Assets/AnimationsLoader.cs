@@ -147,7 +147,7 @@ namespace ClassicUO.Assets
             bool loaduop = false;
             int[] un = { 0x40000, 0x10000, 0x20000, 0x20000, 0x20000 };
 
-            for (int i = 0; i < 5; i++)
+            for (int i = 0; i < 10; i++)
             {
                 if (i > 0 && UOFileManager.IsUOPInstallation)
                 {
