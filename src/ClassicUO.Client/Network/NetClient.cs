@@ -35,6 +35,8 @@ using ClassicUO.Utility.Logging;
 using System;
 using System.Net;
 using System.Net.Sockets;
+using System.Threading;
+using System.Threading.Tasks;
 using ClassicUO.Utility;
 
 namespace ClassicUO.Network
@@ -42,6 +44,10 @@ namespace ClassicUO.Network
     sealed class SocketWrapper : IDisposable
     {
         private TcpClient _socket;
+
+        private readonly CircularBuffer readBuffer = new CircularBuffer();
+        private CancellationTokenSource readCancellationTokenSource;
+        private Task readTask;
 
         public bool IsConnected => _socket?.Client?.Connected ?? false;
 
@@ -70,6 +76,9 @@ namespace ClassicUO.Network
                 }
 
                 OnConnected?.Invoke(this, EventArgs.Empty);
+
+                readCancellationTokenSource = new CancellationTokenSource();
+                readTask = ReadTask(_socket.GetStream(), readCancellationTokenSource.Token);
             }
             catch (SocketException socketEx)
             {
@@ -80,6 +89,27 @@ namespace ClassicUO.Network
             {
                 Log.Error($"error while connecting {ex}");
                 OnError?.Invoke(this, SocketError.SocketError);
+            }
+        }
+
+        /**
+         * Fills #readBuffer asynchronously with data received on the
+         * TCP connection.  This data will be consumed by method Read().
+         */
+        private async Task ReadTask(NetworkStream stream, CancellationToken cancellationToken)
+        {
+            byte[] tempBuffer = new byte[4096];
+
+            while (true)
+            {
+                int nbytes = await stream.ReadAsync(tempBuffer, cancellationToken);
+                if (nbytes <= 0)
+                    break;
+
+                lock (readBuffer)
+                {
+                    readBuffer.Enqueue(tempBuffer.AsSpan(0, nbytes));
+                }
             }
         }
 
@@ -98,36 +128,32 @@ namespace ClassicUO.Network
             {
                 OnDisconnected?.Invoke(this, EventArgs.Empty);
                 Disconnect();
-
                 return 0;
             }
 
-            var available = Math.Min(buffer.Length, _socket.Available);
-            var done = 0;
-
-            var stream = _socket.GetStream();
-
-            while (done < available)
+            lock (readBuffer)
             {
-                var toRead = Math.Min(buffer.Length, available - done);
-                var read = stream.Read(buffer, done, toRead);
-
-                if (read <= 0)
-                {
-                    OnDisconnected?.Invoke(this, EventArgs.Empty);
-                    Disconnect();
-
-                    return 0;
-                }
-
-                done += read;
+                int nbytes = readBuffer.Dequeue(buffer, 0, buffer.Length);
+                if (nbytes > 0)
+                    return nbytes;
             }
 
-            return done;
+            if (readTask.IsCompleted)
+            {
+                /* the readTask finishes only if the connection was
+                   closed (by the peer) */
+                OnDisconnected?.Invoke(this, EventArgs.Empty);
+                Disconnect();
+                return 0;
+            }
+
+            /* no data in the buffer (yet) */
+            return 0;
         }
 
         public void Disconnect()
         {
+            readCancellationTokenSource?.Cancel();
             _socket?.Close();
             Dispose();
         }
@@ -136,6 +162,8 @@ namespace ClassicUO.Network
         {
             _socket?.Dispose();
             _socket = null;
+            readCancellationTokenSource = null;
+            readBuffer.Clear();
         }
     }
 
