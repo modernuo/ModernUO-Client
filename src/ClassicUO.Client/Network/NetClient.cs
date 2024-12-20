@@ -92,7 +92,15 @@ namespace ClassicUO.Network
 
         public int Read(byte[] buffer)
         {
-            if (!IsConnected) return 0;
+            if (_socket == null) return 0;
+
+            if (!IsConnected)
+            {
+                OnDisconnected?.Invoke(this, EventArgs.Empty);
+                Disconnect();
+
+                return 0;
+            }
 
             var available = Math.Min(buffer.Length, _socket.Available);
             var done = 0;
@@ -127,6 +135,7 @@ namespace ClassicUO.Network
         public void Dispose()
         {
             _socket?.Dispose();
+            _socket = null;
         }
     }
 
