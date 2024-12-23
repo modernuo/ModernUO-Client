@@ -53,10 +53,7 @@ namespace ClassicUO.Network
 
         public EndPoint LocalEndPoint => _socket?.Client?.LocalEndPoint;
 
-
-        public event EventHandler OnConnected, OnDisconnected;
-        public event EventHandler<SocketError> OnError;
-
+        public event EventHandler OnDisconnected;
 
         public void Connect(string ip, int port)
         {
@@ -65,25 +62,10 @@ namespace ClassicUO.Network
             _socket = new TcpClient();
             _socket.NoDelay = true;
 
-            try
-            {
-                _socket.Connect(ip, port);
+            _socket.Connect(ip, port);
 
-                OnConnected?.Invoke(this, EventArgs.Empty);
-
-                readCancellationTokenSource = new CancellationTokenSource();
-                readTask = ReadTask(_socket.GetStream(), readCancellationTokenSource.Token);
-            }
-            catch (SocketException socketEx)
-            {
-                Log.Error($"error while connecting {socketEx}");
-                OnError?.Invoke(this, socketEx.SocketErrorCode);
-            }
-            catch (Exception ex)
-            {
-                Log.Error($"error while connecting {ex}");
-                OnError?.Invoke(this, SocketError.SocketError);
-            }
+            readCancellationTokenSource = new CancellationTokenSource();
+            readTask = ReadTask(_socket.GetStream(), readCancellationTokenSource.Token);
         }
 
         /**
@@ -181,13 +163,7 @@ namespace ClassicUO.Network
             _sendStream = new CircularBuffer();
 
             _socket = new SocketWrapper();
-            _socket.OnConnected += (o, e) =>
-            {
-                Statistics.Reset();
-                Connected?.Invoke(this, EventArgs.Empty);
-            };
             _socket.OnDisconnected += (o, e) => Disconnected?.Invoke(this, SocketError.Success);
-            _socket.OnError += (o, e) => Disconnected?.Invoke(this, SocketError.SocketError);
         }
 
 
@@ -262,7 +238,17 @@ namespace ClassicUO.Network
             _huffman.Reset();
             Statistics.Reset();
 
-            _socket.Connect(ip, port);
+            try {
+                _socket.Connect(ip, port);
+
+                Statistics.Reset();
+                Connected?.Invoke(this, EventArgs.Empty);
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"error while connecting {ex}");
+                Disconnected?.Invoke(this, SocketError.SocketError);
+            }
         }
 
         public void Disconnect()
