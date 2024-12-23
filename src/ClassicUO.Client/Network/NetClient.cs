@@ -55,14 +55,14 @@ namespace ClassicUO.Network
 
         public event EventHandler OnDisconnected;
 
-        public void Connect(string ip, int port)
+        public async Task ConnectAsync(string ip, int port, CancellationToken cancellationToken)
         {
             if (IsConnected) return;
 
             _socket = new TcpClient();
             _socket.NoDelay = true;
 
-            _socket.Connect(ip, port);
+            await _socket.ConnectAsync(ip, port, cancellationToken);
 
             readCancellationTokenSource = new CancellationTokenSource();
             readTask = ReadTask(_socket.GetStream(), readCancellationTokenSource.Token);
@@ -153,6 +153,8 @@ namespace ClassicUO.Network
         private readonly Huffman _huffman = new Huffman();
         private bool _isCompressionEnabled;
         private readonly SocketWrapper _socket;
+        private CancellationTokenSource connectCancellationTokenSource;
+        private Task connectTask;
         private uint? _localIP;
         private readonly CircularBuffer _sendStream;
 
@@ -238,21 +240,25 @@ namespace ClassicUO.Network
             _huffman.Reset();
             Statistics.Reset();
 
-            try {
-                _socket.Connect(ip, port);
+            var ui = TaskScheduler.FromCurrentSynchronizationContext();
 
+            connectCancellationTokenSource = new CancellationTokenSource();
+            connectTask = _socket.ConnectAsync(ip, port, connectCancellationTokenSource.Token);
+
+            connectTask.ContinueWith(_ => {
                 Statistics.Reset();
                 Connected?.Invoke(this, EventArgs.Empty);
-            }
-            catch (Exception ex)
-            {
-                Log.Error($"error while connecting {ex}");
+            }, connectCancellationTokenSource.Token, TaskContinuationOptions.OnlyOnRanToCompletion, ui);
+
+            connectTask.ContinueWith(t => {
+                Log.Error($"error while connecting {t.Exception.InnerException}");
                 Disconnected?.Invoke(this, SocketError.SocketError);
-            }
+            }, connectCancellationTokenSource.Token, TaskContinuationOptions.OnlyOnFaulted, ui);
         }
 
         public void Disconnect()
         {
+            connectCancellationTokenSource?.Cancel();
             _isCompressionEnabled = false;
             Statistics.Reset();
             _socket.Disconnect();
@@ -267,6 +273,11 @@ namespace ClassicUO.Network
 
         public ArraySegment<byte> CollectAvailableData()
         {
+            if (connectTask != null && !connectTask.IsCompleted)
+            {
+                return ArraySegment<byte>.Empty;
+            }
+
             try
             {
                 var size = _socket.Read(_compressedBuffer);
