@@ -69,12 +69,6 @@ namespace ClassicUO.Network
             {
                 _socket.Connect(ip, port);
 
-                if (!IsConnected)
-                {
-                    OnError?.Invoke(this, SocketError.NotConnected);
-                    return;
-                }
-
                 OnConnected?.Invoke(this, EventArgs.Empty);
 
                 readCancellationTokenSource = new CancellationTokenSource();
