@@ -58,6 +58,7 @@ namespace ClassicUO
 {
     internal unsafe class GameController : Microsoft.Xna.Framework.Game
     {
+        private readonly EventLoopContext LoopContext = new EventLoopContext();
         private SDL_EventFilter _filter;
 
         private bool _ignoreNextTextInput;
@@ -108,6 +109,8 @@ namespace ClassicUO
 
         protected override void Initialize()
         {
+            SynchronizationContext.SetSynchronizationContext(LoopContext);
+
             if (GraphicManager.GraphicsDevice.Adapter.IsProfileSupported(GraphicsProfile.HiDef))
             {
                 GraphicManager.GraphicsProfile = GraphicsProfile.HiDef;
@@ -379,6 +382,8 @@ namespace ClassicUO
             NetClient.Socket.Flush();
 
             Plugin.Tick();
+
+            LoopContext.ExecuteTasks();
 
             if (Scene != null && Scene.IsLoaded && !Scene.IsDestroyed)
             {
