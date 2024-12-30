@@ -263,19 +263,17 @@ namespace ClassicUO.Game.Scenes
             }
             else
             {
+                showButtons = LoginButtons.Cancel;
+
                 switch (CurrentLoginStep)
                 {
                     case LoginSteps.Connecting:
                         labelText = ClilocLoader.Instance.GetString(3000002, ResGeneral.Connecting); // "Connecting..."
 
-                        showButtons = LoginButtons.Cancel;
-
                         break;
 
                     case LoginSteps.VerifyingAccount:
                         labelText = ClilocLoader.Instance.GetString(3000003, ResGeneral.VerifyingAccount); // "Verifying Account..."
-
-                        showButtons = LoginButtons.Cancel;
 
                         break;
 
@@ -553,26 +551,27 @@ namespace ClassicUO.Game.Scenes
                 return;
             }
 
-            if (e != 0)
+            Characters = null;
+            DisposeAllServerEntries();
+
+            string msg = e != SocketError.Success
+                ? StringHelper.AddSpaceBeforeCapital(e.ToString())
+                : "Disconnected";
+
+            if (Settings.GlobalSettings.Reconnect)
             {
-                Characters = null;
-                DisposeAllServerEntries();
+                Reconnect = true;
 
-                if (Settings.GlobalSettings.Reconnect)
-                {
-                    Reconnect = true;
+                PopupMessage = string.Format(ResGeneral.ReconnectPleaseWait01, _reconnectTryCounter, msg);
 
-                    PopupMessage = string.Format(ResGeneral.ReconnectPleaseWait01, _reconnectTryCounter, StringHelper.AddSpaceBeforeCapital(e.ToString()));
-
-                    UIManager.GetGump<LoadingGump>()?.SetText(PopupMessage);
-                }
-                else
-                {
-                    PopupMessage = string.Format(ResGeneral.ConnectionLost0, StringHelper.AddSpaceBeforeCapital(e.ToString()));
-                }
-
-                CurrentLoginStep = LoginSteps.PopUpMessage;
+                UIManager.GetGump<LoadingGump>()?.SetText(PopupMessage);
             }
+            else
+            {
+                PopupMessage = string.Format(ResGeneral.ConnectionLost0, msg);
+            }
+
+            CurrentLoginStep = LoginSteps.PopUpMessage;
         }
 
         public void ServerListReceived(ref StackDataReader p)

@@ -53,43 +53,19 @@ namespace ClassicUO.Network
 
         public EndPoint LocalEndPoint => _socket?.Client?.LocalEndPoint;
 
+        public event EventHandler OnDisconnected;
 
-        public event EventHandler OnConnected, OnDisconnected;
-        public event EventHandler<SocketError> OnError;
-
-
-        public void Connect(string ip, int port)
+        public async Task ConnectAsync(string ip, int port, CancellationToken cancellationToken)
         {
             if (IsConnected) return;
 
             _socket = new TcpClient();
             _socket.NoDelay = true;
 
-            try
-            {
-                _socket.Connect(ip, port);
+            await _socket.ConnectAsync(ip, port, cancellationToken);
 
-                if (!IsConnected)
-                {
-                    OnError?.Invoke(this, SocketError.NotConnected);
-                    return;
-                }
-
-                OnConnected?.Invoke(this, EventArgs.Empty);
-
-                readCancellationTokenSource = new CancellationTokenSource();
-                readTask = ReadTask(_socket.GetStream(), readCancellationTokenSource.Token);
-            }
-            catch (SocketException socketEx)
-            {
-                Log.Error($"error while connecting {socketEx}");
-                OnError?.Invoke(this, socketEx.SocketErrorCode);
-            }
-            catch (Exception ex)
-            {
-                Log.Error($"error while connecting {ex}");
-                OnError?.Invoke(this, SocketError.SocketError);
-            }
+            readCancellationTokenSource = new CancellationTokenSource();
+            readTask = ReadTask(_socket.GetStream(), readCancellationTokenSource.Token);
         }
 
         /**
@@ -177,6 +153,8 @@ namespace ClassicUO.Network
         private readonly Huffman _huffman = new Huffman();
         private bool _isCompressionEnabled;
         private readonly SocketWrapper _socket;
+        private CancellationTokenSource connectCancellationTokenSource;
+        private Task connectTask;
         private uint? _localIP;
         private readonly CircularBuffer _sendStream;
 
@@ -187,13 +165,7 @@ namespace ClassicUO.Network
             _sendStream = new CircularBuffer();
 
             _socket = new SocketWrapper();
-            _socket.OnConnected += (o, e) =>
-            {
-                Statistics.Reset();
-                Connected?.Invoke(this, EventArgs.Empty);
-            };
             _socket.OnDisconnected += (o, e) => Disconnected?.Invoke(this, SocketError.Success);
-            _socket.OnError += (o, e) => Disconnected?.Invoke(this, SocketError.SocketError);
         }
 
 
@@ -268,11 +240,25 @@ namespace ClassicUO.Network
             _huffman.Reset();
             Statistics.Reset();
 
-            _socket.Connect(ip, port);
+            var ui = TaskScheduler.FromCurrentSynchronizationContext();
+
+            connectCancellationTokenSource = new CancellationTokenSource();
+            connectTask = _socket.ConnectAsync(ip, port, connectCancellationTokenSource.Token);
+
+            connectTask.ContinueWith(_ => {
+                Statistics.Reset();
+                Connected?.Invoke(this, EventArgs.Empty);
+            }, connectCancellationTokenSource.Token, TaskContinuationOptions.OnlyOnRanToCompletion, ui);
+
+            connectTask.ContinueWith(t => {
+                Log.Error($"error while connecting {t.Exception.InnerException}");
+                Disconnected?.Invoke(this, SocketError.SocketError);
+            }, connectCancellationTokenSource.Token, TaskContinuationOptions.OnlyOnFaulted, ui);
         }
 
         public void Disconnect()
         {
+            connectCancellationTokenSource?.Cancel();
             _isCompressionEnabled = false;
             Statistics.Reset();
             _socket.Disconnect();
@@ -287,6 +273,11 @@ namespace ClassicUO.Network
 
         public ArraySegment<byte> CollectAvailableData()
         {
+            if (connectTask != null && !connectTask.IsCompleted)
+            {
+                return ArraySegment<byte>.Empty;
+            }
+
             try
             {
                 var size = _socket.Read(_compressedBuffer);
