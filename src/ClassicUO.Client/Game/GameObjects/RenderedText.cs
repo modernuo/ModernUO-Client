@@ -128,15 +128,44 @@ namespace ClassicUO.Game
                             Client.Game.UO.FileManager.Fonts.SetUseHTML(true, HTMLColor, HasBackgroundColor);
                         }
 
+                        // The atlas-based renderer (see DrawGlyphs) iterates _info.Data to
+                        // place per-glyph quads — so _info must carry exactly the chars
+                        // that should appear on screen, including the "..." ellipsis for
+                        // cropped strings. Pre-atlas (<= commit 119108d3), cropping with
+                        // ellipsis happened inside GenerateUnicode/GeneratePixelsUnicode
+                        // when producing the per-string texture; _info was not on the
+                        // draw path. Now that _info IS on the draw path, we need to crop
+                        // the text here via GetTextByWidth{Unicode,ASCII} and hand the
+                        // already-truncated result (e.g. "LongTermMu...") to GetInfo*.
+                        // Otherwise long single-word property names would either go blank
+                        // or overflow without an ellipsis marker.
+                        string layoutText = Text;
+                        int layoutWidth = MaxWidth > 0 ? MaxWidth : Width;
+
+                        if (MaxWidth > 0 && (FontStyle & FontStyle.Cropped) != 0)
+                        {
+                            var fonts = Client.Game.UO.FileManager.Fonts;
+                            int realWidth = IsUnicode
+                                ? fonts.GetWidthUnicode(Font, Text)
+                                : fonts.GetWidthASCII(Font, Text);
+
+                            if (realWidth > MaxWidth)
+                            {
+                                layoutText = IsUnicode
+                                    ? fonts.GetTextByWidthUnicode(Font, Text.AsSpan(), MaxWidth, isCropped: true, Align, (ushort)FontStyle)
+                                    : fonts.GetTextByWidthASCII(Font, Text, MaxWidth, isCropped: true, Align, (ushort)FontStyle);
+                            }
+                        }
+
                         if (IsUnicode)
                         {
                             _info = Client.Game.UO.FileManager.Fonts.GetInfoUnicode(
                                 Font,
-                                Text,
-                                Text.Length,
+                                layoutText,
+                                layoutText.Length,
                                 Align,
                                 (ushort)FontStyle,
-                                MaxWidth > 0 ? MaxWidth : Width,
+                                layoutWidth,
                                 countret: false,
                                 countspaces: false
                             );
@@ -145,11 +174,11 @@ namespace ClassicUO.Game
                         {
                             _info = Client.Game.UO.FileManager.Fonts.GetInfoASCII(
                                 Font,
-                                Text,
-                                Text.Length,
+                                layoutText,
+                                layoutText.Length,
                                 Align,
                                 (ushort)FontStyle,
-                                MaxWidth > 0 ? MaxWidth : Width,
+                                layoutWidth,
                                 countret: false,
                                 countspaces: false
                             );

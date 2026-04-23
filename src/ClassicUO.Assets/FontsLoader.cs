@@ -10,7 +10,6 @@ using System.Globalization;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using System.Threading.Tasks;
 
 namespace ClassicUO.Assets
 {
@@ -539,7 +538,7 @@ namespace ClassicUO.Assets
 
                 if (size > 0)
                 {
-                    sb.Append(str.Substring(0, size));
+                    sb.Append(str.AsSpan(0, size));
                     str = str.Substring(str.Length - strLen, strLen);
 
                     if (GetWidthASCII(font, str) < width)
@@ -946,6 +945,17 @@ namespace ClassicUO.Assets
                             }
 
                             charCount++;
+                            ptr.Width += readWidth;
+                            ptr.CharCount += charCount;
+                        }
+                        else if (isCropped)
+                        {
+                            // Commit the characters accumulated so far. Without this, a
+                            // cropped single-word string (no spaces) would exit with
+                            // CharCount == 0 and the subsequent `Data.Length = CharCount`
+                            // would truncate every processed char out of ptr.Data — the
+                            // glyph-atlas draw path then has nothing to iterate and the
+                            // label renders blank.
                             ptr.Width += readWidth;
                             ptr.CharCount += charCount;
                         }
@@ -1506,6 +1516,17 @@ namespace ClassicUO.Assets
                             }
 
                             charCount++;
+                            ptr.Width += readWidth;
+                            ptr.CharCount += charCount;
+                        }
+                        else if (isCropped)
+                        {
+                            // Commit the characters accumulated so far. Without this, a
+                            // cropped single-word string (no spaces) would exit with
+                            // CharCount == 0 and the subsequent `Data.Length = CharCount`
+                            // would truncate every processed char out of ptr.Data — the
+                            // glyph-atlas draw path then has nothing to iterate and the
+                            // label renders blank.
                             ptr.Width += readWidth;
                             ptr.CharCount += charCount;
                         }
@@ -2289,10 +2310,7 @@ namespace ClassicUO.Assets
             bool isFixed = (flags & UOFONT_FIXED) != 0;
             bool isCropped = (flags & UOFONT_CROPPED) != 0;
 
-            if (len != 0)
-            {
-                ptr.Align = htmlData[0].Align;
-            }
+            ptr.Align = htmlData[0].Align;
 
             for (int i = 0; i < len; i++)
             {
@@ -2414,6 +2432,17 @@ namespace ClassicUO.Assets
                             readWidth += charWidth;
                             ptr.MaxHeight = MAX_HTML_TEXT_HEIGHT;
                             charCount++;
+                            ptr.Width += readWidth;
+                            ptr.CharCount += charCount;
+                        }
+                        else if (isCropped)
+                        {
+                            // Commit the characters accumulated so far. Without this, a
+                            // cropped single-word string (no spaces) would exit with
+                            // CharCount == 0 and the subsequent `Data.Length = CharCount`
+                            // would truncate every processed char out of ptr.Data — the
+                            // glyph-atlas draw path then has nothing to iterate and the
+                            // label renders blank.
                             ptr.Width += readWidth;
                             ptr.CharCount += charCount;
                         }
