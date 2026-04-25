@@ -157,6 +157,16 @@ namespace ClassicUO.Game
                             }
                         }
 
+                        // countret/countspaces MUST be true so that CharCount in each
+                        // MultilinesFontInfo node includes '\n' and ' '. Stb's hit-testing
+                        // (LocateCoord) walks rows by `i += r.num_chars` and bails out by
+                        // returning text length when it sees num_chars == 0. With
+                        // countret=false an empty line ("\n") produces CharCount=0, which
+                        // forces every click on an empty editable area (book body, etc.)
+                        // to put the caret at the end of the buffer — observed in
+                        // ModernBookGump as "click goes to the last page". The draw path
+                        // (DrawGlyphs) explicitly skips '\n'/'\r' glyphs so counting them
+                        // here costs nothing visually.
                         if (IsUnicode)
                         {
                             _info = Client.Game.UO.FileManager.Fonts.GetInfoUnicode(
@@ -166,8 +176,8 @@ namespace ClassicUO.Game
                                 Align,
                                 (ushort)FontStyle,
                                 layoutWidth,
-                                countret: false,
-                                countspaces: false
+                                countret: true,
+                                countspaces: true
                             );
                         }
                         else
@@ -179,8 +189,8 @@ namespace ClassicUO.Game
                                 Align,
                                 (ushort)FontStyle,
                                 layoutWidth,
-                                countret: false,
-                                countspaces: false
+                                countret: true,
+                                countspaces: true
                             );
                         }
 
