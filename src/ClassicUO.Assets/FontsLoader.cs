@@ -1791,7 +1791,7 @@ namespace ClassicUO.Assets
                 int linkStartX = 0;
                 int linkStartY = 0;
                 int linesCount = 0;
-                var links = new List<WebLinkRect>();
+                using var links = new PooledList<WebLinkRect>(8);
 
                 while (ptr != null)
                 {
@@ -2291,7 +2291,7 @@ namespace ClassicUO.Assets
                 fi.Width = width;
                 fi.Height = height;
                 fi.Data = pData;
-                fi.Links = links.Count == 0 ? null : links.ToArray();
+                fi.Links = links.Count == 0 ? null : links.AsSpan.ToArray();
                 fi.HtmlBackgroundColor = (IsUsingHTML && _htmlStatus.IsHtmlBackgroundColored && _htmlStatus.BackgroundColor != 0)
                     ? HuesHelper.RgbaToArgb(_htmlStatus.BackgroundColor | 0xFF)
                     : 0;
