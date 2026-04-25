@@ -63,6 +63,22 @@ namespace ClassicUO.Utility.Collections
 
 
         /// <summary>
+        /// Sets <see cref="Length"/> to <paramref name="newLength"/>, growing <see cref="Buffer"/> if needed
+        /// to preserve the invariant <c>Length &lt;= Buffer.Length</c>. Use this instead of writing to
+        /// <see cref="Length"/> directly when the new length may exceed the current buffer size.
+        /// </summary>
+        public void Resize(int newLength)
+        {
+            if (newLength > Buffer.Length)
+            {
+                Array.Resize(ref Buffer, Math.Max(Buffer.Length << 1, newLength));
+            }
+
+            Length = newLength;
+        }
+
+
+        /// <summary>
         /// adds the item to the list
         /// </summary>
         public void Add(T item)
