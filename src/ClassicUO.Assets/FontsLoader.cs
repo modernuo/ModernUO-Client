@@ -81,6 +81,29 @@ namespace ClassicUO.Assets
         public FontsLoader(UOFileManager fileManager) : base(fileManager) { }
 
 
+        // Resize ptr.Data to exactly `target` elements, growing with default-initialized
+        // slots or shrinking via CollectionsMarshal.SetCount. Used by GetInfo* to
+        // reconcile MultilinesFontInfo.Data with CharCount when wrap/newline/countspaces
+        // logic adjusts the logical character count out of step with the natural Add
+        // sequence. Replaces the FastList-era `Data.Length = X` idiom that silently
+        // violated `Length <= Buffer.Length` when growing past a backing-array boundary.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static void SetDataCount(List<MultilinesFontData> data, int target)
+        {
+            if (target > data.Count)
+            {
+                data.EnsureCapacity(target);
+                for (int n = data.Count; n < target; n++)
+                {
+                    data.Add(default);
+                }
+            }
+            else if (target < data.Count)
+            {
+                CollectionsMarshal.SetCount(data, target);
+            }
+        }
+
         public int FontCount { get; private set; }
 
         public bool UnusePartialHue { get; set; } = false;
@@ -419,7 +442,9 @@ namespace ClassicUO.Assets
             public int Height;
 
             public int LineCount;
-            public FastList<WebLinkRect> Links;
+            // Built once in GenerateUnicode/GenerateHTML and read-only thereafter — a
+            // plain array is the natural fit (no spare-capacity overhead, exact size).
+            public WebLinkRect[] Links;
             public uint HtmlBackgroundColor;
 
             public static FontInfo Empty = new FontInfo() { Data = null };
@@ -685,17 +710,19 @@ namespace ClassicUO.Assets
                             break;
                     }
 
-                    var count = ptr.Data.Length;
+                    var count = ptr.Data.Count;
+                    var dataSpan = CollectionsMarshal.AsSpan(ptr.Data);
 
                     for (int i = 0; i < count; i++)
                     {
-                        byte index = (byte)ptr.Data[i].Item;
+                        ref var item = ref dataSpan[i];
+                        byte index = (byte)item.Item;
 
                         int offsY = GetFontOffsetY(font, index);
 
                         ref FontCharacterData fcd = ref _fontDataASCII[
                             font,
-                            GetASCIIIndex(ptr.Data[i].Item)
+                            GetASCIIIndex(item.Item)
                         ];
 
                         int dw = fcd.Width;
@@ -876,7 +903,7 @@ namespace ClassicUO.Assets
                             ptr.MaxHeight = 14;
                         }
 
-                        ptr.Data.Resize(ptr.CharCount - newlineval);
+                        SetDataCount(ptr.Data, ptr.CharCount - newlineval);
 
                         MultilinesFontInfo newptr = new MultilinesFontInfo();
                         newptr.Reset();
@@ -979,7 +1006,7 @@ namespace ClassicUO.Assets
 
                         //ptr.CharCount = charCount;
                         charCount = 0;
-                        ptr.Data.Resize(ptr.CharCount);
+                        SetDataCount(ptr.Data, ptr.CharCount);
 
                         if (isFixed || isCropped)
                         {
@@ -1445,7 +1472,7 @@ namespace ClassicUO.Assets
                             ptr.MaxHeight = 14 + extraheight;
                         }
 
-                        ptr.Data.Resize(ptr.CharCount - newlineval);
+                        SetDataCount(ptr.Data, ptr.CharCount - newlineval);
                         MultilinesFontInfo newptr = new MultilinesFontInfo();
                         newptr.Reset();
                         ptr.Next = newptr;
@@ -1553,7 +1580,7 @@ namespace ClassicUO.Assets
                         //ptr.CharCount = charCount;
 
                         charCount = 0;
-                        ptr.Data.Resize(ptr.CharCount);
+                        SetDataCount(ptr.Data, ptr.CharCount);
 
                         if (isFixed || isCropped)
                         {
@@ -1764,7 +1791,7 @@ namespace ClassicUO.Assets
                 int linkStartX = 0;
                 int linkStartY = 0;
                 int linesCount = 0;
-                var links = new FastList<WebLinkRect>();
+                var links = new List<WebLinkRect>();
 
                 while (ptr != null)
                 {
@@ -1805,11 +1832,12 @@ namespace ClassicUO.Assets
                     }
 
                     ushort oldLink = 0;
-                    var dataSize = ptr.Data.Length;
+                    var dataSize = ptr.Data.Count;
+                    var dataSpan = CollectionsMarshal.AsSpan(ptr.Data);
 
                     for (int i = 0; i < dataSize; i++)
                     {
-                        ref MultilinesFontData dataPtr = ref ptr.Data.Buffer[i];
+                        ref MultilinesFontData dataPtr = ref dataSpan[i];
                         char si = dataPtr.Item;
                         ref var @char = ref GetCharUni(dataPtr.Font, si);
 
@@ -1891,7 +1919,7 @@ namespace ClassicUO.Assets
 
                         if (si != ' ')
                         {
-                            if (IsUsingHTML && i < ptr.Data.Length)
+                            if (IsUsingHTML && i < ptr.Data.Count)
                             {
                                 isItalic = (dataPtr.Flags & UOFONT_ITALIC) != 0;
                                 isSolid = (dataPtr.Flags & UOFONT_SOLID) != 0;
@@ -2263,7 +2291,7 @@ namespace ClassicUO.Assets
                 fi.Width = width;
                 fi.Height = height;
                 fi.Data = pData;
-                fi.Links = links;
+                fi.Links = links.Count == 0 ? null : links.ToArray();
                 fi.HtmlBackgroundColor = (IsUsingHTML && _htmlStatus.IsHtmlBackgroundColored && _htmlStatus.BackgroundColor != 0)
                     ? HuesHelper.RgbaToArgb(_htmlStatus.BackgroundColor | 0xFF)
                     : 0;
@@ -2366,7 +2394,7 @@ namespace ClassicUO.Assets
                         }
 
                         ptr.MaxHeight = MAX_HTML_TEXT_HEIGHT;
-                        ptr.Data.Resize(ptr.CharCount);
+                        SetDataCount(ptr.Data, ptr.CharCount);
                         MultilinesFontInfo newptr = new MultilinesFontInfo();
                         newptr.Reset();
                         ptr.Next = newptr;
@@ -2464,7 +2492,7 @@ namespace ClassicUO.Assets
                         }
 
                         ptr.MaxHeight = MAX_HTML_TEXT_HEIGHT;
-                        ptr.Data.Resize(ptr.CharCount);
+                        SetDataCount(ptr.Data, ptr.CharCount);
                         charCount = 0;
 
                         if (isFixed || isCropped)
@@ -2544,7 +2572,7 @@ namespace ClassicUO.Assets
                 Link = 0
             };
 
-            var stack = new FastList<HTMLDataInfo>();
+            using var stack = new PooledList<HTMLDataInfo>(8);
             stack.Add(info);
             HTMLDataInfo currentInfo = info;
 
@@ -2577,7 +2605,7 @@ namespace ClassicUO.Assets
                     {
                         if (newInfo.Font == 0xFF)
                         {
-                            newInfo.Font = stack[stack.Length - 1].Font;
+                            newInfo.Font = stack[stack.Count - 1].Font;
                         }
 
                         if (tag != HTML_TAG_TYPE.HTT_BODY)
@@ -2597,11 +2625,11 @@ namespace ClassicUO.Assets
                             stack.Add(info);
                         }
                     }
-                    else if (stack.Length > 1)
+                    else if (stack.Count > 1)
                     {
                         //int index = -1;
 
-                        for (var j = stack.Length - 1; j >= 1; j--)
+                        for (var j = stack.Count - 1; j >= 1; j--)
                         {
                             if (stack[j].Tag == tag)
                             {
@@ -2612,7 +2640,7 @@ namespace ClassicUO.Assets
                         }
                     }
 
-                    GetCurrentHTMLInfo(ref stack, ref currentInfo);
+                    GetCurrentHTMLInfo(stack.AsSpan, ref currentInfo);
 
                     switch (tag)
                     {
@@ -2672,7 +2700,7 @@ namespace ClassicUO.Assets
             len = newlen;
         }
 
-        private void GetCurrentHTMLInfo(ref FastList<HTMLDataInfo> list, ref HTMLDataInfo info)
+        private void GetCurrentHTMLInfo(ReadOnlySpan<HTMLDataInfo> list, ref HTMLDataInfo info)
         {
             info.Tag = HTML_TAG_TYPE.HTT_NONE;
             info.Align = TEXT_ALIGN_TYPE.TS_LEFT;
@@ -2683,7 +2711,7 @@ namespace ClassicUO.Assets
 
             for (int i = 0; i < list.Length; i++)
             {
-                ref var current = ref list.Buffer[i];
+                ref readonly var current = ref list[i];
 
                 switch (current.Tag)
                 {
@@ -3582,7 +3610,7 @@ namespace ClassicUO.Assets
                     return (x, y);
                 }
 
-                if (pos <= info.CharStart + len && info.Data.Length >= len)
+                if (pos <= info.CharStart + len && info.Data.Count >= len)
                 {
                     for (int i = 0; i < len; i++)
                     {
@@ -3696,7 +3724,7 @@ namespace ClassicUO.Assets
                     return (x, y);
                 }
 
-                if (pos <= info.CharStart + len && info.Data.Length >= len)
+                if (pos <= info.CharStart + len && info.Data.Count >= len)
                 {
                     for (int i = 0; i < len; i++)
                     {
@@ -4065,7 +4093,7 @@ namespace ClassicUO.Assets
         public TEXT_ALIGN_TYPE Align;
         public int CharCount;
         public int CharStart;
-        public FastList<MultilinesFontData> Data = new FastList<MultilinesFontData>();
+        public List<MultilinesFontData> Data = new List<MultilinesFontData>();
         public int IndentionOffset;
         public int MaxHeight;
         public MultilinesFontInfo Next;

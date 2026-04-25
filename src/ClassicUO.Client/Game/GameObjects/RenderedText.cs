@@ -8,6 +8,7 @@ using Microsoft.Xna.Framework.Graphics;
 using StbTextEditSharp;
 using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 
 namespace ClassicUO.Game
 {
@@ -406,7 +407,7 @@ namespace ClassicUO.Game
 
                     if (x >= 0)
                     {
-                        char c = x >= info.Data.Length ? '\n' : info.Data[x].Item;
+                        char c = x >= info.Data.Count ? '\n' : info.Data[x].Item;
 
                         if (IsUnicode)
                         {
@@ -580,11 +581,12 @@ namespace ClassicUO.Game
                         break;
                 }
 
-                int dataLen = ptr.Data.Length;
+                int dataLen = ptr.Data.Count;
+                var dataSpan = CollectionsMarshal.AsSpan(ptr.Data);
 
                 for (int i = 0; i < dataLen; i++)
                 {
-                    ref MultilinesFontData dataPtr = ref ptr.Data.Buffer[i];
+                    ref MultilinesFontData dataPtr = ref dataSpan[i];
                     char si = dataPtr.Item;
 
                     if (si == '\n' || si == '\r')
