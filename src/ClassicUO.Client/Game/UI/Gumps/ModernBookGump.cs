@@ -259,7 +259,7 @@ namespace ClassicUO.Game.UI.Gumps
             }
         }
 
-        public void SetTile(string title, bool editable)
+        public void SetTitle(string title, bool editable)
         {
             _titleTextBox.SetText(title);
             _titleTextBox.IsEditable = editable;
