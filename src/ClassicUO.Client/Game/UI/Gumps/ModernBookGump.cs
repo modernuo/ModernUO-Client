@@ -23,7 +23,7 @@ namespace ClassicUO.Game.UI.Gumps
         private const int MAX_BOOK_CHARS_PER_LINE = 53;
         private const int LEFT_X = 38;
         private const int RIGHT_X = 223;
-        private const int UPPER_MARGIN = 24;
+        private const int UPPER_MARGIN = 26;
         private const int PAGE_HEIGHT = 166;
         private StbPageTextBox _bookPage;
 
@@ -180,7 +180,7 @@ namespace ClassicUO.Game.UI.Gumps
                 {
                     X = 40,
                     Y = 60,
-                    Height = 25,
+                    Height = 25 * 2,
                     Width = 155,
                     IsEditable = IsEditable
                 },
@@ -226,7 +226,7 @@ namespace ClassicUO.Game.UI.Gumps
                 }
 
                 page >>= 1;
-                Add(new Label(k.ToString(), true, 1) { X = x + 80, Y = 200 }, page);
+                Add(new Label(k.ToString(), true, 1) { X = x + 80, Y = 220 }, page);
             }
 
             ActivePage = 1;
