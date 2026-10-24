@@ -179,6 +179,19 @@ The owner asked that everything definitive (e.g. the FNA 26.10 upgrade) land on 
 - **Canonical 5→8 expansion is bit replication `(c<<3)|(c>>2)` (136516a81)**, as measured from GPU sampling. Native 16-bit, the RGBA8 expansion and Indexed8 are now bit-identical: 0 px difference at zoom 1 and 0.5, on D3D12 and Vulkan.
 - **Incident:** a leaking verification run reached 204 GB committed and starved the machine. Every agent process now runs with an 8 GB GC heap limit, and a watchdog kills any process above 16 GB.
 
+### 2026-10-24 — Step 8a: Uo.Render library + external-device mode (c18e96a6b)
+
+- **Project split:** `poc/Uo.Render` is now a library. The exe is `poc/Uo.Render.App` (**`Uo.Render.App.exe`**; older notes say `Uo.Render.exe`), with the same flags.
+- **External mode:** `WorldRenderer.CreateExternal(device, format, pack, options)`, then each frame:
+  1. `Prepare(camera)`;
+  2. land/static overrides (alpha, hidden, highlight) and the dynamic span;
+  3. `Render(target, w, h, format, load)`, which submits its own command buffer.
+- **Verified:** `--external-test` simulates FNA (its own device, window and RT, blitted to the swapchain) and is pixel-identical to normal mode on D3D12 and Vulkan, including a resize.
+- **Translucent sprites** use a second draw, so the world is 2 draw calls when anything is translucent.
+- **Gaps:**
+  - The world is drawn at submission time, so an FNA `Clear()` of the world RT in Gpu mode would wipe it.
+  - The circle of transparency is per-sprite alpha only, not a shader circle.
+
 ## Phase 4 plan (owner, 2026-10-24): bring it into ClassicUO
 
 The owner accepts compressed packs on disk if decompression is fast.
