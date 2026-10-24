@@ -167,6 +167,18 @@ The owner asked that everything definitive (e.g. the FNA 26.10 upgrade) land on 
   2. 1024² animation pages;
   3. prototyping an indexed 8-bit format plus palette, which stays lossless, with the shader doing a manual palette lookup and filtering.
 
+### 2026-10-24 — CP7: ECS mirror in ClassicUO; animated mobiles; canonical expansion
+
+- **ECS mirror (3c6335e77):**
+  - New project `src/ClassicUO.Ecs` (Friflo). Every Item and Mobile in World is mirrored, keyed by serial.
+  - Hooked at World create/remove/clear, Entity destroy and direction, GameObject tile/screen position, and the packet updates.
+  - The `-ecscheck N` consistency check found 0 mismatches over 9,754 live checks: bank, equip, drop, 4 facets and logout, under both JIT and NativeAOT.
+  - `DynamicSpriteExtract` costs 2–3 µs per frame.
+  - In-process relog doesn't work, an existing ClassicUO networking issue. A stuck socket got localhost auto-denylisted, so the auto-denylist is now disabled on the local server.
+- **Animated mobiles in the slice (55557c366):** Indexed8 plus the palette path in one draw call, with mounts and equipment. 5000 animated mobiles cost 0.37 ms CPU with 0 GC.
+- **Canonical 5→8 expansion is bit replication `(c<<3)|(c>>2)` (136516a81)**, as measured from GPU sampling. Native 16-bit, the RGBA8 expansion and Indexed8 are now bit-identical: 0 px difference at zoom 1 and 0.5, on D3D12 and Vulkan.
+- **Incident:** a leaking verification run reached 204 GB committed and starved the machine. Every agent process now runs with an 8 GB GC heap limit, and a watchdog kills any process above 16 GB.
+
 ## Phase 4 plan (owner, 2026-10-24): bring it into ClassicUO
 
 The owner accepts compressed packs on disk if decompression is fast.

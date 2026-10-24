@@ -9,6 +9,14 @@ Format: **what**, where (file:line), why it should help, evidence or estimate, a
 - **World.Update walks every mobile and every item, including items inside containers, every frame** (World.cs:259-398; `Entity.Update` → `UpdateHits`, `Item.ProcessAnimation`).
   - Fix: skip contained items; keep active lists for animating items and mobiles; drive it through ECS systems.
   - Source: cuo-2.0-perf-comparison.md.
+- **More ClassicUO update-path findings** (ECS agent, 2026-10-24):
+  - `WMapManager.AddOrUpdate` runs for every ally or party mobile every frame (World.cs:322/335).
+  - `RootContainer` walks the dictionary per item and is called for every item on map change, so map changes are O(n·depth) (World.cs:846).
+  - LINQ `Reverse()` allocates on every FindNext (World.cs:703/727).
+  - Every 0x78 destroys and reallocates all non-backpack equipment as new `Item`s (PacketHandlers.cs:2883).
+  - ConfirmWalk calls `Player.AddToTile()` (unlink plus a sorted re-insert) per step even when the tile doesn't change, and SetInWorldTile always re-adds (PacketHandlers.cs:1218).
+  - The HP percentage is recomputed every frame for every entity with HitsMax > 0 (Entity.cs:150).
+  - The ECS mirror's `Sync` runs twice per SetInWorldTile; measure it before optimising.
 - **Screen position recomputed for every object every frame** in `FillGameObjectList`. Fix: recompute only when the world position changes, via an ECS change query. Source: impl/ecs 827e54185.
 - **UIManager.Update sorts and recursively updates every gump control every frame** (UIManager.cs:335, Control.cs:259). Fix: update only dirty controls; add a hit-test cache. Source: 2.0 `UiPickCachePlugin`, `GumpPositionCachePlugin`.
 - **About 17–18 KB allocated per frame**, roughly 4 gen0 GCs every 5 s (classicuo-aot-baseline.md). Fix: hunt allocations down to zero, and keep allocation and flush probes permanently in the build. Source: 2.0 `EcPerfProbe`, `BatcherProbe`.
