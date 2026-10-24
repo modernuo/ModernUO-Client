@@ -1,25 +1,46 @@
-using System.Runtime.InteropServices;
 using static SDL3.SDL;
 
 namespace Uo.Render;
 
-/// <summary>SDL_GPU device, pipeline and persistent buffers. One draw call per frame for the whole world pass.</summary>
+/// <summary>How the renderer gets its device and colour target.</summary>
+public enum RendererMode
+{
+    /// <summary>Own device; claims the window and draws into the swapchain.</summary>
+    Window,
+    /// <summary>Own device; draws into its own offscreen texture (screenshots, benches).</summary>
+    Offscreen,
+    /// <summary>A device owned by someone else (FNA3D); draws into the texture passed with each frame. Never touches the
+    /// window or swapchain.</summary>
+    External,
+}
+
+/// <summary>SDL_GPU device, pipelines and persistent buffers. The world pass is one draw call for opaque sprites plus
+/// one for the (usually few) translucent ones.</summary>
 public sealed unsafe class Renderer : IDisposable
 {
     public readonly IntPtr Device, Window;
-    public readonly bool Offscreen;
+    public readonly RendererMode Mode;
+    public readonly bool OwnsDevice;
+    public bool Offscreen => Mode == RendererMode.Offscreen;
+    /// <summary>Swapchain / offscreen format, or the external target's format at creation (pipelines for other target
+    /// formats are built on first use).</summary>
     public readonly SDL_GPUTextureFormat ColorFormat;
-    readonly IntPtr _pipeline;
+    IntPtr _vs, _ps;
+    readonly List<(SDL_GPUTextureFormat Format, IntPtr Opaque, IntPtr Translucent)> _pipelines = new(2);
     IntPtr _depth;
     uint _depthW, _depthH;
     readonly IntPtr _samplerPoint, _samplerLinear, _samplerHue;
     readonly IntPtr _hueTex;
     readonly IntPtr _paletteBuf, _dummyAnimTex;
     public readonly IntPtr InstanceBuffer;
-    readonly IntPtr _chunkTableBuf, _pageTableBuf;
+    readonly IntPtr _frameTableBuf, _pageTableBuf;
     readonly IntPtr _frameTransfer, _pageTableTransfer;
     public readonly uint FrameTransferSize;
-    public readonly int ChunkTableCapacity;
+    /// <summary>Frame table layout (8-byte entries): visible chunks [0, ChunkTableCapacity), translucent list
+    /// [TransBase, + MaxTranslucent), override hash [OverrideBase, + OverrideSlots).</summary>
+    public readonly int ChunkTableCapacity, MaxTranslucent, OverrideSlots;
+    public uint TransBase => (uint)ChunkTableCapacity;
+    public uint OverrideBase => (uint)(ChunkTableCapacity + MaxTranslucent);
     readonly int _pageTableBytes;
     public bool VSync = true;
     public readonly bool ImmediateSupported, MailboxSupported;
@@ -33,18 +54,26 @@ public sealed unsafe class Renderer : IDisposable
     // Range: |key - camKey| < 2^21 covers a 4K view at zoom 0.5 (about ±136 diagonals × 100 × 128).
     public const float DepthScale = 1f / (1 << 22);
 
-    /// <summary><paramref name="driver"/>: "direct3d12", "vulkan", or null for SDL's choice among drivers we have shaders for.</summary>
-    public Renderer(IntPtr window, bool offscreen, PackSet pack, int instanceCapacity, int maxVisibleChunks, string driver = "direct3d12")
+    static SDL_GPUShaderFormat EmbeddedFormats()
     {
-        Window = window;
-        Offscreen = offscreen;
         var formats = SDL_GPUShaderFormat.SDL_GPU_SHADERFORMAT_DXIL;
         if (typeof(Renderer).Assembly.GetManifestResourceInfo("sprite_vs.spv") != null) formats |= SDL_GPUShaderFormat.SDL_GPU_SHADERFORMAT_SPIRV;
-        Device = SDL_CreateGPUDevice(formats, false, driver);
-        if (Device == IntPtr.Zero) throw new Exception($"SDL_CreateGPUDevice({driver ?? "default"}): " + SDL_GetError());
-        ShaderFormat = (SDL_GetGPUShaderFormats(Device) & formats & SDL_GPUShaderFormat.SDL_GPU_SHADERFORMAT_DXIL) != 0
-            ? SDL_GPUShaderFormat.SDL_GPU_SHADERFORMAT_DXIL : SDL_GPUShaderFormat.SDL_GPU_SHADERFORMAT_SPIRV;
+        return formats;
+    }
 
+    static IntPtr CreateDevice(string driver)
+    {
+        var d = SDL_CreateGPUDevice(EmbeddedFormats(), false, driver);
+        if (d == IntPtr.Zero) throw new Exception($"SDL_CreateGPUDevice({driver ?? "default"}): " + SDL_GetError());
+        return d;
+    }
+
+    /// <summary>Own device. <paramref name="driver"/>: "direct3d12", "vulkan", or null for SDL's choice among drivers we
+    /// have shaders for.</summary>
+    public Renderer(IntPtr window, bool offscreen, PackSet pack, int instanceCapacity, int maxVisibleChunks, string driver = "direct3d12",
+        int maxTranslucent = 0, int overrideSlots = 0)
+        : this(CreateDevice(driver), true, window, offscreen ? RendererMode.Offscreen : RendererMode.Window, pack, instanceCapacity, maxVisibleChunks, maxTranslucent, overrideSlots)
+    {
         if (!offscreen)
         {
             if (!SDL_ClaimWindowForGPUDevice(Device, window)) throw new Exception("claim window: " + SDL_GetError());
@@ -56,8 +85,36 @@ public sealed unsafe class Renderer : IDisposable
         {
             ColorFormat = SDL_GPUTextureFormat.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM;
         }
+    }
 
-        _pipeline = CreatePipeline();
+    /// <summary>Renders with a device owned by the host (FNA3D's SDL_GPUDevice*). The host keeps the window and
+    /// swapchain; each frame passes its colour target in <see cref="FrameInput"/>. Shaders are picked from the formats
+    /// the device accepts (DXIL on D3D12, SPIR-V on Vulkan).</summary>
+    public static Renderer CreateExternal(IntPtr device, SDL_GPUTextureFormat colorFormat, PackSet pack, int instanceCapacity, int maxVisibleChunks,
+        int maxTranslucent = 4096, int overrideSlots = 8192)
+    {
+        if (device == IntPtr.Zero) throw new ArgumentException("no SDL_GPUDevice", nameof(device));
+        var r = new Renderer(device, false, IntPtr.Zero, RendererMode.External, pack, instanceCapacity, maxVisibleChunks, maxTranslucent, overrideSlots, colorFormat);
+        r.Pipelines(colorFormat);
+        return r;
+    }
+
+    Renderer(IntPtr device, bool ownsDevice, IntPtr window, RendererMode mode, PackSet pack, int instanceCapacity, int maxVisibleChunks,
+        int maxTranslucent, int overrideSlots, SDL_GPUTextureFormat colorFormat = SDL_GPUTextureFormat.SDL_GPU_TEXTUREFORMAT_INVALID)
+    {
+        Device = device;
+        OwnsDevice = ownsDevice;
+        Window = window;
+        Mode = mode;
+        ColorFormat = colorFormat;
+        if (overrideSlots != 0 && (overrideSlots & (overrideSlots - 1)) != 0) throw new ArgumentException("override slots must be a power of two");
+        var have = SDL_GetGPUShaderFormats(Device) & EmbeddedFormats();
+        if ((have & SDL_GPUShaderFormat.SDL_GPU_SHADERFORMAT_DXIL) != 0) ShaderFormat = SDL_GPUShaderFormat.SDL_GPU_SHADERFORMAT_DXIL;
+        else if ((have & SDL_GPUShaderFormat.SDL_GPU_SHADERFORMAT_SPIRV) != 0) ShaderFormat = SDL_GPUShaderFormat.SDL_GPU_SHADERFORMAT_SPIRV;
+        else throw new NotSupportedException($"device {SDL_GetGPUDeviceDriver(Device)} accepts shader formats {SDL_GetGPUShaderFormats(Device)}; embedded: {EmbeddedFormats()}");
+
+        _vs = CreateShader("sprite_vs", "VSMain", SDL_GPUShaderStage.SDL_GPU_SHADERSTAGE_VERTEX, 0, 3, 1);
+        _ps = CreateShader("sprite_ps", "PSMain", SDL_GPUShaderStage.SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1, 0);
 
         _samplerPoint = CreateSampler(SDL_GPUFilter.SDL_GPU_FILTER_NEAREST, SDL_GPUSamplerMipmapMode.SDL_GPU_SAMPLERMIPMAPMODE_NEAREST, 0);
         // zoomed out: trilinear, limited to mips the 2-px gutter still protects
@@ -66,7 +123,9 @@ public sealed unsafe class Renderer : IDisposable
 
         InstanceBuffer = CreateBuffer((uint)(instanceCapacity * sizeof(SpriteInstance)), "instances");
         ChunkTableCapacity = maxVisibleChunks;
-        _chunkTableBuf = CreateBuffer((uint)(maxVisibleChunks * sizeof(ChunkDraw)), "chunk table");
+        MaxTranslucent = maxTranslucent;
+        OverrideSlots = overrideSlots;
+        _frameTableBuf = CreateBuffer((uint)((maxVisibleChunks + maxTranslucent + overrideSlots) * sizeof(ChunkDraw)), "frame table");
         _pageTableBytes = Math.Max(1, pack.TablePageCount) * 4;
         _pageTableBuf = CreateBuffer((uint)_pageTableBytes, "page table");
 
@@ -166,22 +225,44 @@ public sealed unsafe class Renderer : IDisposable
         }
     }
 
-    IntPtr CreatePipeline()
+    /// <summary>Opaque and translucent pipelines for a colour target format, built on first use.</summary>
+    (IntPtr Opaque, IntPtr Translucent) Pipelines(SDL_GPUTextureFormat format)
     {
-        var vs = CreateShader("sprite_vs", "VSMain", SDL_GPUShaderStage.SDL_GPU_SHADERSTAGE_VERTEX, 0, 3, 1);
-        var ps = CreateShader("sprite_ps", "PSMain", SDL_GPUShaderStage.SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1, 0);
-        var color = new SDL_GPUColorTargetDescription { format = ColorFormat };
+        foreach (var p in _pipelines)
+            if (p.Format == format) return (p.Opaque, p.Translucent);
+        var entry = (format, CreatePipeline(format, false), CreatePipeline(format, true));
+        _pipelines.Add(entry);
+        return (entry.Item2, entry.Item3);
+    }
+
+    IntPtr CreatePipeline(SDL_GPUTextureFormat format, bool translucent)
+    {
+        var color = new SDL_GPUColorTargetDescription { format = format };
+        if (translucent)
+        {
+            // premultiplied output (ClassicUO's AlphaBlend)
+            color.blend_state = new SDL_GPUColorTargetBlendState
+            {
+                enable_blend = true,
+                src_color_blendfactor = SDL_GPUBlendFactor.SDL_GPU_BLENDFACTOR_ONE,
+                dst_color_blendfactor = SDL_GPUBlendFactor.SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+                color_blend_op = SDL_GPUBlendOp.SDL_GPU_BLENDOP_ADD,
+                src_alpha_blendfactor = SDL_GPUBlendFactor.SDL_GPU_BLENDFACTOR_ONE,
+                dst_alpha_blendfactor = SDL_GPUBlendFactor.SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA,
+                alpha_blend_op = SDL_GPUBlendOp.SDL_GPU_BLENDOP_ADD,
+            };
+        }
         var ci = new SDL_GPUGraphicsPipelineCreateInfo
         {
-            vertex_shader = vs,
-            fragment_shader = ps,
+            vertex_shader = _vs,
+            fragment_shader = _ps,
             primitive_type = SDL_GPUPrimitiveType.SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
             rasterizer_state = new SDL_GPURasterizerState { fill_mode = SDL_GPUFillMode.SDL_GPU_FILLMODE_FILL, cull_mode = SDL_GPUCullMode.SDL_GPU_CULLMODE_NONE },
             depth_stencil_state = new SDL_GPUDepthStencilState
             {
                 compare_op = SDL_GPUCompareOp.SDL_GPU_COMPAREOP_LESS,
                 enable_depth_test = true,
-                enable_depth_write = true,
+                enable_depth_write = !translucent,
             },
             target_info = new SDL_GPUGraphicsPipelineTargetInfo
             {
@@ -192,9 +273,7 @@ public sealed unsafe class Renderer : IDisposable
             },
         };
         var p = SDL_CreateGPUGraphicsPipeline(Device, in ci);
-        if (p == IntPtr.Zero) throw new Exception("pipeline: " + SDL_GetError());
-        SDL_ReleaseGPUShader(Device, vs);
-        SDL_ReleaseGPUShader(Device, ps);
+        if (p == IntPtr.Zero) throw new Exception($"pipeline ({format}): " + SDL_GetError());
         return p;
     }
 
@@ -228,7 +307,7 @@ public sealed unsafe class Renderer : IDisposable
 
     public void ApplyPresentMode()
     {
-        if (Offscreen) return;
+        if (Mode != RendererMode.Window) return;
         var mode = VSync ? SDL_GPUPresentMode.SDL_GPU_PRESENTMODE_VSYNC
             : ImmediateSupported ? SDL_GPUPresentMode.SDL_GPU_PRESENTMODE_IMMEDIATE
             : MailboxSupported ? SDL_GPUPresentMode.SDL_GPU_PRESENTMODE_MAILBOX
@@ -236,6 +315,7 @@ public sealed unsafe class Renderer : IDisposable
         SDL_SetGPUSwapchainParameters(Device, Window, SDL_GPUSwapchainComposition.SDL_GPU_SWAPCHAINCOMPOSITION_SDR, mode);
     }
 
+    /// <summary>Our depth texture follows the colour target's size (recreated when the host recreates its target).</summary>
     void EnsureDepth(uint w, uint h)
     {
         if (_depth != IntPtr.Zero && _depthW == w && _depthH == h) return;
@@ -249,7 +329,10 @@ public sealed unsafe class Renderer : IDisposable
         };
         _depth = SDL_CreateGPUTexture(Device, in ci);
         _depthW = w; _depthH = h;
+        DepthRecreations++;
     }
+
+    public int DepthRecreations;
 
     public void EnsureOffscreen(uint w, uint h)
     {
@@ -286,6 +369,19 @@ public sealed unsafe class Renderer : IDisposable
         public SpriteInstance[] Dynamic;
         public int DynamicCount;
         public uint DynamicFirst;
+        /// <summary>Translucent pass: instance indices, back to front (ascending depth key); at most MaxTranslucent.</summary>
+        public uint[] Translucent;
+        public int TranslucentCount;
+        /// <summary>Override hash (OverrideSlots entries) or null; uploaded only when non-null.</summary>
+        public OverrideEntry[] Overrides;
+        /// <summary>External mode: the host's colour target this frame (re-fetched every frame: hosts recreate it on resize).</summary>
+        public IntPtr Target;
+        public uint TargetWidth, TargetHeight;
+        public SDL_GPUTextureFormat TargetFormat;
+        /// <summary>Keep the target's contents (LOAD) instead of clearing it, so host layers drawn earlier stay underneath.</summary>
+        public bool LoadTarget;
+        /// <summary>Viewport inside the target in pixels; width 0 = the whole target.</summary>
+        public int ViewportX, ViewportY, ViewportWidth, ViewportHeight;
     }
 
     public int LastChunkUploads, DrawCalls;
@@ -293,19 +389,26 @@ public sealed unsafe class Renderer : IDisposable
     public bool ForcePoint;
     public SDL_FColor ClearColor = new() { r = 0.02f, g = 0.02f, b = 0.03f, a = 1 };
     public uint TargetW, TargetH;
+    public int ViewportW, ViewportH;
 
-    /// <summary>Records and submits one frame. Returns false if the swapchain was unavailable (minimized).</summary>
+    /// <summary>Records and submits one frame on its own command buffer. Returns false if the swapchain was unavailable
+    /// (minimized) or the external target is missing. In external mode call it before the host submits the command
+    /// buffer that samples the target: queue order then has the world finished first.</summary>
     public bool RenderFrame(ref FrameInput f)
     {
+        if (Mode == RendererMode.External && (f.Target == IntPtr.Zero || f.TargetWidth == 0 || f.TargetHeight == 0)) return false;
         var cmd = SDL_AcquireGPUCommandBuffer(Device);
         if (cmd == IntPtr.Zero) return false;
 
-        // ---- stage instance uploads + chunk table into the frame transfer buffer
+        // ---- stage instance uploads + frame table into the frame transfer buffer
         var mapped = (byte*)SDL_MapGPUTransferBuffer(Device, _frameTransfer, true);
         uint tableBytes = (uint)(f.ChunkCount * sizeof(ChunkDraw));
         uint dynBytes = (uint)(f.DynamicCount * sizeof(SpriteInstance));
+        int transCount = Math.Min(f.TranslucentCount, MaxTranslucent);
+        uint transBytes = (uint)(transCount * sizeof(ChunkDraw));
+        uint ovBytes = f.Overrides != null && OverrideSlots > 0 ? (uint)(OverrideSlots * sizeof(OverrideEntry)) : 0;
         uint offset = 0;
-        LastChunkUploads = f.Chunks.StageUploads(mapped, ref offset, FrameTransferSize - tableBytes - dynBytes - 512, f.ChunkUploadBudget);
+        LastChunkUploads = f.Chunks.StageUploads(mapped, ref offset, FrameTransferSize - tableBytes - dynBytes - transBytes - ovBytes - 1024, f.ChunkUploadBudget);
         offset = (offset + 255) & ~255u;
         uint tableOffset = offset;
         if (tableBytes > 0)
@@ -313,6 +416,12 @@ public sealed unsafe class Renderer : IDisposable
         uint dynOffset = (tableOffset + tableBytes + 255) & ~255u;
         if (dynBytes > 0)
             fixed (SpriteInstance* src = f.Dynamic) Buffer.MemoryCopy(src, mapped + dynOffset, dynBytes, dynBytes);
+        uint transOffset = (dynOffset + dynBytes + 255) & ~255u;
+        var tdst = (uint*)(mapped + transOffset);
+        for (int i = 0; i < transCount; i++) { tdst[2 * i] = f.Translucent[i]; tdst[2 * i + 1] = 0; }
+        uint ovOffset = (transOffset + transBytes + 255) & ~255u;
+        if (ovBytes > 0)
+            fixed (OverrideEntry* src = f.Overrides) Buffer.MemoryCopy(src, mapped + ovOffset, ovBytes, ovBytes);
         SDL_UnmapGPUTransferBuffer(Device, _frameTransfer);
 
         var copy = SDL_BeginGPUCopyPass(cmd);
@@ -323,12 +432,11 @@ public sealed unsafe class Renderer : IDisposable
             var dst = new SDL_GPUBufferRegion { buffer = InstanceBuffer, offset = ch.UploadDst[i], size = ch.UploadSize[i] };
             SDL_UploadToGPUBuffer(copy, in src, in dst, false);
         }
-        if (tableBytes > 0)
-        {
-            var src = new SDL_GPUTransferBufferLocation { transfer_buffer = _frameTransfer, offset = tableOffset };
-            var dst = new SDL_GPUBufferRegion { buffer = _chunkTableBuf, offset = 0, size = tableBytes };
-            SDL_UploadToGPUBuffer(copy, in src, in dst, true);
-        }
+        // The first frame-table upload cycles the buffer (the previous frame may still read it); later ones fill the new one.
+        bool cycle = true;
+        if (tableBytes > 0) UploadFrameTable(copy, tableOffset, 0, tableBytes, ref cycle);
+        if (transBytes > 0) UploadFrameTable(copy, transOffset, TransBase * 8, transBytes, ref cycle);
+        if (ovBytes > 0) UploadFrameTable(copy, ovOffset, OverrideBase * 8, ovBytes, ref cycle);
         if (dynBytes > 0)
         {
             var src = new SDL_GPUTransferBufferLocation { transfer_buffer = _frameTransfer, offset = dynOffset };
@@ -359,9 +467,14 @@ public sealed unsafe class Renderer : IDisposable
         // ---- target
         IntPtr target;
         uint tw, th;
-        if (Offscreen)
+        var format = ColorFormat;
+        if (Mode == RendererMode.Offscreen)
         {
             target = _offscreen; tw = _offW; th = _offH;
+        }
+        else if (Mode == RendererMode.External)
+        {
+            target = f.Target; tw = f.TargetWidth; th = f.TargetHeight; format = f.TargetFormat;
         }
         else
         {
@@ -376,12 +489,17 @@ public sealed unsafe class Renderer : IDisposable
         }
         TargetW = tw; TargetH = th;
         EnsureDepth(tw, th);
+        var (opaque, translucentPipe) = Pipelines(format);
+
+        int vx = 0, vy = 0, vw = (int)tw, vh = (int)th;
+        if (f.ViewportWidth > 0 && f.ViewportHeight > 0) { vx = f.ViewportX; vy = f.ViewportY; vw = f.ViewportWidth; vh = f.ViewportHeight; }
+        ViewportW = vw; ViewportH = vh;
 
         var color = new SDL_GPUColorTargetInfo
         {
             texture = target,
             clear_color = ClearColor,
-            load_op = SDL_GPULoadOp.SDL_GPU_LOADOP_CLEAR,
+            load_op = f.LoadTarget ? SDL_GPULoadOp.SDL_GPU_LOADOP_LOAD : SDL_GPULoadOp.SDL_GPU_LOADOP_CLEAR,
             store_op = SDL_GPUStoreOp.SDL_GPU_STOREOP_STORE,
         };
         var depth = new SDL_GPUDepthStencilTargetInfo
@@ -393,34 +511,35 @@ public sealed unsafe class Renderer : IDisposable
         };
         var pass = Native.SDL_BeginGPURenderPass(cmd, &color, 1, &depth);
         DrawCalls = 0;
+        var u = f.Uniforms;
+        u.InvViewportX = 1f / vw;
+        u.InvViewportY = 1f / vh;
+        u.Sharp = f.LinearFilter || ForcePoint ? 0u : 1u;
+        u.AtlasSize = 1f / u.InvAtlas;
+        if (f.AnimPages != null) { u.AnimAtlasSize = f.AnimPages.PageSize; u.InvAnimAtlas = 1f / f.AnimPages.PageSize; }
+        u.OverrideMask = ovBytes > 0 ? (uint)(OverrideSlots - 1) : 0;
+        u.OverrideBase = OverrideBase;
+        u.TransBase = TransBase;
         if (f.ChunkCount > 0 && f.Instances > 0)
         {
-            SDL_BindGPUGraphicsPipeline(pass, _pipeline);
-            var vp = new SDL_GPUViewport { x = 0, y = 0, w = tw, h = th, min_depth = 0, max_depth = 1 };
-            SDL_SetGPUViewport(pass, in vp);
-            Span<IntPtr> bufs = stackalloc IntPtr[3] { InstanceBuffer, _chunkTableBuf, _pageTableBuf };
-            SDL_BindGPUVertexStorageBuffers(pass, 0, bufs, 3);
-            Span<SDL_GPUTextureSamplerBinding> samp = stackalloc SDL_GPUTextureSamplerBinding[3];
-            samp[0] = new SDL_GPUTextureSamplerBinding { texture = f.Pages.Texture, sampler = ForcePoint && !f.LinearFilter ? _samplerPoint : _samplerLinear }; // sharp-bilinear in the shader when scale >= 1
-            samp[1] = new SDL_GPUTextureSamplerBinding { texture = _hueTex, sampler = _samplerHue };
-            samp[2] = new SDL_GPUTextureSamplerBinding { texture = f.AnimPages?.Texture ?? _dummyAnimTex, sampler = _samplerHue }; // Load only
-            SDL_BindGPUFragmentSamplers(pass, 0, samp, 3);
-            Span<IntPtr> fbufs = stackalloc IntPtr[1] { _paletteBuf };
-            SDL_BindGPUFragmentStorageBuffers(pass, 0, fbufs, 1);
-            var u = f.Uniforms;
-            u.InvViewportX = 1f / tw;
-            u.InvViewportY = 1f / th;
-            u.Sharp = f.LinearFilter || ForcePoint ? 0u : 1u;
-            u.AtlasSize = 1f / u.InvAtlas;
-            if (f.AnimPages != null) { u.AnimAtlasSize = f.AnimPages.PageSize; u.InvAnimAtlas = 1f / f.AnimPages.PageSize; }
+            Bind(pass, opaque, ref f, vx, vy, vw, vh);
+            u.Pass = 0;
             SDL_PushGPUVertexUniformData(cmd, 0, (IntPtr)(&u), (uint)sizeof(FrameUniforms));
             SDL_DrawGPUPrimitives(pass, 6, (uint)f.Instances, 0, 0);
-            DrawCalls = 1;
+            DrawCalls++;
+        }
+        if (transCount > 0)
+        {
+            Bind(pass, translucentPipe, ref f, vx, vy, vw, vh);
+            u.Pass = 1;
+            SDL_PushGPUVertexUniformData(cmd, 0, (IntPtr)(&u), (uint)sizeof(FrameUniforms));
+            SDL_DrawGPUPrimitives(pass, 6, (uint)transCount, 0, 0);
+            DrawCalls++;
         }
         SDL_EndGPURenderPass(pass);
 
         if (f.ScreenshotPath != null && Offscreen)
-            return SubmitAndSave(cmd, f.ScreenshotPath, tw, th);
+            return SubmitAndSave(cmd, f.ScreenshotPath, _offscreen, tw, th, ColorFormat);
 
         if (Offscreen && Throttle)
         {
@@ -443,6 +562,32 @@ public sealed unsafe class Renderer : IDisposable
 
         SDL_SubmitGPUCommandBuffer(cmd);
         return true;
+    }
+
+    void UploadFrameTable(IntPtr copy, uint srcOffset, uint dstOffset, uint bytes, ref bool cycle)
+    {
+        var src = new SDL_GPUTransferBufferLocation { transfer_buffer = _frameTransfer, offset = srcOffset };
+        var dst = new SDL_GPUBufferRegion { buffer = _frameTableBuf, offset = dstOffset, size = bytes };
+        SDL_UploadToGPUBuffer(copy, in src, in dst, cycle);
+        cycle = false;
+    }
+
+    void Bind(IntPtr pass, IntPtr pipeline, ref FrameInput f, int vx, int vy, int vw, int vh)
+    {
+        SDL_BindGPUGraphicsPipeline(pass, pipeline);
+        var vp = new SDL_GPUViewport { x = vx, y = vy, w = vw, h = vh, min_depth = 0, max_depth = 1 };
+        SDL_SetGPUViewport(pass, in vp);
+        var sc = new SDL_Rect { x = vx, y = vy, w = vw, h = vh };
+        SDL_SetGPUScissor(pass, in sc);
+        Span<IntPtr> bufs = stackalloc IntPtr[3] { InstanceBuffer, _frameTableBuf, _pageTableBuf };
+        SDL_BindGPUVertexStorageBuffers(pass, 0, bufs, 3);
+        Span<SDL_GPUTextureSamplerBinding> samp = stackalloc SDL_GPUTextureSamplerBinding[3];
+        samp[0] = new SDL_GPUTextureSamplerBinding { texture = f.Pages.Texture, sampler = ForcePoint && !f.LinearFilter ? _samplerPoint : _samplerLinear }; // sharp-bilinear in the shader when scale >= 1
+        samp[1] = new SDL_GPUTextureSamplerBinding { texture = _hueTex, sampler = _samplerHue };
+        samp[2] = new SDL_GPUTextureSamplerBinding { texture = f.AnimPages?.Texture ?? _dummyAnimTex, sampler = _samplerHue }; // Load only
+        SDL_BindGPUFragmentSamplers(pass, 0, samp, 3);
+        Span<IntPtr> fbufs = stackalloc IntPtr[1] { _paletteBuf };
+        SDL_BindGPUFragmentStorageBuffers(pass, 0, fbufs, 1);
     }
 
     /// <summary>Offscreen bench: fence-throttle submissions (see RenderFrame).</summary>
@@ -490,12 +635,20 @@ public sealed unsafe class Renderer : IDisposable
         SDL_WaitForGPUIdle(Device);
     }
 
-    bool SubmitAndSave(IntPtr cmd, string path, uint w, uint h)
+    /// <summary>RGBA8 pixels of the last screenshot (top row first).</summary>
+    public byte[] LastScreenshot;
+
+    /// <summary>Downloads a colour texture (RGBA8 or BGRA8) and writes it as PNG (null path: only <see cref="LastScreenshot"/>).
+    /// Waits for the GPU. Used by test harnesses on targets they own.</summary>
+    public bool SaveTexture(IntPtr texture, uint w, uint h, SDL_GPUTextureFormat format, string path)
+        => SubmitAndSave(SDL_AcquireGPUCommandBuffer(Device), path, texture, w, h, format);
+
+    bool SubmitAndSave(IntPtr cmd, string path, IntPtr texture, uint w, uint h, SDL_GPUTextureFormat format)
     {
         uint bytes = w * h * 4;
         var tb = CreateTransfer(bytes, false);
         var copy = SDL_BeginGPUCopyPass(cmd);
-        var src = new SDL_GPUTextureRegion { texture = _offscreen, w = w, h = h, d = 1 };
+        var src = new SDL_GPUTextureRegion { texture = texture, w = w, h = h, d = 1 };
         var dst = new SDL_GPUTextureTransferInfo { transfer_buffer = tb, pixels_per_row = w, rows_per_layer = h };
         SDL_DownloadFromGPUTexture(copy, in src, in dst);
         SDL_EndGPUCopyPass(copy);
@@ -504,16 +657,13 @@ public sealed unsafe class Renderer : IDisposable
         SDL_WaitForGPUFences(Device, true, fences, 1);
         SDL_ReleaseGPUFence(Device, fence);
         var p = (byte*)SDL_MapGPUTransferBuffer(Device, tb, false);
-        var span = new ReadOnlySpan<byte>(p, (int)bytes);
-        if (ColorFormat == SDL_GPUTextureFormat.SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM)
-        {
-            var copyBytes = span.ToArray();
-            for (int i = 0; i < copyBytes.Length; i += 4) (copyBytes[i], copyBytes[i + 2]) = (copyBytes[i + 2], copyBytes[i]);
-            Png.Write(path, (int)w, (int)h, copyBytes);
-        }
-        else Png.Write(path, (int)w, (int)h, span);
+        var px = new ReadOnlySpan<byte>(p, (int)bytes).ToArray();
         SDL_UnmapGPUTransferBuffer(Device, tb);
         SDL_ReleaseGPUTransferBuffer(Device, tb);
+        if (format == SDL_GPUTextureFormat.SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM)
+            for (int i = 0; i < px.Length; i += 4) (px[i], px[i + 2]) = (px[i + 2], px[i]);
+        LastScreenshot = px;
+        if (path != null) Png.Write(path, (int)w, (int)h, px);
         return true;
     }
 
@@ -526,15 +676,21 @@ public sealed unsafe class Renderer : IDisposable
         SDL_ReleaseGPUTexture(Device, _dummyAnimTex);
         SDL_ReleaseGPUBuffer(Device, _paletteBuf);
         SDL_ReleaseGPUBuffer(Device, InstanceBuffer);
-        SDL_ReleaseGPUBuffer(Device, _chunkTableBuf);
+        SDL_ReleaseGPUBuffer(Device, _frameTableBuf);
         SDL_ReleaseGPUBuffer(Device, _pageTableBuf);
         SDL_ReleaseGPUTransferBuffer(Device, _frameTransfer);
         SDL_ReleaseGPUTransferBuffer(Device, _pageTableTransfer);
         SDL_ReleaseGPUSampler(Device, _samplerPoint);
         SDL_ReleaseGPUSampler(Device, _samplerLinear);
         SDL_ReleaseGPUSampler(Device, _samplerHue);
-        SDL_ReleaseGPUGraphicsPipeline(Device, _pipeline);
-        if (!Offscreen) SDL_ReleaseWindowFromGPUDevice(Device, Window);
-        SDL_DestroyGPUDevice(Device);
+        foreach (var p in _pipelines)
+        {
+            SDL_ReleaseGPUGraphicsPipeline(Device, p.Opaque);
+            SDL_ReleaseGPUGraphicsPipeline(Device, p.Translucent);
+        }
+        SDL_ReleaseGPUShader(Device, _vs);
+        SDL_ReleaseGPUShader(Device, _ps);
+        if (Mode == RendererMode.Window) SDL_ReleaseWindowFromGPUDevice(Device, Window);
+        if (OwnsDevice) SDL_DestroyGPUDevice(Device);
     }
 }

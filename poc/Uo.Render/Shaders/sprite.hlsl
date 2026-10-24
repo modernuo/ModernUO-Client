@@ -13,8 +13,13 @@
 //   uint uv        u | v << 16 (atlas pixels)
 //   uint pageHue   logical page | hue row << 16
 //   uint depth     integer depth key (bigger = nearer); camera-relative in the shader
-//   uint light     4 x u8 per-corner light (stretched land), 170 = 1.0
+//   uint light     FLAG_LIT: 4 x u8 per-corner light (stretched land), 170 = 1.0;
+//                  otherwise byte 0 = 255 - alpha (0 = opaque), byte 1 = hue mode (MODE_*)
 //   uint corners   4 x s8 per-corner z (stretched land), corner order top,right,left,bottom; FLAG_INDEXED: palette id
+//
+// Two draws share the instance buffer: pass 0 (opaque, depth write) walks the visible chunk table and skips translucent
+// instances; pass 1 (premultiplied blend, depth test only) draws the frame table's back-to-front list of translucent
+// instance indices. A per-frame override hash (instance index -> alpha / hidden / highlight hue) applies to both.
 
 #define FLAG_HUED     1u
 #define FLAG_PARTIAL  2u
@@ -25,6 +30,13 @@
 #define FLAG_SHARP    0x100u  // set by the vertex shader from the Sharp uniform
 #define FLAG_UNPREMUL 0x200u  // FormatFlags bit 0 << 9
 #define FLAG_GRAYTOL  0x400u  // FormatFlags bit 1 << 9
+// hueFlags.y bits 12-15: mode, 16-23: alpha
+#define MODE_NORMAL   0u
+#define MODE_SPECTRAL 1u
+#define MODE_SHADOW   2u
+#define MODE_EFFECT   3u
+#define OV_HIDDEN     1u
+#define OV_HIGHLIGHT  2u
 // BC7 perturbs exact grays by a few levels; ClassicUO's partial-hue test is r == g == b on 5-bit source colours,
 // so BC7 packs use a small tolerance (GrayTolerance uniform, set by the renderer).
 
@@ -41,7 +53,10 @@ struct Instance
 };
 
 StructuredBuffer<Instance> Instances  : register(t0, space0);
-StructuredBuffer<uint2>    ChunkTable : register(t1, space0); // x = first instance in Instances, y = running instance count before this chunk
+// Frame table: [0, ChunkCount) chunk entries (x = first instance in Instances, y = running instance count before this
+// chunk); [TransBase, ...) translucent pass (x = instance index); [OverrideBase, + OverrideMask + 1) override hash
+// (x = instance index + 1, 0 = empty; y = alpha | flags << 8 | hue row << 16), linear probing.
+StructuredBuffer<uint2>    FrameTable : register(t1, space0);
 StructuredBuffer<uint>     PageTable  : register(t2, space0); // logical page -> physical layer (0xFFFFFFFF = not resident)
 
 cbuffer Frame : register(b0, space1)
@@ -60,6 +75,10 @@ cbuffer Frame : register(b0, space1)
     float  GrayTolerance; // partial-hue gray test tolerance when FLAG_GRAYTOL (BC7)
     float  AnimAtlasSize;  // Indexed8 anim page side
     float  InvAnimAtlas;
+    uint   OverrideMask;   // hash slots - 1; 0 = no overrides
+    uint   OverrideBase;
+    uint   TransBase;
+    uint   Pass;
 };
 
 [[vk::combinedImageSampler]] Texture2DArray<float4> Atlas    : register(t0, space2);
@@ -76,7 +95,7 @@ struct VSOut
 {
     float4 pos : SV_Position;
     float3 uvw : TEXCOORD0;
-    nointerpolation uint2 hueFlags : TEXCOORD1; // x = hue row | palette id << 16, y = flags
+    nointerpolation uint2 hueFlags : TEXCOORD1; // x = hue row | palette id << 16, y = flags | mode << 12 | alpha << 16
     float  light : TEXCOORD2;
     nointerpolation float atlasSize : TEXCOORD3; // the fragment stage can't read the vertex cbuffer (space1)
     nointerpolation float grayTol : TEXCOORD4;
@@ -85,33 +104,80 @@ struct VSOut
 static const uint Corner[6] = { 0, 1, 2, 2, 1, 3 };
 static const float2 Diamond[4] = { float2(22, 0), float2(44, 22), float2(0, 22), float2(22, 44) };
 
+// Must match OverrideEntry.Hash in GpuTypes.cs.
+uint OverrideHash(uint i)
+{
+    i ^= i >> 16;
+    i *= 0x7FEB352Du;
+    i ^= i >> 15;
+    return i;
+}
+
+VSOut Collapsed()
+{
+    VSOut o;
+    o.pos = float4(-2, -2, 0, 1);
+    o.uvw = 0; o.hueFlags = 0; o.light = 0; o.atlasSize = 1; o.grayTol = 0;
+    return o;
+}
+
 VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
 {
-    // Which visible chunk does this instance belong to? Binary search the running counts.
-    uint lo = 0, hi = ChunkCount;
-    while (hi - lo > 1)
+    uint gi;
+    if (Pass != 0)
     {
-        uint mid = (lo + hi) >> 1;
-        if (ChunkTable[mid].y <= iid) lo = mid; else hi = mid;
+        gi = FrameTable[TransBase + iid].x;
     }
-    uint2 ce = ChunkTable[lo];
-    Instance inst = Instances[ce.x + (iid - ce.y)];
+    else
+    {
+        // Which visible chunk does this instance belong to? Binary search the running counts.
+        uint lo = 0, hi = ChunkCount;
+        while (hi - lo > 1)
+        {
+            uint mid = (lo + hi) >> 1;
+            if (FrameTable[mid].y <= iid) lo = mid; else hi = mid;
+        }
+        uint2 ce = FrameTable[lo];
+        gi = ce.x + (iid - ce.y);
+    }
+    Instance inst = Instances[gi];
+
+    uint flags = inst.whf >> 24;
+    uint hueRow = inst.pageHue >> 16;
+    bool lit = (flags & FLAG_LIT) != 0;
+    uint alpha = lit ? 255u : 255u - (inst.light & 0xFFu);
+    uint mode = lit ? MODE_NORMAL : (inst.light >> 8) & 0xFu;
+    if (OverrideMask != 0)
+    {
+        uint h = OverrideHash(gi);
+        [loop] for (uint p = 0; p < 8; p++)
+        {
+            uint2 e = FrameTable[OverrideBase + ((h + p) & OverrideMask)];
+            if (e.x == 0) break;
+            if (e.x == gi + 1)
+            {
+                uint ovFlags = (e.y >> 8) & 0xFFu;
+                alpha = (ovFlags & OV_HIDDEN) != 0 ? 0u : alpha * (e.y & 0xFFu) / 255u;
+                if (ovFlags & OV_HIGHLIGHT)
+                {
+                    hueRow = e.y >> 16;
+                    flags = (flags | FLAG_HUED) & ~FLAG_PARTIAL;
+                }
+                break;
+            }
+        }
+    }
+    bool translucent = alpha < 255u || mode == MODE_SPECTRAL || mode == MODE_SHADOW;
+    uint layer = PageTable[inst.pageHue & 0xFFFF];
+    // Not resident, hidden, or the other pass's: collapse to a degenerate triangle.
+    if (layer == 0xFFFFFFFFu || alpha == 0u || translucent != (Pass != 0))
+        return Collapsed();
 
     VSOut o;
-    uint layer = PageTable[inst.pageHue & 0xFFFF];
-    if (layer == 0xFFFFFFFFu)
-    {
-        // Page not resident: collapse to a degenerate triangle.
-        o.pos = float4(-2, -2, 0, 1);
-        o.uvw = 0; o.hueFlags = 0; o.light = 0; o.atlasSize = 1; o.grayTol = 0;
-        return o;
-    }
-
     uint c = Corner[vid];
     float2 cxy = float2(c & 1, c >> 1);
     float w = inst.whf & 0xFFF;
     float h = (inst.whf >> 12) & 0xFFF;
-    uint flags = inst.whf >> 24;
 
     float2 local;
     float light = 1.0;
@@ -120,11 +186,17 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
         int z = (int)(inst.corners << (24 - 8 * c)) >> 24; // sign-extend byte c
         local = Diamond[c] - float2(0, z * 4);
     }
+    else if (mode == MODE_SHADOW)
+    {
+        // Batcher2D.DrawShadow: half height, top edge sheared right by the half height, raised 10 px.
+        float hh = h * 0.5;
+        local = float2(cxy.x * w + (1.0 - cxy.y) * hh, hh - 10.0 + cxy.y * hh);
+    }
     else
     {
         local = cxy * float2(w, h);
     }
-    if (flags & FLAG_LIT)
+    if (lit)
         light = ((inst.light >> (8 * c)) & 0xFF) / 170.0;
     bool indexed = (flags & FLAG_INDEXED) != 0;
 
@@ -138,32 +210,49 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     float2 uv = float2(inst.uv & 0xFFFF, inst.uv >> 16) + tc * float2(w, h);
     o.uvw = float3(uv * (indexed ? InvAnimAtlas : InvAtlas), layer);
     uint pal = indexed ? (inst.corners & 0xFFFF) : 0u;
-    o.hueFlags = uint2((inst.pageHue >> 16) | (pal << 16), flags | (Sharp != 0 ? FLAG_SHARP : 0u) | ((FormatFlags & 3u) << 9));
+    o.hueFlags = uint2(hueRow | (pal << 16),
+        flags | (Sharp != 0 ? FLAG_SHARP : 0u) | ((FormatFlags & 3u) << 9) | (mode << 12) | (alpha << 16));
     o.light = light;
     o.atlasSize = indexed ? AnimAtlasSize : AtlasSize;
     o.grayTol = GrayTolerance;
     return o;
 }
 
-// Indexed8 tap: palette colour as 5-bit integers, hued per tap (exact r5 == g5 == b5 gray test, shade = r5).
-float3 IndexedTap(uint idx, uint pal, uint hueRow, uint flags)
+// Indexed8 tap: palette colour as 5-bit integers, hued per tap (exact r5 == g5 == b5 gray test, shade = r5, or g5 for
+// effect hues). Spectral and shadow ignore the hue.
+float3 IndexedTap(uint idx, uint pal, uint hueRow, uint flags, uint mode)
 {
     uint addr = (pal * 256u + idx) * 2u;
     uint c = (Palettes.Load(addr & ~3u) >> ((addr & 2u) * 8u)) & 0xFFFFu;
     uint r5 = (c >> 10) & 31u, g5 = (c >> 5) & 31u, b5 = c & 31u;
-    if ((flags & FLAG_HUED) != 0 && ((flags & FLAG_PARTIAL) == 0 || (r5 == g5 && r5 == b5)))
-        return HueLut.Load(int3(r5, hueRow, 0)).rgb;
+    if ((flags & FLAG_HUED) != 0)
+    {
+        if (mode == MODE_EFFECT && (flags & FLAG_PARTIAL) == 0)
+            return HueLut.Load(int3(g5, hueRow, 0)).rgb;
+        if (mode == MODE_NORMAL && ((flags & FLAG_PARTIAL) == 0 || (r5 == g5 && r5 == b5)))
+            return HueLut.Load(int3(r5, hueRow, 0)).rgb;
+    }
     // canonical 5->8 expansion: bit replication c<<3|c>>2 (matches native B5G5R5A1 sampling), as k/255 so an
     // 8-bit target stores k exactly
     uint3 c5 = uint3(r5, g5, b5);
     return float3((c5 << 3) | (c5 >> 2)) / 255.0;
 }
 
+// Spectral / shadow / alpha, premultiplied (the opaque pass always has alpha 1).
+float4 Finish(float3 rgb, uint packed)
+{
+    uint mode = (packed >> 12) & 0xFu;
+    float a = ((packed >> 16) & 0xFFu) / 255.0;
+    if (mode == MODE_SPECTRAL) { a = saturate(1.0 - rgb.r * 1.5); rgb = 0; }
+    else if (mode == MODE_SHADOW) { a = 0.4; rgb = 0; }
+    return float4(rgb * a, a);
+}
+
 float4 PSIndexed(VSOut i, uint flags)
 {
     // Manual bilinear over palette-resolved taps, all at mip0 (the 2-px gutter keeps the footprint in the frame's cell,
     // so the instance's palette is right for every tap). Sharp mode remaps the fraction as the hardware path does:
-    // at zoom 1 the fragment sits on texel centres and only one tap has weight.
+    // at integer scales the fragment sits on texel centres and only one tap has weight.
     float2 t = i.uvw.xy * i.atlasSize;
     float2 q;
     if (flags & FLAG_SHARP)
@@ -178,6 +267,18 @@ float4 PSIndexed(VSOut i, uint flags)
     float2 f = q - floor(q);
     int layer = (int)i.uvw.z;
     uint hueRow = i.hueFlags.x & 0xFFFFu, pal = i.hueFlags.x >> 16;
+    uint mode = (flags >> 12) & 0xFu;
+    // One tap holds (nearly) all the weight, as in sharp mode away from texel edges (zoom 1 and other integer scales):
+    // one index and one palette load. The interpolated position is rarely exact, so snap within 1/256 of a texel; the
+    // dropped weights stay under 0.4%, below one 8-bit step of the blended colour.
+    float2 fr = round(f);
+    if (all(abs(f - fr) < 1.0 / 256))
+    {
+        uint i0 = AnimIdx.Load(int4(p0 + (int2)fr, layer, 0));
+        if (i0 == 0u)
+            discard;
+        return Finish(IndexedTap(i0, pal, hueRow, flags, mode) * i.light, flags);
+    }
     float4 wq = float4((1 - f.x) * (1 - f.y), f.x * (1 - f.y), (1 - f.x) * f.y, f.x * f.y);
     uint4 idx = uint4(AnimIdx.Load(int4(p0, layer, 0)), AnimIdx.Load(int4(p0 + int2(1, 0), layer, 0)),
                       AnimIdx.Load(int4(p0 + int2(0, 1), layer, 0)), AnimIdx.Load(int4(p0 + int2(1, 1), layer, 0)));
@@ -186,12 +287,12 @@ float4 PSIndexed(VSOut i, uint flags)
     [unroll] for (int k = 0; k < 4; k++)
     {
         if (idx[k] == 0u || wq[k] <= 0) continue; // index 0 = transparent
-        rgb += wq[k] * IndexedTap(idx[k], pal, hueRow, flags);
+        rgb += wq[k] * IndexedTap(idx[k], pal, hueRow, flags, mode);
         a += wq[k];
     }
     if (a < 0.5)
         discard;
-    return float4(rgb / a * i.light, 1);
+    return Finish(rgb / a * i.light, flags);
 }
 
 float4 PSMain(VSOut i) : SV_Target
@@ -223,17 +324,20 @@ float4 PSMain(VSOut i) : SV_Target
     if (flags & FLAG_UNPREMUL)
         c.rgb /= c.a;
 
-    bool gray;
-    if (flags & FLAG_GRAYTOL)
-        gray = max(abs(c.r - c.g), max(abs(c.r - c.b), abs(c.g - c.b))) <= i.grayTol;
-    else
-        gray = c.r == c.g && c.r == c.b;
-    if ((flags & FLAG_HUED) != 0 && ((flags & FLAG_PARTIAL) == 0 || gray))
+    uint mode = (flags >> 12) & 0xFu;
+    if ((flags & FLAG_HUED) != 0)
     {
-        // ClassicUO get_rgb: grayscale (red channel) selects one of 32 shades of the hue row.
-        int shade = min(31, (int)(c.r * 32.0));
-        c.rgb = HueLut.Load(int3(shade, i.hueFlags.x & 0xFFFFu, 0)).rgb;
+        bool gray;
+        if (flags & FLAG_GRAYTOL)
+            gray = max(abs(c.r - c.g), max(abs(c.r - c.b), abs(c.g - c.b))) <= i.grayTol;
+        else
+            gray = c.r == c.g && c.r == c.b;
+        // ClassicUO get_rgb: the gray level (red channel; green for EFFECT_HUED) selects one of 32 shades of the hue row.
+        if (mode == MODE_EFFECT && (flags & FLAG_PARTIAL) == 0)
+            c.rgb = HueLut.Load(int3(min(31, (int)(c.g * 32.0)), i.hueFlags.x & 0xFFFFu, 0)).rgb;
+        else if (mode == MODE_NORMAL && ((flags & FLAG_PARTIAL) == 0 || gray))
+            c.rgb = HueLut.Load(int3(min(31, (int)(c.r * 32.0)), i.hueFlags.x & 0xFFFFu, 0)).rgb;
     }
     c.rgb *= i.light;
-    return float4(c.rgb, 1);
+    return Finish(c.rgb, flags);
 }

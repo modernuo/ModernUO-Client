@@ -1,20 +1,16 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
+    <OutputType>Library</OutputType>
     <TargetFramework>net10.0</TargetFramework>
     <Nullable>disable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <IsAotCompatible>true</IsAotCompatible>
     <InvariantGlobalization>true</InvariantGlobalization>
-    <ServerGarbageCollection>false</ServerGarbageCollection>
-    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
-    <TieredPGO>true</TieredPGO>
     <PlatformTarget>x64</PlatformTarget>
     <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-x64</RuntimeIdentifier>
-    <SelfContained>false</SelfContained>
-    <!-- NativeAOT: dotnet publish -c Release -p:PublishAot=true -->
+    <!-- Class library: the renderer, streaming and pack tables. Uo.Render.App (benches, screenshots) and Uo.Client are the exes. -->
     <Dxc Condition="'$(Dxc)' == ''">C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\dxc.exe</Dxc>
     <!-- SPIR-V needs an official DXC release (the SDK dxc has no SPIR-V backend); kept outside the repo. Without it the
          build skips SPIR-V and only the D3D12 driver is available. -->
@@ -28,7 +24,6 @@
   </ItemGroup>
 
   <ItemGroup>
-    <None Include="..\..\external\x64\SDL3.dll" Link="SDL3.dll" CopyToOutputDirectory="PreserveNewest" />
     <HlslSource Include="Shaders\*.hlsl" />
   </ItemGroup>
 
