@@ -27,12 +27,15 @@ public sealed class Options
     public int Layers = 24, PageBudget = 2, ChunkBudget = 64;
     public int InstanceCapacity = 2 << 20;
     public int Workers = Math.Clamp(Environment.ProcessorCount / 2 - 1, 2, 8);
+    public string Driver = "direct3d12";
+    public bool ForceExpand;
 
     public const string Usage =
         "Uo.Client [--pack DIR] [--live [--host H] [--port P] [--char NAME] [--go \"x y\"]]  (live credentials: env UO_USER / UO_PASS)\n" +
         "          [--mobiles N] [--items N] [--radius R] [--latency MS] [--server-block \"x y\"]   (offline fake server)\n" +
         "          [--at x y] [--zoom Z] [--size WxH] [--walk \"E5 S5\"] [--run] [--loop]\n" +
-        "          [--screenshots DIR] | [--bench [--bench-seconds S]] | [--test]";
+        "          [--screenshots DIR] | [--bench [--bench-seconds S]] | [--test]\n" +
+        "          [--driver direct3d12|vulkan] [--force-expand]";
 
     public static Options Parse(string[] args)
     {
@@ -69,6 +72,8 @@ public sealed class Options
                 case "--test": o.Test = true; break;
                 case "--workers": o.Workers = int.Parse(Next(), ci); break;
                 case "--layers": o.Layers = int.Parse(Next(), ci); break;
+                case "--driver": o.Driver = Next(); break;
+                case "--force-expand": o.ForceExpand = true; break;
                 default: return null;
             }
         }
@@ -130,7 +135,7 @@ public static class Program
         }
         var walker = new Walker(client, map, world, clock);
 
-        SDL_SetHint("SDL_GPU_DRIVER", "direct3d12");
+        SDL_SetHint("SDL_GPU_DRIVER", o.Driver);
         if (!SDL_Init(SDL_InitFlags.SDL_INIT_VIDEO)) { Console.Error.WriteLine(SDL_GetError()); return 1; }
         bool offscreen = o.ShotsDir != null || o.Bench;
         if (o.ShotsDir != null) Directory.CreateDirectory(o.ShotsDir);
@@ -141,9 +146,10 @@ public static class Program
 
         int rc;
         using (var workers = new WorkerPool(o.Workers))
-        using (var renderer = new Renderer(window, offscreen, pack, o.InstanceCapacity, 8192))
+        using (var renderer = new Renderer(window, offscreen, pack, o.InstanceCapacity, 8192, o.Driver))
         {
-            var residency = new PageResidency(renderer.Device, pack, workers, o.Layers, o.PageBudget, Math.Max(2, o.PageBudget * 2));
+            var residency = new PageResidency(renderer.Device, pack, workers, o.Layers, o.PageBudget, Math.Max(2, o.PageBudget * 2), o.ForceExpand);
+            Console.WriteLine($"  device: {SDL_GetGPUDeviceDriver(renderer.Device)}, shaders {renderer.ShaderFormat}, pages {residency.FormatDescription}");
             var chunks = new ChunkStore(pack, workers, o.InstanceCapacity);
             if (o.Bench) renderer.VSync = false;
             renderer.ApplyPresentMode();
