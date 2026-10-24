@@ -48,6 +48,12 @@ namespace ClassicUO.Assets
 
         public int BodyCount => _bodies.Length;
 
+        public AnimBodyEntry[] PackBodies => _bodies;
+
+        public AnimDirEntry[] PackDirs => _dirs;
+
+        public AnimFrameEntry[] PackFrames => _frames;
+
         public override void Load()
         {
             (_bodies, _dirs, _frames) = AnimTableFile.Read(FileManager.Pack.PathOf("anim/anim.bin"));

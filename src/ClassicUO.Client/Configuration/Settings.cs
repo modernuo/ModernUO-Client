@@ -88,6 +88,11 @@ namespace ClassicUO.Configuration
         // Folder of the converted asset pack; empty = "pack" next to the client, else in the UO directory.
         [JsonPropertyName("pack")] public string PackDirectory { get; set; }
 
+        // "legacy" (FNA batcher) or "gpu" (Uo.Render on FNA3D's SDL_GPU device; falls back to legacy without it).
+        [JsonPropertyName("world_renderer")] public string WorldRenderer { get; set; } = "legacy";
+
+        [JsonIgnore] public bool UseGpuWorldRenderer => string.Equals(WorldRenderer, "gpu", StringComparison.OrdinalIgnoreCase);
+
         [JsonPropertyName("encryption")] public byte Encryption { get; set; }
 
         [JsonPropertyName("plugins")] public string[] Plugins { get; set; } = { @"./Assistant/Razor.dll" };

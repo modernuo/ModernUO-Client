@@ -209,6 +209,7 @@ namespace ClassicUO.Renderer.Animations
                 spriteInfo.Center.X = frame.CenterX;
                 spriteInfo.Center.Y = frame.CenterY;
                 spriteInfo.Texture = _atlas.AddSprite(pixels, frame.Sprite.OrigW, frame.Sprite.OrigH, out spriteInfo.UV);
+                PackSpriteMap.Register(spriteInfo.Texture, spriteInfo.UV, PackSpriteMap.AnimFrame | index);
             }
 
             return sprites;

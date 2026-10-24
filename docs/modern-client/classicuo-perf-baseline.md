@@ -242,3 +242,62 @@ The old JIT baseline was p50 **1.33 ms** (about 700 fps) at 3840×2054 with a 16
 - **After Uo.Render (step 8):** rerun the same plan; the FRAMESTATS lines diff directly.
 
 Raw logs and the summariser scripts are in the session scratchpad; they are not part of the repo.
+
+## Step 8: the GPU world renderer (2026-10-24)
+
+Same machine, 1920×1080 client, game viewport maximised (1280×720 logical × 1.5), FPS uncapped, VSync off, inactive throttling off, `CUO_BENCH_TOPMOST=1`. Each spot ran Legacy then Gpu in the same session (`world:legacy;spot;world:gpu;spot`), 3 windows of 5 s each.
+
+**Caveat: the display was off during these runs.** Presents stalled about 500 ms roughly once a second in both modes (this also happens on the login screen), so fps, frame avg and Present avg are not comparable with the baseline above. Compare the CPU phases and the frame p50.
+
+#### JIT (ms avg; frame is p50)
+| spot | mode | frame p50 | Update | world prepare | world draw | Draw total | FNA calls | FNA draws | world instances (dynamic) | overrides |
+|---|---|---|---|---|---|---|---|---|---|---|
+| britain | legacy | 0.554 | 0.014 | 0.105 | 0.122 | 0.352 | 0.117 | 89 | — | — |
+| britain | gpu | 0.438 | 0.013 | 0.136 | 0.061 | 0.327 | 0.064 | 20 | 4169 (59) | 129 |
+| bank | legacy | 0.522 | 0.014 | 0.086 | 0.116 | 0.325 | 0.114 | 88 | — | — |
+| bank | gpu | 0.445 | 0.013 | 0.121 | 0.101 | 0.347 | 0.076 | 21 | 3673 (64) | 478 |
+| zoomout | legacy | 1.460 | 0.020 | 0.634 | 0.568 | 1.331 | 0.318 | 326 | — | — |
+| zoomout | gpu | 1.038 | 0.019 | 0.707 | 0.094 | 0.924 | 0.058 | 17 | 15014 (97) | 232 |
+| zoomin | legacy | 0.459 | 0.013 | 0.040 | 0.058 | 0.217 | 0.085 | 49 | — | — |
+| zoomin | gpu | 0.462 | 0.013 | 0.063 | 0.054 | 0.249 | 0.065 | 20 | 2208 (21) | 54 |
+| walk | legacy | 0.537 | 0.020 | 0.100 | 0.128 | 0.360 | 0.122 | 90 | — | — |
+| walk | gpu | 0.457 | 0.017 | 0.129 | 0.071 | 0.334 | 0.066 | 20 | 3397 (36) | 241 |
+| travel | legacy | 0.548 | 0.019 | 0.100 | 0.136 | 0.372 | 0.122 | 89 | — | — |
+| travel | gpu | 0.458 | 0.016 | 0.135 | 0.076 | 0.351 | 0.068 | 21 | 3588 (86) | 258 |
+| night (0x1A) | legacy | 0.551 | 0.015 | 0.114 | 0.123 | 0.379 | 0.131 | 90 | — | — |
+| night (0x1A) | gpu | 0.439 | 0.013 | 0.143 | 0.060 | 0.340 | 0.073 | 21 | 4167 (57) | 129 |
+
+#### NativeAOT x86-64-v3
+| spot | mode | frame p50 | Update | world prepare | world draw | Draw total | FNA calls | FNA draws | world instances (dynamic) | overrides |
+|---|---|---|---|---|---|---|---|---|---|---|
+| britain | legacy | 0.554 | 0.015 | 0.123 | 0.133 | 0.398 | 0.124 | 89 | — | — |
+| britain | gpu | 0.468 | 0.015 | 0.159 | 0.065 | 0.367 | 0.064 | 20 | 4171 (61) | 129 |
+| bank | legacy | 0.518 | 0.015 | 0.090 | 0.123 | 0.351 | 0.119 | 88 | — | — |
+| bank | gpu | 0.439 | 0.014 | 0.131 | 0.081 | 0.350 | 0.061 | 20 | 3673 (64) | 478 |
+| zoomout | legacy | 1.405 | 0.021 | 0.592 | 0.559 | 1.288 | 0.316 | 326 | — | — |
+| zoomout | gpu | 1.032 | 0.017 | 0.692 | 0.086 | 0.904 | 0.054 | 17 | 15014 (96) | 232 |
+| zoomin | legacy | 0.471 | 0.016 | 0.049 | 0.060 | 0.244 | 0.088 | 49 | — | — |
+| zoomin | gpu | 0.443 | 0.015 | 0.069 | 0.058 | 0.273 | 0.066 | 20 | 2208 (21) | 54 |
+| walk | legacy | 0.527 | 0.018 | 0.108 | 0.134 | 0.384 | 0.125 | 90 | — | — |
+| walk | gpu | 0.464 | 0.017 | 0.143 | 0.072 | 0.360 | 0.066 | 19 | 3447 (38) | 226 |
+| travel | legacy | 0.539 | 0.017 | 0.101 | 0.132 | 0.371 | 0.116 | 87 | — | — |
+| travel | gpu | 0.451 | 0.016 | 0.138 | 0.072 | 0.357 | 0.066 | 21 | 3596 (91) | 232 |
+
+#### 3840×2054 (JIT) and the 120-mobile crowd (JIT, bank, `[TileXYZ 1422 1692 12 10 0 Banker ...`, deleted afterwards)
+| spot | mode | frame p50 | Update | world prepare | world draw | Draw total | FNA calls | FNA draws | world instances (dynamic) | overrides |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 4K zoomout | legacy | 5.903 | 0.054 | 2.864 | 2.571 | 5.677 | 1.161 | 1042 | — | — |
+| 4K zoomout | gpu | 3.497 | 0.034 | 2.958 | 0.189 | 3.371 | 0.131 | 20 | 45862 (399) | 718 |
+| 4K britain | legacy | 1.279 | 0.017 | 0.335 | 0.394 | 0.952 | 0.289 | 230 | — | — |
+| 4K britain | gpu | 1.216 | 0.018 | 0.404 | 0.112 | 0.735 | 0.129 | 23 | 11139 (89) | 240 |
+| crowd | legacy | 0.622 | 0.020 | 0.100 | 0.275 | 0.507 | 0.139 | 94 | — | — |
+| crowd | gpu | 0.613 | 0.019 | 0.295 | 0.090 | 0.513 | 0.061 | 26 | 4752 (1143) | 478 |
+| crowd zoomout | legacy | 1.358 | 0.024 | 0.472 | 0.642 | 1.243 | 0.303 | 305 | — | — |
+| crowd zoomout | gpu | 1.292 | 0.025 | 0.767 | 0.271 | 1.163 | 0.057 | 23 | 15806 (1173) | 3235 |
+
+**Reading:**
+
+- **World draw drops sharply:** 0.12 → 0.06 ms at Britain, 0.57 → 0.09 zoomed out, 2.57 → 0.19 at 4K zoomed out. FNA draw calls go from 89/326/1042 to about 20, and the world itself is 2 draws. "World draw" in Gpu mode is the FNA overlay (effects, handles, weather) plus `WorldRenderer.Prepare`/`Render` (about 0.05–0.08 ms).
+- **World prepare goes up by 0.02–0.1 ms** (0.3 with 120 mobiles). The list fill is unchanged; on top come the override collection and the item/mobile views, which now run in prepare (capture) instead of in draw. ClassicUO's walk itself is the remaining cost: 0.5 ms zoomed out at 1080p and 2.9 ms at 4K. It is the next lever.
+- **Draw total:** −7% at Britain, −31% zoomed out, −41% at 4K zoomed out; equal at zoom-in and in the crowd, where the views' own logic dominates. AOT tracks JIT, about 5–15% slower on the CPU phases, as before.
+- **Roofs:** at the bank the player is under a roof, so roofs are hidden through overrides: 478 at zoom 1 and 3235 zoomed out (crowd zoomout world draw 0.27 ms, mostly override resolution).

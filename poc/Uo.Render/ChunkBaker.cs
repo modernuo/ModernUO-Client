@@ -43,6 +43,12 @@ public sealed class BakeJob : Job
     public static uint DepthKey(int x, int y, int priorityZ, int rank)
         => (uint)(((((x + y) * 100 + 127 + priorityZ + DepthBias) * 16) + (x & 15)) * 8 + Math.Min(rank, 7));
 
+    /// <summary><see cref="DepthKey"/> from D = 100·(x+y) + 127 + priorityZ given directly (hosts that hold ClassicUO's float
+    /// depth (x+y) + (127+z)·0.01 can pass round(depth·100)).</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static uint DepthKeyD(int d, int x, int rank)
+        => (uint)((((d + DepthBias) * 16) + (x & 15)) * 8 + Math.Clamp(rank, 0, 7));
+
     /// <summary>cell (y·8 + x in the block) &lt;&lt; 25 | static &lt;&lt; 24 | (u8)z &lt;&lt; 16 | graphic (land: tile id).</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static uint ObjectKey(int cell, bool isStatic, int z, int graphic)

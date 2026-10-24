@@ -230,6 +230,24 @@ The owner asked that everything definitive (e.g. the FNA 26.10 upgrade) land on 
   4. UI allocations of 17.7 KB per frame, about 80% from closures.
 - **Next:** step 8b, the Gpu world renderer in ClassicUO.
 
+### 2026-10-24 — Step 8: ClassicUO renders its world with Uo.Render (uncommitted)
+
+- **Switch:** `world_renderer` in settings.json (`legacy` default, `gpu`), CLI `-worldrenderer gpu|legacy`, in-game `-worldrenderer [gpu|legacy]` (no argument toggles). No SDL_GPU device from FNA3D, or a facet that fails to open: Legacy, with a log line.
+- **Per frame (Gpu):** `GameScene.DrawWorldGpu`.
+  1. `FillGameObjectList`/`AddTileToRenderList` run unchanged (visibility, alpha, picking). Where they decide to draw an object they stamp `DrawnFrame` and call `GpuOnDrawn`, which emits per-sprite overrides (alpha, out-of-range/dead tint) for land and statics. After each tile, `CollectGpuHidden` hides the baked land and statics the fill skipped (roofs, above max Z) where they would be on screen. The selected land/static gets a highlight override.
+  2. Items, multis (meshed and not), mobiles and corpses: their views' `Draw` runs with `UltimaBatcher2D.Capture` set; `GpuWorldRenderer` maps each atlas sprite back to its pack sprite (`PackSpriteMap`, registered by `Art`/`Animations`) and writes a `SpriteInstance` (trim-clipped, mirrored, strips, shadows, hue mode, depth key from the draw's float depth). Animation selection, layering, mounts, hues and light gathering stay in the views. Statics whose drawn graphic differs from the pack's (season, animated, stumps) are hidden and captured; trees/foliage/rocks contribute only their shadow.
+  3. FNA draws effects, object handles, the multi preview, weather and the selection rectangle into the world RT (LOAD). Then `WorldRenderer.Prepare` + `Render(world RT texture, CLEAR)` submits before FNA's frame, so the GPU runs the world first. The world RT is `PreserveContents` in Gpu mode so FNA's bind no longer clears it; FNA gets a fresh depth buffer.
+- **Packs:** `PackSet` takes ClassicUO's loaded tables (`PackTables`: sprites, texmaps, hues, anim bodies/dirs/frames, about 55 MB not read twice) and `WithFacet` re-targets it; a facet change recreates the world pass. The ECS `DynamicSpriteExtract` is not used; `GpuWorldRenderer.DynamicBuffer` is the seam.
+- **Parity** (world RT, 1280×720 logical at 1920×1080, Gpu vs Legacy in the same session): Britain 7.3% of pixels differ by >8 (0.5% after a 4×4 box filter), bank 16% (1.5%: two NPCs moved), zoom-in 8.8% (1.2%), zoom-out 75% (24%, mean 4.7). Nearly all of it is filtering: stretched land is point-sampled by Legacy and filtered by Uo.Render, and zoomed out Legacy aliases while Uo.Render uses mips. Light RTs are identical (night, 0x1A). A healer camp (multi), a 120-mobile crowd and Felucca render; the facet switch works.
+- **Picking:** hover over a static, land, a ground item and the player picks the same object in both modes (2 s of samples each); clicks reach the server.
+- **Perf** (JIT, 1920×1080, ms avg; Legacy → Gpu): world draw 0.12 → 0.06 (Britain), 0.57 → 0.09 (zoom-out), 2.57 → 0.19 (4K zoom-out); world prepare rises 0.03–0.1 (the collect and the views' capture moved there); Draw total 0.35 → 0.33, 1.33 → 0.92, 5.68 → 3.37. FNA draw calls 89 → 20 and 326 → 17; the world is 2 draws. Details: classicuo-perf-baseline.md ("Step 8").
+- **Gaps:**
+  - FNA-drawn world-space layers (effects, weather, multi preview) are not depth-tested against the GPU world: they draw on top.
+  - Circle of transparency in shader mode (the default type) is not applied to baked statics; gradient mode works (CPU alpha).
+  - Animated-water wobble, the sitting deformation and rotated sprites are dropped or drawn plain; land season graphics are not swapped.
+  - The prepare phase is still ClassicUO's full walk (0.5 ms zoomed out, 2.9 ms at 4K): the next lever. Roof hiding means hundreds to thousands of overrides.
+  - Item/mobile capture costs what drawing them did (120 mobiles: 0.2 ms); the ECS extract would remove the view logic.
+
 ## Phase 4 plan (owner, 2026-10-24): bring it into ClassicUO
 
 The owner accepts compressed packs on disk if decompression is fast.

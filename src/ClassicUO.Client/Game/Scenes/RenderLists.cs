@@ -243,6 +243,48 @@ namespace ClassicUO.Game.Scenes
             return result;
         }
 
+        /// <summary>GPU world: items, multis, mobiles and corpses go to the world pass through their views (land and statics are baked).</summary>
+        public int CaptureRenderLists(UltimaBatcher2D batcher, sbyte maxGroundZ, GpuWorldRenderer gpu)
+        {
+            return CaptureRenderList(batcher, _statics, maxGroundZ, gpu) +
+                   CaptureRenderList(batcher, _animations, maxGroundZ, gpu) +
+                   CaptureRenderList(batcher, _transparentObjects, maxGroundZ, gpu);
+        }
+
+        /// <summary>GPU world: what FNA still draws over the world pass (effects, object handles).</summary>
+        public int DrawDeferredRenderLists(UltimaBatcher2D batcher, sbyte maxGroundZ)
+        {
+            int result = DrawRenderList(batcher, _effects, maxGroundZ);
+
+            if (_gumpSprites.Count > 0 || _gumpTexts.Count > 0)
+            {
+                result += DrawRenderListWithAtlas(batcher, _gumpSprites);
+                result += DrawRenderListNoAtlas(batcher, _gumpTexts);
+            }
+
+            return result;
+        }
+
+        private static int CaptureRenderList(UltimaBatcher2D batcher, List<GameObject> renderList, sbyte maxGroundZ, GpuWorldRenderer gpu)
+        {
+            int done = 0;
+
+            foreach (var obj in renderList)
+            {
+                if (obj is Land || obj is Static || obj.Z > maxGroundZ)
+                {
+                    continue;
+                }
+
+                if (gpu.DrawObject(batcher, obj, obj.CalculateDepthZ()))
+                {
+                    done++;
+                }
+            }
+
+            return done;
+        }
+
         private static int DrawMeshLayer(UltimaBatcher2D batcher, MeshLayer layer)
         {
             if (layer.VisibleSpriteCount == 0 || layer.VertexBuffer == null || layer.VertexBuffer.IsDisposed)

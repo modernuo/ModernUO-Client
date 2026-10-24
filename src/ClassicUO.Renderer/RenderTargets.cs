@@ -26,6 +26,9 @@ namespace ClassicUO.Renderer
         public RenderTarget2D LightRenderTarget { get => _lightRenderTarget; }
         public RenderTarget2D WorldRenderTarget { get => _worldRenderTarget; }
 
+        // The GPU world pass draws into the world target outside FNA: FNA must load it instead of clearing it on bind.
+        public bool PreserveWorldContents { get; set; }
+
         public void SetLightsConfiguration(Func<BlendState> lightsBlendState, Func<Vector3> lightsHue)
         {
             _lightsBlendState = lightsBlendState;
@@ -41,7 +44,8 @@ namespace ClassicUO.Renderer
 
             EnsureSize(graphicsDevice, ref _uiRenderTarget, _gameWindowAfterDPI.Width, _gameWindowAfterDPI.Height);
             EnsureSize(graphicsDevice, ref _lightRenderTarget, _gameWorldSceneAfterDPI.Width, _gameWorldSceneAfterDPI.Height);
-            EnsureSize(graphicsDevice, ref _worldRenderTarget, _gameWorldSceneAfterDPI.Width, _gameWorldSceneAfterDPI.Height);
+            EnsureSize(graphicsDevice, ref _worldRenderTarget, _gameWorldSceneAfterDPI.Width, _gameWorldSceneAfterDPI.Height,
+                PreserveWorldContents ? RenderTargetUsage.PreserveContents : (RenderTargetUsage?)null);
 
             if (dpiScale == Math.Floor(dpiScale))
             {
@@ -62,16 +66,18 @@ namespace ClassicUO.Renderer
                 (int)(gameWindowOnScreen.Height / dpiScale)
             );
 
-        private static void EnsureSize(GraphicsDevice graphicsDevice, ref RenderTarget2D renderTarget, int width, int height)
+        private static void EnsureSize(GraphicsDevice graphicsDevice, ref RenderTarget2D renderTarget, int width, int height, RenderTargetUsage? usage = null)
         {
             if (width <= 0 || height <= 0)
                 return;
 
-            if (renderTarget == null || renderTarget.IsDisposed || renderTarget.Width != width || renderTarget.Height != height)
+            PresentationParameters pp = graphicsDevice.PresentationParameters;
+            RenderTargetUsage targetUsage = usage ?? pp.RenderTargetUsage;
+
+            if (renderTarget == null || renderTarget.IsDisposed || renderTarget.Width != width || renderTarget.Height != height
+                || renderTarget.RenderTargetUsage != targetUsage)
             {
                 renderTarget?.Dispose();
-
-                PresentationParameters pp = graphicsDevice.PresentationParameters;
 
                 renderTarget = new RenderTarget2D(
                     graphicsDevice,
@@ -81,7 +87,7 @@ namespace ClassicUO.Renderer
                     pp.BackBufferFormat,
                     pp.DepthStencilFormat,
                     pp.MultiSampleCount,
-                    pp.RenderTargetUsage
+                    targetUsage
                     );
             }
         }

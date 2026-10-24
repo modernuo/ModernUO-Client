@@ -79,3 +79,12 @@ Format: **what**, where (file:line), why it should help, evidence or estimate, a
 ## Pipelining
 
 - **No evidence ClassicUO 2.0 pipelines,** apart from a host upload worker. Revisit a render thread, or overlapping the next update with submission, only if Present or submit is still ≥30% of the frame after the items above.
+
+## GPU world in ClassicUO (step 8, 2026-10-24)
+
+- **ClassicUO's list fill is now the world's main cost in Gpu mode:** 0.5 ms zoomed out at 1080p and 2.9 ms at 4K (classicuo-perf-baseline.md, "Step 8"). It walks a square tile range much larger than the screen, tests every object and pixel-checks every static for the mouse. In Gpu mode it only has to produce exceptions (hidden, alpha, tint) and the selection. Fixes: walk only the screen's diamond; cache per-tile decisions and redo them only when the player's max-Z, the alpha timer or the tile change; run the selection test only for tiles under the mouse.
+- **`Static.CheckMouseSelection` runs for every static on screen every frame** (StaticView.cs:95, called from `TrySelectObject`, GameSceneDrawingSorting.cs:940), with a `PixelPicker` dictionary lookup each time. About 3.7% of main-thread samples zoomed out. Fix: reject by the art rectangle first. This helps Legacy as well.
+- **Roof hiding as per-sprite overrides:** 478 overrides at the bank at zoom 1 and 3235 zoomed out. Each one is a `ChunkStore.FindObject` binary search on the main thread (WorldRenderer.cs:315), and the whole 16k-slot hash (128 KB) is uploaded whenever any override exists (Renderer.cs:409). Crowd zoomed out: 0.27 ms of world draw. Fix: a max-Z (and roof-flag) uniform with a per-instance z test in the shader, as noted for the slice.
+- **Item and mobile capture costs what drawing them through FNA did** (120 mobiles: world prepare +0.2 ms), because the views' logic (frame selection, layer order, hue rules) runs either way. Fix: feed dynamics from the ECS `DynamicSpriteExtract` (`GpuWorldRenderer.DynamicBuffer` is the seam) or cache each mobile's sprite list until its animation frame changes.
+- **Chunk meshes are still built in Gpu mode** (GameScene.cs:648), only for `InChunkMesh`/picking parity. That is a CPU and VRAM cost per dirty chunk; the art atlases are also still filled for the picker. Fix: build a picker-only path once the Legacy renderer is removed.
+- **The override collection is a second walk over each tile** (`CollectGpuHidden`). It is cheap after skipping tiles beside the view (about 0.03–0.1 ms zoomed out), but it could disappear if the fill reported skipped objects itself.
