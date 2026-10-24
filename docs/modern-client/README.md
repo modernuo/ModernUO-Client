@@ -55,6 +55,19 @@ Supporting material in this branch:
 
 ## Open items
 
-- Upgrade FNA 25.09 → 26.10 (separate branch).
-- Optionally add Flecs.NET (C ECS) to the benchmark.
-- Prototype a vertical slice: converter → packs → instanced sprite renderer drawing one facet region, measured against ClassicUO.
+- ~~Upgrade FNA 25.09 → 26.10~~ (done, merged to `poc/modern-client`; the submodule checkout is still pending).
+- ~~Add Flecs.NET (C ECS) to the benchmark~~ (adapter done; final quiet-machine timings still owed).
+- ~~Prototype a vertical slice~~ (done: CP5 in poc-log.md).
+
+### WASM checks (deferred; not a primary concern yet)
+
+Things to measure when the browser build starts:
+
+- **`PixelExpand` under the AOT build with SIMD.** Confirm `Vector128.IsHardwareAccelerated` is true and the per-page time beats the scalar paths.
+  - Native results: 1.5 ms with Vector128, 5.7 ms scalar arithmetic, 20.8 ms scalar lookup table. The SIMD path only uses ops SIMD128 has directly: 16-bit multiply, shifts, and/or, and widen (`extend_low/high`).
+  - **Watch the interpreted (non-AOT) mode:** Vector128 may not be accelerated there. If so, the kernel falls back to the scalar arithmetic path, which still beat the lookup table natively. Measure it anyway.
+  - If WASM somehow favours the table, swap the scalar fallback. The output is identical either way.
+- **Brotli decode speed** in WASM (`BrotliDecoder` is managed or native depending on the build). Size the chunked-Brotli (`Kind=2`) chunk count and worker count from it.
+- **Worker threads:** whether the browser build gets real threads (SharedArrayBuffer needs cross-origin isolation). Without them, page decode and expansion run on the main thread and need time-slicing.
+- **WebGPU limits:** the maximum texture array layers, the cost of 2048² RGBA8 pages, and the resident layer count that fits the browser's memory budget. The `r16uint` with manual filtering alternative applies if RGBA8's 2× memory doesn't fit.
+- **GC and allocation:** confirm the 0-allocation frame loop holds in the browser build.
