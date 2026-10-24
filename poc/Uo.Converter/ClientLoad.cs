@@ -8,7 +8,8 @@ namespace Uo.Converter;
 /// The subset of UOFileManager.Load the converter needs. The full Load also initialises animations, which needs the
 /// native zlib that ClassicUO ships with its client (not available to a plain console app), and loaders we don't use.
 /// Order matches UOFileManager.Load; ReadArtDefFile is private there so it is ported verbatim below.
-/// Verdata: only forced for clients &lt; 5.0.0a or when verdata.mul has patches; modern clients ship none.
+/// Patch formats (verdata.mul, mapdif*/stadif*) are unsupported by design: shard owners merge patches into the base
+/// files with their own tools. Verdata is never loaded, and MapLoader.ApplyPatches is never called.
 /// </summary>
 public static class ClientLoad
 {
@@ -20,12 +21,10 @@ public static class ClientLoad
         fm.Hues.Load();
         fm.TileData.Load();
         fm.Texmaps.Load();   // applies TexTerr.def
-        fm.Verdata.Load();
         ApplyArtDef(fm);
         return fm;
     }
 
-    public static bool HasVerdataPatches(UOFileManager fm) => fm.Verdata.File != null && fm.Verdata.File.Length != 0 && fm.Verdata.Patches.Length != 0;
 
     // Port of UOFileManager.ReadArtDefFile.
     private static void ApplyArtDef(UOFileManager fm)

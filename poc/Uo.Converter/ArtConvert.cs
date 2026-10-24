@@ -30,7 +30,7 @@ public sealed class WorkerReaders : IDisposable
         {
             var e = src.Entries[i];
             if (e.File == src) e.File = dst;               // .mul entries point at their own file
-            else if (e.File != null) throw new InvalidOperationException("entry backed by a foreign file (verdata?) - not supported");
+            else if (e.File != null) throw new InvalidOperationException("index entry backed by a foreign file - not supported");
             dst.Entries[i] = e;
         }
     }
@@ -40,7 +40,7 @@ public sealed class WorkerReaders : IDisposable
 
 public static class ArtConvert
 {
-    public sealed record Stats(int TableSize, int Present, int Unique, int Aliased, int Empty, int Pages, double Occupancy, long Bytes);
+    public sealed record Stats(int TableSize, int Present, int Unique, int Aliased, int Empty, int Pages, double Occupancy, long Bytes, long BytesBrotliQ5);
 
     private static ThreadLocal<WorkerReaders> Workers(UOFileManager fm) => new(() => new WorkerReaders(fm), trackAllValues: true);
 
@@ -70,7 +70,7 @@ public static class ArtConvert
 
         using (var workers = Workers(fm))
         {
-            Parallel.For(0, tableSize, id =>
+            Parallel.For(0, tableSize, ConvertOptions.Par, id =>
             {
                 if (canonical[id] != id) return;
                 var art = workers.Value!.Fm.Arts.GetArt((uint)id);
@@ -102,9 +102,9 @@ public static class ArtConvert
             list.Add(new SpriteImage { Id = id, AliasOf = c, Flags = Flags(id, land, stat) });
         }
 
-        var res = AtlasBuilder.Build(dir, tableSize, list, preset);
+        var res = AtlasBuilder.Build(dir, tableSize, list, preset, [0x0003, 0x4000 + 0x0CCA, 0x4000 + 0x0E75, 0x4000 + 0x0FAF, 0x4000 + 0x0064, 0x7191]);
         SpriteTable.Write(Path.Combine(dir, "sprites.bin"), res.Entries);
-        return new Stats(tableSize, res.Packed + res.Aliased, res.Packed, res.Aliased, empty, res.PageCount, res.Occupancy, res.PageBytes);
+        return new Stats(tableSize, res.Packed + res.Aliased, res.Packed, res.Aliased, empty, res.PageCount, res.Occupancy, res.PageBytes, res.PageBytesBrotli);
     }
 
     /// <summary>
@@ -167,7 +167,7 @@ public static class ArtConvert
         var images = new SpriteImage?[tableSize];
         using (var workers = Workers(fm))
         {
-            Parallel.For(0, tableSize, id =>
+            Parallel.For(0, tableSize, ConvertOptions.Par, id =>
             {
                 if (canonical[id] != id) return;
                 var t = workers.Value!.Fm.Texmaps.GetTexmap((uint)id);
@@ -189,9 +189,9 @@ public static class ArtConvert
             list.Add(c == id ? images[id]! : new SpriteImage { Id = id, AliasOf = c, Flags = SpriteFlags.Texmap });
         }
 
-        var res = AtlasBuilder.Build(dir, tableSize, list);
+        var res = AtlasBuilder.Build(dir, tableSize, list, null, [0x0003]);
         SpriteTable.Write(Path.Combine(dir, "texmaps.bin"), res.Entries);
-        return new Stats(tableSize, res.Packed + res.Aliased, res.Packed, res.Aliased, empty, res.PageCount, res.Occupancy, res.PageBytes);
+        return new Stats(tableSize, res.Packed + res.Aliased, res.Packed, res.Aliased, empty, res.PageCount, res.Occupancy, res.PageBytes, res.PageBytesBrotli);
     }
 
     public static int Hues(UOFileManager fm, string outDir)

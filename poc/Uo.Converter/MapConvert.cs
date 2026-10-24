@@ -18,7 +18,7 @@ public static class MapConvert
         {
             bool uop = File.Exists(fm.GetUOFilePath($"map{i}LegacyMUL.uop"));
             bool mul = File.Exists(fm.GetUOFilePath($"map{i}.mul"));
-            if (uop || mul) yield return i;
+            if ((uop || mul) && (ConvertOptions.Facets == null || ConvertOptions.Facets.Contains(i))) yield return i;
         }
     }
 
@@ -54,7 +54,7 @@ public static class MapConvert
         long statics = 0, bytes = 0;
         int blocksWritten = 0;
 
-        Parallel.For(0, rxCount * ryCount, r =>
+        Parallel.For(0, Math.Min(rxCount * ryCount, ConvertOptions.MaxRegions), ConvertOptions.Par, r =>
         {
             int rx = r % rxCount, ry = r / rxCount;
             int bx0 = rx * PackConst.RegionBlocks, by0 = ry * PackConst.RegionBlocks;
@@ -100,12 +100,12 @@ public static class MapConvert
 
             var header = new RegionHeader { Facet = (ushort)facet, Rx = (ushort)rx, Ry = (ushort)ry, BlocksW = (ushort)w, BlocksH = (ushort)h };
             var path = PackConst.RegionPath(dir, rx, ry);
-            RegionFile.Write(path, in header, blocks);
+            RegionFile.Write(path, in header, blocks, ConvertOptions.CompressRegions);
             Interlocked.Add(ref statics, st);
             Interlocked.Add(ref blocksWritten, nb);
             Interlocked.Add(ref bytes, new FileInfo(path).Length);
         });
 
-        return new Stats(facet, info.Width, info.Height, rxCount * ryCount, blocksWritten, statics, bytes, sw.Elapsed.TotalSeconds);
+        return new Stats(facet, info.Width, info.Height, Math.Min(rxCount * ryCount, ConvertOptions.MaxRegions), blocksWritten, statics, bytes, sw.Elapsed.TotalSeconds);
     }
 }
