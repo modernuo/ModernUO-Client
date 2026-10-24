@@ -7,17 +7,20 @@ namespace Uo.Render;
 /// Kind 0: raw read into the mapped buffer. Kind 1 (Brotli): the compressed payload is read into a reusable per-job
 /// buffer and decoded with BrotliDecoder directly into the mapped buffer (no full-size intermediate copy).
 /// Expand (16-bit pack, GPU without 16-bit sampling): the page is read or decoded in pieces into a reusable scratch
-/// buffer and each piece is expanded to RGBA8 into the mapped buffer (the whole chain doubles, so mip offsets double).</summary>
+/// buffer and each piece is expanded to RGBA8 into the mapped buffer (the whole chain doubles, so mip offsets double).
+/// Kind 2 (chunked Brotli): <see cref="ChunkedPageReader"/>'s workers decode the chunks in parallel straight into the
+/// mapped buffer, or into its shared scratch when expanding.</summary>
 public sealed unsafe class PageJob : Job
 {
     public int Page, Slot;
+    public PageResidency Owner;
     public string Path;
     public byte* Dst;
     public int Capacity;
     public bool Ok, Compressed, Expand;
     public int Mips, Size;
     public PixelFormat Format;
-    public long ReadTicks, DecodeTicks, ExpandTicks, FileBytes;
+    public long ReadTicks, DecodeTicks, ExpandTicks, WaitTicks, FileBytes;
     byte[] _compressed = new byte[1 << 20];
     byte[] _scratch;
 
@@ -27,6 +30,7 @@ public sealed unsafe class PageJob : Job
         Compressed = false;
         DecodeTicks = 0;
         ExpandTicks = 0;
+        WaitTicks = 0;
         long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
         using var fh0 = File.OpenHandle(Path, FileMode.Open, FileAccess.Read, FileShare.Read, FileOptions.SequentialScan);
         FileBytes = RandomAccess.GetLength(fh0);
@@ -97,6 +101,36 @@ public sealed unsafe class PageJob : Job
             finally { dec.Dispose(); }
             DecodeTicks = System.Diagnostics.Stopwatch.GetTimestamp() - t1 - ExpandTicks;
         }
+        else if (fh.Kind == FileKind.ChunkedBrotli)
+        {
+            Compressed = true;
+            var cr = ChunkedPageReader.Instance;
+            long tw = System.Diagnostics.Stopwatch.GetTimestamp();
+            ReadTicks = tw - t0;
+            lock (cr.Lock)
+            {
+                long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
+                WaitTicks = t1 - tw;
+                if (!Expand)
+                {
+                    cr.Decoder.Decode(fh0, 16, new Span<byte>(Dst, Capacity), 16, phb);
+                    ph = System.Runtime.InteropServices.MemoryMarshal.Read<PageHeader>(phb);
+                    if (!Fits(ph)) return;
+                    DecodeTicks = System.Diagnostics.Stopwatch.GetTimestamp() - t1;
+                }
+                else
+                {
+                    if (cr.Scratch.Length < Capacity / 2) cr.Scratch = new byte[Capacity / 2];
+                    cr.Decoder.Decode(fh0, 16, cr.Scratch.AsSpan(0, Capacity / 2), 16, phb);
+                    ph = System.Runtime.InteropServices.MemoryMarshal.Read<PageHeader>(phb);
+                    if (!Fits(ph)) return;
+                    long te = System.Diagnostics.Stopwatch.GetTimestamp();
+                    DecodeTicks = te - t1;
+                    PixelExpand.Expand(cr.Scratch.AsSpan(0, (int)ph.DataBytes), new Span<byte>(Dst, (int)ph.DataBytes * 2));
+                    ExpandTicks = System.Diagnostics.Stopwatch.GetTimestamp() - te;
+                }
+            }
+        }
         else return;
         Mips = ph.MipCount;
         Size = ph.Width;
@@ -138,6 +172,29 @@ public sealed unsafe class PageJob : Job
     }
 }
 
+/// <summary>One process-wide <see cref="ChunkedBrotliDecoder"/> for Kind=2 pages. Page jobs take turns (one Decode at a
+/// time), and each decode runs on all of the decoder's threads plus the calling worker, so one page's latency drops
+/// rather than several pages decoding slowly side by side. The scratch buffer serves the RGBA8 expansion path.</summary>
+public sealed class ChunkedPageReader
+{
+    public static int Workers = Math.Clamp(Environment.ProcessorCount / 2, 2, 8);
+    static ChunkedPageReader _instance;
+    static readonly object Create = new();
+
+    public static ChunkedPageReader Instance
+    {
+        get
+        {
+            if (_instance != null) return _instance;
+            lock (Create) return _instance ??= new ChunkedPageReader();
+        }
+    }
+
+    public readonly ChunkedBrotliDecoder Decoder = new(Workers);
+    public readonly object Lock = new();
+    public byte[] Scratch = [];
+}
+
 /// <summary>Maps logical atlas pages onto a fixed number of physical layers of one Texture2DArray, LRU-evicting pages
 /// not used this frame. Loads run on workers into persistent staging transfer buffers; uploads are budgeted per frame.
 /// The logical→physical page table lives in a GPU storage buffer, so chunk instance buffers never need re-baking.</summary>
@@ -155,7 +212,7 @@ public sealed unsafe class PageResidency
     public long ChainBytes => _chainBytes;
     /// <summary>VRAM held by the page array: layers × chain bytes.</summary>
     public long VramBytes => (long)Layers * _chainBytes;
-    readonly PackSet _pack;
+    readonly string[] _paths;
     readonly WorkerPool _workers;
 
     readonly int[] _layerOf;      // logical → layer (-1)
@@ -179,21 +236,28 @@ public sealed unsafe class PageResidency
     public int UploadBudget;
 
     public PageResidency(IntPtr device, PackSet pack, WorkerPool workers, int layers, int uploadBudget, int stagingSlots, bool forceExpand = false)
+        : this(device, pack.PagePaths, pack.Format, pack.PageSize, pack.PageMips, workers, layers, uploadBudget, stagingSlots, forceExpand) { }
+
+    /// <summary>A residency manager over any set of same-format pages (art+tex, or the Indexed8 anim pages).</summary>
+    public PageResidency(IntPtr device, string[] paths, PixelFormat format, int pageSize, int mips, WorkerPool workers, int layers, int uploadBudget, int stagingSlots, bool forceExpand = false)
     {
         _device = device;
-        _pack = pack;
+        _paths = paths;
         _workers = workers;
         Layers = layers;
-        LogicalCount = Math.Max(1, pack.PageCount);
-        PageSize = pack.PageSize;
-        MipCount = pack.PageMips;
-        Format = pack.Format;
+        LogicalCount = Math.Max(1, paths.Length);
+        PageSize = pageSize;
+        MipCount = mips;
+        Format = format;
         UploadBudget = uploadBudget;
         NativeSupported = Supports(device, Format);
         Expanding = Format == PageFormats.B5G5R5A1 && (forceExpand || !NativeSupported);
         UploadFormat = Expanding ? PixelFormat.Rgba8 : Format;
         _chainBytes = PageFormats.ChainBytes(PageSize, MipCount, UploadFormat);
         var gpuFormat = PageFormats.Gpu(UploadFormat);
+        // Integer formats are never "sample"-capable on D3D12 (SHADER_SAMPLE), which is what SDL reports for SAMPLER
+        // usage; the Indexed8 path only uses Load, which every backend supports for R8_UINT, so creation decides.
+        if (Format == PixelFormat.Indexed8) NativeSupported = true;
         if (!(Expanding ? Supports(device, UploadFormat) : NativeSupported))
             throw new NotSupportedException($"GPU does not support {PageFormats.Name(UploadFormat)} ({gpuFormat}) as a sampled 2D array texture");
 
@@ -207,7 +271,7 @@ public sealed unsafe class PageResidency
             num_levels = (uint)MipCount,
         };
         Texture = SDL_CreateGPUTexture(device, in ci);
-        if (Texture == IntPtr.Zero) throw new Exception("atlas texture: " + SDL_GetError());
+        if (Texture == IntPtr.Zero) throw new Exception($"atlas texture ({PageFormats.Name(Format)}): " + SDL_GetError());
 
         _layerOf = new int[LogicalCount];
         _logicalOf = new int[layers];
@@ -228,7 +292,7 @@ public sealed unsafe class PageResidency
         {
             var tci = new SDL_GPUTransferBufferCreateInfo { usage = SDL_GPUTransferBufferUsage.SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD, size = (uint)_chainBytes };
             _staging[i] = SDL_CreateGPUTransferBuffer(device, in tci);
-            _jobs[i] = new PageJob { Slot = i, Capacity = _chainBytes, Format = Format, Expand = Expanding };
+            _jobs[i] = new PageJob { Owner = this, Slot = i, Capacity = _chainBytes, Format = Format, Expand = Expanding };
         }
     }
 
@@ -284,7 +348,7 @@ public sealed unsafe class PageResidency
             if (ptr == IntPtr.Zero) { _state[page] = PState.None; break; }
             var job = _jobs[s];
             job.Page = page;
-            job.Path = _pack.PagePaths[page];
+            job.Path = _paths[page];
             job.Dst = (byte*)ptr;
             _slotState[s] = 1;
             _state[page] = PState.Loading;
@@ -306,6 +370,7 @@ public sealed unsafe class PageResidency
         ReadTicksSum += job.ReadTicks;
         DecodeTicksSum += job.DecodeTicks;
         ExpandTicksSum += job.ExpandTicks;
+        WaitTicksSum += job.WaitTicks;
         FileBytesSum += job.FileBytes;
         if (job.Compressed) CompressedPages++;
         _slotState[job.Slot] = 2;
@@ -314,7 +379,7 @@ public sealed unsafe class PageResidency
     /// <summary>Worker page read time, and main-thread time to map a staging buffer plus unmap + record the mip copies.</summary>
     public JobStats ReadStats;
     public long MainUploadTicks, MainUploadCount;
-    public long ReadTicksSum, DecodeTicksSum, ExpandTicksSum, FileBytesSum;
+    public long ReadTicksSum, DecodeTicksSum, ExpandTicksSum, WaitTicksSum, FileBytesSum;
     public int CompressedPages;
 
     /// <summary>Uploads loaded pages (up to the budget) into free or least-recently-used layers. Call inside a copy pass.</summary>

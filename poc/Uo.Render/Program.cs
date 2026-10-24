@@ -57,6 +57,8 @@ public static unsafe class Program
                 case "--debug-compress-pages": // <srcPackDir> <dstPackDir>: Brotli (Kind=1) every other page, for reader tests
                     DebugCompressPages(args[i + 1], args[i + 2]);
                     return 0;
+                case "--page-decode-bench": // <page dir> [pages] [--expand]: PageJob per page into native memory, ms + bytes allocated
+                    return PageDecodeBench(args[i + 1], i + 2 < args.Length && int.TryParse(args[i + 2], out var np) ? np : 16, args.Contains("--expand"));
                 case "--pack": o.Pack = args[++i]; break;
                 case "--bench": o.Bench = true; break;
                 case "--bench-seconds": o.BenchSeconds = float.Parse(args[++i]); break;
@@ -116,6 +118,40 @@ public static unsafe class Program
         if (o.BenchFormats != null) return FormatBench.Run(o.BenchFormats, o.SizeGiven ? o.Width : 3840, o.SizeGiven ? o.Height : 2160, o.Layers, o.Driver);
         o.Pack ??= PackSet.FindDefault();
         return Run(o);
+    }
+
+    /// <summary>Worker-side page load cost without the renderer: runs <see cref="PageJob"/> on this thread over the first
+    /// pages of a directory, 3 rounds; reports the median ms per page and the bytes allocated (all threads) in the last
+    /// two rounds, which should be just the per-read file handle.</summary>
+    static int PageDecodeBench(string dir, int pages, bool expand)
+    {
+        var paths = new List<string>();
+        while (paths.Count < pages && File.Exists(Uo.Pack.PackConst.PagePath(dir, paths.Count))) paths.Add(Uo.Pack.PackConst.PagePath(dir, paths.Count));
+        var h = PageFormats.ReadHeader(paths[0]);
+        var up = expand ? Uo.Pack.PixelFormat.Rgba8 : h.Format;
+        int cap = PageFormats.ChainBytes(h.Width, h.MipCount, up);
+        var mem = (byte*)System.Runtime.InteropServices.NativeMemory.Alloc((nuint)cap);
+        var job = new PageJob { Capacity = cap, Format = h.Format, Expand = expand, Dst = mem };
+        var ms = new List<double>();
+        long alloc0 = 0;
+        for (int round = 0; round < 3; round++)
+        {
+            if (round == 1) alloc0 = GC.GetTotalAllocatedBytes(true);
+            foreach (var p in paths)
+            {
+                job.Path = p;
+                long t = Stopwatch.GetTimestamp();
+                job.Run();
+                if (!job.Ok) { Console.WriteLine($"{p}: failed"); return 1; }
+                if (round > 0) ms.Add(Stopwatch.GetElapsedTime(t).TotalMilliseconds);
+            }
+        }
+        long alloc = GC.GetTotalAllocatedBytes(true) - alloc0;
+        ms.Sort();
+        Console.WriteLine($"{dir}: {paths.Count} pages {PageFormats.Name(h.Format)} {h.Width}/{h.MipCount} mips{(expand ? " -> RGBA8" : "")}, kind decode threads {ChunkedPageReader.Workers}: " +
+            $"median {ms[ms.Count / 2]:F2} ms/page (min {ms[0]:F2}, max {ms[^1]:F2}); allocated {alloc} B over {ms.Count} loads ({alloc / ms.Count} B/page)");
+        System.Runtime.InteropServices.NativeMemory.Free(mem);
+        return 0;
     }
 
     /// <summary>Debug: dumps land and statics around a tile (tile id, z, tiledata, sprite entry).</summary>
@@ -509,7 +545,7 @@ public static unsafe class Program
                     {
                         case BakeJob b: _chunks.OnBaked(b); break;
                         case RegionJob rj: _chunks.OnRegionLoaded(rj); break;
-                        case PageJob pj: _pages.OnLoaded(pj); break;
+                        case PageJob pj: pj.Owner.OnLoaded(pj); break;
                     }
                 }
                 if (_o.HueSheet == null) _chunks.Update(frame, in view, in need);
@@ -644,6 +680,7 @@ public static unsafe class Program
             double rdOnlyMs = _pages.ReadTicksSum * 1000.0 / Stopwatch.Frequency / nr, decMs = _pages.DecodeTicksSum * 1000.0 / Stopwatch.Frequency / nr;
             double fileMiB = _pages.FileBytesSum / 1048576.0 / nr;
             double expMs = _pages.ExpandTicksSum * 1000.0 / Stopwatch.Frequency / nr;
+            double waitMs = _pages.WaitTicksSum * 1000.0 / Stopwatch.Frequency / nr;
             double rgMs = _chunks.RegionStats.Count > 0 ? _chunks.RegionStats.RunTicks * 1000.0 / Stopwatch.Frequency / _chunks.RegionStats.Count : 0;
             string fmt = PageFormats.Name(_pack.Format) + (_pages.Expanding ? "->RGBA8" : "");
             string driver = SDL_GetGPUDeviceDriver(_r.Device);
@@ -654,7 +691,7 @@ public static unsafe class Program
             Console.WriteLine($"  GC collections gen0 {g0} gen1 {g1} gen2 {g2}");
             Console.WriteLine($"  allocated: main thread {allocMain} B ({(double)allocMain / n:F1} B/frame); all threads {allocAll / 1024} KiB ({(double)allocAll / n:F0} B/frame, workers' region/page IO)");
             Console.WriteLine($"  pages: {_pages.TotalUploads} uploads, {_pages.Evictions} evictions, main-thread map+unmap+copy-record avg {upMs:F3} ms/page, worker read avg {rdMs:F2} ms/page; VRAM for pages {_pages.VramBytes >> 20} MiB ({_pages.Layers} x {_pages.ChainBytes / 1024} KiB)");
-            Console.WriteLine($"  page files: {_pages.CompressedPages}/{_pages.ReadStats.Count} Brotli; avg file {fileMiB:F2} MiB; worker read {rdOnlyMs:F2} ms + decode {decMs:F2} ms + expand {expMs:F2} ms per page");
+            Console.WriteLine($"  page files: {_pages.CompressedPages}/{_pages.ReadStats.Count} Brotli; avg file {fileMiB:F2} MiB; worker read {rdOnlyMs:F2} ms + decode {decMs:F2} ms + expand {expMs:F2} ms per page (+ {waitMs:F2} ms waiting for the shared chunk decoder, Kind 2: {ChunkedPageReader.Workers} decode threads)");
             Console.WriteLine($"  regions: worker read+decompress avg {rgMs:F2} ms; chunks resident {_chunks.ActiveChunks}; instance buffer {_chunks.Alloc.Used}/{_chunks.Alloc.Capacity}; max bakes in flight {maxBake}");
             Console.WriteLine($"  bakes: {_chunks.BakeStats}");
             Console.WriteLine($"  working set {proc.WorkingSet64 >> 20} MiB, private {proc.PrivateMemorySize64 >> 20} MiB, GC heap {GC.GetTotalMemory(false) >> 20} MiB");

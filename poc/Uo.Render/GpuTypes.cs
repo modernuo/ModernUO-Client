@@ -13,9 +13,13 @@ public struct SpriteInstance
     public uint PageHue;  // page | hueRow << 16
     public uint Depth;
     public uint Light;    // 4 x u8, 170 = 1.0
-    public uint Corners;  // 4 x s8 corner z (top, right, left, bottom)
+    public uint Corners;  // 4 x s8 corner z (top, right, left, bottom); FlagIndexed: palette id (u16)
 
     public const uint FlagHued = 1, FlagPartial = 2, FlagStretch = 4, FlagLit = 8;
+    /// <summary>Draw the rect flipped horizontally (mirrored anim directions).</summary>
+    public const uint FlagMirror = 16;
+    /// <summary>Page is in the Indexed8 anim array; Corners holds the palette id.</summary>
+    public const uint FlagIndexed = 32;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static uint PackWhf(int w, int h, uint flags) => (uint)(w & 0xFFF) | ((uint)(h & 0xFFF) << 12) | (flags << 24);
@@ -36,6 +40,8 @@ public struct FrameUniforms
     public float AtlasSize;
     public uint FormatFlags; // PageFormats.ShaderFlags: 1 = un-premultiply edges, 2 = gray tolerance (BC7)
     public float GrayTolerance;
+    public float AnimAtlasSize, InvAnimAtlas; // Indexed8 anim pages
+    public uint Pad0, Pad1;
 }
 
 /// <summary>Entry of the per-frame visible chunk table: first instance in the big buffer and running count.</summary>

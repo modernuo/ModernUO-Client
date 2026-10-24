@@ -22,11 +22,28 @@ public sealed class PackSet
     public readonly PixelFormat Format;
     public readonly int PageSize, PageMips;
 
+    /// <summary>Animations (null when the pack has none). <see cref="AnimPageBase"/> is anim page 0's logical id in the GPU
+    /// page table. 16-bit anim pages matching the art page format join the art array (appended to <see cref="PagePaths"/>);
+    /// Indexed8 pages get their own R8_UINT array (<see cref="AnimPagePaths"/>) plus the palette table.</summary>
+    public readonly AnimBodyEntry[] AnimBodies;
+    public readonly AnimDirEntry[] AnimDirs;
+    public readonly AnimFrameEntry[] AnimFrames;
+    public readonly string AnimDir;
+    public readonly int AnimPageBase;
+    public readonly bool AnimIndexed;
+    public readonly string[] AnimPagePaths = [];
+    public readonly PixelFormat AnimFormat;
+    public readonly int AnimPageSize, AnimPageMips;
+    public readonly uint[] FramePalette;
+    public readonly ushort[] Palettes;
+    public bool HasAnims => AnimBodies != null;
+
     public readonly int Facet;
     public readonly string FacetDir;
     public readonly int MapWidth, MapHeight, BlocksX, BlocksY, RegionBlocks;
 
-    public PackSet(string root, int facet)
+    /// <param name="animRoot">Pack (or its anim/ directory) to take animations from; null = this pack's own.</param>
+    public PackSet(string root, int facet, string animRoot = null)
     {
         Root = root;
         Sprites = SpriteTable.Read(Path.Combine(root, "art", "sprites.bin"));
@@ -53,6 +70,35 @@ public sealed class PackSet
         }
         if (PagePaths.Length == 0) { Format = PixelFormat.Rgba8; PageSize = PackConst.PageSize; PageMips = PackConst.PageMipCount; }
         _ = PageFormats.Gpu(Format); // throws for unknown formats
+
+        AnimDir = ResolveAnimDir(animRoot ?? root);
+        if (AnimDir != null)
+        {
+            (AnimBodies, AnimDirs, AnimFrames) = AnimTableFile.Read(Path.Combine(AnimDir, AnimTableFile.FileName));
+            int n = CountPages(AnimDir);
+            var paths = new string[n];
+            for (int i = 0; i < n; i++) paths[i] = PackConst.PagePath(AnimDir, i);
+            if (n > 0)
+            {
+                var h = PageFormats.ReadHeader(paths[0]); // the converter writes one format per anim set
+                AnimFormat = h.Format; AnimPageSize = h.Width; AnimPageMips = h.MipCount;
+            }
+            AnimPageBase = PagePaths.Length;
+            if (AnimFormat == PixelFormat.Indexed8)
+            {
+                AnimIndexed = true;
+                AnimPageMips = 1; // mips_NNNN.bin sidecars (variant b) are ignored: mip0 + manual filtering
+                AnimPagePaths = paths;
+                (FramePalette, Palettes) = AnimPaletteFile.Read(Path.Combine(AnimDir, AnimPaletteFile.FileName));
+            }
+            else if (n > 0)
+            {
+                if (AnimFormat != Format || AnimPageSize != PageSize || AnimPageMips != PageMips)
+                    throw new InvalidDataException($"{AnimDir}: 16-bit anim pages are {PageFormats.Name(AnimFormat)} {AnimPageSize}/{AnimPageMips} mips but art is " +
+                        $"{PageFormats.Name(Format)} {PageSize}/{PageMips}; they share the art array, so they must match (or use Indexed8 anims)");
+                PagePaths = [.. PagePaths, .. paths];
+            }
+        }
 
         Facet = facet;
         FacetDir = Path.Combine(root, "map", facet.ToString());
@@ -81,6 +127,15 @@ public sealed class PackSet
     }
 
     public int PageCount => PagePaths.Length;
+    /// <summary>Logical pages in the GPU page table: art + tex (+ 16-bit anims), then Indexed8 anim pages.</summary>
+    public int TablePageCount => PagePaths.Length + AnimPagePaths.Length;
+
+    static string ResolveAnimDir(string dir)
+    {
+        if (File.Exists(Path.Combine(dir, AnimTableFile.FileName))) return dir;
+        var sub = Path.Combine(dir, "anim");
+        return File.Exists(Path.Combine(sub, AnimTableFile.FileName)) ? sub : null;
+    }
 
     /// <summary>Default pack location: the converter's output, else the synthetic pack.</summary>
     public static string FindDefault()

@@ -17,7 +17,7 @@ public sealed unsafe class ClientApp
     readonly PackSet _pack;
     readonly IntPtr _window;
     readonly Renderer _r;
-    readonly PageResidency _pages;
+    readonly PageResidency _pages, _animPages;
     readonly ChunkStore _chunks;
     readonly WorkerPool _workers;
     readonly IGameClient _client;
@@ -38,15 +38,15 @@ public sealed unsafe class ClientApp
     bool _goSent;
     long _goSentAt;
 
-    public ClientApp(Options o, PackSet pack, IntPtr window, Renderer r, PageResidency pages, ChunkStore chunks, WorkerPool workers,
+    public ClientApp(Options o, PackSet pack, IntPtr window, Renderer r, PageResidency pages, PageResidency animPages, ChunkStore chunks, WorkerPool workers,
         IGameClient client, EcsWorld world, Walker walker, WalkMap map, Clock clock)
     {
         _map = map;
-        _o = o; _pack = pack; _window = window; _r = r; _pages = pages; _chunks = chunks; _workers = workers;
+        _o = o; _pack = pack; _window = window; _r = r; _pages = pages; _animPages = animPages; _chunks = chunks; _workers = workers;
         _client = client; _world = world; _walker = walker; _clock = clock;
         _zoom = o.Zoom;
         _dynFirst = (uint)chunks.Alloc.Alloc(MaxDynamic); // reserved before any chunk: never fails
-        _extract = new RenderExtract(world.Store, pack, new PlaceholderMobileSprites(pack), MaxDynamic);
+        _extract = new RenderExtract(world.Store, pack, Program.CreateMobileSprites(pack, o), MaxDynamic);
         _script = o.WalkPattern != null ? new WalkScript(o.WalkPattern, o.Run, o.Loop) : null;
         SetCameraTile(o.StartX, o.StartY);
     }
@@ -73,6 +73,9 @@ public sealed unsafe class ClientApp
         var cpuMs = _o.Bench ? new float[maxSamples] : null;
         var extractMs = _o.Bench ? new float[maxSamples] : null;
         var ecsMs = _o.Bench ? new float[maxSamples] : null;
+        var gpuMs = _o.Bench ? new float[maxSamples / 16] : null;
+        int gpuSamples = 0;
+        long mobAccum = 0, spriteAccum = 0;
         bool benchRunning = false;
         long benchStart = 0, allocStart = 0, benchWarm = 0;
         int gc0 = 0, gc1 = 0, gc2 = 0, benchFrames = 0;
@@ -162,15 +165,16 @@ public sealed unsafe class ClientApp
                 {
                     case BakeJob b: _chunks.OnBaked(b); break;
                     case RegionJob rj: _chunks.OnRegionLoaded(rj); break;
-                    case PageJob pj: _pages.OnLoaded(pj); break;
+                    case PageJob pj: pj.Owner.OnLoaded(pj); break;
                 }
             }
             _chunks.Update(frame, in view, in need);
             _pages.BeginFrame();
+            _animPages?.BeginFrame();
             int chunkCount = _chunks.BuildDrawList(in view, _table, _pages, frame, out int instances);
 
             // ---- render extract: ECS → dynamic instances (one more chunk-table entry)
-            _extract.Run(in view, _pages, frame, _clock.Now);
+            _extract.Run(in view, _pages, _animPages, frame, _clock.Now);
             int dyn = _extract.Count;
             if (dyn > 0 && chunkCount < _table.Length)
             {
@@ -180,11 +184,12 @@ public sealed unsafe class ClientApp
                 instances += dyn;
             }
             _pages.StartLoads(frame);
+            _animPages?.StartLoads(frame);
 
             int camPxX = (int)Math.Floor(cx), camPxY = (int)Math.Floor(cy);
             var fi = new Renderer.FrameInput
             {
-                Chunks = _chunks, Pages = _pages, Table = _table, ChunkCount = chunkCount, Instances = instances,
+                Chunks = _chunks, Pages = _pages, AnimPages = _animPages, AnimTableBase = _pack.AnimPageBase, Table = _table, ChunkCount = chunkCount, Instances = instances,
                 Frame = frame, LinearFilter = scale < 0.999f, ChunkUploadBudget = _o.ChunkBudget,
                 Dynamic = _extract.Instances, DynamicCount = dyn, DynamicFirst = _dynFirst,
                 Uniforms = new FrameUniforms
@@ -204,7 +209,8 @@ public sealed unsafe class ClientApp
             // ---- scripted screenshots: before, mid-walk, after
             if (_o.ShotsDir != null)
             {
-                bool streamed = _chunks.PendingChunks == 0 && _chunks.UploadQueueLength == 0 && !_pages.Pending && _pages.MissingVisible == 0 && frame > 3;
+                bool streamed = _chunks.PendingChunks == 0 && _chunks.UploadQueueLength == 0 && !_pages.Pending && _pages.MissingVisible == 0
+                    && (_animPages == null || !_animPages.Pending && _animPages.MissingVisible == 0) && frame > 3;
                 bool idle = _walker.Pending == 0 && (_world.Player.IsNull || _clock.Now >= _world.Player.GetComponent<Motion>().Start + _world.Player.GetComponent<Motion>().Duration);
                 switch (phase)
                 {
@@ -242,15 +248,23 @@ public sealed unsafe class ClientApp
                 }
             }
 
+            // bench: every 30th frame runs alone on an idle GPU and is fence-timed (SDL_GPU has no timestamp queries)
+            bool gpuSample = benchRunning && _r.Offscreen && frame % 30 == 29;
+            if (gpuSample) { _r.DrainInFlight(); fi.GpuSample = true; }
             _r.RenderFrame(ref fi);
             long t1 = Stopwatch.GetTimestamp();
+            if (gpuSample)
+            {
+                if (gpuSamples < gpuMs.Length) gpuMs[gpuSamples++] = (float)(_r.GpuSampleTicks * 1000.0 / freq);
+                continue;
+            }
             double cpu = (t1 - t0 - _r.AcquireWaitTicks) * 1000.0 / freq;
             cpuAccum += cpu;
             framesSinceTitle++;
 
             if (_o.Bench)
             {
-                if (!benchRunning && _world.InWorld && _chunks.PendingChunks == 0 && !_pages.Pending)
+                if (!benchRunning && _world.InWorld && _chunks.PendingChunks == 0 && !_pages.Pending && !(_animPages?.Pending ?? false))
                 {
                     if (benchWarm == 0) benchWarm = t0 + (long)(freq * 1.0);
                     else if (t0 >= benchWarm)
@@ -268,6 +282,8 @@ public sealed unsafe class ClientApp
                     extractMs[benchFrames] = (float)(_extract.Ticks * 1000.0 / freq);
                     ecsMs[benchFrames] = (float)(ecsTicks * 1000.0 / freq);
                     dynAccum += dyn;
+                    mobAccum += _extract.MobilesDrawn;
+                    spriteAccum += _extract.SpritesDrawn;
                     benchFrames++;
                     if ((t1 - benchStart) / freq >= _o.BenchSeconds) running = false;
                 }
@@ -284,6 +300,14 @@ public sealed unsafe class ClientApp
         if (_o.Bench)
         {
             long alloc = GC.GetAllocatedBytesForCurrentThread() - allocStart;
+            Console.WriteLine($"  mobiles drawn/frame {(benchFrames > 0 ? mobAccum / (double)benchFrames : 0):F0}, mobile sprites/frame {(benchFrames > 0 ? spriteAccum / (double)benchFrames : 0):F0} (body + mount + equipment); " +
+                $"anim pages resident {(_animPages != null ? _animPages.ResidentCount + "/" + _animPages.Layers : "in the art array")}");
+            if (gpuSamples > 0)
+            {
+                var g = gpuMs.AsSpan(0, gpuSamples).ToArray();
+                Array.Sort(g);
+                Console.WriteLine($"  GPU frame ms (one frame alone on an idle GPU, submit->fence, n={gpuSamples}) median {g[g.Length / 2]:F3} p95 {g[(int)(g.Length * 0.95)]:F3}");
+            }
             ReportBench(cpuMs, extractMs, ecsMs, benchFrames, alloc, GC.CollectionCount(0) - gc0, GC.CollectionCount(1) - gc1, GC.CollectionCount(2) - gc2,
                 benchFrames > 0 ? dynAccum / (double)benchFrames : 0, (Stopwatch.GetTimestamp() - benchStart) / freq);
         }

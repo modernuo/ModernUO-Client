@@ -16,6 +16,8 @@ public sealed class FakeServer : IGameClient
         public int Seed = 1234;
         public int WanderPerSecond = 6;
         public uint PlayerSerial = 0x00001000;
+        /// <summary>NPC bodies cycle through humans (male/female, one mounted), a horse, a dragon and monsters; else all humans.</summary>
+        public bool MixedBodies = true;
     }
 
     enum Kind : byte { Ack, Reject, NpcStep }
@@ -55,7 +57,8 @@ public sealed class FakeServer : IGameClient
     readonly Random _rng;
     long _nextWander;
     bool _connected;
-    readonly EquipEntry[] _equip = new EquipEntry[3];
+    readonly EquipEntry[] _equip = new EquipEntry[6];
+    static readonly ushort[] MixBodies = [0x190, 0x191, 0x190, 0xCC, 0x3B, 0x11, 0x01, 0x09];
 
     // server truth
     public int ServerX, ServerY;
@@ -87,7 +90,13 @@ public sealed class FakeServer : IGameClient
         _sink.OnStateChanged(State, "fake server");
         _sink.OnLoginConfirm(new PlayerInfo { Serial = PlayerSerial, Body = 0x190, X = (ushort)ServerX, Y = (ushort)ServerY, Z = ServerZ, Direction = (Direction)ServerDir, MapWidth = (ushort)_map.Width, MapHeight = (ushort)_map.Height });
         _sink.OnMapChange(0);
-        _sink.OnMobile(new MobileState { Serial = PlayerSerial, Body = 0x190, X = (ushort)ServerX, Y = (ushort)ServerY, Z = ServerZ, Direction = (Direction)ServerDir, Hue = 0x83EA, IsPlayer = true, Source = MobileSource.Update20 }, default);
+        _sink.OnMobile(new MobileState { Serial = PlayerSerial, Body = 0x190, X = (ushort)ServerX, Y = (ushort)ServerY, Z = ServerZ, Direction = (Direction)ServerDir, Hue = 0x83EA, IsPlayer = true, Source = MobileSource.Update20 },
+        [
+            new EquipEntry { Serial = 0x40F00000, ItemId = 0x1517, Layer = 0x05, Hue = 0x0035 },
+            new EquipEntry { Serial = 0x40F00001, ItemId = 0x152E, Layer = 0x04, Hue = 0x01BB },
+            new EquipEntry { Serial = 0x40F00002, ItemId = 0x170F, Layer = 0x03, Hue = 0 },
+            new EquipEntry { Serial = 0x40F00003, ItemId = 0x203B, Layer = 0x0B, Hue = 0x044E },
+        ]);
 
         _npcs = new Npc[_sc.Mobiles];
         int r = _sc.Radius;
@@ -103,11 +112,23 @@ public sealed class FakeServer : IGameClient
             } while ((!_map.SpawnZ(x, y, out nz) || x == _sc.X && y == _sc.Y) && ++tries < 50);
             if (tries >= 50) nz = _map.TileZ(x, y);
             ref var n = ref _npcs[i];
-            n = new Npc { Serial = 0x2000u + (uint)i, X = (ushort)x, Y = (ushort)y, Z = nz, Body = (ushort)(0x190 + (i & 1)), Hue = (ushort)(0x83EA + (i % 20)), Dir = (byte)_rng.Next(8), Noto = (byte)(1 + _rng.Next(6)) };
-            _equip[0] = new EquipEntry { Serial = 0x40000000u + (uint)i * 3, ItemId = 0x1517, Layer = 0x05, Hue = (ushort)(2 + i % 900) };
-            _equip[1] = new EquipEntry { Serial = 0x40000001u + (uint)i * 3, ItemId = 0x152E, Layer = 0x04, Hue = (ushort)(2 + (i * 7) % 900) };
-            _equip[2] = new EquipEntry { Serial = 0x40000002u + (uint)i * 3, ItemId = 0x170F, Layer = 0x03, Hue = 0 };
-            _sink.OnMobile(new MobileState { Serial = n.Serial, Body = n.Body, X = n.X, Y = n.Y, Z = n.Z, Direction = (Direction)n.Dir, Hue = n.Hue, Notoriety = n.Noto, Source = MobileSource.Incoming78 }, _equip);
+            int kind = i & 7;
+            ushort body = _sc.MixedBodies ? MixBodies[kind] : (ushort)(0x190 + (i & 1));
+            ushort hue = body < 0x190 ? (ushort)(i % 3 == 0 ? 0 : 2 + (i * 13) % 900) : (ushort)(0x83EA + (i % 20));
+            n = new Npc { Serial = 0x2000u + (uint)i, X = (ushort)x, Y = (ushort)y, Z = nz, Body = body, Hue = hue, Dir = (byte)_rng.Next(8), Noto = (byte)(1 + _rng.Next(6)) };
+            int ne = 0;
+            if (body is 0x190 or 0x191)
+            {
+                uint sb = 0x40000000u + (uint)i * 8;
+                bool female = body == 0x191;
+                _equip[ne++] = new EquipEntry { Serial = sb, ItemId = 0x1517, Layer = 0x05, Hue = (ushort)(2 + i % 900) };
+                _equip[ne++] = new EquipEntry { Serial = sb + 1, ItemId = female ? (ushort)0x1516 : (ushort)0x152E, Layer = female ? (byte)0x17 : (byte)0x04, Hue = (ushort)(2 + (i * 7) % 900) };
+                _equip[ne++] = new EquipEntry { Serial = sb + 2, ItemId = 0x170F, Layer = 0x03, Hue = 0 };
+                _equip[ne++] = new EquipEntry { Serial = sb + 3, ItemId = female ? (ushort)0x203C : (ushort)0x203B, Layer = 0x0B, Hue = (ushort)(0x44E + i % 40) };
+                if (_sc.MixedBodies && kind == 2) _equip[ne++] = new EquipEntry { Serial = sb + 4, ItemId = 0x3EA2, Layer = 0x19, Hue = 0 };
+                else if (i % 3 == 0) _equip[ne++] = new EquipEntry { Serial = sb + 4, ItemId = 0x13B9, Layer = 0x01, Hue = 0 };
+            }
+            _sink.OnMobile(new MobileState { Serial = n.Serial, Body = n.Body, X = n.X, Y = n.Y, Z = n.Z, Direction = (Direction)n.Dir, Hue = n.Hue, Notoriety = n.Noto, Source = MobileSource.Incoming78 }, _equip.AsSpan(0, ne));
         }
 
         // ground items: a mix of plain, hued and partial-hued art
@@ -233,7 +254,8 @@ public sealed class FakeServer : IGameClient
         if (!_map.CanWalk(ref dir, ref x, ref y, ref z)) return;
         if (Math.Abs(x - _sc.X) > _sc.Radius + 4 || Math.Abs(y - _sc.Y) > _sc.Radius + 4) return; // stay near the start
         n.X = (ushort)x; n.Y = (ushort)y; n.Z = z; n.Dir = (byte)dir;
-        _sink.OnMobile(new MobileState { Serial = n.Serial, Body = n.Body, X = n.X, Y = n.Y, Z = n.Z, Direction = (Direction)n.Dir, Hue = n.Hue, Notoriety = n.Noto, Source = MobileSource.Moving77 }, default);
+        var d = (Direction)n.Dir | (_rng.Next(4) == 0 ? Direction.Running : 0);
+        _sink.OnMobile(new MobileState { Serial = n.Serial, Body = n.Body, X = n.X, Y = n.Y, Z = n.Z, Direction = d, Hue = n.Hue, Notoriety = n.Noto, Source = MobileSource.Moving77 }, default);
     }
 
     int IndexOf(byte seq)
