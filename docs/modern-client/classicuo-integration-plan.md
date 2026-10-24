@@ -49,7 +49,7 @@ From a read-only spike on 2026-10-24. File:line references are against FNA3D 25.
 
 ## Phased steps
 
-Each step keeps the client runnable. The new world renderer sits behind `WorldRenderer = Legacy|Gpu` (default Legacy) until step 10.
+Each step keeps the client runnable. The new world renderer sits behind `WorldRenderer = Legacy|Gpu`; the default was Legacy until step 10 prep made it Gpu.
 
 1. **FNA bump and patch.**
    - Run the submodule update to 26.10 and re-check the SDL_GPU internals, then apply the device/texture patch and the C# externs.
@@ -94,6 +94,11 @@ Each step keeps the client runnable. The new world renderer sits behind `WorldRe
       - Uncap FPS and turn off v-sync.
       - Build NativeAOT with `IlcInstructionSet=x86-64-v3` (the i9-12900K has AVX2/FMA/BMI but no AVX-512). JIT already uses AVX2.
       - Report Update, world prepare, draw and Present separately. In the baseline, Update and Present dominate the 1.33 ms frame.
+    - **Status (step 10 prep, 2026-10-24):**
+      - Gpu is the default. Legacy stays selectable and is still the automatic fallback.
+      - The NativeAOT build is published to `C:\Repositories\cuo-fps-test\bin` by `tools/fps-test/publish-aot.ps1`.
+      - The owner runs `tools/fps-test/run-fps-test.ps1` on the desktop with the display on. It covers Britain, the bank, zoomed out and a walk at 1080p, plus zoomed out in a maximised window, Legacy vs Gpu, in about 5 min.
+      - Open: the owner's run, and then removing MeshLayer/ChunkMesh and the views' `Draw` bodies.
     - **Reference point:** the ClassicUO 2.0 beta (NativeAOT-LLVM WASM guest on a Rust/wgpu host) shows 1000+ FPS against our 600–700. Check first whether the two FPS counters are comparable.
 
 ## Pack loading in ClassicUO (steps 4–6, done)

@@ -306,6 +306,23 @@ The owner asked that everything definitive (e.g. the FNA 26.10 upgrade) land on 
   - The multi preview has not been screenshot-verified.
   - The remaining zoomed-out overrides (182) are the fill's other skips, mostly land at the view edges.
 
+### 2026-10-24 — Step 10 prep: Gpu is the default; one-command FPS test for the owner (uncommitted)
+
+- **Default:** `world_renderer` now defaults to `gpu` (`Settings.cs`). `-worldrenderer legacy`, the in-game `-worldrenderer` toggle and the automatic fallback to Legacy when FNA3D isn't on SDL_GPU are unchanged. The legacy world path is still there; it goes after the owner's test. A settings.json that already saved `"world_renderer": "legacy"` keeps Legacy.
+- **DevBench:** new plan entry `size:WxH|max` changes the client area mid-plan (`max` = maximised window), so the 1080p and large-window runs share one login.
+- **NativeAOT publish:** `tools/fps-test/publish-aot.ps1` publishes win-x64 x86-64-v3 to `C:\Repositories\cuo-fps-test\bin`, outside the repo. The folder holds the patched FNA3D.dll from `external\x64` and a `build-info.txt` with the commit. It is 88 MB, of which cuo.exe is 17 MB (the rest is mostly pdbs).
+- **The test:** `tools/fps-test/run-fps-test.ps1` (README beside it).
+  - It prompts for the password (masked); `CUO_FPS_TEST_PASSWORD` is an optional override for unattended runs.
+  - It checks the server (127.0.0.1:2593, ModernUO's configured listener), uses a throwaway settings/profile folder under %TEMP%, and sets the GC hard limit, FrameStats, uncapped FPS, VSync off, no inactive throttling and a topmost window.
+  - It runs Legacy then Gpu at Britain, the bank, zoomed out (2.5) and a walk at 1920×1080, then zoomed out in a maximised window. That is 10 spots of 3×5 s.
+  - It writes `C:\Repositories\cuo-fps-test\results-<timestamp>.md` (machine info, build, a summary table and a Legacy-vs-Gpu table per spot) and prints it.
+  - It closes the client and cleans up in `finally`.
+- **Dry run** (agent, AOT, Windows PowerShell 5.1): completed in 4.8 min, and the temp folder and `bin\Data` were removed. This time Present showed no 500 ms stalls (p99 of about 4.5–5 ms at 1080p, as in the CP9 baseline), so the numbers look sane:
+  - FPS Legacy → Gpu: Britain 1370 → 1520, bank 1477 → 1515, zoomed out 690 → 944, walk 1425 → 1505, maximised (3840×2054) zoomed out 162 → 261.
+  - Draw total: 0.42 → 0.34, 0.35 → 0.31, 1.31 → 0.92, 0.38 → 0.34 and 5.92 → 3.61 ms.
+  - World prepare is 0.02–0.1 ms higher in Gpu mode, as in step 8.
+  - The results file was deleted afterwards. The owner's desktop run is the step 10 verdict.
+
 ## Phase 4 plan (owner, 2026-10-24): bring it into ClassicUO
 
 The owner accepts compressed packs on disk if decompression is fast.
