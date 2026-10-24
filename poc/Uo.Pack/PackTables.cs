@@ -26,10 +26,10 @@ public static class TableConst
     public const string EquipConvFile = "equipconv.bin";
 }
 
-/// <summary>Canonical 5->8 bit expansion: round(c*255/31) = (c*527 + 23) >> 6, what GPUs return for B5G5R5A1_UNORM.</summary>
+/// <summary>Canonical 5->8 bit expansion: bit replication (c << 3) | (c >> 2), what GPUs return for B5G5R5A1_UNORM.</summary>
 public static class PackColor
 {
-    public static byte Expand5(int c) => (byte)((c * 527 + 23) >> 6);
+    public static byte Expand5(int c) => (byte)((c << 3) | (c >> 2));
 
     /// <summary>15-bit UO colour (bits 0-4 B, 5-9 G, 10-14 R) to RGBA8 (R in the low byte), alpha 0.</summary>
     public static uint ToRgb8(ushort c) =>
