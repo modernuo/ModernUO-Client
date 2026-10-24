@@ -5,73 +5,136 @@ namespace Uo.Render;
 
 /// <summary>Reads one atlas page file straight into a mapped GPU transfer buffer (no main-thread memcpy).
 /// Kind 0: raw read into the mapped buffer. Kind 1 (Brotli): the compressed payload is read into a reusable per-job
-/// buffer and decoded with BrotliDecoder directly into the mapped buffer (no full-size intermediate copy).</summary>
+/// buffer and decoded with BrotliDecoder directly into the mapped buffer (no full-size intermediate copy).
+/// Expand (16-bit pack, GPU without 16-bit sampling): the page is read or decoded in pieces into a reusable scratch
+/// buffer and each piece is expanded to RGBA8 into the mapped buffer (the whole chain doubles, so mip offsets double).</summary>
 public sealed unsafe class PageJob : Job
 {
     public int Page, Slot;
     public string Path;
     public byte* Dst;
     public int Capacity;
-    public bool Ok, Compressed;
+    public bool Ok, Compressed, Expand;
     public int Mips, Size;
     public PixelFormat Format;
-    public long ReadTicks, DecodeTicks, FileBytes;
+    public long ReadTicks, DecodeTicks, ExpandTicks, FileBytes;
     byte[] _compressed = new byte[1 << 20];
+    byte[] _scratch;
 
     public override void Run()
     {
         Ok = false;
         Compressed = false;
         DecodeTicks = 0;
+        ExpandTicks = 0;
         long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
-        using var fs = new FileStream(Path, FileMode.Open, FileAccess.Read, FileShare.Read, 1, FileOptions.SequentialScan);
-        FileBytes = fs.Length;
+        using var fh0 = File.OpenHandle(Path, FileMode.Open, FileAccess.Read, FileShare.Read, FileOptions.SequentialScan);
+        FileBytes = RandomAccess.GetLength(fh0);
+        long pos = 0;
         Span<byte> fhb = stackalloc byte[16];
-        fs.ReadExactly(fhb);
+        if (!ReadAt(fh0, fhb, ref pos)) return;
         var fh = System.Runtime.InteropServices.MemoryMarshal.Read<FileHeader>(fhb);
         if (fh.Magic != PackConst.MagicPage) return;
+        if (Expand) _scratch ??= new byte[1 << 20];
         Span<byte> phb = stackalloc byte[16];
         PageHeader ph;
         if (fh.Kind == FileKind.Raw)
         {
-            fs.ReadExactly(phb);
+            if (!ReadAt(fh0, phb, ref pos)) return;
             ph = System.Runtime.InteropServices.MemoryMarshal.Read<PageHeader>(phb);
-            if (ph.Format != Format || ph.DataBytes > Capacity) return;
-            fs.ReadExactly(new Span<byte>(Dst, (int)ph.DataBytes));
-            ReadTicks = System.Diagnostics.Stopwatch.GetTimestamp() - t0;
+            if (!Fits(ph)) return;
+            int n = (int)ph.DataBytes;
+            if (!Expand)
+            {
+                if (!ReadAt(fh0, new Span<byte>(Dst, n), ref pos)) return;
+            }
+            else
+            {
+                for (int done = 0; done < n;)
+                {
+                    int k = Math.Min(_scratch.Length, n - done);
+                    if (!ReadAt(fh0, _scratch.AsSpan(0, k), ref pos)) return;
+                    ExpandPiece(k, done);
+                    done += k;
+                }
+            }
+            ReadTicks = System.Diagnostics.Stopwatch.GetTimestamp() - t0 - ExpandTicks;
         }
         else if (fh.Kind == FileKind.Brotli)
         {
             Compressed = true;
-            int n = (int)(fs.Length - 16);
+            int n = (int)(FileBytes - 16);
             if (_compressed.Length < n) _compressed = new byte[n + (n >> 3)];
-            fs.ReadExactly(_compressed.AsSpan(0, n));
+            if (!ReadAt(fh0, _compressed.AsSpan(0, n), ref pos)) return;
             long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
             ReadTicks = t1 - t0;
-            using var dec = new System.IO.Compression.BrotliDecoder();
-            var src = new ReadOnlySpan<byte>(_compressed, 0, n);
-            // 1) the PageHeader (16 bytes) into a stack span
-            var st = dec.Decompress(src, phb, out int used, out int wrote);
-            if (wrote != 16) return;
-            src = src[used..];
-            ph = System.Runtime.InteropServices.MemoryMarshal.Read<PageHeader>(phb);
-            if (ph.Format != Format || ph.DataBytes > Capacity) return;
-            // 2) the mip chain straight into the mapped transfer buffer
-            var dst = new Span<byte>(Dst, (int)ph.DataBytes);
-            int total = 0;
-            while (total < dst.Length)
+            var dec = new System.IO.Compression.BrotliDecoder();
+            try
             {
-                st = dec.Decompress(src, dst[total..], out used, out wrote);
-                src = src[used..];
-                total += wrote;
-                if (st == System.Buffers.OperationStatus.InvalidData || (used == 0 && wrote == 0)) return;
+                var src = new ReadOnlySpan<byte>(_compressed, 0, n);
+                // 1) the PageHeader (16 bytes) into a stack span
+                if (!Decode(ref src, ref dec, phb)) return;
+                ph = System.Runtime.InteropServices.MemoryMarshal.Read<PageHeader>(phb);
+                if (!Fits(ph)) return;
+                int total = (int)ph.DataBytes;
+                if (!Expand)
+                {
+                    // 2) the mip chain straight into the mapped transfer buffer
+                    if (!Decode(ref src, ref dec, new Span<byte>(Dst, total))) return;
+                }
+                else
+                {
+                    // 2) pieces into scratch, each expanded into the mapped transfer buffer
+                    for (int done = 0; done < total;)
+                    {
+                        int k = Math.Min(_scratch.Length, total - done);
+                        if (!Decode(ref src, ref dec, _scratch.AsSpan(0, k))) return;
+                        ExpandPiece(k, done);
+                        done += k;
+                    }
+                }
             }
-            DecodeTicks = System.Diagnostics.Stopwatch.GetTimestamp() - t1;
+            finally { dec.Dispose(); }
+            DecodeTicks = System.Diagnostics.Stopwatch.GetTimestamp() - t1 - ExpandTicks;
         }
         else return;
         Mips = ph.MipCount;
         Size = ph.Width;
         Ok = true;
+    }
+
+    bool Fits(in PageHeader ph) => ph.Format == Format && (long)ph.DataBytes * (Expand ? 2 : 1) <= Capacity;
+
+    void ExpandPiece(int bytes, int srcOffset)
+    {
+        long te = System.Diagnostics.Stopwatch.GetTimestamp();
+        PixelExpand.Expand(_scratch.AsSpan(0, bytes), new Span<byte>(Dst + 2L * srcOffset, bytes * 2));
+        ExpandTicks += System.Diagnostics.Stopwatch.GetTimestamp() - te;
+    }
+
+    static bool Decode(ref ReadOnlySpan<byte> src, ref System.IO.Compression.BrotliDecoder dec, scoped Span<byte> dst)
+    {
+        int total = 0;
+        while (total < dst.Length)
+        {
+            var st = dec.Decompress(src, dst[total..], out int used, out int wrote);
+            src = src[used..];
+            total += wrote;
+            if (st == System.Buffers.OperationStatus.InvalidData || (used == 0 && wrote == 0)) return false;
+        }
+        return true;
+    }
+
+    static bool ReadAt(Microsoft.Win32.SafeHandles.SafeFileHandle h, Span<byte> dst, ref long pos)
+    {
+        while (dst.Length > 0)
+        {
+            int r = RandomAccess.Read(h, dst, pos);
+            if (r <= 0) return false;
+            pos += r;
+            dst = dst[r..];
+        }
+        return true;
     }
 }
 
@@ -85,7 +148,10 @@ public sealed unsafe class PageResidency
     readonly IntPtr _device;
     public readonly IntPtr Texture;
     public readonly int Layers, LogicalCount, PageSize, MipCount;
-    public readonly PixelFormat Format;
+    /// <summary>Pack (source) format; shader flags follow it. <see cref="UploadFormat"/> is what the GPU array holds.</summary>
+    public readonly PixelFormat Format, UploadFormat;
+    /// <summary>16-bit pack on a GPU (or --force-expand) without sampleable B5G5R5A1: workers expand pages to RGBA8.</summary>
+    public readonly bool Expanding, NativeSupported;
     public long ChainBytes => _chainBytes;
     /// <summary>VRAM held by the page array: layers × chain bytes.</summary>
     public long VramBytes => (long)Layers * _chainBytes;
@@ -112,7 +178,7 @@ public sealed unsafe class PageResidency
     public int UploadsThisFrame, ResidentCount, MissingVisible, Evictions, TotalUploads;
     public int UploadBudget;
 
-    public PageResidency(IntPtr device, PackSet pack, WorkerPool workers, int layers, int uploadBudget, int stagingSlots)
+    public PageResidency(IntPtr device, PackSet pack, WorkerPool workers, int layers, int uploadBudget, int stagingSlots, bool forceExpand = false)
     {
         _device = device;
         _pack = pack;
@@ -123,10 +189,13 @@ public sealed unsafe class PageResidency
         MipCount = pack.PageMips;
         Format = pack.Format;
         UploadBudget = uploadBudget;
-        _chainBytes = PageFormats.ChainBytes(PageSize, MipCount, Format);
-        var gpuFormat = PageFormats.Gpu(Format);
-        if (!SDL_GPUTextureSupportsFormat(device, gpuFormat, SDL_GPUTextureType.SDL_GPU_TEXTURETYPE_2D_ARRAY, SDL_GPUTextureUsageFlags.SDL_GPU_TEXTUREUSAGE_SAMPLER))
-            throw new NotSupportedException($"GPU does not support {PageFormats.Name(Format)} ({gpuFormat}) as a sampled 2D array texture");
+        NativeSupported = Supports(device, Format);
+        Expanding = Format == PageFormats.B5G5R5A1 && (forceExpand || !NativeSupported);
+        UploadFormat = Expanding ? PixelFormat.Rgba8 : Format;
+        _chainBytes = PageFormats.ChainBytes(PageSize, MipCount, UploadFormat);
+        var gpuFormat = PageFormats.Gpu(UploadFormat);
+        if (!(Expanding ? Supports(device, UploadFormat) : NativeSupported))
+            throw new NotSupportedException($"GPU does not support {PageFormats.Name(UploadFormat)} ({gpuFormat}) as a sampled 2D array texture");
 
         var ci = new SDL_GPUTextureCreateInfo
         {
@@ -159,9 +228,16 @@ public sealed unsafe class PageResidency
         {
             var tci = new SDL_GPUTransferBufferCreateInfo { usage = SDL_GPUTransferBufferUsage.SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD, size = (uint)_chainBytes };
             _staging[i] = SDL_CreateGPUTransferBuffer(device, in tci);
-            _jobs[i] = new PageJob { Slot = i, Capacity = _chainBytes, Format = Format };
+            _jobs[i] = new PageJob { Slot = i, Capacity = _chainBytes, Format = Format, Expand = Expanding };
         }
     }
+
+    static bool Supports(IntPtr device, PixelFormat f)
+        => SDL_GPUTextureSupportsFormat(device, PageFormats.Gpu(f), SDL_GPUTextureType.SDL_GPU_TEXTURETYPE_2D_ARRAY, SDL_GPUTextureUsageFlags.SDL_GPU_TEXTUREUSAGE_SAMPLER);
+
+    public string FormatDescription => Expanding
+        ? $"{PageFormats.Name(Format)} expanded to {PageFormats.Name(UploadFormat)} on workers (native 16-bit supported: {NativeSupported})"
+        : PageFormats.Name(Format);
 
     /// <summary>A visible sprite uses this page this frame.</summary>
     public void Touch(int page, long frame)
@@ -229,6 +305,7 @@ public sealed unsafe class PageResidency
         ReadStats.Add(job); // worker: file read (+ Brotli decode) straight into the mapped staging buffer
         ReadTicksSum += job.ReadTicks;
         DecodeTicksSum += job.DecodeTicks;
+        ExpandTicksSum += job.ExpandTicks;
         FileBytesSum += job.FileBytes;
         if (job.Compressed) CompressedPages++;
         _slotState[job.Slot] = 2;
@@ -237,7 +314,7 @@ public sealed unsafe class PageResidency
     /// <summary>Worker page read time, and main-thread time to map a staging buffer plus unmap + record the mip copies.</summary>
     public JobStats ReadStats;
     public long MainUploadTicks, MainUploadCount;
-    public long ReadTicksSum, DecodeTicksSum, FileBytesSum;
+    public long ReadTicksSum, DecodeTicksSum, ExpandTicksSum, FileBytesSum;
     public int CompressedPages;
 
     /// <summary>Uploads loaded pages (up to the budget) into free or least-recently-used layers. Call inside a copy pass.</summary>
@@ -278,7 +355,7 @@ public sealed unsafe class PageResidency
                 var src = new SDL_GPUTextureTransferInfo { transfer_buffer = _staging[s], offset = offset, pixels_per_row = dim, rows_per_layer = dim };
                 var dst = new SDL_GPUTextureRegion { texture = Texture, mip_level = (uint)m, layer = (uint)layer, w = dim, h = dim, d = 1 };
                 SDL_UploadToGPUTexture(copyPass, in src, in dst, false);
-                offset += (uint)PageFormats.MipBytes(job.Size, m, Format);
+                offset += (uint)PageFormats.MipBytes(job.Size, m, UploadFormat);
             }
             MainUploadTicks += System.Diagnostics.Stopwatch.GetTimestamp() - tu;
             MainUploadCount++;

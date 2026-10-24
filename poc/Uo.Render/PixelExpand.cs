@@ -65,6 +65,42 @@ public static class PixelExpand
     public static void Expand(ReadOnlySpan<byte> src, Span<byte> dst)
         => Expand(MemoryMarshal.Cast<byte, ushort>(src), MemoryMarshal.Cast<byte, uint>(dst));
 
+    /// <summary>ClassicUO HuesHelper._table (src/ClassicUO.Utility/HuesHelper.cs), the 5→8 bit expansion the RGBA8 packs use.</summary>
+    static ReadOnlySpan<byte> Table =>
+    [
+        0x00, 0x08, 0x10, 0x18, 0x20, 0x29, 0x31, 0x39, 0x41, 0x4A, 0x52, 0x5A, 0x62, 0x6A, 0x73, 0x7B, 0x83, 0x8B,
+        0x94, 0x9C, 0xA4, 0xAC, 0xB4, 0xBD, 0xC5, 0xCD, 0xD5, 0xDE, 0xE6, 0xEE, 0xF6, 0xFF,
+    ];
+
+    /// <summary>Exhaustive check of all 65536 texels against the table, through the scalar path and the span path
+    /// (vector + scalar tail) at several start offsets. Returns the number of mismatching texels.</summary>
+    public static int SelfTest()
+    {
+        var src = new ushort[65536 + 64];
+        var dst = new uint[src.Length];
+        int bad = 0;
+        for (int c = 0; c < 65536; c++)
+        {
+            if (Expand((ushort)c) != Want(c)) bad++;
+        }
+        foreach (int off in (ReadOnlySpan<int>)[0, 1, 3, 7, 8, 15, 17, 31])
+        {
+            for (int c = 0; c < 65536; c++) src[off + c] = (ushort)c;
+            int n = 65536 + (off & 7); // odd lengths exercise the scalar tail
+            Array.Clear(dst);
+            Expand(src.AsSpan(off, n), dst.AsSpan(off, n));
+            for (int k = 0; k < n; k++)
+                if (dst[off + k] != Want(src[off + k])) bad++;
+        }
+        return bad;
+
+        static uint Want(int c)
+        {
+            var t = Table;
+            return t[(c >> 10) & 0x1F] | ((uint)t[(c >> 5) & 0x1F] << 8) | ((uint)t[c & 0x1F] << 16) | ((c & 0x8000) != 0 ? 0xFF000000u : 0);
+        }
+    }
+
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     static (Vector128<uint> lo, Vector128<uint> hi) Expand(Vector128<ushort> v)
     {

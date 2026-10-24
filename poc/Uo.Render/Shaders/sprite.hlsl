@@ -4,6 +4,8 @@
 //   vertex:   t[n] space0 = sampled textures, then storage textures, then storage buffers
 //             s[n] space0 = samplers, b[n] space1 = uniform buffers
 //   fragment: t[n] space2 / s[n] space2, b[n] space3
+// SPIR-V (Vulkan) uses the same numbers as descriptor set = space, binding = register; sampled textures are combined
+// image samplers, so each texture and its sampler share a binding ([[vk::combinedImageSampler]], ignored for DXIL).
 //
 // Instance layout (must match SpriteInstance in GpuTypes.cs):
 //   int  x, y      world pixel of the quad's top-left (for stretched land: tile anchor)
@@ -56,10 +58,10 @@ cbuffer Frame : register(b0, space1)
     float  GrayTolerance; // partial-hue gray test tolerance when FLAG_GRAYTOL (BC7)
 };
 
-Texture2DArray<float4> Atlas    : register(t0, space2);
-Texture2D<float4>      HueLut   : register(t1, space2);
-SamplerState           AtlasSmp : register(s0, space2);
-SamplerState           HueSmp   : register(s1, space2);
+[[vk::combinedImageSampler]] Texture2DArray<float4> Atlas    : register(t0, space2);
+[[vk::combinedImageSampler]] SamplerState           AtlasSmp : register(s0, space2);
+[[vk::combinedImageSampler]] Texture2D<float4>      HueLut   : register(t1, space2);
+[[vk::combinedImageSampler]] SamplerState           HueSmp   : register(s1, space2);
 
 struct VSOut
 {
