@@ -61,3 +61,6 @@
 #*.PDF   diff=astextplain
 #*.rtf   diff=astextplain
 #*.RTF   diff=astextplain
+
+# Patch files must keep LF so git apply works on every platform.
+*.patch text eol=lf
