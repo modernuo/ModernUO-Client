@@ -72,6 +72,38 @@ The owner asked that everything definitive (e.g. the FNA 26.10 upgrade) land on 
 - **The ClassicUO loaders aren't thread-safe** (shared seek position). The converter uses one `UOFileManager` per worker.
 - **v1 size win:** BC7 would cut the art from 663 MB to about 170 MB. Regions compress well too (Brotli).
 
+### 2026-10-24 — CP3: renderer PoC done (e6c6bb043)
+
+- **Run:** `poc/Uo.Render/bin/Release/net10.0/win-x64/Uo.Render.exe` (or `--pack`, `--at x y zoom`, `--bench`, `--screenshot`).
+- **Architecture:**
+  - one world draw call: 32-byte instances pulled from a storage buffer, chunks found by binary search over a visible-chunk table;
+  - Texture2DArray of 24 layers with a GPU page table, LRU eviction and an upload budget of 2 pages per frame;
+  - chunks baked on 8 workers into a sub-allocated persistent buffer;
+  - ClassicUO PriorityZ/CalculateDepthZ ported to an integer depth key, with tie-breakers;
+  - flat and stretched (texmap) land with ClassicUO normals and lighting;
+  - normal and partial hue.
+- **Verified:** screenshots of Britain at several zooms and of mountains (by eye); a magenta-clear coverage test; deterministic across streaming histories; AOT output pixel-identical to JIT.
+- **Owner-reported issues:**
+  - Black spots: transient, from chunks not yet streamed. No longer reproduces.
+  - Flicker: depth-key ties across chunks (16 pairs in Britain, now 0), plus edge pop-in under CPU load. Fixed with prefetch bias, visible-first dispatch and eviction hysteresis.
+- **Bench, under full CPU load (to rerun quiet):** about 0.27 ms CPU per frame (median), 0 GC, about 0.2 B allocated per frame. Rerun with `Uo.Render.exe --bench`.
+- **Gaps:**
+  - D3D12 only (the SDK dxc lacks SPIR-V);
+  - not rendered yet: animated water, seasons, roof hiding, mobiles, items, multis;
+  - NoDraw-by-name filter missing;
+  - v1 (BC7/Brotli) packs not yet supported.
+
+## Phase 3 plan (engine vertical slice)
+
+1. **Converter:** finish v1 (BC7 + Brotli), add a NoDraw flag (tiledata name rule), then animation conversion (UOP AnimationFrame → atlas pages + frame tables).
+2. **Renderer:**
+   - v1 pack support (per-page BC7 format, worker-side Brotli);
+   - Vulkan via SPIR-V (official DXC release);
+   - mobiles and items as dynamic instances;
+   - animation playback.
+3. **Network and server:** a local ModernUO server (out-of-tree publish, no changes to the ModernUO repo) plus `poc/Uo.Net`, a minimal classic-protocol client (login, enter world, entity stream, walk requests).
+4. **Integration** (`poc/Uo.Client`): Uo.Net → Friflo world (dynamic entities) → render extract → Uo.Render. Player movement with client-side prediction. This is the proof of the full stack.
+
 ## Next
 
 - Review each agent's output and commit it.
