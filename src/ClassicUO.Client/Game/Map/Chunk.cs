@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: BSD-2-Clause
+// SPDX-License-Identifier: BSD-2-Clause
 
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
@@ -63,23 +63,17 @@ namespace ClassicUO.Game.Map
         }
 
 
-        public unsafe void Load(int index)
+        public void Load(int index)
         {
             IsDestroyed = false;
 
             Map map = _world.Map;
 
-            ref var im = ref GetIndex(index);
-
-            if (!im.IsValid())
+            if (!Client.Game.UO.FileManager.Maps.TryGetBlock(index, X, Y, out var block))
             {
                 return;
             }
 
-            im.MapFile.Seek((long)im.MapAddress, System.IO.SeekOrigin.Begin);
-            var block = im.MapFile.Read<MapBlock>();
-
-            var cells = block.Cells;
             int bx = X << 3;
             int by = Y << 3;
 
@@ -90,9 +84,8 @@ namespace ClassicUO.Game.Map
 
                 for (int x = 0; x < 8; ++x, ++pos)
                 {
-                    ushort tileID = (ushort)(cells[pos].TileID & 0x3FFF);
-
-                    sbyte z = cells[pos].Z;
+                    ushort tileID = block.Land[pos].TileId;
+                    sbyte z = block.Land[pos].Z;
 
                     Land land = Land.Create(_world, tileID);
 
@@ -108,44 +101,18 @@ namespace ClassicUO.Game.Map
                 }
             }
 
-            if (im.StaticAddress != 0 && im.StaticCount > 0)
+            foreach (ref readonly var sb in block.Statics)
             {
-                var staticsBlockBuffer = ArrayPool<StaticsBlock>.Shared.Rent((int)im.StaticCount);
-                var staticsSpan = staticsBlockBuffer.AsSpan(0, (int)im.StaticCount);
-                im.StaticFile.Seek((long)im.StaticAddress, System.IO.SeekOrigin.Begin);
-                im.StaticFile.Read(MemoryMarshal.AsBytes(staticsSpan));
+                int pos = (sb.Y << 3) + sb.X;
 
-                foreach (ref var sb in staticsSpan)
-                {
-                    if (sb.Color != 0 && sb.Color != 0xFFFF)
-                    {
-                        int pos = (sb.Y << 3) + sb.X;
+                Static staticObject = Static.Create(_world, sb.Graphic, sb.Hue, pos);
+                staticObject.X = (ushort)(bx + sb.X);
+                staticObject.Y = (ushort)(by + sb.Y);
+                staticObject.Z = sb.Z;
+                staticObject.UpdateScreenPosition();
 
-                        if (pos >= 64)
-                        {
-                            continue;
-                        }
-
-                        Static staticObject = Static.Create(_world, sb.Color, sb.Hue, pos);
-                        staticObject.X = (ushort)(bx + sb.X);
-                        staticObject.Y = (ushort)(by + sb.Y);
-                        staticObject.Z = sb.Z;
-                        staticObject.UpdateScreenPosition();
-
-                        AddGameObject(staticObject, sb.X, sb.Y);
-                    }
-                }
-
-                ArrayPool<StaticsBlock>.Shared.Return(staticsBlockBuffer);
+                AddGameObject(staticObject, sb.X, sb.Y);
             }
-        }
-
-
-        private ref IndexMap GetIndex(int map)
-        {
-            Client.Game.UO.FileManager.Maps.SanitizeMapIndex(ref map);
-
-            return ref Client.Game.UO.FileManager.Maps.GetIndex(map, X, Y);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

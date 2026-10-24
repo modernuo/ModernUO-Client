@@ -87,6 +87,14 @@ Each step keeps the client runnable. The new world renderer sits behind `WorldRe
       - Report Update, world prepare, draw and Present separately. In the baseline, Update and Present dominate the 1.33 ms frame.
     - **Reference point:** the ClassicUO 2.0 beta (NativeAOT-LLVM WASM guest on a Rust/wgpu host) shows 1000+ FPS against our 600–700. Check first whether the two FPS counters are comparable.
 
+## Pack loading in ClassicUO (steps 4–6, done)
+
+- **Where the pack comes from:** `-pack <dir>` on the command line, or `"pack"` in settings.json. When neither is set, the client uses a `pack` folder next to `cuo.exe`, then one inside the UO directory. A missing or pre-1.0 pack stops startup with an error.
+- **What still reads the UO directory:** gumps, fonts, cliloc, speech, sounds, skills, professions, multimap images, Anim1/Anim2.def, and the UOP/override plumbing (`ClassicUO.IO`) these use.
+- **Layout:** `ClassicUO.Assets` references `poc/Uo.Pack`. `PackAssets` opens the pack, and `PackPages` decodes Kind 2 pages one 1 MiB chunk at a time into a bounded LRU. The loaders keep their public APIs; sprites are decoded to RGBA on the CPU and fed to ClassicUO's atlases and `PixelPicker`.
+- **Removed:** verdata, map patches (mapdif/stadif; the 0xBF 0x18 packet is ignored), UltimaLive, the `use_verdata` and `maps_layouts` settings, and the `Art/Statics` and `Art/Land` loose-file override. The converter does not read those folders yet.
+- **The converter's MUL readers:** a frozen copy of the old loaders lives in `tools/ClassicUO.Assets.Mul`, referenced only by `poc/Uo.Converter`.
+
 ## NativeAOT status
 
 - ClassicUO.Client.csproj already sets `PublishAot`. Upstream publishes it as a native shared library loaded by the Bootstrap host.

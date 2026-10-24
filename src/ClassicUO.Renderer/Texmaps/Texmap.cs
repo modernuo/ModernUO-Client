@@ -1,4 +1,4 @@
-using ClassicUO.Assets;
+﻿using ClassicUO.Assets;
 using Microsoft.Xna.Framework.Graphics;
 
 namespace ClassicUO.Renderer.Texmaps
@@ -14,7 +14,7 @@ namespace ClassicUO.Renderer.Texmaps
         {
             _texmapsLoader = texmapsLoader;
             _atlas = new TextureAtlas(device, 2048, 2048, SurfaceFormat.Color);
-            _spriteInfos = new SpriteInfo[texmapsLoader.File.Entries.Length];
+            _spriteInfos = new SpriteInfo[texmapsLoader.Count];
         }
 
         public ref readonly SpriteInfo GetTexmap(uint idx)

@@ -188,15 +188,27 @@ namespace ClassicUO
 
             var filesOverride = new UOFilesOverrideMap(Settings.GlobalSettings.OverrideFile);
             filesOverride.Load();
-            FileManager = new UOFileManager(clientVersion, clientPath, filesOverride);
-            FileManager.Load(Settings.GlobalSettings.UseVerdata, Settings.GlobalSettings.Language, Settings.GlobalSettings.MapsLayouts);
+            string packPath = PackAssets.Resolve(Settings.GlobalSettings.PackDirectory, CUOEnviroment.ExecutablePath, clientPath);
+            PackAssets pack;
+
+            try
+            {
+                pack = PackAssets.Open(packPath);
+            }
+            catch (Exception ex) when (ex is IOException or InvalidDataException)
+            {
+                Log.Error(ex.Message);
+                Client.ShowErrorMessage(ex.Message);
+
+                throw;
+            }
+
+            FileManager = new UOFileManager(clientVersion, clientPath, filesOverride, pack);
+            FileManager.Load(Settings.GlobalSettings.Language);
 
             StaticFilters.Load(FileManager.TileData);
             BuffTable.Load();
             ChairTable.Load();
-
-            //ATTENTION: you will need to enable ALSO ultimalive server-side, or this code will have absolutely no effect!
-            UltimaLive.Enable();
         }
     }
 

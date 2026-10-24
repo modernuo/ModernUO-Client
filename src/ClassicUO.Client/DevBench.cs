@@ -22,6 +22,7 @@ namespace ClassicUO
         private static int _spot;
         private static Microsoft.Xna.Framework.Point? _mouse;
         private static string _pickWhat;
+        private static Game.GameObjects.GameObject _pickObject;
         private static Microsoft.Xna.Framework.Point? _pickTarget;
 
         private const int WINDOWS = 6;
@@ -192,6 +193,12 @@ namespace ClassicUO
             if (_mouse.HasValue && game.Scene is Game.Scenes.GameScene scene)
             {
                 Input.Mouse.Position = _mouse.Value;
+                var bounds = game.Window.ClientBounds;
+                SDL3.SDL.SDL_WarpMouseInWindow(
+                    game.Window.Handle,
+                    _mouse.Value.X * game.DpiScale * bounds.Width / game.GraphicManager.PreferredBackBufferWidth,
+                    _mouse.Value.Y * game.DpiScale * bounds.Height / game.GraphicManager.PreferredBackBufferHeight
+                );
                 scene.Camera.Update(true, Time.Delta, _mouse.Value);
                 SelectedObject.TranslatedMousePositionByViewport = scene.Camera.MouseToWorldPosition();
             }
@@ -228,8 +235,40 @@ namespace ClassicUO
                     GameActions.OpenPaperdoll(world, world.Player.Serial);
                     GameActions.OpenBackpack(world);
                     GameActions.OpenMiniMap(world);
+
+                    _step = 21;
+                    _stepAt = now + sec * 3;
+
+                    break;
+
+                case 21:
+                    if (world.Player.FindItemByLayer(Game.Data.Layer.Robe) == null && world.Player.FindItemByLayer(Game.Data.Layer.Backpack) is { } backpack)
+                    {
+                        for (var i = backpack.Items; i != null; i = i.Next)
+                        {
+                            if (i is Game.GameObjects.Item it && it.ItemData.IsWearable && it.ItemData.Layer == (byte)Game.Data.Layer.Robe)
+                            {
+                                GameActions.PickUp(world, it.Serial, 0, 0);
+                                Log.Info($"[bench-ui] equipping 0x{it.Graphic:X4} from the backpack");
+
+                                break;
+                            }
+                        }
+                    }
+
+                    _step = 20;
+                    _stepAt = now + sec * 2;
+
+                    break;
+
+                case 20:
+                    if (Client.Game.UO.GameCursor.ItemHold.Enabled)
+                    {
+                        GameActions.Equip(world);
+                    }
+
                     _step = 3;
-                    _stepAt = now + sec * 4;
+                    _stepAt = now + sec * 3;
 
                     break;
 
@@ -298,6 +337,30 @@ namespace ClassicUO
                 case 9:
                     game.TakeScreenshot();
                     Log.Info("[bench-ui] world map");
+
+                    if (Environment.GetEnvironmentVariable("CUO_BENCH_UNEQUIP") == "1" && world.Player.FindItemByLayer(Game.Data.Layer.Robe) is { } robe)
+                    {
+                        GameActions.PickUp(world, robe.Serial, 0, 0);
+                        Log.Info($"[bench-ui] unequipping 0x{robe.Graphic:X4}");
+                    }
+
+                    _step = 10;
+                    _stepAt = now + sec * 2;
+
+                    break;
+
+                case 10:
+                    if (Client.Game.UO.GameCursor.ItemHold.Enabled && world.Player.FindItemByLayer(Game.Data.Layer.Backpack) is { } pack)
+                    {
+                        GameActions.DropItem(Client.Game.UO.GameCursor.ItemHold.Serial, 0xFFFF, 0xFFFF, 0, pack.Serial);
+                    }
+
+                    _step = 11;
+                    _stepAt = now + sec * 2;
+
+                    break;
+
+                case 11:
                     _step = 99;
                     game.Exit();
 
@@ -308,6 +371,7 @@ namespace ClassicUO
         private static void PickAt(Game.Scenes.GameScene gs, Game.GameObjects.GameObject obj, string what)
         {
             _pickWhat = what;
+            _pickObject = obj;
 
             if (gs == null || obj == null)
             {
@@ -320,14 +384,34 @@ namespace ClassicUO
             var p = obj.RealScreenPosition;
             var target = obj is Game.GameObjects.Mobile
                 ? new Microsoft.Xna.Framework.Point(p.X + 22, p.Y - 15)
-                : new Microsoft.Xna.Framework.Point(p.X + 22, p.Y + 44 - Client.Game.UO.Arts.GetArt(obj.Graphic).UV.Height / 2);
+                : StaticPoint(obj);
             _pickTarget = target;
             _mouse = gs.Camera.WorldToScreen(target, true);
             Log.Info($"[bench-ui] pick {what}: {obj.GetType().Name} 0x{obj.Graphic:X4} at {obj.X},{obj.Y},{obj.Z}, world point {target}");
         }
 
+        private static Microsoft.Xna.Framework.Point StaticPoint(Game.GameObjects.GameObject obj)
+        {
+            var uv = Client.Game.UO.Arts.GetArt(obj.Graphic).UV;
+            var b = Client.Game.UO.Arts.GetRealArtBounds(obj.Graphic);
+            int x0 = obj.RealScreenPosition.X - ((uv.Width >> 1) - 22);
+            int y0 = obj.RealScreenPosition.Y - (uv.Height - 44);
+
+            return new Microsoft.Xna.Framework.Point(x0 + b.X + b.Width / 2, y0 + b.Y + b.Height / 2);
+        }
+
         private static void LogPick()
         {
+            if (_pickObject != null && _pickTarget.HasValue)
+            {
+                var t = _pickTarget.Value;
+                SelectedObject.TranslatedMousePositionByViewport = t;
+                bool hit = _pickObject.CheckMouseSelection();
+                SelectedObject.TranslatedMousePositionByViewport = new Microsoft.Xna.Framework.Point(t.X, t.Y - 300);
+                bool miss = _pickObject.CheckMouseSelection();
+                Log.Info($"[bench-ui] pixel pick ({_pickWhat}) on the sprite: {hit}; 300 px above it: {miss}");
+            }
+
             var o = SelectedObject.Object;
             string desc = o is Game.GameObjects.GameObject go ? $"{go.GetType().Name} 0x{go.Graphic:X4} at {go.X},{go.Y},{go.Z}" : o?.GetType().Name ?? "nothing";
             Log.Info($"[bench-ui] under the mouse ({_pickWhat}, world {SelectedObject.TranslatedMousePositionByViewport}, target {_pickTarget}): {desc}" +

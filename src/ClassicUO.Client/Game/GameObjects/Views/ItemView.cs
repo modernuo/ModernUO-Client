@@ -477,7 +477,7 @@ namespace ClassicUO.Game.GameObjects
                     }
                     else
                     {
-                        ref UOFileIndex index = ref Client.Game.UO.FileManager.Arts.File.GetValidRefEntry(
+                        ref ArtEntry index = ref Client.Game.UO.FileManager.Arts.GetEntry(
                             graphic + 0x4000
                         );
 
@@ -487,7 +487,7 @@ namespace ClassicUO.Game.GameObjects
 
                 if (Client.Game.UO.Arts.GetArt(graphic).Texture != null)
                 {
-                    ref var index = ref Client.Game.UO.FileManager.Arts.File.GetValidRefEntry(graphic + 0x4000);
+                    ref ArtEntry index = ref Client.Game.UO.FileManager.Arts.GetEntry(graphic + 0x4000);
 
                     Point position = RealScreenPosition;
                     position.X += (int)Offset.X;
