@@ -87,3 +87,25 @@ Things to measure when the browser build starts:
 - **Worker threads:** whether the browser build gets real threads (SharedArrayBuffer needs cross-origin isolation). Without them, page decode and expansion run on the main thread and need time-slicing.
 - **WebGPU limits:** the maximum texture array layers, the cost of 2048² RGBA8 pages, and the resident layer count that fits the browser's memory budget. The `r16uint` with manual filtering alternative applies if RGBA8's 2× memory doesn't fit.
 - **GC and allocation:** confirm the 0-allocation frame loop holds in the browser build.
+
+### WASM profile constraints (lessons from ClassicUO 2.0, 2026-10-24)
+
+ClassicUO 2.0 ships C# compiled with **NativeAOT-LLVM** (dotnet/runtimelab, experimental) into a WASI 0.2 component, run by a native Rust host (wasmtime + wgpu). A browser host also exists. Details: [cuo-2.0-perf-comparison.md](cuo-2.0-perf-comparison.md) and branch `research/cuo-2.0-beta-wasm`. A WASM profile of our client must respect the same limits. Design for them now where it's cheap:
+
+- **Assume single-threaded game code.** 2.0 dropped its parallel ECS scheduler and `ThreadingMode` for wasip2. In the WASM profile:
+  - page decode, chunk baking and Kind 2 chunk decode need a single-threaded, time-sliced path (a per-frame budget), with no blocking waits;
+  - Friflo parallel jobs stay off;
+  - native worker threads remain a desktop optimisation.
+- **Cross the host boundary rarely.** Host calls are expensive in WASM, so 2.0 batches all rendering into one binary command buffer per frame (`IGpuDevice` → `gpu-execute`), which the host replays.
+  - Our renderer interface should **record, then submit once**. Uo.Render's world pass already does this (instance buffer plus one draw). The UI batcher must move to the same model.
+  - Network, audio, clipboard and file I/O also become coarse host calls.
+- **The host owns I/O.**
+  - Sockets: browsers have no raw TCP. 2.0's host ships a WebSocket client, so our own protocol needs a **WebSocket transport** next to TCP.
+  - Files: preopened directories or OPFS. Packs arrive over HTTP, and Kind 2 chunks and per-file sha256 suit range or partial fetches and caching.
+- **GPU (WebGPU):**
+  - no 16-bit packed formats, so 16-bit pages need the `PixelExpand` fallback (or `r16uint` plus manual filtering). Indexed8 animations (`r8uint`) work as-is;
+  - shaders are WGSL. 2.0 hand-ported its `.fx` shaders to WGSL; we'd translate our HLSL via SPIR-V with naga or tint;
+  - check storage-buffer-in-vertex-stage limits (compatibility mode can report 0);
+  - uploads go through the host. 2.0 uses an upload worker and arenas on the host side.
+- **Compiler choice:** NativeAOT-LLVM (2.0's choice; fastest code, but experimental) vs Mono-WASM AOT (supported). Re-evaluate when the browser build starts.
+- **No plugins.** 2.0 loads WASM-component mods; our owner rules out third-party scripting, so this doesn't apply.
