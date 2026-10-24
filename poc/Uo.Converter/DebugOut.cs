@@ -1,0 +1,155 @@
+using System.Runtime.InteropServices;
+using ClassicUO.Assets;
+using ClassicUO.Utility;
+using Uo.Pack;
+
+namespace Uo.Converter;
+
+/// <summary>Debug PNGs, all produced from the written pack (not from the source), so they double as a round-trip check.</summary>
+public static class DebugOut
+{
+    public static string Run(UOFileManager fm, string outDir, string debugDir)
+    {
+        if (Directory.Exists(debugDir)) Directory.Delete(debugDir, true);
+        Directory.CreateDirectory(debugDir);
+        const int S = PackConst.PageSize;
+        int written = 0;
+        var chain = new byte[AtlasPage.ChainBytes(S, PackConst.PageMipCount)];
+
+        // (a) page previews: mip1 (1024x1024) straight from the page file.
+        var artDir = Path.Combine(outDir, "art");
+        var texDir = Path.Combine(outDir, "tex");
+        var art = SpriteTable.Read(Path.Combine(artDir, "sprites.bin"));
+        var tex = SpriteTable.Read(Path.Combine(texDir, "texmaps.bin"));
+        int midStaticPage = art[0x4000 + 0x0CCA].Present ? art[0x4000 + 0x0CCA].Page : 0;
+        foreach (var (dir, page, name) in new[] { (artDir, 0, "art_page_0000_land"), (artDir, midStaticPage, $"art_page_{midStaticPage:D4}_statics"), (texDir, 0, "tex_page_0000") })
+        {
+            AtlasPage.Read(PackConst.PagePath(dir, page), chain);
+            var mip1 = MemoryMarshal.Cast<byte, uint>(chain.AsSpan(AtlasPage.MipBytes(S, 0), AtlasPage.MipBytes(S, 1)));
+            Png.Write(Path.Combine(debugDir, name + "_mip1.png"), S / 2, S / 2, Png.OverChecker(mip1, S / 2, S / 2, 16));
+            written++;
+        }
+        // Full-res crop of the top-left of the statics page to inspect gutters.
+        {
+            AtlasPage.Read(PackConst.PagePath(artDir, midStaticPage), chain);
+            var mip0 = MemoryMarshal.Cast<byte, uint>(chain.AsSpan(0, AtlasPage.MipBytes(S, 0)));
+            const int C = 384;
+            var crop = new uint[C * C];
+            for (int y = 0; y < C; y++) mip0.Slice(y * S, C).CopyTo(crop.AsSpan(y * C, C));
+            Png.Write(Path.Combine(debugDir, $"art_page_{midStaticPage:D4}_crop_mip0.png"), C, C, Png.OverChecker(crop, C, C, 4));
+            written++;
+        }
+
+        // (b) individual sprites at 1:1, rebuilt to their original size from the atlas.
+        var picks = new (string Name, bool Tex, int Id)[]
+        {
+            ("land_0003_grass", false, 0x0003), ("land_00A8_water", false, 0x00A8), ("land_0071_dirt", false, 0x0071),
+            ("land_00E8_mountain", false, 0x00E8),
+            ("static_0E75_backpack", false, 0x4000 + 0x0E75), ("static_0CCA_tree", false, 0x4000 + 0x0CCA),
+            ("static_0EED_gold", false, 0x4000 + 0x0EED), ("static_0FAF_anvil", false, 0x4000 + 0x0FAF),
+            ("static_13B9_sword", false, 0x4000 + 0x13B9), ("static_0064_wall", false, 0x4000 + 0x0064),
+            ("static_0B41_sign", false, 0x4000 + 0x0B41), ("static_1F14_recall_rune", false, 0x4000 + 0x1F14),
+            ("tex_0003", true, 0x0003), ("tex_0002", true, 0x0002),
+        };
+        var sheetImgs = new List<(uint[] Px, int W, int H)>();
+        foreach (var grp in picks.GroupBy(p => (p.Tex, p.Tex ? tex[p.Id].Page : art[p.Id].Page)))
+        {
+            var dir = grp.Key.Tex ? texDir : artDir;
+            if (grp.Key.Item2 == PackConst.NoPage) continue;
+            AtlasPage.Read(PackConst.PagePath(dir, grp.Key.Item2), chain);
+            var mip0 = MemoryMarshal.Cast<byte, uint>(chain.AsSpan(0, AtlasPage.MipBytes(S, 0)));
+            foreach (var p in grp)
+            {
+                var e = (p.Tex ? tex : art)[p.Id];
+                var img = new uint[e.OrigW * e.OrigH];
+                for (int y = 0; y < e.H; y++)
+                    mip0.Slice((e.Y + y) * S + e.X, e.W).CopyTo(img.AsSpan((e.TrimY + y) * e.OrigW + e.TrimX, e.W));
+                Png.Write(Path.Combine(debugDir, p.Name + ".png"), e.OrigW, e.OrigH, img);
+                sheetImgs.Add((img, e.OrigW, e.OrigH));
+                written++;
+            }
+        }
+        // contact sheet at 3x, over a checkerboard, with each sprite's original bounds framed in red.
+        {
+            const int K = 3, Pad = 6;
+            int sw = sheetImgs.Sum(i => i.W * K + Pad) + Pad, sh = sheetImgs.Max(i => i.H) * K + 2 * Pad;
+            var sheet = new uint[sw * sh];
+            int ox = Pad;
+            foreach (var (px, w, h) in sheetImgs)
+            {
+                var chk = Png.OverChecker(px, w, h, 4);
+                for (int y = 0; y < h * K; y++)
+                    for (int x = 0; x < w * K; x++)
+                    {
+                        bool frame = x == 0 || y == 0 || x == w * K - 1 || y == h * K - 1;
+                        sheet[(Pad + y) * sw + ox + x] = frame ? 0xFF0000FF : chk[(y / K) * w + x / K];
+                    }
+                ox += w * K + Pad;
+            }
+            Png.Write(Path.Combine(debugDir, "sprites_sheet_3x.png"), sw, sh, Png.OverChecker(sheet, sw, sh));
+            written++;
+        }
+
+        // (c) radar of facet 0 from the region files.
+        var fdir = Path.Combine(outDir, "map", "0");
+        if (Directory.Exists(fdir))
+        {
+            var fi = FacetFileIo.Read(fdir);
+            var radar = fm.Hues.RadarCol;
+            var full = new uint[fi.Width * fi.Height];
+            var zbuf = new sbyte[fi.Width * fi.Height];
+            int rxc = (fi.BlocksX + 63) / 64, ryc = (fi.BlocksY + 63) / 64;
+            Parallel.For(0, rxc * ryc, r =>
+            {
+                int rx = r % rxc, ry = r / rxc;
+                var (h, blocks) = RegionFile.Read(PackConst.RegionPath(fdir, rx, ry));
+                for (int by = 0; by < h.BlocksH; by++)
+                    for (int bx = 0; bx < h.BlocksW; bx++)
+                    {
+                        var b = blocks[by * h.BlocksW + bx];
+                        if (b.IsEmpty) continue;
+                        int cx0 = (rx * 64 + bx) * 8, cy0 = (ry * 64 + by) * 8;
+                        for (int c = 0; c < 64; c++)
+                        {
+                            int i = (cy0 + c / 8) * fi.Width + cx0 + c % 8;
+                            full[i] = Color(radar, b.Land[c].TileId);
+                            zbuf[i] = b.Land[c].Z;
+                        }
+                        foreach (var s in b.Statics)
+                        {
+                            int i = (cy0 + s.Y) * fi.Width + cx0 + s.X;
+                            if (s.Z >= zbuf[i]) { full[i] = Color(radar, 0x4000 + s.Graphic); zbuf[i] = s.Z; }
+                        }
+                    }
+            });
+            int f = 4, dw = fi.Width / f, dh = fi.Height / f;
+            var small = new uint[dw * dh];
+            Parallel.For(0, dh, y =>
+            {
+                for (int x = 0; x < dw; x++)
+                {
+                    uint r = 0, g = 0, b = 0;
+                    for (int yy = 0; yy < f; yy++)
+                        for (int xx = 0; xx < f; xx++)
+                        {
+                            uint p = full[(y * f + yy) * fi.Width + x * f + xx];
+                            r += p & 0xFF; g += (p >> 8) & 0xFF; b += (p >> 16) & 0xFF;
+                        }
+                    int n = f * f;
+                    small[y * dw + x] = (uint)(r / n) | ((uint)(g / n) << 8) | ((uint)(b / n) << 16) | 0xFF000000;
+                }
+            });
+            Png.Write(Path.Combine(debugDir, $"radar_facet0_{dw}x{dh}.png"), dw, dh, small);
+            // and a 1:1 crop around Britain
+            const int CW = 640, CH = 480, CX = 1200, CY = 1400;
+            var crop = new uint[CW * CH];
+            for (int y = 0; y < CH; y++) full.AsSpan((CY + y) * fi.Width + CX, CW).CopyTo(crop.AsSpan(y * CW, CW));
+            Png.Write(Path.Combine(debugDir, "radar_facet0_britain_1to1.png"), CW, CH, crop);
+            written += 2;
+        }
+        return $"{written} PNGs in {debugDir}";
+    }
+
+    private static uint Color(ushort[] radar, int idx) =>
+        HuesHelper.Color16To32(idx < radar.Length ? radar[idx] : (ushort)0) | 0xFF000000;
+}
