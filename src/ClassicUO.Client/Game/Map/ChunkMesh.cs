@@ -431,7 +431,7 @@ namespace ClassicUO.Game.Map
             if (artInfo.Texture == null)
                 return;
 
-            ref var artIndex = ref Client.Game.UO.FileManager.Arts.File.GetValidRefEntry(graphic + 0x4000);
+            ref ArtEntry artIndex = ref Client.Game.UO.FileManager.Arts.GetEntry(graphic + 0x4000);
             artIndex.Width = (short)((artInfo.UV.Width >> 1) - 22);
             artIndex.Height = (short)(artInfo.UV.Height - 44);
 

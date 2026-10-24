@@ -82,9 +82,8 @@ namespace ClassicUO.Configuration
 
         [JsonPropertyName("force_driver")] public byte ForceDriver { get; set; }
 
-        [JsonPropertyName("use_verdata")] public bool UseVerdata { get; set; }
-
-        [JsonPropertyName("maps_layouts")] public string MapsLayouts { get; set; }
+        // Folder of the converted asset pack; empty = "pack" next to the client, else in the UO directory.
+        [JsonPropertyName("pack")] public string PackDirectory { get; set; }
 
         [JsonPropertyName("encryption")] public byte Encryption { get; set; }
 
