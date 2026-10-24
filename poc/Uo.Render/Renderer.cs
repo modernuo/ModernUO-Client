@@ -243,6 +243,11 @@ public sealed unsafe class Renderer : IDisposable
         public int ChunkUploadBudget;
         public string ScreenshotPath; // offscreen only
         public bool GpuSample;        // offscreen bench: submit and wait, timing this frame's GPU work
+        // Dynamic instances (mobiles, items): uploaded every frame to a reserved range of the instance buffer starting at
+        // DynamicFirst. The caller appends a chunk-table entry for the range, so they draw in the same depth-tested call.
+        public SpriteInstance[] Dynamic;
+        public int DynamicCount;
+        public uint DynamicFirst;
     }
 
     public int LastChunkUploads, DrawCalls;
@@ -260,12 +265,16 @@ public sealed unsafe class Renderer : IDisposable
         // ---- stage instance uploads + chunk table into the frame transfer buffer
         var mapped = (byte*)SDL_MapGPUTransferBuffer(Device, _frameTransfer, true);
         uint tableBytes = (uint)(f.ChunkCount * sizeof(ChunkDraw));
+        uint dynBytes = (uint)(f.DynamicCount * sizeof(SpriteInstance));
         uint offset = 0;
-        LastChunkUploads = f.Chunks.StageUploads(mapped, ref offset, FrameTransferSize - tableBytes - 256, f.ChunkUploadBudget);
+        LastChunkUploads = f.Chunks.StageUploads(mapped, ref offset, FrameTransferSize - tableBytes - dynBytes - 512, f.ChunkUploadBudget);
         offset = (offset + 255) & ~255u;
         uint tableOffset = offset;
         if (tableBytes > 0)
             fixed (ChunkDraw* src = f.Table) Buffer.MemoryCopy(src, mapped + tableOffset, tableBytes, tableBytes);
+        uint dynOffset = (tableOffset + tableBytes + 255) & ~255u;
+        if (dynBytes > 0)
+            fixed (SpriteInstance* src = f.Dynamic) Buffer.MemoryCopy(src, mapped + dynOffset, dynBytes, dynBytes);
         SDL_UnmapGPUTransferBuffer(Device, _frameTransfer);
 
         var copy = SDL_BeginGPUCopyPass(cmd);
@@ -281,6 +290,12 @@ public sealed unsafe class Renderer : IDisposable
             var src = new SDL_GPUTransferBufferLocation { transfer_buffer = _frameTransfer, offset = tableOffset };
             var dst = new SDL_GPUBufferRegion { buffer = _chunkTableBuf, offset = 0, size = tableBytes };
             SDL_UploadToGPUBuffer(copy, in src, in dst, true);
+        }
+        if (dynBytes > 0)
+        {
+            var src = new SDL_GPUTransferBufferLocation { transfer_buffer = _frameTransfer, offset = dynOffset };
+            var dst = new SDL_GPUBufferRegion { buffer = InstanceBuffer, offset = f.DynamicFirst * (uint)sizeof(SpriteInstance), size = dynBytes };
+            SDL_UploadToGPUBuffer(copy, in src, in dst, false);
         }
         f.Pages.Upload(copy, f.Frame);
         if (f.Pages.TableDirty)
