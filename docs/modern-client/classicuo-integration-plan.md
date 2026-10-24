@@ -38,6 +38,8 @@ From a read-only spike on 2026-10-24. File:line references are against FNA3D 25.
 
 ## Pack completeness needed before the MUL loaders can go
 
+**Done in format 1.0 (5cb439549):** tiledata_ext, hues_raw, radarcol, multis, lights, tileart, equipconv and animdata, each verified field-exact against ClassicUO's loaders. CPU pixels for picking come from decoding pack pages on the CPU; there are no mask sidecars. The original list follows for reference.
+
 - **tiledata:** name, weight, quantity, animID, light index, hue, stacking offset. There are 72 uses of LightIndex/AnimID/Weight, plus name uses.
 - **hues:** the raw 16-bit colour tables and TableStart/End, for CPU font and gump hueing.
 - **radarcol:** for the minimap and world map.

@@ -191,6 +191,27 @@ The detailed steps are in [classicuo-integration-plan.md](classicuo-integration-
   - format 1.0: consolidated spec, ship-profile defaults, completeness tables (tiledata, raw hues, radarcol, multis, lights, equipconv), plus a full conversion into `uo-packs/classic-1.0`;
   - the renderer: Kind 2 pages, an Indexed8 animation path, and animated mobiles in Uo.Client.
 
+### 2026-10-24 — Format 1.0, FNA patch, ClassicUO AOT baseline
+
+- **Pack format 1.0 (5cb439549):**
+  - `pack-format.md` is now the authoritative spec, and the converter's default output is the ship profile.
+  - Full run 64 s, 825 MiB: art 68, tex 17, anims 675, maps 57, tables 8.
+  - New tables are verified field-exact against ClassicUO's loaders.
+- **FNA 26.10 checkout and FNA3D interop patch (1a984f8c6):**
+  - FNA3D exposes the SDL_GPU device and native textures. The patch lives in `external/patches`, plus local-only submodule commits; FNA3D's policy forbids AI-generated upstream contributions.
+  - `FNA3D.dll` is built by us for win-x64 only.
+  - The shared device is **Vulkan**, because MojoShader offers only SPIR-V.
+  - `WorldRenderTarget` exposes a non-null `SDL_GPUTexture*`.
+- **ClassicUO NativeAOT baseline** (`classicuo-aot-baseline.md`):
+  - It publishes as a standalone exe with only 3 trim warnings of its own.
+  - Britain at zoom 1: JIT frame p50 1.33 ms, scene draw 0.32 ms; AOT 1.35–1.47 ms and 0.36 ms (10–15% slower).
+  - 18 KB allocated per frame in both.
+  - To try: `IlcInstructionSet=x86-x64-v3`.
+- **In flight:**
+  - the ECS mirror on account kbatman2;
+  - the renderer: Kind 2, Indexed8 and animated mobiles in the slice;
+  - pack-only assets in ClassicUO plus deleting the MUL loaders (steps 4–6).
+
 ## Next
 
 - Review and commit each agent's output.
