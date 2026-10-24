@@ -17,6 +17,8 @@ namespace ClassicUO
     //   CUO_BENCH_PICK=1    at Britain: hover and click a static, land, an item and a mobile, under the legacy then the GPU world renderer
     //   CUO_BENCH_SHOTS=dir plan entries also save the world render target as dir/<entry>_<renderer>.png
     //   plan entries world:gpu|legacy switch the world renderer at runtime
+    //   plan entries effect:x y z:graphic[:blend] and moving:x y z:x y z:graphic[:blend] spawn client-side effects; shot:name saves a world shot now; season:winter changes the season locally
+    //   itemhue:hex,hex,... sets the hues of the nearest ground items, ghost:on|off swaps the player body (local-only render checks)
     //   CUO_BENCH_TOPMOST=1 keep the window on top while benching (occluded windows are throttled)
     internal static class DevBench
     {
@@ -35,6 +37,7 @@ namespace ClassicUO
             (1823, 2821), (2899, 676), (2498, 392), (542, 985), (596, 2138), (4442, 1172), (1495, 1629)
         };
         private static int _planIndex, _travelIndex, _windowsAtStart;
+        private static ushort _ghostRestore;
         private static long _travelAt;
         private static bool _walkBack;
         private static int _planFrames;
@@ -670,6 +673,41 @@ namespace ClassicUO
             );
         }
 
+        // Client-side effects for render checks: effect:x y z:graphic[:blend] (FixedXYZ, endless),
+        // moving:x y z:x y z:graphic[:blend] (a moving effect between two points).
+        private static void SpawnBenchEffect(World world, string entry)
+        {
+            string[] p = entry.Split(':');
+            bool moving = p[0] == "moving";
+            int[] a = Array.ConvertAll(p[1].Trim().Split(' '), int.Parse);
+            int[] b = moving ? Array.ConvertAll(p[2].Trim().Split(' '), int.Parse) : a;
+            int gi = moving ? 3 : 2;
+            ushort graphic = Convert.ToUInt16(p[gi], 16);
+            var blend = p.Length > gi + 1 ? (GraphicEffectBlendMode)int.Parse(p[gi + 1]) : GraphicEffectBlendMode.Normal;
+
+            world.SpawnEffect(
+                moving ? GraphicEffectType.Moving : GraphicEffectType.FixedXYZ,
+                0,
+                0,
+                graphic,
+                0,
+                (ushort)a[0],
+                (ushort)a[1],
+                (sbyte)a[2],
+                (ushort)b[0],
+                (ushort)b[1],
+                (sbyte)b[2],
+                (byte)(moving ? 2 : 10),
+                0,
+                false,
+                false,
+                false,
+                blend
+            );
+
+            Log.Info($"[bench] {entry}: spawned");
+        }
+
         // name:x y:zoom measures a fixed spot; name:travel teleports between towns every 2 s; name:walk paths back and forth near Britain.
         private static void UpdatePlan(GameController game, long now)
         {
@@ -799,6 +837,87 @@ namespace ClassicUO
                         Log.Info($"[bench] world renderer {Configuration.Settings.GlobalSettings.WorldRenderer} (gpu available: {game.GetGpuWorld() != null})");
                         _planIndex++;
                         _stepAt = now + sec * 2;
+
+                        break;
+                    }
+
+                    if (_plan[_planIndex].StartsWith("itemhue:") || _plan[_planIndex].StartsWith("ghost:"))
+                    {
+                        // local-only hue checks: the nearest ground items get these hues (comma-separated);
+                        // ghost:on|off swaps the player's body for a ghost (the death screen's gray world)
+                        string arg = _plan[_planIndex].Substring(_plan[_planIndex].IndexOf(':') + 1);
+
+                        if (_plan[_planIndex].StartsWith("ghost:"))
+                        {
+                            if (arg == "on" && !world.Player.IsDead)
+                            {
+                                _ghostRestore = world.Player.Graphic;
+                                world.Player.Graphic = 0x0192;
+                            }
+                            else if (arg == "off" && _ghostRestore != 0)
+                            {
+                                world.Player.Graphic = _ghostRestore;
+                            }
+                        }
+                        else
+                        {
+                            string[] hues = arg.Split(',');
+                            var items = new System.Collections.Generic.List<Game.GameObjects.Item>();
+
+                            foreach (var item in world.Items.Values)
+                            {
+                                if (item.OnGround && !item.IsMulti && item.Distance < 6)
+                                {
+                                    items.Add(item);
+                                }
+                            }
+
+                            items.Sort((a, b) => a.Distance != b.Distance ? a.Distance.CompareTo(b.Distance) : a.Serial.CompareTo(b.Serial));
+
+                            for (int i = 0; i < hues.Length && i < items.Count; i++)
+                            {
+                                items[i].Hue = Convert.ToUInt16(hues[i], 16);
+                                Log.Info($"[bench] item 0x{items[i].Graphic:X4} at {items[i].X},{items[i].Y},{items[i].Z} hue 0x{items[i].Hue:X4}");
+                            }
+                        }
+
+                        Log.Info($"[bench] {_plan[_planIndex]}");
+                        _planIndex++;
+                        _stepAt = now + sec;
+
+                        break;
+                    }
+
+                    if (_plan[_planIndex].StartsWith("season:"))
+                    {
+                        var season = Enum.Parse<Game.Managers.Season>(_plan[_planIndex].Substring(7), true);
+                        world.ChangeSeason(season, 0);
+                        Log.Info($"[bench] season {season}");
+                        _planIndex++;
+                        _stepAt = now + sec;
+
+                        break;
+                    }
+
+                    if (_plan[_planIndex].StartsWith("shot:"))
+                    {
+                        if (!string.IsNullOrEmpty(_shots))
+                        {
+                            string renderer = game.GetGpuWorld() != null ? "gpu" : "legacy";
+                            game.RequestWorldShot(System.IO.Path.Combine(_shots, $"{_plan[_planIndex].Substring(5)}_{renderer}.png"));
+                        }
+
+                        _planIndex++;
+                        _stepAt = now + sec;
+
+                        break;
+                    }
+
+                    if (_plan[_planIndex].StartsWith("effect:") || _plan[_planIndex].StartsWith("moving:"))
+                    {
+                        SpawnBenchEffect(world, _plan[_planIndex]);
+                        _planIndex++;
+                        _stepAt = now + sec;
 
                         break;
                     }

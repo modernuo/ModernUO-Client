@@ -5,7 +5,9 @@ extern alias sdl3core;
 using System;
 using System.IO;
 using ClassicUO.Assets;
+using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
+using ClassicUO.Game.Managers;
 using ClassicUO.Renderer;
 using ClassicUO.Utility.Logging;
 using Microsoft.Xna.Framework;
@@ -39,8 +41,10 @@ namespace ClassicUO.Game.Scenes
         private GameObject _object;
         private int _objectRank;
         private bool _shadowOnly;
+        private bool _additive;
         private int _offsetX, _offsetY;
         private int _failedFacet = -1;
+        private Season _landSeason = (Season)0xFF;
 
         private GpuWorldRenderer(IntPtr device, PackSet pack)
         {
@@ -71,7 +75,8 @@ namespace ClassicUO.Game.Scenes
                     Hues = fileManager.Hues.PackHues,
                     AnimBodies = fileManager.Animations.PackBodies,
                     AnimDirs = fileManager.Animations.PackDirs,
-                    AnimFrames = fileManager.Animations.PackFrames
+                    AnimFrames = fileManager.Animations.PackFrames,
+                    StaticNoCot = BuildNoCotTable(fileManager.TileData.StaticData.Length)
                 };
 
                 var pack = new PackSet(fileManager.Pack.Root, 0, null, tables);
@@ -85,6 +90,19 @@ namespace ClassicUO.Game.Scenes
 
                 return null;
             }
+        }
+
+        // StaticView: trees (and foliage, flagged in tiledata) stay opaque inside the circle of transparency
+        private static bool[] BuildNoCotTable(int count)
+        {
+            var table = new bool[Math.Max(count, 0x10000)];
+
+            for (int g = 0; g < table.Length && g <= 0xFFFF; g++)
+            {
+                table[g] = StaticFilters.IsTree((ushort)g, out _);
+            }
+
+            return table;
         }
 
         /// <summary>Streams the given map; a facet change recreates the world pass (its chunk store belongs to one facet).</summary>
@@ -122,6 +140,8 @@ namespace ClassicUO.Game.Scenes
                     MaxTranslucent = 8192
                 };
 
+                _pack.LandRemap = null;
+                _landSeason = (Season)0xFF;
                 _world = WorldRenderer.CreateExternal(_device, GpuTextureFormat.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, _pack, options);
                 _world.ClearColor = new sdl3core::SDL3.SDL.SDL_FColor { r = 0, g = 0, b = 0, a = 1 };
                 Log.Trace($"GPU world renderer: facet {facet}, shaders {_world.Renderer.ShaderFormat}");
@@ -153,14 +173,79 @@ namespace ClassicUO.Game.Scenes
             _offsetY = offsetY;
         }
 
-        public void LandOverride(int x, int y, byte alpha, bool hidden, ushort highlightHue)
+        public void LandOverride(int x, int y, byte alpha, bool hidden, ushort highlightHue, bool forceShow = false)
         {
-            _world.SetLandOverride(x, y, alpha, hidden, highlightHue);
+            _world.SetLandOverride(x, y, alpha, hidden, highlightHue, forceShow);
         }
 
-        public void StaticOverride(int x, int y, int z, ushort graphic, byte alpha, bool hidden, ushort highlightHue)
+        public void StaticOverride(int x, int y, int z, ushort graphic, byte alpha, bool hidden, ushort highlightHue, bool forceShow = false)
         {
-            _world.SetStaticOverride(x, y, z, graphic, alpha, hidden, highlightHue);
+            _world.SetStaticOverride(x, y, z, graphic, alpha, hidden, highlightHue, forceShow);
+        }
+
+        /// <summary>Season land graphics (SeasonManager): the baked land uses the season's tiles. Rebakes on change.</summary>
+        public void SetLandSeason(Season season)
+        {
+            if (season == _landSeason || _world == null)
+            {
+                return;
+            }
+
+            _landSeason = season;
+            ushort[] remap = null;
+
+            for (int g = 0; g < 0x4000; g++)
+            {
+                ushort to = SeasonManager.GetLandSeasonGraphic(season, (ushort)g);
+
+                if (to != g)
+                {
+                    remap ??= CreateIdentityRemap();
+                    remap[g] = (ushort)(to & 0x3FFF);
+                }
+            }
+
+            if (remap != null || _pack.LandRemap != null)
+            {
+                Log.Trace($"GPU world renderer: {season} land tiles, rebaking");
+                _world.SetLandRemap(remap);
+            }
+        }
+
+        private static ushort[] CreateIdentityRemap()
+        {
+            var remap = new ushort[0x4000];
+
+            for (int i = 0; i < remap.Length; i++)
+            {
+                remap[i] = (ushort)i;
+            }
+
+            return remap;
+        }
+
+        /// <summary>GameScene's _maxZ / _maxGroundZ / _noDrawRoofs, applied to baked land and statics in the shader.</summary>
+        public void SetZHiding(int maxZ, int maxGroundZ, bool hideRoofs)
+        {
+            _world.SetZHiding(maxZ, maxGroundZ, hideRoofs);
+        }
+
+        /// <summary>Whole-sprite hue for all baked land and statics this frame (the death screen's gray), 0 = none.</summary>
+        public void SetTint(ushort hue)
+        {
+            _world.SetTint(hue);
+        }
+
+        /// <summary>Shader-mode circle of transparency: centre and radius in target pixels, z = player z + 5.</summary>
+        public void SetCircleOfTransparency(float centerX, float centerY, float radius, int z)
+        {
+            _world.SetCircleOfTransparency(centerX, centerY, radius, z);
+        }
+
+        /// <summary>Effects whose blend the world pass reproduces (normal, and Screen as additive); the rest stay with FNA.</summary>
+        public static bool CanCapture(GameEffect effect)
+        {
+            return effect.Blend is GraphicEffectBlendMode.Normal or GraphicEffectBlendMode.Screen or GraphicEffectBlendMode.ScreenMore;
         }
 
         /// <summary>Draws a world object's view into the dynamic sprites. Sprites the capture can't map stay with the batcher.</summary>
@@ -169,6 +254,7 @@ namespace ClassicUO.Game.Scenes
             _object = obj;
             _shadowOnly = shadowOnly;
             _objectRank = obj is Mobile ? RANK_MOBILE : RANK_ITEM;
+            _additive = obj is GameEffect effect && effect.Blend != GraphicEffectBlendMode.Normal;
             batcher.Capture = this;
 
             try
@@ -191,10 +277,25 @@ namespace ClassicUO.Game.Scenes
 
             if (scaled || _shadowOnly && mode != SpriteCaptureMode.Shadow)
             {
-                // the animated-water wobble copy and rotated sprites: not supported by the world pass
+                // the animated-water wobble copy and scaled sprites: not supported by the world pass
                 return true;
             }
 
+            return Emit(texture, position, source, hue, flip, depth, mode, 0f);
+        }
+
+        public bool DrawRotated(Texture2D texture, Vector2 position, Rectangle source, Vector3 hue, float rotation, float depth)
+        {
+            if (_object == null || _shadowOnly)
+            {
+                return _object != null;
+            }
+
+            return Emit(texture, position, source, hue, false, depth, SpriteCaptureMode.Normal, rotation);
+        }
+
+        private bool Emit(Texture2D texture, Vector2 position, Rectangle source, Vector3 hue, bool flip, float depth, SpriteCaptureMode mode, float rotation)
+        {
             if (!PackSpriteMap.TryFind(texture, source, out uint packRef, out Point origin))
             {
                 CaptureFallbacks++;
@@ -202,7 +303,9 @@ namespace ClassicUO.Game.Scenes
                 return false;
             }
 
-            float alpha = hue.Z > 1f ? hue.Z - 1f : hue.Z;
+            // alpha > 1 asks IsometricWorld.fx for the circle of transparency
+            bool cot = hue.Z > 1f;
+            float alpha = cot ? hue.Z - 1f : hue.Z;
 
             if (alpha <= 0f)
             {
@@ -304,6 +407,13 @@ namespace ClassicUO.Game.Scenes
                 x = px + dx + (fullH - dy - h) / 2;
                 y = py + (fullH + dy - h) / 2;
             }
+            else if (rotation != 0f)
+            {
+                // rotate about the untrimmed rect's top-left (Batcher2D origin 0): the trimmed quad's corner moves to R * d
+                float sn = MathF.Sin(rotation), cs = MathF.Cos(rotation);
+                x = px + (int)MathF.Round(cs * dx - sn * dy);
+                y = py + (int)MathF.Round(sn * dx + cs * dy);
+            }
             else
             {
                 x = px + dx;
@@ -325,6 +435,16 @@ namespace ClassicUO.Game.Scenes
             inst.Light = 0;
             inst.Corners = palette;
             inst.Mode = hueMode;
+
+            if (cot || _additive)
+            {
+                inst.SetLightBits((cot ? SpriteInstance.LightCot : 0) | (_additive ? SpriteInstance.LightAdditive : 0));
+            }
+
+            if (rotation != 0f)
+            {
+                inst.SetRotation(rotation);
+            }
 
             if (alpha < 1f)
             {
@@ -368,7 +488,7 @@ namespace ClassicUO.Game.Scenes
                 var w = _world;
                 Log.Trace(
                     $"GPU world: {w.ChunkCount} chunks, {w.Instances} baked + {w.DynamicDrawn} dynamic instances, {w.Renderer.DrawCalls} draws; overrides {w.OverridesApplied} applied, " +
-                    $"{w.OverridesMissed} missed, {w.OverridesDropped} dropped; translucent {w.TranslucentCount}; capture fallbacks {CaptureFallbacks}; " +
+                    $"{w.OverridesMissed} missed, {w.OverridesDropped} dropped; translucent {w.TranslucentCount} (cot ring {w.CotRingCount}); capture fallbacks {CaptureFallbacks}; " +
                     $"pages {w.Pages.ResidentCount}/{w.Pages.Layers} resident, {w.Pages.MissingVisible} missing, {w.Pages.TotalUploads} uploads, {w.Pages.Evictions} evictions" +
                     (w.AnimPages != null ? $"; anim pages {w.AnimPages.ResidentCount}/{w.AnimPages.Layers}, {w.AnimPages.MissingVisible} missing, {w.AnimPages.TotalUploads} uploads, {w.AnimPages.Evictions} evictions" : "") +
                     $"; chunks ready {w.Chunks.ReadyChunks} pending {w.Chunks.PendingChunks}; settled {w.Settled}");

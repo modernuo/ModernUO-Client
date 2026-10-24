@@ -20,6 +20,9 @@ namespace ClassicUO.Renderer
     public interface ISpriteCapture
     {
         bool Draw(Texture2D texture, Vector2 position, Rectangle source, Vector3 hue, bool flip, bool scaled, float depth, SpriteCaptureMode mode);
+
+        /// <summary>An unscaled sprite rotated by <paramref name="rotation"/> radians about its top-left corner (effects).</summary>
+        bool DrawRotated(Texture2D texture, Vector2 position, Rectangle source, Vector3 hue, float rotation, float depth);
     }
 
     /// <summary>

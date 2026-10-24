@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
+using System;
 using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using ClassicUO.Configuration;
@@ -25,7 +26,7 @@ namespace ClassicUO.Game.Scenes
         private Rectangle _gpuView;
         private Uo.Pack.SpriteEntry[] _gpuArt;
         private bool _gpuTintOutOfRange, _gpuStaticShadows, _gpuStumps;
-        private ushort _gpuTintAll;
+        private bool _gpuTintAll;
         // half the widest static art past its tile: tiles further beside the view can't reach into it
         private const int GPU_WIDE_ART = 320;
 
@@ -35,8 +36,8 @@ namespace ClassicUO.Game.Scenes
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void GpuOnDrawn(GameObject obj)
         {
-            // the common case: an opaque, untinted meshed land tile
-            if (obj.AlphaHue == 0xFF && _gpuTintAll == 0 && !_gpuTintOutOfRange && obj.InChunkMesh && obj.AllowedToDraw && obj is Land)
+            // the common case: an opaque, untinted meshed land tile the shader's max-Z test keeps
+            if (obj.AlphaHue == 0xFF && !_gpuTintOutOfRange && obj.InChunkMesh && obj.AllowedToDraw && obj.Z <= _maxGroundZ && obj is Land)
             {
                 return;
             }
@@ -56,10 +57,12 @@ namespace ClassicUO.Game.Scenes
                     else
                     {
                         ushort hue = GpuTintHue(land);
+                        // drawn although the shader's max-Z test hides it: fading out, or not meshed (Legacy draws those regardless)
+                        bool force = land.Z > _maxGroundZ;
 
-                        if (land.AlphaHue != 0xFF || hue != 0)
+                        if (land.AlphaHue != 0xFF || hue != 0 || force)
                         {
-                            _gpuWorld.LandOverride(land.X, land.Y, land.AlphaHue, false, hue);
+                            _gpuWorld.LandOverride(land.X, land.Y, land.AlphaHue, false, hue, force);
                         }
                     }
 
@@ -119,14 +122,15 @@ namespace ClassicUO.Game.Scenes
                     continue;
                 }
 
+                // the shader already hides roofs and everything above the max Z: only the fill's other skips need overrides
                 if (obj is Land land)
                 {
-                    if (GpuLandVisible(land.X, land.Y, land.Z))
+                    if (land.Z <= _maxGroundZ && GpuLandVisible(land))
                     {
                         _gpuWorld.LandOverride(land.X, land.Y, 255, true, 0);
                     }
                 }
-                else if (obj is Static st && GpuStaticVisible(st))
+                else if (obj is Static st && !GpuStaticZHidden(st) && GpuStaticVisible(st))
                 {
                     _gpuWorld.StaticOverride(st.X, st.Y, st.Z, st.OriginalGraphic, 255, true, 0);
                 }
@@ -174,11 +178,20 @@ namespace ClassicUO.Game.Scenes
         private void GpuStaticOverride(Static st)
         {
             ushort hue = GpuTintHue(st);
+            // drawn although the shader hides it: a roof or above-max-Z static still fading out
+            bool force = GpuStaticZHidden(st);
 
-            if (st.AlphaHue != 0xFF || hue != 0)
+            if (st.AlphaHue != 0xFF || hue != 0 || force)
             {
-                _gpuWorld.StaticOverride(st.X, st.Y, st.Z, st.OriginalGraphic, st.AlphaHue, false, hue);
+                _gpuWorld.StaticOverride(st.X, st.Y, st.Z, st.OriginalGraphic, st.AlphaHue, false, hue, force);
             }
+        }
+
+        // The shader's max-Z / roof test (sprite.hlsl, FLAG_ZTEST) for the baked sprite of a static.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private bool GpuStaticZHidden(Static st)
+        {
+            return st.Z >= _maxZ || _noDrawRoofs && Client.Game.UO.FileManager.TileData.StaticData[st.OriginalGraphic].IsRoof;
         }
 
         private const byte GPU_KIND_KNOWN = 1, GPU_KIND_TREE = 2, GPU_KIND_ROCK = 4;
@@ -215,22 +228,30 @@ namespace ClassicUO.Game.Scenes
             {
                 if (sel is Land land)
                 {
-                    _gpuWorld.LandOverride(land.X, land.Y, land.AlphaHue, false, Constants.HIGHLIGHT_CURRENT_OBJECT_HUE);
+                    _gpuWorld.LandOverride(land.X, land.Y, land.AlphaHue, false, Constants.HIGHLIGHT_CURRENT_OBJECT_HUE, land.Z > _maxGroundZ);
                 }
                 else if (sel is Static st && (_gpuStatics.IndexOf(st) is int i && (i < 0 || _gpuStaticsShadowOnly[i])))
                 {
-                    _gpuWorld.StaticOverride(st.X, st.Y, st.Z, st.OriginalGraphic, st.AlphaHue, false, Constants.HIGHLIGHT_CURRENT_OBJECT_HUE);
+                    _gpuWorld.StaticOverride(st.X, st.Y, st.Z, st.OriginalGraphic, st.AlphaHue, false, Constants.HIGHLIGHT_CURRENT_OBJECT_HUE, GpuStaticZHidden(st));
                 }
             }
         }
 
         // Baked sprites the fill skipped need a hidden override only where the world pass would actually draw them.
-        private bool GpuLandVisible(int x, int y, int z)
+        private bool GpuLandVisible(Land land)
         {
-            int sx = (x - y) * 22 - _offset.X - 22;
-            int sy = (x + y) * 22 - (z << 2) - _offset.Y - 22;
+            // the 44x44 diamond's box; stretched corners can rise above the tile's z (up to 32 here) and drop to MinZ
+            int sx = (land.X - land.Y) * 22 - _offset.X - 22;
+            int sy = (land.X + land.Y) * 22 - (land.Z << 2) - _offset.Y - 22;
+            int top = sy, bottom = sy + 44;
 
-            return sx + 44 > _gpuView.Left && sx < _gpuView.Right && sy + 108 > _gpuView.Top && sy - 64 < _gpuView.Bottom;
+            if (land.IsStretched)
+            {
+                top -= 128;
+                bottom += Math.Max(0, land.Z - land.MinZ) << 2;
+            }
+
+            return sx + 44 > _gpuView.Left && sx < _gpuView.Right && bottom > _gpuView.Top && top < _gpuView.Bottom;
         }
 
         private bool GpuStaticVisible(Static st)
@@ -249,7 +270,8 @@ namespace ClassicUO.Game.Scenes
             return x0 + sp.OrigW > _gpuView.Left && x0 < _gpuView.Right && y1 > _gpuView.Top && y1 - sp.OrigH < _gpuView.Bottom;
         }
 
-        // ApplyMeshHue's whole-sprite recolours; the static's own hue is baked
+        // ApplyMeshHue's out-of-range recolour (the death screen's gray is a uniform: GpuWorldRenderer.SetTint); the static's
+        // own hue is baked
         private ushort GpuTintHue(GameObject obj)
         {
             if (_gpuTintOutOfRange && obj.Distance > _world.ClientViewRange)
@@ -257,7 +279,7 @@ namespace ClassicUO.Game.Scenes
                 return Constants.OUT_RANGE_COLOR;
             }
 
-            return _gpuTintAll;
+            return 0;
         }
 
         private void DrawWorldGpu(UltimaBatcher2D batcher, ref Matrix matrix, RenderTargets renderTargets, GpuWorldRenderer gpu)
@@ -278,17 +300,32 @@ namespace ClassicUO.Game.Scenes
             _gpuArt = Client.Game.UO.FileManager.Arts.PackSpriteEntries;
             var profile = ProfileManager.CurrentProfile;
             _gpuTintOutOfRange = profile.NoColorObjectsOutOfRange;
-            _gpuTintAll = _world.Player.IsDead && profile.EnableBlackWhiteEffect ? (ushort)Constants.DEAD_RANGE_COLOR : (ushort)0;
+            _gpuTintAll = _world.Player.IsDead && profile.EnableBlackWhiteEffect;
             _gpuStaticShadows = profile.ShadowsEnabled && profile.ShadowsStatics;
             _gpuStumps = profile.TreeToStumps;
             Point viewMin = Camera.ScreenToWorld(Point.Zero);
             Point viewMax = Camera.ScreenToWorld(new Point(Camera.Bounds.Width, Camera.Bounds.Height));
             _gpuView = new Rectangle(viewMin.X, viewMin.Y, viewMax.X - viewMin.X, viewMax.Y - viewMin.Y);
             gpu.BeginFrame();
+            gpu.SetLandSeason(_world.Season);
 
             FillGameObjectList();
             FinishGpuCollect();
             gpu.SetOffset(_offset.X, _offset.Y);
+            gpu.SetZHiding(_maxZ, _maxGroundZ, _noDrawRoofs);
+
+            if (_gpuTintAll)
+            {
+                gpu.SetTint(Constants.DEAD_RANGE_COLOR);
+            }
+
+            var target = renderTargets.WorldRenderTarget;
+
+            if (profile.UseCircleOfTransparency && profile.CircleOfTransparencyType != 1)
+            {
+                // IsometricWorld.fx: distance from the target's centre in target pixels, radius / zoom (gradient mode is CPU alpha)
+                gpu.SetCircleOfTransparency(target.Width * 0.5f, target.Height * 0.5f, profile.CircleOfTransparencyRadius / Camera.Zoom, _world.Player.Z + 5);
+            }
 
             batcher.SetSampler(SamplerState.PointClamp);
             batcher.Begin(null, matrix);
@@ -319,27 +356,25 @@ namespace ClassicUO.Game.Scenes
 
             captured += _renderLists.CaptureRenderLists(batcher, _maxGroundZ, gpu);
 
+            // the multi placement preview is depth-tested against the world, as in Legacy
+            if (
+                _multi != null
+                && _world.TargetManager.IsTargeting
+                && _world.TargetManager.TargetingState == CursorTarget.MultiPlacement
+                && gpu.DrawObject(batcher, _multi, _multi.CalculateDepthZ())
+            )
+            {
+                captured++;
+            }
+
             Profiler.ExitContext(Profiler.ProfilerContext.RENDER_FRAME_WORLD_PREPARE);
             FrameStats.End(FramePhase.WorldPrepare);
             FrameStats.Begin(FramePhase.WorldDraw);
             Profiler.EnterContext(Profiler.ProfilerContext.RENDER_FRAME_WORLD);
 
-            // FNA layers over the world: effects, object handles, multi preview, weather, selection
-            int deferred = _renderLists.DrawDeferredRenderLists(batcher, _maxGroundZ);
-
-            if (
-                _multi != null
-                && _world.TargetManager.IsTargeting
-                && _world.TargetManager.TargetingState == CursorTarget.MultiPlacement
-            )
-            {
-                _multi.Draw(
-                    batcher,
-                    _multi.RealScreenPosition.X,
-                    _multi.RealScreenPosition.Y,
-                    _multi.CalculateDepthZ()
-                );
-            }
+            // Effects go to the world pass (depth-tested like Legacy) when it can reproduce their blend; FNA draws the rest,
+            // the object handles, weather and the selection over the world.
+            int deferred = _renderLists.DrawDeferredRenderLists(batcher, _maxGroundZ, gpu);
 
             _world.Weather.Draw(batcher, 0, 0, MAX_LAYER_DEPTH - 1);
 
@@ -349,7 +384,6 @@ namespace ClassicUO.Game.Scenes
             batcher.SetStencil(null);
             batcher.End();
 
-            var target = renderTargets.WorldRenderTarget;
             gpu.Render(target, GetGpuCamera(target));
 
             device.SetRenderTarget(null);

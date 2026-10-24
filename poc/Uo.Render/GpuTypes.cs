@@ -12,14 +12,26 @@ public struct SpriteInstance
     public uint Uv;       // u | v << 16
     public uint PageHue;  // page | hueRow << 16
     public uint Depth;
-    public uint Light;    // FlagLit: 4 x u8, 170 = 1.0; otherwise byte 0 = 255 - alpha, byte 1 = HueMode
-    public uint Corners;  // 4 x s8 corner z (top, right, left, bottom); FlagIndexed: palette id (u16)
+    public uint Light;    // FlagLit: 4 x u8, 170 = 1.0; otherwise byte 0 = 255 - alpha, bits 8-11 HueMode, 12-15 Light* bits, 16-31 angle
+    public uint Corners;  // 4 x s8 corner z (top, right, left, bottom); FlagIndexed: palette id (u16); FlagZTest statics: z | height | Z* bits
 
     public const uint FlagHued = 1, FlagPartial = 2, FlagStretch = 4, FlagLit = 8;
     /// <summary>Draw the rect flipped horizontally (mirrored anim directions).</summary>
     public const uint FlagMirror = 16;
     /// <summary>Page is in the Indexed8 anim array; Corners holds the palette id.</summary>
     public const uint FlagIndexed = 32;
+    /// <summary>Baked land or static that the frame's max-Z / roof / circle-of-transparency uniforms apply to. Land: z in
+    /// Corners byte 0 (stretched land: its top corner, which is the tile's z). Statics: Corners = (u8)z | height &lt;&lt; 8 |
+    /// Z* bits &lt;&lt; 16.</summary>
+    public const uint FlagZTest = 64;
+
+    /// <summary>Corners bits 16-23 of <see cref="FlagZTest"/> instances.</summary>
+    public const uint ZLand = 1, ZRoof = 2, ZCotCapable = 4, ZNoCot = 8;
+
+    /// <summary>Light bits of non-lit instances: <see cref="LightCot"/> = the circle of transparency applies (dynamic
+    /// sprites; baked statics derive it from their z); <see cref="LightRotated"/> = rotate the quad about its top-left
+    /// corner by bits 16-31 (u16 turns); <see cref="LightAdditive"/> = add to the target (ClassicUO's Screen effect blend).</summary>
+    public const uint LightCot = 0x1000, LightRotated = 0x2000, LightAdditive = 0x4000;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static uint PackWhf(int w, int h, uint flags) => (uint)(w & 0xFFF) | ((uint)(h & 0xFFF) << 12) | (flags << 24);
@@ -39,9 +51,26 @@ public struct SpriteInstance
 
     public HueMode Mode
     {
-        readonly get => (Whf >> 24 & FlagLit) != 0 ? HueMode.Normal : (HueMode)((Light >> 8) & 0xFF);
-        set { if ((Whf >> 24 & FlagLit) == 0) Light = (Light & ~0xFF00u) | ((uint)value << 8); }
+        readonly get => (Whf >> 24 & FlagLit) != 0 ? HueMode.Normal : (HueMode)((Light >> 8) & 0xF);
+        set { if ((Whf >> 24 & FlagLit) == 0) Light = (Light & ~0xF00u) | (((uint)value & 0xF) << 8); }
     }
+
+    /// <summary>Sets <see cref="LightCot"/>/<see cref="LightAdditive"/> bits (non-lit instances only).</summary>
+    public void SetLightBits(uint bits)
+    {
+        if ((Whf >> 24 & FlagLit) == 0) Light |= bits;
+    }
+
+    /// <summary>Rotates the quad by <paramref name="radians"/> (clockwise on screen, as Batcher2D) about its top-left corner.</summary>
+    public void SetRotation(float radians)
+    {
+        if ((Whf >> 24 & FlagLit) != 0) return;
+        float turns = radians / (2 * MathF.PI);
+        turns -= MathF.Floor(turns);
+        Light = (Light & 0xFFFFu) | LightRotated | ((uint)(turns * 65536f + 0.5f) & 0xFFFF) << 16;
+    }
+
+    public readonly bool Additive => (Whf >> 24 & FlagLit) == 0 && (Light & LightAdditive) != 0;
 
     /// <summary>Whole-sprite hue (ClassicUO's highlight: HUED, not partial). <paramref name="hue"/> is the 1-based UO hue.</summary>
     public void SetHighlight(ushort hue)
@@ -53,7 +82,7 @@ public struct SpriteInstance
 
     public void SetMirror(bool mirror) => Whf = mirror ? Whf | (FlagMirror << 24) : Whf & ~(FlagMirror << 24);
 
-    public readonly bool Translucent => Alpha < 255 || Mode is HueMode.Spectral or HueMode.Shadow;
+    public readonly bool Translucent => Alpha < 255 || Mode is HueMode.Spectral or HueMode.Shadow || Additive;
 }
 
 /// <summary>Per-instance colour mode beyond hued/partial (ClassicUO IsometricWorld.fx: SPECTRAL, SHADOW, EFFECT_HUED).</summary>
@@ -88,7 +117,14 @@ public struct FrameUniforms
     public uint OverrideBase;  // first override slot in the frame table
     public uint TransBase;     // first translucent-pass entry in the frame table
     public uint Pass;          // 0 = opaque (chunk table), 1 = translucent (sorted index list)
-    public uint Pad0, Pad1;
+    // ClassicUO's max-Z and roof hiding for FlagZTest instances (ZFlags: 1 = on, 2 = hide roofs)
+    public int MaxZ, MaxGroundZ;
+    public uint ZFlags;
+    // circle of transparency (shader mode): centre and radius in target pixels, CotZ = player z + 5; CotRadius 0 = off
+    public int CotZ;
+    public float CotCenterX, CotCenterY, CotRadius;
+    public uint TintRow;       // whole-sprite hue row + 1 for every FlagZTest instance (ClassicUO's death screen), 0 = none
+    public uint Pad1, Pad2;
 }
 
 /// <summary>Slot of the per-frame override hash (in the frame table): <see cref="Index1"/> = instance index + 1
@@ -99,7 +135,8 @@ public struct OverrideEntry
     public uint Index1;
     public uint Value;
 
-    public const uint Hidden = 1, Highlight = 2;
+    /// <summary><see cref="ForceShow"/>: draw even where the max-Z / roof test would hide it (a roof still fading out).</summary>
+    public const uint Hidden = 1, Highlight = 2, ForceShow = 4;
     public const int MaxProbes = 8;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

@@ -105,6 +105,21 @@ public sealed unsafe class ChunkStore
         if ((frame & 63) == 0) EvictRegions(frame);
     }
 
+    /// <summary>Drops every chunk (they re-stream and rebake from the next <see cref="Update"/>): after a change of the
+    /// bake inputs, e.g. <see cref="PackSet.LandRemap"/>. Bakes in flight are discarded when they finish.</summary>
+    public void EvictAll()
+    {
+        for (int i = _activeCount - 1; i >= 0; i--)
+        {
+            int slot = _active[i];
+            var st = _state[slot];
+            if (st == State.Ready && _count[slot] > 0) Alloc.Free(_first[slot], _count[slot]);
+            if (st == State.Baked) ReturnJob(_job[slot]);
+            _job[slot] = null;
+            FreeSlot(slot);
+        }
+    }
+
     void MarkRange(long frame, in RectI need)
     {
         // world px -> tile: X-Y = sx/22, X+Y = sy/22. Expand by margins so tall art and z offsets are covered.
@@ -368,6 +383,20 @@ public sealed unsafe class ChunkStore
         => _map.TryGetValue(by * _pack.BlocksX + bx, out slot) && _state[slot] == State.Ready;
 
     public ReadOnlySpan<uint> ObjectKeys(int slot) => _state[slot] == State.Ready ? _cpuKeys.AsSpan(_first[slot], _count[slot]) : default;
+
+    /// <summary>Ready chunks whose sprite bounds meet <paramref name="rect"/> (world pixels).</summary>
+    public int ReadySlotsInRect(in RectI rect, Span<int> slots)
+    {
+        int n = 0;
+        for (int i = 0; i < _activeCount && n < slots.Length; i++)
+        {
+            int slot = _active[i];
+            if (_state[slot] != State.Ready || _count[slot] == 0) continue;
+            if (_maxX[slot] < rect.X0 || _minX[slot] > rect.X1 || _maxY[slot] < rect.Y0 || _minY[slot] > rect.Y1) continue;
+            slots[n++] = slot;
+        }
+        return n;
+    }
 
     public int FirstInstance(int slot) => _first[slot];
     public ReadOnlySpan<SpriteInstance> CpuInstances(int slot) => _state[slot] == State.Ready ? _cpuInst.AsSpan(_first[slot], _count[slot]) : default;
