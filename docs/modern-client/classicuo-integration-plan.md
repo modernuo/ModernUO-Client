@@ -66,6 +66,11 @@ Each step keeps the client runnable. The new world renderer sits behind `WorldRe
    - Mirror World into Friflo, keyed by Serial. Hooks: `GetOrCreateItem/Mobile`, `RemoveItem/Mobile`, `Entity.Destroy`, `SetInWorldTile`, and the packet updates.
    - Add a debug consistency check.
    - Verify: 0 mismatches over a 10-minute session.
+7b. **Per-phase timing hooks plus a quiet-machine baseline** (owner, 2026-10-24).
+    - Time each frame phase behind DevBench's `CUO_FRAMESTATS`: packet processing, World.Update (split mobiles, items, effects and text), UI update, world prepare, world draw, lights, UI draw, RT composite, Present/SwapBuffers, and GC.
+    - Record p50/p95/p99 for JIT and AOT at fixed spots.
+    - These numbers rank what moves to the ECS first: the update loops that cost the most become ECS systems. They also decide whether pipelining is worth it, i.e. a render thread or overlapping the next frame's update with GPU submission, as ClassicUO 2.0's Rust host appears to do.
+    - Context: ClassicUO 2.0 is built on TinyEcs throughout and is pipelined by its host. Our target is a similar ECS-first, pipelined architecture, reached incrementally.
 8. **Uo.Render as a library with an external device.** It takes FNA's device, target texture and format, and selects shaders by driver. It's fed by pack regions and the ECS extract.
    - Verify: Gpu matches Legacy in screenshots; one world draw call.
 9. **Feature parity**, one subtask at a time with screenshot diffs: hue modes, alpha and roofs, highlight, shadows, mirror, effects, weather, lights.
