@@ -54,6 +54,24 @@ UltimaLive support is optional if it costs performance. The v0 format supports i
 The owner asked that everything definitive (e.g. the FNA 26.10 upgrade) land on `poc/modern-client`. `chore/fna-26.10` is merged (6e9675e6e).
 **Pending:** run `git submodule update --init --recursive external/FNA` once the renderer agent finishes. The gitlink points at 26.10, but the checkout is still 25.09, kept deliberately so the SDL3-CS source doesn't change under the agent.
 
+### 2026-10-24 — CP2: converter done (ca5f4d406)
+
+- **Run:** `dotnet run -c Release --project poc/Uo.Converter`. Options: `--uo`, `--out`, `--debug`, `--xfiles`, `--no-maps`, `--verify-only`.
+- **Performance:** full conversion of client 7.0.103 in about 4 s. Output is 1.1 GB: art 663 MB in 31 pages, texmaps 86 MB in 4 pages, maps 351 MB covering facets 0–5.
+- **Verified:** sha256, sprite rects, flags, pixel equality on 6k sampled sprites, regions. Radar and sprite PNGs checked by eye.
+- **Notes for the renderer:**
+  - pixels are RGBA bytes;
+  - land is a 44×44 diamond anchored at the tile's top-left;
+  - statics draw at x − (OrigW/2 − 22), y − (OrigH − 44), then add Trim;
+  - hue h is LUT row h−1, shade = r×31; PartialHue applies only to gray pixels.
+- **Deviations from the spec:**
+  - duplicate images share one atlas rect;
+  - fully transparent art is marked absent;
+  - `FacetFileIo` helper added; JSON is camelCase;
+  - mapdif/stadif patches skipped (they're server-driven).
+- **The ClassicUO loaders aren't thread-safe** (shared seek position). The converter uses one `UOFileManager` per worker.
+- **v1 size win:** BC7 would cut the art from 663 MB to about 170 MB. Regions compress well too (Brotli).
+
 ## Next
 
 - Review each agent's output and commit it.
