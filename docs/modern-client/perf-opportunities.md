@@ -52,6 +52,16 @@ Format: **what**, where (file:line), why it should help, evidence or estimate, a
 - **Roof hiding through per-sprite overrides can mean thousands of overrides.** A max-Z uniform plus a per-instance z test would be cheaper.
 - **Dynamic instances re-upload every frame** (Renderer.cs:314), about 400 KB at 5000 mobiles. Fine for now; ties in with ground-item chunk baking.
 
+## ClassicUO pack-loading path (pack-assets agent, 2026-10-24)
+
+- **A new 1 MiB buffer plus a compressed buffer per chunk decode** (PackAssets.cs:234,246). Fix: pool them.
+- **A full untrimmed RGBA image is built, then rescanned for the picker and real-art bounds** (PackSprites.cs:16,46; Art.cs:74,82; Animation.cs:204,207). Fix: derive both from the pack's trim and Indexed8 data.
+- **A whole animation direction is decoded synchronously the first time a body is seen** (Animation.cs:204), causing a hitch. Fix: prefetch or decode on a worker.
+- **Region loads copy the file 2–3 times** (MapLoader.cs:222; PackReaders.cs:260-264): a full read, then MemoryStream/ToArray, about 1.2 MB per copy. Fix: decode straight into a pooled buffer.
+- **Stretch calculation takes a lock and a dictionary lookup per neighbour cell** (Chunk.cs:94 → Map.cs:114). Fix: cache the current block.
+- **The palette cache is cleared wholesale at 8,192 entries** (AnimationsLoader.cs:196). Fix: LRU eviction.
+- **The atlases hold RGBA8 and never evict** (TextureAtlas, which predates this work). Fix: 16-bit (`Bgra5551`) atlases at half the memory, plus eviction. Becomes moot for the world once the GPU renderer is the default.
+
 ## Pipelining
 
 - **No evidence ClassicUO 2.0 pipelines,** apart from a host upload worker. Revisit a render thread, or overlapping the next update with submission, only if Present or submit is still ≥30% of the frame after the items above.

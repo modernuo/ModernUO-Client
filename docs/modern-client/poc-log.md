@@ -192,6 +192,21 @@ The owner asked that everything definitive (e.g. the FNA 26.10 upgrade) land on 
   - The world is drawn at submission time, so an FNA `Clear()` of the world RT in Gpu mode would wipe it.
   - The circle of transparency is per-sprite alpha only, not a shader circle.
 
+### 2026-10-24 — CP8: ClassicUO is pack-only (f89c6107f)
+
+- **Coverage:** art, texmaps, maps, tiledata, hues, radarcol, animations, animdata, multis, lights, tileart and equipconv load only from the pack, using `-pack <dir>`, `./pack`, or the UO dir.
+- **Removed:** about 5.2k lines of MUL/UOP code, including UltimaLive, verdata and map patches. The old loaders are frozen in `tools/ClassicUO.Assets.Mul` for the converter.
+- **Verified:**
+  - every entry matches the MUL loaders exactly at 5 bits;
+  - all 2.27M animation frames show 0 mismatches, apart from two old-loader bugs (UOP frame-0 gaps, MUL→UOP Body.def aliases) where the pack is now correct;
+  - screenshots at 8 spots are within 1/255;
+  - live checks: backpack, paperdoll, minimap, world map, lights, animated statics and picking;
+  - NativeAOT runs on the pack.
+- **Gaps:**
+  - Loose `Art/` override folders aren't read by the converter yet.
+  - Effects with no animdata lose their frame interval.
+  - A placed house hasn't been seen live.
+
 ## Phase 4 plan (owner, 2026-10-24): bring it into ClassicUO
 
 The owner accepts compressed packs on disk if decompression is fast.
