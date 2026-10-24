@@ -19,13 +19,46 @@ for (int i = 0; i < args.Length; i++)
         case "--xfiles": useX = true; break;
         case "--no-maps": maps = false; break;
         case "--verify-only": convert = false; break;
+        case "--format":
+            ConvertOptions.Format = args[++i].ToLowerInvariant() switch
+            {
+                "rgba8" => Uo.Pack.PixelFormat.Rgba8,
+                "bc7" => Uo.Pack.PixelFormat.Bc7,
+                "b5g5r5a1" => Uo.Pack.PixelFormat.B5G5R5A1,
+                var f => throw new ArgumentException($"unknown format {f}"),
+            };
+            break;
+        case "--bc7-quality": ConvertOptions.Bc7Quality = Enum.Parse<BCnEncoder.Encoder.CompressionQuality>(args[++i], ignoreCase: true); break;
+        case "--compress-regions": ConvertOptions.CompressRegions = true; break;
+        case "--compress-pages": ConvertOptions.CompressPages = true; break;
+        case "--bc7-refine-db": ConvertOptions.Bc7RefineDb = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture); break;
+        case "--threads": ConvertOptions.Threads = Math.Max(1, int.Parse(args[++i])); break;
+        case "--pages":
+        {
+            var pr = args[++i].Split('-');
+            ConvertOptions.Pages = (int.Parse(pr[0]), int.Parse(pr.Length > 1 ? pr[1] : pr[0]));
+            break;
+        }
+        case "--facets": ConvertOptions.Facets = args[++i].Split(',').Select(int.Parse).ToHashSet(); break;
+        case "--regions": ConvertOptions.MaxRegions = int.Parse(args[++i]); break;
+        case "--bench-bc7": Bench.Bc7(args[++i]); return 0;
         default:
-            Console.WriteLine("usage: Uo.Converter [--uo <client dir>] [--out <pack dir>] [--debug <png dir>] [--xfiles] [--no-maps] [--verify-only]");
+            Console.WriteLine("usage: Uo.Converter [--uo <client dir>] [--out <pack dir>] [--debug <png dir>] [--format rgba8|bc7|b5g5r5a1] [--bc7-quality fast|balanced|bestquality] [--bc7-refine-db 28] [--compress-regions] [--compress-pages] [--threads n] [--pages a-b] [--facets 0,1] [--regions n] [--xfiles] [--no-maps] [--verify-only]");
             return 1;
     }
 }
 
 var total = Stopwatch.StartNew();
+if (convert)
+{
+    if (Directory.Exists(debugDir)) Directory.Delete(debugDir, true);
+    Directory.CreateDirectory(debugDir);
+}
+ConvertOptions.DebugDir = debugDir;
+Console.WriteLine($"format {ConvertOptions.Format} (bc7 quality {ConvertOptions.Bc7Quality}), compress regions {ConvertOptions.CompressRegions}, compress pages {ConvertOptions.CompressPages}, threads {ConvertOptions.Threads}" +
+                  (ConvertOptions.PartialPages ? $", pages {ConvertOptions.Pages.Lo}-{ConvertOptions.Pages.Hi}" : "") +
+                  (ConvertOptions.Facets != null ? $", facets {string.Join(",", ConvertOptions.Facets)}" : "") +
+                  (ConvertOptions.MaxRegions != int.MaxValue ? $", first {ConvertOptions.MaxRegions} regions" : ""));
 T Stage<T>(string name, Func<T> f)
 {
     var sw = Stopwatch.StartNew();
@@ -43,11 +76,10 @@ Console.WriteLine($"client {uoPath}  version {versionText} ({clientVersion})  ou
 var fm = Stage("load UOFileManager", () =>
 {
     var m = ClientLoad.Open(clientVersion, uoPath);
-    if (ClientLoad.HasVerdataPatches(m)) Console.WriteLine("  WARNING: verdata.mul has patches; they are NOT applied by the converter");
     return m;
 });
 Console.WriteLine($"  uop={fm.IsUOPInstallation} artEntries={fm.Arts.File.Entries.Length} texEntries={fm.Texmaps.File.Entries.Length} " +
-                  $"land={fm.TileData.LandData.Length} statics={fm.TileData.StaticData.Length} hues={fm.Hues.HuesCount} verdata={(fm.Verdata.File?.Length ?? 0)}");
+                  $"land={fm.TileData.LandData.Length} statics={fm.TileData.StaticData.Length} hues={fm.Hues.HuesCount}");
 
 var stats = new Dictionary<string, object>();
 if (convert)
@@ -57,6 +89,8 @@ if (convert)
 
     stats["art"] = Stage("art", () => ArtConvert.Art(fm, outDir));
     stats["tex"] = Stage("tex", () => ArtConvert.Tex(fm, outDir));
+    if (ConvertOptions.Format == Uo.Pack.PixelFormat.Bc7)
+        Console.WriteLine($"  bc7: {PageCodec.RefineStats.Encoded} non-trivial blocks encoded, {PageCodec.RefineStats.Refined} re-encoded at Balanced (refine below {ConvertOptions.Bc7RefineDb} dB)");
     stats["hues"] = Stage("hues", () => ArtConvert.Hues(fm, outDir));
     stats["tiledata"] = Stage("tiledata", () => ArtConvert.TileData(fm, outDir));
 
@@ -76,7 +110,7 @@ if (convert)
         var files = Directory.EnumerateFiles(outDir, "*", SearchOption.AllDirectories)
             .Where(p => !p.EndsWith("manifest.json", StringComparison.OrdinalIgnoreCase)).OrderBy(p => p, StringComparer.Ordinal).ToArray();
         var entries = new ManifestFile[files.Length];
-        Parallel.For(0, files.Length, i =>
+        Parallel.For(0, files.Length, ConvertOptions.Par, i =>
         {
             using var fs = File.OpenRead(files[i]);
             entries[i] = new ManifestFile

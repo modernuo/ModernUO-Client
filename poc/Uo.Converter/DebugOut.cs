@@ -10,11 +10,9 @@ public static class DebugOut
 {
     public static string Run(UOFileManager fm, string outDir, string debugDir)
     {
-        if (Directory.Exists(debugDir)) Directory.Delete(debugDir, true);
         Directory.CreateDirectory(debugDir);
         const int S = PackConst.PageSize;
         int written = 0;
-        var chain = new byte[AtlasPage.ChainBytes(S, PackConst.PageMipCount)];
 
         // (a) page previews: mip1 (1024x1024) straight from the page file.
         var artDir = Path.Combine(outDir, "art");
@@ -24,15 +22,15 @@ public static class DebugOut
         int midStaticPage = art[0x4000 + 0x0CCA].Present ? art[0x4000 + 0x0CCA].Page : 0;
         foreach (var (dir, page, name) in new[] { (artDir, 0, "art_page_0000_land"), (artDir, midStaticPage, $"art_page_{midStaticPage:D4}_statics"), (texDir, 0, "tex_page_0000") })
         {
-            AtlasPage.Read(PackConst.PagePath(dir, page), chain);
-            var mip1 = MemoryMarshal.Cast<byte, uint>(chain.AsSpan(AtlasPage.MipBytes(S, 0), AtlasPage.MipBytes(S, 1)));
+            if (!File.Exists(PackConst.PagePath(dir, page))) continue; // --pages run
+            var mip1 = PageCodec.ReadMip(PackConst.PagePath(dir, page), 1, out _);
             Png.Write(Path.Combine(debugDir, name + "_mip1.png"), S / 2, S / 2, Png.OverChecker(mip1, S / 2, S / 2, 16));
             written++;
         }
         // Full-res crop of the top-left of the statics page to inspect gutters.
+        if (File.Exists(PackConst.PagePath(artDir, midStaticPage)))
         {
-            AtlasPage.Read(PackConst.PagePath(artDir, midStaticPage), chain);
-            var mip0 = MemoryMarshal.Cast<byte, uint>(chain.AsSpan(0, AtlasPage.MipBytes(S, 0)));
+            var mip0 = PageCodec.ReadMip(PackConst.PagePath(artDir, midStaticPage), 0, out _).AsSpan();
             const int C = 384;
             var crop = new uint[C * C];
             for (int y = 0; y < C; y++) mip0.Slice(y * S, C).CopyTo(crop.AsSpan(y * C, C));
@@ -55,9 +53,8 @@ public static class DebugOut
         foreach (var grp in picks.GroupBy(p => (p.Tex, p.Tex ? tex[p.Id].Page : art[p.Id].Page)))
         {
             var dir = grp.Key.Tex ? texDir : artDir;
-            if (grp.Key.Item2 == PackConst.NoPage) continue;
-            AtlasPage.Read(PackConst.PagePath(dir, grp.Key.Item2), chain);
-            var mip0 = MemoryMarshal.Cast<byte, uint>(chain.AsSpan(0, AtlasPage.MipBytes(S, 0)));
+            if (grp.Key.Item2 == PackConst.NoPage || !File.Exists(PackConst.PagePath(dir, grp.Key.Item2))) continue;
+            var mip0 = PageCodec.ReadMip(PackConst.PagePath(dir, grp.Key.Item2), 0, out _).AsSpan();
             foreach (var p in grp)
             {
                 var e = (p.Tex ? tex : art)[p.Id];
@@ -70,6 +67,7 @@ public static class DebugOut
             }
         }
         // contact sheet at 3x, over a checkerboard, with each sprite's original bounds framed in red.
+        if (sheetImgs.Count > 0)
         {
             const int K = 3, Pad = 6;
             int sw = sheetImgs.Sum(i => i.W * K + Pad) + Pad, sh = sheetImgs.Max(i => i.H) * K + 2 * Pad;
@@ -90,16 +88,58 @@ public static class DebugOut
             written++;
         }
 
+        // (b2) partial-hue fidelity: source | stored (decoded) | gray-broken map, 4x. Red = was exact gray, no longer is
+        // (would not be hued); blue = was coloured, became exact gray (would be hued wrongly); dim = unchanged.
+        {
+            int pid = 0x4000 + 0x1F00; // partial-hue in this client
+            if (!art[pid].Present || (art[pid].Flags & SpriteFlags.PartialHue) == 0)
+                pid = Enumerable.Range(0x4000, art.Length - 0x4000).FirstOrDefault(i => art[i].Present && (art[i].Flags & SpriteFlags.PartialHue) != 0 && art[i].W * art[i].H > 1500);
+            var e = art[pid];
+            if (pid != 0 && File.Exists(PackConst.PagePath(artDir, e.Page)))
+            {
+                var page = PageCodec.ReadMip(PackConst.PagePath(artDir, e.Page), 0, out var ph);
+                var srcInfo = fm.Arts.GetArt((uint)pid);
+                var src = srcInfo.Pixels.ToArray();
+                int w = e.W, h = e.H;
+                var a0 = new uint[w * h]; var b0 = new uint[w * h]; var m0 = new uint[w * h];
+                int broken = 0, turned = 0;
+                for (int y = 0; y < h; y++)
+                    for (int x = 0; x < w; x++)
+                    {
+                        uint sp = src[(e.TrimY + y) * srcInfo.Width + e.TrimX + x], dp = page[(e.Y + y) * S + e.X + x];
+                        a0[y * w + x] = sp; b0[y * w + x] = dp;
+                        if ((sp >> 24) == 0) { m0[y * w + x] = 0xFF202020; continue; }
+                        bool gs = (sp & 0xFF) == ((sp >> 8) & 0xFF) && (sp & 0xFF) == ((sp >> 16) & 0xFF);
+                        bool gd = (dp & 0xFF) == ((dp >> 8) & 0xFF) && (dp & 0xFF) == ((dp >> 16) & 0xFF);
+                        uint dim = ((sp & 0xFEFEFE) >> 1) | 0xFF000000;
+                        m0[y * w + x] = gs && !gd ? 0xFF0000FF : !gs && gd ? 0xFFFF4000 : dim;
+                        if (gs && !gd) broken++; else if (!gs && gd) turned++;
+                    }
+                const int K = 4, Gap = 8;
+                int W = 3 * w * K + 2 * Gap, H = h * K;
+                var o = new uint[W * H];
+                Array.Fill(o, 0xFFFFFFFF);
+                var panels = new[] { Png.OverChecker(a0, w, h, 4), Png.OverChecker(b0, w, h, 4), m0 };
+                for (int i = 0; i < 3; i++)
+                    for (int y = 0; y < H; y++)
+                        for (int x = 0; x < w * K; x++)
+                            o[y * W + i * (w * K + Gap) + x] = panels[i][(y / K) * w + x / K];
+                Png.Write(Path.Combine(debugDir, $"partialhue_{pid - 0x4000:X4}_{ph.Format}_4x.png"), W, H, o);
+                Console.WriteLine($"  partial-hue sample 0x{pid - 0x4000:X4} ({ph.Format}): {broken} gray px broken, {turned} coloured px turned gray");
+                written++;
+            }
+        }
+
         // (c) radar of facet 0 from the region files.
         var fdir = Path.Combine(outDir, "map", "0");
-        if (Directory.Exists(fdir))
+        if (Directory.Exists(fdir) && ConvertOptions.MaxRegions == int.MaxValue)
         {
             var fi = FacetFileIo.Read(fdir);
             var radar = fm.Hues.RadarCol;
             var full = new uint[fi.Width * fi.Height];
             var zbuf = new sbyte[fi.Width * fi.Height];
             int rxc = (fi.BlocksX + 63) / 64, ryc = (fi.BlocksY + 63) / 64;
-            Parallel.For(0, rxc * ryc, r =>
+            Parallel.For(0, rxc * ryc, ConvertOptions.Par, r =>
             {
                 int rx = r % rxc, ry = r / rxc;
                 var (h, blocks) = RegionFile.Read(PackConst.RegionPath(fdir, rx, ry));
@@ -124,7 +164,7 @@ public static class DebugOut
             });
             int f = 4, dw = fi.Width / f, dh = fi.Height / f;
             var small = new uint[dw * dh];
-            Parallel.For(0, dh, y =>
+            Parallel.For(0, dh, ConvertOptions.Par, y =>
             {
                 for (int x = 0; x < dw; x++)
                 {

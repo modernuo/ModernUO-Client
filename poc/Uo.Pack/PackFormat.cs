@@ -42,7 +42,23 @@ public struct FileHeader
     public ulong Reserved;
 }
 
-public enum PixelFormat : ushort { Rgba8 = 0 }
+public enum PixelFormat : ushort
+{
+    Rgba8 = 0,
+    /// <summary>BC7 (BPTC) unorm, 16 bytes per 4x4 block, blocks row-major. v1.</summary>
+    Bc7 = 1,
+    /// <summary>16-bit, little-endian u16 per texel: bits 0-4 B, 5-9 G, 10-14 R, 15 A (SDL_GPU B5G5R5A1_UNORM). v1.
+    /// UO's own 1555 colour layout, so mip0 is bit-exact to the client data.</summary>
+    B5G5R5A1 = 2,
+}
+
+/// <summary>FileHeader.Kind values for region files.</summary>
+public static class FileKind
+{
+    public const ushort Raw = 0;
+    /// <summary>Everything after the 16-byte FileHeader is one Brotli stream. v1.</summary>
+    public const ushort Brotli = 1;
+}
 
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
 public struct PageHeader
@@ -165,6 +181,17 @@ public static class StructIo
 
     public static void WriteSpan<T>(Stream s, ReadOnlySpan<T> values) where T : unmanaged
         => s.Write(MemoryMarshal.AsBytes(values));
+
+    /// <summary>Reads and validates a FileHeader, returning it (so callers can inspect Kind).</summary>
+    public static FileHeader ReadHeaderFull(Stream s, uint expectedMagic)
+    {
+        var h = Read<FileHeader>(s);
+        if (h.Magic != expectedMagic)
+            throw new InvalidDataException($"Bad magic 0x{h.Magic:X8}, expected 0x{expectedMagic:X8}");
+        if (h.Version != PackConst.Version)
+            throw new InvalidDataException($"Unsupported pack version {h.Version}");
+        return h;
+    }
 
     public static T Read<T>(Stream s) where T : unmanaged
     {

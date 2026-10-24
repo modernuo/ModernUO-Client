@@ -36,22 +36,92 @@ public static class AtlasPage
         return total;
     }
 
-    public static void Write(string path, int size, int mips, ReadOnlySpan<byte> chain)
+    /// <summary>Bytes of one mip level in the given format (BC7: 16 bytes per 4x4 block, i.e. 1 byte/pixel).</summary>
+    public static int MipBytes(int size, int mip, PixelFormat format)
     {
-        using var fs = File.Create(path);
-        StructIo.WriteHeader(fs, PackConst.MagicPage);
-        var h = new PageHeader { Width = (ushort)size, Height = (ushort)size, MipCount = (ushort)mips, Format = PixelFormat.Rgba8, DataBytes = (uint)chain.Length };
-        StructIo.Write(fs, in h);
-        fs.Write(chain);
+        int s = size >> mip;
+        return format switch
+        {
+            PixelFormat.Rgba8 => s * s * 4,
+            PixelFormat.Bc7 => ((s + 3) / 4) * ((s + 3) / 4) * 16,
+            PixelFormat.B5G5R5A1 => s * s * 2,
+            _ => throw new NotSupportedException(format.ToString()),
+        };
     }
 
-    /// <summary>Reads a page into <paramref name="into"/>, which must be at least DataBytes long. Returns the header.</summary>
+    public static int ChainBytes(int size, int mips, PixelFormat format)
+    {
+        var total = 0;
+        for (int m = 0; m < mips; m++) total += MipBytes(size, m, format);
+        return total;
+    }
+
+    /// <summary>Byte offset of mip level <paramref name="mip"/> inside the chain.</summary>
+    public static int MipOffset(int size, int mip, PixelFormat format) => ChainBytes(size, mip, format);
+
+    public static void Write(string path, int size, int mips, ReadOnlySpan<byte> chain)
+        => Write(path, size, mips, PixelFormat.Rgba8, chain);
+
+    public static void Write(string path, int size, int mips, PixelFormat format, ReadOnlySpan<byte> chain)
+        => Write(path, size, mips, format, chain, compress: false);
+
+    /// <summary>Brotli quality used for Kind=1 pages.</summary>
+    public const int BrotliQuality = 5;
+
+    /// <summary>
+    /// Writes a page. With <paramref name="compress"/> the file is FileHeader(Kind=1) followed by one Brotli stream of
+    /// everything a Kind=0 file has after its FileHeader (PageHeader + chain). DataBytes is always the uncompressed size.
+    /// </summary>
+    public static void Write(string path, int size, int mips, PixelFormat format, ReadOnlySpan<byte> chain, bool compress)
+    {
+        using var fs = File.Create(path);
+        StructIo.WriteHeader(fs, PackConst.MagicPage, compress ? FileKind.Brotli : FileKind.Raw);
+        var h = new PageHeader { Width = (ushort)size, Height = (ushort)size, MipCount = (ushort)mips, Format = format, DataBytes = (uint)chain.Length };
+        if (!compress)
+        {
+            StructIo.Write(fs, in h);
+            fs.Write(chain);
+            return;
+        }
+        using var br = new System.IO.Compression.BrotliStream(fs, new System.IO.Compression.BrotliCompressionOptions { Quality = BrotliQuality });
+        StructIo.Write(br, in h);
+        br.Write(chain);
+    }
+
+    /// <summary>
+    /// Opens a page (Kind 0 or 1) and returns a stream positioned at the start of the mip chain, plus the header.
+    /// For Kind 1 the stream is a forward-only streaming Brotli decoder. Dispose it when done.
+    /// </summary>
+    public static Stream OpenChain(string path, out PageHeader header)
+    {
+        var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1 << 16);
+        try
+        {
+            var fh = StructIo.ReadHeaderFull(fs, PackConst.MagicPage);
+            Stream s = fh.Kind switch
+            {
+                FileKind.Raw => fs,
+                FileKind.Brotli => new System.IO.Compression.BrotliStream(fs, System.IO.Compression.CompressionMode.Decompress),
+                _ => throw new InvalidDataException($"Unknown page kind {fh.Kind}"),
+            };
+            header = StructIo.Read<PageHeader>(s);
+            return s;
+        }
+        catch
+        {
+            fs.Dispose();
+            throw;
+        }
+    }
+
+    /// <summary>
+    /// Reads a page (raw or Brotli, transparently) into <paramref name="into"/>, which must be at least DataBytes long.
+    /// Decompression streams straight into the caller's span with no intermediate full-size buffer. Returns the header.
+    /// </summary>
     public static PageHeader Read(string path, Span<byte> into)
     {
-        using var fs = File.OpenRead(path);
-        StructIo.ReadHeader(fs, PackConst.MagicPage);
-        var h = StructIo.Read<PageHeader>(fs);
-        fs.ReadExactly(into[..(int)h.DataBytes]);
+        using var s = OpenChain(path, out var h);
+        s.ReadExactly(into[..(int)h.DataBytes]);
         return h;
     }
 }
@@ -69,9 +139,36 @@ public readonly struct BlockData
 /// <summary>Map regions: RegionHeader, block offset table, then block records.</summary>
 public static class RegionFile
 {
+    /// <summary>Brotli quality used for Kind=1 regions.</summary>
+    public const int BrotliQuality = 5;
+
     public static void Write(string path, in RegionHeader header, ReadOnlySpan<BlockData> blocks)
+        => Write(path, in header, blocks, compress: false);
+
+    /// <summary>
+    /// Writes a region. With <paramref name="compress"/> the file is FileHeader(Kind=1) followed by a Brotli stream of
+    /// everything a Kind=0 file has after its FileHeader. Block offsets are always relative to the start of the
+    /// logical (uncompressed) file, i.e. they include the 16-byte FileHeader.
+    /// </summary>
+    public static void Write(string path, in RegionHeader header, ReadOnlySpan<BlockData> blocks, bool compress)
     {
+        if (!compress)
+        {
+            using var f = File.Create(path);
+            WriteRaw(f, in header, blocks);
+            return;
+        }
+        using var ms = new MemoryStream();
+        WriteRaw(ms, in header, blocks);
+        int hs = StructIo.SizeOf<FileHeader>();
         using var fs = File.Create(path);
+        StructIo.WriteHeader(fs, PackConst.MagicRegion, FileKind.Brotli);
+        using (var br = new System.IO.Compression.BrotliStream(fs, new System.IO.Compression.BrotliCompressionOptions { Quality = BrotliQuality }, leaveOpen: true))
+            br.Write(ms.GetBuffer().AsSpan(hs, (int)ms.Length - hs));
+    }
+
+    private static void WriteRaw(Stream fs, in RegionHeader header, ReadOnlySpan<BlockData> blocks)
+    {
         StructIo.WriteHeader(fs, PackConst.MagicRegion);
         StructIo.Write(fs, in header);
         var n = header.BlocksW * header.BlocksH;
@@ -93,9 +190,29 @@ public static class RegionFile
     }
 
     /// <summary>Reads a whole region. Blocks are returned row-major (by * BlocksW + bx).</summary>
-    public static (RegionHeader Header, BlockData[] Blocks) Read(string path)
+    public static (RegionHeader Header, BlockData[] Blocks) Read(string path) => Parse(File.ReadAllBytes(path));
+
+    /// <summary>Returns the logical (uncompressed, Kind=0 layout) bytes of a region file; Kind 0 is returned as-is.</summary>
+    public static byte[] Decompress(byte[] fileBytes)
     {
-        var bytes = File.ReadAllBytes(path);
+        int hs = StructIo.SizeOf<FileHeader>();
+        FileHeader fh;
+        using (var hms = new MemoryStream(fileBytes, 0, hs, writable: false)) fh = StructIo.ReadHeaderFull(hms, PackConst.MagicRegion);
+        if (fh.Kind == FileKind.Raw) return fileBytes;
+        if (fh.Kind != FileKind.Brotli) throw new InvalidDataException($"Unknown region kind {fh.Kind}");
+        using var outMs = new MemoryStream(fileBytes.Length * 6);
+        outMs.Write(fileBytes, 0, hs); // the logical file keeps its header so block offsets stay file-relative
+        using (var br = new System.IO.Compression.BrotliStream(new MemoryStream(fileBytes, hs, fileBytes.Length - hs, writable: false), System.IO.Compression.CompressionMode.Decompress))
+            br.CopyTo(outMs);
+        var logical = outMs.ToArray();
+        logical[6] = 0; logical[7] = 0; // FileHeader.Kind = Raw: the result is a valid Kind-0 file
+        return logical;
+    }
+
+    /// <summary>Parses a region from its file bytes (Kind 0, or Kind 1 = Brotli).</summary>
+    public static (RegionHeader Header, BlockData[] Blocks) Parse(byte[] fileBytes)
+    {
+        var bytes = Decompress(fileBytes);
         using var ms = new MemoryStream(bytes, writable: false);
         StructIo.ReadHeader(ms, PackConst.MagicRegion);
         var header = StructIo.Read<RegionHeader>(ms);
