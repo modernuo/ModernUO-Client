@@ -19,6 +19,8 @@ namespace ClassicUO
         public static uint CurrentRefreshRate;
         public static bool SkipLoginScreen;
         public static bool NoServerPing;
+        public static int EcsCheckFrames;
+        public static string EcsDriverScript;
 
         public static readonly bool IsWindows = Environment.OSVersion.Platform == PlatformID.Win32NT || Environment.OSVersion.Platform == PlatformID.Win32Windows || Environment.OSVersion.Platform == PlatformID.Win32S || Environment.OSVersion.Platform == PlatformID.WinCE;
         public static readonly bool IsUnix = !IsWindows;

@@ -774,6 +774,8 @@ namespace ClassicUO.Network
                     // ???
                 }
             }
+
+            world.Ecs.Sync(mobile);
         }
 
         private static void UpdateItem(World world, ref StackDataReader p)
@@ -1658,6 +1660,7 @@ namespace ClassicUO.Network
                                     world.RemoveItemFromContainer(item);
                                     container.PushToBack(item);
                                     item.Container = container.Serial;
+                                    world.Ecs.Sync(item);
 
                                     UIManager
                                         .GetGump<PaperDollGump>(item.Container)
@@ -1837,6 +1840,7 @@ namespace ClassicUO.Network
             Entity entity = world.Get(item.Container);
 
             entity?.PushToBack(item);
+            world.Ecs.Sync(item);
 
             if (item.Layer >= Layer.ShopBuyRestock && item.Layer <= Layer.ShopSell)
             {
@@ -2816,6 +2820,7 @@ namespace ClassicUO.Network
                 mobile.Graphic = graphic;
                 mobile.CheckGraphicChange();
                 mobile.FixHue(hue);
+                world.Ecs.Sync(mobile);
                 // TODO: x,y,z, direction cause elastic effect, ignore 'em for the moment
             }
             else
@@ -2850,6 +2855,7 @@ namespace ClassicUO.Network
                 world.Player.CheckGraphicChange();
                 world.Player.FixHue(hue);
                 world.Player.Flags = flags;
+                world.Ecs.Sync(world.Player);
             }
             else
             {
@@ -2925,6 +2931,7 @@ namespace ClassicUO.Network
                 item.CheckGraphicChange();
 
                 obj.PushToBack(item);
+                world.Ecs.Sync(item);
 
                 itemSerial = p.ReadUInt32BE();
             }
@@ -3136,6 +3143,7 @@ namespace ClassicUO.Network
                     item.Container = serial;
                     item.Layer = layer - 1;
                     corpse.PushToBack(item);
+                    world.Ecs.Sync(item);
                 }
 
                 layer = (Layer)p.ReadUInt8();
@@ -3718,8 +3726,10 @@ namespace ClassicUO.Network
                     it.Container = serial;
                 }
 
+                uint oldSerial = owner.Serial;
                 world.Mobiles[serial] = owner;
                 owner.Serial = serial;
+                world.Ecs.OnSerialChanged(oldSerial, owner);
             }
 
             if (SerialHelper.IsValid(corpseSerial))
@@ -4512,6 +4522,7 @@ namespace ClassicUO.Network
                     Item spellbook = world.GetOrCreateItem(p.ReadUInt32BE());
                     spellbook.Graphic = p.ReadUInt16BE();
                     spellbook.Clear();
+                    world.Ecs.Sync(spellbook);
                     ushort type = p.ReadUInt16BE();
 
                     for (int j = 0; j < 2; j++)
@@ -6099,6 +6110,7 @@ namespace ClassicUO.Network
             }
         
             container.PushToBack(item);
+            world.Ecs.Sync(item);
         
             if (SerialHelper.IsMobile(containerSerial))
             {

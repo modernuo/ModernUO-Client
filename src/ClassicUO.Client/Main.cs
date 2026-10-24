@@ -245,7 +245,7 @@ namespace ClassicUO
                     }
                 }
 
-                Log.Trace($"ARG: {cmd}, VALUE: {value}");
+                Log.Trace($"ARG: {cmd}, VALUE: {(cmd.StartsWith("password") ? "***" : value)}");
 
                 switch (cmd)
                 {
@@ -412,6 +412,16 @@ namespace ClassicUO
                     case "maps_layouts":
 
                         Settings.GlobalSettings.MapsLayouts = value;
+
+                        break;
+
+                    case "ecscheck":
+                        CUOEnviroment.EcsCheckFrames = int.TryParse(value, out int frames) ? frames : 60;
+
+                        break;
+
+                    case "ecsdriver":
+                        CUOEnviroment.EcsDriverScript = value;
 
                         break;
 

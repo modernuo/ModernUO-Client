@@ -18,6 +18,7 @@ using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Threading;
@@ -38,6 +39,8 @@ namespace ClassicUO
         private readonly RenderLists _renderLists = new();
         private bool _suppressedDraw;
         private bool _pluginsInitialized = false;
+        private bool _loggedWorldTexture;
+        private IntPtr _gpuDevice;
         private float _displayScale;
 
         public GameController(IPluginHost pluginHost)
@@ -102,6 +105,12 @@ namespace ClassicUO
             GraphicManager.ApplyChanges();
 
             SetRefreshRate(Settings.GlobalSettings.FPS);
+
+            if (DevBench.FrameStats)
+            {
+                _intervalFixedUpdate[0] = _intervalFixedUpdate[1] = 0.01f;
+            }
+
             _uoSpriteBatch = new UltimaBatcher2D(GraphicsDevice);
 
             _filter = HandleSdlEvent;
@@ -117,6 +126,11 @@ namespace ClassicUO
         protected override void LoadContent()
         {
             base.LoadContent();
+
+            _gpuDevice = GpuInterop.GetDevice(GraphicsDevice);
+            Log.Trace(_gpuDevice != IntPtr.Zero
+                ? $"SDL_GPU device 0x{_gpuDevice:X}: driver={GpuInterop.GetDriverName(_gpuDevice)} shaders={GpuInterop.GetShaderFormats(_gpuDevice)}"
+                : "FNA3D is not on the SDL_GPU driver; GPU interop disabled");
 
             Fonts.Initialize(GraphicsDevice);
             SolidColorTextureCache.Initialize(GraphicsDevice);
@@ -445,6 +459,11 @@ namespace ClassicUO
             UO.GameCursor?.Update();
             Audio?.Update();
 
+            if (DevBench.Enabled)
+            {
+                DevBench.Update(this);
+            }
+
 
             for (var i = _queuedActions.Count - 1; i >= 0; i--)
             {
@@ -463,12 +482,21 @@ namespace ClassicUO
 
         protected override void Draw(GameTime gameTime)
         {
+            long frameStart = Stopwatch.GetTimestamp();
+            long sceneTicks = 0;
+
             _renderTargets.EnsureSizes(
                 GraphicsDevice,
                 new Rectangle(0, 0, GraphicManager.PreferredBackBufferWidth, GraphicManager.PreferredBackBufferHeight),
                 Scene.Camera.Bounds,
                 DpiScale
             );
+
+            if (!_loggedWorldTexture && _gpuDevice != IntPtr.Zero && _renderTargets.WorldRenderTarget != null)
+            {
+                _loggedWorldTexture = true;
+                Log.Trace($"WorldRenderTarget SDL_GPUTexture: 0x{GpuInterop.GetTexture(_renderTargets.WorldRenderTarget):X}");
+            }
 
             Profiler.EndFrame();
             Profiler.BeginFrame();
@@ -486,7 +514,9 @@ namespace ClassicUO
 
             if (Scene != null && Scene.IsLoaded && !Scene.IsDestroyed)
             {
+                sceneTicks = Stopwatch.GetTimestamp();
                 Scene.Draw(_uoSpriteBatch, _renderTargets);
+                sceneTicks = Stopwatch.GetTimestamp() - sceneTicks;
             }
 
             _uoSpriteBatch.GraphicsDevice.SetRenderTarget(_renderTargets.UiRenderTarget);
@@ -528,6 +558,11 @@ namespace ClassicUO
             Profiler.EnterContext(Profiler.ProfilerContext.OUT_OF_CONTEXT);
 
             Plugin.ProcessDrawCmdList(GraphicsDevice);
+
+            if (DevBench.FrameStats)
+            {
+                DevBench.RecordFrame(frameStart, sceneTicks, Stopwatch.GetTimestamp());
+            }
 
             base.Draw(gameTime);
         }
@@ -933,7 +968,7 @@ namespace ClassicUO
             base.OnExiting(sender, args);
         }
 
-        private void TakeScreenshot()
+        internal void TakeScreenshot()
         {
             string screenshotsFolder = FileSystemHelper.CreateFolderIfNotExists(
                 CUOEnviroment.ExecutablePath,
