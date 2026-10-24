@@ -69,6 +69,7 @@ Each step keeps the client runnable. The new world renderer sits behind `WorldRe
 7b. **Per-phase timing hooks plus a quiet-machine baseline** (owner, 2026-10-24).
     - Time each frame phase behind DevBench's `CUO_FRAMESTATS`: packet processing, World.Update (split mobiles, items, effects and text), UI update, world prepare, world draw, lights, UI draw, RT composite, Present/SwapBuffers, and GC.
     - Record p50/p95/p99 for JIT and AOT at fixed spots.
+    - Also count batcher flushes and draw calls per frame, and the time spent inside FNA per draw (state application, MojoShader uniforms, FNA3D calls). That shows whether a command-list GPU device would pay off. ClassicUO 2.0 records into an `IGpuDevice` command buffer that a native host replays (see cuo-2.0-perf-comparison.md). Long term, that device layer is also the path off FNA for the UI, and onto WebGPU.
     - These numbers rank what moves to the ECS first: the update loops that cost the most become ECS systems. They also decide whether pipelining is worth it, i.e. a render thread or overlapping the next frame's update with GPU submission, as ClassicUO 2.0's Rust host appears to do.
     - Context: ClassicUO 2.0 is built on TinyEcs throughout and is pipelined by its host. Our target is a similar ECS-first, pipelined architecture, reached incrementally.
 8. **Uo.Render as a library with an external device.** It takes FNA's device, target texture and format, and selects shaders by driver. It's fed by pack regions and the ECS extract.
