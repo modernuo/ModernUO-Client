@@ -26,7 +26,8 @@ namespace ClassicUO.Game.Managers
         {
             try
             {
-                new DynamicSoundEffectInstance(0, AudioChannels.Stereo).Dispose();
+                // Probe for audio hardware. FNA rejects sample rates outside FAudio's supported range.
+                new DynamicSoundEffectInstance(22050, AudioChannels.Stereo).Dispose();
             }
             catch (NoAudioHardwareException ex)
             {
