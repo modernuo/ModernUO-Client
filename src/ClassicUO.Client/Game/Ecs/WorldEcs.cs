@@ -1,0 +1,309 @@
+// SPDX-License-Identifier: BSD-2-Clause
+
+using System.Collections.Generic;
+using System.Diagnostics;
+using ClassicUO.Ecs;
+using ClassicUO.Game.GameObjects;
+using ClassicUO.Utility.Logging;
+
+namespace ClassicUO.Game
+{
+    // Mirrors World's items and mobiles into Friflo (ClassicUO.Ecs), keyed by serial. World stays the source of truth:
+    // its choke points call Sync/OnDestroyed and nothing reads the mirror yet except the consistency check and the extract.
+    internal sealed class WorldEcs
+    {
+        private const int MAX_LOGGED_MISMATCHES = 25;
+
+        private readonly World _world;
+        private readonly HashSet<uint> _live = new HashSet<uint>();
+        private readonly List<uint> _extra = new List<uint>();
+        private int _frame;
+        private int _checks, _mismatchesTotal, _checksWithMismatches;
+        private long _extractTicks, _extractMaxTicks, _extractFrames;
+        private int _extractLastCount, _extractMaxCount;
+
+        public WorldEcs(World world)
+        {
+            _world = world;
+            Mirror = new WorldMirror();
+            Extract = new DynamicSpriteExtract(Mirror.Store);
+        }
+
+        public WorldMirror Mirror { get; }
+
+        public DynamicSpriteExtract Extract { get; }
+
+        public EcsSessionDriver Driver { get; private set; }
+
+        public int MismatchesTotal => _mismatchesTotal;
+
+        public int Checks => _checks;
+
+        public void Sync(Entity entity)
+        {
+            if (entity == null || entity.IsDestroyed)
+            {
+                return;
+            }
+
+            if (entity is Item item)
+            {
+                // Only the instance World currently holds for this serial; stale or detached objects are ignored.
+                if (!ReferenceEquals(_world.Items.Get(item.Serial), item))
+                {
+                    return;
+                }
+
+                Mirror.UpsertItem
+                (
+                    item.Serial,
+                    item.Graphic,
+                    item.Hue,
+                    item.X,
+                    item.Y,
+                    item.Z,
+                    (byte)item.Direction,
+                    (byte)item.Flags,
+                    item.Amount,
+                    item.Container,
+                    (byte)item.Layer,
+                    item.IsMulti
+                );
+            }
+            else if (entity is Mobile mobile)
+            {
+                if (!ReferenceEquals(_world.Mobiles.Get(mobile.Serial), mobile))
+                {
+                    return;
+                }
+
+                Mirror.UpsertMobile
+                (
+                    mobile.Serial,
+                    mobile.Graphic,
+                    mobile.Hue,
+                    mobile.X,
+                    mobile.Y,
+                    mobile.Z,
+                    (byte)mobile.Direction,
+                    (byte)mobile.Flags,
+                    ReferenceEquals(mobile, _world.Player)
+                );
+            }
+        }
+
+        public void OnDestroyed(Entity entity)
+        {
+            Entity current = entity is Item ? _world.Items.Get(entity.Serial) : _world.Mobiles.Get(entity.Serial);
+
+            // a newer live object already owns this serial
+            if (current != null && !ReferenceEquals(current, entity) && !current.IsDestroyed)
+            {
+                return;
+            }
+
+            Mirror.Remove(entity.Serial);
+        }
+
+        // Death re-keys a mobile to serial | 0x80000000 and repoints its items.
+        public void OnSerialChanged(uint oldSerial, Entity entity)
+        {
+            Mirror.Remove(oldSerial);
+            Sync(entity);
+
+            for (LinkedObject i = entity.Items; i != null; i = i.Next)
+            {
+                Sync(i as Entity);
+            }
+        }
+
+        public void OnWorldCleared()
+        {
+            if (Mirror.Count != 0)
+            {
+                Log.Warn($"[ECS] {Mirror.Count} entities left after World.Clear; resetting mirror");
+                Mirror.Clear();
+            }
+        }
+
+        public void Update()
+        {
+            int interval = CUOEnviroment.EcsCheckFrames;
+
+            if (interval <= 0)
+            {
+                return;
+            }
+
+            if (Driver == null && CUOEnviroment.EcsDriverScript != null)
+            {
+                Driver = EcsSessionDriver.Load(CUOEnviroment.EcsDriverScript);
+                CUOEnviroment.EcsDriverScript = null;
+            }
+
+            Driver?.EnsureAttached(_world);
+
+            if (_world.Player != null)
+            {
+                long t0 = Stopwatch.GetTimestamp();
+                Extract.Run(_world.Player.X, _world.Player.Y, _world.ClientViewRange);
+                long dt = Stopwatch.GetTimestamp() - t0;
+                _extractTicks += dt;
+                _extractFrames++;
+                _extractLastCount = Extract.Sprites.Length;
+
+                // the first frames include JIT and buffer growth
+                if (dt > _extractMaxTicks && _extractFrames > 120)
+                {
+                    _extractMaxTicks = dt;
+                }
+
+                if (_extractLastCount > _extractMaxCount)
+                {
+                    _extractMaxCount = _extractLastCount;
+                }
+            }
+
+            if (++_frame >= interval)
+            {
+                _frame = 0;
+                RunCheck(false);
+            }
+        }
+
+        public int RunCheck(bool forceSummary)
+        {
+            int mismatches = 0;
+            int items = 0, mobiles = 0;
+            _live.Clear();
+
+            foreach (Item item in _world.Items.Values)
+            {
+                if (item.IsDestroyed)
+                {
+                    continue;
+                }
+
+                items++;
+                _live.Add(item.Serial);
+                CompareItem(item, ref mismatches);
+            }
+
+            foreach (Mobile mobile in _world.Mobiles.Values)
+            {
+                if (mobile.IsDestroyed)
+                {
+                    continue;
+                }
+
+                mobiles++;
+                _live.Add(mobile.Serial);
+                CompareMobile(mobile, ref mismatches);
+            }
+
+            _extra.Clear();
+
+            foreach (uint serial in Mirror.Serials)
+            {
+                if (!_live.Contains(serial))
+                {
+                    _extra.Add(serial);
+                }
+            }
+
+            foreach (uint serial in _extra)
+            {
+                Mirror.TryGet(serial, out MirrorRecord r);
+                Report(ref mismatches, $"0x{serial:X8} in ECS but not in World (mobile={r.IsMobile} g=0x{r.Graphic:X4} parent=0x{r.Parent:X8})");
+            }
+
+            if (Mirror.ItemCount != items || Mirror.MobileCount != mobiles)
+            {
+                Report(ref mismatches, $"counts: World items={items} mobiles={mobiles}, ECS items={Mirror.ItemCount} mobiles={Mirror.MobileCount}");
+            }
+
+            _checks++;
+            _mismatchesTotal += mismatches;
+
+            if (mismatches != 0)
+            {
+                _checksWithMismatches++;
+            }
+
+            if (mismatches != 0 || forceSummary || _checks % 30 == 1)
+            {
+                double us = _extractFrames == 0 ? 0 : _extractTicks * 1_000_000.0 / Stopwatch.Frequency / _extractFrames;
+                double maxUs = _extractMaxTicks * 1_000_000.0 / Stopwatch.Frequency;
+
+                Log.Info
+                (
+                    $"[ECS] check #{_checks}: map={_world.MapIndex} pos=({_world.Player?.X},{_world.Player?.Y}) items={items} mobiles={mobiles} ecs={Mirror.Count} mismatches={mismatches} " +
+                    $"(total {_mismatchesTotal} in {_checksWithMismatches} checks) | extract avg={us:F2}us max={maxUs:F1}us " +
+                    $"sprites={_extractLastCount} (items {Extract.ItemCount}, mobiles {Extract.MobileCount}) max={_extractMaxCount} frames={_extractFrames}"
+                );
+            }
+
+            return mismatches;
+        }
+
+        private void CompareItem(Item item, ref int mismatches)
+        {
+            if (!Mirror.TryGet(item.Serial, out MirrorRecord r))
+            {
+                Report(ref mismatches, $"item 0x{item.Serial:X8} g=0x{item.Graphic:X4} container=0x{item.Container:X8} missing in ECS");
+
+                return;
+            }
+
+            bool onGround = item.Container == WorldMirror.NO_CONTAINER || item.Container == 0;
+            ParentKind kind = onGround ? ParentKind.None : SerialHelper.IsMobile(item.Container) ? ParentKind.Equipped : ParentKind.Contained;
+
+            if (r.IsMobile || r.Graphic != item.Graphic || r.Hue != item.Hue || r.X != item.X || r.Y != item.Y || r.Z != item.Z ||
+                r.Facing != (byte)item.Direction || r.Flags != (byte)item.Flags || r.Amount != item.Amount || r.IsMulti != item.IsMulti ||
+                r.OnGround != onGround || r.ParentKind != kind || (!onGround && r.Parent != item.Container) ||
+                (kind == ParentKind.Equipped && r.Layer != (byte)item.Layer))
+            {
+                Report
+                (
+                    ref mismatches,
+                    $"item 0x{item.Serial:X8}: World g=0x{item.Graphic:X4} h=0x{item.Hue:X4} ({item.X},{item.Y},{item.Z}) dir={(byte)item.Direction} " +
+                    $"f=0x{(byte)item.Flags:X2} amt={item.Amount} multi={item.IsMulti} cont=0x{item.Container:X8} layer={(byte)item.Layer} | " +
+                    $"ECS g=0x{r.Graphic:X4} h=0x{r.Hue:X4} ({r.X},{r.Y},{r.Z}) dir={r.Facing} f=0x{r.Flags:X2} amt={r.Amount} multi={r.IsMulti} " +
+                    $"{r.ParentKind} parent=0x{r.Parent:X8} layer={r.Layer} mobile={r.IsMobile}"
+                );
+            }
+        }
+
+        private void CompareMobile(Mobile mobile, ref int mismatches)
+        {
+            if (!Mirror.TryGet(mobile.Serial, out MirrorRecord r))
+            {
+                Report(ref mismatches, $"mobile 0x{mobile.Serial:X8} g=0x{mobile.Graphic:X4} missing in ECS");
+
+                return;
+            }
+
+            bool isPlayer = ReferenceEquals(mobile, _world.Player);
+
+            if (!r.IsMobile || r.IsPlayer != isPlayer || r.Graphic != mobile.Graphic || r.Hue != mobile.Hue || r.X != mobile.X ||
+                r.Y != mobile.Y || r.Z != mobile.Z || r.Facing != (byte)mobile.Direction || r.Flags != (byte)mobile.Flags)
+            {
+                Report
+                (
+                    ref mismatches,
+                    $"mobile 0x{mobile.Serial:X8}: World g=0x{mobile.Graphic:X4} h=0x{mobile.Hue:X4} ({mobile.X},{mobile.Y},{mobile.Z}) " +
+                    $"dir={(byte)mobile.Direction} f=0x{(byte)mobile.Flags:X2} player={isPlayer} | ECS g=0x{r.Graphic:X4} h=0x{r.Hue:X4} " +
+                    $"({r.X},{r.Y},{r.Z}) dir={r.Facing} f=0x{r.Flags:X2} player={r.IsPlayer} mobile={r.IsMobile}"
+                );
+            }
+        }
+
+        private static void Report(ref int mismatches, string message)
+        {
+            if (mismatches++ < MAX_LOGGED_MISMATCHES)
+            {
+                Log.Warn($"[ECS] mismatch: {message}");
+            }
+        }
+    }
+}

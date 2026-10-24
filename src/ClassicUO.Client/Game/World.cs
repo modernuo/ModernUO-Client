@@ -48,7 +48,10 @@ namespace ClassicUO.Game
             CommandManager = new CommandManager(this);
             Weather = new Weather(this);
             InfoBars = new InfoBarManager(this);
+            Ecs = new WorldEcs(this);
         }
+
+        public WorldEcs Ecs { get; }
 
         public Point RangeSize;
 
@@ -211,6 +214,7 @@ namespace ClassicUO.Game
 
             Player = new PlayerMobile(this, serial);
             Mobiles.Add(Player);
+            Ecs.Sync(Player);
 
             Log.Trace($"Player [0x{serial:X8}] created");
         }
@@ -390,6 +394,7 @@ namespace ClassicUO.Game
                 _effectManager.Update();
                 WorldTextManager.Update();
                 WMapManager.RemoveUnupdatedWEntity();
+                Ecs.Update();
             }
         }
 
@@ -448,6 +453,7 @@ namespace ClassicUO.Game
             {
                 item = Item.Create(this, serial);
                 Items.Add(item);
+                Ecs.Sync(item);
             }
 
             return item;
@@ -467,6 +473,7 @@ namespace ClassicUO.Game
             {
                 mob = Mobile.Create(this, serial);
                 Mobiles.Add(mob);
+                Ecs.Sync(mob);
             }
 
             return mob;
@@ -512,6 +519,7 @@ namespace ClassicUO.Game
             obj.Next = null;
             obj.Previous = null;
             obj.RemoveFromTile();
+            Ecs.Sync(obj);
         }
 
         public bool RemoveItem(uint serial, bool forceRemove = false)
@@ -818,6 +826,7 @@ namespace ClassicUO.Game
             ActiveSpellIcons.Clear();
 
             SkillsRequested = false;
+            Ecs.OnWorldCleared();
         }
 
         private void InternalMapChangeClear(bool noplayer)

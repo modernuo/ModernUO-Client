@@ -120,6 +120,11 @@ namespace ClassicUO.Game.GameObjects
             {
                 chunk.AddGameObject(this, chunkX, chunkY);
             }
+
+            if (this is Entity entity)
+            {
+                World.Ecs.Sync(entity);
+            }
         }
 
         public void RemoveFromTile()
@@ -144,6 +149,11 @@ namespace ClassicUO.Game.GameObjects
         {
             IsPositionChanged = true;
             OnPositionChanged();
+
+            if (this is Entity entity)
+            {
+                World.Ecs.Sync(entity);
+            }
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
