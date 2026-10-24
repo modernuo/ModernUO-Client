@@ -326,9 +326,13 @@ namespace ClassicUO
                         break;
 
                     case "fps":
-                        int v = int.Parse(value);
+                        int v = value == "uncapped" ? 0 : int.Parse(value);
 
-                        if (v < Constants.MIN_FPS)
+                        if (v <= 0)
+                        {
+                            v = 0;
+                        }
+                        else if (v < Constants.MIN_FPS)
                         {
                             v = Constants.MIN_FPS;
                         }
@@ -386,6 +390,11 @@ namespace ClassicUO
                     case "login_music_volume":
                     case "music_volume":
                         Settings.GlobalSettings.LoginMusicVolume = int.Parse(value);
+
+                        break;
+
+                    case "vsync":
+                        Settings.GlobalSettings.VSync = bool.Parse(value);
 
                         break;
 

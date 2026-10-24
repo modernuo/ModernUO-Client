@@ -54,7 +54,10 @@ namespace ClassicUO.Configuration
 
         [JsonPropertyName("last_server_name")] public string LastServerName { get; set; } = string.Empty;
 
-        [JsonPropertyName("fps")] public int FPS { get; set; } = 60;
+        // 0 = uncapped
+        [JsonPropertyName("fps")] public int FPS { get; set; } = 0;
+
+        [JsonPropertyName("vsync")] public bool VSync { get; set; }
 
         [JsonPropertyName("screen_scale")] public float ScreenScale { get; set; } = 1f;
 

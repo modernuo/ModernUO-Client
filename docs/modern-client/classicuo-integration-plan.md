@@ -83,7 +83,7 @@ Each step keeps the client runnable. The new world renderer sits behind `WorldRe
     - **Measurement rules:**
       - Turn off ClassicUO's "reduce FPS when inactive" option; unfocused windows are throttled.
       - Uncap FPS and turn off v-sync.
-      - Build NativeAOT with `IlcInstructionSet=x86-x64-v3` (the i9-12900K has AVX2/FMA/BMI but no AVX-512). JIT already uses AVX2.
+      - Build NativeAOT with `IlcInstructionSet=x86-64-v3` (the i9-12900K has AVX2/FMA/BMI but no AVX-512). JIT already uses AVX2.
       - Report Update, world prepare, draw and Present separately. In the baseline, Update and Present dominate the 1.33 ms frame.
     - **Reference point:** the ClassicUO 2.0 beta (NativeAOT-LLVM WASM guest on a Rust/wgpu host) shows 1000+ FPS against our 600–700. Check first whether the two FPS counters are comparable.
 

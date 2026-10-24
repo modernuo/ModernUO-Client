@@ -103,6 +103,17 @@ namespace ClassicUO.Renderer
         public GraphicsDevice GraphicsDevice { get; }
 
         public int TextureSwitches, FlushesDone;
+
+        public static readonly bool CollectFrameStats = Environment.GetEnvironmentVariable("CUO_FRAMESTATS") == "1"
+                                                        && Environment.GetEnvironmentVariable("CUO_FRAMESTATS_PHASES") != "0";
+        public static int FrameFlushes, FrameDrawCalls;
+        public static long FrameGpuTicks;
+
+        public static void ResetFrameCounters()
+        {
+            FrameFlushes = FrameDrawCalls = 0;
+            FrameGpuTicks = 0;
+        }
         private bool _worldOffsetActive;
 
 
@@ -1184,6 +1195,8 @@ namespace ClassicUO.Renderer
 
         public void DrawDirectIndexed(Texture2D texture, int startIndex, int primitiveCount, int numVertices)
         {
+            long t0 = CollectFrameStats ? Stopwatch.GetTimestamp() : 0;
+
             GraphicsDevice.Textures[0] = texture;
             _basicUOEffect.Pass.Apply();
 
@@ -1212,6 +1225,12 @@ namespace ClassicUO.Renderer
                     startIndex,
                     primitiveCount
                 );
+            }
+
+            if (CollectFrameStats)
+            {
+                FrameDrawCalls++;
+                FrameGpuTicks += Stopwatch.GetTimestamp() - t0;
             }
         }
 
@@ -1283,11 +1302,18 @@ namespace ClassicUO.Renderer
                 return;
             }
 
+            long t0 = CollectFrameStats ? Stopwatch.GetTimestamp() : 0;
+
             ApplyStates();
 
             int arrayOffset = 0;
         nextbatch:
             ++FlushesDone;
+
+            if (CollectFrameStats)
+            {
+                FrameFlushes++;
+            }
 
             int batchSize = Math.Min(_numSprites, MAX_SPRITES);
             int baseOff = UpdateVertexBuffer(arrayOffset, batchSize);
@@ -1318,11 +1344,21 @@ namespace ClassicUO.Renderer
             }
 
             _numSprites = 0;
+
+            if (CollectFrameStats)
+            {
+                FrameGpuTicks += Stopwatch.GetTimestamp() - t0;
+            }
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void InternalDraw(Texture texture, int baseSprite, int batchSize)
         {
+            if (CollectFrameStats)
+            {
+                FrameDrawCalls++;
+            }
+
             GraphicsDevice.Textures[0] = texture;
 
             if (_customEffect != null)

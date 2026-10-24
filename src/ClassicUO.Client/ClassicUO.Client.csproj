@@ -8,6 +8,11 @@
     <PublishAot>true</PublishAot>
   </PropertyGroup>
 
+  <!-- NativeAOT on win-x64 targets x86-64-v3 (AVX2/FMA/BMI2): Haswell / Excavator or newer CPUs -->
+  <PropertyGroup Condition="'$(RuntimeIdentifier)'=='win-x64'">
+    <IlcInstructionSet>x86-64-v3</IlcInstructionSet>
+  </PropertyGroup>
+
   <PropertyGroup Condition="'$(Configuration)'=='Release'">
     <OutputPath>$(ProjectDir)..\..\bin\Release\</OutputPath>
     <PublishDir>$(ProjectDir)..\..\bin\dist\</PublishDir>

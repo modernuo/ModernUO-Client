@@ -940,7 +940,9 @@ namespace ClassicUO.Game.Scenes
 
             bool can_draw_lights = false;
 
+            FrameStats.Begin(FramePhase.Lights);
             can_draw_lights = PrepareLightsRendering(batcher, ref matrix, renderTargets);
+            FrameStats.End(FramePhase.Lights);
             batcher.GraphicsDevice.Viewport = camera_viewport;
 
             DrawWorld(batcher, ref matrix, renderTargets);
@@ -952,6 +954,7 @@ namespace ClassicUO.Game.Scenes
 
         private void DrawWorld(UltimaBatcher2D batcher, ref Matrix matrix, RenderTargets renderTargets)
         {
+            FrameStats.Begin(FramePhase.WorldPrepare);
             batcher.GraphicsDevice.SetRenderTarget(renderTargets.WorldRenderTarget);
             SelectedObject.Object = null;
             Profiler.EnterContext(Profiler.ProfilerContext.RENDER_FRAME_WORLD_PREPARE);
@@ -995,6 +998,8 @@ namespace ClassicUO.Game.Scenes
             }
 
             Profiler.ExitContext(Profiler.ProfilerContext.RENDER_FRAME_WORLD_PREPARE);
+            FrameStats.End(FramePhase.WorldPrepare);
+            FrameStats.Begin(FramePhase.WorldDraw);
             Profiler.EnterContext(Profiler.ProfilerContext.RENDER_FRAME_WORLD);
             batcher.SetSampler(SamplerState.PointClamp);
 
@@ -1049,10 +1054,10 @@ namespace ClassicUO.Game.Scenes
             batcher.SetCircleOfTransparencyRadius(0f);
             batcher.End();
 
-            int flushes = batcher.FlushesDone;
-            int switches = batcher.TextureSwitches;
             batcher.GraphicsDevice.SetRenderTarget(null);
             Profiler.ExitContext(Profiler.ProfilerContext.RENDER_FRAME_WORLD);
+            FrameStats.End(FramePhase.WorldDraw);
+            FrameStats.Set(FrameCounter.RenderListEntries, RenderedObjectsCount);
         }
 
         private bool PrepareLightsRendering(UltimaBatcher2D batcher, ref Matrix matrix, RenderTargets renderTargets)

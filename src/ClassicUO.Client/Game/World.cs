@@ -302,6 +302,8 @@ namespace ClassicUO.Game
                     _timeToDelete = Time.Ticks + 50;
                 }
 
+                FrameStats.Begin(FramePhase.WorldMobiles);
+
                 foreach (Mobile mob in Mobiles.Values)
                 {
                     mob.Update();
@@ -356,6 +358,9 @@ namespace ClassicUO.Game
                     _toRemove.Clear();
                 }
 
+                FrameStats.End(FramePhase.WorldMobiles);
+                FrameStats.Begin(FramePhase.WorldItems);
+
                 foreach (Item item in Items.Values)
                 {
                     item.Update();
@@ -391,10 +396,17 @@ namespace ClassicUO.Game
                     _toRemove.Clear();
                 }
 
+                FrameStats.End(FramePhase.WorldItems);
+                FrameStats.Begin(FramePhase.WorldEffectsText);
                 _effectManager.Update();
                 WorldTextManager.Update();
                 WMapManager.RemoveUnupdatedWEntity();
+                FrameStats.End(FramePhase.WorldEffectsText);
+                FrameStats.Begin(FramePhase.WorldEcs);
                 Ecs.Update();
+                FrameStats.End(FramePhase.WorldEcs);
+                FrameStats.Set(FrameCounter.Mobiles, Mobiles.Count);
+                FrameStats.Set(FrameCounter.Items, Items.Count);
             }
         }
 

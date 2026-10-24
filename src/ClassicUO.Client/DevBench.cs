@@ -8,7 +8,9 @@ namespace ClassicUO
 {
     // Opt-in measurement script, driven by environment variables:
     //   CUO_BENCH_GO="x y"  once in game, [go there, zoom 1, then measure
-    //   CUO_FRAMESTATS=1    uncap the frame rate and log frame / scene-draw timings every 5 s
+    //   CUO_FRAMESTATS=1    uncap the frame rate, force inactive throttling off, log per-phase timings every 5 s (FrameStats)
+    //   CUO_BENCH_PLAN="name:x y:zoom;name:travel;name:walk;say:text;vsync:on|off"  measure each entry for CUO_BENCH_WINDOWS (default 3) windows, then quit
+    //   CUO_BENCH_SIZE=1920x1080  resize the window client area to this many pixels with the game viewport filling it
     //   CUO_BENCH_EXIT=1    walk a few steps, take screenshots and quit when done
     //   CUO_BENCH_SPOTS="x y;x y"  screenshot each spot at zoom 1 and full light, then quit
     //   CUO_BENCH_UI=1      at Britain: paperdoll, backpack, minimap, picking, multi preview, night lights, world map
@@ -19,6 +21,18 @@ namespace ClassicUO
         private static readonly bool _exit = Environment.GetEnvironmentVariable("CUO_BENCH_EXIT") == "1";
         private static readonly string[] _spots = Environment.GetEnvironmentVariable("CUO_BENCH_SPOTS")?.Split(';', StringSplitOptions.RemoveEmptyEntries);
         private static readonly bool _ui = Environment.GetEnvironmentVariable("CUO_BENCH_UI") == "1";
+        private static readonly string[] _plan = Environment.GetEnvironmentVariable("CUO_BENCH_PLAN")?.Split(';', StringSplitOptions.RemoveEmptyEntries);
+        private static readonly string _size = Environment.GetEnvironmentVariable("CUO_BENCH_SIZE");
+        private static readonly int _planWindows = int.TryParse(Environment.GetEnvironmentVariable("CUO_BENCH_WINDOWS"), out int w) ? w : 3;
+        private static readonly (int X, int Y)[] _travel =
+        {
+            (1823, 2821), (2899, 676), (2498, 392), (542, 985), (596, 2138), (4442, 1172), (1495, 1629)
+        };
+        private static int _planIndex, _travelIndex, _windowsAtStart;
+        private static long _travelAt;
+        private static bool _walkBack;
+        private static int _planFrames;
+        private static long _planStart;
         private static int _spot;
         private static Microsoft.Xna.Framework.Point? _mouse;
         private static string _pickWhat;
@@ -26,13 +40,10 @@ namespace ClassicUO
         private static Microsoft.Xna.Framework.Point? _pickTarget;
 
         private const int WINDOWS = 6;
-        private static readonly double[] _frame = new double[1 << 16], _scene = new double[1 << 16], _draw = new double[1 << 16];
-        private static int _count, _windows, _step;
-        private static long _lastFrame, _windowStart, _stepAt, _allocStart;
-        private static int _gcStart;
-        private static bool _measuring;
+        private static int _step;
+        private static long _stepAt;
 
-        public static bool Enabled => FrameStats || _go != null || _spots != null || _ui;
+        public static bool Enabled => FrameStats || _go != null || _spots != null || _ui || _plan != null;
 
         public static void Update(GameController game)
         {
@@ -64,6 +75,13 @@ namespace ClassicUO
                 return;
             }
 
+            if (_plan != null)
+            {
+                UpdatePlan(game, now);
+
+                return;
+            }
+
             if (_go == null || !(game.UO.World?.InGame ?? false))
             {
                 return;
@@ -87,15 +105,21 @@ namespace ClassicUO
                     gs.Camera.Zoom = 1f;
                 }
 
+                ApplySize(game);
                 game.TakeScreenshot();
                 Log.Info($"[bench] at {game.UO.World.Player.X},{game.UO.World.Player.Y},{game.UO.World.Player.Z} zoom 1; measuring");
-                _measuring = FrameStats;
-                _windowStart = 0;
+                _windowsAtStart = ClassicUO.FrameStats.WindowsReported;
+
+                if (FrameStats)
+                {
+                    ClassicUO.FrameStats.StartWindow("go");
+                }
+
                 _step = 3;
             }
-            else if (_step == 3 && (!FrameStats || _windows >= WINDOWS))
+            else if (_step == 3 && (!FrameStats || ClassicUO.FrameStats.WindowsReported - _windowsAtStart >= WINDOWS))
             {
-                _measuring = false;
+                ClassicUO.FrameStats.StopWindow();
                 _step = _exit ? 4 : 99;
                 _stepAt = now;
             }
@@ -444,71 +468,177 @@ namespace ClassicUO
             return null;
         }
 
-        public static void RecordFrame(long frameStart, long sceneTicks, long drawEnd)
+        private static void ApplySize(GameController game)
         {
-            if (!_measuring)
+            if (string.IsNullOrEmpty(_size))
             {
-                _lastFrame = frameStart;
-
                 return;
             }
 
-            if (_windowStart == 0)
-            {
-                _windowStart = frameStart;
-                _lastFrame = frameStart;
-                _count = 0;
-                _allocStart = GC.GetTotalAllocatedBytes();
-                _gcStart = GC.CollectionCount(0);
+            string[] parts = _size.Split('x');
+            int pw = int.Parse(parts[0]), ph = int.Parse(parts[1]);
 
-                return;
+            if (game.IsWindowMaximized())
+            {
+                game.RestoreWindow();
             }
 
-            double toMs = 1000.0 / Stopwatch.Frequency;
-
-            if (_count < _frame.Length)
+            if (game.Window.ClientBounds.Width != pw || game.Window.ClientBounds.Height != ph)
             {
-                _frame[_count] = (frameStart - _lastFrame) * toMs;
-                _scene[_count] = sceneTicks * toMs;
-                _draw[_count] = (drawEnd - frameStart) * toMs;
-                _count++;
+                game.SetWindowSize(pw, ph);
             }
 
-            _lastFrame = frameStart;
-
-            if ((frameStart - _windowStart) * toMs >= 5000)
+            if (Configuration.ProfileManager.CurrentProfile is { } profile)
             {
-                long alloc = GC.GetTotalAllocatedBytes() - _allocStart;
-                int gcs = GC.CollectionCount(0) - _gcStart;
+                profile.GameWindowFullSize = true;
+            }
 
-                Log.Info(
-                    $"[bench] window {_windows + 1}/{WINDOWS}: {_count} frames, {_count / ((frameStart - _windowStart) * toMs / 1000.0):0} fps | " +
-                    $"frame {Stats(_frame, _count)} | scene draw cpu {Stats(_scene, _count)} | Draw() cpu {Stats(_draw, _count)} | " +
-                    $"alloc {alloc / Math.Max(1, _count)} B/frame, gen0 {gcs}"
-                );
-
-                _windows++;
-                _windowStart = 0;
+            if (Game.Managers.UIManager.GetGump<Game.UI.Gumps.WorldViewportGump>() is { } vp)
+            {
+                vp.ResizeGameWindow(new Microsoft.Xna.Framework.Point(game.Window.ClientBounds.Width, game.Window.ClientBounds.Height));
+                vp.SetGameWindowPosition(new Microsoft.Xna.Framework.Point(-5, -5));
             }
         }
 
-        private static string Stats(double[] values, int count)
+        private static void LogSize(GameController game)
         {
-            if (count == 0)
+            var cb = game.Window.ClientBounds;
+            var cam = (game.Scene as Game.Scenes.GameScene)?.Camera.Bounds;
+            Log.Info(
+                $"[bench] window client {cb.Width}x{cb.Height}, backbuffer {game.GraphicManager.PreferredBackBufferWidth}x{game.GraphicManager.PreferredBackBufferHeight}, " +
+                $"dpi scale {game.DpiScale:0.00}, camera {cam}, vsync {game.GraphicManager.SynchronizeWithVerticalRetrace}, fps setting {Configuration.Settings.GlobalSettings.FPS}"
+            );
+        }
+
+        // name:x y:zoom measures a fixed spot; name:travel teleports between towns every 2 s; name:walk paths back and forth near Britain.
+        private static void UpdatePlan(GameController game, long now)
+        {
+            var world = game.UO.World;
+
+            if (!(world?.InGame ?? false))
             {
-                return "-";
+                return;
             }
 
-            double sum = 0;
+            long sec = Stopwatch.Frequency;
+            var gs = game.Scene as Game.Scenes.GameScene;
 
-            for (int i = 0; i < count; i++)
+            if (_step == 4)
             {
-                sum += values[i];
+                _planFrames++;
+                string mode = _plan[_planIndex].Split(':')[1].Trim();
+
+                if (mode == "travel" && now >= _travelAt)
+                {
+                    var (tx, ty) = _travel[_travelIndex++ % _travel.Length];
+                    GameActions.Say($"[go {tx} {ty}");
+                    _travelAt = now + sec * 2;
+                }
+                else if (mode == "walk" && !world.Player.Pathfinder.AutoWalking && now >= _travelAt)
+                {
+                    _walkBack = !_walkBack;
+                    world.Player.Pathfinder.WalkTo(_walkBack ? 1475 : 1495, _walkBack ? 1650 : 1629, world.Player.Z, 0);
+                    _travelAt = now + sec / 2;
+                }
+
+                if (FrameStats ? ClassicUO.FrameStats.WindowsReported - _windowsAtStart >= _planWindows : now >= _stepAt)
+                {
+                    ClassicUO.FrameStats.StopWindow();
+                    world.Player.Pathfinder.StopAutoWalk();
+                    Log.Info($"[bench] {_plan[_planIndex]} done at {world.Player.X},{world.Player.Y},{world.Player.Z}, mobiles {world.Mobiles.Count}, items {world.Items.Count}, " +
+                             $"{_planFrames * (double)sec / (now - _planStart):0} fps (update count)");
+                    _planIndex++;
+                    _step = 1;
+                    _stepAt = now + sec;
+                }
+
+                return;
             }
 
-            Array.Sort(values, 0, count);
+            if (now < _stepAt)
+            {
+                return;
+            }
 
-            return $"avg {sum / count:0.000} p50 {values[count / 2]:0.000} p95 {values[(int)(count * 0.95)]:0.000} p99 {values[(int)(count * 0.99)]:0.000} ms";
+            switch (_step)
+            {
+                case 0:
+                    ApplySize(game);
+                    _step = 1;
+                    _stepAt = now + sec * 5;
+
+                    break;
+
+                case 1:
+                    if (_planIndex >= _plan.Length)
+                    {
+                        Log.Info("[bench] plan done");
+                        _step = 99;
+
+                        if (_exit)
+                        {
+                            game.Exit();
+                        }
+
+                        return;
+                    }
+
+                    if (_plan[_planIndex].StartsWith("vsync:"))
+                    {
+                        game.SetVSync(_plan[_planIndex] == "vsync:on");
+                        Log.Info($"[bench] vsync {game.GraphicManager.SynchronizeWithVerticalRetrace}, present interval {game.GraphicsDevice.PresentationParameters.PresentationInterval}");
+                        _planIndex++;
+                        _stepAt = now + sec * 2;
+
+                        break;
+                    }
+
+                    if (_plan[_planIndex].StartsWith("say:"))
+                    {
+                        GameActions.Say(_plan[_planIndex].Substring(4));
+                        Log.Info($"[bench] said {_plan[_planIndex].Substring(4)}");
+                        _planIndex++;
+                        _stepAt = now + sec * 4;
+
+                        break;
+                    }
+
+                    ApplySize(game);
+
+                    string[] p = _plan[_planIndex].Split(':');
+                    string mode = p[1].Trim();
+                    float zoom = p.Length > 2 ? float.Parse(p[2], System.Globalization.CultureInfo.InvariantCulture) : 1f;
+
+                    if (gs != null)
+                    {
+                        gs.Camera.Zoom = zoom;
+                    }
+
+                    GameActions.Say(mode == "travel" || mode == "walk" ? "[go 1495 1629" : $"[go {mode}");
+                    _step = 2;
+                    _stepAt = now + sec * 8;
+
+                    break;
+
+                case 2:
+                    LogSize(game);
+                    game.TakeScreenshot();
+                    Log.Info($"[bench] {_plan[_planIndex]} at {world.Player.X},{world.Player.Y},{world.Player.Z} zoom {gs?.Camera.Zoom:0.0}, mobiles {world.Mobiles.Count}, items {world.Items.Count}; measuring");
+                    _windowsAtStart = ClassicUO.FrameStats.WindowsReported;
+                    _travelAt = now;
+                    _planStart = now;
+                    _planFrames = 0;
+                    _stepAt = now + sec * 5 * _planWindows;
+
+                    if (FrameStats)
+                    {
+                        ClassicUO.FrameStats.StartWindow(_plan[_planIndex].Split(':')[0].Trim());
+                    }
+
+                    _step = 4;
+
+                    break;
+            }
         }
     }
 }
