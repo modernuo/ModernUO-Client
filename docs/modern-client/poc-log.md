@@ -207,6 +207,29 @@ The owner asked that everything definitive (e.g. the FNA 26.10 upgrade) land on 
   - Effects with no animdata lose their frame interval.
   - A placed house hasn't been seen live.
 
+### 2026-10-24 — CP9: FrameStats, uncapped FPS, quiet baseline (941f3fc94)
+
+- **FrameStats** (`CUO_FRAMESTATS`): per-phase avg/p50/p95/p99 including Present, GC and batcher counters, plus a `FRAMESTATS {json}` line. Overhead is about 1% when on and zero when off.
+- **FPS and VSync:** uncapped by default, with a runtime VSync toggle and Options checkboxes. Reduce-FPS-when-inactive is off by default.
+- **AOT:** `IlcInstructionSet=x86-64-v3` for win-x64 AOT. It made no measurable difference. AOT is still 15–20% slower than JIT on Draw/UI, probably because it lacks dynamic PGO.
+- **Baseline** (idle machine, 1920×1080, JIT p50, ms):
+
+  | Spot | Frame | Draw |
+  |---|---|---|
+  | Britain | 0.52 (1439 fps) | 0.33 |
+  | Bank | 0.48 | — |
+  | Zoomed out | 1.32 (746 fps) | 1.20 |
+
+  - Update is about 0.012 ms.
+  - At 3840×2054 the frame is 1.33 ms, mostly Present (0.45–0.53 ms) plus the composite. **The owner's 600–700 fps reading was largely window size, not Update.**
+  - Zoomed out at 4K: 5.7 ms, 40.5k render-list entries and 1,041 draws.
+- **Top costs:**
+  1. World prepare + draw: 0.22 / 1.09 / 5.2 ms. Uo.Render replaces this.
+  2. FNA per-batch overhead.
+  3. Present + composite at 4K.
+  4. UI allocations of 17.7 KB per frame, about 80% from closures.
+- **Next:** step 8b, the Gpu world renderer in ClassicUO.
+
 ## Phase 4 plan (owner, 2026-10-24): bring it into ClassicUO
 
 The owner accepts compressed packs on disk if decompression is fast.
