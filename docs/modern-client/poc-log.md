@@ -171,13 +171,33 @@ The owner asked that everything definitive (e.g. the FNA 26.10 upgrade) land on 
 
 The owner accepts compressed packs on disk if decompression is fast.
 1. **Finalize the file format.** Use the animation storage results, then consolidate v0+v1 into one final spec.
-2. **Implement the pack format in the ClassicUO client** (src/), alongside the MUL/UOP loaders and chosen by a setting.
+2. **Implement the pack format in the ClassicUO client** (src/). The pack *replaces* MUL/UOP for every converted asset; the owner revised this the same day, so there is no dual path.
 3. **Add Friflo ECS side by side** with ClassicUO's World: mirror entities, then convert systems one at a time. The first is the render extract.
 4. **Replace ClassicUO's world renderer** with the SDL_GPU renderer, committed on this branch. Prove there is no performance problem in general use cases, with NativeAOT on the desktop machine. The main risk is device sharing with FNA, which draws the UI; a read-only spike is investigating it.
 
+The detailed steps are in [classicuo-integration-plan.md](classicuo-integration-plan.md).
+
+### 2026-10-24 — Checkpoint: Phase 4 underway
+
+- **Committed:**
+  - Renderer RGBA8 fallback and Vulkan via SPIR-V (7af7a0ac2).
+  - `PixelExpand` rounding like GPU UNORM sampling (bcd3e8e25).
+  - Chunked Brotli Kind 2, page-size options and experimental Indexed8 animations (bc12d92ae).
+  - The final pack profile decision (500dadfac): 16-bit art with Kind 2 at 1 MiB chunks; Indexed8 1024 animations with no mips.
+- **Integration spike conclusion:** share FNA3D's SDL_GPU device through a small FNA3D patch; the world renders into `WorldRenderTarget`.
+- **Agents in flight:**
+  - FNA 26.10 submodule update, the FNA3D interop patch (with a self-built FNA3D.dll), and the ClassicUO NativeAOT baseline;
+  - the ECS mirror in ClassicUO;
+  - format 1.0: consolidated spec, ship-profile defaults, completeness tables (tiledata, raw hues, radarcol, multis, lights, equipconv), plus a full conversion into `uo-packs/classic-1.0`;
+  - the renderer: Kind 2 pages, an Indexed8 animation path, and animated mobiles in Uo.Client.
+
 ## Next
 
-- The agents in flight: the renderer's RGBA8 fallback and Vulkan; the animation storage investigation; the ClassicUO integration spike.
-- `git submodule update --init --recursive external/FNA` once no agent is building Uo.Render.
+- Review and commit each agent's output.
+- Then:
+  - pack-backed tiledata, hues and maps in ClassicUO (plan step 4);
+  - pack-backed art, texmaps and animations (step 5);
+  - delete the MUL loaders (step 6);
+  - Uo.Render as a library on FNA's device (step 8).
 - Final Flecs.NET timing rounds on a quiet machine, then mark ecs-decision.md accepted. Decide between the preview NuGet package and a pinned commit.
 - Write renderer-decision.md.
