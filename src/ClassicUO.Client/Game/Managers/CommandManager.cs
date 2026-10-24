@@ -63,6 +63,19 @@ namespace ClassicUO.Game.Managers
             );
 
 
+            // -worldrenderer [gpu|legacy]: switch the world renderer at runtime (no argument toggles)
+            Register
+            (
+                "worldrenderer",
+                s =>
+                {
+                    var settings = Configuration.Settings.GlobalSettings;
+                    settings.WorldRenderer = s.Length > 1 ? s[1].ToLowerInvariant() : settings.UseGpuWorldRenderer ? "legacy" : "gpu";
+                    bool active = Client.Game.GetGpuWorld() != null;
+                    GameActions.Print(_world, $"World renderer: {settings.WorldRenderer}{(settings.UseGpuWorldRenderer && !active ? " (unavailable, using legacy)" : "")}");
+                }
+            );
+
             Register
             (
                 "debug",

@@ -36,11 +36,15 @@ namespace ClassicUO.Assets
                 HuesRange[i >> 3].Entries[i & 7] = blocks[i];
             }
 
-            (_, _lut) = HueFile.Read(FileManager.Pack.PathOf("hues.bin"));
+            (PackHueCount, _lut) = HueFile.Read(FileManager.Pack.PathOf("hues.bin"));
             RadarCol = RadarColFile.Read(FileManager.Pack.PathOf(TableConst.RadarColFile));
         }
 
         private uint[] _lut;
+
+        public int PackHueCount { get; private set; }
+
+        public uint[] PackHues => _lut;
 
         public float[] CreateHuesPalette()
         {

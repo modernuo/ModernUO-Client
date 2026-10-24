@@ -551,6 +551,7 @@ namespace ClassicUO.Game.Scenes
             _visibleChunks.Clear();
 
             _foliageCount = 0;
+            _drawFrame++;
 
             if (!_world.InGame)
             {
@@ -648,10 +649,13 @@ namespace ClassicUO.Game.Scenes
                     }
 
                     // Reset visibility and alpha for this frame
-                    chunk.Mesh.Land.ResetVisibility();
-                    chunk.Mesh.Land.ResetAlpha();
-                    chunk.Mesh.Statics.ResetVisibility();
-                    chunk.Mesh.Statics.ResetAlpha();
+                    if (_gpuWorld == null)
+                    {
+                        chunk.Mesh.Land.ResetVisibility();
+                        chunk.Mesh.Land.ResetAlpha();
+                        chunk.Mesh.Statics.ResetVisibility();
+                        chunk.Mesh.Statics.ResetAlpha();
+                    }
 
                     _visibleChunks.Add(chunk);
 
@@ -669,6 +673,11 @@ namespace ClassicUO.Game.Scenes
                                 150,
                                 chunk
                             );
+
+                            if (_gpuWorld != null)
+                            {
+                                CollectGpuHidden(firstObj);
+                            }
                         }
                     }
                 }
@@ -945,7 +954,24 @@ namespace ClassicUO.Game.Scenes
             FrameStats.End(FramePhase.Lights);
             batcher.GraphicsDevice.Viewport = camera_viewport;
 
-            DrawWorld(batcher, ref matrix, renderTargets);
+            var gpu = Client.Game.GetGpuWorld();
+
+            if (
+                gpu != null
+                && renderTargets.WorldRenderTarget?.RenderTargetUsage == RenderTargetUsage.PreserveContents
+                && gpu.EnsureFacet(_world.MapIndex)
+            )
+            {
+                DrawWorldGpu(batcher, ref matrix, renderTargets, gpu);
+            }
+            else
+            {
+                DrawWorld(batcher, ref matrix, renderTargets);
+                FrameStats.Set(FrameCounter.GpuInstances, 0);
+                FrameStats.Set(FrameCounter.GpuDynamic, 0);
+                FrameStats.Set(FrameCounter.GpuOverrides, 0);
+                FrameStats.Set(FrameCounter.GpuDrawCalls, 0);
+            }
 
             batcher.GraphicsDevice.Viewport = r_viewport;
 
@@ -956,6 +982,13 @@ namespace ClassicUO.Game.Scenes
         {
             FrameStats.Begin(FramePhase.WorldPrepare);
             batcher.GraphicsDevice.SetRenderTarget(renderTargets.WorldRenderTarget);
+
+            if (renderTargets.WorldRenderTarget.RenderTargetUsage == RenderTargetUsage.PreserveContents)
+            {
+                // a GPU-mode target (the GPU pass is unavailable for this map): binding it no longer clears it
+                batcher.GraphicsDevice.Clear(ClearOptions.Target | ClearOptions.DepthBuffer | ClearOptions.Stencil, Color.Black, 1f, 0);
+            }
+
             SelectedObject.Object = null;
             Profiler.EnterContext(Profiler.ProfilerContext.RENDER_FRAME_WORLD_PREPARE);
             FillGameObjectList();

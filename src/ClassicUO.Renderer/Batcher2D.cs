@@ -102,6 +102,9 @@ namespace ClassicUO.Renderer
 
         public GraphicsDevice GraphicsDevice { get; }
 
+        /// <summary>While set, sprite draws go to the capture first; the batcher draws only what it declines.</summary>
+        public ISpriteCapture Capture;
+
         public int TextureSwitches, FlushesDone;
 
         public static readonly bool CollectFrameStats = Environment.GetEnvironmentVariable("CUO_FRAMESTATS") == "1"
@@ -318,6 +321,11 @@ namespace ClassicUO.Renderer
 
         public void DrawShadow(Texture2D texture, Vector2 position, Rectangle sourceRect, bool flip, float depth)
         {
+            if (Capture != null && Capture.Draw(texture, position, sourceRect, new Vector3(0, ShaderHueTranslator.SHADER_SHADOW, 1f), flip, false, depth, SpriteCaptureMode.Shadow))
+            {
+                return;
+            }
+
             float width = sourceRect.Width;
             float height = sourceRect.Height * 0.5f;
             float translatedY = position.Y + height - 10;
@@ -383,6 +391,11 @@ namespace ClassicUO.Renderer
             float depth
         )
         {
+            if (Capture != null && Capture.Draw(texture, position, sourceRect, hue, flip, false, depth, SpriteCaptureMode.Sitted))
+            {
+                return;
+            }
+
             EnsureSize();
 
             float h03 = sourceRect.Height * mod.X;
@@ -614,6 +627,11 @@ namespace ClassicUO.Renderer
             float depth
         )
         {
+            if (Capture != null && Capture.Draw(texture, position, sourceRectangle ?? texture.Bounds, color, false, false, depth, SpriteCaptureMode.Normal))
+            {
+                return;
+            }
+
             float sourceX, sourceY, sourceW, sourceH;
             float destW, destH;
 
@@ -650,6 +668,12 @@ namespace ClassicUO.Renderer
             float layerDepth
         )
         {
+            if (Capture != null && Capture.Draw(texture, position, sourceRectangle ?? texture.Bounds, color, (effects & SpriteEffects.FlipHorizontally) != 0,
+                    scale != 1f || rotation != 0f, layerDepth, SpriteCaptureMode.Normal))
+            {
+                return;
+            }
+
             float sourceX, sourceY, sourceW, sourceH;
             float destW = scale;
             float destH = scale;
@@ -705,6 +729,12 @@ namespace ClassicUO.Renderer
             float layerDepth
         )
         {
+            if (Capture != null && Capture.Draw(texture, position, sourceRectangle ?? texture.Bounds, color, (effects & SpriteEffects.FlipHorizontally) != 0,
+                    scale != Vector2.One || rotation != 0f, layerDepth, SpriteCaptureMode.Normal))
+            {
+                return;
+            }
+
             float sourceX, sourceY, sourceW, sourceH;
             if (sourceRectangle.HasValue)
             {
@@ -828,6 +858,17 @@ namespace ClassicUO.Renderer
             float layerDepth
         )
         {
+            if (Capture != null && origin == Vector2.Zero && effects == SpriteEffects.None)
+            {
+                Rectangle source = sourceRectangle ?? texture.Bounds;
+
+                if (destinationRectangle.Width == source.Width && destinationRectangle.Height == source.Height
+                    && Capture.DrawRotated(texture, new Vector2(destinationRectangle.X, destinationRectangle.Y), source, color, rotation, layerDepth))
+                {
+                    return;
+                }
+            }
+
             float sourceX, sourceY, sourceW, sourceH;
             if (sourceRectangle.HasValue)
             {

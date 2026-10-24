@@ -21,6 +21,8 @@ namespace ClassicUO.Assets
 
         public int Count => _sprites.Length;
 
+        public SpriteEntry[] PackSpriteEntries => _sprites;
+
         /// <summary>Per-sprite draw state (anchor offsets, animated-static frame offset), indexed like the sprite table.</summary>
         public ArtEntry[] Entries => _entries;
 

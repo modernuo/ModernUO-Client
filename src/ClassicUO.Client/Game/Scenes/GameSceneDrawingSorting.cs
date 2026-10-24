@@ -590,8 +590,17 @@ namespace ClassicUO.Game.Scenes
                     return 0;
                 }
 
-                mesh.Statics.SetVisible(obj.MeshSpriteIndex, obj.AlphaHue, cot);
-                ApplyMeshHue(obj, mesh.Statics);
+                obj.DrawnFrame = _drawFrame;
+
+                if (_gpuWorld != null)
+                {
+                    GpuOnDrawn(obj);
+                }
+                else
+                {
+                    mesh.Statics.SetVisible(obj.MeshSpriteIndex, obj.AlphaHue, cot);
+                    ApplyMeshHue(obj, mesh.Statics);
+                }
 
                 if (itemData.IsLight)
                 {
@@ -744,6 +753,13 @@ namespace ClassicUO.Game.Scenes
                 }
             }
 
+            obj.DrawnFrame = _drawFrame;
+
+            if (_gpuWorld != null)
+            {
+                GpuOnDrawn(obj);
+            }
+
             _renderLists.Add(obj, isTransparent || obj.AlphaHue != byte.MaxValue);
         }
 
@@ -812,8 +828,18 @@ namespace ClassicUO.Game.Scenes
 
                         if (obj.AlphaHue != 0)
                         {
-                            mesh.Land.SetVisible(obj.MeshSpriteIndex, obj.AlphaHue);
-                            ApplyMeshHue(obj, mesh.Land);
+                            obj.DrawnFrame = _drawFrame;
+
+                            if (_gpuWorld != null)
+                            {
+                                GpuOnDrawn(obj);
+                            }
+                            else
+                            {
+                                mesh.Land.SetVisible(obj.MeshSpriteIndex, obj.AlphaHue);
+                                ApplyMeshHue(obj, mesh.Land);
+                            }
+
                             TrySelectObject(obj, true);
                         }
                         continue;
@@ -894,8 +920,17 @@ namespace ClassicUO.Game.Scenes
                         continue;
                     }
 
-                    mesh.Statics.SetVisible(obj.MeshSpriteIndex, obj.AlphaHue, meshCot);
-                    ApplyMeshHue(obj, mesh.Statics);
+                    obj.DrawnFrame = _drawFrame;
+
+                    if (_gpuWorld != null)
+                    {
+                        GpuOnDrawn(obj);
+                    }
+                    else
+                    {
+                        mesh.Statics.SetVisible(obj.MeshSpriteIndex, obj.AlphaHue, meshCot);
+                        ApplyMeshHue(obj, mesh.Statics);
+                    }
 
                     if (meshItemData.IsLight)
                     {

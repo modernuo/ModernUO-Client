@@ -43,6 +43,12 @@ public sealed class BakeJob : Job
     public static uint DepthKey(int x, int y, int priorityZ, int rank)
         => (uint)(((((x + y) * 100 + 127 + priorityZ + DepthBias) * 16) + (x & 15)) * 8 + Math.Min(rank, 7));
 
+    /// <summary><see cref="DepthKey"/> from D = 100·(x+y) + 127 + priorityZ given directly (hosts that hold ClassicUO's float
+    /// depth (x+y) + (127+z)·0.01 can pass round(depth·100)).</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static uint DepthKeyD(int d, int x, int rank)
+        => (uint)((((d + DepthBias) * 16) + (x & 15)) * 8 + Math.Clamp(rank, 0, 7));
+
     /// <summary>cell (y·8 + x in the block) &lt;&lt; 25 | static &lt;&lt; 24 | (u8)z &lt;&lt; 16 | graphic (land: tile id).</summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static uint ObjectKey(int cell, bool isStatic, int z, int graphic)
@@ -72,6 +78,7 @@ public sealed class BakeJob : Job
 
         var sprites = Pack.Sprites;
         var landData = Pack.Land;
+        var remap = Pack.LandRemap; // season graphics (ClassicUO Land.UpdateGraphicBySeason)
         var staticData = Pack.Statics;
         int n = 0;
         int baseTx = Bx * 8, baseTy = By * 8;
@@ -80,6 +87,7 @@ public sealed class BakeJob : Job
         for (int i = 0; i < 64; i++)
         {
             ushort tile = (ushort)(land[i].TileId & 0x3FFF);
+            if (remap != null) tile = remap[tile];
             if (tile <= 2) continue; // Land.AllowedToDraw = graphic > 2
             int z = land[i].Z;
             int tx = baseTx + (i & 7), ty = baseTy + (i >> 3);
@@ -145,11 +153,13 @@ public sealed class BakeJob : Job
             {
                 int z = land[idx].Z;
                 ushort tile = (ushort)(land[idx].TileId & 0x3FFF);
+                if (remap != null) tile = remap[tile];
                 if (_stretched[idx])
                 {
                     ref readonly var t = ref Pack.Texmaps[landData[tile].TexId];
                     int ax = sx, ay = (tx + ty) * 22 - 22; // posY += Z << 2 cancels the z offset; corners carry z
-                    Emit(ax, ay, t, Pack.TexPageBase + t.Page, 0, SpriteInstance.FlagStretch | SpriteInstance.FlagLit, depth, _light[idx], _corners[idx]);
+                    // corner byte 0 (top) is the tile's own z: the shader's max-Z test reads it
+                    Emit(ax, ay, t, Pack.TexPageBase + t.Page, 0, SpriteInstance.FlagStretch | SpriteInstance.FlagLit | SpriteInstance.FlagZTest, depth, _light[idx], _corners[idx]);
                     Keys[Count - 1] = ObjectKey(cell, false, z, tile);
                     int zmin = Math.Min(Math.Min((sbyte)_corners[idx], (sbyte)(_corners[idx] >> 8)), Math.Min((sbyte)(_corners[idx] >> 16), (sbyte)(_corners[idx] >> 24)));
                     int zmax = Math.Max(Math.Max((sbyte)_corners[idx], (sbyte)(_corners[idx] >> 8)), Math.Max((sbyte)(_corners[idx] >> 16), (sbyte)(_corners[idx] >> 24)));
@@ -160,7 +170,7 @@ public sealed class BakeJob : Job
                     ref readonly var sp = ref sprites[tile];
                     if (!sp.Present) continue;
                     int x = sx + sp.TrimX, y = (tx + ty) * 22 - (z << 2) - 22 + sp.TrimY;
-                    Emit(x, y, sp, sp.Page, 0, 0, depth, 0, 0);
+                    Emit(x, y, sp, sp.Page, 0, SpriteInstance.FlagZTest, depth, 0, (uint)(byte)(sbyte)z | SpriteInstance.ZLand << 16);
                     Keys[Count - 1] = ObjectKey(cell, false, z, tile);
                     Bounds(x, y, x + sp.W, y + sp.H);
                 }
@@ -182,11 +192,26 @@ public sealed class BakeJob : Job
                     hueRow = (uint)(hue - 1);
                     flags = SpriteInstance.FlagHued | (partial ? SpriteInstance.FlagPartial : 0);
                 }
-                Emit(x, y, sp, sp.Page, hueRow, flags, depth, 0, 0);
+                Emit(x, y, sp, sp.Page, hueRow, flags | SpriteInstance.FlagZTest, depth, 0, ZInfo(s.Graphic, s.Z, staticData));
                 Keys[Count - 1] = ObjectKey(cell, true, s.Z, s.Graphic);
                 Bounds(x, y, x + sp.W, y + sp.H);
             }
         }
+    }
+
+    /// <summary>Corners of a <see cref="SpriteInstance.FlagZTest"/> static: (u8)z | height &lt;&lt; 8 | Z* bits &lt;&lt; 16, with
+    /// Static._canBeTransparent (Static.Create) as <see cref="SpriteInstance.ZCotCapable"/>.</summary>
+    static uint ZInfo(int g, int z, StaticTileData[] staticData)
+    {
+        ref readonly var d = ref staticData[g];
+        ulong f = d.Flags;
+        bool roof = (f & TileFlags.Roof) != 0, surface = (f & TileFlags.Surface) != 0, background = (f & TileFlags.Background) != 0;
+        bool cotCapable = d.Height > 5 || d.Height == 0 || roof || surface && background || (f & TileFlags.Wall) != 0
+            || d.Height == 5 && surface && !background;
+        var noCot = Pack.StaticNoCot;
+        bool exempt = (f & TileFlags.Foliage) != 0 || noCot != null && g < noCot.Length && noCot[g];
+        uint bits = (roof ? SpriteInstance.ZRoof : 0) | (cotCapable ? SpriteInstance.ZCotCapable : 0) | (exempt ? SpriteInstance.ZNoCot : 0);
+        return (uint)(byte)(sbyte)z | (uint)d.Height << 8 | bits << 16;
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -274,7 +299,8 @@ public sealed class BakeJob : Job
         return (uint)Math.Clamp((int)MathF.Round(r * 170), 0, 255);
     }
 
-    /// <summary>GameObject.CanBeDrawn for statics (the tiledata "nodraw" name check needs names, which pack v0 lacks).</summary>
+    /// <summary>GameObject.CanBeDrawn for statics; the tiledata "nodraw" name check is the converter's
+    /// <see cref="TilePackFlags.NameNoDraw"/> (0 in v0 packs, which lack it).</summary>
     static bool CanBeDrawn(int g, StaticTileData[] data)
     {
         switch (g)
@@ -286,6 +312,7 @@ public sealed class BakeJob : Job
         }
         if (g != 0x63D3 && g >= 0x2198 && g <= 0x21A4) return false;
         if (g >= data.Length) return false;
+        if (g != 0x63D3 && (data[g].PackFlags & TilePackFlags.NameNoDraw) != 0) return false;
         return (data[g].Flags & TileFlags.NoDiagonal) == 0;
     }
 }
@@ -293,6 +320,6 @@ public sealed class BakeJob : Job
 /// <summary>UO TileFlag bit values used by the renderer.</summary>
 public static class TileFlags
 {
-    public const ulong Background = 0x1, Surface = 0x200, Wet = 0x80, Foliage = 0x20000, PartialHue = 0x40000,
+    public const ulong Background = 0x1, Wall = 0x10, Surface = 0x200, Wet = 0x80, Foliage = 0x20000, PartialHue = 0x40000,
         NoDiagonal = 0x02000000, Roof = 0x10000000, MultiMovable = 0x10000000000;
 }

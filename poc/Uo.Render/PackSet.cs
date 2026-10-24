@@ -3,6 +3,20 @@ using Uo.Pack;
 
 namespace Uo.Render;
 
+/// <summary>Tables a host already loaded from the same pack (ClassicUO's loaders), shared instead of read again. Null
+/// members are read from the pack.</summary>
+public sealed class PackTables
+{
+    public SpriteEntry[] Sprites, Texmaps;
+    public int HueCount;
+    public uint[] Hues;
+    public AnimBodyEntry[] AnimBodies;
+    public AnimDirEntry[] AnimDirs;
+    public AnimFrameEntry[] AnimFrames;
+    /// <summary>Per static graphic: the host keeps it opaque inside the circle of transparency (ClassicUO: trees).</summary>
+    public bool[] StaticNoCot;
+}
+
 /// <summary>Everything the renderer reads from a pack at startup (small tables). Pages and regions stream later.</summary>
 public sealed class PackSet
 {
@@ -13,6 +27,11 @@ public sealed class PackSet
     public readonly StaticTileData[] Statics;
     public readonly int HueCount;
     public readonly uint[] Hues;
+    /// <summary>Host table (<see cref="PackTables.StaticNoCot"/>), or null.</summary>
+    public readonly bool[] StaticNoCot;
+    /// <summary>Land graphic replacement (0x4000 entries, e.g. the host's season tiles), or null. Set it through
+    /// <see cref="WorldRenderer.SetLandRemap"/>, which rebakes the chunks.</summary>
+    public ushort[] LandRemap;
 
     /// <summary>Logical page id → file. Art pages first, then texmap pages (offset by <see cref="TexPageBase"/>).</summary>
     public readonly string[] PagePaths;
@@ -43,14 +62,19 @@ public sealed class PackSet
     public readonly int MapWidth, MapHeight, BlocksX, BlocksY, RegionBlocks;
 
     /// <param name="animRoot">Pack (or its anim/ directory) to take animations from; null = this pack's own.</param>
-    public PackSet(string root, int facet, string animRoot = null)
+    public PackSet(string root, int facet, string animRoot = null) : this(root, facet, animRoot, null) { }
+
+    /// <param name="shared">Tables the host already loaded from this pack (see <see cref="PackTables"/>), or null.</param>
+    public PackSet(string root, int facet, string animRoot, PackTables shared)
     {
         Root = root;
-        Sprites = SpriteTable.Read(Path.Combine(root, "art", "sprites.bin"));
+        Sprites = shared?.Sprites ?? SpriteTable.Read(Path.Combine(root, "art", "sprites.bin"));
         var texPath = Path.Combine(root, "tex", "texmaps.bin");
-        Texmaps = File.Exists(texPath) ? SpriteTable.Read(texPath) : [];
+        Texmaps = shared?.Texmaps ?? (File.Exists(texPath) ? SpriteTable.Read(texPath) : []);
         (Land, Statics) = TileDataFile.Read(Path.Combine(root, "tiledata.bin"));
-        (HueCount, Hues) = HueFile.Read(Path.Combine(root, "hues.bin"));
+        if (shared?.Hues != null) (HueCount, Hues) = (shared.HueCount, shared.Hues);
+        else (HueCount, Hues) = HueFile.Read(Path.Combine(root, "hues.bin"));
+        StaticNoCot = shared?.StaticNoCot;
 
         var artPages = CountPages(Path.Combine(root, "art"));
         var texPages = CountPages(Path.Combine(root, "tex"));
@@ -74,7 +98,8 @@ public sealed class PackSet
         AnimDir = ResolveAnimDir(animRoot ?? root);
         if (AnimDir != null)
         {
-            (AnimBodies, AnimDirs, AnimFrames) = AnimTableFile.Read(Path.Combine(AnimDir, AnimTableFile.FileName));
+            if (shared?.AnimFrames != null) (AnimBodies, AnimDirs, AnimFrames) = (shared.AnimBodies, shared.AnimDirs, shared.AnimFrames);
+            else (AnimBodies, AnimDirs, AnimFrames) = AnimTableFile.Read(Path.Combine(AnimDir, AnimTableFile.FileName));
             int n = CountPages(AnimDir);
             var paths = new string[n];
             for (int i = 0; i < n; i++) paths[i] = PackConst.PagePath(AnimDir, i);
@@ -100,15 +125,28 @@ public sealed class PackSet
             }
         }
 
-        Facet = facet;
-        FacetDir = Path.Combine(root, "map", facet.ToString());
-        using var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(FacetDir, "facet.json")));
+        (Facet, FacetDir, MapWidth, MapHeight, BlocksX, BlocksY, RegionBlocks) = ReadFacet(root, facet);
+    }
+
+    /// <summary>The same pack (all tables shared) on another facet.</summary>
+    public PackSet WithFacet(int facet) => facet == Facet ? this : new PackSet(this, facet);
+
+    PackSet(PackSet o, int facet)
+    {
+        Root = o.Root; Sprites = o.Sprites; Texmaps = o.Texmaps; Land = o.Land; Statics = o.Statics; HueCount = o.HueCount; Hues = o.Hues; StaticNoCot = o.StaticNoCot; LandRemap = o.LandRemap;
+        PagePaths = o.PagePaths; TexPageBase = o.TexPageBase; Format = o.Format; PageSize = o.PageSize; PageMips = o.PageMips;
+        AnimBodies = o.AnimBodies; AnimDirs = o.AnimDirs; AnimFrames = o.AnimFrames; AnimDir = o.AnimDir; AnimPageBase = o.AnimPageBase;
+        AnimIndexed = o.AnimIndexed; AnimPagePaths = o.AnimPagePaths; AnimFormat = o.AnimFormat; AnimPageSize = o.AnimPageSize;
+        AnimPageMips = o.AnimPageMips; FramePalette = o.FramePalette; Palettes = o.Palettes;
+        (Facet, FacetDir, MapWidth, MapHeight, BlocksX, BlocksY, RegionBlocks) = ReadFacet(Root, facet);
+    }
+
+    static (int, string, int, int, int, int, int) ReadFacet(string root, int facet)
+    {
+        var dir = Path.Combine(root, "map", facet.ToString());
+        using var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(dir, "facet.json")));
         var r = doc.RootElement;
-        MapWidth = Get(r, "width");
-        MapHeight = Get(r, "height");
-        BlocksX = Get(r, "blocksX");
-        BlocksY = Get(r, "blocksY");
-        RegionBlocks = Get(r, "regionBlocks", PackConst.RegionBlocks);
+        return (facet, dir, Get(r, "width"), Get(r, "height"), Get(r, "blocksX"), Get(r, "blocksY"), Get(r, "regionBlocks", PackConst.RegionBlocks));
     }
 
     static int Get(JsonElement e, string name, int? fallback = null)

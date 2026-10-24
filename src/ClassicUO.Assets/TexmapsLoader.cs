@@ -15,6 +15,8 @@ namespace ClassicUO.Assets
 
         public int Count => _sprites.Length;
 
+        public SpriteEntry[] PackSpriteEntries => _sprites;
+
         public override void Load()
         {
             _sprites = SpriteTable.Read(FileManager.Pack.PathOf("tex/texmaps.bin"));
