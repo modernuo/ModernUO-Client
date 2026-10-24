@@ -55,7 +55,7 @@ public static class Verify
         for (int i = 0; i < Math.Min(hueCount, fm.Hues.HuesCount); i++)
             for (int k = 0; k < HueFile.Shades; k++)
                 if (hues[i * HueFile.Shades + k] != (PackColor.ToRgb8(fm.Hues.HuesRange[i >> 3].Entries[i & 7].ColorTable[k]) | 0xFF000000) && lutBad++ == 0) Fail($"hue LUT {i}:{k}");
-        Console.WriteLine($"  tiledata: {land.Length} land, {statics.Length} statics (flags, texId, height, layer exact); hues: {hueCount}, LUT = round(c*255/31) of hues.mul {(lutBad == 0 ? "EXACT" : "MISMATCH")}");
+        Console.WriteLine($"  tiledata: {land.Length} land, {statics.Length} statics (flags, texId, height, layer exact); hues: {hueCount}, LUT = bit-replicated (c<<3|c>>2) hues.mul {(lutBad == 0 ? "EXACT" : "MISMATCH")}");
         CheckNoDraw(fm, land, statics);
         CheckTables(fm, outDir);
 

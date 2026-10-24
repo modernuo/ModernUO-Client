@@ -153,9 +153,10 @@ float3 IndexedTap(uint idx, uint pal, uint hueRow, uint flags)
     uint r5 = (c >> 10) & 31u, g5 = (c >> 5) & 31u, b5 = c & 31u;
     if ((flags & FLAG_HUED) != 0 && ((flags & FLAG_PARTIAL) == 0 || (r5 == g5 && r5 == b5)))
         return HueLut.Load(int3(r5, hueRow, 0)).rgb;
-    // canonical 5->8 expansion round(c*255/31) = (c*527+23)>>6, as k/255 so an 8-bit target stores k exactly
-    // (native B5G5R5A1 sampling may bit-replicate instead: c<<3|c>>2, up to 1 lower)
-    return float3((uint3(r5, g5, b5) * 527u + 23u) >> 6) / 255.0;
+    // canonical 5->8 expansion: bit replication c<<3|c>>2 (matches native B5G5R5A1 sampling), as k/255 so an
+    // 8-bit target stores k exactly
+    uint3 c5 = uint3(r5, g5, b5);
+    return float3((c5 << 3) | (c5 >> 2)) / 255.0;
 }
 
 float4 PSIndexed(VSOut i, uint flags)

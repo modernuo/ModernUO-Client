@@ -25,7 +25,7 @@ public static unsafe class Program
         public bool SizeGiven;
         public List<string> BenchFormats; // --bench-formats packA packB ...: one child process per pack         // offscreen: pan at keyboard speed (60 Hz steps) and count visible chunk pop-in         // debug: clear to magenta so unpainted pixels stand out
         public bool ForceExpand;     // --force-expand: 16-bit packs go through the worker RGBA8 expansion even if the GPU samples 16-bit
-        public bool SelfTest;        // --self-test: exhaustive PixelExpand check against round(c*255/31), then exit
+        public bool SelfTest;        // --self-test: exhaustive PixelExpand check against bit replication (c<<3|c>>2), then exit
         public string Driver = "direct3d12"; // --driver vulkan|direct3d12
         public float StartX = 1495, StartY = 1629, StartZoom = 1;
         public int Width = 1600, Height = 900;
@@ -112,7 +112,7 @@ public static unsafe class Program
         {
             long ts = Stopwatch.GetTimestamp();
             int bad = PixelExpand.SelfTest();
-            Console.WriteLine($"self-test: PixelExpand vs round(c*255/31), all 65536 texels (scalar + span at 8 offsets): {bad} mismatches, {Stopwatch.GetElapsedTime(ts).TotalMilliseconds:F0} ms (Vector256 {System.Runtime.Intrinsics.Vector256.IsHardwareAccelerated}, Vector128 {System.Runtime.Intrinsics.Vector128.IsHardwareAccelerated})");
+            Console.WriteLine($"self-test: PixelExpand vs bit replication (c<<3|c>>2), all 65536 texels (scalar + span at 8 offsets): {bad} mismatches, {Stopwatch.GetElapsedTime(ts).TotalMilliseconds:F0} ms (Vector256 {System.Runtime.Intrinsics.Vector256.IsHardwareAccelerated}, Vector128 {System.Runtime.Intrinsics.Vector128.IsHardwareAccelerated})");
             return bad != 0 ? 1 : 0;
         }
         if (o.BenchFormats != null) return FormatBench.Run(o.BenchFormats, o.SizeGiven ? o.Width : 3840, o.SizeGiven ? o.Height : 2160, o.Layers, o.Driver);
