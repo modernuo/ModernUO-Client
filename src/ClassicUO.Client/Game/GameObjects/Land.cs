@@ -95,7 +95,7 @@ namespace ClassicUO.Game.GameObjects
 
         public void ApplyStretch(Map.Map map, int x, int y, sbyte z)
         {
-            if (IsStretched || Client.Game.UO.FileManager.Texmaps.File.GetValidRefEntry(TileData.TexID).Length <= 0)
+            if (IsStretched || !Client.Game.UO.FileManager.Texmaps.Exists(TileData.TexID))
             {
                 IsStretched = false;
                 AverageZ = z;

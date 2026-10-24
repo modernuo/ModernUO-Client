@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- Frozen copy of ClassicUO's MUL/UOP loaders for the pack converter (poc/Uo.Converter). The client no longer
+       reads these formats: it loads the converted pack. Do not reference this from src/. -->
+  <PropertyGroup>
+    <OutputType>Library</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>Preview</LangVersion>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <RootNamespace>ClassicUO.Assets</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\src\ClassicUO.IO\ClassicUO.IO.csproj" />
+    <ProjectReference Include="..\..\src\ClassicUO.Utility\ClassicUO.Utility.csproj" />
+  </ItemGroup>
+
+</Project>

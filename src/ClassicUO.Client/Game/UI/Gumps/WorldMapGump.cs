@@ -1115,44 +1115,13 @@ namespace ClassicUO.Game.UI.Gumps
 
                 _mapTexture?.Dispose();
 
-                var mapFile = Client.Game.UO.FileManager.Maps.GetMapFile(mapIndex);
-                var staticFile = Client.Game.UO.FileManager.Maps.GetStaticFile(mapIndex);
+                var mapKey = $"{mapIndex}";
 
-                if (!_mapCache.TryGetValue(mapFile.FilePath, out var fileMapPath))
+                if (!_mapCache.TryGetValue(mapKey, out var fileMapPath))
                 {
-                    using var mapReader = new BinaryReader(File.Open(mapFile.FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite));
-                    using var staticsReader = new BinaryReader(File.Open(staticFile.FilePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite));
-
-                    static string calculateMd5(BinaryReader file)
-                    {
-                        var md5Ctx = new MD5Behaviour.MD5Context();
-                        MD5Behaviour.Initialize(ref md5Ctx);
-
-                        var h = new byte[4096];
-                        int bytesRead;
-                        while ((bytesRead = file.Read(h)) > 0)
-                            MD5Behaviour.Update(ref md5Ctx, h.AsSpan(0, bytesRead));
-                        MD5Behaviour.Finalize(ref md5Ctx);
-
-                        var strSb = new StringBuilder();
-                        for (int i = 0; i < 16; ++i)
-                            strSb.AppendFormat("{0:x2}", md5Ctx.Digest(i));
-
-                        return strSb.ToString();
-                    }
-
-                    var sum = calculateMd5(mapReader) + calculateMd5(staticsReader);
-                    var md5Ctx = new MD5Behaviour.MD5Context();
-                    MD5Behaviour.Initialize(ref md5Ctx);
-                    MD5Behaviour.Update(ref md5Ctx, MemoryMarshal.AsBytes<char>(sum));
-                    MD5Behaviour.Finalize(ref md5Ctx);
-                    var strSb = new StringBuilder();
-                    for (int i = 0; i < 16; ++i)
-                        strSb.AppendFormat("{0:x2}", md5Ctx.Digest(i));
-                    var hash = strSb.ToString();
-
+                    var hash = Client.Game.UO.FileManager.Maps.GetFacetHash(mapIndex);
                     fileMapPath = Path.Combine(_mapsCachePath, $"map{mapIndex}_{hash}.png");
-                    _mapCache[mapFile.FilePath] = fileMapPath;
+                    _mapCache[mapKey] = fileMapPath;
                 }
 
                 if (!File.Exists(fileMapPath))
@@ -1164,7 +1133,6 @@ namespace ClassicUO.Game.UI.Gumps
 
                         var size = (realWidth + OFFSET_PIX) * (realHeight + OFFSET_PIX);
                         var allZ = new sbyte[size];
-                        var staticBlocks = new StaticsBlock[32];
 
                         using var img = new SixLabors.ImageSharp.Image<Byte4>(new SixLabors.ImageSharp.Configuration()
                         {
@@ -1178,80 +1146,70 @@ namespace ClassicUO.Game.UI.Gumps
 
                         int bx, by, mapX = 0, mapY = 0, x, y;
 
-                        // Workaroud to avoid accessing map files from 2 sources at the same time
-                        UOFile fileMap = null;
-                        UOFile fileStatics = null;
+                        var maps = Client.Game.UO.FileManager.Maps;
+                        int regionBlocks = maps.RegionBlocks(mapIndex);
 
-                        for (bx = 0; bx < fixedWidth; ++bx)
+                        for (int rx = 0; rx * regionBlocks < fixedWidth; ++rx)
                         {
-                            mapX = bx << 3;
-
-                            for (by = 0; by < fixedHeight; ++by)
+                            for (int ry = 0; ry * regionBlocks < fixedHeight; ++ry)
                             {
-                                ref var indexMap = ref map.GetIndex(bx, by);
+                                var region = maps.ReadRegion(mapIndex, rx, ry);
 
-                                if (!indexMap.IsValid())
+                                if (region == null)
                                 {
                                     continue;
                                 }
 
-                                if (fileMap == null)
+                                for (int lx = 0; lx < region.BlocksW; ++lx)
                                 {
-                                    fileMap = new UOFile(indexMap.MapFile.FilePath);
-                                }
+                                    bx = rx * regionBlocks + lx;
+                                    mapX = bx << 3;
 
-                                fileMap.Seek((long)indexMap.MapAddress, System.IO.SeekOrigin.Begin);
-                                var cells = fileMap.Read<MapBlock>().Cells;
-
-                                mapY = by << 3;
-
-                                for (y = 0; y < 8; ++y)
-                                {
-                                    var block = (mapY + y + OFFSET_PIX_HALF) * (realWidth + OFFSET_PIX) + mapX + OFFSET_PIX_HALF;
-                                    var pos = y << 3;
-
-                                    for (x = 0; x < 8; ++x, ++pos, ++block)
+                                    for (int ly = 0; ly < region.BlocksH; ++ly)
                                     {
-                                        ushort color = (ushort)(0x8000 | huesLoader.GetRadarColorData(cells[pos].TileID & 0x3FFF));
+                                        by = ry * regionBlocks + ly;
 
-                                        imgSpan[block].PackedValue = HuesHelper.Color16To32(color) | 0xFF_00_00_00;
-                                        allZ[block] = cells[pos].Z;
-                                    }
-                                }
-
-                                if (fileStatics == null)
-                                {
-                                    fileStatics = new UOFile(indexMap.StaticFile.FilePath);
-                                }
-
-                                fileStatics.Seek((long)indexMap.StaticAddress, System.IO.SeekOrigin.Begin);
-
-                                if (staticBlocks.Length < indexMap.StaticCount)
-                                    staticBlocks = new StaticsBlock[indexMap.StaticCount];
-
-                                var staticsBlocksSpan = staticBlocks.AsSpan(0, (int)indexMap.StaticCount);
-                                fileStatics.Read(MemoryMarshal.AsBytes(staticsBlocksSpan));
-
-                                foreach (ref var sb in staticsBlocksSpan)
-                                {
-                                    if (sb.Color != 0 && sb.Color != 0xFFFF && GameObject.CanBeDrawn(World, sb.Color))
-                                    {
-                                        int block = (mapY + sb.Y + OFFSET_PIX_HALF) * (realWidth + OFFSET_PIX) + mapX + sb.X + OFFSET_PIX_HALF;
-
-                                        if (sb.Z >= allZ[block])
+                                        if (!region.TryGetBlock(lx, ly, out var mapBlock))
                                         {
-                                            var color = (ushort)(0x8000 | (sb.Hue != 0 ? huesLoader.GetColor16(16384, sb.Hue) : huesLoader.GetRadarColorData(sb.Color + 0x4000)));
+                                            continue;
+                                        }
 
-                                            imgSpan[block].PackedValue = HuesHelper.Color16To32(color) | 0xFF_00_00_00;
-                                            allZ[block] = sb.Z;
+                                        var cells = mapBlock.Land;
+                                        mapY = by << 3;
+
+                                        for (y = 0; y < 8; ++y)
+                                        {
+                                            var block = (mapY + y + OFFSET_PIX_HALF) * (realWidth + OFFSET_PIX) + mapX + OFFSET_PIX_HALF;
+                                            var pos = y << 3;
+
+                                            for (x = 0; x < 8; ++x, ++pos, ++block)
+                                            {
+                                                ushort color = (ushort)(0x8000 | huesLoader.GetRadarColorData(cells[pos].TileId));
+
+                                                imgSpan[block].PackedValue = HuesHelper.Color16To32(color) | 0xFF_00_00_00;
+                                                allZ[block] = cells[pos].Z;
+                                            }
+                                        }
+
+                                        foreach (ref readonly var sb in mapBlock.Statics)
+                                        {
+                                            if (GameObject.CanBeDrawn(World, sb.Graphic))
+                                            {
+                                                int block = (mapY + sb.Y + OFFSET_PIX_HALF) * (realWidth + OFFSET_PIX) + mapX + sb.X + OFFSET_PIX_HALF;
+
+                                                if (sb.Z >= allZ[block])
+                                                {
+                                                    var color = (ushort)(0x8000 | (sb.Hue != 0 ? huesLoader.GetColor16(16384, sb.Hue) : huesLoader.GetRadarColorData(sb.Graphic + 0x4000)));
+
+                                                    imgSpan[block].PackedValue = HuesHelper.Color16To32(color) | 0xFF_00_00_00;
+                                                    allZ[block] = sb.Z;
+                                                }
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
-
-                        fileMap?.Dispose();
-                        fileStatics?.Dispose();
 
                         int real_width_less_one = realWidth - 1;
                         int real_height_less_one = realHeight - 1;

@@ -281,32 +281,27 @@ namespace ClassicUO.Game.UI.Gumps
                         break;
                     }
 
-                    ref var indexMap = ref World.Map.GetIndex(i, j);
-
-                    if (!indexMap.IsValid())
+                    if (!World.Map.TryGetBlock(i, j, out var mapBlock))
                     {
                         break;
                     }
 
                     staticsZ.Fill(d);
-                    indexMap.StaticFile.Seek((long)indexMap.StaticAddress, System.IO.SeekOrigin.Begin);
-                    indexMap.MapFile.Seek((long)indexMap.MapAddress, System.IO.SeekOrigin.Begin);
-                    var cells = indexMap.MapFile.Read<MapBlock>().Cells;
+                    var cells = mapBlock.Land;
 
                     Chunk block = World.Map.GetChunk(blockIndex);
                     int realBlockX = i << 3;
                     int realBlockY = j << 3;
 
 
-                    for (int c = 0; c < indexMap.StaticCount; ++c)
+                    foreach (ref readonly var stblock in mapBlock.Statics)
                     {
-                        var stblock = indexMap.StaticFile.Read<StaticsBlock>();
-                        if (stblock.Color > 0 && stblock.Color != 0xFFFF && GameObject.CanBeDrawn(World, stblock.Color))
+                        if (GameObject.CanBeDrawn(World, stblock.Graphic))
                         {
                             ref var st = ref staticsZ[stblock.Y * 8 + stblock.X];
                             if (st.Z < stblock.Z)
                             {
-                                st.Color = stblock.Hue > 0 ? (ushort)(stblock.Hue + 0x4000) : stblock.Color;
+                                st.Color = stblock.Hue > 0 ? (ushort)(stblock.Hue + 0x4000) : stblock.Graphic;
                                 st.Z = stblock.Z;
                                 st.IsLand = stblock.Hue > 0;
                             }
@@ -320,7 +315,7 @@ namespace ClassicUO.Game.UI.Gumps
                         for (int y = 0; y < 8; y++)
                         {
                             ref readonly var cell = ref cells[(y << 3) + x];
-                            int color = cell.TileID;
+                            int color = cell.TileId;
                             bool isLand = true;
                             int z = cell.Z;
 

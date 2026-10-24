@@ -7,6 +7,12 @@
   <ItemGroup>
     <ProjectReference Include="..\ClassicUO.IO\ClassicUO.IO.csproj" />
     <ProjectReference Include="..\ClassicUO.Utility\ClassicUO.Utility.csproj" />
+    <ProjectReference Include="..\..\poc\Uo.Pack\Uo.Pack.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Include="..\..\poc\Uo.Render\PixelExpand.cs" Link="Pack\PixelExpand.cs" />
+    <Using Include="System" />
   </ItemGroup>
 
   <ItemGroup>

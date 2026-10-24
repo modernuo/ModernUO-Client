@@ -1,11 +1,10 @@
 ﻿// SPDX-License-Identifier: BSD-2-Clause
 
-using ClassicUO.IO;
 using ClassicUO.Utility;
 using System;
+using Uo.Pack;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
-using System.Threading.Tasks;
 
 namespace ClassicUO.Assets
 {
@@ -23,31 +22,25 @@ namespace ClassicUO.Assets
 
         public ushort[] RadarCol { get; private set; }
 
-        public override unsafe void Load()
+        public override void Load()
         {
-            var path = FileManager.GetUOFilePath("hues.mul");
+            var entries = HueRawFile.Read(FileManager.Pack.PathOf(TableConst.HueRawFile));
+            int groups = (entries.Length + 7) >> 3;
+            HuesCount = groups * 8;
+            HuesRange = new HuesGroup[groups];
+            var blocks = MemoryMarshal.Cast<HueEntry, HuesBlock>(entries.AsSpan());
 
-            FileSystemHelper.EnsureFileExists(path);
-
-            using var file = new UOFileMul(path);
-            int groupSize = Unsafe.SizeOf<HuesGroup>();
-            int entrycount = (int) file.Length / groupSize;
-            HuesCount = entrycount * 8;
-            HuesRange = new HuesGroup[entrycount];
-
-            for (int i = 0; i < entrycount; i++)
+            for (int i = 0; i < blocks.Length; i++)
             {
-                HuesRange[i] = file.Read<HuesGroup>();
+                HuesRange[i >> 3].Header = 0;
+                HuesRange[i >> 3].Entries[i & 7] = blocks[i];
             }
 
-            path = FileManager.GetUOFilePath("radarcol.mul");
-
-            FileSystemHelper.EnsureFileExists(path);
-
-            using var radarcol = new UOFileMul(path);
-            RadarCol = new ushort[radarcol.Length / sizeof(ushort)];
-            radarcol.Read(MemoryMarshal.AsBytes<ushort>(RadarCol.AsSpan()));
+            (_, _lut) = HueFile.Read(FileManager.Pack.PathOf("hues.bin"));
+            RadarCol = RadarColFile.Read(FileManager.Pack.PathOf(TableConst.RadarColFile));
         }
+
+        private uint[] _lut;
 
         public float[] CreateHuesPalette()
         {
@@ -94,25 +87,8 @@ namespace ClassicUO.Assets
 
         public void CreateShaderColors(uint[] buffer)
         {
-            int len = HuesRange.Length;
-
-            int idx = 0;
-
-            for (int r = 0; r < len; r++)
-            {
-                for (int y = 0; y < 8; y++)
-                {
-                    for (int x = 0; x < 32; x++)
-                    {
-                        buffer[idx++] = HuesHelper.Color16To32(HuesRange[r].Entries[y].ColorTable[x]) | 0xFF_00_00_00;
-
-                        if (idx >= buffer.Length)
-                        {
-                            return;
-                        }
-                    }
-                }
-            }
+            int n = Math.Min(buffer.Length, _lut.Length);
+            _lut.AsSpan(0, n).CopyTo(buffer);
         }
 
         //public float[] GetColorForShader(ushort color)
@@ -131,21 +107,6 @@ namespace ClassicUO.Assets
         //    }
 
         //    return _empty;
-        //}
-
-        //public static void SetHuesBlock(int index, IntPtr ptr)
-        //{
-        //    VerdataHuesGroup group = Marshal.PtrToStructure<VerdataHuesGroup>(ptr);
-        //    SetHuesBlock(index, group);
-        //}
-
-        //public static void SetHuesBlock(int index, VerdataHuesGroup group)
-        //{
-        //    if (index < 0 || index >= HuesCount)
-        //        return;
-
-        //    HuesRange[index].Header = group.Header;
-        //    for (int i = 0; i < 8; i++) HuesRange[index].Entries[i].ColorTable = group.Entries[i].ColorTable;
         //}
 
         public ushort GetColor16(ushort c, ushort color)
@@ -267,23 +228,6 @@ namespace ClassicUO.Assets
     public struct HuesGroup
     {
         public uint Header;
-        public HuesBlockArray Entries;
-    }
-
-    [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public struct VerdataHuesBlock
-    {
-        public ColorTableArray ColorTable;
-        public ushort TableStart;
-        public ushort TableEnd;
-        public unsafe fixed byte Name[20];
-        public unsafe fixed ushort Unk[20];
-    }
-
-    [StructLayout(LayoutKind.Sequential, Pack = 1)]
-    public struct VerdataHuesGroup
-    {
-        public readonly uint Header;
         public HuesBlockArray Entries;
     }
 

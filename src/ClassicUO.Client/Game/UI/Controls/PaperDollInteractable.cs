@@ -355,9 +355,8 @@ namespace ClassicUO.Game.UI.Controls
                 }
             }
 
-            if (Client.Game.UO.FileManager.TileArt.TryGetTileArtInfo(itemGraphic, out var tileArtInfo))
             {
-                if (tileArtInfo.TryGetAppearance(mobileGraphic, out var appareanceId))
+                if (Client.Game.UO.FileManager.TileArt.TryGetAppearance(itemGraphic, mobileGraphic, out var appareanceId))
                 {
                     var gumpId = (ushort)(Constants.MALE_GUMP_OFFSET + appareanceId);
                     if (Client.Game.UO.Gumps.GetGump(gumpId).Texture != null)

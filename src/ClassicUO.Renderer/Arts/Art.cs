@@ -1,4 +1,4 @@
-using ClassicUO.Assets;
+﻿using ClassicUO.Assets;
 using ClassicUO.Utility;
 using ClassicUO.Utility.Logging;
 using Microsoft.Xna.Framework;
@@ -23,13 +23,12 @@ namespace ClassicUO.Renderer.Arts
             _artLoader = artLoader;
             _huesLoader = huesLoader;
             _atlas = new TextureAtlas(device, 4096, 4096, SurfaceFormat.Color);
-            _spriteInfos = new SpriteInfo[_artLoader.File.Entries.Length];
+            _spriteInfos = new SpriteInfo[_artLoader.Count];
             _realArtBounds = new Rectangle[_spriteInfos.Length];
         }
 
         public void Reload()
         {
-            _artLoader.LoadOurs();
             Array.Clear(_spriteInfos);
             Array.Clear(_realArtBounds);
             _picker.Clear();
