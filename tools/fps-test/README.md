@@ -15,7 +15,7 @@
 4. Type the account password at the masked prompt (the username defaults to `kbatman2`; use `-Username` to change it).
 5. Don't touch the mouse or keyboard until it prints the results. The client window stays on top and closes itself at the end.
 
-The results are written to `C:\Repositories\cuo-fps-test\results-<timestamp>.md` and also printed to the console. If the run fails, a client log with the password masked is saved next to it as `fps-test-failed-<timestamp>.log`.
+The results are written to `C:\Repositories\cuo-fps-test\results-<timestamp>.md` and also printed to the console. If the run fails, a client log with the password masked is saved next to it as `fps-test-failed-<timestamp>.log`. When the GPU driver logged errors during the run (for example nvlddmkm event 153, a driver reset that takes the client's graphics device with it), the failure message and the log list them.
 
 ## What it does
 
