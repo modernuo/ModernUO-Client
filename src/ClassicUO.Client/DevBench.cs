@@ -49,6 +49,10 @@ namespace ClassicUO
         private static Game.GameObjects.GameObject _pickObject;
         private static Microsoft.Xna.Framework.Point? _pickTarget;
 
+        // flip:N[:frames[:walk]] state: world renderer toggles left, frames between toggles, walking while flipping
+        private static int _flipLeft, _flipEvery, _flipFrame, _flipTotal;
+        private static bool _flipWalk;
+
         private const int WINDOWS = 6;
         private static int _step;
         private static long _stepAt;
@@ -732,6 +736,34 @@ namespace ClassicUO
             long sec = Stopwatch.Frequency;
             var gs = game.Scene as Game.Scenes.GameScene;
 
+            if (_flipLeft > 0)
+            {
+                if (_flipWalk && !world.Player.Pathfinder.AutoWalking && now >= _travelAt)
+                {
+                    _walkBack = !_walkBack;
+                    world.Player.Pathfinder.WalkTo(_walkBack ? 1475 : 1495, _walkBack ? 1650 : 1629, world.Player.Z, 0);
+                    _travelAt = now + sec / 2;
+                }
+
+                if (++_flipFrame >= _flipEvery)
+                {
+                    _flipFrame = 0;
+                    _flipLeft--;
+                    _flipTotal++;
+                    var gset = Configuration.Settings.GlobalSettings;
+                    gset.WorldRenderer = _flipLeft == 0 || !gset.UseGpuWorldRenderer ? "gpu" : "legacy";
+
+                    if (_flipLeft == 0)
+                    {
+                        world.Player.Pathfinder.StopAutoWalk();
+                        Log.Info($"[bench] flip done: {_flipTotal} world renderer toggles so far, now {gset.WorldRenderer} (gpu available: {game.GetGpuWorld() != null})");
+                        _stepAt = now + sec * 2;
+                    }
+                }
+
+                return;
+            }
+
             if (_step == 4)
             {
                 _planFrames++;
@@ -849,6 +881,20 @@ namespace ClassicUO
                         Log.Info($"[bench] size {_size}");
                         _planIndex++;
                         _stepAt = now + sec * 3;
+
+                        break;
+                    }
+
+                    if (_plan[_planIndex].StartsWith("flip:"))
+                    {
+                        // flip:N[:frames[:walk]] toggles the world renderer N times, every `frames` frames (default 1), ending on gpu
+                        string[] f = _plan[_planIndex].Split(':');
+                        _flipLeft = Math.Max(1, int.Parse(f[1]));
+                        _flipEvery = f.Length > 2 ? Math.Max(1, int.Parse(f[2])) : 1;
+                        _flipWalk = f.Length > 3 && f[3] == "walk";
+                        _flipFrame = 0;
+                        Log.Info($"[bench] flip {_flipLeft} toggles every {_flipEvery} frame(s){(_flipWalk ? ", walking" : "")}");
+                        _planIndex++;
 
                         break;
                     }

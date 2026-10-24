@@ -247,7 +247,7 @@ try {
     }
 
     if (-not $failure -and -not $planDone) {
-        $failure = "The client exited before the plan finished (exit code $($proc.ExitCode))."
+        $failure = "The client exited before the plan finished (exit code {0} / 0x{0:X8})." -f $proc.ExitCode
     }
 }
 catch {
@@ -275,8 +275,17 @@ finally {
     }
 
     if ($failure) {
+        # A GPU driver reset (nvlddmkm event 153, a Display TDR 4101, ...) takes the client's graphics device with it
+        $gpuEvents = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'nvlddmkm', 'amdkmdag', 'igfx', 'Display'; StartTime = $started } -ErrorAction SilentlyContinue)
+        $gpuText = ''
+        if ($gpuEvents.Count -gt 0) {
+            $failure += " The GPU driver logged $($gpuEvents.Count) event(s) during the run (" +
+                (($gpuEvents | ForEach-Object { "$($_.ProviderName) $($_.Id) at $($_.TimeCreated.ToString('HH:mm:ss'))" }) -join ', ') +
+                '); a driver reset takes the client''s graphics device with it.'
+            $gpuText = "`r`nGPU driver events:`r`n" + (($gpuEvents | ForEach-Object { "$($_.TimeCreated.ToString('o')) $($_.ProviderName) $($_.Id) $($_.Message)" }) -join "`r`n")
+        }
         $failLog = Join-Path $ResultsDir "fps-test-failed-$stamp.log"
-        Hide-Secret (($lines -join "`r`n") + "`r`n" + $(if (Test-Path "$log.err") { Get-Content "$log.err" -Raw })) |
+        Hide-Secret (($lines -join "`r`n") + "`r`n" + $(if (Test-Path "$log.err") { Get-Content "$log.err" -Raw }) + $gpuText) |
             Set-Content -Encoding UTF8 $failLog
     }
 

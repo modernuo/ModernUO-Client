@@ -323,6 +323,33 @@ The owner asked that everything definitive (e.g. the FNA 26.10 upgrade) land on 
   - World prepare is 0.02–0.1 ms higher in Gpu mode, as in step 8.
   - The results file was deleted afterwards. The owner's desktop run is the step 10 verdict.
 
+### 2026-10-24 — Step 10: the owner's FPS test hit a GPU driver reset (uncommitted)
+
+- **What happened:** the owner's run (AOT bf274f4f9) died right after the first `world:legacy` switch. The System log has nvlddmkm event 153 (the NVIDIA driver reset the GPU for the process) in the same second. SDL then printed "Out of device-local memory" and "Out of BAR memory", and the client exited with no crash log and no WER entry.
+- **Not reproduced.** All on the same desktop, driver 617.42, with no nvlddmkm event in any of these runs:
+  - the AOT baseline: 6 runs of the start of the owner's plan, 3 runs of the full plan with the window on top as the script does, and 12 logins straight into Legacy;
+  - the new DevBench `flip:N[:frames[:walk]]` entry, which toggles the world renderer every few frames. Each toggle recreates the world RT.
+    - JIT: about 15,000 toggles (every frame, every 2 to 30 frames, with resizes, walking and teleports).
+    - The republished AOT build: the same 14,000-toggle plan 4 times under validation (one run with sync validation).
+- **Validation:** Khronos validation layer (nightly build in the scratchpad: `VK_LAYER_PATH` + `VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation`), plus sync validation and GPU-AV runs. There is no Vulkan SDK on the machine.
+  - The only error: `VUID-VkPipelineRasterizationStateCreateInfo-depthClampEnable-00782` on Uo.Render's two pipelines. SDL maps `enable_depth_clip = false` to depth clamp, and FNA3D creates its device without the depthClamp feature.
+  - **Fixed:** the pipelines now use depth clip. The vertex shader saturates depth, so the output is unchanged (`--external-test` is pixel-identical on Vulkan). Every later run had 0 validation errors and 0 sync hazards, toggles included.
+- **The switch itself checks out:**
+  - The old world RT is released through SDL, which keeps it alive until the command buffers that used it finish.
+  - Uo.Render re-fetches the RT's texture every frame, and records and submits its command buffer in one call, so none is left open.
+  - Its depth texture follows the RT's size.
+  - SDL's Vulkan defragmenter can't move the staging buffers that PageResidency keeps mapped across frames: transfer buffers are dedicated allocations (checked with a scratch test).
+- **Not specific to the Gpu renderer:** the machine logged the same event 153 on 2026-07-27 at 13:50:06. That is the same second the stock ClassicUO build of that day (FNA 25.09, FNA3D on SDL_GPU/Vulkan, no Uo.Render) created its first profile and `seasons.txt`, i.e. while it was logging in. Event 153 also appears on 2026-08-11.
+- **After the reset:** SDL_GPU doesn't recover from a lost device. A failed submit leaks its command buffer and the references it holds, so every frame's cycled buffers and textures are new allocations. That fits the two SDL memory warnings: they come after the reset, not before it.
+- **Diagnostics added:**
+  - `Renderer.SubmitFailures` / `LastSubmitError`; the client logs the first failed world submit once.
+  - `run-fps-test.ps1` puts GPU driver events (nvlddmkm, Display, …) logged during a failed run into the message and the log, and prints the exit code in hex.
+- **Re-published** with `publish-aot.ps1`. `run-fps-test.ps1 -Windows 1` completed in 3.1 min (the results file was deleted). FPS Legacy → Gpu: Britain 1397 → 1366, bank 1442 → 1531, zoomed out 614 → 870, walk 1432 → 1461, maximised zoomed out 158 → 249.
+- **Checks:** client Release build, 188 unit tests and `--external-test` on Vulkan (0 validation errors) all pass.
+- **Still open:**
+  - What triggers the reset.
+  - How the client behaves after one. A forced TDR (`dxcap -forcetdr`) would show it, but that resets the display for the whole desktop, so it needs the owner's OK.
+
 ## Phase 4 plan (owner, 2026-10-24): bring it into ClassicUO
 
 The owner accepts compressed packs on disk if decompression is fast.

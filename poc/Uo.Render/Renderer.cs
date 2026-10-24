@@ -257,7 +257,13 @@ public sealed unsafe class Renderer : IDisposable
             vertex_shader = _vs,
             fragment_shader = _ps,
             primitive_type = SDL_GPUPrimitiveType.SDL_GPU_PRIMITIVETYPE_TRIANGLELIST,
-            rasterizer_state = new SDL_GPURasterizerState { fill_mode = SDL_GPUFillMode.SDL_GPU_FILLMODE_FILL, cull_mode = SDL_GPUCullMode.SDL_GPU_CULLMODE_NONE },
+            // Depth clip, not clamp: SDL maps enable_depth_clip=false to Vulkan depthClampEnable, which needs the depthClamp
+            // feature, and FNA3D creates its device without it (VUID-VkPipelineRasterizationStateCreateInfo-depthClampEnable-00782).
+            // The vertex shader saturates depth, so clip and clamp draw the same.
+            rasterizer_state = new SDL_GPURasterizerState
+            {
+                fill_mode = SDL_GPUFillMode.SDL_GPU_FILLMODE_FILL, cull_mode = SDL_GPUCullMode.SDL_GPU_CULLMODE_NONE, enable_depth_clip = true,
+            },
             depth_stencil_state = new SDL_GPUDepthStencilState
             {
                 compare_op = SDL_GPUCompareOp.SDL_GPU_COMPAREOP_LESS,
@@ -560,9 +566,19 @@ public sealed unsafe class Renderer : IDisposable
             return true;
         }
 
-        SDL_SubmitGPUCommandBuffer(cmd);
+        if (!SDL_SubmitGPUCommandBuffer(cmd))
+        {
+            // e.g. VK_ERROR_DEVICE_LOST after a driver reset: every later frame fails too
+            SubmitFailures++;
+            LastSubmitError = SDL_GetError();
+            return false;
+        }
         return true;
     }
+
+    /// <summary>Frames whose command buffer submit failed, and SDL's error for the last one (a lost device, typically).</summary>
+    public int SubmitFailures;
+    public string LastSubmitError;
 
     void UploadFrameTable(IntPtr copy, uint srcOffset, uint dstOffset, uint bytes, ref bool cycle)
     {

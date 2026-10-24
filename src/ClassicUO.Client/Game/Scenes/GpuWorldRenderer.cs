@@ -482,6 +482,12 @@ namespace ClassicUO.Game.Scenes
 
             bool ok = _world.Render(texture, (uint)target.Width, (uint)target.Height, GpuTextureFormat.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, false);
 
+            if (_world.Renderer.SubmitFailures > 0 && !_loggedSubmitFailure)
+            {
+                _loggedSubmitFailure = true;
+                Log.Error($"GPU world: command buffer submit failed ({_world.Renderer.LastSubmitError}); the GPU device was probably lost (driver reset)");
+            }
+
             if (DevBench.Enabled && Time.Ticks >= _nextStatsLog)
             {
                 _nextStatsLog = Time.Ticks + 5000;
@@ -498,6 +504,7 @@ namespace ClassicUO.Game.Scenes
         }
 
         private uint _nextStatsLog;
+        private bool _loggedSubmitFailure;
 
         public void Dispose()
         {
