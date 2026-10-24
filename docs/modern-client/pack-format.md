@@ -9,7 +9,11 @@ For every content type described here, the client reads only the pack. MUL/UOP s
 - All integers are little-endian. All structs are packed (no padding beyond the explicit `pad` fields) and blittable.
 - "Colour" and "16-bit colour" mean UO's 1555 layout: bits 0–4 blue, 5–9 green, 10–14 red, bit 15 alpha (1 = visible) where stated, otherwise as stored by the client.
 - Ids index tables directly: a table's entry `i` is id `i`.
-- **Canonical 5→8-bit expansion:** `e(c) = round(c·255/31) = (c·527 + 23) >> 6`, for `c` in 0..31. GPUs return this value when they sample `B5G5R5A1_UNORM`. Every CPU expansion in the pack and runtime uses it (`Uo.Pack.PackColor`). `(v·31 + 127) / 255` and `v >> 3` both invert it exactly. ClassicUO's `HuesHelper` table is `floor(c·255/31)` (at most 1 lower per channel) and is not used.
+- **Canonical 5→8-bit expansion: bit replication, `e(c) = (c << 3) | (c >> 2)`**, for `c` in 0..31.
+  - This is what the GPU returns when it samples `B5G5R5A1_UNORM`; measured on D3D12 and Vulkan.
+  - Every CPU expansion in the pack and runtime uses it: `Uo.Pack.PackColor`, `PixelExpand`, and the Indexed8 palette lookup in the shader. With it, native 16-bit sampling, the RGBA8 expansion fallback and Indexed8 render **bit-identically**: 0 differing pixels at zoom 1 and 0.5, lit land included.
+  - `v >> 3` inverts it exactly.
+  - It differs from `round(c·255/31)` only for c = 3, 7, 24, 28 (by 1), and ClassicUO's `HuesHelper` table is `floor(c·255/31)`. Neither is used.
 - An RGBA8 value stored as a `u32` has red in the low byte: `r | g << 8 | b << 16 | a << 24`.
 
 ## Layout
@@ -243,7 +247,7 @@ ClassicUO hides some tiles in code rather than with tiledata flags. The converte
 
 `FileHeader`, `count i32`, then `count × 32` RGBA8 `u32`. Row `i` is hue `i + 1` (UO hue 0 = unhued), column `s` is shade 0..31, alpha 0xFF. Each texel is the canonical expansion of `hues_raw.bin`'s colour.
 
-**Change in 1.0:** the LUT is regenerated with `round(c·255/31)` (ClassicUO uses `floor`); version-0 packs have the floor values. The 5-bit colours are in `hues_raw.bin` for exact CPU work.
+**Change in 1.0:** the LUT is regenerated with the canonical bit-replication expansion (ClassicUO uses `floor`); version-0 packs have the floor values. The 5-bit colours are in `hues_raw.bin` for exact CPU work.
 
 Shader hueing follows ClassicUO: the shade index is the texel's 5-bit red channel. A partial-hue sprite hues only exactly gray texels (`r5 == g5 == b5`, compared as 5-bit integers, no tolerance).
 
