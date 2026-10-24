@@ -14,6 +14,7 @@ dotnet publish src\ClassicUO.Client\ClassicUO.Client.csproj -c Release -r win-x6
 
 - **Output:** `cuo.exe` (about 15 MB) plus the natives from `external/x64` (SDL3, FNA3D, FAudio, libtheorafile, zlib). Copy the `Data` folder only if you want screenshots kept next to the exe.
 - **No code changes were needed** to publish or run it.
+- **Instruction set (step 7b):** win-x64 publishes now set `<IlcInstructionSet>x86-64-v3</IlcInstructionSet>` (AVX2, FMA, BMI1/2, LZCNT, MOVBE). The exe then needs a **Haswell (2013) or newer Intel, or an Excavator or newer AMD, CPU**; older CPUs fail at startup. The same setting is in `poc/Uo.Client` and `poc/Uo.Render.App`. Note the spelling: ILC rejects `x86-x64-v3`. Pass `-p:IlcInstructionSet=` to build for the default baseline ISA. Measured effect: classicuo-perf-baseline.md.
 
 ## Trim and AOT warnings (IL2xxx / IL3xxx)
 
@@ -74,7 +75,7 @@ These match the earlier EcsBench finding: Friflo needs explicit type registratio
 **Findings:**
 
 - **AOT is about 10–15% slower on CPU than JIT here.** Startup is faster, but steady-state code is not: JIT has Dynamic PGO and targets the host ISA (AVX2), while ILC's default target is a conservative x64 baseline.
-  - Try `<IlcInstructionSet>x86-x64-v3</IlcInstructionSet>` (or `native` for local runs) before comparing renderers in step 10.
+  - Try `<IlcInstructionSet>x86-64-v3</IlcInstructionSet>` (or `native` for local runs) before comparing renderers in step 10. Done in step 7b; see the Publish section.
 - **The frame is dominated by everything outside Draw.** Of about 1.35 ms, Update, input and Present take about 0.8 ms. World prepare plus draw is only about 0.35 ms at this spot and size.
   - The legacy renderer is cheap on a quiet street. Step 10 needs busier scenes (the bank, zoomed out, travelling) to show differences.
 - **Steady-state allocation is about 17–18 KB per frame** (≈ 12 MB/s at 700 FPS, 4 gen0 GCs per 5 s), on both runtimes. That's a separate backlog item.

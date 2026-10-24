@@ -28,6 +28,8 @@ Both count presented frames per second, but the tests weren't like for like.
 
 ## Where our ~1.35 ms frame goes, from reading the code
 
+**Measured since (step 7b, classicuo-perf-baseline.md):** at 3840×2054 the time outside Draw is almost all Present (0.45–0.53 ms) plus the RT composite (0.12 ms); Update is about 0.015 ms on the local shard. The 250 FPS cap is gone (uncapped by default).
+
 - **Total `Draw()`:** about 0.53 ms, of which the scene draw is 0.34 ms. That leaves **about 0.8 ms in Update, the event pump and Present**.
 - **`World.Update`** (World.cs:259-398) walks **every mobile and every item, including items inside containers**. Each item calls `Entity.Update`, and items also run `ProcessAnimation`.
 - **`UIManager.Update`** sorts controls and recursively updates every gump child every frame.
