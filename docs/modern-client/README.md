@@ -35,6 +35,7 @@ Supporting material in this branch:
 - **Platforms:** desktop first, targeting NativeAOT. Keep the browser (WASM) and mobile possible without rebuilding the project. Steam Deck desirable.
 - **One process = one session.** No multiboxing.
 - **No patch formats:** verdata.mul and mapdif/stadif are never supported. Shard owners who use them must merge the patches into the base files with their own tooling before running our converter (2026-10-24).
+- **Texture format (2026-10-24):** the desktop profile is **16-bit lossless (`B5G5R5A1`)**, bit-exact to the source art. Pages are stored Brotli-compressed on disk and decompressed on worker threads while streaming into memory; SSDs make this stutter-free. **BC7 or ASTC is a separate pack profile** for mobile and web, built by the same converter with the same format (each page header records its format). There, assets are downloaded ahead of time into browser storage (e.g. OPFS/IndexedDB) or a mobile cache, then streamed into memory. The renderer uses one format per pack.
 - **UltimaLive:** optional; drop it if it costs performance. Format v0 supports it cheaply at block granularity.
 - **Team:** a few engineers or engineering-adjacent people with AI assistance; nobody has ECS experience.
 
