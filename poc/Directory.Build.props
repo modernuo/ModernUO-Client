@@ -1,0 +1,7 @@
+<Project>
+  <!-- PoC projects live outside src/ and must not pick up ClassicUO's build props. -->
+  <PropertyGroup>
+    <LangVersion>preview</LangVersion>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+</Project>
