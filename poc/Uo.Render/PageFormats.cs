@@ -14,6 +14,7 @@ public static class PageFormats
         PixelFormat.Rgba8 => "RGBA8",
         PixelFormat.Bc7 => "BC7",
         B5G5R5A1 => "B5G5R5A1",
+        PixelFormat.Indexed8 => "Indexed8",
         _ => $"format {(int)f}",
     };
 
@@ -22,6 +23,8 @@ public static class PageFormats
         PixelFormat.Rgba8 => SDL_GPUTextureFormat.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
         PixelFormat.Bc7 => SDL_GPUTextureFormat.SDL_GPU_TEXTUREFORMAT_BC7_RGBA_UNORM,
         B5G5R5A1 => SDL_GPUTextureFormat.SDL_GPU_TEXTUREFORMAT_B5G5R5A1_UNORM,
+        // palette indices, read with Load in the shader (manual palette lookup + filtering)
+        PixelFormat.Indexed8 => SDL_GPUTextureFormat.SDL_GPU_TEXTUREFORMAT_R8_UINT,
         _ => throw new NotSupportedException($"page format {(int)f}"),
     };
 
@@ -34,6 +37,7 @@ public static class PageFormats
             PixelFormat.Rgba8 => s * s * 4,
             PixelFormat.Bc7 => ((s + 3) / 4) * ((s + 3) / 4) * 16,
             B5G5R5A1 => s * s * 2,
+            PixelFormat.Indexed8 => s * s,
             _ => throw new NotSupportedException($"page format {(int)f}"),
         };
     }
@@ -64,22 +68,10 @@ public static class PageFormats
         _ => 0u,
     };
 
-    /// <summary>Reads only the page header (decoding the start of the Brotli stream for Kind=1 pages).</summary>
+    /// <summary>Reads only the page header (Kind 0, 1 or 2; compressed pages decode just their first bytes or chunk).</summary>
     public static PageHeader ReadHeader(string path)
     {
-        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096);
-        Span<byte> fhb = stackalloc byte[16];
-        fs.ReadExactly(fhb);
-        var fh = System.Runtime.InteropServices.MemoryMarshal.Read<FileHeader>(fhb);
-        if (fh.Magic != PackConst.MagicPage) throw new InvalidDataException($"{path}: bad page magic");
-        Span<byte> ph = stackalloc byte[16];
-        if (fh.Kind == FileKind.Raw) fs.ReadExactly(ph);
-        else if (fh.Kind == FileKind.Brotli)
-        {
-            using var br = new System.IO.Compression.BrotliStream(fs, System.IO.Compression.CompressionMode.Decompress, leaveOpen: true);
-            br.ReadExactly(ph);
-        }
-        else throw new InvalidDataException($"{path}: unknown page kind {fh.Kind}");
-        return System.Runtime.InteropServices.MemoryMarshal.Read<PageHeader>(ph);
+        using var s = AtlasPage.OpenChain(path, out var h);
+        return h;
     }
 }

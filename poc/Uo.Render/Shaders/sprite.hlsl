@@ -14,12 +14,14 @@
 //   uint pageHue   logical page | hue row << 16
 //   uint depth     integer depth key (bigger = nearer); camera-relative in the shader
 //   uint light     4 x u8 per-corner light (stretched land), 170 = 1.0
-//   uint corners   4 x s8 per-corner z (stretched land), corner order top,right,left,bottom
+//   uint corners   4 x s8 per-corner z (stretched land), corner order top,right,left,bottom; FLAG_INDEXED: palette id
 
 #define FLAG_HUED     1u
 #define FLAG_PARTIAL  2u
 #define FLAG_STRETCH  4u
 #define FLAG_LIT      8u
+#define FLAG_MIRROR   16u     // flip the rect horizontally (mirrored anim directions)
+#define FLAG_INDEXED  32u     // Indexed8 anim page: AnimIdx array + palette lookup, manual filtering
 #define FLAG_SHARP    0x100u  // set by the vertex shader from the Sharp uniform
 #define FLAG_UNPREMUL 0x200u  // FormatFlags bit 0 << 9
 #define FLAG_GRAYTOL  0x400u  // FormatFlags bit 1 << 9
@@ -56,18 +58,25 @@ cbuffer Frame : register(b0, space1)
     float  AtlasSize;
     uint   FormatFlags; // 1 = un-premultiply filtered edges (RGBA8/16-bit), 2 = partial-hue gray tolerance (BC7)
     float  GrayTolerance; // partial-hue gray test tolerance when FLAG_GRAYTOL (BC7)
+    float  AnimAtlasSize;  // Indexed8 anim page side
+    float  InvAnimAtlas;
 };
 
 [[vk::combinedImageSampler]] Texture2DArray<float4> Atlas    : register(t0, space2);
 [[vk::combinedImageSampler]] SamplerState           AtlasSmp : register(s0, space2);
 [[vk::combinedImageSampler]] Texture2D<float4>      HueLut   : register(t1, space2);
 [[vk::combinedImageSampler]] SamplerState           HueSmp   : register(s1, space2);
+// Indexed8 anim pages (R8_UINT palette indices; Load only, the sampler is unused) and the palettes.bin table
+// (u16 B5G5R5A1 entries, palette p entry i at byte (p*256 + i)*2). Storage buffers follow the sampled textures.
+[[vk::combinedImageSampler]] Texture2DArray<uint>   AnimIdx  : register(t2, space2);
+[[vk::combinedImageSampler]] SamplerState           AnimSmp  : register(s2, space2);
+ByteAddressBuffer                                    Palettes : register(t3, space2);
 
 struct VSOut
 {
     float4 pos : SV_Position;
     float3 uvw : TEXCOORD0;
-    nointerpolation uint2 hueFlags : TEXCOORD1;
+    nointerpolation uint2 hueFlags : TEXCOORD1; // x = hue row | palette id << 16, y = flags
     float  light : TEXCOORD2;
     nointerpolation float atlasSize : TEXCOORD3; // the fragment stage can't read the vertex cbuffer (space1)
     nointerpolation float grayTol : TEXCOORD4;
@@ -117,23 +126,77 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     }
     if (flags & FLAG_LIT)
         light = ((inst.light >> (8 * c)) & 0xFF) / 170.0;
+    bool indexed = (flags & FLAG_INDEXED) != 0;
 
     float2 world = float2(int2(inst.x, inst.y) - CamPx) - CamFrac + local;
     float2 ndc = world * Scale * 2.0 * InvViewport;
     float depth = 0.5 - (float)(int)(inst.depth - CamDepth) * DepthScale;
 
     o.pos = float4(ndc.x, -ndc.y, saturate(depth), 1);
-    float2 uv = float2(inst.uv & 0xFFFF, inst.uv >> 16) + cxy * float2(w, h);
-    o.uvw = float3(uv * InvAtlas, layer);
-    o.hueFlags = uint2(inst.pageHue >> 16, flags | (Sharp != 0 ? FLAG_SHARP : 0u) | ((FormatFlags & 3u) << 9));
+    float2 tc = cxy;
+    if (flags & FLAG_MIRROR) tc.x = 1.0 - tc.x;
+    float2 uv = float2(inst.uv & 0xFFFF, inst.uv >> 16) + tc * float2(w, h);
+    o.uvw = float3(uv * (indexed ? InvAnimAtlas : InvAtlas), layer);
+    uint pal = indexed ? (inst.corners & 0xFFFF) : 0u;
+    o.hueFlags = uint2((inst.pageHue >> 16) | (pal << 16), flags | (Sharp != 0 ? FLAG_SHARP : 0u) | ((FormatFlags & 3u) << 9));
     o.light = light;
-    o.atlasSize = AtlasSize;
+    o.atlasSize = indexed ? AnimAtlasSize : AtlasSize;
     o.grayTol = GrayTolerance;
     return o;
 }
 
+// Indexed8 tap: palette colour as 5-bit integers, hued per tap (exact r5 == g5 == b5 gray test, shade = r5).
+float3 IndexedTap(uint idx, uint pal, uint hueRow, uint flags)
+{
+    uint addr = (pal * 256u + idx) * 2u;
+    uint c = (Palettes.Load(addr & ~3u) >> ((addr & 2u) * 8u)) & 0xFFFFu;
+    uint r5 = (c >> 10) & 31u, g5 = (c >> 5) & 31u, b5 = c & 31u;
+    if ((flags & FLAG_HUED) != 0 && ((flags & FLAG_PARTIAL) == 0 || (r5 == g5 && r5 == b5)))
+        return HueLut.Load(int3(r5, hueRow, 0)).rgb;
+    // canonical 5->8 expansion round(c*255/31) = (c*527+23)>>6, as k/255 so an 8-bit target stores k exactly
+    // (native B5G5R5A1 sampling may bit-replicate instead: c<<3|c>>2, up to 1 lower)
+    return float3((uint3(r5, g5, b5) * 527u + 23u) >> 6) / 255.0;
+}
+
+float4 PSIndexed(VSOut i, uint flags)
+{
+    // Manual bilinear over palette-resolved taps, all at mip0 (the 2-px gutter keeps the footprint in the frame's cell,
+    // so the instance's palette is right for every tap). Sharp mode remaps the fraction as the hardware path does:
+    // at zoom 1 the fragment sits on texel centres and only one tap has weight.
+    float2 t = i.uvw.xy * i.atlasSize;
+    float2 q;
+    if (flags & FLAG_SHARP)
+    {
+        float2 fw = max(fwidth(t), 1e-4);
+        float2 d = frac(t) - 0.5;
+        float2 off = sign(d) * 0.5 * saturate((abs(d) - 0.5) / (fw * 0.5) + 1.0);
+        q = floor(t) + off;
+    }
+    else q = t - 0.5;
+    int2 p0 = (int2)floor(q);
+    float2 f = q - floor(q);
+    int layer = (int)i.uvw.z;
+    uint hueRow = i.hueFlags.x & 0xFFFFu, pal = i.hueFlags.x >> 16;
+    float4 wq = float4((1 - f.x) * (1 - f.y), f.x * (1 - f.y), (1 - f.x) * f.y, f.x * f.y);
+    uint4 idx = uint4(AnimIdx.Load(int4(p0, layer, 0)), AnimIdx.Load(int4(p0 + int2(1, 0), layer, 0)),
+                      AnimIdx.Load(int4(p0 + int2(0, 1), layer, 0)), AnimIdx.Load(int4(p0 + int2(1, 1), layer, 0)));
+    float3 rgb = 0;
+    float a = 0;
+    [unroll] for (int k = 0; k < 4; k++)
+    {
+        if (idx[k] == 0u || wq[k] <= 0) continue; // index 0 = transparent
+        rgb += wq[k] * IndexedTap(idx[k], pal, hueRow, flags);
+        a += wq[k];
+    }
+    if (a < 0.5)
+        discard;
+    return float4(rgb / a * i.light, 1);
+}
+
 float4 PSMain(VSOut i) : SV_Target
 {
+    if (i.hueFlags.y & FLAG_INDEXED)
+        return PSIndexed(i, i.hueFlags.y);
     float4 c;
     if (i.hueFlags.y & FLAG_SHARP)
     {
@@ -168,7 +231,7 @@ float4 PSMain(VSOut i) : SV_Target
     {
         // ClassicUO get_rgb: grayscale (red channel) selects one of 32 shades of the hue row.
         int shade = min(31, (int)(c.r * 32.0));
-        c.rgb = HueLut.Load(int3(shade, i.hueFlags.x, 0)).rgb;
+        c.rgb = HueLut.Load(int3(shade, i.hueFlags.x & 0xFFFFu, 0)).rgb;
     }
     c.rgb *= i.light;
     return float4(c.rgb, 1);
