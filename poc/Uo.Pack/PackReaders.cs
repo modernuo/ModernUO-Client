@@ -174,6 +174,19 @@ public static class ManifestFileIo
     public static Manifest Read(string path) => JsonSerializer.Deserialize(File.ReadAllText(path), PackJsonContext.Default.Manifest)!;
 }
 
-[System.Text.Json.Serialization.JsonSourceGenerationOptions(WriteIndented = true)]
+/// <summary>map/&lt;facet&gt;/facet.json.</summary>
+public static class FacetFileIo
+{
+    public const string FileName = "facet.json";
+
+    public static void Write(string facetDir, FacetInfo f) => File.WriteAllText(Path.Combine(facetDir, FileName), JsonSerializer.Serialize(f, PackJsonContext.Default.FacetInfo));
+    public static FacetInfo Read(string facetDir) => JsonSerializer.Deserialize(File.ReadAllText(Path.Combine(facetDir, FileName)), PackJsonContext.Default.FacetInfo)!;
+}
+
+// camelCase to match the spec's field names; case-insensitive on read.
+[System.Text.Json.Serialization.JsonSourceGenerationOptions(WriteIndented = true,
+    PropertyNamingPolicy = System.Text.Json.Serialization.JsonKnownNamingPolicy.CamelCase,
+    PropertyNameCaseInsensitive = true)]
 [System.Text.Json.Serialization.JsonSerializable(typeof(Manifest))]
+[System.Text.Json.Serialization.JsonSerializable(typeof(FacetInfo))]
 internal partial class PackJsonContext : System.Text.Json.Serialization.JsonSerializerContext { }
