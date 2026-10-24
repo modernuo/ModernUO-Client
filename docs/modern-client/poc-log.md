@@ -93,6 +93,27 @@ The owner asked that everything definitive (e.g. the FNA 26.10 upgrade) land on 
   - NoDraw-by-name filter missing;
   - v1 (BC7/Brotli) packs not yet supported.
 
+### 2026-10-24 — CP4: Uo.Net done (ba37bcbf8)
+
+- **Run:** `poc\Uo.Net.Cli\scripts\start-modernuo.ps1`, then `dotnet run -c Release --project poc\Uo.Net.Cli -- --runs 3` with `UO_USER`/`UO_PASS` set. Stop the server with `stop-modernuo.ps1` (Ctrl+Break, which goes through ModernUO's normal shutdown and never force-kills).
+- **Server:** the owner's existing build in `C:\Repositories\ModernUO\Distribution`, unchanged. Its autosave writes backups to `Distribution\Backups\Automatic` while it runs.
+- **Verified live:** 3/3, 2/2 and 1/1 NativeAOT runs. Every run reached the world and got 24/24 moves acked with 0 rejects. World entry takes 72–157 ms. Move RTT on localhost: median 0.16–0.28 ms. No allocations per packet in steady state. Byte-by-byte reads reassemble correctly.
+- **API for integration:**
+  - `IGameClient`: `Connect`, `Poll(waitMs)`, `RequestMove(dir)` (returns the sequence number), `Say`, `Disconnect`.
+  - Events arrive through `IWorldSink` as structs (mobile, item, equip, remove, move ack/reject with RTT, sequence reset, map).
+  - Poll once per frame on one thread.
+- **Quirks:**
+  - Every 0xBD version request must be answered.
+  - The game connection starts with the raw 4-byte key. All server traffic is Huffman-compressed; nothing from the client is.
+  - The move sequence wraps 255→1 and resets to 0 on a 0x20 for the player, a map change, or a reject.
+  - Steps take 400 ms walking, 200 ms running; at most 5 moves unacknowledged.
+  - Idle timeout is 30 s, so the client pings every 10 s.
+- **Gaps:**
+  - 0xF8 character creation is untested live, to avoid writing to the owner's save.
+  - About 15 packet ids are skipped using the length table.
+  - Connect is synchronous.
+  - The 1/256 case where the key's first byte is 0xEF isn't handled.
+
 ## Phase 3 plan (engine vertical slice)
 
 1. **Converter:** finish v1 (BC7 + Brotli), add a NoDraw flag (tiledata name rule), then animation conversion (UOP AnimationFrame → atlas pages + frame tables).
