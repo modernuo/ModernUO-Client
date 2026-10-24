@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <IsAotCompatible>true</IsAotCompatible>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <ServerGarbageCollection>false</ServerGarbageCollection>
+    <ConcurrentGarbageCollection>true</ConcurrentGarbageCollection>
+    <TieredPGO>true</TieredPGO>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-x64</RuntimeIdentifier>
+    <SelfContained>false</SelfContained>
+    <!-- NativeAOT: dotnet publish -c Release -p:PublishAot=true -->
+    <Dxc Condition="'$(Dxc)' == ''">C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\dxc.exe</Dxc>
+    <ShaderOut>$(MSBuildProjectDirectory)\obj\shaders\</ShaderOut>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\Uo.Pack\Uo.Pack.csproj" />
+    <ProjectReference Include="..\..\external\FNA\lib\SDL3-CS\SDL3\SDL3.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="..\..\external\x64\SDL3.dll" Link="SDL3.dll" CopyToOutputDirectory="PreserveNewest" />
+    <HlslSource Include="Shaders\*.hlsl" />
+  </ItemGroup>
+
+  <!-- HLSL -> DXIL at build time with the Windows SDK dxc. The DXIL is embedded as a resource
+       (works for NativeAOT publish too). SDL_GPU register conventions are documented in sprite.hlsl. -->
+  <Target Name="CompileShaders" BeforeTargets="BeforeBuild" Inputs="@(HlslSource)" Outputs="$(ShaderOut)sprite.vs.dxil;$(ShaderOut)sprite.ps.dxil">
+    <MakeDir Directories="$(ShaderOut)" />
+    <Exec Command="&quot;$(Dxc)&quot; -nologo -T vs_6_0 -E VSMain -O3 -Fo &quot;$(ShaderOut)sprite.vs.dxil&quot; &quot;Shaders\sprite.hlsl&quot;" />
+    <Exec Command="&quot;$(Dxc)&quot; -nologo -T ps_6_0 -E PSMain -O3 -Fo &quot;$(ShaderOut)sprite.ps.dxil&quot; &quot;Shaders\sprite.hlsl&quot;" />
+  </Target>
+
+  <Target Name="EmbedShaders" AfterTargets="CompileShaders" BeforeTargets="BeforeBuild">
+    <ItemGroup>
+      <EmbeddedResource Include="$(ShaderOut)sprite.vs.dxil" LogicalName="sprite_vs.dxil" WithCulture="false" />
+      <EmbeddedResource Include="$(ShaderOut)sprite.ps.dxil" LogicalName="sprite_ps.dxil" WithCulture="false" />
+    </ItemGroup>
+  </Target>
+
+</Project>
