@@ -22,6 +22,7 @@ public sealed unsafe class Renderer : IDisposable
     readonly int _pageTableBytes;
     public bool VSync = true;
     public readonly bool ImmediateSupported, MailboxSupported;
+    public readonly SDL_GPUShaderFormat ShaderFormat;
 
     // offscreen target (screenshot mode)
     IntPtr _offscreen;
@@ -31,12 +32,17 @@ public sealed unsafe class Renderer : IDisposable
     // Range: |key - camKey| < 2^21 covers a 4K view at zoom 0.5 (about ±136 diagonals × 100 × 128).
     public const float DepthScale = 1f / (1 << 22);
 
-    public Renderer(IntPtr window, bool offscreen, PackSet pack, int instanceCapacity, int maxVisibleChunks)
+    /// <summary><paramref name="driver"/>: "direct3d12", "vulkan", or null for SDL's choice among drivers we have shaders for.</summary>
+    public Renderer(IntPtr window, bool offscreen, PackSet pack, int instanceCapacity, int maxVisibleChunks, string driver = "direct3d12")
     {
         Window = window;
         Offscreen = offscreen;
-        Device = SDL_CreateGPUDevice(SDL_GPUShaderFormat.SDL_GPU_SHADERFORMAT_DXIL, false, "direct3d12");
-        if (Device == IntPtr.Zero) throw new Exception("SDL_CreateGPUDevice: " + SDL_GetError());
+        var formats = SDL_GPUShaderFormat.SDL_GPU_SHADERFORMAT_DXIL;
+        if (typeof(Renderer).Assembly.GetManifestResourceInfo("sprite_vs.spv") != null) formats |= SDL_GPUShaderFormat.SDL_GPU_SHADERFORMAT_SPIRV;
+        Device = SDL_CreateGPUDevice(formats, false, driver);
+        if (Device == IntPtr.Zero) throw new Exception($"SDL_CreateGPUDevice({driver ?? "default"}): " + SDL_GetError());
+        ShaderFormat = (SDL_GetGPUShaderFormats(Device) & formats & SDL_GPUShaderFormat.SDL_GPU_SHADERFORMAT_DXIL) != 0
+            ? SDL_GPUShaderFormat.SDL_GPU_SHADERFORMAT_DXIL : SDL_GPUShaderFormat.SDL_GPU_SHADERFORMAT_SPIRV;
 
         if (!offscreen)
         {
@@ -112,8 +118,9 @@ public sealed unsafe class Renderer : IDisposable
         return b;
     }
 
-    IntPtr CreateShader(string resource, string entry, SDL_GPUShaderStage stage, uint samplers, uint storageBuffers, uint uniforms)
+    IntPtr CreateShader(string name, string entry, SDL_GPUShaderStage stage, uint samplers, uint storageBuffers, uint uniforms)
     {
+        string resource = name + (ShaderFormat == SDL_GPUShaderFormat.SDL_GPU_SHADERFORMAT_DXIL ? ".dxil" : ".spv");
         var code = LoadResource(resource);
         var ep = System.Text.Encoding.UTF8.GetBytes(entry + "\0");
         fixed (byte* c = code)
@@ -122,7 +129,7 @@ public sealed unsafe class Renderer : IDisposable
             var ci = new SDL_GPUShaderCreateInfo
             {
                 code_size = (UIntPtr)code.Length, code = c, entrypoint = e,
-                format = SDL_GPUShaderFormat.SDL_GPU_SHADERFORMAT_DXIL, stage = stage,
+                format = ShaderFormat, stage = stage,
                 num_samplers = samplers, num_storage_buffers = storageBuffers, num_uniform_buffers = uniforms,
             };
             var sh = SDL_CreateGPUShader(Device, in ci);
@@ -133,8 +140,8 @@ public sealed unsafe class Renderer : IDisposable
 
     IntPtr CreatePipeline()
     {
-        var vs = CreateShader("sprite_vs.dxil", "VSMain", SDL_GPUShaderStage.SDL_GPU_SHADERSTAGE_VERTEX, 0, 3, 1);
-        var ps = CreateShader("sprite_ps.dxil", "PSMain", SDL_GPUShaderStage.SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 0, 0);
+        var vs = CreateShader("sprite_vs", "VSMain", SDL_GPUShaderStage.SDL_GPU_SHADERSTAGE_VERTEX, 0, 3, 1);
+        var ps = CreateShader("sprite_ps", "PSMain", SDL_GPUShaderStage.SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 0, 0);
         var color = new SDL_GPUColorTargetDescription { format = ColorFormat };
         var ci = new SDL_GPUGraphicsPipelineCreateInfo
         {

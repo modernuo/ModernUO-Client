@@ -5,25 +5,28 @@ namespace Uo.Render;
 
 /// <summary><c>--bench-formats packA packB ...</c>: runs the identical scripted bench once per pack in a child process
 /// (offscreen 3840×2160 by default, fence-throttled, vsync irrelevant), records system CPU load during each run, and
-/// prints a comparison table built from each child's RESULT line.</summary>
+/// prints a comparison table built from each child's RESULT line. A 16-bit pack runs a second time with
+/// <c>--force-expand</c> (worker RGBA8 expansion, the fallback for GPUs without 16-bit sampling).</summary>
 public static partial class FormatBench
 {
     [LibraryImport("kernel32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool GetSystemTimes(out long idle, out long kernel, out long user);
 
-    public static int Run(List<string> packs, int width, int height, int layers)
+    public static int Run(List<string> packs, int width, int height, int layers, string driver)
     {
         var exe = Environment.ProcessPath!;
         var results = new List<(string Pack, Dictionary<string, string> R, double Load)>();
-        foreach (var pack in packs)
+        var runs = new Queue<(string Pack, bool Expand)>(packs.Select(p => (p, false)));
+        while (runs.TryDequeue(out var run))
         {
+            var (pack, expand) = run;
             if (!File.Exists(Path.Combine(pack, "manifest.json")))
             {
                 Console.WriteLine($"== {pack}: skipped (no manifest.json yet)");
                 continue;
             }
-            Console.WriteLine($"== {pack}");
+            Console.WriteLine($"== {pack}{(expand ? " --force-expand" : "")}");
             GetSystemTimes(out var i0, out var k0, out var u0);
             var psi = new ProcessStartInfo(exe)
             {
@@ -31,8 +34,9 @@ public static partial class FormatBench
                 RedirectStandardError = true,
                 UseShellExecute = false,
             };
-            foreach (var a in new[] { "--pack", pack, "--bench", "--offscreen", "--size", $"{width}x{height}", "--layers", layers.ToString() })
+            foreach (var a in new[] { "--pack", pack, "--bench", "--offscreen", "--size", $"{width}x{height}", "--layers", layers.ToString(), "--driver", driver })
                 psi.ArgumentList.Add(a);
+            if (expand) psi.ArgumentList.Add("--force-expand");
             using var p = Process.Start(psi)!;
             Dictionary<string, string> result = null;
             p.ErrorDataReceived += (_, e) => { if (e.Data != null) Console.WriteLine("   ! " + e.Data); };
@@ -58,18 +62,20 @@ public static partial class FormatBench
             Console.WriteLine($"   system CPU busy during run: {load:F0}% (all processes; this bench itself uses ~1 core + workers)");
             if (result == null) { Console.WriteLine($"   no RESULT (exit code {p.ExitCode})"); continue; }
             results.Add((pack, result, load));
+            if (!expand && result.TryGetValue("format", out var f) && f == PageFormats.Name(PageFormats.B5G5R5A1))
+                runs.Enqueue((pack, true));
         }
 
         if (results.Count == 0) return 1;
         Console.WriteLine();
         Console.WriteLine($"format comparison ({width}x{height} offscreen, identical camera script incl. zoom-0.5 segments, {layers} layers):");
-        string[] cols = ["format", "fps", "cpu_med", "cpu_p95", "cpu_p99", "int_med", "int_p99", "gpu_med", "gpu_net", "gpu_p95", "uploads", "up_ms", "read_ms", "page_file_mib", "page_read_ms", "page_dec_ms", "page_brotli", "region_ms", "vram_mib", "ws_mib", "alloc_bpf", "gcs"];
+        string[] cols = ["format", "driver", "fps", "cpu_med", "cpu_p95", "cpu_p99", "int_med", "int_p99", "gpu_med", "gpu_net", "gpu_p95", "uploads", "up_ms", "read_ms", "page_file_mib", "page_read_ms", "page_dec_ms", "page_exp_ms", "page_brotli", "region_ms", "vram_mib", "ws_mib", "alloc_bpf", "gcs"];
         Console.WriteLine(string.Join(" | ", cols) + " | sys_load");
         foreach (var (_, r, load) in results)
             Console.WriteLine(string.Join(" | ", cols.Select(c => r.TryGetValue(c, out var v) ? v : "-")) + $" | {load:F0}%");
         Console.WriteLine("cpu = CPU work per frame (excl. waits); int = frame interval with 2 frames in flight = max(CPU, GPU);");
         Console.WriteLine("gpu = one frame alone on an idle GPU, submit->fence (SDL_GPU has no timestamp queries); gpu_net = gpu_med minus empty submit->fence overhead; up_ms = main-thread map+unmap+copy-record per page;");
-        Console.WriteLine("read_ms = worker page file read into the mapped staging buffer; region_ms = worker region read (+Brotli decode); vram_mib = layers x page chain bytes.");
+        Console.WriteLine("read_ms = worker page file read into the mapped staging buffer; page_exp_ms = worker 16->32-bit expansion per page; region_ms = worker region read (+Brotli decode); vram_mib = layers x page chain bytes.");
         return 0;
     }
 }

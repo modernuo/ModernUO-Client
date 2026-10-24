@@ -16,6 +16,9 @@
     <SelfContained>false</SelfContained>
     <!-- NativeAOT: dotnet publish -c Release -p:PublishAot=true -->
     <Dxc Condition="'$(Dxc)' == ''">C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\dxc.exe</Dxc>
+    <!-- SPIR-V needs an official DXC release (the SDK dxc has no SPIR-V backend); kept outside the repo. Without it the
+         build skips SPIR-V and only the D3D12 driver is available. -->
+    <DxcSpirv Condition="'$(DxcSpirv)' == ''">C:\Repositories\tools\dxc\v1.9.2609\bin\x64\dxc.exe</DxcSpirv>
     <ShaderOut>$(MSBuildProjectDirectory)\obj\shaders\</ShaderOut>
   </PropertyGroup>
 
@@ -37,10 +40,20 @@
     <Exec Command="&quot;$(Dxc)&quot; -nologo -T ps_6_0 -E PSMain -O3 -Fo &quot;$(ShaderOut)sprite.ps.dxil&quot; &quot;Shaders\sprite.hlsl&quot;" />
   </Target>
 
-  <Target Name="EmbedShaders" AfterTargets="CompileShaders" BeforeTargets="BeforeBuild">
+  <!-- HLSL -> SPIR-V (Vulkan) with the same source; SDL_GPU's SPIR-V set/binding conventions are in sprite.hlsl. -->
+  <Target Name="CompileShadersSpirv" BeforeTargets="BeforeBuild" Condition="Exists('$(DxcSpirv)')" Inputs="@(HlslSource)" Outputs="$(ShaderOut)sprite.vs.spv;$(ShaderOut)sprite.ps.spv">
+    <MakeDir Directories="$(ShaderOut)" />
+    <Exec Command="&quot;$(DxcSpirv)&quot; -nologo -spirv -fspv-target-env=vulkan1.0 -fvk-use-dx-layout -T vs_6_0 -E VSMain -O3 -Fo &quot;$(ShaderOut)sprite.vs.spv&quot; &quot;Shaders\sprite.hlsl&quot;" />
+    <Exec Command="&quot;$(DxcSpirv)&quot; -nologo -spirv -fspv-target-env=vulkan1.0 -fvk-use-dx-layout -T ps_6_0 -E PSMain -O3 -Fo &quot;$(ShaderOut)sprite.ps.spv&quot; &quot;Shaders\sprite.hlsl&quot;" />
+  </Target>
+
+  <Target Name="EmbedShaders" AfterTargets="CompileShaders;CompileShadersSpirv" BeforeTargets="BeforeBuild">
+    <Warning Condition="!Exists('$(DxcSpirv)')" Text="DXC with SPIR-V not found at $(DxcSpirv): building without Vulkan shaders" />
     <ItemGroup>
       <EmbeddedResource Include="$(ShaderOut)sprite.vs.dxil" LogicalName="sprite_vs.dxil" WithCulture="false" />
       <EmbeddedResource Include="$(ShaderOut)sprite.ps.dxil" LogicalName="sprite_ps.dxil" WithCulture="false" />
+      <EmbeddedResource Include="$(ShaderOut)sprite.vs.spv" LogicalName="sprite_vs.spv" WithCulture="false" Condition="Exists('$(DxcSpirv)')" />
+      <EmbeddedResource Include="$(ShaderOut)sprite.ps.spv" LogicalName="sprite_ps.spv" WithCulture="false" Condition="Exists('$(DxcSpirv)')" />
     </ItemGroup>
   </Target>
 

@@ -24,6 +24,9 @@ public static unsafe class Program
         public bool Offscreen;       // --offscreen: render to an offscreen target (no swapchain), fence-throttled
         public bool SizeGiven;
         public List<string> BenchFormats; // --bench-formats packA packB ...: one child process per pack         // offscreen: pan at keyboard speed (60 Hz steps) and count visible chunk pop-in         // debug: clear to magenta so unpainted pixels stand out
+        public bool ForceExpand;     // --force-expand: 16-bit packs go through the worker RGBA8 expansion even if the GPU samples 16-bit
+        public bool SelfTest;        // --self-test: exhaustive PixelExpand check against ClassicUO's table, then exit
+        public string Driver = "direct3d12"; // --driver vulkan|direct3d12
         public float StartX = 1495, StartY = 1629, StartZoom = 1;
         public int Width = 1600, Height = 900;
         public int Layers = 24, PageBudget = 2, ChunkBudget = 64;
@@ -63,6 +66,9 @@ public static unsafe class Program
                 case "--offscreen": o.Offscreen = true; break;
                 case "--gray-tol": o.GrayTol = float.Parse(args[++i]); break;
                 case "--format-flags": o.FormatFlags = int.Parse(args[++i]); break;
+                case "--force-expand": o.ForceExpand = true; break;
+                case "--self-test": o.SelfTest = true; break;
+                case "--driver": o.Driver = args[++i]; break;
                 case "--bench-formats":
                     o.BenchFormats = new List<string>();
                     while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) o.BenchFormats.Add(args[++i]);
@@ -100,7 +106,14 @@ public static unsafe class Program
                     return 2;
             }
         }
-        if (o.BenchFormats != null) return FormatBench.Run(o.BenchFormats, o.SizeGiven ? o.Width : 3840, o.SizeGiven ? o.Height : 2160, o.Layers);
+        if (o.SelfTest)
+        {
+            long ts = Stopwatch.GetTimestamp();
+            int bad = PixelExpand.SelfTest();
+            Console.WriteLine($"self-test: PixelExpand vs ClassicUO 5->8 table, all 65536 texels (scalar + span at 8 offsets): {bad} mismatches, {Stopwatch.GetElapsedTime(ts).TotalMilliseconds:F0} ms (Vector256 {System.Runtime.Intrinsics.Vector256.IsHardwareAccelerated}, Vector128 {System.Runtime.Intrinsics.Vector128.IsHardwareAccelerated})");
+            return bad != 0 ? 1 : 0;
+        }
+        if (o.BenchFormats != null) return FormatBench.Run(o.BenchFormats, o.SizeGiven ? o.Width : 3840, o.SizeGiven ? o.Height : 2160, o.Layers, o.Driver);
         o.Pack ??= PackSet.FindDefault();
         return Run(o);
     }
@@ -275,7 +288,7 @@ public static unsafe class Program
         var pack = new PackSet(o.Pack, 0);
         Console.WriteLine($"  {pack.PageCount} pages ({pack.TexPageBase} art + {pack.PageCount - pack.TexPageBase} tex) {PageFormats.Name(pack.Format)} {pack.PageSize}px/{pack.PageMips} mips, {pack.Sprites.Length} sprites, {pack.HueCount} hues, map {pack.MapWidth}x{pack.MapHeight}");
 
-        SDL_SetHint("SDL_GPU_DRIVER", "direct3d12");
+        SDL_SetHint("SDL_GPU_DRIVER", o.Driver);
         if (!SDL_Init(SDL_InitFlags.SDL_INIT_VIDEO)) { Console.Error.WriteLine(SDL_GetError()); return 1; }
         bool offscreen = o.Screenshot != null || o.ShotsDir != null || o.PanTest || o.Offscreen;
         if (o.ShotsDir != null) Directory.CreateDirectory(o.ShotsDir);
@@ -285,9 +298,10 @@ public static unsafe class Program
         if (window == IntPtr.Zero) { Console.Error.WriteLine(SDL_GetError()); return 1; }
 
         using var workers = new WorkerPool(o.Workers);
-        using var renderer = new Renderer(window, offscreen, pack, o.InstanceCapacity, 8192);
+        using var renderer = new Renderer(window, offscreen, pack, o.InstanceCapacity, 8192, o.Driver);
         Console.WriteLine($"  device: {SDL_GetGPUDeviceDriver(renderer.Device)}, swapchain format {renderer.ColorFormat}, immediate={renderer.ImmediateSupported}");
-        var residency = new PageResidency(renderer.Device, pack, workers, o.Layers, o.PageBudget, Math.Max(2, o.PageBudget * 2));
+        var residency = new PageResidency(renderer.Device, pack, workers, o.Layers, o.PageBudget, Math.Max(2, o.PageBudget * 2), o.ForceExpand);
+        Console.WriteLine($"  shaders {renderer.ShaderFormat}, pages {residency.FormatDescription}");
         var chunks = new ChunkStore(pack, workers, o.InstanceCapacity);
 
         if (o.Bench) renderer.VSync = false;
@@ -629,24 +643,26 @@ public static unsafe class Program
             int nr = Math.Max(1, (int)_pages.ReadStats.Count);
             double rdOnlyMs = _pages.ReadTicksSum * 1000.0 / Stopwatch.Frequency / nr, decMs = _pages.DecodeTicksSum * 1000.0 / Stopwatch.Frequency / nr;
             double fileMiB = _pages.FileBytesSum / 1048576.0 / nr;
+            double expMs = _pages.ExpandTicksSum * 1000.0 / Stopwatch.Frequency / nr;
             double rgMs = _chunks.RegionStats.Count > 0 ? _chunks.RegionStats.RunTicks * 1000.0 / Stopwatch.Frequency / _chunks.RegionStats.Count : 0;
-            string fmt = PageFormats.Name(_pack.Format);
-            Console.WriteLine($"bench [{fmt}, {_r.TargetW}x{_r.TargetH}{(_r.Offscreen ? " offscreen, fence-throttled (2 in flight)" : ", vsync off")}]: {n} frames in {secs:F1} s = {fps:F0} fps, {_o.Workers} workers, {_o.Layers} layers");
+            string fmt = PageFormats.Name(_pack.Format) + (_pages.Expanding ? "->RGBA8" : "");
+            string driver = SDL_GetGPUDeviceDriver(_r.Device);
+            Console.WriteLine($"bench [{fmt}, {driver}, {_r.TargetW}x{_r.TargetH}{(_r.Offscreen ? " offscreen, fence-throttled (2 in flight)" : ", vsync off")}]: {n} frames in {secs:F1} s = {fps:F0} fps, {_o.Workers} workers, {_o.Layers} layers");
             Console.WriteLine($"  CPU frame ms   median {P(c, 0.5):F3}  p95 {P(c, 0.95):F3}  p99 {P(c, 0.99):F3}  max {(c.Length > 0 ? c[^1] : 0):F3}");
             Console.WriteLine($"  frame interval median {P(f, 0.5):F3}  p95 {P(f, 0.95):F3}  p99 {P(f, 0.99):F3}  max {f[^1]:F3}");
             if (nGpu > 0) Console.WriteLine($"  GPU frame ms (one frame alone on an idle GPU, fence-timed, every 30th frame, n={nGpu}) median {P(g, 0.5):F3}  p95 {P(g, 0.95):F3}  max {g[^1]:F3}; empty submit->fence overhead {_submitOverheadMs:F3} => net GPU median ~{Math.Max(0, P(g, 0.5) - _submitOverheadMs):F3}");
             Console.WriteLine($"  GC collections gen0 {g0} gen1 {g1} gen2 {g2}");
             Console.WriteLine($"  allocated: main thread {allocMain} B ({(double)allocMain / n:F1} B/frame); all threads {allocAll / 1024} KiB ({(double)allocAll / n:F0} B/frame, workers' region/page IO)");
             Console.WriteLine($"  pages: {_pages.TotalUploads} uploads, {_pages.Evictions} evictions, main-thread map+unmap+copy-record avg {upMs:F3} ms/page, worker read avg {rdMs:F2} ms/page; VRAM for pages {_pages.VramBytes >> 20} MiB ({_pages.Layers} x {_pages.ChainBytes / 1024} KiB)");
-            Console.WriteLine($"  page files: {_pages.CompressedPages}/{_pages.ReadStats.Count} Brotli; avg file {fileMiB:F2} MiB; worker read {rdOnlyMs:F2} ms + decode {decMs:F2} ms per page");
+            Console.WriteLine($"  page files: {_pages.CompressedPages}/{_pages.ReadStats.Count} Brotli; avg file {fileMiB:F2} MiB; worker read {rdOnlyMs:F2} ms + decode {decMs:F2} ms + expand {expMs:F2} ms per page");
             Console.WriteLine($"  regions: worker read+decompress avg {rgMs:F2} ms; chunks resident {_chunks.ActiveChunks}; instance buffer {_chunks.Alloc.Used}/{_chunks.Alloc.Capacity}; max bakes in flight {maxBake}");
             Console.WriteLine($"  bakes: {_chunks.BakeStats}");
             Console.WriteLine($"  working set {proc.WorkingSet64 >> 20} MiB, private {proc.PrivateMemorySize64 >> 20} MiB, GC heap {GC.GetTotalMemory(false) >> 20} MiB");
             var ci = System.Globalization.CultureInfo.InvariantCulture;
             Console.WriteLine(string.Format(ci,
-                "RESULT format={0} size={1}x{2} fps={3:F0} cpu_med={4:F3} cpu_p95={5:F3} cpu_p99={6:F3} int_med={7:F3} int_p95={8:F3} int_p99={9:F3} gpu_med={10:F3} gpu_p95={11:F3} uploads={12} up_ms={13:F3} read_ms={14:F2} vram_mib={15} ws_mib={16} alloc_bpf={17:F1} gcs={18} region_ms={19:F2} gpu_net={20:F3} gpu_ovh={21:F3} page_file_mib={22:F2} page_read_ms={23:F2} page_dec_ms={24:F2} page_brotli={25}",
+                "RESULT format={0} size={1}x{2} fps={3:F0} cpu_med={4:F3} cpu_p95={5:F3} cpu_p99={6:F3} int_med={7:F3} int_p95={8:F3} int_p99={9:F3} gpu_med={10:F3} gpu_p95={11:F3} uploads={12} up_ms={13:F3} read_ms={14:F2} vram_mib={15} ws_mib={16} alloc_bpf={17:F1} gcs={18} region_ms={19:F2} gpu_net={20:F3} gpu_ovh={21:F3} page_file_mib={22:F2} page_read_ms={23:F2} page_dec_ms={24:F2} page_brotli={25} page_exp_ms={26:F2} driver={27}",
                 fmt, _r.TargetW, _r.TargetH, fps, P(c, 0.5), P(c, 0.95), P(c, 0.99), P(f, 0.5), P(f, 0.95), P(f, 0.99), P(g, 0.5), P(g, 0.95),
-                _pages.TotalUploads, upMs, rdMs, _pages.VramBytes >> 20, proc.WorkingSet64 >> 20, (double)allocMain / n, g0 + g1 + g2, rgMs, Math.Max(0, P(g, 0.5) - _submitOverheadMs), _submitOverheadMs, fileMiB, rdOnlyMs, decMs, _pages.CompressedPages));
+                _pages.TotalUploads, upMs, rdMs, _pages.VramBytes >> 20, proc.WorkingSet64 >> 20, (double)allocMain / n, g0 + g1 + g2, rgMs, Math.Max(0, P(g, 0.5) - _submitOverheadMs), _submitOverheadMs, fileMiB, rdOnlyMs, decMs, _pages.CompressedPages, expMs, driver));
         }
 
         static void Interp(double t, ReadOnlySpan<double> kt, ReadOnlySpan<double> kx, ReadOnlySpan<double> ky, ReadOnlySpan<double> kz, out double x, out double y, out float zoom)
