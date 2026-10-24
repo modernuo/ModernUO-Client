@@ -301,3 +301,27 @@ Same machine, 1920×1080 client, game viewport maximised (1280×720 logical × 1
 - **World prepare goes up by 0.02–0.1 ms** (0.3 with 120 mobiles). The list fill is unchanged; on top come the override collection and the item/mobile views, which now run in prepare (capture) instead of in draw. ClassicUO's walk itself is the remaining cost: 0.5 ms zoomed out at 1080p and 2.9 ms at 4K. It is the next lever.
 - **Draw total:** −7% at Britain, −31% zoomed out, −41% at 4K zoomed out; equal at zoom-in and in the crowd, where the views' own logic dominates. AOT tracks JIT, about 5–15% slower on the CPU phases, as before.
 - **Roofs:** at the bank the player is under a roof, so roofs are hidden through overrides: 478 at zoom 1 and 3235 zoomed out (crowd zoomout world draw 0.27 ms, mostly override resolution).
+
+## Step 9: parity work (2026-10-24)
+
+Same conditions as step 8 (1920×1080, uncapped, VSync off, Legacy then Gpu in one session, 3 windows of 5 s, fresh default profile, circle of transparency off unless stated). Before is HEAD 88f455e4f, the mean of two runs; after is one run of the step 9 working tree. JIT, ms avg; frame is p50.
+
+| spot | mode | frame p50 before → after | world prepare | world draw | Draw total | FNA draws | overrides |
+|---|---|---|---|---|---|---|---|
+| britain | legacy | 0.567 → 0.505 | 0.110 → 0.105 | 0.132 → 0.119 | 0.365 → 0.335 | 95 → 92 | — |
+| bank | legacy | 0.527 → 0.485 | 0.087 → 0.076 | 0.126 → 0.116 | 0.339 → 0.298 | 93 → 91 | — |
+| zoomout | legacy | 1.365 → 1.348 | 0.556 → 0.531 | 0.558 → 0.558 | 1.239 → 1.210 | 332 → 332 | — |
+| britain | gpu | 0.485 → 0.505 | 0.156 → 0.152 | 0.086 → 0.059 | 0.374 → 0.335 | 26 → 23 | 129 → 71 |
+| bank | gpu | 0.476 → 0.499 | 0.130 → 0.127 | 0.082 → 0.057 | 0.340 → 0.304 | 25 → 23 | 478 → 39 |
+| zoomout | gpu | 0.931 → 0.903 | 0.608 → 0.605 | 0.090 → 0.078 | 0.820 → 0.802 | 24 → 23 | 232 → 182 |
+
+The Legacy path is unchanged, so its rows show the run-to-run noise (about ±0.03 ms on frame p50).
+
+With the circle of transparency on, at the bank's front wall (1435,1692):
+
+| spot | mode | frame p50 | world prepare | world draw | Draw total | ring instances |
+|---|---|---|---|---|---|---|
+| zoom 1 | legacy | 0.510 | 0.090 | 0.150 | 0.353 | — |
+| zoom 1 | gpu | 0.495 | 0.140 | 0.057 | 0.323 | 8 |
+| zoom 2.5 | legacy | 1.284 | 0.420 | 0.625 | 1.165 | — |
+| zoom 2.5 | gpu | 0.813 | 0.504 | 0.080 | 0.712 | 8 |

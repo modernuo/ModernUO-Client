@@ -56,10 +56,12 @@ public struct SpriteDebugInfo
 /// <code>
 ///   world.Prepare(camera);                       // streaming + visible chunks
 ///   world.SetStaticOverride(x, y, z, g, alpha);  // any number, e.g. from AddTileToRenderList
+///   world.SetZHiding(maxZ, maxGroundZ, roofs);   // optional: ClassicUO's max-Z / roof hiding in the shader
+///   world.SetCircleOfTransparency(cx, cy, r, z); // optional: shader-mode circle of transparency
 ///   world.AddDynamic() = instance;               // mobiles, items, effects
 ///   world.Render(target, w, h, format, load);    // records + submits its own command buffer
 /// </code>
-/// Overrides and dynamic sprites are cleared after each Render.</summary>
+/// Overrides, dynamic sprites, z hiding and the circle of transparency are cleared after each Render.</summary>
 public sealed unsafe class WorldRenderer : IDisposable
 {
     public readonly PackSet Pack;
@@ -88,6 +90,13 @@ public sealed unsafe class WorldRenderer : IDisposable
 
     readonly PendingOverride[] _pending;
     int _pendingCount;
+
+    // per-frame uniforms set by the host (cleared after Render)
+    int _maxZ, _maxGroundZ;
+    uint _zFlags;
+    int _cotZ;
+    float _cotX, _cotY, _cotR;
+    ushort _tintHue;
     readonly OverrideEntry[] _ovTable;
     readonly int[] _ovUsed;
     int _ovUsedCount;
@@ -105,6 +114,8 @@ public sealed unsafe class WorldRenderer : IDisposable
     /// <summary>Last frame: overrides that matched a baked instance, missed (chunk not ready or no such object), dropped
     /// (hash or translucent list full); translucent instances drawn; dynamic instances.</summary>
     public int OverridesApplied, OverridesMissed, OverridesDropped, TranslucentCount, DynamicDrawn;
+    /// <summary>Last frame: instances listed for the circle-of-transparency ring (translucent pass).</summary>
+    public int CotRingCount;
     /// <summary>Last frame: main-thread time to resolve overrides and build the translucent list (Stopwatch ticks).</summary>
     public long OverrideTicks;
     public int ChunkCount => _chunkCount;
@@ -231,19 +242,76 @@ public sealed unsafe class WorldRenderer : IDisposable
     // ---- overrides for baked land and statics
 
     /// <summary>Overrides the land tile at (x, y) this frame. alpha 255 = opaque; hidden = not drawn; highlightHue
-    /// (1-based UO hue, 0 = none) recolours the whole sprite.</summary>
-    public void SetLandOverride(int x, int y, byte alpha = 255, bool hidden = false, ushort highlightHue = 0)
-        => AddOverride(x, y, 0, 0, false, alpha, hidden, highlightHue);
+    /// (1-based UO hue, 0 = none) recolours the whole sprite; forceShow = draw it even where <see cref="SetZHiding"/>
+    /// would hide it (an object still fading out).</summary>
+    public void SetLandOverride(int x, int y, byte alpha = 255, bool hidden = false, ushort highlightHue = 0, bool forceShow = false)
+        => AddOverride(x, y, 0, 0, false, alpha, hidden, highlightHue, forceShow);
 
     /// <summary>Overrides the statics at (x, y) with this graphic and z (z = int.MinValue: any z) this frame.</summary>
-    public void SetStaticOverride(int x, int y, int z, ushort graphic, byte alpha = 255, bool hidden = false, ushort highlightHue = 0)
-        => AddOverride(x, y, z, graphic, true, alpha, hidden, highlightHue);
+    public void SetStaticOverride(int x, int y, int z, ushort graphic, byte alpha = 255, bool hidden = false, ushort highlightHue = 0, bool forceShow = false)
+        => AddOverride(x, y, z, graphic, true, alpha, hidden, highlightHue, forceShow);
 
-    void AddOverride(int x, int y, int z, int graphic, bool isStatic, byte alpha, bool hidden, ushort highlightHue)
+    /// <summary>ClassicUO's roof and max-Z hiding for this frame, tested per baked instance in the shader: land with
+    /// z &gt; <paramref name="maxGroundZ"/>, statics with z &gt;= <paramref name="maxZ"/>, and roofs when
+    /// <paramref name="hideRoofs"/> are not drawn (unless a <c>forceShow</c> override keeps one).</summary>
+    public void SetZHiding(int maxZ, int maxGroundZ, bool hideRoofs)
     {
-        if (alpha == 255 && !hidden && highlightHue == 0) return;
+        _maxZ = maxZ;
+        _maxGroundZ = maxGroundZ;
+        _zFlags = 1u | (hideRoofs ? 2u : 0);
+    }
+
+    /// <summary>Recolours every baked land tile and static with this 1-based hue this frame (whole sprite, as a highlight;
+    /// per-sprite highlight overrides win). ClassicUO's death screen; 0 = none.</summary>
+    public void SetTint(ushort hue) => _tintHue = hue;
+
+    /// <summary>Circle of transparency (ClassicUO's shader mode) for this frame: centre and radius in target pixels,
+    /// <paramref name="z"/> = the player's z + 5 (Static.TransparentTest). Applies to baked statics that pass the test and
+    /// to dynamic sprites with <see cref="SpriteInstance.LightCot"/>.</summary>
+    public void SetCircleOfTransparency(float centerX, float centerY, float radius, int z)
+    {
+        _cotX = centerX;
+        _cotY = centerY;
+        _cotR = radius;
+        _cotZ = z;
+    }
+
+    /// <summary>Replaces land graphics in the bake (0x4000 entries, null = none; ClassicUO's season land tiles) and
+    /// rebakes every chunk. Meant for rare changes: the view re-streams.</summary>
+    public void SetLandRemap(ushort[] remap)
+    {
+        if (remap != null && remap.Length < 0x4000) throw new ArgumentException("land remap needs 0x4000 entries", nameof(remap));
+        Pack.LandRemap = remap;
+        Chunks.EvictAll();
+    }
+
+    /// <summary>The shader's z-hiding test on the CPU (same rules as sprite.hlsl).</summary>
+    public bool ZHidden(in SpriteInstance inst, bool forceShow = false)
+    {
+        if ((_zFlags & 1) == 0 || forceShow || (inst.Flags & SpriteInstance.FlagZTest) == 0) return false;
+        int z = (sbyte)inst.Corners;
+        uint zb = inst.Corners >> 16 & 0xFF;
+        if ((inst.Flags & SpriteInstance.FlagStretch) != 0 || (zb & SpriteInstance.ZLand) != 0) return z > _maxGroundZ;
+        return z >= _maxZ || (_zFlags & 2) != 0 && (zb & SpriteInstance.ZRoof) != 0;
+    }
+
+    /// <summary>The shader's circle-of-transparency eligibility on the CPU (same rules as sprite.hlsl).</summary>
+    public bool CotApplies(in SpriteInstance inst)
+    {
+        if (_cotR <= 0 || (inst.Flags & SpriteInstance.FlagLit) != 0) return false;
+        if ((inst.Flags & SpriteInstance.FlagZTest) == 0) return (inst.Light & SpriteInstance.LightCot) != 0;
+        if ((inst.Flags & SpriteInstance.FlagStretch) != 0) return false;
+        int z = (sbyte)inst.Corners, height = (int)(inst.Corners >> 8 & 0xFF);
+        uint zb = inst.Corners >> 16 & 0xFF;
+        return (zb & (SpriteInstance.ZLand | SpriteInstance.ZNoCot)) == 0 && z > _cotZ - height && (z <= _cotZ || (zb & SpriteInstance.ZCotCapable) != 0);
+    }
+
+    void AddOverride(int x, int y, int z, int graphic, bool isStatic, byte alpha, bool hidden, ushort highlightHue, bool forceShow)
+    {
+        if (alpha == 255 && !hidden && highlightHue == 0 && !forceShow) return;
         if (_pendingCount >= _pending.Length) { _droppedPending++; return; }
-        uint flags = (hidden || alpha == 0 ? OverrideEntry.Hidden : 0) | (highlightHue != 0 ? OverrideEntry.Highlight : 0);
+        uint flags = (hidden || alpha == 0 ? OverrideEntry.Hidden : 0) | (highlightHue != 0 ? OverrideEntry.Highlight : 0)
+            | (forceShow ? OverrideEntry.ForceShow : 0);
         uint hueRow = highlightHue != 0 ? (uint)(highlightHue - 1) : 0;
         _pending[_pendingCount++] = new PendingOverride { X = x, Y = y, Z = z, Graphic = graphic, IsStatic = isStatic, Value = alpha | flags << 8 | hueRow << 16 };
     }
@@ -284,6 +352,15 @@ public sealed unsafe class WorldRenderer : IDisposable
         _transCount = 0;
         int transCap = _trans.Length;
         OverridesDropped = _droppedPending;
+        CotRingCount = 0;
+        bool cot = _cotR > 0;
+        if (cot)
+        {
+            // the circle in world pixels (the target's viewport centre is the camera centre)
+            double ox = _cam.ViewportX + Math.Max(1, _cam.ViewportWidth) * 0.5, oy = _cam.ViewportY + Math.Max(1, _cam.ViewportHeight) * 0.5;
+            double wx = _cx + (_cotX - ox) / _scale, wy = _cy + (_cotY - oy) / _scale, wr = _cotR / _scale;
+            _cotRect = new RectI((int)Math.Floor(wx - wr) - 1, (int)Math.Floor(wy - wr) - 1, (int)Math.Ceiling(wx + wr) + 1, (int)Math.Ceiling(wy + wr) + 1);
+        }
 
         // dynamic: page residency, translucent list, one more chunk-table entry for the reserved range
         DynamicDrawn = _dynCount;
@@ -294,7 +371,9 @@ public sealed unsafe class WorldRenderer : IDisposable
                 ref readonly var d = ref _dynamic[i];
                 if ((d.Flags & SpriteInstance.FlagIndexed) != 0) AnimPages?.Touch(d.Page - Pack.AnimPageBase, Frame);
                 else Pages.Touch(d.Page, Frame);
-                if (!d.Translucent || d.Alpha == 0) continue;
+                if (d.Alpha == 0) continue;
+                // translucent, or opaque with a circle-of-transparency ring to blend (the shader discards the rest)
+                if (!d.Translucent && !(cot && (d.Light & SpriteInstance.LightCot) != 0 && InCotRect(d))) continue;
                 if (_transCount < transCap) _transSort[_transCount++] = SortKey(d.Depth, _dynFirst + (uint)i);
                 else OverridesDropped++;
             }
@@ -323,9 +402,36 @@ public sealed unsafe class WorldRenderer : IDisposable
                 OverridesApplied++;
                 bool hidden = (po.Value >> 8 & OverrideEntry.Hidden) != 0;
                 ref readonly var inst = ref cpu[locals[k]];
-                if (hidden || ((po.Value & 0xFF) == 255 && !inst.Translucent)) continue;
+                if (hidden || ZHidden(inst, (po.Value >> 8 & OverrideEntry.ForceShow) != 0)) continue;
+                // opaque: the circle-of-transparency scan below lists it if it has a ring
+                if ((po.Value & 0xFF) == 255 && !inst.Translucent) continue;
                 if (_transCount < transCap) _transSort[_transCount++] = SortKey(inst.Depth, gi);
                 else OverridesDropped++;
+            }
+        }
+
+        // circle of transparency: baked opaque statics it applies to also draw their faded ring in the translucent pass
+        if (cot)
+        {
+            int nSlots = Chunks.ReadySlotsInRect(in _cotRect, _cotSlots);
+            for (int c = 0; c < nSlots; c++)
+            {
+                int slot = _cotSlots[c];
+                var cpu = Chunks.CpuInstances(slot);
+                int first = Chunks.FirstInstance(slot);
+                for (int k = 0; k < cpu.Length; k++)
+                {
+                    ref readonly var inst = ref cpu[k];
+                    if ((inst.Flags & SpriteInstance.FlagZTest) == 0 || !InCotRect(inst) || !CotApplies(inst)) continue;
+                    uint gi = (uint)(first + k);
+                    uint ov = FindOverride(gi, mask, out bool found);
+                    // hidden, or translucent through its override (already listed, gets the whole effect there)
+                    if (found && ((ov >> 8 & OverrideEntry.Hidden) != 0 || (ov & 0xFF) != 255)) continue;
+                    if (ZHidden(inst, found && (ov >> 8 & OverrideEntry.ForceShow) != 0)) continue;
+                    if (inst.Translucent) continue;
+                    if (_transCount < transCap) { _transSort[_transCount++] = SortKey(inst.Depth, gi); CotRingCount++; }
+                    else OverridesDropped++;
+                }
             }
         }
 
@@ -361,11 +467,35 @@ public sealed unsafe class WorldRenderer : IDisposable
                 FormatFlags = FormatFlagsOverride >= 0 ? (uint)FormatFlagsOverride : PageFormats.ShaderFlags(Pack.Format),
                 GrayTolerance = (GrayToleranceOverride >= 0 ? GrayToleranceOverride : PageFormats.Bc7GrayTolerance) / 255f,
                 DepthScale = Renderer.DepthScale,
+                MaxZ = _maxZ, MaxGroundZ = _maxGroundZ, ZFlags = _zFlags,
+                CotZ = _cotZ, CotCenterX = _cotX, CotCenterY = _cotY, CotRadius = _cotR,
+                TintRow = _tintHue != 0 && _tintHue - 1 < Pack.HueCount ? _tintHue : 0u,
             },
         };
     }
 
     static ulong SortKey(uint depth, uint gi) => (ulong)depth << 32 | (uint.MaxValue - gi);
+
+    RectI _cotRect;
+    readonly int[] _cotSlots = new int[1024];
+
+    /// <summary>The instance's (unrotated) rectangle meets the circle of transparency's bounding box.</summary>
+    bool InCotRect(in SpriteInstance i)
+        => i.X <= _cotRect.X1 && i.X + i.Width >= _cotRect.X0 && i.Y <= _cotRect.Y1 && i.Y + i.Height >= _cotRect.Y0;
+
+    uint FindOverride(uint gi, uint mask, out bool found)
+    {
+        found = false;
+        if (_ovUsedCount == 0) return 0;
+        uint h = OverrideEntry.Hash(gi);
+        for (int p = 0; p < OverrideEntry.MaxProbes; p++)
+        {
+            ref readonly var e = ref _ovTable[(int)((h + (uint)p) & mask)];
+            if (e.Index1 == 0) return 0;
+            if (e.Index1 == gi + 1) { found = true; return e.Value; }
+        }
+        return 0;
+    }
 
     bool InsertOverride(uint gi, uint value, uint mask)
     {
@@ -392,6 +522,9 @@ public sealed unsafe class WorldRenderer : IDisposable
         _pendingCount = 0;
         _droppedPending = 0;
         _dynCount = 0;
+        _zFlags = 0;
+        _cotR = 0;
+        _tintHue = 0;
         ScreenshotPath = null;
         GpuSample = false;
         _prepared = false;

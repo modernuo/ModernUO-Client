@@ -14,12 +14,19 @@
 //   uint pageHue   logical page | hue row << 16
 //   uint depth     integer depth key (bigger = nearer); camera-relative in the shader
 //   uint light     FLAG_LIT: 4 x u8 per-corner light (stretched land), 170 = 1.0;
-//                  otherwise byte 0 = 255 - alpha (0 = opaque), byte 1 = hue mode (MODE_*)
-//   uint corners   4 x s8 per-corner z (stretched land), corner order top,right,left,bottom; FLAG_INDEXED: palette id
+//                  otherwise byte 0 = 255 - alpha (0 = opaque), bits 8-11 hue mode (MODE_*), 12-15 LIGHT_* bits,
+//                  16-31 rotation (u16 turns) when LIGHT_ROTATED
+//   uint corners   4 x s8 per-corner z (stretched land), corner order top,right,left,bottom; FLAG_INDEXED: palette id;
+//                  FLAG_ZTEST statics: (u8)z | height << 8 | Z_* bits << 16; FLAG_ZTEST flat land: (u8)z | Z_LAND << 16
 //
 // Two draws share the instance buffer: pass 0 (opaque, depth write) walks the visible chunk table and skips translucent
 // instances; pass 1 (premultiplied blend, depth test only) draws the frame table's back-to-front list of translucent
 // instance indices. A per-frame override hash (instance index -> alpha / hidden / highlight hue) applies to both.
+//
+// ClassicUO's max-Z / roof hiding and its circle of transparency (shader mode) are uniforms tested per FLAG_ZTEST
+// instance, so the steady state needs no per-sprite overrides. Circle of transparency: an opaque instance it applies to
+// is drawn by the opaque pass with the circle cut out, and again by the translucent pass (the host lists it) for the
+// faded ring only; a translucent one gets the whole effect in the translucent pass (IsometricWorld.fx PixelShader_Hue).
 
 #define FLAG_HUED     1u
 #define FLAG_PARTIAL  2u
@@ -27,9 +34,11 @@
 #define FLAG_LIT      8u
 #define FLAG_MIRROR   16u     // flip the rect horizontally (mirrored anim directions)
 #define FLAG_INDEXED  32u     // Indexed8 anim page: AnimIdx array + palette lookup, manual filtering
+#define FLAG_ZTEST    64u     // baked land / static: max-Z, roof and circle-of-transparency uniforms apply
 #define FLAG_SHARP    0x100u  // set by the vertex shader from the Sharp uniform
 #define FLAG_UNPREMUL 0x200u  // FormatFlags bit 0 << 9
 #define FLAG_GRAYTOL  0x400u  // FormatFlags bit 1 << 9
+#define FLAG_ADDITIVE 0x1000000u // hueFlags.y: additive output (alpha 0 under the premultiplied blend)
 // hueFlags.y bits 12-15: mode, 16-23: alpha
 #define MODE_NORMAL   0u
 #define MODE_SPECTRAL 1u
@@ -37,6 +46,18 @@
 #define MODE_EFFECT   3u
 #define OV_HIDDEN     1u
 #define OV_HIGHLIGHT  2u
+#define OV_FORCESHOW  4u      // ignore the max-Z / roof test (an object still fading out)
+#define LIGHT_COT     0x1000u
+#define LIGHT_ROTATED 0x2000u
+#define LIGHT_ADDITIVE 0x4000u
+#define Z_LAND        1u
+#define Z_ROOF        2u
+#define Z_COTCAPABLE  4u      // Static._canBeTransparent
+#define Z_NOCOT       8u      // trees and foliage stay opaque inside the circle
+#define COT_NONE      0u
+#define COT_HOLE      1u      // opaque pass: cut the circle out
+#define COT_RING      2u      // translucent pass, opaque instance: only the faded ring
+#define COT_FULL      3u      // translucent instance: hole + ring
 // BC7 perturbs exact grays by a few levels; ClassicUO's partial-hue test is r == g == b on 5-bit source colours,
 // so BC7 packs use a small tolerance (GrayTolerance uniform, set by the renderer).
 
@@ -79,6 +100,16 @@ cbuffer Frame : register(b0, space1)
     uint   OverrideBase;
     uint   TransBase;
     uint   Pass;
+    int    MaxZ;           // statics with z >= MaxZ are hidden (ZFlags & 1)
+    int    MaxGroundZ;     // land with z > MaxGroundZ is hidden
+    uint   ZFlags;         // 1 = max-Z test on, 2 = hide roofs
+    int    CotZ;           // circle of transparency: player z + 5 (Static.TransparentTest)
+    float  CotCenterX;     // target pixels
+    float  CotCenterY;
+    float  CotRadius;      // target pixels, 0 = off
+    uint   TintRow;        // hue row + 1 applied whole-sprite to FLAG_ZTEST instances (death screen), 0 = none
+    uint   Pad1;
+    uint   Pad2;
 };
 
 [[vk::combinedImageSampler]] Texture2DArray<float4> Atlas    : register(t0, space2);
@@ -99,6 +130,7 @@ struct VSOut
     float  light : TEXCOORD2;
     nointerpolation float atlasSize : TEXCOORD3; // the fragment stage can't read the vertex cbuffer (space1)
     nointerpolation float grayTol : TEXCOORD4;
+    nointerpolation float4 cot : TEXCOORD5; // centre (target px), radius, COT_* mode
 };
 
 static const uint Corner[6] = { 0, 1, 2, 2, 1, 3 };
@@ -117,7 +149,7 @@ VSOut Collapsed()
 {
     VSOut o;
     o.pos = float4(-2, -2, 0, 1);
-    o.uvw = 0; o.hueFlags = 0; o.light = 0; o.atlasSize = 1; o.grayTol = 0;
+    o.uvw = 0; o.hueFlags = 0; o.light = 0; o.atlasSize = 1; o.grayTol = 0; o.cot = 0;
     return o;
 }
 
@@ -147,6 +179,9 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     bool lit = (flags & FLAG_LIT) != 0;
     uint alpha = lit ? 255u : 255u - (inst.light & 0xFFu);
     uint mode = lit ? MODE_NORMAL : (inst.light >> 8) & 0xFu;
+    uint lbits = lit ? 0u : inst.light & 0xF000u;
+    bool forceShow = false;
+    bool highlighted = false;
     if (OverrideMask != 0)
     {
         uint h = OverrideHash(gi);
@@ -158,8 +193,10 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
             {
                 uint ovFlags = (e.y >> 8) & 0xFFu;
                 alpha = (ovFlags & OV_HIDDEN) != 0 ? 0u : alpha * (e.y & 0xFFu) / 255u;
+                forceShow = (ovFlags & OV_FORCESHOW) != 0;
                 if (ovFlags & OV_HIGHLIGHT)
                 {
+                    highlighted = true;
                     hueRow = e.y >> 16;
                     flags = (flags | FLAG_HUED) & ~FLAG_PARTIAL;
                 }
@@ -167,10 +204,39 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
             }
         }
     }
-    bool translucent = alpha < 255u || mode == MODE_SPECTRAL || mode == MODE_SHADOW;
+    // ClassicUO's roof / max-Z hiding (FillGameObjectList: land above _maxGroundZ, statics at or above _maxZ, roofs
+    // when _noDrawRoofs) and Static.TransparentTest for the circle of transparency.
+    uint cotMode = COT_NONE;
+    bool zTest = (flags & FLAG_ZTEST) != 0;
+    if (zTest && TintRow != 0 && !highlighted)
+    {
+        hueRow = TintRow - 1;
+        flags = (flags | FLAG_HUED) & ~FLAG_PARTIAL;
+    }
+    bool zLand = (flags & FLAG_STRETCH) != 0 || ((inst.corners >> 16) & Z_LAND) != 0;
+    int z = (int)(inst.corners << 24) >> 24;
+    if (zTest && (ZFlags & 1u) != 0 && !forceShow)
+    {
+        if (zLand ? z > MaxGroundZ : z >= MaxZ || ((ZFlags & 2u) != 0 && ((inst.corners >> 16) & Z_ROOF) != 0))
+            alpha = 0u;
+    }
+    bool translucent = alpha < 255u || mode == MODE_SPECTRAL || mode == MODE_SHADOW || (lbits & LIGHT_ADDITIVE) != 0;
+    if (CotRadius > 0)
+    {
+        bool cot;
+        if (zTest)
+        {
+            uint zb = (inst.corners >> 16) & 0xFFu;
+            int height = (int)((inst.corners >> 8) & 0xFFu);
+            cot = !zLand && (zb & Z_NOCOT) == 0 && z > CotZ - height && (z <= CotZ || (zb & Z_COTCAPABLE) != 0);
+        }
+        else cot = (lbits & LIGHT_COT) != 0;
+        if (cot) cotMode = translucent ? COT_FULL : (Pass != 0 ? COT_RING : COT_HOLE);
+    }
     uint layer = PageTable[inst.pageHue & 0xFFFF];
-    // Not resident, hidden, or the other pass's: collapse to a degenerate triangle.
-    if (layer == 0xFFFFFFFFu || alpha == 0u || translucent != (Pass != 0))
+    // Not resident, hidden, or the other pass's (an opaque instance's circle-of-transparency ring is the translucent
+    // pass's too): collapse to a degenerate triangle.
+    if (layer == 0xFFFFFFFFu || alpha == 0u || translucent != (Pass != 0) && cotMode != COT_RING)
         return Collapsed();
 
     VSOut o;
@@ -196,6 +262,13 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     {
         local = cxy * float2(w, h);
     }
+    if (lbits & LIGHT_ROTATED)
+    {
+        // Batcher2D.SetVertex with origin 0: x' = cos x - sin y, y' = sin x + cos y about the quad's top-left
+        float sn, cs;
+        sincos((inst.light >> 16) * (6.28318530718 / 65536.0), sn, cs);
+        local = float2(cs * local.x - sn * local.y, sn * local.x + cs * local.y);
+    }
     if (lit)
         light = ((inst.light >> (8 * c)) & 0xFF) / 170.0;
     bool indexed = (flags & FLAG_INDEXED) != 0;
@@ -211,10 +284,12 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     o.uvw = float3(uv * (indexed ? InvAnimAtlas : InvAtlas), layer);
     uint pal = indexed ? (inst.corners & 0xFFFF) : 0u;
     o.hueFlags = uint2(hueRow | (pal << 16),
-        flags | (Sharp != 0 ? FLAG_SHARP : 0u) | ((FormatFlags & 3u) << 9) | (mode << 12) | (alpha << 16));
+        flags | (Sharp != 0 ? FLAG_SHARP : 0u) | ((FormatFlags & 3u) << 9) | (mode << 12) | (alpha << 16)
+        | ((lbits & LIGHT_ADDITIVE) != 0 ? FLAG_ADDITIVE : 0u));
     o.light = light;
     o.atlasSize = indexed ? AnimAtlasSize : AtlasSize;
     o.grayTol = GrayTolerance;
+    o.cot = float4(CotCenterX, CotCenterY, CotRadius, (float)cotMode);
     return o;
 }
 
@@ -238,17 +313,39 @@ float3 IndexedTap(uint idx, uint pal, uint hueRow, uint flags, uint mode)
     return float3((c5 << 3) | (c5 >> 2)) / 255.0;
 }
 
-// Spectral / shadow / alpha, premultiplied (the opaque pass always has alpha 1).
-float4 Finish(float3 rgb, uint packed)
+// IsometricWorld.fx circle of transparency: discard inside 0.85 r, fade alpha by t^3 out to r. Returns the alpha factor.
+float CotAlpha(float4 pos, float4 cot)
+{
+    uint m = (uint)cot.w;
+    if (m == COT_NONE)
+        return 1.0;
+    float ratio = length(pos.xy - cot.xy) / cot.z;
+    if (m == COT_HOLE)
+    {
+        if (ratio < 1.0) discard;
+        return 1.0;
+    }
+    if (ratio < 0.85 || m == COT_RING && ratio >= 1.0)
+        discard;
+    float t = saturate((ratio - 0.85) / 0.15);
+    return ratio < 1.0 ? t * t * t : 1.0;
+}
+
+// Spectral / shadow / alpha, premultiplied (the opaque pass always has alpha 1). Additive: alpha 0, so the
+// premultiplied blend adds the colour (ClassicUO's Screen effect blend: One, One).
+float4 Finish(float3 rgb, uint packed, float cotAlpha)
 {
     uint mode = (packed >> 12) & 0xFu;
     float a = ((packed >> 16) & 0xFFu) / 255.0;
     if (mode == MODE_SPECTRAL) { a = saturate(1.0 - rgb.r * 1.5); rgb = 0; }
     else if (mode == MODE_SHADOW) { a = 0.4; rgb = 0; }
-    return float4(rgb * a, a);
+    a *= cotAlpha;
+    if (cotAlpha < 1.0 && a < 0.02)
+        discard;
+    return float4(rgb * a, (packed & FLAG_ADDITIVE) != 0 ? 0.0 : a);
 }
 
-float4 PSIndexed(VSOut i, uint flags)
+float4 PSIndexed(VSOut i, uint flags, float cotAlpha)
 {
     // Manual bilinear over palette-resolved taps, all at mip0 (the 2-px gutter keeps the footprint in the frame's cell,
     // so the instance's palette is right for every tap). Sharp mode remaps the fraction as the hardware path does:
@@ -277,7 +374,7 @@ float4 PSIndexed(VSOut i, uint flags)
         uint i0 = AnimIdx.Load(int4(p0 + (int2)fr, layer, 0));
         if (i0 == 0u)
             discard;
-        return Finish(IndexedTap(i0, pal, hueRow, flags, mode) * i.light, flags);
+        return Finish(IndexedTap(i0, pal, hueRow, flags, mode) * i.light, flags, cotAlpha);
     }
     float4 wq = float4((1 - f.x) * (1 - f.y), f.x * (1 - f.y), (1 - f.x) * f.y, f.x * f.y);
     uint4 idx = uint4(AnimIdx.Load(int4(p0, layer, 0)), AnimIdx.Load(int4(p0 + int2(1, 0), layer, 0)),
@@ -292,13 +389,14 @@ float4 PSIndexed(VSOut i, uint flags)
     }
     if (a < 0.5)
         discard;
-    return Finish(rgb / a * i.light, flags);
+    return Finish(rgb / a * i.light, flags, cotAlpha);
 }
 
 float4 PSMain(VSOut i) : SV_Target
 {
+    float cotAlpha = CotAlpha(i.pos, i.cot);
     if (i.hueFlags.y & FLAG_INDEXED)
-        return PSIndexed(i, i.hueFlags.y);
+        return PSIndexed(i, i.hueFlags.y, cotAlpha);
     float4 c;
     if (i.hueFlags.y & FLAG_SHARP)
     {
@@ -339,5 +437,5 @@ float4 PSMain(VSOut i) : SV_Target
             c.rgb = HueLut.Load(int3(min(31, (int)(c.r * 32.0)), i.hueFlags.x & 0xFFFFu, 0)).rgb;
     }
     c.rgb *= i.light;
-    return Finish(c.rgb, flags);
+    return Finish(c.rgb, flags, cotAlpha);
 }

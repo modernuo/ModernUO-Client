@@ -13,6 +13,8 @@ public sealed class PackTables
     public AnimBodyEntry[] AnimBodies;
     public AnimDirEntry[] AnimDirs;
     public AnimFrameEntry[] AnimFrames;
+    /// <summary>Per static graphic: the host keeps it opaque inside the circle of transparency (ClassicUO: trees).</summary>
+    public bool[] StaticNoCot;
 }
 
 /// <summary>Everything the renderer reads from a pack at startup (small tables). Pages and regions stream later.</summary>
@@ -25,6 +27,11 @@ public sealed class PackSet
     public readonly StaticTileData[] Statics;
     public readonly int HueCount;
     public readonly uint[] Hues;
+    /// <summary>Host table (<see cref="PackTables.StaticNoCot"/>), or null.</summary>
+    public readonly bool[] StaticNoCot;
+    /// <summary>Land graphic replacement (0x4000 entries, e.g. the host's season tiles), or null. Set it through
+    /// <see cref="WorldRenderer.SetLandRemap"/>, which rebakes the chunks.</summary>
+    public ushort[] LandRemap;
 
     /// <summary>Logical page id → file. Art pages first, then texmap pages (offset by <see cref="TexPageBase"/>).</summary>
     public readonly string[] PagePaths;
@@ -67,6 +74,7 @@ public sealed class PackSet
         (Land, Statics) = TileDataFile.Read(Path.Combine(root, "tiledata.bin"));
         if (shared?.Hues != null) (HueCount, Hues) = (shared.HueCount, shared.Hues);
         else (HueCount, Hues) = HueFile.Read(Path.Combine(root, "hues.bin"));
+        StaticNoCot = shared?.StaticNoCot;
 
         var artPages = CountPages(Path.Combine(root, "art"));
         var texPages = CountPages(Path.Combine(root, "tex"));
@@ -125,7 +133,7 @@ public sealed class PackSet
 
     PackSet(PackSet o, int facet)
     {
-        Root = o.Root; Sprites = o.Sprites; Texmaps = o.Texmaps; Land = o.Land; Statics = o.Statics; HueCount = o.HueCount; Hues = o.Hues;
+        Root = o.Root; Sprites = o.Sprites; Texmaps = o.Texmaps; Land = o.Land; Statics = o.Statics; HueCount = o.HueCount; Hues = o.Hues; StaticNoCot = o.StaticNoCot; LandRemap = o.LandRemap;
         PagePaths = o.PagePaths; TexPageBase = o.TexPageBase; Format = o.Format; PageSize = o.PageSize; PageMips = o.PageMips;
         AnimBodies = o.AnimBodies; AnimDirs = o.AnimDirs; AnimFrames = o.AnimFrames; AnimDir = o.AnimDir; AnimPageBase = o.AnimPageBase;
         AnimIndexed = o.AnimIndexed; AnimPagePaths = o.AnimPagePaths; AnimFormat = o.AnimFormat; AnimPageSize = o.AnimPageSize;

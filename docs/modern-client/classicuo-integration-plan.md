@@ -77,6 +77,15 @@ Each step keeps the client runnable. The new world renderer sits behind `WorldRe
 8. **Uo.Render as a library with an external device.** It takes FNA's device, target texture and format, and selects shaders by driver. It's fed by pack regions and the ECS extract.
    - Verify: Gpu matches Legacy in screenshots; one world draw call.
 9. **Feature parity**, one subtask at a time with screenshot diffs: hue modes, alpha and roofs, highlight, shadows, mirror, effects, weather, lights.
+   - **Status (step 9, 2026-10-24):** done:
+     - the circle of transparency (shader mode);
+     - roof and max-Z hiding as shader uniforms;
+     - effects and the multi preview captured into the world pass (depth-tested), with rotation and the Screen blend;
+     - season land tiles;
+     - the death-screen tint uniform;
+     - hue modes checked against Legacy.
+
+     Open gaps: effect blends other than Normal/Screen, the sitting deformation, the water wobble and scaled sprites. Details are in poc-log.md ("Step 9").
 10. **Performance proof under NativeAOT.**
     - Compare Legacy and Gpu in a busy town, at the Britain bank, zoomed out, and while travelling: frame time, world-prepare CPU, allocations.
     - Then make Gpu the default, and remove MeshLayer/ChunkMesh and the views' `Draw` bodies.

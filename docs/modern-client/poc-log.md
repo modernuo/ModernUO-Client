@@ -248,6 +248,64 @@ The owner asked that everything definitive (e.g. the FNA 26.10 upgrade) land on 
   - The prepare phase is still ClassicUO's full walk (0.5 ms zoomed out, 2.9 ms at 4K): the next lever. Roof hiding means hundreds to thousands of overrides.
   - Item/mobile capture costs what drawing them did (120 mobiles: 0.2 ms); the ECS extract would remove the view logic.
 
+### 2026-10-24 — Step 9: Gpu world parity for general play (uncommitted)
+
+- **Shader-side z data:** baked land and statics now carry `FlagZTest`. Statics pack (u8)z, tiledata height and bits (roof, `Static._canBeTransparent`, no-circle) into the instance's free `Corners` word; flat land packs z and a land bit; stretched land already has its z in the top corner. New uniforms: `MaxZ`, `MaxGroundZ`, `ZFlags`, the circle of transparency (centre, radius, player z + 5) and `TintRow`.
+- **1. Circle of transparency, shader mode** (`WorldRenderer.SetCircleOfTransparency`):
+  - The shader runs `Static.TransparentTest` per baked static. Trees (a host `StaticNoCot` table from `StaticFilters.IsTree`) and foliage are exempt, as in `StaticView`. Captured sprites whose hue alpha is > 1 (multis, replaced statics) get `LightCot`.
+  - An opaque instance is drawn by the opaque pass with the circle cut out. It is drawn again by the translucent pass for the faded ring only (0.85–1.0 r, alpha t³, the `IsometricWorld.fx` formula). The CPU lists ring candidates by scanning only the chunks inside the circle's bounding box: 8 instances at the bank. A translucent instance gets the whole effect in its own pass.
+  - **Parity:** inside a 120 px circle around the player, standing against the bank's front wall, Gpu vs Legacy differ by more than 8 on 0.06–0.27% of pixels. I looked at the crops: the wall cut and the ring match. Zoomed out, the cut matches too; the rest of that view is the known mip-vs-alias difference.
+- **2. Roof and max-Z hiding in the shader** (`SetZHiding(_maxZ, _maxGroundZ, _noDrawRoofs)`):
+  - Hidden: land with z > max ground z, statics with z ≥ max z, and roofs when roofs are off.
+  - Objects still fading out (or unmeshed land, which Legacy draws regardless) get a `ForceShow` override carrying their alpha. Fading back in uses the existing alpha overrides.
+  - `CollectGpuHidden` skips what the shader already hides. It now tests land against the real 44×44 box: stretched tiles get a 32-z margin above and MinZ below. The old 108/64 px slack had produced most of the remaining overrides.
+  - **Overrides:** bank 478 → 39, Britain 129 → 71, zoomed out 232 → 182. Bank world draw 0.082 → 0.057 ms; world prepare unchanged (0.130 → 0.127). Table below.
+  - The baker also applies the converter's `NameNoDraw` flag, which is the tiledata "nodraw" name check.
+- **3. Depth for FNA-drawn world-space layers** (chosen approach: capture into Uo.Render, so they share the world's depth key):
+  - **Effects** go through `GpuWorldRenderer.DrawObject` like items. The rotated `Batcher2D.Draw` overload gained a capture hook (`ISpriteCapture.DrawRotated`). The instance rotates in the vertex shader (`LightRotated`, u16 angle in `Light` bits 16–31) about the untrimmed rect's corner, as Batcher2D does.
+  - **Blends:** Normal is captured. Screen/ScreenMore are captured as additive (`LightAdditive`: premultiplied output with alpha 0, i.e. dst + src·a). Multiply, ScreenLess, NormalHalfTransparent, ShadowBlue and ScreenRed can't be expressed with the premultiplied blend, so they stay FNA draws over the world. So do sprites the capture can't map.
+  - **Multi placement preview:** captured too, so it is depth-tested. Not screenshot-verified: it needs a scripted mouse.
+  - **Overlays:** weather, the selection rectangle and object handles stay FNA overlays. Legacy draws them at max depth as well.
+  - **Checked with client-side effects** (new DevBench `effect:`/`moving:` entries):
+    - A fire column under the bank roof is hidden by the roof in both modes; step 8 drew it on top.
+    - A Screen-blend sparkle looks the same in both.
+    - A moving fireball's rotation matches Legacy.
+- **4. Extras:**
+  - **Seasonal land:** `WorldRenderer.SetLandRemap` (from `SeasonManager.GetLandSeasonGraphic`) is applied in the bake and rebakes via `ChunkStore.EvictAll`. A season change therefore re-streams the view for a few frames. Winter at Yew: 0.19% of pixels differ.
+  - **Rotated sprites:** done (effects).
+  - **Left as gaps:** the sitting deformation (needs per-vertex skew; there is no room in the 32-byte instance), the animated-water wobble (off by default) and other scaled sprites.
+- **5. Hue modes** (local-only DevBench `itemhue:`/`ghost:` entries, both modes in one session; I looked at each crop):
+  - Spectral (an item hued 0x4001) and partial (0x8021) match.
+  - Mobile shadows are unchanged from step 8.
+  - **Death screen gray:** 2.8% of pixels differ by more than 8 at zoom 1 (0.07% after the 4×4 box filter). The gray is now a `TintRow` uniform: it was about 2,800 per-sprite overrides at zoom 1, and zoomed out it would have overflowed the 8,192-entry pending list. Out-of-range tint stays per-object.
+- **General parity** (unchanged from step 8, so nothing regressed):
+  - Pixels differing by more than 8, then after the 4×4 box filter: Britain 7.2% / 0.4%, bank 16.1% / 0.9%, zoomed out 75% / 24%.
+  - Most of it is filtering. Stretched land is point-sampled by Legacy and filtered by Uo.Render; zoomed out, Legacy aliases while Uo.Render uses mips.
+- **Picking** (`CUO_BENCH_PICK`): static, land, ground item and player resolve to the same objects in both modes, and the clicks reach the server.
+- **Perf** (JIT, 1920×1080, ms avg; before = HEAD 88f455e4f, mean of 2 runs; after = 1 run). Legacy's code is unchanged, so its rows show the run-to-run noise:
+
+  | spot | mode | world prepare before → after | world draw before → after | Draw total before → after | overrides before → after |
+  |---|---|---|---|---|---|
+  | britain | legacy | 0.110 → 0.105 | 0.132 → 0.119 | 0.365 → 0.335 | — |
+  | britain | gpu | 0.156 → 0.152 | 0.086 → 0.059 | 0.374 → 0.335 | 129 → 71 |
+  | bank | gpu | 0.130 → 0.127 | 0.082 → 0.057 | 0.340 → 0.304 | 478 → 39 |
+  | zoomout | legacy | 0.556 → 0.531 | 0.558 → 0.558 | 1.239 → 1.210 | — |
+  | zoomout | gpu | 0.608 → 0.605 | 0.090 → 0.078 | 0.820 → 0.802 | 232 → 182 |
+
+  - With the circle of transparency on (Gpu): bank front wall, prepare 0.140 and draw 0.057, with 8 ring instances; zoomed out, prepare 0.504 and draw 0.080.
+  - FNA draw calls in Gpu mode are 23–24 (24–27 before), because effects left the FNA overlay.
+- **Uo.Render.App `--external-test`:** passes on Vulkan and D3D12. The new uniforms default to off, so standalone and slice output is unchanged.
+- **Server:** ModernUO received Ctrl+C at 07:44, not from this session. It was restarted with `start-modernuo.ps1` at 07:50 and left running.
+- **Remaining gaps:**
+  - The effect blends listed above.
+  - The sitting deformation, the water wobble and other scaled sprites.
+  - Translucent statics (tiledata Translucent → alpha 178) are still per-sprite overrides every frame.
+  - The ring-candidate test uses unrotated rects.
+  - A season change re-streams the view.
+  - The gargoyle exception to NoDiagonal is not baked.
+  - The multi preview has not been screenshot-verified.
+  - The remaining zoomed-out overrides (182) are the fill's other skips, mostly land at the view edges.
+
 ## Phase 4 plan (owner, 2026-10-24): bring it into ClassicUO
 
 The owner accepts compressed packs on disk if decompression is fast.

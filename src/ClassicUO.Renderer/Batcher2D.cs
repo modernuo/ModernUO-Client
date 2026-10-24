@@ -858,6 +858,17 @@ namespace ClassicUO.Renderer
             float layerDepth
         )
         {
+            if (Capture != null && origin == Vector2.Zero && effects == SpriteEffects.None)
+            {
+                Rectangle source = sourceRectangle ?? texture.Bounds;
+
+                if (destinationRectangle.Width == source.Width && destinationRectangle.Height == source.Height
+                    && Capture.DrawRotated(texture, new Vector2(destinationRectangle.X, destinationRectangle.Y), source, color, rotation, layerDepth))
+                {
+                    return;
+                }
+            }
+
             float sourceX, sourceY, sourceW, sourceH;
             if (sourceRectangle.HasValue)
             {

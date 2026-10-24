@@ -251,10 +251,29 @@ namespace ClassicUO.Game.Scenes
                    CaptureRenderList(batcher, _transparentObjects, maxGroundZ, gpu);
         }
 
-        /// <summary>GPU world: what FNA still draws over the world pass (effects, object handles).</summary>
-        public int DrawDeferredRenderLists(UltimaBatcher2D batcher, sbyte maxGroundZ)
+        /// <summary>GPU world: effects (into the world pass when it can reproduce their blend, else FNA over it) and what FNA
+        /// draws over the world pass (object handles).</summary>
+        public int DrawDeferredRenderLists(UltimaBatcher2D batcher, sbyte maxGroundZ, GpuWorldRenderer gpu)
         {
-            int result = DrawRenderList(batcher, _effects, maxGroundZ);
+            int result = 0;
+
+            foreach (var obj in _effects)
+            {
+                if (obj.Z > maxGroundZ)
+                {
+                    continue;
+                }
+
+                float depth = obj.CalculateDepthZ();
+                bool drawn = obj is GameEffect effect && GpuWorldRenderer.CanCapture(effect)
+                    ? gpu.DrawObject(batcher, obj, depth)
+                    : obj.Draw(batcher, obj.RealScreenPosition.X, obj.RealScreenPosition.Y, depth);
+
+                if (drawn)
+                {
+                    result++;
+                }
+            }
 
             if (_gumpSprites.Count > 0 || _gumpTexts.Count > 0)
             {
