@@ -32,6 +32,11 @@ public sealed unsafe class ChunkStore
     readonly byte[] _pageCount = new byte[MaxSlots];
     readonly long[] _lastNeeded = new long[MaxSlots];
     readonly BakeJob[] _job = new BakeJob[MaxSlots];
+    // CPU mirror of the instance buffer at the same offsets, with each instance's object key: override lookup,
+    // translucent sort keys, debug rects. The allocator is first-fit, so only the low part is used; the mirror starts at
+    // 512k instances (19 MB; the 4K bench path, zoom 0.5 included, peaks below that) and doubles past it if ever needed.
+    SpriteInstance[] _cpuInst;
+    uint[] _cpuKeys;
     readonly int[] _active = new int[MaxSlots], _activePos = new int[MaxSlots];
     int _activeCount;
     readonly int[] _freeSlots = new int[MaxSlots];
@@ -65,6 +70,8 @@ public sealed unsafe class ChunkStore
         _pack = pack;
         _workers = workers;
         Alloc = new RangeAllocator(instanceCapacity);
+        _cpuInst = new SpriteInstance[Math.Min(instanceCapacity, 1 << 19)];
+        _cpuKeys = new uint[_cpuInst.Length];
         for (int i = MaxSlots - 1; i >= 0; i--) _freeSlots[_freeCount++] = i;
         for (int i = 0; i < MaxBakesInFlight; i++) _jobPool.Push(new BakeJob()); // pre-sized: no steady-state allocation
         BakeJob.Pack = pack;
@@ -236,7 +243,9 @@ public sealed unsafe class ChunkStore
         _active[_activeCount++] = slot;
         var job = _jobPool.Pop();
         if (job.Instances.Length < count) job.Instances = new SpriteInstance[count];
+        if (job.Keys.Length < count) job.Keys = new uint[count];
         Array.Copy(instances, job.Instances, count);
+        Array.Clear(job.Keys, 0, count);
         job.Count = count;
         job.MinX = job.MinY = int.MaxValue; job.MaxX = job.MaxY = int.MinValue;
         job.PageCount = 0;
@@ -308,6 +317,17 @@ public sealed unsafe class ChunkStore
             job.Pages.AsSpan(0, pc).CopyTo(_pages.AsSpan(slot * MaxPagesPerChunk, pc));
             _state[slot] = State.Ready;
             _job[slot] = null;
+            if (n > 0)
+            {
+                if (first + n > _cpuInst.Length)
+                {
+                    int len = Math.Min(Alloc.Capacity, Math.Max(first + n, _cpuInst.Length * 2));
+                    Array.Resize(ref _cpuInst, len);
+                    Array.Resize(ref _cpuKeys, len);
+                }
+                job.Instances.AsSpan(0, n).CopyTo(_cpuInst.AsSpan(first));
+                job.Keys.AsSpan(0, n).CopyTo(_cpuKeys.AsSpan(first));
+            }
             ReturnJob(job);
             uploaded++;
         }
@@ -316,8 +336,46 @@ public sealed unsafe class ChunkStore
 
     public int UploadQueueLength => _uqCount;
 
+    /// <summary>Finds the baked instances of a map object in a ready chunk: the land tile at (x, y)
+    /// (<paramref name="isStatic"/> false; z and graphic ignored), or the statics there with this graphic and z
+    /// (<c>int.MinValue</c> = any z). Writes chunk-local instance indices; global index = <see cref="FirstInstance"/> + local.</summary>
+    public int FindObject(int x, int y, bool isStatic, int z, int graphic, out int slot, Span<int> locals)
+    {
+        slot = -1;
+        if (x < 0 || y < 0 || (x >> 3) >= _pack.BlocksX || (y >> 3) >= _pack.BlocksY) return 0;
+        if (!_map.TryGetValue((y >> 3) * _pack.BlocksX + (x >> 3), out slot) || _state[slot] != State.Ready) return 0;
+        var keys = _cpuKeys.AsSpan(_first[slot], _count[slot]);
+        int n = keys.Length;
+        uint cell = (uint)((y & 7) * 8 + (x & 7));
+        int lo = 0, hi = n;
+        while (lo < hi)
+        {
+            int mid = (lo + hi) >> 1;
+            if (keys[mid] >> 25 < cell) lo = mid + 1; else hi = mid;
+        }
+        int found = 0;
+        for (int i = lo; i < n && keys[i] >> 25 == cell && found < locals.Length; i++)
+        {
+            uint k = keys[i];
+            if (((k >> 24 & 1) != 0) != isStatic) continue;
+            if (isStatic && ((k & 0xFFFF) != (uint)graphic || z != int.MinValue && (sbyte)(k >> 16) != z)) continue;
+            locals[found++] = i;
+        }
+        return found;
+    }
+
+    public bool TryGetReadySlot(int bx, int by, out int slot)
+        => _map.TryGetValue(by * _pack.BlocksX + bx, out slot) && _state[slot] == State.Ready;
+
+    public ReadOnlySpan<uint> ObjectKeys(int slot) => _state[slot] == State.Ready ? _cpuKeys.AsSpan(_first[slot], _count[slot]) : default;
+
+    public int FirstInstance(int slot) => _first[slot];
+    public ReadOnlySpan<SpriteInstance> CpuInstances(int slot) => _state[slot] == State.Ready ? _cpuInst.AsSpan(_first[slot], _count[slot]) : default;
+    /// <summary>Elements in the CPU instance mirror (grows to the allocator's high-water mark).</summary>
+    public int CpuMirrorLength => _cpuInst.Length;
+
     /// <summary>Visible chunk table for this frame. Touches the pages of every visible chunk in the residency manager.</summary>
-    public int BuildDrawList(in RectI view, ChunkDraw[] table, PageResidency residency, long frame, out int instances)
+    public int BuildDrawList(in RectI view, Span<ChunkDraw> table, PageResidency residency, long frame, out int instances)
     {
         int n = 0;
         uint total = 0;

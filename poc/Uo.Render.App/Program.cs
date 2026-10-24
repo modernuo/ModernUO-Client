@@ -5,7 +5,7 @@ namespace Uo.Render;
 
 public static unsafe class Program
 {
-    sealed class Options
+    internal sealed class Options
     {
         public string Pack;
         public bool Bench;
@@ -33,6 +33,10 @@ public static unsafe class Program
         public int InstanceCapacity = 2 << 20;
         public int Workers = Math.Clamp(Environment.ProcessorCount / 2 - 1, 2, 8);
         public float BenchSeconds = 20;
+        public bool ExternalTest;
+        public int BenchOverrides;   // --bench-overrides N: N static overrides per frame (hidden / alpha 128 / highlight)    // --external-test: external device mode into a host-owned target, compared with offscreen mode
+
+        public Options Clone() => (Options)MemberwiseClone();
     }
 
     public static int Main(string[] args)
@@ -57,8 +61,13 @@ public static unsafe class Program
                 case "--debug-compress-pages": // <srcPackDir> <dstPackDir>: Brotli (Kind=1) every other page, for reader tests
                     DebugCompressPages(args[i + 1], args[i + 2]);
                     return 0;
-                case "--page-decode-bench": // <page dir> [pages] [--expand]: PageJob per page into native memory, ms + bytes allocated
-                    return PageDecodeBench(args[i + 1], i + 2 < args.Length && int.TryParse(args[i + 2], out var np) ? np : 16, args.Contains("--expand"));
+                case "--page-decode-bench": // <page dir> [pages] [--expand] [--parallel N]: PageJob per page into native memory, ms + bytes allocated
+                {
+                    int pi = Array.IndexOf(args, "--parallel");
+                    int par = pi >= 0 && pi + 1 < args.Length ? int.Parse(args[pi + 1]) : 1;
+                    int pages = i + 2 < args.Length && int.TryParse(args[i + 2], out var np) ? np : 16;
+                    return par > 1 ? PageDecodeBenchParallel(args[i + 1], pages, args.Contains("--expand"), par) : PageDecodeBench(args[i + 1], pages, args.Contains("--expand"));
+                }
                 case "--pack": o.Pack = args[++i]; break;
                 case "--bench": o.Bench = true; break;
                 case "--bench-seconds": o.BenchSeconds = float.Parse(args[++i]); break;
@@ -70,7 +79,14 @@ public static unsafe class Program
                 case "--format-flags": o.FormatFlags = int.Parse(args[++i]); break;
                 case "--force-expand": o.ForceExpand = true; break;
                 case "--self-test": o.SelfTest = true; break;
+                case "--external-test": o.ExternalTest = true; break;
+                case "--bench-overrides": o.BenchOverrides = int.Parse(args[++i]); break;
                 case "--driver": o.Driver = args[++i]; break;
+                case "--chunk-decoders": // N[xT]: Kind 2 decoder pool size [x threads each]
+                    var dt = args[++i].Split('x');
+                    ChunkedPageReader.Decoders = int.Parse(dt[0]);
+                    if (dt.Length > 1) ChunkedPageReader.ThreadsPerDecoder = int.Parse(dt[1]);
+                    break;
                 case "--bench-formats":
                     o.BenchFormats = new List<string>();
                     while (i + 1 < args.Length && !args[i + 1].StartsWith("--")) o.BenchFormats.Add(args[++i]);
@@ -117,6 +133,7 @@ public static unsafe class Program
         }
         if (o.BenchFormats != null) return FormatBench.Run(o.BenchFormats, o.SizeGiven ? o.Width : 3840, o.SizeGiven ? o.Height : 2160, o.Layers, o.Driver);
         o.Pack ??= PackSet.FindDefault();
+        if (o.ExternalTest) return ExternalTest.Run(o);
         return Run(o);
     }
 
@@ -148,9 +165,63 @@ public static unsafe class Program
         }
         long alloc = GC.GetTotalAllocatedBytes(true) - alloc0;
         ms.Sort();
-        Console.WriteLine($"{dir}: {paths.Count} pages {PageFormats.Name(h.Format)} {h.Width}/{h.MipCount} mips{(expand ? " -> RGBA8" : "")}, kind decode threads {ChunkedPageReader.Workers}: " +
+        Console.WriteLine($"{dir}: {paths.Count} pages {PageFormats.Name(h.Format)} {h.Width}/{h.MipCount} mips{(expand ? " -> RGBA8" : "")}, kind 2 decoders {ChunkedPageReader.Decoders} x {ChunkedPageReader.ThreadsPerDecoder} threads: " +
             $"median {ms[ms.Count / 2]:F2} ms/page (min {ms[0]:F2}, max {ms[^1]:F2}); allocated {alloc} B over {ms.Count} loads ({alloc / ms.Count} B/page)");
         System.Runtime.InteropServices.NativeMemory.Free(mem);
+        return 0;
+    }
+
+    /// <summary>Like the worker pool loading a burst of pages: <paramref name="par"/> threads run PageJobs concurrently over
+    /// the pages, 3 rounds; reports wall time per round, pages/s, and the average time a job waited for a chunk decoder.</summary>
+    static int PageDecodeBenchParallel(string dir, int pages, bool expand, int par)
+    {
+        var paths = new List<string>();
+        while (paths.Count < pages && File.Exists(Uo.Pack.PackConst.PagePath(dir, paths.Count))) paths.Add(Uo.Pack.PackConst.PagePath(dir, paths.Count));
+        var h = PageFormats.ReadHeader(paths[0]);
+        var up = expand ? Uo.Pack.PixelFormat.Rgba8 : h.Format;
+        int cap = PageFormats.ChainBytes(h.Width, h.MipCount, up);
+        var jobs = new PageJob[par];
+        for (int t = 0; t < par; t++)
+            jobs[t] = new PageJob { Capacity = cap, Format = h.Format, Expand = expand, Dst = (byte*)System.Runtime.InteropServices.NativeMemory.Alloc((nuint)cap) };
+        var rounds = new List<double>();
+        long wait = 0, run = 0;
+        int n = 0;
+        bool failed = false;
+        for (int round = 0; round < 3; round++)
+        {
+            int next = -1;
+            long t0 = Stopwatch.GetTimestamp();
+            var threads = new Thread[par];
+            for (int t = 0; t < par; t++)
+            {
+                var job = jobs[t];
+                threads[t] = new Thread(() =>
+                {
+                    int k;
+                    while ((k = Interlocked.Increment(ref next)) < paths.Count)
+                    {
+                        job.Path = paths[k];
+                        long ts = Stopwatch.GetTimestamp();
+                        job.Run();
+                        if (!job.Ok) failed = true;
+                        if (round > 0)
+                        {
+                            Interlocked.Add(ref run, Stopwatch.GetTimestamp() - ts);
+                            Interlocked.Add(ref wait, job.WaitTicks);
+                            Interlocked.Increment(ref n);
+                        }
+                    }
+                });
+                threads[t].Start();
+            }
+            foreach (var th in threads) th.Join();
+            if (round > 0) rounds.Add(Stopwatch.GetElapsedTime(t0).TotalMilliseconds);
+        }
+        if (failed) { Console.WriteLine("page load failed"); return 1; }
+        double f = 1000.0 / Stopwatch.Frequency, wall = rounds.Average();
+        Console.WriteLine($"{dir}: {paths.Count} pages {PageFormats.Name(h.Format)} x {par} concurrent jobs, {ChunkedPageReader.Decoders} chunk decoders x {ChunkedPageReader.ThreadsPerDecoder} threads: " +
+            $"wall {wall:F1} ms/round = {paths.Count * 1000.0 / wall:F0} pages/s; per job {run * f / n:F2} ms of which {wait * f / n:F2} ms waiting for a decoder");
+        foreach (var j in jobs) System.Runtime.InteropServices.NativeMemory.Free(j.Dst);
         return 0;
     }
 
@@ -318,7 +389,16 @@ public static unsafe class Program
         }
     }
 
-    static int Run(Options o)
+    internal static WorldOptions WorldOptions(Options o) => new()
+    {
+        InstanceCapacity = o.InstanceCapacity, Layers = o.Layers, PageBudget = o.PageBudget, ChunkBudget = o.ChunkBudget,
+        ForceExpand = o.ForceExpand, StreamMap = o.HueSheet == null, AnimLayers = 0, Workers = o.Workers,
+    };
+
+    /// <summary>RGBA8 pixels of the last --screenshot taken by <see cref="Run"/> (external-test reference).</summary>
+    internal static byte[] LastShot;
+
+    internal static int Run(Options o)
     {
         Console.WriteLine($"pack: {o.Pack}");
         var pack = new PackSet(o.Pack, 0);
@@ -333,29 +413,34 @@ public static unsafe class Program
         var window = SDL_CreateWindow("Uo.Render", o.Width, o.Height, flags);
         if (window == IntPtr.Zero) { Console.Error.WriteLine(SDL_GetError()); return 1; }
 
-        using var workers = new WorkerPool(o.Workers);
-        using var renderer = new Renderer(window, offscreen, pack, o.InstanceCapacity, 8192, o.Driver);
-        Console.WriteLine($"  device: {SDL_GetGPUDeviceDriver(renderer.Device)}, swapchain format {renderer.ColorFormat}, immediate={renderer.ImmediateSupported}");
-        var residency = new PageResidency(renderer.Device, pack, workers, o.Layers, o.PageBudget, Math.Max(2, o.PageBudget * 2), o.ForceExpand);
-        Console.WriteLine($"  shaders {renderer.ShaderFormat}, pages {residency.FormatDescription}");
-        var chunks = new ChunkStore(pack, workers, o.InstanceCapacity);
-
-        if (o.Bench) renderer.VSync = false;
-        renderer.ApplyPresentMode();
-        if (offscreen) renderer.EnsureOffscreen((uint)o.Width, (uint)o.Height);
-        renderer.Throttle = o.Offscreen;
-        renderer.ForcePoint = o.Point;
-        if (o.HueSheet != null)
+        int rc;
+        var wo = WorldOptions(o);
+        using (var workers = new WorkerPool(o.Workers))
+        using (var renderer = new Renderer(window, offscreen, pack, o.InstanceCapacity, wo.MaxVisibleChunks, o.Driver, wo.MaxTranslucent, wo.OverrideSlots))
+        using (var world = new WorldRenderer(renderer, pack, workers, wo))
         {
-            renderer.ClearColor = new SDL_FColor { r = 0.30f, g = 0.30f, b = 0.32f, a = 1 };
-            int n = BuildHueSheet(pack, o, out var sheet);
-            chunks.InjectDebugChunk(sheet, n);
-        }
-        if (o.Magenta) renderer.ClearColor = new SDL_FColor { r = 1, g = 0, b = 1, a = 1 };
+            Console.WriteLine($"  device: {SDL_GetGPUDeviceDriver(renderer.Device)}, swapchain format {renderer.ColorFormat}, immediate={renderer.ImmediateSupported}");
+            Console.WriteLine($"  shaders {renderer.ShaderFormat}, pages {world.Pages.FormatDescription}");
+            if (o.Bench) renderer.VSync = false;
+            renderer.ApplyPresentMode();
+            if (offscreen) renderer.EnsureOffscreen((uint)o.Width, (uint)o.Height);
+            renderer.Throttle = o.Offscreen;
+            renderer.ForcePoint = o.Point;
+            if (o.FormatFlags >= 0) world.FormatFlagsOverride = o.FormatFlags;
+            if (o.GrayTol >= 0) world.GrayToleranceOverride = o.GrayTol;
+            if (o.HueSheet != null)
+            {
+                renderer.ClearColor = new SDL_FColor { r = 0.30f, g = 0.30f, b = 0.32f, a = 1 };
+                int n = BuildHueSheet(pack, o, out var sheet);
+                world.Chunks.InjectDebugChunk(sheet, n);
+            }
+            if (o.Magenta) renderer.ClearColor = new SDL_FColor { r = 1, g = 0, b = 1, a = 1 };
 
-        var app = new App(o, pack, window, renderer, residency, chunks, workers);
-        int rc = app.Loop();
-        residency.Dispose();
+            var app = new App(o, pack, window, world);
+            rc = app.Loop();
+            LastShot = renderer.LastScreenshot;
+        }
+        SDL_DestroyWindow(window);
         return rc;
     }
 
@@ -364,11 +449,10 @@ public static unsafe class Program
         readonly Options _o;
         readonly PackSet _pack;
         readonly IntPtr _window;
+        readonly WorldRenderer _w;
         readonly Renderer _r;
         readonly PageResidency _pages;
         readonly ChunkStore _chunks;
-        readonly WorkerPool _workers;
-        readonly ChunkDraw[] _table = new ChunkDraw[8192];
 
         // camera (world pixels: X = (x-y)*22, Y = (x+y)*22)
         double _camX, _camY;
@@ -379,13 +463,12 @@ public static unsafe class Program
         long _prevFrameStart;
         double _submitOverheadMs;
         long _panStart = -1;
-        double _velX, _velY, _prevCx, _prevCy;
         int _panFrames, _panPopFrames, _panPopChunks, _panMaxEvict;
         bool _viaPending;
 
-        public App(Options o, PackSet pack, IntPtr window, Renderer r, PageResidency pages, ChunkStore chunks, WorkerPool workers)
+        public App(Options o, PackSet pack, IntPtr window, WorldRenderer world)
         {
-            _o = o; _pack = pack; _window = window; _r = r; _pages = pages; _chunks = chunks; _workers = workers;
+            _o = o; _pack = pack; _window = window; _w = world; _r = world.Renderer; _pages = world.Pages; _chunks = world.Chunks;
             SetCameraTile(o.StartX, o.StartY);
             _zoom = o.StartZoom;
             if (!double.IsNaN(o.ViaX)) { SetCameraTile(o.ViaX, o.ViaY); _viaPending = true; }
@@ -401,7 +484,7 @@ public static unsafe class Program
         {
             long frame = 0;
             double freq = Stopwatch.Frequency;
-            long last = Stopwatch.GetTimestamp();
+            long last = Stopwatch.GetTimestamp(), startTicks = last;
             long titleAt = last;
             int framesSinceTitle = 0;
             double cpuAccum = 0;
@@ -420,6 +503,7 @@ public static unsafe class Program
             int gc0 = 0, gc1 = 0, gc2 = 0;
             long warmupUntil = last + (long)(freq * 1.0);
             int maxBakeQueue = 0;
+            long ovTicks = 0, ovApplied = 0, ovTrans = 0, ovMissed = 0, ovDropped = 0, ovFrames = 0;
 
             // screenshot state
             long shotDeadline = last + (long)(freq * 60);
@@ -513,70 +597,17 @@ public static unsafe class Program
                     if (keys[(int)SDL_Scancode.SDL_SCANCODE_D] || keys[(int)SDL_Scancode.SDL_SCANCODE_RIGHT]) _camX += speed;
                 }
 
-                // ---- view
+                // ---- view, streaming, visible chunks
                 SDL_GetWindowSizeInPixels(_window, out int pw, out int ph);
                 if (_r.Offscreen) { pw = _o.Width; ph = _o.Height; density = _o.Density; }
                 float scale = _zoom * density;
-                double cx = Math.Round(_camX * scale) / scale, cy = Math.Round(_camY * scale) / scale;
-                float halfW = pw * 0.5f / scale, halfH = ph * 0.5f / scale;
-                var view = new RectI((int)(cx - halfW) - 1, (int)(cy - halfH) - 1, (int)(cx + halfW) + 1, (int)(cy + halfH) + 1);
-                float pre = 0.35f;
-                var need = new RectI((int)(cx - halfW * (1 + pre)) - 128, (int)(cy - halfH * (1 + pre)) - 128, (int)(cx + halfW * (1 + pre)) + 128, (int)(cy + halfH * (1 + pre)) + 128);
-                // Bias the prefetch toward the direction of motion: 0.4 s of travel, at most half a view.
-                // Jumps larger than half a view in one frame (teleport, or a hitch under a time-scripted camera)
-                // are not motion and must not inflate the prefetch set.
-                if (frame > 1)
-                {
-                    double ddx = cx - _prevCx, ddy = cy - _prevCy;
-                    if (Math.Abs(ddx) > halfW || Math.Abs(ddy) > halfH) { ddx = 0; ddy = 0; _velX = _velY = 0; }
-                    double inv = 1.0 / Math.Max(dt, 1e-4);
-                    _velX = _velX * 0.8 + ddx * inv * 0.2; // world px / s
-                    _velY = _velY * 0.8 + ddy * inv * 0.2;
-                }
-                _prevCx = cx; _prevCy = cy;
-                int leadX = (int)Math.Clamp(_velX * 0.4, -halfW, halfW), leadY = (int)Math.Clamp(_velY * 0.4, -halfH, halfH);
-                if (leadX > 0) need.X1 += leadX; else need.X0 += leadX;
-                if (leadY > 0) need.Y1 += leadY; else need.Y0 += leadY;
-
-                // ---- streaming
-                while (_workers.TryDequeueDone(out var job))
-                {
-                    switch (job)
-                    {
-                        case BakeJob b: _chunks.OnBaked(b); break;
-                        case RegionJob rj: _chunks.OnRegionLoaded(rj); break;
-                        case PageJob pj: pj.Owner.OnLoaded(pj); break;
-                    }
-                }
-                if (_o.HueSheet == null) _chunks.Update(frame, in view, in need);
+                _w.Prepare(new WorldCamera { CenterX = _camX, CenterY = _camY, Zoom = scale, ViewportWidth = pw, ViewportHeight = ph });
                 maxBakeQueue = Math.Max(maxBakeQueue, _chunks.BakesInFlight);
-                _pages.BeginFrame();
-                int chunkCount = _chunks.BuildDrawList(in view, _table, _pages, frame, out int instances);
-                _pages.StartLoads(frame);
-
-                // ---- render
-                int camPxX = (int)Math.Floor(cx), camPxY = (int)Math.Floor(cy);
-                var fi = new Renderer.FrameInput
-                {
-                    Chunks = _chunks, Pages = _pages, Table = _table, ChunkCount = chunkCount, Instances = instances,
-                    Frame = frame, LinearFilter = scale < 0.999f, ChunkUploadBudget = _o.ChunkBudget,
-                    Uniforms = new FrameUniforms
-                    {
-                        CamPxX = camPxX, CamPxY = camPxY,
-                        CamFracX = (float)(cx - camPxX), CamFracY = (float)(cy - camPxY),
-                        ScaleX = scale, ScaleY = scale,
-                        CamDepth = BakeJob.CameraDepthKey((float)(cy / 22.0)),
-                        ChunkCount = (uint)chunkCount,
-                        InvAtlas = 1f / _pack.PageSize,
-                        FormatFlags = _o.FormatFlags >= 0 ? (uint)_o.FormatFlags : PageFormats.ShaderFlags(_pack.Format),
-                        GrayTolerance = (_o.GrayTol >= 0 ? _o.GrayTol : PageFormats.Bc7GrayTolerance) / 255f,
-                        DepthScale = Renderer.DepthScale,
-                    },
-                };
+                int chunkCount = _w.ChunkCount, instances = _w.Instances;
 
                 if (_o.Screenshot != null)
                 {
-                    bool settled = _chunks.PendingChunks == 0 && _chunks.UploadQueueLength == 0 && !_pages.Pending && _pages.MissingVisible == 0 && frame > 3;
+                    bool settled = _w.Settled && frame > 3;
                     settledFrames = settled ? settledFrames + 1 : 0;
                     if (settledFrames >= 3 && _viaPending)
                     {
@@ -588,29 +619,33 @@ public static unsafe class Program
                     if (settledFrames >= 3 || t0 > shotDeadline)
                     {
                         if (!settled) Console.WriteLine("screenshot: streaming did not settle before the deadline");
-                        fi.ScreenshotPath = _o.Screenshot;
-                        _r.RenderFrame(ref fi);
-                        Console.WriteLine($"screenshot {_o.Screenshot}: {_r.TargetW}x{_r.TargetH}, {instances} instances, {chunkCount} chunks, {_pages.ResidentCount} pages resident, frame {frame}");
+                        _w.ScreenshotPath = _o.Screenshot;
+                        _w.Render();
+                        Console.WriteLine($"screenshot {_o.Screenshot}: {_r.TargetW}x{_r.TargetH}, {instances} instances, {chunkCount} chunks, {_pages.ResidentCount} pages resident, frame {frame}, settled after {(t0 - startTicks) * 1000.0 / freq:F0} ms; page loads {_pages.ReadStats}, {_pages.WaitTicksSum * 1000.0 / Stopwatch.Frequency / Math.Max(1, _pages.ReadStats.Count):F2} ms avg waiting for a chunk decoder");
                         return 0;
                     }
                 }
 
                 if (_o.ShotsDir != null && frame % _o.ShotEvery == 0)
                 {
-                    fi.ScreenshotPath = Path.Combine(_o.ShotsDir, $"shot_{frame:D5}.png");
-                    _r.RenderFrame(ref fi);
-                    Console.WriteLine($"{fi.ScreenshotPath}: zoom {_zoom:F2}, {instances} inst, {chunkCount} chunks, pending chunks {_chunks.PendingChunks}, pages {_pages.ResidentCount} missing-visible {_pages.MissingVisible}");
+                    string shot = Path.Combine(_o.ShotsDir, $"shot_{frame:D5}.png");
+                    _w.ScreenshotPath = shot;
+                    _w.Render();
+                    Console.WriteLine($"{shot}: zoom {_zoom:F2}, {instances} inst, {chunkCount} chunks, pending chunks {_chunks.PendingChunks}, pages {_pages.ResidentCount} missing-visible {_pages.MissingVisible}");
                     continue;
                 }
 
                 // Offscreen bench: every 30th frame runs alone on an idle GPU and is fence-timed (GPU time estimate;
                 // SDL_GPU exposes no timestamp queries).
-                if (benchRunning && _r.Offscreen && samples % 30 == 29)
+                if (_o.BenchOverrides > 0) ApplyBenchOverrides();
+                if (benchRunning) { ovTicks += _w.OverrideTicks; ovApplied += _w.OverridesApplied; ovTrans += _w.TranslucentCount; ovMissed += _w.OverridesMissed; ovDropped += _w.OverridesDropped; ovFrames++; }
+                bool gpuSample = benchRunning && _r.Offscreen && samples % 30 == 29;
+                if (gpuSample)
                 {
                     _r.DrainInFlight();
-                    fi.GpuSample = true;
+                    _w.GpuSample = true;
                 }
-                _r.RenderFrame(ref fi);
+                _w.Render();
                 if (_o.PanTest) // pace like a 60 Hz vsync'd session so worker latency is measured in real frames
                     while (Stopwatch.GetTimestamp() - t0 < freq / 60) Thread.Sleep(1);
                 long t1 = Stopwatch.GetTimestamp();
@@ -620,7 +655,7 @@ public static unsafe class Program
 
                 if (benchRunning && samples < maxSamples)
                 {
-                    if (fi.GpuSample)
+                    if (gpuSample)
                     {
                         cpuMs[samples] = -1;
                         if (gpuSamples < gpuMs.Length) gpuMs[gpuSamples++] = (float)(_r.GpuSampleTicks * 1000.0 / freq);
@@ -632,7 +667,7 @@ public static unsafe class Program
                         if (!skipInterval && _prevFrameStart != 0) frameMs[intervals++] = (float)((t0 - _prevFrameStart) * 1000.0 / freq);
                     }
                     samples++;
-                    skipInterval = fi.GpuSample;
+                    skipInterval = gpuSample;
                 }
                 _prevFrameStart = t0;
 
@@ -655,8 +690,40 @@ public static unsafe class Program
                 int g0 = GC.CollectionCount(0) - gc0, g1 = GC.CollectionCount(1) - gc1, g2 = GC.CollectionCount(2) - gc2;
                 double secs = (Stopwatch.GetTimestamp() - benchStart) / freq;
                 ReportBench(cpuMs, frameMs, intervals, gpuMs, gpuSamples, samples, secs, allocMain, allocAll, g0, g1, g2, maxBakeQueue);
+                if (_o.BenchOverrides > 0 && ovFrames > 0)
+                    Console.WriteLine($"  overrides: {_o.BenchOverrides} requested/frame, {(double)ovApplied / ovFrames:F0} applied, {(double)ovMissed / ovFrames:F0} missed, {(double)ovDropped / ovFrames:F0} dropped, {(double)ovTrans / ovFrames:F0} translucent; " +
+                        $"resolve + translucent sort {ovTicks * 1000.0 / Stopwatch.Frequency / ovFrames * 1000:F1} us/frame (main thread, inside the CPU frame time)");
             }
             return 0;
+        }
+
+        /// <summary>--bench-overrides: overrides the first N statics found in ready chunks around the camera, cycling
+        /// hidden / alpha 128 / highlight. The key gathering is harness work; the world times its own resolve.</summary>
+        void ApplyBenchOverrides()
+        {
+            var v = _w.View;
+            double wx = (v.X0 + v.X1) * 0.5, wy = (v.Y0 + v.Y1) * 0.5;
+            int cbx = (int)Math.Round((wx + wy) / 44) >> 3, cby = (int)Math.Round((wy - wx) / 44) >> 3;
+            int n = 0;
+            for (int r = 0; r < 6 && n < _o.BenchOverrides; r++)
+                for (int by = cby - r; by <= cby + r && n < _o.BenchOverrides; by++)
+                    for (int bx = cbx - r; bx <= cbx + r && n < _o.BenchOverrides; bx++)
+                    {
+                        if (Math.Max(Math.Abs(bx - cbx), Math.Abs(by - cby)) != r || !_chunks.TryGetReadySlot(bx, by, out int slot)) continue;
+                        var keys = _chunks.ObjectKeys(slot);
+                        for (int i = 0; i < keys.Length && n < _o.BenchOverrides; i++)
+                        {
+                            uint k = keys[i];
+                            if ((k >> 24 & 1) == 0) continue;
+                            int cell = (int)(k >> 25), x = bx * 8 + (cell & 7), y = by * 8 + (cell >> 3);
+                            switch (n++ % 3)
+                            {
+                                case 0: _w.SetStaticOverride(x, y, (sbyte)(k >> 16), (ushort)k, hidden: true); break;
+                                case 1: _w.SetStaticOverride(x, y, (sbyte)(k >> 16), (ushort)k, alpha: 128); break;
+                                default: _w.SetStaticOverride(x, y, (sbyte)(k >> 16), (ushort)k, highlightHue: 0x35); break;
+                            }
+                        }
+                    }
         }
 
         void ReportBench(float[] cpuMs, float[] frameMs, int nInt, float[] gpuMs, int nGpu, int n, double secs, long allocMain, long allocAll, int g0, int g1, int g2, int maxBake)
@@ -691,8 +758,8 @@ public static unsafe class Program
             Console.WriteLine($"  GC collections gen0 {g0} gen1 {g1} gen2 {g2}");
             Console.WriteLine($"  allocated: main thread {allocMain} B ({(double)allocMain / n:F1} B/frame); all threads {allocAll / 1024} KiB ({(double)allocAll / n:F0} B/frame, workers' region/page IO)");
             Console.WriteLine($"  pages: {_pages.TotalUploads} uploads, {_pages.Evictions} evictions, main-thread map+unmap+copy-record avg {upMs:F3} ms/page, worker read avg {rdMs:F2} ms/page; VRAM for pages {_pages.VramBytes >> 20} MiB ({_pages.Layers} x {_pages.ChainBytes / 1024} KiB)");
-            Console.WriteLine($"  page files: {_pages.CompressedPages}/{_pages.ReadStats.Count} Brotli; avg file {fileMiB:F2} MiB; worker read {rdOnlyMs:F2} ms + decode {decMs:F2} ms + expand {expMs:F2} ms per page (+ {waitMs:F2} ms waiting for the shared chunk decoder, Kind 2: {ChunkedPageReader.Workers} decode threads)");
-            Console.WriteLine($"  regions: worker read+decompress avg {rgMs:F2} ms; chunks resident {_chunks.ActiveChunks}; instance buffer {_chunks.Alloc.Used}/{_chunks.Alloc.Capacity}; max bakes in flight {maxBake}");
+            Console.WriteLine($"  page files: {_pages.CompressedPages}/{_pages.ReadStats.Count} Brotli; avg file {fileMiB:F2} MiB; worker read {rdOnlyMs:F2} ms + decode {decMs:F2} ms + expand {expMs:F2} ms per page (+ {waitMs:F2} ms waiting for a chunk decoder, Kind 2: {ChunkedPageReader.Decoders} decoders x {ChunkedPageReader.ThreadsPerDecoder} threads)");
+            Console.WriteLine($"  regions: worker read+decompress avg {rgMs:F2} ms; chunks resident {_chunks.ActiveChunks}; instance buffer {_chunks.Alloc.Used}/{_chunks.Alloc.Capacity} (CPU mirror {_chunks.CpuMirrorLength}); max bakes in flight {maxBake}");
             Console.WriteLine($"  bakes: {_chunks.BakeStats}");
             Console.WriteLine($"  working set {proc.WorkingSet64 >> 20} MiB, private {proc.PrivateMemorySize64 >> 20} MiB, GC heap {GC.GetTotalMemory(false) >> 20} MiB");
             var ci = System.Globalization.CultureInfo.InvariantCulture;

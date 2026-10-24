@@ -8,8 +8,8 @@ namespace Uo.Render;
 /// buffer and decoded with BrotliDecoder directly into the mapped buffer (no full-size intermediate copy).
 /// Expand (16-bit pack, GPU without 16-bit sampling): the page is read or decoded in pieces into a reusable scratch
 /// buffer and each piece is expanded to RGBA8 into the mapped buffer (the whole chain doubles, so mip offsets double).
-/// Kind 2 (chunked Brotli): <see cref="ChunkedPageReader"/>'s workers decode the chunks in parallel straight into the
-/// mapped buffer, or into its shared scratch when expanding.</summary>
+/// Kind 2 (chunked Brotli): a decoder rented from <see cref="ChunkedPageReader"/> decodes the chunks in parallel straight
+/// into the mapped buffer, or into the lease's scratch when expanding.</summary>
 public sealed unsafe class PageJob : Job
 {
     public int Page, Slot;
@@ -23,6 +23,7 @@ public sealed unsafe class PageJob : Job
     public long ReadTicks, DecodeTicks, ExpandTicks, WaitTicks, FileBytes;
     byte[] _compressed = new byte[1 << 20];
     byte[] _scratch;
+    ChunkedPageReader.Lease _own;
 
     public override void Run()
     {
@@ -107,29 +108,36 @@ public sealed unsafe class PageJob : Job
             var cr = ChunkedPageReader.Instance;
             long tw = System.Diagnostics.Stopwatch.GetTimestamp();
             ReadTicks = tw - t0;
-            lock (cr.Lock)
+            // A page of about one chunk (1024² Indexed8 anims: 1 MiB + the 16-byte PageHeader) gains nothing from decoder
+            // threads: decode it here, beside other pages, instead of queueing for a pooled decoder.
+            ChunkedHeader ch = default;
+            RandomAccess.Read(fh0, System.Runtime.InteropServices.MemoryMarshal.AsBytes(new Span<ChunkedHeader>(ref ch)), 16);
+            bool pooled = ch.LogicalBytes > ch.ChunkBytes + ch.ChunkBytes / 2;
+            var lease = pooled ? cr.Rent() : _own ??= new ChunkedPageReader.Lease(1);
+            try
             {
                 long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
                 WaitTicks = t1 - tw;
                 if (!Expand)
                 {
-                    cr.Decoder.Decode(fh0, 16, new Span<byte>(Dst, Capacity), 16, phb);
+                    lease.Decoder.Decode(fh0, 16, new Span<byte>(Dst, Capacity), 16, phb);
                     ph = System.Runtime.InteropServices.MemoryMarshal.Read<PageHeader>(phb);
                     if (!Fits(ph)) return;
                     DecodeTicks = System.Diagnostics.Stopwatch.GetTimestamp() - t1;
                 }
                 else
                 {
-                    if (cr.Scratch.Length < Capacity / 2) cr.Scratch = new byte[Capacity / 2];
-                    cr.Decoder.Decode(fh0, 16, cr.Scratch.AsSpan(0, Capacity / 2), 16, phb);
+                    if (lease.Scratch.Length < Capacity / 2) lease.Scratch = new byte[Capacity / 2];
+                    lease.Decoder.Decode(fh0, 16, lease.Scratch.AsSpan(0, Capacity / 2), 16, phb);
                     ph = System.Runtime.InteropServices.MemoryMarshal.Read<PageHeader>(phb);
                     if (!Fits(ph)) return;
                     long te = System.Diagnostics.Stopwatch.GetTimestamp();
                     DecodeTicks = te - t1;
-                    PixelExpand.Expand(cr.Scratch.AsSpan(0, (int)ph.DataBytes), new Span<byte>(Dst, (int)ph.DataBytes * 2));
+                    PixelExpand.Expand(lease.Scratch.AsSpan(0, (int)ph.DataBytes), new Span<byte>(Dst, (int)ph.DataBytes * 2));
                     ExpandTicks = System.Diagnostics.Stopwatch.GetTimestamp() - te;
                 }
             }
+            finally { if (pooled) cr.Return(lease); }
         }
         else return;
         Mips = ph.MipCount;
@@ -172,12 +180,16 @@ public sealed unsafe class PageJob : Job
     }
 }
 
-/// <summary>One process-wide <see cref="ChunkedBrotliDecoder"/> for Kind=2 pages. Page jobs take turns (one Decode at a
-/// time), and each decode runs on all of the decoder's threads plus the calling worker, so one page's latency drops
-/// rather than several pages decoding slowly side by side. The scratch buffer serves the RGBA8 expansion path.</summary>
+/// <summary>A small process-wide pool of <see cref="ChunkedBrotliDecoder"/>s for multi-chunk Kind=2 pages. Each page job
+/// rents one for its Decode (its threads plus the calling worker decode that page's chunks in parallel), so a burst of
+/// pages decodes <see cref="Decoders"/> at a time instead of queueing on one decoder; single-chunk pages skip the pool.
+/// The lease's scratch serves the RGBA8 expansion path.</summary>
 public sealed class ChunkedPageReader
 {
-    public static int Workers = Math.Clamp(Environment.ProcessorCount / 2, 2, 8);
+    /// <summary>Pool size and threads per decoder (cores/2, 2..8, as the old single decoder); set before the first Kind=2
+    /// page loads. Two decoders keep a lone page's latency and raise burst throughput ~1.7x (page-decode-bench --parallel 4).</summary>
+    public static int Decoders = 2;
+    public static int ThreadsPerDecoder = Math.Clamp(Environment.ProcessorCount / 2, 2, 8);
     static ChunkedPageReader _instance;
     static readonly object Create = new();
 
@@ -190,9 +202,39 @@ public sealed class ChunkedPageReader
         }
     }
 
-    public readonly ChunkedBrotliDecoder Decoder = new(Workers);
-    public readonly object Lock = new();
-    public byte[] Scratch = [];
+    public sealed class Lease(int threads)
+    {
+        public readonly ChunkedBrotliDecoder Decoder = new(threads);
+        public byte[] Scratch = [];
+    }
+
+    readonly Stack<Lease> _free = new();
+    readonly object _lock = new();
+    int _created;
+
+    public Lease Rent()
+    {
+        lock (_lock)
+        {
+            while (_free.Count == 0)
+            {
+                if (_created < Math.Max(1, Decoders)) { _created++; goto create; }
+                Monitor.Wait(_lock);
+            }
+            return _free.Pop();
+        }
+    create:
+        return new Lease(ThreadsPerDecoder);
+    }
+
+    public void Return(Lease lease)
+    {
+        lock (_lock)
+        {
+            _free.Push(lease);
+            Monitor.Pulse(_lock);
+        }
+    }
 }
 
 /// <summary>Maps logical atlas pages onto a fixed number of physical layers of one Texture2DArray, LRU-evicting pages
