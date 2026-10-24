@@ -97,7 +97,8 @@ public static class Verify
 
     private static void CheckAtlas(UOFileManager fm, string dir, string table, bool tex, StaticTileData[] statics)
     {
-        const int S = PackConst.PageSize, G = PackConst.Gutter;
+        const int G = PackConst.Gutter;
+        int S = PageSide(dir);
         var entries = SpriteTable.Read(Path.Combine(dir, table));
         int pageCount = 0;
         foreach (var en in entries) if (en.Present) pageCount = Math.Max(pageCount, en.Page + 1);
@@ -141,7 +142,7 @@ public static class Verify
             if (!ConvertOptions.PageSelected(p)) return;
             var px = PageCodec.ReadMip(PackConst.PagePath(dir, p), 0, out var h);
             fmt = h.Format;
-            if (h.Width != S || h.Height != S || h.MipCount != PackConst.PageMipCount || h.DataBytes != AtlasPage.ChainBytes(S, PackConst.PageMipCount, h.Format))
+            if (h.Width != S || h.Height != S || h.MipCount != ConvertOptions.MipsFor(S) || h.DataBytes != AtlasPage.ChainBytes(S, ConvertOptions.MipsFor(S), h.Format))
                 Fail($"{dir} page {p} header");
             foreach (var id in byPage[p])
             {
@@ -259,7 +260,7 @@ public static class Verify
     /// </summary>
     private static void CheckAnim(UOFileManager fm, string dir)
     {
-        const int S = PackConst.PageSize;
+        int S = PageSide(dir);
         if (StructIo.SizeOf<AnimBodyEntry>() != 24 || StructIo.SizeOf<AnimDirEntry>() != 8 || StructIo.SizeOf<AnimFrameEntry>() != 24 || StructIo.SizeOf<AnimDataEntry>() != 70)
             Fail("anim struct sizes");
         var (bodies, dirs, frames) = AnimTableFile.Read(Path.Combine(dir, AnimTableFile.FileName));
@@ -376,6 +377,15 @@ public static class Verify
             Console.WriteLine($"  anim sample vs ClassicUO loader: {samples.Count} directions, {checkedFrames} frames: {exact} BIT-EXACT ({fmt}), {absent} absent, {crossPage} on another page (size/center only)");
     }
 
+    /// <summary>Side of the pack's pages in <paramref name="dir"/> (from page 0's header), else the default.</summary>
+    public static int PageSide(string dir)
+    {
+        var p0 = PackConst.PagePath(dir, 0);
+        if (!File.Exists(p0)) return PackConst.PageSize;
+        using var s = AtlasPage.OpenChain(p0, out var h);
+        return h.Width;
+    }
+
     private static double Psnr(double se, long n) => n == 0 || se == 0 ? 99 : 10 * Math.Log10(255.0 * 255.0 / (se / n));
 
     /// <summary>Single-thread per-page load timing: open, Brotli-decompress if Kind 1, read the full chain into a buffer.</summary>
@@ -383,7 +393,7 @@ public static class Verify
     {
         var files = Directory.GetFiles(dir, "page_*.bin");
         if (files.Length == 0) return;
-        var buf = new byte[AtlasPage.ChainBytes(PackConst.PageSize, PackConst.PageMipCount)];
+        var buf = new byte[AtlasPage.ChainBytes(Math.Max(PackConst.PageSize, PageSide(dir)), PackConst.PageMipCount)];
         var t = new List<double>(); long disk = 0, raw = 0; int compressed = 0;
         var sw = new System.Diagnostics.Stopwatch();
         foreach (var f in files)

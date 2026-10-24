@@ -35,6 +35,21 @@ public static class ConvertOptions
     public static bool MeasurePageBrotli = false;
     /// <summary>--compress-pages: write pages as Kind=1 (Brotli).</summary>
     public static bool CompressPages;
+    /// <summary>--compress-pages=chunked: write pages as Kind=2 (chunked Brotli, --chunk-bytes per chunk).</summary>
+    public static bool ChunkedPages;
+    public static int ChunkBytes = ChunkedBrotli.DefaultChunkBytes;
+    public static ushort PageKind => ChunkedPages ? FileKind.ChunkedBrotli : CompressPages ? FileKind.Brotli : FileKind.Raw;
+    public static bool AnyPageCompression => ChunkedPages || CompressPages;
+    /// <summary>--page-size: art and tex page side. --anim-page-size: anim page side (defaults to --page-size).</summary>
+    public static int PageSize = PackConst.PageSize;
+    public static int? AnimPageSizeOverride;
+    public static int AnimPageSize => AnimPageSizeOverride ?? PageSize;
+    /// <summary>Mip levels down to 64x64, as for the 2048 default (6 levels).</summary>
+    public static int MipsFor(int size) => Math.Max(1, System.Numerics.BitOperations.Log2((uint)size) - 5);
+    /// <summary>--anim-format indexed8: experimental palette-indexed anim pages (see AnimPaletteFile).</summary>
+    public static bool AnimIndexed;
+    /// <summary>--indexed-mips b16|none: with Indexed8, also write mips 1+ as a B5G5R5A1 sidecar page (mips_NNNN.bin).</summary>
+    public static bool IndexedMips = true;
 }
 
 /// <summary>Page pixel codec: RGBA8 chain -> BC7 chain, and decoding any page mip back to RGBA8.</summary>
@@ -170,10 +185,10 @@ public static class PageCodec
     /// RGBA8 chain -> B5G5R5A1 chain. Colour channels are rounded to 5 bits ((v*31+127)/255, which maps UO's expanded
     /// values back to their original 5-bit codes exactly); alpha = a >= 128. Texels with alpha 0 are stored as 0.
     /// </summary>
-    public static byte[] EncodeB5G5R5A1(byte[] rgbaChain, int size, int mips)
+    public static byte[] EncodeB5G5R5A1(ReadOnlySpan<byte> rgbaChain, int size, int mips)
     {
         var outBuf = new byte[AtlasPage.ChainBytes(size, mips, PackPixelFormat.B5G5R5A1)];
-        var src = MemoryMarshal.Cast<byte, uint>(rgbaChain.AsSpan());
+        var src = MemoryMarshal.Cast<byte, uint>(rgbaChain);
         var dst = MemoryMarshal.Cast<byte, ushort>(outBuf.AsSpan());
         int n = 0;
         for (int m = 0; m < mips; m++) n += (size >> m) * (size >> m);
@@ -211,7 +226,13 @@ public static class PageCodec
     /// <summary>Reads one mip of a page file as RGBA8 regardless of its stored format.</summary>
     public static uint[] ReadMip(string path, int mip, out PageHeader header)
     {
-        using var fs = AtlasPage.OpenChain(path, out header);
+        var fs = AtlasPage.OpenChain(path, out header);
+        if (header.Format == PackPixelFormat.Indexed8 && mip > 0)
+        {
+            fs.Dispose();
+            return ReadMip(AnimConst.MipsPath(Path.GetDirectoryName(path)!, IndexedPages.PageOf(path)), mip - 1, out _);
+        }
+        using var _fs = fs;
         int size = header.Width;
         int skip = AtlasPage.MipOffset(size, mip, header.Format);
         if (fs.CanSeek) fs.Position += skip;
@@ -227,6 +248,7 @@ public static class PageCodec
             PackPixelFormat.Rgba8 => MemoryMarshal.Cast<byte, uint>(data).ToArray(),
             PackPixelFormat.Bc7 => DecodeBc7(data, size >> mip),
             PackPixelFormat.B5G5R5A1 => DecodeB5G5R5A1(data),
+            PackPixelFormat.Indexed8 => IndexedPages.Expand(path, data, size),
             _ => throw new NotSupportedException(header.Format.ToString()),
         };
     }

@@ -31,7 +31,7 @@ public sealed class AnimWorker : IDisposable
 public static class AnimConvert
 {
     public sealed record Stats(int Bodies, int WithFrames, int Aliased, int UopBodies, int DirRecords, int UniqueDirs, int Frames, int Packed, int ContentDupes,
-        int Pages, double Occupancy, long Bytes, long BytesBrotli, double DecodeSeconds, long InvalidMulBlocks);
+        int Pages, double Occupancy, long Bytes, long BytesBrotli, double DecodeSeconds, long InvalidMulBlocks, string Extra);
 
     public const BodyConvFlags BodyConvAll = BodyConvFlags.Anim1 | BodyConvFlags.Anim2 | BodyConvFlags.Anim3 | BodyConvFlags.Anim4 | BodyConvFlags.Anim5;
     /// <summary>Bodies scanned: ClassicUO's initial index size; raised to cover every id named in the def files.</summary>
@@ -69,6 +69,10 @@ public static class AnimConvert
         public short CenterX, CenterY, W, H;
         public SpriteImage? Img;
         public UInt128 Hash;
+        // --anim-format indexed8: trimmed palette indices, the canonical palette (entry 0 = transparent) and its source.
+        public byte[]? Indices;
+        public ushort[]? Palette, SourcePalette;
+        public bool PaletteOverflow;
     }
 
     // Port of AnimationsLoader.ProcessBodyConvDef (all flags on): body -> (file index, graphic in that file, mount height).
@@ -172,7 +176,8 @@ public static class AnimConvert
         return l.ReadMULAnimationFrames(m.FileIndex, new LoaderDir { Position = e.Position, Size = e.Size });
     }
 
-    public sealed record RawFrame(short CenterX, short CenterY, short W, short H, uint[]? Pixels);
+    /// <summary>Palette = the client's 256-entry 16-bit palette (MUL: per direction, shared; UOP: per frame); Uop = value 0 is transparent.</summary>
+    public sealed record RawFrame(short CenterX, short CenterY, short W, short H, uint[]? Pixels, ushort[]? Palette = null, bool Uop = false);
 
     private static readonly System.Collections.Concurrent.ConcurrentDictionary<(bool, int), Microsoft.Win32.SafeHandles.SafeFileHandle?> Handles = new();
     private static long _invalidBlocks;
@@ -280,7 +285,7 @@ public static class AnimConvert
     private static RawFrame? ReadSprite(ref Reader r, ushort[] palette, bool alphaCheck)
     {
         short cx = (short)r.U16(), cy = (short)r.U16(), w = (short)r.U16(), h = (short)r.U16();
-        if (w <= 0 || h <= 0) return new RawFrame(cx, cy, w, h, null);
+        if (w <= 0 || h <= 0) return new RawFrame(cx, cy, w, h, null, palette, alphaCheck);
         var px = new uint[w * h];
         uint header = r.U32();
         while (header != 0x7FFF7FFF && r.Pos < r.Len)
@@ -300,7 +305,7 @@ public static class AnimConvert
             header = r.U32();
             if (r.Pos == before && r.Pos < r.Len) return null; // the loader would spin here forever
         }
-        return new RawFrame(cx, cy, w, h, px);
+        return new RawFrame(cx, cy, w, h, px, palette, alphaCheck);
     }
 
     /// <summary>StackDataReader semantics: reads past the end return 0 and leave the position unchanged.</summary>
@@ -378,12 +383,20 @@ public static class AnimConvert
             if (m.Uop) uopBodies++;
         }
 
+        _usage = ConvertOptions.AnimIndexed ? PaletteUsage(fm, jobs) : null;
+
         // Phase B: decode distinct blocks in parallel batches; pack serially in job order (streaming atlas).
         var atlas = new StreamingAtlas(dir);
         var ranges = new (int First, int Count)[jobs.Count];
         var frames = new List<AnimFrameEntry>();
-        var byHash = new Dictionary<UInt128, SpriteEntry>();
+        var byHash = new Dictionary<UInt128, (SpriteEntry E, uint Pal)>();
         int packed = 0, dupes = 0;
+        bool indexed = ConvertOptions.AnimIndexed;
+        var framePal = new List<uint>();
+        var palIds = new Dictionary<ushort[], uint>(PaletteComparer.Instance);
+        var srcPalIds = new HashSet<ushort[]>(PaletteComparer.Instance);
+        var palList = new List<ushort[]>();
+        long srcPalInstances = 0, overflow = 0;
         var decodeSw = new System.Diagnostics.Stopwatch();
         int batch = ConvertOptions.Threads * 24;
         for (int start = 0; start < jobs.Count; start += batch)
@@ -396,19 +409,34 @@ public static class AnimConvert
             for (int k = 0; k < n; k++)
             {
                 ranges[start + k] = (frames.Count, decoded[k].Length);
+                ushort[]? lastSrc = null;
                 foreach (var f in decoded[k])
                 {
                     var e = SpriteEntry.Absent;
+                    uint pal = uint.MaxValue;
                     if (f.Img != null)
                     {
-                        if (!byHash.TryGetValue(f.Hash, out e))
+                        if (indexed && f.SourcePalette != lastSrc)
                         {
-                            e = atlas.Add(f.Img);
-                            byHash[f.Hash] = e;
+                            // MUL frames of one direction share one palette array; UOP frames each carry their own.
+                            lastSrc = f.SourcePalette;
+                            srcPalInstances++;
+                            srcPalIds.Add(f.SourcePalette!);
+                        }
+                        if (byHash.TryGetValue(f.Hash, out var hit)) { e = hit.E; pal = hit.Pal; dupes++; }
+                        else
+                        {
+                            if (indexed)
+                            {
+                                if (!palIds.TryGetValue(f.Palette!, out pal)) { pal = (uint)palList.Count; palIds[f.Palette!] = pal; palList.Add(f.Palette!); }
+                                if (f.PaletteOverflow) overflow++;
+                            }
+                            e = atlas.Add(f.Img, f.Indices, f.Palette);
+                            byHash[f.Hash] = (e, pal);
                             packed++;
                         }
-                        else dupes++;
                     }
+                    framePal.Add(pal);
                     e.OrigW = (ushort)Math.Max((short)0, f.W);
                     e.OrigH = (ushort)Math.Max((short)0, f.H);
                     frames.Add(new AnimFrameEntry { Sprite = e, CenterX = f.CenterX, CenterY = f.CenterY });
@@ -440,17 +468,118 @@ public static class AnimConvert
         var frameArr = frames.ToArray();
         AnimTableFile.Write(Path.Combine(dir, AnimTableFile.FileName), bodies, dirs, frameArr);
         AnimDataFile.Write(Path.Combine(dir, AnimDataFile.FileName), AnimData(fm));
+        string extra = $"page {atlas.Size}px x{atlas.Mips} mips, sprite texels / page texels {atlas.SpriteFill:P1}";
+        if (indexed)
+        {
+            var flat = new ushort[palList.Count * AnimPaletteFile.Entries];
+            for (int i = 0; i < palList.Count; i++) palList[i].CopyTo(flat, i * AnimPaletteFile.Entries);
+            var palPath = Path.Combine(dir, AnimPaletteFile.FileName);
+            AnimPaletteFile.Write(palPath, framePal.ToArray(), flat);
+            extra += $"; indexed8: source palettes {srcPalInstances} ({srcPalIds.Count} distinct by content), canonical after dedupe {palList.Count}, overflow (>255 colours) {overflow}, " +
+                     $"palettes.bin {new FileInfo(palPath).Length} B ({flat.Length * 2} B palettes); mips sidecar raw {atlas.MipBytes} B, file {atlas.MipBytesBrotli} B; " +
+                     $"self-check vs B5G5R5A1 mip0: {atlas.IndexedMismatch} mismatching texels";
+        }
         return new Stats(bodyCount, withFrames, aliased, uopBodies, dirRecords, jobs.Count, frameArr.Length, packed, dupes,
-            atlas.PageCount, atlas.Occupancy, atlas.PageBytes, atlas.PageBytesBrotli, decodeSw.Elapsed.TotalSeconds, InvalidBlocks);
+            atlas.PageCount, atlas.Occupancy, atlas.PageBytes, atlas.PageBytesBrotli, decodeSw.Elapsed.TotalSeconds, InvalidBlocks, extra);
     }
 
     private static DecodedFrame[] Decode(UOFileManager fm, DirJob j)
     {
         var src = ReadFrames(fm, j) ?? [];
         var res = new DecodedFrame[src.Length];
-        for (int i = 0; i < src.Length; i++) res[i] = Frame(src[i].CenterX, src[i].CenterY, src[i].W, src[i].H, src[i].Pixels);
+        for (int i = 0; i < src.Length; i++)
+        {
+            res[i] = Frame(src[i].CenterX, src[i].CenterY, src[i].W, src[i].H, src[i].Pixels);
+            if (ConvertOptions.AnimIndexed && res[i].Img != null) Index(res[i], src[i].Palette!, src[i].Uop, _usage![src[i].Palette!]);
+        }
         return res;
     }
+
+    [ThreadStatic] private static byte[]? _lut;
+    private static Dictionary<ushort[], ulong[]>? _usage;
+
+    /// <summary>
+    /// Indexed8 pre-pass: for every distinct source palette (by content), the set of 15-bit colours any frame drawn with
+    /// it actually uses. MUL palettes often hold 256 distinct colours and no transparent entry; dropping colours no
+    /// frame uses frees index 0 for transparency while keeping one canonical palette per source palette.
+    /// </summary>
+    private static Dictionary<ushort[], ulong[]> PaletteUsage(UOFileManager fm, List<DirJob> jobs)
+    {
+        var map = new Dictionary<ushort[], ulong[]>(PaletteComparer.Instance);
+        Parallel.For(0, jobs.Count, ConvertOptions.Par, k =>
+        {
+            var local = new Dictionary<ushort[], ulong[]>(ReferenceEqualityComparer.Instance);
+            foreach (var f in ReadFrames(fm, jobs[k]) ?? [])
+            {
+                if (f.Palette == null) continue;
+                if (!local.TryGetValue(f.Palette, out var bits)) local[f.Palette] = bits = new ulong[0x8000 / 64];
+                if (f.Pixels == null) continue;
+                foreach (var p in f.Pixels)
+                    if ((p >> 24) != 0) { int c = To16(p); bits[c >> 6] |= 1UL << (c & 63); }
+            }
+            lock (map)
+                foreach (var (pal, bits) in local)
+                {
+                    if (!map.TryGetValue(pal, out var all)) { map[pal] = bits; continue; }
+                    for (int i = 0; i < all.Length; i++) all[i] |= bits[i];
+                }
+        });
+        return map;
+    }
+
+    /// <summary>
+    /// Canonical palette: entry 0 = transparent (0), then the source palette's distinct visible B5G5R5A1 colours that some
+    /// frame drawn with that palette uses (see PaletteUsage), in order of first appearance (UOP value 0 is transparent and
+    /// skipped). If that still exceeds 255 colours, the frame's own used colours are used instead.
+    /// </summary>
+    private static void Index(DecodedFrame d, ushort[] src, bool uop, ulong[] used)
+    {
+        var lut = _lut ??= new byte[0x8000];
+        var img = d.Img!;
+        var pal = new ushort[AnimPaletteFile.Entries];
+        int n = 1;
+        foreach (var v in src)
+        {
+            if (uop && v == 0) continue;
+            int c = v & 0x7FFF;
+            if (lut[c] != 0 || (used[c >> 6] & (1UL << (c & 63))) == 0) continue;
+            if (n == 256) { n = -1; break; }
+            lut[c] = (byte)n;
+            pal[n++] = (ushort)(c | 0x8000);
+        }
+        if (n < 0)
+        {
+            for (int i = 1; i < 256; i++) lut[pal[i] & 0x7FFF] = 0;
+            Array.Clear(pal);
+            n = 1;
+            d.PaletteOverflow = true;
+            foreach (var p in img.Pixels)
+            {
+                if ((p >> 24) == 0) continue;
+                int c = To16(p);
+                if (lut[c] != 0) continue;
+                if (n == 256) throw new InvalidOperationException("frame uses more than 255 colours");
+                lut[c] = (byte)n;
+                pal[n++] = (ushort)(c | 0x8000);
+            }
+        }
+        var idx = new byte[img.Pixels.Length];
+        for (int i = 0; i < idx.Length; i++)
+        {
+            uint p = img.Pixels[i];
+            if ((p >> 24) == 0) continue;
+            byte b = lut[To16(p)];
+            if (b == 0) throw new InvalidOperationException("pixel colour missing from its palette");
+            idx[i] = b;
+        }
+        for (int i = 1; i < n; i++) lut[pal[i] & 0x7FFF] = 0;
+        d.Indices = idx;
+        d.Palette = pal;
+        d.SourcePalette = src;
+    }
+
+    /// <summary>RGBA8 (ClassicUO-expanded) -> 15-bit colour; exact inverse of HuesHelper.Color16To32.</summary>
+    public static int To16(uint p) => (int)(((((p >> 16) & 0xFF) * 31 + 127) / 255) | ((((p >> 8) & 0xFF) * 31 + 127) / 255) << 5 | (((p & 0xFF) * 31 + 127) / 255) << 10);
 
     private static DecodedFrame Frame(short cx, short cy, short w, short h, ReadOnlySpan<uint> px)
     {
@@ -487,31 +616,49 @@ public static class AnimConvert
     }
 }
 
+/// <summary>Content equality for 256-entry palettes.</summary>
+public sealed class PaletteComparer : IEqualityComparer<ushort[]>
+{
+    public static readonly PaletteComparer Instance = new();
+    public bool Equals(ushort[]? a, ushort[]? b) => a.AsSpan().SequenceEqual(b);
+    public int GetHashCode(ushort[] p)
+    {
+        var h = new HashCode();
+        h.AddBytes(MemoryMarshal.AsBytes(p.AsSpan()));
+        return h.ToHashCode();
+    }
+}
+
 /// <summary>
 /// AtlasBuilder's packing (skyline, sequential, previous page kept open for small sprites) without holding every
 /// sprite in memory: once a page can no longer receive sprites it is encoded, written, and its pixels released.
-/// Page files are identical in format to AtlasBuilder's.
+/// Page files are identical in format to AtlasBuilder's. Page side is --anim-page-size. With --anim-format indexed8,
+/// mip0 is written as Indexed8 and mips 1+ (optionally) as a half-size B5G5R5A1 sidecar page.
 /// </summary>
 public sealed class StreamingAtlas
 {
-    private const int S = PackConst.PageSize, G = PackConst.Gutter;
+    private const int G = PackConst.Gutter;
+    private readonly int S = ConvertOptions.AnimPageSize, _mips = ConvertOptions.MipsFor(ConvertOptions.AnimPageSize);
     private readonly string _dir;
-    private readonly int _align = ConvertOptions.Align;
+    private readonly int _align = ConvertOptions.AnimIndexed ? 1 : ConvertOptions.Align;
     private readonly List<SkylinePacker> _packers = new();
-    private readonly List<List<(SpriteImage Img, SpriteEntry E)>?> _pages = new();
+    private readonly List<List<(SpriteImage Img, SpriteEntry E, byte[]? Idx, ushort[]? Pal)>?> _pages = new();
     private readonly List<int> _closed = new();
     private int _cur, _prev = -1;
-    private long _used;
-    public long PageBytes, PageBytesBrotli;
+    private long _used, _spriteArea;
+    public long PageBytes, PageBytesBrotli, MipBytes, MipBytesBrotli, IndexedMismatch;
     public int PageCount => _pages.Count;
+    public int Size => S;
+    public int Mips => _mips;
     public double Occupancy => _pages.Count == 0 ? 0 : _used / (double)((long)_pages.Count * S * S);
+    public double SpriteFill => _pages.Count == 0 ? 0 : _spriteArea / (double)((long)_pages.Count * S * S);
 
     public StreamingAtlas(string dir) { _dir = dir; _cur = Open(); }
 
     private int Open() { _packers.Add(new SkylinePacker(S, S)); _pages.Add(new()); return _packers.Count - 1; }
     private int Cell(int v) => (v + 2 * G + _align - 1) / _align * _align;
 
-    public SpriteEntry Add(SpriteImage sp)
+    public SpriteEntry Add(SpriteImage sp, byte[]? indices = null, ushort[]? palette = null)
     {
         int pw = Cell(sp.W), ph = Cell(sp.H);
         if (pw > S || ph > S) throw new InvalidOperationException($"frame {sp.W}x{sp.H} too large for a page");
@@ -531,7 +678,8 @@ public sealed class StreamingAtlas
             Page = (ushort)page, X = (ushort)(x + G), Y = (ushort)(y + G), W = (ushort)sp.W, H = (ushort)sp.H,
             TrimX = (short)sp.TrimX, TrimY = (short)sp.TrimY, OrigW = (ushort)sp.OrigW, OrigH = (ushort)sp.OrigH, Flags = sp.Flags,
         };
-        _pages[page]!.Add((sp, e));
+        _pages[page]!.Add((sp, e, indices, palette));
+        _spriteArea += (long)sp.W * sp.H;
         return e;
     }
 
@@ -556,21 +704,52 @@ public sealed class StreamingAtlas
     private void Write(int p)
     {
         var format = ConvertOptions.Format;
-        var chain = GC.AllocateUninitializedArray<byte>(AtlasPage.ChainBytes(S, PackConst.PageMipCount));
+        var chain = GC.AllocateUninitializedArray<byte>(AtlasPage.ChainBytes(S, _mips));
         var mip0 = MemoryMarshal.Cast<byte, uint>(chain.AsSpan(0, AtlasPage.MipBytes(S, 0)));
         mip0.Clear();
-        foreach (var (sp, e) in _pages[p]!)
+        foreach (var (sp, e, _, _) in _pages[p]!)
             AtlasBuilder.Blit(mip0, S, e.X, e.Y, sp.Pixels, sp.W, sp.H, G, Cell(sp.W) - sp.W - G, Cell(sp.H) - sp.H - G);
-        AtlasBuilder.BuildMips(chain, S, PackConst.PageMipCount);
+        AtlasBuilder.BuildMips(chain, S, _mips);
+        var path = PackConst.PagePath(_dir, p);
+        if (ConvertOptions.AnimIndexed)
+        {
+            WriteIndexed(p, chain, path);
+            return;
+        }
         byte[] data = format switch
         {
-            PixelFormat.B5G5R5A1 => PageCodec.EncodeB5G5R5A1(chain, S, PackConst.PageMipCount),
-            PixelFormat.Bc7 => PageCodec.EncodeBc7(chain, S, PackConst.PageMipCount),
+            PixelFormat.B5G5R5A1 => PageCodec.EncodeB5G5R5A1(chain, S, _mips),
+            PixelFormat.Bc7 => PageCodec.EncodeBc7(chain, S, _mips),
             _ => chain,
         };
-        var path = PackConst.PagePath(_dir, p);
-        AtlasPage.Write(path, S, PackConst.PageMipCount, format, data, ConvertOptions.CompressPages);
+        AtlasPage.Write(path, S, _mips, format, data, ConvertOptions.PageKind, ConvertOptions.ChunkBytes);
         Interlocked.Add(ref PageBytes, data.Length + 32);
         Interlocked.Add(ref PageBytesBrotli, new FileInfo(path).Length);
+    }
+
+    private void WriteIndexed(int p, byte[] chain, string path)
+    {
+        var idx = new byte[S * S];
+        foreach (var (sp, e, ix, _) in _pages[p]!)
+            AtlasBuilder.Blit<byte>(idx, S, e.X, e.Y, ix, sp.W, sp.H, G, G, G);
+        // Self-check: palette[index] per cell must equal the B5G5R5A1 encoding of the same page's mip0, gutters included.
+        var b16 = MemoryMarshal.Cast<byte, ushort>(PageCodec.EncodeB5G5R5A1(chain.AsSpan(0, AtlasPage.MipBytes(S, 0)), S, 1).AsSpan());
+        var rec = new ushort[S * S];
+        foreach (var (sp, e, _, pal) in _pages[p]!)
+            for (int y = e.Y - G; y < e.Y + e.H + G; y++)
+                for (int x = e.X - G; x < e.X + e.W + G; x++)
+                    rec[y * S + x] = pal![idx[y * S + x]];
+        long bad = 0;
+        for (int i = 0; i < rec.Length; i++) if (rec[i] != b16[i]) bad++;
+        if (bad != 0) Interlocked.Add(ref IndexedMismatch, bad);
+        AtlasPage.Write(path, S, 1, PixelFormat.Indexed8, idx, ConvertOptions.PageKind, ConvertOptions.ChunkBytes);
+        Interlocked.Add(ref PageBytes, idx.Length + 32);
+        Interlocked.Add(ref PageBytesBrotli, new FileInfo(path).Length);
+        if (!ConvertOptions.IndexedMips || _mips < 2) return;
+        var mips = PageCodec.EncodeB5G5R5A1(chain.AsSpan(AtlasPage.MipBytes(S, 0)), S / 2, _mips - 1);
+        var mp = AnimConst.MipsPath(_dir, p);
+        AtlasPage.Write(mp, S / 2, _mips - 1, PixelFormat.B5G5R5A1, mips, ConvertOptions.PageKind, ConvertOptions.ChunkBytes);
+        Interlocked.Add(ref MipBytes, mips.Length + 32);
+        Interlocked.Add(ref MipBytesBrotli, new FileInfo(mp).Length);
     }
 }

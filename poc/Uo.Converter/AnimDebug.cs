@@ -33,7 +33,8 @@ public static class AnimDebug
 
     private static string? Draw(int body, string tag, AnimBodyEntry[] bodies, AnimDirEntry[] dirs, AnimFrameEntry[] frames, string dir, Dictionary<int, uint[]> pages, string debugDir)
     {
-        const int S = PackConst.PageSize, Pad = 8, K = 2;
+        const int Pad = 8, K = 2;
+        int S = Verify.PageSide(dir);
         const int action = 0; // walk for every animation type (people WalkUnarmed, low/high Walk)
         int cols = 0, minX = -22, minY = -44, maxX = 22, maxY = 4;
         for (int d = 0; d < AnimConst.Directions; d++)
