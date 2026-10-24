@@ -21,6 +21,13 @@ public struct EquippedOn : ILinkComponent
     public Entity GetIndexedValue() => Parent;
 }
 
+[System.Runtime.CompilerServices.InlineArray(Layers.Count)]
+public struct EquipSlots { uint _e; }
+
+/// <summary>A mobile's worn items by layer, cached for the render extract: graphic | hue &lt;&lt; 16 (0 = empty).
+/// Kept in sync by <see cref="EcsWorld"/> with the <see cref="EquippedOn"/> links.</summary>
+public struct Equipment : IComponent { public EquipSlots Slots; }
+
 /// <summary>Step interpolation: the entity is moving from (FromX, FromY, FromZ) to its <see cref="Position"/>
 /// between Start and Start + Duration (Stopwatch ticks). Done when now ≥ Start + Duration.</summary>
 public struct Motion : IComponent
@@ -48,7 +55,7 @@ public static class EcsSchema
         var aot = new NativeAOT();
         aot.RegisterComponent<Serial>(); aot.RegisterComponent<Graphic>(); aot.RegisterComponent<Hue>();
         aot.RegisterComponent<Position>(); aot.RegisterComponent<Facing>(); aot.RegisterComponent<Flags>();
-        aot.RegisterComponent<Notoriety>(); aot.RegisterComponent<Amount>(); aot.RegisterComponent<Motion>();
+        aot.RegisterComponent<Notoriety>(); aot.RegisterComponent<Amount>(); aot.RegisterComponent<Motion>(); aot.RegisterComponent<Equipment>();
         aot.RegisterIndexedComponentEntity<EquippedOn>();
         aot.RegisterTag<MobileTag>(); aot.RegisterTag<ItemTag>(); aot.RegisterTag<PlayerTag>();
         aot.RegisterTag<OnGround>(); aot.RegisterTag<MultiTag>();

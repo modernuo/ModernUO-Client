@@ -78,6 +78,7 @@ public sealed class EcsWorld : WorldSinkBase, IDynamicBlockers
             e = Store.CreateEntity(new Serial { Value = m.Serial }, new Graphic { Value = m.Body }, new Hue { Value = m.Hue }, pos,
                 new Facing { Value = (byte)m.Direction }, new Flags { Value = m.Flags }, new Notoriety { Value = m.Notoriety }, new Motion(),
                 isPlayer ? Tags.Get<MobileTag, PlayerTag>() : Tags.Get<MobileTag>());
+            e.AddComponent(new Equipment());
             _bySerial[m.Serial] = e;
             Mobiles++;
             if (isPlayer) Player = e;
@@ -123,7 +124,11 @@ public sealed class EcsWorld : WorldSinkBase, IDynamicBlockers
             Items++;
             return;
         }
-        if (e.HasComponent<EquippedOn>()) e.RemoveComponent<EquippedOn>();
+        if (e.HasComponent<EquippedOn>())
+        {
+            ClearSlot(e);
+            e.RemoveComponent<EquippedOn>();
+        }
         e.AddComponent(pos);
         e.AddComponent(new Amount { Value = item.Amount });
         e.AddComponent(new Flags { Value = item.Flags });
@@ -142,12 +147,19 @@ public sealed class EcsWorld : WorldSinkBase, IDynamicBlockers
     void UpsertEquip(uint serial, ushort itemId, ushort hue, byte layer, Entity parent)
     {
         var link = new EquippedOn { Parent = parent, Layer = layer };
+        if (layer < Layers.Count && parent.HasComponent<Equipment>())
+            parent.GetComponent<Equipment>().Slots[layer] = itemId | (uint)hue << 16;
         if (!_bySerial.TryGetValue(serial, out var e))
         {
             e = Store.CreateEntity(new Serial { Value = serial }, new Graphic { Value = itemId }, new Hue { Value = hue }, link, Tags.Get<ItemTag>());
             _bySerial[serial] = e;
             Items++;
             return;
+        }
+        if (e.HasComponent<EquippedOn>())
+        {
+            var old = e.GetComponent<EquippedOn>();
+            if (old.Parent != parent || old.Layer != layer) ClearSlot(e);
         }
         e.GetComponent<Graphic>().Value = itemId;
         e.GetComponent<Hue>().Value = hue;
@@ -156,10 +168,21 @@ public sealed class EcsWorld : WorldSinkBase, IDynamicBlockers
         e.RemoveTags(Tags.Get<OnGround, MultiTag>());
     }
 
+    /// <summary>Empties the parent's equipment slot that <paramref name="item"/> (an equipped item) occupies.</summary>
+    static void ClearSlot(Entity item)
+    {
+        var link = item.GetComponent<EquippedOn>();
+        var p = link.Parent;
+        if (p.IsNull || link.Layer >= Layers.Count || !p.HasComponent<Equipment>()) return;
+        ref var slot = ref p.GetComponent<Equipment>().Slots[link.Layer];
+        if ((ushort)slot == item.GetComponent<Graphic>().Value) slot = 0;
+    }
+
     public override void OnRemove(uint serial)
     {
         if (!_bySerial.Remove(serial, out var e)) return;
         Removes++;
+        if (e.HasComponent<EquippedOn>()) ClearSlot(e);
         DeleteWithEquipment(e);
     }
 

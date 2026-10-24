@@ -14,6 +14,7 @@ public sealed unsafe class Renderer : IDisposable
     uint _depthW, _depthH;
     readonly IntPtr _samplerPoint, _samplerLinear, _samplerHue;
     readonly IntPtr _hueTex;
+    readonly IntPtr _paletteBuf, _dummyAnimTex;
     public readonly IntPtr InstanceBuffer;
     readonly IntPtr _chunkTableBuf, _pageTableBuf;
     readonly IntPtr _frameTransfer, _pageTableTransfer;
@@ -66,7 +67,7 @@ public sealed unsafe class Renderer : IDisposable
         InstanceBuffer = CreateBuffer((uint)(instanceCapacity * sizeof(SpriteInstance)), "instances");
         ChunkTableCapacity = maxVisibleChunks;
         _chunkTableBuf = CreateBuffer((uint)(maxVisibleChunks * sizeof(ChunkDraw)), "chunk table");
-        _pageTableBytes = Math.Max(1, pack.PageCount) * 4;
+        _pageTableBytes = Math.Max(1, pack.TablePageCount) * 4;
         _pageTableBuf = CreateBuffer((uint)_pageTableBytes, "page table");
 
         FrameTransferSize = 8u << 20;
@@ -74,6 +75,33 @@ public sealed unsafe class Renderer : IDisposable
         _pageTableTransfer = CreateTransfer((uint)_pageTableBytes, true);
 
         _hueTex = CreateHueTexture(pack);
+        _paletteBuf = CreatePaletteBuffer(pack);
+        _dummyAnimTex = SDL_CreateGPUTexture(Device, new SDL_GPUTextureCreateInfo
+        {
+            type = SDL_GPUTextureType.SDL_GPU_TEXTURETYPE_2D_ARRAY, format = SDL_GPUTextureFormat.SDL_GPU_TEXTUREFORMAT_R8_UINT,
+            usage = SDL_GPUTextureUsageFlags.SDL_GPU_TEXTUREUSAGE_SAMPLER, width = 1, height = 1, layer_count_or_depth = 1, num_levels = 1,
+        });
+    }
+
+    /// <summary>palettes.bin's u16 table as one storage buffer (18.5 MiB for all 37.9k palettes), uploaded once.</summary>
+    IntPtr CreatePaletteBuffer(PackSet pack)
+    {
+        var pal = pack.Palettes ?? new ushort[2];
+        uint bytes = (uint)((pal.Length * 2 + 3) & ~3);
+        var buf = CreateBuffer(bytes, "palettes");
+        var tb = CreateTransfer(bytes, true);
+        var ptr = SDL_MapGPUTransferBuffer(Device, tb, false);
+        fixed (ushort* src = pal) Buffer.MemoryCopy(src, (void*)ptr, bytes, pal.Length * 2);
+        SDL_UnmapGPUTransferBuffer(Device, tb);
+        var cmd = SDL_AcquireGPUCommandBuffer(Device);
+        var copy = SDL_BeginGPUCopyPass(cmd);
+        var src2 = new SDL_GPUTransferBufferLocation { transfer_buffer = tb };
+        var dst = new SDL_GPUBufferRegion { buffer = buf, size = bytes };
+        SDL_UploadToGPUBuffer(copy, in src2, in dst, false);
+        SDL_EndGPUCopyPass(copy);
+        SDL_SubmitGPUCommandBuffer(cmd);
+        SDL_ReleaseGPUTransferBuffer(Device, tb);
+        return buf;
     }
 
     IntPtr CreateBuffer(uint size, string name)
@@ -141,7 +169,7 @@ public sealed unsafe class Renderer : IDisposable
     IntPtr CreatePipeline()
     {
         var vs = CreateShader("sprite_vs", "VSMain", SDL_GPUShaderStage.SDL_GPU_SHADERSTAGE_VERTEX, 0, 3, 1);
-        var ps = CreateShader("sprite_ps", "PSMain", SDL_GPUShaderStage.SDL_GPU_SHADERSTAGE_FRAGMENT, 2, 0, 0);
+        var ps = CreateShader("sprite_ps", "PSMain", SDL_GPUShaderStage.SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1, 0);
         var color = new SDL_GPUColorTargetDescription { format = ColorFormat };
         var ci = new SDL_GPUGraphicsPipelineCreateInfo
         {
@@ -242,6 +270,9 @@ public sealed unsafe class Renderer : IDisposable
     {
         public ChunkStore Chunks;
         public PageResidency Pages;
+        /// <summary>Indexed8 anim pages (null: none); its table is uploaded at <see cref="PackSet.AnimPageBase"/>.</summary>
+        public PageResidency AnimPages;
+        public int AnimTableBase;
         public ChunkDraw[] Table;
         public int ChunkCount, Instances;
         public FrameUniforms Uniforms;
@@ -305,10 +336,18 @@ public sealed unsafe class Renderer : IDisposable
             SDL_UploadToGPUBuffer(copy, in src, in dst, false);
         }
         f.Pages.Upload(copy, f.Frame);
-        if (f.Pages.TableDirty)
+        f.AnimPages?.Upload(copy, f.Frame);
+        if (f.Pages.TableDirty || f.AnimPages is { TableDirty: true })
         {
-            var p = SDL_MapGPUTransferBuffer(Device, _pageTableTransfer, true);
-            fixed (uint* src = f.Pages.Table) Buffer.MemoryCopy(src, (void*)p, _pageTableBytes, _pageTableBytes);
+            var p = (byte*)SDL_MapGPUTransferBuffer(Device, _pageTableTransfer, true);
+            int artBytes = Math.Min(f.Pages.Table.Length * 4, _pageTableBytes);
+            fixed (uint* src = f.Pages.Table) Buffer.MemoryCopy(src, p, _pageTableBytes, artBytes);
+            if (f.AnimPages != null)
+            {
+                int animBytes = Math.Min(f.AnimPages.Table.Length * 4, _pageTableBytes - f.AnimTableBase * 4);
+                fixed (uint* src = f.AnimPages.Table) Buffer.MemoryCopy(src, p + f.AnimTableBase * 4, animBytes, animBytes);
+                f.AnimPages.TableDirty = false;
+            }
             SDL_UnmapGPUTransferBuffer(Device, _pageTableTransfer);
             var src2 = new SDL_GPUTransferBufferLocation { transfer_buffer = _pageTableTransfer };
             var dst = new SDL_GPUBufferRegion { buffer = _pageTableBuf, size = (uint)_pageTableBytes };
@@ -361,15 +400,19 @@ public sealed unsafe class Renderer : IDisposable
             SDL_SetGPUViewport(pass, in vp);
             Span<IntPtr> bufs = stackalloc IntPtr[3] { InstanceBuffer, _chunkTableBuf, _pageTableBuf };
             SDL_BindGPUVertexStorageBuffers(pass, 0, bufs, 3);
-            Span<SDL_GPUTextureSamplerBinding> samp = stackalloc SDL_GPUTextureSamplerBinding[2];
+            Span<SDL_GPUTextureSamplerBinding> samp = stackalloc SDL_GPUTextureSamplerBinding[3];
             samp[0] = new SDL_GPUTextureSamplerBinding { texture = f.Pages.Texture, sampler = ForcePoint && !f.LinearFilter ? _samplerPoint : _samplerLinear }; // sharp-bilinear in the shader when scale >= 1
             samp[1] = new SDL_GPUTextureSamplerBinding { texture = _hueTex, sampler = _samplerHue };
-            SDL_BindGPUFragmentSamplers(pass, 0, samp, 2);
+            samp[2] = new SDL_GPUTextureSamplerBinding { texture = f.AnimPages?.Texture ?? _dummyAnimTex, sampler = _samplerHue }; // Load only
+            SDL_BindGPUFragmentSamplers(pass, 0, samp, 3);
+            Span<IntPtr> fbufs = stackalloc IntPtr[1] { _paletteBuf };
+            SDL_BindGPUFragmentStorageBuffers(pass, 0, fbufs, 1);
             var u = f.Uniforms;
             u.InvViewportX = 1f / tw;
             u.InvViewportY = 1f / th;
             u.Sharp = f.LinearFilter || ForcePoint ? 0u : 1u;
             u.AtlasSize = 1f / u.InvAtlas;
+            if (f.AnimPages != null) { u.AnimAtlasSize = f.AnimPages.PageSize; u.InvAnimAtlas = 1f / f.AnimPages.PageSize; }
             SDL_PushGPUVertexUniformData(cmd, 0, (IntPtr)(&u), (uint)sizeof(FrameUniforms));
             SDL_DrawGPUPrimitives(pass, 6, (uint)f.Instances, 0, 0);
             DrawCalls = 1;
@@ -480,6 +523,8 @@ public sealed unsafe class Renderer : IDisposable
         if (_depth != IntPtr.Zero) SDL_ReleaseGPUTexture(Device, _depth);
         if (_offscreen != IntPtr.Zero) SDL_ReleaseGPUTexture(Device, _offscreen);
         SDL_ReleaseGPUTexture(Device, _hueTex);
+        SDL_ReleaseGPUTexture(Device, _dummyAnimTex);
+        SDL_ReleaseGPUBuffer(Device, _paletteBuf);
         SDL_ReleaseGPUBuffer(Device, InstanceBuffer);
         SDL_ReleaseGPUBuffer(Device, _chunkTableBuf);
         SDL_ReleaseGPUBuffer(Device, _pageTableBuf);

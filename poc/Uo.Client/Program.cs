@@ -29,13 +29,19 @@ public sealed class Options
     public int Workers = Math.Clamp(Environment.ProcessorCount / 2 - 1, 2, 8);
     public string Driver = "direct3d12";
     public bool ForceExpand;
+    public string AnimPack;             // TEMPORARY: anims from another pack until classic-1.0 carries both
+    public string TileDataMul;          // TEMPORARY: AnimID source until the pack's tiledata has it
+    public int AnimLayers = 64;
+    public string AnimSheet;            // offline: bodies x 8 directions, standing and walking, screenshots into DIR
+    public string BodyMix = "mixed";    // offline NPC bodies: humans | mixed
 
     public const string Usage =
         "Uo.Client [--pack DIR] [--live [--host H] [--port P] [--char NAME] [--go \"x y\"]]  (live credentials: env UO_USER / UO_PASS)\n" +
         "          [--mobiles N] [--items N] [--radius R] [--latency MS] [--server-block \"x y\"]   (offline fake server)\n" +
         "          [--at x y] [--zoom Z] [--size WxH] [--walk \"E5 S5\"] [--run] [--loop]\n" +
         "          [--screenshots DIR] | [--bench [--bench-seconds S]] | [--test]\n" +
-        "          [--driver direct3d12|vulkan] [--force-expand]";
+        "          [--driver direct3d12|vulkan] [--force-expand] [--anim-pack DIR] [--anim-layers N] [--tiledata-mul PATH]\n" +
+        "          [--npc-bodies humans|mixed] | [--anim-sheet DIR]";
 
     public static Options Parse(string[] args)
     {
@@ -74,6 +80,11 @@ public sealed class Options
                 case "--layers": o.Layers = int.Parse(Next(), ci); break;
                 case "--driver": o.Driver = Next(); break;
                 case "--force-expand": o.ForceExpand = true; break;
+                case "--anim-pack": o.AnimPack = Next(); break;
+                case "--anim-layers": o.AnimLayers = int.Parse(Next(), ci); break;
+                case "--tiledata-mul": o.TileDataMul = Next(); break;
+                case "--anim-sheet": o.AnimSheet = Next(); break;
+                case "--npc-bodies": o.BodyMix = Next(); break;
                 default: return null;
             }
         }
@@ -91,12 +102,34 @@ public static class Program
         if (o == null) { Console.Error.WriteLine(Options.Usage); return 2; }
 
         Console.WriteLine($"pack: {o.Pack}");
-        var pack = new PackSet(o.Pack, 0);
+        var pack = new PackSet(o.Pack, 0, o.AnimPack);
         Console.WriteLine($"  {pack.PageCount} pages {PageFormats.Name(pack.Format)}, {pack.Sprites.Length} sprites, {pack.HueCount} hues, map {pack.MapWidth}x{pack.MapHeight}");
+        Console.WriteLine(pack.HasAnims
+            ? $"  anims {pack.AnimDir}: {pack.AnimBodies.Length} bodies, {pack.AnimFrames.Length} frames, {(pack.AnimIndexed ? pack.AnimPagePaths.Length : pack.PageCount - pack.AnimPageBase)} pages {PageFormats.Name(pack.AnimFormat)} {pack.AnimPageSize}px" +
+              (pack.AnimIndexed ? $" (own R8_UINT array, {pack.Palettes.Length / 256} palettes)" : " (in the art array)")
+            : "  no anims: mobiles are not drawn");
         EcsSchema.Register();
 
         if (o.Test) return PredictionTests.Run(pack);
+        if (o.AnimSheet != null) return AnimSheet.Run(o, pack);
         return RunClient(o, pack);
+    }
+
+    /// <summary>Indexed8 anims get their own R8_UINT page array (1 MiB per 1024² layer); 16-bit anims use the art array.</summary>
+    public static PageResidency CreateAnimResidency(Renderer renderer, PackSet pack, WorkerPool workers, Options o)
+        => pack.AnimIndexed
+            ? new PageResidency(renderer.Device, pack.AnimPagePaths, pack.AnimFormat, pack.AnimPageSize, pack.AnimPageMips, workers, o.AnimLayers, Math.Max(4, o.PageBudget * 4), Math.Max(4, o.PageBudget * 4))
+            : null;
+
+    public static IMobileSprites CreateMobileSprites(PackSet pack, Options o)
+    {
+        var ids = o.TileDataMul == null ? PackAnimIds.TryLoad(pack.Root) : null;
+        string src = "pack tiledata_ext.bin";
+        if (ids == null) { ids = TileDataMulAnimIds.TryDefault(o.TileDataMul); src = "FALLBACK tiledata.mul read (pack has no tiledata_ext.bin)"; }
+        var convPath = Path.Combine(pack.Root, Uo.Pack.TableConst.EquipConvFile);
+        var conv = File.Exists(convPath) ? Uo.Pack.EquipConvFile.Read(convPath) : null;
+        Console.WriteLine(ids != null ? $"  equipment AnimIDs: {src}; equipconv {(conv != null ? conv.Length + " rows" : "none")}" : "  equipment AnimIDs: none: equipment is not drawn");
+        return pack.HasAnims ? new AnimMobileSprites(pack, ids, conv) : new NoMobileSprites();
     }
 
     static int RunClient(Options o, PackSet pack)
@@ -123,7 +156,7 @@ public static class Program
         }
         else
         {
-            var fake = new FakeServer(world, map, clock, new FakeServer.Scenario { X = (int)o.StartX, Y = (int)o.StartY, Mobiles = o.Mobiles, Items = o.Items, Radius = o.Radius }, o.LatencyMs);
+            var fake = new FakeServer(world, map, clock, new FakeServer.Scenario { X = (int)o.StartX, Y = (int)o.StartY, Mobiles = o.Mobiles, Items = o.Items, Radius = o.Radius, MixedBodies = o.BodyMix != "humans" }, o.LatencyMs);
             if (o.ServerBlock != null)
             {
                 var p = o.ServerBlock.Split(' ', StringSplitOptions.RemoveEmptyEntries);
@@ -149,16 +182,19 @@ public static class Program
         using (var renderer = new Renderer(window, offscreen, pack, o.InstanceCapacity, 8192, o.Driver))
         {
             var residency = new PageResidency(renderer.Device, pack, workers, o.Layers, o.PageBudget, Math.Max(2, o.PageBudget * 2), o.ForceExpand);
-            Console.WriteLine($"  device: {SDL_GetGPUDeviceDriver(renderer.Device)}, shaders {renderer.ShaderFormat}, pages {residency.FormatDescription}");
+            var animPages = CreateAnimResidency(renderer, pack, workers, o);
+            Console.WriteLine($"  device: {SDL_GetGPUDeviceDriver(renderer.Device)}, shaders {renderer.ShaderFormat}, pages {residency.FormatDescription}" +
+                (animPages != null ? $", anim pages {animPages.FormatDescription} x {animPages.Layers} layers ({animPages.VramBytes >> 20} MiB)" : ""));
             var chunks = new ChunkStore(pack, workers, o.InstanceCapacity);
             if (o.Bench) renderer.VSync = false;
             renderer.ApplyPresentMode();
             if (offscreen) renderer.EnsureOffscreen((uint)o.Width, (uint)o.Height);
             renderer.Throttle = offscreen;
-            var app = new ClientApp(o, pack, window, renderer, residency, chunks, workers, client, world, walker, map, clock);
+            var app = new ClientApp(o, pack, window, renderer, residency, animPages, chunks, workers, client, world, walker, map, clock);
             rc = app.Loop();
             client.Disconnect();
             residency.Dispose();
+            animPages?.Dispose();
         }
         client.Dispose();
         return rc;
