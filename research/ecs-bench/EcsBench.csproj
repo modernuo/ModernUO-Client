@@ -19,5 +19,6 @@
     <ProjectReference Include="..\..\..\TinyECS\src\TinyEcs\TinyEcs.csproj" />
     <ProjectReference Include="..\..\..\Friflo.Engine.ECS\src\ECS\Friflo.Engine.ECS.csproj" />
     <ProjectReference Include="..\..\..\Arch\src\Arch\Arch.csproj" />
+    <PackageReference Include="Flecs.NET.Release" Version="4.0.3" />
   </ItemGroup>
 </Project>

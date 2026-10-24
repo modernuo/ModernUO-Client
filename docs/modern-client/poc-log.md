@@ -34,6 +34,21 @@ UltimaLive support is optional if it costs performance. The v0 format supports i
   - **Flecs.NET adapter** for EcsBench (checksums plus an AOT smoke test only; final timing runs are done by the main session when the machine is quiet).
   - **FNA 26.10 upgrade** in a worktree, branch `chore/fna-26.10` off `main`.
 
+### 2026-10-24 — FNA 26.10 upgrade done (branch `chore/fna-26.10`, `41f3802e9`, not pushed)
+
+- **Almost drop-in.** It compiles unchanged, but two runtime crashes needed fixes:
+  - FNA now checks that a vertex type's size equals its stride. `PositionNormalTextureColor4` packs a whole quad, so `Batcher2D`/`MeshLayer` now pass its `VertexDeclaration` explicitly.
+  - `AudioManager` probed audio hardware with sample rate 0; it now uses 22050.
+- **Natives:** SDL3 3.2.23 → 3.4.19, plus FNA3D, FAudio and Theorafile, from FNA's fnalibs-dailies CI artifacts (2026-10-24). These are dailies, not a pinned release. Windows/Linux/macOS natives are replaced, but only Windows was launch-tested.
+- 185/185 unit tests pass. The client reaches the login screen on the Vulkan driver.
+
+### 2026-10-24 — Flecs.NET adapter added (EcsBench + `research/ecs-bench/FlecsAdapter.cs`)
+
+- Flecs.NET.Release 4.0.3. Checksums match the other libraries under both JIT and AOT. 0 AOT warnings. `flecs.dll` adds about 700 KB (a static-link option exists).
+- Preliminary, single runs on a busy machine: iteration ties Friflo. Per-entity operations (lookups, create/destroy, tag toggles) are 1.5–2× slower than Friflo, because each is a P/Invoke.
+- Ergonomics: field-index access, several overlapping iteration styles, uncached-by-default queries, a fast create path that leaves memory uninitialized. Harder for developers new to ECS than Friflo.
+- TODO: final 3-round timings once no builds are running.
+
 ## Next
 
 - Review each agent's output and commit it.
