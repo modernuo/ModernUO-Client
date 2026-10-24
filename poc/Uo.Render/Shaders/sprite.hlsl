@@ -19,6 +19,10 @@
 #define FLAG_STRETCH  4u
 #define FLAG_LIT      8u
 #define FLAG_SHARP    0x100u  // set by the vertex shader from the Sharp uniform
+#define FLAG_UNPREMUL 0x200u  // FormatFlags bit 0 << 9
+#define FLAG_GRAYTOL  0x400u  // FormatFlags bit 1 << 9
+// BC7 perturbs exact grays by a few levels; ClassicUO's partial-hue test is r == g == b on 5-bit source colours,
+// so BC7 packs use a small tolerance (GrayTolerance uniform, set by the renderer).
 
 struct Instance
 {
@@ -48,7 +52,8 @@ cbuffer Frame : register(b0, space1)
     float  DepthScale;
     uint   Sharp;      // 1 = scale >= 1: sharp-bilinear (stable at fractional scales); 0 = trilinear (zoomed out)
     float  AtlasSize;
-    uint2  Pad;
+    uint   FormatFlags; // 1 = un-premultiply filtered edges (RGBA8/16-bit), 2 = partial-hue gray tolerance (BC7)
+    float  GrayTolerance; // partial-hue gray test tolerance when FLAG_GRAYTOL (BC7)
 };
 
 Texture2DArray<float4> Atlas    : register(t0, space2);
@@ -63,6 +68,7 @@ struct VSOut
     nointerpolation uint2 hueFlags : TEXCOORD1;
     float  light : TEXCOORD2;
     nointerpolation float atlasSize : TEXCOORD3; // the fragment stage can't read the vertex cbuffer (space1)
+    nointerpolation float grayTol : TEXCOORD4;
 };
 
 static const uint Corner[6] = { 0, 1, 2, 2, 1, 3 };
@@ -86,7 +92,7 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     {
         // Page not resident: collapse to a degenerate triangle.
         o.pos = float4(-2, -2, 0, 1);
-        o.uvw = 0; o.hueFlags = 0; o.light = 0; o.atlasSize = 1;
+        o.uvw = 0; o.hueFlags = 0; o.light = 0; o.atlasSize = 1; o.grayTol = 0;
         return o;
     }
 
@@ -117,9 +123,10 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     o.pos = float4(ndc.x, -ndc.y, saturate(depth), 1);
     float2 uv = float2(inst.uv & 0xFFFF, inst.uv >> 16) + cxy * float2(w, h);
     o.uvw = float3(uv * InvAtlas, layer);
-    o.hueFlags = uint2(inst.pageHue >> 16, flags | (Sharp != 0 ? FLAG_SHARP : 0u));
+    o.hueFlags = uint2(inst.pageHue >> 16, flags | (Sharp != 0 ? FLAG_SHARP : 0u) | ((FormatFlags & 3u) << 9));
     o.light = light;
     o.atlasSize = AtlasSize;
+    o.grayTol = GrayTolerance;
     return o;
 }
 
@@ -146,10 +153,15 @@ float4 PSMain(VSOut i) : SV_Target
     // effectively premultiplied; un-premultiply to avoid dark fringes when zoomed out.
     if (c.a < 0.5)
         discard;
-    c.rgb /= c.a;
-
     uint flags = i.hueFlags.y;
-    bool gray = c.r == c.g && c.r == c.b;
+    if (flags & FLAG_UNPREMUL)
+        c.rgb /= c.a;
+
+    bool gray;
+    if (flags & FLAG_GRAYTOL)
+        gray = max(abs(c.r - c.g), max(abs(c.r - c.b), abs(c.g - c.b))) <= i.grayTol;
+    else
+        gray = c.r == c.g && c.r == c.b;
     if ((flags & FLAG_HUED) != 0 && ((flags & FLAG_PARTIAL) == 0 || gray))
     {
         // ClassicUO get_rgb: grayscale (red channel) selects one of 32 shades of the hue row.

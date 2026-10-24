@@ -242,6 +242,7 @@ public sealed unsafe class Renderer : IDisposable
         public long Frame;
         public int ChunkUploadBudget;
         public string ScreenshotPath; // offscreen only
+        public bool GpuSample;        // offscreen bench: submit and wait, timing this frame's GPU work
     }
 
     public int LastChunkUploads, DrawCalls;
@@ -356,8 +357,72 @@ public sealed unsafe class Renderer : IDisposable
         if (f.ScreenshotPath != null && Offscreen)
             return SubmitAndSave(cmd, f.ScreenshotPath, tw, th);
 
+        if (Offscreen && Throttle)
+        {
+            // No swapchain to pace us: keep at most 2 frames in flight with fences, so the frame interval
+            // becomes max(CPU, GPU) and a GPU-bound run measures GPU frame time.
+            long ts = System.Diagnostics.Stopwatch.GetTimestamp();
+            var fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
+            if (f.GpuSample)
+            {
+                WaitFence(fence);
+                GpuSampleTicks = System.Diagnostics.Stopwatch.GetTimestamp() - ts;
+                SDL_ReleaseGPUFence(Device, fence);
+                return true;
+            }
+            if (_fences[_fenceHead] != IntPtr.Zero) { WaitFence(_fences[_fenceHead]); SDL_ReleaseGPUFence(Device, _fences[_fenceHead]); }
+            _fences[_fenceHead] = fence;
+            _fenceHead = (_fenceHead + 1) % _fences.Length;
+            return true;
+        }
+
         SDL_SubmitGPUCommandBuffer(cmd);
         return true;
+    }
+
+    /// <summary>Offscreen bench: fence-throttle submissions (see RenderFrame).</summary>
+    public bool Throttle;
+    readonly IntPtr[] _fences = new IntPtr[2];
+    int _fenceHead;
+    /// <summary>Submit → fence-signalled time of the last GpuSample frame (taken after the GPU was idle).</summary>
+    public long GpuSampleTicks;
+
+    void WaitFence(IntPtr fence)
+    {
+        Span<IntPtr> one = stackalloc IntPtr[1] { fence };
+        SDL_WaitForGPUFences(Device, true, one, 1);
+    }
+
+    /// <summary>Median submit -> fence-signalled time of an empty command buffer on an idle GPU: the fixed overhead
+    /// included in every GpuSample, subtracted to estimate net GPU frame time.</summary>
+    public double MeasureSubmitOverheadMs(int n = 64)
+    {
+        DrainInFlight();
+        var t = new double[n];
+        for (int i = 0; i < n; i++)
+        {
+            var cmd = SDL_AcquireGPUCommandBuffer(Device);
+            long ts = System.Diagnostics.Stopwatch.GetTimestamp();
+            var fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
+            WaitFence(fence);
+            t[i] = (System.Diagnostics.Stopwatch.GetTimestamp() - ts) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            SDL_ReleaseGPUFence(Device, fence);
+        }
+        Array.Sort(t);
+        return t[n / 2];
+    }
+
+    /// <summary>Waits for all in-flight frames; used before a GPU timing sample so the sample measures one frame alone.</summary>
+    public void DrainInFlight()
+    {
+        for (int i = 0; i < _fences.Length; i++)
+        {
+            if (_fences[i] == IntPtr.Zero) continue;
+            WaitFence(_fences[i]);
+            SDL_ReleaseGPUFence(Device, _fences[i]);
+            _fences[i] = IntPtr.Zero;
+        }
+        SDL_WaitForGPUIdle(Device);
     }
 
     bool SubmitAndSave(IntPtr cmd, string path, uint w, uint h)
@@ -389,7 +454,7 @@ public sealed unsafe class Renderer : IDisposable
 
     public void Dispose()
     {
-        SDL_WaitForGPUIdle(Device);
+        DrainInFlight();
         if (_depth != IntPtr.Zero) SDL_ReleaseGPUTexture(Device, _depth);
         if (_offscreen != IntPtr.Zero) SDL_ReleaseGPUTexture(Device, _offscreen);
         SDL_ReleaseGPUTexture(Device, _hueTex);
