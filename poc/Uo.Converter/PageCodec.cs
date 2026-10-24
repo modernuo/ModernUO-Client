@@ -11,9 +11,10 @@ namespace Uo.Converter;
 /// <summary>Global output options (set once by Program).</summary>
 public static class ConvertOptions
 {
-    public static PackPixelFormat Format = PackPixelFormat.Rgba8;
+    public static PackPixelFormat Format = PackPixelFormat.B5G5R5A1;
     public static CompressionQuality Bc7Quality = CompressionQuality.Fast;
-    public static bool CompressRegions;
+    /// <summary>Regions as Kind 1 (ship profile). --raw-regions writes Kind 0.</summary>
+    public static bool CompressRegions = true;
     public static string? DebugDir;
     public static bool Bc7FillTransparent = true;
     /// <summary>With Fast quality, blocks below this PSNR are re-encoded at Balanced (0 = off). --bc7-refine-db.</summary>
@@ -33,23 +34,23 @@ public static class ConvertOptions
     public static int Align => Format == PackPixelFormat.Bc7 ? 4 : 1;
     /// <summary>Measure-only experiment: Brotli(q5) size of every written page.</summary>
     public static bool MeasurePageBrotli = false;
-    /// <summary>--compress-pages: write pages as Kind=1 (Brotli).</summary>
+    /// <summary>--compress-pages: write pages as Kind=1 (Brotli) instead of the default Kind=2.</summary>
     public static bool CompressPages;
     /// <summary>--compress-pages=chunked: write pages as Kind=2 (chunked Brotli, --chunk-bytes per chunk).</summary>
-    public static bool ChunkedPages;
+    public static bool ChunkedPages = true;
     public static int ChunkBytes = ChunkedBrotli.DefaultChunkBytes;
     public static ushort PageKind => ChunkedPages ? FileKind.ChunkedBrotli : CompressPages ? FileKind.Brotli : FileKind.Raw;
     public static bool AnyPageCompression => ChunkedPages || CompressPages;
     /// <summary>--page-size: art and tex page side. --anim-page-size: anim page side (defaults to --page-size).</summary>
     public static int PageSize = PackConst.PageSize;
-    public static int? AnimPageSizeOverride;
+    public static int? AnimPageSizeOverride = 1024;
     public static int AnimPageSize => AnimPageSizeOverride ?? PageSize;
     /// <summary>Mip levels down to 64x64, as for the 2048 default (6 levels).</summary>
     public static int MipsFor(int size) => Math.Max(1, System.Numerics.BitOperations.Log2((uint)size) - 5);
-    /// <summary>--anim-format indexed8: experimental palette-indexed anim pages (see AnimPaletteFile).</summary>
-    public static bool AnimIndexed;
+    /// <summary>Indexed8 anim pages (ship profile; see AnimPaletteFile). --anim-format page uses --format instead.</summary>
+    public static bool AnimIndexed = true;
     /// <summary>--indexed-mips b16|none: with Indexed8, also write mips 1+ as a B5G5R5A1 sidecar page (mips_NNNN.bin).</summary>
-    public static bool IndexedMips = true;
+    public static bool IndexedMips;
 }
 
 /// <summary>Page pixel codec: RGBA8 chain -> BC7 chain, and decoding any page mip back to RGBA8.</summary>

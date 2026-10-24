@@ -36,7 +36,7 @@ Supporting material in this branch:
 - **One process = one session.** No multiboxing.
 - **The pack replaces MUL/UOP (2026-10-24).**
   - For every asset the pack format covers (art, texmaps, maps/statics, tiledata, hues, animations), the client loads only from the pack. There is no side-by-side MUL/UOP path, so we never support two formats. Those ClassicUO loaders get deleted once the pack path works.
-  - MUL/UOP stay only for content the pack doesn't cover yet (gumps, fonts, cliloc, sounds, multis, …). Each one moves into the pack over time.
+  - MUL/UOP stay only for content the pack doesn't cover yet (gumps, fonts, cliloc, sounds, …; the list is in [pack-format.md](pack-format.md)). Each one moves into the pack over time. Multis, lights, radarcol, full tiledata, raw hues, tileart appearances and Equipconv.def joined the pack in format 1.0.
   - The converter is the only code that reads MUL/UOP for converted content.
 - **No patch formats:** verdata.mul and mapdif/stadif are never supported. Shard owners who use them must merge the patches into the base files with their own tooling before running our converter (2026-10-24).
 - **Texture format (2026-10-24, revised the same day):** **16-bit lossless (`B5G5R5A1`) on every platform**, bit-exact to the source art.
@@ -53,7 +53,7 @@ Supporting material in this branch:
   - On disk the 16-bit pack is 435 MB raw versus 142 MB compressed.
   - Platforms that must keep pages compressed at rest (mobile storage, browser storage) use **chunked Brotli**: independent ~1 MiB streams that workers decode in parallel. See "Distribution and chunked compression" in pack-format-v0.md.
   - **Superseded the same day:** the owner accepts compressed-at-rest when decode is fast, and raw animations would be 6.7 GiB. See the final profile below.
-- **Final pack profile, format 1.0 (2026-10-24).** Based on the animation storage investigation in pack-format-v0.md.
+- **Final pack profile, format 1.0 (2026-10-24).** Based on the animation storage investigation in pack-format-v0.md. The authoritative spec is [pack-format.md](pack-format.md), and the converter's default output is this profile.
   - **Art and texmaps:** B5G5R5A1, 2048² pages, full mip chain, **chunked Brotli (Kind 2), 1 MiB chunks**. Decode takes about 4 ms per page with 8 workers.
   - **Animations:** **Indexed8, 1024² pages, no mips**, plus `palettes.bin` (37.9k deduplicated 256-entry B5G5R5A1 palettes, 6 MB compressed). Also Kind 2 (one chunk per page at 1 MiB).
     - Lossless: 0 mismatches against the 16-bit pack.

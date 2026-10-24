@@ -160,6 +160,7 @@ public static class AtlasPage
         FileHeader f = default;
         RandomAccess.Read(fh, System.Runtime.InteropServices.MemoryMarshal.AsBytes(new Span<FileHeader>(ref f)), 0);
         if (f.Magic != PackConst.MagicPage) throw new InvalidDataException($"Bad magic 0x{f.Magic:X8}");
+        if (!PackConst.VersionSupported(f.Version)) throw new InvalidDataException($"Unsupported pack version {f.Version}");
         if (f.Kind != FileKind.ChunkedBrotli)
         {
             fh.Dispose();

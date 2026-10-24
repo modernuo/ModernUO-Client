@@ -3,12 +3,17 @@ using System.Runtime.InteropServices;
 
 namespace Uo.Pack;
 
-// Binary layouts for pack format v0. See docs/modern-client/pack-format-v0.md.
+// Binary layouts for pack format 1.0. See docs/modern-client/pack-format.md.
 // All structs are blittable and read/written with MemoryMarshal — no per-element parsing.
 
 public static class PackConst
 {
-    public const ushort Version = 0;
+    /// <summary>FileHeader.Version written by this library (format 1.0).</summary>
+    public const ushort Version = 1;
+    /// <summary>Oldest FileHeader.Version readers accept. Version 0 files have the same layouts (pre-1.0 packs).</summary>
+    public const ushort MinReadVersion = 0;
+
+    public static bool VersionSupported(ushort v) => v >= MinReadVersion && v <= Version;
 
     public const uint MagicPage = 0x4B415050;    // "PPAK"
     public const uint MagicSprites = 0x53525053; // "SPRS"
@@ -305,7 +310,7 @@ public static class StructIo
         var h = Read<FileHeader>(s);
         if (h.Magic != expectedMagic)
             throw new InvalidDataException($"Bad magic 0x{h.Magic:X8}, expected 0x{expectedMagic:X8}");
-        if (h.Version != PackConst.Version)
+        if (!PackConst.VersionSupported(h.Version))
             throw new InvalidDataException($"Unsupported pack version {h.Version}");
     }
 
@@ -321,7 +326,7 @@ public static class StructIo
         var h = Read<FileHeader>(s);
         if (h.Magic != expectedMagic)
             throw new InvalidDataException($"Bad magic 0x{h.Magic:X8}, expected 0x{expectedMagic:X8}");
-        if (h.Version != PackConst.Version)
+        if (!PackConst.VersionSupported(h.Version))
             throw new InvalidDataException($"Unsupported pack version {h.Version}");
         return h;
     }

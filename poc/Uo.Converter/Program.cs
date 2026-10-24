@@ -38,8 +38,10 @@ for (int i = 0; i < args.Length; i++)
             break;
         case "--bc7-quality": ConvertOptions.Bc7Quality = Enum.Parse<BCnEncoder.Encoder.CompressionQuality>(args[++i], ignoreCase: true); break;
         case "--compress-regions": ConvertOptions.CompressRegions = true; break;
-        case "--compress-pages": ConvertOptions.CompressPages = true; break;
+        case "--raw-regions": ConvertOptions.CompressRegions = false; break;
+        case "--compress-pages": ConvertOptions.CompressPages = true; ConvertOptions.ChunkedPages = false; break;
         case "--compress-pages=chunked": ConvertOptions.ChunkedPages = true; break;
+        case "--raw-pages": ConvertOptions.CompressPages = false; ConvertOptions.ChunkedPages = false; break;
         case "--chunk-bytes": ConvertOptions.ChunkBytes = int.Parse(args[++i]); break;
         case "--page-size": ConvertOptions.PageSize = PageSide(args[++i]); break;
         case "--anim-page-size": ConvertOptions.AnimPageSizeOverride = PageSide(args[++i]); break;
@@ -63,7 +65,7 @@ for (int i = 0; i < args.Length; i++)
         case "--regions": ConvertOptions.MaxRegions = int.Parse(args[++i]); break;
         case "--bench-bc7": Bench.Bc7(args[++i]); return 0;
         default:
-            Console.WriteLine("usage: Uo.Converter [--uo <client dir>] [--out <pack dir>] [--debug <png dir>] [--format rgba8|bc7|b5g5r5a1] [--bc7-quality fast|balanced|bestquality] [--bc7-refine-db 28] [--compress-regions] [--compress-pages[=chunked]] [--chunk-bytes n] [--page-size 2048] [--anim-page-size 1024] [--anim-format page|indexed8] [--indexed-mips b16|none] [--threads n] [--pages a-b] [--facets 0,1] [--regions n] [--xfiles] [--no-maps] [--no-anims] [--only art,tex,hues,tiledata,maps,anims] [--anims-only] [--bodies 400,0xC8] [--verify-only]");
+            Console.WriteLine("usage: Uo.Converter [--uo <client dir>] [--out <pack dir>] [--debug <png dir>] [--format b5g5r5a1|rgba8|bc7] [--bc7-quality fast|balanced|bestquality] [--bc7-refine-db 28] [--raw-regions] [--raw-pages|--compress-pages[=chunked]] [--chunk-bytes n] [--page-size 2048] [--anim-page-size 1024] [--anim-format indexed8|page] [--indexed-mips none|b16] [--threads n] [--pages a-b] [--facets 0,1] [--regions n] [--xfiles] [--no-maps] [--no-anims] [--only art,tex,hues,tiledata,data,maps,anims] [--anims-only] [--bodies 400,0xC8] [--verify-only]");
             return 1;
     }
 }
@@ -72,9 +74,12 @@ bool Want(string stage) => only != null ? only.Contains(stage) : stage switch { 
 if (only != null && !formatGiven && File.Exists(PackConst.PagePath(Path.Combine(outDir, "art"), 0)))
 {
     // Match the pack being extended: page format and compression come from its first art page.
-    using var ps = AtlasPage.OpenChain(PackConst.PagePath(Path.Combine(outDir, "art"), 0), out var ph);
-    ConvertOptions.Format = ph.Format;
-    if (!ConvertOptions.ChunkedPages) ConvertOptions.CompressPages |= ps is not FileStream;
+    var p0 = PackConst.PagePath(Path.Combine(outDir, "art"), 0);
+    using (var ps = AtlasPage.OpenChain(p0, out var ph)) ConvertOptions.Format = ph.Format;
+    using var hs = File.OpenRead(p0);
+    var kind = StructIo.ReadHeaderFull(hs, PackConst.MagicPage).Kind;
+    ConvertOptions.ChunkedPages = kind == FileKind.ChunkedBrotli;
+    ConvertOptions.CompressPages = kind == FileKind.Brotli;
 }
 
 var total = Stopwatch.StartNew();
@@ -123,7 +128,23 @@ if (convert)
     if (ConvertOptions.Format == Uo.Pack.PixelFormat.Bc7)
         Console.WriteLine($"  bc7: {PageCodec.RefineStats.Encoded} non-trivial blocks encoded, {PageCodec.RefineStats.Refined} re-encoded at Balanced (refine below {ConvertOptions.Bc7RefineDb} dB)");
     if (Want("hues")) stats["hues"] = Stage("hues", () => ArtConvert.Hues(fm, outDir));
-    if (Want("tiledata")) stats["tiledata"] = Stage("tiledata", () => ArtConvert.TileData(fm, outDir));
+    if (Want("tiledata"))
+    {
+        stats["tiledata"] = Stage("tiledata", () => ArtConvert.TileData(fm, outDir));
+        Stage("tiledata (extended)", () => TableConvert.TileDataExt(fm, outDir));
+    }
+    if (Want("hues"))
+    {
+        Stage("hues (raw)", () => TableConvert.HuesRaw(fm, outDir));
+        Stage("radarcol", () => TableConvert.RadarCol(fm, outDir));
+    }
+    if (Want("data"))
+    {
+        Stage("multis", () => TableConvert.Multis(fm, outDir));
+        Stage("lights", () => TableConvert.Lights(fm, outDir));
+        Stage("tileart", () => TableConvert.TileArt(fm, outDir));
+        Stage("equipconv", () => TableConvert.EquipConv(fm, outDir));
+    }
 
     if (Want("maps"))
     {
