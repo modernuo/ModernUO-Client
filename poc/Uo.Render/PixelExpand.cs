@@ -6,21 +6,23 @@ namespace Uo.Render;
 
 /// <summary>
 /// B5G5R5A1 → R8G8B8A8 expansion for GPUs without a sampleable 16-bit format (WebGPU, Intel Macs).
-/// Channels expand with ClassicUO's HuesHelper table, which is exactly floor(c·255/31) = (c·1053) >> 7 for c in 0..31,
-/// so the vector paths compute it in 16-bit lanes with no lookup. Alpha bit → 0x00/0xFF.
+/// Channels expand as round(c·255/31) = (c·527 + 23) >> 6 for c in 0..31, the same value GPUs produce when they sample
+/// B5G5R5A1_UNORM natively, so the expanded and native paths render identically. Computed in 16-bit lanes with no
+/// lookup. Alpha bit → 0x00/0xFF. (ClassicUO's HuesHelper table is floor(c·255/31), at most 1 lower per channel.)
 /// Uses only portable Vector128/256 ops: SSE/AVX on x64, AdvSimd on ARM64, PackedSimd (SIMD128) on WASM.
 /// </summary>
 public static class PixelExpand
 {
-    const ushort Mul = 1053;
-    const int Shift = 7;
+    const ushort Mul = 527;
+    const ushort Bias = 23;
+    const int Shift = 6;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static uint Expand(ushort c)
     {
-        uint r = (uint)(((c >> 10) & 0x1F) * Mul) >> Shift;
-        uint g = (uint)(((c >> 5) & 0x1F) * Mul) >> Shift;
-        uint b = (uint)((c & 0x1F) * Mul) >> Shift;
+        uint r = (uint)(((c >> 10) & 0x1F) * Mul + Bias) >> Shift;
+        uint g = (uint)(((c >> 5) & 0x1F) * Mul + Bias) >> Shift;
+        uint b = (uint)((c & 0x1F) * Mul + Bias) >> Shift;
         uint a = (uint)-(c >> 15) & 0xFF;
         return r | (g << 8) | (b << 16) | (a << 24);
     }
@@ -65,14 +67,7 @@ public static class PixelExpand
     public static void Expand(ReadOnlySpan<byte> src, Span<byte> dst)
         => Expand(MemoryMarshal.Cast<byte, ushort>(src), MemoryMarshal.Cast<byte, uint>(dst));
 
-    /// <summary>ClassicUO HuesHelper._table (src/ClassicUO.Utility/HuesHelper.cs), the 5→8 bit expansion the RGBA8 packs use.</summary>
-    static ReadOnlySpan<byte> Table =>
-    [
-        0x00, 0x08, 0x10, 0x18, 0x20, 0x29, 0x31, 0x39, 0x41, 0x4A, 0x52, 0x5A, 0x62, 0x6A, 0x73, 0x7B, 0x83, 0x8B,
-        0x94, 0x9C, 0xA4, 0xAC, 0xB4, 0xBD, 0xC5, 0xCD, 0xD5, 0xDE, 0xE6, 0xEE, 0xF6, 0xFF,
-    ];
-
-    /// <summary>Exhaustive check of all 65536 texels against the table, through the scalar path and the span path
+    /// <summary>Exhaustive check of all 65536 texels against round(c·255/31) computed in floating point, through the scalar path and the span path
     /// (vector + scalar tail) at several start offsets. Returns the number of mismatching texels.</summary>
     public static int SelfTest()
     {
@@ -96,8 +91,8 @@ public static class PixelExpand
 
         static uint Want(int c)
         {
-            var t = Table;
-            return t[(c >> 10) & 0x1F] | ((uint)t[(c >> 5) & 0x1F] << 8) | ((uint)t[c & 0x1F] << 16) | ((c & 0x8000) != 0 ? 0xFF000000u : 0);
+            static uint Ch(int v) => (uint)Math.Round(v * 255.0 / 31.0); // no exact .5 ties for v in 0..31
+            return Ch((c >> 10) & 0x1F) | (Ch((c >> 5) & 0x1F) << 8) | (Ch(c & 0x1F) << 16) | ((c & 0x8000) != 0 ? 0xFF000000u : 0);
         }
     }
 
@@ -105,9 +100,10 @@ public static class PixelExpand
     static (Vector128<uint> lo, Vector128<uint> hi) Expand(Vector128<ushort> v)
     {
         var m5 = Vector128.Create((ushort)0x1F);
-        var r = ((v >>> 10) & m5) * Mul >>> Shift;
-        var g = ((v >>> 5) & m5) * Mul >>> Shift;
-        var b = (v & m5) * Mul >>> Shift;
+        var bias = Vector128.Create(Bias);
+        var r = (((v >>> 10) & m5) * Mul + bias) >>> Shift;
+        var g = (((v >>> 5) & m5) * Mul + bias) >>> Shift;
+        var b = ((v & m5) * Mul + bias) >>> Shift;
         var a = (v.AsInt16() >> 15).AsUInt16() & Vector128.Create((ushort)0xFF);
         var rg = r | (g << 8);
         var ba = b | (a << 8);
@@ -120,9 +116,10 @@ public static class PixelExpand
     static (Vector256<uint> lo, Vector256<uint> hi) Expand(Vector256<ushort> v)
     {
         var m5 = Vector256.Create((ushort)0x1F);
-        var r = ((v >>> 10) & m5) * Mul >>> Shift;
-        var g = ((v >>> 5) & m5) * Mul >>> Shift;
-        var b = (v & m5) * Mul >>> Shift;
+        var bias = Vector256.Create(Bias);
+        var r = (((v >>> 10) & m5) * Mul + bias) >>> Shift;
+        var g = (((v >>> 5) & m5) * Mul + bias) >>> Shift;
+        var b = ((v & m5) * Mul + bias) >>> Shift;
         var a = (v.AsInt16() >> 15).AsUInt16() & Vector256.Create((ushort)0xFF);
         var rg = r | (g << 8);
         var ba = b | (a << 8);
