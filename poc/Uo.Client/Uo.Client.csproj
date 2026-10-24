@@ -14,8 +14,6 @@
     <PlatformTarget>x64</PlatformTarget>
     <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-x64</RuntimeIdentifier>
     <SelfContained Condition="'$(PublishAot)' != 'true'">false</SelfContained>
-    <!-- Uo.Render is an exe used here as a library (renderer, streaming, pack tables); its Main is unused. -->
-    <ValidateExecutableReferencesMatchSelfContained>false</ValidateExecutableReferencesMatchSelfContained>
     <!-- NativeAOT: dotnet publish -c Release -p:PublishAot=true (vswhere.exe on PATH) -->
   </PropertyGroup>
 

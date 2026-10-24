@@ -18,6 +18,8 @@ public sealed class BakeJob : Job
 
     // output
     public SpriteInstance[] Instances = new SpriteInstance[256];
+    /// <summary>Per instance: which map object it draws (<see cref="ObjectKey"/>); instances are in ascending cell order.</summary>
+    public uint[] Keys = new uint[256];
     public int Count;
     public int MinX, MinY, MaxX, MaxY;
     public readonly ushort[] Pages = new ushort[ChunkStore.MaxPagesPerChunk];
@@ -41,6 +43,11 @@ public sealed class BakeJob : Job
     public static uint DepthKey(int x, int y, int priorityZ, int rank)
         => (uint)(((((x + y) * 100 + 127 + priorityZ + DepthBias) * 16) + (x & 15)) * 8 + Math.Min(rank, 7));
 
+    /// <summary>cell (y·8 + x in the block) &lt;&lt; 25 | static &lt;&lt; 24 | (u8)z &lt;&lt; 16 | graphic (land: tile id).</summary>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static uint ObjectKey(int cell, bool isStatic, int z, int graphic)
+        => ((uint)cell << 25) | (isStatic ? 1u << 24 : 0) | ((uint)(byte)(sbyte)z << 16) | (uint)(ushort)graphic;
+
     public static uint CameraDepthKey(float tileSum) => (uint)((int)(tileSum * 100) + 127 + DepthBias) * 128;
 
     public override void Run()
@@ -61,6 +68,7 @@ public sealed class BakeJob : Job
         int need = 64 + statics.Length;
         if (_keys.Length < need) _keys = new long[need * 2];
         if (Instances.Length < need) Instances = new SpriteInstance[need * 2];
+        if (Keys.Length < Instances.Length) Keys = new uint[Instances.Length];
 
         var sprites = Pack.Sprites;
         var landData = Pack.Land;
@@ -142,6 +150,7 @@ public sealed class BakeJob : Job
                     ref readonly var t = ref Pack.Texmaps[landData[tile].TexId];
                     int ax = sx, ay = (tx + ty) * 22 - 22; // posY += Z << 2 cancels the z offset; corners carry z
                     Emit(ax, ay, t, Pack.TexPageBase + t.Page, 0, SpriteInstance.FlagStretch | SpriteInstance.FlagLit, depth, _light[idx], _corners[idx]);
+                    Keys[Count - 1] = ObjectKey(cell, false, z, tile);
                     int zmin = Math.Min(Math.Min((sbyte)_corners[idx], (sbyte)(_corners[idx] >> 8)), Math.Min((sbyte)(_corners[idx] >> 16), (sbyte)(_corners[idx] >> 24)));
                     int zmax = Math.Max(Math.Max((sbyte)_corners[idx], (sbyte)(_corners[idx] >> 8)), Math.Max((sbyte)(_corners[idx] >> 16), (sbyte)(_corners[idx] >> 24)));
                     Bounds(ax, ay - zmax * 4, ax + 44, ay + 44 - zmin * 4);
@@ -152,6 +161,7 @@ public sealed class BakeJob : Job
                     if (!sp.Present) continue;
                     int x = sx + sp.TrimX, y = (tx + ty) * 22 - (z << 2) - 22 + sp.TrimY;
                     Emit(x, y, sp, sp.Page, 0, 0, depth, 0, 0);
+                    Keys[Count - 1] = ObjectKey(cell, false, z, tile);
                     Bounds(x, y, x + sp.W, y + sp.H);
                 }
             }
@@ -173,6 +183,7 @@ public sealed class BakeJob : Job
                     flags = SpriteInstance.FlagHued | (partial ? SpriteInstance.FlagPartial : 0);
                 }
                 Emit(x, y, sp, sp.Page, hueRow, flags, depth, 0, 0);
+                Keys[Count - 1] = ObjectKey(cell, true, s.Z, s.Graphic);
                 Bounds(x, y, x + sp.W, y + sp.H);
             }
         }
