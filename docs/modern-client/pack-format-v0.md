@@ -56,9 +56,9 @@ Art is converted from UO 16-bit 1555 to RGBA8. Fully transparent pixels get alph
 
 ## Tile data
 
-- `LandTileData` (12 bytes): flags `u64`, texId `u16`, pad `u16`.
-- `StaticTileData` (12 bytes): flags `u64`, height `u8`, layer `u8`, pad `u16`.
-- Flags keep UO's `TileFlag` bit values.
+- `LandTileData` (12 bytes): flags `u64`, texId `u16`, packFlags `u16` (pad in v0).
+- `StaticTileData` (12 bytes): flags `u64`, height `u8`, layer `u8`, packFlags `u16` (pad in v0).
+- Flags keep UO's `TileFlag` bit values. `packFlags` is converter-derived, see "v1 NoDraw flags" below.
 
 ## Deliberately deferred to v1+
 
@@ -147,6 +147,82 @@ The v1 additions are backward compatible: `FileHeader.Version` stays 0, and a v0
 5. **Metric.** Report **average and p95 pages touched per window** and **page-change rate along random walks**, before and after. The converter prints these so a shard can see the effect of its custom art. This is the acceptance test for the v2 packer.
 
 The page format doesn't change. Only the sprite-to-page assignment changes, which the sprite table already records, so v2 packs stay readable by v1 renderers.
+
+### v1 NoDraw flags (`TilePackFlags`, in `packFlags`)
+
+ClassicUO hides some tiles with code rather than tiledata flags. The converter evaluates that code once and stores the result. A v0 pack has 0 here, so a renderer that honours the flags should keep its own id rules as a fallback.
+
+| Bit | Name | Meaning |
+|---|---|---|
+| 0 | `NoDraw` | ClassicUO never draws the tile. |
+| 1 | `NoDrawUnlessGargoyle` | Static hidden unless the player is a gargoyle. |
+| 2 | `NameNoDraw` | The tiledata name starts with `nodraw` (case-insensitive). For land this is informational only. |
+
+- **Land** (`Land.AllowedToDraw = graphic > 2`): `NoDraw` for ids 0, 1 and 2. ClassicUO never checks land names. In 7.0.103 the only land named `NODRAW` is 0x0002, which the id rule already covers. 0x1DB..0x1E0 are `NoName`/`dirt` and drawn normally. 0x1AE..0x1B5 and 0x1DB appear only in ClassicUO's Pathfinder (walkability), not in drawing. Season graphic swaps are runtime, so the renderer applies the `> 2` rule to the swapped graphic.
+- **Statics** (static-data part of `GameObject.CanBeDrawn`, evaluated in this order):
+  - 0x0001, 0x21BC and 0xA1FE..0xA201: `NoDraw`.
+  - 0x9E4C, 0x9E64, 0x9E65 and 0x9E7D: `NoDraw` only with Background or Surface. The name is not checked.
+  - 0x63D3, and 0x2198..0x21A4: `NoDraw`.
+  - 0x0F65 (easel) is drawn on clients older than 6.0.14.4.
+  - A name starting with `nodraw` gives `NoDraw`.
+  - TileFlag `NoDiagonal` (0x02000000) gives `NoDraw`, or `NoDrawUnlessGargoyle` when the tile also has `Animation`.
+- 7.0.103 counts: land 3 `NoDraw`; statics 31 `NoDraw`, 1 `NoDrawUnlessGargoyle`, 20 named `nodraw`.
+- These flags apply to map statics and to items or multis that ClassicUO passes through `CanBeDrawn`. Multi components use their own `> 2` test.
+
+## v1 animations
+
+Mobiles, equipment and corpses are body animations. The converter emits them only with the `anims` stage (on by default, `--no-anims` to skip, `--only anims` / `--anims-only` to add them to an existing pack). This section covers that output.
+
+```
+<pack>/anim/
+  anim.bin          AnimTable: body table, direction records, frame records
+  animdata.bin      animdata.mul records (animated static art)
+  page_NNNN.bin     atlas pages, same page format as art (PixelFormat and Kind per page)
+```
+
+**Pages** use the art page format unchanged: 2048², 6 mips, 2 px extruded gutter, `PixelFormat` as chosen by `--format` (BC7 cells 4-aligned), and Brotli per file with `--compress-pages`. B5G5R5A1 mip0 is bit-exact to the client's 16-bit colours. Pixels are unhued; hues apply in the shader as for art. Frames are packed in body → action → direction → frame order, so one body's frames share a few pages. Identical frames (by trimmed pixels and trim) share one rect.
+
+**`anim.bin`** = `FileHeader` (magic `ANIM`), `bodyCount i32`, `dirCount i32`, `frameCount i32`, then `AnimBodyEntry[bodyCount]` (index = body id), `AnimDirEntry[dirCount]` and `AnimFrameEntry[frameCount]`. The reader is `AnimTableFile.Read`, and `AnimTableFile.Frames(…, body, action, dir)` looks up one direction.
+
+`AnimBodyEntry` (24 bytes):
+
+| Field | Type | Meaning |
+|---|---|---|
+| firstDir | u32 | Record of (action 0, dir 0). Record (a, d) is at `firstDir + a*8 + d`. |
+| actionCount | u16 | 0 = the body has no frames of its own. Actions ≥ actionCount have no frames. |
+| type | u8 | ClassicUO `AnimationGroupsType`: 0 monster, 1 sea monster, 2 animal, 3 human, 4 equipment. |
+| source | u8 | bit 7 = `AnimationFrame<n+1>.uop`, else `anim<n+1>.mul` (n = low bits). 0xFF = none. |
+| flags | u32 | mobtypes.txt flags (ClassicUO `AnimationFlags`, e.g. 0x10000 UOP). Bit 31 = listed in mobtypes. |
+| sourceBody | u16 | Body id inside the source file (the Bodyconv.def target), else the body itself. |
+| aliasBody, aliasHue | u16, u16 | Body.def replacement, already chained (0xFFFF = none). Draw aliasBody's entry, its type and its flags instead, with aliasHue. |
+| corpseBody, corpseHue | u16, u16 | Corpse.def replacement for corpses (0xFFFF = none). |
+| mountHeight | i8 | Bodyconv.def mounted height offset. |
+| pad | u8 | |
+
+`AnimDirEntry` (8 bytes): firstFrame `u32`, frameCount `u16` (absent frames included; 0 = no animation), storedDir `u8`, flags `u8` (bit0 = mirrored). There are **8 records per action, one per UO direction** 0..7 (N, NE, E, SE, S, SW, W, NW). The client stores only 5 directions. Directions 3..7 are stored directions 0..4. Directions 2, 1 and 0 reuse stored 1, 2 and 3 with the mirrored flag (ClassicUO `GetAnimDirection`). Mirrored records point at the same frame range, so no pixels are duplicated.
+
+`AnimFrameEntry` (24 bytes): a `SpriteEntry` (page, rect, trim; origW/origH = the client frame's size; page 0xFFFF = empty frame), then centerX `i16`, centerY `i16`, the client frame's centre.
+
+**Anchoring** (ClassicUO `MobileView`): take the mobile's tile screen position (x, y), with z applied as for statics, and set the anchor to `ax = x + 22`, `ay = y + 22 − 3`.
+- Unmirrored: the frame's top-left is `(ax − centerX, ay − (origH + centerY))`. The trimmed rect sits at `+ (trimX, trimY)`.
+- Mirrored: the frame's left is `ax − (origW − centerX)`. Draw the trimmed rect flipped horizontally at x offset `origW − trimX − w`. Its y is the same as unmirrored.
+
+**Resolution done at conversion time** (as ClassicUO's `AnimationsLoader.GetIndices` + `Animations.GetAnimationFrames`):
+- Bodies 0..max(2047, highest id in mobtypes/Bodyconv/Body/Corpse.def) are scanned.
+- **mobtypes.txt** gives the type and flags. Flag 0x10000 means UOP: frames come from AnimationFrame*.uop.
+- **AnimationSequence.uop** group replacement is already applied. Action `a` of a UOP body holds exactly what ClassicUO draws for `a`, including its double application of the replacement. The renderer must not remap UOP actions.
+- **Bodyconv.def** is resolved with every column enabled (all expansion flags on, as a modern server sends at login). The body's frames are the converted ones, and `sourceBody`/`source` record where they came from.
+- **Body.def / Corpse.def** stay as aliases, because the original body still has its own frames (corpses use them when there is no Corpse.def entry). As in ClassicUO, they only apply to plain anim.mul bodies, never to UOP or Bodyconv bodies.
+- Equipment layers use the item's animation id as the body. ClassicUO draws equipment only when that body's type is equipment or human, and it does that check at runtime.
+- **verdata.mul is never read** (see below).
+
+**Frame counts.** MUL directions carry their own frame count. For UOP, ClassicUO splits a group's frames into `round(n / 5)` per direction, with a minimum of 10 for the equipment type, and fills gaps in frame ids with empty frames. The table stores the result. Empty frames (zero size, or fully transparent) have page 0xFFFF, keep their size and centre, and count toward frameCount.
+
+**`animdata.bin`** = `FileHeader` (magic `ANDT`), `count i32`, then `AnimDataEntry[count]` (70 bytes, sorted by graphic, only graphics with frames): graphic `u16`, frameCount `u8`, frameInterval `u8`, frameStart `u8`, unknown `u8`, frames `i8[64]` (graphic offsets). The reader is `AnimDataFile.Read`.
+
+**Decoding and verification.** The converter decodes frames with a managed port of ClassicUO's `ReadUOPAnimationFrames`/`ReadMULAnimationFrames`. The loader can't run on parallel workers: its MUL path reads through a pointer to an unpinned array, and concurrent native zlib calls crash. Malformed blocks, which would crash or hang the loader, are stored as empty. The verify step decodes a sample (about 1 in 9 distinct directions, plus every direction of the debug bodies) with the real ClassicUO loader, serially, and compares frame count, size, centre and pixels. Pixels must be bit-exact for RGBA8 and B5G5R5A1; BC7 reports PSNR instead.
+
+Not converted: gump paperdoll art, Equipconv.def (runtime: equipment graphic swaps per body, from the server item graphic), Anim1.def/Anim2.def group replaces (used by ClassicUO's mount and group fallbacks at runtime), sitting tables, and animinfo.mul.
 
 ### Patch formats: unsupported by design
 

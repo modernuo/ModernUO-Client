@@ -9,6 +9,9 @@ namespace Uo.Converter;
 public static class Verify
 {
     private static int _errors;
+    /// <summary>--only: check just these stages (plus the manifest); null = everything.</summary>
+    public static HashSet<string>? Only;
+    private static bool Want(string stage) => Only == null || Only.Contains(stage);
 
     private static void Fail(string msg)
     {
@@ -29,6 +32,13 @@ public static class Verify
         });
         Console.WriteLine($"  manifest: {manifest.Files.Count} files, {manifest.Facets.Count} facets, hashes checked");
 
+        if (Want("anims") && File.Exists(Path.Combine(outDir, "anim", AnimTableFile.FileName))) CheckAnim(fm, Path.Combine(outDir, "anim"));
+        if (!File.Exists(Path.Combine(outDir, "tiledata.bin")))
+        {
+            Console.WriteLine(_errors == 0 ? "  all checks passed" : $"  {_errors} errors");
+            return _errors == 0;
+        }
+
         // Tile data and hues.
         var (land, statics) = TileDataFile.Read(Path.Combine(outDir, "tiledata.bin"));
         if (land.Length != fm.TileData.LandData.Length || statics.Length != fm.TileData.StaticData.Length) Fail("tiledata counts");
@@ -37,12 +47,13 @@ public static class Verify
         var (hueCount, hues) = HueFile.Read(Path.Combine(outDir, "hues.bin"));
         if (hueCount != fm.Hues.HuesCount || hues.Any(h => (h >> 24) != 0xFF)) Fail("hues");
         Console.WriteLine($"  tiledata: {land.Length} land, {statics.Length} statics; hues: {hueCount}");
+        CheckNoDraw(fm, land, statics);
 
-        CheckAtlas(fm, Path.Combine(outDir, "art"), "sprites.bin", tex: false, statics);
-        CheckAtlas(fm, Path.Combine(outDir, "tex"), "texmaps.bin", tex: true, statics);
+        if (Want("art")) CheckAtlas(fm, Path.Combine(outDir, "art"), "sprites.bin", tex: false, statics);
+        if (Want("tex")) CheckAtlas(fm, Path.Combine(outDir, "tex"), "texmaps.bin", tex: true, statics);
 
         // Map regions.
-        foreach (var facet in manifest.Facets)
+        foreach (var facet in Want("maps") ? manifest.Facets : [])
         {
             var dir = Path.Combine(outDir, "map", facet.Index.ToString());
             var fi = FacetFileIo.Read(dir);
@@ -77,8 +88,9 @@ public static class Verify
             Console.WriteLine($"  facet {fi.Index}: {fi.Width}x{fi.Height}, {nreg}/{rxc * ryc} regions, {blocks} blocks, {st} statics");
         }
 
-        PageTimings(Path.Combine(outDir, "art"));
-        RegionTimings(outDir, manifest);
+        if (Want("art")) PageTimings(Path.Combine(outDir, "art"));
+        if (Want("anims")) PageTimings(Path.Combine(outDir, "anim"));
+        if (Want("maps") && manifest.Facets.Count > 0) RegionTimings(outDir, manifest);
         Console.WriteLine(_errors == 0 ? "  all checks passed" : $"  {_errors} errors");
         return _errors == 0;
     }
@@ -213,6 +225,155 @@ public static class Verify
             Console.WriteLine($"  {Path.GetFileName(dir)}/{table}: {entries.Length} entries, {present} present, {pageCount} B5G5R5A1 pages, {sampled} sprites BIT-EXACT vs source 16-bit colour (incl. gutters)");
         else
             Console.WriteLine($"  {Path.GetFileName(dir)}/{table}: {entries.Length} entries, {present} present, {pageCount} pages, {sampled} sprites pixel-verified against source");
+    }
+
+    /// <summary>NoDraw flags against the converter's CanBeDrawn port, plus a few fixed cases.</summary>
+    private static void CheckNoDraw(UOFileManager fm, LandTileData[] land, StaticTileData[] statics)
+    {
+        var sd = fm.TileData.StaticData;
+        int landNo = 0, landName = 0, statNo = 0, statGarg = 0, statName = 0;
+        for (int i = 0; i < land.Length; i++)
+        {
+            if (land[i].PackFlags != ArtConvert.LandPackFlags(i, fm.TileData.LandData[i])) { Fail($"land {i} pack flags"); break; }
+            if ((land[i].PackFlags & TilePackFlags.NoDraw) != 0) landNo++;
+            if ((land[i].PackFlags & TilePackFlags.NameNoDraw) != 0) landName++;
+        }
+        for (int i = 0; i < statics.Length; i++)
+        {
+            var f = statics[i].PackFlags;
+            if (f != ArtConvert.StaticPackFlags(i, sd, fm.Version)) { Fail($"static {i} pack flags"); break; }
+            if ((f & TilePackFlags.NameNoDraw) != 0 && (f & TilePackFlags.NoDraw) == 0 && i is not (0x9E4C or 0x9E64 or 0x9E65 or 0x9E7D or 0x0F65))
+                Fail($"static {i}: nodraw name but drawable");
+            if ((f & TilePackFlags.NoDraw) != 0) statNo++;
+            if ((f & TilePackFlags.NoDrawUnlessGargoyle) != 0) statGarg++;
+            if ((f & TilePackFlags.NameNoDraw) != 0) statName++;
+        }
+        if ((land[2].PackFlags & TilePackFlags.NoDraw) == 0 || (land[3].PackFlags & TilePackFlags.NoDraw) != 0) Fail("land 2/3 NoDraw");
+        if ((statics[0x0001].PackFlags & TilePackFlags.NoDraw) == 0 || (statics[0x21A0].PackFlags & TilePackFlags.NoDraw) == 0) Fail("static 0x1/0x21A0 NoDraw");
+        Console.WriteLine($"  nodraw: land {landNo} NoDraw (id <= 2), {landName} named nodraw; statics {statNo} NoDraw, {statGarg} NoDrawUnlessGargoyle, {statName} named nodraw");
+    }
+
+    /// <summary>
+    /// Animation table structure, then a sample of stored directions decoded again with a fresh ClassicUO loader and
+    /// compared frame by frame: count, size, center, and pixels (exact for RGBA8/B5G5R5A1, PSNR for BC7).
+    /// </summary>
+    private static void CheckAnim(UOFileManager fm, string dir)
+    {
+        const int S = PackConst.PageSize;
+        if (StructIo.SizeOf<AnimBodyEntry>() != 24 || StructIo.SizeOf<AnimDirEntry>() != 8 || StructIo.SizeOf<AnimFrameEntry>() != 24 || StructIo.SizeOf<AnimDataEntry>() != 70)
+            Fail("anim struct sizes");
+        var (bodies, dirs, frames) = AnimTableFile.Read(Path.Combine(dir, AnimTableFile.FileName));
+        var animData = AnimDataFile.Read(Path.Combine(dir, AnimDataFile.FileName));
+        int pageCount = 0;
+        foreach (var f in frames) if (f.Sprite.Present) pageCount = Math.Max(pageCount, f.Sprite.Page + 1);
+        if (Directory.GetFiles(dir, "page_*.bin").Length != pageCount) Fail($"anim page files != {pageCount}");
+        foreach (var f in frames)
+        {
+            var e = f.Sprite;
+            if (!e.Present) continue;
+            if (e.W == 0 || e.H == 0 || e.X < PackConst.Gutter || e.Y < PackConst.Gutter || e.X + e.W + PackConst.Gutter > S || e.Y + e.H + PackConst.Gutter > S) { Fail("anim frame rect"); break; }
+            if (e.TrimX < 0 || e.TrimY < 0 || e.TrimX + e.W > e.OrigW || e.TrimY + e.H > e.OrigH) { Fail("anim frame trim"); break; }
+        }
+
+        // Structure, and the sample: about 1 in 9 distinct frame ranges, plus every range of the debug bodies.
+        var debugBodies = new HashSet<int>(AnimDebug.Bodies);
+        var samples = new List<(int Body, int Action, int Dir, AnimDirEntry E)>();
+        var sampledRanges = new HashSet<(uint, ushort)>();
+        int withFrames = 0;
+        for (int b = 0; b < bodies.Length; b++)
+        {
+            var be = bodies[b];
+            if (be.AliasBody != AnimConst.NoBody && be.AliasBody >= bodies.Length) Fail($"body {b}: alias {be.AliasBody} out of table");
+            if (be.CorpseBody != AnimConst.NoBody && be.CorpseBody >= bodies.Length) Fail($"body {b}: corpse {be.CorpseBody} out of table");
+            if (!be.HasFrames) continue;
+            withFrames++;
+            if (be.FirstDir + be.ActionCount * AnimConst.Directions > dirs.Length) { Fail($"body {b}: dir range"); continue; }
+            for (int a = 0; a < be.ActionCount; a++)
+                for (int d = 0; d < AnimConst.Directions; d++)
+                {
+                    var de = dirs[be.FirstDir + a * AnimConst.Directions + d];
+                    var (sd, mir) = AnimConst.MapDirection(d);
+                    if (de.StoredDir != sd || ((de.Flags & AnimDirFlags.Mirrored) != 0) != mir) Fail($"body {b} action {a} dir {d}: direction mapping");
+                    var st = dirs[be.FirstDir + a * AnimConst.Directions + sd + 3]; // directions 3..7 are stored 0..4, unmirrored
+                    if (st.FirstFrame != de.FirstFrame || st.FrameCount != de.FrameCount) Fail($"body {b} action {a} dir {d}: mirror target");
+                    if (de.FirstFrame + de.FrameCount > frames.Length) { Fail($"body {b}: frame range"); continue; }
+                    if (mir) continue;
+                    bool pick = debugBodies.Contains(b) || (uint)HashCode.Combine(de.FirstFrame, de.FrameCount) % 9 == 0;
+                    if (pick && sampledRanges.Add((de.FirstFrame, de.FrameCount))) samples.Add((b, a, sd, de));
+                }
+        }
+        // Each sampled direction is checked with the page of its first present frame loaded; frames on other pages get size/center checks.
+        var groups = samples.GroupBy(s =>
+        {
+            for (int i = 0; i < s.E.FrameCount; i++) if (frames[s.E.FirstFrame + i].Sprite.Present) return (int)frames[s.E.FirstFrame + i].Sprite.Page;
+            return -1;
+        }).ToArray();
+
+        var conv = AnimConvert.ReadBodyConv(fm);
+        long checkedFrames = 0, exact = 0, crossPage = 0, absent = 0;
+        double se = 0; long nRgb = 0, flips = 0, nPx = 0;
+        PixelFormat fmt = PixelFormat.Rgba8;
+        var gate = new object();
+        using var workers = new ThreadLocal<(AnimWorker W, Dictionary<int, AnimConvert.BodyMeta> M)>(() => (new AnimWorker(fm), new()), trackAllValues: true);
+        // Serial: ClassicUO's ReadMULAnimationFrames is not GC-safe under concurrent allocation (see AnimConvert.ReadMul).
+        Parallel.ForEach(groups, new ParallelOptions { MaxDegreeOfParallelism = 1 }, g =>
+        {
+            var (w, metas) = workers.Value;
+            uint[]? px = null;
+            if (g.Key >= 0) { px = PageCodec.ReadMip(PackConst.PagePath(dir, g.Key), 0, out var h); fmt = h.Format; }
+            long ck = 0, ex = 0, cp = 0, ab = 0, fl = 0, np = 0, nr = 0; double sse = 0;
+            foreach (var (b, a, sd, de) in g)
+            {
+                if (!metas.TryGetValue(b, out var m)) metas[b] = m = AnimConvert.Meta(w.Loader, fm.Version, b, conv);
+                var job = AnimConvert.Job(w.Loader, m, a, sd);
+                var src = job == null ? default : AnimConvert.Read(w.Loader, job);
+                if (src.Length != de.FrameCount) { Fail($"anim body {b} action {a} dir {sd}: {de.FrameCount} frames, source {src.Length}"); continue; }
+                for (int i = 0; i < src.Length; i++)
+                {
+                    ref var sf = ref src[i];
+                    var fe = frames[de.FirstFrame + i];
+                    var e = fe.Sprite;
+                    ck++;
+                    if (fe.CenterX != sf.CenterX || fe.CenterY != sf.CenterY || e.OrigW != Math.Max((short)0, sf.Width) || e.OrigH != Math.Max((short)0, sf.Height))
+                    { Fail($"anim body {b} action {a} dir {sd} frame {i}: center/size"); continue; }
+                    int sw = sf.Width, sh = sf.Height;
+                    var spx = sw > 0 && sh > 0 && sf.Pixels != null ? sf.Pixels.AsSpan(0, sw * sh) : default;
+                    if (!e.Present)
+                    {
+                        foreach (var v in spx) if ((v >> 24) != 0) { Fail($"anim body {b} action {a} dir {sd} frame {i}: visible frame marked absent"); break; }
+                        ab++;
+                        continue;
+                    }
+                    if (e.Page != g.Key) { cp++; continue; }
+                    bool same = true;
+                    for (int y = 0; y < sh; y++)
+                        for (int x = 0; x < sw; x++)
+                        {
+                            uint s = spx[y * sw + x];
+                            bool inside = x >= e.TrimX && x < e.TrimX + e.W && y >= e.TrimY && y < e.TrimY + e.H;
+                            if (!inside) { if ((s >> 24) != 0) same = false; continue; }
+                            uint p = px![(e.Y + y - e.TrimY) * S + e.X + x - e.TrimX];
+                            if (fmt != PixelFormat.Bc7) { if (p != s) same = false; continue; }
+                            np++;
+                            if (((s >> 24) >= 128) != ((p >> 24) >= 128)) fl++;
+                            if ((s >> 24) == 0) continue;
+                            for (int k = 0; k < 24; k += 8) { int dd = (int)((s >> k) & 0xFF) - (int)((p >> k) & 0xFF); sse += dd * dd; }
+                            nr += 3;
+                        }
+                    if (!same) { Fail($"anim body {b} action {a} dir {sd} frame {i}: pixel mismatch ({fmt})"); continue; }
+                    if (fmt != PixelFormat.Bc7) ex++;
+                }
+            }
+            lock (gate) { checkedFrames += ck; exact += ex; crossPage += cp; absent += ab; flips += fl; nPx += np; nRgb += nr; se += sse; }
+        });
+        foreach (var w in workers.Values) w.W.Dispose();
+        int aliases = bodies.Count(x => x.AliasBody != AnimConst.NoBody), corpses = bodies.Count(x => x.CorpseBody != AnimConst.NoBody);
+        Console.WriteLine($"  anim: {bodies.Length} bodies ({withFrames} with frames, {aliases} Body.def, {corpses} Corpse.def), {dirs.Length} dir records, {frames.Length} frames, {pageCount} pages, {animData.Length} animdata entries");
+        if (fmt == PixelFormat.Bc7)
+            Console.WriteLine($"  anim sample vs ClassicUO loader: {samples.Count} directions, {checkedFrames} frames ({absent} absent, {crossPage} on another page: size/center only); " +
+                              $"BC7 PSNR rgb {Psnr(se, nRgb):F2} dB, alpha-test flips {flips}/{nPx} ({100.0 * flips / Math.Max(1, nPx):F3}%)");
+        else
+            Console.WriteLine($"  anim sample vs ClassicUO loader: {samples.Count} directions, {checkedFrames} frames: {exact} BIT-EXACT ({fmt}), {absent} absent, {crossPage} on another page (size/center only)");
     }
 
     private static double Psnr(double se, long n) => n == 0 || se == 0 ? 99 : 10 * Math.Log10(255.0 * 255.0 / (se / n));

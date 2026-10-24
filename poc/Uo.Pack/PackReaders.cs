@@ -284,6 +284,69 @@ public static class HueFile
     }
 }
 
+/// <summary>anim/anim.bin: counts, then AnimBodyEntry[] (index = body id), AnimDirEntry[], AnimFrameEntry[]. v1.</summary>
+public static class AnimTableFile
+{
+    public const string FileName = "anim.bin";
+
+    public static void Write(string path, ReadOnlySpan<AnimBodyEntry> bodies, ReadOnlySpan<AnimDirEntry> dirs, ReadOnlySpan<AnimFrameEntry> frames)
+    {
+        using var fs = File.Create(path);
+        StructIo.WriteHeader(fs, AnimConst.MagicAnim);
+        StructIo.Write(fs, bodies.Length);
+        StructIo.Write(fs, dirs.Length);
+        StructIo.Write(fs, frames.Length);
+        StructIo.WriteSpan(fs, bodies);
+        StructIo.WriteSpan(fs, dirs);
+        StructIo.WriteSpan(fs, frames);
+    }
+
+    public static (AnimBodyEntry[] Bodies, AnimDirEntry[] Dirs, AnimFrameEntry[] Frames) Read(string path)
+    {
+        using var fs = File.OpenRead(path);
+        StructIo.ReadHeader(fs, AnimConst.MagicAnim);
+        var bodies = new AnimBodyEntry[StructIo.Read<int>(fs)];
+        var dirs = new AnimDirEntry[StructIo.Read<int>(fs)];
+        var frames = new AnimFrameEntry[StructIo.Read<int>(fs)];
+        StructIo.ReadSpan<AnimBodyEntry>(fs, bodies);
+        StructIo.ReadSpan<AnimDirEntry>(fs, dirs);
+        StructIo.ReadSpan<AnimFrameEntry>(fs, frames);
+        return (bodies, dirs, frames);
+    }
+
+    /// <summary>Frames of (body, action, UO direction 0..7); empty when the body has no such action. Does not follow AliasBody.</summary>
+    public static ReadOnlySpan<AnimFrameEntry> Frames(AnimBodyEntry[] bodies, AnimDirEntry[] dirs, AnimFrameEntry[] frames, int body, int action, int dir, out AnimDirEntry entry)
+    {
+        entry = default;
+        if ((uint)body >= (uint)bodies.Length || action < 0 || action >= bodies[body].ActionCount) return default;
+        entry = dirs[bodies[body].FirstDir + action * AnimConst.Directions + (dir & 7)];
+        return frames.AsSpan((int)entry.FirstFrame, entry.FrameCount);
+    }
+}
+
+/// <summary>anim/animdata.bin: count, then AnimDataEntry[] sorted by graphic (only graphics with frames). v1.</summary>
+public static class AnimDataFile
+{
+    public const string FileName = "animdata.bin";
+
+    public static void Write(string path, ReadOnlySpan<AnimDataEntry> entries)
+    {
+        using var fs = File.Create(path);
+        StructIo.WriteHeader(fs, AnimConst.MagicAnimData);
+        StructIo.Write(fs, entries.Length);
+        StructIo.WriteSpan(fs, entries);
+    }
+
+    public static AnimDataEntry[] Read(string path)
+    {
+        using var fs = File.OpenRead(path);
+        StructIo.ReadHeader(fs, AnimConst.MagicAnimData);
+        var entries = new AnimDataEntry[StructIo.Read<int>(fs)];
+        StructIo.ReadSpan<AnimDataEntry>(fs, entries);
+        return entries;
+    }
+}
+
 public static class ManifestFileIo
 {
 

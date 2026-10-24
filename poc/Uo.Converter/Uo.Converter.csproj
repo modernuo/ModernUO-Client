@@ -14,4 +14,8 @@
   <ItemGroup>
     <PackageReference Include="BCnEncoder.Net" Version="2.3.0" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- ClassicUO.Utility.ZLib P/Invokes the native zlib (UOP animation frames are zlib-compressed). -->
+    <None Include="..\..\external\x64\zlib.dll" Link="zlib.dll" CopyToOutputDirectory="PreserveNewest" Condition="'$(OS)' == 'Windows_NT'" />
+  </ItemGroup>
 </Project>
