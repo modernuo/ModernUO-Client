@@ -134,7 +134,8 @@ public static class AtlasBuilder
     public static AtlasResult Build(string dir, int tableSize, IReadOnlyList<SpriteImage> sprites, SpriteEntry[]? preset = null, IReadOnlyCollection<int>? debugIds = null)
     {
         Directory.CreateDirectory(dir);
-        const int S = PackConst.PageSize, G = PackConst.Gutter;
+        const int G = PackConst.Gutter;
+        int S = ConvertOptions.PageSize, mips = ConvertOptions.MipsFor(S);
         int A = ConvertOptions.Align;
         int Cell(int v) => (v + 2 * G + A - 1) / A * A; // packed cell incl. gutter, rounded up to the alignment
         var format = ConvertOptions.Format;
@@ -180,7 +181,7 @@ public static class AtlasBuilder
             aliased++;
         }
 
-        int chainBytes = AtlasPage.ChainBytes(S, PackConst.PageMipCount);
+        int chainBytes = AtlasPage.ChainBytes(S, mips);
         long fileBytes = 0, brotliBytes = 0;
         // BC7 parallelises over block rows inside a page, so pages go one at a time to respect --threads.
         int dop = format == PixelFormat.Bc7 ? 1 : ConvertOptions.Threads;
@@ -196,22 +197,22 @@ public static class AtlasBuilder
                 // Extrude into the whole aligned cell: left/top gutter G, right/bottom gutter G + alignment padding.
                 Blit(mip0, S, e.X, e.Y, sp.Pixels, sp.W, sp.H, G, Cell(sp.W) - sp.W - G, Cell(sp.H) - sp.H - G);
             }
-            BuildMips(chain, S, PackConst.PageMipCount);
+            BuildMips(chain, S, mips);
             byte[] data = chain;
-            if (format == PixelFormat.B5G5R5A1) data = PageCodec.EncodeB5G5R5A1(chain, S, PackConst.PageMipCount);
+            if (format == PixelFormat.B5G5R5A1) data = PageCodec.EncodeB5G5R5A1(chain, S, mips);
             if (format == PixelFormat.Bc7)
             {
-                data = PageCodec.EncodeBc7(chain, S, PackConst.PageMipCount);
+                data = PageCodec.EncodeBc7(chain, S, mips);
                 if (debugIds != null && ConvertOptions.DebugDir != null)
                     foreach (var id in debugIds)
                         if (entries[id].Present && entries[id].Page == p)
                             DebugCompare(Path.Combine(ConvertOptions.DebugDir, $"bc7_vs_rgba8_{Path.GetFileName(dir)}_{id:X5}.png"), mip0, data, S, entries[id]);
             }
             var pagePath = PackConst.PagePath(dir, p);
-            AtlasPage.Write(pagePath, S, PackConst.PageMipCount, format, data, ConvertOptions.CompressPages);
+            AtlasPage.Write(pagePath, S, mips, format, data, ConvertOptions.PageKind, ConvertOptions.ChunkBytes);
             Interlocked.Add(ref fileBytes, data.Length + 32);
-            if (ConvertOptions.CompressPages) Interlocked.Add(ref brotliBytes, new FileInfo(pagePath).Length);
-            if (ConvertOptions.MeasurePageBrotli && !ConvertOptions.CompressPages)
+            if (ConvertOptions.AnyPageCompression) Interlocked.Add(ref brotliBytes, new FileInfo(pagePath).Length);
+            if (ConvertOptions.MeasurePageBrotli && !ConvertOptions.AnyPageCompression)
             {
                 using var ms = new MemoryStream();
                 using (var br = new System.IO.Compression.BrotliStream(ms, new System.IO.Compression.BrotliCompressionOptions { Quality = 5 }, leaveOpen: true))
@@ -231,7 +232,7 @@ public static class AtlasBuilder
     }
 
     /// <summary>Copies a sprite to (x,y) and fills g pixels left/top and gr/gb right/bottom by clamping (edge extrusion).</summary>
-    public static void Blit(Span<uint> dst, int stride, int x, int y, ReadOnlySpan<uint> src, int w, int h, int g, int gr = -1, int gb = -1)
+    public static void Blit<T>(Span<T> dst, int stride, int x, int y, ReadOnlySpan<T> src, int w, int h, int g, int gr = -1, int gb = -1) where T : unmanaged
     {
         if (gr < 0) gr = g;
         if (gb < 0) gb = g;

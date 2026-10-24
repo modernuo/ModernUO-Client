@@ -11,7 +11,7 @@ public static class DebugOut
     public static string Run(UOFileManager fm, string outDir, string debugDir)
     {
         Directory.CreateDirectory(debugDir);
-        const int S = PackConst.PageSize;
+        int S = ConvertOptions.PageSize;
         int written = 0;
 
         // (a) page previews: mip1 (1024x1024) straight from the page file.

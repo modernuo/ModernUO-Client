@@ -39,6 +39,18 @@ for (int i = 0; i < args.Length; i++)
         case "--bc7-quality": ConvertOptions.Bc7Quality = Enum.Parse<BCnEncoder.Encoder.CompressionQuality>(args[++i], ignoreCase: true); break;
         case "--compress-regions": ConvertOptions.CompressRegions = true; break;
         case "--compress-pages": ConvertOptions.CompressPages = true; break;
+        case "--compress-pages=chunked": ConvertOptions.ChunkedPages = true; break;
+        case "--chunk-bytes": ConvertOptions.ChunkBytes = int.Parse(args[++i]); break;
+        case "--page-size": ConvertOptions.PageSize = PageSide(args[++i]); break;
+        case "--anim-page-size": ConvertOptions.AnimPageSizeOverride = PageSide(args[++i]); break;
+        case "--anim-format":
+            ConvertOptions.AnimIndexed = args[++i].ToLowerInvariant() switch { "indexed8" => true, "page" => false, var f => throw new ArgumentException($"unknown anim format {f}") };
+            break;
+        case "--indexed-mips": ConvertOptions.IndexedMips = args[++i].ToLowerInvariant() != "none"; break;
+        case "--bench-chunked": return AnimExperiments.BenchChunked(args[++i], args.Length > i + 1 && !args[i + 1].StartsWith("--") ? args[++i] : null);
+        case "--anim-report": return AnimExperiments.Report(args[++i]);
+        case "--compare-indexed": return AnimExperiments.CompareIndexed(args[++i], args[++i]);
+        case "--filter-ref": return AnimExperiments.FilterRef(args[++i], args[++i], args[++i]);
         case "--bc7-refine-db": ConvertOptions.Bc7RefineDb = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture); break;
         case "--threads": ConvertOptions.Threads = Math.Max(1, int.Parse(args[++i])); break;
         case "--pages":
@@ -51,7 +63,7 @@ for (int i = 0; i < args.Length; i++)
         case "--regions": ConvertOptions.MaxRegions = int.Parse(args[++i]); break;
         case "--bench-bc7": Bench.Bc7(args[++i]); return 0;
         default:
-            Console.WriteLine("usage: Uo.Converter [--uo <client dir>] [--out <pack dir>] [--debug <png dir>] [--format rgba8|bc7|b5g5r5a1] [--bc7-quality fast|balanced|bestquality] [--bc7-refine-db 28] [--compress-regions] [--compress-pages] [--threads n] [--pages a-b] [--facets 0,1] [--regions n] [--xfiles] [--no-maps] [--no-anims] [--only art,tex,hues,tiledata,maps,anims] [--anims-only] [--bodies 400,0xC8] [--verify-only]");
+            Console.WriteLine("usage: Uo.Converter [--uo <client dir>] [--out <pack dir>] [--debug <png dir>] [--format rgba8|bc7|b5g5r5a1] [--bc7-quality fast|balanced|bestquality] [--bc7-refine-db 28] [--compress-regions] [--compress-pages[=chunked]] [--chunk-bytes n] [--page-size 2048] [--anim-page-size 1024] [--anim-format page|indexed8] [--indexed-mips b16|none] [--threads n] [--pages a-b] [--facets 0,1] [--regions n] [--xfiles] [--no-maps] [--no-anims] [--only art,tex,hues,tiledata,maps,anims] [--anims-only] [--bodies 400,0xC8] [--verify-only]");
             return 1;
     }
 }
@@ -62,14 +74,14 @@ if (only != null && !formatGiven && File.Exists(PackConst.PagePath(Path.Combine(
     // Match the pack being extended: page format and compression come from its first art page.
     using var ps = AtlasPage.OpenChain(PackConst.PagePath(Path.Combine(outDir, "art"), 0), out var ph);
     ConvertOptions.Format = ph.Format;
-    ConvertOptions.CompressPages |= ps is not FileStream;
+    if (!ConvertOptions.ChunkedPages) ConvertOptions.CompressPages |= ps is not FileStream;
 }
 
 var total = Stopwatch.StartNew();
 if (convert && only == null && Directory.Exists(debugDir)) Directory.Delete(debugDir, true);
 Directory.CreateDirectory(debugDir);
 ConvertOptions.DebugDir = debugDir;
-Console.WriteLine($"format {ConvertOptions.Format} (bc7 quality {ConvertOptions.Bc7Quality}), compress regions {ConvertOptions.CompressRegions}, compress pages {ConvertOptions.CompressPages}, threads {ConvertOptions.Threads}" +
+Console.WriteLine($"format {ConvertOptions.Format} (bc7 quality {ConvertOptions.Bc7Quality}), compress regions {ConvertOptions.CompressRegions}, compress pages {(ConvertOptions.ChunkedPages ? $"chunked ({ConvertOptions.ChunkBytes} B)" : ConvertOptions.CompressPages.ToString())}, page size {ConvertOptions.PageSize} (anims {ConvertOptions.AnimPageSize}{(ConvertOptions.AnimIndexed ? ", indexed8" + (ConvertOptions.IndexedMips ? " + b16 mips" : ", no mips") : "")}), threads {ConvertOptions.Threads}" +
                   (ConvertOptions.PartialPages ? $", pages {ConvertOptions.Pages.Lo}-{ConvertOptions.Pages.Hi}" : "") +
                   (ConvertOptions.Facets != null ? $", facets {string.Join(",", ConvertOptions.Facets)}" : "") +
                   (ConvertOptions.MaxRegions != int.MaxValue ? $", first {ConvertOptions.MaxRegions} regions" : "") +
@@ -155,3 +167,10 @@ if (Directory.Exists(Path.Combine(outDir, "anim")) && (only == null || only.Cont
 
 Console.WriteLine($"[{total.Elapsed.TotalSeconds,7:F2}s] total — {(ok ? "OK" : "VERIFY FAILED")}");
 return ok ? 0 : 2;
+
+static int PageSide(string v)
+{
+    int s = int.Parse(v);
+    if (s < 256 || s > 8192 || (s & (s - 1)) != 0) throw new ArgumentException($"page size {s}: power of two in 256..8192");
+    return s;
+}

@@ -50,14 +50,19 @@ public enum PixelFormat : ushort
     /// <summary>16-bit, little-endian u16 per texel: bits 0-4 B, 5-9 G, 10-14 R, 15 A (SDL_GPU B5G5R5A1_UNORM). v1.
     /// UO's own 1555 colour layout, so mip0 is bit-exact to the client data.</summary>
     B5G5R5A1 = 2,
+    /// <summary>Experimental (anims): one byte per texel, a palette index; 0 = transparent. The palette comes from
+    /// anim/palettes.bin per frame. mip0 only; lower mips, if any, are a separate B5G5R5A1 page (mips_NNNN.bin).</summary>
+    Indexed8 = 3,
 }
 
-/// <summary>FileHeader.Kind values for region files.</summary>
+/// <summary>FileHeader.Kind values for page and region files.</summary>
 public static class FileKind
 {
     public const ushort Raw = 0;
     /// <summary>Everything after the 16-byte FileHeader is one Brotli stream. v1.</summary>
     public const ushort Brotli = 1;
+    /// <summary>ChunkedHeader, u32 CompressedSize[ChunkCount], then independent Brotli streams. See ChunkedBrotli.</summary>
+    public const ushort ChunkedBrotli = 2;
 }
 
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
@@ -151,6 +156,9 @@ public static class AnimConst
 {
     public const uint MagicAnim = 0x4D494E41;     // "ANIM"
     public const uint MagicAnimData = 0x54444E41; // "ANDT"
+    public const uint MagicPalettes = 0x4C415041; // "APAL"
+    /// <summary>Experimental Indexed8 sidecar: B5G5R5A1 page holding mips 1+ of anim page NNNN.</summary>
+    public static string MipsPath(string dir, int page) => Path.Combine(dir, $"mips_{page:D4}.bin");
     /// <summary>Direction records per action: UO directions 0..7 (N, NE, E, SE, S, SW, W, NW).</summary>
     public const int Directions = 8;
     /// <summary>Directions stored in the client data; the other three are drawn mirrored.</summary>
