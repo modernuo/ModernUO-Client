@@ -206,7 +206,7 @@ namespace ClassicUO.Renderer
                 VertexBuffer?.Dispose();
                 VertexBuffer = new DynamicVertexBuffer(
                     graphicsDevice,
-                    typeof(PositionNormalTextureColor4),
+                    PositionNormalTextureColor4.VertexDeclaration,
                     requiredVertices,
                     BufferUsage.WriteOnly
                 );
