@@ -8,7 +8,8 @@ using Uo.Pack;
 string uoPath = @"C:\Ultima Online Classic";
 string outDir = @"C:\Repositories\uo-packs\classic";
 string debugDir = @"C:\Repositories\uo-packs\debug";
-bool useX = false, maps = true, convert = true;
+bool useX = false, maps = true, convert = true, anims = true, formatGiven = false;
+HashSet<string>? only = null; // --only: convert just these stages into an existing pack, keeping everything else
 for (int i = 0; i < args.Length; i++)
 {
     switch (args[i])
@@ -19,7 +20,14 @@ for (int i = 0; i < args.Length; i++)
         case "--xfiles": useX = true; break;
         case "--no-maps": maps = false; break;
         case "--verify-only": convert = false; break;
+        case "--only": only = args[++i].Split(',').Select(s => s.Trim().ToLowerInvariant()).ToHashSet(); break;
+        case "--anims-only": only = ["anims"]; break;
+        case "--no-anims": anims = false; break;
+        case "--bodies":
+            AnimConvert.Bodies = args[++i].Split(',').Select(s => s.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? Convert.ToInt32(s[2..], 16) : int.Parse(s)).ToHashSet();
+            break;
         case "--format":
+            formatGiven = true;
             ConvertOptions.Format = args[++i].ToLowerInvariant() switch
             {
                 "rgba8" => Uo.Pack.PixelFormat.Rgba8,
@@ -43,22 +51,30 @@ for (int i = 0; i < args.Length; i++)
         case "--regions": ConvertOptions.MaxRegions = int.Parse(args[++i]); break;
         case "--bench-bc7": Bench.Bc7(args[++i]); return 0;
         default:
-            Console.WriteLine("usage: Uo.Converter [--uo <client dir>] [--out <pack dir>] [--debug <png dir>] [--format rgba8|bc7|b5g5r5a1] [--bc7-quality fast|balanced|bestquality] [--bc7-refine-db 28] [--compress-regions] [--compress-pages] [--threads n] [--pages a-b] [--facets 0,1] [--regions n] [--xfiles] [--no-maps] [--verify-only]");
+            Console.WriteLine("usage: Uo.Converter [--uo <client dir>] [--out <pack dir>] [--debug <png dir>] [--format rgba8|bc7|b5g5r5a1] [--bc7-quality fast|balanced|bestquality] [--bc7-refine-db 28] [--compress-regions] [--compress-pages] [--threads n] [--pages a-b] [--facets 0,1] [--regions n] [--xfiles] [--no-maps] [--no-anims] [--only art,tex,hues,tiledata,maps,anims] [--anims-only] [--bodies 400,0xC8] [--verify-only]");
             return 1;
     }
 }
 
-var total = Stopwatch.StartNew();
-if (convert)
+bool Want(string stage) => only != null ? only.Contains(stage) : stage switch { "maps" => maps, "anims" => anims, _ => true };
+if (only != null && !formatGiven && File.Exists(PackConst.PagePath(Path.Combine(outDir, "art"), 0)))
 {
-    if (Directory.Exists(debugDir)) Directory.Delete(debugDir, true);
-    Directory.CreateDirectory(debugDir);
+    // Match the pack being extended: page format and compression come from its first art page.
+    using var ps = AtlasPage.OpenChain(PackConst.PagePath(Path.Combine(outDir, "art"), 0), out var ph);
+    ConvertOptions.Format = ph.Format;
+    ConvertOptions.CompressPages |= ps is not FileStream;
 }
+
+var total = Stopwatch.StartNew();
+if (convert && only == null && Directory.Exists(debugDir)) Directory.Delete(debugDir, true);
+Directory.CreateDirectory(debugDir);
 ConvertOptions.DebugDir = debugDir;
 Console.WriteLine($"format {ConvertOptions.Format} (bc7 quality {ConvertOptions.Bc7Quality}), compress regions {ConvertOptions.CompressRegions}, compress pages {ConvertOptions.CompressPages}, threads {ConvertOptions.Threads}" +
                   (ConvertOptions.PartialPages ? $", pages {ConvertOptions.Pages.Lo}-{ConvertOptions.Pages.Hi}" : "") +
                   (ConvertOptions.Facets != null ? $", facets {string.Join(",", ConvertOptions.Facets)}" : "") +
-                  (ConvertOptions.MaxRegions != int.MaxValue ? $", first {ConvertOptions.MaxRegions} regions" : ""));
+                  (ConvertOptions.MaxRegions != int.MaxValue ? $", first {ConvertOptions.MaxRegions} regions" : "") +
+                  (only != null ? $", only {string.Join(",", only)}" : "") +
+                  (AnimConvert.Bodies != null ? $", bodies {string.Join(",", AnimConvert.Bodies)}" : ""));
 T Stage<T>(string name, Func<T> f)
 {
     var sw = Stopwatch.StartNew();
@@ -84,18 +100,20 @@ Console.WriteLine($"  uop={fm.IsUOPInstallation} artEntries={fm.Arts.File.Entrie
 var stats = new Dictionary<string, object>();
 if (convert)
 {
-    if (Directory.Exists(outDir)) Directory.Delete(outDir, recursive: true);
+    var oldManifest = Path.Combine(outDir, "manifest.json");
+    var facets = only != null && !Want("maps") && File.Exists(oldManifest) ? ManifestFileIo.Read(oldManifest).Facets : new List<FacetInfo>();
+    if (only == null && Directory.Exists(outDir)) Directory.Delete(outDir, recursive: true);
     Directory.CreateDirectory(outDir);
 
-    stats["art"] = Stage("art", () => ArtConvert.Art(fm, outDir));
-    stats["tex"] = Stage("tex", () => ArtConvert.Tex(fm, outDir));
+    if (Want("art")) stats["art"] = Stage("art", () => ArtConvert.Art(fm, outDir));
+    if (Want("tex")) stats["tex"] = Stage("tex", () => ArtConvert.Tex(fm, outDir));
+    if (Want("anims")) stats["anims"] = Stage("anims", () => AnimConvert.Run(fm, outDir));
     if (ConvertOptions.Format == Uo.Pack.PixelFormat.Bc7)
         Console.WriteLine($"  bc7: {PageCodec.RefineStats.Encoded} non-trivial blocks encoded, {PageCodec.RefineStats.Refined} re-encoded at Balanced (refine below {ConvertOptions.Bc7RefineDb} dB)");
-    stats["hues"] = Stage("hues", () => ArtConvert.Hues(fm, outDir));
-    stats["tiledata"] = Stage("tiledata", () => ArtConvert.TileData(fm, outDir));
+    if (Want("hues")) stats["hues"] = Stage("hues", () => ArtConvert.Hues(fm, outDir));
+    if (Want("tiledata")) stats["tiledata"] = Stage("tiledata", () => ArtConvert.TileData(fm, outDir));
 
-    var facets = new List<FacetInfo>();
-    if (maps)
+    if (Want("maps"))
     {
         foreach (var f in MapConvert.AvailableFacets(fm))
         {
@@ -129,8 +147,11 @@ if (convert)
     });
 }
 
+Verify.Only = only;
 bool ok = Stage("verify (round-trip)", () => Verify.Run(fm, outDir, stats));
-Stage("debug PNGs", () => DebugOut.Run(fm, outDir, debugDir));
+if (only == null || only.Contains("art")) Stage("debug PNGs", () => DebugOut.Run(fm, outDir, debugDir));
+if (Directory.Exists(Path.Combine(outDir, "anim")) && (only == null || only.Contains("anims")))
+    Stage("anim debug PNGs", () => AnimDebug.Run(outDir, Path.Combine(debugDir, "anim")));
 
 Console.WriteLine($"[{total.Elapsed.TotalSeconds,7:F2}s] total — {(ok ? "OK" : "VERIFY FAILED")}");
 return ok ? 0 : 2;
