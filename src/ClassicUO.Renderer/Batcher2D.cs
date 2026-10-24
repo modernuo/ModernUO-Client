@@ -63,7 +63,7 @@ namespace ClassicUO.Renderer
 
             _textureInfo = new Texture2D[MAX_SPRITES];
             _vertexInfo = new PositionNormalTextureColor4[MAX_SPRITES];
-            _vertexBuffer = new DynamicVertexBuffer(GraphicsDevice, typeof(PositionNormalTextureColor4), MAX_VERTICES, BufferUsage.WriteOnly);
+            _vertexBuffer = new DynamicVertexBuffer(GraphicsDevice, PositionNormalTextureColor4.VertexDeclaration, MAX_VERTICES, BufferUsage.WriteOnly);
             _indexBuffer = new IndexBuffer(GraphicsDevice, IndexElementSize.SixteenBits, MAX_INDICES, BufferUsage.WriteOnly);
             _indexBuffer.SetData(GenerateIndexArray());
 
@@ -1524,7 +1524,10 @@ namespace ClassicUO.Renderer
 
             VertexDeclaration IVertexType.VertexDeclaration => VertexDeclaration;
 
-            private static readonly VertexDeclaration VertexDeclaration = new VertexDeclaration
+            // Declares a single vertex; the struct packs a whole quad (4 vertices), so pass this
+            // declaration directly to vertex buffers instead of typeof(PositionNormalTextureColor4)
+            // (FNA validates Marshal.SizeOf(type) == VertexStride).
+            public static readonly VertexDeclaration VertexDeclaration = new VertexDeclaration
             (
                 new VertexElement(0, VertexElementFormat.Vector3, VertexElementUsage.Position, 0),                          // position
                 new VertexElement(sizeof(float) * 3, VertexElementFormat.Vector3, VertexElementUsage.Normal, 0),            // normal
