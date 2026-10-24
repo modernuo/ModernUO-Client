@@ -49,6 +49,11 @@ UltimaLive support is optional if it costs performance. The v0 format supports i
 - Ergonomics: field-index access, several overlapping iteration styles, uncached-by-default queries, a fast create path that leaves memory uninitialized. Harder for developers new to ECS than Friflo.
 - TODO: final 3-round timings once no builds are running.
 
+### 2026-10-24 — Policy: `poc/modern-client` is the integration branch
+
+The owner asked that everything definitive (e.g. the FNA 26.10 upgrade) land on `poc/modern-client`. `chore/fna-26.10` is merged (6e9675e6e).
+**Pending:** run `git submodule update --init --recursive external/FNA` once the renderer agent finishes. The gitlink points at 26.10, but the checkout is still 25.09, kept deliberately so the SDL3-CS source doesn't change under the agent.
+
 ## Next
 
 - Review each agent's output and commit it.
