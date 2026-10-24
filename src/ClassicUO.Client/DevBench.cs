@@ -14,6 +14,10 @@ namespace ClassicUO
     //   CUO_BENCH_EXIT=1    walk a few steps, take screenshots and quit when done
     //   CUO_BENCH_SPOTS="x y;x y"  screenshot each spot at zoom 1 and full light, then quit
     //   CUO_BENCH_UI=1      at Britain: paperdoll, backpack, minimap, picking, multi preview, night lights, world map
+    //   CUO_BENCH_PICK=1    at Britain: hover and click a static, land, an item and a mobile, under the legacy then the GPU world renderer
+    //   CUO_BENCH_SHOTS=dir plan entries also save the world render target as dir/<entry>_<renderer>.png
+    //   plan entries world:gpu|legacy switch the world renderer at runtime
+    //   CUO_BENCH_TOPMOST=1 keep the window on top while benching (occluded windows are throttled)
     internal static class DevBench
     {
         public static readonly bool FrameStats = Environment.GetEnvironmentVariable("CUO_FRAMESTATS") == "1";
@@ -23,6 +27,8 @@ namespace ClassicUO
         private static readonly bool _ui = Environment.GetEnvironmentVariable("CUO_BENCH_UI") == "1";
         private static readonly string[] _plan = Environment.GetEnvironmentVariable("CUO_BENCH_PLAN")?.Split(';', StringSplitOptions.RemoveEmptyEntries);
         private static readonly string _size = Environment.GetEnvironmentVariable("CUO_BENCH_SIZE");
+        private static readonly bool _pick = Environment.GetEnvironmentVariable("CUO_BENCH_PICK") == "1";
+        private static readonly string _shots = Environment.GetEnvironmentVariable("CUO_BENCH_SHOTS");
         private static readonly int _planWindows = int.TryParse(Environment.GetEnvironmentVariable("CUO_BENCH_WINDOWS"), out int w) ? w : 3;
         private static readonly (int X, int Y)[] _travel =
         {
@@ -43,7 +49,7 @@ namespace ClassicUO
         private static int _step;
         private static long _stepAt;
 
-        public static bool Enabled => FrameStats || _go != null || _spots != null || _ui || _plan != null;
+        public static bool Enabled => FrameStats || _go != null || _spots != null || _ui || _plan != null || _pick;
 
         public static void Update(GameController game)
         {
@@ -71,6 +77,13 @@ namespace ClassicUO
             if (_ui)
             {
                 UpdateUi(game, now);
+
+                return;
+            }
+
+            if (_pick)
+            {
+                UpdatePick(game, now);
 
                 return;
             }
@@ -392,6 +405,139 @@ namespace ClassicUO
             }
         }
 
+        private static readonly Game.GameObjects.GameObject[] _pickTargets = new Game.GameObjects.GameObject[4];
+        private static readonly string[] _pickNames = { "static", "land", "item", "player" };
+        private static int _pickIndex;
+        private static readonly System.Collections.Generic.Dictionary<string, int> _pickSamples = new System.Collections.Generic.Dictionary<string, int>();
+
+        private static void UpdatePick(GameController game, long now)
+        {
+            var world = game.UO.World;
+
+            if (!(world?.InGame ?? false))
+            {
+                return;
+            }
+
+            HoldMouse(game);
+
+            if (_step == 4 && _mouse.HasValue)
+            {
+                var sel = SelectedObject.Object;
+                string key = sel is Game.GameObjects.GameObject g ? $"{g.GetType().Name} 0x{g.Graphic:X4} at {g.X},{g.Y},{g.Z}" : sel?.GetType().Name ?? "nothing";
+                _pickSamples[key] = _pickSamples.TryGetValue(key, out int c) ? c + 1 : 1;
+            }
+
+            if (now < _stepAt)
+            {
+                return;
+            }
+
+            var gs = game.Scene as Game.Scenes.GameScene;
+            long sec = Stopwatch.Frequency;
+
+            switch (_step)
+            {
+                case 0:
+                    ApplySize(game);
+                    _step = 1;
+                    _stepAt = now + sec * 5;
+
+                    break;
+
+                case 1:
+                    GameActions.Say("[go 1495 1629");
+                    _step = 2;
+                    _stepAt = now + sec * 10;
+
+                    break;
+
+                case 2:
+                    if (gs != null)
+                    {
+                        gs.Camera.Zoom = 1f;
+                    }
+
+                    _pickTargets[0] = FindStatic(world);
+                    _pickTargets[1] = world.Map.GetTile(world.Player.X + 3, world.Player.Y + 3);
+                    _pickTargets[2] = FindGroundItem(world);
+                    _pickTargets[3] = world.Player;
+                    Configuration.Settings.GlobalSettings.WorldRenderer = "legacy";
+                    _pickIndex = 0;
+                    _step = 3;
+                    _stepAt = now + sec * 2;
+
+                    break;
+
+                case 3:
+                    if (_pickIndex == 0 || _pickIndex == 4)
+                    {
+                        Log.Info($"[bench-pick] renderer {Configuration.Settings.GlobalSettings.WorldRenderer}, gpu available {game.GetGpuWorld() != null}");
+                        game.TakeScreenshot();
+                    }
+
+                    PickAt(gs, _pickTargets[_pickIndex % 4], _pickNames[_pickIndex % 4]);
+                    _pickSamples.Clear();
+                    _step = 4;
+                    _stepAt = now + sec * 2;
+
+                    break;
+
+                case 4:
+                    Log.Info($"[bench-pick] {_pickNames[_pickIndex % 4]} selection over 2 s: {string.Join(", ", System.Linq.Enumerable.Select(_pickSamples, kv => $"{kv.Key} x{kv.Value}"))}");
+                    LogPick(true);
+                    _pickIndex++;
+
+                    if (_pickIndex == 4)
+                    {
+                        Configuration.Settings.GlobalSettings.WorldRenderer = "gpu";
+                    }
+
+                    _step = _pickIndex >= 8 ? 5 : 3;
+                    _stepAt = now + sec * (_pickIndex == 4 ? 3 : 1);
+
+                    break;
+
+                case 5:
+                    _step = 99;
+                    game.Exit();
+
+                    break;
+            }
+        }
+
+        private static void HoldMouse(GameController game)
+        {
+            if (_mouse.HasValue && game.Scene is Game.Scenes.GameScene scene)
+            {
+                Input.Mouse.Position = _mouse.Value;
+                var bounds = game.Window.ClientBounds;
+                SDL3.SDL.SDL_WarpMouseInWindow(
+                    game.Window.Handle,
+                    _mouse.Value.X * game.DpiScale * bounds.Width / game.GraphicManager.PreferredBackBufferWidth,
+                    _mouse.Value.Y * game.DpiScale * bounds.Height / game.GraphicManager.PreferredBackBufferHeight
+                );
+                scene.Camera.Update(true, Time.Delta, _mouse.Value);
+                SelectedObject.TranslatedMousePositionByViewport = scene.Camera.MouseToWorldPosition();
+            }
+        }
+
+        private static Game.GameObjects.GameObject FindGroundItem(World world)
+        {
+            Game.GameObjects.Item best = null;
+
+            foreach (var item in world.Items.Values)
+            {
+                if (item.OnGround && !item.IsMulti && item.Distance < 8 && Client.Game.UO.Arts.GetArt(item.DisplayedGraphic).UV.Height > 10
+                    && (best == null || item.Distance < best.Distance))
+                {
+                    best = item;
+                }
+            }
+
+            return best;
+        }
+
         private static void PickAt(Game.Scenes.GameScene gs, Game.GameObjects.GameObject obj, string what)
         {
             _pickWhat = what;
@@ -424,7 +570,7 @@ namespace ClassicUO
             return new Microsoft.Xna.Framework.Point(x0 + b.X + b.Width / 2, y0 + b.Y + b.Height / 2);
         }
 
-        private static void LogPick()
+        private static void LogPick(bool click = false)
         {
             if (_pickObject != null && _pickTarget.HasValue)
             {
@@ -440,6 +586,13 @@ namespace ClassicUO
             string desc = o is Game.GameObjects.GameObject go ? $"{go.GetType().Name} 0x{go.Graphic:X4} at {go.X},{go.Y},{go.Z}" : o?.GetType().Name ?? "nothing";
             Log.Info($"[bench-ui] under the mouse ({_pickWhat}, world {SelectedObject.TranslatedMousePositionByViewport}, target {_pickTarget}): {desc}" +
                      $" | overWorld {Game.Managers.UIManager.IsMouseOverWorld}, control {Game.Managers.UIManager.MouseOverControl?.GetType().Name}, mouse {Input.Mouse.Position}");
+
+            if (click && o is Game.GameObjects.Entity clicked)
+            {
+                GameActions.SingleClick(Client.Game.UO.World, clicked.Serial);
+                Log.Info($"[bench-pick] clicked 0x{clicked.Serial:X8}");
+            }
+
             _mouse = null;
             _pickTarget = null;
         }
@@ -470,6 +623,13 @@ namespace ClassicUO
 
         private static void ApplySize(GameController game)
         {
+            if (Environment.GetEnvironmentVariable("CUO_BENCH_TOPMOST") == "1")
+            {
+                // an occluded window gets its presents throttled by the compositor
+                SDL3.SDL.SDL_SetWindowAlwaysOnTop(game.Window.Handle, true);
+                SDL3.SDL.SDL_RaiseWindow(game.Window.Handle);
+            }
+
             if (string.IsNullOrEmpty(_size))
             {
                 return;
@@ -593,6 +753,56 @@ namespace ClassicUO
                         break;
                     }
 
+                    if (_plan[_planIndex].StartsWith("light:") && Configuration.ProfileManager.CurrentProfile is { } lightProfile)
+                    {
+                        string level = _plan[_planIndex].Substring(6);
+                        lightProfile.UseCustomLightLevel = level != "off";
+
+                        if (lightProfile.UseCustomLightLevel)
+                        {
+                            lightProfile.LightLevel = (byte)Convert.ToInt32(level, 16);
+                            lightProfile.LightLevelType = 0;
+                            world.Light.Overall = lightProfile.LightLevel;
+                            world.Light.Personal = 0;
+                        }
+
+                        Log.Info($"[bench] light {level}");
+                        _planIndex++;
+                        _stepAt = now + sec * 2;
+
+                        break;
+                    }
+
+                    if (_plan[_planIndex] == "gumpok")
+                    {
+                        // answers OK (button 1) on the frontmost server gump, e.g. a staff command's confirmation
+                        foreach (var g in Game.Managers.UIManager.Gumps)
+                        {
+                            if (g.ServerSerial != 0 && g.GetType() == typeof(Game.UI.Gumps.Gump))
+                            {
+                                Log.Info($"[bench] gump 0x{g.ServerSerial:X8}: OK");
+                                g.OnButtonClick(1);
+
+                                break;
+                            }
+                        }
+
+                        _planIndex++;
+                        _stepAt = now + sec * 3;
+
+                        break;
+                    }
+
+                    if (_plan[_planIndex].StartsWith("world:"))
+                    {
+                        Configuration.Settings.GlobalSettings.WorldRenderer = _plan[_planIndex].Substring(6);
+                        Log.Info($"[bench] world renderer {Configuration.Settings.GlobalSettings.WorldRenderer} (gpu available: {game.GetGpuWorld() != null})");
+                        _planIndex++;
+                        _stepAt = now + sec * 2;
+
+                        break;
+                    }
+
                     if (_plan[_planIndex].StartsWith("say:"))
                     {
                         GameActions.Say(_plan[_planIndex].Substring(4));
@@ -623,6 +833,13 @@ namespace ClassicUO
                 case 2:
                     LogSize(game);
                     game.TakeScreenshot();
+
+                    if (!string.IsNullOrEmpty(_shots))
+                    {
+                        string renderer = game.GetGpuWorld() != null ? "gpu" : "legacy";
+                        game.RequestWorldShot(System.IO.Path.Combine(_shots, $"{_plan[_planIndex].Split(':')[0].Trim()}_{renderer}.png"));
+                    }
+
                     Log.Info($"[bench] {_plan[_planIndex]} at {world.Player.X},{world.Player.Y},{world.Player.Z} zoom {gs?.Camera.Zoom:0.0}, mobiles {world.Mobiles.Count}, items {world.Items.Count}; measuring");
                     _windowsAtStart = ClassicUO.FrameStats.WindowsReported;
                     _travelAt = now;

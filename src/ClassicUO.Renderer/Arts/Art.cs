@@ -68,6 +68,8 @@ namespace ClassicUO.Renderer.Arts
                     out spriteInfo.UV
                 );
 
+                PackSpriteMap.Register(spriteInfo.Texture, spriteInfo.UV, idx);
+
                 if (idx > 0x4000)
                 {
                     idx -= 0x4000;

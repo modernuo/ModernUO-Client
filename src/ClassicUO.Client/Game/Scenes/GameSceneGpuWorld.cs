@@ -1,0 +1,388 @@
+// SPDX-License-Identifier: BSD-2-Clause
+
+using System.Collections.Generic;
+using System.Runtime.CompilerServices;
+using ClassicUO.Configuration;
+using ClassicUO.Game.Data;
+using ClassicUO.Game.GameObjects;
+using ClassicUO.Game.Managers;
+using ClassicUO.Renderer;
+using ClassicUO.Utility;
+using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
+using Uo.Render;
+
+namespace ClassicUO.Game.Scenes
+{
+    internal partial class GameScene
+    {
+        private GpuWorldRenderer _gpuWorld;
+        private uint _drawFrame;
+        private readonly List<GameObject> _gpuMeshMultis = new List<GameObject>();
+        private readonly List<Static> _gpuStatics = new List<Static>();
+        private readonly List<bool> _gpuStaticsShadowOnly = new List<bool>();
+        private readonly List<Static> _gpuFoliage = new List<Static>();
+        private Rectangle _gpuView;
+        private Uo.Pack.SpriteEntry[] _gpuArt;
+        private bool _gpuTintOutOfRange, _gpuStaticShadows, _gpuStumps;
+        private ushort _gpuTintAll;
+        // half the widest static art past its tile: tiles further beside the view can't reach into it
+        private const int GPU_WIDE_ART = 320;
+
+        public bool IsGpuWorldActive => _gpuWorld != null;
+
+        // The list fill decided to draw obj (called where it stamps DrawnFrame): report what differs from the baked sprite.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void GpuOnDrawn(GameObject obj)
+        {
+            // the common case: an opaque, untinted meshed land tile
+            if (obj.AlphaHue == 0xFF && _gpuTintAll == 0 && !_gpuTintOutOfRange && obj.InChunkMesh && obj.AllowedToDraw && obj is Land)
+            {
+                return;
+            }
+
+            GpuOnDrawnSlow(obj);
+        }
+
+        private void GpuOnDrawnSlow(GameObject obj)
+        {
+            switch (obj)
+            {
+                case Land land:
+                    if (!land.AllowedToDraw)
+                    {
+                        _gpuWorld.LandOverride(land.X, land.Y, 255, true, 0);
+                    }
+                    else
+                    {
+                        ushort hue = GpuTintHue(land);
+
+                        if (land.AlphaHue != 0xFF || hue != 0)
+                        {
+                            _gpuWorld.LandOverride(land.X, land.Y, land.AlphaHue, false, hue);
+                        }
+                    }
+
+                    break;
+
+                case Static st:
+                    if (!st.AllowedToDraw)
+                    {
+                        _gpuWorld.StaticOverride(st.X, st.Y, st.Z, st.OriginalGraphic, 255, true, 0);
+                    }
+                    else if (st.InChunkMesh)
+                    {
+                        // meshed statics are never trees, foliage or animated (ChunkMesh) and draw without shadows
+                        if (st.Graphic != st.OriginalGraphic)
+                        {
+                            GpuReplaceStatic(st);
+                        }
+                        else
+                        {
+                            GpuStaticOverride(st);
+                        }
+                    }
+                    else if (st.ItemData.IsFoliage)
+                    {
+                        // foliage alpha is updated after the walk (FillGameObjectList's foliage pass)
+                        _gpuFoliage.Add(st);
+                    }
+                    else
+                    {
+                        CollectGpuStatic(st);
+                    }
+
+                    break;
+
+                case Multi multi when multi.InChunkMesh:
+                    _gpuMeshMultis.Add(multi);
+
+                    break;
+            }
+        }
+
+        // After the fill walked a tile: baked land and statics it skipped are hidden where the world pass would draw them.
+        private void CollectGpuHidden(GameObject obj)
+        {
+            // tiles far beside the view: nothing of theirs reaches it (and the fill never touched them)
+            int sx = (obj.X - obj.Y) * 22 - _offset.X - 22;
+
+            if (sx < _gpuView.Left - GPU_WIDE_ART || sx > _gpuView.Right + GPU_WIDE_ART)
+            {
+                return;
+            }
+
+            for (; obj != null; obj = obj.TNext)
+            {
+                if (obj.DrawnFrame == _drawFrame)
+                {
+                    continue;
+                }
+
+                if (obj is Land land)
+                {
+                    if (GpuLandVisible(land.X, land.Y, land.Z))
+                    {
+                        _gpuWorld.LandOverride(land.X, land.Y, 255, true, 0);
+                    }
+                }
+                else if (obj is Static st && GpuStaticVisible(st))
+                {
+                    _gpuWorld.StaticOverride(st.X, st.Y, st.Z, st.OriginalGraphic, 255, true, 0);
+                }
+            }
+        }
+
+        // Statics the list fill draws itself (not meshed): trees, foliage, animated and wet statics.
+        private void CollectGpuStatic(Static st)
+        {
+            ushort graphic = st.Graphic;
+            byte kind = GpuGraphicKind(graphic);
+
+            // The baked sprite is the pack's original graphic: seasons, animated statics and stumps draw another one.
+            if (
+                graphic != st.OriginalGraphic
+                || st.ItemData.IsAnimated && Client.Game.UO.FileManager.Arts.GetEntry(graphic + 0x4000).AnimOffset != 0
+                || _gpuStumps && (kind & GPU_KIND_TREE) != 0
+            )
+            {
+                GpuReplaceStatic(st);
+
+                return;
+            }
+
+            if (_gpuStaticShadows && ((kind & (GPU_KIND_TREE | GPU_KIND_ROCK)) != 0 || st.ItemData.IsFoliage))
+            {
+                _gpuStatics.Add(st);
+                _gpuStaticsShadowOnly.Add(true);
+            }
+            else if (st.ItemData.IsLight)
+            {
+                AddLight(st, st, st.RealScreenPosition.X + 22, st.RealScreenPosition.Y + 22);
+            }
+
+            GpuStaticOverride(st);
+        }
+
+        private void GpuReplaceStatic(Static st)
+        {
+            _gpuWorld.StaticOverride(st.X, st.Y, st.Z, st.OriginalGraphic, 255, true, 0);
+            _gpuStatics.Add(st);
+            _gpuStaticsShadowOnly.Add(false);
+        }
+
+        private void GpuStaticOverride(Static st)
+        {
+            ushort hue = GpuTintHue(st);
+
+            if (st.AlphaHue != 0xFF || hue != 0)
+            {
+                _gpuWorld.StaticOverride(st.X, st.Y, st.Z, st.OriginalGraphic, st.AlphaHue, false, hue);
+            }
+        }
+
+        private const byte GPU_KIND_KNOWN = 1, GPU_KIND_TREE = 2, GPU_KIND_ROCK = 4;
+        private static readonly byte[] _gpuGraphicKinds = new byte[0x10000];
+
+        private static byte GpuGraphicKind(ushort graphic)
+        {
+            byte kind = _gpuGraphicKinds[graphic];
+
+            if (kind == 0)
+            {
+                kind = (byte)(GPU_KIND_KNOWN | (StaticFilters.IsTree(graphic, out _) ? GPU_KIND_TREE : 0) | (StaticFilters.IsRock(graphic) ? GPU_KIND_ROCK : 0));
+                _gpuGraphicKinds[graphic] = kind;
+            }
+
+            return kind;
+        }
+
+        private void FinishGpuCollect()
+        {
+            for (int i = 0; i < _gpuFoliage.Count; i++)
+            {
+                if (_gpuFoliage[i].AlphaHue == 0)
+                {
+                    _gpuWorld.StaticOverride(_gpuFoliage[i].X, _gpuFoliage[i].Y, _gpuFoliage[i].Z, _gpuFoliage[i].OriginalGraphic, 255, true, 0);
+                }
+                else
+                {
+                    CollectGpuStatic(_gpuFoliage[i]);
+                }
+            }
+
+            if (ProfileManager.CurrentProfile.HighlightGameObjects && SelectedObject.Object is GameObject sel && sel.DrawnFrame == _drawFrame)
+            {
+                if (sel is Land land)
+                {
+                    _gpuWorld.LandOverride(land.X, land.Y, land.AlphaHue, false, Constants.HIGHLIGHT_CURRENT_OBJECT_HUE);
+                }
+                else if (sel is Static st && (_gpuStatics.IndexOf(st) is int i && (i < 0 || _gpuStaticsShadowOnly[i])))
+                {
+                    _gpuWorld.StaticOverride(st.X, st.Y, st.Z, st.OriginalGraphic, st.AlphaHue, false, Constants.HIGHLIGHT_CURRENT_OBJECT_HUE);
+                }
+            }
+        }
+
+        // Baked sprites the fill skipped need a hidden override only where the world pass would actually draw them.
+        private bool GpuLandVisible(int x, int y, int z)
+        {
+            int sx = (x - y) * 22 - _offset.X - 22;
+            int sy = (x + y) * 22 - (z << 2) - _offset.Y - 22;
+
+            return sx + 44 > _gpuView.Left && sx < _gpuView.Right && sy + 108 > _gpuView.Top && sy - 64 < _gpuView.Bottom;
+        }
+
+        private bool GpuStaticVisible(Static st)
+        {
+            int g = st.OriginalGraphic + 0x4000;
+
+            if ((uint)g >= (uint)_gpuArt.Length)
+            {
+                return false;
+            }
+
+            ref readonly var sp = ref _gpuArt[g];
+            int x0 = (st.X - st.Y) * 22 - _offset.X - 22 - ((sp.OrigW >> 1) - 22);
+            int y1 = (st.X + st.Y) * 22 - (st.Z << 2) - _offset.Y + 22;
+
+            return x0 + sp.OrigW > _gpuView.Left && x0 < _gpuView.Right && y1 > _gpuView.Top && y1 - sp.OrigH < _gpuView.Bottom;
+        }
+
+        // ApplyMeshHue's whole-sprite recolours; the static's own hue is baked
+        private ushort GpuTintHue(GameObject obj)
+        {
+            if (_gpuTintOutOfRange && obj.Distance > _world.ClientViewRange)
+            {
+                return Constants.OUT_RANGE_COLOR;
+            }
+
+            return _gpuTintAll;
+        }
+
+        private void DrawWorldGpu(UltimaBatcher2D batcher, ref Matrix matrix, RenderTargets renderTargets, GpuWorldRenderer gpu)
+        {
+            FrameStats.Begin(FramePhase.WorldPrepare);
+            var device = batcher.GraphicsDevice;
+            device.SetRenderTarget(renderTargets.WorldRenderTarget);
+            // the world target is preserved (the GPU pass already cleared it); FNA's world-space draws get a fresh depth buffer
+            device.Clear(ClearOptions.DepthBuffer | ClearOptions.Stencil, Vector4.Zero, 1f, 0);
+            SelectedObject.Object = null;
+            Profiler.EnterContext(Profiler.ProfilerContext.RENDER_FRAME_WORLD_PREPARE);
+
+            _gpuWorld = gpu;
+            _gpuMeshMultis.Clear();
+            _gpuStatics.Clear();
+            _gpuStaticsShadowOnly.Clear();
+            _gpuFoliage.Clear();
+            _gpuArt = Client.Game.UO.FileManager.Arts.PackSpriteEntries;
+            var profile = ProfileManager.CurrentProfile;
+            _gpuTintOutOfRange = profile.NoColorObjectsOutOfRange;
+            _gpuTintAll = _world.Player.IsDead && profile.EnableBlackWhiteEffect ? (ushort)Constants.DEAD_RANGE_COLOR : (ushort)0;
+            _gpuStaticShadows = profile.ShadowsEnabled && profile.ShadowsStatics;
+            _gpuStumps = profile.TreeToStumps;
+            Point viewMin = Camera.ScreenToWorld(Point.Zero);
+            Point viewMax = Camera.ScreenToWorld(new Point(Camera.Bounds.Width, Camera.Bounds.Height));
+            _gpuView = new Rectangle(viewMin.X, viewMin.Y, viewMax.X - viewMin.X, viewMax.Y - viewMin.Y);
+            gpu.BeginFrame();
+
+            FillGameObjectList();
+            FinishGpuCollect();
+            gpu.SetOffset(_offset.X, _offset.Y);
+
+            batcher.SetSampler(SamplerState.PointClamp);
+            batcher.Begin(null, matrix);
+            batcher.SetBrightlight(ProfileManager.CurrentProfile.TerrainShadowsLevel * 0.1f);
+            batcher.SetCircleOfTransparencyRadius(0f);
+            batcher.SetStencil(DepthStencilState.Default);
+
+            // dynamic sprites, in the legacy draw order: meshed multis, statics drawn by their view, then the lists
+            int captured = 0;
+
+            foreach (var multi in _gpuMeshMultis)
+            {
+                if (multi.Z <= _maxGroundZ && gpu.DrawObject(batcher, multi, multi.CalculateDepthZ()))
+                {
+                    captured++;
+                }
+            }
+
+            for (int i = 0; i < _gpuStatics.Count; i++)
+            {
+                var st = _gpuStatics[i];
+
+                if (st.Z <= _maxGroundZ && gpu.DrawObject(batcher, st, st.CalculateDepthZ(), _gpuStaticsShadowOnly[i]))
+                {
+                    captured++;
+                }
+            }
+
+            captured += _renderLists.CaptureRenderLists(batcher, _maxGroundZ, gpu);
+
+            Profiler.ExitContext(Profiler.ProfilerContext.RENDER_FRAME_WORLD_PREPARE);
+            FrameStats.End(FramePhase.WorldPrepare);
+            FrameStats.Begin(FramePhase.WorldDraw);
+            Profiler.EnterContext(Profiler.ProfilerContext.RENDER_FRAME_WORLD);
+
+            // FNA layers over the world: effects, object handles, multi preview, weather, selection
+            int deferred = _renderLists.DrawDeferredRenderLists(batcher, _maxGroundZ);
+
+            if (
+                _multi != null
+                && _world.TargetManager.IsTargeting
+                && _world.TargetManager.TargetingState == CursorTarget.MultiPlacement
+            )
+            {
+                _multi.Draw(
+                    batcher,
+                    _multi.RealScreenPosition.X,
+                    _multi.RealScreenPosition.Y,
+                    _multi.CalculateDepthZ()
+                );
+            }
+
+            _world.Weather.Draw(batcher, 0, 0, MAX_LAYER_DEPTH - 1);
+
+            DrawSelection(batcher, MAX_LAYER_DEPTH);
+
+            batcher.SetSampler(null);
+            batcher.SetStencil(null);
+            batcher.End();
+
+            var target = renderTargets.WorldRenderTarget;
+            gpu.Render(target, GetGpuCamera(target));
+
+            device.SetRenderTarget(null);
+            _gpuWorld = null;
+
+            RenderedObjectsCount = captured + deferred;
+            Profiler.ExitContext(Profiler.ProfilerContext.RENDER_FRAME_WORLD);
+            FrameStats.End(FramePhase.WorldDraw);
+            FrameStats.Set(FrameCounter.RenderListEntries, RenderedObjectsCount);
+
+            if (gpu.World != null)
+            {
+                FrameStats.Set(FrameCounter.GpuInstances, gpu.World.Instances + gpu.World.DynamicDrawn);
+                FrameStats.Set(FrameCounter.GpuDynamic, gpu.World.DynamicDrawn);
+                FrameStats.Set(FrameCounter.GpuOverrides, gpu.World.OverridesApplied);
+                FrameStats.Set(FrameCounter.GpuDrawCalls, gpu.World.Renderer.DrawCalls);
+            }
+        }
+
+        // The batcher's world matrix maps p = world - _offset to (p - c) / zoom + c - cameraOffset, c = the target's centre.
+        private WorldCamera GetGpuCamera(RenderTarget2D target)
+        {
+            float scale = 1f / Camera.Zoom;
+            Vector2 peek = Camera.Offset;
+
+            return new WorldCamera
+            {
+                CenterX = _offset.X + Camera.Bounds.Width * 0.5 + peek.X / scale,
+                CenterY = _offset.Y + Camera.Bounds.Height * 0.5 + peek.Y / scale,
+                Zoom = scale,
+                ViewportWidth = target.Width,
+                ViewportHeight = target.Height
+            };
+        }
+    }
+}

@@ -41,6 +41,9 @@ namespace ClassicUO
         private bool _pluginsInitialized = false;
         private bool _loggedWorldTexture;
         private IntPtr _gpuDevice;
+        private GpuWorldRenderer _gpuWorld;
+        private bool _gpuWorldFailed;
+        private string _worldShotPath;
         private float _displayScale;
 
         public GameController(IPluginHost pluginHost)
@@ -173,6 +176,9 @@ namespace ClassicUO
 
             UO.Unload();
 
+            _gpuWorld?.Dispose();
+            _gpuWorld = null;
+
             base.UnloadContent();
         }
 
@@ -207,6 +213,23 @@ namespace ClassicUO
             Scene?.Dispose();
             Scene = scene;
             Scene?.Load();
+        }
+
+        /// <summary>The GPU world renderer when the world_renderer setting is "gpu" and FNA3D shares an SDL_GPU device, else null (Legacy).</summary>
+        internal GpuWorldRenderer GetGpuWorld()
+        {
+            if (!Settings.GlobalSettings.UseGpuWorldRenderer || _gpuWorldFailed)
+            {
+                return null;
+            }
+
+            if (_gpuWorld == null)
+            {
+                _gpuWorld = GpuWorldRenderer.TryCreate(_gpuDevice, UO.FileManager);
+                _gpuWorldFailed = _gpuWorld == null;
+            }
+
+            return _gpuWorld;
         }
 
         public void SetVSync(bool value)
@@ -512,6 +535,7 @@ namespace ClassicUO
             FrameStats.Begin(FramePhase.Draw);
             FrameStats.Begin(FramePhase.DrawSetup);
 
+            _renderTargets.PreserveWorldContents = Scene is GameScene && GetGpuWorld() != null;
             _renderTargets.EnsureSizes(
                 GraphicsDevice,
                 new Rectangle(0, 0, GraphicManager.PreferredBackBufferWidth, GraphicManager.PreferredBackBufferHeight),
@@ -587,6 +611,12 @@ namespace ClassicUO
 
             _renderTargets.Draw(_uoSpriteBatch);
             FrameStats.End(FramePhase.Composite);
+
+            if (_worldShotPath != null)
+            {
+                SaveWorldShot(_worldShotPath);
+                _worldShotPath = null;
+            }
 
             Profiler.ExitContext(Profiler.ProfilerContext.RENDER_FRAME);
             Profiler.EnterContext(Profiler.ProfilerContext.OUT_OF_CONTEXT);
@@ -1013,6 +1043,36 @@ namespace ClassicUO
             Scene?.Dispose();
 
             base.OnExiting(sender, args);
+        }
+
+        // DevBench: the world render target of the next drawn frame, without UI, as a PNG
+        internal void RequestWorldShot(string path) => _worldShotPath = path;
+
+        private void SaveWorldShot(string path)
+        {
+            var rt = _renderTargets.WorldRenderTarget;
+
+            if (rt == null || rt.IsDisposed)
+            {
+                return;
+            }
+
+            Directory.CreateDirectory(Path.GetDirectoryName(path));
+
+            using (FileStream fileStream = File.Create(path))
+            {
+                rt.SaveAsPng(fileStream, rt.Width, rt.Height);
+            }
+
+            var lights = _renderTargets.LightRenderTarget;
+
+            if (lights != null && !lights.IsDisposed)
+            {
+                using FileStream fileStream = File.Create(Path.ChangeExtension(path, null) + "_lights.png");
+                lights.SaveAsPng(fileStream, lights.Width, lights.Height);
+            }
+
+            Log.Info($"World render target saved: {path}");
         }
 
         internal void TakeScreenshot()

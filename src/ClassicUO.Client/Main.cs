@@ -418,6 +418,11 @@ namespace ClassicUO
 
                         break;
 
+                    case "worldrenderer":
+                        Settings.GlobalSettings.WorldRenderer = value;
+
+                        break;
+
                     case "ecscheck":
                         CUOEnviroment.EcsCheckFrames = int.TryParse(value, out int frames) ? frames : 60;
 

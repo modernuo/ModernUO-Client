@@ -50,6 +50,10 @@ namespace ClassicUO
         Flushes,
         DrawCalls,
         AllocBytes,
+        GpuInstances,
+        GpuDynamic,
+        GpuOverrides,
+        GpuDrawCalls,
         Count
     }
 
@@ -77,7 +81,8 @@ namespace ClassicUO
             "cursor", "composite", "plugin_draw", "draw_other", "draw", "batcher_fna", "present", "frame"
         };
 
-        private static readonly string[] _counterKeys = { "items", "mobiles", "gumps", "render_list", "flushes", "draw_calls", "alloc_bytes" };
+        private static readonly string[] _counterKeys = { "items", "mobiles", "gumps", "render_list", "flushes", "draw_calls", "alloc_bytes", "gpu_instances", "gpu_dynamic",
+            "gpu_overrides", "gpu_draw_calls" };
 
         private static readonly long[] _start = new long[PHASES];
         private static readonly long[] _acc = new long[PHASES];

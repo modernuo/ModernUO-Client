@@ -25,6 +25,8 @@ namespace ClassicUO.Game.GameObjects
         public bool AllowedToDraw = true;
         public bool InChunkMesh;
         public int MeshSpriteIndex = -1;
+        // GameScene's frame stamp when the list fill decided to draw this object (the GPU world pass reads it)
+        public uint DrawnFrame;
         public ObjectHandlesStatus ObjectHandlesStatus;
         public Rectangle FrameInfo;
         protected bool IsFlipped;
