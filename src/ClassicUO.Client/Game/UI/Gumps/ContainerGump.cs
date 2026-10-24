@@ -655,6 +655,8 @@ namespace ClassicUO.Game.UI.Gumps
             {
                 item.Y = (ushort)boundHeight;
             }
+
+            World.Ecs.Sync(item);
         }
 
         public override bool AddToRenderLists(RenderLists renderLists, int x, int y, ref float layerDepthRef)

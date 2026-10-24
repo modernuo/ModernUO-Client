@@ -56,6 +56,8 @@ namespace ClassicUO.Game.GameObjects
                     _direction = value;
                     OnDirectionChanged();
                 }
+
+                World.Ecs.Sync(this);
             }
         }
 
@@ -160,6 +162,7 @@ namespace ClassicUO.Game.GameObjects
 
             AnimIndex = 0;
             LastAnimationChangeTime = 0;
+            World.Ecs.OnDestroyed(this);
         }
 
         public Item FindItem(ushort graphic, ushort hue = 0xFFFF)
