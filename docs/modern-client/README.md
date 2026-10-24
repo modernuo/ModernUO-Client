@@ -34,6 +34,10 @@ Supporting material in this branch:
 - **UI:** classic gumps must work; newer interfaces (client-side UI driven by data/actions over the wire) are wanted. Controllers and localization are wanted.
 - **Platforms:** desktop first, targeting NativeAOT. Keep the browser (WASM) and mobile possible without rebuilding the project. Steam Deck desirable.
 - **One process = one session.** No multiboxing.
+- **The pack replaces MUL/UOP (2026-10-24).**
+  - For every asset the pack format covers (art, texmaps, maps/statics, tiledata, hues, animations), the client loads only from the pack. There is no side-by-side MUL/UOP path, so we never support two formats. Those ClassicUO loaders get deleted once the pack path works.
+  - MUL/UOP stay only for content the pack doesn't cover yet (gumps, fonts, cliloc, sounds, multis, …). Each one moves into the pack over time.
+  - The converter is the only code that reads MUL/UOP for converted content.
 - **No patch formats:** verdata.mul and mapdif/stadif are never supported. Shard owners who use them must merge the patches into the base files with their own tooling before running our converter (2026-10-24).
 - **Texture format (2026-10-24, revised the same day):** **16-bit lossless (`B5G5R5A1`) on every platform**, bit-exact to the source art.
   - **Why not lossy:** lossy formats can't hue correctly. BC7 broke 31.8% of the gray pixels that partial hue depends on, and the best shader tolerance still left 3,981 of 27,287 hued pixels wrong. MobileUO shows phones handle 16-bit UO art fine.
