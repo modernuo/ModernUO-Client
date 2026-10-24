@@ -42,12 +42,22 @@ public static class Verify
         // Tile data and hues.
         var (land, statics) = TileDataFile.Read(Path.Combine(outDir, "tiledata.bin"));
         if (land.Length != fm.TileData.LandData.Length || statics.Length != fm.TileData.StaticData.Length) Fail("tiledata counts");
-        for (int i = 0; i < statics.Length; i++)
-            if (statics[i].Flags != (ulong)fm.TileData.StaticData[i].Flags || statics[i].Height != fm.TileData.StaticData[i].Height) { Fail($"tiledata static {i}"); break; }
+        for (int i = 0; i < Math.Min(land.Length, fm.TileData.LandData.Length); i++)
+            if (land[i].Flags != (ulong)fm.TileData.LandData[i].Flags || land[i].TexId != fm.TileData.LandData[i].TexID) { Fail($"tiledata land {i}"); break; }
+        for (int i = 0; i < Math.Min(statics.Length, fm.TileData.StaticData.Length); i++)
+        {
+            ref readonly var t = ref fm.TileData.StaticData[i];
+            if (statics[i].Flags != (ulong)t.Flags || statics[i].Height != t.Height || statics[i].Layer != t.Layer) { Fail($"tiledata static {i}"); break; }
+        }
         var (hueCount, hues) = HueFile.Read(Path.Combine(outDir, "hues.bin"));
-        if (hueCount != fm.Hues.HuesCount || hues.Any(h => (h >> 24) != 0xFF)) Fail("hues");
-        Console.WriteLine($"  tiledata: {land.Length} land, {statics.Length} statics; hues: {hueCount}");
+        if (hueCount != fm.Hues.HuesCount) Fail("hues count");
+        int lutBad = 0;
+        for (int i = 0; i < Math.Min(hueCount, fm.Hues.HuesCount); i++)
+            for (int k = 0; k < HueFile.Shades; k++)
+                if (hues[i * HueFile.Shades + k] != (PackColor.ToRgb8(fm.Hues.HuesRange[i >> 3].Entries[i & 7].ColorTable[k]) | 0xFF000000) && lutBad++ == 0) Fail($"hue LUT {i}:{k}");
+        Console.WriteLine($"  tiledata: {land.Length} land, {statics.Length} statics (flags, texId, height, layer exact); hues: {hueCount}, LUT = round(c*255/31) of hues.mul {(lutBad == 0 ? "EXACT" : "MISMATCH")}");
         CheckNoDraw(fm, land, statics);
+        CheckTables(fm, outDir);
 
         if (Want("art")) CheckAtlas(fm, Path.Combine(outDir, "art"), "sprites.bin", tex: false, statics);
         if (Want("tex")) CheckAtlas(fm, Path.Combine(outDir, "tex"), "texmaps.bin", tex: true, statics);
@@ -228,6 +238,162 @@ public static class Verify
             Console.WriteLine($"  {Path.GetFileName(dir)}/{table}: {entries.Length} entries, {present} present, {pageCount} pages, {sampled} sprites pixel-verified against source");
     }
 
+    /// <summary>Format 1.0 game data tables against ClassicUO's own loaders, every record and field.</summary>
+    private static void CheckTables(UOFileManager fm, string outDir)
+    {
+        string P(string f) => Path.Combine(outDir, f);
+        if (StructIo.SizeOf<LandTileInfo>() != 16 || StructIo.SizeOf<StaticTileInfo>() != 28 || StructIo.SizeOf<HueEntry>() != 88 || StructIo.SizeOf<MultiComponent>() != 10
+            || StructIo.SizeOf<LightEntry>() != 8 || StructIo.SizeOf<TileArtAppearance>() != 8 || StructIo.SizeOf<EquipConvEntry>() != 10)
+            Fail("table struct sizes");
+
+        if (Want("tiledata") && File.Exists(P(TableConst.TileDataExtFile)))
+        {
+            var (l, st, names) = TileDataExtFile.Read(P(TableConst.TileDataExtFile));
+            var ld = fm.TileData.LandData;
+            var sd = fm.TileData.StaticData;
+            if (l.Length != ld.Length || st.Length != sd.Length) Fail("tiledata_ext counts");
+            int bad = 0;
+            for (int i = 0; i < Math.Min(l.Length, ld.Length); i++)
+                if ((l[i].Flags != (ulong)ld[i].Flags || l[i].TexId != ld[i].TexID || TileDataExtFile.Name(names, l[i].NameOffset, l[i].NameLength) != (ld[i].Name ?? "")) && bad++ == 0)
+                    Fail($"tiledata_ext land {i}");
+            for (int i = 0; i < Math.Min(st.Length, sd.Length); i++)
+            {
+                ref readonly var t = ref sd[i];
+                var e = st[i];
+                if ((e.Flags != (ulong)t.Flags || e.Weight != t.Weight || e.Layer != t.Layer || e.Count != t.Count || e.AnimId != t.AnimID || e.Hue != t.Hue
+                     || e.LightIndex != t.LightIndex || e.Height != t.Height || TileDataExtFile.Name(names, e.NameOffset, e.NameLength) != (t.Name ?? "")) && bad++ == 0)
+                    Fail($"tiledata_ext static {i}");
+            }
+            Console.WriteLine($"  tiledata_ext: {l.Length} land, {st.Length} statics, every field and name {(bad == 0 ? "EXACT" : $"{bad} MISMATCHES")} vs TileDataLoader; names {names.Length} B");
+        }
+
+        if (Want("hues") && File.Exists(P(TableConst.HueRawFile)))
+        {
+            var raw = HueRawFile.Read(P(TableConst.HueRawFile));
+            var groups = fm.Hues.HuesRange;
+            int bad = 0;
+            if (raw.Length != groups.Length * 8) Fail("hues_raw count");
+            for (int i = 0; i < Math.Min(raw.Length, groups.Length * 8); i++)
+            {
+                var src = groups[i >> 3].Entries[i & 7];
+                var e = raw[i];
+                bool same = e.TableStart == src.TableStart && e.TableEnd == src.TableEnd;
+                for (int c = 0; c < 32; c++) same &= e.Colors[c] == src.ColorTable[c];
+                unsafe { for (int c = 0; c < 20; c++) same &= e.Name[c] == src.Name[c]; }
+                if (!same && bad++ == 0) Fail($"hues_raw {i}");
+            }
+            var radar = RadarColFile.Read(P(TableConst.RadarColFile));
+            bool radarOk = radar.AsSpan().SequenceEqual(fm.Hues.RadarCol);
+            if (!radarOk) Fail("radarcol");
+            Console.WriteLine($"  hues_raw: {raw.Length} entries (colours, TableStart/End, names) {(bad == 0 ? "EXACT" : $"{bad} MISMATCHES")} vs HuesLoader; radarcol: {radar.Length} colours {(radarOk ? "EXACT" : "MISMATCH")}");
+        }
+
+        if (!Want("data") || !File.Exists(P(TableConst.MultisFile))) return;
+        using var own = new UOFileManager(fm.Version, fm.BasePath);
+
+        {
+            var (multis, comps) = MultiFile.Read(P(TableConst.MultisFile));
+            var entries = TableConvert.MultiEntries(own.Multis);
+            int bad = 0, n = 0, maxId = -1;
+            for (int id = 0; id < entries.Length; id++)
+            {
+                if (!TableConvert.HasMulti(entries, id))
+                {
+                    if (id < multis.Length && multis[id].ComponentCount != 0 && bad++ == 0) Fail($"multi {id}: present in pack only");
+                    continue;
+                }
+                maxId = id;
+                var src = own.Multis.GetMultis((uint)id);
+                var pk = MultiFile.Components(multis, comps, id);
+                bool same = pk.Length == src.Count;
+                for (int k = 0; same && k < pk.Length; k++)
+                    same = pk[k].Graphic == src[k].ID && pk[k].X == src[k].X && pk[k].Y == src[k].Y && pk[k].Z == src[k].Z
+                           && ((pk[k].Flags & MultiComponentFlags.Visible) != 0) == src[k].IsVisible;
+                if (!same && bad++ == 0) Fail($"multi {id}");
+                n += src.Count;
+            }
+            if (multis.Length != maxId + 1) Fail($"multis: {multis.Length} ids, expected {maxId + 1}");
+            Console.WriteLine($"  multis: {multis.Length} ids, {n} components {(bad == 0 ? "EXACT" : $"{bad} MISMATCHES")} vs MultiLoader.GetMultis");
+        }
+
+        {
+            var (lights, data) = LightFile.Read(P(TableConst.LightsFile));
+            own.Lights.Load();
+            int bad = 0;
+            if (lights.Length != own.Lights.File.Entries.Length) Fail("lights count");
+            for (int i = 0; i < Math.Min(lights.Length, own.Lights.File.Entries.Length); i++)
+            {
+                var src = own.Lights.GetLight((uint)i);
+                var e = lights[i];
+                bool same = e.Width == src.Width && e.Height == src.Height;
+                for (int k = 0; same && k < src.Pixels.Length; k++) same = LightFile.ToRgba8(data[e.Offset + k]) == src.Pixels[k];
+                if (!same && bad++ == 0) Fail($"light {i}");
+            }
+            Console.WriteLine($"  lights: {lights.Length} ids, {data.Length} texels {(bad == 0 ? "EXACT" : $"{bad} MISMATCHES")} vs LightsLoader.GetLight");
+        }
+
+        if (File.Exists(fm.GetUOFilePath("tileart.uop")))
+        {
+            var pack = TileArtFile.Read(P(TableConst.TileArtFile));
+            own.TileArt.Load();
+            int bad = 0, items = 0, rows = 0;
+            for (int g = 0; g <= ushort.MaxValue; g++)
+            {
+                if (!own.TileArt.TryGetTileArtInfo((uint)g, out var info)) continue;
+                if (info.Appearances.Count <= 1 || !info.Appearances.TryGetValue(0, out var map) || map.Count == 0) continue;
+                items++;
+                rows += map.Count;
+                foreach (var body in map.Keys)
+                {
+                    bool a = info.TryGetAppearance(body, out var want);
+                    bool b = TileArtFile.TryGetAppearance(pack, (ushort)g, (ushort)body, out var got);
+                    if ((a != b || want != got) && bad++ == 0) Fail($"tileart {g} body {body}");
+                }
+            }
+            if (rows != pack.Length) Fail($"tileart: {pack.Length} rows, expected {rows}");
+            Console.WriteLine($"  tileart: {items} items, {pack.Length} appearances {(bad == 0 && rows == pack.Length ? "EXACT" : "MISMATCH")} vs TileArtInfo.TryGetAppearance");
+        }
+
+        {
+            var pack = EquipConvFile.Read(P(TableConst.EquipConvFile));
+            own.Animations.Load();
+            int bad = 0, rows = 0;
+            foreach (var (body, dict) in own.Animations.EquipConversions)
+                foreach (var (graphic, d) in dict)
+                {
+                    rows++;
+                    if ((!EquipConvFile.TryGet(pack, body, graphic, out var e) || e.NewGraphic != d.Graphic || e.Gump != d.Gump || e.Color != d.Color) && bad++ == 0)
+                        Fail($"equipconv body {body} graphic {graphic}");
+                }
+            if (rows != pack.Length) Fail($"equipconv: {pack.Length} rows, expected {rows}");
+            Console.WriteLine($"  equipconv: {pack.Length} rows {(bad == 0 && rows == pack.Length ? "EXACT" : "MISMATCH")} vs AnimationsLoader.EquipConversions");
+        }
+    }
+
+    /// <summary>animdata.bin against AnimDataLoader.CalculateCurrentGraphic for every graphic whose record is in the file.</summary>
+    private static void CheckAnimData(UOFileManager fm, AnimDataEntry[] pack)
+    {
+        using var own = new UOFileManager(fm.Version, fm.BasePath);
+        own.AnimData.Load();
+        var file = own.AnimData.AnimDataFile;
+        if (file == null) { if (pack.Length != 0) Fail("animdata without animdata.mul"); return; }
+        var byGraphic = pack.ToDictionary(e => (int)e.Graphic);
+        int bad = 0, n = 0;
+        for (int g = 0; g <= ushort.MaxValue; g++)
+        {
+            if (g * 68 + 4 * ((g >> 3) + 1) + 68 > file.Length) { if (byGraphic.ContainsKey(g) && bad++ == 0) Fail($"animdata {g}: past the end of animdata.mul"); continue; }
+            var src = own.AnimData.CalculateCurrentGraphic((ushort)g);
+            bool has = byGraphic.TryGetValue(g, out var e);
+            if (src.FrameCount == 0) { if (has && bad++ == 0) Fail($"animdata {g}: listed without frames"); continue; }
+            n++;
+            bool same = has && e.FrameCount == src.FrameCount && e.FrameInterval == src.FrameInterval && e.FrameStart == src.FrameStart && e.Unknown == src.Unknown;
+            unsafe { for (int k = 0; same && k < 64; k++) same = e.Frames[k] == src.FrameData[k]; }
+            if (!same && bad++ == 0) Fail($"animdata {g}");
+        }
+        if (n != pack.Length) Fail($"animdata: {pack.Length} entries, expected {n}");
+        Console.WriteLine($"  animdata: {pack.Length} entries {(bad == 0 && n == pack.Length ? "EXACT" : "MISMATCH")} vs AnimDataLoader.CalculateCurrentGraphic");
+    }
+
     /// <summary>NoDraw flags against the converter's CanBeDrawn port, plus a few fixed cases.</summary>
     private static void CheckNoDraw(UOFileManager fm, LandTileData[] land, StaticTileData[] statics)
     {
@@ -265,6 +431,7 @@ public static class Verify
             Fail("anim struct sizes");
         var (bodies, dirs, frames) = AnimTableFile.Read(Path.Combine(dir, AnimTableFile.FileName));
         var animData = AnimDataFile.Read(Path.Combine(dir, AnimDataFile.FileName));
+        CheckAnimData(fm, animData);
         int pageCount = 0;
         foreach (var f in frames) if (f.Sprite.Present) pageCount = Math.Max(pageCount, f.Sprite.Page + 1);
         if (Directory.GetFiles(dir, "page_*.bin").Length != pageCount) Fail($"anim page files != {pageCount}");
@@ -403,10 +570,10 @@ public static class Verify
             t.Add(sw.Elapsed.TotalMilliseconds);
             disk += new FileInfo(f).Length; raw += h.DataBytes + 32;
             using var fs = File.OpenRead(f);
-            if (StructIo.ReadHeaderFull(fs, PackConst.MagicPage).Kind == FileKind.Brotli) compressed++;
+            if (StructIo.ReadHeaderFull(fs, PackConst.MagicPage).Kind != FileKind.Raw) compressed++;
         }
         t.Sort();
-        Console.WriteLine($"  {Path.GetFileName(dir)} pages: {files.Length} ({compressed} Brotli), {disk / 1048576.0:F1} MiB on disk, {raw / 1048576.0:F1} MiB raw; " +
+        Console.WriteLine($"  {Path.GetFileName(dir)} pages: {files.Length} ({compressed} compressed), {disk / 1048576.0:F1} MiB on disk, {raw / 1048576.0:F1} MiB raw; " +
                           $"single-thread load (read+decompress) median {t[t.Count / 2]:F1} ms, max {t[^1]:F1} ms");
     }
 

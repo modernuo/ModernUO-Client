@@ -1,5 +1,7 @@
 # Pack Format v0 (PoC)
 
+> **History.** The authoritative format 1.0 spec is [pack-format.md](pack-format.md). This file records how the format got there: v0/v1 additions, measurements and dead ends.
+
 The contract between the converter (`poc/Uo.Converter`) and the renderer (`poc/Uo.Render`). It's implemented in `poc/Uo.Pack` (structs, readers, writers). The goal is GPU-friendly and streaming-friendly data that keeps gameplay semantics: tile ids, z, flags.
 
 All integers are little-endian. Every binary file starts with a 16-byte `FileHeader`: magic `u32`, version `u16`, kind `u16`, reserved `u64`.

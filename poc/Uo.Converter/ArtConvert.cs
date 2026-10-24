@@ -202,7 +202,7 @@ public static class ArtConvert
         for (int g = 0; g < groups.Length; g++)
             for (int e = 0; e < 8; e++)
                 for (int s = 0; s < HueFile.Shades; s++)
-                    rgba[(g * 8 + e) * HueFile.Shades + s] = HuesHelper.Color16To32(groups[g].Entries[e].ColorTable[s]) | 0xFF000000;
+                    rgba[(g * 8 + e) * HueFile.Shades + s] = PackColor.ToRgb8(groups[g].Entries[e].ColorTable[s]) | 0xFF000000;
         HueFile.Write(Path.Combine(outDir, "hues.bin"), count, rgba);
         return count;
     }
