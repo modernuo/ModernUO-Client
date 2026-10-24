@@ -156,8 +156,28 @@ The owner asked that everything definitive (e.g. the FNA 26.10 upgrade) land on 
 3. **Network and server:** a local ModernUO server (out-of-tree publish, no changes to the ModernUO repo) plus `poc/Uo.Net`, a minimal classic-protocol client (login, enter world, entity stream, walk requests).
 4. **Integration** (`poc/Uo.Client`): Uo.Net → Friflo world (dynamic entities) → render extract → Uo.Render. Player movement with client-side prediction. This is the proof of the full stack.
 
+### 2026-10-24 — CP6: animations + NoDraw in the converter (1c7c9a60c)
+
+- **Coverage:** 963 bodies and 993k frames in pack pages. Mirrored directions reference the stored frames. Body.def, Bodyconv and Corpse.def are resolved at conversion time.
+- **Verified:** 111k frames are bit-exact against the ClassicUO loader.
+- **NoDraw:** it mirrors ClassicUO's `CanBeDrawn` static rules, which go beyond the name rule. Stored as `TilePackFlags`.
+- **ClassicUO bug:** its animation loader crashes under parallel use (unpinned `Unsafe.AsPointer`, concurrent native zlib). The converter uses managed readers instead.
+- **Size problem:** animations are 1.1 GB with Brotli but 6.7 GiB raw, so "raw at install" fails for them. The owner approved investigating:
+  1. chunked Brotli (Kind=2);
+  2. 1024² animation pages;
+  3. prototyping an indexed 8-bit format plus palette, which stays lossless, with the shader doing a manual palette lookup and filtering.
+
+## Phase 4 plan (owner, 2026-10-24): bring it into ClassicUO
+
+The owner accepts compressed packs on disk if decompression is fast.
+1. **Finalize the file format.** Use the animation storage results, then consolidate v0+v1 into one final spec.
+2. **Implement the pack format in the ClassicUO client** (src/), alongside the MUL/UOP loaders and chosen by a setting.
+3. **Add Friflo ECS side by side** with ClassicUO's World: mirror entities, then convert systems one at a time. The first is the render extract.
+4. **Replace ClassicUO's world renderer** with the SDL_GPU renderer, committed on this branch. Prove there is no performance problem in general use cases, with NativeAOT on the desktop machine. The main risk is device sharing with FNA, which draws the UI; a read-only spike is investigating it.
+
 ## Next
 
-- Review each agent's output and commit it.
-- Run final Flecs.NET timing rounds when no builds are running, then write `docs/modern-client/ecs-decision.md`.
-- Integrate the renderer with real packs, measure, write `docs/modern-client/renderer-decision.md`.
+- The agents in flight: the renderer's RGBA8 fallback and Vulkan; the animation storage investigation; the ClassicUO integration spike.
+- `git submodule update --init --recursive external/FNA` once no agent is building Uo.Render.
+- Final Flecs.NET timing rounds on a quiet machine, then mark ecs-decision.md accepted. Decide between the preview NuGet package and a pinned commit.
+- Write renderer-decision.md.
