@@ -114,6 +114,37 @@ The owner asked that everything definitive (e.g. the FNA 26.10 upgrade) land on 
   - Connect is synchronous.
   - The 1/256 case where the key's first byte is 0xEF isn't handled.
 
+### 2026-10-24 — Renderer formats + expansion kernel (8b4d73763, 2c72f83b8)
+
+- **Formats:** Uo.Render reads RGBA8, BC7 and B5G5R5A1 packs (one format per pack, checked at startup). Brotli pages and regions are decoded on workers.
+- **Bench** (`--bench-formats`, 4K):
+  - 16-bit vs RGBA8: 0.17 vs 0.21 ms CPU per frame, 255 vs 511 MiB of page VRAM.
+  - Raw vs Brotli 16-bit pages: identical frame times. Worker cost per page is 2.9 ms raw vs 25 ms decode.
+  - This led to the decision: lossless everywhere, Brotli for transport only.
+- **`PixelExpand`:** a portable SIMD (Vector256/128, so also WASM SIMD128) B5G5R5A1→RGBA8 kernel for GPUs that can't sample 16-bit. ClassicUO's 5→8-bit table equals `(c·1053)>>7`. 0 mismatches over all 65536 values. Per page: 1.2 ms with AVX2, 1.5 ms with Vector128 only, 20.8 ms with a scalar lookup table. WASM is unmeasured (needs the wasm-tools workload).
+
+### 2026-10-24 — CP5: vertical slice done (2c6379030)
+
+- **Run:** `poc/Uo.Client/bin/Release/net10.0/win-x64/Uo.Client.exe` (offline fake server by default), `--live --go "1495 1629"` with `UO_USER`/`UO_PASS`, `--test` for the prediction tests.
+- **Frame loop, single-threaded:**
+  1. input;
+  2. `client.Poll()` writes to the Friflo world;
+  3. `Walker.Update` predicts and sends move requests;
+  4. the camera follows the interpolated player;
+  5. map streaming and the static draw list;
+  6. render extract: ECS → per-frame dynamic instance range;
+  7. one depth-keyed draw call for statics and dynamics together.
+- **Prediction:** a port of ClassicUO's CanWalk/CalculateNewZ against pack data. It handles pacing, the cap of 5 pending moves, turn-only requests, snap on reject, and reset on teleport.
+- **Verified:**
+  - Live against ModernUO (JIT and AOT): 0 rejects, predicted z matched the server on stairs and slopes, server items render.
+  - Offline tests cover reject/snap, the pending cap and teleport.
+  - 5000 mobiles on screen: 0.10 ms CPU per frame, 0.05 ms extract, 0 GC.
+  - NativeAOT warnings come only from Friflo's own assemblies.
+- **Gaps:**
+  - Mobiles are placeholders until animations land (`IMobileSprites` seam).
+  - Equipment isn't drawn, multis aren't rendered, and stacks have no offsets.
+  - Walk-map region loads are synchronous: 3–6 ms, a possible hitch when crossing a region.
+
 ## Phase 3 plan (engine vertical slice)
 
 1. **Converter:** finish v1 (BC7 + Brotli), add a NoDraw flag (tiledata name rule), then animation conversion (UOP AnimationFrame → atlas pages + frame tables).
