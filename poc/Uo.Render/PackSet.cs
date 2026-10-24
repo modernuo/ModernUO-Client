@@ -18,6 +18,10 @@ public sealed class PackSet
     public readonly string[] PagePaths;
     public readonly int TexPageBase;
 
+    /// <summary>Page pixel format, size and mip count, identical for every page of the pack (mixed packs are rejected).</summary>
+    public readonly PixelFormat Format;
+    public readonly int PageSize, PageMips;
+
     public readonly int Facet;
     public readonly string FacetDir;
     public readonly int MapWidth, MapHeight, BlocksX, BlocksY, RegionBlocks;
@@ -37,6 +41,18 @@ public sealed class PackSet
         PagePaths = new string[artPages + texPages];
         for (int i = 0; i < artPages; i++) PagePaths[i] = PackConst.PagePath(Path.Combine(root, "art"), i);
         for (int i = 0; i < texPages; i++) PagePaths[artPages + i] = PackConst.PagePath(Path.Combine(root, "tex"), i);
+
+        // One pack = one format: the Texture2DArray has a single format, so every page must match.
+        for (int i = 0; i < PagePaths.Length; i++)
+        {
+            var h = PageFormats.ReadHeader(PagePaths[i]);
+            if (i == 0) { Format = h.Format; PageSize = h.Width; PageMips = h.MipCount; continue; }
+            if (h.Format != Format || h.Width != PageSize || h.Height != PageSize || h.MipCount != PageMips)
+                throw new InvalidDataException($"mixed pack: {PagePaths[i]} is {PageFormats.Name(h.Format)} {h.Width}x{h.Height}/{h.MipCount} mips, " +
+                    $"page 0 is {PageFormats.Name(Format)} {PageSize}/{PageMips}. One pack must use one page format.");
+        }
+        if (PagePaths.Length == 0) { Format = PixelFormat.Rgba8; PageSize = PackConst.PageSize; PageMips = PackConst.PageMipCount; }
+        _ = PageFormats.Gpu(Format); // throws for unknown formats
 
         Facet = facet;
         FacetDir = Path.Combine(root, "map", facet.ToString());

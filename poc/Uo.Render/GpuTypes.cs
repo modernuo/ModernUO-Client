@@ -34,7 +34,8 @@ public struct FrameUniforms
     public float DepthScale;
     public uint Sharp;
     public float AtlasSize;
-    public uint Pad0, Pad1;
+    public uint FormatFlags; // PageFormats.ShaderFlags: 1 = un-premultiply edges, 2 = gray tolerance (BC7)
+    public float GrayTolerance;
 }
 
 /// <summary>Entry of the per-frame visible chunk table: first instance in the big buffer and running count.</summary>
