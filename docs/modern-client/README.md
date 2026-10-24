@@ -38,8 +38,12 @@ Supporting material in this branch:
 - **Texture format (2026-10-24, revised the same day):** **16-bit lossless (`B5G5R5A1`) on every platform**, bit-exact to the source art.
   - **Why not lossy:** lossy formats can't hue correctly. BC7 broke 31.8% of the gray pixels that partial hue depends on, and the best shader tolerance still left 3,981 of 27,287 hued pixels wrong. MobileUO shows phones handle 16-bit UO art fine.
   - **Status of lossy:** BC7 support stays in the converter and renderer as an experiment, but it is not a shipping profile.
-  - **WebGPU** has no 16-bit packed format, so the web build expands pages to RGBA8 when it uploads them.
-  - **Mobile memory** is handled by residency (fewer or smaller pages), not by lossy compression.
+  - **Platform renderer profiles are deferred (owner, 2026-10-24).** They are runtime choices behind an existing seam and don't change the pack format or the architecture.
+    - **The seam:** `PageFormats` maps the pack format to the GPU format, and `PageResidency` checks support at startup.
+    - **Unsupported 16-bit:** when the GPU can't sample 16-bit, the worker expands the page to RGBA8 in the staging buffer. This fallback is small and lands in the PoC to prove the path. Unsupported cases: WebGPU, which has no 16-bit packed formats, and Intel Macs, where Metal has none.
+    - **Native 16-bit is expected elsewhere:** Vulkan's mandatory `A1R5G5B5_UNORM_PACK16` has the same bit layout, Apple-GPU Metal has `BGR5A1Unorm`, and D3D12 has it too.
+    - **Web alternative:** `r16uint` pages with manual filtering in the shader, if RGBA8's 2× memory is too much there.
+    - **Mobile memory** is a residency setting (layer count, page size), not lossy compression.
 - **Brotli is for transport (2026-10-24).** Packs are downloaded Brotli-compressed. The installer or patcher unpacks pages to raw once, so runtime page loads are plain reads.
   - Measured with 16-bit pages: about 3 ms per raw page versus about 25 ms to decode Brotli, on a worker thread. The render thread's cost is the same either way (0.3–0.4 ms per page upload).
   - On disk the 16-bit pack is 435 MB raw versus 142 MB compressed.
