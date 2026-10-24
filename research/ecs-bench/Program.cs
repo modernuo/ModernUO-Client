@@ -21,6 +21,7 @@ var libs = new (string Name, Func<Adapter> Make)[]
     ("TinyEcs", () => new TinyEcsAdapter()),
     ("Friflo",  () => new FrifloAdapter()),
     ("Arch",    () => new ArchAdapter()),
+    ("Flecs",   () => new FlecsAdapter()),
 };
 
 var benchFilter = args.Length > 0 ? args[0] : "*";
