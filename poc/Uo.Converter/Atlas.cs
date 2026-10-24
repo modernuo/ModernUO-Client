@@ -120,6 +120,8 @@ public sealed class AtlasResult
     public double Occupancy;
     public int Packed;
     public int Aliased;
+    /// <summary>PageBytes is the raw size; this is the Brotli(q5) size (the actual files with --compress-pages).</summary>
+    public long PageBytesBrotli;
 }
 
 public static class AtlasBuilder
@@ -129,10 +131,13 @@ public static class AtlasBuilder
     /// Packing is sequential in id order so neighbouring ids share a page (streaming locality); a page is closed when
     /// the next sprite doesn't fit, except that we keep the previous page open for small sprites to fill holes.
     /// </summary>
-    public static AtlasResult Build(string dir, int tableSize, IReadOnlyList<SpriteImage> sprites, SpriteEntry[]? preset = null)
+    public static AtlasResult Build(string dir, int tableSize, IReadOnlyList<SpriteImage> sprites, SpriteEntry[]? preset = null, IReadOnlyCollection<int>? debugIds = null)
     {
         Directory.CreateDirectory(dir);
         const int S = PackConst.PageSize, G = PackConst.Gutter;
+        int A = ConvertOptions.Align;
+        int Cell(int v) => (v + 2 * G + A - 1) / A * A; // packed cell incl. gutter, rounded up to the alignment
+        var format = ConvertOptions.Format;
         var entries = new SpriteEntry[tableSize];
         for (int i = 0; i < tableSize; i++) entries[i] = preset != null ? preset[i] : SpriteEntry.Absent;
 
@@ -146,7 +151,7 @@ public static class AtlasBuilder
         foreach (var sp in sprites)
         {
             if (sp.AliasOf >= 0) continue;
-            int pw = sp.W + 2 * G, ph = sp.H + 2 * G;
+            int pw = Cell(sp.W), ph = Cell(sp.H);
             if (pw > S || ph > S) throw new InvalidOperationException($"sprite {sp.Id} {sp.W}x{sp.H} too large for a page");
             int page, x, y;
             if (packers[cur].TryInsert(pw, ph, out x, out y)) page = cur;
@@ -176,18 +181,43 @@ public static class AtlasBuilder
         }
 
         int chainBytes = AtlasPage.ChainBytes(S, PackConst.PageMipCount);
-        Parallel.For(0, pages.Count, new ParallelOptions { MaxDegreeOfParallelism = Math.Min(Environment.ProcessorCount, 12) }, p =>
+        long fileBytes = 0, brotliBytes = 0;
+        // BC7 parallelises over block rows inside a page, so pages go one at a time to respect --threads.
+        int dop = format == PixelFormat.Bc7 ? 1 : ConvertOptions.Threads;
+        Parallel.For(0, pages.Count, new ParallelOptions { MaxDegreeOfParallelism = dop }, p =>
         {
+            if (!ConvertOptions.PageSelected(p)) return;
             var chain = GC.AllocateUninitializedArray<byte>(chainBytes);
             var mip0 = MemoryMarshal.Cast<byte, uint>(chain.AsSpan(0, AtlasPage.MipBytes(S, 0)));
             mip0.Clear();
             foreach (var sp in pages[p])
             {
                 ref var e = ref entries[sp.Id];
-                Blit(mip0, S, e.X, e.Y, sp.Pixels, sp.W, sp.H, G);
+                // Extrude into the whole aligned cell: left/top gutter G, right/bottom gutter G + alignment padding.
+                Blit(mip0, S, e.X, e.Y, sp.Pixels, sp.W, sp.H, G, Cell(sp.W) - sp.W - G, Cell(sp.H) - sp.H - G);
             }
             BuildMips(chain, S, PackConst.PageMipCount);
-            AtlasPage.Write(PackConst.PagePath(dir, p), S, PackConst.PageMipCount, chain);
+            byte[] data = chain;
+            if (format == PixelFormat.B5G5R5A1) data = PageCodec.EncodeB5G5R5A1(chain, S, PackConst.PageMipCount);
+            if (format == PixelFormat.Bc7)
+            {
+                data = PageCodec.EncodeBc7(chain, S, PackConst.PageMipCount);
+                if (debugIds != null && ConvertOptions.DebugDir != null)
+                    foreach (var id in debugIds)
+                        if (entries[id].Present && entries[id].Page == p)
+                            DebugCompare(Path.Combine(ConvertOptions.DebugDir, $"bc7_vs_rgba8_{Path.GetFileName(dir)}_{id:X5}.png"), mip0, data, S, entries[id]);
+            }
+            var pagePath = PackConst.PagePath(dir, p);
+            AtlasPage.Write(pagePath, S, PackConst.PageMipCount, format, data, ConvertOptions.CompressPages);
+            Interlocked.Add(ref fileBytes, data.Length + 32);
+            if (ConvertOptions.CompressPages) Interlocked.Add(ref brotliBytes, new FileInfo(pagePath).Length);
+            if (ConvertOptions.MeasurePageBrotli && !ConvertOptions.CompressPages)
+            {
+                using var ms = new MemoryStream();
+                using (var br = new System.IO.Compression.BrotliStream(ms, new System.IO.Compression.BrotliCompressionOptions { Quality = 5 }, leaveOpen: true))
+                    br.Write(data);
+                Interlocked.Add(ref brotliBytes, ms.Length + 32);
+            }
         });
 
         long used = 0;
@@ -195,22 +225,57 @@ public static class AtlasBuilder
         return new AtlasResult
         {
             Entries = entries, PageCount = pages.Count, Packed = packed, Aliased = aliased,
-            PageBytes = (long)pages.Count * (chainBytes + 32),
+            PageBytes = fileBytes, PageBytesBrotli = brotliBytes,
             Occupancy = used / (double)((long)pages.Count * S * S),
         };
     }
 
-    /// <summary>Copies a sprite to (x,y) and fills a gutter of g pixels around it by clamping (edge extrusion).</summary>
-    public static void Blit(Span<uint> dst, int stride, int x, int y, ReadOnlySpan<uint> src, int w, int h, int g)
+    /// <summary>Copies a sprite to (x,y) and fills g pixels left/top and gr/gb right/bottom by clamping (edge extrusion).</summary>
+    public static void Blit(Span<uint> dst, int stride, int x, int y, ReadOnlySpan<uint> src, int w, int h, int g, int gr = -1, int gb = -1)
     {
-        for (int yy = -g; yy < h + g; yy++)
+        if (gr < 0) gr = g;
+        if (gb < 0) gb = g;
+        for (int yy = -g; yy < h + gb; yy++)
         {
             int sy = Math.Clamp(yy, 0, h - 1);
             var srow = src.Slice(sy * w, w);
-            var drow = dst.Slice((y + yy) * stride + x - g, w + 2 * g);
-            for (int i = 0; i < g; i++) { drow[i] = srow[0]; drow[w + g + i] = srow[w - 1]; }
+            var drow = dst.Slice((y + yy) * stride + x - g, g + w + gr);
+            for (int i = 0; i < g; i++) drow[i] = srow[0];
+            for (int i = 0; i < gr; i++) drow[g + w + i] = srow[w - 1];
             srow.CopyTo(drow.Slice(g, w));
         }
+    }
+
+    /// <summary>Side-by-side debug crop around a sprite: RGBA8 | BC7 decoded | |diff| x8 (RGB on visible texels, alpha as gray), each at 2x, over a checkerboard.</summary>
+    private static void DebugCompare(string path, ReadOnlySpan<uint> rgba, byte[] bc7Chain, int S, SpriteEntry e)
+    {
+        const int C = 192, K = 2;
+        var dec = PageCodec.DecodeBc7(bc7Chain.AsSpan(0, AtlasPage.MipBytes(S, 0, PixelFormat.Bc7)), S);
+        int cx = Math.Clamp(e.X + e.W / 2 - C / 2, 0, S - C), cy = Math.Clamp(e.Y + e.H / 2 - C / 2, 0, S - C);
+        var a = new uint[C * C]; var b = new uint[C * C]; var d = new uint[C * C];
+        for (int y = 0; y < C; y++)
+            for (int x = 0; x < C; x++)
+            {
+                uint p = rgba[(cy + y) * S + cx + x], q = dec[(cy + y) * S + cx + x];
+                a[y * C + x] = p; b[y * C + x] = q;
+                // RGB error only where the texel is visible (RGB under alpha 0 is intentionally filled); alpha error shown as white.
+                uint dd = 0;
+                if ((p >> 24) != 0)
+                    for (int sh = 0; sh < 24; sh += 8) dd |= (uint)Math.Min(255, Math.Abs((int)((p >> sh) & 0xFF) - (int)((q >> sh) & 0xFF)) * 8) << sh;
+                uint ae = (uint)Math.Min(255, Math.Abs((int)(p >> 24) - (int)(q >> 24)) * 8);
+                dd |= ae | (ae << 8) | (ae << 16);
+                d[y * C + x] = dd | 0xFF000000;
+            }
+        a = Png.OverChecker(a, C, C, 4); b = Png.OverChecker(b, C, C, 4);
+        int W = 3 * C * K + 2 * 4, H = C * K;
+        var o = new uint[W * H];
+        Array.Fill(o, 0xFFFFFFFF);
+        var panels = new[] { a, b, d };
+        for (int i = 0; i < 3; i++)
+            for (int y = 0; y < H; y++)
+                for (int x = 0; x < C * K; x++)
+                    o[y * W + i * (C * K + 4) + x] = panels[i][(y / K) * C + x / K];
+        Png.Write(path, W, H, o);
     }
 
     /// <summary>Alpha-aware 2×2 box filter: colors are weighted by alpha (premultiply, average, unpremultiply).</summary>
