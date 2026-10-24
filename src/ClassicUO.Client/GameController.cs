@@ -54,7 +54,7 @@ namespace ClassicUO
             };
 
             GraphicManager.PreferredDepthStencilFormat = DepthFormat.Depth24Stencil8;
-            SetVSync(false);
+            GraphicManager.SynchronizeWithVerticalRetrace = Settings.GlobalSettings.VSync;
 
             Window.ClientSizeChanged += WindowOnClientSizeChanged;
             Window.AllowUserResizing = true;
@@ -105,11 +105,6 @@ namespace ClassicUO
             GraphicManager.ApplyChanges();
 
             SetRefreshRate(Settings.GlobalSettings.FPS);
-
-            if (DevBench.FrameStats)
-            {
-                _intervalFixedUpdate[0] = _intervalFixedUpdate[1] = 0.01f;
-            }
 
             _uoSpriteBatch = new UltimaBatcher2D(GraphicsDevice);
 
@@ -216,12 +211,23 @@ namespace ClassicUO
 
         public void SetVSync(bool value)
         {
-            GraphicManager.SynchronizeWithVerticalRetrace = value;
+            Settings.GlobalSettings.VSync = value;
+
+            if (GraphicManager.SynchronizeWithVerticalRetrace != value)
+            {
+                GraphicManager.SynchronizeWithVerticalRetrace = value;
+                GraphicManager.ApplyChanges();
+            }
         }
 
+        // 0 = uncapped (no frame limiter)
         public void SetRefreshRate(int rate)
         {
-            if (rate < Constants.MIN_FPS)
+            if (rate <= 0)
+            {
+                rate = 0;
+            }
+            else if (rate < Constants.MIN_FPS)
             {
                 rate = Constants.MIN_FPS;
             }
@@ -232,7 +238,11 @@ namespace ClassicUO
 
             float frameDelay;
 
-            if (rate == Constants.MIN_FPS)
+            if (rate == 0 || DevBench.FrameStats)
+            {
+                frameDelay = 0;
+            }
+            else if (rate == Constants.MIN_FPS)
             {
                 // The "real" UO framerate is 12.5. Treat "12" as "12.5" to match.
                 frameDelay = 80;
@@ -394,6 +404,8 @@ namespace ClassicUO
 
         protected override void Update(GameTime gameTime)
         {
+            FrameStats.Begin(FramePhase.Update);
+
             if (Profiler.InContext(Profiler.ProfilerContext.OUT_OF_CONTEXT))
             {
                 Profiler.ExitContext(Profiler.ProfilerContext.OUT_OF_CONTEXT);
@@ -404,22 +416,30 @@ namespace ClassicUO
 
             Mouse.Update();
 
+            FrameStats.Begin(FramePhase.Packets);
             var data = NetClient.Socket.CollectAvailableData();
             var packetsCount = PacketHandlers.Handler.ParsePackets(NetClient.Socket, UO.World, data);
 
             NetClient.Socket.Statistics.TotalPacketsReceived += (uint)packetsCount;
             NetClient.Socket.Flush();
+            FrameStats.End(FramePhase.Packets);
 
+            FrameStats.Begin(FramePhase.PluginTick);
             Plugin.Tick();
+            FrameStats.End(FramePhase.PluginTick);
 
             if (Scene != null && Scene.IsLoaded && !Scene.IsDestroyed)
             {
+                FrameStats.Begin(FramePhase.SceneUpdate);
                 Profiler.EnterContext(Profiler.ProfilerContext.UPDATE_WORLD);
                 Scene.Update();
                 Profiler.ExitContext(Profiler.ProfilerContext.UPDATE_WORLD);
+                FrameStats.End(FramePhase.SceneUpdate);
             }
 
+            FrameStats.Begin(FramePhase.UiUpdate);
             UIManager.Update();
+            FrameStats.End(FramePhase.UiUpdate);
 
             _totalElapsed += gameTime.ElapsedGameTime.TotalMilliseconds;
             _currentFpsTime += gameTime.ElapsedGameTime.TotalMilliseconds;
@@ -434,6 +454,7 @@ namespace ClassicUO
 
             double x = _intervalFixedUpdate[
                 !IsActive
+                && !DevBench.FrameStats
                 && ProfileManager.CurrentProfile != null
                 && ProfileManager.CurrentProfile.ReduceFPSWhenInactive
                     ? 1
@@ -441,7 +462,11 @@ namespace ClassicUO
             ];
             _suppressedDraw = false;
 
-            if (_totalElapsed > x)
+            if (x <= 0)
+            {
+                _totalElapsed = 0;
+            }
+            else if (_totalElapsed > x)
             {
                 _totalElapsed %= x;
             }
@@ -477,13 +502,15 @@ namespace ClassicUO
                 }
             }
 
-             base.Update(gameTime);
+            base.Update(gameTime);
+
+            FrameStats.End(FramePhase.Update);
         }
 
         protected override void Draw(GameTime gameTime)
         {
-            long frameStart = Stopwatch.GetTimestamp();
-            long sceneTicks = 0;
+            FrameStats.Begin(FramePhase.Draw);
+            FrameStats.Begin(FramePhase.DrawSetup);
 
             _renderTargets.EnsureSizes(
                 GraphicsDevice,
@@ -511,12 +538,11 @@ namespace ClassicUO
             _totalFrames++;
 
             GraphicsDevice.Clear(Color.Black);
+            FrameStats.End(FramePhase.DrawSetup);
 
             if (Scene != null && Scene.IsLoaded && !Scene.IsDestroyed)
             {
-                sceneTicks = Stopwatch.GetTimestamp();
                 Scene.Draw(_uoSpriteBatch, _renderTargets);
-                sceneTicks = Stopwatch.GetTimestamp() - sceneTicks;
             }
 
             _uoSpriteBatch.GraphicsDevice.SetRenderTarget(_renderTargets.UiRenderTarget);
@@ -537,34 +563,55 @@ namespace ClassicUO
             SelectedObject.HealthbarObject = null;
             SelectedObject.SelectedContainer = null;
 
+            FrameStats.Begin(FramePhase.SceneDrawUi);
             _uoSpriteBatch.Begin();
             if (Scene != null && Scene.IsLoaded && !Scene.IsDestroyed)
             {
                 Scene.DrawUI(_uoSpriteBatch);
             }
             _uoSpriteBatch.End();
+            FrameStats.End(FramePhase.SceneDrawUi);
 
+            FrameStats.Begin(FramePhase.UiDraw);
             UIManager.Draw(_uoSpriteBatch);
+            FrameStats.End(FramePhase.UiDraw);
 
+            FrameStats.Begin(FramePhase.Cursor);
             _uoSpriteBatch.Begin();
             UO.GameCursor?.Draw(_uoSpriteBatch);
             _uoSpriteBatch.End();
+            FrameStats.End(FramePhase.Cursor);
 
+            FrameStats.Begin(FramePhase.Composite);
             _uoSpriteBatch.GraphicsDevice.SetRenderTarget(null);
 
             _renderTargets.Draw(_uoSpriteBatch);
+            FrameStats.End(FramePhase.Composite);
 
             Profiler.ExitContext(Profiler.ProfilerContext.RENDER_FRAME);
             Profiler.EnterContext(Profiler.ProfilerContext.OUT_OF_CONTEXT);
 
+            FrameStats.Begin(FramePhase.PluginDraw);
             Plugin.ProcessDrawCmdList(GraphicsDevice);
-
-            if (DevBench.FrameStats)
-            {
-                DevBench.RecordFrame(frameStart, sceneTicks, Stopwatch.GetTimestamp());
-            }
+            FrameStats.End(FramePhase.PluginDraw);
 
             base.Draw(gameTime);
+
+            FrameStats.End(FramePhase.Draw);
+        }
+
+        protected override void EndDraw()
+        {
+            if (DevBench.FrameStats)
+            {
+                FrameStats.BeforeEndDraw();
+                base.EndDraw();
+                FrameStats.AfterEndDraw();
+
+                return;
+            }
+
+            base.EndDraw();
         }
 
         private float _screenScale = Settings.GlobalSettings.ScreenScale;

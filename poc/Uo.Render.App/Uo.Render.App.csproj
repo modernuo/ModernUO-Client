@@ -14,6 +14,7 @@
     <PlatformTarget>x64</PlatformTarget>
     <RuntimeIdentifier Condition="'$(RuntimeIdentifier)' == ''">win-x64</RuntimeIdentifier>
     <SelfContained Condition="'$(PublishAot)' != 'true'">false</SelfContained>
+    <IlcInstructionSet Condition="'$(RuntimeIdentifier)' == 'win-x64'">x86-64-v3</IlcInstructionSet>
     <RootNamespace>Uo.Render</RootNamespace>
     <!-- NativeAOT: dotnet publish -c Release -p:PublishAot=true -->
   </PropertyGroup>
