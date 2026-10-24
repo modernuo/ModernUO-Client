@@ -45,6 +45,7 @@ public static class AtlasPage
             PixelFormat.Rgba8 => s * s * 4,
             PixelFormat.Bc7 => ((s + 3) / 4) * ((s + 3) / 4) * 16,
             PixelFormat.B5G5R5A1 => s * s * 2,
+            PixelFormat.Indexed8 => s * s,
             _ => throw new NotSupportedException(format.ToString()),
         };
     }
@@ -73,24 +74,47 @@ public static class AtlasPage
     /// everything a Kind=0 file has after its FileHeader (PageHeader + chain). DataBytes is always the uncompressed size.
     /// </summary>
     public static void Write(string path, int size, int mips, PixelFormat format, ReadOnlySpan<byte> chain, bool compress)
+        => Write(path, size, mips, format, chain, compress ? FileKind.Brotli : FileKind.Raw);
+
+    /// <summary>Writes a page as Kind 0 (raw), 1 (one Brotli stream) or 2 (chunked Brotli, <paramref name="chunkBytes"/> per chunk).</summary>
+    public static void Write(string path, int size, int mips, PixelFormat format, ReadOnlySpan<byte> chain, ushort kind, int chunkBytes = ChunkedBrotli.DefaultChunkBytes)
     {
         using var fs = File.Create(path);
-        StructIo.WriteHeader(fs, PackConst.MagicPage, compress ? FileKind.Brotli : FileKind.Raw);
+        StructIo.WriteHeader(fs, PackConst.MagicPage, kind);
         var h = new PageHeader { Width = (ushort)size, Height = (ushort)size, MipCount = (ushort)mips, Format = format, DataBytes = (uint)chain.Length };
-        if (!compress)
+        switch (kind)
         {
-            StructIo.Write(fs, in h);
-            fs.Write(chain);
-            return;
+            case FileKind.Raw:
+                StructIo.Write(fs, in h);
+                fs.Write(chain);
+                return;
+            case FileKind.Brotli:
+            {
+                using var br = new System.IO.Compression.BrotliStream(fs, new System.IO.Compression.BrotliCompressionOptions { Quality = BrotliQuality });
+                StructIo.Write(br, in h);
+                br.Write(chain);
+                return;
+            }
+            case FileKind.ChunkedBrotli:
+            {
+                int hs = StructIo.SizeOf<PageHeader>();
+                var logical = System.Buffers.ArrayPool<byte>.Shared.Rent(hs + chain.Length);
+                try
+                {
+                    System.Runtime.InteropServices.MemoryMarshal.Write(logical, in h);
+                    chain.CopyTo(logical.AsSpan(hs));
+                    ChunkedBrotli.Write(fs, logical.AsSpan(0, hs + chain.Length), chunkBytes);
+                }
+                finally { System.Buffers.ArrayPool<byte>.Shared.Return(logical); }
+                return;
+            }
+            default: throw new ArgumentOutOfRangeException(nameof(kind));
         }
-        using var br = new System.IO.Compression.BrotliStream(fs, new System.IO.Compression.BrotliCompressionOptions { Quality = BrotliQuality });
-        StructIo.Write(br, in h);
-        br.Write(chain);
     }
 
     /// <summary>
-    /// Opens a page (Kind 0 or 1) and returns a stream positioned at the start of the mip chain, plus the header.
-    /// For Kind 1 the stream is a forward-only streaming Brotli decoder. Dispose it when done.
+    /// Opens a page (Kind 0, 1 or 2) and returns a stream positioned at the start of the mip chain, plus the header.
+    /// For Kind 1/2 the stream is a forward-only decoder. Dispose it when done.
     /// </summary>
     public static Stream OpenChain(string path, out PageHeader header)
     {
@@ -102,6 +126,7 @@ public static class AtlasPage
             {
                 FileKind.Raw => fs,
                 FileKind.Brotli => new System.IO.Compression.BrotliStream(fs, System.IO.Compression.CompressionMode.Decompress),
+                FileKind.ChunkedBrotli => new ChunkedBrotliStream(fs),
                 _ => throw new InvalidDataException($"Unknown page kind {fh.Kind}"),
             };
             header = StructIo.Read<PageHeader>(s);
@@ -122,6 +147,27 @@ public static class AtlasPage
     {
         using var s = OpenChain(path, out var h);
         s.ReadExactly(into[..(int)h.DataBytes]);
+        return h;
+    }
+
+    /// <summary>
+    /// As <see cref="Read(string, Span{byte})"/>, but a Kind=2 page is decoded by <paramref name="decoder"/>'s workers
+    /// straight into <paramref name="into"/> (chunk 0 goes through a worker scratch buffer to split off the PageHeader).
+    /// </summary>
+    public static PageHeader Read(string path, Span<byte> into, ChunkedBrotliDecoder decoder)
+    {
+        using var fh = File.OpenHandle(path);
+        FileHeader f = default;
+        RandomAccess.Read(fh, System.Runtime.InteropServices.MemoryMarshal.AsBytes(new Span<FileHeader>(ref f)), 0);
+        if (f.Magic != PackConst.MagicPage) throw new InvalidDataException($"Bad magic 0x{f.Magic:X8}");
+        if (f.Kind != FileKind.ChunkedBrotli)
+        {
+            fh.Dispose();
+            return Read(path, into);
+        }
+        PageHeader h = default;
+        int hs = StructIo.SizeOf<PageHeader>();
+        decoder.Decode(fh, StructIo.SizeOf<FileHeader>(), into, hs, System.Runtime.InteropServices.MemoryMarshal.AsBytes(new Span<PageHeader>(ref h)));
         return h;
     }
 }
@@ -199,6 +245,16 @@ public static class RegionFile
         FileHeader fh;
         using (var hms = new MemoryStream(fileBytes, 0, hs, writable: false)) fh = StructIo.ReadHeaderFull(hms, PackConst.MagicRegion);
         if (fh.Kind == FileKind.Raw) return fileBytes;
+        if (fh.Kind == FileKind.ChunkedBrotli)
+        {
+            var body = fileBytes.AsSpan(hs);
+            var ch = System.Runtime.InteropServices.MemoryMarshal.Read<ChunkedHeader>(body);
+            var res = new byte[hs + (long)ch.LogicalBytes];
+            fileBytes.AsSpan(0, hs).CopyTo(res);
+            ChunkedBrotli.Decode(body, res.AsSpan(hs));
+            res[6] = 0; res[7] = 0;
+            return res;
+        }
         if (fh.Kind != FileKind.Brotli) throw new InvalidDataException($"Unknown region kind {fh.Kind}");
         using var outMs = new MemoryStream(fileBytes.Length * 6);
         outMs.Write(fileBytes, 0, hs); // the logical file keeps its header so block offsets stay file-relative
@@ -209,7 +265,7 @@ public static class RegionFile
         return logical;
     }
 
-    /// <summary>Parses a region from its file bytes (Kind 0, or Kind 1 = Brotli).</summary>
+    /// <summary>Parses a region from its file bytes (Kind 0, 1 = Brotli, or 2 = chunked Brotli).</summary>
     public static (RegionHeader Header, BlockData[] Blocks) Parse(byte[] fileBytes)
     {
         var bytes = Decompress(fileBytes);
@@ -344,6 +400,39 @@ public static class AnimDataFile
         var entries = new AnimDataEntry[StructIo.Read<int>(fs)];
         StructIo.ReadSpan<AnimDataEntry>(fs, entries);
         return entries;
+    }
+}
+
+/// <summary>
+/// anim/palettes.bin (experimental, Indexed8 anim pages): paletteCount i32, frameCount i32, u32 FramePalette[frameCount]
+/// (palette id per AnimFrameEntry, uint.MaxValue for absent frames), then u16 Palettes[paletteCount * 256] as B5G5R5A1.
+/// Entry 0 of every palette is 0 (transparent).
+/// </summary>
+public static class AnimPaletteFile
+{
+    public const string FileName = "palettes.bin";
+    public const int Entries = 256;
+
+    public static void Write(string path, ReadOnlySpan<uint> framePalette, ReadOnlySpan<ushort> palettes)
+    {
+        using var fs = File.Create(path);
+        StructIo.WriteHeader(fs, AnimConst.MagicPalettes);
+        StructIo.Write(fs, palettes.Length / Entries);
+        StructIo.Write(fs, framePalette.Length);
+        StructIo.WriteSpan(fs, framePalette);
+        StructIo.WriteSpan(fs, palettes);
+    }
+
+    public static (uint[] FramePalette, ushort[] Palettes) Read(string path)
+    {
+        using var fs = File.OpenRead(path);
+        StructIo.ReadHeader(fs, AnimConst.MagicPalettes);
+        int pc = StructIo.Read<int>(fs);
+        var fp = new uint[StructIo.Read<int>(fs)];
+        var pal = new ushort[pc * Entries];
+        StructIo.ReadSpan<uint>(fs, fp);
+        StructIo.ReadSpan<ushort>(fs, pal);
+        return (fp, pal);
     }
 }
 
