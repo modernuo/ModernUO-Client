@@ -28,6 +28,16 @@ Format: **what**, where (file:line), why it should help, evidence or estimate, a
 - **Expanding 16-bit pages to RGBA8 costs 3–5 ms per page in the renderer, against 1.2 ms in a microbenchmark.** The suspect is writes into write-combined upload memory. Fix: expand into cached scratch memory, then memcpy, or let the GPU expand with a compute shader. Only matters on the RGBA8 fallback path (WebGPU).
 - **Co-occurrence page packing (v2).** Fewer pages touched per screen. Method in pack-format-v0.md.
 
+## Uo.Render / slice (reported by the renderer agent, 2026-10-24)
+
+- **The global `ChunkedBrotliDecoder` lock serialises Kind 2 page jobs** (PageResidency.cs:110), causing 13–17 ms waits in bursts. Fix: a decoder per staging slot with fewer threads, or chunk jobs on the WorkerPool.
+- **The Indexed8 shader always does 4 index loads plus 4 palette loads** (sprite.hlsl:181). Fix: a single-tap branch when the sample is sharp and the fraction is 0, as at zoom 1.
+- **Three entity lookups per mobile in the extract** (Flags, Serial, Equipment; Uo.Client RenderExtract.cs:119). Fix: a query over those components, iterating chunk spans.
+- **The extract walks 23 equipment layers per human per frame** (Animation.cs:240). Fix: cache a compacted, ordered slot list when equipment changes.
+- **`ReadHeader` on Kind 2 decodes all of chunk 0 (1 MiB) per page at startup** (PackSet.cs:65,83). Fix: decode only the PageHeader bytes.
+- **All 37.9k palettes (18.5 MiB VRAM) plus a 4 MB FramePalette table load at startup** (PackSet.cs:92). Fix: stream them per body.
+- **Dynamic instances re-upload every frame** (Renderer.cs:314), about 400 KB at 5000 mobiles. Fine for now; ties in with ground-item chunk baking.
+
 ## Pipelining
 
 - **No evidence ClassicUO 2.0 pipelines,** apart from a host upload worker. Revisit a render thread, or overlapping the next update with submission, only if Present or submit is still ≥30% of the frame after the items above.
