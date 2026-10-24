@@ -52,6 +52,18 @@ Supporting material in this branch:
   - Measured with 16-bit pages: about 3 ms per raw page versus about 25 ms to decode Brotli, on a worker thread. The render thread's cost is the same either way (0.3–0.4 ms per page upload).
   - On disk the 16-bit pack is 435 MB raw versus 142 MB compressed.
   - Platforms that must keep pages compressed at rest (mobile storage, browser storage) use **chunked Brotli**: independent ~1 MiB streams that workers decode in parallel. See "Distribution and chunked compression" in pack-format-v0.md.
+  - **Superseded the same day:** the owner accepts compressed-at-rest when decode is fast, and raw animations would be 6.7 GiB. See the final profile below.
+- **Final pack profile, format 1.0 (2026-10-24).** Based on the animation storage investigation in pack-format-v0.md.
+  - **Art and texmaps:** B5G5R5A1, 2048² pages, full mip chain, **chunked Brotli (Kind 2), 1 MiB chunks**. Decode takes about 4 ms per page with 8 workers.
+  - **Animations:** **Indexed8, 1024² pages, no mips**, plus `palettes.bin` (37.9k deduplicated 256-entry B5G5R5A1 palettes, 6 MB compressed). Also Kind 2 (one chunk per page at 1 MiB).
+    - Lossless: 0 mismatches against the 16-bit pack.
+    - Size: 0.63 GB compressed, 2.6 GiB raw.
+    - About 0.3 MB on disk and 1 MiB of VRAM for a human's walk, run and stand.
+    - No mips are needed: ClassicUO's minimum zoom is 0.5, and at 0.5 the shader's manual bilinear filter is within 5/255 of the 16-bit mip.
+    - The shader does the palette lookup and filtering by hand: an R8_UINT array, palettes in a storage buffer, the palette id per instance, and hue applied after the lookup.
+  - **Regions:** Kind 1 (small, 2–5 ms to decode).
+  - **No install-time unpacking is required.** Raw is still valid for any file, for delta patching.
+  - The ship profile has no BC7/ASTC/RGBA8 pages. The RGBA8 expansion stays a runtime fallback for 16-bit pages only (WebGPU). Indexed8 needs no fallback.
 - **Page packing by co-occurrence is planned for v2:** sprites that appear together go on the same pages. The method is in pack-format-v0.md.
 - **Compression is per file** (`FileHeader.Kind`: 0 = raw, 1 = Brotli), and **raw packs are always valid**: shard owners may ship large uncompressed packs for easy binary delta patching, since the manifest's per-file sha256 identifies what changed.
 - **UltimaLive:** optional; drop it if it costs performance. Format v0 supports it cheaply at block granularity.
