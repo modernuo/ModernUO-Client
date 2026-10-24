@@ -1,0 +1,118 @@
+diff --git a/lib/FNA3D/include/FNA3D_SysRenderer.h b/lib/FNA3D/include/FNA3D_SysRenderer.h
+index 33566ef..d736672 100644
+--- a/lib/FNA3D/include/FNA3D_SysRenderer.h
++++ b/lib/FNA3D/include/FNA3D_SysRenderer.h
+@@ -86,6 +86,12 @@ typedef struct FNA3D_SysRendererEXT
+ 			uint32_t queueFamilyIndex;
+ 		} vulkan;
+ #endif /* FNA3D_DRIVER_VULKAN */
++#if FNA3D_DRIVER_SDL
++		struct
++		{
++			void *device; /* SDL_GPUDevice* */
++		} sdlgpu;
++#endif /* FNA3D_DRIVER_SDL */
+ 		uint8_t filler[64];
+ 	} renderer;
+ } FNA3D_SysRendererEXT;
+@@ -147,6 +153,14 @@ FNA3DAPI FNA3D_Texture* FNA3D_CreateSysTextureEXT(
+ 	FNA3D_SysTextureEXT *systexture
+ );
+ 
++/* Export the SDL_GPUTexture* backing a texture or render target.
++ * Returns NULL if the device is not using the SDL_GPU driver.
++ */
++FNA3DAPI void* FNA3D_SDLGPU_GetTextureEXT(
++	FNA3D_Device *device,
++	FNA3D_Texture *texture
++);
++
+ #ifdef __cplusplus
+ }
+ #endif /* __cplusplus */
+diff --git a/lib/FNA3D/src/FNA3D_Driver_SDL.c b/lib/FNA3D/src/FNA3D_Driver_SDL.c
+index 6b56a74..38334d3 100644
+--- a/lib/FNA3D/src/FNA3D_Driver_SDL.c
++++ b/lib/FNA3D/src/FNA3D_Driver_SDL.c
+@@ -4177,9 +4177,11 @@ static void SDLGPU_GetSysRenderer(
+ 	FNA3D_Renderer *driverData,
+ 	FNA3D_SysRendererEXT *sysrenderer
+ ) {
+-	/* TODO */
++	SDLGPU_Renderer *renderer = (SDLGPU_Renderer*) driverData;
++
+ 	SDL_memset(sysrenderer, '\0', sizeof(FNA3D_SysRendererEXT));
+ 	sysrenderer->rendererType = FNA3D_RENDERER_TYPE_SDL_GPU_EXT;
++	sysrenderer->renderer.sdlgpu.device = renderer->device;
+ }
+ 
+ static FNA3D_Texture* SDLGPU_CreateSysTexture(
+@@ -4190,6 +4192,19 @@ static FNA3D_Texture* SDLGPU_CreateSysTexture(
+ 	return NULL;
+ }
+ 
++FNA3DAPI void* FNA3D_SDLGPU_GetTextureEXT(
++	FNA3D_Device *device,
++	FNA3D_Texture *texture
++) {
++	if (	device == NULL ||
++		texture == NULL ||
++		device->GetSysRenderer != SDLGPU_GetSysRenderer	)
++	{
++		return NULL;
++	}
++	return ((SDLGPU_TextureHandle*) texture)->texture;
++}
++
+ /* Destroy */
+ 
+ static void SDLGPU_DestroyDevice(FNA3D_Device *device)
+diff --git a/src/Graphics/FNA3D.cs b/src/Graphics/FNA3D.cs
+index c7459b4..4e7fbef 100644
+--- a/src/Graphics/FNA3D.cs
++++ b/src/Graphics/FNA3D.cs
+@@ -864,6 +864,44 @@ namespace Microsoft.Xna.Framework.Graphics
+ 
+ 		#endregion
+ 
++		#region External Interop
++
++		public enum FNA3D_SysRendererTypeEXT
++		{
++			OpenGL,
++			Vulkan, /* REMOVED, DO NOT USE */
++			D3D11,
++			Metal, /* REMOVED, DO NOT USE */
++			SDL_GPU
++		}
++
++		/* Only the SDL_GPU member of the renderer union is mapped */
++		[StructLayout(LayoutKind.Explicit, Size = 72)]
++		public struct FNA3D_SysRendererEXT
++		{
++			[FieldOffset(0)]
++			public uint version;
++			[FieldOffset(4)]
++			public FNA3D_SysRendererTypeEXT rendererType;
++			[FieldOffset(8)]
++			public IntPtr sdlgpuDevice; /* SDL_GPUDevice* */
++		}
++
++		[DllImport(nativeLibName, CallingConvention = CallingConvention.Cdecl)]
++		public static extern void FNA3D_GetSysRendererEXT(
++			IntPtr device,
++			ref FNA3D_SysRendererEXT sysrenderer
++		);
++
++		/* IntPtr refers to an SDL_GPUTexture* */
++		[DllImport(nativeLibName, CallingConvention = CallingConvention.Cdecl)]
++		public static extern IntPtr FNA3D_SDLGPU_GetTextureEXT(
++			IntPtr device,
++			IntPtr texture
++		);
++
++		#endregion
++
+ 		#region Image Read API
+ 
+ 		[UnmanagedFunctionPointer(CallingConvention.Cdecl)]
