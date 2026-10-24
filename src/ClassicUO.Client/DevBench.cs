@@ -20,6 +20,7 @@ namespace ClassicUO
     //   plan entries effect:x y z:graphic[:blend] and moving:x y z:x y z:graphic[:blend] spawn client-side effects; shot:name saves a world shot now; season:winter changes the season locally
     //   itemhue:hex,hex,... sets the hues of the nearest ground items, ghost:on|off swaps the player body (local-only render checks)
     //   CUO_BENCH_TOPMOST=1 keep the window on top while benching (occluded windows are throttled)
+    //   plan entries size:WxH|max change the CUO_BENCH_SIZE client area mid-plan (max = maximised window)
     internal static class DevBench
     {
         public static readonly bool FrameStats = Environment.GetEnvironmentVariable("CUO_FRAMESTATS") == "1";
@@ -28,7 +29,7 @@ namespace ClassicUO
         private static readonly string[] _spots = Environment.GetEnvironmentVariable("CUO_BENCH_SPOTS")?.Split(';', StringSplitOptions.RemoveEmptyEntries);
         private static readonly bool _ui = Environment.GetEnvironmentVariable("CUO_BENCH_UI") == "1";
         private static readonly string[] _plan = Environment.GetEnvironmentVariable("CUO_BENCH_PLAN")?.Split(';', StringSplitOptions.RemoveEmptyEntries);
-        private static readonly string _size = Environment.GetEnvironmentVariable("CUO_BENCH_SIZE");
+        private static string _size = Environment.GetEnvironmentVariable("CUO_BENCH_SIZE");
         private static readonly bool _pick = Environment.GetEnvironmentVariable("CUO_BENCH_PICK") == "1";
         private static readonly string _shots = Environment.GetEnvironmentVariable("CUO_BENCH_SHOTS");
         private static readonly int _planWindows = int.TryParse(Environment.GetEnvironmentVariable("CUO_BENCH_WINDOWS"), out int w) ? w : 3;
@@ -638,17 +639,27 @@ namespace ClassicUO
                 return;
             }
 
-            string[] parts = _size.Split('x');
-            int pw = int.Parse(parts[0]), ph = int.Parse(parts[1]);
-
-            if (game.IsWindowMaximized())
+            if (_size == "max")
             {
-                game.RestoreWindow();
+                if (!game.IsWindowMaximized())
+                {
+                    game.MaximizeWindow();
+                }
             }
-
-            if (game.Window.ClientBounds.Width != pw || game.Window.ClientBounds.Height != ph)
+            else
             {
-                game.SetWindowSize(pw, ph);
+                string[] parts = _size.Split('x');
+                int pw = int.Parse(parts[0]), ph = int.Parse(parts[1]);
+
+                if (game.IsWindowMaximized())
+                {
+                    game.RestoreWindow();
+                }
+
+                if (game.Window.ClientBounds.Width != pw || game.Window.ClientBounds.Height != ph)
+                {
+                    game.SetWindowSize(pw, ph);
+                }
             }
 
             if (Configuration.ProfileManager.CurrentProfile is { } profile)
@@ -825,6 +836,17 @@ namespace ClassicUO
                             }
                         }
 
+                        _planIndex++;
+                        _stepAt = now + sec * 3;
+
+                        break;
+                    }
+
+                    if (_plan[_planIndex].StartsWith("size:"))
+                    {
+                        _size = _plan[_planIndex].Substring(5).Trim();
+                        ApplySize(game);
+                        Log.Info($"[bench] size {_size}");
                         _planIndex++;
                         _stepAt = now + sec * 3;
 
