@@ -101,6 +101,53 @@ The v1 additions are backward compatible: `FileHeader.Version` stays 0, and a v0
 - `Kind = 1`: the 16-byte `FileHeader` is followed by **one Brotli stream** (written at quality 5). It decompresses to exactly the bytes a Kind=0 file has after its `FileHeader`: the `RegionHeader`, the offset table, and the block records.
 - Block offsets are still relative to the start of the logical, uncompressed file, so they include the 16-byte header. The simplest reader rebuilds the logical file (the header plus the decompressed payload) and parses it as Kind 0. `RegionFile.Read/Parse` do this transparently. `RegionFile.Decompress(bytes)` returns the logical bytes as a valid Kind=0 file, with the Kind field reset to 0.
 
+### Distribution and chunked compression (decided 2026-10-24; Kind=2 not implemented yet)
+
+**Background measurements.** Measured on an i9-12900K with the 16-bit pack (`Uo.Render.exe --bench-formats`, 4K):
+- One 2048² 16-bit page is 10.7 MiB raw and 1.4–4.6 MiB compressed with Brotli q5.
+- `BrotliDecoder` decodes about 450–700 MB/s on one core. That is 14–32 ms per page, even for a nearly empty page, because the cost scales with output size.
+- A raw page read takes about 3 ms on a worker.
+- The render thread's upload cost per page is 0.3–0.4 ms in both cases.
+- Frame-time p99 is identical for raw and Brotli packs. The decode cost shows up only as latency for pages that aren't resident yet (login, teleport): sprites appear late.
+
+**Rules for implementers:**
+1. **Brotli for transport only (desktop).** The CDN and bundles carry Kind=1 files. The installer or patcher rewrites each Kind=1 page to Kind=0 once, after verifying the sha256 of the *compressed* file the manifest names. The runtime then reads raw. Readers must still accept any kind, because raw packs are always valid.
+2. **Chunked Brotli (`FileHeader.Kind = 2`) for compressed-at-rest platforms** (mobile app storage, browser OPFS/IndexedDB). The logical payload is the same as for Kind 0/1: every byte after the `FileHeader`. It is split into fixed-size chunks that compress independently, so N workers can decode one page at once and a reader can decode just the first chunk to get the `PageHeader`.
+
+   | Field | Type | Meaning |
+   |---|---|---|
+   | `ChunkBytes` | u32 | uncompressed chunk size; 1 MiB (1,048,576) by default; the last chunk may be shorter |
+   | `LogicalBytes` | u64 | total uncompressed payload size |
+   | `ChunkCount` | u32 | `ceil(LogicalBytes / ChunkBytes)` |
+   | `CompressedSize[ChunkCount]` | u32[] | compressed size of each chunk; offsets are prefix sums from the end of this table |
+   | chunks | bytes | `ChunkCount` independent Brotli streams; chunk `i` decodes to logical bytes `[i·ChunkBytes, (i+1)·ChunkBytes)` |
+
+   - Decode each chunk straight into the staging buffer at its logical offset, so no intermediate copy is needed. Chunk 0 contains the `PageHeader` (and for regions the `RegionHeader` and offset table).
+   - With 8 workers, latency for a 10.7 MiB page drops from about 25 ms to about 3–4 ms.
+   - The compression ratio cost of 1 MiB chunks is small, because Brotli's window is already limited (q5 uses lgwin 22, i.e. 4 MiB). Measure this when implementing.
+   - The same layout works for regions. Region payloads are small (2–5 ms decode), so Kind 1 stays fine for them.
+3. **Residency is the real mobile lever, not lossy compression.** 24 resident layers of 16-bit 2048² pages take 255 MiB of video memory. Mobile should use fewer layers or 1024² pages. The format allows any page size, but the converter still needs a `--page-size` option.
+
+### v2: page packing by co-occurrence (planned)
+
+**Problem.** Today sprites are packed into pages roughly in id order, so one visible sprite pulls in a whole 10.7 MiB page. Britain touches 9 of the 35 pages.
+
+**Goal.** Put sprites that appear on screen together on the same pages, so a screen touches few pages and walking rarely crosses into a new one.
+
+**How to determine co-occurrence** (all offline, in the converter, from map data):
+1. **Sample windows.** Tile every facet into screen-sized windows, e.g. 32×32 tiles, which is about a 1080p view at zoom 1, overlapping by half. For each window, record the set of land, texmap and static ids it uses, with multis expanded to their components. Each window is one "scene".
+2. **Weight by frequency.** Ids used in more than ~25% of windows (common grass, dirt, walls) are **global**. Pack them first into a small number of pages that stay resident permanently. They co-occur with everything, so grouping them elsewhere would only add noise.
+3. **Cluster the rest.** Use a cheap ordering instead of solving a graph partition:
+   - give each remaining id a feature, the centroid of the windows it appears in;
+   - order all ids along a Hilbert curve over the facets laid side by side (facet-major), using those centroids;
+   - fill pages in that order.
+
+   Nearby content, such as a town's buildings and decor, lands on the same pages. Optionally improve the order with a few passes of greedy swaps that reduce the metric below.
+4. **Non-map content** isn't in the map, so it uses heuristics. Item graphics seen only from the network (the server spawns them) are grouped by tiledata category and id range. Animations are grouped per body: all actions and directions of one body together, popular bodies first (from mobtypes and server spawn data if available).
+5. **Metric.** Report **average and p95 pages touched per window** and **page-change rate along random walks**, before and after. The converter prints these so a shard can see the effect of its custom art. This is the acceptance test for the v2 packer.
+
+The page format doesn't change. Only the sprite-to-page assignment changes, which the sprite table already records, so v2 packs stay readable by v1 renderers.
+
 ### Patch formats: unsupported by design
 
 `verdata.mul` and `mapdif*/mapdifl*/stadif*/stadifi*/stadifl*` are never read. Shard owners who rely on patches must merge them into the base files with their own tools before converting. The `map*x`/`statics*x`/`staidx*x` variants (`--xfiles`) are base files, not patches, and are supported.

@@ -35,7 +35,17 @@ Supporting material in this branch:
 - **Platforms:** desktop first, targeting NativeAOT. Keep the browser (WASM) and mobile possible without rebuilding the project. Steam Deck desirable.
 - **One process = one session.** No multiboxing.
 - **No patch formats:** verdata.mul and mapdif/stadif are never supported. Shard owners who use them must merge the patches into the base files with their own tooling before running our converter (2026-10-24).
-- **Texture format (2026-10-24):** the desktop profile is **16-bit lossless (`B5G5R5A1`)**, bit-exact to the source art. Pages are stored Brotli-compressed on disk and decompressed on worker threads while streaming into memory; SSDs make this stutter-free. **BC7 or ASTC is a separate pack profile** for mobile and web, built by the same converter with the same format (each page header records its format). There, assets are downloaded ahead of time into browser storage (e.g. OPFS/IndexedDB) or a mobile cache, then streamed into memory. The renderer uses one format per pack. **Compression is per file** (`FileHeader.Kind`: 0 = raw, 1 = Brotli), and **raw packs are always valid**: shard owners may ship large uncompressed packs for easy binary delta patching, since the manifest's per-file sha256 identifies what changed.
+- **Texture format (2026-10-24, revised the same day):** **16-bit lossless (`B5G5R5A1`) on every platform**, bit-exact to the source art.
+  - **Why not lossy:** lossy formats can't hue correctly. BC7 broke 31.8% of the gray pixels that partial hue depends on, and the best shader tolerance still left 3,981 of 27,287 hued pixels wrong. MobileUO shows phones handle 16-bit UO art fine.
+  - **Status of lossy:** BC7 support stays in the converter and renderer as an experiment, but it is not a shipping profile.
+  - **WebGPU** has no 16-bit packed format, so the web build expands pages to RGBA8 when it uploads them.
+  - **Mobile memory** is handled by residency (fewer or smaller pages), not by lossy compression.
+- **Brotli is for transport (2026-10-24).** Packs are downloaded Brotli-compressed. The installer or patcher unpacks pages to raw once, so runtime page loads are plain reads.
+  - Measured with 16-bit pages: about 3 ms per raw page versus about 25 ms to decode Brotli, on a worker thread. The render thread's cost is the same either way (0.3–0.4 ms per page upload).
+  - On disk the 16-bit pack is 435 MB raw versus 142 MB compressed.
+  - Platforms that must keep pages compressed at rest (mobile storage, browser storage) use **chunked Brotli**: independent ~1 MiB streams that workers decode in parallel. See "Distribution and chunked compression" in pack-format-v0.md.
+- **Page packing by co-occurrence is planned for v2:** sprites that appear together go on the same pages. The method is in pack-format-v0.md.
+- **Compression is per file** (`FileHeader.Kind`: 0 = raw, 1 = Brotli), and **raw packs are always valid**: shard owners may ship large uncompressed packs for easy binary delta patching, since the manifest's per-file sha256 identifies what changed.
 - **UltimaLive:** optional; drop it if it costs performance. Format v0 supports it cheaply at block granularity.
 - **Team:** a few engineers or engineering-adjacent people with AI assistance; nobody has ECS experience.
 
