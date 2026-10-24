@@ -3,26 +3,72 @@ using static SDL3.SDL;
 
 namespace Uo.Render;
 
-/// <summary>Reads one atlas page file straight into a mapped GPU transfer buffer (no main-thread memcpy).</summary>
+/// <summary>Reads one atlas page file straight into a mapped GPU transfer buffer (no main-thread memcpy).
+/// Kind 0: raw read into the mapped buffer. Kind 1 (Brotli): the compressed payload is read into a reusable per-job
+/// buffer and decoded with BrotliDecoder directly into the mapped buffer (no full-size intermediate copy).</summary>
 public sealed unsafe class PageJob : Job
 {
     public int Page, Slot;
     public string Path;
     public byte* Dst;
     public int Capacity;
-    public bool Ok;
+    public bool Ok, Compressed;
     public int Mips, Size;
+    public PixelFormat Format;
+    public long ReadTicks, DecodeTicks, FileBytes;
+    byte[] _compressed = new byte[1 << 20];
 
     public override void Run()
     {
         Ok = false;
+        Compressed = false;
+        DecodeTicks = 0;
+        long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
         using var fs = new FileStream(Path, FileMode.Open, FileAccess.Read, FileShare.Read, 1, FileOptions.SequentialScan);
-        Span<byte> hdr = stackalloc byte[16 + 16];
-        fs.ReadExactly(hdr);
-        var fh = System.Runtime.InteropServices.MemoryMarshal.Read<FileHeader>(hdr);
-        var ph = System.Runtime.InteropServices.MemoryMarshal.Read<PageHeader>(hdr[16..]);
-        if (fh.Magic != PackConst.MagicPage || ph.Format != PixelFormat.Rgba8 || ph.DataBytes > Capacity) return;
-        fs.ReadExactly(new Span<byte>(Dst, (int)ph.DataBytes));
+        FileBytes = fs.Length;
+        Span<byte> fhb = stackalloc byte[16];
+        fs.ReadExactly(fhb);
+        var fh = System.Runtime.InteropServices.MemoryMarshal.Read<FileHeader>(fhb);
+        if (fh.Magic != PackConst.MagicPage) return;
+        Span<byte> phb = stackalloc byte[16];
+        PageHeader ph;
+        if (fh.Kind == FileKind.Raw)
+        {
+            fs.ReadExactly(phb);
+            ph = System.Runtime.InteropServices.MemoryMarshal.Read<PageHeader>(phb);
+            if (ph.Format != Format || ph.DataBytes > Capacity) return;
+            fs.ReadExactly(new Span<byte>(Dst, (int)ph.DataBytes));
+            ReadTicks = System.Diagnostics.Stopwatch.GetTimestamp() - t0;
+        }
+        else if (fh.Kind == FileKind.Brotli)
+        {
+            Compressed = true;
+            int n = (int)(fs.Length - 16);
+            if (_compressed.Length < n) _compressed = new byte[n + (n >> 3)];
+            fs.ReadExactly(_compressed.AsSpan(0, n));
+            long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
+            ReadTicks = t1 - t0;
+            using var dec = new System.IO.Compression.BrotliDecoder();
+            var src = new ReadOnlySpan<byte>(_compressed, 0, n);
+            // 1) the PageHeader (16 bytes) into a stack span
+            var st = dec.Decompress(src, phb, out int used, out int wrote);
+            if (wrote != 16) return;
+            src = src[used..];
+            ph = System.Runtime.InteropServices.MemoryMarshal.Read<PageHeader>(phb);
+            if (ph.Format != Format || ph.DataBytes > Capacity) return;
+            // 2) the mip chain straight into the mapped transfer buffer
+            var dst = new Span<byte>(Dst, (int)ph.DataBytes);
+            int total = 0;
+            while (total < dst.Length)
+            {
+                st = dec.Decompress(src, dst[total..], out used, out wrote);
+                src = src[used..];
+                total += wrote;
+                if (st == System.Buffers.OperationStatus.InvalidData || (used == 0 && wrote == 0)) return;
+            }
+            DecodeTicks = System.Diagnostics.Stopwatch.GetTimestamp() - t1;
+        }
+        else return;
         Mips = ph.MipCount;
         Size = ph.Width;
         Ok = true;
@@ -39,6 +85,10 @@ public sealed unsafe class PageResidency
     readonly IntPtr _device;
     public readonly IntPtr Texture;
     public readonly int Layers, LogicalCount, PageSize, MipCount;
+    public readonly PixelFormat Format;
+    public long ChainBytes => _chainBytes;
+    /// <summary>VRAM held by the page array: layers × chain bytes.</summary>
+    public long VramBytes => (long)Layers * _chainBytes;
     readonly PackSet _pack;
     readonly WorkerPool _workers;
 
@@ -69,15 +119,19 @@ public sealed unsafe class PageResidency
         _workers = workers;
         Layers = layers;
         LogicalCount = Math.Max(1, pack.PageCount);
-        PageSize = PackConst.PageSize;
-        MipCount = PackConst.PageMipCount;
+        PageSize = pack.PageSize;
+        MipCount = pack.PageMips;
+        Format = pack.Format;
         UploadBudget = uploadBudget;
-        _chainBytes = AtlasPage.ChainBytes(PageSize, MipCount);
+        _chainBytes = PageFormats.ChainBytes(PageSize, MipCount, Format);
+        var gpuFormat = PageFormats.Gpu(Format);
+        if (!SDL_GPUTextureSupportsFormat(device, gpuFormat, SDL_GPUTextureType.SDL_GPU_TEXTURETYPE_2D_ARRAY, SDL_GPUTextureUsageFlags.SDL_GPU_TEXTUREUSAGE_SAMPLER))
+            throw new NotSupportedException($"GPU does not support {PageFormats.Name(Format)} ({gpuFormat}) as a sampled 2D array texture");
 
         var ci = new SDL_GPUTextureCreateInfo
         {
             type = SDL_GPUTextureType.SDL_GPU_TEXTURETYPE_2D_ARRAY,
-            format = SDL_GPUTextureFormat.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM,
+            format = gpuFormat,
             usage = SDL_GPUTextureUsageFlags.SDL_GPU_TEXTUREUSAGE_SAMPLER,
             width = (uint)PageSize, height = (uint)PageSize,
             layer_count_or_depth = (uint)layers,
@@ -105,7 +159,7 @@ public sealed unsafe class PageResidency
         {
             var tci = new SDL_GPUTransferBufferCreateInfo { usage = SDL_GPUTransferBufferUsage.SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD, size = (uint)_chainBytes };
             _staging[i] = SDL_CreateGPUTransferBuffer(device, in tci);
-            _jobs[i] = new PageJob { Slot = i, Capacity = _chainBytes };
+            _jobs[i] = new PageJob { Slot = i, Capacity = _chainBytes, Format = Format };
         }
     }
 
@@ -148,7 +202,9 @@ public sealed unsafe class PageResidency
                 break;
             }
             if (page < 0) break;
+            long tm = System.Diagnostics.Stopwatch.GetTimestamp();
             var ptr = SDL_MapGPUTransferBuffer(_device, _staging[s], true); // cycle: never stomp a buffer still being copied from
+            MainUploadTicks += System.Diagnostics.Stopwatch.GetTimestamp() - tm;
             if (ptr == IntPtr.Zero) { _state[page] = PState.None; break; }
             var job = _jobs[s];
             job.Page = page;
@@ -168,7 +224,21 @@ public sealed unsafe class PageResidency
         return false;
     }
 
-    public void OnLoaded(PageJob job) => _slotState[job.Slot] = 2;
+    public void OnLoaded(PageJob job)
+    {
+        ReadStats.Add(job); // worker: file read (+ Brotli decode) straight into the mapped staging buffer
+        ReadTicksSum += job.ReadTicks;
+        DecodeTicksSum += job.DecodeTicks;
+        FileBytesSum += job.FileBytes;
+        if (job.Compressed) CompressedPages++;
+        _slotState[job.Slot] = 2;
+    }
+
+    /// <summary>Worker page read time, and main-thread time to map a staging buffer plus unmap + record the mip copies.</summary>
+    public JobStats ReadStats;
+    public long MainUploadTicks, MainUploadCount;
+    public long ReadTicksSum, DecodeTicksSum, FileBytesSum;
+    public int CompressedPages;
 
     /// <summary>Uploads loaded pages (up to the budget) into free or least-recently-used layers. Call inside a copy pass.</summary>
     public void Upload(IntPtr copyPass, long frame)
@@ -198,6 +268,7 @@ public sealed unsafe class PageResidency
                 ResidentCount--;
                 Evictions++;
             }
+            long tu = System.Diagnostics.Stopwatch.GetTimestamp();
             SDL_UnmapGPUTransferBuffer(_device, _staging[s]);
             uint offset = 0;
             int mips = Math.Min(job.Mips, MipCount);
@@ -207,8 +278,10 @@ public sealed unsafe class PageResidency
                 var src = new SDL_GPUTextureTransferInfo { transfer_buffer = _staging[s], offset = offset, pixels_per_row = dim, rows_per_layer = dim };
                 var dst = new SDL_GPUTextureRegion { texture = Texture, mip_level = (uint)m, layer = (uint)layer, w = dim, h = dim, d = 1 };
                 SDL_UploadToGPUTexture(copyPass, in src, in dst, false);
-                offset += dim * dim * 4;
+                offset += (uint)PageFormats.MipBytes(job.Size, m, Format);
             }
+            MainUploadTicks += System.Diagnostics.Stopwatch.GetTimestamp() - tu;
+            MainUploadCount++;
             _layerOf[page] = layer;
             _logicalOf[layer] = page;
             _layerUsed[layer] = frame;

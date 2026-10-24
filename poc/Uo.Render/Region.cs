@@ -19,10 +19,11 @@ public sealed class Region
     public void Parse(string path)
     {
         if (!File.Exists(path)) { Data = null; BlocksW = BlocksH = 0; return; }
-        var bytes = File.ReadAllBytes(path);
+        // Kind 1 (v1): Brotli payload after the FileHeader. Decompressed here, on the worker, into the logical
+        // Kind-0 file so block offsets stay file-relative.
+        var bytes = RegionFile.Decompress(File.ReadAllBytes(path));
         var fh = MemoryMarshal.Read<FileHeader>(bytes);
         if (fh.Magic != PackConst.MagicRegion) throw new InvalidDataException($"{path}: bad magic");
-        if (fh.Kind != 0) throw new NotSupportedException($"{path}: region kind {fh.Kind} (v1 Brotli) not supported by the renderer yet");
         var rh = MemoryMarshal.Read<RegionHeader>(bytes.AsSpan(Unsafe.SizeOf<FileHeader>()));
         BlocksW = rh.BlocksW;
         BlocksH = rh.BlocksH;

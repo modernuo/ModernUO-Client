@@ -225,6 +225,38 @@ public sealed unsafe class ChunkStore
         _regionJobPool.Push(job);
     }
 
+    /// <summary>Debug: injects a hand-built instance list as one chunk (uploaded through the normal path).
+    /// Used by --hue-sheet with map streaming disabled.</summary>
+    public void InjectDebugChunk(SpriteInstance[] instances, int count)
+    {
+        int slot = _freeSlots[--_freeCount];
+        _map[-1] = slot;
+        _key[slot] = -1;
+        _activePos[slot] = _activeCount;
+        _active[_activeCount++] = slot;
+        var job = _jobPool.Pop();
+        if (job.Instances.Length < count) job.Instances = new SpriteInstance[count];
+        Array.Copy(instances, job.Instances, count);
+        job.Count = count;
+        job.MinX = job.MinY = int.MaxValue; job.MaxX = job.MaxY = int.MinValue;
+        job.PageCount = 0;
+        for (int i = 0; i < count; i++)
+        {
+            ref var e = ref instances[i];
+            job.MinX = Math.Min(job.MinX, e.X); job.MinY = Math.Min(job.MinY, e.Y);
+            job.MaxX = Math.Max(job.MaxX, e.X + (int)(e.Whf & 0xFFF)); job.MaxY = Math.Max(job.MaxY, e.Y + (int)((e.Whf >> 12) & 0xFFF));
+            ushort pg = (ushort)(e.PageHue & 0xFFFF);
+            bool have = false;
+            for (int k = 0; k < job.PageCount; k++) have |= job.Pages[k] == pg;
+            if (!have && job.PageCount < job.Pages.Length) job.Pages[job.PageCount++] = pg;
+        }
+        job.Slot = slot;
+        _job[slot] = job;
+        _state[slot] = State.Baking;
+        BakesInFlight++;
+        OnBaked(job);
+    }
+
     public void OnBaked(BakeJob job)
     {
         BakeStats.Add(job);
