@@ -38,6 +38,7 @@
 #define FLAG_SHARP    0x100u  // set by the vertex shader from the Sharp uniform
 #define FLAG_UNPREMUL 0x200u  // FormatFlags bit 0 << 9
 #define FLAG_GRAYTOL  0x400u  // FormatFlags bit 1 << 9
+#define FLAG_TILE     0x800u  // zoomed out, baked 44x44 tile (land or floor/water static diamond, or FLAG_STRETCH texmap): SampleTile
 #define FLAG_ADDITIVE 0x1000000u // hueFlags.y: additive output (alpha 0 under the premultiplied blend)
 // hueFlags.y bits 12-15: mode, 16-23: alpha
 #define MODE_NORMAL   0u
@@ -131,7 +132,11 @@ struct VSOut
     nointerpolation float atlasSize : TEXCOORD3; // the fragment stage can't read the vertex cbuffer (space1)
     nointerpolation float grayTol : TEXCOORD4;
     nointerpolation float4 cot : TEXCOORD5; // centre (target px), radius, COT_* mode
+    nointerpolation float4 rect : TEXCOORD6; // FLAG_TILE: the sprite's atlas rect in texels (x0, y0, x1, y1)
 };
+
+// Must match the linear sampler's max_lod (Renderer.cs _samplerLinear).
+#define LINEAR_MAX_LOD 1.5
 
 static const uint Corner[6] = { 0, 1, 2, 2, 1, 3 };
 static const float2 Diamond[4] = { float2(22, 0), float2(44, 22), float2(0, 22), float2(22, 44) };
@@ -149,7 +154,7 @@ VSOut Collapsed()
 {
     VSOut o;
     o.pos = float4(-2, -2, 0, 1);
-    o.uvw = 0; o.hueFlags = 0; o.light = 0; o.atlasSize = 1; o.grayTol = 0; o.cot = 0;
+    o.uvw = 0; o.hueFlags = 0; o.light = 0; o.atlasSize = 1; o.grayTol = 0; o.cot = 0; o.rect = 0;
     return o;
 }
 
@@ -283,8 +288,13 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     float2 uv = float2(inst.uv & 0xFFFF, inst.uv >> 16) + tc * float2(w, h);
     o.uvw = float3(uv * (indexed ? InvAnimAtlas : InvAtlas), layer);
     uint pal = indexed ? (inst.corners & 0xFFFF) : 0u;
+    // Zoomed out, baked tiles that sit edge to edge (land, and statics whose trimmed art fills 44x44: floors, static
+    // water) take SampleTile, which keeps them seamless. Flat land art is always an untrimmed 44x44 diamond in the pack.
+    bool tile = Sharp == 0 && zTest && !indexed && ((flags & FLAG_STRETCH) != 0 || (w == 44.0 && h == 44.0));
+    float2 uv0 = float2(inst.uv & 0xFFFF, inst.uv >> 16);
+    o.rect = tile ? float4(uv0, uv0 + float2(w, h)) : 0;
     o.hueFlags = uint2(hueRow | (pal << 16),
-        flags | (Sharp != 0 ? FLAG_SHARP : 0u) | ((FormatFlags & 3u) << 9) | (mode << 12) | (alpha << 16)
+        flags | (tile ? FLAG_TILE : 0u) | (Sharp != 0 ? FLAG_SHARP : 0u) | ((FormatFlags & 3u) << 9) | (mode << 12) | (alpha << 16)
         | ((lbits & LIGHT_ADDITIVE) != 0 ? FLAG_ADDITIVE : 0u));
     o.light = light;
     o.atlasSize = indexed ? AnimAtlasSize : AtlasSize;
@@ -392,6 +402,41 @@ float4 PSIndexed(VSOut i, uint flags, float cotAlpha)
     return Finish(rgb / a * i.light, flags, cotAlpha);
 }
 
+// Zoomed-out (trilinear) baked tiles without seams. Plain trilinear sampling drew a dark grid along tile edges:
+//  - flat land and 44x44 floor / water statics: the 0.5 alpha test ran on filtered alpha, so where the footprint
+//    straddled a diamond edge both neighbours could discard (a gap), and the colour blended in the transparent black
+//    texels outside the diamond;
+//  - stretched land: at mip 1+ the footprint reached past the 2-texel gutter into neighbouring atlas sprites.
+// Flat tiles take their coverage from the mip0 texel under the fragment, exactly ClassicUO's point-sampled diamond, which
+// tiles with its neighbours. Colour stays trilinear with the original gradients (same mip levels as before, so no new
+// shimmer or blur):
+//  - the sample position is clamped into the sprite's rect, inset so that a tap's mip texel (it spans up to 1.5 s
+//    texels from the sample point, s = the coarsest level's texel size) stays inside the 2-texel gutter;
+//  - flat tiles are un-premultiplied: B5G5R5A1 texels are either opaque or 0 (the converter stores mip texels under 0.5
+//    alpha as 0), so the filtered colour is premultiplied by the filtered alpha and colour / alpha is the average of
+//    the diamond's own taps. Where no tap is opaque, the mip0 texel's colour is used.
+float4 SampleTile(VSOut i, uint flags)
+{
+    float2 t = i.uvw.xy * i.atlasSize;
+    float2 gx = ddx(i.uvw.xy), gy = ddy(i.uvw.xy);
+    float rho = max(length(gx), length(gy)) * i.atlasSize;
+    float s = exp2(ceil(clamp(log2(max(rho, 1e-6)), 0.0, LINEAR_MAX_LOD)));
+    float m = max(0.0, 1.5 * s - 2.0);
+    float2 q = clamp(t, i.rect.xy + m, i.rect.zw - m);
+    float4 c = Atlas.SampleGrad(AtlasSmp, float3(q / i.atlasSize, i.uvw.z), gx, gy);
+    if ((flags & FLAG_STRETCH) == 0)
+    {
+        // At scales such as exactly 0.5 the pixel centres land on texel edges, where the interpolated UV's rounding
+        // error decided per tile which side won: both neighbours could reject the pixel (a gap). Every tile shares the
+        // pixel's true fraction (tile origins are whole texels), so a bias far above that error picks the same side
+        // for all of them.
+        float4 p = Atlas.Load(int4((int2)floor(t + 1.0 / 64), (int)i.uvw.z, 0));
+        const float k = 1.0 / 256;
+        c = float4((c.rgb + p.rgb * k) / (c.a + k), p.a);
+    }
+    return c;
+}
+
 float4 PSMain(VSOut i) : SV_Target
 {
     float cotAlpha = CotAlpha(i.pos, i.cot);
@@ -409,6 +454,10 @@ float4 PSMain(VSOut i) : SV_Target
         float2 off = sign(d) * 0.5 * saturate((abs(d) - 0.5) / (fw * 0.5) + 1.0);
         float2 uv = (floor(t) + 0.5 + off) / i.atlasSize;
         c = Atlas.SampleLevel(AtlasSmp, float3(uv, i.uvw.z), 0);
+    }
+    else if (i.hueFlags.y & FLAG_TILE)
+    {
+        c = SampleTile(i, i.hueFlags.y);
     }
     else
     {
