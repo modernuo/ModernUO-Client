@@ -105,6 +105,25 @@ Revisit if the root cause turns out to be a pure SDL bug (case 1). Owning the de
 - **Audio:** call FAudio directly, or SDL3 audio streams (3 files).
 - **Effort:** 3–5 days. **Perf:** small, from `System.Numerics` SIMD in hot math.
 
+## UltimaBatcher2D and UI improvements (worth doing at any tier)
+
+These pay off on FNA today and carry over into the Tier 2 backend. They're also listed in perf-opportunities.md. Measured context: 16–25 batcher flushes per frame in Gpu mode; time inside FNA calls 0.08–0.11 ms at zoom 1; about 17.5 KB allocated per frame, about 90% of it in the UI draw path.
+
+| # | Change | Where | Why |
+|---|---|---|---|
+| B1 | Dirty-track matrices, viewport and effect parameters; call `Pass.Apply()` only on a state change, not every flush | `Batcher2D.ApplyStates`, `DrawDirectIndexed` | `Effect.INTERNAL_applyEffect` 9.4% and `ApplyStates` 8.1% of CPU samples (step 7b) |
+| B2 | Replace per-draw closures with struct commands in pooled lists | `RenderLists.AddGumpWithAtlas/NoAtlas`; `GumpPic`, `GumpPicTiled`, `Button`, `HtmlControl.AddToRenderLists` | About 60% of per-frame allocation |
+| B3 | Early-return before the closure in `Control.DrawDebug` | Control.cs:328 | About 20% of per-frame allocation, even with debug off |
+| B4 | Reuse a cached `RenderLists` per control | `ResizePic`, `StbTextBox` render lambdas | A new `RenderLists` (seven `List<>`s) every frame |
+| B5 | Set the empty-slot tooltip only when the slot becomes empty | `PaperDollGump.EquipmentSlot.Update` | String building plus `SetTooltip` every frame |
+| B6 | Compact sprite format: a 32-byte instance (rect, UV, hue, flags) expanded by the vertex shader, instead of 4 × 48-byte vertices (192 bytes per sprite) | `PositionNormalTextureColor4`, batcher flush | About 6× less vertex upload and CPU writing. On FNA it needs instancing support; natural in the Tier 2 backend |
+| B7 | Upload ring: write sprites straight into a persistent mapped buffer (no-overwrite ring) instead of a CPU array copied with `SetData` | `_vertexBuffer` | Removes a copy per flush. Tier 2 backend |
+| B8 | Cache the UI render target and redraw it only when dirty | GameController.cs UI pass | UI redraw is skipped on most frames when nothing changed. Needs dirty tracking in `UIManager` |
+| B9 | Batch-key sorting: atlas id, blend, scissor | Batcher flush | Fewer flushes when gumps interleave atlases |
+
+- **B1–B5 are cheap and FNA-independent:** start now.
+- **B6–B7 are Tier 2 work** (or a Tier 1 seam feature). B8 and B9 can come after B2.
+
 ## Order relative to other work
 
 1. Tier 0 now; it overlaps the device-lost agent.
