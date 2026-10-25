@@ -43,6 +43,7 @@ namespace ClassicUO
         private static long _travelAt;
         private static bool _walkBack;
         private static int _planFrames;
+        private static bool _gumpsOpened;
         private static long _planStart;
         private static int _spot;
         private static Microsoft.Xna.Framework.Point? _mouse;
@@ -67,6 +68,12 @@ namespace ClassicUO
             if (Configuration.ProfileManager.CurrentProfile is { } profile)
             {
                 profile.ReduceFPSWhenInactive = false;
+
+                if (_shots != null)
+                {
+                    // keeps the timestamped "screenshot stored in" line out of the UI shots
+                    profile.HideScreenshotStoredInMessage = true;
+                }
 
                 if (_spots != null)
                 {
@@ -959,13 +966,33 @@ namespace ClassicUO
 
                     if (_plan[_planIndex] == "gumps")
                     {
-                        GameActions.OpenPaperdoll(world, world.Player.Serial);
-                        GameActions.OpenBackpack(world);
-                        GameActions.OpenJournal(world);
-                        GameActions.OpenStatusBar(world);
+                        if (!_gumpsOpened)
+                        {
+                            // the paperdoll and backpack come from the server; place them all on the next pass
+                            GameActions.OpenPaperdoll(world, world.Player.Serial);
+                            GameActions.OpenBackpack(world);
+                            GameActions.OpenJournal(world);
+                            GameActions.OpenStatusBar(world);
+                            _gumpsOpened = true;
+                            _stepAt = now + sec * 3;
+
+                            break;
+                        }
+
+                        foreach (var g in Game.Managers.UIManager.Gumps)
+                        {
+                            switch (g)
+                            {
+                                case Game.UI.Gumps.PaperDollGump: g.X = 20; g.Y = 150; break;
+                                case Game.UI.Gumps.ContainerGump: g.X = 300; g.Y = 150; break;
+                                case Game.UI.Gumps.StatusGumpBase: g.X = 520; g.Y = 40; break;
+                                case Game.UI.Gumps.JournalGump: g.X = 500; g.Y = 260; break;
+                            }
+                        }
+
                         Log.Info("[bench] gumps: paperdoll, backpack, journal, status");
                         _planIndex++;
-                        _stepAt = now + sec * 3;
+                        _stepAt = now + sec * 2;
 
                         break;
                     }
