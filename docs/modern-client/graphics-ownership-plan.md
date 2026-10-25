@@ -142,3 +142,15 @@ The seam from Tier 1 is also where a WebGPU backend plugs in later.
 | Hidden FNA behaviour (SamplerState defaults, premultiplied alpha, `SetData` row pitch) | Write down each FNA default as the seam is built, with a unit test per state mapping |
 | Plugin users | Out of scope (owner); the Batching command list is removed in Tier 1 |
 | SDL-level bug (if root cause is case 1) | Own lifetime management in Tier 2 (deferred destroy after the fence); keep the Aftermath stress gate; patch or report SDL if confirmed |
+
+## Upstream contributions (SDL, FNA3D)
+
+- **Both projects refuse AI-generated contributions.**
+  - SDL's `AGENTS.md` (since April 2026) says generative AI "should not be used in any way when contributing to SDL", including bug reports and pull requests.
+  - FNA3D has an equivalent rule.
+- **So agents never draft upstream issues or patches** for either project, not even as a starting point.
+- **Any upstream report or fix is written by the owner personally.** It is verified against upstream source on their own, not pasted or paraphrased from our docs.
+- **Our own patches live in our forks** (`ModernUO/SDL` once created, and the local FNA3D patch). They are pinned by submodule and dropped when upstream ships its own fix.
+- **Bugs found so far:**
+  - SDL Vulkan never releases command buffers after `VK_ERROR_DEVICE_LOST` (device-lost-leak.md).
+  - A suspected defragmenter page fault, still under investigation.
