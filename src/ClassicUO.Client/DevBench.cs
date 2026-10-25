@@ -29,6 +29,12 @@ namespace ClassicUO
     //   plan entries gpuskip:on|off switch the Gpu world prepare's skipping of baked land and statics (gpu_prepare_skip_baked)
     //   pickscan:CxR hovers a C x R grid of the game view and compares the selection with that skipping off and on; cot:on|off
     //   switches the circle of transparency
+    //   name:reinit drops the GPU world pass every 2 s (recreated next frame, as on a facet change); name:reinitrt also drops
+    //   the world render target (as at login). Each plan entry logs the world settle counters (WorldSettleGate) when it ends.
+    //   CUO_WORLD_HOLD=0    never hold the last world frame after a discontinuity (observe only: the before/after baseline)
+    //   CUO_WORLD_HOLD_TIMEOUT=ms  the hold's timeout (default 1500)
+    //   CUO_BENCH_TPSHOTS=dir[|frames]  ltravel/reinit/reinitrt: save the world target (and lights, UI) of each of the first
+    //   frames (default 8) after every teleport or recreation as dir/tpNN_fMM.png (what each frame shows: held or new)
     internal static class DevBench
     {
         public static readonly bool FrameStats = Environment.GetEnvironmentVariable("CUO_FRAMESTATS") == "1";
@@ -51,6 +57,15 @@ namespace ClassicUO
         private static ushort _ghostRestore, _bodyRestore;
         private static int _bodyNext, _bodiesShown, _glideX;
 
+        // cumulative world settle counters (WorldSettleGate): unsettled frames presented, frames held, hold durations
+        private static void LogSettle(Game.Scenes.GameScene gs, string where)
+        {
+            if (gs != null)
+            {
+                Log.Info($"[settle] {where}: hold {(gs.Settle.HoldEnabled ? "on" : "off")}; {gs.Settle.Stats}");
+            }
+        }
+
         // what the 0x20 player update does for a teleport, without the server: chunks, regions and art load as on a real teleport
         private static void LocalTeleport(World world, Game.Scenes.GameScene gs, int x, int y)
         {
@@ -67,6 +82,28 @@ namespace ClassicUO
             world.Player.SetInWorldTile((ushort)x, (ushort)y, z == -125 ? (sbyte)0 : z);
         }
         private static long _travelAt;
+        private static readonly string _tpShots = Environment.GetEnvironmentVariable("CUO_BENCH_TPSHOTS");
+        private static int _tpShotLeft, _tpShotIndex, _tpShotFrame;
+
+        private static void StartTeleportShots()
+        {
+            if (!string.IsNullOrEmpty(_tpShots))
+            {
+                string[] parts = _tpShots.Split('|');
+                _tpShotLeft = parts.Length > 1 && int.TryParse(parts[1], out int k) ? k : 8;
+                _tpShotIndex++;
+                _tpShotFrame = 0;
+            }
+        }
+
+        private static void TeleportShot(GameController game)
+        {
+            if (_tpShotLeft > 0)
+            {
+                _tpShotLeft--;
+                game.RequestWorldShot(System.IO.Path.Combine(_tpShots.Split('|')[0], $"tp{_tpShotIndex:00}_f{_tpShotFrame++:00}.png"));
+            }
+        }
         private static bool _walkBack;
         private static int _planFrames;
         private static bool _gumpsOpened;
@@ -898,6 +935,18 @@ namespace ClassicUO
                     // client-only teleports between towns (no staff account needed): the server keeps the real position
                     var (tx, ty) = _travel[_travelIndex++ % _travel.Length];
                     LocalTeleport(world, gs, tx, ty);
+                    StartTeleportShots();
+                    _travelAt = now + sec * 2;
+                }
+                else if ((mode == "reinit" || mode == "reinitrt") && now >= _travelAt)
+                {
+                    if (_planFrames > 1)
+                    {
+                        Log.Info($"[bench] {mode}: dropping the GPU world pass{(mode == "reinitrt" ? " and the world render target" : "")}");
+                        game.DebugRecreateGpuWorld(mode == "reinitrt");
+                        StartTeleportShots();
+                    }
+
                     _travelAt = now + sec * 2;
                 }
                 else if (mode == "glide" && now >= _travelAt)
@@ -943,6 +992,8 @@ namespace ClassicUO
                     _travelAt = now + sec / 2;
                 }
 
+                TeleportShot(game);
+
                 if (FrameStats ? ClassicUO.FrameStats.WindowsReported - _windowsAtStart >= _planWindows : now >= _stepAt)
                 {
                     ClassicUO.FrameStats.StopWindow();
@@ -957,6 +1008,7 @@ namespace ClassicUO
 
                     Log.Info($"[bench] {_plan[_planIndex]} done at {world.Player.X},{world.Player.Y},{world.Player.Z}, mobiles {world.Mobiles.Count}, items {world.Items.Count}, " +
                              $"{_planFrames * (double)sec / (now - _planStart):0} fps (update count), {(Renderer.UltimaBatcher2D.EffectApplies - _appliesAtStart) / (double)Math.Max(1, _planFrames):0.0} effect applies/frame");
+                    LogSettle(gs, _plan[_planIndex]);
                     _planIndex++;
                     _step = 1;
                     _stepAt = now + sec;
@@ -982,6 +1034,7 @@ namespace ClassicUO
                 case 1:
                     if (_planIndex >= _plan.Length)
                     {
+                        LogSettle(gs, "plan done");
                         Log.Info("[bench] plan done");
                         _step = 99;
 
@@ -1116,6 +1169,7 @@ namespace ClassicUO
 
                     if (_plan[_planIndex].StartsWith("world:"))
                     {
+                        LogSettle(gs, _plan[_planIndex]);
                         Configuration.Settings.GlobalSettings.WorldRenderer = _plan[_planIndex].Substring(6);
                         Log.Info($"[bench] world renderer {Configuration.Settings.GlobalSettings.WorldRenderer} (gpu available: {game.GetGpuWorld() != null})");
                         _planIndex++;
@@ -1259,7 +1313,7 @@ namespace ClassicUO
                         gs.Camera.Zoom = zoom;
                     }
 
-                    GameActions.Say(mode == "travel" || mode == "walk" || mode == "bodies" || mode == "ltravel" || mode == "glide" ? "[go 1495 1629" : $"[go {mode}");
+                    GameActions.Say(mode == "travel" || mode == "walk" || mode == "bodies" || mode == "ltravel" || mode == "glide" || mode == "reinit" || mode == "reinitrt" ? "[go 1495 1629" : $"[go {mode}");
                     _step = 2;
                     _stepAt = now + sec * 8;
 

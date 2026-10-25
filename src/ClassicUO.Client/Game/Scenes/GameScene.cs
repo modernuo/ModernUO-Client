@@ -1053,26 +1053,73 @@ namespace ClassicUO.Game.Scenes
             Viewport camera_viewport = Camera.GetViewport();
             Matrix matrix = Camera.ViewTransformMatrix;
 
-            bool can_draw_lights = false;
-
-            FrameStats.Begin(FramePhase.Lights);
-            can_draw_lights = PrepareLightsRendering(batcher, ref matrix, renderTargets);
-            FrameStats.End(FramePhase.Lights);
-            batcher.GraphicsDevice.Viewport = camera_viewport;
-
             var gpu = Client.Game.GetGpuWorld();
 
-            if (
-                gpu != null
-                && renderTargets.WorldRenderTarget?.RenderTargetUsage == RenderTargetUsage.PreserveContents
-                && gpu.EnsureFacet(_world.MapIndex)
-            )
+            if (gpu != null)
             {
-                DrawWorldGpu(batcher, ref matrix, renderTargets, gpu);
+                // No Legacy fallback: after a world entry, teleport, facet change or world-pass recreation the last presented
+                // world frame (and its lights) stays in the world and light targets while the GPU world streams, until its
+                // view is ready or the timeout passes (WorldSettleGate)
+                var target = renderTargets.WorldRenderTarget;
+                bool targetOk = target != null && !target.IsDisposed && target.RenderTargetUsage == RenderTargetUsage.PreserveContents;
+                bool ready = targetOk && gpu.EnsureFacet(_world.MapIndex);
+                bool hold = true;
+
+                if (ready)
+                {
+                    // the player's world pixel, which a teleport moves in Update: the draw offset (the camera) only follows
+                    // during this frame's list fill, after the hold decision
+                    var player = _world.Player;
+                    hold = _settle.Begin(Time.Ticks, gpu.World, _world.MapIndex, (player.X - player.Y) * 22, (player.X + player.Y) * 22 - (player.Z << 2),
+                        ReferenceEquals(target, _settleTarget));
+                    _settleTarget = target;
+                }
+
+                if (!hold)
+                {
+                    FrameStats.Begin(FramePhase.Lights);
+                    PrepareLightsRendering(batcher, ref matrix, renderTargets);
+                    FrameStats.End(FramePhase.Lights);
+                }
+                else
+                {
+                    // the light target keeps the held frame's lights
+                    InitializeRenderTargets(renderTargets);
+                    _lightCount = 0;
+                }
+
+                batcher.GraphicsDevice.Viewport = camera_viewport;
+
+                if (ready)
+                {
+                    DrawWorldGpu(batcher, ref matrix, renderTargets, gpu, hold);
+                    _settle.End(gpu.VisibleReady);
+
+                    if (SettleLog && !hold && !gpu.VisibleReady)
+                    {
+                        LogUnsettledFrame(gpu);
+                    }
+                }
+
+                renderTargets.WorldFade = ready ? _settle.Fade : 0f;
+            }
+            else if (GpuDeviceLost.WorldSetupFailed)
+            {
+                // the client exits at the end of this frame: no world, and never Legacy in its place
+                renderTargets.WorldFade = 0f;
             }
             else
             {
+                // the developer comparison mode (-worldrenderer legacy, DevBench world:legacy), never a fallback
+                FrameStats.Begin(FramePhase.Lights);
+                PrepareLightsRendering(batcher, ref matrix, renderTargets);
+                FrameStats.End(FramePhase.Lights);
+                batcher.GraphicsDevice.Viewport = camera_viewport;
+
                 DrawWorld(batcher, ref matrix, renderTargets);
+                _settle.OnOtherRenderer();
+                _settleTarget = renderTargets.WorldRenderTarget;
+                renderTargets.WorldFade = 1f;
                 FrameStats.Set(FrameCounter.GpuInstances, 0);
                 FrameStats.Set(FrameCounter.GpuDynamic, 0);
                 FrameStats.Set(FrameCounter.GpuOverrides, 0);

@@ -71,6 +71,7 @@ Driven by environment variables. Read the header comment in DevBench.cs for the 
 | `CUO_BENCH_UI=1`, `CUO_BENCH_SPOTS`, `CUO_BENCH_GO`, `CUO_BENCH_EXIT` | UI tour, screenshot spots, go-to, walk-and-quit |
 | `CUO_GPU_WATCH=1` | Logs GPU resource events (creation, cycling, defragmentation moves) |
 | `CUO_SIMULATE_DEVICE_LOST=<s>`, `CUO_DEVICE_LOST_NOEXIT=1` | Device-loss handler test switches |
+| `CUO_WORLD_HOLD=0`, `CUO_WORLD_SETTLE_LOG=1`, `CUO_BENCH_TPSHOTS=dir\|N` | World-settle switches: observe only (no hold), log each unsettled frame presented, per-frame shots after teleports. See [testing/world-settle.md](testing/world-settle.md) |
 
 **Plan entries:**
 - `name:x y:zoom` (go and measure), `travel`, `walk`, `say:text`;

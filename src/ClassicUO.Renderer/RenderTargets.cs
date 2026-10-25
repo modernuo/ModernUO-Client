@@ -29,6 +29,10 @@ namespace ClassicUO.Renderer
         // The GPU world pass draws into the world target outside FNA: FNA must load it instead of clearing it on bind.
         public bool PreserveWorldContents { get; set; }
 
+        // The world area's opacity over black (1 = normal): 0 while there is no world frame to show yet (first entry),
+        // then a short fade-in. Covers the world and its lights, not the UI.
+        public float WorldFade { get; set; } = 1f;
+
         public void SetLightsConfiguration(Func<BlendState> lightsBlendState, Func<Vector3> lightsHue)
         {
             _lightsBlendState = lightsBlendState;
@@ -139,6 +143,16 @@ namespace ClassicUO.Renderer
             );
 
             batcher.SetBlendState(null);
+
+            if (WorldFade < 1f)
+            {
+                batcher.Draw(
+                    SolidColorTextureCache.GetTexture(Color.Black),
+                    _gameWorldSceneOnScreen,
+                    new Vector3(0, 0, 1f - Math.Max(0f, WorldFade)),
+                    0f
+                );
+            }
 
             // Draw UI at original window size (render target is DPI-scaled but destination is not)
             batcher.Draw(

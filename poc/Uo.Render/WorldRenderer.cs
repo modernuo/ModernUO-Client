@@ -216,6 +216,12 @@ public sealed unsafe class WorldRenderer : IDisposable
     public bool Settled => Chunks.PendingChunks == 0 && Chunks.UploadQueueLength == 0 && !Pages.Pending && Pages.MissingVisible == 0
         && (AnimPages == null || !AnimPages.Pending && AnimPages.MissingVisible == 0);
 
+    /// <summary>The last frame drew everything its view needs: no chunk the view (with art margins) touches is still
+    /// loading or baking, and no page a visible sprite uses is missing. Unlike <see cref="Settled"/> it ignores the
+    /// prefetch ring and page loads nothing visible waits for, so a host can hold its previous frame until this is true.
+    /// Read after Render/Stream.</summary>
+    public bool VisibleReady => Chunks.MissingNear == 0 && Pages.MissingVisible == 0 && (AnimPages == null || AnimPages.MissingVisible == 0);
+
     // ---- dynamic sprites
 
     /// <summary>The next dynamic instance slot (zeroed), or a scratch slot when the frame's capacity is used up.</summary>
@@ -338,6 +344,16 @@ public sealed unsafe class WorldRenderer : IDisposable
         var fi = BuildFrame();
         fi.Target = target; fi.TargetWidth = width; fi.TargetHeight = height; fi.TargetFormat = format;
         fi.LoadTarget = load;
+        return Submit(ref fi);
+    }
+
+    /// <summary>Streams without drawing: this frame's chunk and page uploads run, no target is touched. A host that holds
+    /// its previous frame (after a teleport) calls this instead of <see cref="Render(IntPtr, uint, uint, SDL_GPUTextureFormat, bool)"/>
+    /// until <see cref="VisibleReady"/>.</summary>
+    public bool Stream()
+    {
+        var fi = BuildFrame();
+        fi.StreamOnly = true;
         return Submit(ref fi);
     }
 

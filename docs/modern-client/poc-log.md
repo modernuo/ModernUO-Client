@@ -633,3 +633,83 @@ Run-to-run stdev: Draw 0.02–0.3 ms; UI and composite 0.002–0.013 ms.
   - try `<DirectPInvoke>` for FNA3D and SDL3 with generated import libraries;
   - re-check on the current base, which now has the B1–B5 UI changes and W1.
 - **Procedure:** testing/aot-performance.md. Tools: tools/aot-bench, tools/pgo/collect_mibc.py.
+## World settle: hold the last frame on entry, teleports and recreation; Legacy is developer-only (2026-10-25)
+
+Branch `worktree-agent-ae4318b953711686b`. Fixes the known issue "Gpu world renderer: raw pop-in on world entry and teleports". Test procedure: [testing/world-settle.md](testing/world-settle.md).
+
+**Changes.**
+- **`WorldSettleGate`** (GameScene, pure logic, 11 unit tests) detects a discontinuity:
+  - the first world frame;
+  - the player moving more than 8 tiles in one frame;
+  - a facet change;
+  - a new world-pass instance;
+  - the first Gpu frame after Legacy frames.
+
+  The gate then holds until `WorldRenderer.VisibleReady` or 1.5 s, whichever comes first. While holding:
+  - the world and light targets keep the last presented frame;
+  - the GPU world only streams: `WorldRenderer.Stream()` runs the copy pass and draws nothing;
+  - GameScene's fill, picking and captures run as usual, and FNA's world-space draws go to the backbuffer, which the composite clears.
+
+  If there is no frame to hold (login, or a recreated target), the world area is black and then fades in over 250 ms. Walking never holds.
+- **Uo.Render:** `VisibleReady` is true when no unready chunk lies near the view (`ChunkStore.MissingNear`, the land footprint widened by the streaming's art margins) and no visible page or anim page is missing. It ignores the prefetch ring, unlike `Settled`.
+- **No Legacy fallback.**
+  - GameScene draws Legacy only when it is selected explicitly.
+  - A failed GPU world setup (no SDL_GPU device, pack error, facet pass error) logs the cause, saves and exits with `0xDEAF` (`GpuDeviceLost.FailWorldSetup`), the same way device loss exits. No Legacy frame is drawn first.
+- **Legacy is a developer comparison mode only.**
+  - `world_renderer` is now runtime-only, set by `-worldrenderer`, the `-worldrenderer` command or DevBench `world:legacy`.
+  - A saved `"world_renderer"` in settings.json is ignored with a warning and dropped on the next save.
+  - In game the world target is always `PreserveContents`, so a switch back from Legacy holds Legacy's last frame.
+- **DevBench additions:**
+  - `reinit` / `reinitrt` plan modes;
+  - `CUO_BENCH_TPSHOTS`;
+  - `[settle]` counters per plan entry;
+  - `CUO_WORLD_HOLD=0` (observe only, the baseline);
+  - `CUO_WORLD_SETTLE_LOG=1`.
+- **Teleport prefetch on the server packet:** not done. ClassicUO applies the 0x20/0x21 position in Update and draws the same frame, so there's no gap to prefetch in. The hold itself is what streams the destination before showing it.
+
+**Numbers.** Hold off is the baseline; it presents every frame, like the base build. 1280×720 at 150% DPI, uncapped fps, other agents' clients on the GPU.
+
+| Run | Hold off | Hold on |
+|---|---|---|
+| Login | 0 held, 7–10 unsettled frames presented, ready after 578–596 ms | 9–14 black frames held (460–615 ms), then fade-in; 0 unsettled presented |
+| `ltravel`, per teleport (6 per run, 2 runs each) | 6–12 unsettled frames presented, ready after 16–51 ms | 4–16 frames held (15–60 ms), 0 unsettled presented |
+| `reinit`, per recreation (5 per run) | 13–19 unsettled presented, ready after 52–65 ms | 19–39 frames held (50–65 ms), 0 unsettled |
+| `reinitrt` (pass and RT dropped) | 14–18 unsettled presented | 15–29 frames held (black), 0 unsettled, then fade-in |
+| `world:legacy` → `world:gpu` | Resume ready at once, 0 unsettled | 1 frame held, 0 unsettled |
+| Unsettled frames while walking (both runs) | 5–20 | 8–13 |
+| Legacy frames outside `world:legacy` | 0 | 0 |
+| Timeouts | — | 0 in all clean runs; 1 in a `CUO_BENCH_TPSHOTS` run, where frames were 150 ms each |
+
+- **At `-fps 60`, hold on:** a teleport holds 3–5 frames (46–82 ms), a recreation 8 frames (about 133 ms); 0 unsettled frames presented.
+- **The walking unsettled frames** are single art pages first touched by a dynamic sprite, missing for about 10 ms at ~1000 fps. Walking doesn't hold, so they are equal with and without hold.
+
+**FrameStats** (walk and ltravel, 5 s windows, alternating runs, noisy):
+
+| | Hold off | Hold on |
+|---|---|---|
+| Walk fps | 692–1495 | 673–1568 |
+| Walk frame p50 | 0.37–0.49 ms | 0.42–0.54 ms |
+| Walk world_prepare avg | 0.049–0.071 ms | 0.052–0.073 ms |
+| Walk alloc per frame | 1.2–3.0 KB | 0.8–2.8 KB |
+| ltravel world_prepare avg | 0.047–0.071 ms | 0.043–0.074 ms |
+
+No regression beyond the run-to-run noise. The gate costs one call and a few compares per frame.
+
+**Visual evidence** (`CUO_BENCH_TPSHOTS`, world target per frame; scratchpad `settle\evidence\`):
+- `holdoff_teleport_f04.png`: 4 frames after a teleport, black apart from the player.
+- `holdoff_reinit_f04.png`: after a recreation, the dynamic items only, on black.
+- `holdon_teleport_f04_held.png`: the previous town, byte-identical across the held frames.
+- `holdon_teleport_f05_released.png`: the complete new town, no gaps.
+- `holdon_reinitrt_fadein.png`: the black fade-in after the RT drop.
+- ffmpeg gdigrab of the window didn't work on this machine (150% DPI and overlapping windows), so the evidence is in-client shots.
+
+**Checks.**
+- Client Release build: 0 errors.
+- 244 unit tests: 233 before, plus 11 for `WorldSettleGateTests`.
+- A saved `"world_renderer": "legacy"` is ignored with a warning; 0 Legacy frames.
+- `FNA3D_FORCE_DRIVER=D3D11` exits with `0xDEAF`.
+
+**Not verified:**
+- a real facet change (no local facet hop; unit-tested, and `reinit` exercises the same recreation path);
+- `CUO_BENCH_PICK` and Legacy parity shots: Legacy currently has an unrelated corruption regression being bisected by another agent;
+- the page-fault branch's `CUO_GPU_REINIT`: it isn't on this branch. It drops the RT, so it should behave like `reinitrt`.

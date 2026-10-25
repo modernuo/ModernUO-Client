@@ -63,6 +63,9 @@ public sealed unsafe class ChunkStore
     public JobStats BakeStats, RegionStats;
     /// <summary>Chunks intersecting the view that are not drawable yet this frame (visible pop-in).</summary>
     public int MissingVisible;
+    /// <summary>Chunks not drawable yet whose art may reach the view (the land footprint widened by the art margins the
+    /// streaming uses): what a host holding its frame waits for.</summary>
+    public int MissingNear;
     public bool OutOfGpuSpace;
 
     public ChunkStore(PackSet pack, WorkerPool workers, int instanceCapacity)
@@ -409,6 +412,7 @@ public sealed unsafe class ChunkStore
         int n = 0;
         uint total = 0;
         MissingVisible = 0;
+        MissingNear = 0;
         for (int i = 0; i < _activeCount && n < table.Length; i++)
         {
             int slot = _active[i];
@@ -419,6 +423,8 @@ public sealed unsafe class ChunkStore
                 int x0 = (bx * 8 - (by * 8 + 7)) * 22 - 22, x1 = ((bx * 8 + 7) - by * 8) * 22 + 22;
                 int y0 = (bx * 8 + by * 8) * 22 - 22, y1 = (bx * 8 + by * 8 + 14) * 22 + 22;
                 if (!(x1 < view.X0 || x0 > view.X1 || y1 < view.Y0 || y0 > view.Y1)) MissingVisible++;
+                // art above the tile (TopMargin) reaches up from chunks below the view, negative z (BottomMargin) down
+                if (!(x1 + SideMargin < view.X0 || x0 - SideMargin > view.X1 || y1 + BottomMargin < view.Y0 || y0 - TopMargin > view.Y1)) MissingNear++;
                 continue;
             }
             if (_count[slot] == 0) continue;
