@@ -53,6 +53,7 @@ namespace ClassicUO.Renderer
             fixed (uint* src = pixels)
             {
                 texture.SetDataPointerEXT(0, pr, (IntPtr)src, sizeof(uint) * width * height);
+                TextureUploads.Changed();
             }
 
             return texture;

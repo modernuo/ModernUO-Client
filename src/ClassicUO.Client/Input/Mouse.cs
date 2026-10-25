@@ -79,6 +79,9 @@ namespace ClassicUO.Input
 
         public static Point Position;
 
+        /// <summary>Dev (DevBench's ui scene): the position Update reports instead of the OS cursor's, without moving it.</summary>
+        public static Point? Override;
+
         public static Point LClickPosition;
 
         public static Point RClickPosition;
@@ -113,6 +116,14 @@ namespace ClassicUO.Input
 
         public static void Update()
         {
+            if (Override.HasValue)
+            {
+                Position = Override.Value;
+                IsDragging = LButtonPressed || RButtonPressed || MButtonPressed;
+
+                return;
+            }
+
             if (!MouseInWindow)
             {
                 SDL.SDL_GetGlobalMouseState(out float x, out float y);

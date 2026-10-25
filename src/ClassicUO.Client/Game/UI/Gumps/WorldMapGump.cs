@@ -1056,6 +1056,7 @@ namespace ClassicUO.Game.UI.Gumps
 
                     Texture2D texture = new Texture2D(Client.Game.GraphicsDevice, surface->w, surface->h);
                     texture.SetDataPointerEXT(0, new Rectangle(0, 0, surface->w, surface->h), surface->pixels, len);
+                    ClassicUO.Renderer.TextureUploads.Changed();
 
                     SDL.SDL_DestroySurface((IntPtr)surface);
 

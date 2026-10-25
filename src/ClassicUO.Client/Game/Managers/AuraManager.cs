@@ -43,6 +43,7 @@ namespace ClassicUO.Game.Managers
                 _texture?.Dispose();
                 _texture = new Texture2D(batcher.GraphicsDevice, w, h, false, SurfaceFormat.Color);
                 _texture.SetData(data);
+                ClassicUO.Renderer.TextureUploads.Changed();
             }
 
             x -= (_texture.Width >> 1);

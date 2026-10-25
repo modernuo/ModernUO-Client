@@ -62,6 +62,11 @@ namespace ClassicUO
         BatcherGpuCalls,
         Present,
         Frame,
+        // inside the UI pass (scene DrawUI, UIManager.Draw, cursor): the gump tree walk queueing render lists, and the
+        // batcher's FNA time spent on the UI target
+        UiTraverse,
+        UiFna,
+        UiPass,
         Count
     }
 
@@ -115,6 +120,12 @@ namespace ClassicUO
         RegionWaitUs,
         RegionSyncLoads,
         RegionPrefetches,
+        // the UI pass: batcher flushes and draw calls into the UI targets; B8: 1 when the gumps (cache) target was reused, 1 when
+        // the UI target was left untouched too
+        UiFlushes,
+        UiDrawCalls,
+        UiCached,
+        UiUntouched,
         Count
     }
 
@@ -141,7 +152,8 @@ namespace ClassicUO
             "  prep: capture items", "  prep: capture mobiles", "  prep: capture other", "  prep: item cache", "  prep: capture cached", "  prep: rest", "    walk: baked land",
             "    walk: baked statics", "    walk: unmeshed", "    walk: items/mob/fx", "    walk: screen pos", "    walk: picking",
             "    walk: override/mesh", "    walk: lights", "    walk: foliage check", "  (bare list walk)", "world draw", "scene DrawUI", "UIManager.Draw", "cursor", "RT composite",
-            "plugin draw", "draw other", "Draw total", "  batcher FNA calls", "Present", "frame"
+            "plugin draw", "draw other", "Draw total", "  batcher FNA calls", "Present", "frame",
+            "  UI tree walk", "  UI batcher FNA", "UI pass total"
         };
 
         private static readonly string[] _phaseKeys =
@@ -151,7 +163,8 @@ namespace ClassicUO
             "prep_foliage_finish", "prep_text", "prep_cap_multi", "prep_cap_static", "prep_cap_item", "prep_cap_mobile", "prep_cap_other",
             "prep_item_cache", "prep_cap_cached", "prep_rest", "walk_land", "walk_static", "walk_unmeshed", "walk_dynamic", "walk_pos", "walk_pick", "walk_override", "walk_light",
             "walk_foliage", "bare_walk", "world_draw", "scene_draw_ui", "ui_draw",
-            "cursor", "composite", "plugin_draw", "draw_other", "draw", "batcher_fna", "present", "frame"
+            "cursor", "composite", "plugin_draw", "draw_other", "draw", "batcher_fna", "present", "frame",
+            "ui_traverse", "ui_fna", "ui_pass"
         };
 
         private static readonly string[] _counterKeys = { "items", "mobiles", "gumps", "render_list", "flushes", "draw_calls", "alloc_bytes", "gpu_instances", "gpu_dynamic",
@@ -159,7 +172,8 @@ namespace ClassicUO
             "override_calls", "hidden_tiles", "lights_added", "foliage", "cap_multis", "cap_statics", "cap_items", "cap_mobiles", "cap_other", "gpu_mask_rebuilds",
             "gpu_skip_active", "gpu_full_tiles", "gpu_walk_tiles", "gpu_edge_tiles", "gpu_pick_tiles",
             "item_cache_builds", "item_cache_tiles", "item_cache_items", "item_cache_fallbacks",
-            "chunk_loads", "chunk_load_us", "chunk_mesh_us", "chunk_queue", "region_wait_us", "region_sync", "region_prefetch" };
+            "chunk_loads", "chunk_load_us", "chunk_mesh_us", "chunk_queue", "region_wait_us", "region_sync", "region_prefetch",
+            "ui_flushes", "ui_draw_calls", "ui_cached", "ui_untouched" };
 
         private static readonly long[] _start = new long[PHASES];
         private static readonly long[] _acc = new long[PHASES];
@@ -240,6 +254,16 @@ namespace ClassicUO
             }
 
             return 0;
+        }
+
+        // Adds a Stopwatch tick count measured elsewhere (the batcher's FNA ticks) to phase.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void AddTicks(FramePhase phase, long ticks)
+        {
+            if (On)
+            {
+                _acc[(int)phase] += ticks;
+            }
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
