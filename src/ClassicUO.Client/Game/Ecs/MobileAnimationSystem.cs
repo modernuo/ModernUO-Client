@@ -71,7 +71,16 @@ namespace ClassicUO.Game
             // copies: removing the dirty tag moves the entity to another archetype, which invalidates component refs
             AnimationState s = e.GetComponent<AnimationState>();
             MobileRenderState rs = e.GetComponent<MobileRenderState>();
-            bool keysChanged = Sample(world, m, ref s, ref rs);
+
+            // W5 (mobile_push_inputs): the slow-changing inputs come from MobileInputs, pushed at their mutation sites;
+            // off = all of them read from the Mobile every frame
+            bool push = Configuration.Settings.GlobalSettings.MobilePushInputs && e.HasComponent<MobileInputs>();
+
+            if (InputBench && push)
+            {
+                BenchSample(world, m, e, in s, in rs);
+            }
+            bool keysChanged = push ? SamplePushed(world, m, in e.GetComponent<MobileInputs>(), ref s, ref rs) : Sample(world, m, ref s, ref rs);
 
             if (keysChanged || e.Tags.Has<EquipmentDirty>())
             {
@@ -84,6 +93,20 @@ namespace ClassicUO.Game
             }
 
             ref EquipmentSlots eq = ref e.GetComponent<EquipmentSlots>();
+
+            if (push)
+            {
+                // Mobile.IsMounted, from the slots the mirror rebuilds on every equipment change
+                if (eq.Mounted)
+                {
+                    s.Flags |= AnimStateFlags.Mounted;
+                }
+
+                if (InputCheck)
+                {
+                    CheckInputs(world, m, in s, in rs);
+                }
+            }
 
             if (Configuration.Settings.GlobalSettings.GpuMobileFrameCache)
             {
@@ -239,9 +262,6 @@ namespace ClassicUO.Game
                 f |= AnimStateFlags.Shadow;
             }
 
-            // dead hair and the female torso table are baked into the slots
-            const AnimStateFlags EQUIP_KEYS = AnimStateFlags.Dead | AnimStateFlags.Female;
-
             bool keysChanged = ((s.Flags ^ f) & EQUIP_KEYS) != 0;
 
             s.Flags = f;
@@ -257,6 +277,171 @@ namespace ClassicUO.Game
             rs.OverrideHue = SelectOverrideHue(world, m, profile, (f & AnimStateFlags.Human) != 0);
 
             return keysChanged;
+        }
+
+        // dead hair and the female torso table are baked into the slots
+        private const AnimStateFlags EQUIP_KEYS = AnimStateFlags.Dead | AnimStateFlags.Female;
+
+        /// <summary>
+        /// <see cref="Sample"/> with the pushed inputs (<see cref="MobileInputs"/>): only the animation clock the legacy
+        /// World.Update still advances (server action, frame, frame time, from-server), the mirror history, the walking
+        /// offset and alpha, and the per-frame view context are read here. Mounted is added from the slots by the caller.
+        /// </summary>
+        private static bool SamplePushed(World world, Mobile m, in MobileInputs inp, ref AnimationState s, ref MobileRenderState rs)
+        {
+            Profile profile = ProfileManager.CurrentProfile;
+            AnimStateFlags f = inp.Flags;
+
+            if (m.ViewFlipped) f |= AnimStateFlags.Mirror;
+            if (m.AnimationFromServer) f |= AnimStateFlags.FromServer;
+            if (!m.IsDestroyed && m.AllowedToDraw) f |= AnimStateFlags.Visible;
+            if (MobileInputRules.IsWalking(in inp, Time.Ticks)) f |= AnimStateFlags.Walking;
+
+            if ((f & (AnimStateFlags.Dead | AnimStateFlags.Hidden)) == 0 && profile.ShadowsEnabled)
+            {
+                f |= AnimStateFlags.Shadow;
+            }
+
+            bool keysChanged = ((s.Flags ^ f) & EQUIP_KEYS) != 0;
+
+            s.Flags = f;
+            s.Body = inp.Body;
+            s.ServerGroup = m.AnimationGroupRaw;
+            s.Frame = m.AnimIndex;
+            s.NextFrameTime = (uint)m.LastAnimationChangeTime;
+            s.Facing = inp.Facing;
+
+            rs.Alpha = m.AlphaHue;
+            rs.OffsetX = (short)(int)m.Offset.X;
+            rs.OffsetY = (short)(int)(m.Offset.Y - m.Offset.Z);
+            rs.OverrideHue = SelectOverrideHue(world, m, profile, in inp);
+
+            return keysChanged;
+        }
+
+        private static ushort SelectOverrideHue(World world, Mobile m, Profile profile, in MobileInputs inp)
+        {
+            bool selected = ReferenceEquals(SelectedObject.Object, m);
+            AnimStateFlags f = inp.Flags;
+            MobileHueBits bits = inp.HueBits;
+
+            var input = new AnimationRules.OverrideHueInput
+            {
+                HighlightSelected = profile.HighlightGameObjects && selected,
+                IsHealthbarTarget = SelectedObject.HealthbarObject == m,
+                OutOfRange = profile.NoColorObjectsOutOfRange && m.Distance > world.ClientViewRange,
+                PlayerDeadGray = world.Player.IsDead && profile.EnableBlackWhiteEffect,
+                Hidden = (f & AnimStateFlags.Hidden) != 0,
+                Dead = (f & AnimStateFlags.Dead) != 0,
+                Human = (f & AnimStateFlags.Human) != 0,
+                PoisonHighlight = profile.HighlightMobilesByPoisoned,
+                Poisoned = (bits & MobileHueBits.Poisoned) != 0,
+                ParalyzeHighlight = profile.HighlightMobilesByParalize,
+                Paralyzed = (bits & MobileHueBits.Paralyzed) != 0,
+                InvulHighlight = profile.HighlightMobilesByInvul,
+                YellowHits = (bits & MobileHueBits.YellowHits) != 0,
+                Invulnerable = (bits & MobileHueBits.Invulnerable) != 0,
+                IsPlayer = m.Serial == world.Player.Serial,
+                IsLastAttack = m.Serial == world.TargetManager.LastAttack,
+                UnderMouseWhileTargeting = world.TargetManager.IsTargeting && selected,
+                NotorietyHue = Notoriety.GetHue((NotorietyFlag)inp.Notoriety),
+                PoisonHue = profile.PoisonHue,
+                ParalyzedHue = profile.ParalyzedHue,
+                InvulnerableHue = profile.InvulnerableHue
+            };
+
+            return AnimationRules.OverrideHue(in input);
+        }
+
+        // CUO_MOBILE_INPUT_BENCH=1: times the legacy and the pushed sample of the same mobile in the same frame (paired, so
+        // machine-wide noise cancels); 8 calls each, alternating which goes first. Logged with [mobile-input-check]'s timer.
+        public static readonly bool InputBench = Environment.GetEnvironmentVariable("CUO_MOBILE_INPUT_BENCH") == "1";
+        public static long BenchLegacyTicks, BenchPushedTicks, BenchSamples, BenchSeatLegacyTicks, BenchSeatPushedTicks, BenchSeats;
+        private static bool _benchFlip;
+
+        private static void BenchSample(World world, Mobile m, EcsEntity e, in AnimationState s0, in MobileRenderState rs0)
+        {
+            const int N = 8;
+            MobileInputs inp = e.GetComponent<MobileInputs>();
+            bool mounted = e.GetComponent<EquipmentSlots>().Mounted;
+            AnimStateFlags sink = 0;
+            _benchFlip = !_benchFlip;
+
+            for (int pass = 0; pass < 2; pass++)
+            {
+                bool legacy = (pass == 0) == _benchFlip;
+                long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+
+                for (int i = 0; i < N; i++)
+                {
+                    AnimationState s = s0;
+                    MobileRenderState rs = rs0;
+
+                    if (legacy)
+                    {
+                        Sample(world, m, ref s, ref rs);
+                    }
+                    else
+                    {
+                        SamplePushed(world, m, in inp, ref s, ref rs);
+
+                        if (mounted)
+                        {
+                            s.Flags |= AnimStateFlags.Mounted;
+                        }
+                    }
+
+                    sink ^= s.Flags;
+                }
+
+                long dt = System.Diagnostics.Stopwatch.GetTimestamp() - t0;
+
+                if (legacy)
+                {
+                    BenchLegacyTicks += dt;
+                }
+                else
+                {
+                    BenchPushedTicks += dt;
+                }
+            }
+
+            BenchSamples += N;
+            _benchSink ^= (uint)sink;
+        }
+
+        private static uint _benchSink;
+
+        // CUO_MOBILE_INPUT_CHECK=1: every pushed sample is compared with the legacy one (all of Sample's outputs)
+        public static readonly bool InputCheck = Environment.GetEnvironmentVariable("CUO_MOBILE_INPUT_CHECK") == "1";
+        public static long InputChecks, InputDiffs, SeatChecks, SeatDiffs;
+        private static int _inputLogged;
+
+        private static void CheckInputs(World world, Mobile m, in AnimationState pushed, in MobileRenderState rsPushed)
+        {
+            AnimationState legacy = pushed;
+            MobileRenderState rsLegacy = rsPushed;
+            Sample(world, m, ref legacy, ref rsLegacy);
+            InputChecks++;
+
+            if (legacy.Flags == pushed.Flags && legacy.Body == pushed.Body && legacy.ServerGroup == pushed.ServerGroup &&
+                legacy.Frame == pushed.Frame && legacy.NextFrameTime == pushed.NextFrameTime && legacy.Facing == pushed.Facing &&
+                rsLegacy.Alpha == rsPushed.Alpha && rsLegacy.OffsetX == rsPushed.OffsetX && rsLegacy.OffsetY == rsPushed.OffsetY &&
+                rsLegacy.OverrideHue == rsPushed.OverrideHue)
+            {
+                return;
+            }
+
+            InputDiffs++;
+
+            if (_inputLogged++ < 20)
+            {
+                Utility.Logging.Log.Warn
+                (
+                    $"[mobile-input-check] 0x{m.Serial:X8} g=0x{m.Graphic:X4}: legacy flags {legacy.Flags} body 0x{legacy.Body:X4} facing {legacy.Facing} hue 0x{rsLegacy.OverrideHue:X4} | " +
+                    $"pushed flags {pushed.Flags} body 0x{pushed.Body:X4} facing {pushed.Facing} hue 0x{rsPushed.OverrideHue:X4} | differing flags {legacy.Flags ^ pushed.Flags}"
+                );
+            }
         }
 
         private static ushort SelectOverrideHue(World world, Mobile m, Profile profile, bool human)
@@ -347,6 +532,9 @@ namespace ClassicUO.Game
                 serial[layer] = item.GetComponent<Serial>().Value;
             }
 
+            // Mobile.IsMounted: the mount item (FindItemByLayer's), not a boat's tiller, with a mount body (Item.GetGraphicForAnimation)
+            eq.Mounted = AnimationRules.IsMountedBy(eq.MountItem, eq.MountGraphic, eq.MountAnimId);
+
             if (present[(int)Layer.OneHanded])
             {
                 eq.Hand1 = new HandItem { Present = true, AnimId = anim[(int)Layer.OneHanded], IsLight = tiles[gfx[(int)Layer.OneHanded]].IsLight };
@@ -436,13 +624,66 @@ namespace ClassicUO.Game
             }
         }
 
+        /// <summary>
+        /// Mobile.TryGetSittingInfo. With mobile_push_inputs its inputs come from the selection: Human and Flying from the
+        /// flags; mounted is false here (the branch is reached only without a mount item or with a tiller, where IsMounted
+        /// is false); the action is the one just selected for the body, which is what GetGroupForAnimation returns unless
+        /// that selection rolled a random action (then the legacy call runs, rolling as before).
+        /// </summary>
+        private static bool SeatOf(Mobile m, AnimStateFlags f, byte group, bool groupRolled, out AnimationsLoader.SittingInfoData seat)
+        {
+            if (Configuration.Settings.GlobalSettings.MobilePushInputs && !groupRolled)
+            {
+                bool sits = m.TryGetSittingInfo
+                (
+                    (f & AnimStateFlags.Human) != 0,
+                    (f & AnimStateFlags.Mounted) != 0,
+                    (f & AnimStateFlags.Flying) != 0,
+                    group,
+                    out seat
+                );
+
+                if (InputBench)
+                {
+                    AnimationsLoader.SittingInfoData tmp;
+                    long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                    m.TryGetSittingInfo(out tmp);
+                    long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
+                    m.TryGetSittingInfo((f & AnimStateFlags.Human) != 0, (f & AnimStateFlags.Mounted) != 0, (f & AnimStateFlags.Flying) != 0, group, out tmp);
+                    long t2 = System.Diagnostics.Stopwatch.GetTimestamp();
+                    BenchSeatLegacyTicks += t1 - t0;
+                    BenchSeatPushedTicks += t2 - t1;
+                    BenchSeats++;
+                }
+
+                if (InputCheck)
+                {
+                    // no random roll in this selection, so the legacy test's GetGroupForAnimation doesn't roll either
+                    bool legacy = m.TryGetSittingInfo(out AnimationsLoader.SittingInfoData legacySeat);
+                    SeatChecks++;
+
+                    if (legacy != sits || legacySeat.Graphic != seat.Graphic)
+                    {
+                        SeatDiffs++;
+                        Utility.Logging.Log.Warn($"[mobile-input-check] seat of 0x{m.Serial:X8}: legacy {legacy} 0x{legacySeat.Graphic:X4}, pushed {sits} 0x{seat.Graphic:X4}");
+                    }
+                }
+
+                return sits;
+            }
+
+            return m.TryGetSittingInfo(out seat);
+        }
+
         private static void Select(Mobile m, ref AnimationState s, ref EquipmentSlots eq)
         {
             var animations = Client.Game.UO.Animations;
             AnimGroupInput input = AnimGroupInput.From(in s, in eq);
             AnimStateFlags f = s.Flags & ~(AnimStateFlags.MountDrawn | AnimStateFlags.Sitting | AnimStateFlags.CharSitting);
 
+            uint rolls = AnimationGroupRules.RandomRolls;
             s.Group = AnimationGroupRules.Select(in input, s.Body, true, animations);
+            bool groupRolled = rolls != AnimationGroupRules.RandomRolls;
             s.MountBody = 0;
             s.MountGroup = 0;
             s.MountOffsetY = 0;
@@ -467,7 +708,7 @@ namespace ClassicUO.Game
                     s.MountGroup = AnimationGroupRules.Select(in input, mountBody, false, animations);
                 }
             }
-            else if (m.TryGetSittingInfo(out AnimationsLoader.SittingInfoData seat))
+            else if (SeatOf(m, f, s.Group, groupRolled, out AnimationsLoader.SittingInfoData seat))
             {
                 f |= AnimStateFlags.Sitting;
                 s.Group = (byte)PeopleAnimationGroup.Stand;

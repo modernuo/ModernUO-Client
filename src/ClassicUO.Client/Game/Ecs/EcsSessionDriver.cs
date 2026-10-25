@@ -16,7 +16,7 @@ namespace ClassicUO.Game
     // Debug-only (-ecsdriver <file>): plays a line-based script in game so the ECS mirror can be exercised unattended.
     // Commands: wait <s> | say <text> | walk <dir 0-7> <steps> [run] | backpack | pick worn|backpack|held|near <hex graphic>
     //           | drop backpack|ground|equip | check | logout | quit | log <text>
-    //           | target self|ground <dx> <dy>|worn <layer> | parity
+    //           | target self|ground <dx> <dy>|worn <layer> | parity | use self|held|mobile <dx> <dy> | mount
     internal sealed class EcsSessionDriver
     {
         private DriverGump _gump;
@@ -152,6 +152,54 @@ namespace ClassicUO.Game
                     GameActions.OpenBackpack(world);
 
                     return true;
+
+                // use self|held|mobile <dx> <dy>: double-clicks (mounting an ethereal from the pack, dismounting on self)
+                case "use" when args.Length > 0:
+                    uint useSerial = args[0] switch
+                    {
+                        "self" => player.Serial,
+                        "held" => _held,
+                        _ => 0
+                    };
+
+                    if (args[0] == "mobile" && args.Length > 2)
+                    {
+                        int ux = player.X + int.Parse(args[1]), uy = player.Y + int.Parse(args[2]);
+
+                        foreach (Mobile um in world.Mobiles.Values)
+                        {
+                            if (!ReferenceEquals(um, player) && !um.IsDestroyed && Math.Max(Math.Abs(um.X - ux), Math.Abs(um.Y - uy)) <= 1)
+                            {
+                                useSerial = um.Serial;
+
+                                break;
+                            }
+                        }
+                    }
+
+                    if (useSerial != 0)
+                    {
+                        GameActions.DoubleClick(world, useSerial);
+                    }
+                    else
+                    {
+                        Log.Warn($"[ECS] driver: nothing to use ({arg})");
+                    }
+
+                    return true;
+
+                // mount: logs whether the player and the mobiles within 8 tiles ride, from the Mobile and from the ECS slots
+                case "mount":
+                    foreach (Mobile mm in world.Mobiles.Values)
+                    {
+                        if (Math.Abs(mm.X - player.X) <= 8 && Math.Abs(mm.Y - player.Y) <= 8 &&
+                            world.Ecs.Mirror.TryGetEntity(mm.Serial, out Friflo.Engine.ECS.Entity me) && me.HasComponent<ClassicUO.Ecs.EquipmentSlots>())
+                        {
+                            Log.Info($"[ECS] mount 0x{mm.Serial:X8} body 0x{mm.Graphic:X4}: mobile {mm.IsMounted}, ecs {me.GetComponent<ClassicUO.Ecs.EquipmentSlots>().Mounted} (rebuilt lazily), war {mm.InWarMode}, noto {mm.NotorietyFlag}, flags {mm.Flags}");
+                        }
+                    }
+
+                    return false;
 
                 case "pick":
                     uint serial = args[0] switch
@@ -387,11 +435,19 @@ namespace ClassicUO.Game
 
                     return true;
 
-                // w5 on|off: all W5 update shortcuts (world_update_active_items, gpu_mobile_frame_cache, text_skip_expired)
+                // w5 on|off: all W5 update shortcuts (world_update_active_items, gpu_mobile_frame_cache, text_skip_expired,
+                // mobile_push_inputs)
                 case "w5" when args.Length > 0:
                     Settings.GlobalSettings.WorldUpdateActiveItems = Settings.GlobalSettings.GpuMobileFrameCache =
-                        Settings.GlobalSettings.TextSkipExpired = args[0] == "on";
+                        Settings.GlobalSettings.TextSkipExpired = Settings.GlobalSettings.MobilePushInputs = args[0] == "on";
                     Log.Info($"[ECS] driver: W5 shortcuts {args[0]}");
+
+                    return true;
+
+                // pushinputs on|off: mobiles' pushed ECS inputs (mobile_push_inputs, W5)
+                case "pushinputs" when args.Length > 0:
+                    Settings.GlobalSettings.MobilePushInputs = args[0] == "on";
+                    Log.Info($"[ECS] driver: mobile pushed inputs {args[0]}");
 
                     return true;
 
