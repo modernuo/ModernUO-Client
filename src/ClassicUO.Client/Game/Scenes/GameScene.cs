@@ -787,6 +787,11 @@ namespace ClassicUO.Game.Scenes
 
             long textStart = FrameStats.AddSince(FramePhase.PrepFoliageFinish, foliageStart);
             UpdateTextServerEntities();
+
+            if (PrepCheck.On)
+            {
+                PrepCheck.Report();
+            }
             FrameStats.AddSince(FramePhase.PrepText, textStart);
 
             UpdateDrawPosition = false;
