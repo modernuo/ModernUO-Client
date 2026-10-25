@@ -88,6 +88,18 @@ namespace ClassicUO.Game.Managers
                 }
             );
 
+            // -itemcache [on|off]: the Gpu world prepare caches settled ground items' sprites per chunk (no argument toggles)
+            Register
+            (
+                "itemcache",
+                s =>
+                {
+                    var settings = Configuration.Settings.GlobalSettings;
+                    settings.GpuPrepareItemCache = s.Length > 1 ? s[1].ToLowerInvariant() == "on" : !settings.GpuPrepareItemCache;
+                    GameActions.Print(_world, $"Gpu world prepare caches ground items: {(settings.GpuPrepareItemCache ? "on" : "off")}");
+                }
+            );
+
             // -ecssprites [on|off]: the Gpu world draws mobiles from the ECS sprite extract instead of capturing their views
             Register
             (

@@ -368,11 +368,14 @@ namespace ClassicUO.Game.Scenes
         }
 
         /// <summary>GPU world: items, multis, mobiles and corpses go to the world pass through their views (land and statics are baked).</summary>
-        public int CaptureRenderLists(UltimaBatcher2D batcher, sbyte maxGroundZ, GpuWorldRenderer gpu)
+        /// <summary>Statics queued so far: where the Gpu prepare's cached ground items (GameSceneGpuItemCache) go in capture order.</summary>
+        public int StaticsCount => _statics.Count;
+
+        public int CaptureRenderLists(UltimaBatcher2D batcher, sbyte maxGroundZ, GpuWorldRenderer gpu, GameScene cached = null)
         {
-            return CaptureRenderList(batcher, _statics, maxGroundZ, gpu) +
-                   CaptureRenderList(batcher, _animations, maxGroundZ, gpu) +
-                   CaptureRenderList(batcher, _transparentObjects, maxGroundZ, gpu);
+            return CaptureRenderList(batcher, _statics, maxGroundZ, gpu, cached) +
+                   CaptureRenderList(batcher, _animations, maxGroundZ, gpu, null) +
+                   CaptureRenderList(batcher, _transparentObjects, maxGroundZ, gpu, null);
         }
 
         /// <summary>GPU world: effects (into the world pass when it can reproduce their blend, else FNA over it) and what FNA
@@ -408,7 +411,7 @@ namespace ClassicUO.Game.Scenes
             return result;
         }
 
-        private static int CaptureRenderList(UltimaBatcher2D batcher, List<GameObject> renderList, sbyte maxGroundZ, GpuWorldRenderer gpu)
+        private static int CaptureRenderList(UltimaBatcher2D batcher, List<GameObject> renderList, sbyte maxGroundZ, GpuWorldRenderer gpu, GameScene cached)
         {
             int done = 0;
             // FrameStats: time runs of one object kind (a clock read per object cost about 0.5 ms per frame with 20,000
@@ -416,9 +419,27 @@ namespace ClassicUO.Game.Scenes
             bool stats = FrameStats.On;
             FramePhase runPhase = FramePhase.PrepCaptureOther;
             long stamp = FrameStats.Stamp();
+            // cached ground items (GameSceneGpuItemCache) go where the walk would have queued them
+            int nextCached = cached?.GpuItemNextInsert ?? int.MaxValue;
+            int count = renderList.Count;
 
-            foreach (var obj in renderList)
+            for (int i = 0; i <= count; i++)
             {
+                if (i >= nextCached)
+                {
+                    stamp = FrameStats.AddSince(runPhase, stamp);
+                    done += cached.EmitGpuItemRuns(gpu, i);
+                    stamp = FrameStats.AddSince(FramePhase.PrepCaptureCached, stamp);
+                    nextCached = cached.GpuItemNextInsert;
+                }
+
+                if (i == count)
+                {
+                    break;
+                }
+
+                var obj = renderList[i];
+
                 if (obj is Land || obj is Static || obj.Z > maxGroundZ)
                 {
                     continue;

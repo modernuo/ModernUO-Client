@@ -41,6 +41,24 @@ namespace ClassicUO.Game.Map
         public int GpuMinZ, GpuMaxZ, GpuMaxHalfWidth, GpuMaxHeight;
         public uint GpuSeenFrame = uint.MaxValue - 1;
         public int GpuFreshSteps;
+        // W4 (GameSceneGpuItemCache): the chunk's settled ground items' sprite instances; GpuItemsDirty = re-extract
+        public Scenes.GpuItemCache GpuItems;
+        public bool GpuItemsDirty = true;
+        // tiles holding a mobile, and a mobile the walk's max Z stops at (rebuilt with the masks); a mobile on a cached
+        // item tile is walked on its own
+        public ulong GpuMobileMask, GpuMobileStopMask;
+
+        /// <summary>An object joined or left one of the chunk's tile lists. Mobiles don't change which items are cached.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void OnTileContentChanged(GameObject obj)
+        {
+            GpuMaskDirty = true;
+
+            if (obj is not Mobile)
+            {
+                GpuItemsDirty = true;
+            }
+        }
 
 
         public static Chunk Create(World world, int x, int y)
@@ -60,6 +78,7 @@ namespace ClassicUO.Game.Map
             c.X = x;
             c.Y = y;
             c.GpuMaskDirty = true;
+            c.GpuItemsDirty = true;
             c.GpuSeenFrame = uint.MaxValue - 1;
 
             return c;
@@ -143,8 +162,9 @@ namespace ClassicUO.Game.Map
         public void AddGameObject(GameObject obj, int x, int y)
         {
             Mesh.MarkDirtyIfNeeded(obj);
-            GpuMaskDirty = true;
             obj.RemoveFromTile();
+            OnTileContentChanged(obj);
+            obj.TileChunk = this;
 
             short priorityZ = obj.Z;
             sbyte state = -1;
@@ -323,7 +343,12 @@ namespace ClassicUO.Game.Map
         public void RemoveGameObject(GameObject obj, int x, int y)
         {
             Mesh.MarkDirtyIfNeeded(obj);
-            GpuMaskDirty = true;
+            OnTileContentChanged(obj);
+
+            if (obj != null && obj.TileChunk == this)
+            {
+                obj.TileChunk = null;
+            }
             ref GameObject firstNode = ref Tiles[x, y];
 
             if (firstNode == null || obj == null)
@@ -377,6 +402,7 @@ namespace ClassicUO.Game.Map
 
                         first.TPrevious = null;
                         first.TNext = null;
+                        first.TileChunk = null;
                         first = next;
                     }
 
@@ -395,6 +421,7 @@ namespace ClassicUO.Game.Map
             }
 
             IsDestroyed = true;
+            GpuItems?.Reset();
 
             if (_pool.Count < Constants.PREDICTABLE_CHUNKS)
             {
@@ -442,6 +469,7 @@ namespace ClassicUO.Game.Map
 
                         first.TPrevious = null;
                         first.TNext = null;
+                        first.TileChunk = null;
                         first = next;
                     }
 
@@ -450,6 +478,7 @@ namespace ClassicUO.Game.Map
             }
 
             Mesh.SoftClear();
+            GpuItems?.Reset();
         }
 
         public bool HasNoExternalData()

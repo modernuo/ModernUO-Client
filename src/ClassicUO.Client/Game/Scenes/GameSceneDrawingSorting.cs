@@ -814,7 +814,8 @@ namespace ClassicUO.Game.Scenes
             int maxZ,
             Chunk chunk,
             bool skipBaked = false,
-            bool forcePosition = false
+            bool forcePosition = false,
+            bool skipItems = false
         )
         {
             var profile = ProfileManager.CurrentProfile;
@@ -822,8 +823,9 @@ namespace ClassicUO.Game.Scenes
 
             for (; obj != null; obj = obj.TNext)
             {
-                // Gpu prepare (GameSceneGpuPrepare): settled baked land and statics are the GPU's alone
-                if (skipBaked && IsGpuBaked(obj))
+                // Gpu prepare (GameSceneGpuPrepare): settled baked land and statics are the GPU's alone; skipItems: the
+                // tile's items come from the chunk's item cache (GameSceneGpuItemCache)
+                if (skipBaked && IsGpuBaked(obj) || skipItems && obj is Item)
                 {
                     continue;
                 }
