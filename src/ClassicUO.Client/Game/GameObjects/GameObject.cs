@@ -27,6 +27,12 @@ namespace ClassicUO.Game.GameObjects
         public bool IsDestroyed { get; protected set; }
         public bool IsPositionChanged { get; protected set; }
         public TextContainer TextContainer { get; private set; }
+
+        /// <summary>Listed in World.TextOwners.</summary>
+        public bool InTextOwners;
+
+        /// <summary>GameScene's camera generation when the world prepare last set RealScreenPosition.</summary>
+        public int ScreenPositionGen;
         private AverageOverTime _averageOverTime;
 
         public int Distance
@@ -348,6 +354,12 @@ namespace ClassicUO.Game.GameObjects
 
             msg.Owner = this;
             TextContainer.Add(msg);
+
+            if (!InTextOwners && this is Entity entity)
+            {
+                InTextOwners = true;
+                World.TextOwners.Add(entity);
+            }
 
             if (this is Item it && SerialHelper.IsValid(it.Container))
             {
