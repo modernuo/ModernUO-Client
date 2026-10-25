@@ -10,7 +10,7 @@ using System.Collections.Generic;
 
 namespace ClassicUO.Game.UI.Controls
 {
-    internal class ResizePic : Control
+    internal class ResizePic : Control, IGumpDeferredDraw
     {
         private int _maxIndex;
 
@@ -237,25 +237,29 @@ namespace ClassicUO.Game.UI.Controls
 
         public override bool AddToRenderLists(RenderLists renderLists, int x, int y, ref float layerDepthRef)
         {
-            float layerDepth = layerDepthRef;
-            renderLists.AddGumpNoAtlas(
-                batcher =>
-                {
-                    if (batcher.ClipBegin(x, y, Width, Height))
-                    {
-                        Vector3 hueVector = ShaderHueTranslator.GetHueVector(0, false, Alpha, true);
+            renderLists.AddGumpNoAtlas(GumpCommand.Deferred(this, x, y, layerDepthRef));
 
-                        DrawInternal(batcher, x, y, hueVector, layerDepth);
-                        RenderLists childRenderLists = new();
-                        base.AddToRenderLists(childRenderLists, x, y, ref layerDepth);
-                        childRenderLists.DrawRenderLists(batcher, sbyte.MaxValue);
+            return true;
+        }
 
-                        batcher.ClipEnd();
-                    }
+        // the children draw inside the clip, through a RenderLists of their own that is reused every frame
+        private RenderLists _childRenderLists;
 
-                    return true;
-                }
-            );
+        bool IGumpDeferredDraw.DrawDeferred(UltimaBatcher2D batcher, int x, int y, float layerDepth, int arg)
+        {
+            if (batcher.ClipBegin(x, y, Width, Height))
+            {
+                Vector3 hueVector = ShaderHueTranslator.GetHueVector(0, false, Alpha, true);
+
+                DrawInternal(batcher, x, y, hueVector, layerDepth);
+                RenderLists childRenderLists = _childRenderLists ??= new RenderLists();
+                childRenderLists.Clear();
+                base.AddToRenderLists(childRenderLists, x, y, ref layerDepth);
+                childRenderLists.DrawRenderLists(batcher, sbyte.MaxValue);
+                childRenderLists.Clear();
+
+                batcher.ClipEnd();
+            }
 
             return true;
         }

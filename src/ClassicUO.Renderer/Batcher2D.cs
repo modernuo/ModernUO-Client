@@ -26,25 +26,6 @@ namespace ClassicUO.Renderer
 
         private readonly IndexBuffer _indexBuffer;
         private int _numSprites;
-        private Matrix _projectionMatrix = new Matrix
-        (
-            0f, //(float)( 2.0 / (double)viewport.Width ) is the actual value we will use
-            0.0f,
-            0.0f,
-            0.0f,
-            0.0f,
-            0f, //(float)( -2.0 / (double)viewport.Height ) is the actual value we will use
-            0.0f,
-            0.0f,
-            0.0f,
-            0.0f,
-            1.0f,
-            0.0f,
-            -1.0f,
-            1.0f,
-            0.0f,
-            1.0f
-        );
         private readonly RasterizerState _rasterizerState;
         private SamplerState _sampler;
         private bool _started;
@@ -132,13 +113,49 @@ namespace ClassicUO.Renderer
 
         public void SetBrightlight(float f)
         {
-            _basicUOEffect.Brighlight.SetValue(f);
+            if (f != _brightlight)
+            {
+                _brightlight = f;
+                _basicUOEffect.Brighlight.SetValue(f);
+                _effectDirty = true;
+            }
         }
 
         public void SetCircleOfTransparencyRadius(float radius)
         {
-            _basicUOEffect.CircleOfTransparencyRadius.SetValue(radius);
+            if (radius != _circleRadius)
+            {
+                _circleRadius = radius;
+                _basicUOEffect.CircleOfTransparencyRadius.SetValue(radius);
+                _effectDirty = true;
+            }
         }
+
+        // The basic effect's parameters as last committed with Pass.Apply(). FNA3D keeps the committed values in
+        // MojoShader's register file and pushes them again whenever it rebinds the pipeline (new render pass or
+        // command buffer), so Apply() is only needed when a parameter changed or another effect was applied since.
+        // Other effects are applied outside Begin/End (SpriteBatch, plugins) or by a custom effect pass, so Begin()
+        // and custom-effect draws invalidate.
+        private bool _effectDirty = true;
+        private int _appliedViewportW = -1, _appliedViewportH = -1;
+        private Matrix _appliedTransform;
+        private bool _appliedWorldIdentity;
+        private float _brightlight = float.NaN, _circleRadius = float.NaN;
+
+        private void ApplyEffect()
+        {
+            if (!_effectDirty)
+            {
+                return;
+            }
+
+            _basicUOEffect.Pass.Apply();
+            _effectDirty = false;
+            EffectApplies++;
+        }
+
+        /// <summary>Basic effect Pass.Apply() calls since start (DevBench reports them per plan entry).</summary>
+        public static long EffectApplies;
 
         public void DrawString(SpriteFont spriteFont, ReadOnlySpan<char> text, int x, int y, Vector3 color, float layerDepth)
             => DrawString(spriteFont, text, new Vector2(x, y), color, layerDepth);
@@ -962,6 +979,7 @@ namespace ClassicUO.Renderer
 
             _customEffect = customEffect;
             _transformMatrix = transform_matrix;
+            _effectDirty = true;
         }
 
         public void End()
@@ -1239,7 +1257,7 @@ namespace ClassicUO.Renderer
             long t0 = CollectFrameStats ? Stopwatch.GetTimestamp() : 0;
 
             GraphicsDevice.Textures[0] = texture;
-            _basicUOEffect.Pass.Apply();
+            ApplyEffect();
 
             if (_customEffect != null)
             {
@@ -1255,6 +1273,8 @@ namespace ClassicUO.Renderer
                         primitiveCount
                     );
                 }
+
+                _effectDirty = true;
             }
             else
             {
@@ -1281,15 +1301,24 @@ namespace ClassicUO.Renderer
             ApplyStates();
             _worldOffsetActive = true;
             _basicUOEffect.WorldMatrix.SetValue(Matrix.CreateTranslation(-offsetX, -offsetY, 0));
-            _basicUOEffect.Pass.Apply();
+            _appliedWorldIdentity = false;
+            _effectDirty = true;
+            ApplyEffect();
         }
 
         public void ResetWorldOffset()
         {
             Flush();
             _worldOffsetActive = false;
-            _basicUOEffect.WorldMatrix.SetValue(Matrix.Identity);
-            _basicUOEffect.Pass.Apply();
+
+            if (!_appliedWorldIdentity)
+            {
+                _basicUOEffect.WorldMatrix.SetValue(Matrix.Identity);
+                _appliedWorldIdentity = true;
+                _effectDirty = true;
+            }
+
+            ApplyEffect();
             GraphicsDevice.SetVertexBuffer(_vertexBuffer);
             GraphicsDevice.Indices = _indexBuffer;
         }
@@ -1307,33 +1336,42 @@ namespace ClassicUO.Renderer
             GraphicsDevice.Indices = _indexBuffer;
             GraphicsDevice.SetVertexBuffer(_vertexBuffer);
 
+            Viewport viewport = GraphicsDevice.Viewport;
 
+            if (viewport.Width != _appliedViewportW || viewport.Height != _appliedViewportH || _transformMatrix != _appliedTransform)
+            {
+                _appliedViewportW = viewport.Width;
+                _appliedViewportH = viewport.Height;
+                _appliedTransform = _transformMatrix;
 
-            _projectionMatrix.M11 = (float)(2.0 / GraphicsDevice.Viewport.Width);
-            _projectionMatrix.M22 = (float)(-2.0 / GraphicsDevice.Viewport.Height);
+                Matrix.CreateOrthographicOffCenter
+                (
+                    0f,
+                    viewport.Width,
+                    viewport.Height,
+                    0,
+                    short.MinValue,
+                    short.MaxValue,
+                    out Matrix matrix
+                );
+                Matrix.Multiply(ref _transformMatrix, ref matrix, out matrix);
 
-            Matrix matrix = _projectionMatrix;
-            Matrix.CreateOrthographicOffCenter
-            (
-                0f,
-                GraphicsDevice.Viewport.Width,
-                GraphicsDevice.Viewport.Height,
-                0,
-                short.MinValue,
-                short.MaxValue,
-                out matrix
-            );
-            Matrix.Multiply(ref _transformMatrix, ref matrix, out matrix);
+                //Matrix halfPixelOffset = Matrix.CreateTranslation(-0.5f, -0.5f, 0);
+                //Matrix.Multiply(ref halfPixelOffset, ref matrix, out matrix);
 
+                _basicUOEffect.Viewport.SetValue(new Vector2(viewport.Width, viewport.Height));
+                _basicUOEffect.MatrixTransform.SetValue(matrix);
+                _effectDirty = true;
+            }
 
-            //Matrix halfPixelOffset = Matrix.CreateTranslation(-0.5f, -0.5f, 0);
-            //Matrix.Multiply(ref halfPixelOffset, ref matrix, out matrix);
-
-            if (!_worldOffsetActive)
+            if (!_worldOffsetActive && !_appliedWorldIdentity)
+            {
                 _basicUOEffect.WorldMatrix.SetValue(Matrix.Identity);
-            _basicUOEffect.Viewport.SetValue(new Vector2(GraphicsDevice.Viewport.Width, GraphicsDevice.Viewport.Height));
-            _basicUOEffect.MatrixTransform.SetValue(matrix);
-            _basicUOEffect.Pass.Apply();
+                _appliedWorldIdentity = true;
+                _effectDirty = true;
+            }
+
+            ApplyEffect();
         }
 
         private void Flush()
@@ -1417,6 +1455,8 @@ namespace ClassicUO.Renderer
                         batchSize << 1
                     );
                 }
+
+                _effectDirty = true;
             }
             else
             {

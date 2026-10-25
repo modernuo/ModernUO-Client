@@ -732,6 +732,8 @@ namespace ClassicUO.Game.UI.Gumps
 
             public Layer Layer { get; }
 
+            private string _emptySlotTooltip;
+
             public override void Update()
             {
                 Item item = _paperDollGump.World.Items.Get(LocalSerial);
@@ -740,7 +742,14 @@ namespace ClassicUO.Game.UI.Gumps
                 {
                     _itemGump?.Dispose();
                     _itemGump = null;
-                    SetTooltip($"{Layer} slot");
+
+                    // built once and set only when it isn't already the tooltip (this runs every frame)
+                    _emptySlotTooltip ??= $"{Layer} slot";
+
+                    if (!ReferenceEquals(Tooltip, _emptySlotTooltip))
+                    {
+                        SetTooltip(_emptySlotTooltip);
+                    }
                 }
 
                 Mobile mobile = _paperDollGump.World.Mobiles.Get(_paperDollGump.LocalSerial);

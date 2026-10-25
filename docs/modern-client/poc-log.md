@@ -423,7 +423,7 @@ The owner ran `tools/fps-test/run-fps-test.ps1` on the desktop with the display 
 - Allocation is unchanged at about 17.5 KB per frame; the UI closure fixes in perf-opportunities.md remain.
 - **The Phase 4 renderer goal is met:** no performance regression in general use under NativeAOT on this machine, and large gains in heavy scenes.
 
-### 2026-10-24 — Device-lost handling (uncommitted)
+### 2026-10-24 — Device-lost handling
 
 - **What FNA3D and SDL do on a lost device.** Details and line numbers: [device-lost-leak.md](device-lost-leak.md).
   - FNA3D's SDL_GPU driver ignores failed submits and swapchain acquires and keeps rendering. It reports an error only in its fence/stall path, and FNA then throws out of the native log callback. That is the stock client's 2026-07-27 InvalidOperationException and the 2026-08-11 NativeAOT fail-fast.
@@ -443,3 +443,40 @@ The owner ran `tools/fps-test/run-fps-test.ps1` on the desktop with the display 
   - Uo.Render now names its textures; the names show in dumps only from a debug-mode device (Debug build).
 - **Checks:** client Release build, 188 unit tests and `--external-test` on Vulkan pass. Re-published with `publish-aot.ps1`.
 
+## B1–B5 — batcher state tracking and zero-allocation UI (2026-10-24)
+
+Branch `poc/batcher-ui-alloc` (worktree, from 43dec9ae4): 99ced3184 and 2eedf61db (DevBench), 2202efb1f (B1), ff81fd332 (B2–B5 and the other allocations).
+
+- **Scene:** the DevBench `gumps` plan entry opens the paperdoll, backpack, journal and status bar at fixed positions. Shots (`CUO_BENCH_SHOTS`) now also save the UI render target as `<entry>_<renderer>_ui.png`. Gpu world renderer, 1080p, Britain (1495,1629) and the bank (1430,1690). DevBench logs basic-effect applies per frame.
+- **Allocation** (FrameStats, all threads):
+
+| build | spot | alloc/frame | gen0/s | GC pause |
+|---|---|---|---|---|
+| JIT before | Britain / bank | 27.6 / 27.6 KB | 1.6–2.2 / 1.5–2.2 | 0.4–0.9 ms/s |
+| JIT after | Britain / bank | 69–82 / 21–125 B | 0 / 0 | 0 |
+| NativeAOT after | Britain / bank | 252 / 273 B | 0 / 0 | 0 |
+
+- **Remaining allocations** (EventPipe AllocationTick, 14 s windows):
+  - asset streaming: animation frames decoded when a mobile shows a new direction (`PackPages.DecodeChunk` byte[] and `PackSprites.DecodeIndexed` uint[], via `Animations.LoadDirection` from `Mobile.Draw` or `World.Update`);
+  - the FrameStats report string every 5 s;
+  - nothing else per frame.
+- **Before, by source:**
+  - UI closures and display classes (GumpPic, Button, GumpPicTiled, Checkbox, HitBox, ItemGump, Line) about 55%;
+  - `Control.DrawDebug` display class about 30% (hoisted to method entry, so allocated even with debug off);
+  - nested `new RenderLists()` about 5%;
+  - the PaperDoll tooltip string about 3%;
+  - then BorderControl, ScrollFlag, ScrollBar, AlphaBlendControl, SystemChatControl, Container/TextContainerGump, JournalGump, a new lights `BlendState` plus two lambdas every frame in GameScene, boxed dictionary enumerators in `UpdateTextServerEntities`, and DevBench's per-frame `Split`.
+- **B1:** basic-effect `Pass.Apply()` calls drop from about 16 to 3 per frame (each flush and mesh run before; now once per `Begin` plus parameter changes). The batcher's FNA time and UI draw are about 10–15% lower in the cleanest A/B, but this session had three other ClassicUO clients running (other agents, then the owner). Frame times swung ±40% between runs, so read the timing columns as "no regression", not as a gain.
+  - JIT before / after at Britain: UI draw 0.117 → 0.103 ms, batcher FNA 0.119 → 0.102 ms, Draw 0.477 → 0.400 ms. The bank run went the other way under load.
+  - NativeAOT (after only) ran while the owner's launcher and two clients were active (142–498 fps), so its timings aren't comparable.
+  - Flushes are unchanged (16) and draw calls 23–24.
+- **UI parity:**
+  - Before/after UI render-target shots match pixel for pixel except the journal text. Its content differs between runs (live server messages): checked the diff overlay and a side-by-side crop.
+  - The paperdoll, backpack, status, reward HtmlControl, top bar, chat text box and journal frame and scroll flag are identical.
+  - World shots differ only in 89 px on an animated mobile.
+- **Tests:** 191 pass (188 plus 3 new: GumpCommand fields, deferred dispatch, zero-allocation queueing). The NativeAOT publish has no new trim warnings.
+- **SIMD (owner question):** micro-benchmark (scratch `vbench`). Scalar vertex generation costs 8.5 ns/sprite, Vector128 7.3 ns (bit-exact), plus a 3.1 ns copy. A 32-byte B6 instance costs 3.5 ns plus a 0.5 ns copy. Not worth SIMD at UI sprite counts. B6 pays off only for thousands of batched sprites, and it needs instancing; reported, not started.
+- **Files outside the batcher/UI that changed:**
+  - GameController.cs (the device-loss agent's file): `SaveWorldShot` also saves the UI render target, +8 lines;
+  - GameScene.cs: the lights statics, and the `UpdateTextServerEntities` signature next to `FillGameObjectList`;
+  - none of GameSceneDrawingSorting.cs, GameSceneGpuWorld.cs or FrameStats.cs.
