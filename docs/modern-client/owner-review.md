@@ -38,7 +38,7 @@ Running notes for your return, newest at the top within each section. Started 20
 
 ## In progress
 
-- **Large-scale test scene, then W2** (an agent started about 04:50): first a repeatable busy scene (about 2,000 mobiles and 20,000 ground items) on the local shard, measured in both renderers; then W2 (ground items and mobiles from ECS queries instead of tile lists), measured against that scene.
+- **Large-scale test scene, then W2** (an agent started about 04:50; the scene is placed away from Britain and kbatman, with frozen NPCs): first a repeatable busy scene (about 2,000 mobiles and 20,000 ground items) on the local shard, measured in both renderers; then W2 (ground items and mobiles from ECS queries instead of tile lists), measured against that scene.
 
 ## Things you saw tonight, explained
 
