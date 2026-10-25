@@ -236,6 +236,12 @@ namespace ClassicUO.Game
                             }
 
                             break;
+
+                        // item <hex serial>: a known item, e.g. one in the backpack (cleanup with [remove)
+                        case "item" when args.Length > 1 && world.Items.Get(Convert.ToUInt32(args[1], 16)) is { } known:
+                            world.TargetManager.Target(known.Serial);
+
+                            break;
                     }
 
                     return true;
@@ -258,6 +264,32 @@ namespace ClassicUO.Game
                         lightProfile.LightLevelType = 0;
                         world.Light.Overall = lightProfile.LightLevel;
                         world.Light.Personal = 0;
+                    }
+
+                    return false;
+
+                // equip: logs the player's worn items (to check that a scenario cleaned up after itself)
+                case "equip":
+                    for (Layer l = Layer.OneHanded; l <= Layer.Bank; l++)
+                    {
+                        if (player.FindItemByLayer(l) is { } worn)
+                        {
+                            Log.Info($"[ECS] worn {l} ({(int)l}): 0x{worn.Graphic:X4} hue 0x{worn.Hue:X4} serial 0x{worn.Serial:X8} {worn.Name}");
+                        }
+                    }
+
+                    return false;
+
+                // items: logs the ground items within 8 tiles and the backpack's known contents (cleanup checks)
+                case "items":
+                    foreach (Item it in world.Items.Values)
+                    {
+                        bool ground = it.OnGround && Math.Abs(it.X - player.X) <= 8 && Math.Abs(it.Y - player.Y) <= 8;
+
+                        if (ground || backpack != null && it.Container == backpack.Serial)
+                        {
+                            Log.Info($"[ECS] item {(ground ? "ground" : "backpack")} 0x{it.Graphic:X4} x{it.Amount} serial 0x{it.Serial:X8} at {it.X},{it.Y} {it.Name}");
+                        }
                     }
 
                     return false;
