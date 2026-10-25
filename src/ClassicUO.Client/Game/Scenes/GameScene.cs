@@ -730,7 +730,7 @@ namespace ClassicUO.Game.Scenes
                                     if (!mobile.IsDestroyed)
                                     {
                                         FrameStats.Inc(FrameCounter.Tiles);
-                                        AddTileToRenderList(mobile, use_handles, GPU_WALK_MAX_Z, chunk, true, _gpuSkipEnabled, singleObject: true);
+                                        AddTileToRenderList(mobile, use_handles, GPU_WALK_MAX_Z, chunk, true, _gpuSkipEnabled, mobile.TNext);
                                     }
                                 }
 
