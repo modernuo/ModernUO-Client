@@ -29,6 +29,7 @@ namespace ClassicUO
         WorldPrepare,
         PrepSetup,
         PrepWalk,
+        PrepGpuMasks,
         PrepHidden,
         PrepFoliageFinish,
         PrepText,
@@ -92,6 +93,12 @@ namespace ClassicUO
         CaptureItems,
         CaptureMobiles,
         CaptureOther,
+        GpuMaskRebuilds,
+        GpuSkipActive,
+        GpuFullTiles,
+        GpuWalkTiles,
+        GpuEdgeTiles,
+        GpuPickTiles,
         Count
     }
 
@@ -113,7 +120,7 @@ namespace ClassicUO
         {
             "event pump", "ParsePackets", "Plugin.Tick", "GameScene.Update", "  world: mobiles", "  world: items",
             "  world: effects+text", "  world: Ecs.Update", "  scene update rest", "UIManager.Update", "update other", "Update total",
-            "draw setup", "lights", "world prepare", "  prep: setup", "  prep: tile walk", "  prep: gpu hidden collect",
+            "draw setup", "lights", "world prepare", "  prep: setup", "  prep: tile walk", "  prep: gpu skip masks", "  prep: gpu hidden collect",
             "  prep: foliage+finish", "  prep: text entities", "  prep: capture multis", "  prep: capture statics",
             "  prep: capture items", "  prep: capture mobiles", "  prep: capture other", "  prep: rest", "    walk: baked land",
             "    walk: baked statics", "    walk: unmeshed", "    walk: items/mob/fx", "    walk: screen pos", "    walk: picking",
@@ -124,7 +131,7 @@ namespace ClassicUO
         private static readonly string[] _phaseKeys =
         {
             "pump", "packets", "plugin", "scene_update", "world_mobiles", "world_items", "world_fx_text", "world_ecs", "scene_rest",
-            "ui_update", "update_other", "update", "draw_setup", "lights", "world_prepare", "prep_setup", "prep_walk", "prep_hidden",
+            "ui_update", "update_other", "update", "draw_setup", "lights", "world_prepare", "prep_setup", "prep_walk", "prep_gpu_masks", "prep_hidden",
             "prep_foliage_finish", "prep_text", "prep_cap_multi", "prep_cap_static", "prep_cap_item", "prep_cap_mobile", "prep_cap_other",
             "prep_rest", "walk_land", "walk_static", "walk_unmeshed", "walk_dynamic", "walk_pos", "walk_pick", "walk_override", "walk_light",
             "walk_foliage", "bare_walk", "world_draw", "scene_draw_ui", "ui_draw",
@@ -133,7 +140,8 @@ namespace ClassicUO
 
         private static readonly string[] _counterKeys = { "items", "mobiles", "gumps", "render_list", "flushes", "draw_calls", "alloc_bytes", "gpu_instances", "gpu_dynamic",
             "gpu_overrides", "gpu_draw_calls", "tiles", "objects", "baked_land", "baked_statics", "unmeshed", "dynamic", "pick_tests",
-            "override_calls", "hidden_tiles", "lights_added", "foliage", "cap_multis", "cap_statics", "cap_items", "cap_mobiles", "cap_other" };
+            "override_calls", "hidden_tiles", "lights_added", "foliage", "cap_multis", "cap_statics", "cap_items", "cap_mobiles", "cap_other", "gpu_mask_rebuilds",
+            "gpu_skip_active", "gpu_full_tiles", "gpu_walk_tiles", "gpu_edge_tiles", "gpu_pick_tiles" };
 
         private static readonly long[] _start = new long[PHASES];
         private static readonly long[] _acc = new long[PHASES];
@@ -222,6 +230,15 @@ namespace ClassicUO
             if (On)
             {
                 _cur[(int)counter]++;
+            }
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void Add(FrameCounter counter, int value)
+        {
+            if (On)
+            {
+                _cur[(int)counter] += value;
             }
         }
 
@@ -351,7 +368,7 @@ namespace ClassicUO
                                                       _acc[(int)FramePhase.Cursor] - _acc[(int)FramePhase.Composite] -
                                                       _acc[(int)FramePhase.PluginDraw];
                     _acc[(int)FramePhase.BatcherGpuCalls] = UltimaBatcher2D.FrameGpuTicks;
-                    _acc[(int)FramePhase.PrepRest] = _acc[(int)FramePhase.WorldPrepare] - _acc[(int)FramePhase.PrepSetup] - _acc[(int)FramePhase.PrepWalk] -
+                    _acc[(int)FramePhase.PrepRest] = _acc[(int)FramePhase.WorldPrepare] - _acc[(int)FramePhase.PrepSetup] - _acc[(int)FramePhase.PrepWalk] - _acc[(int)FramePhase.PrepGpuMasks] -
                                                      _acc[(int)FramePhase.PrepHidden] - _acc[(int)FramePhase.PrepFoliageFinish] -
                                                      _acc[(int)FramePhase.PrepText] - _acc[(int)FramePhase.PrepCaptureMulti] -
                                                      _acc[(int)FramePhase.PrepCaptureStatic] - _acc[(int)FramePhase.PrepCaptureItem] -

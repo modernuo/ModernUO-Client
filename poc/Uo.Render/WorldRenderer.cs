@@ -285,6 +285,15 @@ public sealed unsafe class WorldRenderer : IDisposable
         Chunks.EvictAll();
     }
 
+    /// <summary>Replaces static graphics in the bake (0x10000 entries, null = none; ClassicUO's season statics) and rebakes
+    /// every chunk. Overrides keep addressing statics by their original graphic. Meant for rare changes: the view re-streams.</summary>
+    public void SetStaticRemap(ushort[] remap)
+    {
+        if (remap != null && remap.Length < 0x10000) throw new ArgumentException("static remap needs 0x10000 entries", nameof(remap));
+        Pack.StaticRemap = remap;
+        Chunks.EvictAll();
+    }
+
     /// <summary>The shader's z-hiding test on the CPU (same rules as sprite.hlsl).</summary>
     public bool ZHidden(in SpriteInstance inst, bool forceShow = false)
     {

@@ -84,7 +84,7 @@ namespace ClassicUO.Game.Scenes
                     else if (st.InChunkMesh)
                     {
                         // meshed statics are never trees, foliage or animated (ChunkMesh) and draw without shadows
-                        if (st.Graphic != st.OriginalGraphic)
+                        if (st.Graphic != GpuBakedGraphic(st))
                         {
                             GpuReplaceStatic(st);
                         }
@@ -113,7 +113,7 @@ namespace ClassicUO.Game.Scenes
         }
 
         // After the fill walked a tile: baked land and statics it skipped are hidden where the world pass would draw them.
-        private void CollectGpuHidden(GameObject obj)
+        private void CollectGpuHidden(GameObject obj, bool skipBaked)
         {
             // tiles far beside the view: nothing of theirs reaches it (and the fill never touched them)
             int sx = (obj.X - obj.Y) * 22 - _offset.X - 22;
@@ -127,7 +127,8 @@ namespace ClassicUO.Game.Scenes
 
             for (; obj != null; obj = obj.TNext)
             {
-                if (obj.DrawnFrame == _drawFrame)
+                // skipBaked: the walk left this tile's baked objects to the GPU (GameSceneGpuPrepare)
+                if (obj.DrawnFrame == _drawFrame || skipBaked && IsGpuBaked(obj))
                 {
                     continue;
                 }
@@ -201,7 +202,7 @@ namespace ClassicUO.Game.Scenes
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private bool GpuStaticZHidden(Static st)
         {
-            return st.Z >= _maxZ || _noDrawRoofs && Client.Game.UO.FileManager.TileData.StaticData[st.OriginalGraphic].IsRoof;
+            return st.Z >= _maxZ || _noDrawRoofs && Client.Game.UO.FileManager.TileData.StaticData[GpuBakedGraphic(st)].IsRoof;
         }
 
         private const byte GPU_KIND_KNOWN = 1, GPU_KIND_TREE = 2, GPU_KIND_ROCK = 4;
@@ -266,7 +267,7 @@ namespace ClassicUO.Game.Scenes
 
         private bool GpuStaticVisible(Static st)
         {
-            int g = st.OriginalGraphic + 0x4000;
+            int g = GpuBakedGraphic(st) + 0x4000;
 
             if ((uint)g >= (uint)_gpuArt.Length)
             {
@@ -319,6 +320,7 @@ namespace ClassicUO.Game.Scenes
             _gpuView = new Rectangle(viewMin.X, viewMin.Y, viewMax.X - viewMin.X, viewMax.Y - viewMin.Y);
             gpu.BeginFrame();
             gpu.SetLandSeason(_world.Season);
+            GpuUpdateStaticSeason(gpu);
             FrameStats.AddSince(FramePhase.PrepSetup, stamp);
 
             FillGameObjectList();
