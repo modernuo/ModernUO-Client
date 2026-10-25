@@ -187,6 +187,15 @@ namespace ClassicUO.Game.GameObjects
             }
         }
 
+        /// <summary><see cref="UpdateRealScreenPosition"/> without <see cref="UpdateTextCoordsV"/>.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void UpdateRealScreenPositionOnly(int offsetX, int offsetY)
+        {
+            RealScreenPosition.X = ((X - Y) * 22) - offsetX - 22;
+            RealScreenPosition.Y = ((X + Y) * 22 - (Z << 2)) - offsetY - 22;
+            IsPositionChanged = false;
+        }
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void UpdateRealScreenPosition(int offsetX, int offsetY)
         {
@@ -216,6 +225,46 @@ namespace ClassicUO.Game.GameObjects
                 true,
                 text_type
             );
+        }
+
+        // W5: TextContainer (and its Version) when every text in it was found expired; texts never un-expire (their Time is
+        // set before TextContainer.Add), so this holds until a text is added
+        private TextContainer _textExpiredContainer;
+        private uint _textExpiredVersion;
+
+        /// <summary>
+        /// W5: true when every text of <see cref="TextContainer"/> has expired: then
+        /// <see cref="UpdateTextCoordsV"/> places nothing (Mobile's and Item's skip expired texts until a live one, and
+        /// FixTextCoordinatesInScreen skips expired ones). Cached until a text is added.
+        /// </summary>
+        public bool TextAllExpired()
+        {
+            TextContainer c = TextContainer;
+
+            if (c == null)
+            {
+                return true;
+            }
+
+            if (ReferenceEquals(c, _textExpiredContainer) && c.Version == _textExpiredVersion)
+            {
+                return true;
+            }
+
+            // every text, whatever its RenderedText's state (a pooled RenderedText could come back to life): Time alone
+            // decides, and it never moves
+            for (TextObject t = (TextObject)c.Items; t != null; t = (TextObject)t.Next)
+            {
+                if (t.Time >= Time.Ticks)
+                {
+                    return false;
+                }
+            }
+
+            _textExpiredContainer = c;
+            _textExpiredVersion = c.Version;
+
+            return true;
         }
 
         public virtual void UpdateTextCoordsV()

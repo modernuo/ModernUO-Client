@@ -127,6 +127,10 @@ namespace ClassicUO.Configuration
         // reapplied every frame. Off = selected and extracted every frame.
         [JsonPropertyName("gpu_mobile_frame_cache")] public bool GpuMobileFrameCache { get; set; } = true;
 
+        // W5: the per-frame overhead text pass skips the text layout of mobiles and corpses whose texts have all expired
+        // (expired texts stay in the entity's container; the layout would place nothing). Off = laid out every frame.
+        [JsonPropertyName("text_skip_expired")] public bool TextSkipExpired { get; set; } = true;
+
         [JsonPropertyName("encryption")] public byte Encryption { get; set; }
 
         [JsonPropertyName("plugins")] public string[] Plugins { get; set; } = { @"./Assistant/Razor.dll" };
