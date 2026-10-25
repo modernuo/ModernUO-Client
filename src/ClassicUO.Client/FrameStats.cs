@@ -27,6 +27,27 @@ namespace ClassicUO
         DrawSetup,
         Lights,
         WorldPrepare,
+        PrepSetup,
+        PrepWalk,
+        PrepHidden,
+        PrepFoliageFinish,
+        PrepText,
+        PrepCaptureMulti,
+        PrepCaptureStatic,
+        PrepCaptureItem,
+        PrepCaptureMobile,
+        PrepCaptureOther,
+        PrepRest,
+        WalkLand,
+        WalkStatic,
+        WalkUnmeshed,
+        WalkDynamic,
+        WalkPosition,
+        WalkPick,
+        WalkOverride,
+        WalkLight,
+        WalkFoliage,
+        BareWalk,
         WorldDraw,
         SceneDrawUi,
         UiDraw,
@@ -54,6 +75,23 @@ namespace ClassicUO
         GpuDynamic,
         GpuOverrides,
         GpuDrawCalls,
+        // world prepare: incremented during the frame, cleared after it
+        Tiles,
+        Objects,
+        BakedLand,
+        BakedStatics,
+        Unmeshed,
+        Dynamic,
+        PickTests,
+        OverrideCalls,
+        HiddenTiles,
+        Lights,
+        Foliage,
+        CaptureMultis,
+        CaptureStatics,
+        CaptureItems,
+        CaptureMobiles,
+        CaptureOther,
         Count
     }
 
@@ -61,6 +99,11 @@ namespace ClassicUO
     internal static class FrameStats
     {
         public static readonly bool On = DevBench.FrameStats && Environment.GetEnvironmentVariable("CUO_FRAMESTATS_PHASES") != "0";
+
+        // CUO_FRAMESTATS_PREP=1 (or the DevBench plan entry prepdetail:on) also splits the tile walk into exclusive buckets
+        // (Walk*) and times a bare walk of the same tile lists. It takes a timestamp per bucket change, so it adds overhead:
+        // compare its world prepare with a run without it.
+        public static bool PrepDetail = On && Environment.GetEnvironmentVariable("CUO_FRAMESTATS_PREP") == "1";
 
         private const int CAPACITY = 1 << 15;
         private const int PHASES = (int)FramePhase.Count;
@@ -70,19 +113,27 @@ namespace ClassicUO
         {
             "event pump", "ParsePackets", "Plugin.Tick", "GameScene.Update", "  world: mobiles", "  world: items",
             "  world: effects+text", "  world: Ecs.Update", "  scene update rest", "UIManager.Update", "update other", "Update total",
-            "draw setup", "lights", "world prepare", "world draw", "scene DrawUI", "UIManager.Draw", "cursor", "RT composite",
+            "draw setup", "lights", "world prepare", "  prep: setup", "  prep: tile walk", "  prep: gpu hidden collect",
+            "  prep: foliage+finish", "  prep: text entities", "  prep: capture multis", "  prep: capture statics",
+            "  prep: capture items", "  prep: capture mobiles", "  prep: capture other", "  prep: rest", "    walk: baked land",
+            "    walk: baked statics", "    walk: unmeshed", "    walk: items/mob/fx", "    walk: screen pos", "    walk: picking",
+            "    walk: override/mesh", "    walk: lights", "    walk: foliage check", "  (bare list walk)", "world draw", "scene DrawUI", "UIManager.Draw", "cursor", "RT composite",
             "plugin draw", "draw other", "Draw total", "  batcher FNA calls", "Present", "frame"
         };
 
         private static readonly string[] _phaseKeys =
         {
             "pump", "packets", "plugin", "scene_update", "world_mobiles", "world_items", "world_fx_text", "world_ecs", "scene_rest",
-            "ui_update", "update_other", "update", "draw_setup", "lights", "world_prepare", "world_draw", "scene_draw_ui", "ui_draw",
+            "ui_update", "update_other", "update", "draw_setup", "lights", "world_prepare", "prep_setup", "prep_walk", "prep_hidden",
+            "prep_foliage_finish", "prep_text", "prep_cap_multi", "prep_cap_static", "prep_cap_item", "prep_cap_mobile", "prep_cap_other",
+            "prep_rest", "walk_land", "walk_static", "walk_unmeshed", "walk_dynamic", "walk_pos", "walk_pick", "walk_override", "walk_light",
+            "walk_foliage", "bare_walk", "world_draw", "scene_draw_ui", "ui_draw",
             "cursor", "composite", "plugin_draw", "draw_other", "draw", "batcher_fna", "present", "frame"
         };
 
         private static readonly string[] _counterKeys = { "items", "mobiles", "gumps", "render_list", "flushes", "draw_calls", "alloc_bytes", "gpu_instances", "gpu_dynamic",
-            "gpu_overrides", "gpu_draw_calls" };
+            "gpu_overrides", "gpu_draw_calls", "tiles", "objects", "baked_land", "baked_statics", "unmeshed", "dynamic", "pick_tests",
+            "override_calls", "hidden_tiles", "lights_added", "foliage", "cap_multis", "cap_statics", "cap_items", "cap_mobiles", "cap_other" };
 
         private static readonly long[] _start = new long[PHASES];
         private static readonly long[] _acc = new long[PHASES];
@@ -144,6 +195,79 @@ namespace ClassicUO
             }
         }
 
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static long Stamp()
+        {
+            return On ? Stopwatch.GetTimestamp() : 0;
+        }
+
+        // Adds the time since `since` (a Stamp()) to phase and returns now.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static long AddSince(FramePhase phase, long since)
+        {
+            if (On)
+            {
+                long now = Stopwatch.GetTimestamp();
+                _acc[(int)phase] += now - since;
+
+                return now;
+            }
+
+            return 0;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void Inc(FrameCounter counter)
+        {
+            if (On)
+            {
+                _cur[(int)counter]++;
+            }
+        }
+
+        public static bool Detail
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => On && PrepDetail;
+        }
+
+        // Detail mode's exclusive walk buckets: charges the time since the last switch to the current bucket, makes `bucket`
+        // current and returns the previous one (FramePhase.Count = none), so a nested duty can switch back.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static FramePhase Enter(FramePhase bucket)
+        {
+            if (On && PrepDetail && bucket != _bucket)
+            {
+                return Switch(bucket);
+            }
+
+            return bucket;
+        }
+
+        public const FramePhase NoBucket = FramePhase.Count;
+        private static FramePhase _bucket = NoBucket;
+        private static long _bucketAt;
+
+        private static FramePhase Switch(FramePhase bucket)
+        {
+            long now = Stopwatch.GetTimestamp();
+            FramePhase prev = _bucket;
+
+            if (prev != FramePhase.Count)
+            {
+                _acc[(int)prev] += now - _bucketAt;
+            }
+
+            _bucket = bucket;
+            _bucketAt = now;
+            _bucketEntries[(int)bucket]++;
+
+            return prev;
+        }
+
+        // detail mode: switches into each bucket during the window, to subtract the timestamps' own cost
+        private static readonly long[] _bucketEntries = new long[PHASES + 1];
+
         // Starts a measurement window; Window() ends it and logs the summary.
         public static void StartWindow(string tag)
         {
@@ -179,6 +303,7 @@ namespace ClassicUO
             {
                 _lastEnd = now;
                 Array.Clear(_acc);
+                ClearFrameCounters();
                 UltimaBatcher2D.ResetFrameCounters();
 
                 return;
@@ -195,7 +320,9 @@ namespace ClassicUO
                 _gc1 = GC.CollectionCount(1);
                 _gc2 = GC.CollectionCount(2);
                 _pauseStart = GC.GetTotalPauseDuration();
+                Array.Clear(_bucketEntries);
                 Array.Clear(_acc);
+                ClearFrameCounters();
                 UltimaBatcher2D.ResetFrameCounters();
 
                 return;
@@ -224,6 +351,11 @@ namespace ClassicUO
                                                       _acc[(int)FramePhase.Cursor] - _acc[(int)FramePhase.Composite] -
                                                       _acc[(int)FramePhase.PluginDraw];
                     _acc[(int)FramePhase.BatcherGpuCalls] = UltimaBatcher2D.FrameGpuTicks;
+                    _acc[(int)FramePhase.PrepRest] = _acc[(int)FramePhase.WorldPrepare] - _acc[(int)FramePhase.PrepSetup] - _acc[(int)FramePhase.PrepWalk] -
+                                                     _acc[(int)FramePhase.PrepHidden] - _acc[(int)FramePhase.PrepFoliageFinish] -
+                                                     _acc[(int)FramePhase.PrepText] - _acc[(int)FramePhase.PrepCaptureMulti] -
+                                                     _acc[(int)FramePhase.PrepCaptureStatic] - _acc[(int)FramePhase.PrepCaptureItem] -
+                                                     _acc[(int)FramePhase.PrepCaptureMobile] - _acc[(int)FramePhase.PrepCaptureOther];
 
                     _cur[(int)FrameCounter.Flushes] = UltimaBatcher2D.FrameFlushes;
                     _cur[(int)FrameCounter.DrawCalls] = UltimaBatcher2D.FrameDrawCalls;
@@ -246,6 +378,7 @@ namespace ClassicUO
             }
 
             Array.Clear(_acc);
+            ClearFrameCounters();
             UltimaBatcher2D.ResetFrameCounters();
             _lastEnd = now;
 
@@ -255,6 +388,11 @@ namespace ClassicUO
                 _windowStart = 0;
                 _lastEnd = Stopwatch.GetTimestamp();
             }
+        }
+
+        private static void ClearFrameCounters()
+        {
+            Array.Clear(_cur, (int)FrameCounter.Tiles, COUNTERS - (int)FrameCounter.Tiles);
         }
 
         private static void Report(long now)
@@ -275,7 +413,7 @@ namespace ClassicUO
               .Append("  phase                      avg      p50      p95      p99  (ms)\n");
 
             json.Append(inv, $"FRAMESTATS {{\"tag\":\"{_tag}\",\"window\":{_windowIndex},\"frames\":{n},\"seconds\":{seconds:0.000},\"fps\":{n / seconds:0.0},")
-                .Append(inv, $"\"phases_on\":{(On ? "true" : "false")},\"gc0\":{gc0},\"gc1\":{gc1},\"gc2\":{gc2},\"gc_pause_ms\":{pauseMs:0.000},")
+                .Append(inv, $"\"phases_on\":{(On ? "true" : "false")},\"prep_detail\":{(Detail ? "true" : "false")},\"gc0\":{gc0},\"gc1\":{gc1},\"gc2\":{gc2},\"gc_pause_ms\":{pauseMs:0.000},")
                 .Append(inv, $"\"alloc_per_frame\":{allocTotal / Math.Max(1, n)},\"phases\":{{");
 
             bool first = true;
@@ -291,6 +429,18 @@ namespace ClassicUO
                 sb.Append(inv, $"  {_phaseNames[p],-24} {avg,7:0.000}  {p50,7:0.000}  {p95,7:0.000}  {p99,7:0.000}\n");
                 json.Append(first ? "" : ",").Append(inv, $"\"{_phaseKeys[p]}\":[{avg:0.0000},{p50:0.0000},{p95:0.0000},{p99:0.0000}]");
                 first = false;
+            }
+
+            if (Detail)
+            {
+                json.Append("},\"bucket_entries\":{");
+                first = true;
+
+                for (int p = (int)FramePhase.WalkLand; p <= (int)FramePhase.WalkFoliage; p++)
+                {
+                    json.Append(first ? "" : ",").Append(inv, $"\"{_phaseKeys[p]}\":{_bucketEntries[p] / (double)Math.Max(1, n):0.0}");
+                    first = false;
+                }
             }
 
             json.Append("},\"counts\":{");

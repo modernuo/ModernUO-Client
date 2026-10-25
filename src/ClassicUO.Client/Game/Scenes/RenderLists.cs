@@ -295,9 +295,18 @@ namespace ClassicUO.Game.Scenes
                     continue;
                 }
 
+                long stamp = FrameStats.Stamp();
+
                 if (gpu.DrawObject(batcher, obj, obj.CalculateDepthZ()))
                 {
                     done++;
+                }
+
+                if (FrameStats.On)
+                {
+                    bool mobile = obj is Mobile, item = !mobile && obj is Item;
+                    FrameStats.AddSince(mobile ? FramePhase.PrepCaptureMobile : item ? FramePhase.PrepCaptureItem : FramePhase.PrepCaptureOther, stamp);
+                    FrameStats.Inc(mobile ? FrameCounter.CaptureMobiles : item ? FrameCounter.CaptureItems : FrameCounter.CaptureOther);
                 }
             }
 
