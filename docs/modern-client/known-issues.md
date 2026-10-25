@@ -2,6 +2,26 @@
 
 Visual or behavioural defects found in the PoC client that aren't fixed yet. Add new ones here; move them to the poc-log when fixed.
 
+## Legacy on FNA3D D3D11 and OpenGL: observations for the deferred Legacy project (2026-10-25)
+
+Auto's fallback (no usable SDL_GPU/Vulkan) runs Legacy on FNA3D's D3D11 driver, or OpenGL. Neither had been run for a while. Tested with `CUO_RENDERER_PROBE_FAIL=device` (plus `CUO_RENDERER_LEGACY_DRIVER=OpenGL`), Release JIT, 1280×720, display off, other agents' clients running. Nothing below blocks a session; none of it was fixed.
+
+- **Nothing broken.** On both drivers: login, world shots (Britain, bank, house), gumps and UI shots, a walk, and `CUO_BENCH_PICK` (static, land, item and player selected; both clicks reached the server). The house spot is 1.83% (D3D11) and 1.84% (OpenGL) near-black, the same as Legacy on SDL_GPU (1.83–1.84%). Shots differ from Legacy on the SDL_GPU device in 0.3–1.7% of pixels: moving NPCs and journal text. No errors or FNA warnings in the logs. Looked at.
+- **OpenGL lands on the Intel UHD 770, not the RTX 3090 Ti** (`OpenGL Renderer: Intel(R) UHD Graphics 770`). D3D11 and SDL_GPU both pick the RTX. So the OpenGL numbers are integrated-GPU numbers. A Legacy project that keeps OpenGL needs adapter selection there (or must accept the OS's choice).
+- **Speed (Britain, ms per frame, means):**
+
+  | Device | fps | Draw | batcher FNA calls | Present | Frame |
+  |---|---|---|---|---|---|
+  | Legacy on SDL_GPU (RTX) | 869 | 0.32 | 0.12 | 0.80 | 1.15 |
+  | Legacy on D3D11 (RTX) | 407 | 0.37 | 0.04 | 2.01 | 2.46 |
+  | Legacy on OpenGL (UHD 770) | 258 | 0.98 | 0.55 | 2.79 | 3.87 |
+  | Gpu on SDL_GPU (UHD 770, `FNA3D_PREFER_LOW_POWER=1`) | 262 | 0.36 | | 3.39 | 3.82 |
+
+  - On the same GPU, D3D11 spends 2.5× longer in Present than SDL_GPU. One suspect, not tested: `Main.cs` sets `FNA3D_D3D11_FORCE_BITBLT=1` (a Windows 11 scaling workaround), which uses the BitBlt presentation model. Present times with the display off aren't reliable, so measure with the display on before acting on this.
+  - D3D11's CPU side is the cheapest of the three (0.04 ms in FNA calls).
+- **FNA3D doesn't fall through a forced driver.** Auto forces `FNA3D_FORCE_DRIVER=D3D11` when a hardware D3D11 device (feature level 10.0+) can be created, the same check FNA3D's D3D11 driver makes. FNA3D also needs MojoShader's D3D11 shader compiler (d3dcompiler). If that's missing, FNA3D fails instead of trying OpenGL, and the client can't start. Very unlikely on Windows 10/11; a fallback-profile project should handle it.
+- **Gpu mode on the Intel UHD 770 works** (optional check): `[renderer] auto: Gpu (SDL_GPU vulkan, Intel(R) UHD Graphics 770)`, 0 parity mismatches over 15,795 frames (Britain, bank, walk, house), correct shots, 250–300 fps, bound by Present. So on this iGPU the Gpu path is at least as fast as Legacy.
+
 ## Gpu world renderer: grid lines between land tiles when zoomed out (2026-10-24) — fixed 2026-10-25, leftover below
 
 - **Fixed** (seams agent, commit 115e93c71; poc-log "Land seams when zoomed out"): baked land, stretched land and 44×44 floor and water statics draw seam-free at zoom 1.5, 2 and 2.5 (`SampleTile` in sprite.hlsl).
