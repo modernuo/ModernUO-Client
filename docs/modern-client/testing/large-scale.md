@@ -10,25 +10,36 @@ A repeatable busy scene on the local ModernUO shard, for measuring how world pre
   - **19,476 ground items:** a 36×36 block (5138..5173, 2132..2167), 15 full layers at z 0..7 (gold and arrow stacks, bandages, a backpack, chest, sword, axe, spellbook, robe, logs, apples, a bottle, single coins) plus four 12×12 blocks of lit or animated art (brazier 0xE31, candle 0xA0F, 0x3996, fire 0x19AB). All non-movable, so they never decay.
   - **A walking lane:** row y 2150 is free of mobiles and items from 5138 to 5173. DevBench `lswalk` walks it end to end.
 - **Server load:** creatures' AI runs only while a player is near (sector activation). With a client standing in the scene ModernUO used about 4% of one core (11 s of CPU in 5 minutes); with nobody there, nothing measurable. ModernUO's working set grew from 563 to 711 MB over the session that built (and once rebuilt) it.
-- **Left in place** after 2026-10-25 (frozen and cheap). Wipe it with the script below if it is in the way.
+- **Left in place** (frozen and cheap). Since 2026-10-25 11:01 it is the server-built copy from `[TestScene create` below; the client-built one from before was wiped.
 
-## Create and wipe
+## Create and wipe: ModernUO's `[TestScene`
 
-`tools/large-scale/make_scene.py` writes `-ecsdriver` scripts. They need an account with GameMaster access or above (kbatman2–4; never kbatman).
+The scene is a server feature on the local ModernUO branch `modernuo-client/test-scene` (worktree `C:\Repositories\ModernUO\.wt-testscene`, file `Projects/UOContent/Commands/ClientPoc/TestScene.cs`; local only, not pushed). The running server loads it since 2026-10-25 11:00. It needs GameMaster access or above (kbatman and kbatman2–4 are Owner).
 
-```
-python tools/large-scale/make_scene.py create > <scratch>/ls_create.txt
-python tools/large-scale/make_scene.py wipe   > <scratch>/ls_wipe.txt
-```
+| Command | What it does |
+|---|---|
+| `[TestScene create` | Builds exactly the layout above in one server tick (strips, layers, blocks and lane as the old `[TileXYZ` script, same order). It refuses if the scene exists or anything but players is within 20 tiles of the centre |
+| `[TestScene wipe` | Deletes exactly the objects `create` made (riders' mounts and worn items go with them). They are tracked by serial in `Saves/TestScene/TestScene.bin`, written with the world save, so this works after a restart. Nothing else in the area is touched |
+| `[TestScene go` | Moves you to Felucca 5156 2150 0 from any facet and remembers where you were. A second `go` from inside the scene keeps the first return point |
+| `[TestScene return` | Takes you back to that location and facet |
+| `[TestScene status` | Tracked mobiles and items, plus the NPCs and ground items within 20 tiles |
 
-- **create** `[go`es to the centre and issues `[TileXYZ x y w h z <type> [args] set Frozen true Blessed true …` per strip and per item layer: absolute coordinates, no targeting, so it is deterministic. About 95 s. The driver's last `[ECS] check` line should read `mobiles=1985` (with yours) and `items` about 25,100 (ground items plus worn ones).
-- **wipe** `[go`es to the centre and runs `[wipe` with a targeted box of ±20 tiles. About 30 s. The last check should read `mobiles=1` and only your own worn items. Never run it anywhere else: `[wipe` deletes every item and NPC in the box.
-- An optional `x y` after `create`/`wipe` moves the centre; check the new spot is empty and flat first.
-- The driver only runs when `-ecscheck` is set (any interval), e.g. with `tools/ecs-parity/run_parity.py` (`--script`, `--parity 0`) or your own launcher.
-- Don't create it twice: `[TileXYZ` adds, it doesn't replace. Wipe first.
+- **Rebuilding** is `[TestScene wipe` then `[TestScene create`, from anywhere.
+- **`make_scene.py`** now only writes `-ecsdriver` scripts that issue these commands from a client (`create`, `wipe`, `status`; each one does `go` first and `return` at the end). The `[TileXYZ`/`[wipe` generator is gone: it took about 95 s through a client.
+- **The driver's check lines** with the scene in range read `mobiles=1985` (with yours) and `items` about 25,100 (ground items plus worn ones; the creatures' equipment is random).
+
+**Replacing the client-built scene (2026-10-25 11:00, kbatman4):**
+
+| Step | Server (`[TestScene status`) | Client check at the centre |
+|---|---|---|
+| Before, old client-built scene | 0 tracked; 1,984 NPCs, 19,476 ground items in the area | mobiles=1985, items=25,142 |
+| After `[wipe` of the ±20 box (old scene only) | 0; 0 NPCs, 0 items | mobiles=1, items=24 (own) |
+| After `[TestScene create` | 1,984 mobiles and 19,476 items tracked; 1,984 NPCs, 19,476 ground items in the area | mobiles=1985, items=25,136 |
+| After `go` from inside the scene, then `return` | | back at Trammel 5156 2150, where kbatman4 started |
 
 ## Measuring
 
+- **The owner's FPS test** (`tools/fps-test`) measures the scene as its last spot, "Large scene" (zoom 1, 1920x1080, Legacy and Gpu), between `say:[TestScene go` and `say:[TestScene return`.
 - **Plan entries** (DevBench): `ls_z1:5156 2150:1`, `ls_zo:5156 2150:2.5`, and partial views `ls_e12:5168 2150:1` (about two thirds of the scene in range) and `ls_e24:5180 2150:1` (about a third). `name:lswalk:<zoom>` `[go`es to the centre and walks the lane back and forth (objects leave and enter range at the ends).
 - **Environment:** `CUO_FRAMESTATS=1 CUO_BENCH_SIZE=1920x1080 CUO_BENCH_WINDOWS=2 CUO_BENCH_EXIT=1 CUO_BENCH_NOSHOT=1`. `world:legacy` for the Legacy columns. `prepdetail:on` for the walk buckets (see [world-prepare.md](world-prepare.md) for correcting them).
 - **Summaries:** `python tools/large-scale/summarize.py <log> [--keys a,b] [--counts c,d]` prints one row per plan tag: fps, alloc per frame, gen0, the phases (ms, averages of the windows) and counts.
