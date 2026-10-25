@@ -84,9 +84,10 @@ Driven by environment variables. Read the header comment in DevBench.cs for the 
 
 | Check | How | Pass |
 |---|---|---|
-| Build and unit tests | `dotnet test tests/ClassicUO.UnitTests -c Release` | All pass (191 as of B1–B5) |
+| Build and unit tests | `dotnet test tests/ClassicUO.UnitTests -c Release` | All pass (244 on poc/modern-client a6110f967) |
 | World screenshot parity | `CUO_BENCH_SHOTS` at fixed spots (Britain, bank, zoomed out, night); compare before vs after or Legacy vs Gpu | Pixel diff is explained (filtering), and someone **looked at the images** |
 | UI parity | `gumps` plus the `_ui.png` shots | Identical, apart from live journal text |
+| **Legacy world (required for any change to the batcher, the asset loaders, world prepare or GameScene drawing)** | A pure-Legacy session (`-worldrenderer legacy`) with `CUO_BENCH_SHOTS` at a fixed spot, compared with the same spot on the previous build. Legacy is developer-only now, but it is our parity yardstick and the batcher still draws the UI in Gpu mode | Same image apart from moving creatures, and someone **looked at it**. The B1 regression (2026-10-25: missing and wrong land/static tiles in every Legacy frame) passed every Gpu-only check for a day |
 | Picking | `CUO_BENCH_PICK=1` | Same object selected in both renderers; clicks reach the server |
 | Performance | `CUO_FRAMESTATS=1` with a plan; quick JIT runs only. Report Update, world prepare, world draw, Draw and Present separately | No regression beyond the run-to-run noise. Other clients running make timings noisy, so say so |
 | Allocation | FrameStats `alloc/frame` and gen0 counts | No new per-frame allocation |
