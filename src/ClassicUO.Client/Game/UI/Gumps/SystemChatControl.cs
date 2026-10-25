@@ -32,7 +32,7 @@ namespace ClassicUO.Game.UI.Gumps
         UOChat
     }
 
-    internal class SystemChatControl : Control
+    internal class SystemChatControl : Control, IGumpDeferredDraw
     {
         private const int MAX_MESSAGE_LENGTH = 100;
         private const int TEXTBOX_LENGTH = 500;
@@ -561,39 +561,39 @@ namespace ClassicUO.Game.UI.Gumps
             base.Update();
         }
 
-        public override bool AddToRenderLists(RenderLists renderLists, int x, int y, ref float layerDepthRef)
+        bool IGumpDeferredDraw.DrawDeferred(UltimaBatcher2D batcher, int x, int y, float layerDepth, int arg)
         {
             int yy = TextBoxControl.Y + y - 20;
             var scale = 1f;
 
             LinkedListNode<ChatLineTime> last = _textEntries.Last;
 
-            var depth = layerDepthRef;
-
-            renderLists.AddGumpNoAtlas(batcher =>
+            while (last != null)
             {
-                while (last != null)
+                LinkedListNode<ChatLineTime> prev = last.Previous;
+
+                if (last.Value.IsDisposed)
                 {
-                    LinkedListNode<ChatLineTime> prev = last.Previous;
-
-                    if (last.Value.IsDisposed)
-                    {
-                        _textEntries.Remove(last);
-                    }
-                    else
-                    {
-                        yy -= last.Value.TextHeight;
-
-                        if (yy >= y)
-                        {
-                            last.Value.Draw(batcher, x + 2, yy, depth, scale);
-                        }
-                    }
-
-                    last = prev;
+                    _textEntries.Remove(last);
                 }
-                return true;
-            });
+                else
+                {
+                    yy -= last.Value.TextHeight;
+
+                    if (yy >= y)
+                    {
+                        last.Value.Draw(batcher, x + 2, yy, layerDepth, scale);
+                    }
+                }
+
+                last = prev;
+            }
+            return true;
+        }
+
+        public override bool AddToRenderLists(RenderLists renderLists, int x, int y, ref float layerDepthRef)
+        {
+            renderLists.AddGumpNoAtlas(GumpCommand.Deferred(this, x, y, layerDepthRef));
 
             return base.AddToRenderLists(renderLists, x, y, ref layerDepthRef);
         }

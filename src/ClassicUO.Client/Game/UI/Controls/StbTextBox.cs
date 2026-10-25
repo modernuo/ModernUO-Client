@@ -16,7 +16,7 @@ using System.Diagnostics;
 
 namespace ClassicUO.Game.UI.Controls
 {
-    internal class StbTextBox : Control, ITextEditHandler
+    internal class StbTextBox : Control, ITextEditHandler, IGumpDeferredDraw
     {
         protected static readonly Color SELECTION_COLOR = new Color() { PackedValue = 0x80a06020 };
         private readonly FontStyle _fontStyle;
@@ -887,24 +887,29 @@ namespace ClassicUO.Game.UI.Controls
 
         public override bool AddToRenderLists(RenderLists renderLists, int x, int y, ref float layerDepthRef)
         {
-            float layerDepth = layerDepthRef;
-            renderLists.AddGumpNoAtlas(
-                batcher =>
-                {
-                    if (batcher.ClipBegin(x, y, Width, Height))
-                    {
-                        RenderLists childRenderLists = new();
-                        base.AddToRenderLists(childRenderLists, x, y, ref layerDepth);
-                        childRenderLists.DrawRenderLists(batcher, sbyte.MaxValue);
-                        DrawSelection(batcher, x, y, layerDepth);
-                        _rendererText.Draw(batcher, x, y, layerDepth);
-                        DrawCaret(batcher, x, y, layerDepth);
+            renderLists.AddGumpNoAtlas(GumpCommand.Deferred(this, x, y, layerDepthRef));
 
-                        batcher.ClipEnd();
-                    }
-                    return true;
-                }
-            );
+            return true;
+        }
+
+        // the children draw inside the clip, through a RenderLists of their own that is reused every frame
+        private RenderLists _childRenderLists;
+
+        bool IGumpDeferredDraw.DrawDeferred(UltimaBatcher2D batcher, int x, int y, float layerDepth, int arg)
+        {
+            if (batcher.ClipBegin(x, y, Width, Height))
+            {
+                RenderLists childRenderLists = _childRenderLists ??= new RenderLists();
+                childRenderLists.Clear();
+                base.AddToRenderLists(childRenderLists, x, y, ref layerDepth);
+                childRenderLists.DrawRenderLists(batcher, sbyte.MaxValue);
+                childRenderLists.Clear();
+                DrawSelection(batcher, x, y, layerDepth);
+                _rendererText.Draw(batcher, x, y, layerDepth);
+                DrawCaret(batcher, x, y, layerDepth);
+
+                batcher.ClipEnd();
+            }
 
             return true;
         }
