@@ -12,6 +12,7 @@ namespace ClassicUO
     //   CUO_BENCH_PLAN="name:x y:zoom;name:travel;name:walk;name:bodies;name:ltravel;name:glide;say:text;vsync:on|off"  measure each entry for CUO_BENCH_WINDOWS (default 3) windows, then quit
     //     bodies: swap the player to a new body every 50 ms; ltravel: client-only teleports between towns every 2 s;
     //     glide: client-only travel east from Britain at 25 tiles/s (ltravel/glide need no staff account)
+    //     lswalk: [go 5156 2150, then walk the large-scale scene's lane (5141..5171, y 2150) end to end (tools/large-scale)
     //     bwalk: [go 1495 1528, then walk to 1495 1542 and back (a region edge, two chunk edges, a z 40 -> 30 slope),
     //     logging each leg's end position against the map's land z and the server's walk denials
     //   CUO_BENCH_NOSHOT=1  no screenshot when a plan entry starts measuring (keeps the PNG encode out of hitch counts)
@@ -1021,6 +1022,13 @@ namespace ClassicUO
 
                     _travelAt = now + sec / 20;
                 }
+                else if (mode == "lswalk" && !world.Player.Pathfinder.AutoWalking && now >= _travelAt)
+                {
+                    // the large-scale scene's lane (tools/large-scale/make_scene.py): end to end through 2,000 mobiles
+                    _walkBack = !_walkBack;
+                    world.Player.Pathfinder.WalkTo(_walkBack ? 5141 : 5171, 2150, world.Player.Z, 0);
+                    _travelAt = now + sec / 2;
+                }
                 else if (mode == "walk" && !world.Player.Pathfinder.AutoWalking && now >= _travelAt)
                 {
                     _walkBack = !_walkBack;
@@ -1380,7 +1388,7 @@ namespace ClassicUO
                         gs.Camera.Zoom = zoom;
                     }
 
-                    GameActions.Say(mode == "bwalk" ? "[go 1495 1528" : mode == "travel" || mode == "walk" || mode == "bodies" || mode == "ltravel" || mode == "glide" || mode == "reinit" || mode == "reinitrt" ? "[go 1495 1629" : $"[go {mode}");
+                    GameActions.Say(mode == "bwalk" ? "[go 1495 1528" : mode == "lswalk" ? "[go 5156 2150" : mode == "travel" || mode == "walk" || mode == "bodies" || mode == "ltravel" || mode == "glide" || mode == "reinit" || mode == "reinitrt" ? "[go 1495 1629" : $"[go {mode}");
                     _step = 2;
                     _stepAt = now + sec * 8;
 

@@ -50,6 +50,9 @@ namespace ClassicUO.Game.Scenes
         private bool _cotGradientMode;
 
         private readonly RenderLists _renderLists = new();
+        // bumped on every camera move (UpdateDrawPosition); a walked object whose GameObject.ScreenPositionGen equals it
+        // was positioned with the current offset
+        private int _screenPositionGen = 1;
         private readonly List<Map.Chunk> _visibleChunks = new();
 
         public sbyte FoliageIndex { get; private set; }
@@ -832,12 +835,24 @@ namespace ClassicUO.Game.Scenes
                     FrameStats.Enter(WalkBucket(obj));
                 }
 
-                // forcePosition: objects the Gpu prepare skipped may have missed camera moves
-                if (UpdateDrawPosition || obj.IsPositionChanged || forcePosition)
+                // forcePosition: objects the Gpu prepare skipped may have missed camera moves; the generation says whether
+                // this one did (recomputing every walked object each frame cost 8 ns per object)
+                if (UpdateDrawPosition || obj.IsPositionChanged || forcePosition && obj.ScreenPositionGen != _screenPositionGen)
                 {
                     FramePhase bucket = FrameStats.Enter(FramePhase.WalkPosition);
                     obj.UpdateRealScreenPosition(_offset.X, _offset.Y);
+                    obj.ScreenPositionGen = _screenPositionGen;
                     FrameStats.Enter(bucket);
+                }
+                else if (PrepCheck.On)
+                {
+                    PrepCheck.PositionsKept++;
+
+                    if (obj.RealScreenPosition.X != ((obj.X - obj.Y) * 22) - _offset.X - 22 || obj.RealScreenPosition.Y != ((obj.X + obj.Y) * 22 - (obj.Z << 2)) - _offset.Y - 22)
+                    {
+                        PrepCheck.PositionsWrong++;
+                        PrepCheck.Sample ??= $"{obj.GetType().Name} {obj.X},{obj.Y},{obj.Z} at {obj.RealScreenPosition}";
+                    }
                 }
 
                 int screenX = obj.RealScreenPosition.X;

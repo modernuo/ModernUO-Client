@@ -120,6 +120,10 @@ namespace ClassicUO.Game
 
         public WorldTextManager WorldTextManager { get; }
 
+        /// <summary>Mobiles and items that got overhead text (GameObject.AddMessage): the scene refreshes their text position
+        /// each frame from this list instead of scanning every entity. Entries whose text is gone are dropped there.</summary>
+        public readonly List<Entity> TextOwners = new List<Entity>();
+
         public JournalManager Journal { get; } = new JournalManager();
 
 
@@ -800,6 +804,8 @@ namespace ClassicUO.Game
 
         public void Clear()
         {
+            TextOwners.Clear();
+
             foreach (Mobile mobile in Mobiles.Values)
             {
                 RemoveMobile(mobile);
