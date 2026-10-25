@@ -127,6 +127,11 @@ namespace ClassicUO
                 Settings.GlobalSettings.Save();
             }
 
+            if (!string.IsNullOrEmpty(Settings.IgnoredSavedWorldRenderer) && !string.Equals(Settings.IgnoredSavedWorldRenderer, "gpu", StringComparison.OrdinalIgnoreCase))
+            {
+                Log.Warn($"settings.json world_renderer \"{Settings.IgnoredSavedWorldRenderer}\" is ignored: the Legacy world renderer is a developer comparison mode (use -worldrenderer legacy)");
+            }
+
             if (string.IsNullOrWhiteSpace(Settings.GlobalSettings.Language))
             {
                 Log.Trace("language is not set. Trying to get the OS language.");
@@ -419,6 +424,7 @@ namespace ClassicUO
                         break;
 
                     case "worldrenderer":
+                        // developer switch: "legacy" is the comparison mode (parity shots, picking, A/B FPS), never saved
                         Settings.GlobalSettings.WorldRenderer = value;
 
                         break;

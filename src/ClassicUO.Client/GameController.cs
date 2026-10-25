@@ -215,7 +215,8 @@ namespace ClassicUO
             Scene?.Load();
         }
 
-        /// <summary>The GPU world renderer when the world_renderer setting is "gpu" and FNA3D shares an SDL_GPU device, else null (Legacy).</summary>
+        /// <summary>The GPU world renderer; null only in the developer Legacy mode (-worldrenderer legacy) or after a failed
+        /// setup, which exits the client at the end of the frame (GpuDeviceLost.FailWorldSetup): no Legacy fallback.</summary>
         internal GpuWorldRenderer GetGpuWorld()
         {
             if (!Settings.GlobalSettings.UseGpuWorldRenderer || _gpuWorldFailed)
@@ -225,11 +226,28 @@ namespace ClassicUO
 
             if (_gpuWorld == null)
             {
-                _gpuWorld = GpuWorldRenderer.TryCreate(_gpuDevice, UO.FileManager);
+                _gpuWorld = GpuWorldRenderer.TryCreate(_gpuDevice, UO.FileManager, out string error);
                 _gpuWorldFailed = _gpuWorld == null;
+
+                if (_gpuWorldFailed)
+                {
+                    GpuDeviceLost.FailWorldSetup(error);
+                }
             }
 
             return _gpuWorld;
+        }
+
+        /// <summary>DevBench reinit: drops the GPU world pass (recreated on the next frame, as on a facet change) and, with
+        /// <paramref name="dropTarget"/>, the world render target (recreated, as at login).</summary>
+        internal void DebugRecreateGpuWorld(bool dropTarget)
+        {
+            _gpuWorld?.Dispose();
+
+            if (dropTarget)
+            {
+                _renderTargets.WorldRenderTarget?.Dispose();
+            }
         }
 
         public void SetVSync(bool value)
@@ -540,7 +558,10 @@ namespace ClassicUO
             FrameStats.Begin(FramePhase.Draw);
             FrameStats.Begin(FramePhase.DrawSetup);
 
-            _renderTargets.PreserveWorldContents = Scene is GameScene && GetGpuWorld() != null;
+            // In game the world target always keeps its contents: the GPU pass draws into it outside FNA, and a world entry or
+            // teleport (or a switch back from the developer Legacy mode) holds the last frame in it (WorldSettleGate).
+            _renderTargets.PreserveWorldContents = Scene is GameScene;
+            _renderTargets.WorldFade = 1f; // GameScene lowers it while there is no world frame yet
             _renderTargets.EnsureSizes(
                 GraphicsDevice,
                 new Rectangle(0, 0, GraphicManager.PreferredBackBufferWidth, GraphicManager.PreferredBackBufferHeight),

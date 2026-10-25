@@ -63,7 +63,8 @@ namespace ClassicUO.Game.Managers
             );
 
 
-            // -worldrenderer [gpu|legacy]: switch the world renderer at runtime (no argument toggles)
+            // -worldrenderer [gpu|legacy]: developer switch of the world renderer for this run (no argument toggles). Legacy is
+            // a comparison mode (parity shots, picking, A/B FPS); it isn't saved.
             Register
             (
                 "worldrenderer",
@@ -71,8 +72,7 @@ namespace ClassicUO.Game.Managers
                 {
                     var settings = Configuration.Settings.GlobalSettings;
                     settings.WorldRenderer = s.Length > 1 ? s[1].ToLowerInvariant() : settings.UseGpuWorldRenderer ? "legacy" : "gpu";
-                    bool active = Client.Game.GetGpuWorld() != null;
-                    GameActions.Print(_world, $"World renderer: {settings.WorldRenderer}{(settings.UseGpuWorldRenderer && !active ? " (unavailable, using legacy)" : "")}");
+                    GameActions.Print(_world, $"World renderer: {settings.WorldRenderer}{(settings.UseGpuWorldRenderer ? "" : " (developer comparison mode, not saved)")}");
                 }
             );
 
