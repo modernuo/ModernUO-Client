@@ -1,6 +1,10 @@
 using System;
+using System.Buffers;
+using System.Collections.Concurrent;
 using System.Runtime.CompilerServices;
+using System.Threading;
 using ClassicUO.Assets;
+using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
 using Uo.Pack;
 
@@ -117,7 +121,8 @@ namespace ClassicUO.Renderer.Animations
 
             var frames = GetAnimationFrames(graphic, animGroup, dir, out _, out _, false);
 
-            if (!frames.IsEmpty && frameIndex < frames.Length && frames[frameIndex].Texture != null)
+            // UV size is set for every non-empty frame, also while its direction is still decoding on a worker
+            if (!frames.IsEmpty && frameIndex < frames.Length && frames[frameIndex].UV.Width != 0)
             {
                 centerX = frames[frameIndex].Center.X;
                 centerY = frames[frameIndex].Center.Y;
@@ -150,6 +155,11 @@ namespace ClassicUO.Renderer.Animations
             hue = 0;
             useUOP = false;
 
+            if (!_ready.IsEmpty)
+            {
+                DrainReady();
+            }
+
             if (action >= AnimationsLoader.MAX_ACTIONS || dir >= AnimationsLoader.MAX_DIRECTIONS || id >= _animationLoader.BodyCount)
             {
                 return Span<SpriteInfo>.Empty;
@@ -181,6 +191,19 @@ namespace ClassicUO.Renderer.Animations
             return sprites;
         }
 
+        /// <summary>
+        /// The first direction of a body never seen before decodes on a worker thread when its pack chunks are not cached
+        /// (a chunk decompress is about 3 ms, a direction up to about 12 ms). CUO_ANIM_SYNC=1 restores the synchronous load.
+        /// </summary>
+        public static bool AsyncFirstSight = Environment.GetEnvironmentVariable("CUO_ANIM_SYNC") != "1";
+
+        private readonly ConcurrentQueue<DirectionJob> _ready = new ConcurrentQueue<DirectionJob>();
+        private bool[] _bodySeen;
+        private int _pendingJobs;
+
+        /// <summary>Directions decoding on worker threads (drawn as nothing until they are ready).</summary>
+        public int PendingDirections => Volatile.Read(ref _pendingJobs);
+
         private SpriteInfo[] LoadDirection(ushort body, byte action, byte dir)
         {
             // stored client direction d is UO direction d + 3, the only records that are not mirrored copies
@@ -190,29 +213,203 @@ namespace ClassicUO.Renderer.Animations
             }
 
             var sprites = new SpriteInfo[entry.FrameCount];
+            _bodySeen ??= new bool[_animationLoader.BodyCount];
 
-            for (int i = 0; i < sprites.Length; i++)
+            // First sight of a body: decode on a worker unless the chunks are already cached. Until the job lands, the
+            // frames exist (count, centre and size, so animation timing and dimensions are unchanged) but have no texture,
+            // and callers draw nothing for them, as for an empty frame. Later directions and actions of a body that is
+            // already on screen stay synchronous, so a visible mobile never blinks when it turns or changes action; the
+            // worker prefetches the chunks of the other directions of the same action so those loads rarely decompress.
+            if (AsyncFirstSight && !_bodySeen[body] && !IsResident(entry))
             {
-                uint index = entry.FirstFrame + (uint)i;
-                ref readonly var frame = ref _animationLoader.GetFrame(index);
+                _bodySeen[body] = true;
 
-                if (frame.Sprite.OrigW == 0 || frame.Sprite.OrigH == 0)
+                for (int i = 0; i < sprites.Length; i++)
                 {
-                    continue;
+                    ref readonly var frame = ref _animationLoader.GetFrame(entry.FirstFrame + (uint)i);
+
+                    if (frame.Sprite.OrigW != 0 && frame.Sprite.OrigH != 0)
+                    {
+                        sprites[i].Center.X = frame.CenterX;
+                        sprites[i].Center.Y = frame.CenterY;
+                        sprites[i].UV = new Rectangle(0, 0, frame.Sprite.OrigW, frame.Sprite.OrigH);
+                    }
                 }
 
-                var pixels = _animationLoader.DecodeFrame(index);
-                ref var spriteInfo = ref sprites[i];
+                var job = new DirectionJob(this, body, action, dir, entry, sprites);
+                Interlocked.Increment(ref _pendingJobs);
+                ThreadPool.UnsafeQueueUserWorkItem(job, preferLocal: false);
 
-                _picker.Set(PickerKey(body, action, dir, i), frame.Sprite.OrigW, frame.Sprite.OrigH, pixels);
+                return sprites;
+            }
 
-                spriteInfo.Center.X = frame.CenterX;
-                spriteInfo.Center.Y = frame.CenterY;
-                spriteInfo.Texture = _atlas.AddSprite(pixels, frame.Sprite.OrigW, frame.Sprite.OrigH, out spriteInfo.UV);
-                PackSpriteMap.Register(spriteInfo.Texture, spriteInfo.UV, PackSpriteMap.AnimFrame | index);
+            _bodySeen[body] = true;
+            uint[] buffer = null;
+
+            try
+            {
+                for (int i = 0; i < sprites.Length; i++)
+                {
+                    uint index = entry.FirstFrame + (uint)i;
+                    ref readonly var frame = ref _animationLoader.GetFrame(index);
+
+                    if (frame.Sprite.OrigW == 0 || frame.Sprite.OrigH == 0)
+                    {
+                        continue;
+                    }
+
+                    int count = frame.Sprite.OrigW * frame.Sprite.OrigH;
+
+                    if (buffer == null || buffer.Length < count)
+                    {
+                        if (buffer != null)
+                        {
+                            ArrayPool<uint>.Shared.Return(buffer);
+                        }
+
+                        buffer = ArrayPool<uint>.Shared.Rent(count);
+                    }
+
+                    _animationLoader.DecodeFrame(index, buffer);
+                    Upload(body, action, dir, i, index, buffer.AsSpan(0, count), ref sprites[i]);
+                }
+            }
+            finally
+            {
+                if (buffer != null)
+                {
+                    ArrayPool<uint>.Shared.Return(buffer);
+                }
             }
 
             return sprites;
+        }
+
+        private bool IsResident(in AnimDirEntry entry)
+        {
+            for (int i = 0; i < entry.FrameCount; i++)
+            {
+                if (!_animationLoader.IsFrameResident(entry.FirstFrame + (uint)i))
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        private void Upload(ushort body, byte action, byte dir, int i, uint index, ReadOnlySpan<uint> pixels, ref SpriteInfo spriteInfo)
+        {
+            ref readonly var frame = ref _animationLoader.GetFrame(index);
+            var trim = PackSprites.Trim(in frame.Sprite);
+
+            // texels outside the pack trim rect are 0, so the picker mask only scans the trim rect
+            _picker.SetTrimmed(PickerKey(body, action, dir, i), frame.Sprite.OrigW, frame.Sprite.OrigH, trim.X, trim.Y, trim.W, trim.H, pixels);
+
+            spriteInfo.Center.X = frame.CenterX;
+            spriteInfo.Center.Y = frame.CenterY;
+            spriteInfo.Texture = _atlas.AddSprite(pixels, frame.Sprite.OrigW, frame.Sprite.OrigH, out spriteInfo.UV);
+            PackSpriteMap.Register(spriteInfo.Texture, spriteInfo.UV, PackSpriteMap.AnimFrame | index);
+        }
+
+        // main thread: atlas uploads and picker masks for the directions the workers finished
+        private void DrainReady()
+        {
+            while (_ready.TryDequeue(out var job))
+            {
+                Interlocked.Decrement(ref _pendingJobs);
+
+                for (int i = 0; i < job.Sprites.Length; i++)
+                {
+                    uint index = job.Entry.FirstFrame + (uint)i;
+                    ref readonly var frame = ref _animationLoader.GetFrame(index);
+
+                    if (frame.Sprite.OrigW == 0 || frame.Sprite.OrigH == 0)
+                    {
+                        continue;
+                    }
+
+                    var pixels = job.Pixels?[i];
+
+                    if (pixels == null)
+                    {
+                        // the worker failed: decode here
+                        pixels = _animationLoader.DecodeFrame(index);
+                    }
+
+                    Upload(job.Body, job.Action, job.Dir, i, index, pixels.AsSpan(0, frame.Sprite.OrigW * frame.Sprite.OrigH), ref job.Sprites[i]);
+
+                    if (job.Pixels?[i] != null)
+                    {
+                        ArrayPool<uint>.Shared.Return(pixels);
+                    }
+                }
+            }
+        }
+
+        private sealed class DirectionJob : IThreadPoolWorkItem
+        {
+            private readonly Animations _owner;
+            public readonly ushort Body;
+            public readonly byte Action, Dir;
+            public readonly AnimDirEntry Entry;
+            public readonly SpriteInfo[] Sprites;
+            public uint[][] Pixels;
+
+            public DirectionJob(Animations owner, ushort body, byte action, byte dir, AnimDirEntry entry, SpriteInfo[] sprites)
+            {
+                _owner = owner;
+                Body = body;
+                Action = action;
+                Dir = dir;
+                Entry = entry;
+                Sprites = sprites;
+            }
+
+            public void Execute()
+            {
+                var loader = _owner._animationLoader;
+
+                try
+                {
+                    var pixels = new uint[Sprites.Length][];
+
+                    for (int i = 0; i < Sprites.Length; i++)
+                    {
+                        uint index = Entry.FirstFrame + (uint)i;
+                        ref readonly var frame = ref loader.GetFrame(index);
+
+                        if (frame.Sprite.OrigW == 0 || frame.Sprite.OrigH == 0)
+                        {
+                            continue;
+                        }
+
+                        pixels[i] = ArrayPool<uint>.Shared.Rent(frame.Sprite.OrigW * frame.Sprite.OrigH);
+                        loader.DecodeFrame(index, pixels[i]);
+                    }
+
+                    Pixels = pixels;
+
+                    // warm the chunks of the other directions of this action: turning then loads without a decompress
+                    for (int d = 0; d < AnimationsLoader.MAX_DIRECTIONS; d++)
+                    {
+                        if (d != Dir && loader.TryGetDirection(Body, Action, d + 3, out var other))
+                        {
+                            for (int i = 0; i < other.FrameCount; i++)
+                            {
+                                loader.PrefetchFrame(other.FirstFrame + (uint)i);
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    // Pixels stays null when the frames failed: DrainReady decodes them on the main thread
+                    ClassicUO.Utility.Logging.Log.Warn($"anim body {Body} action {Action} dir {Dir}: worker decode failed ({ex.Message})");
+                }
+
+                _owner._ready.Enqueue(this);
+            }
         }
 
         public void UpdateAnimationTable(BodyConvFlags flags)
@@ -232,19 +429,20 @@ namespace ClassicUO.Renderer.Animations
 
         public bool AnimationExists(ushort graphic, byte group, bool isCorpse = false)
         {
+            // From the tables, without decoding: the same answer as "frame 0 of stored direction 0 has a texture" (a frame
+            // gets a texture exactly when it has a size), which used to decode that direction of every group asked about.
             if (graphic < _animationLoader.BodyCount && group < AnimationsLoader.MAX_ACTIONS)
             {
-                var frames = GetAnimationFrames(
-                    graphic,
-                    group,
-                    0,
-                    out var _,
-                    out _,
-                    false,
-                    isCorpse
-                );
+                ushort id = _animationLoader.ResolveBody(graphic, isCorpse, out _);
 
-                return !frames.IsEmpty && frames[0].Texture != null;
+                if (!_animationLoader.TryGetDirection(id, group, 3, out var entry))
+                {
+                    return false;
+                }
+
+                ref readonly var frame = ref _animationLoader.GetFrame(entry.FirstFrame);
+
+                return frame.Sprite.OrigW != 0 && frame.Sprite.OrigH != 0;
             }
 
             return false;
