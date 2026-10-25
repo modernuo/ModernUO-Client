@@ -12,6 +12,8 @@ namespace ClassicUO
     //   CUO_BENCH_PLAN="name:x y:zoom;name:travel;name:walk;name:bodies;name:ltravel;name:glide;say:text;vsync:on|off"  measure each entry for CUO_BENCH_WINDOWS (default 3) windows, then quit
     //     bodies: swap the player to a new body every 50 ms; ltravel: client-only teleports between towns every 2 s;
     //     glide: client-only travel east from Britain at 25 tiles/s (ltravel/glide need no staff account)
+    //     bwalk: [go 1495 1528, then walk to 1495 1542 and back (a region edge, two chunk edges, a z 40 -> 30 slope),
+    //     logging each leg's end position against the map's land z and the server's walk denials
     //   CUO_BENCH_NOSHOT=1  no screenshot when a plan entry starts measuring (keeps the PNG encode out of hitch counts)
     //   CUO_BENCH_SIZE=1920x1080  resize the window client area to this many pixels with the game viewport filling it
     //   CUO_BENCH_EXIT=1    walk a few steps, take screenshots and quit when done
@@ -49,7 +51,7 @@ namespace ClassicUO
         };
         private static int _planIndex, _travelIndex, _windowsAtStart;
         private static ushort _ghostRestore, _bodyRestore;
-        private static int _bodyNext, _bodiesShown, _glideX;
+        private static int _bodyNext, _bodiesShown, _glideX, _bwalkLegs, _bwalkDenies = -1;
 
         // what the 0x20 player update does for a teleport, without the server: chunks, regions and art load as on a real teleport
         private static void LocalTeleport(World world, Game.Scenes.GameScene gs, int x, int y)
@@ -975,6 +977,24 @@ namespace ClassicUO
                     world.Player.Pathfinder.WalkTo(_walkBack ? 1475 : 1495, _walkBack ? 1650 : 1629, world.Player.Z, 0);
                     _travelAt = now + sec / 2;
                 }
+                else if (mode == "bwalk" && !world.Player.Pathfinder.AutoWalking && now >= _travelAt)
+                {
+                    // right after the teleport: walk north-south across a region edge (y 1536), two chunk edges and a
+                    // 40 -> 30 slope, logging where each leg ends against the map's land z
+                    if (_bwalkDenies < 0)
+                    {
+                        _bwalkDenies = world.Player.Walker.ServerDenies;
+                    }
+                    else
+                    {
+                        sbyte land = world.Map.GetTileZ(world.Player.X, world.Player.Y);
+                        Log.Info($"[bench] bwalk leg {_bwalkLegs} ended at {world.Player.X},{world.Player.Y},{world.Player.Z} (land z {land}), server denies {world.Player.Walker.ServerDenies - _bwalkDenies}");
+                    }
+
+                    _bwalkLegs++;
+                    world.Player.Pathfinder.WalkTo(1495, _bwalkLegs % 2 == 1 ? 1542 : 1528, world.Player.Z, 0);
+                    _travelAt = now + sec / 4;
+                }
 
                 if (FrameStats ? ClassicUO.FrameStats.WindowsReported - _windowsAtStart >= _planWindows : now >= _stepAt)
                 {
@@ -1292,7 +1312,7 @@ namespace ClassicUO
                         gs.Camera.Zoom = zoom;
                     }
 
-                    GameActions.Say(mode == "travel" || mode == "walk" || mode == "bodies" || mode == "ltravel" || mode == "glide" ? "[go 1495 1629" : $"[go {mode}");
+                    GameActions.Say(mode == "bwalk" ? "[go 1495 1528" : mode == "travel" || mode == "walk" || mode == "bodies" || mode == "ltravel" || mode == "glide" ? "[go 1495 1629" : $"[go {mode}");
                     _step = 2;
                     _stepAt = now + sec * 8;
 
