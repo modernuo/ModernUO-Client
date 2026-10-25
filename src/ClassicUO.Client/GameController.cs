@@ -1072,6 +1072,14 @@ namespace ClassicUO
                 lights.SaveAsPng(fileStream, lights.Width, lights.Height);
             }
 
+            var ui = _renderTargets.UiRenderTarget;
+
+            if (ui != null && !ui.IsDisposed)
+            {
+                using FileStream fileStream = File.Create(Path.ChangeExtension(path, null) + "_ui.png");
+                ui.SaveAsPng(fileStream, ui.Width, ui.Height);
+            }
+
             Log.Info($"World render target saved: {path}");
         }
 
