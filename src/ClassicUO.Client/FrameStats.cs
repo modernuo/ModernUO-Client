@@ -293,7 +293,58 @@ namespace ClassicUO
                 first = false;
             }
 
-            json.Append("},\"counts\":{");
+            // frame-time tail: the worst frame, hitch counts, and the phases that dominated the worst frame
+            var frames = _phase[(int)FramePhase.Frame];
+            int worst = 0, hitch8 = 0, hitch16 = 0;
+
+            for (int i = 0; i < n; i++)
+            {
+                if (frames[i] > frames[worst])
+                {
+                    worst = i;
+                }
+
+                if (frames[i] > 8f)
+                {
+                    hitch8++;
+                }
+
+                if (frames[i] > 16f)
+                {
+                    hitch16++;
+                }
+            }
+
+            double frameMax = n > 0 ? frames[worst] : 0;
+            var top = new StringBuilder();
+
+            if (On && n > 0)
+            {
+                for (int k = 0; k < 3; k++)
+                {
+                    int best = -1;
+
+                    for (int p = 0; p < (int)FramePhase.Frame; p++)
+                    {
+                        if (p == (int)FramePhase.Update || p == (int)FramePhase.Draw || p == (int)FramePhase.SceneUpdate || top.ToString().Contains(_phaseKeys[p] + "="))
+                        {
+                            continue;
+                        }
+
+                        if (best < 0 || _phase[p][worst] > _phase[best][worst])
+                        {
+                            best = p;
+                        }
+                    }
+
+                    top.Append(inv, $"{(k > 0 ? " " : "")}{_phaseKeys[best]}={_phase[best][worst]:0.00}");
+                }
+            }
+
+            sb.Append(inv, $"  frame max {frameMax:0.00} ms, hitches >8 ms {hitch8}, >16 ms {hitch16}; worst frame: {top}\n");
+            json.Append(inv, $"}},\"frame_max\":{frameMax:0.000},\"hitch8\":{hitch8},\"hitch16\":{hitch16},\"worst\":\"{top}\"");
+
+            json.Append(",\"counts\":{");
             sb.Append("  count                      avg      p50      p95      max\n");
             first = true;
 
