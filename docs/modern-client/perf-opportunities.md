@@ -8,18 +8,17 @@ Format: **what**, where (file:line), why it should help, evidence or estimate, a
 
 ## Frame loop / Update
 
-- **World.Update walks every mobile and every item, including items inside containers, every frame** (World.cs:259-398; `Entity.Update` → `UpdateHits`, `Item.ProcessAnimation`).
-  - Fix: skip contained items; keep active lists for animating items and mobiles; drive it through ECS systems.
-  - Source: cuo-2.0-perf-comparison.md.
-  - Measured: about 1 µs for 6 mobiles and 70 items, and Ecs.Update <0.1 µs. Not worth attacking until a populated scene (≥100 mobiles, a full backpack) shows otherwise.
-- **More ClassicUO update-path findings** (ECS agent, 2026-10-24):
-  - `WMapManager.AddOrUpdate` runs for every ally or party mobile every frame (World.cs:322/335).
-  - `RootContainer` walks the dictionary per item and is called for every item on map change, so map changes are O(n·depth) (World.cs:846).
-  - LINQ `Reverse()` allocates on every FindNext (World.cs:703/727).
-  - Every 0x78 destroys and reallocates all non-backpack equipment as new `Item`s (PacketHandlers.cs:2883).
-  - ConfirmWalk calls `Player.AddToTile()` (unlink plus a sorted re-insert) per step even when the tile doesn't change, and SetInWorldTile always re-adds (PacketHandlers.cs:1218).
-  - The HP percentage is recomputed every frame for every entity with HitsMax > 0 (Entity.cs:150).
-  - The ECS mirror's `Sync` runs twice per SetInWorldTile; measure it before optimising.
+- **Done (W5, 2026-10-25, `world_update_active_items`): World.Update walked every mobile and every item, including items inside containers, every frame** (World.cs; `Entity.Update` → `UpdateHits`, `Item.ProcessAnimation`). Now only items whose `Update` does something (corpses, items whose handles just opened) are visited per frame, plus the 50 ms range sweep. Large-scale scene: 0.28–0.33 → 0.015–0.02 ms for 25,120 items. (In that scene 19,476 of them are ground items, not worn or packed: what made the loop cheap to cut is that `Item.Update` is a no-op for almost every item.) Source: cuo-2.0-perf-comparison.md.
+- **ClassicUO update-path findings** (ECS agent, 2026-10-24), **W5 verdicts (2026-10-25):**
+  - **Done:** `WMapManager.AddOrUpdate` ran its early-outs (including a UI gump search) for every ally or party mobile every frame; World.Update now asks `AcceptsLocalUpdates` once per frame.
+  - **Not a real problem:** `RootContainer` on map change is O(n · depth) with depth 1–3, once per facet change; the removal of every item dominates that frame.
+  - **Done:** LINQ `Reverse()` allocated on every FindNext; scratch lists now (per keypress, not per frame).
+  - **Left, not per frame:** every 0x78 destroys and re-creates all non-backpack equipment as new `Item`s (PacketHandlers.cs `UpdateObject`). Reusing them would keep OPL and other per-item state the destroy clears, a behaviour change, for a cost paid once per packet.
+  - **Left, not per frame:** ConfirmWalk calls `Player.AddToTile()` (unlink plus a sorted re-insert) per step. Skipping it can change the order among equal-priority objects on the player's tile (the painter order), for about a microsecond per step.
+  - **Done:** the HP percentage is computed in the `Hits`/`HitsMax` setters instead of every frame (Entity.cs).
+  - The ECS mirror's `Sync` runs twice per SetInWorldTile; not measured (it is per change, not per frame).
+- **Done (W5, `gpu_mobile_frame_cache`): a mobile's action selection and sprite extract ran every frame although most mobiles change frame only every 80–100 ms.** `MobileFrameCache` reuses both while the inputs are the same. Scene: 0.71 → 0.35–0.37 ms for 1,611 mobiles. What remains (about 0.22 µs per mobile) is mostly `Sample` reading the legacy Mobile: `IsMounted` walks the equipment list twice and looks up the mount table, plus the override-hue inputs and steps. Fix: the mirror's change funnel pushes these into the ECS (W5's next step).
+- **Done (W5, `text_skip_expired`): expired overhead texts stay in an entity's text container, so every mobile that ever showed text (incoming names) was laid out every frame**, an animation-dimensions lookup and two mount lookups each, for nothing. Scene: 0.18 → 0.04 ms for 1,985 mobiles.
 - **Done for the Gpu walk (2026-10-25, large-scale agent):** a camera generation replaces the per-frame recompute of walked objects (`forcePosition`). Original finding: **screen position recomputed for every object every frame** in `FillGameObjectList`. Fix: recompute only when the world position changes, via an ECS change query. Source: impl/ecs 827e54185.
 - **UIManager.Update sorts and recursively updates every gump control every frame** (UIManager.cs:335, Control.cs:259). Fix: update only dirty controls; add a hit-test cache. Source: 2.0 `UiPickCachePlugin`, `GumpPositionCachePlugin`.
 - **Done (B1–B5, `poc/batcher-ui-alloc`): about 17–28 KB allocated per frame is now about 0.1–0.25 KB, with no gen0 GCs in steady state.** Measured with paperdoll, backpack, journal and status open: 27.6 KB → 70–250 B per frame, gen0 1.6–2.2/s → 0, JIT and NativeAOT. What remains is asset streaming (animation frame decode in `PackPages.DecodeChunk` and `PackSprites.DecodeIndexed` when a mobile shows a new direction) and the FrameStats report string every 5 s.
@@ -43,7 +42,7 @@ Format: **what**, where (file:line), why it should help, evidence or estimate, a
   - Measured: Present p50 0.12 ms plus composite 0.04 ms at 1080p, against 0.45 + 0.12 ms at 3840×2054. About 0.4 ms per frame to win at 4K.
 - **Present stalls 4–5 ms on about 4% of frames above ~1,000 fps** (SDL_GPU frames in flight and windowed IMMEDIATE present back-pressure); there are none at ≤750 fps. Not CPU work, but it makes frame avg and p99 misleading at very high FPS. Compare CPU work with Update + Draw or frame p50. If it matters later, try `FNA3D_VULKAN_FORCE_MAILBOX_VSYNC`-style present modes or more frames in flight. Source: step 7b.
 - **Ground-item chunk baking:** bake rarely-changing ground items into chunk buffers and re-bake on ECS changes. Only if the dynamic extract or upload shows up in busy scenes. Source: 2.0 `BakeChunkDynamics`. **It does (2026-10-25):** in the large-scale scene (19,476 ground items) the items cost about 1.0 of the 1.9 ms world prepare (walk share plus extract). See world-prepare-ecs-plan.md W4.
-- **Measured at scale (2026-10-25):** `World.Update`'s item loop is 0.20 ms for 25,100 items (about 8 ns each, most of them worn or in packs); the per-mobile ECS sample + select + extract is about 0.36 µs. Both are W5's.
+- **Measured at scale (2026-10-25):** `World.Update`'s item loop is 0.20 ms for 25,100 items (about 8 ns each); the per-mobile ECS sample + select + extract is about 0.36 µs. Both are W5's. **W5 (same day):** item loop about 0.02 ms, mobiles about 0.22 µs each (see "Frame loop / Update").
 - **NativeAOT instruction set:** done (step 7b). `IlcInstructionSet=x86-64-v3` (note the spelling; `x86-x64-v3` is rejected) is set for win-x64. Measured: no difference from the default ISA.
 - **AOT vs JIT gap: re-measured 2026-10-25, static PGO and `OptimizationPreference=Speed` don't help.**
   - **The gap is now small:** total Draw is within noise (Britain p50 0.43 vs 0.40 ms; bank and zoomed out, AOT equal or ahead). What remains is UI draw (+20–25%, 0.095 vs 0.076 ms) and composite (+20%, 0.060 vs 0.050 ms). That is about 0.03 ms per frame.

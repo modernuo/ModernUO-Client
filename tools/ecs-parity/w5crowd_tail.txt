@@ -1,0 +1,46 @@
+wait 8
+w5 off
+wait 2
+window c_off
+wait 8
+w5 on
+wait 2
+window c_on
+wait 8
+w5 off
+wait 2
+window c_off2
+wait 8
+w5 on
+wait 2
+window c_on2
+wait 8
+w5 off
+window cw_off
+walk 2 3
+walk 6 3
+walk 2 3 run
+walk 6 3 run
+w5 on
+window cw_on
+walk 2 3
+walk 6 3
+walk 2 3 run
+walk 6 3 run
+window stop
+check
+parity
+say [wipe mobiles
+wait 1
+target ground -18 -18
+wait 1
+target ground 18 18
+wait 3
+say [wipe items
+wait 1
+target ground -18 -18
+wait 1
+target ground 18 18
+wait 3
+check
+quit
