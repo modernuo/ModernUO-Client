@@ -727,3 +727,46 @@ No regression beyond the run-to-run noise. The gate costs one call and a few com
   - Effect applies: Gpu 2.0–2.7 per frame, unchanged. Legacy 7 → 56–63 per frame; batcher_fna 0.20–0.23 → 0.22–0.23 ms, within noise.
   - Unit tests: 244 pass.
   - Regression check: `testing/ui-batcher.md`.
+
+### 2026-10-25 — Land seams when zoomed out, and the scissor exception (seams agent)
+
+Branch `worktree-agent-a2ed70cbca488756a`, started at d583f65f5 and merged up to 67141bf6e. Final numbers and shots were measured on that base. Fixes the known issues "grid lines between land tiles when zoomed out" and "scissor rectangle is invalid". Evidence is in the session scratchpad, `seams\evidence\`.
+
+**Land seams** (115e93c71, sprite.hlsl only)
+- **What the shots showed** (1280×720 world target, Britain 1495,1629, zoom 1.5, 2 and 2.5). There were dark diamond lines on dirt, grass, the static river water and stone floors. The river is static water tiles, not land, so statics had to be included.
+- **Causes:**
+  - The 0.5 alpha test ran on trilinear-filtered alpha. On a diamond edge, both neighbours could discard the pixel (a gap), or blend in the transparent black texels outside the diamond.
+  - For stretched land, the mip footprint reached past the 2-texel gutter into neighbouring sprites.
+- **Fix (`SampleTile`).** It applies only when zoomed out (`Sharp` off), to `FLAG_ZTEST` instances that are stretched or whose sprite fills 44×44: land, which is always an untrimmed 44×44 in the pack, plus floor and water statics.
+  - **Coverage of flat tiles** comes from the mip0 texel under the fragment, Legacy's point-sampled diamond, which tiles exactly. A 1/64-texel bias makes pixel centres that land exactly on texel edges (scale 0.5) pick the same side in every tile. Without the bias, zoom 2 drew new lines along the shore.
+  - **Colour stays trilinear** with the original gradients, so it uses the same mip levels as before: no new shimmer or blur. The sample position is clamped into the sprite's rect, inset by 1.5 s − 2 texels for the coarsest mip used.
+  - **Flat tiles un-premultiply:** B5G5R5A1 texels are either opaque or 0, so filtered colour divided by filtered alpha is the average of the tile's own taps.
+  - Zoom ≥ 1 (sharp path) is untouched. There are no pack or atlas changes; a gutter or pack change isn't needed.
+- **Candidates rejected:**
+  - Point-sampling land at zoom < 1: Legacy's look, but it aliases and shimmers.
+  - Clamping colour into the diamond by an L1 inset: it needs about 2 s texels, and smears a 2–3 px band along every edge at zoom 2.5.
+  - Alpha-aware mips or atlas gutters: the converter's mips are already alpha-aware, and they don't fix the alpha-test gaps.
+- **Shots** (left to right: Legacy, Gpu before, Gpu after):
+  - `z25_river_*`, `z25_dirt_grass_*`, `z25_floor_*`, `z20_shore_*`, `z15_dirt_grass_*`: the grid is gone, and the after shots match Legacy apart from the trilinear softness.
+  - `z25_diff_before_after_x8.png`: the only differences are tile edges.
+- **Left over:** a few short dark ticks where shore statics meet open water at zoom 2. They were there before the fix; those statics don't fill 44×44 and keep the generic path.
+
+**Scissor exception** (b59735443)
+- **Cause:** FNA only rejects a scissor rect with a negative x, y, width or height. `ScissorStack` intersected pushed rects with their parent but left the root rect unclipped, so a control partly off the top or left edge threw.
+- **Fix:**
+  - `ScissorStack.ClipToBounds` clips every rect to the bound render target, or to the back buffer when none is bound. An empty result isn't pushed.
+  - `GameController.Draw` skips the scene UI, gumps and cursor when there is no UI target or the back buffer is 0 wide or high.
+  - 11 unit tests (`ScissorStackTests`).
+- **Not reproduced** with the old build: a 200×150 saved `window_size`, and 4 minimise, restore and 120×90 `SetWindowPos` cycles on the login screen. The only other code that sets FNA's `ScissorRectangle` is the plugin draw path (`Plugin.cs`).
+
+**Tooling** (dda406a89): `Uo.Render.App --bench-fixed --at x y scale` holds one spot for GPU timing.
+
+**Checks** (base 67141bf6e)
+- Client Release build: 0 errors. 255 unit tests: 244 before, plus 11 new.
+- **UI parity** (`gumps` and `_ui.png`): identical apart from the journal and world-save text.
+- **Gpu world, Britain and bank at zoom 1:** identical apart from moving NPCs.
+- **Legacy world** (Britain at zoom 1, and zoom 2.5): identical apart from the moving player and NPCs.
+- **Uo.Render.App `--external-test`:** PASS on Vulkan and D3D12.
+- **Performance** (2 or 3 other clients on the GPU the whole time, so very noisy):
+  - client FrameStats, alternating runs: world_draw p50 at zoom 2.5 was 0.105–0.123 ms before and 0.103–0.115 ms after. The CPU side is unchanged by construction.
+  - GPU frame time, `--bench-fixed` at 3840×2160 and scale 0.4, 5 alternating rounds: best medians 1.07 ms before and 1.11 ms after (+0.04 ms, about 3.5%, at 8.3 Mpx). Single runs varied from 1.0 to 6 ms, so this is within noise. An idle GPU wasn't available.
