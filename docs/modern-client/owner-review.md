@@ -70,7 +70,7 @@ Running notes for your return, newest at the top within each section. Started 20
 
 ## Your FPS test
 
-The build at `C:\Repositories\cuo-fps-test\bin` is **786d86c9c** (published after your 10:26 run). It has everything above, including W5, the 3.4.18 SDL and our FNA3D: the fork SDL, W3 (now including corpses and multis), W4's item cache, the large-scale fixes (including FrameStats' lower overhead), the teleport work, world settle and the B1 fix.
+The build at `C:\Repositories\cuo-fps-test\bin` is **d3f0ceea4** (code = 786d86c9c; published 10:36, after your 10:26 run). It has everything above, including W5, the 3.4.18 SDL and our FNA3D: the fork SDL, W3 (now including corpses and multis), W4's item cache, the large-scale fixes (including FrameStats' lower overhead), the teleport work, world settle and the B1 fix.
 
 1. Make sure no agent is running clients (ask me to pause them) and the display is on.
 2. From a normal PowerShell window:
