@@ -5,8 +5,6 @@ Running notes for your return, newest at the top within each section. Started 20
 ## Needs you
 
 - **FPS test**, when you're back: see "Your FPS test" below. The build is ready.
-- **Old SDL branch:** delete `modernuo/3.4.19` on github.com/modernuo/SDL now that `modernuo/3.4.18-patched` is verified? (`diag/defrag` stays either way.)
-- **Large test scene:** keep it on the shard, and should it become an extra FPS-test spot?
 - **Optional:** the fork-built SDL3.dll has no libusb HIDAPI support (the old upstream DLL had it). That only matters for unusual controllers. Say if you want it built in.
 
 ## Decisions you made tonight (recorded in README "Decisions so far" and in memory)
@@ -15,6 +13,7 @@ Running notes for your return, newest at the top within each section. Started 20
 - **SDL fork:** agents may push fixes to github.com/modernuo/SDL without asking first. The client may build SDL3.dll from the fork. Upstream (libsdl-org) contributions stay forbidden. *In progress (page-fault agent).*
 - **Keep Legacy for now** (2026-10-25, after your FPS test): it may be the low-end-hardware path. Delete it only once the supported hardware range is decided. The Legacy regression is therefore being fixed, not just explained.
 - **Renderer chosen at startup by capability** (2026-10-25): `auto` (default) / forced `gpu` / forced `legacy`; runtime switching kept for testing behind `CUO_DEVTOOLS` and marked for release cleanup; the Legacy project (D3D11/OpenGL, optimisation, fallback profiles) is deferred. *In progress (agent started about 10:55).*
+- **Housekeeping answers** (2026-10-25): the old SDL branch `modernuo/3.4.19` is deleted (kept as tag `archive/modernuo-3.4.19` so older poc commits still check out); the large scene becomes server commands on a local ModernUO branch and an extra FPS-test spot (*agent started about 11:05*); libusb isn't needed for controller support (SDL's XInput and Windows-HID HIDAPI are already built in), so it waits until a specific controller needs it.
 - **Codex audits** go through rf-agent with the `gpt-6-astra` model; the recipe is in memory.
 - **Fork branch rule** (2026-10-25, after your return): a production branch is `modernuo/<release>-patched`, created from upstream's release tag, with our patches as the only commits on top, so each patch re-applies to later releases until it's fixed upstream. Applied to SDL (`modernuo/3.4.18-patched`) and FNA/FNA3D (`modernuo/26.10-patched`). See sdl-fork.md and fna-fork.md.
 - **FNA and FNA3D forks** (2026-10-25): you created github.com/modernuo/FNA and github.com/modernuo/FNA3D and will talk to the FNA team about upstreaming. *Implemented in 072ae4d88.*
