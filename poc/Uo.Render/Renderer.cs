@@ -398,6 +398,8 @@ public sealed unsafe class Renderer : IDisposable
         public SDL_GPUTextureFormat TargetFormat;
         /// <summary>Keep the target's contents (LOAD) instead of clearing it, so host layers drawn earlier stay underneath.</summary>
         public bool LoadTarget;
+        /// <summary>Run the copy pass (chunk and page uploads, tables) but draw nothing: no target is touched.</summary>
+        public bool StreamOnly;
         /// <summary>Viewport inside the target in pixels; width 0 = the whole target.</summary>
         public int ViewportX, ViewportY, ViewportWidth, ViewportHeight;
     }
@@ -414,7 +416,7 @@ public sealed unsafe class Renderer : IDisposable
     /// buffer that samples the target: queue order then has the world finished first.</summary>
     public bool RenderFrame(ref FrameInput f)
     {
-        if (Mode == RendererMode.External && (f.Target == IntPtr.Zero || f.TargetWidth == 0 || f.TargetHeight == 0)) return false;
+        if (Mode == RendererMode.External && !f.StreamOnly && (f.Target == IntPtr.Zero || f.TargetWidth == 0 || f.TargetHeight == 0)) return false;
         var cmd = SDL_AcquireGPUCommandBuffer(Device);
         if (cmd == IntPtr.Zero)
         {
@@ -486,6 +488,16 @@ public sealed unsafe class Renderer : IDisposable
             f.Pages.TableDirty = false;
         }
         SDL_EndGPUCopyPass(copy);
+
+        if (f.StreamOnly)
+        {
+            // uploads only: the host keeps showing its previous frame while the view streams in
+            DrawCalls = 0;
+            if (SDL_SubmitGPUCommandBuffer(cmd)) return true;
+            SubmitFailures++;
+            LastSubmitError = SDL_GetError();
+            return false;
+        }
 
         // ---- target
         IntPtr target;
