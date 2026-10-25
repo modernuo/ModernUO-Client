@@ -1,4 +1,4 @@
-SDL3.dll built from github.com/modernuo/SDL modernuo/3.4.19 at b2a3160aaeaff6fc2783d1bc7e6b402b93940dbe
-SDL_VENDOR_INFO: modernuo modernuo/3.4.19 b2a3160aa
-Built 2026-10-25 01:25 with tools\sdl\build-sdl.ps1 (Release, NMake, MSVC x64)
-SHA256 4AF1D258F128E1F28972E5241FD564ED8556B7389228489B17A76AD23A4AB6BD
+SDL3.dll built from github.com/modernuo/SDL modernuo/3.4.18-patched at 27ac7d26baa4e3f5de266b9d5c7f8a3cb258cc9c
+SDL_VENDOR_INFO: modernuo modernuo/3.4.18-patched 27ac7d26b
+Built 2026-10-25 09:18 with tools\sdl\build-sdl.ps1 (Release, NMake, MSVC x64)
+SHA256 7F8AE18E919F1C0EF79BE61362FE63EE64A1C831E6D3E1D118D017C05C9461DB

@@ -41,13 +41,19 @@ Visual or behavioural defects found in the PoC client that aren't fixed yet. Add
 - **Update (page-fault agent, 2026-10-25):** that recording was a stress run with `CUO_GPU_REINIT=1500`, which drops and recreates the GPU world pass and world RT every 1.5 s. The 5 bad frames match the 5 recreations, so the cause is very likely the test hook, not mitigations A/B/C. Not proven yet: compare normal runs (no reinit) of the mitigation and base builds for unsettled frames. Even so, a recreation should hold the last frame instead of showing a half-built world (see the pop-in entry above).
 - **Update (world-settle agent, 2026-10-25):** recreations now hold the last frame (DevBench `reinit`: 0 unsettled frames presented, against 13–19 before). `CUO_GPU_REINIT` also drops the world RT, so there's nothing to hold: expect black and a 250 ms fade-in per recreation (like DevBench `reinitrt`), not a half-built world.
 - **Resolved (page-fault agent, 2026-10-25):**
-  - The scattered missing and wrong tiles in the later normal (no reinit) runs were **Legacy frames**, broken by B1. See the FNA3D index-buffer entry above, fixed on `poc/modern-client`.
+  - The scattered missing and wrong tiles in the later normal (no reinit) runs were **Legacy frames**, broken by B1. See the FNA3D index-buffer entry below, worked around on `poc/modern-client` and since fixed in our FNA3D fork.
   - World-RT shots of the Gpu pass were clean: 150 or more shots from 1 to 1024 frames after each switch, with A/B/C on and off. So were the Legacy frames once the B1 fix was in.
   - The black frames in the reinit run are the stress hook, by design.
 
-## FNA3D: a disposed render target can stay the pending render-pass target (2026-10-25, follow-up)
+## FNA3D: a disposed render target can stay the pending render-pass target (2026-10-25) — fixed 2026-10-25 in our FNA3D fork
 
 - **What:** FNA3D's `SDLGPU_INTERNAL_FreeTextureHandle` (`FNA3D_Driver_SDL.c` ~2568) clears `boundRenderTargets`, but not `nextRenderPassColorAttachments` or `nextRenderPassDepthStencilAttachment`. `SDLGPU_INTERNAL_BeginRenderPass` (~823) later dereferences them.
 - **Risk:** a render target disposed while it is the pending target of a deferred render pass (for example a clear that hasn't started its pass yet) would be used after its SDL texture was released. That is a use-after-free that could fault on the GPU without any defragmentation.
 - **Status:** no ClassicUO path that does this was found. `RenderTargets.EnsureSize` disposes at the start of Draw, while the pending target is the backbuffer. The page faults are explained by atlas defragmentation (device-lost-leak.md part B). Lower likelihood; noted by an independent audit.
-- **If it's ever needed:** a local FNA3D patch that clears the pending attachments matching the freed texture. **Ask the coordinator before forking or patching FNA3D.**
+- **Fixed (2026-10-25)** in github.com/modernuo/FNA3D `modernuo/26.10-patched` (19e5188): a freed pending color target sends the pass back to the backbuffer, a freed pending depth target is dropped. See [fna-fork.md](fna-fork.md). Not reproducible in the client, so the evidence is the code change plus the usual regression checks.
+
+## FNA3D: a cycled index buffer isn't rebound (2026-10-25) — fixed 2026-10-25 in our FNA3D fork
+
+- **What:** `SetIndexBufferData` with Discard cycles the SDL buffer, but `SDLGPU_INTERNAL_BindDeferredState` skips `SDL_BindGPUIndexBuffer` when the handle is unchanged, so the open render pass keeps the old buffer and later draws read old indices. This was the cause of the B1 Legacy corruption (missing and wrong land and static tiles).
+- **Was worked around** in the batcher (b62406b8e: `Batcher2D.IndexDataChanged` forced an effect re-apply after each mesh-layer index upload).
+- **Fixed** in github.com/modernuo/FNA3D `modernuo/26.10-patched` (e3bd4f2): a cycling upload of the bound index buffer clears the binding, so the next draw rebinds it. The batcher workaround is removed. See [fna-fork.md](fna-fork.md).

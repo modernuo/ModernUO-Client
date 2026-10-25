@@ -109,7 +109,7 @@ Driven by environment variables. Read the header comment in DevBench.cs for the 
 - The NVIDIA Aftermath monitor writes dumps to `C:\CrashDumps\aftermath`.
 - **Decode them without the GUI:** `"C:\Program Files\NVIDIA Corporation\Nsight Graphics 2026.3.1\host\windows-desktop-nomad-x64\nv-aftermath-format.exe" -j -p <build folder with PDBs> <dump>`.
 - **Debug builds can't be used for the page fault.** SDL's debug-mode device names resources, but it also rejects Uo.Render's Indexed8 anim atlas (SAMPLER on an integer format), so the Gpu world can't start in a Debug build. Use Release/AOT builds, and record which binary each repro run used.
-- **SDL3.dll** comes from our fork ([sdl-fork.md](sdl-fork.md)). The client logs `SDL3 SDL-3.4.19-… (modernuo …)` at startup; check that line when a result depends on the allocator.
+- **SDL3.dll** comes from our fork ([sdl-fork.md](sdl-fork.md)). The client logs `SDL3 SDL-3.4.18-… (modernuo modernuo/3.4.18-patched …)` at startup; check that line when a result depends on the allocator.
 - Windows process dumps (LocalDumps) go to `C:\CrashDumps`.
 - Driver resets show as System log `nvlddmkm` event 153.
 - `dxcap -forcetdr` needs admin; don't use it.

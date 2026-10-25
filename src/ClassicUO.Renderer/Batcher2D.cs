@@ -1252,17 +1252,6 @@ namespace ClassicUO.Renderer
             return _dynamicIndexBuffer;
         }
 
-        /// <summary>
-        /// Call after rewriting an index buffer that later DrawDirectIndexed calls use (MeshLayer.UploadVisibleIndices).
-        /// SetData with Discard cycles the buffer, but FNA3D's SDL_GPU driver skips SDL_BindGPUIndexBuffer when the same
-        /// buffer handle is still bound, so the draws would read the previous cycle's indices (missing or wrong tiles).
-        /// FNA3D resets its index binding when it rebinds the pipeline, which the next effect apply forces.
-        /// </summary>
-        public void IndexDataChanged()
-        {
-            _effectDirty = true;
-        }
-
         public void DrawDirectIndexed(Texture2D texture, int startIndex, int primitiveCount, int numVertices)
         {
             long t0 = CollectFrameStats ? Stopwatch.GetTimestamp() : 0;
