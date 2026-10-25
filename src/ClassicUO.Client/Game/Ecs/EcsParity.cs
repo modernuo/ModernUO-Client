@@ -186,6 +186,84 @@ namespace ClassicUO.Game
             }
         }
 
+        private static long _items, _itemMismatched, _itemDrawnMismatched, _itemLightMismatched, _itemCapInstances, _itemEcsInstances, _itemLights;
+        private static long _itemCaptureTicks, _itemExtractTicks;
+        private static int _itemLogged;
+
+        /// <summary>
+        /// An art item: the view drew <c>buffer[start..end)</c> under capture (the reference), <paramref name="extract"/>
+        /// holds the <see cref="ItemSpriteExtract"/> output for the same item. Diffs the instances, the drawn result and
+        /// the light (added for the extract, compared, removed again).
+        /// </summary>
+        public static void OnItemCaptured(Item item, SpriteInstance[] buffer, int start, int end, ItemSpriteExtract extract, bool viewDrawn, bool ecsDrawn,
+            Scenes.GameScene scene, int lightsBefore, long captureTicks, long extractTicks)
+        {
+            if (!_frameCounted)
+            {
+                _frameCounted = true;
+                _frames++;
+            }
+
+            _items++;
+            _itemCaptureTicks += captureTicks;
+            _itemExtractTicks += extractTicks;
+            ReadOnlySpan<SpriteInstance> cap = new ReadOnlySpan<SpriteInstance>(buffer, start, end - start);
+            ReadOnlySpan<SpriteInstance> got = extract.Instances;
+            _itemCapInstances += cap.Length;
+            _itemEcsInstances += got.Length;
+            string problem = null;
+            int first = FirstDifference(cap, got);
+
+            if (first >= 0)
+            {
+                _itemMismatched++;
+                problem = $" instances capture={cap.Length} ecs={got.Length} first diff #{first}";
+
+                for (int i = Math.Max(0, first - 1); i < Math.Min(Math.Max(cap.Length, got.Length), first + 2); i++)
+                {
+                    problem += $"\n  #{i} cap {(i < cap.Length ? Fmt(in cap[i]) : "-")}\n     ecs {(i < got.Length ? Fmt(in got[i]) : "-")}";
+                }
+            }
+
+            if (viewDrawn != ecsDrawn)
+            {
+                _itemDrawnMismatched++;
+                problem += $" drawn view={viewDrawn} ecs={ecsDrawn}";
+            }
+
+            if (scene != null)
+            {
+                int viewEnd = scene.LightCount;
+
+                if (extract.Light)
+                {
+                    scene.AddLight(item, item, extract.LightX, extract.LightY);
+                }
+
+                int ecsEnd = scene.LightCount;
+                _itemLights += viewEnd - lightsBefore;
+
+                if (!SameLights(scene, lightsBefore, viewEnd, ecsEnd))
+                {
+                    _itemLightMismatched++;
+                    problem += $" lights view={viewEnd - lightsBefore} ecs={ecsEnd - viewEnd}";
+                }
+
+                scene.TruncateLights(viewEnd);
+            }
+
+            if (problem != null && _itemLogged++ < MAX_LOGGED)
+            {
+                Log.Warn($"[PARITY] item mismatch 0x{item.Serial:X8} g=0x{item.Graphic:X4} shown=0x{item.DisplayedGraphic:X4} h=0x{item.Hue:X4} x{item.Amount} ({item.X},{item.Y},{item.Z}) a={item.AlphaHue}:{problem}");
+            }
+
+            if (Time.Ticks >= _nextSummary)
+            {
+                _nextSummary = Time.Ticks + 5000;
+                Summary();
+            }
+        }
+
         private static bool SameLights(Scenes.GameScene scene, int a, int b, int end)
         {
             if (b - a != end - b)
@@ -225,13 +303,23 @@ namespace ClassicUO.Game
 
         public static void Summary()
         {
+            double f = Stopwatch.Frequency / 1_000_000.0;
+            double frames = Math.Max(1, _frames);
+
+            if (_items > 0)
+            {
+                Log.Info
+                (
+                    $"[PARITY] items={_items} mismatched={_itemMismatched} drawn-mismatched={_itemDrawnMismatched} lights-mismatched={_itemLightMismatched} lights={_itemLights} " +
+                    $"instances capture={_itemCapInstances} ecs={_itemEcsInstances} | per frame: capture {_itemCaptureTicks / f / frames:F2}us, extract {_itemExtractTicks / f / frames:F2}us " +
+                    $"(per item {_itemCaptureTicks / f / _items:F3} / {_itemExtractTicks / f / _items:F3}us)"
+                );
+            }
+
             if (_mobiles == 0)
             {
                 return;
             }
-
-            double f = Stopwatch.Frequency / 1_000_000.0;
-            double frames = Math.Max(1, _frames);
 
             Log.Info
             (

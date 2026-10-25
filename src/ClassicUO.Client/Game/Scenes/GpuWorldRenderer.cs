@@ -273,6 +273,11 @@ namespace ClassicUO.Game.Scenes
                 return ecsDrawn;
             }
 
+            if (_ecsMobiles && obj is Item it && !shadowOnly && ItemSpriteExtract.Handles(it))
+            {
+                return DrawItemEcs(batcher, it, depth);
+            }
+
             _object = obj;
             _shadowOnly = shadowOnly;
             _objectRank = obj is Mobile ? RANK_MOBILE : RANK_ITEM;
@@ -309,6 +314,68 @@ namespace ClassicUO.Game.Scenes
         /// IsFlipped, lights). On EcsParity frames the view is drawn under capture first as the reference (its side effects
         /// stand) and its instances are replaced by the ECS ones after the diff. False = not mirrored: capture it instead.
         /// </summary>
+        private readonly ItemSpriteExtract _itemExtract = new ItemSpriteExtract();
+
+        /// <summary>
+        /// W3: an art item's dynamic sprites from <see cref="ItemSpriteExtract"/> instead of ItemView.Draw, plus its light.
+        /// On EcsParity frames the view is drawn under capture first as the reference, as for mobiles.
+        /// </summary>
+        private bool DrawItemEcs(UltimaBatcher2D batcher, Item item, float depth)
+        {
+            int posX = item.RealScreenPosition.X, posY = item.RealScreenPosition.Y;
+            int start = _dynamicCount;
+            bool drawn;
+
+            if (EcsParity.Active)
+            {
+                int lightsBefore = _scene?.LightCount ?? 0;
+                _object = item;
+                _shadowOnly = false;
+                _objectRank = RANK_ITEM;
+                _additive = false;
+                batcher.Capture = this;
+                long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                bool viewDrawn;
+
+                try
+                {
+                    viewDrawn = item.Draw(batcher, posX, posY, depth);
+                }
+                finally
+                {
+                    batcher.Capture = null;
+                    _object = null;
+                }
+
+                long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
+                drawn = _itemExtract.Emit(item, _pack, _offsetX, _offsetY, posX, posY, depth);
+                long t2 = System.Diagnostics.Stopwatch.GetTimestamp();
+                EcsParity.OnItemCaptured(item, _dynamic, start, _dynamicCount, _itemExtract, viewDrawn, drawn, _scene, lightsBefore, t1 - t0, t2 - t1);
+                _dynamicCount = start;
+            }
+            else
+            {
+                drawn = _itemExtract.Emit(item, _pack, _offsetX, _offsetY, posX, posY, depth);
+
+                if (_itemExtract.Light)
+                {
+                    _scene?.AddLight(item, item, _itemExtract.LightX, _itemExtract.LightY);
+                }
+            }
+
+            ReadOnlySpan<SpriteInstance> got = _itemExtract.Instances;
+
+            if (_dynamicCount + got.Length > _dynamic.Length)
+            {
+                Array.Resize(ref _dynamic, Math.Max(_dynamic.Length * 2, _dynamicCount + got.Length));
+            }
+
+            got.CopyTo(new Span<SpriteInstance>(_dynamic, _dynamicCount, got.Length));
+            _dynamicCount += got.Length;
+
+            return drawn;
+        }
+
         private bool TryDrawMobileEcs(UltimaBatcher2D batcher, Mobile mobile, float depth, out bool drawn)
         {
             drawn = false;
