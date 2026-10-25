@@ -14,8 +14,9 @@ using ClassicUO.Utility.Logging;
 namespace ClassicUO.Game
 {
     // Debug-only (-ecsdriver <file>): plays a line-based script in game so the ECS mirror can be exercised unattended.
-    // Commands: wait <s> | say <text> | walk <dir 0-7> <steps> [run] | backpack | pick worn|backpack|held
+    // Commands: wait <s> | say <text> | walk <dir 0-7> <steps> [run] | backpack | pick worn|backpack|held|near <hex graphic>
     //           | drop backpack|ground|equip | check | logout | quit | log <text>
+    //           | target self|ground <dx> <dy>|worn <layer> | parity
     internal sealed class EcsSessionDriver
     {
         private DriverGump _gump;
@@ -153,10 +154,11 @@ namespace ClassicUO.Game
                     return true;
 
                 case "pick":
-                    uint serial = arg switch
+                    uint serial = args[0] switch
                     {
                         "worn" => FindWorn(player),
                         "backpack" => FindInBackpack(backpack),
+                        "near" => FindNear(world, player, Convert.ToUInt16(args[1], 16)),
                         _ => _held
                     };
 
@@ -200,6 +202,49 @@ namespace ClassicUO.Game
 
                     return false;
 
+                // answers a pending target cursor (e.g. after a staff command): self | ground <dx> <dy> | worn <layer>
+                case "target":
+                    if (!world.TargetManager.IsTargeting)
+                    {
+                        Log.Warn("[ECS] driver: no target cursor");
+
+                        return true;
+                    }
+
+                    switch (args[0])
+                    {
+                        case "self":
+                            world.TargetManager.Target(player.Serial);
+
+                            break;
+
+                        case "ground":
+                            world.TargetManager.Target(0, (ushort)(player.X + int.Parse(args[1])), (ushort)(player.Y + int.Parse(args[2])), player.Z);
+
+                            break;
+
+                        case "worn":
+                            Item worn = player.FindItemByLayer((Layer)int.Parse(args[1]));
+
+                            if (worn != null)
+                            {
+                                world.TargetManager.Target(worn.Serial);
+                            }
+                            else
+                            {
+                                world.TargetManager.CancelTarget();
+                            }
+
+                            break;
+                    }
+
+                    return true;
+
+                case "parity":
+                    EcsParity.Summary();
+
+                    return false;
+
                 case "log":
                     return false;
 
@@ -212,6 +257,7 @@ namespace ClassicUO.Game
 
                 case "quit":
                     world.Ecs.RunCheck(true);
+                    EcsParity.Summary();
                     Client.Game.Exit();
 
                     return true;
@@ -264,6 +310,20 @@ namespace ClassicUO.Game
                 }
 
                 if (it.Layer < Layer.Mount && it.ItemData.IsWearable)
+                {
+                    return it.Serial;
+                }
+            }
+
+            return 0;
+        }
+
+        // a ground item of that graphic within 2 tiles
+        private static uint FindNear(World world, PlayerMobile player, ushort graphic)
+        {
+            foreach (Item it in world.Items.Values)
+            {
+                if (it.OnGround && it.Graphic == graphic && it.Distance <= 2)
                 {
                     return it.Serial;
                 }
