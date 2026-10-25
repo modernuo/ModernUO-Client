@@ -11,6 +11,31 @@ namespace ClassicUO.UnitTests.Ecs
         private const uint BAG = 0x4000_3000;
 
         [Fact]
+        public void Items_Of_A_Dying_Mobile_Stay_Worn_After_The_Death_Rekey()
+        {
+            // PacketHandlers.DisplayDeath re-keys the mobile to serial | 0x80000000 and repoints its items; MobileView keeps
+            // drawing them during the death animation, so the slots must still find them (was: ContainedIn, no slots)
+            const uint DYING = MOBILE | 0x8000_0000;
+            var mirror = new WorldMirror();
+            mirror.UpsertMobile(MOBILE, 0x190, 0, 100, 200, 0, 2, 0, false);
+            mirror.UpsertItem(ITEM, 0x203B, 0x44E, 100, 200, 0, 0, 0, 1, MOBILE, 11, false);
+            mirror.Remove(MOBILE);
+            mirror.UpsertMobile(DYING, 0x190, 0, 100, 200, 0, 2, 0, false);
+            mirror.TryGetEntity(DYING, out var dying).Should().BeTrue();
+            dying.Tags.Has<EquipmentDirty>().Should().BeTrue();
+            mirror.UpsertItem(ITEM, 0x203B, 0x44E, 100, 200, 0, 0, 0, 1, DYING, 11, false);
+
+            mirror.TryGet(ITEM, out MirrorRecord r).Should().BeTrue();
+            r.ParentKind.Should().Be(ParentKind.Equipped);
+            r.Parent.Should().Be(DYING);
+            mirror.GetEquipment(DYING).Count.Should().Be(1);
+            WorldMirror.IsWearerSerial(DYING).Should().BeTrue();
+            WorldMirror.IsWearerSerial(ITEM).Should().BeFalse();
+            WorldMirror.IsWearerSerial(ITEM | 0x8000_0000).Should().BeFalse();
+            WorldMirror.IsWearerSerial(0x8000_0000).Should().BeFalse();
+        }
+
+        [Fact]
         public void Item_Moves_Between_Ground_Equipment_And_Container()
         {
             var mirror = new WorldMirror();
