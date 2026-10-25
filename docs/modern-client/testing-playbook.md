@@ -33,6 +33,12 @@ Area-specific procedures live in [`testing/`](testing/), one file per area, writ
   - keep logs, shots and binaries in the session scratchpad, not the repo.
 - **Builds you publish go to your scratch folder,** never `C:\Repositories\cuo-fps-test\bin`. That's the owner's test build, republished only by the main session with `tools/fps-test/publish-aot.ps1`.
 - **Denied tool calls:** report them and skip that step; no workarounds.
+- **Stay current with `poc/modern-client`.** Agents work on their own branch; the main session merges into `poc/modern-client` several times a day.
+  - **When you start:** branch from the current tip of the local `poc/modern-client` and note the commit in your report.
+  - **Before each measurement series and before final verification:** run `git log --oneline HEAD..poc/modern-client` (worktrees share branch refs, so the local branch is always the latest; no fetch needed). If anything new landed, merge it (`git merge poc/modern-client`; never rebase shared work), rebuild every test binary, and re-run base and new from the same tip. Never compare a build on an old base against one on a new base.
+  - **When the coordinator says something merged** that touches your files or your measurements, merge it at your next clean point.
+  - **Your report states** the `poc/modern-client` commit your final numbers were measured on.
+  - **Test binaries** live in your scratch folder, one folder per build, each with `build-info.txt` (commit plus uncommitted state). Rebuild them after every merge; a stale binary is the most common source of "fixed but still broken" reports.
 
 ## Accounts (local ModernUO, 2026-10-24)
 
@@ -84,9 +90,10 @@ Driven by environment variables. Read the header comment in DevBench.cs for the 
 
 | Check | How | Pass |
 |---|---|---|
-| Build and unit tests | `dotnet test tests/ClassicUO.UnitTests -c Release` | All pass (191 as of B1–B5) |
+| Build and unit tests | `dotnet test tests/ClassicUO.UnitTests -c Release` | All pass (244 on poc/modern-client a6110f967) |
 | World screenshot parity | `CUO_BENCH_SHOTS` at fixed spots (Britain, bank, zoomed out, night); compare before vs after or Legacy vs Gpu | Pixel diff is explained (filtering), and someone **looked at the images** |
 | UI parity | `gumps` plus the `_ui.png` shots | Identical, apart from live journal text |
+| **Legacy world (required for any change to the batcher, the asset loaders, world prepare or GameScene drawing)** | A pure-Legacy session (`-worldrenderer legacy`) with `CUO_BENCH_SHOTS` at a fixed spot, compared with the same spot on the previous build. Legacy is developer-only now, but it is our parity yardstick and the batcher still draws the UI in Gpu mode | Same image apart from moving creatures, and someone **looked at it**. The B1 regression (2026-10-25: missing and wrong land/static tiles in every Legacy frame) passed every Gpu-only check for a day |
 | Picking | `CUO_BENCH_PICK=1` | Same object selected in both renderers; clicks reach the server |
 | Performance | `CUO_FRAMESTATS=1` with a plan; quick JIT runs only. Report Update, world prepare, world draw, Draw and Present separately | No regression beyond the run-to-run noise. Other clients running make timings noisy, so say so |
 | Allocation | FrameStats `alloc/frame` and gen0 counts | No new per-frame allocation |

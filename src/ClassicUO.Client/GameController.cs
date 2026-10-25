@@ -184,23 +184,32 @@ namespace ClassicUO
 
         public void SetWindowTitle(string title)
         {
+            _windowTitle = title;
+            _titleShowsLegacy = !Settings.GlobalSettings.UseGpuWorldRenderer;
+
+            // Legacy is a developer comparison mode: say so in the title, so nobody mistakes its frames for the Gpu renderer's
+            string legacy = _titleShowsLegacy ? " [Legacy renderer]" : "";
+
             if (string.IsNullOrEmpty(title))
             {
 #if DEV_BUILD
-                Window.Title = $"ClassicUO [dev] - {CUOEnviroment.Version}";
+                Window.Title = $"ClassicUO [dev]{legacy} - {CUOEnviroment.Version}";
 #else
-                Window.Title = $"ClassicUO - {CUOEnviroment.Version}";
+                Window.Title = $"ClassicUO{legacy} - {CUOEnviroment.Version}";
 #endif
             }
             else
             {
 #if DEV_BUILD
-                Window.Title = $"{title} - ClassicUO [dev] - {CUOEnviroment.Version}";
+                Window.Title = $"{title} - ClassicUO [dev]{legacy} - {CUOEnviroment.Version}";
 #else
-                Window.Title = $"{title} - ClassicUO - {CUOEnviroment.Version}";
+                Window.Title = $"{title} - ClassicUO{legacy} - {CUOEnviroment.Version}";
 #endif
             }
         }
+
+        private string _windowTitle;
+        private bool _titleShowsLegacy;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public T GetScene<T>() where T : Scene
@@ -459,6 +468,12 @@ namespace ClassicUO
 
             Time.Ticks = (uint)gameTime.TotalGameTime.TotalMilliseconds;
             Time.Delta = (float)gameTime.ElapsedGameTime.TotalSeconds;
+
+            // the renderer can be switched at runtime (-worldrenderer command, DevBench world:legacy)
+            if (_titleShowsLegacy == Settings.GlobalSettings.UseGpuWorldRenderer)
+            {
+                SetWindowTitle(_windowTitle);
+            }
 
             Mouse.Update();
 
