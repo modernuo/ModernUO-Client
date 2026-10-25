@@ -405,3 +405,20 @@ The detailed steps are in [classicuo-integration-plan.md](classicuo-integration-
   - Uo.Render as a library on FNA's device (step 8).
 - Final Flecs.NET timing rounds on a quiet machine, then mark ecs-decision.md accepted. Decide between the preview NuGet package and a pinned commit.
 - Write renderer-decision.md.
+
+## Step 10 — owner's NativeAOT FPS proof (2026-10-24)
+
+The owner ran `tools/fps-test/run-fps-test.ps1` on the desktop with the display on (build 0684ab8d1, RTX 3090 Ti via Vulkan, 3840x2160 @ 143 Hz, DPI 1.5). Full results: [fps-test-results-2026-10-24.md](fps-test-results-2026-10-24.md).
+
+| Spot | Legacy FPS | Gpu FPS | Change |
+|---|---|---|---|
+| Britain | 1234 | 1348 | +9% |
+| Britain bank | 1298 | 1388 | +7% |
+| Zoomed out | 539 | 772 | +43% |
+| Walk | 1243 | 1375 | +11% |
+| Zoomed out, 3840x2054 | 148 | 232 | +57% |
+
+- **Gpu wins every spot,** with lower frame p50 and p95 everywhere and lower p99 in the heavy scenes. World draw drops 46–92%; FNA draw calls drop from 93–1048 to 25.
+- **World prepare is 2–35% higher under Gpu** (override collection plus view capture). At 4K zoomed out it is 3.6 ms of the 4.1 ms Draw, so ClassicUO's per-tile walk is now the top cost. It is the first target of the improvement phase (ECS-driven visibility, screen positions recomputed only on change, no per-sprite capture for static ground items).
+- Allocation is unchanged at about 17.5 KB per frame; the UI closure fixes in perf-opportunities.md remain.
+- **The Phase 4 renderer goal is met:** no performance regression in general use under NativeAOT on this machine, and large gains in heavy scenes.
