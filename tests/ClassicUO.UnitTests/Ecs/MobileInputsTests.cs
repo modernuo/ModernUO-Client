@@ -145,6 +145,52 @@ namespace ClassicUO.UnitTests.Ecs
             m.Tags.Has<EquipmentDirty>().Should().BeTrue("dismounting (the item was deleted)");
         }
 
+        // Codex audit P2: the mirror's equipment index is keyed by the item's container, so it holds a mount that arrived before
+        // its rider (0x2E with no parent yet, never attached to the rider's list). Mounted must follow the rider's own list.
+        [Fact]
+        public void Mounted_Ignores_A_Mount_That_Arrived_Before_Its_Rider_And_Serial_Reuse()
+        {
+            const uint MOUNT = 0x4000_0020;
+            var tiles = System.Array.Empty<ClassicUO.Assets.StaticTiles>();
+            var world = new World();
+
+            Item orphan = world.GetOrCreateItem(MOUNT);
+            orphan.Graphic = 0x3EA0;
+            orphan.Layer = Layer.Mount;
+            orphan.Container = SERIAL;
+            world.Ecs.Sync(orphan);
+
+            Mobile rider = world.GetOrCreateMobile(SERIAL);
+            rider.Graphic = 0x190;
+            world.Ecs.Sync(rider);
+            world.Ecs.Mirror.GetEquipment(SERIAL).Count.Should().Be(1, "the index holds the orphan by its container");
+            MobileAnimationSystem.IsMounted(rider, tiles).Should().BeFalse("the rider's own list doesn't hold it, as IsMounted sees it");
+
+            // attached later (a new equip packet): the list changes and the mirror marks the slots dirty
+            world.Ecs.Mirror.TryGetEntity(SERIAL, out EcsEntity e).Should().BeTrue();
+            e.RemoveTag<EquipmentDirty>();
+            rider.PushToBack(orphan);
+            world.Ecs.Sync(orphan);
+            e.Tags.Has<EquipmentDirty>().Should().BeTrue("attaching marks the rider dirty");
+            MobileAnimationSystem.IsMounted(rider, tiles).Should().BeTrue();
+
+            // a boat's tiller on the mount layer isn't riding
+            orphan.Graphic = 0x3E96;
+            MobileAnimationSystem.IsMounted(rider, tiles).Should().BeFalse();
+            orphan.Graphic = 0x3EA0;
+
+            // the rider leaves; a new mobile reuses the serial while the item still names it as container
+            world.Mobiles.Remove(SERIAL);
+            world.Ecs.Mirror.Remove(SERIAL);
+            Mobile next = world.GetOrCreateMobile(SERIAL);
+            next.Graphic = 0x190;
+            world.Ecs.Sync(next);
+            world.Ecs.Mirror.TryGetEntity(SERIAL, out EcsEntity e2).Should().BeTrue();
+            e2.Tags.Has<EquipmentDirty>().Should().BeTrue("a new entity starts dirty, so its slots are rebuilt from the new mobile");
+            world.Ecs.Mirror.GetEquipment(SERIAL).Count.Should().Be(1);
+            MobileAnimationSystem.IsMounted(next, tiles).Should().BeFalse("the old rider's mount isn't in the new mobile's list");
+        }
+
         private static MobileInputs Pushed(World world, uint serial)
         {
             world.Ecs.Mirror.TryGetEntity(serial, out EcsEntity e).Should().BeTrue();
