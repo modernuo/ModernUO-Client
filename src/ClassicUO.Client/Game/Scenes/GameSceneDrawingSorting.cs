@@ -723,11 +723,25 @@ namespace ClassicUO.Game.Scenes
             return (dx * dx + dy * dy) < _cotRadiusSq;
         }
 
-        // CheckMouseSelection with FrameStats' pick counter and detail bucket
+        // CheckMouseSelection with FrameStats' pick counter (a plain static, added once per frame by FlushWalkCounters) and
+        // detail bucket (out of line: the walk runs this ~40,000 times a frame at the 4K zoom-out)
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static bool CheckMouseSelectionTimed(GameObject obj)
         {
-            FrameStats.Inc(FrameCounter.PickTests);
+            if (FrameStats.Detail)
+            {
+                return CheckMouseSelectionDetail(obj);
+            }
+
+            _walkPickTests++;
+
+            return obj.CheckMouseSelection();
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static bool CheckMouseSelectionDetail(GameObject obj)
+        {
+            _walkPickTests++;
             FramePhase bucket = FrameStats.Enter(FramePhase.WalkPick);
             bool hit = obj.CheckMouseSelection();
             FrameStats.Enter(bucket);
@@ -735,13 +749,51 @@ namespace ClassicUO.Game.Scenes
             return hit;
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void AddLightTimed(GameObject obj, int x, int y)
         {
             FrameStats.Inc(FrameCounter.Lights);
             FramePhase bucket = FrameStats.Enter(FramePhase.WalkLight);
             AddLight(obj, obj, x, y);
             FrameStats.Enter(bucket);
+        }
+
+        // The walk's counters, added to FrameStats once per frame (FlushWalkCounters at the end of FillGameObjectList)
+        // instead of a FrameStats.Inc per object: objects walked (this scene's) and pick tests (static: TrySelectObject is)
+        private int _walkObjects;
+        private static int _walkPickTests;
+
+        private void FlushWalkCounters()
+        {
+            if (FrameStats.On)
+            {
+                FrameStats.Add(FrameCounter.Objects, _walkObjects);
+                FrameStats.Add(FrameCounter.PickTests, _walkPickTests);
+            }
+
+            _walkObjects = 0;
+            _walkPickTests = 0;
+        }
+
+        // FrameStats detail mode, per walked object: its category counter and walk bucket (out of line; detail mode only)
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void DetailObject(GameObject obj)
+        {
+            FramePhase bucket = WalkBucket(obj);
+            FrameStats.Inc(bucket switch
+            {
+                FramePhase.WalkLand => FrameCounter.BakedLand,
+                FramePhase.WalkStatic => FrameCounter.BakedStatics,
+                FramePhase.WalkUnmeshed => FrameCounter.Unmeshed,
+                _ => FrameCounter.Dynamic
+            });
+            FrameStats.Enter(bucket);
+        }
+
+        // FrameStats detail mode: switches the walk bucket (out of line: AddTileToRenderList calls it only in detail mode)
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static FramePhase DetailEnter(FramePhase bucket)
+        {
+            return FrameStats.Enter(bucket);
         }
 
         // FrameStats detail: which walk bucket an object's own work is charged to
@@ -827,6 +879,14 @@ namespace ClassicUO.Game.Scenes
             var profile = ProfileManager.CurrentProfile;
             var mesh = chunk.Mesh;
 
+            // FrameStats: this walk runs per object (140,000 objects in 92,000 calls a frame at the 4K zoom-out), so it makes no
+            // FrameStats call per object: the objects counter is a field, the baked/unmeshed/dynamic split and the walk buckets
+            // are detail mode only (out of line), and the flags are read once per call (under NativeAOT, and in JIT code
+            // compiled before FrameStats was initialised, a static readonly flag is a load at every use, not a constant).
+            // W0's per-object Inc/Enter calls cost Legacy 0.3-0.55 ms of world prepare there (poc-log 2026-10-25).
+            bool detail = FrameStats.Detail;
+            bool prepCheck = PrepCheck.On;
+
             // stopAt: the walk ends there, not at the tile's end (the Gpu prepare's item cache serves a tile's items and
             // walks its mobiles one by one: stopAt = mobile.TNext, GameSceneGpuItemCache)
             for (; obj != stopAt; obj = obj.TNext)
@@ -837,23 +897,27 @@ namespace ClassicUO.Game.Scenes
                     continue;
                 }
 
-                FrameStats.Inc(FrameCounter.Objects);
+                _walkObjects++;
 
-                if (FrameStats.Detail)
+                if (detail)
                 {
-                    FrameStats.Enter(WalkBucket(obj));
+                    DetailObject(obj);
                 }
 
                 // forcePosition: objects the Gpu prepare skipped may have missed camera moves; the generation says whether
                 // this one did (recomputing every walked object each frame cost 8 ns per object)
                 if (UpdateDrawPosition || obj.IsPositionChanged || forcePosition && obj.ScreenPositionGen != _screenPositionGen)
                 {
-                    FramePhase bucket = FrameStats.Enter(FramePhase.WalkPosition);
+                    FramePhase bucket = detail ? DetailEnter(FramePhase.WalkPosition) : default;
                     obj.UpdateRealScreenPosition(_offset.X, _offset.Y);
                     obj.ScreenPositionGen = _screenPositionGen;
-                    FrameStats.Enter(bucket);
+
+                    if (detail)
+                    {
+                        DetailEnter(bucket);
+                    }
                 }
-                else if (PrepCheck.On)
+                else if (prepCheck)
                 {
                     PrepCheck.PositionsKept++;
 
@@ -879,8 +943,6 @@ namespace ClassicUO.Game.Scenes
                 {
                     if (obj is Land meshLand)
                     {
-                        FrameStats.Inc(FrameCounter.BakedLand);
-
                         // For stretched tiles, the visible area extends below screenY
                         // based on MinZ, so use adjustedY for the top-of-screen cull.
                         if (meshLand.IsStretched)
@@ -922,18 +984,20 @@ namespace ClassicUO.Game.Scenes
                             }
                             else
                             {
-                                FramePhase bucket = FrameStats.Enter(FramePhase.WalkOverride);
+                                FramePhase bucket = detail ? DetailEnter(FramePhase.WalkOverride) : default;
                                 mesh.Land.SetVisible(obj.MeshSpriteIndex, obj.AlphaHue);
                                 ApplyMeshHue(obj, mesh.Land);
-                                FrameStats.Enter(bucket);
+
+                                if (detail)
+                                {
+                                    DetailEnter(bucket);
+                                }
                             }
 
                             TrySelectObject(obj, true);
                         }
                         continue;
                     }
-
-                    FrameStats.Inc(FrameCounter.BakedStatics);
 
                     if (screenY < _minPixel.Y || screenY > _maxPixel.Y)
                         continue;
@@ -1018,10 +1082,14 @@ namespace ClassicUO.Game.Scenes
                     }
                     else
                     {
-                        FramePhase bucket = FrameStats.Enter(FramePhase.WalkOverride);
+                        FramePhase bucket = detail ? DetailEnter(FramePhase.WalkOverride) : default;
                         mesh.Statics.SetVisible(obj.MeshSpriteIndex, obj.AlphaHue, meshCot);
                         ApplyMeshHue(obj, mesh.Statics);
-                        FrameStats.Enter(bucket);
+
+                        if (detail)
+                        {
+                            DetailEnter(bucket);
+                        }
                     }
 
                     if (meshItemData.IsLight)
@@ -1031,11 +1099,6 @@ namespace ClassicUO.Game.Scenes
 
                     TrySelectObject(obj, meshAllowSelection && !(meshCot && IsMouseInsideCotCircle()));
                     continue;
-                }
-
-                if (FrameStats.On)
-                {
-                    FrameStats.Inc(obj is Land || obj is Static || obj is Multi ? FrameCounter.Unmeshed : FrameCounter.Dynamic);
                 }
 
                 switch (obj)

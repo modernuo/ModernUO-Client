@@ -1207,3 +1207,47 @@ Branch `worktree-agent-a1570509bc420675c`, on `poc/modern-client` 78061753b (mea
 - **P3:** `Renderer.CreateExternal` disposes the renderer if a pipeline fails, and `Pipelines` releases the opaque pipeline if the translucent one fails. No failure injection.
 - The 8,192-entry translucent list is a truncation risk for busy translucent or seated scenes (perf-opportunities.md, "GPU world parity").
 - Re-verified: both build flavours, 322 tests, effect, sitting and water shots (water: same pattern as before), and a parity run with 413k mobile comparisons (24.6k CharSitting frames) and 474k item comparisons, with 0 mismatches except the known dock NPC.
+
+## Legacy world prepare regression: split, partial fix, what's left (2026-10-25)
+
+Branch `worktree-agent-a3e5dca4a0e9e616d` (legacyfix agent, kbatman2). Final numbers measured on `poc/modern-client` 47cb613c9 (merged), the earlier series on 905daf319/898d4c5c6. All at the large spot (`size:max`, 3840×2054, zoom 2.5 at 1495,1629), Legacy, ms/frame, per run the median (or minimum) over its six windows' p50s, then the median over runs. 613842720 ("p2", the last good merge) is the reference. **The machine was noisy all day** (Rider indexing, other projects' clients, an unrelated ClassicUO client 15:26–15:45, SentinelOne): the same binary moved by up to 1 ms between rounds, so only alternated rounds are compared.
+
+**What the bisect missed: JIT timings are bimodal.** With tiered JIT, a run's world prepare sits in one of two modes about 1 ms apart and can switch mid-run (the same spot, `warm` vs `large`, in one process). A sampling profile of the tip shows the cause: FillGameObjectList inlines `Stopwatch.GetTimestamp` (W0's per-chunk stamps), a `SuppressGCTransition` P/Invoke with a GC poll after it, and runs in a code version where the sampler stops the thread there (99.7% of its samples in `PollGC`). The bisect's "+1 ms in 755c9599e" mixes this with real cost. `DOTNET_TieredCompilation=0` (every method fully optimised on first call, static readonly flags read from memory, as in NativeAOT) gives stable runs, so the JIT series below use it.
+
+**Split (JIT, TC=0, stats on):**
+- 613842720 → 78021a764 (W0): +0.26 ms; W0+W1 (b63b5b1c6): +0.2 ms more; later commits up to the tip: about +0.4 ms more.
+- Stripping every FrameStats call from AddTileToRenderList and its helpers (experiment `nostats`): −0.55 ms at 905daf319, −0.4 at 898d4c5c6. A Legacy-only copy of the walk without W1's `skipBaked`/`forcePosition`/`stopAt`/PrepCheck parameters: only −0.15 more, so the per-object counters and detail checks are the walk's cost, not the method's size or the W1 parameters.
+- NativeAOT with `CUO_FRAMESTATS_PHASES=0` (no measurement at all): p2 8.72 → tip 10.10 ms frame. So most of the NativeAOT regression is real code, not FrameStats overhead.
+- An object-size experiment (p2 plus the 6 fields GameObject gained since, ~32 bytes): +0.06 ms, noise level.
+- W0/W1 in NativeAOT (one alternated series, under heavy load): inconclusive.
+
+**Fix (GameScene.cs, GameSceneDrawingSorting.cs):**
+- AddTileToRenderList makes no FrameStats call per object. `objects` is a scene field and `pick_tests` a static, both added to FrameStats once per frame (`FlushWalkCounters`). The baked/unmeshed/dynamic split and the walk buckets are now detail-mode only and out of line (`DetailObject`, `DetailEnter`, `CheckMouseSelectionDetail`, all NoInlining). `FrameStats.Detail` and `PrepCheck.On` are read once per call.
+- Legacy takes no timestamps per chunk: the whole chunk loop is one `prep_walk` stamp pair (it now includes chunk lookup, mesh build and reset). The Gpu world and detail mode keep the per-chunk split. Tiles are counted in a local and added once per frame.
+- testing/world-prepare.md is updated (counters in detail mode, Legacy `prep_walk`).
+
+**Results, NativeAOT (the shipping build), on 47cb613c9, 3 alternated rounds:**
+
+| Legacy, large | p2 613842720 | tip 47cb613c9 | fix |
+|---|---|---|---|
+| world prepare (median) | 3.48 | 5.10 | 4.40 |
+| world prepare (min window) | 3.34 | 4.98 | 4.32 |
+| world draw | 4.14 | 4.43 | 4.27 |
+| frame | 8.30 | 10.29 | 9.35 |
+
+| Gpu, large | tip 47cb613c9 | fix |
+|---|---|---|
+| world prepare | 0.930 | 0.917 |
+| prep_walk (min window) | 0.366 | 0.366 |
+| world draw | 0.125 | 0.124 |
+| frame | 1.547 | 1.514 |
+
+**Results, JIT TC=0 (stats on), on 47cb613c9, 2 rounds:** world prepare p2 3.37, tip 4.57, fix 4.46 (min windows 3.31 / 4.42 / 4.27); world draw 3.29 / 3.66 / 3.64. An earlier 4-round series on 898d4c5c6: p2 3.70, tip 4.56, `nostats` 4.15, fix 4.29.
+
+**World draw:** in NativeAOT, Legacy world draw is 4.14 (p2) vs 4.43 (tip), +0.1–0.3 ms, nowhere near the owner's 2.73 → 4.13 between the 10-24 and 10-25 FPS tests. Not reproduced on this machine; the earlier bisect agent didn't see it either. JIT world draw p2 vs tip: +0.2–0.35 ms (batcher_fna 1.24 → 1.42). That is batcher/FNA3D work, outside this change.
+
+**Left:**
+- **About 0.9 ms (+27%) of Legacy world prepare in NativeAOT** (0.9–1.1 ms in JIT TC=0) is still above 613842720, and it's real code (stats-off frame +1.4 ms). It isn't FrameStats, object size or W1's parameters. Not found today: needs a NativeAOT bisect over 613842720..tip on a quiet machine (the JIT bisect is unreliable, see above). Candidates by elimination: per-object work added after the merge in shared paths (CheckMouseSelection/PixelPicker/Art trim bounds, CalculateAlpha's settle snap, UpdateObjectHandles' item queue, the W4 per-tile serve/check branches in FillGameObjectList).
+- Re-measure on a quiet machine: every table above, the W0/W1 split in NativeAOT, and the owner's world-draw rise (FPS test at 10-24 vs today's build).
+
+**Verification:** both build flavours (Release, `-p:CuoDevTools=false`); 322 unit tests pass. Shots (NativeAOT, tip 898d4c5c6 vs fix, then the fix on 47cb613c9): house spot near-black 1.88% in all three Legacy house shots (clean); Legacy and Gpu world diffs only on walking NPCs in the house and one mobile at the large spot; UI diffs only in the journal text. Looked at.
