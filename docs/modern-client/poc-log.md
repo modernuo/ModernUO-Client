@@ -954,3 +954,51 @@ Legacy in the scene: 4.45 ms, of which world draw (the FNA batcher) 2.29 ms. All
 **Checks:** ECS parity in the scene with `CUO_ANIM_SYNC=1` (standing and walking the lane): 0 mismatches in 9.46M mobile and 75M item comparisons. `CUO_GPU_SKIP_CHECK`: 0. `pickscan:8x6` at the scene (zoom 1 and 2.5) and Britain: 0 different; `CUO_BENCH_PICK` base vs new: the same objects. Teleports Britain ↔ scene: 0 settle timeouts (the hold into the scene is up to 650 ms while 27k objects arrive). Shots base vs new, Gpu, Legacy and UI, at Britain, bank, zoom 2.5, the scene and its zoom-out: differences only on moving or animating creatures and the journal text; looked at. 263 unit tests pass.
 
 **Not done:** W4, W5, NativeAOT measurements, the 120-NPC crowd and 4K re-runs (the scene covers both directions), night/lights in the scene (lit items were compared only by daylight, `lights=0`).
+
+## W4: ground-item chunk cache (2026-10-25)
+
+Branch `worktree-agent-abad0cde09b845af9`, started on poc/modern-client f793e1bb4 (still current at the final measurements). JIT Release, 1920×1080, kbatman3, no other clients. Scripts, logs and shots: session scratchpad `w4\`. Procedure: [testing/world-prepare.md](testing/world-prepare.md) ("The ground-item cache").
+
+**Design** (`GameSceneGpuItemCache.cs`, setting `gpu_prepare_item_cache`, default on):
+- **Per chunk** (`Chunk.GpuItems`): every tile in the walk mask whose unbaked objects are only cacheable ground items (plus mobiles) is extracted once with `ItemSpriteExtract`. Entries are in walk order with their instances in world pixels, the tile anchor (for the walk's culling), a picking box, the light and a signature.
+- **Each frame,** before the chunk's walk: rebuild if dirty; serve the cached tiles minus those with an item art box under the mouse, the selected container's tile and tiles with a mobile the walk's max Z stops at. Served tiles leave the walk mask. When the tile loop reaches a served tile it checks each entry's signature (a changed item: walk the tile now, rebuild next frame), culls by the anchor, stamps `DrawnFrame` and queues a run at the statics list's current length. A served tile with mobiles walks its mobiles alone (`Chunk.GpuMobiles`, in tile-list order).
+- **Capture:** `RenderLists.CaptureRenderList` appends each run where the walk would have queued its items, so the dynamic buffer's order (and equal-depth ties) is unchanged; lit entries call `AddLight` at that point.
+- **Invalidation:** `GameObject.TileChunk` (set by `Chunk.AddGameObject`, cleared by `RemoveFromTile`, which now marks the chunk dirty; before, removals left W1's masks stale until something else re-added). Mobiles moving don't re-extract items. Also: any full-walk frame of the chunk, a new GPU world pass, the setting, `gpu_ecs_sprites`, the dead-gray tint; transient exclusions (text, fading in, handles) retry every 30 frames. No ECS change events: the signature catches what they would, and server item updates always re-add the item to its tile (0 tiles were ever caught by the signature in the tests).
+- **Not cached:** corpses, multis, animated / foliage / translucent / roof / internal items, items with text or handles, offsets, not at full alpha, above the max Z or ground Z or too tall for the walk's max Z, tiles with any other unbaked object; nothing while object handles show or during W1's full-walk steps.
+- **Checker** `CUO_GPU_ITEM_CHECK=1|every`: a check frame walks everything and compares what the cache would have served, item by item (order, instance bytes, light, the statics-list position), plus a hash of the other queued objects against the served frame before.
+
+**Measurements** (base = f793e1bb4, new = 80a3db4f2; 2 alternated sessions × 2 windows each, ms per frame; GPU Present was noisy throughout, so frame/fps are a sanity check only):
+
+| Spot | world prepare base → new | walk | item extract (walked items) | cache (prepare + capture) | mobile extract | objects walked | alloc/frame |
+|---|---|---|---|---|---|---|---|
+| Scene, zoom 1 | 1.67, 2.01 → 1.32, 1.45 | 0.52, 0.78 → 0.40, 0.44 | 0.44, 0.41 → 0.10, 0.11 | 0.04, 0.05 | 0.52–0.61 both | 21.1k → 8.8k | 0.9–5.6 KB both (arrival) |
+| Scene, zoom 2.5 | 2.19, 2.53 → 1.80, 1.97 | 0.63, 0.91 → 0.51, 0.56 | 0.60, 0.56 → 0.22, 0.24 | 0.05 | 0.69–0.80 both | 21.5k → 9.0k | 0.87–0.89 KB both |
+| Scene, walking the lane | 1.46, 1.78 → 1.25, 1.44 | 0.46, 0.70 → 0.39, 0.46 | 0.36, 0.35 → 0.12, 0.14 | 0.03 | 0.48–0.60 | 17k → 7.6k | 10–15 KB both |
+| Scene, walking, zoom 2.5 | 1.91, 2.19 → 1.59, 1.75 | 0.58, 0.81 → 0.48, 0.53 | 0.47, 0.45 → 0.19, 0.21 | 0.03 | 0.61–0.70 | 17.4k → 7.8k | 10–13 KB both |
+| Britain | 0.052, 0.054 → 0.044, 0.046 | 0.019 → 0.015 | 0.002 → 0 | 0.002 | – | 254 → 204 | 0.87 KB both |
+| Bank | 0.061, 0.056 → 0.051, 0.053 | 0.020 → 0.017 | 0.001 → 0 | 0.001 | – | 260 → 222 | 0.75 KB both |
+| Britain, zoom 2.5 | 0.195, 0.198 → 0.172, 0.180 | 0.077 → 0.068 | 0.003 → 0.001 | 0.005 | – | 1.17k → 1.12k | 0.34 KB both |
+| Legacy scene (3 more alternated rounds) | 0.76–1.02 (avg 0.86) → 0.83–0.90 (avg 0.85) | | | | | | |
+| Legacy Britain | 0.136–0.157 → 0.136–0.149 | | | | | | |
+
+- An earlier in-session on/off series gave the same split (scene zoom 1: 1.69 → 1.20, 2.01 → 1.47 ms).
+- Private bytes: peak 2.04–2.08 GB base, 2.08–2.16 GB new (within run-to-run spread; the cache holds about 12k entries and 26k instances in the scene, about 2 MB).
+- In the scene 2.9k of 14.2k items stay walked at zoom 1: the tiles under the lit/animated art blocks. An animated item on top of 15 layers keeps its whole tile in the walk, to keep the statics list's order.
+
+**Verification:**
+
+| Check | Result |
+|---|---|
+| `CUO_GPU_ITEM_CHECK=every` in the scene (standing, `lswalk`, zoom 2.5, pickscans), Britain, bank, zoom 2.5, `travel`, `walk` | 0 differences in 155k checks, 110M cached-item comparisons (0 missing, extra, different or misplaced) |
+| Item changes (Green Acres `[TileXYZ` blocks; `[area set hue`, `set amount` (stacks, coins), `increase x`/`y`, `delete`; `[add`; pick up and drop; walk; `[wipe`), `CUO_GPU_ITEM_CHECK=every` | Every change seen in the driver's `items` log; 380k check frames, **0 stale** (0 frames with differences). The same script with world shots cache-on vs cache-off after each step: 9 pairs pixel-identical |
+| Other queued objects (mobiles walked alone on served tiles), check every 30th frame | Standing: every check frame's lists equal to the served frame before (scene, zoom 2.5, Britain, bank); walking: differences from movement only |
+| ECS parity `CUO_ECS_PARITY=1 CUO_ANIM_SYNC=1` with the cache on (+ `CUO_GPU_ITEM_CHECK=1`): scene standing and walking (`ls_parity`), bank, items (night, lights), corpses (corpses, camp multi) | 0 mismatches (7.4M mobile and 10M item comparisons in the scene; 649k corpses); item check 0 |
+| `CUO_GPU_SKIP_CHECK`, `CUO_PREP_CHECK` alongside | 0 unsettled / 0 drawn differently; 0 wrong positions / picks |
+| Picking | `pickscan:8x6` Britain, bank, scene zoom 2.5: 0 different. Scene zoom 1: 1–4 different per scan in both base and new, each on an animating object (0x3996 art, dragons, mongbats). `CUO_BENCH_PICK` base vs new: same objects in both renderers |
+| Shots base vs new (Gpu, Legacy, UI) at Britain, bank, zoom 2.5, the scene and its zoom-out | Britain, zoom 2.5: small moving critters only; bank: NPCs; scene: creatures and their overhead names; Legacy: NPCs, rain. Looked at. In-session cache on/off pairs at Britain and zoom 2.5: pixel-identical |
+| Settle | 0 timeouts in every run (travel, scene ↔ Britain teleports, 21 GPU world recreations, facet changes) |
+| `lsreinit` / `reinit` (21 recreations) with the item check | 0 differences, 0 timeouts |
+| Facet change (`[set map trammel` / `felucca` on self) and chunk unload/reload (scene → Britain for 12 s → scene) | 0 differences, ECS mirror consistent |
+| Unit tests | 263 pass |
+
+**Not done:** NativeAOT build and measurements; 4K; the 120-NPC crowd; lit items in the scene by shot at night (their light data is compared by the checker, and the `items` parity run is at night); multis / player houses (none on the shard); hidden items (`[area set hidden` didn't change the flags, so the hidden-hue path had no change test).
