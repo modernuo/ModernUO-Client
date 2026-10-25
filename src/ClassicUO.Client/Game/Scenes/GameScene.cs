@@ -651,6 +651,7 @@ namespace ClassicUO.Game.Scenes
             int maxY = _maxTile.Y;
             Map.Map map = _world.Map;
             bool use_handles = _useObjectHandles;
+            GpuItemCacheBegin(use_handles);
             (var minChunkX, var minChunkY) = (minX >> 3, minY >> 3);
             (var maxChunkX, var maxChunkY) = (maxX >> 3, maxY >> 3);
             FrameStats.AddSince(FramePhase.PrepSetup, setupStart);
@@ -693,6 +694,13 @@ namespace ClassicUO.Game.Scenes
                     {
                         GpuPrepareChunk(chunk, out fullTiles, out walkTiles, out edgeTiles);
                         walkStart = FrameStats.AddSince(FramePhase.PrepGpuMasks, walkStart);
+
+                        if (_gpuItemCacheOn && walkTiles != 0)
+                        {
+                            // W4: tiles of settled ground items leave walkTiles for _gpuServeTiles
+                            GpuItemCachePrepare(chunk, ref walkTiles);
+                            walkStart = FrameStats.AddSince(FramePhase.PrepItemCache, walkStart);
+                        }
                     }
 
                     for (var x = 0; x < 8; x++)
@@ -703,7 +711,36 @@ namespace ClassicUO.Game.Scenes
                             bool full = (fullTiles & bit) != 0;
 
                             if (!full && (walkTiles & bit) == 0)
+                            {
+                                // W4: settled ground items come from the chunk's item cache; a tile whose items changed
+                                // since it was extracted is walked instead
+                                if ((_gpuServeTiles & bit) == 0 || GpuServeCachedTile(chunk, x << 3 | y))
+                                    continue;
+                            }
+                            else if ((_gpuServeTiles & bit) != 0 && GpuServeCachedTile(chunk, x << 3 | y))
+                            {
+                                // a served tile with mobiles: the walk visits the mobiles alone (they are all its other
+                                // unbaked objects; GpuMobiles is in tile-list order)
+                                int b = x << 3 | y;
+
+                                for (int m = chunk.GpuMobileStart[b], mEnd = chunk.GpuMobileStart[b + 1]; m < mEnd; m++)
+                                {
+                                    GameObject mobile = chunk.GpuMobiles[m];
+
+                                    if (!mobile.IsDestroyed)
+                                    {
+                                        FrameStats.Inc(FrameCounter.Tiles);
+                                        AddTileToRenderList(mobile, use_handles, GPU_WALK_MAX_Z, chunk, true, _gpuSkipEnabled, mobile.TNext);
+                                    }
+                                }
+
                                 continue;
+                            }
+                            else if ((_gpuCheckTiles & bit) != 0)
+                            {
+                                // CUO_GPU_ITEM_CHECK: what the cache would serve, compared with the walk after the capture
+                                GpuExpectCachedTile(chunk, x << 3 | y);
+                            }
 
                             var firstObj = chunk.GetHeadObject(x, y);
                             if (firstObj == null || firstObj.IsDestroyed)

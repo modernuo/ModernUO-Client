@@ -30,6 +30,7 @@ namespace ClassicUO
     //   plan entry gumps opens the paperdoll, backpack, journal and status bar (the UI allocation/parity scene); shots also save the UI render target
     //   plan entries prepdetail:on|off switch FrameStats' world prepare detail buckets (CUO_FRAMESTATS_PREP=1 starts with them on)
     //   plan entries gpuskip:on|off switch the Gpu world prepare's skipping of baked land and statics (gpu_prepare_skip_baked)
+    //   plan entries itemcache:on|off switch its ground-item cache (gpu_prepare_item_cache); name:lsreinit is reinit in the large-scale scene
     //   pickscan:CxR hovers a C x R grid of the game view and compares the selection with that skipping off and on; cot:on|off
     //   switches the circle of transparency
     //   name:reinit drops the GPU world pass every 2 s (recreated next frame, as on a facet change); name:reinitrt also drops
@@ -974,7 +975,7 @@ namespace ClassicUO
                     StartTeleportShots();
                     _travelAt = now + sec * 2;
                 }
-                else if ((mode == "reinit" || mode == "reinitrt") && now >= _travelAt)
+                else if ((mode == "reinit" || mode == "reinitrt" || mode == "lsreinit") && now >= _travelAt)
                 {
                     if (_planFrames > 1)
                     {
@@ -1230,6 +1231,16 @@ namespace ClassicUO
                         break;
                     }
 
+                    if (_plan[_planIndex].StartsWith("itemcache:"))
+                    {
+                        Configuration.Settings.GlobalSettings.GpuPrepareItemCache = _plan[_planIndex] == "itemcache:on";
+                        Log.Info($"[bench] gpu prepare caches ground items: {Configuration.Settings.GlobalSettings.GpuPrepareItemCache}");
+                        _planIndex++;
+                        _stepAt = now + sec;
+
+                        break;
+                    }
+
                     if (_plan[_planIndex].StartsWith("gpuskip:"))
                     {
                         Configuration.Settings.GlobalSettings.GpuPrepareSkipBaked = _plan[_planIndex] == "gpuskip:on";
@@ -1388,7 +1399,7 @@ namespace ClassicUO
                         gs.Camera.Zoom = zoom;
                     }
 
-                    GameActions.Say(mode == "bwalk" ? "[go 1495 1528" : mode == "lswalk" ? "[go 5156 2150" : mode == "travel" || mode == "walk" || mode == "bodies" || mode == "ltravel" || mode == "glide" || mode == "reinit" || mode == "reinitrt" ? "[go 1495 1629" : $"[go {mode}");
+                    GameActions.Say(mode == "bwalk" ? "[go 1495 1528" : mode == "lswalk" || mode == "lsreinit" ? "[go 5156 2150" : mode == "travel" || mode == "walk" || mode == "bodies" || mode == "ltravel" || mode == "glide" || mode == "reinit" || mode == "reinitrt" ? "[go 1495 1629" : $"[go {mode}");
                     _step = 2;
                     _stepAt = now + sec * 8;
 

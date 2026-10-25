@@ -63,6 +63,26 @@ How to measure ClassicUO's world prepare (`GameScene.FillGameObjectList` and the
 - **Picking:**
   - `CUO_BENCH_PICK=1` (no plan) hovers and clicks a static, a land tile, a ground item and the player in Legacy, then in Gpu. The objects must match. A `TextObject` from the earlier clicks can win a few samples in the second half; that's expected.
   - The plan entry `pickscan:8x6` hovers an 8×6 grid of the view, comparing the selection with skipping off and on at each point. It must log `0 different`. About 13 s per scan; it warps the OS mouse inside the client window.
+  - **In the large-scale scene `pickscan` is noisy:** the two phases are 3 frames apart and the scene's animated art (0x3996) and flapping creatures (dragons, mongbats) change which one is on top. The base build shows the same 1–4 differences per scan there; every one involves an animating object. Use Britain and the bank for a 0-different check, and in the scene look at each difference.
+
+## The ground-item cache (W4, `gpu_prepare_item_cache`)
+
+Added 2026-10-25 (W4 agent). Design in world-prepare-ecs-plan.md ("W4") and poc-log ("W4: ground-item chunk cache").
+
+- **Switches:**
+  - setting `gpu_prepare_item_cache` (default on; it needs `gpu_prepare_skip_baked` and `gpu_ecs_sprites`);
+  - plan entries `itemcache:on|off`, the chat command `-itemcache [on|off]`, and the `-ecsdriver` command `itemcache on|off`.
+- **Counters and phases** (FrameStats):
+  - `prep_item_cache`: re-extracting chunks and choosing the served tiles, before each chunk's walk;
+  - `prep_cap_cached`: copying the served runs into the capture, and their lights;
+  - `item_cache_builds` (chunks re-extracted), `item_cache_tiles`, `item_cache_items` (served), `item_cache_fallbacks` (served tiles walked because an item's signature changed).
+  - `objects`, `cap_items` and `prep_walk` drop by the served items.
+- **Checker: `CUO_GPU_ITEM_CHECK=1`** (every 30th cache frame) **or `=every`** (every frame). A check frame serves nothing: it walks every item as before and compares, after the capture:
+  - each item the cache would have served with what the walk queued and the extract produced: the same items in the same order, all instance bytes, the light and its position, and the statics-list position the served run would have taken (`misplaced`);
+  - the rest of the render lists and the selection, hashed, with the served frame before it (`other queued objects … same / different`). This covers the mobiles that served tiles walk alone. It is equal while nothing moves, so read it standing; walking gives legitimate differences.
+  - It logs `[gpu-item-check] N checks, 0 with differences; … 0 missing or out of order, 0 extra, 0 different, 0 misplaced; K tiles caught by the signature; …` every 5 s. A check frame with any difference counts as a stale frame. Don't measure with it on.
+- **Item changes:** `-ecsdriver` scripts can drive them. The W4 agent's script (`[TileXYZ` blocks at Green Acres, then `[area set hue`, `[area set amount`, `[area increase x|y`, `[area delete` with `gumpok`, `[add`, `pick near`/`drop ground`, a walk, `[wipe items`) ran with `CUO_GPU_ITEM_CHECK=every` and, separately, with a `shot <name>` before and after `itemcache off` at each step. The driver's `items` command logs each ground item's graphic, amount, hue, flags and position, so the log shows that every change happened.
+- **Visual check:** in one session, `shot:X_on;itemcache:off;shot:X_off;itemcache:on` at a spot, then compare `X_on` with `X_off`. At Britain, zoom 2.5 and after every item change, the world shots were pixel-identical. In the large-scale scene the creatures animate between the two shots, so use the checker there.
 
 ## Cleanup
 

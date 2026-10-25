@@ -71,6 +71,8 @@ Base = poc/modern-client 507dc2995, new = the large-scale branch (60d18112d). Av
 - **Private bytes:** 1.86 → 2.01 GB over a base session, 1.93 → 2.07 GB over a new one (+64 MB: the 64 extra anim layers).
 - **Update** is about 0.3 ms in the scene, two thirds of it `World.Update`'s item loop (25,100 items, about 8 ns each, most of them worn or in packs).
 
+**W4 (ground-item cache, 2026-10-25, base f793e1bb4 → 80a3db4f2):** Gpu world prepare in the scene 1.67–2.01 → 1.32–1.45 ms at zoom 1, 2.19–2.53 → 1.80–1.97 at zoom 2.5, walking 1.46–1.78 → 1.25–1.44; objects walked 21k → 8.8k; about 11.3k of the 14.2k items in view are served from the cache. Full table and checks in poc-log ("W4: ground-item chunk cache"). With the cache on, the scene's `[PARITY] items=` covers only walked items; run `CUO_GPU_ITEM_CHECK` for the rest.
+
 ## Reading results
 
 - **The creatures animate** (stand loops, Mongbats and Dragons flap), so two shots of the scene always differ on the creatures. Compare items and land, and use the parity harness for the creatures.

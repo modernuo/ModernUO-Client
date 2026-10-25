@@ -80,6 +80,8 @@ namespace ClassicUO.Game.GameObjects
         public short PriorityZ;
         public GameObject TNext;
         public GameObject TPrevious;
+        /// <summary>The chunk whose tile list holds this object (Chunk.AddGameObject); null once removed (RemoveFromTile).</summary>
+        public Chunk TileChunk;
         public ushort X,
             Y;
         public sbyte Z;
@@ -150,6 +152,13 @@ namespace ClassicUO.Game.GameObjects
 
         public void RemoveFromTile()
         {
+            if (TileChunk != null)
+            {
+                // the Gpu prepare's tile masks and item cache (GameSceneGpuItemCache) follow the tile lists
+                TileChunk.OnTileContentChanged(this);
+                TileChunk = null;
+            }
+
             if (TPrevious != null)
             {
                 TPrevious.TNext = TNext;
