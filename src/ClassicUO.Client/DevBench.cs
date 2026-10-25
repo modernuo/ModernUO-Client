@@ -54,7 +54,17 @@ namespace ClassicUO
         // what the 0x20 player update does for a teleport, without the server: chunks, regions and art load as on a real teleport
         private static void LocalTeleport(World world, Game.Scenes.GameScene gs, int x, int y)
         {
-            sbyte z = world.Map.GetTileZ(x, y);
+            // a real teleport gets z from the server; here it comes from the map. While the destination region is still
+            // being decoded (Map prefetch) the player keeps its z and FixTeleportZ corrects it once the region is in, so
+            // the bench does not wait for a decode that a real teleport would not wait for
+            _fixZ = null;
+
+            if (!Client.Game.UO.FileManager.Maps.TryGetLandZ(world.Map.Index, x, y, out sbyte z))
+            {
+                world.Map.Prefetch(x, y);
+                z = world.Player.Z;
+                _fixZ = (x, y);
+            }
             world.RangeSize.X = x;
             world.RangeSize.Y = y;
             world.Player.Walker.DenyWalk(0xFF, -1, -1, -1);
@@ -66,6 +76,28 @@ namespace ClassicUO
 
             world.Player.SetInWorldTile((ushort)x, (ushort)y, z == -125 ? (sbyte)0 : z);
         }
+
+        private static (int X, int Y)? _fixZ;
+
+        // LocalTeleport's z, once the destination region is decoded (while the player is still there)
+        private static void FixTeleportZ(World world)
+        {
+            if (_fixZ is not { } t)
+            {
+                return;
+            }
+
+            if (world.Player.X != t.X || world.Player.Y != t.Y)
+            {
+                _fixZ = null;
+            }
+            else if (Client.Game.UO.FileManager.Maps.TryGetLandZ(world.Map.Index, t.X, t.Y, out sbyte z))
+            {
+                _fixZ = null;
+                world.Player.SetInWorldTile((ushort)t.X, (ushort)t.Y, z == -125 ? (sbyte)0 : z);
+            }
+        }
+
         private static long _travelAt;
         private static bool _walkBack;
         private static int _planFrames;
@@ -884,6 +916,7 @@ namespace ClassicUO
 
             if (_step == 4)
             {
+                FixTeleportZ(world);
                 _planFrames++;
                 string mode = _planMode;
 
