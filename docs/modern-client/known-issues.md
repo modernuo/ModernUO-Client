@@ -18,6 +18,13 @@ Visual or behavioural defects found in the PoC client that aren't fixed yet. Add
   4. For land specifically, sample at the mip level the zoom needs with clamping, or point-sample land at zoom ≤ 1.
 - **Verify:** DevBench `CUO_BENCH_SHOTS` at zoom-out and full zoom-out over river, grass and dirt. Crop and compare Legacy vs Gpu, and look at the images.
 
+## FNA3D SDL_GPU: a cycled index buffer isn't rebound (2026-10-25) — worked around in the batcher
+
+- **What happens:** `SetData(Discard)` on an index buffer cycles the SDL buffer. FNA3D (`SDLGPU_INTERNAL_BindDeferredState`) only calls `SDL_BindGPUIndexBuffer` when the buffer handle differs from the bound one, so draws after the cycle use the old contents until something rebinds the pipeline.
+- **Effect here:** after B1, Legacy drew baked land and statics with stale mesh indices: missing or wrong tiles, different every frame. This was the "tile corruption" the owner saw on several clients on 2026-10-25.
+- **Workaround:** `UltimaBatcher2D.IndexDataChanged()` after each mesh-layer index upload (fix commit on `poc/b1-index-rebind`).
+- **Real fix:** a local FNA3D patch that clears `indexBufferBinding.buffer` when the bound buffer is cycled. The FNA3D DLL in `external/x64` is already locally patched. Not done yet.
+
 ## GPU engine resets take down every client on the GPU (2026-10-24)
 
 - **What happens:** a page fault in one process causes an NVIDIA engine reset (nvlddmkm 153). Other clients running on the GPU at the time also get `VK_ERROR_DEVICE_LOST` and exit with 0xDEAD; the W1 agent's clients died at 22:34 and 23:18 from resets caused by repro runs.
