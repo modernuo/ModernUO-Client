@@ -75,7 +75,7 @@ Driven by environment variables. Read the header comment in DevBench.cs for the 
 | `CUO_BENCH_SHOTS=dir` | Plan entries save the world render target (and UI and lights) as PNGs, for parity |
 | `CUO_BENCH_PICK=1` | Hover-and-click picking test in both renderers |
 | `CUO_BENCH_UI=1`, `CUO_BENCH_SPOTS`, `CUO_BENCH_GO`, `CUO_BENCH_EXIT` | UI tour, screenshot spots, go-to, walk-and-quit |
-| `CUO_GPU_WATCH=1` | Logs GPU resource events (creation, cycling, defragmentation moves) |
+| `CUO_GPU_WATCH=1` | **Diagnostic branch `poc/gpu-pagefault-diag` only.** Logs when the SDL texture or memory behind the atlases and RTs changes. The RTs' thousands of `CYCLE` lines are FNA3D cycling on clearing passes, not defragmentation. See [testing/gpu-faults.md](testing/gpu-faults.md) |
 | `CUO_SIMULATE_DEVICE_LOST=<s>`, `CUO_DEVICE_LOST_NOEXIT=1` | Device-loss handler test switches |
 | `CUO_WORLD_HOLD=0`, `CUO_WORLD_SETTLE_LOG=1`, `CUO_BENCH_TPSHOTS=dir\|N` | World-settle switches: observe only (no hold), log each unsettled frame presented, per-frame shots after teleports. See [testing/world-settle.md](testing/world-settle.md) |
 
@@ -97,14 +97,16 @@ Driven by environment variables. Read the header comment in DevBench.cs for the 
 | Picking | `CUO_BENCH_PICK=1` | Same object selected in both renderers; clicks reach the server |
 | Performance | `CUO_FRAMESTATS=1` with a plan; quick JIT runs only. Report Update, world prepare, world draw, Draw and Present separately | No regression beyond the run-to-run noise. Other clients running make timings noisy, so say so |
 | Allocation | FrameStats `alloc/frame` and gen0 counts | No new per-frame allocation |
-| GPU robustness | Renderer flips (`flip:`), simulated device loss, the repro loop with the Aftermath monitor | No faults; device loss exits with code 0xDEAD |
+| GPU robustness | Renderer flips (`flip:`), simulated device loss, the repro loop with the Aftermath monitor ([testing/gpu-faults.md](testing/gpu-faults.md)) | No faults of ours, attributed by PID; device loss exits with code 0xDEAD |
+| Legacy batcher state | Pure-Legacy run (`-worldrenderer legacy`) with `CUO_BENCH_SHOTS` at the house spot; see [testing/ui-batcher.md](testing/ui-batcher.md) | About 2% near-black pixels in the world shot (25–67% = the B1 stale-index corruption) |
 | Uo.Render | `poc/Uo.Render.App --external-test` on Vulkan (and D3D12) | PASS |
 
 ## GPU crash evidence
 
 - The NVIDIA Aftermath monitor writes dumps to `C:\CrashDumps\aftermath`.
 - **Decode them without the GUI:** `"C:\Program Files\NVIDIA Corporation\Nsight Graphics 2026.3.1\host\windows-desktop-nomad-x64\nv-aftermath-format.exe" -j -p <build folder with PDBs> <dump>`.
-- Debug builds name Uo.Render textures in dumps; Release builds don't. Record which binary each repro run used.
+- **Debug builds can't be used for the page fault.** SDL's debug-mode device names resources, but it also rejects Uo.Render's Indexed8 anim atlas (SAMPLER on an integer format), so the Gpu world can't start in a Debug build. Use Release/AOT builds, and record which binary each repro run used.
+- **SDL3.dll** comes from our fork ([sdl-fork.md](sdl-fork.md)). The client logs `SDL3 SDL-3.4.19-… (modernuo …)` at startup; check that line when a result depends on the allocator.
 - Windows process dumps (LocalDumps) go to `C:\CrashDumps`.
 - Driver resets show as System log `nvlddmkm` event 153.
 - `dxcap -forcetdr` needs admin; don't use it.

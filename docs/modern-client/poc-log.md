@@ -819,6 +819,27 @@ Branch `worktree-agent-acd66bd79c6a500ba`, from poc/modern-client 7f25fa29d. Fol
   - Unit tests: 244 pass.
   - Regression check: `testing/ui-batcher.md`.
 
+### 2026-10-25 — Tier 0: the GPU page fault is fixed with an SDL fork patch
+
+- **Cause:** every own `Error_DMA_PageFault` (4 in 90 baseline logins) followed SDL's Vulkan defragmenter copying Uo.Render's 256 MiB art atlas during FNA's swapchain submit. The atlas shares a 320 MiB allocation with FNA's render targets, and their churn gets it marked for defrag.
+- **Fix:** SDL3 now comes from our fork, github.com/modernuo/SDL `modernuo/3.4.19` ([sdl-fork.md](sdl-fork.md)).
+  - The patch gives images of 64 MiB or more a dedicated allocation, which is never defragmented.
+  - It's the `external/SDL` submodule; the built DLL is committed, and `tools/sdl/build-sdl.ps1` rebuilds it.
+  - The client logs `SDL3 SDL-3.4.19-b2a3160 (modernuo …)`.
+- **Measured** ([device-lost-leak.md](device-lost-leak.md) part B):
+  - dedicated: 0 atlas moves in 24 runs, against about 0.3 per run with stock SDL, while the render targets kept defragmenting;
+  - shipped DLL on the merged tip: 220 runs on three merged tips (the last one 92dfb1fc3, poc/modern-client 3216539a7), 0 own faults, 0 atlas moves on the watched 100. Baseline was 4 in 90; the chance of 0 in 220 at that rate is about 0.005%.
+  - Reference-guarded defrag blocked all defrag, so it told the hypotheses nothing.
+- **App side:** A (session-wide world-RT usage) arrived with the settle merge. B (atlas tail filler) and C (world-pass creation after present) are dropped. They, the `GpuWatchTemp` watcher and `CUO_GPU_REINIT` are kept on `poc/gpu-pagefault-diag`.
+- **Tools:**
+  - `tools/gpu-fault-repro/repro.py`: the fault loop, with PID attribution;
+  - `run-fps-test.ps1` writes the password encrypted into its temp settings.
+- **Docs:** [testing/gpu-faults.md](testing/gpu-faults.md) (fixed: PID attribution, foreign faults, what a fault looks like, the Debug-build limitation, NEWTEX semantics).
+- **Follow-ups (known-issues):**
+  - FNA3D's `nextRenderPass*` dangling-reference hazard;
+  - FNA3D's cycled-index-buffer rebind;
+  - the owner's FPS test on the new DLL.
+
 ### 2026-10-25 — Land seams when zoomed out, and the scissor exception (seams agent)
 
 Branch `worktree-agent-a2ed70cbca488756a`, started at d583f65f5 and merged up to 67141bf6e. Final numbers and shots were measured on that base. Fixes the known issues "grid lines between land tiles when zoomed out" and "scissor rectangle is invalid". Evidence is in the session scratchpad, `seams\evidence\`.
