@@ -387,6 +387,13 @@ namespace ClassicUO.Game
 
                     return true;
 
+                // mobcache on|off: the Gpu world's mobile frame cache (gpu_mobile_frame_cache, W5)
+                case "mobcache" when args.Length > 0:
+                    Settings.GlobalSettings.GpuMobileFrameCache = args[0] == "on";
+                    Log.Info($"[ECS] driver: mobile frame cache {args[0]}");
+
+                    return true;
+
                 // activeitems on|off: World.Update's active item list (world_update_active_items, W5)
                 case "activeitems" when args.Length > 0:
                     Settings.GlobalSettings.WorldUpdateActiveItems = args[0] == "on";

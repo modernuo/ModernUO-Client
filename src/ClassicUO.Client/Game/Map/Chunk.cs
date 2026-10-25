@@ -52,9 +52,14 @@ namespace ClassicUO.Game.Map
         public readonly int[] GpuMobileStart = new int[65];
 
         /// <summary>An object joined or left one of the chunk's tile lists. Mobiles don't change which items are cached.</summary>
+        /// <summary>W5: bumped whenever any object joins or leaves one of the chunk's tile lists, or the chunk is reused
+        /// (MobileFrameCache keys a mobile's seat lookup on it).</summary>
+        public uint ContentVersion;
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void OnTileContentChanged(GameObject obj)
         {
+            ContentVersion++;
             GpuMaskDirty = true;
 
             if (obj is not Mobile)
@@ -83,6 +88,7 @@ namespace ClassicUO.Game.Map
             c.GpuMaskDirty = true;
             c.GpuItemsDirty = true;
             c.GpuSeenFrame = uint.MaxValue - 1;
+            c.ContentVersion++;
 
             return c;
         }
