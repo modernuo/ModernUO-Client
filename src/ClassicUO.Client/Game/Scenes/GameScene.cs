@@ -654,8 +654,14 @@ namespace ClassicUO.Game.Scenes
             GpuItemCacheBegin(use_handles);
             (var minChunkX, var minChunkY) = (minX >> 3, minY >> 3);
             (var maxChunkX, var maxChunkY) = (maxX >> 3, maxY >> 3);
-            FrameStats.AddSince(FramePhase.PrepSetup, setupStart);
+            long loopStart = FrameStats.AddSince(FramePhase.PrepSetup, setupStart);
             map.DrawPending = 0;
+
+            // FrameStats per chunk (masks, walk, hidden) only for the Gpu world and in detail mode. Legacy times the whole
+            // chunk loop as PrepWalk, without two timestamps per chunk (~1,400 chunks at the 4K zoom-out, each
+            // Stopwatch.GetTimestamp a P/Invoke with a GC poll after it)
+            bool chunkStamps = FrameStats.On && (_gpuWorld != null || FrameStats.Detail);
+            int nTiles = 0;
 
             for (var chunkX = minChunkX; chunkX <= maxChunkX; chunkX++)
             {
@@ -684,7 +690,7 @@ namespace ClassicUO.Game.Scenes
                     }
 
                     _visibleChunks.Add(chunk);
-                    long walkStart = FrameStats.Stamp();
+                    long walkStart = chunkStamps ? FrameStats.Stamp() : 0;
 
                     // Gpu prepare skipping baked objects (GameSceneGpuPrepare): fullTiles are walked in full, walkTiles
                     // without their baked land and statics, the rest not at all
@@ -729,7 +735,7 @@ namespace ClassicUO.Game.Scenes
 
                                     if (!mobile.IsDestroyed)
                                     {
-                                        FrameStats.Inc(FrameCounter.Tiles);
+                                        nTiles++;
                                         AddTileToRenderList(mobile, use_handles, GPU_WALK_MAX_Z, chunk, true, _gpuSkipEnabled, mobile.TNext);
                                     }
                                 }
@@ -746,7 +752,7 @@ namespace ClassicUO.Game.Scenes
                             if (firstObj == null || firstObj.IsDestroyed)
                                 continue;
 
-                            FrameStats.Inc(FrameCounter.Tiles);
+                            nTiles++;
                             AddTileToRenderList(
                                 firstObj,
                                 use_handles,
@@ -758,8 +764,11 @@ namespace ClassicUO.Game.Scenes
                         }
                     }
 
-                    FrameStats.Enter(FrameStats.NoBucket);
-                    walkStart = FrameStats.AddSince(FramePhase.PrepWalk, walkStart);
+                    if (chunkStamps)
+                    {
+                        FrameStats.Enter(FrameStats.NoBucket);
+                        walkStart = FrameStats.AddSince(FramePhase.PrepWalk, walkStart);
+                    }
 
                     // after the chunk's walk: CollectGpuHidden only reads what the walk stamped on this tile's objects
                     if (_gpuWorld != null)
@@ -790,9 +799,22 @@ namespace ClassicUO.Game.Scenes
                             }
                         }
 
-                        FrameStats.AddSince(FramePhase.PrepHidden, walkStart);
+                        if (chunkStamps)
+                        {
+                            FrameStats.AddSince(FramePhase.PrepHidden, walkStart);
+                        }
                     }
                 }
+            }
+
+            if (FrameStats.On)
+            {
+                if (!chunkStamps)
+                {
+                    FrameStats.AddSince(FramePhase.PrepWalk, loopStart);
+                }
+
+                FrameStats.Add(FrameCounter.Tiles, nTiles);
             }
 
             if (FrameStats.Detail)
@@ -823,6 +845,7 @@ namespace ClassicUO.Game.Scenes
             }
 
             long textStart = FrameStats.AddSince(FramePhase.PrepFoliageFinish, foliageStart);
+            FlushWalkCounters();
             UpdateTextServerEntities();
 
             if (PrepCheck.On)
