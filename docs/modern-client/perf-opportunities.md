@@ -82,8 +82,17 @@ Format: **what**, where (file:line), why it should help, evidence or estimate, a
 - **Stretch lookups cache the last block** (`MapLoader.GetLandZ`): 110–180 → 12 ns per lookup.
 - **Palette cache is an LRU** (`LruCache`, evicted arrays reused).
 
+- **Teleport frame split up (teleport agent, 2026-10-25):**
+  - Regions decode on the thread pool. They are prefetched on 0x1B/0x20 and every frame within 104 tiles of the player.
+  - Chunks load over several frames, nearest the player first, with a 2 ms budget per frame that covers the load and the mesh build.
+  - The draw walk and `AddToTile` no longer load chunks. Game-logic lookups still do.
+  - `travel` Update+Draw max went from 36–40 ms to 10–14 ms, and frames over 16 ms from 4–14 to 0. Numbers are in poc-log.md.
+
 **Still open in this path:**
-- **A teleport still costs one 25–40 ms frame:** about 72–81 `Chunk.Load` calls (5–14 ms) plus a region Brotli decode (3–9 ms) in the same frame, plus the server's packet burst. Fix: load chunks incrementally over frames, and decode regions on a worker (outside MapLoader's lock, as PackPages does) with a prefetch of the neighbouring regions when walking.
+- **The remaining 8–14 ms frames after a teleport or on a new glide column:**
+  - The server's packet burst (`packets` about 8 ms; not map loading).
+  - A single chunk whose mesh build hits many first-sight statics: one chunk can take 6–10 ms (`chunk_mesh_us`), and the at-least-one-per-frame rule lets it through. The time is the art lookups in `ChunkMesh.Build`.
+  - Fix: decode first-sight art on a worker before the chunk is offered for a mesh build. The animation path already does this; art would need the same.
 - **A visible body changing to an action it has never shown** still decodes synchronously (about 3 ms, 15 in a 20 s bodies run), to avoid a blink. Prefetch covers its other directions and actions 0–4.
 - **Unattributed 250–750 ms frames** with every phase under 1 ms show up in both builds while other clients run; not pack loading.
 - **The atlases hold RGBA8 and never evict** (TextureAtlas, which predates this work). Fix: 16-bit (`Bgra5551`) atlases at half the memory, plus eviction. Becomes moot for the world once the GPU renderer is the default.

@@ -99,6 +99,15 @@ namespace ClassicUO
         GpuWalkTiles,
         GpuEdgeTiles,
         GpuPickTiles,
+        // map loading (Map.UpdateLoading, MapLoader prefetch): chunks loaded and the time they took, chunks queued at the
+        // end of the frame, time the main thread waited for a region decode, regions decoded on the main thread, prefetches
+        ChunkLoads,
+        ChunkLoadUs,
+        ChunkMeshUs,
+        ChunkQueue,
+        RegionWaitUs,
+        RegionSyncLoads,
+        RegionPrefetches,
         Count
     }
 
@@ -141,7 +150,8 @@ namespace ClassicUO
         private static readonly string[] _counterKeys = { "items", "mobiles", "gumps", "render_list", "flushes", "draw_calls", "alloc_bytes", "gpu_instances", "gpu_dynamic",
             "gpu_overrides", "gpu_draw_calls", "tiles", "objects", "baked_land", "baked_statics", "unmeshed", "dynamic", "pick_tests",
             "override_calls", "hidden_tiles", "lights_added", "foliage", "cap_multis", "cap_statics", "cap_items", "cap_mobiles", "cap_other", "gpu_mask_rebuilds",
-            "gpu_skip_active", "gpu_full_tiles", "gpu_walk_tiles", "gpu_edge_tiles", "gpu_pick_tiles" };
+            "gpu_skip_active", "gpu_full_tiles", "gpu_walk_tiles", "gpu_edge_tiles", "gpu_pick_tiles",
+            "chunk_loads", "chunk_load_us", "chunk_mesh_us", "chunk_queue", "region_wait_us", "region_sync", "region_prefetch" };
 
         private static readonly long[] _start = new long[PHASES];
         private static readonly long[] _acc = new long[PHASES];
@@ -377,6 +387,7 @@ namespace ClassicUO
                     _cur[(int)FrameCounter.Flushes] = UltimaBatcher2D.FrameFlushes;
                     _cur[(int)FrameCounter.DrawCalls] = UltimaBatcher2D.FrameDrawCalls;
                     _cur[(int)FrameCounter.Gumps] = UIManager.Gumps.Count;
+                    SampleMapLoading();
                 }
 
                 long alloc = GC.GetAllocatedBytesForCurrentThread();
@@ -407,8 +418,40 @@ namespace ClassicUO
             }
         }
 
+        private static int _lastSync, _lastPrefetch;
+        private static long _lastWaitTicks;
+
+        private static void SampleMapLoading()
+        {
+            double toUs = 1e6 / Stopwatch.Frequency;
+            _cur[(int)FrameCounter.ChunkLoads] = Game.Map.Map.FrameChunkLoads;
+            _cur[(int)FrameCounter.ChunkLoadUs] = (int)(Game.Map.Map.FrameChunkLoadTicks * toUs);
+            _cur[(int)FrameCounter.ChunkMeshUs] = (int)(Game.Map.Map.FrameMeshTicks * toUs);
+            Game.Map.Map.FrameChunkLoads = 0;
+            Game.Map.Map.FrameChunkLoadTicks = 0;
+            Game.Map.Map.FrameMeshTicks = 0;
+            _cur[(int)FrameCounter.ChunkQueue] = Client.Game?.UO?.World?.Map?.QueuedChunks ?? 0;
+
+            var maps = Client.Game?.UO?.FileManager?.Maps;
+
+            if (maps != null)
+            {
+                _cur[(int)FrameCounter.RegionWaitUs] = (int)((maps.PrefetchWaitTicks - _lastWaitTicks) * toUs);
+                _cur[(int)FrameCounter.RegionSyncLoads] = maps.SyncLoads - _lastSync;
+                _cur[(int)FrameCounter.RegionPrefetches] = maps.PrefetchesStarted - _lastPrefetch;
+                _lastWaitTicks = maps.PrefetchWaitTicks;
+                _lastSync = maps.SyncLoads;
+                _lastPrefetch = maps.PrefetchesStarted;
+            }
+        }
+
         private static void ClearFrameCounters()
         {
+            if (On)
+            {
+                SampleMapLoading(); // so frames that are not recorded do not pile up into the next recorded one
+            }
+
             Array.Clear(_cur, (int)FrameCounter.Tiles, COUNTERS - (int)FrameCounter.Tiles);
         }
 
