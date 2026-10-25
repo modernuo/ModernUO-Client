@@ -91,6 +91,7 @@ namespace ClassicUO.Game
             bool mirror = (s.Flags & AnimStateFlags.Mirror) != 0;
             bool shadow = (s.Flags & AnimStateFlags.Shadow) != 0;
             bool charSitting = (s.Flags & AnimStateFlags.CharSitting) != 0;
+            _human = (s.Flags & AnimStateFlags.Human) != 0;
             byte frame = s.Frame;
             int mountOffset = s.MountOffsetY;
             ushort over = rs.OverrideHue;
@@ -295,7 +296,9 @@ namespace ClassicUO.Game
 
             if (charSitting)
             {
-                Write(index, x, y, 0, h, hueVec, mirror, depth, 1, 0f);
+                // MobileView: CalculateSitAnimation then DrawCharacterSitted's sections
+                Vector3 mod = SitDeform.Mod(ref _sitRows, y, h, isItem, _human);
+                Write(index, x, y, 0, h, hueVec, mirror, depth, 1, 0f, true, mod);
 
                 return;
             }
@@ -324,20 +327,33 @@ namespace ClassicUO.Game
 
         // GpuWorldRenderer.Emit for an animation frame drawn from source rows [srcY, srcY + srcH) at (px, py). The depth is
         // baseDepth (kind 0) or (baseDepth + 1f) + add (kind 1): the shadow, the seated body and the strips' depth + 1f + i * 2.
-        private void Write(uint index, int px, int py, int srcY, int srcH, Vector3 hue, bool flip, float baseDepth, byte kind, float add)
+        private void Write(uint index, int px, int py, int srcY, int srcH, Vector3 hue, bool flip, float baseDepth, byte kind, float add,
+            bool sitted = false, Vector3 sitMod = default)
         {
             int before = _count;
             WriteFrame(_pack, ref _out, ref _count, index, px + _offsetX, py + _offsetY, srcY, srcH, hue, flip, DepthOf(baseDepth, kind, add), _objX, RANK_MOBILE);
 
-            if (_record != null && _count > before)
+            if (sitted && _count > before)
             {
-                int i = _count - 1 - _recordStart;
-                _record.EnsureCapacity(i + 1);
-                ref MobileFrameCache.Entry entry = ref _record.Entries[i];
-                entry.Kind = kind;
-                entry.Add = add;
+                SitDeform.Split(ref _out, ref _count, before, py + _offsetY, srcH, sitMod, flip);
+            }
+
+            if (_record != null)
+            {
+                for (int c = before; c < _count; c++)
+                {
+                    int i = c - _recordStart;
+                    _record.EnsureCapacity(i + 1);
+                    ref MobileFrameCache.Entry entry = ref _record.Entries[i];
+                    entry.Kind = kind;
+                    entry.Add = add;
+                }
             }
         }
+
+        // the seated body's waist and knee rows for its equipment (MobileView's statics), and whether the mobile is human
+        private SitDeform.BodyRows _sitRows;
+        private bool _human;
 
         internal static float DepthOf(float baseDepth, byte kind, float add) => kind == 0 ? baseDepth : baseDepth + 1f + add;
 

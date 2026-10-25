@@ -79,6 +79,7 @@ public sealed unsafe class WorldRenderer : IDisposable
 
     readonly uint[] _trans;
     readonly ulong[] _transSort;
+    readonly TransRun[] _transRuns;
     int _transCount;
 
     struct PendingOverride
@@ -114,6 +115,8 @@ public sealed unsafe class WorldRenderer : IDisposable
     /// <summary>Last frame: overrides that matched a baked instance, missed (chunk not ready or no such object), dropped
     /// (hash or translucent list full); translucent instances drawn; dynamic instances.</summary>
     public int OverridesApplied, OverridesMissed, OverridesDropped, TranslucentCount, DynamicDrawn;
+    /// <summary>Last frame: translucent draws split by effect blend (0 = one draw).</summary>
+    public int TransRunCount;
     /// <summary>Last frame: instances listed for the circle-of-transparency ring (translucent pass).</summary>
     public int CotRingCount;
     /// <summary>Last frame: main-thread time to resolve overrides and build the translucent list (Stopwatch ticks).</summary>
@@ -158,6 +161,7 @@ public sealed unsafe class WorldRenderer : IDisposable
         if (o.MaxDynamic > 0) _dynFirst = (uint)Chunks.Alloc.Alloc(o.MaxDynamic); // reserved before any chunk: never fails
         _trans = new uint[Math.Max(1, renderer.MaxTranslucent)];
         _transSort = new ulong[_trans.Length];
+        _transRuns = new TransRun[_trans.Length];
         _ovTable = new OverrideEntry[Math.Max(1, renderer.OverrideSlots)];
         _ovUsed = new int[_ovTable.Length];
         _pending = new PendingOverride[Math.Max(1, renderer.OverrideSlots / 2)];
@@ -291,6 +295,21 @@ public sealed unsafe class WorldRenderer : IDisposable
         Chunks.EvictAll();
     }
 
+    /// <summary>ClassicUO's animated water (profile AnimatedWaterEffect): <paramref name="on"/> bakes a scaled copy of every
+    /// wet flat land tile (LandView's second draw; a change rebakes every chunk), and the frame scales
+    /// <see cref="SpriteInstance.LightWobble"/> instances, baked or dynamic, by (<paramref name="scaleX"/>, <paramref name="scaleY"/>).</summary>
+    public void SetWaterWobble(bool on, float scaleX, float scaleY)
+    {
+        _waterX = on ? scaleX : 1f;
+        _waterY = on ? scaleY : 1f;
+        if (on == Pack.WaterWobble) return;
+        Pack.WaterWobble = on;
+        Chunks.EvictAll();
+    }
+
+    public bool WaterWobble => Pack.WaterWobble;
+    float _waterX = 1f, _waterY = 1f;
+
     /// <summary>Replaces static graphics in the bake (0x10000 entries, null = none; ClassicUO's season statics) and rebakes
     /// every chunk. Overrides keep addressing statics by their original graphic. Meant for rare changes: the view re-streams.</summary>
     public void SetStaticRemap(ushort[] remap)
@@ -389,6 +408,7 @@ public sealed unsafe class WorldRenderer : IDisposable
 
         // dynamic: page residency, translucent list, one more chunk-table entry for the reserved range
         DynamicDrawn = _dynCount;
+        int ownBlend = 0;
         if (_dynCount > 0)
         {
             for (int i = 0; i < _dynCount; i++)
@@ -401,6 +421,7 @@ public sealed unsafe class WorldRenderer : IDisposable
                 if (!d.Translucent && !(cot && (d.Light & SpriteInstance.LightCot) != 0 && InCotRect(d))) continue;
                 if (_transCount < transCap) _transSort[_transCount++] = SortKey(d.Depth, _dynFirst + (uint)i);
                 else OverridesDropped++;
+                if (d.Blend is not (InstanceBlend.Normal or InstanceBlend.Screen)) ownBlend++;
             }
             _table[chunkCount].First = _dynFirst;
             _table[chunkCount].Prefix = (uint)instances;
@@ -464,6 +485,20 @@ public sealed unsafe class WorldRenderer : IDisposable
         if (_transCount > 1) _transSort.AsSpan(0, _transCount).Sort();
         for (int i = 0; i < _transCount; i++) _trans[i] = uint.MaxValue - (uint)_transSort[i];
         TranslucentCount = _transCount;
+        // effect blends with their own pipeline: split the sorted list into runs of one blend (only on frames that have one)
+        int runCount = 0;
+        if (ownBlend > 0)
+        {
+            for (int i = 0; i < _transCount; i++)
+            {
+                uint gi = _trans[i] - _dynFirst;
+                var b = gi < (uint)_dynCount ? _dynamic[gi].Blend : InstanceBlend.Normal;
+                if (b == InstanceBlend.Screen) b = InstanceBlend.Normal; // same pipeline
+                if (runCount > 0 && _transRuns[runCount - 1].Blend == b) _transRuns[runCount - 1].Count++;
+                else _transRuns[runCount++] = new TransRun { Start = i, Count = 1, Blend = b };
+            }
+        }
+        TransRunCount = runCount;
         OverrideTicks = Stopwatch.GetTimestamp() - t0;
 
         Pages.StartLoads(Frame);
@@ -478,6 +513,7 @@ public sealed unsafe class WorldRenderer : IDisposable
             Frame = Frame, LinearFilter = scale < 0.999f, ChunkUploadBudget = _o.ChunkBudget,
             Dynamic = _dynamic, DynamicCount = _dynCount, DynamicFirst = _dynFirst,
             Translucent = _trans, TranslucentCount = _transCount,
+            TransRuns = _transRuns, TransRunCount = runCount,
             Overrides = _ovUsedCount > 0 ? _ovTable : null,
             ViewportX = _cam.ViewportX, ViewportY = _cam.ViewportY, ViewportWidth = _cam.ViewportWidth, ViewportHeight = _cam.ViewportHeight,
             ScreenshotPath = ScreenshotPath, GpuSample = GpuSample,
@@ -495,6 +531,7 @@ public sealed unsafe class WorldRenderer : IDisposable
                 MaxZ = _maxZ, MaxGroundZ = _maxGroundZ, ZFlags = _zFlags,
                 CotZ = _cotZ, CotCenterX = _cotX, CotCenterY = _cotY, CotRadius = _cotR,
                 TintRow = _tintHue != 0 && _tintHue - 1 < Pack.HueCount ? _tintHue : 0u,
+                WaterScaleX = _waterX, WaterScaleY = _waterY,
             },
         };
     }
