@@ -32,7 +32,17 @@ namespace ClassicUO.Game.GameObjects
         }
 
         public Skill[] Skills { get; }
-        public override bool InWarMode { get; set; }
+        private bool _inWarMode;
+
+        public override bool InWarMode
+        {
+            get => _inWarMode;
+            set
+            {
+                _inWarMode = value;
+                PushInputs();
+            }
+        }
         public IReadOnlyDictionary<BuffIconType, BuffIcon> BuffIcons => _buffIcons;
 
         public ref Ability PrimaryAbility => ref Abilities[0];
@@ -663,6 +673,8 @@ namespace ClassicUO.Game.GameObjects
                     Run = run
                 }
             );
+
+            PushInputs();
 
 
             NetClient.Socket.Send_WalkRequest(direction, Walker.WalkSequence, run, Walker.FastWalkStack.GetValue());

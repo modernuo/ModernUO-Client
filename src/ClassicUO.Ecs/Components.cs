@@ -142,6 +142,47 @@ namespace ClassicUO.Ecs
         public uint NextFrameTime;
     }
 
+    [Flags]
+    public enum MobileHueBits : byte
+    {
+        None = 0,
+        Poisoned = 1,
+        Paralyzed = 2,
+        YellowHits = 4,
+        Invulnerable = 8
+    }
+
+    /// <summary>
+    /// W5 (setting mobile_push_inputs): the selection and override-hue inputs of a mobile that change only on a server
+    /// update, a step or a client-side state change. The client's change funnel (WorldEcs.Sync / WorldEcs.PushInputs,
+    /// called from every mutation site of these values) recomputes it, so the per-frame sample doesn't read them from the
+    /// legacy Mobile. Whether the mobile is mounted comes from <see cref="EquipmentSlots.Mounted"/> (rebuilt on
+    /// <see cref="EquipmentDirty"/>), not from here.
+    /// </summary>
+    public struct MobileInputs : IComponent
+    {
+        // only the pushed bits: WarMode, Running, Flying, Dead, Hidden, Female, Human, GargoyleBody, GargoyleProp,
+        // HasSteps, StepRun (MobileInputRules.PUSHED)
+        public AnimStateFlags Flags;
+
+        // GetGraphicForAnimation
+        public ushort Body;
+
+        // ProcessSteps' direction: the front step's (masked to 0..7 when it runs), else Direction & 7
+        public byte Facing;
+
+        // NotorietyFlag; its hue is looked up per frame (the profile's notoriety colours can change)
+        public byte Notoriety;
+        public MobileHueBits HueBits;
+
+        // IsWalking = LastStepTime > Ticks - WalkingDelay (uint arithmetic, as the Mobile computes it)
+        public uint LastStepTime;
+        public uint WalkingDelay;
+
+        // pushes since the entity was created (diagnostics)
+        public uint Pushes;
+    }
+
     /// <summary>Per-frame view context of a mobile: overriding hue (highlight, notoriety, out of range...), alpha, step offset.</summary>
     public struct MobileRenderState : IComponent
     {
@@ -215,6 +256,9 @@ namespace ClassicUO.Ecs
         public uint MountItem;
         public ushort MountGraphic, MountAnimId, MountHue;
 
+        // Mobile.IsMounted: a mount item that isn't a boat's tiller (0x3E96) and whose mount body isn't 0xFFFF (W5)
+        public bool Mounted;
+
         public HandItem Hand1, Hand2;
 
         // Light items the view doesn't draw but lights at the body's anchor (MobileView: a human's light without an equip
@@ -269,6 +313,7 @@ namespace ClassicUO.Ecs
             aot.RegisterComponent<MobileRenderState>();
             aot.RegisterComponent<EquipmentSlots>();
             aot.RegisterTag<EquipmentDirty>();
+            aot.RegisterComponent<MobileInputs>();
 
             return aot.CreateSchema();
         }

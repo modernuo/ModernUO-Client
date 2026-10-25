@@ -124,6 +124,12 @@ namespace ClassicUO.Configuration
         // reapplied every frame. Off = selected and extracted every frame.
         [JsonPropertyName("gpu_mobile_frame_cache")] public bool GpuMobileFrameCache { get; set; } = true;
 
+        // W5, with gpu_ecs_sprites: a mobile's slow-changing selection and override-hue inputs (body flags, sex, dead, war
+        // mode, running, steps, notoriety, status bits, mounted) are read from the ECS, where their mutation sites push
+        // them (MobileInputs, EquipmentSlots.Mounted), instead of from the legacy Mobile every frame. The pushes always
+        // run. Off = sampled from the Mobile every frame.
+        [JsonPropertyName("mobile_push_inputs")] public bool MobilePushInputs { get; set; } = true;
+
         // W5: the per-frame overhead text pass skips the text layout of mobiles and corpses whose texts have all expired
         // (expired texts stay in the entity's container; the layout would place nothing). Off = laid out every frame.
         [JsonPropertyName("text_skip_expired")] public bool TextSkipExpired { get; set; } = true;
