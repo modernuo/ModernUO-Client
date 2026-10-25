@@ -16,6 +16,7 @@ Running notes for your return, newest at the top within each section. Started 20
 
 | Commit | What | Verified |
 |---|---|---|
+| cededb3ee | **Land seams fixed when zoomed out** (shader only: tile coverage comes from the full-size texel, as Legacy decides it, while colour stays trilinear, so no new shimmer). Also the **scissor exception fix**: every scissor rect is clipped to the target, and UI drawing is skipped on an empty back buffer. Left over: a few short ticks where shore pieces meet water at zoom 2 (they predate the fix). The scissor crash wasn't reproducible, so 11 unit tests are its only evidence. | Shots looked at (grid gone, matches Legacy); UI and Gpu zoom-1 parity; Legacy shots; `--external-test` on Vulkan and D3D12; 255 tests. GPU cost within noise (no idle GPU available) |
 | 6f2007199 | Playbook: agents must stay current with `poc/modern-client` (merge before measuring and before final checks, rebuild binaries, report the base commit) | docs |
 | a5e43e94c | **Window title shows `[Legacy renderer]`** whenever Legacy draws the world, including runtime switches. You couldn't tell which renderer was drawing. | build, 244 tests |
 | b62406b8e | **Fix: Legacy tile corruption.** Root cause: B1 stopped re-applying the effect per mesh run, and FNA3D doesn't rebind a cycled index buffer, so every mesh layer after the first drew with stale indices. B1's skipping is kept; Gpu-mode effect applies are unchanged (2.0–2.7 per frame). | 12 of 12 Legacy shots and 39 of 39 flip shots clean; UI parity holds; 244 tests |
@@ -36,8 +37,8 @@ Running notes for your return, newest at the top within each section. Started 20
   - **Cause:** SDL's Vulkan memory defragmenter moving the art-atlas allocation at login.
   - **Evidence:** 0 faults in 100 runs with defrag disabled, against 2 in 72 at baseline.
   - **Fix:** a minimal SDL patch in our fork (Codex/astra suggested dedicated allocations for images of 64 MiB and up), with the client building SDL from the fork.
-- **Land seams when zoomed out, plus the scissor exception on login** (a separate agent).
-- **Next:** W3 (the ECS sprite extract becomes the dynamic draw source; items and corpses ported), then W2, then the large-scale test scene.
+- **W3** (an agent started 01:25): the ECS sprite extract becomes the render source for mobiles, then items and corpses, with parity and measurements. It uses kbatman under the lock and stops if `kbatman.owner-hold` appears.
+- **Next:** W2, then the large-scale test scene (about 2,000 mobiles and 20,000 items).
 
 ## Things you saw tonight, explained
 
