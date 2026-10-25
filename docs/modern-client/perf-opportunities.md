@@ -56,6 +56,16 @@ Format: **what**, where (file:line), why it should help, evidence or estimate, a
 - **Expanding 16-bit pages to RGBA8 costs 3–5 ms per page in the renderer, against 1.2 ms in a microbenchmark.** The suspect is writes into write-combined upload memory. Fix: expand into cached scratch memory, then memcpy, or let the GPU expand with a compute shader. Only matters on the RGBA8 fallback path (WebGPU).
 - **Co-occurrence page packing (v2).** Fewer pages touched per screen. Method in pack-format-v0.md.
 
+## Server update range vs. large viewports (owner, 2026-10-25; deferred)
+
+The server sends dynamic objects (mobiles, items, effects) only within its update range: usually 18 tiles, and 24 for houses/multis. Players with large monitors who enlarge the game viewport often don't realise the fps cost, which grows quickly with activity on screen. **Deferred to a later iteration** unless it would change the current milestone's architecture (assessed below: it doesn't).
+
+- **Bound the per-frame walk by the update range, not just the viewport.** Beyond the range the server sends no dynamic objects, so the outer ring of a large viewport holds only land, statics and multis (the multi range is larger). The Gpu path already draws settled land and statics from baked chunks (W1) and ground items from per-chunk caches (W4), so the outer ring should cost close to nothing per frame. Today the shared list fill still walks every tile in the view (about 92k tiles at the 3840×2054 large spot). Combine this with the "walk only the screen's diamond / per-tile decision cache" item in "GPU world in ClassicUO": walk tile by tile inside the range, and draw outside it from the bake only. Check that objects the client retains past the range (stale until the server removes them, houses) still behave correctly.
+- **Stream assets by update range.** Knowing the range gives a residency radius: chunk bakes, item caches, animation pages and art pages for anything beyond the range plus the viewport (plus a margin in the walk direction) can be evicted or deprioritised, and prefetch can target the ring the player is walking into. This ties into the ChunkStore eviction and the pack-loading worker decode.
+- **Tell the player.** Show or log the fps cost of a viewport beyond the range (or a soft cap/warning in options), and measure it: an FPS-test spot with a busy scene at max viewport (the large scene at 3840×2054 already covers part of this).
+- **Read the range from the server.** Use ClassicUO's `ClientViewRange` (packet 0xC8) and, later, our own protocol announcing the range and the multi range. Don't hard-code 18/24.
+- **Architecture check (2026-10-25):** nothing in the current milestone (ECS world prepare W0–W5, per-chunk bakes and caches, startup renderer selection) assumes the viewport fits inside the range, and per-chunk caching is what range-based streaming would build on. One rule to keep until then: don't add per-frame work that scales with viewport tiles in the Gpu path when it could be per-chunk or per-change.
+
 ## Uo.Render / slice (reported by the renderer agent, 2026-10-24)
 
 - **The global `ChunkedBrotliDecoder` lock serialises Kind 2 page jobs** (PageResidency.cs:110), causing 13–17 ms waits in bursts. Fix: a decoder per staging slot with fewer threads, or chunk jobs on the WorkerPool.
