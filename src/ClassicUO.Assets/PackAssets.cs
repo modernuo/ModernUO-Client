@@ -2,9 +2,11 @@
 
 using ClassicUO.Utility.Logging;
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Threading;
 using Uo.Pack;
 
 namespace ClassicUO.Assets
@@ -108,19 +110,26 @@ namespace ClassicUO.Assets
     /// <summary>
     /// Mip-0 texel access to a folder of atlas pages. Kind 2 pages are decoded one 1 MiB chunk at a time, so a sprite
     /// costs only the chunks its rows touch; decoded chunks stay in an LRU bounded by <c>cacheBytes</c>.
+    /// Thread-safe: a chunk decodes outside the lock (several threads can decode at once) into a buffer reused from an
+    /// evicted chunk, and every copy out of a cached chunk happens under the lock, so an evicted buffer is never in use.
     /// </summary>
     public sealed class PackPages
     {
         private static readonly int FileHeaderSize = StructIo.SizeOf<FileHeader>();
         private static readonly int PageHeaderSize = StructIo.SizeOf<PageHeader>();
 
+        // evicted chunk buffers kept for the next decodes (one size class: the pack's chunk size)
+        private const int MaxFreeBuffers = 4;
+
         private readonly string _dir;
         private readonly long _cacheBytes;
         private readonly Dictionary<int, PageInfo> _pages = new Dictionary<int, PageInfo>();
         private readonly Dictionary<long, LinkedListNode<Chunk>> _chunks = new Dictionary<long, LinkedListNode<Chunk>>();
         private readonly LinkedList<Chunk> _lru = new LinkedList<Chunk>();
+        private readonly Stack<byte[]> _free = new Stack<byte[]>();
         private readonly object _sync = new object();
         private long _cachedBytes;
+        private int _decodedChunks;
 
         public PackPages(string dir, long cacheBytes)
         {
@@ -129,31 +138,58 @@ namespace ClassicUO.Assets
         }
 
         public long CachedBytes => _cachedBytes;
-        public int DecodedChunks { get; private set; }
+        public int DecodedChunks => _decodedChunks;
 
-        public PageHeader GetHeader(int page)
-        {
-            lock (_sync)
-            {
-                return GetPage(page).Header;
-            }
-        }
+        public PageHeader GetHeader(int page) => GetPage(page).Header;
 
         /// <summary>Copies a <paramref name="w"/> x <paramref name="h"/> rect of mip 0 into <paramref name="dst"/>, rows packed.</summary>
         public void ReadRect(int page, int x, int y, int w, int h, Span<byte> dst)
         {
+            var info = GetPage(page);
+            int bpp = BytesPerTexel(info.Header.Format);
+            int side = info.Header.Width;
+            int rowBytes = w * bpp;
+
+            for (int row = 0; row < h; row++)
+            {
+                long logical = PageHeaderSize + ((long)(y + row) * side + x) * bpp;
+                ReadLogical(info, page, logical, dst.Slice(row * rowBytes, rowBytes), false);
+            }
+        }
+
+        /// <summary>True when every chunk under the rect is decoded and cached, so a <see cref="ReadRect"/> would not decode.</summary>
+        public bool IsResident(int page, int x, int y, int w, int h)
+        {
             lock (_sync)
             {
-                var info = GetPage(page);
-                int bpp = BytesPerTexel(info.Header.Format);
-                int side = info.Header.Width;
-                int rowBytes = w * bpp;
-
-                for (int row = 0; row < h; row++)
+                if (!_pages.TryGetValue(page, out var info))
                 {
-                    long logical = PageHeaderSize + ((long)(y + row) * side + x) * bpp;
-                    ReadLogical(info, page, logical, dst.Slice(row * rowBytes, rowBytes));
+                    return false;
                 }
+
+                ChunkRange(info, x, y, w, h, out long first, out long last);
+
+                for (long c = first; c <= last; c++)
+                {
+                    if (!_chunks.ContainsKey(((long)page << 32) | (uint)c))
+                    {
+                        return false;
+                    }
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>Decodes the chunks under a rect into the cache without copying anything out (prefetch).</summary>
+        public void Touch(int page, int x, int y, int w, int h)
+        {
+            var info = GetPage(page);
+            ChunkRange(info, x, y, w, h, out long first, out long last);
+
+            for (long c = first; c <= last; c++)
+            {
+                ReadLogical(info, page, c * info.ChunkBytes, Span<byte>.Empty, true);
             }
         }
 
@@ -164,6 +200,7 @@ namespace ClassicUO.Assets
                 _chunks.Clear();
                 _lru.Clear();
                 _pages.Clear();
+                _free.Clear();
                 _cachedBytes = 0;
             }
         }
@@ -176,44 +213,98 @@ namespace ClassicUO.Assets
             _ => throw new NotSupportedException($"pack pixel format {format}")
         };
 
-        private void ReadLogical(PageInfo info, int page, long offset, Span<byte> dst)
+        private static void ChunkRange(PageInfo info, int x, int y, int w, int h, out long first, out long last)
         {
-            while (!dst.IsEmpty)
+            int bpp = BytesPerTexel(info.Header.Format);
+            long side = info.Header.Width;
+            first = (PageHeaderSize + (y * side + x) * bpp) / info.ChunkBytes;
+            last = (PageHeaderSize + ((y + Math.Max(h, 1) - 1) * side + x + Math.Max(w, 1)) * bpp - 1) / info.ChunkBytes;
+        }
+
+        private void ReadLogical(PageInfo info, int page, long offset, Span<byte> dst, bool touchOnly)
+        {
+            do
             {
                 int index = (int)(offset / info.ChunkBytes);
                 int within = (int)(offset - (long)index * info.ChunkBytes);
-                var chunk = GetChunk(info, page, index);
-                int n = Math.Min(dst.Length, chunk.Length - within);
+                long key = ((long)page << 32) | (uint)index;
+                int n;
+
+                lock (_sync)
+                {
+                    n = TryCopyLocked(key, within, dst, touchOnly);
+                }
+
+                if (n < 0)
+                {
+                    // miss: decode outside the lock, then publish (another thread may have published it meanwhile)
+                    var buffer = RentBuffer(info.ChunkBytes);
+                    int length = DecodeChunk(info, page, index, buffer);
+                    Interlocked.Increment(ref _decodedChunks);
+
+                    lock (_sync)
+                    {
+                        if (_chunks.ContainsKey(key))
+                        {
+                            ReturnBufferLocked(buffer);
+                        }
+                        else
+                        {
+                            InsertLocked(key, buffer, length);
+                        }
+
+                        n = TryCopyLocked(key, within, dst, touchOnly);
+                    }
+                }
+
+                if (touchOnly)
+                {
+                    return;
+                }
 
                 if (n <= 0)
                 {
                     throw new InvalidDataException($"page {page}: read past the end of the page");
                 }
 
-                chunk.Data.AsSpan(within, n).CopyTo(dst);
                 dst = dst.Slice(n);
                 offset += n;
             }
+            while (!dst.IsEmpty);
         }
 
-        private Chunk GetChunk(PageInfo info, int page, int index)
+        // -1 = not cached, else the bytes copied (0 when touchOnly)
+        private int TryCopyLocked(long key, int within, Span<byte> dst, bool touchOnly)
         {
-            long key = ((long)page << 32) | (uint)index;
-
-            if (_chunks.TryGetValue(key, out var node))
+            if (!_chunks.TryGetValue(key, out var node))
             {
-                _lru.Remove(node);
-                _lru.AddFirst(node);
-
-                return node.Value;
+                return -1;
             }
 
-            var chunk = new Chunk { Key = key };
-            DecodeChunk(info, page, index, chunk);
-            DecodedChunks++;
-            node = _lru.AddFirst(chunk);
+            _lru.Remove(node);
+            _lru.AddFirst(node);
+
+            if (touchOnly)
+            {
+                return 0;
+            }
+
+            var chunk = node.Value;
+            int n = Math.Min(dst.Length, chunk.Length - within);
+
+            if (n > 0)
+            {
+                chunk.Data.AsSpan(within, n).CopyTo(dst);
+            }
+
+            return n;
+        }
+
+        private void InsertLocked(long key, byte[] buffer, int length)
+        {
+            var node = _lru.AddFirst(new Chunk { Key = key, Data = buffer, Length = length });
             _chunks[key] = node;
-            _cachedBytes += chunk.Data.Length;
+            _cachedBytes += buffer.Length;
 
             while (_cachedBytes > _cacheBytes && _lru.Count > 1)
             {
@@ -221,34 +312,63 @@ namespace ClassicUO.Assets
                 _lru.RemoveLast();
                 _chunks.Remove(last.Value.Key);
                 _cachedBytes -= last.Value.Data.Length;
+                ReturnBufferLocked(last.Value.Data);
             }
-
-            return chunk;
         }
 
-        private void DecodeChunk(PageInfo info, int page, int index, Chunk chunk)
+        private byte[] RentBuffer(int size)
+        {
+            lock (_sync)
+            {
+                if (_free.Count > 0 && _free.Peek().Length == size)
+                {
+                    return _free.Pop();
+                }
+            }
+
+            return new byte[size];
+        }
+
+        private void ReturnBufferLocked(byte[] buffer)
+        {
+            if (_free.Count < MaxFreeBuffers && (_free.Count == 0 || _free.Peek().Length == buffer.Length))
+            {
+                _free.Push(buffer);
+            }
+        }
+
+        // decodes chunk `index` into `buffer` (capacity info.ChunkBytes) and returns its length
+        private int DecodeChunk(PageInfo info, int page, int index, byte[] buffer)
         {
             using var fh = File.OpenHandle(PackConst.PagePath(_dir, page));
             long start = (long)index * info.ChunkBytes;
             int length = (int)Math.Min(info.ChunkBytes, info.LogicalBytes - start);
-            chunk.Data = new byte[length];
-            chunk.Length = length;
+            var dst = buffer.AsSpan(0, length);
 
             switch (info.Kind)
             {
                 case FileKind.Raw:
-                    RandomAccess.Read(fh, chunk.Data, FileHeaderSize + start);
+                    RandomAccess.Read(fh, dst, FileHeaderSize + start);
 
                     break;
 
                 case FileKind.ChunkedBrotli:
                 {
-                    var compressed = new byte[info.ChunkSizes[index]];
-                    RandomAccess.Read(fh, compressed, info.ChunkOffsets[index]);
+                    int size = (int)info.ChunkSizes[index];
+                    var compressed = ArrayPool<byte>.Shared.Rent(size);
 
-                    if (!System.IO.Compression.BrotliDecoder.TryDecompress(compressed, chunk.Data, out int written) || written != length)
+                    try
                     {
-                        throw new InvalidDataException($"page {page}: corrupt chunk {index}");
+                        RandomAccess.Read(fh, compressed.AsSpan(0, size), info.ChunkOffsets[index]);
+
+                        if (!System.IO.Compression.BrotliDecoder.TryDecompress(compressed.AsSpan(0, size), dst, out int written) || written != length)
+                        {
+                            throw new InvalidDataException($"page {page}: corrupt chunk {index}");
+                        }
+                    }
+                    finally
+                    {
+                        ArrayPool<byte>.Shared.Return(compressed);
                     }
 
                     break;
@@ -259,84 +379,104 @@ namespace ClassicUO.Assets
                     using var fs = new FileStream(fh, FileAccess.Read);
                     fs.Position = FileHeaderSize;
                     using var br = new System.IO.Compression.BrotliStream(fs, System.IO.Compression.CompressionMode.Decompress);
-                    br.ReadExactly(chunk.Data);
+                    br.ReadExactly(dst);
 
                     break;
                 }
             }
+
+            return length;
         }
 
         private PageInfo GetPage(int page)
         {
-            if (_pages.TryGetValue(page, out var info))
+            lock (_sync)
             {
-                return info;
+                if (_pages.TryGetValue(page, out var cached))
+                {
+                    return cached;
+                }
             }
 
             var path = PackConst.PagePath(_dir, page);
-            using var fh = File.OpenHandle(path);
-            FileHeader fileHeader = default;
-            RandomAccess.Read(fh, MemoryMarshal.AsBytes(new Span<FileHeader>(ref fileHeader)), 0);
+            PageInfo info;
 
-            if (fileHeader.Magic != PackConst.MagicPage || !PackConst.VersionSupported(fileHeader.Version))
+            using (var fh = File.OpenHandle(path))
             {
-                throw new InvalidDataException($"'{path}' is not a supported pack page");
-            }
+                FileHeader fileHeader = default;
+                RandomAccess.Read(fh, MemoryMarshal.AsBytes(new Span<FileHeader>(ref fileHeader)), 0);
 
-            info = new PageInfo { Kind = fileHeader.Kind };
-
-            switch (fileHeader.Kind)
-            {
-                case FileKind.Raw:
-                    info.LogicalBytes = RandomAccess.GetLength(fh) - FileHeaderSize;
-                    info.ChunkBytes = 1 << 20;
-
-                    break;
-
-                case FileKind.ChunkedBrotli:
+                if (fileHeader.Magic != PackConst.MagicPage || !PackConst.VersionSupported(fileHeader.Version))
                 {
-                    ChunkedHeader ch = default;
-                    RandomAccess.Read(fh, MemoryMarshal.AsBytes(new Span<ChunkedHeader>(ref ch)), FileHeaderSize);
-                    info.LogicalBytes = (long)ch.LogicalBytes;
-                    info.ChunkBytes = (int)ch.ChunkBytes;
-                    info.ChunkSizes = new uint[ch.ChunkCount];
-                    long table = FileHeaderSize + ChunkedBrotli.HeaderBytes;
-                    RandomAccess.Read(fh, MemoryMarshal.AsBytes(info.ChunkSizes.AsSpan()), table);
-                    info.ChunkOffsets = new long[ch.ChunkCount];
-                    long offset = table + 4L * ch.ChunkCount;
+                    throw new InvalidDataException($"'{path}' is not a supported pack page");
+                }
 
-                    for (int i = 0; i < info.ChunkSizes.Length; i++)
+                info = new PageInfo { Kind = fileHeader.Kind };
+
+                switch (fileHeader.Kind)
+                {
+                    case FileKind.Raw:
+                        info.LogicalBytes = RandomAccess.GetLength(fh) - FileHeaderSize;
+                        info.ChunkBytes = 1 << 20;
+
+                        break;
+
+                    case FileKind.ChunkedBrotli:
                     {
-                        info.ChunkOffsets[i] = offset;
-                        offset += info.ChunkSizes[i];
+                        ChunkedHeader ch = default;
+                        RandomAccess.Read(fh, MemoryMarshal.AsBytes(new Span<ChunkedHeader>(ref ch)), FileHeaderSize);
+                        info.LogicalBytes = (long)ch.LogicalBytes;
+                        info.ChunkBytes = (int)ch.ChunkBytes;
+                        info.ChunkSizes = new uint[ch.ChunkCount];
+                        long table = FileHeaderSize + ChunkedBrotli.HeaderBytes;
+                        RandomAccess.Read(fh, MemoryMarshal.AsBytes(info.ChunkSizes.AsSpan()), table);
+                        info.ChunkOffsets = new long[ch.ChunkCount];
+                        long offset = table + 4L * ch.ChunkCount;
+
+                        for (int i = 0; i < info.ChunkSizes.Length; i++)
+                        {
+                            info.ChunkOffsets[i] = offset;
+                            offset += info.ChunkSizes[i];
+                        }
+
+                        break;
                     }
 
-                    break;
+                    case FileKind.Brotli:
+                    {
+                        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+                        fs.Position = FileHeaderSize;
+                        using var br = new System.IO.Compression.BrotliStream(fs, System.IO.Compression.CompressionMode.Decompress);
+                        var header = StructIo.Read<PageHeader>(br);
+                        info.LogicalBytes = PageHeaderSize + header.DataBytes;
+                        info.ChunkBytes = (int)info.LogicalBytes;
+
+                        break;
+                    }
+
+                    default:
+                        throw new InvalidDataException($"'{path}': unknown kind {fileHeader.Kind}");
                 }
-
-                case FileKind.Brotli:
-                {
-                    using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
-                    fs.Position = FileHeaderSize;
-                    using var br = new System.IO.Compression.BrotliStream(fs, System.IO.Compression.CompressionMode.Decompress);
-                    var header = StructIo.Read<PageHeader>(br);
-                    info.LogicalBytes = PageHeaderSize + header.DataBytes;
-                    info.ChunkBytes = (int)info.LogicalBytes;
-
-                    break;
-                }
-
-                default:
-                    throw new InvalidDataException($"'{path}': unknown kind {fileHeader.Kind}");
             }
 
-            _pages[page] = info;
-            var first = GetChunk(info, page, 0);
-            info.Header = MemoryMarshal.Read<PageHeader>(first.Data);
+            // the PageHeader comes from chunk 0, which then stays cached for the sprites in it
+            PageHeader pageHeader = default;
+            ReadLogical(info, page, 0, MemoryMarshal.AsBytes(new Span<PageHeader>(ref pageHeader)), false);
+            info.Header = pageHeader;
 
             if (info.Header.Width != info.Header.Height || info.Header.Width == 0)
             {
                 throw new InvalidDataException($"'{path}': bad page size");
+            }
+
+            lock (_sync)
+            {
+                if (_pages.TryGetValue(page, out var raced))
+                {
+                    return raced;
+                }
+
+                _pages[page] = info;
             }
 
             return info;

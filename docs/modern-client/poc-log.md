@@ -555,3 +555,45 @@ Branch `worktree-agent-af12d303f4d9e40e7`, on top of 43dec9ae4: W0 78021a764, W1
   - the gradient circle-of-transparency mode;
   - a shader-side cull for the edge band;
   - the owner's AOT FPS test.
+
+## Pack-loading hitches and waste (2026-10-24)
+
+Branch `worktree-agent-a968cd66550e734a5`, merged into poc/modern-client.
+
+Items from perf-opportunities.md "ClassicUO pack-loading path" and two "Uo.Render / slice" items. Method: [testing/pack-loading.md](testing/pack-loading.md). JIT Release, Gpu world renderer, 1920×1080, VSync off; other agents' clients were running, so frame and Present times are noisy.
+
+**Changes.**
+- **PackPages** reuses evicted 1 MiB chunk buffers and rents the compressed one; chunks decode outside the lock (thread-safe, parallel). Adds `IsResident` and `Touch`.
+- **Picker masks and real-art bounds from the trim rect:** `PixelPicker.SetTrimmed` (Vector256/128 zero test, scalar fallback) and `PixelPicker.VisibleBounds`. Art decodes into a pooled buffer. The untrimmed RGBA image remains because the legacy atlas uploads it.
+- **Animations:** until a body has a direction uploaded, an uncached direction decodes on the thread pool. Its frames carry size and centre but no texture, so callers draw nothing (as for an empty frame) and animation timing, frame counts and `GetAnimationDimensions` are unchanged. Uploads are budgeted at 2 ms per 8 ms. A body with something uploaded loads synchronously, so a visible mobile never blinks on a turn or a new action; the worker prefetches the action's other directions and actions 0–4. `AnimationExists` answers from the tables. `CUO_ANIM_SYNC=1` restores the old path. Equipment counts as a body: a new item on a visible human can appear a few milliseconds (a frame or two) after the body. Nobody has checked this by eye yet.
+- **Palette cache** is an LRU (`LruCache`) instead of clearing all 8,192.
+- **Regions:** `RegionFile.DecompressInto` decodes into a reusable buffer; MapLoader recycles evicted region buffers. `MapLoader.GetLandZ` caches the last block for `Map.GetTileZ`.
+- **Uo.Render:** `AtlasPage.ReadHeader` (behind `PageFormats.ReadHeader`) decodes only the 16 PageHeader bytes; the Kind 2 page job passes its already-read ChunkedHeader to the decoder.
+- **Bench:** FrameStats reports frame max, hitches over 8/16 ms, the same without Present, and Update+Draw only. DevBench adds `bodies`, `ltravel`, `glide` and `CUO_BENCH_NOSHOT=1`.
+
+**Micro benchmarks** (second repetition):
+
+| Operation | Before | After |
+|---|---|---|
+| Chunk decode (1 MiB, Kind 2) | 3.2–3.4 ms, 1.27 MB | 2.6–2.8 ms, 55–65 KB |
+| Picker mask per sprite (6,000 preloaded) | 4.7 µs | 3.2 µs SIMD (4.7 µs scalar trimmed) |
+| Real-art bounds per sprite | 4.8 µs | 0.4–1.0 µs |
+| First sight of a direction, main thread | 3.4–4.0 ms p50, 11–14 ms max, 1.56 MB | 0.2 µs (worker does the 3.4–4 ms), 0.41 MB |
+| Region load (60, 24-region LRU) | 4.0–4.2 ms, 3.9 MB | 3.0–3.3 ms, 1.1 MB average (0 with a warm pool) |
+| Land z lookup (stretch) | 110–180 ns | 12 ns |
+| Page header read | 2.8–4.6 ms | 0.36–0.39 ms |
+
+**Travel and first-sight test**, Update+Draw only (the client's own work), summed over four 5 s windows per entry; two base and two new runs alternated:
+
+| Entry | Base max (ms) | Base >8 / >16 ms | New max (ms) | New >8 / >16 ms |
+|---|---|---|---|---|
+| `travel` (`[go`, 7 towns) | 42.9–43.4 | 9–10 / 3–4 | 35.6–42.3 | 7–9 / 3–4 |
+| `ltravel` (client-only teleports) | 5.1–6.2 | 0 / 0 | 4.4–5.2 | 0 / 0 |
+| `glide` (25 tiles/s) | 11.5–18.6 | 1–15 / 0–5 | 10.7–11.6 | 1 / 0 |
+| `bodies` (390 new bodies) | 24.4–25.3 | 43–76 / 4–6 | 4.3–8.2 | 0–1 / 0 |
+
+- **Whole-frame numbers** (Present included) swing with the GPU load from other clients. Bodies frame max went from 24.5–25.4 to 32.9–48.6 ms, all in Present; p99 4.4–11.7 ms in both builds.
+- **Bodies allocation** fell from 57–122 KB to 19 KB per frame, the baseline.
+- **Teleports still cost one 25–40 ms frame:** about 75 `Chunk.Load` calls (5–14 ms), a region decode (3–9 ms) and the server's packet burst, in the same frame. A diagnostic build confirmed this split. Next steps are listed in perf-opportunities.md.
+- **kbatman4 has staff access** (`[go` worked).
+- **Checks:** client Release build; 199 unit tests (11 new pack-path parity tests); `CUO_BENCH_PICK=1` gave the same selections and pixel-pick results before and after in both renderers; Uo.Render.App `--external-test` on Vulkan passes.

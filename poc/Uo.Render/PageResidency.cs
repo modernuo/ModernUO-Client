@@ -120,7 +120,7 @@ public sealed unsafe class PageJob : Job
                 WaitTicks = t1 - tw;
                 if (!Expand)
                 {
-                    lease.Decoder.Decode(fh0, 16, new Span<byte>(Dst, Capacity), 16, phb);
+                    lease.Decoder.Decode(fh0, 16, ch, new Span<byte>(Dst, Capacity), 16, phb); // ch read above: no second header read
                     ph = System.Runtime.InteropServices.MemoryMarshal.Read<PageHeader>(phb);
                     if (!Fits(ph)) return;
                     DecodeTicks = System.Diagnostics.Stopwatch.GetTimestamp() - t1;
@@ -128,7 +128,7 @@ public sealed unsafe class PageJob : Job
                 else
                 {
                     if (lease.Scratch.Length < Capacity / 2) lease.Scratch = new byte[Capacity / 2];
-                    lease.Decoder.Decode(fh0, 16, lease.Scratch.AsSpan(0, Capacity / 2), 16, phb);
+                    lease.Decoder.Decode(fh0, 16, ch, lease.Scratch.AsSpan(0, Capacity / 2), 16, phb);
                     ph = System.Runtime.InteropServices.MemoryMarshal.Read<PageHeader>(phb);
                     if (!Fits(ph)) return;
                     long te = System.Diagnostics.Stopwatch.GetTimestamp();
