@@ -1199,3 +1199,11 @@ Branch `worktree-agent-a1570509bc420675c`, on `poc/modern-client` 78061753b (mea
 **Left:**
 - Lightning (`LightningEffect`) draws gump art, which isn't in the pack, so it stays an FNA overlay (not depth-tested) with Additive blending and `SHADER_LIGHTS`, as before.
 - The water check is visual only (no frozen phase); the effect check is on stretched land (a flat-land spot would give a cleaner diff).
+
+**Codex audit fixes (merge with fixes, same day):**
+- **P2, equal-depth effects across the pass split:** a Normal effect was drawn by the opaque pass and wrote depth, so a later Multiply/ScreenLess/NormalHalf/ShadowBlue effect at the same depth failed the strict depth test (Legacy: LessEqual plus painter order). Normal effects now carry `InstanceBlend.NormalOrdered`: the premultiplied pipeline with opaque output, but in the translucent pass, so every effect is ordered by depth key and then capture order there. Opaque world objects still write depth first, so an object captured after an effect at equal depth still wins, as in Legacy.
+  - Checked: at Britain, Normal→ShadowBlue on one tile now shows ShadowBlue over the bag (before, the bag stayed plain), and Multiply→Normal and ScreenLess→Normal show the plain bag; Gpu and Legacy are identical over those bags. The Normal→Multiply pair on the test tile was hidden by the stairs in both renderers.
+- **P2, animated wet statics on frames with animation offset 0:** with animated water on, animated wet statics always go through view capture (`CollectGpuStatic`). Legacy keeps animated statics out of its chunk mesh, so the view draws their water copy on every frame. Meshed wet statics are unchanged. Not checked live (no animated wet static at the test spots).
+- **P3:** `Renderer.CreateExternal` disposes the renderer if a pipeline fails, and `Pipelines` releases the opaque pipeline if the translucent one fails. No failure injection.
+- The 8,192-entry translucent list is a truncation risk for busy translucent or seated scenes (perf-opportunities.md, "GPU world parity").
+- Re-verified: both build flavours, 322 tests, effect, sitting and water shots (water: same pattern as before), and a parity run with 413k mobile comparisons (24.6k CharSitting frames) and 474k item comparisons, with 0 mismatches except the known dock NPC.

@@ -320,7 +320,8 @@ namespace ClassicUO.Game.Scenes
             GraphicEffectBlendMode.ScreenLess => InstanceBlend.ScreenLess,
             GraphicEffectBlendMode.NormalHalfTransparent => InstanceBlend.NormalHalf,
             GraphicEffectBlendMode.ShadowBlue => InstanceBlend.ShadowBlue,
-            _ => InstanceBlend.Normal
+            // normal effects too go to the translucent pass (opaque output), so equal-depth effects keep painter order
+            _ => InstanceBlend.NormalOrdered
         };
 
         /// <summary>Draws a world object's view into the dynamic sprites. Sprites the capture can't map stay with the batcher.</summary>

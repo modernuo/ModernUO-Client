@@ -120,6 +120,10 @@ public enum InstanceBlend : byte
     Normal = 0,
     /// <summary>ShadowBlue: dst·(1 - src) - src·src (reverse subtract).</summary>
     ShadowBlue = 1,
+    /// <summary>Normal (premultiplied pipeline, opaque output), but drawn in the translucent pass: effects, so that
+    /// effects at equal depth keep their painter order whatever their blends (an opaque effect in the opaque pass would
+    /// write depth and hide a later blended one at the same depth under the strict depth test).</summary>
+    NormalOrdered = 2,
     /// <summary>Screen / ScreenMore: dst + src (One, One).</summary>
     Screen = 4,
     /// <summary>Multiply: dst·src (Zero, SrcColor).</summary>
