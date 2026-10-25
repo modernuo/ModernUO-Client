@@ -15,6 +15,13 @@ Recorded 2026-10-23. Nothing here is a final decision unless it is listed under 
 | [world-prepare-ecs-plan.md](world-prepare-ecs-plan.md) | Moving ClassicUO's per-frame world walk onto baked GPU data and the ECS (W0–W6) |
 | [graphics-ownership-plan.md](graphics-ownership-plan.md) | Tiered path off FNA graphics (Tiers 1–4 deferred), batcher/UI improvements, upstream contribution policy |
 | [sdl-fork.md](sdl-fork.md) | Why we build SDL3 from our fork, the patch list, rebuilding and rebasing |
+| [fna-fork.md](fna-fork.md) | Our FNA and FNA3D forks: the patches (interop, index-buffer rebind, freed render target), the branch rule, rebuilding |
+| [owner-review.md](owner-review.md) | Running notes for the owner: decisions, merges with their evidence, open questions, the FPS test steps |
+| [poc-log.md](poc-log.md) | The PoC's chronological log; read its newest entries first when resuming |
+| [known-issues.md](known-issues.md) | Open and recently fixed bugs, with where to look |
+| [perf-opportunities.md](perf-opportunities.md) | Measured performance opportunities and their verdicts |
+| [fps-test-results-2026-10-25.md](fps-test-results-2026-10-25.md) | The owner's latest NativeAOT FPS test, compared with [10-24](fps-test-results-2026-10-24.md) |
+| `testing/` | Per-area test procedures (world prepare, ECS animation, world settle, large scene, GPU faults, UI batcher, pack loading, AOT) |
 
 Supporting material in this branch:
 
