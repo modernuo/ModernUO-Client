@@ -780,8 +780,7 @@ namespace ClassicUO.Game.Scenes
             }
 
             long textStart = FrameStats.AddSince(FramePhase.PrepFoliageFinish, foliageStart);
-            UpdateTextServerEntities(_world.Mobiles.Values, true);
-            UpdateTextServerEntities(_world.Items.Values, false);
+            UpdateTextServerEntities();
             FrameStats.AddSince(FramePhase.PrepText, textStart);
 
             UpdateDrawPosition = false;
@@ -824,16 +823,27 @@ namespace ClassicUO.Game.Scenes
         private static int _bareWalkSink;
 
         // the dictionary's value collection, not IEnumerable<T>: that boxed an enumerator twice a frame
-        private void UpdateTextServerEntities<T>(Dictionary<uint, T>.ValueCollection entities, bool force)
-            where T : Entity
+        // the text of every mobile, and of corpses, follows the camera (items' text is placed by their view). Only entities
+        // that got text are listed (World.TextOwners); scanning all of World.Mobiles and World.Items cost 0.2 ms per frame
+        // with 25,000 items in range
+        private void UpdateTextServerEntities()
         {
-            foreach (T e in entities)
+            List<Entity> owners = _world.TextOwners;
+
+            for (int i = owners.Count - 1; i >= 0; i--)
             {
-                if (
-                    e.TextContainer != null
-                    && !e.TextContainer.IsEmpty
-                    && (force || e.Graphic == 0x2006)
-                )
+                Entity e = owners[i];
+
+                if (e.IsDestroyed || e.TextContainer == null || e.TextContainer.IsEmpty)
+                {
+                    e.InTextOwners = false;
+                    owners[i] = owners[owners.Count - 1];
+                    owners.RemoveAt(owners.Count - 1);
+
+                    continue;
+                }
+
+                if (e is Mobile || e.Graphic == 0x2006)
                 {
                     e.UpdateRealScreenPosition(_offset.X, _offset.Y);
                 }
