@@ -57,7 +57,8 @@ namespace ClassicUO.Ecs
 
         public bool TryGetEntity(uint serial, out Entity entity) => _bySerial.TryGetValue(serial, out entity);
 
-        public void UpsertMobile(uint serial, ushort graphic, ushort hue, ushort x, ushort y, sbyte z, byte facing, byte flags, bool isPlayer)
+        /// <summary>Creates or updates a mobile's entity and returns it (the caller pushes <see cref="MobileInputs"/>).</summary>
+        public Entity UpsertMobile(uint serial, ushort graphic, ushort hue, ushort x, ushort y, sbyte z, byte facing, byte flags, bool isPlayer)
         {
             if (!_bySerial.TryGetValue(serial, out Entity e) || !e.Tags.Has<MobileTag>())
             {
@@ -77,13 +78,14 @@ namespace ClassicUO.Ecs
                     new AnimationState { ServerGroup = 0xFF },
                     new MobileRenderState { Alpha = 0xFF },
                     new EquipmentSlots(),
+                    new MobileInputs(),
                     isPlayer ? Tags.Get<MobileTag, PlayerTag, EquipmentDirty>() : Tags.Get<MobileTag, EquipmentDirty>()
                 );
 
                 _bySerial[serial] = e;
                 MobileCount++;
 
-                return;
+                return e;
             }
 
             // the equipment's drawn bodies (equipconv, gargoyle remap, covered rules) depend on the body graphic
@@ -105,6 +107,8 @@ namespace ClassicUO.Ecs
                     e.RemoveTag<PlayerTag>();
                 }
             }
+
+            return e;
         }
 
         public void UpsertItem

@@ -141,7 +141,11 @@ namespace ClassicUO.Game.GameObjects
                 || Graphic == 0x2B6
                 || Graphic == 0x02B7
                 || _isDead;
-            set => _isDead = value;
+            set
+            {
+                _isDead = value;
+                PushInputs();
+            }
         }
 
         public bool IsFlying =>
@@ -200,11 +204,51 @@ namespace ClassicUO.Game.GameObjects
 
         public byte AnimationFrameCount;
         public bool AnimationFromServer;
-        public bool IsFemale;
         public bool IsRenamable;
-        public bool IsRunning;
         public long LastStepSoundTime;
-        public NotorietyFlag NotorietyFlag;
+
+        // W5: these are inputs of the mobile's animation and override hue; every write is pushed to the ECS (MobileInputs)
+        private bool _isFemale, _isRunning;
+        private NotorietyFlag _notorietyFlag;
+
+        public bool IsFemale
+        {
+            get => _isFemale;
+            set
+            {
+                _isFemale = value;
+                PushInputs();
+            }
+        }
+
+        public bool IsRunning
+        {
+            get => _isRunning;
+            set
+            {
+                _isRunning = value;
+                PushInputs();
+            }
+        }
+
+        public NotorietyFlag NotorietyFlag
+        {
+            get => _notorietyFlag;
+            set
+            {
+                _notorietyFlag = value;
+                PushInputs();
+            }
+        }
+
+        internal bool SAPoisoned => _isSA_Poisoned;
+
+        /// <summary>W5: recomputes the mobile's pushed ECS inputs (MobileInputs) after a change to one of them.</summary>
+        protected void PushInputs()
+        {
+            World?.Ecs.PushInputs(this);
+        }
+
         public RaceType Race;
         public CharacterSpeedType SpeedMode = CharacterSpeedType.Normal;
         public ushort Stamina;
@@ -240,6 +284,7 @@ namespace ClassicUO.Game.GameObjects
         public void SetSAPoison(bool value)
         {
             _isSA_Poisoned = value;
+            PushInputs();
         }
 
         private void CalculateRandomIdleTime()
@@ -269,6 +314,7 @@ namespace ClassicUO.Game.GameObjects
         {
             Steps.Clear();
             Offset = Vector3.Zero;
+            PushInputs();
         }
 
         public bool EnqueueStep(int x, int y, sbyte z, Direction direction, bool run)
@@ -327,6 +373,8 @@ namespace ClassicUO.Game.GameObjects
                 step.Run = run;
                 Steps.AddToBack(step);
             }
+
+            PushInputs();
 
             return true;
         }
@@ -800,6 +848,7 @@ namespace ClassicUO.Game.GameObjects
                         Offset.Z = 0;
                         Steps.RemoveFromFront();
                         CalculateRandomIdleTime();
+                        PushInputs();
 
                         if (directionChange)
                         {
@@ -821,6 +870,7 @@ namespace ClassicUO.Game.GameObjects
                         }
 
                         LastStepTime = Time.Ticks;
+                        PushInputs();
                     }
 
                     UpdateTextCoordsV();
@@ -830,14 +880,27 @@ namespace ClassicUO.Game.GameObjects
 
         public bool TryGetSittingInfo(out AnimationsLoader.SittingInfoData data)
         {
-            ushort result = 0;
-
-            if (
+            return TryGetSittingInfoIf(
                 IsHuman
                 && !IsMounted
                 && !IsFlying
-                && !TestStepNoChangeDirection(this, GetGroupForAnimation(this, isParent: true))
-            )
+                && !TestStepNoChangeDirection(this, GetGroupForAnimation(this, isParent: true)),
+                out data
+            );
+        }
+
+        /// <summary>W5 (mobile_push_inputs): <see cref="TryGetSittingInfo(out AnimationsLoader.SittingInfoData)"/> with the
+        /// human, mounted, flying and action inputs already known from the ECS: the seat test without its equipment walks.</summary>
+        internal bool TryGetSittingInfo(bool human, bool mounted, bool flying, byte group, out AnimationsLoader.SittingInfoData data)
+        {
+            return TryGetSittingInfoIf(human && !mounted && !flying && !TestStepNoChangeDirection(this, group), out data);
+        }
+
+        private bool TryGetSittingInfoIf(bool eligible, out AnimationsLoader.SittingInfoData data)
+        {
+            ushort result = 0;
+
+            if (eligible)
             {
                 GameObject start = this;
 
