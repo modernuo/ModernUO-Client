@@ -193,6 +193,12 @@ namespace ClassicUO.Ecs
         private EquipSlot _e;
     }
 
+    [InlineArray(EquipmentSlots.MAX_LIGHT_ONLY)]
+    public struct LightItemArray
+    {
+        private uint _e;
+    }
+
     /// <summary>
     /// A mobile's drawn equipment, compacted and in paint order (PaperdollOrder table and reorder rules; covered layers,
     /// light-only items and a dead mobile's hair removed). Rebuilt only when equipment changes (<see cref="EquipmentDirty"/>);
@@ -210,6 +216,12 @@ namespace ClassicUO.Ecs
         public ushort MountGraphic, MountAnimId, MountHue;
 
         public HandItem Hand1, Hand2;
+
+        // Light items the view doesn't draw but lights at the body's anchor (MobileView: a human's light without an equip
+        // AnimID, any light on a non-human body), in paint order; serials. Drawn lights carry EquipSlotBits.Light.
+        public const int MAX_LIGHT_ONLY = 4;
+        public LightItemArray LightItems;
+        public byte LightCount;
 
         // bumped on every rebuild
         public ushort Version;

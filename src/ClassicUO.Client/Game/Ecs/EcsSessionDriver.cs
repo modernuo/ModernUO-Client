@@ -248,6 +248,37 @@ namespace ClassicUO.Game
                 case "log":
                     return false;
 
+                // light <hex level>|off: the profile's custom light level, as DevBench's light: entry (night = lights drawn)
+                case "light" when args.Length > 0 && ProfileManager.CurrentProfile is { } lightProfile:
+                    lightProfile.UseCustomLightLevel = args[0] != "off";
+
+                    if (lightProfile.UseCustomLightLevel)
+                    {
+                        lightProfile.LightLevel = (byte)Convert.ToInt32(args[0], 16);
+                        lightProfile.LightLevelType = 0;
+                        world.Light.Overall = lightProfile.LightLevel;
+                        world.Light.Personal = 0;
+                    }
+
+                    return false;
+
+                // window <tag>|stop: a FrameStats measurement window (CUO_FRAMESTATS=1) tagged like a DevBench plan spot
+                case "window" when args.Length > 0 && FrameStats.On:
+                    FrameStats.StopWindow();
+
+                    if (args[0] != "stop")
+                    {
+                        FrameStats.StartWindow(args[0]);
+                    }
+
+                    return false;
+
+                // ecssprites on|off: gpu_ecs_sprites (mobiles drawn from the ECS extract or captured from their views)
+                case "ecssprites" when args.Length > 0:
+                    Settings.GlobalSettings.GpuEcsSprites = args[0] == "on";
+
+                    return false;
+
                 // logout: drop the socket, then swap to the login scene (World.Clear) and exit; log back in with a new process
                 case "logout":
                     NetClient.Socket.Disconnect();
