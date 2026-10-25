@@ -1,0 +1,5 @@
+FNA3D.dll built from github.com/modernuo/FNA3D modernuo/26.10-patched at 19e518844ac29d0906d572d60f3edc1bfbdadb95
+FNA (github.com/modernuo/FNA) at 8e0a28431573731f66d2c9f575d8164899284a7d
+Linked against: SDL3.dll built from github.com/modernuo/SDL modernuo/3.4.18-patched at 27ac7d26baa4e3f5de266b9d5c7f8a3cb258cc9c
+Built 2026-10-25 09:27 with tools\fna3d\build-fna3d.ps1 (Release, NMake, MSVC x64, static CRT)
+SHA256 15A85894268C9FFB41F242266F235C563A01613EC0FB118EDC86EB4FFBF04387

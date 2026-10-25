@@ -5,7 +5,7 @@ using Microsoft.Xna.Framework.Graphics;
 
 namespace ClassicUO.Renderer
 {
-    // Native handles behind FNA3D's SDL_GPU driver. Needs the patched FNA3D (external/patches/fna3d-sdlgpu-interop.patch).
+    // Native handles behind FNA3D's SDL_GPU driver. Needs our FNA3D fork (github.com/modernuo/FNA3D, see docs/modern-client/fna-fork.md).
     public static unsafe partial class GpuInterop
     {
         private const int RENDERER_TYPE_SDL_GPU = 4;
@@ -38,7 +38,7 @@ namespace ClassicUO.Renderer
         [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
         private static partial IntPtr SDL_GetRevision();
 
-        /// <summary>SDL3.dll's revision, e.g. "SDL-3.4.19-b2a3160 (modernuo modernuo/3.4.19 b2a3160aa)" for the fork build
+        /// <summary>SDL3.dll's revision, e.g. "SDL-3.4.18-27ac7d2 (modernuo modernuo/3.4.18-patched 27ac7d26b)" for the fork build
         /// (external/x64/SDL3.version, docs/modern-client/sdl-fork.md).</summary>
         public static string GetSdlRevision() => Marshal.PtrToStringUTF8(SDL_GetRevision());
 
