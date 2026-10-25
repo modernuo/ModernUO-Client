@@ -46,7 +46,8 @@ namespace ClassicUO.Game.Scenes
             var w = gpu.World;
             Utility.Logging.Log.Trace(
                 $"[settle] unsettled frame presented at {Time.Ticks}: chunks missing near view {w.Chunks.MissingNear} (in view {w.Chunks.MissingVisible}), " +
-                $"pages missing {w.Pages.MissingVisible}, anim pages missing {w.AnimPages?.MissingVisible ?? 0}, camera {_world.Player.X},{_world.Player.Y}");
+                $"pages missing {w.Pages.MissingVisible}, anim pages missing {w.AnimPages?.MissingVisible ?? 0}, client chunks queued in view {_world.Map.DrawPending}, " +
+                $"camera {_world.Player.X},{_world.Player.Y}");
         }
 
         private static WorldSettleGate CreateSettleGate()

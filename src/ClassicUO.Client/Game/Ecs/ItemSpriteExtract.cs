@@ -5,6 +5,7 @@ using ClassicUO.Assets;
 using ClassicUO.Configuration;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
+using ClassicUO.Game.Managers;
 using ClassicUO.Renderer;
 using Microsoft.Xna.Framework;
 using Uo.Pack;
@@ -13,12 +14,13 @@ using Uo.Render;
 namespace ClassicUO.Game
 {
     /// <summary>
-    /// W3 for world items drawn as art (ItemView.Draw minus corpses and multis): the <see cref="SpriteInstance"/>s the
-    /// Gpu world's view capture produces — the stack's second copy, the animated-art frame, the per-frame hue rules
-    /// (selection, container highlight, field replacement, out of range, dead gray, hidden) — straight from the pack's art
-    /// table, with no atlas and no batcher. Like <see cref="MobileAnimationSystem"/> it samples the Item until the ECS
+    /// W3 for world items (ItemView.Draw): the <see cref="SpriteInstance"/>s the Gpu world's view capture produces —
+    /// for art items and multis the stack's second copy, the animated-art frame, the per-frame hue rules (selection,
+    /// container highlight, field replacement, out of range, dead gray, hidden, the multi placement preview) from the pack's
+    /// art table; for corpses the body and the worn layers in paint order from the pack's animation tables (DrawCorpse) —
+    /// with no atlas and no batcher. Like <see cref="MobileAnimationSystem"/> it samples the Item until the ECS
     /// owns the world update (W5). Side effects of the view kept: the light request and the art entry's draw offset that
-    /// picking reads (ArtEntry.Width/Height).
+    /// picking reads (ArtEntry.Width/Height), and a corpse's mirror bit (GetAnimDirection history; corpse picking reads it).
     /// </summary>
     internal sealed class ItemSpriteExtract
     {
@@ -36,8 +38,8 @@ namespace ClassicUO.Game
 
         public int LightY { get; private set; }
 
-        /// <summary>True when the extract reproduces this item's view (art items; corpses and multis keep the capture).</summary>
-        public static bool Handles(Item item) => !item.IsCorpse && !item.IsMulti;
+        /// <summary>True when the extract reproduces this item's view: every world item (art items, multis and corpses).</summary>
+        public static bool Handles(Item item) => true;
 
         /// <summary>ItemView.Draw for one item at screen position (<paramref name="posX"/>, <paramref name="posY"/>). False = not drawn.</summary>
         public bool Emit(Item item, PackSet pack, int offsetX, int offsetY, int posX, int posY, float depth)
@@ -69,6 +71,11 @@ namespace ClassicUO.Game
             float alpha = item.AlphaHue / 255f;
             Profile profile = ProfileManager.CurrentProfile;
             World world = item.World;
+
+            if (item.IsCorpse)
+            {
+                return EmitCorpse(item, pack, offsetX, offsetY, posX, posY - 3, ShaderHueTranslator.GetHueVector(0, false, alpha).Z, depth, profile);
+            }
 
             ushort hue = item.Hue;
             ushort graphic = displayed;
@@ -129,7 +136,7 @@ namespace ClassicUO.Game
             {
                 hue = Constants.DEAD_RANGE_COLOR;
             }
-            else if (!item.IsLocked && selected)
+            else if (!item.IsLocked && !item.IsMulti && selected)
             {
                 hue = 0x0035;
             }
@@ -141,14 +148,179 @@ namespace ClassicUO.Game
             Vector3 hueVec = ShaderHueTranslator.GetHueVector(hue, partial, alpha);
             int objX = item.X;
 
-            if (!item.IsCoin && item.Amount > 1 && item.ItemData.IsStackable)
+            if (!item.IsMulti && !item.IsCoin && item.Amount > 1 && item.ItemData.IsStackable)
             {
                 Art(pack, graphic, posX - 5, posY - 5, hueVec, depth, objX, offsetX, offsetY);
+            }
+
+            // the house placement preview (a local multi item without a serial) is drawn half transparent
+            if (!SerialHelper.IsValid(item.Serial) && item.IsMulti && world.TargetManager.TargetingState == CursorTarget.MultiPlacement)
+            {
+                hueVec.Z = 0.5f;
             }
 
             Art(pack, graphic, posX, posY, hueVec, depth, objX, offsetX, offsetY);
 
             return true;
+        }
+
+        // ItemView.DrawCorpse: the body, then the worn layers in paint order (PaperdollOrder.BuildInWorld)
+        private bool EmitCorpse(Item item, PackSet pack, int offsetX, int offsetY, int posX, int posY, float alpha, float depth, Profile profile)
+        {
+            World world = item.World;
+
+            if (world.CorpseManager.Exists(item.Serial, 0) || pack == null || !pack.HasAnims)
+            {
+                return false;
+            }
+
+            posX += 22;
+            posY += 22;
+
+            byte direction = (byte)((byte)item.Layer & 0x7F & 7);
+            bool flipped = item.ViewFlipped;
+            var animations = Client.Game.UO.Animations;
+            animations.GetAnimDirection(ref direction, ref flipped);
+            item.ViewFlipped = flipped;
+
+            ushort graphic = item.GetGraphicForAnimation();
+            ushort converted = graphic;
+            animations.ConvertBodyIfNeeded(ref converted, isCorpse: true);
+            AnimationsLoader anims = Client.Game.UO.FileManager.Animations;
+            byte group = anims.GetDeathAction(converted, animations.GetAnimFlags(converted), animations.GetAnimType(converted), item.UsedLayer);
+            bool human = IsHumanCorpse(item.Amount);
+            int x = posX + offsetX, y = posY + offsetY;
+
+            CorpseLayer(item, pack, anims, Layer.Invalid, item.AnimIndex, human, item.Hue, flipped, alpha, group, direction, x, y, depth, profile);
+
+            Span<Layer> layers = stackalloc Layer[PaperdollOrder.N];
+            int layerCount = PaperdollOrder.BuildInWorld(item, altTorsoTable: false, direction, layers);
+
+            for (int i = 0; i < layerCount; i++)
+            {
+                CorpseLayer(item, pack, anims, layers[i], item.AnimIndex, human, 0, flipped, alpha, group, direction, x, y, depth, profile);
+            }
+
+            return true;
+        }
+
+        private static bool IsHumanCorpse(ushort body) =>
+            body >= 0x0190 && body <= 0x0193 || body >= 0x00B7 && body <= 0x00BA || body >= 0x025D && body <= 0x0260 ||
+            body >= 0x029A && body <= 0x029B || body >= 0x02B6 && body <= 0x02B7 ||
+            body == 0x03DB || body == 0x03DF || body == 0x03E2 || body == 0x02E8 || body == 0x02E9;
+
+        // ItemView.DrawLayer: one layer's frame at target pixel (x, y) (screen position + draw offset), in strips
+        private void CorpseLayer(Item owner, PackSet pack, AnimationsLoader anims, Layer layer, byte animIndex, bool human, ushort color,
+            bool flipped, float alpha, byte group, byte dir, int x, int y, float depth, Profile profile)
+        {
+            bool partial = false;
+            bool hasConv = false;
+            ushort convColor = 0;
+            ushort graphic;
+
+            if (layer == Layer.Invalid)
+            {
+                graphic = owner.GetGraphicForAnimation();
+            }
+            else if (human)
+            {
+                Item equip = owner.FindItemByLayer(layer);
+
+                if (equip == null)
+                {
+                    return;
+                }
+
+                graphic = equip.ItemData.AnimID;
+                partial = equip.ItemData.IsPartialHue;
+
+                // as the view: the conversion table is looked up by the item's animation id twice
+                if (anims.EquipConversions.TryGetValue(graphic, out var map) && map.TryGetValue(graphic, out EquipConvData data))
+                {
+                    hasConv = true;
+                    convColor = data.Color;
+                    graphic = data.Graphic;
+                }
+
+                color = equip.Hue;
+            }
+            else
+            {
+                return;
+            }
+
+            if (!MobileSpriteExtract.TryGetFrames(anims, graphic, group, dir, layer != Layer.Invalid, layer == Layer.Invalid,
+                    out uint first, out int count, out ushort fileHue))
+            {
+                return;
+            }
+
+            if (color == 0)
+            {
+                color = fileHue;
+            }
+
+            if (animIndex >= count)
+            {
+                animIndex = (byte)(count - 1);
+            }
+
+            uint index = first + animIndex;
+            ref readonly AnimFrameEntry fe = ref pack.AnimFrames[index];
+            int w = fe.Sprite.OrigW, h = fe.Sprite.OrigH;
+
+            // no texture
+            if (w == 0 || h == 0)
+            {
+                return;
+            }
+
+            x -= flipped ? w - fe.CenterX : fe.CenterX;
+            y -= h + fe.CenterY;
+
+            if (color == 0 && hasConv)
+            {
+                color = convColor;
+                partial = false;
+            }
+
+            Vector3 hueVec;
+            World world = owner.World;
+
+            if (profile.NoColorObjectsOutOfRange && owner.Distance > world.ClientViewRange)
+            {
+                hueVec = ShaderHueTranslator.GetHueVector(Constants.OUT_RANGE_COLOR + 1, false, 1);
+            }
+            else if (world.Player.IsDead && profile.EnableBlackWhiteEffect)
+            {
+                hueVec = ShaderHueTranslator.GetHueVector(Constants.DEAD_RANGE_COLOR + 1, false, 1);
+            }
+            else
+            {
+                if (profile.GridLootType > 0 && SelectedObject.CorpseObject == owner)
+                {
+                    color = 0x0034;
+                }
+                else if (profile.HighlightGameObjects && ReferenceEquals(SelectedObject.Object, owner))
+                {
+                    color = Constants.HIGHLIGHT_CURRENT_OBJECT_HUE;
+                }
+
+                hueVec = ShaderHueTranslator.GetHueVector(color, partial, alpha);
+            }
+
+            // the view's strips: rows [0, value) and [value, h) with value = max(1, h + centre y); later strips are empty
+            int value = Math.Max(1, h + fe.CenterY);
+            int strips = Math.Max(h / value + 1, 2);
+            int srcY = 0, srcH = Math.Min(value, h), remains = h - srcH;
+
+            for (int i = 0; i < strips; i++)
+            {
+                MobileSpriteExtract.WriteFrame(pack, ref _out, ref _count, index, x, y + srcY, srcY, srcH, hueVec, flipped, depth + 1f + i * 2, owner.X, RANK_ITEM);
+                srcY += srcH;
+                srcH = remains;
+                remains -= srcH;
+            }
         }
 
         // View.DrawStaticAnimated (no shadow, not wet) + GpuWorldRenderer.Emit for a whole art sprite

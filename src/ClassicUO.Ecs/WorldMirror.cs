@@ -49,6 +49,12 @@ namespace ClassicUO.Ecs
 
         public static bool IsMobileSerial(uint serial) => serial > 0 && serial < 0x4000_0000;
 
+        /// <summary>
+        /// A parent serial that wears its items: a mobile, or a dying mobile that ClassicUO re-keyed to serial | 0x80000000
+        /// for its death animation (PacketHandlers.DisplayDeath repoints its items there; MobileView still draws them).
+        /// </summary>
+        public static bool IsWearerSerial(uint serial) => IsMobileSerial(serial & 0x7FFF_FFFF);
+
         public bool TryGetEntity(uint serial, out Entity entity) => _bySerial.TryGetValue(serial, out entity);
 
         public void UpsertMobile(uint serial, ushort graphic, ushort hue, ushort x, ushort y, sbyte z, byte facing, byte flags, bool isPlayer)
@@ -160,7 +166,7 @@ namespace ClassicUO.Ecs
                 MarkEquipmentDirty(oldWearer);
             }
 
-            if (IsMobileSerial(container) && container != oldWearer)
+            if (IsWearerSerial(container) && container != oldWearer)
             {
                 MarkEquipmentDirty(container);
             }
@@ -304,8 +310,8 @@ namespace ClassicUO.Ecs
             e.GetComponent<Flags>().Value = flags;
         }
 
-        // ClassicUO: 0xFFFFFFFF (or 0) = in the world; a mobile serial = worn; anything else = inside that item
-        // (including the 0x80000000 | serial of a dead mobile).
+        // ClassicUO: 0xFFFFFFFF (or 0) = in the world; a mobile serial, or the 0x80000000 | serial of a dying mobile, = worn;
+        // anything else = inside that item.
         private static void SetParent(Entity e, uint container, byte layer)
         {
             if (container == NO_CONTAINER || container == 0)
@@ -333,7 +339,7 @@ namespace ClassicUO.Ecs
                 e.RemoveTag<OnGround>();
             }
 
-            if (IsMobileSerial(container))
+            if (IsWearerSerial(container))
             {
                 if (e.HasComponent<ContainedIn>())
                 {
