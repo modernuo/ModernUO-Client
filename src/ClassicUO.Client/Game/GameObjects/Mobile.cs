@@ -599,84 +599,37 @@ namespace ClassicUO.Game.GameObjects
 
                 if (frames.Length != 0)
                 {
-                    int fc = frames.Length;
-
-                    int frameIndex =
-                        AnimIndex
-                        + (AnimationFromServer && !_isAnimationForwardDirection ? -1 : 1);
-
-                    if (AnimationFromServer)
+                    // the frame step is a shared pure rule (AnimationTiming) so the ECS can run it too
+                    var timer = new AnimationTimer
                     {
-                        currentDelay += currentDelay * (_animationInterval + 1);
+                        Frame = AnimIndex,
+                        FrameCount = AnimationFrameCount,
+                        Interval = _animationInterval,
+                        RepeatMode = _animationRepeateMode,
+                        RepeatModeCount = _animationRepeatModeCount,
+                        Repeat = _animationRepeat,
+                        Forward = _isAnimationForwardDirection,
+                        FromServer = AnimationFromServer
+                    };
 
-                        if (AnimationFrameCount == 0)
-                        {
-                            AnimationFrameCount = (byte)fc;
-                        }
-                        else
-                        {
-                            fc = AnimationFrameCount;
-                        }
+                    currentDelay = AnimationTiming.Advance(ref timer, frames.Length, out AnimationAdvance advance);
 
-                        if (_isAnimationForwardDirection && frameIndex >= fc)
-                        {
-                            frameIndex = 0;
-                        }
-                        else if (!_isAnimationForwardDirection && frameIndex < 0)
-                        {
-                            if (fc == 0)
-                            {
-                                frameIndex = 0;
-                            }
-                            else
-                            {
-                                frameIndex = (byte)(frames.Length - 1);
-                            }
-                        }
-                        else
-                        {
-                            goto SKIP;
-                        }
+                    AnimationFrameCount = timer.FrameCount;
+                    _animationRepeateMode = timer.RepeatMode;
+                    _animationRepeatModeCount = timer.RepeatModeCount;
+                    _animationRepeat = timer.Repeat;
 
-                        if (_animationRepeateMode == 0) // play animation infinite time
-                        {
-                            goto SKIP;
-                        }
-
-                        if (--_animationRepeateMode > 0) // play animation n times
-                        {
-                            goto SKIP;
-                        }
-
-                        if (_animationRepeat)
-                        {
-                            _animationRepeatModeCount = _animationRepeateMode;
-
-                            _animationRepeat = false;
-                        }
-                        else
-                        {
-                            SetAnimation(0xFF);
-                        }
-
-                    SKIP:
-                        ;
+                    if (advance == AnimationAdvance.Finished)
+                    {
+                        SetAnimation(0xFF);
                     }
-                    else
+                    else if (advance == AnimationAdvance.Wrapped && (Serial & 0x80000000) != 0)
                     {
-                        if (frameIndex >= fc)
-                        {
-                            frameIndex = 0;
-
-                            if ((Serial & 0x80000000) != 0)
-                            {
-                                World.CorpseManager.Remove(0, Serial);
-                                World.RemoveMobile(Serial);
-                            }
-                        }
+                        World.CorpseManager.Remove(0, Serial);
+                        World.RemoveMobile(Serial);
                     }
 
-                    AnimIndex = (byte)(frameIndex % frames.Length);
+                    AnimIndex = timer.Frame;
                 }
                 else if ((Serial & 0x80000000) != 0)
                 {
