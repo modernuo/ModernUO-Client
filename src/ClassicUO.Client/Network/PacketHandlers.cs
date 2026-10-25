@@ -900,6 +900,7 @@ namespace ClassicUO.Network
                 world.MapIndex = 0;
             }
 
+            world.Map?.Prefetch(x, y);
             world.Player.SetInWorldTile(x, y, z);
             world.Player.Direction = (Direction)(p.ReadUInt8() & 0x7);
             world.RangeSize.X = x;
@@ -6488,6 +6489,8 @@ namespace ClassicUO.Network
 
                 world.Player.Walker.ResendPacketResync = false;
                 world.Player.CloseRangedGumps();
+                // a teleport: start decoding the destination's regions now, while the rest of the packet burst is handled
+                world.Map?.Prefetch(x, y);
                 world.Player.SetInWorldTile(x, y, z);
                 world.Player.UpdateAbilities();
             }

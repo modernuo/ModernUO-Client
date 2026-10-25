@@ -109,8 +109,23 @@ namespace ClassicUO.Game.GameObjects
 
         public void AddToTile(int x, int y)
         {
+            // a chunk that is not loaded yet does not load here (a teleport's packet burst used to load dozens in one
+            // frame): the map keeps the object and adds it to (x, y) when the chunk loads (Map.Park)
+            if (!IsDestroyed && World.Map != null && World.Map.Park(this, x, y))
+            {
+                if (this is Entity parked)
+                {
+                    World.Ecs.Sync(parked);
+                }
+
+                return;
+            }
+
             AddToTile(World.Map?.GetChunk(x, y), x % 8, y % 8);
         }
+
+        /// <summary>The map block this object is parked on, waiting for the chunk to load (Map.Park); -1 when not parked.</summary>
+        public int PendingBlock = -1;
 
         public void AddToTile(Chunk chunk, int chunkX, int chunkY)
         {
@@ -141,6 +156,7 @@ namespace ClassicUO.Game.GameObjects
 
             TNext = null;
             TPrevious = null;
+            PendingBlock = -1;
         }
 
         public virtual void UpdateGraphicBySeason() { }

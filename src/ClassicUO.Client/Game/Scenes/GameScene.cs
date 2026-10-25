@@ -642,7 +642,7 @@ namespace ClassicUO.Game.Scenes
             {
                 for (var chunkY = minChunkY; chunkY <= maxChunkY; chunkY++)
                 {
-                    var chunk = map.GetChunk2(chunkX, chunkY, true);
+                    var chunk = map.GetChunkForDraw(chunkX, chunkY); // unloaded chunks are queued (Map.UpdateLoading)
                     if (chunk == null || chunk.IsDestroyed)
                         continue;
 
