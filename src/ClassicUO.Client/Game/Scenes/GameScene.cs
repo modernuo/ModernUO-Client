@@ -400,6 +400,14 @@ namespace ClassicUO.Game.Scenes
             );
         }
 
+        // the light list so far (EcsParity compares the lights the ECS sprite path adds with the view's)
+        internal int LightCount => _lightCount;
+
+        internal (byte Id, ushort Color, bool IsHue, int X, int Y) LightAt(int i) =>
+            (_lights[i].ID, _lights[i].Color, _lights[i].IsHue, _lights[i].DrawX, _lights[i].DrawY);
+
+        internal void TruncateLights(int count) => _lightCount = Math.Min(_lightCount, Math.Max(count, 0));
+
         public void AddLight(GameObject obj, GameObject lightObject, int x, int y)
         {
             if (
@@ -642,7 +650,7 @@ namespace ClassicUO.Game.Scenes
             {
                 for (var chunkY = minChunkY; chunkY <= maxChunkY; chunkY++)
                 {
-                    var chunk = map.GetChunk2(chunkX, chunkY, true);
+                    var chunk = map.GetChunkForDraw(chunkX, chunkY); // unloaded chunks are queued (Map.UpdateLoading)
                     if (chunk == null || chunk.IsDestroyed)
                         continue;
 

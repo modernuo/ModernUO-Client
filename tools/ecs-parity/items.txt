@@ -1,0 +1,43 @@
+wait 6
+say [go 5445 1153
+wait 3
+light 1A
+wait 2
+say [add Static 0xA0F
+wait 1
+target ground 2 0
+wait 2
+say [add Arrow 50
+wait 1
+target ground 0 2
+wait 2
+say [add Static 0x3996
+wait 1
+target ground -2 0
+wait 2
+say [add Static 0x1F1B
+wait 1
+target ground 0 -2
+wait 2
+say [add Bandage 20
+wait 1
+target ground 2 2
+wait 2
+walk 2 2
+walk 6 4
+walk 2 2
+walk 0 2
+walk 4 2
+wait 3
+parity
+light off
+wait 2
+say [wipe items
+wait 1
+target ground -4 -4
+wait 1
+target ground 4 4
+wait 2
+items
+check
+quit

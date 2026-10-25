@@ -9,6 +9,7 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading.Tasks;
 using Uo.Pack;
 
 namespace ClassicUO.Assets
@@ -26,6 +27,21 @@ namespace ClassicUO.Assets
         private readonly LinkedList<RegionData> _lru = new LinkedList<RegionData>();
         private readonly object _sync = new object();
         private FacetInfo[] _facets = Array.Empty<FacetInfo>();
+
+        // regions being decoded on the thread pool (PrefetchRegion); adopted into the cache by the next lookup that needs
+        // them, under _sync, so the cache itself is only changed by callers of the lookups (the main thread)
+        private readonly Dictionary<long, Task<RegionData>> _pending = new Dictionary<long, Task<RegionData>>();
+
+        /// <summary>
+        /// False (CUO_CHUNK_SYNC=1) turns prefetching off: every region decodes on the calling thread when first needed,
+        /// as before the incremental chunk loading.
+        /// </summary>
+        public static bool PrefetchEnabled = Environment.GetEnvironmentVariable("CUO_CHUNK_SYNC") != "1";
+
+        /// <summary>Statistics for FrameStats and the tests: regions decoded by a lookup (not prefetched), prefetches
+        /// started, lookups that had to wait for a prefetch still decoding, and the time spent waiting (Stopwatch ticks).</summary>
+        public int SyncLoads, PrefetchesStarted, PrefetchWaits;
+        public long PrefetchWaitTicks;
 
         public MapLoader(UOFileManager fileManager) : base(fileManager)
         {
@@ -162,7 +178,13 @@ namespace ClassicUO.Assets
 
             if (c == null || c.Map != map || c.BlockX != bx || c.BlockY != by || (c.Region != null && !c.Region.Live))
             {
-                c = new LandZCache { Map = map, BlockX = bx, BlockY = by };
+                // one cache object, reused (a chunk load moves between up to four blocks)
+                c ??= new LandZCache();
+                c.Map = map;
+                c.BlockX = bx;
+                c.BlockY = by;
+                c.Region = null;
+                c.Offset = 0;
 
                 if (HasMap(map) && (uint)bx < (uint)_facets[map].BlocksX && (uint)by < (uint)_facets[map].BlocksY)
                 {
@@ -193,6 +215,160 @@ namespace ClassicUO.Assets
         private LandZCache _zCache;
 
         /// <summary>Reads one region without caching it, for bulk readers such as the world map.</summary>
+        /// <summary>
+        /// Starts decoding region (rx, ry) of <paramref name="map"/> on the thread pool unless it is cached or already being
+        /// decoded. Never blocks. The decoded region joins the cache on the next lookup that needs it (or IsBlockReady).
+        /// </summary>
+        public void PrefetchRegion(int map, int rx, int ry)
+        {
+            if (!PrefetchEnabled || !HasMap(map))
+            {
+                return;
+            }
+
+            var facet = _facets[map];
+            int side = facet.RegionBlocks;
+
+            if (rx < 0 || ry < 0 || rx * side >= facet.BlocksX || ry * side >= facet.BlocksY)
+            {
+                return;
+            }
+
+            lock (_sync)
+            {
+                StartPrefetch(facet, rx, ry);
+            }
+        }
+
+        /// <summary>
+        /// Prefetches every region that the square of +/- <paramref name="radius"/> tiles around tile (x, y) touches, the
+        /// region under (x, y) first.
+        /// </summary>
+        public void PrefetchAround(int map, int x, int y, int radius)
+        {
+            if (!PrefetchEnabled || !HasMap(map) || x < 0 || y < 0)
+            {
+                return;
+            }
+
+            int tiles = _facets[map].RegionBlocks * 8;
+            PrefetchRegion(map, x / tiles, y / tiles);
+
+            int rx0 = Math.Max(0, x - radius) / tiles, rx1 = (x + radius) / tiles;
+            int ry0 = Math.Max(0, y - radius) / tiles, ry1 = (y + radius) / tiles;
+
+            for (int rx = rx0; rx <= rx1; rx++)
+            {
+                for (int ry = ry0; ry <= ry1; ry++)
+                {
+                    PrefetchRegion(map, rx, ry);
+                }
+            }
+        }
+
+        /// <summary>
+        /// True when the regions holding block (blockX, blockY) and its eight neighbours (the land stretch reads the z of
+        /// neighbouring cells) are decoded, so loading that chunk will not wait for a decode. Regions that are neither
+        /// cached nor being decoded are prefetched, finished prefetches are adopted. Never blocks. Always true when
+        /// prefetching is off or the block is outside the map.
+        /// </summary>
+        public bool IsBlockReady(int map, int blockX, int blockY)
+        {
+            if (!PrefetchEnabled || !HasMap(map))
+            {
+                return true;
+            }
+
+            var facet = _facets[map];
+
+            if ((uint)blockX >= (uint)facet.BlocksX || (uint)blockY >= (uint)facet.BlocksY)
+            {
+                return true;
+            }
+
+            int side = facet.RegionBlocks;
+            int rx0 = Math.Max(0, blockX - 1) / side, rx1 = Math.Min(facet.BlocksX - 1, blockX + 1) / side;
+            int ry0 = Math.Max(0, blockY - 1) / side, ry1 = Math.Min(facet.BlocksY - 1, blockY + 1) / side;
+            bool ready = true;
+
+            lock (_sync)
+            {
+                for (int rx = rx0; rx <= rx1; rx++)
+                {
+                    for (int ry = ry0; ry <= ry1; ry++)
+                    {
+                        long key = RegionKey(facet, rx, ry);
+
+                        if (_regions.ContainsKey(key))
+                        {
+                            continue;
+                        }
+
+                        if (_pending.TryGetValue(key, out var task))
+                        {
+                            if (task.IsCompleted)
+                            {
+                                GetRegion(facet, rx, ry); // adopts it without waiting
+
+                                continue;
+                            }
+                        }
+                        else
+                        {
+                            StartPrefetch(facet, rx, ry);
+                        }
+
+                        ready = false;
+                    }
+                }
+            }
+
+            return ready;
+        }
+
+        /// <summary>Land z of cell (x, y) as GetLandZ when its region is decoded; otherwise false and a prefetch.</summary>
+        public bool TryGetLandZ(int map, int x, int y, out sbyte z)
+        {
+            z = -125;
+
+            if (x >= 0 && y >= 0 && !IsBlockReady(map, x >> 3, y >> 3))
+            {
+                return false;
+            }
+
+            z = GetLandZ(map, x, y);
+
+            return true;
+        }
+
+        /// <summary>Number of regions being decoded on the thread pool and not yet adopted.</summary>
+        public int PendingCount
+        {
+            get
+            {
+                lock (_sync)
+                {
+                    return _pending.Count;
+                }
+            }
+        }
+
+        private static long RegionKey(FacetInfo facet, int rx, int ry) => ((long)facet.Index << 40) | ((long)rx << 20) | (uint)ry;
+
+        // under _sync
+        private void StartPrefetch(FacetInfo facet, int rx, int ry)
+        {
+            long key = RegionKey(facet, rx, ry);
+
+            if (_regions.ContainsKey(key) || _pending.ContainsKey(key))
+            {
+                return;
+            }
+
+            PrefetchesStarted++;
+            _pending[key] = Task.Run(() => LoadRegion(facet, rx, ry));
+        }
+
         public RegionData ReadRegion(int map, int rx, int ry)
         {
             return HasMap(map) ? LoadRegion(_facets[map], rx, ry) : null;
@@ -231,15 +407,18 @@ namespace ClassicUO.Assets
                     region.Live = false;
                 }
 
+                // decodes still running finish into buffers nobody adopts; the GC takes them
+                _pending.Clear();
                 _regions.Clear();
                 _lru.Clear();
                 _zCache = null;
             }
         }
 
+        // under _sync
         private RegionData GetRegion(FacetInfo facet, int rx, int ry)
         {
-            long key = ((long)facet.Index << 40) | ((long)rx << 20) | (uint)ry;
+            long key = RegionKey(facet, rx, ry);
 
             if (_regions.TryGetValue(key, out var node))
             {
@@ -249,7 +428,28 @@ namespace ClassicUO.Assets
                 return node.Value;
             }
 
-            var region = LoadRegion(facet, rx, ry);
+            RegionData region;
+
+            if (_pending.Remove(key, out var task))
+            {
+                // a prefetch: adopt it, waiting for the rest of its decode if it is still running. The wait is never longer
+                // than decoding here would take, and LoadRegion takes no lock this thread holds.
+                if (!task.IsCompleted)
+                {
+                    long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                    ((IAsyncResult)task).AsyncWaitHandle.WaitOne();
+                    PrefetchWaits++;
+                    PrefetchWaitTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
+                }
+
+                region = task.IsCompletedSuccessfully ? task.Result : LoadRegion(facet, rx, ry);
+            }
+            else
+            {
+                SyncLoads++;
+                region = LoadRegion(facet, rx, ry);
+            }
+
             node = _lru.AddFirst(region);
             _regions[key] = node;
 
@@ -295,9 +495,10 @@ namespace ClassicUO.Assets
             }
         }
 
+        // thread-safe: called by lookups and by prefetch tasks
         private RegionData LoadRegion(FacetInfo facet, int rx, int ry)
         {
-            long key = ((long)facet.Index << 40) | ((long)rx << 20) | (uint)ry;
+            long key = RegionKey(facet, rx, ry);
             var path = PackConst.RegionPath(FileManager.Pack.PathOf(Path.Combine("map", facet.Index.ToString())), rx, ry);
 
             if (!File.Exists(path))

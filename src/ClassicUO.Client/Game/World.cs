@@ -260,6 +260,9 @@ namespace ClassicUO.Game
         {
             if (Player != null)
             {
+                // region prefetch around the player and this frame's share of the queued chunk loads (Map.UpdateLoading)
+                Map?.UpdateLoading(Player.X, Player.Y);
+
                 if (SerialHelper.IsValid(ObjectToRemove))
                 {
                     Item rem = Items.Get(ObjectToRemove);

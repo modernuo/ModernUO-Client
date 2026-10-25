@@ -481,6 +481,46 @@ Branch `poc/batcher-ui-alloc` (worktree, from 43dec9ae4): 99ced3184 and 2eedf61d
   - GameScene.cs: the lights statics, and the `UpdateTextServerEntities` signature next to `FillGameObjectList`;
   - none of GameSceneDrawingSorting.cs, GameSceneGpuWorld.cs or FrameStats.cs.
 
+## W3: the ECS extract is the Gpu world's source for mobiles and art items (2026-10-25)
+
+Branch `worktree-agent-ab8d28b4333136756`, started on 67141bf6e, merged with poc/modern-client 7d0a74a92; final numbers measured on that merge (base build = 7d0a74a92). Commits: 38c35fabd (mobiles), 21adf7688 (driver cleanup commands), 918786113 (art items), merge cc9bb72aa, docs. JIT Release, 1920×1080, kbatman, two other agents' clients on the GPU during most runs. Procedure: [testing/ecs-animation.md](testing/ecs-animation.md).
+
+- **Switch:** setting `gpu_ecs_sprites` (default on), `-ecssprites [on|off]`, DevBench `ecssprites:on|off`, driver `ecssprites on|off`. Off = the view capture, unchanged.
+- **Mobiles** (`GpuWorldRenderer.TryDrawMobileEcs`): `MobileAnimationSystem.Update` then `MobileSpriteExtract.Emit`, copied into the dynamic list. What `MobileView.Draw` did besides drawing is reproduced:
+  - `FrameInfo` (picking, overhead text, health bars) from the extract's frame bounds;
+  - the mirror bit, written back to the Mobile (`ViewFlipped`). The ECS now samples the bit from the Mobile, so both paths share one history and switching mid-session can't start from a stale bit;
+  - worn lights: drawn light items (slot bit) at the frame position, light-only items (no equip AnimID, and any light on a non-human body) at the body anchor (`EquipmentSlots.LightItems`, up to 4);
+  - the aura (`MobileView.DrawAura`, drawn through the batcher as the capture's fallback did).
+- **Art items** (`ItemSpriteExtract`, `DrawItemEcs`): `ItemView.Draw` without the batcher for every item except corpses and multis (those keep the capture): stack copy, animated-art frame, field replacement, container/selection/out-of-range/dead/hidden hues, the light, and the `ArtEntry.Width/Height` draw offset that item picking reads. It samples the Item (until W5); the mirror entity isn't needed for art.
+- **Parity harness:** on `CUO_ECS_PARITY` frames the view is drawn under capture as the reference, then the ECS output is diffed and drawn. New: `CompareViewEffects` (mirror, FrameInfo, lights as a set; ECS lights are added, compared, then truncated) and `OnItemCaptured` (instances, drawn result, light).
+  - **`CUO_ANIM_SYNC=1` is required for parity now.** Without it the legacy loader decodes a body's first direction on a worker; until it lands the view draws nothing for it, while the extract already draws from the pack. That gave 12 first-sight mismatches in 40k at the bank (capture missing layers), all on the first frames after login or teleport.
+  - **Sabotage check:** FrameInfo height +1 and drawn-light x +1 were flagged on every check (43k FrameInfo, 3.3k light mismatches; light-only and non-human lights correctly unaffected).
+
+| Scenario (merged build, ECS on, parity every frame) | Mobile comparisons | Item comparisons | Lights compared | Mismatches |
+|---|---|---|---|---|
+| bank | 121k | 546k | 0 | 0 |
+| items (lit candle, arrow stack, animated art, bandages; night) | 58k | 229k | 57k | 0 |
+| lights (torch drawn, light-only 0x1647, non-human body 201; night) | 65k | 2.5k | 31k | 0 |
+| 120-NPC crowd | 5.2M | 773k | 0 | 0 |
+| cases, mixed (pre-merge build 38c35fabd, mobiles only) | 71k, 636k | – | 0 | 0 |
+
+- **Screenshots** (`ecssprites:off` vs `on` in one session, and base 7d0a74a92 vs new): Britain, zoomed out and night (world and `_lights`) are identical off vs on; the bank differs only where an NPC walked between the two shots. Base vs new differs only in moving creatures (a dog, bank NPCs) and another character standing on the player, which the Legacy shots of both builds show the same way. Legacy world base vs new: the same regions only. UI (`gumps`): journal text only. I looked at every region.
+- **Picking** (`CUO_BENCH_PICK=1`): the same static, land, item and mobile in Legacy and Gpu.
+
+**Performance** (µs per frame, averages of two alternated runs per build, 2 windows per spot; the crowd alternates `ecssprites` in one session, 3 rounds, same NPC positions):
+
+| Spot | Mobile capture base → new | Item capture base → new | World prepare base → new | World draw base → new |
+|---|---|---|---|---|
+| Britain (3–4 mobiles, ~70 items) | 9.4 → 7.1 | 8.7 → 3.5 | 112 → 90 | 84 → 74 |
+| Bank (5 mobiles) | 23.1 → 10.3 | 6.7 → 2.0 | 147 → 105 | 93 → 81 |
+| Zoomed out ×2.5 | 14.2 → 8.9 | 15.1 → 5.8 | 389 → 331 | 116 → 105 |
+| 120-NPC crowd (~102 in view) | 103.8 → 45.3 | 7.2 → 7.9 (2 items) | 168.5 → 109.1 | 70 → 66 |
+
+- The capture columns are the cleanest signal; world prepare and draw totals move 20–40% between runs with the other clients, so only the direction is meaningful there. Update is unchanged (19–66 µs, noise). Allocation: p50 136 B/frame in both builds; gen0 counts 0 in both; the 1–2 MB single-frame spikes occur in both modes.
+- Per object (parity harness, bank): mobile 3.9 µs capture vs 0.6 + 0.8 µs sample+extract (cold, few mobiles); crowd 1.84 vs 0.24 + 0.38 µs; art item 0.16–0.18 vs 0.05 µs.
+- **Not done:** corpses (CorpseView-like layer walk with its own hue rules and `CorpseManager` checks) and item multis still use the capture, so the capture hook can't be retired yet. W2 not started. NativeAOT not re-measured. The Tier 0 login mitigation C was not applied (no matching commit on `poc/gpu-pagefault`); no page faults in 25 runs.
+- **Test-character cleanup:** the cases/mixed scripts kill and resurrect the character, which leaves a death robe worn and one in the backpack, and a cloak in the backpack. I removed them with the new driver commands (`equip`, `items`, `target item <serial>`); kbatman is back to hair, backpack and its earlier items. Every spawn was wiped (`mobiles=1` at the end of each script).
+
 ## W3 groundwork — mobile animation state in the ECS, sprite extract, capture parity (2026-10-25)
 
 Worktree branch `worktree-agent-a30778aae8d7c73a8` (rebased on dd178a524). Not yet the renderer's source; the capture still feeds `DynamicBuffer`. Test procedure: [testing/ecs-animation.md](testing/ecs-animation.md).
@@ -713,6 +753,57 @@ No regression beyond the run-to-run noise. The gate costs one call and a few com
 - a real facet change (no local facet hop; unit-tested, and `reinit` exercises the same recreation path);
 - `CUO_BENCH_PICK` and Legacy parity shots: Legacy currently has an unrelated corruption regression being bisected by another agent;
 - the page-fault branch's `CUO_GPU_REINIT`: it isn't on this branch. It drops the RT, so it should behave like `reinitrt`.
+## Teleport frame: region prefetch and incremental chunk loads (2026-10-25)
+
+Branch `worktree-agent-acd66bd79c6a500ba`, from poc/modern-client 7f25fa29d. Follows "Pack-loading hitches and waste": each teleport still cost one 25–40 ms frame. Method: [testing/pack-loading.md](testing/pack-loading.md) §3 and §4.
+
+**Changes.**
+- **MapLoader decodes regions on the thread pool** (`PrefetchRegion`, `PrefetchAround`, `IsBlockReady`, `TryGetLandZ`).
+  - A lookup adopts a finished prefetch. If the prefetch is still decoding, the lookup waits for the rest of it instead of decoding again.
+  - The cache and its pooled buffers are only changed under `_sync`, by lookups.
+  - Prefetch triggers: the 0x1B and 0x20 handlers, and every frame for the regions within 104 tiles of the player (glide and walk).
+- **Chunks load incrementally** (`Map.UpdateLoading`, called from `World.Update`; `ChunkLoadQueue`):
+  - Order: nearest the player first. The player's own chunk loads as soon as its regions are decoded.
+  - Budget: 2 ms per frame (`CUO_CHUNK_BUDGET_MS`), covering the load and the mesh build, with at least one chunk per frame. Nothing waits for a decode.
+  - The draw walk uses `GetChunkForDraw`, a one-line hook in GameScene.cs.
+  - `GameObject.AddToTile` parks objects whose chunk is not loaded (`Map.Park`). They join their tile when the chunk loads.
+- **Rule for game logic:** `GetChunk`/`GetTile` with load = true, `GetMapZ` and `GetTileZ` still load synchronously. `Pathfinder` now loads chunks within the view range on demand; before, the draw walk had already loaded everything on screen.
+- `CUO_CHUNK_SYNC=1` restores the old path.
+- **FrameStats** has map-loading counters. **DevBench** has the `bwalk` entry, and `LocalTeleport` no longer waits for a decode.
+
+**Travel and first-sight test**, Update+Draw only, summed over four 5 s windows per entry, base and new alternated (baseA, newA, baseB, newB).
+- Both builds carry the uncommitted Tier 0 login mitigations A and C.
+- Other clients on the GPU: none for baseA, newA and newB; one for baseB.
+- Allocation is per frame, averaged over the entry's windows.
+
+| Entry | Base max (ms) | Base >8 / >16 | Base alloc | New max (ms) | New >8 / >16 | New alloc |
+|---|---|---|---|---|---|---|
+| `travel` (`[go`, 7 towns) | 36.5–39.6 | 8–31 / 4–14 | 8.6–11.3 KB | 10.4–13.7 | 3 / 0 | 6.1–6.4 KB |
+| `ltravel` (client-only teleports) | 7.9–42.3 | 0–22 / 0–10 | 2.1–3.4 KB | 5.5–13.0 | 0–1 / 0 | 2.3–2.7 KB |
+| `glide` (25 tiles/s) | 11.0–11.8 | 1 / 0 | 1.7–2.6 KB | 10.3–10.5 | 1 / 0 | 1.9–2.2 KB |
+| `bodies` (390 new bodies) | 3.9–29.9 | 0–9 / 0–7 | 2.6–2.9 KB | 5.0–5.5 | 0 / 0 | 3.6–4.4 KB |
+
+- **Base teleport frames:** the worst is `world_prepare` 24–25 ms, which is chunk loads plus mesh builds in the draw walk.
+- **New teleport frames:**
+  - Chunk work is spread over frames: up to 81 chunks queued, `region_wait_us` 0 and no region decoded on the main thread.
+  - The worst frames are the server's packet burst (`packets` 8.0 ms) and UI or GPU noise (`ui_draw` 13 ms in one window).
+  - Map-loading frames peak at 8.3 ms. One chunk with many first-sight statics can take 6–10 ms to mesh, and the at-least-one rule lets it through. That is also glide's 10.3 ms frame, about the same as base.
+- **Target not fully met.** Teleport frames are under 8 ms Update+Draw except for those two causes. perf-opportunities.md lists the next step: worker art decode before the mesh build.
+- **Spikes seen in single windows of both builds:**
+  - base `ltravel` 42 ms (`composite`) and base `bodies` 30 ms (`prep_walk`);
+  - new `ltravel` 13 ms (`prep_cap_mobile`);
+  - earlier new runs, without mitigations: `bodies` 28–34 ms (`update_other`).
+  None of them involve chunk or region loading.
+- Base allocation in `bodies` is 2.6–2.9 KB per frame against 3.6–4.4 KB for new, inside the run-to-run noise of earlier runs (1.6–8 KB). The region buffer pool and pooled chunk buffers are unchanged.
+
+**Checks.**
+- Client Release build: 0 errors.
+- Unit tests: 240 pass, including 7 new in `ChunkLoadingTests`: queue order, budget, stale and sticky requests, no allocation, prefetch parity, land z across 40 regions.
+- `bwalk` after a real teleport crossed the y 1536 region edge and the 40 → 30 slope with 0 server walk denials, and the client z equalled the land z at each leg end.
+- The world screenshot after the walk matches `CUO_CHUNK_SYNC=1`.
+- **Not run:** `CUO_BENCH_PICK=1`. The chunk lookup that picking uses is unchanged, but nobody has checked picking.
+- **GPU faults:** 3 of the first 8 runs (without mitigations) hit the Tier 0 login page fault, one of them on the base build. None in the 6 runs with mitigations.
+
 
 ### 2026-10-25 — Legacy tile corruption: B1 batcher regression, fixed
 

@@ -102,7 +102,11 @@ namespace ClassicUO.Game
             bool cv7000 = Client.Game.UO.Version >= ClientVersion.CV_7000;
             ushort graphic = m.Graphic;
 
-            AnimStateFlags f = s.Flags & AnimStateFlags.Mirror;
+            // The mirror bit is history (GetAnimDirection keeps it for directions 3 and 7). The Mobile holds it: MobileView
+            // advances it in capture mode, the Gpu world's ECS sprite path writes the ECS result back. One history, so
+            // switching gpu_ecs_sprites mid-session can't start from a stale bit. GetAnimDirection is idempotent, so
+            // sampling after the view drew (EcsParity) gives the same selection.
+            AnimStateFlags f = m.ViewFlipped ? AnimStateFlags.Mirror : 0;
 
             if (m.AnimationFromServer) f |= AnimStateFlags.FromServer;
             if (m.InWarMode) f |= AnimStateFlags.WarMode;
@@ -247,11 +251,8 @@ namespace ClassicUO.Game
                 eq.Hand2 = new HandItem { Present = true, AnimId = anim[(int)Layer.TwoHanded], IsLight = tiles[gfx[(int)Layer.TwoHanded]].IsLight };
             }
 
-            // MobileView draws equipment only on human bodies
-            if ((s.Flags & AnimStateFlags.Human) == 0 && !AnimationRules.IsHumanBody(body))
-            {
-                return;
-            }
+            // MobileView draws equipment only on human bodies; other bodies only light their light items
+            bool human = (s.Flags & AnimStateFlags.Human) != 0 || AnimationRules.IsHumanBody(body);
 
             bool cv7000 = Client.Game.UO.Version >= ClientVersion.CV_7000;
             bool gargoyle = AnimationRules.IsGargoyleDrawBody(body, cv7000);
@@ -284,8 +285,18 @@ namespace ClassicUO.Game
                     continue;
                 }
 
-                if (AnimationRules.IsCovered(layer, gfx, anim, present, body) || anim[li] == 0)
+                if (human && AnimationRules.IsCovered(layer, gfx, anim, present, body))
                 {
+                    continue;
+                }
+
+                if (!human || anim[li] == 0)
+                {
+                    if (tiles[gfx[li]].IsLight && eq.LightCount < EquipmentSlots.MAX_LIGHT_ONLY)
+                    {
+                        eq.LightItems[eq.LightCount++] = serial[li];
+                    }
+
                     continue;
                 }
 
