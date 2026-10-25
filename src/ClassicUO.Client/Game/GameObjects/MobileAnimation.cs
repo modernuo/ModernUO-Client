@@ -14,33 +14,7 @@ namespace ClassicUO.Game.GameObjects
     internal partial class Mobile
     {
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public override ushort GetGraphicForAnimation()
-        {
-            ushort g = Graphic;
-
-            switch (g)
-            {
-                case 0x0192:
-                case 0x0193:
-                {
-                    g -= 2;
-
-                    break;
-                }
-
-                case 0x02B6:
-                    g = 667;
-
-                    break;
-
-                case 0x02B7:
-                    g = 666;
-
-                    break;
-            }
-
-            return g;
-        }
+        public override ushort GetGraphicForAnimation() => MobileInputRules.AnimationBody(Graphic);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Direction GetDirectionForAnimation()
@@ -234,7 +208,7 @@ namespace ClassicUO.Game.GameObjects
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static bool TestStepNoChangeDirection(Mobile mob, byte group)
+        internal static bool TestStepNoChangeDirection(Mobile mob, byte group)
         {
             switch ((PeopleAnimationGroup)group)
             {

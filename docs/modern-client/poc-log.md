@@ -1097,3 +1097,58 @@ Owner decision (README "Decisions so far"): `auto` / `gpu` / `legacy`, never a m
   - NativeAOT;
   - the owner's real 5-minute FPS test.
 
+## W5: mobile inputs pushed into the ECS (2026-10-25)
+
+Branch `worktree-agent-a97d49f3c0ed8a14c`, started on poc/modern-client 905daf319 (code as c6d1dfa49). Measured on 0b5aa5fb1 (docs-only commits after c6d1dfa49). JIT Release, kbatman3, Gpu. Setting `mobile_push_inputs` (default on). Switches: plan `pushinputs:on|off`, driver `pushinputs on|off`, both part of `w5:on|off`. Procedure: [testing/world-update.md](testing/world-update.md). Logs, shots and tools: session scratchpad `w5push\`.
+
+**What moved.** These inputs of the mobile animation sample were read from the legacy Mobile every frame. They are now ECS state, pushed by their mutation sites:
+
+| Input | ECS home | Mutation sites covered (each pushes) |
+|---|---|---|
+| Mounted (`IsMounted`: 2 equipment walks per call, called twice per sample) | `EquipmentSlots.Mounted`, set by `Rebuild` | The mirror's `EquipmentDirty`: mount item equipped or moved onto the rider (`UpsertItem`, new wearer), moved off (old wearer), graphic or hue change while worn, deleted (`Remove`), body change (`UpsertMobile`), new entity. Death re-key: the new entity starts dirty. Already covered by parity (`eq.MountItem` vs `FindItemByLayer`); `-ecscheck` now also compares `Mounted` with `IsMounted` |
+| War mode | `MobileInputs.Flags` | NPCs: `Flags` via `Sync` (packet handlers 0x77/0x78/0x20 and `UpdateGameObject` end in `Sync`). Player: the `PlayerMobile.InWarMode` setter (0x72) |
+| Hidden, flying (CV_7000 poisoned bit), paralyzed (Frozen), yellow hits, CV<7000 poisoned | `MobileInputs.Flags` / `HueBits` | `Flags` writes reach the ECS through `Sync`, which recomputes the inputs |
+| Human / gargoyle body flags, animation body, dead body | `MobileInputs.Flags`, `Body` | `Graphic` writes reach the ECS through `Sync`. DevBench body swaps call `Sync` |
+| Dead (server flag) | `MobileInputs.Flags` | `Mobile.IsDead` setter (0xBF 0x19 bonded-pet status) |
+| Female | `MobileInputs.Flags` | `Mobile.IsFemale` setter (status packet, `CheckGraphicChange`; character creation and race-change preview mobiles aren't in World and are ignored) |
+| SA poison (CV_7000+) | `MobileInputs.HueBits` | `SetSAPoison` (0x17) |
+| Notoriety (hue looked up per frame) and invulnerable | `MobileInputs.Notoriety`, `HueBits` | `Mobile.NotorietyFlag` setter (0x77, 0x78, the player's 0x11) |
+| Running | `MobileInputs.Flags` | `Mobile.IsRunning` setter (step removal, 0x77 resync) |
+| Steps (has steps, front step run, facing) | `MobileInputs.Flags`, `Facing` | `EnqueueStep` (after its adds), `ClearSteps` (packet resync, `DenyWalk`, map change, `Destroy`), the player's `Walk` (after its add), `ProcessSteps`' step removal (after `RemoveFromFront`, and after `LastStepTime`). The `Direction` setter calls `Sync` |
+| Walking (`IsWalking`: last step time and the player's or NPC delay) | `MobileInputs.LastStepTime`, `WalkingDelay` | `LastStepTime` writes for mobiles: `EnqueueStep`, `ProcessSteps`, `PlayerMobile.Walk`, all followed by a push. Boats write it for items only |
+| Removal and reuse of serials | | `PushInputs` and `Sync` ignore an object World no longer holds for its serial; a new entity (`UpsertMobile`) gets fresh inputs from the new object; item↔mobile serial changes re-create the entity. Unit test: a replaced Mobile's setters don't reach its successor's entity |
+
+**Still read from the Mobile every frame:** the animation clock `World.Update` advances (server action, frame, frame time, from-server), the mirror history bit, visibility, the walking offset, alpha, and the per-frame view context (selection, healthbar target, targeting, last attack, range, profile hues, the player's death).
+
+**The seat test** (`TryGetSittingInfo`, on selection misses) also re-ran `IsMounted` and `GetAnimGroupInput`'s hand walks and the action selection. With the setting on, it takes human, mounted, flying and the action from the selection, unless that selection rolled a random action (then the legacy call runs and rolls as before).
+
+**Verification:**
+
+| Run | Result |
+|---|---|
+| `tools/ecs-parity/w5push.txt`, twice (the second logged in inside the large scene: 731 mobiles), checkers all on | `[mobile-input-check]` 1.1M and 2.54M pushed samples, 0 different; 2.1M seat tests, 0 different. Parity 1.2M and 2.6M mobile comparisons, 0 mismatches; cache check 0 different; `[w5-check]` 0; `-ecscheck` 0 mismatches (including pushed-vs-fresh inputs and `Mounted`). `mount` lines: the player mounted (ethereal), dismounted, remounted, dismounted, with ECS `Mounted` = `IsMounted` each time |
+| `tools/ecs-parity/cases.txt` (cloak, hues, gargoyle bodies, flying, seated, death) with the input check | 997k samples and 911k seat tests, 0 different. Parity 988k, 0 (Sitting 16k, GargoyleBody 40k, Flying 11k, Dead 13k frames) |
+| Shots, `pushinputs` off vs on, about 1 s apart (NPCs, hidden, hue, mounted, dismounted, seated, dead) | The player is identical in every pair (mounted, dismounted, re-hued, ghost). Differences only on NPCs that animated or wandered between the two shots. Looked at |
+| Builds | Release and `-p:CuoDevTools=false` build |
+| Unit tests | 321 pass (new: `MobileInputsTests`, 14) |
+
+**Timing** (large scene, Gpu, 1920×1080):
+- **Paired** (`CUO_MOBILE_INPUT_BENCH`, legacy and pushed sample of the same mobile in the same frame, 461M samples): 37.4 → 10.4 ns per mobile. Seat test 58 → 28 ns.
+  - That is about 0.045 ms per frame at zoom 1 (1,611 mobiles drawn) and 0.055 ms at zoom 2.5 (1,985).
+  - The legacy sample was about 17% of the 0.22 µs per mobile, not the 40% estimated earlier.
+- **In-session off → on windows** (2 rounds × 2 windows): too noisy to show this reliably.
+  - Another agent's client was running, and the same configuration moved 0.31–0.43 ms between windows; `world_mobiles` (untouched) moved with it.
+  - First series, mobile select+extract (averages): 0.359 → 0.326 ms at zoom 1, 0.577 → 0.495 at zoom 2.5, 0.363 → 0.329 walking. Best windows: 0.310 → 0.246, 0.548 → 0.425, 0.293 → 0.270.
+  - Second series (with the seat change): 0.369 → 0.298, 0.465 → 0.444, and walking 0.395 → 0.424 (noise).
+  - World prepare and frame follow the same pattern: zoom 1 1.28 → 1.14–1.28 ms, frame 2.20–2.28 → 2.00–2.23 ms. `update` is unchanged (0.15–0.30 ms, noise).
+- **Profile** (EventPipe thread time, push on, scene): the cached emission replay is 31% of the per-mobile time and `Select` misses 7.5%. The rest is the inlined update path and the ECS lookups.
+
+**Not done:**
+- `World.Update`'s mobile loop as a system over animating mobiles. It costs 0.035–0.06 ms at 2k mobiles. A due-time schedule would need a push from every `LastAnimationChangeTime` and idle-timer write (`SetAnimation` from many packet handlers, `SetIdleAnimation`, `ProcessAnimation`), plus mobiles with steps and handles, for at most about 0.03 ms.
+- NativeAOT.
+- A quiet-machine off/on series.
+- An NPC dismount (the scenario's kill hit another NPC). The player's mount and dismount and NPCs spawning mounted were covered.
+
+**Codex audit (merge with fixes), one P2, fixed:** `Mounted` came from the mirror's equipment index, which is keyed by the item's container. A mount equipped (0x2E) before its rider arrives is mirrored under the rider's serial, but legacy never attaches it to the rider's list (World.GetOrCreateMobile doesn't adopt earlier items), and it can outlive the rider and meet a later mobile with the same serial. Then `Mounted` was true while `IsMounted` was false. The bug was older than this patch; the patch made it visible. Now `Rebuild` computes `Mounted` from the mobile's own list (`MobileAnimationSystem.IsMounted`: first live mount-layer item, not a tiller, mount body). Every `PushToBack` attach in PacketHandlers (0x2E equip, 0x78 mobile equipment, container adds) and `RemoveItemFromContainer` is followed by `Sync`, and the mirror marks the old wearer dirty on any write to a worn item, so the slots are rebuilt whenever the list changes. Regression test: an orphan mount before its rider, a later attach (dirty, mounted), a tiller, and serial reuse.
+
+**Coordination incident:** one profiling run (12:55:25–12:56:20) started a client while `legacyfix` held `bench.lock`: my wait loop timed out without the lock and the script carried on. The client was closed and `legacyfix`'s lock was left alone. Later runs use `round.py`, which exits if it can't take the lock.

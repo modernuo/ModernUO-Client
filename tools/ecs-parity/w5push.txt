@@ -1,0 +1,220 @@
+wait 6
+say [go 5445 1153
+wait 4
+pushinputs on
+say [add Brigand
+wait 1
+target ground 2 0
+wait 1
+say [add SavageRider
+wait 1
+target ground 0 3
+wait 1
+say [add Horse
+wait 1
+target ground 3 -2
+wait 1
+say [add Gargoyle
+wait 1
+target ground -3 2
+wait 1
+say [add EvilMage
+wait 1
+target ground -2 -2
+wait 5
+check
+mount
+shot npcs_on
+wait 1
+pushinputs off
+wait 1
+shot npcs_off
+pushinputs on
+say [set Warmode true
+wait 1
+target self
+wait 2
+mount
+say [set Warmode true
+wait 1
+target mobile 2 0
+wait 2
+mount
+say [set Warmode false
+wait 1
+target self
+wait 1
+say [set Hidden true
+wait 1
+target self
+wait 2
+shot hidden_on
+wait 1
+pushinputs off
+wait 1
+shot hidden_off
+pushinputs on
+say [set Hidden false
+wait 1
+target self
+wait 1
+say [set Hue 0x21
+wait 1
+target self
+wait 2
+shot hue_on
+wait 1
+pushinputs off
+wait 1
+shot hue_off
+pushinputs on
+say [set Hue 0x83EA
+wait 1
+target self
+wait 1
+say [set Hue 0x59
+wait 1
+target mobile 2 0
+wait 2
+say [set Frozen true
+wait 1
+target mobile -2 -2
+wait 1
+say [set Blessed true
+wait 1
+target mobile -3 2
+wait 1
+say [set Female true
+wait 1
+target mobile 2 0
+wait 1
+say [set Body 401
+wait 1
+target mobile 2 0
+wait 2
+mount
+check
+parity
+say [add EtherealHorse
+wait 1
+target ground 1 0
+wait 2
+pick near 20DD
+wait 1
+drop backpack
+wait 2
+use held
+wait 6
+mount
+check
+shot mounted_on
+wait 1
+pushinputs off
+wait 1
+shot mounted_off
+pushinputs on
+walk 2 3
+walk 6 3
+walk 2 3 run
+walk 6 3 run
+wait 2
+shot mountedwalk_on
+check
+use self
+wait 4
+mount
+check
+shot dismounted_on
+wait 1
+pushinputs off
+wait 1
+shot dismounted_off
+pushinputs on
+walk 2 3
+walk 6 3
+walk 2 3 run
+walk 6 3 run
+pushinputs off
+walk 2 3
+walk 6 3
+pushinputs on
+wait 2
+use held
+wait 6
+mount
+use self
+wait 4
+mount
+say [kill
+wait 0.5
+target mobile 0 3
+wait 5
+mount
+check
+parity
+say [add WoodenChair
+wait 1
+target ground 1 0
+wait 2
+walk 2 1
+wait 3
+shot seated_on
+wait 1
+pushinputs off
+wait 1
+shot seated_off
+pushinputs on
+walk 4 1
+wait 1
+walk 0 1
+wait 2
+walk 6 2
+wait 2
+say [mortal
+wait 1
+target self
+wait 2
+say [kill
+wait 1
+target self
+wait 5
+mount
+walk 2 2
+walk 6 2
+wait 2
+shot dead_on
+wait 1
+pushinputs off
+wait 1
+shot dead_off
+pushinputs on
+say [res
+wait 1
+target self
+wait 4
+say [immortal
+wait 1
+target self
+wait 2
+check
+parity
+say [remove
+wait 0.5
+target held
+wait 1
+say [wipe mobiles
+wait 1
+target ground -18 -18
+wait 1
+target ground 18 18
+wait 3
+say [wipe items
+wait 1
+target ground -18 -18
+wait 1
+target ground 18 18
+wait 3
+items
+equip
+check
+quit
