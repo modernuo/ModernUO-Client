@@ -105,6 +105,9 @@ namespace ClassicUO.Game.Managers
         public byte WalkSequence;
         public bool WantChangeCoordinates;
 
+        /// <summary>Walk requests the server refused (0x21), for DevBench's walk checks.</summary>
+        public int ServerDenies;
+
         public void DenyWalk(byte sequence, int x, int y, sbyte z)
         {
             _player.ClearSteps();
@@ -113,6 +116,7 @@ namespace ClassicUO.Game.Managers
 
             if (x != -1)
             {
+                ServerDenies++;
                 _player.World.RangeSize.X = x;
                 _player.World.RangeSize.Y = y;
 

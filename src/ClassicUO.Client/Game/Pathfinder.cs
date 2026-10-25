@@ -55,7 +55,11 @@ namespace ClassicUO.Game
 
         private bool CreateItemList(List<PathObject> list, int x, int y, int stepState)
         {
-            GameObject tile = _world.Map.GetTile(x, y, false);
+            // the draw walk used to load every chunk on screen the first time it saw it; it now loads them over a few frames
+            // (Map.UpdateLoading), so chunks within the view range load here on demand and walking right after a teleport
+            // sees the same tiles as before
+            bool inView = Math.Max(Math.Abs(x - _world.Player.X), Math.Abs(y - _world.Player.Y)) <= _world.ClientViewRange + 8;
+            GameObject tile = _world.Map.GetTile(x, y, inView);
 
             if (tile == null)
             {
