@@ -18,6 +18,7 @@ Running notes for your return, newest at the top within each section. Started 20
 
 | Commit | What | Verified |
 |---|---|---|
+| a122f2cc1 | **Large-scale test scene, and the scale bugs it found.** A repeatable scene of 1,984 frozen NPCs and 19,476 ground items on Felucca at 5156 2150, an empty field east of the continent (`tools/large-scale/make_scene.py create|wipe`; see `testing/large-scale.md`). **Two real bugs at scale, both fixed:** above 32,768 sprites the Gpu world silently dropped the rest (the north tip of the scene was missing when zoomed out), and 82 animation pages competed for 64 slots, so sprites flickered while pages re-uploaded. Capacity is now 131,072 sprites and 128 animation layers (+64 MB), and a warning is logged if sprites are ever dropped. Also faster: overhead-text positions (a list of entities that have text instead of scanning all 25,000), screen positions recomputed only when something moved, and a quicker item-picking rejection. **FrameStats was measuring itself**, costing about 0.33 ms per frame in busy scenes, so your FPS test ran slightly pessimistic too; fixed. **Scene, Gpu: 252 → 341 fps at zoom 1, 200 → 291 zoomed out (about 0.7 ms of real gain, the rest was FrameStats' overhead). Legacy: 206 → 225.** Britain and the bank are about 3–5% faster. | 0 parity mismatches (9.5 M mobile and 75 M item comparisons, standing and walking); built-in checks: 0 wrong among 852 M kept positions and 487 M rejected picks; pickscan 0 different; teleports 0 settle timeouts; Gpu, Legacy and UI shots looked at; memory flat; 263 tests. NativeAOT not re-measured |
 | cacc27d44 | **W3 finished, and the settle follow-up.** Corpses and multi-tile items are now drawn from the ECS too; the old capture runs on the default path only for effects, captured statics and shadow-only draws. Fixed: when an NPC died, the ECS dropped its hair for the first frames of the death animation. The frame hold now also waits for chunks the client still has queued, and fades finish during the hold, so buildings are opaque on the first frame after a teleport (before, 10–36 chunks could still be queued at release, with translucent buildings). Cost: about +1–2 ms per teleport hold, and login black lasts about 100 ms longer. Also the **W3+teleport integration check** on the merged tip: passed. | 0 parity mismatches (about 900k corpse and 260k multi comparisons; across about 60 teleports; a deliberately broken build is caught); picking identical (pickscan 48/48); 13-minute session with memory flat at 1.9 GB, 0 objects left parked, 0 settle timeouts; world prepare slightly better (crowd 92 → 87–91 µs, corpses 42 → 34 µs); 263 tests. NativeAOT not re-measured |
 | 08b952f3a | **GPU page fault fixed (Tier 0).** SDL3.dll is now built from **github.com/modernuo/SDL** branch `modernuo/3.4.19` (b2a3160aa: a 5-line patch that gives Vulkan images of 64 MiB or more their own allocation, so SDL never defragments the atlases). The fork is the `external/SDL` submodule, built with `tools/sdl/build-sdl.ps1`; the DLL is committed with `SDL3.version`. **0 faults in 220 logins vs 4 in 90 at baseline** (p ≈ 0.005% by luck). Diagnostics live on the fork's `diag/defrag` branch and the local `poc/gpu-pagefault-diag`; the fork's `main` is untouched, and nothing went upstream. Mitigations B and C dropped (the patch supersedes them); A came in with the settle merge. | 262 tests; `--external-test` on Vulkan and D3D12; Legacy and flip shots clean; the fps-test logs in |
 | 28bb72308 | **Teleport hitch** (verified on its own branch first): region decode on a worker, chunk loads budgeted per frame. `[go` teleport worst frame 35–36 ms → 12–18 ms. Objects on unloaded chunks are parked until the chunk loads (7,626 parked and 7,612 placed in an 18-minute session; the other 14 moved or were destroyed first). | picking identical (pickscan 0 different); teleports with the frame hold show 0 unsettled frames and 0 timeouts; facet change Trammel↔Felucca; region-edge walks with 0 denials; memory flat over 18 minutes; 262 tests |
@@ -38,7 +39,7 @@ Running notes for your return, newest at the top within each section. Started 20
 
 ## In progress
 
-- **Large-scale test scene, then W2** (an agent started about 04:50; the scene is placed away from Britain and kbatman, with frozen NPCs): first a repeatable busy scene (about 2,000 mobiles and 20,000 ground items) on the local shard, measured in both renderers; then W2 (ground items and mobiles from ECS queries instead of tile lists), measured against that scene.
+- **W4: ground items baked into the chunk meshes** (an agent started about 06:40). In the large scene, ground items are about 1.0 ms of the 1.9 ms world prepare. Their chunks get baked and are re-baked only when an item changes.
 
 ## Things you saw tonight, explained
 
@@ -48,6 +49,10 @@ Running notes for your return, newest at the top within each section. Started 20
 - **Black only during teleports or login** (on Kbatfour earlier) was the pop-in that a6110f967 fixes.
 
 ## Follow-ups noted (not started)
+
+- **The large scene is left on the shard** (frozen: about 4% of one server core while a client stands there, ModernUO memory 563 → 711 MB). Say if you want it wiped (`make_scene.py wipe`) or added to your FPS test as an extra spot. It's on Felucca, so it needs a facet change, and it isn't added by default, so your results stay comparable with 10-24.
+- **W2 was half done on purpose.** The screen-position half is merged. The ECS-query half would save about 0.15 ms in the 21,000-object scene and nothing at normal scale, and it risks changing draw order and the height cut-off, so it was skipped in favour of W4. Recorded in the plan.
+- **Next after W4:** W5. Mobile animation is about 0.36 µs per mobile, and `World.Update` walks 25,000 items, most of them in packs.
 
 - **Stray test items:** after the W3 corpse runs, one item each near kbatman3 and kbatman4 at Green Acres couldn't be identified, so it was left in place. Harmless.
 - **Multi placement preview** (house placement, drawn at half alpha) is now drawn from the ECS but has no automated test scenario.
@@ -59,7 +64,7 @@ Running notes for your return, newest at the top within each section. Started 20
 
 ## Your FPS test
 
-The build at `C:\Repositories\cuo-fps-test\bin` is **cacc27d44** (published 04:43). It has everything above: the fork SDL, W3 (now including corpses and multis), the teleport work, world settle and the B1 fix.
+The build at `C:\Repositories\cuo-fps-test\bin` is **a122f2cc1** (published 06:33). It has everything above: the fork SDL, W3 (now including corpses and multis), the large-scale fixes (including FrameStats' lower overhead), the teleport work, world settle and the B1 fix.
 
 1. Make sure no agent is running clients (ask me to pause them) and the display is on.
 2. From a normal PowerShell window:
