@@ -106,17 +106,8 @@ namespace ClassicUO.Game.Map
 
         public sbyte GetTileZ(int x, int y)
         {
-            if (x < 0 || y < 0)
-            {
-                return -125;
-            }
-
-            if (!Client.Game.UO.FileManager.Maps.TryGetBlock(Index, x >> 3, y >> 3, out var block))
-            {
-                return -125;
-            }
-
-            return block.Land[((y & 7) << 3) + (x & 7)].Z;
+            // MapLoader caches the last block, so ApplyStretch's 13 neighbour lookups per cell skip the lock and region lookup
+            return Client.Game.UO.FileManager.Maps.GetLandZ(Index, x, y);
         }
 
         public void GetMapZ(int x, int y, out sbyte groundZ, out sbyte staticZ)

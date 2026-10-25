@@ -113,6 +113,59 @@ public static class AtlasPage
     }
 
     /// <summary>
+    /// Reads only a page's <see cref="PageHeader"/>. Compressed pages decode just its 16 bytes: the Brotli decoder stops
+    /// once they are out, so a Kind 2 page no longer decodes its whole 1 MiB chunk 0 (and Kind 1 its first block).
+    /// </summary>
+    public static PageHeader ReadHeader(string path)
+    {
+        using var fh = File.OpenHandle(path);
+        int fhs = StructIo.SizeOf<FileHeader>();
+        Span<byte> head = stackalloc byte[fhs + ChunkedBrotli.HeaderBytes];
+        int got = RandomAccess.Read(fh, head, 0);
+        if (got < fhs) throw new InvalidDataException($"'{path}' is too short for a pack page");
+        var fileHeader = System.Runtime.InteropServices.MemoryMarshal.Read<FileHeader>(head);
+        if (fileHeader.Magic != PackConst.MagicPage) throw new InvalidDataException($"Bad magic 0x{fileHeader.Magic:X8}, expected 0x{PackConst.MagicPage:X8}");
+        if (!PackConst.VersionSupported(fileHeader.Version)) throw new InvalidDataException($"Unsupported pack version {fileHeader.Version}");
+
+        PageHeader header = default;
+        var dst = System.Runtime.InteropServices.MemoryMarshal.AsBytes(new Span<PageHeader>(ref header));
+        long src; // file offset of the Brotli stream that starts with the PageHeader
+        switch (fileHeader.Kind)
+        {
+            case FileKind.Raw:
+                if (RandomAccess.Read(fh, dst, fhs) != dst.Length) throw new EndOfStreamException();
+                return header;
+            case FileKind.Brotli:
+                src = fhs;
+                break;
+            case FileKind.ChunkedBrotli:
+            {
+                if (got < head.Length) throw new EndOfStreamException();
+                var ch = System.Runtime.InteropServices.MemoryMarshal.Read<ChunkedHeader>(head.Slice(fhs));
+                src = fhs + ChunkedBrotli.HeaderBytes + 4L * ch.ChunkCount; // chunk 0 follows the size table
+                break;
+            }
+            default: throw new InvalidDataException($"Unknown page kind {fileHeader.Kind}");
+        }
+
+        // feed the compressed bytes a little at a time until the 16 header bytes are out
+        Span<byte> input = stackalloc byte[512];
+        using var dec = new System.IO.Compression.BrotliDecoder();
+        int written = 0;
+        while (written < dst.Length)
+        {
+            int n = RandomAccess.Read(fh, input, src);
+            if (n <= 0) throw new EndOfStreamException($"'{path}': page header truncated");
+            var status = dec.Decompress(input.Slice(0, n), dst.Slice(written), out int consumed, out int w);
+            written += w;
+            src += consumed;
+            if (status == System.Buffers.OperationStatus.InvalidData) throw new InvalidDataException($"'{path}': corrupt page");
+            if (status == System.Buffers.OperationStatus.Done && written < dst.Length) throw new EndOfStreamException($"'{path}': page header truncated");
+        }
+        return header;
+    }
+
+    /// <summary>
     /// Opens a page (Kind 0, 1 or 2) and returns a stream positioned at the start of the mip chain, plus the header.
     /// For Kind 1/2 the stream is a forward-only decoder. Dispose it when done.
     /// </summary>
@@ -242,28 +295,76 @@ public static class RegionFile
     /// <summary>Returns the logical (uncompressed, Kind=0 layout) bytes of a region file; Kind 0 is returned as-is.</summary>
     public static byte[] Decompress(byte[] fileBytes)
     {
+        if (ReadKind(fileBytes) == FileKind.Raw) return fileBytes;
+        byte[] dest = null;
+        int n = DecompressInto(fileBytes, ref dest);
+        if (dest.Length != n) Array.Resize(ref dest, n);
+        return dest;
+    }
+
+    static ushort ReadKind(ReadOnlySpan<byte> fileBytes)
+    {
         int hs = StructIo.SizeOf<FileHeader>();
-        FileHeader fh;
-        using (var hms = new MemoryStream(fileBytes, 0, hs, writable: false)) fh = StructIo.ReadHeaderFull(hms, PackConst.MagicRegion);
-        if (fh.Kind == FileKind.Raw) return fileBytes;
-        if (fh.Kind == FileKind.ChunkedBrotli)
+        if (fileBytes.Length < hs) throw new InvalidDataException("region file too short");
+        var fh = System.Runtime.InteropServices.MemoryMarshal.Read<FileHeader>(fileBytes);
+        if (fh.Magic != PackConst.MagicRegion || !PackConst.VersionSupported(fh.Version)) throw new InvalidDataException("not a supported region file");
+        return fh.Kind;
+    }
+
+    /// <summary>
+    /// Writes the logical (Kind=0 layout, header included) bytes of a region file into <paramref name="dest"/> and returns
+    /// their length. <paramref name="dest"/> is reused when big enough, else replaced by a larger array (null = allocate):
+    /// pass a pooled buffer to load regions without per-load allocations or intermediate copies.
+    /// </summary>
+    public static int DecompressInto(ReadOnlySpan<byte> fileBytes, ref byte[] dest)
+    {
+        int hs = StructIo.SizeOf<FileHeader>();
+        ushort kind = ReadKind(fileBytes);
+        int total;
+        if (kind == FileKind.Raw)
         {
-            var body = fileBytes.AsSpan(hs);
-            var ch = System.Runtime.InteropServices.MemoryMarshal.Read<ChunkedHeader>(body);
-            var res = new byte[hs + (long)ch.LogicalBytes];
-            fileBytes.AsSpan(0, hs).CopyTo(res);
-            ChunkedBrotli.Decode(body, res.AsSpan(hs));
-            res[6] = 0; res[7] = 0;
-            return res;
+            Ensure(ref dest, fileBytes.Length, 0);
+            fileBytes.CopyTo(dest);
+            return fileBytes.Length;
         }
-        if (fh.Kind != FileKind.Brotli) throw new InvalidDataException($"Unknown region kind {fh.Kind}");
-        using var outMs = new MemoryStream(fileBytes.Length * 6);
-        outMs.Write(fileBytes, 0, hs); // the logical file keeps its header so block offsets stay file-relative
-        using (var br = new System.IO.Compression.BrotliStream(new MemoryStream(fileBytes, hs, fileBytes.Length - hs, writable: false), System.IO.Compression.CompressionMode.Decompress))
-            br.CopyTo(outMs);
-        var logical = outMs.ToArray();
-        logical[6] = 0; logical[7] = 0; // FileHeader.Kind = Raw: the result is a valid Kind-0 file
-        return logical;
+        if (kind == FileKind.ChunkedBrotli)
+        {
+            var body = fileBytes.Slice(hs);
+            var ch = System.Runtime.InteropServices.MemoryMarshal.Read<ChunkedHeader>(body);
+            total = checked(hs + (int)ch.LogicalBytes);
+            Ensure(ref dest, total, 0);
+            fileBytes.Slice(0, hs).CopyTo(dest);
+            ChunkedBrotli.Decode(body, dest.AsSpan(hs, total - hs));
+        }
+        else if (kind == FileKind.Brotli)
+        {
+            // the logical file keeps its header so block offsets stay file-relative; the size is not stored, so grow as needed
+            Ensure(ref dest, Math.Max(fileBytes.Length * 8, 1 << 16), 0);
+            fileBytes.Slice(0, hs).CopyTo(dest);
+            var src = fileBytes.Slice(hs);
+            total = hs;
+            using var dec = new System.IO.Compression.BrotliDecoder();
+            while (true)
+            {
+                var status = dec.Decompress(src, dest.AsSpan(total), out int consumed, out int written);
+                src = src.Slice(consumed);
+                total += written;
+                if (status == System.Buffers.OperationStatus.Done) break;
+                if (status == System.Buffers.OperationStatus.DestinationTooSmall) { Ensure(ref dest, dest.Length + dest.Length / 2, total); continue; }
+                throw new InvalidDataException($"corrupt region (brotli {status})");
+            }
+        }
+        else throw new InvalidDataException($"Unknown region kind {kind}");
+        dest[6] = 0; dest[7] = 0; // FileHeader.Kind = Raw: the result is a valid Kind-0 file
+        return total;
+    }
+
+    static void Ensure(ref byte[] buffer, int size, int keep)
+    {
+        if (buffer != null && buffer.Length >= size) return;
+        var bigger = new byte[size];
+        if (buffer != null && keep > 0) buffer.AsSpan(0, keep).CopyTo(bigger);
+        buffer = bigger;
     }
 
     /// <summary>Parses a region from its file bytes (Kind 0, 1 = Brotli, or 2 = chunked Brotli).</summary>
