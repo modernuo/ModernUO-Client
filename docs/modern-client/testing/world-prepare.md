@@ -9,9 +9,10 @@ How to measure ClassicUO's world prepare (`GameScene.FillGameObjectList` and the
   - The world-prepare sub-phases are `prep_*`:
     - setup, walk, gpu masks, hidden collect, foliage and finish, text;
     - capture of multis, statics, items, mobiles and other;
-    - rest = world prepare minus the others.
+    - rest = world prepare minus the others;
+    - Legacy (since 2026-10-25): `prep_walk` is the whole chunk loop (chunk lookup, mesh build and reset included), timed once per frame. The Gpu world and detail mode keep the per-chunk split (`prep_gpu_masks`, `prep_walk`, `prep_hidden`).
   - Counters:
-    - tiles and objects walked, baked land and statics, unmeshed and dynamic objects;
+    - tiles and objects walked; baked land and statics, unmeshed and dynamic objects in detail mode only (since 2026-10-25: the walk makes no FrameStats call per object; see poc-log "Legacy world prepare regression");
     - pick tests, override calls, hidden-collect tiles, lights, foliage, captures;
     - for the W1 path: `gpu_full_tiles`, `gpu_walk_tiles`, `gpu_edge_tiles`, `gpu_pick_tiles`, `gpu_mask_rebuilds` and `gpu_skip_active`.
 - **Detail mode** (`CUO_FRAMESTATS_PREP=1`, or the plan entries `prepdetail:on|off`):
