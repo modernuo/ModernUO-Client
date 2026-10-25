@@ -13,6 +13,12 @@
     <IlcInstructionSet>x86-64-v3</IlcInstructionSet>
   </PropertyGroup>
 
+  <!-- Opt-in NativeAOT static PGO: -p:CuoMibcPath=<file.mibc> passes a profile collected from a JIT run
+       (tools/pgo/collect_mibc.py) to ILC. Off by default: measured no gain on 2026-10-25 (docs/modern-client/testing/aot-performance.md). -->
+  <ItemGroup Condition="'$(PublishAot)' == 'true' and '$(CuoMibcPath)' != '' and Exists('$(CuoMibcPath)')">
+    <MibcFile Include="$(CuoMibcPath)" />
+  </ItemGroup>
+
   <PropertyGroup Condition="'$(Configuration)'=='Release'">
     <OutputPath>$(ProjectDir)..\..\bin\Release\</OutputPath>
     <PublishDir>$(ProjectDir)..\..\bin\dist\</PublishDir>
