@@ -117,11 +117,13 @@ Move each per-frame duty that touches land or statics to where it belongs:
   - **Shared rules:** action selection (`AnimationGroupRules`, moved out of Mobile) and the frame step (`AnimationTiming`). They are shared with the legacy Mobile, not duplicated.
   - **Parity:** 0 mismatches against the capture in every case the harness drives: bank, walking/running, 120-NPC crowd, mounted humans, equipment changes, cloak facings, partial and spectral hues, hidden, gargoyle (both sexes, flying, per-layer actions), sitting, dead. JIT and NativeAOT.
   - **Cost:** the extract is 0.33 µs per mobile vs 1.5 µs for the capture.
+- **Status (2026-10-25, later): the extract is the Gpu world's source for mobiles and art items** (setting `gpu_ecs_sprites`, default on; off = the capture). Details in poc-log ("W3: the ECS extract is the Gpu world's source").
+  - Mobiles: the view's side effects are reproduced (FrameInfo, mirror bit, worn lights, aura). Art items: `ItemSpriteExtract` (hue rules, stack, animated art, light, picking offset).
+  - Parity with `CUO_ANIM_SYNC=1`: 0 mismatches in bank, items, lights and 120-NPC crowd runs (5.2M mobile, 1.5M item comparisons), including the side effects. Screenshots and picking unchanged.
+  - Crowd: mobile capture 104 → 45 µs/frame, world prepare 169 → 109 µs. Bank: mobiles 23 → 10 µs, items 6.7 → 2.0 µs.
   - **Next:**
-    1. Fill `DynamicBuffer` from the extract behind a switch, for mobiles first.
-    2. Move the sampled inputs (steps, server action, war mode) to the ECS with W5.
-    3. Port ground items and corpses (ItemView) the same way.
-    4. Only then retire the capture hook.
+    1. Corpses and item multis (still captured), then retire the capture hook.
+    2. Move the sampled inputs (steps, server action, war mode, item hue state) to the ECS with W5.
 
 ### W4: ground-item chunk baking (only if W0–W3 numbers ask for it)
 - Bake rarely-changing ground items into the chunk instance buffer and re-bake the chunk on ECS change events. Mobiles stay per frame.

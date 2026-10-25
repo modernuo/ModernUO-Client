@@ -481,6 +481,46 @@ Branch `poc/batcher-ui-alloc` (worktree, from 43dec9ae4): 99ced3184 and 2eedf61d
   - GameScene.cs: the lights statics, and the `UpdateTextServerEntities` signature next to `FillGameObjectList`;
   - none of GameSceneDrawingSorting.cs, GameSceneGpuWorld.cs or FrameStats.cs.
 
+## W3: the ECS extract is the Gpu world's source for mobiles and art items (2026-10-25)
+
+Branch `worktree-agent-ab8d28b4333136756`, started on 67141bf6e, merged with poc/modern-client 7d0a74a92; final numbers measured on that merge (base build = 7d0a74a92). Commits: 38c35fabd (mobiles), 21adf7688 (driver cleanup commands), 918786113 (art items), merge cc9bb72aa, docs. JIT Release, 1920×1080, kbatman, two other agents' clients on the GPU during most runs. Procedure: [testing/ecs-animation.md](testing/ecs-animation.md).
+
+- **Switch:** setting `gpu_ecs_sprites` (default on), `-ecssprites [on|off]`, DevBench `ecssprites:on|off`, driver `ecssprites on|off`. Off = the view capture, unchanged.
+- **Mobiles** (`GpuWorldRenderer.TryDrawMobileEcs`): `MobileAnimationSystem.Update` then `MobileSpriteExtract.Emit`, copied into the dynamic list. What `MobileView.Draw` did besides drawing is reproduced:
+  - `FrameInfo` (picking, overhead text, health bars) from the extract's frame bounds;
+  - the mirror bit, written back to the Mobile (`ViewFlipped`). The ECS now samples the bit from the Mobile, so both paths share one history and switching mid-session can't start from a stale bit;
+  - worn lights: drawn light items (slot bit) at the frame position, light-only items (no equip AnimID, and any light on a non-human body) at the body anchor (`EquipmentSlots.LightItems`, up to 4);
+  - the aura (`MobileView.DrawAura`, drawn through the batcher as the capture's fallback did).
+- **Art items** (`ItemSpriteExtract`, `DrawItemEcs`): `ItemView.Draw` without the batcher for every item except corpses and multis (those keep the capture): stack copy, animated-art frame, field replacement, container/selection/out-of-range/dead/hidden hues, the light, and the `ArtEntry.Width/Height` draw offset that item picking reads. It samples the Item (until W5); the mirror entity isn't needed for art.
+- **Parity harness:** on `CUO_ECS_PARITY` frames the view is drawn under capture as the reference, then the ECS output is diffed and drawn. New: `CompareViewEffects` (mirror, FrameInfo, lights as a set; ECS lights are added, compared, then truncated) and `OnItemCaptured` (instances, drawn result, light).
+  - **`CUO_ANIM_SYNC=1` is required for parity now.** Without it the legacy loader decodes a body's first direction on a worker; until it lands the view draws nothing for it, while the extract already draws from the pack. That gave 12 first-sight mismatches in 40k at the bank (capture missing layers), all on the first frames after login or teleport.
+  - **Sabotage check:** FrameInfo height +1 and drawn-light x +1 were flagged on every check (43k FrameInfo, 3.3k light mismatches; light-only and non-human lights correctly unaffected).
+
+| Scenario (merged build, ECS on, parity every frame) | Mobile comparisons | Item comparisons | Lights compared | Mismatches |
+|---|---|---|---|---|
+| bank | 121k | 546k | 0 | 0 |
+| items (lit candle, arrow stack, animated art, bandages; night) | 58k | 229k | 57k | 0 |
+| lights (torch drawn, light-only 0x1647, non-human body 201; night) | 65k | 2.5k | 31k | 0 |
+| 120-NPC crowd | 5.2M | 773k | 0 | 0 |
+| cases, mixed (pre-merge build 38c35fabd, mobiles only) | 71k, 636k | – | 0 | 0 |
+
+- **Screenshots** (`ecssprites:off` vs `on` in one session, and base 7d0a74a92 vs new): Britain, zoomed out and night (world and `_lights`) are identical off vs on; the bank differs only where an NPC walked between the two shots. Base vs new differs only in moving creatures (a dog, bank NPCs) and another character standing on the player, which the Legacy shots of both builds show the same way. Legacy world base vs new: the same regions only. UI (`gumps`): journal text only. I looked at every region.
+- **Picking** (`CUO_BENCH_PICK=1`): the same static, land, item and mobile in Legacy and Gpu.
+
+**Performance** (µs per frame, averages of two alternated runs per build, 2 windows per spot; the crowd alternates `ecssprites` in one session, 3 rounds, same NPC positions):
+
+| Spot | Mobile capture base → new | Item capture base → new | World prepare base → new | World draw base → new |
+|---|---|---|---|---|
+| Britain (3–4 mobiles, ~70 items) | 9.4 → 7.1 | 8.7 → 3.5 | 112 → 90 | 84 → 74 |
+| Bank (5 mobiles) | 23.1 → 10.3 | 6.7 → 2.0 | 147 → 105 | 93 → 81 |
+| Zoomed out ×2.5 | 14.2 → 8.9 | 15.1 → 5.8 | 389 → 331 | 116 → 105 |
+| 120-NPC crowd (~102 in view) | 103.8 → 45.3 | 7.2 → 7.9 (2 items) | 168.5 → 109.1 | 70 → 66 |
+
+- The capture columns are the cleanest signal; world prepare and draw totals move 20–40% between runs with the other clients, so only the direction is meaningful there. Update is unchanged (19–66 µs, noise). Allocation: p50 136 B/frame in both builds; gen0 counts 0 in both; the 1–2 MB single-frame spikes occur in both modes.
+- Per object (parity harness, bank): mobile 3.9 µs capture vs 0.6 + 0.8 µs sample+extract (cold, few mobiles); crowd 1.84 vs 0.24 + 0.38 µs; art item 0.16–0.18 vs 0.05 µs.
+- **Not done:** corpses (CorpseView-like layer walk with its own hue rules and `CorpseManager` checks) and item multis still use the capture, so the capture hook can't be retired yet. W2 not started. NativeAOT not re-measured. The Tier 0 login mitigation C was not applied (no matching commit on `poc/gpu-pagefault`); no page faults in 25 runs.
+- **Test-character cleanup:** the cases/mixed scripts kill and resurrect the character, which leaves a death robe worn and one in the backpack, and a cloak in the backpack. I removed them with the new driver commands (`equip`, `items`, `target item <serial>`); kbatman is back to hair, backpack and its earlier items. Every spawn was wiped (`mobiles=1` at the end of each script).
+
 ## W3 groundwork — mobile animation state in the ECS, sprite extract, capture parity (2026-10-25)
 
 Worktree branch `worktree-agent-a30778aae8d7c73a8` (rebased on dd178a524). Not yet the renderer's source; the capture still feeds `DynamicBuffer`. Test procedure: [testing/ecs-animation.md](testing/ecs-animation.md).

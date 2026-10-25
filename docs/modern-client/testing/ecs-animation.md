@@ -38,6 +38,18 @@ Written 2026-10-25 by the W3 agent. It covers how the ECS mobile animation path 
   - per-case counts (mobile-frames). Use them to prove a case actually happened: `Mounted`, `Sitting`, `CharSitting`, `GargoyleBody`, `GargoyleLayerGroups`, `Flying`, `Running`, `Walking`, `StepOffset`, `Hidden`, `Dead`, `NonHuman`, `Equipped`, `Cloak`, `Converted` (equipconv), `OverrideHue`, `Translucent`, `ShadowInst`, `Spectral`, `Partial`, `Mirrored`, `ServerAnim`.
 - **Prove the harness can fail** after changing it: break the extract on purpose (e.g. strip depth `i * 2` → `i * 3` in `MobileSpriteExtract.Layer`) and confirm every mobile mismatches. Then revert.
 
+## Since the extract became the source (2026-10-25)
+
+- **`gpu_ecs_sprites`** (default on) draws mobiles and art items from the ECS extracts. On parity frames the view is still drawn under capture first as the reference, its side effects stand, and the ECS instances replace its instances after the diff. With the setting off, the parity harness runs as before (capture drawn, ECS compared).
+- **Always set `CUO_ANIM_SYNC=1` for parity.** Otherwise the view draws nothing for a body's first-seen direction until a worker decodes it, while the extract draws it at once; those first frames show up as capture-side count mismatches.
+- **More lines in the summary:**
+  - `view effects:` mirror bit, FrameInfo and lights compared per mobile;
+  - `[PARITY] items=…` for art items (instances, drawn result, light). Corpses and item multis aren't compared; they still use the capture.
+  - Mismatch lines are `[PARITY] view-effect mismatch` and `[PARITY] item mismatch`.
+- **Scenarios added:** `lights.txt` (night; a torch, then the light-only graphic 0x1647, then a non-human body; about 50 s) and `items.txt` (night; a lit candle, an arrow stack, animated art, bandages; wiped at the end; about 40 s).
+- **Driver commands added:** `light <hex>|off`, `ecssprites on|off`, `window <tag>|stop` (FrameStats windows with `CUO_FRAMESTATS=1`, for in-session A/B timing), and for cleanup `equip`, `items` and `target item <hex serial>`.
+- **The cases and mixed scripts kill and resurrect the character.** That leaves a death robe worn and another in the backpack, plus the cloak. Check with `equip` and `items`, then `[remove` + `target worn 22` / `target item <serial>`. Do this on any account, and always on kbatman.
+
 ## Running it
 
 - **Launcher:** `tools/ecs-parity/run_parity.py`. It writes a throwaway `settings.json` with the password encrypted (from `CUO_TEST_PASSWORD`), runs an `-ecsdriver` scenario with `CUO_ECS_PARITY` and `-ecscheck 120`, closes the client, copies the log and deletes the temp folder.
