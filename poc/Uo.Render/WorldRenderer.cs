@@ -421,7 +421,7 @@ public sealed unsafe class WorldRenderer : IDisposable
                 if (!d.Translucent && !(cot && (d.Light & SpriteInstance.LightCot) != 0 && InCotRect(d))) continue;
                 if (_transCount < transCap) _transSort[_transCount++] = SortKey(d.Depth, _dynFirst + (uint)i);
                 else OverridesDropped++;
-                if (d.Blend is not (InstanceBlend.Normal or InstanceBlend.Screen)) ownBlend++;
+                if (d.Blend is not (InstanceBlend.Normal or InstanceBlend.NormalOrdered or InstanceBlend.Screen)) ownBlend++;
             }
             _table[chunkCount].First = _dynFirst;
             _table[chunkCount].Prefix = (uint)instances;
@@ -493,7 +493,7 @@ public sealed unsafe class WorldRenderer : IDisposable
             {
                 uint gi = _trans[i] - _dynFirst;
                 var b = gi < (uint)_dynCount ? _dynamic[gi].Blend : InstanceBlend.Normal;
-                if (b == InstanceBlend.Screen) b = InstanceBlend.Normal; // same pipeline
+                if (b is InstanceBlend.Screen or InstanceBlend.NormalOrdered) b = InstanceBlend.Normal; // same pipeline
                 if (runCount > 0 && _transRuns[runCount - 1].Blend == b) _transRuns[runCount - 1].Count++;
                 else _transRuns[runCount++] = new TransRun { Start = i, Count = 1, Blend = b };
             }
