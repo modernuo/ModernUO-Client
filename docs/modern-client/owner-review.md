@@ -18,6 +18,7 @@ Running notes for your return, newest at the top within each section. Started 20
 
 | Commit | What | Verified |
 |---|---|---|
+| cacc27d44 | **W3 finished, and the settle follow-up.** Corpses and multi-tile items are now drawn from the ECS too; the old capture runs on the default path only for effects, captured statics and shadow-only draws. Fixed: when an NPC died, the ECS dropped its hair for the first frames of the death animation. The frame hold now also waits for chunks the client still has queued, and fades finish during the hold, so buildings are opaque on the first frame after a teleport (before, 10–36 chunks could still be queued at release, with translucent buildings). Cost: about +1–2 ms per teleport hold, and login black lasts about 100 ms longer. Also the **W3+teleport integration check** on the merged tip: passed. | 0 parity mismatches (about 900k corpse and 260k multi comparisons; across about 60 teleports; a deliberately broken build is caught); picking identical (pickscan 48/48); 13-minute session with memory flat at 1.9 GB, 0 objects left parked, 0 settle timeouts; world prepare slightly better (crowd 92 → 87–91 µs, corpses 42 → 34 µs); 263 tests. NativeAOT not re-measured |
 | 08b952f3a | **GPU page fault fixed (Tier 0).** SDL3.dll is now built from **github.com/modernuo/SDL** branch `modernuo/3.4.19` (b2a3160aa: a 5-line patch that gives Vulkan images of 64 MiB or more their own allocation, so SDL never defragments the atlases). The fork is the `external/SDL` submodule, built with `tools/sdl/build-sdl.ps1`; the DLL is committed with `SDL3.version`. **0 faults in 220 logins vs 4 in 90 at baseline** (p ≈ 0.005% by luck). Diagnostics live on the fork's `diag/defrag` branch and the local `poc/gpu-pagefault-diag`; the fork's `main` is untouched, and nothing went upstream. Mitigations B and C dropped (the patch supersedes them); A came in with the settle merge. | 262 tests; `--external-test` on Vulkan and D3D12; Legacy and flip shots clean; the fps-test logs in |
 | 28bb72308 | **Teleport hitch** (verified on its own branch first): region decode on a worker, chunk loads budgeted per frame. `[go` teleport worst frame 35–36 ms → 12–18 ms. Objects on unloaded chunks are parked until the chunk loads (7,626 parked and 7,612 placed in an 18-minute session; the other 14 moved or were destroyed first). | picking identical (pickscan 0 different); teleports with the frame hold show 0 unsettled frames and 0 timeouts; facet change Trammel↔Felucca; region-edge walks with 0 denials; memory flat over 18 minutes; 262 tests |
 | e9f2505c2 | **W3: mobiles and art items in the Gpu world are drawn from the ECS** (`gpu_ecs_sprites`, default on; the old capture is kept behind it). World prepare: Britain 112→90 µs, bank 147→105, zoomed out 389→331, 120-NPC crowd 168→109. Corpses and multis still use the capture. | 0 mismatches across about 7.5 M comparisons (parity runs need `CUO_ANIM_SYNC=1`); Gpu, Legacy, UI and picking shots looked at; 255 tests |
@@ -37,8 +38,7 @@ Running notes for your return, newest at the top within each section. Started 20
 
 ## In progress
 
-- **Integration check, then the rest of W3 and W2** (an agent started about 02:50): checks W3 and teleport together first, then corpses and multis to the ECS, the fade-in follow-up, then W2.
-- **Next:** W2, then the large-scale test scene (about 2,000 mobiles and 20,000 items).
+- **Large-scale test scene, then W2** (an agent started about 04:50): first a repeatable busy scene (about 2,000 mobiles and 20,000 ground items) on the local shard, measured in both renderers; then W2 (ground items and mobiles from ECS queries instead of tile lists), measured against that scene.
 
 ## Things you saw tonight, explained
 
@@ -49,15 +49,17 @@ Running notes for your return, newest at the top within each section. Started 20
 
 ## Follow-ups noted (not started)
 
+- **Stray test items:** after the W3 corpse runs, one item each near kbatman3 and kbatman4 at Green Acres couldn't be identified, so it was left in place. Harmless.
+- **Multi placement preview** (house placement, drawn at half alpha) is now drawn from the ECS but has no automated test scenario.
+
 - **Your kbatman character:** W3's parity scripts kill and resurrect the character. The agent removed the leftover death robes and a test cloak, checked the backpack, and moved it back to Britain 1495,1629. Worth a glance when you log in.
-- **Teleport and frame-hold interplay:** `VisibleReady` ignores the client's chunk queue, so in very slow frames statics can still be fading in when the hold releases. At 60 fps the queue was empty at all 21 releases checked. Fix candidate: count visible queued chunks as not ready.
 - **Unexplained single-frame spikes** (16–50 ms `update_other`, 95 ms at a facet switch) were seen during verification but not compared with base. Not tied to the new loading.
 - **FNA3D:** a proper fix for "a cycled index buffer isn't rebound" (worked around in the batcher). There's also a dangling `nextRenderPass*` reference after `FreeTextureHandle` that the Codex audit flagged. The page-fault agent will ask before forking FNA3D.
 - **Teleport:** the remaining 10–14 ms frame comes from the server packet burst and one first-sight chunk mesh build. Next step: decode art on a worker before the mesh build.
 
 ## Your FPS test
 
-The build at `C:\Repositories\cuo-fps-test\bin` is **08b952f3a** (published 03:25). It has everything above: the fork SDL, W3, the teleport work, world settle and the B1 fix.
+The build at `C:\Repositories\cuo-fps-test\bin` is **cacc27d44** (published 04:43). It has everything above: the fork SDL, W3 (now including corpses and multis), the teleport work, world settle and the B1 fix.
 
 1. Make sure no agent is running clients (ask me to pause them) and the display is on.
 2. From a normal PowerShell window:
