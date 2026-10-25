@@ -49,7 +49,9 @@ Running notes for your return, newest at the top within each section. Started 20
 ## In progress
 
 - **Legacy regression fix** (an agent started 2026-10-25 afternoon): split W0 from W1, measure with stats off, fix the shared tile walk, verify JIT and NativeAOT for Legacy and Gpu, and re-check your Legacy world-draw rise on a quiet machine.
-- The two agents share a `bench.lock`, so timing series never overlap.
+- **Gpu world parity gaps** (an agent started at about 14:15): effect blends other than Normal/Screen, the sitting deformation, the water wobble, scaled sprites. Each gets fixed, or gets a written proposal if it needs a redesign.
+- **Batcher B8/B9** (an agent started at the same time): cache the UI render target and redraw it only when something changed (behind a setting, pixel-identical, with an every-frame fallback for controls that can't be tracked), and sort batches by atlas, blend and scissor. Each is dropped if it doesn't pay off. A Codex audit runs on B8 before the merge.
+- All agents share a `bench.lock`, so client runs, builds and timing series never overlap.
 
 ## Things you saw tonight, explained
 
