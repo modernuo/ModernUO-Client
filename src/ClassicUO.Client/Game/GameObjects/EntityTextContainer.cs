@@ -12,8 +12,12 @@ namespace ClassicUO.Game.GameObjects
         public int Size,
             MaxSize = 5;
 
+        /// <summary>W5: bumped when a text is added or the container cleared (GameObject.TextAllExpired caches on it).</summary>
+        public uint Version;
+
         public void Add(TextObject obj)
         {
+            Version++;
             PushToBack(obj);
 
             if (Size >= MaxSize)
@@ -29,6 +33,7 @@ namespace ClassicUO.Game.GameObjects
 
         public new void Clear()
         {
+            Version++;
             TextObject item = (TextObject)Items;
             Items = null;
 

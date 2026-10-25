@@ -311,6 +311,10 @@ namespace ClassicUO.Game
 
                 FrameStats.Begin(FramePhase.WorldMobiles);
 
+                // W5: AddOrUpdate's own early-outs (no recent party/guild packet, the world map closed), asked once per frame;
+                // nothing in the loop changes them
+                bool wmap = !Settings.GlobalSettings.WorldUpdateActiveItems || WMapManager.AcceptsLocalUpdates;
+
                 foreach (Mobile mob in Mobiles.Values)
                 {
                     mob.Update();
@@ -324,7 +328,7 @@ namespace ClassicUO.Game
                     {
                         _toRemove.Add(mob.Serial);
                     }
-                    else
+                    else if (wmap)
                     {
                         if (mob.NotorietyFlag == NotorietyFlag.Ally)
                         {
@@ -639,7 +643,42 @@ namespace ClassicUO.Game
             if (Time.Ticks >= _checkNextLog)
             {
                 _checkNextLog = Time.Ticks + 5000;
-                Log.Info($"[w5-check] {_checkFrames} frames, {_checkItems} item checks: {_checkUnlisted} needing an update but unlisted, {MissedActiveItems} caught by the sweep; {_checkCorpses} corpse and {_checkHandles} handle updates seen; {_checkHits} hits checks, {_checkHitsWrong} wrong; {_destroyedSeen} items destroyed, {_checkDestroyedLeft} left in Items after the update; active list {_activeItems.Count}");
+                Log.Info($"[w5-check] {_checkFrames} frames, {_checkItems} item checks: {_checkUnlisted} needing an update but unlisted, {MissedActiveItems} caught by the sweep; {_checkCorpses} corpse and {_checkHandles} handle updates seen; {_checkHits} hits checks, {_checkHitsWrong} wrong; {_destroyedSeen} items destroyed, {_checkDestroyedLeft} left in Items after the update; active list {_activeItems.Count}; text layouts skipped {_checkTextSkips}, {_checkTextMoved} would have moved a text");
+            }
+        }
+
+        private long _checkTextSkips, _checkTextMoved;
+
+        /// <summary>CUO_W5_CHECK: the text layout the overhead text pass skipped (text_skip_expired) must place nothing.</summary>
+        internal void CheckSkippedTextLayout(Entity e)
+        {
+            System.Span<(int X, int Y, int OffsetY)> before = stackalloc (int, int, int)[16];
+            int n = 0;
+
+            for (TextObject t = (TextObject)e.TextContainer.Items; t != null && n < before.Length; t = (TextObject)t.Next)
+            {
+                before[n++] = (t.RealScreenPosition.X, t.RealScreenPosition.Y, t.OffsetY);
+            }
+
+            e.UpdateTextCoordsV();
+            _checkTextSkips++;
+            int i = 0;
+            bool moved = false;
+
+            for (TextObject t = (TextObject)e.TextContainer.Items; t != null && i < n; t = (TextObject)t.Next, i++)
+            {
+                if (t.RealScreenPosition.X != before[i].X || t.RealScreenPosition.Y != before[i].Y || t.OffsetY != before[i].OffsetY)
+                {
+                    moved = true;
+                    t.RealScreenPosition.X = before[i].X;
+                    t.RealScreenPosition.Y = before[i].Y;
+                    t.OffsetY = before[i].OffsetY;
+                }
+            }
+
+            if (moved && _checkTextMoved++ < 10)
+            {
+                Log.Warn($"[w5-check] skipped text layout of 0x{e.Serial:X8} would have moved a text");
             }
         }
 
@@ -957,13 +996,39 @@ namespace ClassicUO.Game
             return serial;
         }
 
+        private readonly List<Item> _scanItems = new List<Item>();
+        private readonly List<Mobile> _scanMobiles = new List<Mobile>();
+
         public uint FindNext(ScanTypeObject scanType, uint lastSerial, bool reverse)
+        {
+            try
+            {
+                return FindNextCore(scanType, lastSerial, reverse);
+            }
+            finally
+            {
+                // don't keep the world's objects alive between scans
+                _scanItems.Clear();
+                _scanMobiles.Clear();
+            }
+        }
+
+        private uint FindNextCore(ScanTypeObject scanType, uint lastSerial, bool reverse)
         {
             bool found = false;
 
             if (scanType == ScanTypeObject.Objects)
             {
-                var items = reverse ? Items.Values.Reverse() : Items.Values;
+                // W5: the same order as Items.Values / .Reverse(), without LINQ's per-call copy and the boxed enumerator
+                List<Item> items = _scanItems;
+                items.Clear();
+                items.AddRange(Items.Values);
+
+                if (reverse)
+                {
+                    items.Reverse();
+                }
+
                 foreach (Item item in items)
                 {
                     if (item.IsMulti || item.IsDestroyed || !item.OnGround)
@@ -987,7 +1052,15 @@ namespace ClassicUO.Game
             }
             else
             {
-                IEnumerable<Mobile> mobiles = reverse ? Mobiles.Values.Reverse() : Mobiles.Values;
+                List<Mobile> mobiles = _scanMobiles;
+                mobiles.Clear();
+                mobiles.AddRange(Mobiles.Values);
+
+                if (reverse)
+                {
+                    mobiles.Reverse();
+                }
+
                 foreach (Mobile mobile in mobiles)
                 {
                     if (mobile.IsDestroyed || mobile == Player)
