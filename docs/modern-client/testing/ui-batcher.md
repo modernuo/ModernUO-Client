@@ -90,6 +90,15 @@ dotnet-trace collect -o <scratch>/runs/<tag>.nettrace --providers Microsoft-Wind
 - **Effect applies:** `UltimaBatcher2D.EffectApplies` is a running total that is always counted. DevBench's `[bench] <entry> done …` log line ends with `N effect applies/frame` for that plan entry.
   - Gpu mode: 3.0 per frame (world, UI and composite `Begin`s), sometimes 3.3 when the brightlight or radius changes.
   - A jump back towards the flush count means something invalidates `_effectDirty` too often. Check `Begin`, custom-effect draws, and `SetBrightlight` or `SetCircleOfTransparencyRadius` being called with changing values.
+  - Legacy: 56–63 per frame at Britain, the bank and the house (2026-10-25), one per drawn mesh layer (`IndexDataChanged`, below). Before that fix it was 7, with corrupted tiles.
+- **An apply is not only a uniform upload.** After an effect apply, FNA3D's SDL_GPU driver rebinds the pipeline, which also resets its index-buffer binding. The mesh path depends on that:
+  - `DrawMeshLayer` rewrites the batcher's one dynamic index buffer per layer with `SetData(Discard)`, which cycles the SDL buffer.
+  - FNA3D skips `SDL_BindGPUIndexBuffer` while the same handle is bound, so without a rebind the layer draws with an earlier cycle's indices.
+  - `UltimaBatcher2D.IndexDataChanged()` forces that rebind. Any new path that rewrites a bound buffer with Discard needs the same.
+- **Regression check for batcher-state changes:** a pure-Legacy run (`-worldrenderer legacy`) with `CUO_BENCH_SHOTS` at the house spot (`house:1427 1691:1`, kbatman2's KamDos). Measure the share of near-black pixels (luminance < 6) in `house_legacy.png`:
+  - about 2% is clean;
+  - 25–67% is the B1 corruption (missing or wrong land and statics).
+  - Run 3 or more times: it moves around every frame.
 
 ## Vertex-generation micro-benchmark
 
