@@ -53,6 +53,16 @@ Revisit if the root cause turns out to be a pure SDL bug (case 1). Owning the de
 ## Tiers
 
 ### Tier 0: stabilise the shared device (now; overlaps the running agent)
+
+**Status 2026-10-25: the page fault is fixed.**
+- **The fix:** the client ships SDL3 from our fork, where images of 64 MiB or more get a dedicated allocation, so SDL never defragments Uo.Render's atlases ([sdl-fork.md](sdl-fork.md)). Rates are in [device-lost-leak.md](device-lost-leak.md) part B.
+- **No mid-session RT recreation:** done, through the world-settle merge (the world RT is always PreserveContents in game).
+- **Frame-boundary creation (C):** measured but not shipped. The settle code owns world-pass creation, and the atlas can't move any more.
+- **Device loss:** done (exit 0xDEAD).
+- **Debuggability:** partial. Uo.Render names its textures, but Debug builds can't run the Gpu world: SDL's debug device rejects the Indexed8 anim atlas's SAMPLER usage.
+- **Gate:** login stress under Aftermath, measured with the repro loop; 0 own faults with the fork DLL. The owner's FPS test is still to run on the new DLL.
+
+The original plan:
 - **Frame-boundary resources:** create and destroy Uo.Render's large resources only at frame boundaries, after FNA's `SwapBuffers` and before the next frame's FNA command buffer records anything.
 - **No mid-session RT recreation:** stop recreating the world render target when the GPU renderer starts. Pick the RT usage once at startup instead of flipping `PreserveWorldContents`.
 - **Device loss:** handle it with a clean exit, logging and an exit code. In progress (device-lost agent).
