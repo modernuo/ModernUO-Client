@@ -296,8 +296,8 @@ namespace ClassicUO
             // frame-time tail: the worst frame, hitch counts, and the phases that dominated the worst frame
             var frames = _phase[(int)FramePhase.Frame];
             var presents = _phase[(int)FramePhase.Present];
-            int worst = 0, hitch8 = 0, hitch16 = 0, cpuHitch8 = 0, cpuHitch16 = 0;
-            double cpuMax = 0;
+            int worst = 0, hitch8 = 0, hitch16 = 0, cpuHitch8 = 0, cpuHitch16 = 0, worstWork = 0, workHitch8 = 0, workHitch16 = 0;
+            double cpuMax = 0, workMax = 0;
 
             for (int i = 0; i < n; i++)
             {
@@ -321,13 +321,35 @@ namespace ClassicUO
                 cpuMax = Math.Max(cpuMax, cpu);
                 cpuHitch8 += cpu > 8 ? 1 : 0;
                 cpuHitch16 += cpu > 16 ? 1 : 0;
+
+                // Update + Draw only: the client's own work (loading shows up here, in world prepare or update); stalls
+                // outside every phase (the OS not scheduling the window, focus changes) do not
+                if (On)
+                {
+                    double work = _phase[(int)FramePhase.Update][i] + _phase[(int)FramePhase.Draw][i];
+
+                    if (work > workMax)
+                    {
+                        workMax = work;
+                        worstWork = i;
+                    }
+
+                    workHitch8 += work > 8 ? 1 : 0;
+                    workHitch16 += work > 16 ? 1 : 0;
+                }
             }
 
             double frameMax = n > 0 ? frames[worst] : 0;
-            var top = new StringBuilder();
 
-            if (On && n > 0)
+            string Top(int frame)
             {
+                var top = new StringBuilder();
+
+                if (!On || n == 0)
+                {
+                    return "";
+                }
+
                 for (int k = 0; k < 3; k++)
                 {
                     int best = -1;
@@ -339,18 +361,23 @@ namespace ClassicUO
                             continue;
                         }
 
-                        if (best < 0 || _phase[p][worst] > _phase[best][worst])
+                        if (best < 0 || _phase[p][frame] > _phase[best][frame])
                         {
                             best = p;
                         }
                     }
 
-                    top.Append(inv, $"{(k > 0 ? " " : "")}{_phaseKeys[best]}={_phase[best][worst]:0.00}");
+                    top.Append(inv, $"{(k > 0 ? " " : "")}{_phaseKeys[best]}={_phase[best][frame]:0.00}");
                 }
+
+                return top.ToString();
             }
 
-            sb.Append(inv, $"  frame max {frameMax:0.00} ms, hitches >8 ms {hitch8}, >16 ms {hitch16}; without Present: max {cpuMax:0.00} ms, >8 ms {cpuHitch8}, >16 ms {cpuHitch16}; worst frame: {top}\n");
-            json.Append(inv, $"}},\"frame_max\":{frameMax:0.000},\"hitch8\":{hitch8},\"hitch16\":{hitch16},\"cpu_max\":{cpuMax:0.000},\"cpu_hitch8\":{cpuHitch8},\"cpu_hitch16\":{cpuHitch16},\"worst\":\"{top}\"");
+            string topFrame = Top(worst), topWork = Top(worstWork);
+            sb.Append(inv, $"  frame max {frameMax:0.00} ms, hitches >8 ms {hitch8}, >16 ms {hitch16}; without Present: max {cpuMax:0.00} ms, >8 ms {cpuHitch8}, >16 ms {cpuHitch16}; worst frame: {topFrame}\n");
+            sb.Append(inv, $"  Update+Draw max {workMax:0.00} ms, >8 ms {workHitch8}, >16 ms {workHitch16}; worst: {topWork}\n");
+            json.Append(inv, $"}},\"frame_max\":{frameMax:0.000},\"hitch8\":{hitch8},\"hitch16\":{hitch16},\"cpu_max\":{cpuMax:0.000},\"cpu_hitch8\":{cpuHitch8},\"cpu_hitch16\":{cpuHitch16},\"worst\":\"{topFrame}\"");
+            json.Append(inv, $",\"work_max\":{workMax:0.000},\"work_hitch8\":{workHitch8},\"work_hitch16\":{workHitch16},\"worst_work\":\"{topWork}\"");
 
             json.Append(",\"counts\":{");
             sb.Append("  count                      avg      p50      p95      max\n");
