@@ -59,8 +59,11 @@ Each client is fresh, so every first visit is a true first sight; within a run, 
 **How hitches are counted** (FrameStats, every 5 s window):
 - `frame max`: the worst frame; `p99`: the 99th percentile frame time;
 - `h>8` and `h>16`: frames over 8 ms and 16 ms;
-- the same three **without Present** (`cpu_max`, `cpu_hitch8`, `cpu_hitch16`: frame time minus Present). Present waits come from the GPU and the compositor, mostly other agents' uncapped clients on the same GPU, and swing 10–60 ms between identical runs. Loading hitches are CPU work in Update or Draw, so judge them on the without-Present columns;
-- `worst`: the three biggest phases of the worst frame (for example `world_prepare=52.8` = loading inside the world walk; `present=45` = GPU wait, not ours).
+- the same three **without Present** (`cpu_max`, `cpu_hitch8`, `cpu_hitch16`: frame time minus Present). Present waits come from the GPU and the compositor, mostly other agents' uncapped clients on the same GPU, and swing 10–60 ms between identical runs;
+- **Update+Draw** (`work_max`, `work_hitch8`, `work_hitch16`): only the client's own work. Loading hitches land here (world prepare, update). **Judge loading on these columns.** Frame-minus-Present still contains stalls outside every phase: frames of 250–750 ms where no phase took more than 1 ms, seen in both builds (the OS not scheduling the window while other clients run);
+- `worst` / `worst_work`: the three biggest phases of the worst frame and of the worst Update+Draw frame (for example `world_prepare=52.8` = loading inside the world walk; `present=45` = GPU wait, not ours).
+
+`summarize.py` prints one line per plan entry: worst-window p99, frame max, hitch sums for all three definitions, allocation per frame, GC counts and the worst Update+Draw frame's phases.
 
 ## Noise and false positives
 

@@ -199,7 +199,7 @@ namespace ClassicUO.Renderer.Animations
         public static bool AsyncFirstSight = Environment.GetEnvironmentVariable("CUO_ANIM_SYNC") != "1";
 
         private readonly ConcurrentQueue<DirectionJob> _ready = new ConcurrentQueue<DirectionJob>();
-        private bool[] _bodySeen;
+        private bool[] _bodyDrawn; // the body has at least one direction uploaded (it may be on screen)
         private int _pendingJobs;
 
         /// <summary>Directions decoding on worker threads (drawn as nothing until they are ready).</summary>
@@ -214,17 +214,16 @@ namespace ClassicUO.Renderer.Animations
             }
 
             var sprites = new SpriteInfo[entry.FrameCount];
-            _bodySeen ??= new bool[_animationLoader.BodyCount];
+            _bodyDrawn ??= new bool[_animationLoader.BodyCount];
 
-            // First sight of a body: decode on a worker unless the chunks are already cached. Until the job lands, the
-            // frames exist (count, centre and size, so animation timing and dimensions are unchanged) but have no texture,
-            // and callers draw nothing for them, as for an empty frame. Later directions and actions of a body that is
-            // already on screen stay synchronous, so a visible mobile never blinks when it turns or changes action; the
-            // worker prefetches the chunks of the other directions of the same action so those loads rarely decompress.
-            if (AsyncFirstSight && !_bodySeen[body] && !IsResident(entry))
+            // A body with nothing uploaded yet (first sight, or its first directions still on a worker): decode on a worker
+            // unless the chunks are already cached. Until the job lands, the frames exist (count, centre and size, so
+            // animation timing and dimensions are unchanged) but have no texture, and callers draw nothing for them, as for
+            // an empty frame. Once a body has a direction uploaded, later directions and actions stay synchronous, so a
+            // visible mobile never blinks when it turns or changes action; the worker prefetches the chunks of the other
+            // directions of the action and of the first actions (walk, stand, run) so those loads rarely decompress.
+            if (AsyncFirstSight && !_bodyDrawn[body] && !IsResident(entry))
             {
-                _bodySeen[body] = true;
-
                 for (int i = 0; i < sprites.Length; i++)
                 {
                     ref readonly var frame = ref _animationLoader.GetFrame(entry.FirstFrame + (uint)i);
@@ -244,7 +243,7 @@ namespace ClassicUO.Renderer.Animations
                 return sprites;
             }
 
-            _bodySeen[body] = true;
+            _bodyDrawn[body] = true;
             uint[] buffer = null;
 
             try
@@ -342,6 +341,7 @@ namespace ClassicUO.Renderer.Animations
         private void Complete(DirectionJob job)
         {
             Interlocked.Decrement(ref _pendingJobs);
+            _bodyDrawn[job.Body] = true;
 
             for (int i = 0; i < job.Sprites.Length; i++)
             {
@@ -369,6 +369,9 @@ namespace ClassicUO.Renderer.Animations
                 }
             }
         }
+
+        // actions 0..4 cover walk/stand/run for monsters, animals and people
+        private const int PrefetchActions = 5;
 
         private sealed class DirectionJob : IThreadPoolWorkItem
         {
@@ -413,14 +416,25 @@ namespace ClassicUO.Renderer.Animations
 
                     Pixels = pixels;
 
-                    // warm the chunks of the other directions of this action: turning then loads without a decompress
-                    for (int d = 0; d < AnimationsLoader.MAX_DIRECTIONS; d++)
+                    // warm the chunks of this action's other directions and of the first actions (walk, stand, run for
+                    // every body type): turning or starting to move then loads synchronously without a decompress
+                    for (int a = -1; a < PrefetchActions; a++)
                     {
-                        if (d != Dir && loader.TryGetDirection(Body, Action, d + 3, out var other))
+                        int action = a < 0 ? Action : a;
+
+                        if (a == Action)
                         {
-                            for (int i = 0; i < other.FrameCount; i++)
+                            continue;
+                        }
+
+                        for (int d = 0; d < AnimationsLoader.MAX_DIRECTIONS; d++)
+                        {
+                            if ((action != Action || d != Dir) && loader.TryGetDirection(Body, action, d + 3, out var other))
                             {
-                                loader.PrefetchFrame(other.FirstFrame + (uint)i);
+                                for (int i = 0; i < other.FrameCount; i++)
+                                {
+                                    loader.PrefetchFrame(other.FirstFrame + (uint)i);
+                                }
                             }
                         }
                     }
