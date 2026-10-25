@@ -26,7 +26,7 @@ using static SDL3.SDL;
 
 namespace ClassicUO
 {
-    internal unsafe class GameController : Microsoft.Xna.Framework.Game
+    internal unsafe partial class GameController : Microsoft.Xna.Framework.Game
     {
         private SDL_EventFilter _filter;
 
@@ -110,6 +110,7 @@ namespace ClassicUO
             SetRefreshRate(Settings.GlobalSettings.FPS);
 
             _uoSpriteBatch = new UltimaBatcher2D(GraphicsDevice);
+            GraphicsDevice.DeviceReset += (_, _) => _uiCache.Invalidate();
 
             _filter = HandleSdlEvent;
             SDL_SetEventFilter(_filter, IntPtr.Zero);
@@ -596,6 +597,7 @@ namespace ClassicUO
             // teleport (or a switch back from the developer Legacy mode) holds the last frame in it (WorldSettleGate).
             _renderTargets.PreserveWorldContents = Scene is GameScene;
             _renderTargets.WorldFade = 1f; // GameScene lowers it while there is no world frame yet
+            _renderTargets.UiCache = Settings.GlobalSettings.UiRenderCache;
             _renderTargets.EnsureSizes(
                 GraphicsDevice,
                 new Rectangle(0, 0, GraphicManager.PreferredBackBufferWidth, GraphicManager.PreferredBackBufferHeight),
@@ -634,9 +636,6 @@ namespace ClassicUO
             bool drawUi = _renderTargets.UiRenderTarget != null && !_renderTargets.UiRenderTarget.IsDisposed
                 && GraphicManager.PreferredBackBufferWidth > 0 && GraphicManager.PreferredBackBufferHeight > 0;
 
-            _uoSpriteBatch.GraphicsDevice.SetRenderTarget(_renderTargets.UiRenderTarget);
-            GraphicsDevice.Clear(Color.Transparent);
-
             if ((UO.World?.InGame ?? false) && SelectedObject.Object is TextObject t)
             {
                 if (t.IsTextGump)
@@ -652,26 +651,35 @@ namespace ClassicUO
             SelectedObject.HealthbarObject = null;
             SelectedObject.SelectedContainer = null;
 
+            FrameStats.Begin(FramePhase.UiPass);
+            int uiFlushes0 = UltimaBatcher2D.FrameFlushes, uiDrawCalls0 = UltimaBatcher2D.FrameDrawCalls;
+            long uiFna0 = UltimaBatcher2D.FrameGpuTicks;
+
+            if (drawUi && _renderTargets.UiCache && _renderTargets.UiCacheRenderTarget is { IsDisposed: false })
+            {
+                DrawUiCached();
+            }
+            else
+            {
+                _uiCache.Invalidate();
+
+                _uoSpriteBatch.GraphicsDevice.SetRenderTarget(_renderTargets.UiRenderTarget);
+                GraphicsDevice.Clear(Color.Transparent);
+
+                if (drawUi)
+                {
+                    DrawSceneUiAndGumps();
+                    DrawCursor();
+                }
+            }
+
+            FrameStats.End(FramePhase.UiPass);
+
             if (drawUi)
             {
-                FrameStats.Begin(FramePhase.SceneDrawUi);
-                _uoSpriteBatch.Begin();
-                if (Scene != null && Scene.IsLoaded && !Scene.IsDestroyed)
-                {
-                    Scene.DrawUI(_uoSpriteBatch);
-                }
-                _uoSpriteBatch.End();
-                FrameStats.End(FramePhase.SceneDrawUi);
-
-                FrameStats.Begin(FramePhase.UiDraw);
-                UIManager.Draw(_uoSpriteBatch);
-                FrameStats.End(FramePhase.UiDraw);
-
-                FrameStats.Begin(FramePhase.Cursor);
-                _uoSpriteBatch.Begin();
-                UO.GameCursor?.Draw(_uoSpriteBatch);
-                _uoSpriteBatch.End();
-                FrameStats.End(FramePhase.Cursor);
+                FrameStats.Set(FrameCounter.UiFlushes, UltimaBatcher2D.FrameFlushes - uiFlushes0);
+                FrameStats.Set(FrameCounter.UiDrawCalls, UltimaBatcher2D.FrameDrawCalls - uiDrawCalls0);
+                FrameStats.AddTicks(FramePhase.UiFna, UltimaBatcher2D.FrameGpuTicks - uiFna0);
             }
 
             FrameStats.Begin(FramePhase.Composite);
@@ -1209,6 +1217,7 @@ namespace ClassicUO
             using (FileStream fileStream = File.Create(path))
             {
                 texture.SetData(colors);
+                ClassicUO.Renderer.TextureUploads.Changed();
                 texture.SaveAsPng(fileStream, texture.Width, texture.Height);
                 string message = string.Format(ResGeneral.ScreenshotStoredIn0, path);
 

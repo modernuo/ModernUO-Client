@@ -31,6 +31,9 @@ namespace ClassicUO
     //   CUO_BENCH_TOPMOST=1 keep the window on top while benching (occluded windows are throttled)
     //   plan entries size:WxH|max change the CUO_BENCH_SIZE client area mid-plan (max = maximised window)
     //   plan entry gumps opens the paperdoll, backpack, journal and status bar (the UI allocation/parity scene); shots also save the UI render target
+    //   plan entries uicache:on|off switch the UI render cache (ui_render_cache, B8); CUO_UI_CACHE_CHECK=1|N compares the UI
+    //   target with a replay of the recordings and with a direct redraw every N frames (default 30)
+    //   plan entry healthbars opens health bars for the player and the three nearest mobiles at the right edge
     //   plan entries prepdetail:on|off switch FrameStats' world prepare detail buckets (CUO_FRAMESTATS_PREP=1 starts with them on)
     //   plan entries gpuskip:on|off switch the Gpu world prepare's skipping of baked land and statics (gpu_prepare_skip_baked)
     //   plan entries itemcache:on|off switch its ground-item cache (gpu_prepare_item_cache); name:lsreinit is reinit in the large-scale scene
@@ -631,6 +634,218 @@ namespace ClassicUO
             }
         }
 
+        // ---- plan mode "ui" (name:ui[:zoom]): a 14-second loop of UI changes while measuring, for the UI render cache (B8) ----
+        // The mouse goes through Input.Mouse.Override (the OS cursor isn't moved). Phases: 0 the cursor circles over the world,
+        // 1-2 a sweep over the paperdoll (hover), 3-4 still over a backpack item (tooltip), 5-6 the journal moves, 7 the chat box
+        // has focus (caret), 8-9 a backpack item on the cursor, 10 it's dropped back, 11 the player's hits change locally
+        // (health bar, status), 12 the camera zoom alternates, 13 the world map gump is open.
+        private static int _uiPhase = -1;
+        private static ushort _uiHits;
+        private static uint _uiHeld;
+
+        private static void UiSceneFrame(GameController game, Game.Scenes.GameScene gs, World world, long now)
+        {
+            double t = (now - _planStart) / (double)Stopwatch.Frequency;
+            int phase = (int)(t % 14);
+            double f = t % 1;
+            var ui = Game.Managers.UIManager.Gumps;
+
+            if (phase != _uiPhase)
+            {
+                UiPhaseExit(world, gs);
+                _uiPhase = phase;
+                UiPhaseEnter(world, phase);
+            }
+
+            Microsoft.Xna.Framework.Point mouse;
+
+            switch (phase)
+            {
+                case 0:
+                    mouse = new Microsoft.Xna.Framework.Point(640 + (int)(220 * Math.Cos(Math.PI * 2 * f)), 360 + (int)(150 * Math.Sin(Math.PI * 2 * f)));
+
+                    break;
+
+                case 1:
+                case 2:
+                    mouse = new Microsoft.Xna.Framework.Point(40 + (int)(220 * (t % 14 - 1) / 2), 300);
+
+                    break;
+
+                case 3:
+                case 4:
+                    mouse = BackpackItemPoint(world) ?? new Microsoft.Xna.Framework.Point(340, 220);
+
+                    break;
+
+                case 5:
+                case 6:
+                    foreach (var g in ui)
+                    {
+                        if (g is Game.UI.Gumps.JournalGump)
+                        {
+                            g.X = 500 + (int)(60 * Math.Sin(Math.PI * (t % 14 - 5)));
+                        }
+                    }
+
+                    mouse = new Microsoft.Xna.Framework.Point(900, 640);
+
+                    break;
+
+                case 8:
+                case 9:
+                    mouse = new Microsoft.Xna.Framework.Point(100 + (int)(1000 * (t % 14 - 8) / 2), 250 + (int)(200 * Math.Sin(Math.PI * 2 * f)));
+
+                    break;
+
+                case 11:
+                    if (_uiHits != 0)
+                    {
+                        world.Player.Hits = (ushort)Math.Max(1, world.Player.HitsMax * (0.5 + 0.5 * Math.Sin(Math.PI * 2 * f)));
+                    }
+
+                    mouse = new Microsoft.Xna.Framework.Point(600, 80);
+
+                    break;
+
+                case 12:
+                    if (gs != null)
+                    {
+                        gs.Camera.Zoom = ((int)(t * 4) & 1) == 0 ? 1f : 1.25f;
+                    }
+
+                    mouse = new Microsoft.Xna.Framework.Point(700, 500);
+
+                    break;
+
+                case 13:
+                    mouse = new Microsoft.Xna.Framework.Point(400 + (int)(200 * f), 300);
+
+                    break;
+
+                default:
+                    mouse = new Microsoft.Xna.Framework.Point(1000, 650);
+
+                    break;
+            }
+
+            Input.Mouse.Override = mouse;
+            Input.Mouse.Position = mouse;
+        }
+
+        private static void UiPhaseEnter(World world, int phase)
+        {
+            switch (phase)
+            {
+                case 7:
+                    if (Game.Managers.UIManager.SystemChat?.TextBoxControl is { } box)
+                    {
+                        box.SetKeyboardFocus();
+                    }
+
+                    break;
+
+                case 8:
+                    if (world.Player.FindItemByLayer(Game.Data.Layer.Backpack) is { } pack && pack.Items is Game.GameObjects.Item first
+                        && !Client.Game.UO.GameCursor.ItemHold.Enabled && GameActions.PickUp(world, first.Serial, 0, 0, 1))
+                    {
+                        _uiHeld = first.Serial;
+                        Log.Info($"[bench-ui] holding 0x{first.Graphic:X4} on the cursor");
+                    }
+
+                    break;
+
+                case 10:
+                    DropHeld(world);
+
+                    break;
+
+                case 11:
+                    _uiHits = world.Player.Hits;
+
+                    break;
+
+                case 13:
+                    GameActions.OpenWorldMap(world);
+
+                    break;
+            }
+
+            Log.Info($"[bench-ui] phase {phase}, mouse over {Game.Managers.UIManager.MouseOverControl?.GetType().Name ?? "world"}" +
+                     $"{(Game.Managers.UIManager.KeyboardFocusControl != null ? ", keyboard focus " + Game.Managers.UIManager.KeyboardFocusControl.GetType().Name : "")}" +
+                     $"{(Game.Managers.UIManager.GetGump<Game.UI.Gumps.WorldMapGump>() != null ? ", world map open" : "")}");
+        }
+
+        private static void UiPhaseExit(World world, Game.Scenes.GameScene gs)
+        {
+            switch (_uiPhase)
+            {
+                case 7:
+                    Game.Managers.UIManager.KeyboardFocusControl = null;
+
+                    break;
+
+                case 11:
+                    if (_uiHits != 0)
+                    {
+                        world.Player.Hits = _uiHits;
+                        _uiHits = 0;
+                    }
+
+                    break;
+
+                case 12:
+                    if (gs != null)
+                    {
+                        gs.Camera.Zoom = 1f;
+                    }
+
+                    break;
+
+                case 13:
+                    Game.Managers.UIManager.GetGump<Game.UI.Gumps.WorldMapGump>()?.Dispose();
+
+                    break;
+            }
+        }
+
+        private static void UiSceneEnd(World world, Game.Scenes.GameScene gs)
+        {
+            UiPhaseExit(world, gs);
+            DropHeld(world);
+            _uiPhase = -1;
+            Input.Mouse.Override = null;
+        }
+
+        private static void DropHeld(World world)
+        {
+            if (_uiHeld != 0 && Client.Game.UO.GameCursor.ItemHold.Enabled && world.Player.FindItemByLayer(Game.Data.Layer.Backpack) is { } pack)
+            {
+                GameActions.DropItem(_uiHeld, 0xFFFF, 0xFFFF, 0, pack.Serial);
+            }
+
+            _uiHeld = 0;
+        }
+
+        private static Microsoft.Xna.Framework.Point? BackpackItemPoint(World world)
+        {
+            foreach (var g in Game.Managers.UIManager.Gumps)
+            {
+                if (g is Game.UI.Gumps.ContainerGump)
+                {
+                    foreach (var c in g.Children)
+                    {
+                        if (c is Game.UI.Controls.ItemGump item)
+                        {
+                            return new Microsoft.Xna.Framework.Point(item.ScreenCoordinateX + item.Width / 2, item.ScreenCoordinateY + item.Height / 2);
+                        }
+                    }
+                }
+            }
+
+            return null;
+        }
+
         private static void HoldMouse(GameController game)
         {
             if (_mouse.HasValue && game.Scene is Game.Scenes.GameScene scene)
@@ -1066,12 +1281,22 @@ namespace ClassicUO
                     _travelAt = now + sec / 4;
                 }
 
+                else if (mode == "ui")
+                {
+                    UiSceneFrame(game, gs, world, now);
+                }
+
                 TeleportShot(game);
 
                 if (FrameStats ? ClassicUO.FrameStats.WindowsReported - _windowsAtStart >= _planWindows : now >= _stepAt)
                 {
                     ClassicUO.FrameStats.StopWindow();
                     world.Player.Pathfinder.StopAutoWalk();
+
+                    if (mode == "ui")
+                    {
+                        UiSceneEnd(world, gs);
+                    }
 
                     if (_bodyRestore != 0)
                     {
@@ -1242,6 +1467,16 @@ namespace ClassicUO
                         break;
                     }
 
+                    if (_plan[_planIndex].StartsWith("uicache:"))
+                    {
+                        Configuration.Settings.GlobalSettings.UiRenderCache = _plan[_planIndex] == "uicache:on";
+                        Log.Info($"[bench] ui render cache: {Configuration.Settings.GlobalSettings.UiRenderCache}");
+                        _planIndex++;
+                        _stepAt = now + sec;
+
+                        break;
+                    }
+
                     if (_plan[_planIndex].StartsWith("itemcache:"))
                     {
                         Configuration.Settings.GlobalSettings.GpuPrepareItemCache = _plan[_planIndex] == "itemcache:on";
@@ -1406,6 +1641,37 @@ namespace ClassicUO
                         break;
                     }
 
+                    if (_plan[_planIndex] == "healthbars")
+                    {
+                        // health bars for the player and the nearest three mobiles, in a column at the right edge (the
+                        // typical-UI scene of the UI cache and batcher work: world-driven gumps)
+                        var mobiles = new System.Collections.Generic.List<Game.GameObjects.Mobile>();
+
+                        foreach (var m in world.Mobiles.Values)
+                        {
+                            if (m != world.Player && !m.IsDestroyed)
+                            {
+                                mobiles.Add(m);
+                            }
+                        }
+
+                        mobiles.Sort((a, b) => a.Distance.CompareTo(b.Distance));
+                        mobiles.Insert(0, world.Player);
+                        int y = 40;
+
+                        for (int i = 0; i < mobiles.Count && i < 4; i++)
+                        {
+                            Game.Managers.UIManager.Add(new Game.UI.Gumps.HealthBarGump(world, mobiles[i]) { X = 1080, Y = y });
+                            y += 60;
+                        }
+
+                        Log.Info($"[bench] healthbars: {Math.Min(4, mobiles.Count)}");
+                        _planIndex++;
+                        _stepAt = now + sec;
+
+                        break;
+                    }
+
                     if (_plan[_planIndex].StartsWith("season:"))
                     {
                         var season = Enum.Parse<Game.Managers.Season>(_plan[_planIndex].Substring(7), true);
@@ -1461,7 +1727,7 @@ namespace ClassicUO
                         gs.Camera.Zoom = zoom;
                     }
 
-                    GameActions.Say(mode == "bwalk" ? "[go 1495 1528" : mode == "lswalk" || mode == "lsreinit" ? "[go 5156 2150" : mode == "travel" || mode == "walk" || mode == "bodies" || mode == "ltravel" || mode == "glide" || mode == "reinit" || mode == "reinitrt" ? "[go 1495 1629" : $"[go {mode}");
+                    GameActions.Say(mode == "bwalk" ? "[go 1495 1528" : mode == "lswalk" || mode == "lsreinit" ? "[go 5156 2150" : mode == "travel" || mode == "walk" || mode == "bodies" || mode == "ltravel" || mode == "glide" || mode == "reinit" || mode == "reinitrt" || mode == "ui" ? "[go 1495 1629" : $"[go {mode}");
                     _step = 2;
                     _stepAt = now + sec * 8;
 
