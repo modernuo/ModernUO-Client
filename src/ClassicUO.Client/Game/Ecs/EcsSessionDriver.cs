@@ -266,6 +266,12 @@ namespace ClassicUO.Game
 
                             break;
 
+                        // held: the item the last pick picked up (e.g. after drop backpack, to change it in the pack)
+                        case "held" when _held != 0:
+                            world.TargetManager.Target(_held);
+
+                            break;
+
                         // item <hex serial>: a known item, e.g. one in the backpack (cleanup with [remove)
                         case "item" when args.Length > 1 && world.Items.Get(Convert.ToUInt32(args[1], 16)) is { } known:
                             world.TargetManager.Target(known.Serial);
@@ -320,6 +326,71 @@ namespace ClassicUO.Game
                 case "itemcache" when args.Length > 0:
                     Settings.GlobalSettings.GpuPrepareItemCache = args[0] == "on";
                     Log.Info($"[ECS] driver: item cache {args[0]}");
+
+                    return true;
+
+                // handles on|off: the object handles (name overhead) toggle, for every object type; handles count: the
+                // name gumps open and the items/mobiles showing handles (W5's active item check)
+                case "handles" when args.Length > 0:
+                    if (args[0] == "count")
+                    {
+                        int gumps = 0, items = 0, mobiles = 0;
+
+                        foreach (Gump g in UIManager.Gumps)
+                        {
+                            if (g is NameOverheadGump && !g.IsDisposed)
+                            {
+                                gumps++;
+                            }
+                        }
+
+                        foreach (Item it in world.Items.Values)
+                        {
+                            if (it.ObjectHandlesStatus == ObjectHandlesStatus.DISPLAYING)
+                            {
+                                items++;
+                            }
+                        }
+
+                        foreach (Mobile mob in world.Mobiles.Values)
+                        {
+                            if (mob.ObjectHandlesStatus == ObjectHandlesStatus.DISPLAYING)
+                            {
+                                mobiles++;
+                            }
+                        }
+
+                        Log.Info($"[ECS] driver: handles: {gumps} name gumps, {items} items and {mobiles} mobiles displaying");
+                    }
+                    else
+                    {
+                        if (args[0] == "on")
+                        {
+                            world.NameOverHeadManager.TypeAllowed = NameOverheadTypeAllowed.All;
+                        }
+
+                        world.NameOverHeadManager.IsToggled = args[0] == "on";
+                        Log.Info($"[ECS] driver: handles {args[0]}");
+                    }
+
+                    return true;
+
+                // mobiles: hits, max and percentage of the mobiles within 8 tiles (health bars read the percentage)
+                case "mobiles":
+                    foreach (Mobile mob in world.Mobiles.Values)
+                    {
+                        if (Math.Abs(mob.X - player.X) <= 8 && Math.Abs(mob.Y - player.Y) <= 8)
+                        {
+                            Log.Info($"[ECS] mobile 0x{mob.Serial:X8} body 0x{mob.Graphic:X4} hits {mob.Hits}/{mob.HitsMax} = {mob.HitsPercentage}% at {mob.X},{mob.Y} {mob.Name}");
+                        }
+                    }
+
+                    return true;
+
+                // activeitems on|off: World.Update's active item list (world_update_active_items, W5)
+                case "activeitems" when args.Length > 0:
+                    Settings.GlobalSettings.WorldUpdateActiveItems = args[0] == "on";
+                    Log.Info($"[ECS] driver: active items {args[0]}");
 
                     return true;
 

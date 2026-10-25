@@ -368,11 +368,140 @@ namespace ClassicUO.Game
                 FrameStats.End(FramePhase.WorldMobiles);
                 FrameStats.Begin(FramePhase.WorldItems);
 
+                if (Settings.GlobalSettings.WorldUpdateActiveItems)
+                {
+                    UpdateActiveItems(do_delete);
+                }
+                else
+                {
+                    UpdateAllItems(do_delete);
+                }
+
+                FrameStats.End(FramePhase.WorldItems);
+                FrameStats.Begin(FramePhase.WorldEffectsText);
+                _effectManager.Update();
+                WorldTextManager.Update();
+                WMapManager.RemoveUnupdatedWEntity();
+                FrameStats.End(FramePhase.WorldEffectsText);
+                FrameStats.Begin(FramePhase.WorldEcs);
+                Ecs.Update();
+                FrameStats.End(FramePhase.WorldEcs);
+                FrameStats.Set(FrameCounter.Mobiles, Mobiles.Count);
+                FrameStats.Set(FrameCounter.Items, Items.Count);
+            }
+        }
+
+        // W5 (world_update_active_items): items whose Update does something this frame (Item.NeedsFrameUpdate)
+        private readonly List<Item> _activeItems = new List<Item>();
+        // items destroyed since the last update; World.Update drops them from Items as the full loop did
+        private readonly List<Item> _destroyedItems = new List<Item>();
+        private bool _activeItemsValid;
+
+        /// <summary>Items in the per-frame update list (corpses, items whose handles just opened).</summary>
+        public int ActiveItemCount => _activeItems.Count;
+
+        /// <summary>W5: <paramref name="item"/> needs <see cref="Item.Update"/> from now on (a corpse, or handles opened).</summary>
+        public void QueueItemUpdate(Item item)
+        {
+            if (!item.InUpdateList)
+            {
+                item.InUpdateList = true;
+                _activeItems.Add(item);
+            }
+        }
+
+        internal void OnItemDestroyed(Item item)
+        {
+            _destroyedItems.Add(item);
+            _destroyedSeen++;
+        }
+
+        // world_update_active_items off: every item, every frame (ClassicUO's loop)
+        private void UpdateAllItems(bool do_delete)
+        {
+            _activeItemsValid = false;
+            _destroyedItems.Clear();
+
+            foreach (Item item in Items.Values)
+            {
+                item.Update();
+
+                if (do_delete && item.OnGround && item.Distance > ClientViewRange /*CheckToRemove(item, ClientViewRange)*/)
+                {
+                    if (item.IsMulti)
+                    {
+                        if (HouseManager.TryToRemove(item, ClientViewRange))
+                        {
+                            RemoveItem(item);
+                        }
+                    }
+                    else
+                    {
+                        RemoveItem(item);
+                    }
+                }
+
+                if (item.IsDestroyed)
+                {
+                    _toRemove.Add(item.Serial);
+                }
+            }
+
+            if (_toRemove.Count != 0)
+            {
+                for (int i = 0; i < _toRemove.Count; i++)
+                {
+                    Items.Remove(_toRemove[i]);
+                }
+
+                _toRemove.Clear();
+            }
+        }
+
+        // W5: the same work as UpdateAllItems. Item.Update is a no-op for every item not in the active list
+        // (Item.NeedsFrameUpdate), the range removal only runs every 50 ms (do_delete), and destroyed items are known
+        // from Entity.Destroy, so the full pass runs only on do_delete frames.
+        private void UpdateActiveItems(bool do_delete)
+        {
+            if (ActiveCheck)
+            {
+                CheckActiveItems();
+            }
+
+            if (!_activeItemsValid)
+            {
+                // first frame on (or after the setting was off): find every item that needs updates
+                _activeItemsValid = true;
+
                 foreach (Item item in Items.Values)
                 {
-                    item.Update();
+                    if (item.NeedsFrameUpdate)
+                    {
+                        QueueItemUpdate(item);
+                    }
+                }
+            }
 
-                    if (do_delete && item.OnGround && item.Distance > ClientViewRange /*CheckToRemove(item, ClientViewRange)*/)
+            for (int i = 0; i < _activeItems.Count; i++)
+            {
+                Item item = _activeItems[i];
+
+                item.Update();
+
+                if (!item.NeedsFrameUpdate || !ReferenceEquals(Items.Get(item.Serial), item))
+                {
+                    item.InUpdateList = false;
+                    _activeItems[i] = _activeItems[_activeItems.Count - 1];
+                    _activeItems.RemoveAt(_activeItems.Count - 1);
+                    i--;
+                }
+            }
+
+            if (do_delete)
+            {
+                foreach (Item item in Items.Values)
+                {
+                    if (item.OnGround && item.Distance > ClientViewRange)
                     {
                         if (item.IsMulti)
                         {
@@ -391,29 +520,144 @@ namespace ClassicUO.Game
                     {
                         _toRemove.Add(item.Serial);
                     }
+                    else if (!item.InUpdateList && item.NeedsFrameUpdate)
+                    {
+                        // a corpse the change hooks missed: update it from now on
+                        QueueItemUpdate(item);
+                        MissedActiveItems++;
+                    }
+                }
+            }
+
+            QueueDestroyedForRemoval();
+
+            if (_toRemove.Count != 0)
+            {
+                for (int i = 0; i < _toRemove.Count; i++)
+                {
+                    Items.Remove(_toRemove[i]);
                 }
 
-                if (_toRemove.Count != 0)
+                _toRemove.Clear();
+            }
+
+            if (ActiveCheck)
+            {
+                // the full loop left no destroyed item in Items
+                foreach (Item item in Items.Values)
                 {
-                    for (int i = 0; i < _toRemove.Count; i++)
+                    if (item.IsDestroyed)
                     {
-                        Items.Remove(_toRemove[i]);
+                        _checkDestroyedLeft++;
+                    }
+                }
+            }
+        }
+
+        // the destroyed items World still holds (not a newer object with the same serial) go to _toRemove
+        private void QueueDestroyedForRemoval()
+        {
+            for (int i = 0; i < _destroyedItems.Count; i++)
+            {
+                Item item = _destroyedItems[i];
+
+                if (item.IsDestroyed && Items.TryGetValue(item.Serial, out Item current) && ReferenceEquals(current, item))
+                {
+                    _toRemove.Add(item.Serial);
+                }
+            }
+
+            _destroyedItems.Clear();
+        }
+
+        /// <summary>W5: drops the items destroyed since the last update from <see cref="Items"/>, as World.Update does
+        /// (exposed for the unit tests). Returns how many were dropped.</summary>
+        internal int DropDestroyedItems()
+        {
+            QueueDestroyedForRemoval();
+            int n = _toRemove.Count;
+
+            for (int i = 0; i < _toRemove.Count; i++)
+            {
+                Items.Remove(_toRemove[i]);
+            }
+
+            _toRemove.Clear();
+
+            return n;
+        }
+
+        /// <summary>Items the 50 ms sweep found needing updates that no hook had queued (should stay 0).</summary>
+        public int MissedActiveItems;
+
+        // CUO_W5_CHECK=1: every frame, before the active update, every item is checked against what the full loop would
+        // have done: an item whose Update does something must be listed, and every entity's hits percentage must equal
+        // the per-frame rule's. Logged every 5 s as [w5-check]. Costs a full pass per frame; don't measure with it on.
+        public static readonly bool ActiveCheck = System.Environment.GetEnvironmentVariable("CUO_W5_CHECK") == "1";
+        private long _checkFrames, _checkItems, _checkUnlisted, _checkHits, _checkHitsWrong, _checkCorpses, _checkHandles, _checkDestroyedLeft;
+        private int _destroyedSeen;
+        private uint _checkNextLog;
+
+        private void CheckActiveItems()
+        {
+            _checkFrames++;
+
+            foreach (Item item in Items.Values)
+            {
+                _checkItems++;
+
+                if (item.NeedsFrameUpdate)
+                {
+                    if (item.IsCorpse)
+                    {
+                        _checkCorpses++;
+                    }
+                    else
+                    {
+                        _checkHandles++;
                     }
 
-                    _toRemove.Clear();
+                    if (!item.InUpdateList && _activeItemsValid)
+                    {
+                        _checkUnlisted++;
+
+                        if (_checkUnlisted <= 10)
+                        {
+                            Log.Warn($"[w5-check] unlisted item 0x{item.Serial:X8} graphic 0x{item.Graphic:X4} corpse={item.IsCorpse} handles={item.ObjectHandlesStatus}");
+                        }
+                    }
                 }
 
-                FrameStats.End(FramePhase.WorldItems);
-                FrameStats.Begin(FramePhase.WorldEffectsText);
-                _effectManager.Update();
-                WorldTextManager.Update();
-                WMapManager.RemoveUnupdatedWEntity();
-                FrameStats.End(FramePhase.WorldEffectsText);
-                FrameStats.Begin(FramePhase.WorldEcs);
-                Ecs.Update();
-                FrameStats.End(FramePhase.WorldEcs);
-                FrameStats.Set(FrameCounter.Mobiles, Mobiles.Count);
-                FrameStats.Set(FrameCounter.Items, Items.Count);
+                CheckHits(item);
+            }
+
+            foreach (Mobile mob in Mobiles.Values)
+            {
+                CheckHits(mob);
+            }
+
+            if (Time.Ticks >= _checkNextLog)
+            {
+                _checkNextLog = Time.Ticks + 5000;
+                Log.Info($"[w5-check] {_checkFrames} frames, {_checkItems} item checks: {_checkUnlisted} needing an update but unlisted, {MissedActiveItems} caught by the sweep; {_checkCorpses} corpse and {_checkHandles} handle updates seen; {_checkHits} hits checks, {_checkHitsWrong} wrong; {_destroyedSeen} items destroyed, {_checkDestroyedLeft} left in Items after the update; active list {_activeItems.Count}");
+            }
+        }
+
+        private void CheckHits(Entity e)
+        {
+            if (e.HitsMax > 0 && !e.IsDestroyed)
+            {
+                _checkHits++;
+
+                if (e.HitsPercentage != Entity.HitsPercent(e.Hits, e.HitsMax))
+                {
+                    _checkHitsWrong++;
+
+                    if (_checkHitsWrong <= 10)
+                    {
+                        Log.Warn($"[w5-check] hits 0x{e.Serial:X8} {e.Hits}/{e.HitsMax} percentage {e.HitsPercentage}");
+                    }
+                }
             }
         }
 
@@ -834,6 +1078,15 @@ namespace ClassicUO.Game
             MessageManager.PromptData = default;
             _effectManager.Clear();
             _toRemove.Clear();
+
+            foreach (Item item in _activeItems)
+            {
+                item.InUpdateList = false;
+            }
+
+            _activeItems.Clear();
+            _destroyedItems.Clear();
+            _activeItemsValid = false;
             CorpseManager.Clear();
             OPL.Clear();
             WMapManager.Clear();

@@ -267,6 +267,12 @@ namespace ClassicUO.Game.Scenes
                     if (obj.ObjectHandlesStatus == ObjectHandlesStatus.NONE)
                     {
                         obj.ObjectHandlesStatus = ObjectHandlesStatus.OPEN;
+
+                        // W5: World.Update turns OPEN into the name gump; items are only updated when listed
+                        if (obj is Item handleItem)
+                        {
+                            _world.QueueItemUpdate(handleItem);
+                        }
                     }
 
                     obj.UpdateTextCoordsV();

@@ -80,6 +80,12 @@ namespace ClassicUO.Game
                     (byte)item.Layer,
                     item.IsMulti
                 );
+
+                // W5: corpses animate in World.Update; every item change reaches the mirror here
+                if (item.IsCorpse)
+                {
+                    _world.QueueItemUpdate(item);
+                }
             }
             else if (entity is Mobile mobile)
             {

@@ -31,6 +31,7 @@ namespace ClassicUO
     //   plan entries prepdetail:on|off switch FrameStats' world prepare detail buckets (CUO_FRAMESTATS_PREP=1 starts with them on)
     //   plan entries gpuskip:on|off switch the Gpu world prepare's skipping of baked land and statics (gpu_prepare_skip_baked)
     //   plan entries itemcache:on|off switch its ground-item cache (gpu_prepare_item_cache); name:lsreinit is reinit in the large-scale scene
+    //   plan entries activeitems:on|off switch World.Update's active item list (world_update_active_items, W5); CUO_W5_CHECK=1 verifies it
     //   pickscan:CxR hovers a C x R grid of the game view and compares the selection with that skipping off and on; cot:on|off
     //   switches the circle of transparency
     //   name:reinit drops the GPU world pass every 2 s (recreated next frame, as on a facet change); name:reinitrt also drops
@@ -1235,6 +1236,16 @@ namespace ClassicUO
                     {
                         Configuration.Settings.GlobalSettings.GpuPrepareItemCache = _plan[_planIndex] == "itemcache:on";
                         Log.Info($"[bench] gpu prepare caches ground items: {Configuration.Settings.GlobalSettings.GpuPrepareItemCache}");
+                        _planIndex++;
+                        _stepAt = now + sec;
+
+                        break;
+                    }
+
+                    if (_plan[_planIndex].StartsWith("activeitems:"))
+                    {
+                        Configuration.Settings.GlobalSettings.WorldUpdateActiveItems = _plan[_planIndex] == "activeitems:on";
+                        Log.Info($"[bench] world update visits active items only: {Configuration.Settings.GlobalSettings.WorldUpdateActiveItems}");
                         _planIndex++;
                         _stepAt = now + sec;
 

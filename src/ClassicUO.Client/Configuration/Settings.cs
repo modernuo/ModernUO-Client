@@ -118,6 +118,10 @@ namespace ClassicUO.Configuration
         // instead of capturing MobileView.Draw. Off = the capture, the parity yardstick (EcsParity).
         [JsonPropertyName("gpu_ecs_sprites")] public bool GpuEcsSprites { get; set; } = true;
 
+        // W5: World.Update visits only the items that need a per-frame update (corpses, items whose object handles just
+        // opened) plus a range sweep every 50 ms, instead of every item every frame. Off = the full per-frame loop.
+        [JsonPropertyName("world_update_active_items")] public bool WorldUpdateActiveItems { get; set; } = true;
+
         [JsonPropertyName("encryption")] public byte Encryption { get; set; }
 
         [JsonPropertyName("plugins")] public string[] Plugins { get; set; } = { @"./Assistant/Razor.dll" };
