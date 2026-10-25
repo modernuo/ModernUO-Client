@@ -9,7 +9,10 @@ namespace ClassicUO
     // Opt-in measurement script, driven by environment variables:
     //   CUO_BENCH_GO="x y"  once in game, [go there, zoom 1, then measure
     //   CUO_FRAMESTATS=1    uncap the frame rate, force inactive throttling off, log per-phase timings every 5 s (FrameStats)
-    //   CUO_BENCH_PLAN="name:x y:zoom;name:travel;name:walk;name:bodies;say:text;vsync:on|off"  measure each entry for CUO_BENCH_WINDOWS (default 3) windows, then quit
+    //   CUO_BENCH_PLAN="name:x y:zoom;name:travel;name:walk;name:bodies;name:ltravel;name:glide;say:text;vsync:on|off"  measure each entry for CUO_BENCH_WINDOWS (default 3) windows, then quit
+    //     bodies: swap the player to a new body every 50 ms; ltravel: client-only teleports between towns every 2 s;
+    //     glide: client-only travel east from Britain at 25 tiles/s (ltravel/glide need no staff account)
+    //   CUO_BENCH_NOSHOT=1  no screenshot when a plan entry starts measuring (keeps the PNG encode out of hitch counts)
     //   CUO_BENCH_SIZE=1920x1080  resize the window client area to this many pixels with the game viewport filling it
     //   CUO_BENCH_EXIT=1    walk a few steps, take screenshots and quit when done
     //   CUO_BENCH_SPOTS="x y;x y"  screenshot each spot at zoom 1 and full light, then quit
@@ -32,6 +35,8 @@ namespace ClassicUO
         private static string _size = Environment.GetEnvironmentVariable("CUO_BENCH_SIZE");
         private static readonly bool _pick = Environment.GetEnvironmentVariable("CUO_BENCH_PICK") == "1";
         private static readonly string _shots = Environment.GetEnvironmentVariable("CUO_BENCH_SHOTS");
+        // the screenshot taken as a plan entry starts lands in its first measurement window (a PNG encode on the main thread)
+        private static readonly bool _noShot = Environment.GetEnvironmentVariable("CUO_BENCH_NOSHOT") == "1";
         private static readonly int _planWindows = int.TryParse(Environment.GetEnvironmentVariable("CUO_BENCH_WINDOWS"), out int w) ? w : 3;
         private static readonly (int X, int Y)[] _travel =
         {
@@ -39,7 +44,23 @@ namespace ClassicUO
         };
         private static int _planIndex, _travelIndex, _windowsAtStart;
         private static ushort _ghostRestore, _bodyRestore;
-        private static int _bodyNext, _bodiesShown;
+        private static int _bodyNext, _bodiesShown, _glideX;
+
+        // what the 0x20 player update does for a teleport, without the server: chunks, regions and art load as on a real teleport
+        private static void LocalTeleport(World world, Game.Scenes.GameScene gs, int x, int y)
+        {
+            sbyte z = world.Map.GetTileZ(x, y);
+            world.RangeSize.X = x;
+            world.RangeSize.Y = y;
+            world.Player.Walker.DenyWalk(0xFF, -1, -1, -1);
+
+            if (gs != null)
+            {
+                gs.UpdateDrawPosition = true;
+            }
+
+            world.Player.SetInWorldTile((ushort)x, (ushort)y, z == -125 ? (sbyte)0 : z);
+        }
         private static long _travelAt;
         private static bool _walkBack;
         private static int _planFrames;
@@ -776,6 +797,24 @@ namespace ClassicUO
                     GameActions.Say($"[go {tx} {ty}");
                     _travelAt = now + sec * 2;
                 }
+                else if (mode == "ltravel" && now >= _travelAt)
+                {
+                    // client-only teleports between towns (no staff account needed): the server keeps the real position
+                    var (tx, ty) = _travel[_travelIndex++ % _travel.Length];
+                    LocalTeleport(world, gs, tx, ty);
+                    _travelAt = now + sec * 2;
+                }
+                else if (mode == "glide" && now >= _travelAt)
+                {
+                    // client-only fast travel: one tile east every 40 ms (25 tiles/s) from Britain, a new chunk column every 8 tiles
+                    if (_glideX == 0)
+                    {
+                        _glideX = 1300;
+                    }
+
+                    LocalTeleport(world, gs, ++_glideX, 1640);
+                    _travelAt = now + sec / 25;
+                }
                 else if (mode == "bodies" && now >= _travelAt)
                 {
                     // first sight of many bodies: swap the player's body (local only) to a body not drawn yet, every 50 ms
@@ -1045,7 +1084,7 @@ namespace ClassicUO
                         gs.Camera.Zoom = zoom;
                     }
 
-                    GameActions.Say(mode == "travel" || mode == "walk" || mode == "bodies" ? "[go 1495 1629" : $"[go {mode}");
+                    GameActions.Say(mode == "travel" || mode == "walk" || mode == "bodies" || mode == "ltravel" || mode == "glide" ? "[go 1495 1629" : $"[go {mode}");
                     _step = 2;
                     _stepAt = now + sec * 8;
 
@@ -1053,7 +1092,11 @@ namespace ClassicUO
 
                 case 2:
                     LogSize(game);
-                    game.TakeScreenshot();
+
+                    if (!_noShot)
+                    {
+                        game.TakeScreenshot();
+                    }
 
                     if (!string.IsNullOrEmpty(_shots))
                     {
