@@ -86,6 +86,11 @@ Each step keeps the client runnable. The new world renderer sits behind `WorldRe
      - hue modes checked against Legacy.
 
      Open gaps: effect blends other than Normal/Screen, the sitting deformation, the water wobble and scaled sprites. Details are in poc-log.md ("Step 9").
+   - **Status (2026-10-25, Gpu parity gaps):** all four closed (poc-log.md, "Gpu world parity gaps"):
+     - every effect blend is drawn by the world pass, depth-tested: Multiply, ScreenLess, NormalHalfTransparent and ShadowBlue get their own translucent pipelines (ClassicUO's blend factors), drawn as runs of the sorted translucent list; ScreenRed draws normally, as in Legacy;
+     - the seated-character deformation (three sections, sheared middle, per-section row ranges) in the capture and the ECS extract;
+     - the animated-water wobble (off by default) for baked wet land and captured wet statics; the wobble was the only scaled world sprite.
+     - Left: lightning (gump art, not in the pack) stays an FNA overlay.
 10. **Performance proof under NativeAOT.**
     - Compare Legacy and Gpu in a busy town, at the Britain bank, zoomed out, and while travelling: frame time, world-prepare CPU, allocations.
     - Then make Gpu the default, and remove MeshLayer/ChunkMesh and the views' `Draw` bodies.

@@ -5,6 +5,7 @@ extern alias sdl3core;
 using System;
 using System.IO;
 using ClassicUO.Assets;
+using ClassicUO.Configuration;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
 using ClassicUO.Game.Managers;
@@ -42,7 +43,8 @@ namespace ClassicUO.Game.Scenes
         private GameObject _object;
         private int _objectRank;
         private bool _shadowOnly;
-        private bool _additive;
+        private InstanceBlend _blend;
+        private bool _wobble;
         private int _offsetX, _offsetY;
         private int _failedFacet = -1;
         private Season _landSeason = (Season)0xFF;
@@ -202,6 +204,7 @@ namespace ClassicUO.Game.Scenes
             _dynamicCount = 0;
             _object = null;
             CaptureFallbacks = 0;
+            UpdateWaterWobble();
             EcsParity.BeginFrame();
             _ecsMobiles = Configuration.Settings.GlobalSettings.GpuEcsSprites && _pack != null && _pack.HasAnims;
             _scene = Client.Game.GetScene<GameScene>();
@@ -286,11 +289,39 @@ namespace ClassicUO.Game.Scenes
             _world.SetCircleOfTransparency(centerX, centerY, radius, z);
         }
 
-        /// <summary>Effects whose blend the world pass reproduces (normal, and Screen as additive); the rest stay with FNA.</summary>
-        public static bool CanCapture(GameEffect effect)
+        /// <summary>
+        /// ClassicUO's animated water (profile AnimatedWaterEffect, off by default): wet flat land gets a baked scaled copy
+        /// (a change rebakes), and every <see cref="SpriteInstance.LightWobble"/> instance is scaled in the shader by
+        /// View.DrawStatic's time-based factor, the same Time.Ticks the views read this frame.
+        /// </summary>
+        private void UpdateWaterWobble()
         {
-            return effect.Blend is GraphicEffectBlendMode.Normal or GraphicEffectBlendMode.Screen or GraphicEffectBlendMode.ScreenMore;
+            _wobble = ProfileManager.CurrentProfile?.AnimatedWaterEffect == true;
+
+            if (_world == null)
+            {
+                return;
+            }
+
+            float t = Time.Ticks / 1000f;
+            _world.SetWaterWobble(_wobble, 1.1f + MathF.Sin(t) * 0.1f, 1.1f + MathF.Cos(t) * 0.5f * 0.1f);
         }
+
+        /// <summary>Every effect blend is reproduced by the world pass (Normal; Screen as additive; Multiply, ScreenLess,
+        /// NormalHalfTransparent and ShadowBlue with their own translucent pipelines; ScreenRed draws normally, as in
+        /// GameEffectView), so effects are depth-tested against the world. Sprites the capture can't map stay with FNA.</summary>
+        public static bool CanCapture(GameEffect effect) => true;
+
+        /// <summary>GameEffectView.Draw's blend state as the instance blend.</summary>
+        private static InstanceBlend BlendOf(GraphicEffectBlendMode blend) => blend switch
+        {
+            GraphicEffectBlendMode.Multiply => InstanceBlend.Multiply,
+            GraphicEffectBlendMode.Screen or GraphicEffectBlendMode.ScreenMore => InstanceBlend.Screen,
+            GraphicEffectBlendMode.ScreenLess => InstanceBlend.ScreenLess,
+            GraphicEffectBlendMode.NormalHalfTransparent => InstanceBlend.NormalHalf,
+            GraphicEffectBlendMode.ShadowBlue => InstanceBlend.ShadowBlue,
+            _ => InstanceBlend.Normal
+        };
 
         /// <summary>Draws a world object's view into the dynamic sprites. Sprites the capture can't map stay with the batcher.</summary>
         public bool DrawObject(UltimaBatcher2D batcher, GameObject obj, float depth, bool shadowOnly = false)
@@ -308,7 +339,7 @@ namespace ClassicUO.Game.Scenes
             _object = obj;
             _shadowOnly = shadowOnly;
             _objectRank = obj is Mobile ? RANK_MOBILE : RANK_ITEM;
-            _additive = obj is GameEffect effect && effect.Blend != GraphicEffectBlendMode.Normal;
+            _blend = obj is GameEffect effect ? BlendOf(effect.Blend) : InstanceBlend.Normal;
             batcher.Capture = this;
 
             try
@@ -359,7 +390,7 @@ namespace ClassicUO.Game.Scenes
                 _object = item;
                 _shadowOnly = false;
                 _objectRank = RANK_ITEM;
-                _additive = false;
+                _blend = InstanceBlend.Normal;
                 batcher.Capture = this;
                 long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
                 bool viewDrawn;
@@ -450,7 +481,7 @@ namespace ClassicUO.Game.Scenes
                 _object = mobile;
                 _shadowOnly = false;
                 _objectRank = RANK_MOBILE;
-                _additive = false;
+                _blend = InstanceBlend.Normal;
                 batcher.Capture = this;
 
                 try
@@ -517,13 +548,61 @@ namespace ClassicUO.Game.Scenes
                 return false;
             }
 
-            if (scaled || _shadowOnly && mode != SpriteCaptureMode.Shadow)
+            if (_shadowOnly && mode != SpriteCaptureMode.Shadow)
             {
-                // the animated-water wobble copy and scaled sprites: not supported by the world pass
+                return true;
+            }
+
+            if (scaled)
+            {
+                // The only scaled world draw is View.DrawStatic's animated-water copy (wet statics the view draws, e.g.
+                // animated ones; baked land gets its copy in the bake): scaled in the shader by the frame's water scale.
+                // Anything else scaled isn't supported by the world pass and is dropped.
+                if (!_wobble || _object is not (Static or Land))
+                {
+                    return true;
+                }
+
+                int before = _dynamicCount;
+
+                if (!Emit(texture, position, source, hue, flip, depth, mode, 0f))
+                {
+                    return false;
+                }
+
+                if (_dynamicCount > before)
+                {
+                    ref SpriteInstance inst = ref _dynamic[_dynamicCount - 1];
+                    int px = (int)MathF.Round(position.X) + _offsetX, py = (int)MathF.Round(position.Y) + _offsetY;
+                    inst.Light |= SpriteInstance.WobbleBits(inst.X - px, inst.Y - py);
+                }
+
                 return true;
             }
 
             return Emit(texture, position, source, hue, flip, depth, mode, 0f);
+        }
+
+        public bool DrawSitted(Texture2D texture, Vector2 position, Rectangle source, Vector3 mod, Vector3 hue, bool flip, float depth)
+        {
+            if (_object == null || _shadowOnly)
+            {
+                return _object != null;
+            }
+
+            int before = _dynamicCount;
+
+            if (!Emit(texture, position, source, hue, flip, depth, SpriteCaptureMode.Normal, 0f))
+            {
+                return false;
+            }
+
+            if (_dynamicCount > before)
+            {
+                SitDeform.Split(ref _dynamic, ref _dynamicCount, before, (int)MathF.Round(position.Y) + _offsetY, source.Height, mod, flip);
+            }
+
+            return true;
         }
 
         public bool DrawRotated(Texture2D texture, Vector2 position, Rectangle source, Vector3 hue, float rotation, float depth)
@@ -678,9 +757,14 @@ namespace ClassicUO.Game.Scenes
             inst.Corners = palette;
             inst.Mode = hueMode;
 
-            if (cot || _additive)
+            if (cot)
             {
-                inst.SetLightBits((cot ? SpriteInstance.LightCot : 0) | (_additive ? SpriteInstance.LightAdditive : 0));
+                inst.SetLightBits(SpriteInstance.LightCot);
+            }
+
+            if (_blend != InstanceBlend.Normal)
+            {
+                inst.Blend = _blend;
             }
 
             if (rotation != 0f)

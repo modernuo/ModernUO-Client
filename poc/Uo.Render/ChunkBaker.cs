@@ -71,7 +71,8 @@ public sealed class BakeJob : Job
         var land = reg.Land(off);
         var statics = reg.Statics(off);
 
-        int need = 64 + statics.Length;
+        bool wobble = Pack.WaterWobble;
+        int need = 128 + statics.Length; // land, its animated-water copies, statics
         if (_keys.Length < need) _keys = new long[need * 2];
         if (Instances.Length < need) Instances = new SpriteInstance[need * 2];
         if (Keys.Length < Instances.Length) Keys = new uint[Instances.Length];
@@ -171,7 +172,17 @@ public sealed class BakeJob : Job
                     ref readonly var sp = ref sprites[tile];
                     if (!sp.Present) continue;
                     int x = sx + sp.TrimX, y = (tx + ty) * 22 - (z << 2) - 22 + sp.TrimY;
-                    Emit(x, y, sp, sp.Page, 0, SpriteInstance.FlagZTest, depth, 0, (uint)(byte)(sbyte)z | SpriteInstance.ZLand << 16);
+                    uint zc = (uint)(byte)(sbyte)z | SpriteInstance.ZLand << 16;
+                    if (wobble && (landData[tile].Flags & TileFlags.Wet) != 0)
+                    {
+                        // LandView with AnimatedWaterEffect: a second, scaled copy over the tile (scale <= 1.2). Emitted first
+                        // with the same key, so it wins the depth tie against its own tile and keeps the tile's order
+                        // against every other object; overrides find both (same object key).
+                        Emit(x, y, sp, sp.Page, 0, SpriteInstance.FlagZTest, depth, SpriteInstance.WobbleBits(sp.TrimX, sp.TrimY), zc);
+                        Keys[Count - 1] = ObjectKey(cell, false, z, tile);
+                        Bounds(sx, y - sp.TrimY, sx + (int)MathF.Ceiling((sp.TrimX + sp.W) * 1.2f) + 1, y - sp.TrimY + (int)MathF.Ceiling((sp.TrimY + sp.H) * 1.2f) + 1);
+                    }
+                    Emit(x, y, sp, sp.Page, 0, SpriteInstance.FlagZTest, depth, 0, zc);
                     Keys[Count - 1] = ObjectKey(cell, false, z, tile);
                     Bounds(x, y, x + sp.W, y + sp.H);
                 }
