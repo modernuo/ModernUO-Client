@@ -411,6 +411,11 @@ namespace ClassicUO.Game.Scenes
         private static int CaptureRenderList(UltimaBatcher2D batcher, List<GameObject> renderList, sbyte maxGroundZ, GpuWorldRenderer gpu)
         {
             int done = 0;
+            // FrameStats: time runs of one object kind (a clock read per object cost about 0.5 ms per frame with 20,000
+            // objects in view, inflating the capture it measured)
+            bool stats = FrameStats.On;
+            FramePhase runPhase = FramePhase.PrepCaptureOther;
+            long stamp = FrameStats.Stamp();
 
             foreach (var obj in renderList)
             {
@@ -419,20 +424,27 @@ namespace ClassicUO.Game.Scenes
                     continue;
                 }
 
-                long stamp = FrameStats.Stamp();
+                if (stats)
+                {
+                    bool mobile = obj is Mobile, item = !mobile && obj is Item;
+                    FramePhase phase = mobile ? FramePhase.PrepCaptureMobile : item ? FramePhase.PrepCaptureItem : FramePhase.PrepCaptureOther;
+
+                    if (phase != runPhase)
+                    {
+                        stamp = FrameStats.AddSince(runPhase, stamp);
+                        runPhase = phase;
+                    }
+
+                    FrameStats.Inc(mobile ? FrameCounter.CaptureMobiles : item ? FrameCounter.CaptureItems : FrameCounter.CaptureOther);
+                }
 
                 if (gpu.DrawObject(batcher, obj, obj.CalculateDepthZ()))
                 {
                     done++;
                 }
-
-                if (FrameStats.On)
-                {
-                    bool mobile = obj is Mobile, item = !mobile && obj is Item;
-                    FrameStats.AddSince(mobile ? FramePhase.PrepCaptureMobile : item ? FramePhase.PrepCaptureItem : FramePhase.PrepCaptureOther, stamp);
-                    FrameStats.Inc(mobile ? FrameCounter.CaptureMobiles : item ? FrameCounter.CaptureItems : FrameCounter.CaptureOther);
-                }
             }
+
+            FrameStats.AddSince(runPhase, stamp);
 
             return done;
         }

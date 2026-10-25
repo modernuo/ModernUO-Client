@@ -477,24 +477,47 @@ namespace ClassicUO.Game.GameObjects
                     }
                     else
                     {
-                        ref ArtEntry index = ref Client.Game.UO.FileManager.Arts.GetEntry(
+                        ref ArtEntry animEntry = ref Client.Game.UO.FileManager.Arts.GetEntry(
                             graphic + 0x4000
                         );
 
-                        graphic += (ushort)index.AnimOffset;
+                        graphic += (ushort)animEntry.AnimOffset;
                     }
+                }
+
+                ref ArtEntry index = ref Client.Game.UO.FileManager.Arts.GetEntry(graphic + 0x4000);
+
+                Point position = RealScreenPosition;
+                position.X += (int)Offset.X;
+                position.Y += (int)(Offset.Y + Offset.Z);
+                position.X -= index.Width;
+                position.Y -= index.Height;
+
+                // the drawn art is at most (Width + 23) * 2 by Height + 44 pixels (the view and ItemSpriteExtract store
+                // those offsets when they draw it; 0, 0 = not drawn yet or 44 x 44), and a stack is tested 5 px further:
+                // reject the mouse outside that before the art lookup (most of the per-item picking cost in big scenes)
+                int mouseX = SelectedObject.TranslatedMousePositionByViewport.X - position.X;
+                int mouseY = SelectedObject.TranslatedMousePositionByViewport.Y - position.Y;
+
+                if ((index.Width | index.Height) != 0 && (mouseX < -5 || mouseY < -5 || mouseX >= (index.Width + 23) * 2 || mouseY >= index.Height + 44))
+                {
+                    if (Scenes.PrepCheck.On)
+                    {
+                        Scenes.PrepCheck.PicksRejected++;
+
+                        if (Client.Game.UO.Arts.GetArt(graphic).Texture != null && (Client.Game.UO.Arts.PixelCheck(graphic, mouseX, mouseY) ||
+                            !IsMulti && !IsCoin && Amount > 1 && ItemData.IsStackable && Client.Game.UO.Arts.PixelCheck(graphic, mouseX + 5, mouseY + 5)))
+                        {
+                            Scenes.PrepCheck.PicksWrong++;
+                            Scenes.PrepCheck.Sample ??= $"item 0x{Serial:X8} graphic 0x{graphic:X4} mouse {mouseX},{mouseY} entry {index.Width},{index.Height}";
+                        }
+                    }
+
+                    return false;
                 }
 
                 if (Client.Game.UO.Arts.GetArt(graphic).Texture != null)
                 {
-                    ref ArtEntry index = ref Client.Game.UO.FileManager.Arts.GetEntry(graphic + 0x4000);
-
-                    Point position = RealScreenPosition;
-                    position.X += (int)Offset.X;
-                    position.Y += (int)(Offset.Y + Offset.Z);
-                    position.X -= index.Width;
-                    position.Y -= index.Height;
-
                     if (
                         Client.Game.UO.Arts.PixelCheck(
                             graphic,

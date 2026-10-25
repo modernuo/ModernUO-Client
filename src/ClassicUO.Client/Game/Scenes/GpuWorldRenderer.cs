@@ -58,6 +58,9 @@ namespace ClassicUO.Game.Scenes
         public WorldRenderer World => _world;
         public int CaptureFallbacks { get; private set; }
 
+        /// <summary>Dynamic instances not drawn because a frame had more than WorldOptions.MaxDynamic (cumulative).</summary>
+        public long DynamicDropped { get; private set; }
+
         /// <summary>Null when FNA3D is not on the SDL_GPU driver or the pack can't be opened (<paramref name="error"/> says
         /// why). There is no Legacy fallback: the caller reports the error and exits (GpuDeviceLost.FailWorldSetup).</summary>
         public static GpuWorldRenderer TryCreate(IntPtr device, UOFileManager fileManager, out string error)
@@ -147,7 +150,12 @@ namespace ClassicUO.Game.Scenes
                 var options = new WorldOptions
                 {
                     OverrideSlots = 16384,
-                    MaxTranslucent = 8192
+                    MaxTranslucent = 8192,
+                    // the large-scale scene (2,000 mobiles, 20,000 items) needs about 33k dynamic instances and 82 anim
+                    // pages zoomed out; at 32768 / 64 the last sprites were dropped and the anim pages thrashed
+                    // (4 MiB of instances, 1 MiB per Indexed8 anim layer)
+                    MaxDynamic = 131072,
+                    AnimLayers = 128
                 };
 
                 _pack.LandRemap = null;
@@ -674,6 +682,16 @@ namespace ClassicUO.Game.Scenes
             int n = Math.Min(_dynamicCount, _world.DynamicBuffer.Length);
             var dst = _world.DynamicBuffer;
 
+            if (n < _dynamicCount)
+            {
+                if (DynamicDropped == 0)
+                {
+                    Log.Warn($"GPU world: {_dynamicCount} dynamic instances, capacity {n}; the rest are not drawn");
+                }
+
+                DynamicDropped += _dynamicCount - n;
+            }
+
             for (int i = 0; i < n; i++)
             {
                 dst[i] = _dynamic[_dynamicCount - 1 - i];
@@ -697,7 +715,7 @@ namespace ClassicUO.Game.Scenes
                 var w = _world;
                 Log.Trace(
                     $"GPU world: {w.ChunkCount} chunks, {w.Instances} baked + {w.DynamicDrawn} dynamic instances, {w.Renderer.DrawCalls} draws; overrides {w.OverridesApplied} applied, " +
-                    $"{w.OverridesMissed} missed, {w.OverridesDropped} dropped; translucent {w.TranslucentCount} (cot ring {w.CotRingCount}); capture fallbacks {CaptureFallbacks}; " +
+                    $"{w.OverridesMissed} missed, {w.OverridesDropped} dropped; dynamic dropped {DynamicDropped}; translucent {w.TranslucentCount} (cot ring {w.CotRingCount}); capture fallbacks {CaptureFallbacks}; " +
                     $"pages {w.Pages.ResidentCount}/{w.Pages.Layers} resident, {w.Pages.MissingVisible} missing, {w.Pages.TotalUploads} uploads, {w.Pages.Evictions} evictions" +
                     (w.AnimPages != null ? $"; anim pages {w.AnimPages.ResidentCount}/{w.AnimPages.Layers}, {w.AnimPages.MissingVisible} missing, {w.AnimPages.TotalUploads} uploads, {w.AnimPages.Evictions} evictions" : "") +
                     $"; chunks ready {w.Chunks.ReadyChunks} pending {w.Chunks.PendingChunks} missing near view {w.Chunks.MissingNear}; settled {w.Settled}, visible ready {w.VisibleReady}");
