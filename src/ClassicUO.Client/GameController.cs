@@ -126,6 +126,7 @@ namespace ClassicUO
             base.LoadContent();
 
             _gpuDevice = GpuInterop.GetDevice(GraphicsDevice);
+            Log.Info($"SDL3 {GpuInterop.GetSdlRevision()}");
             Log.Trace(_gpuDevice != IntPtr.Zero
                 ? $"SDL_GPU device 0x{_gpuDevice:X}: driver={GpuInterop.GetDriverName(_gpuDevice)} shaders={GpuInterop.GetShaderFormats(_gpuDevice)}"
                 : "FNA3D is not on the SDL_GPU driver; GPU interop disabled");
