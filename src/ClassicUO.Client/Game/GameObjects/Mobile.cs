@@ -15,6 +15,9 @@ namespace ClassicUO.Game.GameObjects
 {
     internal partial class Mobile : Entity
     {
+        /// <summary>W5: the Gpu world's reused selection and sprite instances (gpu_mobile_frame_cache).</summary>
+        internal MobileFrameCache FrameCache;
+
         //private static readonly QueuedPool<Mobile> _pool = new QueuedPool<Mobile>(
         //    Constants.PREDICTABLE_CHUNKS,
         //    mobile =>

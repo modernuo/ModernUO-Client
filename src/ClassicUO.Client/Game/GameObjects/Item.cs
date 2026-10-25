@@ -66,6 +66,15 @@ namespace ClassicUO.Game.GameObjects
         private ushort? _displayedGraphic;
         private bool _isMulti;
 
+        /// <summary>W5: listed in World's per-frame item update list (World.QueueItemUpdate).</summary>
+        internal bool InUpdateList;
+
+        /// <summary>
+        /// W5: whether <see cref="Update"/> does anything this frame. Item.Update is a no-op unless the item is a corpse
+        /// (ProcessAnimation) or its object handles just opened (Entity.Update); the hits percentage follows the setters.
+        /// </summary>
+        internal bool NeedsFrameUpdate => !IsDestroyed && (IsCorpse || ObjectHandlesStatus == ObjectHandlesStatus.OPEN);
+
         public Item(World world) : base(world, 0) { }
 
         public bool IsCoin => Graphic == 0x0EEA || Graphic == 0x0EED || Graphic == 0x0EF0;

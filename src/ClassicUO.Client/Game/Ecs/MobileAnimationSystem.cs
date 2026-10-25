@@ -39,6 +39,9 @@ namespace ClassicUO.Game
 
         public int Rebuilds { get; private set; }
 
+        // EquipmentSlots.Version source, shared by all mobiles (a version is never reused)
+        private static uint _equipVersions;
+
         /// <summary>All of <paramref name="world"/>'s mobiles (the per-frame system once the extract is the renderer's source).</summary>
         public void Run(World world)
         {
@@ -56,6 +59,15 @@ namespace ClassicUO.Game
                 return false;
             }
 
+            Update(world, m, e);
+
+            return true;
+        }
+
+        /// <summary><see cref="Update(World, Mobile)"/> for the mobile's mirror entity <paramref name="e"/>, already looked
+        /// up by the caller (it must have an <see cref="AnimationState"/>).</summary>
+        public void Update(World world, Mobile m, EcsEntity e)
+        {
             // copies: removing the dirty tag moves the entity to another archetype, which invalidates component refs
             AnimationState s = e.GetComponent<AnimationState>();
             MobileRenderState rs = e.GetComponent<MobileRenderState>();
@@ -71,11 +83,106 @@ namespace ClassicUO.Game
                 Rebuild(e, in s);
             }
 
-            Select(m, ref s, ref e.GetComponent<EquipmentSlots>());
+            ref EquipmentSlots eq = ref e.GetComponent<EquipmentSlots>();
+
+            if (Configuration.Settings.GlobalSettings.GpuMobileFrameCache)
+            {
+                SelectCached(world, m, ref s, ref eq);
+            }
+            else
+            {
+                m.FrameCache?.Invalidate();
+                Select(m, ref s, ref eq);
+            }
+
             e.GetComponent<AnimationState>() = s;
             e.GetComponent<MobileRenderState>() = rs;
+        }
 
-            return true;
+        // W5: Select, or the last frame's result when the sampled inputs are the same (MobileFrameCache)
+        private static void SelectCached(World world, Mobile m, ref AnimationState s, ref EquipmentSlots eq)
+        {
+            MobileFrameCache cache = m.FrameCache ??= new MobileFrameCache();
+            MobileFrameCache.SelectKey key = default;
+            bool cacheable = (s.Flags & AnimStateFlags.HasSteps) == 0;
+
+            if (cacheable)
+            {
+                key.Flags = s.Flags;
+                key.NextFrameTime = s.NextFrameTime;
+                key.Body = s.Body;
+                key.Graphic = m.Graphic;
+                key.ServerGroup = s.ServerGroup;
+                key.Facing = s.Facing;
+                key.Frame = s.Frame;
+                key.EquipVersion = eq.Version;
+                key.X = m.X;
+                key.Y = m.Y;
+                key.Z = m.Z;
+                key.Season = (byte)world.Season;
+                key.Tile = m.TileChunk;
+                key.TileVersion = m.TileChunk?.ContentVersion ?? 0;
+
+                if (cache.SelectValid && key.Equals(cache.Key))
+                {
+                    MobileFrameCache.SelectHits++;
+
+                    if (CacheCheck)
+                    {
+                        CheckSelect(m, in s, in eq, in cache.Selected);
+                    }
+
+                    s = cache.Selected;
+
+                    return;
+                }
+            }
+
+            MobileFrameCache.SelectMisses++;
+            uint rolls = AnimationGroupRules.RandomRolls;
+            Select(m, ref s, ref eq);
+
+            cache.Key = key;
+            cache.Selected = s;
+            cache.SelectGen++;
+            cache.SelectValid = cacheable && rolls == AnimationGroupRules.RandomRolls;
+        }
+
+        // CUO_MOBILE_CACHE_CHECK=1: every reused selection and emission is compared with a fresh one (MobileFrameCache)
+        public static readonly bool CacheCheck = Environment.GetEnvironmentVariable("CUO_MOBILE_CACHE_CHECK") == "1";
+        public static long CheckSelects, CheckSelectDiffs;
+        private static int _checkLogged;
+
+        private static void CheckSelect(Mobile m, in AnimationState sampled, in EquipmentSlots eq, in AnimationState cached)
+        {
+            AnimationState fresh = sampled;
+            EquipmentSlots eqFresh = eq;
+            uint rolls = AnimationGroupRules.RandomRolls;
+            Select(m, ref fresh, ref eqFresh);
+
+            if (rolls != AnimationGroupRules.RandomRolls)
+            {
+                return;
+            }
+
+            CheckSelects++;
+            bool same = System.Runtime.InteropServices.MemoryMarshal.AsBytes(new ReadOnlySpan<AnimationState>(in fresh))
+                .SequenceEqual(System.Runtime.InteropServices.MemoryMarshal.AsBytes(new ReadOnlySpan<AnimationState>(in cached)));
+
+            for (int i = 0; i < eq.Count && same; i++)
+            {
+                same = eq.Slots[i].Group == eqFresh.Slots[i].Group;
+            }
+
+            if (!same)
+            {
+                CheckSelectDiffs++;
+
+                if (_checkLogged++ < 20)
+                {
+                    Utility.Logging.Log.Warn($"[mobile-cache-check] selection differs 0x{m.Serial:X8} g=0x{m.Graphic:X4}: fresh group {fresh.Group} dir {fresh.Dir} flags {fresh.Flags} mount {fresh.MountBody}/{fresh.MountGroup} sit {fresh.SitX},{fresh.SitY} frame {fresh.Frame}; cached group {cached.Group} dir {cached.Dir} flags {cached.Flags} mount {cached.MountBody}/{cached.MountGroup} sit {cached.SitX},{cached.SitY} frame {cached.Frame}");
+                }
+            }
         }
 
         /// <summary>Rebuilds every dirty <see cref="EquipmentSlots"/> (normally done lazily by <see cref="Update"/>).</summary>
@@ -192,9 +299,8 @@ namespace ClassicUO.Game
         {
             Rebuilds++;
             ref EquipmentSlots eq = ref mobile.GetComponent<EquipmentSlots>();
-            ushort version = (ushort)(eq.Version + 1);
             eq = default;
-            eq.Version = version;
+            eq.Version = ++_equipVersions;
 
             ushort body = mobile.GetComponent<Graphic>().Value;
             StaticTiles[] tiles = Client.Game.UO.FileManager.TileData.StaticData;
