@@ -844,6 +844,16 @@ namespace ClassicUO.Game.Scenes
                     obj.ScreenPositionGen = _screenPositionGen;
                     FrameStats.Enter(bucket);
                 }
+                else if (PrepCheck.On)
+                {
+                    PrepCheck.PositionsKept++;
+
+                    if (obj.RealScreenPosition.X != ((obj.X - obj.Y) * 22) - _offset.X - 22 || obj.RealScreenPosition.Y != ((obj.X + obj.Y) * 22 - (obj.Z << 2)) - _offset.Y - 22)
+                    {
+                        PrepCheck.PositionsWrong++;
+                        PrepCheck.Sample ??= $"{obj.GetType().Name} {obj.X},{obj.Y},{obj.Z} at {obj.RealScreenPosition}";
+                    }
+                }
 
                 int screenX = obj.RealScreenPosition.X;
 
