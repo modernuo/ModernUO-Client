@@ -44,7 +44,7 @@ The results are written to `C:\Repositories\cuo-fps-test\results-<timestamp>.md`
 | `-Size` / `-LargeSize` | `1920x1080` / `max` (a maximised window; or e.g. `3840x2160`) |
 | `-Windows` | `3` (5-s measurement windows per spot) |
 
-For unattended runs you can set the optional `CUO_FPS_TEST_PASSWORD` environment variable instead of typing the password. The password is only passed to the client process at runtime; it is never written to disk.
+For unattended runs you can set the optional `CUO_FPS_TEST_PASSWORD` environment variable instead of typing the password. Either way the script writes the password encrypted (the client's own settings format) into the throwaway settings.json under `%TEMP%`, never on a command line, and deletes that folder when the run ends.
 
 ## Rebuilding the client
 
