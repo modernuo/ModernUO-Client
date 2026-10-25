@@ -14,6 +14,7 @@ Recorded 2026-10-23. Nothing here is a final decision unless it is listed under 
 | [visual-features-roadmap.md](visual-features-roadmap.md) | Particles, dynamic lighting, normal maps, shadows, post-processing; toggles/presets and server-driven effect packets |
 | [world-prepare-ecs-plan.md](world-prepare-ecs-plan.md) | Moving ClassicUO's per-frame world walk onto baked GPU data and the ECS (W0–W6) |
 | [graphics-ownership-plan.md](graphics-ownership-plan.md) | Tiered path off FNA graphics (Tiers 1–4 deferred), batcher/UI improvements, upstream contribution policy |
+| [sdl-fork.md](sdl-fork.md) | Why we build SDL3 from our fork, the patch list, rebuilding and rebasing |
 
 Supporting material in this branch:
 
@@ -92,6 +93,11 @@ Supporting material in this branch:
 - **Compression is per file** (`FileHeader.Kind`: 0 = raw, 1 = Brotli), and **raw packs are always valid**: shard owners may ship large uncompressed packs for easy binary delta patching, since the manifest's per-file sha256 identifies what changed.
 - **UltimaLive:** optional; drop it if it costs performance. Format v0 supports it cheaply at block granularity.
 - **Team:** a few engineers or engineering-adjacent people with AI assistance; nobody has ECS experience.
+- **SDL3 comes from our fork, github.com/modernuo/SDL (2026-10-25):**
+  - The fork's branch `modernuo/3.4.19` is SDL 3.4.19 plus our patches. It's the `external/SDL` submodule, and its build is committed as `external/x64/SDL3.dll`.
+  - The first patch gives Vulkan images of 64 MiB or more dedicated allocations, which stops the page-atlas defragmentation behind our GPU page faults.
+  - Agents may push branches to the fork. Upstream libsdl-org gets no AI-written issues or PRs, not even drafts.
+  - See [sdl-fork.md](sdl-fork.md).
 
 ## Open items
 

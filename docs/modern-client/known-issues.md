@@ -11,6 +11,7 @@ Visual or behavioural defects found in the PoC client that aren't fixed yet. Add
 
 - **What happens:** a page fault in one process causes an NVIDIA engine reset (nvlddmkm 153). Other clients running on the GPU at the time also get `VK_ERROR_DEVICE_LOST` and exit with 0xDEAD; the W1 agent's clients died at 22:34 and 23:18 from resets caused by repro runs.
 - **What to do:** when attributing an Aftermath dump, match the dump's PID to the run. Keep deliberate repro runs to a minimum while other agents or the owner use the GPU.
+- **Update 2026-10-25:** the page faults our client caused came from SDL defragmenting Uo.Render's page atlas. Since the SDL fork's dedicated large-image allocations ([sdl-fork.md](sdl-fork.md)), the atlas is never moved. A build without that DLL (an upstream SDL3.dll, or a branch from before the fork) still faults at about 3% of logins, or more with other clients on the GPU.
 
 ## FNA "scissor rectangle is invalid" on the login gump right after a GPU reset (2026-10-24) — fixed 2026-10-25, not reproduced
 
@@ -39,3 +40,14 @@ Visual or behavioural defects found in the PoC client that aren't fixed yet. Add
 - **Not seen** on the Kbatfour client (the pack-loading build): there, black appears only during teleports, which is the pop-in issue above.
 - **Update (page-fault agent, 2026-10-25):** that recording was a stress run with `CUO_GPU_REINIT=1500`, which drops and recreates the GPU world pass and world RT every 1.5 s. The 5 bad frames match the 5 recreations, so the cause is very likely the test hook, not mitigations A/B/C. Not proven yet: compare normal runs (no reinit) of the mitigation and base builds for unsettled frames. Even so, a recreation should hold the last frame instead of showing a half-built world (see the pop-in entry above).
 - **Update (world-settle agent, 2026-10-25):** recreations now hold the last frame (DevBench `reinit`: 0 unsettled frames presented, against 13–19 before). `CUO_GPU_REINIT` also drops the world RT, so there's nothing to hold: expect black and a 250 ms fade-in per recreation (like DevBench `reinitrt`), not a half-built world.
+- **Resolved (page-fault agent, 2026-10-25):**
+  - The scattered missing and wrong tiles in the later normal (no reinit) runs were **Legacy frames**, broken by B1. See the FNA3D index-buffer entry above, fixed on `poc/modern-client`.
+  - World-RT shots of the Gpu pass were clean: 150 or more shots from 1 to 1024 frames after each switch, with A/B/C on and off. So were the Legacy frames once the B1 fix was in.
+  - The black frames in the reinit run are the stress hook, by design.
+
+## FNA3D: a disposed render target can stay the pending render-pass target (2026-10-25, follow-up)
+
+- **What:** FNA3D's `SDLGPU_INTERNAL_FreeTextureHandle` (`FNA3D_Driver_SDL.c` ~2568) clears `boundRenderTargets`, but not `nextRenderPassColorAttachments` or `nextRenderPassDepthStencilAttachment`. `SDLGPU_INTERNAL_BeginRenderPass` (~823) later dereferences them.
+- **Risk:** a render target disposed while it is the pending target of a deferred render pass (for example a clear that hasn't started its pass yet) would be used after its SDL texture was released. That is a use-after-free that could fault on the GPU without any defragmentation.
+- **Status:** no ClassicUO path that does this was found. `RenderTargets.EnsureSize` disposes at the start of Draw, while the pending target is the backbuffer. The page faults are explained by atlas defragmentation (device-lost-leak.md part B). Lower likelihood; noted by an independent audit.
+- **If it's ever needed:** a local FNA3D patch that clears the pending attachments matching the freed texture. **Ask the coordinator before forking or patching FNA3D.**

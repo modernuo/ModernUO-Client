@@ -132,3 +132,48 @@ What the dump shows:
 - **Mitigations to try if the fault returns (none applied):**
   - Keep the atlas's allocation free of other resources so it is never marked for defrag. For example, Uo.Render could fill the tail with one long-lived texture it owns, or size the atlas to an exact multiple of 64 MiB.
   - Or pre-create FNA's render targets at fixed sizes before the atlas exists, to reduce RT churn in large allocations.
+
+(These next steps were superseded on 2026-10-25; see below.)
+
+### Results and fix (2026-10-25, Tier 0 page-fault agents)
+
+**Method.**
+- **The loop:** `tools/gpu-fault-repro/repro.py`. One run is a login with the Gpu renderer plus the flip plan (`vsync:off;world:legacy;world:gpu` ×3), about 25 s. The procedure is in [testing/gpu-faults.md](testing/gpu-faults.md).
+- **Own faults** are exit `0xDEAD` or an Aftermath dump carrying our PID. Other agents' clients share the GPU and fault too; their events are "foreign" and are not counted.
+- **Atlas moves** were counted from a diagnostic SDL that logs every defrag move (fork branch `diag/defrag`), or earlier from the `GpuWatchTemp` watcher.
+- **Account:** kbatman2, standing in a house next to the Britain bank.
+
+| Variant | Runs | Own faults | Atlas moves |
+|---|---|---|---|
+| Baseline: stock SDL, no app mitigations (the 2026-10-24 loop plus 2026-10-25 base4, sw-off, V-stock and a6110f967 runs) | 90 | **4** (4.4%), all at login 3–7 s after start: cuo-57564, cuo-39168, cuo-41540, cuo-63504 | about 0.3 per run (V-stock: 1 in 5 runs; watcher: 4 of 12 runs) |
+| SDL defrag disabled (`CUO_SDL_NO_DEFRAG`, 2026-10-24) | 100 | 0 | 0 |
+| A only (one world-RT usage per session) | 30 | 0 | 7 runs with a move |
+| A+C, and A+B+C (B: atlas tail filler; C: world pass created after present) | 63 | 0 | 0 in normal runs. With `CUO_GPU_REINIT` stress, 1–2 per run |
+| SDL `refguard` (defrag skips allocations holding any referenced resource), app mitigations off | 10 | 0 | **0, and no defrag at all.** The marked atlas allocation is always referenced, so it stays marked and unavailable forever, and nothing else is ever marked (thousands of skips per run). It can't tell hypotheses apart, and it strands memory |
+| SDL `dedicated` (images of 64 MiB or more get their own allocation), diagnostic DLL, app mitigations off | 24 | 0 | **0**, while the render-target allocations kept defragmenting: 68 defrags, 959 RT moves |
+| Production DLL in the 2026-10-25 watcher build, app mitigations off | 20 | 0 | 0, while RTs kept moving |
+| **Shipped:** fork DLL `modernuo/3.4.19` b2a3160aa on `poc/gpu-pagefault` with `poc/modern-client` merged in, so it includes the settle merge's session-wide world-RT usage. Three tips: c593cb627 / a5bcbbe7f (poc/modern-client 6f2007199), 0019abe02 (7d0a74a92), and 92dfb1fc3 (3216539a7, with a passive atlas watcher added for counting) | 100 + 20 + 100 | **0 + 0 + 0** | 0 atlas moves (260 world-RT moves seen, so the watcher was working) on 92dfb1fc3 |
+
+- **Concurrency:** other agents' clients were on the GPU during most of these runs, typically 1–3. Another agent's plain `poc/modern-client` clients faulted 3 times in 8 logins with others running (cuo-8768, cuo-2348, cuo-14872), so the baseline rate rises with load.
+- **Foreign dumps** seen during our runs: cuo-8768. Foreign dumps from 2026-10-24: cuo-11400, cuo-55344 and cuo-7280.
+
+**Conclusions.**
+- **Every own fault was preceded by a copy of the art atlas, during FNA's swapchain submit.** No fault ever happened in a run without an atlas move. Removing the copy, by any means, removes the faults:
+  - defrag off: 0 in 100;
+  - A+C: 0 in 63;
+  - dedicated: see the table.
+- **The exact driver/SDL mechanism is still unknown.** The ROP write lands in the new atlas copy. Candidates, unproven:
+  - a driver problem with the 24-layer image copy on the graphics queue;
+  - SDL's defrag leaving the old image in `TRANSFER_SRC` while redirecting later bindings.
+  A cheap discriminator ("reference-guarded" defrag) turned out not to discriminate (above).
+- **Atlas isolation is the robust fix.** Mitigations A–C only change the odds: they keep render-target churn away from the atlas's tail at the moments that mattered. The dedicated allocation makes the atlas impossible to mark, whatever else happens.
+
+**What ships.**
+- **SDL:** the fork patch ([sdl-fork.md](sdl-fork.md)), dedicated allocations for images of 64 MiB or more.
+- **App side:**
+  - **A is kept**, in the form the world-settle merge gave it (the world RT is always PreserveContents in game).
+  - **B (tail filler) is dropped:** the dedicated allocation supersedes it.
+  - **C (world-pass creation after present) is dropped:** the settle merge owns world-pass creation now, and the atlas can no longer move.
+  - B and C, the watcher and `CUO_GPU_REINIT` are kept on `poc/gpu-pagefault-diag` (2ad0e20ec, 5793cd62a).
+
+**Related finding: the "tile corruption" of 2026-10-25 was not the page-fault work.** It was the B1 batcher regression in Legacy (FNA3D doesn't rebind a cycled index buffer; see known-issues). It's fixed on `poc/modern-client`.
