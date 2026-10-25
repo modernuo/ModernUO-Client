@@ -295,7 +295,9 @@ namespace ClassicUO
 
             // frame-time tail: the worst frame, hitch counts, and the phases that dominated the worst frame
             var frames = _phase[(int)FramePhase.Frame];
-            int worst = 0, hitch8 = 0, hitch16 = 0;
+            var presents = _phase[(int)FramePhase.Present];
+            int worst = 0, hitch8 = 0, hitch16 = 0, cpuHitch8 = 0, cpuHitch16 = 0;
+            double cpuMax = 0;
 
             for (int i = 0; i < n; i++)
             {
@@ -313,6 +315,12 @@ namespace ClassicUO
                 {
                     hitch16++;
                 }
+
+                // the frame without Present: GPU/compositor waits (other windows, the driver) are not CPU hitches
+                double cpu = frames[i] - presents[i];
+                cpuMax = Math.Max(cpuMax, cpu);
+                cpuHitch8 += cpu > 8 ? 1 : 0;
+                cpuHitch16 += cpu > 16 ? 1 : 0;
             }
 
             double frameMax = n > 0 ? frames[worst] : 0;
@@ -341,8 +349,8 @@ namespace ClassicUO
                 }
             }
 
-            sb.Append(inv, $"  frame max {frameMax:0.00} ms, hitches >8 ms {hitch8}, >16 ms {hitch16}; worst frame: {top}\n");
-            json.Append(inv, $"}},\"frame_max\":{frameMax:0.000},\"hitch8\":{hitch8},\"hitch16\":{hitch16},\"worst\":\"{top}\"");
+            sb.Append(inv, $"  frame max {frameMax:0.00} ms, hitches >8 ms {hitch8}, >16 ms {hitch16}; without Present: max {cpuMax:0.00} ms, >8 ms {cpuHitch8}, >16 ms {cpuHitch16}; worst frame: {top}\n");
+            json.Append(inv, $"}},\"frame_max\":{frameMax:0.000},\"hitch8\":{hitch8},\"hitch16\":{hitch16},\"cpu_max\":{cpuMax:0.000},\"cpu_hitch8\":{cpuHitch8},\"cpu_hitch16\":{cpuHitch16},\"worst\":\"{top}\"");
 
             json.Append(",\"counts\":{");
             sb.Append("  count                      avg      p50      p95      max\n");
