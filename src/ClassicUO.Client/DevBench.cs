@@ -33,6 +33,8 @@ namespace ClassicUO
     //   the world render target (as at login). Each plan entry logs the world settle counters (WorldSettleGate) when it ends.
     //   CUO_WORLD_HOLD=0    never hold the last world frame after a discontinuity (observe only: the before/after baseline)
     //   CUO_WORLD_HOLD_TIMEOUT=ms  the hold's timeout (default 1500)
+    //   CUO_BENCH_TPSHOTS=dir[|frames]  ltravel/reinit/reinitrt: save the world target (and lights, UI) of each of the first
+    //   frames (default 8) after every teleport or recreation as dir/tpNN_fMM.png (what each frame shows: held or new)
     internal static class DevBench
     {
         public static readonly bool FrameStats = Environment.GetEnvironmentVariable("CUO_FRAMESTATS") == "1";
@@ -80,6 +82,28 @@ namespace ClassicUO
             world.Player.SetInWorldTile((ushort)x, (ushort)y, z == -125 ? (sbyte)0 : z);
         }
         private static long _travelAt;
+        private static readonly string _tpShots = Environment.GetEnvironmentVariable("CUO_BENCH_TPSHOTS");
+        private static int _tpShotLeft, _tpShotIndex, _tpShotFrame;
+
+        private static void StartTeleportShots()
+        {
+            if (!string.IsNullOrEmpty(_tpShots))
+            {
+                string[] parts = _tpShots.Split('|');
+                _tpShotLeft = parts.Length > 1 && int.TryParse(parts[1], out int k) ? k : 8;
+                _tpShotIndex++;
+                _tpShotFrame = 0;
+            }
+        }
+
+        private static void TeleportShot(GameController game)
+        {
+            if (_tpShotLeft > 0)
+            {
+                _tpShotLeft--;
+                game.RequestWorldShot(System.IO.Path.Combine(_tpShots.Split('|')[0], $"tp{_tpShotIndex:00}_f{_tpShotFrame++:00}.png"));
+            }
+        }
         private static bool _walkBack;
         private static int _planFrames;
         private static bool _gumpsOpened;
@@ -911,6 +935,7 @@ namespace ClassicUO
                     // client-only teleports between towns (no staff account needed): the server keeps the real position
                     var (tx, ty) = _travel[_travelIndex++ % _travel.Length];
                     LocalTeleport(world, gs, tx, ty);
+                    StartTeleportShots();
                     _travelAt = now + sec * 2;
                 }
                 else if ((mode == "reinit" || mode == "reinitrt") && now >= _travelAt)
@@ -919,6 +944,7 @@ namespace ClassicUO
                     {
                         Log.Info($"[bench] {mode}: dropping the GPU world pass{(mode == "reinitrt" ? " and the world render target" : "")}");
                         game.DebugRecreateGpuWorld(mode == "reinitrt");
+                        StartTeleportShots();
                     }
 
                     _travelAt = now + sec * 2;
@@ -965,6 +991,8 @@ namespace ClassicUO
                     world.Player.Pathfinder.WalkTo(_walkBack ? 1475 : 1495, _walkBack ? 1650 : 1629, world.Player.Z, 0);
                     _travelAt = now + sec / 2;
                 }
+
+                TeleportShot(game);
 
                 if (FrameStats ? ClassicUO.FrameStats.WindowsReported - _windowsAtStart >= _planWindows : now >= _stepAt)
                 {
