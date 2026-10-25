@@ -60,7 +60,8 @@ Running notes for your return, newest at the top within each section. Started 20
 
 - **End of milestone, your manual check:** the shoreline ticks at zoom 2 (coordinates in known-issues.md, grid-lines entry). You'll confirm whether they bother you before anyone fixes them.
 
-- **The large scene is left on the shard** (frozen: about 4% of one server core while a client stands there, ModernUO memory 563 → 711 MB). Say if you want it wiped (`make_scene.py wipe`) or added to your FPS test as an extra spot. It's on Felucca, so it needs a facet change, and it isn't added by default, so your results stay comparable with 10-24.
+- **Legacy regression: cause found, not fixed.** The bisect (handoff: scratchpad `legacybisect\handoff.md`) puts it in **world prepare** with the W0/W1 merge (755c9599e): about +1.0 ms at the large window (JIT). It isn't the natives (swapping SDL3/FNA3D changed nothing) and isn't world draw (B1 made draw slightly cheaper there). Suspect: per-object FrameStats counters/`Enter` pairs and extra work added to the tile walk that both renderers share. Proposed fix: hoist the stats flags, count in locals, guard the detail pairs. It would help Gpu too. Next: split W0 vs W1, measure with stats off, implement and prove. Your 10-25 Legacy world-draw rise didn't reproduce in the agent's runs and needs a quiet-machine check.
+- **Small ModernUO fix not deployed:** 7d52e9b33 on `modernuo-client/test-scene` (the `[TestScene create` timer always said 0 ms). Cosmetic; deploy with the next server restart.
 - **W2 was half done on purpose.** The screen-position half is merged. The ECS-query half would save about 0.15 ms in the 21,000-object scene and nothing at normal scale, and it risks changing draw order and the height cut-off, so it was skipped in favour of W4. Recorded in the plan.
 - **Parity runs now need the item check too:** with the cache on, cached items skip the ECS item comparison, so parity runs must add `CUO_GPU_ITEM_CHECK` (in the testing docs). `itemcache off` restores the old coverage.
 
@@ -69,12 +70,11 @@ Running notes for your return, newest at the top within each section. Started 20
 
 - **Your kbatman character:** W3's parity scripts kill and resurrect the character. The agent removed the leftover death robes and a test cloak, checked the backpack, and moved it back to Britain 1495,1629. Worth a glance when you log in.
 - **Unexplained single-frame spikes** (16–50 ms `update_other`, 95 ms at a facet switch) were seen during verification but not compared with base. Not tied to the new loading.
-- **FNA3D:** a proper fix for "a cycled index buffer isn't rebound" (worked around in the batcher). There's also a dangling `nextRenderPass*` reference after `FreeTextureHandle` that the Codex audit flagged. The page-fault agent will ask before forking FNA3D.
 - **Teleport:** the remaining 10–14 ms frame comes from the server packet burst and one first-sight chunk mesh build. Next step: decode art on a worker before the mesh build.
 
 ## Your FPS test
 
-The build at `C:\Repositories\cuo-fps-test\bin` is **d3f0ceea4** (code = 786d86c9c; published 10:36, after your 10:26 run). It has everything above, including W5, the 3.4.18 SDL and our FNA3D: the fork SDL, W3 (now including corpses and multis), W4's item cache, the large-scale fixes (including FrameStats' lower overhead), the teleport work, world settle and the B1 fix.
+The build at `C:\Repositories\cuo-fps-test\bin` is **4ba96f416** (published 11:26). It has everything in the Merged table: W5, W4, the forks, startup renderer selection (it logs `[renderer] auto: Gpu (...)`), and spot 6, "Large scene" (Felucca, via `[TestScene go`/`return`; your character ends where it started). The run takes about 6 minutes. I ran the real script once on kbatman4 to check it end to end.
 
 1. Make sure no agent is running clients (ask me to pause them) and the display is on.
 2. From a normal PowerShell window:
