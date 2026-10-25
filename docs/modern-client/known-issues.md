@@ -5,6 +5,7 @@ Visual or behavioural defects found in the PoC client that aren't fixed yet. Add
 ## Gpu world renderer: grid lines between land tiles when zoomed out (2026-10-24) — fixed 2026-10-25, leftover below
 
 - **Fixed** (seams agent, commit 115e93c71; poc-log "Land seams when zoomed out"): baked land, stretched land and 44×44 floor and water statics draw seam-free at zoom 1.5, 2 and 2.5 (`SampleTile` in sprite.hlsl).
+- **Confirmed by the owner (2026-10-25):** no grid marks fully zoomed out in any of the day's runs, including the FPS test at 3840x2054.
 - **Left over:** a few short dark ticks where shore statics meet open water at zoom 2. They were there before the fix too. They come from statics that don't fill 44×44 (shore pieces), which still take the generic trilinear alpha-test path.
 
 ## GPU engine resets take down every client on the GPU (2026-10-24)
