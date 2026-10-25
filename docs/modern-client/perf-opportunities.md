@@ -44,7 +44,12 @@ Format: **what**, where (file:line), why it should help, evidence or estimate, a
 - **Present stalls 4–5 ms on about 4% of frames above ~1,000 fps** (SDL_GPU frames in flight and windowed IMMEDIATE present back-pressure); there are none at ≤750 fps. Not CPU work, but it makes frame avg and p99 misleading at very high FPS. Compare CPU work with Update + Draw or frame p50. If it matters later, try `FNA3D_VULKAN_FORCE_MAILBOX_VSYNC`-style present modes or more frames in flight. Source: step 7b.
 - **Ground-item chunk baking:** bake rarely-changing ground items into chunk buffers and re-bake on ECS changes. Only if the dynamic extract or upload shows up in busy scenes. Source: 2.0 `BakeChunkDynamics`.
 - **NativeAOT instruction set:** done (step 7b). `IlcInstructionSet=x86-64-v3` (note the spelling; `x86-x64-v3` is rejected) is set for win-x64. Measured: no difference from the default ISA.
-- **AOT is 15–20% slower than JIT on Draw, UI and composite, independent of ISA** (Britain Draw 0.39 vs 0.33 ms). The likely cause is that there is no Dynamic PGO (devirtualisation of the batcher and UI virtual calls). Try static PGO (collect a `.mibc` from a JIT trace and pass it to ILC) and `<OptimizationPreference>Speed</OptimizationPreference>`. Source: step 7b.
+- **AOT vs JIT gap: re-measured 2026-10-25, static PGO and `OptimizationPreference=Speed` don't help.**
+  - **The gap is now small:** total Draw is within noise (Britain p50 0.43 vs 0.40 ms; bank and zoomed out, AOT equal or ahead). What remains is UI draw (+20–25%, 0.095 vs 0.076 ms) and composite (+20%, 0.060 vs 0.050 ms). That is about 0.03 ms per frame.
+  - **The remainder is native time inside FNA calls,** not managed codegen: `batcher_fna` is +0.015 ms per frame with identical draw and flush counts.
+  - **The AOT profile shows 4–5% of render-thread samples in `RtlWalkFrameChain`** (stack captures under the GPU driver), against about 2% in JIT. The likely source is an injected GPU tool on this machine (nv-aftermath-monitor running, `InProcessClient64.dll` loaded). A plausible reason it costs AOT more: the walk unwinds through every AOT frame (static .pdata) but stops at JIT frames. Re-measure on a machine without GPU tools before chasing it.
+  - **Not done:** `<DirectPInvoke>` for FNA3D and SDL3 (needs generated import libraries).
+  - **Static PGO is opt-in** via `-p:CuoMibcPath=` (tools/pgo/collect_mibc.py). Details: testing/aot-performance.md and the 2026-10-25 poc-log entry.
 
 ## Assets / streaming
 
