@@ -156,8 +156,16 @@ namespace ClassicUO.Game
             }
         }
 
+        private uint _cacheLogAt;
+
         public void Update()
         {
+            if (MobileAnimationSystem.CacheCheck && Time.Ticks >= _cacheLogAt)
+            {
+                _cacheLogAt = Time.Ticks + 5000;
+                Log.Info($"[mobile-cache-check] selections reused {MobileFrameCache.SelectHits}, run {MobileFrameCache.SelectMisses}; checked {MobileAnimationSystem.CheckSelects}, {MobileAnimationSystem.CheckSelectDiffs} different | instances replayed {MobileFrameCache.EmitHits}, emitted {MobileFrameCache.EmitMisses}; checked {MobileSpriteExtract.CheckReplays}, {MobileSpriteExtract.CheckReplayDiffs} different");
+            }
+
             int interval = CUOEnviroment.EcsCheckFrames;
 
             if (interval <= 0)

@@ -44,6 +44,10 @@ namespace ClassicUO.Game
     /// </summary>
     internal static class AnimationGroupRules
     {
+        /// <summary>Counts selections that rolled a random action (LowGroupExtended, server action 5/6): such a result
+        /// changes every frame, so MobileFrameCache never reuses it.</summary>
+        public static uint RandomRolls;
+
         private static readonly ushort[] HANDS_BASE_ANIMID =
         {
             0x0263,
@@ -211,6 +215,7 @@ namespace ClassicUO.Game
                         else
                         {
                             v13 = (ushort)(6 - (RandomHelper.GetValue() % 2 != 0 ? 1 : 0));
+                            RandomRolls++;
                         }
 
                         goto LABEL_243;

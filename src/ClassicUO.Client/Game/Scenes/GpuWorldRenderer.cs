@@ -452,14 +452,12 @@ namespace ClassicUO.Game.Scenes
             }
             else
             {
-                if (!ecs.Animation.Update(world, mobile))
-                {
-                    return false;
-                }
+                // e was looked up above (mirrored, with AnimationState) and the mobile is not destroyed: Update(world, mobile)'s checks
+                ecs.Animation.Update(world, mobile, e);
 
                 mobile.DrawAura(batcher, posX, posY, depth);
                 extract.Begin(_pack, _offsetX, _offsetY);
-                extract.Emit(e, posX, posY, depth);
+                extract.Emit(e, posX, posY, depth, Configuration.Settings.GlobalSettings.GpuMobileFrameCache ? mobile.FrameCache : null);
                 drawn = true;
 
                 // the view's side effects: picking, text and health bars read FrameInfo and IsFlipped

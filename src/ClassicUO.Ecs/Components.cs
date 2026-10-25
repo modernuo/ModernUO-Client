@@ -223,8 +223,9 @@ namespace ClassicUO.Ecs
         public LightItemArray LightItems;
         public byte LightCount;
 
-        // bumped on every rebuild
-        public ushort Version;
+        // set on every rebuild from a counter shared by all mobiles, so a version never repeats (W5's MobileFrameCache
+        // keys on it, also across a mirror entity being re-created); 0 = never built
+        public uint Version;
     }
 
     // Equipment (or the body graphic or sex) changed: EquipmentSystem rebuilds EquipmentSlots before the next extract.
