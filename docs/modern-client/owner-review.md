@@ -57,6 +57,8 @@ Running notes for your return, newest at the top within each section. Started 20
 
 ## Follow-ups noted (not started)
 
+- **End of milestone, your manual check:** the shoreline ticks at zoom 2 (coordinates in known-issues.md, grid-lines entry). You'll confirm whether they bother you before anyone fixes them.
+
 - **The large scene is left on the shard** (frozen: about 4% of one server core while a client stands there, ModernUO memory 563 → 711 MB). Say if you want it wiped (`make_scene.py wipe`) or added to your FPS test as an extra spot. It's on Felucca, so it needs a facet change, and it isn't added by default, so your results stay comparable with 10-24.
 - **W2 was half done on purpose.** The screen-position half is merged. The ECS-query half would save about 0.15 ms in the 21,000-object scene and nothing at normal scale, and it risks changing draw order and the height cut-off, so it was skipped in favour of W4. Recorded in the plan.
 - **Parity runs now need the item check too:** with the cache on, cached items skip the ECS item comparison, so parity runs must add `CUO_GPU_ITEM_CHECK` (in the testing docs). `itemcache off` restores the old coverage.
