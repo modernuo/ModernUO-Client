@@ -47,7 +47,9 @@ Running notes for your return, newest at the top within each section. Started 20
 
 ## In progress
 
-- **W5: the ECS takes over the per-frame world update** (an agent started about 08:45). Mobile animation and extract (about 0.55 ms in the scene) is now the largest piece of world prepare, and `World.Update` walks 25,000 items, most of them in packs.
+- **Legacy regression fix** (an agent started 2026-10-25 afternoon): split W0 from W1, measure with stats off, fix the shared tile walk, verify JIT and NativeAOT for Legacy and Gpu, and re-check your Legacy world-draw rise on a quiet machine.
+- **W5, next step** (an agent started at the same time): push mobile inputs (mount, hues, steps, war mode, server action) into the ECS instead of polling the legacy Mobile each frame. A Codex audit runs before the merge.
+- The two agents share a `bench.lock`, so timing series never overlap.
 
 ## Things you saw tonight, explained
 
