@@ -42,6 +42,8 @@ Use the kbatman3 lock and a throwaway settings.json with the password encrypted,
 4. **Saved setting:** a settings.json with `"world_renderer": "legacy"` and no `-worldrenderer` flag logs a warning and runs Gpu (legacy frames 0).
 5. **Setup failure:** `FNA3D_FORCE_DRIVER=D3D11` (no SDL_GPU device) must exit with `0xDEAF` after login, with no Legacy frame drawn.
 
+**Client chunk readiness (2026-10-25, integration agent).** The gate's readiness is `WorldRenderer.VisibleReady && Map.DrawPending == 0`: a chunk GameScene's walk asked for that is still in the client's ChunkLoadQueue counts as not ready, and while the gate holds, object fades complete at once (statics of a freshly loaded chunk start at alpha 0), so the first frame after a hold is complete and opaque. Check it with the slow shot run (`lt:ltravel`, `-fps 60`, `CUO_WORLD_HOLD_TIMEOUT=30000`, `CUO_BENCH_TPSHOTS=<dir>|24`): the first frame after each hold must be complete and opaque. `CUO_WORLD_SETTLE_LOG` lines show `client chunks queued in view`.
+
 ## Pass criteria
 
 - With hold on, 0 unsettled frames are presented in any episode; only frames after a timeout may be unsettled, and they are counted.

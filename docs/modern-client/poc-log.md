@@ -882,3 +882,40 @@ Branch `worktree-agent-a2ed70cbca488756a`, started at d583f65f5 and merged up to
 - **Performance** (2 or 3 other clients on the GPU the whole time, so very noisy):
   - client FrameStats, alternating runs: world_draw p50 at zoom 2.5 was 0.105–0.123 ms before and 0.103–0.115 ms after. The CPU side is unchanged by construction.
   - GPU frame time, `--bench-fixed` at 3840×2160 and scale 0.4, 5 alternating rounds: best medians 1.07 ms before and 1.11 ms after (+0.04 ms, about 3.5%, at 8.3 Mpx). Single runs varied from 1.0 to 6 ms, so this is within noise. An idle GPU wasn't available.
+
+## W3 + teleport integration gate; corpses and multis from the ECS; settle follow-up (2026-10-25)
+
+Branch `worktree-agent-add0b9e9bfc1fdafb`, started on poc/modern-client 3216539a7 (= the merged tip 28bb72308 + docs), merged with 08b952f3a (Tier 0 SDL fix) before the final measurements. JIT Release, 1920×1080. Scripts and logs: session scratchpad `integ\`.
+
+**Phase 1, the merged tip (3216539a7): pass.** Parked objects (Map.Park) are off every tile, so neither the capture nor the extracts see them; their mirror entities are synced when parked and again when placed.
+
+| Check | Result |
+|---|---|
+| ECS parity, `CUO_ANIM_SYNC=1`: bank / items / 120-NPC crowd | 0 mismatches (61k / 68k / 5.9M mobile and 374k / 265k / 798k item comparisons) |
+| Parity during `travel`, `ltravel`, `travel` (60 teleports with holds, `-ecscheck 60`) | 0 mismatches (137k mobile, 2.15M item); 1,766 objects parked, 1,759 placed, 0 placed at a wrong tile or with a stale ECS position (diag build) |
+| The same plan's `bodies` entry | 12,676 false mismatches: DevBench swapped the body without syncing the mirror. Fixed (af894ce94); 0 after |
+| Teleport settle, 2 normal runs | 0 unsettled frames outside walking, 0 timeouts (25–26 episodes each) |
+| Picking vs 7d0a74a92 | `CUO_BENCH_PICK` same objects in both renderers and both builds; `pickscan:8x6` 48 same, 0 different in both |
+| Shots vs 7d0a74a92 (Gpu, Legacy, UI) at Britain, bank, zoom 2.5 | Gpu Britain/UI identical; bank: moving NPCs; Legacy: moving NPCs and rain streaks; UI: journal text. Looked at |
+| 13-minute mixed session (travel, glide, walk, ltravel, bwalk) | 7,577 parked, 7,556 placed, 0 left parked (the rest moved or were deleted first); ECS count = World count in all 98 checks; private bytes 1,766 → 1,878 MB in the first 2 min, then 1,888–1,916 MB; 162 settle episodes, 0 timeouts |
+
+**Phase 2.**
+- **Corpses and item multis from `ItemSpriteExtract`** (83f8c7a6d): `EmitCorpse` ports `ItemView.DrawCorpse` (Corpse.def body, worn layers in PaperdollOrder order, equipconv, strips, out-of-range/dead/grid-loot/highlight hues, CorpseManager, the mirror bit written back for picking). Multis: no stack copy, no selection hue, the placement preview at half alpha. On the default path the capture now runs only for effects, captured statics/multi components and shadow-only draws; `gpu_ecs_sprites off` keeps it for everything.
+  - Parity: 0 mismatches over about 900k corpse comparisons (6.4M instances) and 260k multi comparisons (new `tools/ecs-parity/corpses.txt`; corpses in the crowd from NPC fights). Sabotage (corpse strip depth) flagged 154k.
+  - Found on the way: **items of a dying NPC** (re-keyed to serial | 0x80000000) were filed as contained, so the ECS dropped its hair for the first frames of the death animation (35 mismatches in 8 deaths). Fixed in the mirror (2f53f9a7f, unit test); 0 after.
+- **Settle follow-up:** readiness is now `VisibleReady && Map.DrawPending == 0` (b7b2d739c), and object fades complete at once while the gate holds (1f70b5905). The slow shot run (`CUO_WORLD_HOLD_TIMEOUT=30000`) showed the hold releasing with 10–36 client chunks queued and buildings still translucent for several frames; with both changes every release has 0 queued chunks and the first frame is opaque. The fade part was the larger one: statics of a reloaded chunk start at alpha 0, queue or not.
+  - Cost: teleport holds +1–2 ms each on average, login black screen about +100 ms (it now waits for the visible client chunks).
+
+**Measurements** (base = 08b952f3a, new = the merged branch; alternated, no other clients on the GPU; µs per frame):
+
+| Spot | world prepare base → new | world draw | Update | item capture | alloc/frame |
+|---|---|---|---|---|---|
+| Britain | 63.5, 65.6 → 58.1, 65.5 | 63–66 → 57–65 | 14.4–14.7 → 13.3–14.6 | 2.4 → 2.4 | 1.29–1.41 KB both |
+| Bank | 74.5, 76.2 → 65.2, 75.6 | 66–69 → 56–66 | 15.3–15.5 → 13.2–15.1 | 1.6 → 1.6–1.7 | 1.17 KB both |
+| Zoomed out ×2.5 | 250.8, 218.2 → 205.7, 222.0 | 80–86 → 75–81 | 14.5–16.7 → 14.0–14.6 | 3.3 → 3.4 | 1.29 KB both |
+| 120-NPC crowd | 91.8, 91.9 → 87.3, 91.1 | 52–54 → 51–53 | 28.8–30.4 → 28.1–28.2 | 6.2–6.4 → 4.4–4.5 | 1.17 KB both |
+| 8 corpses (one session, `ecssprites off` → `on`) | 42.4 → 34.0 | 44.5 → 43.7 | 19 | 12.5 → 7.7 | — |
+
+No regression. The crowd's item capture fell because NPCs that kill each other leave corpses.
+
+**Not done:** W2. The house placement preview (multi alpha 0.5) has no scenario; NativeAOT not re-measured.
