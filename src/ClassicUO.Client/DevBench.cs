@@ -21,6 +21,7 @@ namespace ClassicUO
     //   itemhue:hex,hex,... sets the hues of the nearest ground items, ghost:on|off swaps the player body (local-only render checks)
     //   CUO_BENCH_TOPMOST=1 keep the window on top while benching (occluded windows are throttled)
     //   plan entries size:WxH|max change the CUO_BENCH_SIZE client area mid-plan (max = maximised window)
+    //   plan entry gumps opens the paperdoll, backpack, journal and status bar (the UI allocation/parity scene); shots also save the UI render target
     internal static class DevBench
     {
         public static readonly bool FrameStats = Environment.GetEnvironmentVariable("CUO_FRAMESTATS") == "1";
@@ -42,6 +43,9 @@ namespace ClassicUO
         private static long _travelAt;
         private static bool _walkBack;
         private static int _planFrames;
+        private static bool _gumpsOpened;
+        private static long _appliesAtStart;
+        private static string _planMode;
         private static long _planStart;
         private static int _spot;
         private static Microsoft.Xna.Framework.Point? _mouse;
@@ -66,6 +70,12 @@ namespace ClassicUO
             if (Configuration.ProfileManager.CurrentProfile is { } profile)
             {
                 profile.ReduceFPSWhenInactive = false;
+
+                if (_shots != null)
+                {
+                    // keeps the timestamped "screenshot stored in" line out of the UI shots
+                    profile.HideScreenshotStoredInMessage = true;
+                }
 
                 if (_spots != null)
                 {
@@ -767,7 +777,7 @@ namespace ClassicUO
             if (_step == 4)
             {
                 _planFrames++;
-                string mode = _plan[_planIndex].Split(':')[1].Trim();
+                string mode = _planMode;
 
                 if (mode == "travel" && now >= _travelAt)
                 {
@@ -787,7 +797,7 @@ namespace ClassicUO
                     ClassicUO.FrameStats.StopWindow();
                     world.Player.Pathfinder.StopAutoWalk();
                     Log.Info($"[bench] {_plan[_planIndex]} done at {world.Player.X},{world.Player.Y},{world.Player.Z}, mobiles {world.Mobiles.Count}, items {world.Items.Count}, " +
-                             $"{_planFrames * (double)sec / (now - _planStart):0} fps (update count)");
+                             $"{_planFrames * (double)sec / (now - _planStart):0} fps (update count), {(Renderer.UltimaBatcher2D.EffectApplies - _appliesAtStart) / (double)Math.Max(1, _planFrames):0.0} effect applies/frame");
                     _planIndex++;
                     _step = 1;
                     _stepAt = now + sec;
@@ -956,6 +966,39 @@ namespace ClassicUO
                         break;
                     }
 
+                    if (_plan[_planIndex] == "gumps")
+                    {
+                        if (!_gumpsOpened)
+                        {
+                            // the paperdoll and backpack come from the server; place them all on the next pass
+                            GameActions.OpenPaperdoll(world, world.Player.Serial);
+                            GameActions.OpenBackpack(world);
+                            GameActions.OpenJournal(world);
+                            GameActions.OpenStatusBar(world);
+                            _gumpsOpened = true;
+                            _stepAt = now + sec * 3;
+
+                            break;
+                        }
+
+                        foreach (var g in Game.Managers.UIManager.Gumps)
+                        {
+                            switch (g)
+                            {
+                                case Game.UI.Gumps.PaperDollGump: g.X = 20; g.Y = 150; break;
+                                case Game.UI.Gumps.ContainerGump: g.X = 300; g.Y = 150; break;
+                                case Game.UI.Gumps.StatusGumpBase: g.X = 520; g.Y = 40; break;
+                                case Game.UI.Gumps.JournalGump: g.X = 500; g.Y = 260; break;
+                            }
+                        }
+
+                        Log.Info("[bench] gumps: paperdoll, backpack, journal, status");
+                        _planIndex++;
+                        _stepAt = now + sec * 2;
+
+                        break;
+                    }
+
                     if (_plan[_planIndex].StartsWith("season:"))
                     {
                         var season = Enum.Parse<Game.Managers.Season>(_plan[_planIndex].Substring(7), true);
@@ -1032,6 +1075,8 @@ namespace ClassicUO
                     _travelAt = now;
                     _planStart = now;
                     _planFrames = 0;
+                    _appliesAtStart = Renderer.UltimaBatcher2D.EffectApplies;
+                    _planMode = _plan[_planIndex].Split(':')[1].Trim(); // read every measured frame: split once
                     _stepAt = now + sec * 5 * _planWindows;
 
                     if (FrameStats)
