@@ -713,3 +713,17 @@ No regression beyond the run-to-run noise. The gate costs one call and a few com
 - a real facet change (no local facet hop; unit-tested, and `reinit` exercises the same recreation path);
 - `CUO_BENCH_PICK` and Legacy parity shots: Legacy currently has an unrelated corruption regression being bisected by another agent;
 - the page-fault branch's `CUO_GPU_REINIT`: it isn't on this branch. It drops the RT, so it should behave like `reinitrt`.
+
+### 2026-10-25 — Legacy tile corruption: B1 batcher regression, fixed
+
+- **Symptom:** the owner saw garbled, flickering world tiles on several clients: whole diamonds of land and statics missing, and square land patches. Mobiles, dynamic items and the UI were fine.
+- **It was Legacy frames,** not the Gpu world pass:
+  - world-RT shots: every Gpu frame was clean, and every Legacy frame was corrupt;
+  - the Legacy frames came from the plans' `world:legacy` periods and, before the world-settle merge, the automatic Legacy fallback while the Gpu pass was being (re)created.
+- **Bisect:** pure Legacy at the house spot, % near-black pixels of the world target. 3fc29d9d5 and 2eedf61db were clean (2%). B1 2202efb1f, and every later build, were corrupt (25–67%).
+- **Cause:** B1 stopped applying the basic effect per mesh run. That apply was what made FNA3D rebind the pipeline and with it the index buffer. FNA3D doesn't rebind a cycled index buffer (known-issues), so each mesh layer drew with stale indices.
+- **Fix** (`poc/b1-index-rebind`, on a6110f967): `IndexDataChanged()` after each layer's index upload.
+  - Shots: 12 of 12 pure-Legacy and 39 of 39 flip-plan shots clean.
+  - Effect applies: Gpu 2.0–2.7 per frame, unchanged. Legacy 7 → 56–63 per frame; batcher_fna 0.20–0.23 → 0.22–0.23 ms, within noise.
+  - Unit tests: 244 pass.
+  - Regression check: `testing/ui-batcher.md`.
