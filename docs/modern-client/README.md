@@ -49,6 +49,10 @@ Supporting material in this branch:
 - **UI:** classic gumps must work; newer interfaces (client-side UI driven by data/actions over the wire) are wanted. Controllers and localization are wanted.
 - **Platforms:** desktop first, targeting NativeAOT. Keep the browser (WASM) and mobile possible without rebuilding the project. Steam Deck desirable.
 - **One process = one session.** No multiboxing.
+- **Legacy world renderer is a developer comparison mode only (2026-10-24).**
+  - No automatic fallback to Legacy. While the GPU world isn't ready (login, facet change), hold the last frame or fade. If GPU setup fails, show an error and exit, the same way device loss does.
+  - Keep Legacy only as a developer comparison mode, mainly to catch Gpu bugs (parity shots, picking checks, A/B FPS). It is not a normal player setting.
+  - Delete the Legacy world path once the parity tooling compares against saved reference shots instead of a live Legacy render.
 - **The pack replaces MUL/UOP (2026-10-24).**
   - For every asset the pack format covers (art, texmaps, maps/statics, tiledata, hues, animations), the client loads only from the pack. There is no side-by-side MUL/UOP path, so we never support two formats. Those ClassicUO loaders get deleted once the pack path works.
   - MUL/UOP stay only for content the pack doesn't cover yet (gumps, fonts, cliloc, sounds, …; the list is in [pack-format.md](pack-format.md)). Each one moves into the pack over time. Multis, lights, radarcol, full tiledata, raw hues, tileart appearances and Equipconv.def joined the pack in format 1.0.

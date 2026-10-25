@@ -28,3 +28,24 @@ Visual or behavioural defects found in the PoC client that aren't fixed yet. Add
 - **What happens:** one client started right after a reset threw `ArgumentException: The scissor rectangle is invalid` from `ScissorStack.PushScissors` ← `ResizePic` on the login gump. The same exception was also seen at 02:45 (Application log, id 1026), so it may not need a reset.
 - **Likely cause:** a scissor rect larger than the render target while the window or back buffer has a transient size (0, or not yet resized).
 - **Fix:** clamp scissor rects to the current target bounds in `ScissorStack`, and skip the UI draw when the target is empty.
+
+## Gpu world renderer: raw pop-in on world entry and teleports (2026-10-24)
+
+- **Seen by:** the owner, watching agent test runs. On first entering the world and after moving to a new location, things pop in quickly, land is partly black for a moment, and there are flashes that look like intermediate drawing.
+- **Two causes in the code:**
+  - **Legacy fallback while Gpu isn't ready.** `GameScene.cs:1065` draws the world with Legacy until `gpu.IsReady(_world.MapIndex)` is true, and also whenever the world RT isn't `PreserveContents`. So entering the world or changing facet shows a few Legacy frames, then switches renderers. Legacy and Gpu filter differently, so the switch is visible.
+  - **Unsettled frames are presented.** `WorldRenderer.Settled` (`poc/Uo.Render/WorldRenderer.cs:216`) is false while chunks are pending or visible pages are missing, but only screenshots and tests wait for it. The live client presents those frames: chunks that aren't built yet show as gaps or black, and missing pages draw as empty or black texels.
+- **Fix candidates:**
+  - on world entry and teleport, hold the last frame (or a loading fade) until `Settled`, with a timeout;
+  - don't draw a chunk until its pages are resident, or draw a low-detail placeholder (architecture-recommendations.md, item 5);
+  - prefetch the destination area on teleport or map change, before the client moves the camera;
+  - once Legacy is removed, drop the Legacy fallback; until then, hold the previous frame instead of drawing Legacy.
+- **Verify:** record the screen during a login and a recall or `[go` teleport. Log `MissingVisible`/`PendingChunks` for each frame until `Settled`, and count the presented frames that weren't settled and the frames drawn by Legacy.
+- **Related, from the pack-loading merge (df2fbf8c8):** a body seen for the first time decodes on a worker and draws nothing until its first direction is uploaded. A new equipment item on a human who is already visible can appear a frame or two after the body. Nobody has checked this by eye yet. `CUO_ANIM_SYNC=1` restores synchronous loading for comparison.
+
+## Single frames with no baked land and statics, or scattered missing and wrong tiles (2026-10-25)
+
+- **Seen by:** the owner on the KamDos client, which ran the page-fault agent's mitigation build `pf/aot-sabc3` (uncommitted Tier 0 work). Recording: `Desktop\Recording 2026-10-25 000245.mp4`.
+- **What happens:** the character stands still in a fully loaded house. In 5 of 234 recorded frames, either nearly all baked land and statics are black (dynamic items, mobiles and the UI still draw), or scattered tiles are missing or show the wrong texture.
+- **Not seen** on the Kbatfour client (the pack-loading build): there, black appears only during teleports, which is the pop-in issue above.
+- **Likely cause:** a buffer or page-atlas write racing the GPU read, or a resource recreated mid-frame, in one of the mitigations. A blocker for merging any mitigation that causes it.
