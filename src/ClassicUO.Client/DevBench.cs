@@ -9,7 +9,7 @@ namespace ClassicUO
     // Opt-in measurement script, driven by environment variables:
     //   CUO_BENCH_GO="x y"  once in game, [go there, zoom 1, then measure
     //   CUO_FRAMESTATS=1    uncap the frame rate, force inactive throttling off, log per-phase timings every 5 s (FrameStats)
-    //   CUO_BENCH_PLAN="name:x y:zoom;name:travel;name:walk;say:text;vsync:on|off"  measure each entry for CUO_BENCH_WINDOWS (default 3) windows, then quit
+    //   CUO_BENCH_PLAN="name:x y:zoom;name:travel;name:walk;name:bodies;say:text;vsync:on|off"  measure each entry for CUO_BENCH_WINDOWS (default 3) windows, then quit
     //   CUO_BENCH_SIZE=1920x1080  resize the window client area to this many pixels with the game viewport filling it
     //   CUO_BENCH_EXIT=1    walk a few steps, take screenshots and quit when done
     //   CUO_BENCH_SPOTS="x y;x y"  screenshot each spot at zoom 1 and full light, then quit
@@ -38,7 +38,8 @@ namespace ClassicUO
             (1823, 2821), (2899, 676), (2498, 392), (542, 985), (596, 2138), (4442, 1172), (1495, 1629)
         };
         private static int _planIndex, _travelIndex, _windowsAtStart;
-        private static ushort _ghostRestore;
+        private static ushort _ghostRestore, _bodyRestore;
+        private static int _bodyNext, _bodiesShown;
         private static long _travelAt;
         private static bool _walkBack;
         private static int _planFrames;
@@ -775,6 +776,31 @@ namespace ClassicUO
                     GameActions.Say($"[go {tx} {ty}");
                     _travelAt = now + sec * 2;
                 }
+                else if (mode == "bodies" && now >= _travelAt)
+                {
+                    // first sight of many bodies: swap the player's body (local only) to a body not drawn yet, every 50 ms
+                    var anims = game.UO.FileManager.Animations;
+
+                    if (_bodyRestore == 0)
+                    {
+                        _bodyRestore = world.Player.Graphic;
+                    }
+
+                    while (++_bodyNext < anims.BodyCount)
+                    {
+                        ref readonly var body = ref anims.GetBody((ushort)_bodyNext);
+
+                        if (body.ActionCount > 0 && (int)body.Type != (int)Assets.AnimationGroupsType.Equipment && anims.TryGetDirection((ushort)_bodyNext, 0, 4, out _))
+                        {
+                            world.Player.Graphic = (ushort)_bodyNext;
+                            _bodiesShown++;
+
+                            break;
+                        }
+                    }
+
+                    _travelAt = now + sec / 20;
+                }
                 else if (mode == "walk" && !world.Player.Pathfinder.AutoWalking && now >= _travelAt)
                 {
                     _walkBack = !_walkBack;
@@ -786,6 +812,14 @@ namespace ClassicUO
                 {
                     ClassicUO.FrameStats.StopWindow();
                     world.Player.Pathfinder.StopAutoWalk();
+
+                    if (_bodyRestore != 0)
+                    {
+                        world.Player.Graphic = _bodyRestore;
+                        _bodyRestore = 0;
+                        Log.Info($"[bench] bodies: {_bodiesShown} bodies shown, up to body {_bodyNext}");
+                    }
+
                     Log.Info($"[bench] {_plan[_planIndex]} done at {world.Player.X},{world.Player.Y},{world.Player.Z}, mobiles {world.Mobiles.Count}, items {world.Items.Count}, " +
                              $"{_planFrames * (double)sec / (now - _planStart):0} fps (update count)");
                     _planIndex++;
@@ -1011,7 +1045,7 @@ namespace ClassicUO
                         gs.Camera.Zoom = zoom;
                     }
 
-                    GameActions.Say(mode == "travel" || mode == "walk" ? "[go 1495 1629" : $"[go {mode}");
+                    GameActions.Say(mode == "travel" || mode == "walk" || mode == "bodies" ? "[go 1495 1629" : $"[go {mode}");
                     _step = 2;
                     _stepAt = now + sec * 8;
 
