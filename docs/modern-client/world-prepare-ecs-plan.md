@@ -36,7 +36,7 @@ Under Gpu, **most of this repeats work the GPU already does or that changes only
   - `EquippedOn` and `ContainedIn`, indexed by parent serial;
   - tags `MobileTag`, `ItemTag`, `PlayerTag`, `OnGround`, `MultiTag`.
 - It mirrors `World` with 0 mismatches. `DynamicSpriteExtract` exists, but the GPU path doesn't use it yet; `WorldRenderer.DynamicBuffer` is where it would plug in.
-- Animation state, light, alpha and screen position are not yet in the ECS.
+- Mobile animation state is in the ECS (W3 groundwork, below); light, item/corpse sprites and screen position are not yet.
 
 ## Steps
 
@@ -97,6 +97,17 @@ Move each per-frame duty that touches land or statics to where it belongs:
 - **Parity:** must match ClassicUO's animation selection exactly. The existing view code is the reference; port its rules case by case (mounts, sitting, gargoyle flying, partial hues, spectral) with screenshot tests per case.
 - **Retire** the batcher capture hook for mobiles and items.
 - **Effort:** 1–2 weeks. This is the largest step and the one ClassicUO 2.0 took with TinyEcs.
+- **Status (2026-10-25): groundwork done for mobiles, parity proven; not yet the renderer's source.** Details in poc-log ("W3 groundwork"), test procedure in [testing/ecs-animation.md](testing/ecs-animation.md).
+  - **Components:** `AnimationState`, `MobileRenderState` (override hue, alpha, step offset) and `EquipmentSlots` (rebuilt only on an `EquipmentDirty` tag that the mirror sets on equip, unequip, worn-item or body changes).
+  - **Systems:** `MobileAnimationSystem`, then `MobileSpriteExtract`, which writes `SpriteInstance`s from the pack tables with no atlas and no batcher.
+  - **Shared rules:** action selection (`AnimationGroupRules`, moved out of Mobile) and the frame step (`AnimationTiming`). They are shared with the legacy Mobile, not duplicated.
+  - **Parity:** 0 mismatches against the capture in every case the harness drives: bank, walking/running, 120-NPC crowd, mounted humans, equipment changes, cloak facings, partial and spectral hues, hidden, gargoyle (both sexes, flying, per-layer actions), sitting, dead. JIT and NativeAOT.
+  - **Cost:** the extract is 0.33 µs per mobile vs 1.5 µs for the capture.
+  - **Next:**
+    1. Fill `DynamicBuffer` from the extract behind a switch, for mobiles first.
+    2. Move the sampled inputs (steps, server action, war mode) to the ECS with W5.
+    3. Port ground items and corpses (ItemView) the same way.
+    4. Only then retire the capture hook.
 
 ### W4: ground-item chunk baking (only if W0–W3 numbers ask for it)
 - Bake rarely-changing ground items into the chunk instance buffer and re-bake the chunk on ECS change events. Mobiles stay per frame.

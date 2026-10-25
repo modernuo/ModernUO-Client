@@ -1,0 +1,11 @@
+wait 6
+say [go 1430 1690
+wait 5
+check
+walk 2 4
+walk 6 4
+walk 2 4 run
+walk 6 4 run
+wait 4
+check
+quit

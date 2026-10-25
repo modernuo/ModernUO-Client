@@ -1,10 +1,13 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
+using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using ClassicUO.Ecs;
+using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
 using ClassicUO.Utility.Logging;
+using EcsEntity = Friflo.Engine.ECS.Entity;
 
 namespace ClassicUO.Game
 {
@@ -27,11 +30,19 @@ namespace ClassicUO.Game
             _world = world;
             Mirror = new WorldMirror();
             Extract = new DynamicSpriteExtract(Mirror.Store);
+            Animation = new MobileAnimationSystem(Mirror);
         }
 
         public WorldMirror Mirror { get; }
 
         public DynamicSpriteExtract Extract { get; }
+
+        public MobileAnimationSystem Animation { get; }
+
+        // created on first use: needs the loaded animation tables
+        public MobileSpriteExtract MobileExtract => _mobileExtract ??= new MobileSpriteExtract(Client.Game.UO.FileManager.Animations);
+
+        private MobileSpriteExtract _mobileExtract;
 
         public EcsSessionDriver Driver { get; private set; }
 
@@ -108,8 +119,21 @@ namespace ClassicUO.Game
         // Death re-keys a mobile to serial | 0x80000000 and repoints its items.
         public void OnSerialChanged(uint oldSerial, Entity entity)
         {
+            // the Mobile keeps IsFlipped across the re-key; so must the persistent mirror bit
+            AnimStateFlags keep = 0;
+
+            if (Mirror.TryGetEntity(oldSerial, out EcsEntity old) && old.HasComponent<AnimationState>())
+            {
+                keep = old.GetComponent<AnimationState>().Flags & AnimStateFlags.Mirror;
+            }
+
             Mirror.Remove(oldSerial);
             Sync(entity);
+
+            if (keep != 0 && Mirror.TryGetEntity(entity.Serial, out EcsEntity rekeyed) && rekeyed.HasComponent<AnimationState>())
+            {
+                rekeyed.GetComponent<AnimationState>().Flags |= keep;
+            }
 
             for (LinkedObject i = entity.Items; i != null; i = i.Next)
             {
@@ -199,6 +223,7 @@ namespace ClassicUO.Game
                 mobiles++;
                 _live.Add(mobile.Serial);
                 CompareMobile(mobile, ref mismatches);
+                CompareAnimation(mobile, ref mismatches);
             }
 
             _extra.Clear();
@@ -295,6 +320,111 @@ namespace ClassicUO.Game
                     $"dir={(byte)mobile.Direction} f=0x{(byte)mobile.Flags:X2} player={isPlayer} | ECS g=0x{r.Graphic:X4} h=0x{r.Hue:X4} " +
                     $"({r.X},{r.Y},{r.Z}) dir={r.Facing} f=0x{r.Flags:X2} player={r.IsPlayer} mobile={r.IsMobile}"
                 );
+            }
+        }
+
+        // EquipmentSlots vs MobileView's layer walk, AnimationState's action/frame vs the Mobile's
+        private void CompareAnimation(Mobile mobile, ref int mismatches)
+        {
+            if (_world.Player == null || !Mirror.TryGetEntity(mobile.Serial, out EcsEntity e) || !e.HasComponent<AnimationState>())
+            {
+                return;
+            }
+
+            // The mirror bit is history (GetAnimDirection keeps it for directions 3 and 7) and MobileView advances it only
+            // on frames the mobile is drawn; the check must not advance it on frames the view skips.
+            AnimStateFlags mirrorBefore = e.GetComponent<AnimationState>().Flags & AnimStateFlags.Mirror;
+
+            if (!Animation.Update(_world, mobile))
+            {
+                return;
+            }
+
+            try
+            {
+                CompareAnimation(mobile, e, ref mismatches);
+            }
+            finally
+            {
+                ref AnimationState restore = ref e.GetComponent<AnimationState>();
+                restore.Flags = restore.Flags & ~AnimStateFlags.Mirror | mirrorBefore;
+            }
+        }
+
+        private void CompareAnimation(Mobile mobile, EcsEntity e, ref int mismatches)
+        {
+
+            ref readonly EquipmentSlots eq = ref e.GetComponent<EquipmentSlots>();
+            ref readonly AnimationState s = ref e.GetComponent<AnimationState>();
+            bool gargoyle = AnimationRules.IsGargoyleDrawBody(mobile.Graphic, Client.Game.UO.Version >= Utility.ClientVersion.CV_7000);
+
+            Span<Layer> layers = stackalloc Layer[PaperdollOrder.N];
+            Span<uint> expected = stackalloc uint[PaperdollOrder.N];
+            int count = PaperdollOrder.BuildInWorld(mobile, mobile.IsFemale || gargoyle, 1, layers);
+            int n = 0;
+
+            if (mobile.IsHuman)
+            {
+                for (int i = 0; i < count; i++)
+                {
+                    Item item = mobile.FindItemByLayer(layers[i]);
+
+                    if (item == null || mobile.IsDead && (layers[i] == Layer.Hair || layers[i] == Layer.Beard) ||
+                        Mobile.IsCovered(mobile, layers[i]) || item.ItemData.AnimID == 0)
+                    {
+                        continue;
+                    }
+
+                    expected[n++] = item.Serial;
+                }
+            }
+
+            Span<byte> order = stackalloc byte[EquipmentSlots.MAX];
+            Span<byte> layerOf = stackalloc byte[EquipmentSlots.MAX];
+
+            for (int i = 0; i < eq.Count; i++)
+            {
+                order[i] = (byte)i;
+                layerOf[i] = eq.Slots[i].Layer;
+            }
+
+            int got = AnimationRules.ApplyDirectionCloak(order, eq.Count, layerOf, 1);
+            bool same = got == n;
+
+            for (int i = 0; same && i < n; i++)
+            {
+                same = eq.Slots[order[i]].Item == expected[i];
+            }
+
+            uint mount = mobile.FindItemByLayer(Layer.Mount)?.Serial ?? 0;
+            AnimGroupInput legacy = mobile.GetAnimGroupInput();
+
+            if (!same || eq.MountItem != mount || !legacy.Hand1.Equals(eq.Hand1) || !legacy.Hand2.Equals(eq.Hand2))
+            {
+                var sb = new System.Text.StringBuilder();
+
+                for (int i = 0; i < n; i++)
+                {
+                    sb.Append($" 0x{expected[i]:X8}");
+                }
+
+                sb.Append(" | ecs");
+
+                for (int i = 0; i < got; i++)
+                {
+                    sb.Append($" 0x{eq.Slots[order[i]].Item:X8}");
+                }
+
+                Report(ref mismatches, $"equipment of 0x{mobile.Serial:X8} g=0x{mobile.Graphic:X4}: World{sb} mount 0x{mount:X8}/0x{eq.MountItem:X8}");
+            }
+
+            // a seated mobile draws the stand action's frame 0 whatever the Mobile's action and frame are
+            bool seated = (s.Flags & AnimStateFlags.Sitting) != 0;
+
+            if (s.Body != mobile.GetGraphicForAnimation() ||
+                !seated && (s.Frame != mobile.AnimIndex || s.Group != Mobile.GetGroupForAnimation(mobile, s.Body, true)))
+            {
+                Report(ref mismatches, $"animation of 0x{mobile.Serial:X8}: World body=0x{mobile.GetGraphicForAnimation():X4} frame={mobile.AnimIndex} | ECS body=0x{s.Body:X4} group={s.Group} frame={s.Frame}");
             }
         }
 
