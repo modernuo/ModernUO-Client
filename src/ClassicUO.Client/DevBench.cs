@@ -1012,6 +1012,7 @@ namespace ClassicUO
                         if (body.ActionCount > 0 && (int)body.Type != (int)Assets.AnimationGroupsType.Equipment && anims.TryGetDirection((ushort)_bodyNext, 0, 4, out _))
                         {
                             world.Player.Graphic = (ushort)_bodyNext;
+                            world.Ecs.Sync(world.Player); // a local body swap: the ECS mirror follows, as for a server body change
                             _bodiesShown++;
 
                             break;
@@ -1055,6 +1056,7 @@ namespace ClassicUO
                     if (_bodyRestore != 0)
                     {
                         world.Player.Graphic = _bodyRestore;
+                        world.Ecs.Sync(world.Player);
                         _bodyRestore = 0;
                         Log.Info($"[bench] bodies: {_bodiesShown} bodies shown, up to body {_bodyNext}");
                     }
@@ -1253,10 +1255,12 @@ namespace ClassicUO
                             {
                                 _ghostRestore = world.Player.Graphic;
                                 world.Player.Graphic = 0x0192;
+                                world.Ecs.Sync(world.Player);
                             }
                             else if (arg == "off" && _ghostRestore != 0)
                             {
                                 world.Player.Graphic = _ghostRestore;
+                                world.Ecs.Sync(world.Player);
                             }
                         }
                         else
