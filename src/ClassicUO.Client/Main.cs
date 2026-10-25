@@ -500,6 +500,12 @@ namespace ClassicUO
                         CUOEnviroment.NoServerPing = true;
 
                         break;
+
+                    case "nomessagebox":
+
+                        CUOEnviroment.NoMessageBox = true;
+
+                        break;
                 }
             }
         }

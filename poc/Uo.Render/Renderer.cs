@@ -135,11 +135,11 @@ public sealed unsafe class Renderer : IDisposable
 
         _hueTex = CreateHueTexture(pack);
         _paletteBuf = CreatePaletteBuffer(pack);
-        _dummyAnimTex = SDL_CreateGPUTexture(Device, new SDL_GPUTextureCreateInfo
+        _dummyAnimTex = CreateNamedTexture(Device, new SDL_GPUTextureCreateInfo
         {
             type = SDL_GPUTextureType.SDL_GPU_TEXTURETYPE_2D_ARRAY, format = SDL_GPUTextureFormat.SDL_GPU_TEXTUREFORMAT_R8_UINT,
             usage = SDL_GPUTextureUsageFlags.SDL_GPU_TEXTUREUSAGE_SAMPLER, width = 1, height = 1, layer_count_or_depth = 1, num_levels = 1,
-        });
+        }, "Uo.Render dummy anim pages");
     }
 
     /// <summary>palettes.bin's u16 table as one storage buffer (18.5 MiB for all 37.9k palettes), uploaded once.</summary>
@@ -293,7 +293,7 @@ public sealed unsafe class Renderer : IDisposable
             usage = SDL_GPUTextureUsageFlags.SDL_GPU_TEXTUREUSAGE_SAMPLER,
             width = 32, height = (uint)rows, layer_count_or_depth = 1, num_levels = 1,
         };
-        var tex = SDL_CreateGPUTexture(Device, in ci);
+        var tex = CreateNamedTexture(Device, ci, "Uo.Render hues");
         uint bytes = (uint)(rows * 32 * 4);
         var tb = CreateTransfer(bytes, true);
         var ptr = SDL_MapGPUTransferBuffer(Device, tb, false);
@@ -333,12 +333,24 @@ public sealed unsafe class Renderer : IDisposable
             usage = SDL_GPUTextureUsageFlags.SDL_GPU_TEXTUREUSAGE_DEPTH_STENCIL_TARGET,
             width = w, height = h, layer_count_or_depth = 1, num_levels = 1,
         };
-        _depth = SDL_CreateGPUTexture(Device, in ci);
+        _depth = CreateNamedTexture(Device, ci, $"Uo.Render depth {w}x{h}");
         _depthW = w; _depthH = h;
         DepthRecreations++;
     }
 
     public int DepthRecreations;
+
+    /// <summary>SDL_CreateGPUTexture with a debug name. SDL applies names only on a debug-mode device (FNA3D: Debug builds),
+    /// where they show up in validation messages and GPU crash dumps.</summary>
+    internal static IntPtr CreateNamedTexture(IntPtr device, SDL_GPUTextureCreateInfo ci, string name)
+    {
+        uint props = SDL_CreateProperties();
+        SDL_SetStringProperty(props, SDL_PROP_GPU_TEXTURE_CREATE_NAME_STRING, name);
+        ci.props = props;
+        var tex = SDL_CreateGPUTexture(device, in ci);
+        SDL_DestroyProperties(props);
+        return tex;
+    }
 
     public void EnsureOffscreen(uint w, uint h)
     {
@@ -351,7 +363,7 @@ public sealed unsafe class Renderer : IDisposable
             usage = SDL_GPUTextureUsageFlags.SDL_GPU_TEXTUREUSAGE_COLOR_TARGET | SDL_GPUTextureUsageFlags.SDL_GPU_TEXTUREUSAGE_SAMPLER,
             width = w, height = h, layer_count_or_depth = 1, num_levels = 1,
         };
-        _offscreen = SDL_CreateGPUTexture(Device, in ci);
+        _offscreen = CreateNamedTexture(Device, ci, $"Uo.Render offscreen {w}x{h}");
         _offW = w; _offH = h;
     }
 
@@ -404,7 +416,12 @@ public sealed unsafe class Renderer : IDisposable
     {
         if (Mode == RendererMode.External && (f.Target == IntPtr.Zero || f.TargetWidth == 0 || f.TargetHeight == 0)) return false;
         var cmd = SDL_AcquireGPUCommandBuffer(Device);
-        if (cmd == IntPtr.Zero) return false;
+        if (cmd == IntPtr.Zero)
+        {
+            SubmitFailures++;
+            LastSubmitError = SDL_GetError();
+            return false;
+        }
 
         // ---- stage instance uploads + frame table into the frame transfer buffer
         var mapped = (byte*)SDL_MapGPUTransferBuffer(Device, _frameTransfer, true);
@@ -576,7 +593,8 @@ public sealed unsafe class Renderer : IDisposable
         return true;
     }
 
-    /// <summary>Frames whose command buffer submit failed, and SDL's error for the last one (a lost device, typically).</summary>
+    /// <summary>Frames whose command buffer could not be acquired or submitted, and SDL's error for the last one (a lost
+    /// device, typically). SDL_GPU doesn't recover from that, and its Vulkan backend leaks every failed submit.</summary>
     public int SubmitFailures;
     public string LastSubmitError;
 

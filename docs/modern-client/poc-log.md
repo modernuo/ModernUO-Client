@@ -422,3 +422,24 @@ The owner ran `tools/fps-test/run-fps-test.ps1` on the desktop with the display 
 - **World prepare is 2–35% higher under Gpu** (override collection plus view capture). At 4K zoomed out it is 3.6 ms of the 4.1 ms Draw, so ClassicUO's per-tile walk is now the top cost. It is the first target of the improvement phase (ECS-driven visibility, screen positions recomputed only on change, no per-sprite capture for static ground items).
 - Allocation is unchanged at about 17.5 KB per frame; the UI closure fixes in perf-opportunities.md remain.
 - **The Phase 4 renderer goal is met:** no performance regression in general use under NativeAOT on this machine, and large gains in heavy scenes.
+
+### 2026-10-24 — Device-lost handling (uncommitted)
+
+- **What FNA3D and SDL do on a lost device.** Details and line numbers: [device-lost-leak.md](device-lost-leak.md).
+  - FNA3D's SDL_GPU driver ignores failed submits and swapchain acquires and keeps rendering. It reports an error only in its fence/stall path, and FNA then throws out of the native log callback. That is the stock client's 2026-07-27 InvalidOperationException and the 2026-08-11 NativeAOT fail-fast.
+  - SDL 3.4.19's Vulkan backend never cleans a command buffer again after `VK_ERROR_DEVICE_LOST`. Each frame allocates a new command buffer, uniform buffers and cycled transfer buffers (FNA3D's 16 MiB upload buffer, Uo.Render's 8 MiB frame buffer).
+  - The only signal is the text in `SDL_GetError()`.
+- **Handler (`GpuDeviceLost`).**
+  - **Detection:** after every present, SDL's error text is checked for `DEVICE_LOST`/`REMOVED`/`HUNG`/`RESET` (raw pointer, no allocation). A failed Uo.Render acquire or submit and an FNA error with device-lost text also count.
+  - **Then:** log the error; save the profile, macros, info bars and settings and disconnect, without GPU teardown; show "The graphics driver reset (GPU device lost). ClassicUO will close." (skipped with `-nomessagebox`, DevBench or `CUO_BENCH_*`); exit with code `0xDEAD`.
+  - **Diagnostics:** `CUO_DEVICE_LOST_NOEXIT=1` keeps running and logs frames and private bytes. `CUO_SIMULATE_DEVICE_LOST=<s>` injects the Vulkan error text, to test without a reset.
+  - **Not done:** recovery (recreating the device).
+- **run-fps-test.ps1** reports exit code 0xDEAD as "GPU device lost (driver reset)" with the driver events, and waits up to 5 s for the event to reach the log.
+- **Forced TDR: blocked.** `dxcap -forcetdr` needs admin ("Please run as administrator"). It was tried once at 21:32:29 and caused no reset. Simulated losses passed for JIT and AOT in Gpu and Legacy mode, and with and without the message box: profile saved, exit 0xDEAD within a frame, memory flat.
+- **A real reset during the run** (21:36:29, AOT `run-fps-test.ps1 -Windows 1`, at the first `world:legacy` switch):
+  - The handler caught it (`vkQueueSubmit VK_ERROR_DEVICE_LOST`), saved and exited 0xDEAD in the same second.
+  - The Aftermath monitor's dump `C:\CrashDumps\aftermath\cuo-16164-20261024_213629.nv-gpudmp` is a GPU page fault (`Error_DMA_PageFault`): a ROP write in FNA3D's SwapBuffers command buffer, at a VA inside a 2048×2048×24-layer, 12-mip texture created 17 ms earlier. That is a copy of Uo.Render's page atlas, which only SDL's Vulkan defragmenter creates. The atlas's 320 MiB allocation shares its 64 MiB tail with FNA's 3.75 MiB render targets, so it becomes a defrag candidate.
+  - A forced defrag that moved the atlas did not fault, and an identical fps-test rerun did not reproduce it, so the trigger is not settled. The candidates are in device-lost-leak.md.
+  - Uo.Render now names its textures; the names show in dumps only from a debug-mode device (Debug build).
+- **Checks:** client Release build, 188 unit tests and `--external-test` on Vulkan pass. Re-published with `publish-aot.ps1`.
+
