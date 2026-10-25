@@ -610,6 +610,11 @@ namespace ClassicUO
                 Scene.Draw(_uoSpriteBatch, _renderTargets);
             }
 
+            // A transient zero-sized window (minimised, mid-resize, or right after a device reset) leaves no UI target to
+            // draw into: skip the UI rather than draw into an empty back buffer.
+            bool drawUi = _renderTargets.UiRenderTarget != null && !_renderTargets.UiRenderTarget.IsDisposed
+                && GraphicManager.PreferredBackBufferWidth > 0 && GraphicManager.PreferredBackBufferHeight > 0;
+
             _uoSpriteBatch.GraphicsDevice.SetRenderTarget(_renderTargets.UiRenderTarget);
             GraphicsDevice.Clear(Color.Transparent);
 
@@ -628,24 +633,27 @@ namespace ClassicUO
             SelectedObject.HealthbarObject = null;
             SelectedObject.SelectedContainer = null;
 
-            FrameStats.Begin(FramePhase.SceneDrawUi);
-            _uoSpriteBatch.Begin();
-            if (Scene != null && Scene.IsLoaded && !Scene.IsDestroyed)
+            if (drawUi)
             {
-                Scene.DrawUI(_uoSpriteBatch);
+                FrameStats.Begin(FramePhase.SceneDrawUi);
+                _uoSpriteBatch.Begin();
+                if (Scene != null && Scene.IsLoaded && !Scene.IsDestroyed)
+                {
+                    Scene.DrawUI(_uoSpriteBatch);
+                }
+                _uoSpriteBatch.End();
+                FrameStats.End(FramePhase.SceneDrawUi);
+
+                FrameStats.Begin(FramePhase.UiDraw);
+                UIManager.Draw(_uoSpriteBatch);
+                FrameStats.End(FramePhase.UiDraw);
+
+                FrameStats.Begin(FramePhase.Cursor);
+                _uoSpriteBatch.Begin();
+                UO.GameCursor?.Draw(_uoSpriteBatch);
+                _uoSpriteBatch.End();
+                FrameStats.End(FramePhase.Cursor);
             }
-            _uoSpriteBatch.End();
-            FrameStats.End(FramePhase.SceneDrawUi);
-
-            FrameStats.Begin(FramePhase.UiDraw);
-            UIManager.Draw(_uoSpriteBatch);
-            FrameStats.End(FramePhase.UiDraw);
-
-            FrameStats.Begin(FramePhase.Cursor);
-            _uoSpriteBatch.Begin();
-            UO.GameCursor?.Draw(_uoSpriteBatch);
-            _uoSpriteBatch.End();
-            FrameStats.End(FramePhase.Cursor);
 
             FrameStats.Begin(FramePhase.Composite);
             _uoSpriteBatch.GraphicsDevice.SetRenderTarget(null);
