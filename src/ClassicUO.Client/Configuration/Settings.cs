@@ -88,21 +88,18 @@ namespace ClassicUO.Configuration
         // Folder of the converted asset pack; empty = "pack" next to the client, else in the UO directory.
         [JsonPropertyName("pack")] public string PackDirectory { get; set; }
 
-        // The world renderer for this run: "gpu" (Uo.Render on FNA3D's SDL_GPU device; the only player renderer) or
-        // "legacy" (the FNA batcher), a developer comparison mode chosen only by -worldrenderer, the -worldrenderer command
-        // or DevBench's world:legacy. Not saved: a "world_renderer" in settings.json is ignored (SavedWorldRenderer).
+        // The world renderer setting: "auto" (default: Gpu when the machine supports it, else Legacy), "gpu" (forced: no
+        // Gpu world = error and exit) or "legacy" (forced). Saved. -worldrenderer overrides it for one run without saving
+        // (WorldRendererOverride). RendererSelection decides at startup; WorldRenderer below is the result.
+        [JsonPropertyName("world_renderer")] public string WorldRendererSetting { get; set; } = "auto";
+
+        /// <summary>-worldrenderer auto|gpu|legacy: this run only, never saved.</summary>
+        [JsonIgnore] public static string WorldRendererOverride { get; set; }
+
+        // The world renderer this session uses: "gpu" (Uo.Render on FNA3D's SDL_GPU device) or "legacy" (the FNA batcher).
+        // Set once at startup by RendererSelection (never mid-session for players); dev builds (CUO_DEVTOOLS) can switch it at
+        // runtime (-worldrenderer command, DevBench world:/flip:/pick). Not saved.
         [JsonIgnore] public string WorldRenderer { get; set; } = "gpu";
-
-        // The old saved setting. Read so a "world_renderer": "legacy" left in settings.json can be reported, never applied;
-        // never written (null), so the next save drops it.
-        [JsonPropertyName("world_renderer"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
-        public string SavedWorldRenderer
-        {
-            get => null;
-            set => IgnoredSavedWorldRenderer = value;
-        }
-
-        [JsonIgnore] public static string IgnoredSavedWorldRenderer { get; private set; }
 
         [JsonIgnore] public bool UseGpuWorldRenderer => string.Equals(WorldRenderer, "gpu", StringComparison.OrdinalIgnoreCase);
 
