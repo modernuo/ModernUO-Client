@@ -34,6 +34,14 @@ namespace ClassicUO.Renderer
         [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
         private static partial uint SDL_GetGPUShaderFormats(IntPtr device);
 
+        [LibraryImport("SDL3")]
+        [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+        private static partial IntPtr SDL_GetRevision();
+
+        /// <summary>SDL3.dll's revision, e.g. "SDL-3.4.19-b2a3160 (modernuo modernuo/3.4.19 b2a3160aa)" for the fork build
+        /// (external/x64/SDL3.version, docs/modern-client/sdl-fork.md).</summary>
+        public static string GetSdlRevision() => Marshal.PtrToStringUTF8(SDL_GetRevision());
+
         [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "GLDevice")]
         private static extern ref IntPtr GLDevice(GraphicsDevice device);
 

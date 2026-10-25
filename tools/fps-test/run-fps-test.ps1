@@ -11,8 +11,9 @@
     Writes results-<timestamp>.md to -ResultsDir and prints the same tables. The client is closed and the temp
     folder deleted at the end, also on error or Ctrl+C.
 
-    The password is asked for with a masked prompt and only passed to the client process on its command line; it is
-    never written to disk. For unattended runs, set CUO_FPS_TEST_PASSWORD instead (optional).
+    The password is asked for with a masked prompt and written, encrypted the way the client stores it (Crypter), into the
+    throwaway settings.json; it is never on a command line, and the temp folder is deleted at the end. For unattended
+    runs, set CUO_FPS_TEST_PASSWORD instead (optional).
 
 .EXAMPLE
     powershell -ExecutionPolicy Bypass -File C:\Repositories\classicuo\tools\fps-test\run-fps-test.ps1
@@ -125,6 +126,18 @@ if ([string]::IsNullOrEmpty($password)) {
     exit 1
 }
 
+# ClassicUO.Utility.Crypter.Encrypt: "1-" + hex of the ASCII bytes XORed with the machine name, which is what the client's
+# settings.json holds, so the password never goes on the client's command line
+function Protect-Password([string]$plain) {
+    $key = [Environment]::MachineName
+    $bytes = [Text.Encoding]::ASCII.GetBytes($plain)
+    $sb = New-Object Text.StringBuilder('1-')
+    for ($i = 0; $i -lt $bytes.Length; $i++) {
+        $null = $sb.Append(($bytes[$i] -bxor [byte][char]$key[$i % $key.Length]).ToString('X2'))
+    }
+    $sb.ToString()
+}
+
 function Hide-Secret([string]$text) {
     if ($password -and $password.Length -ge 3) { $text.Replace($password, '***') } else { $text }
 }
@@ -143,6 +156,7 @@ $work = Join-Path $env:TEMP "cuo-fps-test-$stamp"
 New-Item -ItemType Directory -Force (Join-Path $work 'profiles') | Out-Null
 $settingsPath = Join-Path $work 'settings.json'
 $settings = [ordered]@{
+    username = $Username; password = (Protect-Password $password)
     ip = $Server; port = $Port; ultimaonlinedirectory = $UoPath; clientversion = $ClientVersion; lastservernum = 1
     fps = 0; vsync = $false; is_win_maximized = $false; saveaccount = $false; autologin = $true; login_music = $false
     plugins = @(); pack = $Pack; world_renderer = 'gpu'
@@ -164,7 +178,7 @@ foreach ($k in $envVars.Keys) {
     [Environment]::SetEnvironmentVariable($k, $envVars[$k], 'Process')
 }
 
-$clientArgs = @('-settings', $settingsPath, '-profilespath', (Join-Path $work 'profiles'), '-username', $Username, '-password', $password,
+$clientArgs = @('-settings', $settingsPath, '-profilespath', (Join-Path $work 'profiles'),
     '-autologin', 'true', '-skiploginscreen', '-saveaccount', 'false', '-ip', $Server, '-port', "$Port", '-fps', '0', '-vsync', 'false',
     '-worldrenderer', 'gpu', '-pack', $Pack)
 $argLine = ($clientArgs | ForEach-Object { Quote-Arg $_ }) -join ' '

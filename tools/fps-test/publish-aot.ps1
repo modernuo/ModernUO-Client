@@ -48,7 +48,9 @@ if ($LASTEXITCODE -ne 0) {
 $commit = (git -C $repo rev-parse --short HEAD).Trim()
 $branch = (git -C $repo rev-parse --abbrev-ref HEAD).Trim()
 $dirty = if (git -C $repo status --porcelain --untracked-files=no -- src poc) { ' + uncommitted changes in src/poc' } else { '' }
-"$branch $commit$dirty, published $(Get-Date -Format 'yyyy-MM-dd HH:mm'), NativeAOT win-x64 x86-64-v3" |
+$sdlVersion = Join-Path $repo 'external\x64\SDL3.version'
+$sdl = if (Test-Path $sdlVersion) { ', SDL3 ' + ((Get-Content $sdlVersion | Select-Object -Skip 1 -First 1) -replace '^SDL_VENDOR_INFO: ', '') } else { '' }
+"$branch $commit$dirty, published $(Get-Date -Format 'yyyy-MM-dd HH:mm'), NativeAOT win-x64 x86-64-v3$sdl" |
     Set-Content -Encoding ASCII (Join-Path $OutDir 'build-info.txt')
 
 $size = (Get-ChildItem $OutDir -Recurse -File | Measure-Object Length -Sum).Sum
