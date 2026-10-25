@@ -1044,3 +1044,45 @@ Branch `worktree-agent-a869a121fcf3a9548`, started on poc/modern-client 48280a41
 - **Shots base vs new** (Gpu, Legacy, UI) at Britain, bank, zoom 2.5, the scene and its zoom-out: differences only on moving bank NPCs, the scene's flapping dragons and mongbats and other animating creatures, and the journal text. Looked at.
 - **Unit tests:** 277 pass (new: `WorldUpdateActiveItemsTests`, `MobileFrameCacheTests`).
 - **Not done:** NativeAOT; 4K; a base-vs-new series on a quiet machine; the next W5 step (push Sample's inputs into the ECS, see the plan).
+
+## Renderer chosen at startup by capability (2026-10-25)
+
+Owner decision (README "Decisions so far"): `auto` / `gpu` / `legacy`, never a mid-session switch; runtime switching behind `CUO_DEVTOOLS`.
+
+**As built:**
+- `RendererSelection` holds the decision logic as pure functions; `RendererStartup` runs it.
+  - **Setting:** `world_renderer` in settings.json is `auto` (default), `gpu` or `legacy`, and is saved. `-worldrenderer` overrides it for one run (`Settings.WorldRendererOverride`, never saved). The "saved Legacy is ignored" code is removed.
+  - **Before the device** (Bootstrap, before `Client.Run`): SDL video is initialised for the probe only, then `SDL_GPUSupportsShaderFormats(SPIRV, "vulkan")` and `SDL_GPUSupportsProperties` with the properties FNA3D's SDL_GPU driver uses in `PrepareWindowAttributes` (SPIR-V only, hardware Vulkan, no optional features, `FNA3D_PREFER_LOW_POWER`). It passes: `SDL_GPU_DRIVER=vulkan` is set, unless already set. It fails under auto: `FNA3D_FORCE_DRIVER=D3D11` if `D3D11CreateDevice` (hardware, feature level 10.0+) works, else `OpenGL`. A user-forced driver (`force_driver`, `FNA3D_FORCE_DRIVER`) is kept; OpenGL/D3D11 skip the probe.
+  - **After the device** (`GameController.LoadContent`, after `UO.Load`, before login): Gpu needs an SDL_GPU **vulkan** device (so FNA3D falling through to D3D11 is caught) and the Gpu world pass (`GpuWorldRenderer.TryCreate` + `TryEnsureFacet(0)`, kept for the session). Otherwise auto → Legacy for the session, forced gpu → `GpuDeviceLost.FailWorldSetup` (error, exit `0xDEAF`, as before).
+  - **Forced legacy** keeps FNA3D's own driver order (SDL_GPU here), so parity compares the same device.
+  - **Unchanged:** device loss after startup (`0xDEAD`) and a world-pass failure later, e.g. at a facet change (`EnsureFacet` → `FailWorldSetup`).
+- **The decision is logged in one line,** e.g. `[renderer] auto: Gpu (SDL_GPU vulkan, NVIDIA GeForce RTX 3090 Ti)` or `[renderer] auto: Legacy (<reason>; FNA3D D3D11)`, with a Trace line before it (setting, source, driver, probe). The title marker is unchanged. `run-fps-test.ps1` prints the line and records it in the results file.
+- **Test hooks:** `CUO_RENDERER_PROBE_FAIL=device|world`, `CUO_RENDERER_LEGACY_DRIVER=OpenGL`.
+- **`CUO_DEVTOOLS`** (`src/Directory.Build.props`, on by default, off with `-p:CuoDevTools=false`) guards the `-worldrenderer` chat command, `RendererStartup.TrySwitch`, and all of DevBench (a stub replaces it). Runtime switches go through `TrySwitch`, which refuses `gpu` in a Legacy-fallback session. Tagged `CLEANUP(release)`; list in [release-cleanup.md](release-cleanup.md). Also fixed: Debug's `DefineConstants` was missing its `;` before `TRACE`.
+
+**Verified** (base 8b35d1346 plus these commits, Release JIT, kbatman3, 1280×720; before the merge of e0d93d0a4):
+
+| Check | Result |
+|---|---|
+| Auto on the RTX 3090 Ti | `[renderer] auto: Gpu (SDL_GPU vulkan, NVIDIA GeForce RTX 3090 Ti)` |
+| Forced legacy / gpu from settings.json and from `-worldrenderer` | All 4 as expected. `legacy` in settings + `-worldrenderer gpu` ran Gpu and left `legacy` in the saved file; a file without the key saves `auto` |
+| `PROBE_FAIL=device` | Legacy on FNA3D D3D11 (RTX): login, Britain/bank/house shots, gumps and UI shots, walk, picking (both clicks reached the server), `world:gpu` refused, 0 errors |
+| Same, OpenGL (`CUO_RENDERER_LEGACY_DRIVER=OpenGL`) | Same results; OpenGL ran on the Intel UHD 770. User-forced `FNA3D_FORCE_DRIVER=OpenGL` with auto: Legacy without probing |
+| `PROBE_FAIL=world` | Legacy on the SDL_GPU device: same checks pass |
+| Forced gpu + `PROBE_FAIL=device` or `world` | Error logged, exit `0xDEAF` |
+| Device loss after a Gpu startup (`CUO_SIMULATE_DEVICE_LOST=15`) | Exit `0xDEAD` |
+| Gpu unchanged | Parity (`CUO_ANIM_SYNC=1 CUO_ECS_PARITY=1`): 0 mismatches; `CUO_GPU_ITEM_CHECK`: 0 differences; settle (walk, ltravel, flip, reinit): 0 timeouts, the 8 walking frames are the known leftover; Legacy house shot 1.83% near-black (all four Legacy devices 1.83–1.84%); the FPS-test plan's Legacy and Gpu entries both run; Gpu picking identical |
+| `-p:CuoDevTools=false` | Builds; the switching strings (`flip done`, `[bench-pick]`, the command's messages, `CUO_BENCH_PLAN`, `TrySwitch`) are absent from cuo.dll; a run selects the renderer and ignores a bench plan |
+| Unit tests | 307 pass (new: `RendererSelectionTests`, 30 cases) |
+| Optional: Intel UHD 770 (`FNA3D_PREFER_LOW_POWER=1`) | Gpu works: 0 parity mismatches, correct shots, 250–300 fps (Present-bound) |
+
+- **Legacy on D3D11/OpenGL:** nothing broken. The observations (OpenGL on the iGPU, D3D11's Present at 2.5× SDL_GPU's, no FNA3D fall-through past a forced driver) are in known-issues.md, as input for the deferred Legacy project.
+- **Not verified:**
+  - the full matrix re-run after merging e0d93d0a4 (both builds and the 307 tests pass there);
+  - a real (not simulated) machine without Vulkan;
+  - a world-pass failure at a facet change after a successful startup (code path unchanged, not exercised);
+  - the message box (runs use `-nomessagebox`);
+  - the window title by eye;
+  - NativeAOT;
+  - the owner's real 5-minute FPS test.
+
