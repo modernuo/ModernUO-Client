@@ -480,3 +480,43 @@ Branch `poc/batcher-ui-alloc` (worktree, from 43dec9ae4): 99ced3184 and 2eedf61d
   - GameController.cs (the device-loss agent's file): `SaveWorldShot` also saves the UI render target, +8 lines;
   - GameScene.cs: the lights statics, and the `UpdateTextServerEntities` signature next to `FillGameObjectList`;
   - none of GameSceneDrawingSorting.cs, GameSceneGpuWorld.cs or FrameStats.cs.
+
+## W3 groundwork — mobile animation state in the ECS, sprite extract, capture parity (2026-10-25)
+
+Worktree branch `worktree-agent-a30778aae8d7c73a8` (rebased on dd178a524). Not yet the renderer's source; the capture still feeds `DynamicBuffer`. Test procedure: [testing/ecs-animation.md](testing/ecs-animation.md).
+
+- **Components** (`src/ClassicUO.Ecs/Components.cs`, all registered for NativeAOT):
+  - `AnimationState`: the action-selection inputs (server action, war, walking/steps, mounted, flying, dead, hidden, female, gargoyle tests), the selected body/mount action, stored dir, facing, frame, mount body and offset, seat offsets, and the **persistent mirror bit**. `GetAnimDirection` leaves the mirror untouched for directions 3/7, so it is history, not a function of the direction.
+  - `MobileRenderState`: override hue, alpha, step offset.
+  - `EquipmentSlots`: up to 25 drawn layers in paint order (an `InlineArray`), plus the mount and the hand items. Built from PaperdollOrder; covered layers, light-only items and a dead mobile's hair are dropped; drawn bodies after the gargoyle remap and equipconv. Rebuilt only when the `EquipmentDirty` tag is set. `WorldMirror` sets it on a new mobile, an equip/unequip, any write to a worn item and a body change; `MobileAnimationSystem` sets it on a dead/female change.
+- **Systems** (`src/ClassicUO.Client/Game/Ecs`):
+  - `MobileAnimationSystem` samples the Mobile (steps, server action, frame, selection/target context; until W5), rebuilds dirty slots from the mirror's `EquippedOn` index, then selects body/mount/per-layer gargoyle actions, seat and direction as `MobileView.Draw` does.
+  - `MobileSpriteExtract` writes `SpriteInstance`s straight from the pack's animation tables: shadows, mount, body, equipment with the facing-dependent cloak move, strips, trim, mirror, hue mode, depth key, Indexed8 palette.
+- **Rules:**
+  - `Mobile.GetGroupForAnimation` (about 1,300 lines of reverse-engineered tables) moved verbatim into `AnimationGroupRules.Select(in AnimGroupInput, …)`. Mobile delegates to it, so the legacy path and the ECS share one rule.
+  - The frame step of `Mobile.ProcessAnimation` is the shared pure `AnimationTiming.Advance`.
+  - `AnimationRules` ports the rest of MobileView: direction map, cloak order, `IsCovered`, gargoyle equipment fix, mount body/offset, layer hue, strips, override-hue precedence.
+- **Parity harness** `EcsParity` (`CUO_ECS_PARITY=N`): per captured mobile, runs the ECS path with the same screen position/depth/offset and diffs all 32 bytes of every instance, in order. It logs decoded mismatches with the ECS state, and a summary with costs and per-case counters. Hook: about 12 lines in `GpuWorldRenderer.DrawObject`/`BeginFrame`.
+  - A deliberately broken extract (strip depth) was flagged on every mobile.
+  - **`-ecscheck`** now also compares `EquipmentSlots` with MobileView's layer walk (order, serials, mount, hands) and the action/frame with the Mobile.
+- **Results:** 0 mismatches in all scenarios, under JIT and NativeAOT:
+  - bank: 44k mobile comparisons;
+  - the cases script (cloak at all facings, spectral, gargoyle 666/667, flying, sitting, dead): 61k;
+  - mixed spawns (mounted savage riders, brigands, animals, monsters, hidden, hue changes, re-equip): 486k;
+  - a 120-NPC crowd: 6.8M comparisons, 46M instances.
+  - **Two divergences found and fixed** (both about the mirror bit's history):
+    1. a death re-key (serial | 0x80000000) recreated the entity and lost the bit; `OnSerialChanged` now carries it over;
+    2. `-ecscheck` ran selection for mobiles on frames the view didn't draw them; the check now restores the bit. In production the selection must run only for drawn mobiles (W2's visible set), as MobileView does.
+  - **Intentional residuals:**
+    - bodies whose selection calls `RandomHelper` (LowGroupExtended, server action 5/6) roll separately on each side (not seen);
+    - the seated deformation isn't in either path (the capture draws it plain);
+    - equipped multis use the item graphic for tiledata.
+- **Cost** (JIT, harness timings): crowd (~103 mobiles in view) capture 70 µs/frame vs ECS sample+select 10.7 µs plus extract 15.6 µs; per mobile 1.5 vs 0.23 + 0.33 µs. The bank: 8–11 µs vs 1.7 + 1.9 µs.
+  - **SIMD:** not attempted. At 0.33 µs per mobile (about 7 instances each), the instance stores are a small part; the cost is frame lookups and branches. Revisit with a 1,000+ mobile measurement.
+- **Account:** `kbatman3` has Owner access, verified: `[go`, `[add`, `[set`, `[wipe` all worked. The character Kbatthree was created with Uo.Net.Cli. Spawns were made at Green Acres and wiped by every script.
+- **Tests:** 222 pass (31 new in `Ecs/AnimationRulesTests.cs`: direction map and mirror persistence, cloak order vs PaperdollOrder, the arms table, mount offsets/bodies, strips, layer and override hue, covered layers, timing, dirty marking).
+- **Files outside the ECS folders:**
+  - GpuWorldRenderer.cs (harness hook, +13 lines);
+  - Mobile.cs (`ProcessAnimation` uses `AnimationTiming`);
+  - MobileAnimation.cs (group selection moved out, `GetAnimGroupInput` added).
+  - None of GameSceneDrawingSorting.cs, GameSceneGpuWorld.cs, Batcher2D.cs, RenderLists.cs, the UI controls, GameController.cs or Uo.Render.
