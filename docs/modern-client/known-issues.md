@@ -43,9 +43,9 @@ Visual or behavioural defects found in the PoC client that aren't fixed yet. Add
 - **Verify:** record the screen during a login and a recall or `[go` teleport. Log `MissingVisible`/`PendingChunks` for each frame until `Settled`, and count the presented frames that weren't settled and the frames drawn by Legacy.
 - **Related, from the pack-loading merge (df2fbf8c8):** a body seen for the first time decodes on a worker and draws nothing until its first direction is uploaded. A new equipment item on a human who is already visible can appear a frame or two after the body. Nobody has checked this by eye yet. `CUO_ANIM_SYNC=1` restores synchronous loading for comparison.
 
-## Single frames with no baked land and statics, or scattered missing and wrong tiles (2026-10-25)
+## Single frames with no baked land and statics, or scattered missing and wrong tiles, in a reinit stress run (2026-10-25)
 
 - **Seen by:** the owner on the KamDos client, which ran the page-fault agent's mitigation build `pf/aot-sabc3` (uncommitted Tier 0 work). Recording: `Desktop\Recording 2026-10-25 000245.mp4`.
 - **What happens:** the character stands still in a fully loaded house. In 5 of 234 recorded frames, either nearly all baked land and statics are black (dynamic items, mobiles and the UI still draw), or scattered tiles are missing or show the wrong texture.
 - **Not seen** on the Kbatfour client (the pack-loading build): there, black appears only during teleports, which is the pop-in issue above.
-- **Likely cause:** a buffer or page-atlas write racing the GPU read, or a resource recreated mid-frame, in one of the mitigations. A blocker for merging any mitigation that causes it.
+- **Update (page-fault agent, 2026-10-25):** that recording was a stress run with `CUO_GPU_REINIT=1500`, which drops and recreates the GPU world pass and world RT every 1.5 s. The 5 bad frames match the 5 recreations, so the cause is very likely the test hook, not mitigations A/B/C. Not proven yet: compare normal runs (no reinit) of the mitigation and base builds for unsettled frames. Even so, a recreation should hold the last frame instead of showing a half-built world (see the pop-in entry above).
