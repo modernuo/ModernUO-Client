@@ -19,6 +19,7 @@ namespace ClassicUO
         public static uint CurrentRefreshRate;
         public static bool SkipLoginScreen;
         public static bool NoServerPing;
+        public static bool NoMessageBox;
         public static int EcsCheckFrames;
         public static string EcsDriverScript;
 

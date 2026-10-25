@@ -247,7 +247,13 @@ try {
     }
 
     if (-not $failure -and -not $planDone) {
-        $failure = "The client exited before the plan finished (exit code {0} / 0x{0:X8})." -f $proc.ExitCode
+        if ($proc.ExitCode -eq 0xDEAD) {
+            # GpuDeviceLost.ExitCode: the client saw the GPU device lost, saved and exited
+            $failure = "GPU device lost (driver reset). The client detected it and exited (exit code 0x{0:X})." -f $proc.ExitCode
+        }
+        else {
+            $failure = "The client exited before the plan finished (exit code {0} / 0x{0:X8})." -f $proc.ExitCode
+        }
     }
 }
 catch {
@@ -277,6 +283,11 @@ finally {
     if ($failure) {
         # A GPU driver reset (nvlddmkm event 153, a Display TDR 4101, ...) takes the client's graphics device with it
         $gpuEvents = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'nvlddmkm', 'amdkmdag', 'igfx', 'Display'; StartTime = $started } -ErrorAction SilentlyContinue)
+        # The client exits within a frame of the reset, often before the driver's event is in the log
+        for ($i = 0; $i -lt 10 -and $gpuEvents.Count -eq 0 -and $proc -and $proc.HasExited -and $proc.ExitCode -eq 0xDEAD; $i++) {
+            Start-Sleep -Milliseconds 500
+            $gpuEvents = @(Get-WinEvent -FilterHashtable @{ LogName = 'System'; ProviderName = 'nvlddmkm', 'amdkmdag', 'igfx', 'Display'; StartTime = $started } -ErrorAction SilentlyContinue)
+        }
         $gpuText = ''
         if ($gpuEvents.Count -gt 0) {
             $failure += " The GPU driver logged $($gpuEvents.Count) event(s) during the run (" +
