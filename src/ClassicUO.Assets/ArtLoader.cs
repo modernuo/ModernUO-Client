@@ -46,7 +46,13 @@ namespace ClassicUO.Assets
             return ref _entries[idx];
         }
 
-        public ArtInfo GetArt(uint idx)
+        public ArtInfo GetArt(uint idx) => GetArt(idx, null);
+
+        /// <summary>Texels in sprite <paramref name="idx"/>'s untrimmed image (0 when absent), the buffer size <see cref="GetArt(uint, uint[])"/> needs.</summary>
+        public int PixelCount(uint idx) => Exists((int)idx) ? _sprites[idx].OrigW * _sprites[idx].OrigH : 0;
+
+        /// <summary>Decodes into <paramref name="buffer"/> (at least <see cref="PixelCount"/> long; null = a new array).</summary>
+        public ArtInfo GetArt(uint idx, uint[] buffer)
         {
             if (!Exists((int)idx))
             {
@@ -54,12 +60,19 @@ namespace ClassicUO.Assets
             }
 
             ref readonly var sprite = ref _sprites[idx];
+            var pixels = buffer == null ? new uint[sprite.OrigW * sprite.OrigH] : buffer.AsSpan(0, sprite.OrigW * sprite.OrigH);
+            PackSprites.DecodeColor(FileManager.Pack.Art, in sprite, pixels);
+            var trim = PackSprites.Trim(in sprite);
 
             return new ArtInfo()
             {
-                Pixels = PackSprites.DecodeColor(FileManager.Pack.Art, in sprite),
+                Pixels = pixels,
                 Width = sprite.OrigW,
-                Height = sprite.OrigH
+                Height = sprite.OrigH,
+                TrimX = trim.X,
+                TrimY = trim.Y,
+                TrimW = trim.W,
+                TrimH = trim.H
             };
         }
     }
@@ -76,5 +89,8 @@ namespace ClassicUO.Assets
         public Span<uint> Pixels;
         public int Width;
         public int Height;
+
+        /// <summary>The pack trim rect: every texel outside it is 0 (W = H = 0 when the sprite has no texels).</summary>
+        public int TrimX, TrimY, TrimW, TrimH;
     }
 }
