@@ -2,39 +2,20 @@
 
 Visual or behavioural defects found in the PoC client that aren't fixed yet. Add new ones here; move them to the poc-log when fixed.
 
-## Gpu world renderer: grid lines between land tiles when zoomed out (2026-10-24)
+## Gpu world renderer: grid lines between land tiles when zoomed out (2026-10-24) — fixed 2026-10-25, leftover below
 
-- **Seen by:** the owner, fully zoomed out. Faint grid or diamond lines along tile edges on river water, some grass and dirt.
-- **Gpu-only:** a side-by-side crop of the step 9 zoom-out shots (scratchpad `s9/shots/after1/zoomout_{legacy,gpu}.png`, 1280×720) shows faint diamond seams in the Gpu shot and none in Legacy. Legacy point-samples with no mips.
-- **Likely cause:** linear filtering plus mipmaps sample across tile edges:
-  - for land art diamonds, into the transparent pixels around the diamond;
-  - for stretched or texture-mapped land, into neighbouring sprites on the atlas page.
-
-  Averaged edge texels darken or tint the seams, which is most visible on flat textures such as water, grass and dirt.
-- **Fix candidates, to be tested against Legacy shots at zoom-out and full zoom-out:**
-  1. Clamp UVs to each sprite's own rect in the shader (half a texel inset per mip level).
-  2. Alpha-aware mip generation in the converter (premultiplied or coverage-weighted), so transparent texels don't darken edges.
-  3. A gutter or padding around sprites in the pack pages (pack-format change; edge-extend the pixels).
-  4. For land specifically, sample at the mip level the zoom needs with clamping, or point-sample land at zoom ≤ 1.
-- **Verify:** DevBench `CUO_BENCH_SHOTS` at zoom-out and full zoom-out over river, grass and dirt. Crop and compare Legacy vs Gpu, and look at the images.
-
-## FNA3D SDL_GPU: a cycled index buffer isn't rebound (2026-10-25) — worked around in the batcher
-
-- **What happens:** `SetData(Discard)` on an index buffer cycles the SDL buffer. FNA3D (`SDLGPU_INTERNAL_BindDeferredState`) only calls `SDL_BindGPUIndexBuffer` when the buffer handle differs from the bound one, so draws after the cycle use the old contents until something rebinds the pipeline.
-- **Effect here:** after B1, Legacy drew baked land and statics with stale mesh indices: missing or wrong tiles, different every frame. This was the "tile corruption" the owner saw on several clients on 2026-10-25.
-- **Workaround:** `UltimaBatcher2D.IndexDataChanged()` after each mesh-layer index upload (fix commit on `poc/b1-index-rebind`).
-- **Real fix:** a local FNA3D patch that clears `indexBufferBinding.buffer` when the bound buffer is cycled. The FNA3D DLL in `external/x64` is already locally patched. Not done yet.
+- **Fixed** (seams agent, commit 115e93c71; poc-log "Land seams when zoomed out"): baked land, stretched land and 44×44 floor and water statics draw seam-free at zoom 1.5, 2 and 2.5 (`SampleTile` in sprite.hlsl).
+- **Left over:** a few short dark ticks where shore statics meet open water at zoom 2. They were there before the fix too. They come from statics that don't fill 44×44 (shore pieces), which still take the generic trilinear alpha-test path.
 
 ## GPU engine resets take down every client on the GPU (2026-10-24)
 
 - **What happens:** a page fault in one process causes an NVIDIA engine reset (nvlddmkm 153). Other clients running on the GPU at the time also get `VK_ERROR_DEVICE_LOST` and exit with 0xDEAD; the W1 agent's clients died at 22:34 and 23:18 from resets caused by repro runs.
 - **What to do:** when attributing an Aftermath dump, match the dump's PID to the run. Keep deliberate repro runs to a minimum while other agents or the owner use the GPU.
 
-## FNA "scissor rectangle is invalid" on the login gump right after a GPU reset (2026-10-24)
+## FNA "scissor rectangle is invalid" on the login gump right after a GPU reset (2026-10-24) — fixed 2026-10-25, not reproduced
 
-- **What happens:** one client started right after a reset threw `ArgumentException: The scissor rectangle is invalid` from `ScissorStack.PushScissors` ← `ResizePic` on the login gump. The same exception was also seen at 02:45 (Application log, id 1026), so it may not need a reset.
-- **Likely cause:** a scissor rect larger than the render target while the window or back buffer has a transient size (0, or not yet resized).
-- **Fix:** clamp scissor rects to the current target bounds in `ScissorStack`, and skip the UI draw when the target is empty.
+- **Fixed** (seams agent, commit b59735443; poc-log "Scissor exception"): `ScissorStack` clips every pushed rect to the bound render target or back buffer. FNA only rejects negative x, y, width or height, and only the root rect of a clip stack was unclipped, so the cause was a control partly off the top or left edge. `GameController.Draw` also skips the UI when there's no UI target or the back buffer is 0 wide or high. 11 unit tests.
+- **Not reproduced:** a tiny saved `window_size`, and minimise, restore and 120×90 `SetWindowPos` cycles on the login screen, didn't throw with the old build. If it shows up again, look for another caller that sets FNA's `ScissorRectangle` directly.
 
 ## Gpu world renderer: raw pop-in on world entry and teleports (2026-10-24) — fixed 2026-10-25, leftovers below
 
