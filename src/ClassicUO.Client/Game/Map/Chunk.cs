@@ -47,6 +47,9 @@ namespace ClassicUO.Game.Map
         // tiles holding a mobile, and a mobile the walk's max Z stops at (rebuilt with the masks); a mobile on a cached
         // item tile is walked on its own
         public ulong GpuMobileMask, GpuMobileStopMask;
+        // the mobiles of tile bit b, in tile-list order: GpuMobiles[GpuMobileStart[b] .. GpuMobileStart[b + 1])
+        public GameObject[] GpuMobiles = Array.Empty<GameObject>();
+        public readonly int[] GpuMobileStart = new int[65];
 
         /// <summary>An object joined or left one of the chunk's tile lists. Mobiles don't change which items are cached.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -422,6 +425,7 @@ namespace ClassicUO.Game.Map
 
             IsDestroyed = true;
             GpuItems?.Reset();
+            Array.Clear(GpuMobiles);
 
             if (_pool.Count < Constants.PREDICTABLE_CHUNKS)
             {
@@ -479,6 +483,7 @@ namespace ClassicUO.Game.Map
 
             Mesh.SoftClear();
             GpuItems?.Reset();
+            Array.Clear(GpuMobiles);
         }
 
         public bool HasNoExternalData()

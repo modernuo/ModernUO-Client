@@ -815,17 +815,18 @@ namespace ClassicUO.Game.Scenes
             Chunk chunk,
             bool skipBaked = false,
             bool forcePosition = false,
-            bool skipItems = false
+            bool singleObject = false
         )
         {
             var profile = ProfileManager.CurrentProfile;
             var mesh = chunk.Mesh;
 
-            for (; obj != null; obj = obj.TNext)
+            // singleObject: obj alone, not the rest of its tile (the Gpu prepare's item cache serves a tile's items and
+            // walks its mobiles one by one, GameSceneGpuItemCache)
+            for (; obj != null; obj = singleObject ? null : obj.TNext)
             {
-                // Gpu prepare (GameSceneGpuPrepare): settled baked land and statics are the GPU's alone; skipItems: the
-                // tile's items come from the chunk's item cache (GameSceneGpuItemCache)
-                if (skipBaked && IsGpuBaked(obj) || skipItems && obj is Item)
+                // Gpu prepare (GameSceneGpuPrepare): settled baked land and statics are the GPU's alone
+                if (skipBaked && IsGpuBaked(obj))
                 {
                     continue;
                 }

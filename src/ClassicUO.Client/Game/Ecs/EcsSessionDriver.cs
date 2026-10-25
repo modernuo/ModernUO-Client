@@ -310,6 +310,34 @@ namespace ClassicUO.Game
                     return false;
 
                 // items: logs the ground items within 8 tiles and the backpack's known contents (cleanup checks)
+                // shot <name>: saves the world render target as CUO_BENCH_SHOTS/<name>_gpu.png (DevBench's shot:)
+                case "shot" when args.Length > 0 && Environment.GetEnvironmentVariable("CUO_BENCH_SHOTS") is { Length: > 0 } shots:
+                    Client.Game.RequestWorldShot(Path.Combine(shots, $"{args[0]}_gpu.png"));
+
+                    return true;
+
+                // itemcache on|off: the Gpu world prepare's ground-item cache (gpu_prepare_item_cache)
+                case "itemcache" when args.Length > 0:
+                    Settings.GlobalSettings.GpuPrepareItemCache = args[0] == "on";
+                    Log.Info($"[ECS] driver: item cache {args[0]}");
+
+                    return true;
+
+                // answers OK (button 1) on the frontmost server gump, e.g. a staff command's confirmation (as DevBench's gumpok)
+                case "gumpok":
+                    foreach (var g in UIManager.Gumps)
+                    {
+                        if (g.ServerSerial != 0 && g.GetType() == typeof(Gump))
+                        {
+                            Log.Info($"[ECS] driver: gump 0x{g.ServerSerial:X8}: OK");
+                            g.OnButtonClick(1);
+
+                            break;
+                        }
+                    }
+
+                    return true;
+
                 case "items":
                     foreach (Item it in world.Items.Values)
                     {
@@ -317,7 +345,7 @@ namespace ClassicUO.Game
 
                         if (ground || backpack != null && it.Container == backpack.Serial)
                         {
-                            Log.Info($"[ECS] item {(ground ? "ground" : "backpack")} 0x{it.Graphic:X4} x{it.Amount} serial 0x{it.Serial:X8} at {it.X},{it.Y} {it.Name}");
+                            Log.Info($"[ECS] item {(ground ? "ground" : "backpack")} 0x{it.Graphic:X4} x{it.Amount} hue 0x{it.Hue:X4} flags {it.Flags} serial 0x{it.Serial:X8} at {it.X},{it.Y},{it.Z} {it.Name}");
                         }
                     }
 

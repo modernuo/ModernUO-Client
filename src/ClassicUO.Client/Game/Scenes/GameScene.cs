@@ -710,8 +710,6 @@ namespace ClassicUO.Game.Scenes
                             ulong bit = 1UL << (x << 3 | y);
                             bool full = (fullTiles & bit) != 0;
 
-                            bool skipItems = false;
-
                             if (!full && (walkTiles & bit) == 0)
                             {
                                 // W4: settled ground items come from the chunk's item cache; a tile whose items changed
@@ -719,10 +717,24 @@ namespace ClassicUO.Game.Scenes
                                 if ((_gpuServeTiles & bit) == 0 || GpuServeCachedTile(chunk, x << 3 | y))
                                     continue;
                             }
-                            else if ((_gpuServeTiles & bit) != 0)
+                            else if ((_gpuServeTiles & bit) != 0 && GpuServeCachedTile(chunk, x << 3 | y))
                             {
-                                // a served tile with mobiles: the walk visits the mobiles only
-                                skipItems = GpuServeCachedTile(chunk, x << 3 | y);
+                                // a served tile with mobiles: the walk visits the mobiles alone (they are all its other
+                                // unbaked objects; GpuMobiles is in tile-list order)
+                                int b = x << 3 | y;
+
+                                for (int m = chunk.GpuMobileStart[b], mEnd = chunk.GpuMobileStart[b + 1]; m < mEnd; m++)
+                                {
+                                    GameObject mobile = chunk.GpuMobiles[m];
+
+                                    if (!mobile.IsDestroyed)
+                                    {
+                                        FrameStats.Inc(FrameCounter.Tiles);
+                                        AddTileToRenderList(mobile, use_handles, GPU_WALK_MAX_Z, chunk, true, _gpuSkipEnabled, singleObject: true);
+                                    }
+                                }
+
+                                continue;
                             }
                             else if ((_gpuCheckTiles & bit) != 0)
                             {
@@ -741,8 +753,7 @@ namespace ClassicUO.Game.Scenes
                                 GPU_WALK_MAX_Z,
                                 chunk,
                                 !full,
-                                _gpuSkipEnabled,
-                                skipItems
+                                _gpuSkipEnabled
                             );
                         }
                     }

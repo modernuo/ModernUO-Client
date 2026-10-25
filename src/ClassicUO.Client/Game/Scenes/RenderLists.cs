@@ -367,15 +367,21 @@ namespace ClassicUO.Game.Scenes
             return result;
         }
 
-        /// <summary>GPU world: items, multis, mobiles and corpses go to the world pass through their views (land and statics are baked).</summary>
         /// <summary>Statics queued so far: where the Gpu prepare's cached ground items (GameSceneGpuItemCache) go in capture order.</summary>
         public int StaticsCount => _statics.Count;
 
+        /// <summary>The statics-list index being captured (-1 outside that list): CUO_GPU_ITEM_CHECK's insertion check.</summary>
+        internal static int CaptureStaticsIndex = -1;
+
+        /// <summary>GPU world: items, multis, mobiles and corpses go to the world pass through their views (land and statics are baked).
+        /// <paramref name="cached"/>: the scene whose cached ground items join the statics list's capture.</summary>
         public int CaptureRenderLists(UltimaBatcher2D batcher, sbyte maxGroundZ, GpuWorldRenderer gpu, GameScene cached = null)
         {
-            return CaptureRenderList(batcher, _statics, maxGroundZ, gpu, cached) +
-                   CaptureRenderList(batcher, _animations, maxGroundZ, gpu, null) +
-                   CaptureRenderList(batcher, _transparentObjects, maxGroundZ, gpu, null);
+            int done = CaptureRenderList(batcher, _statics, maxGroundZ, gpu, cached, true);
+            CaptureStaticsIndex = -1;
+
+            return done + CaptureRenderList(batcher, _animations, maxGroundZ, gpu, null, false) +
+                   CaptureRenderList(batcher, _transparentObjects, maxGroundZ, gpu, null, false);
         }
 
         /// <summary>GPU world: effects (into the world pass when it can reproduce their blend, else FNA over it) and what FNA
@@ -411,7 +417,7 @@ namespace ClassicUO.Game.Scenes
             return result;
         }
 
-        private static int CaptureRenderList(UltimaBatcher2D batcher, List<GameObject> renderList, sbyte maxGroundZ, GpuWorldRenderer gpu, GameScene cached)
+        private static int CaptureRenderList(UltimaBatcher2D batcher, List<GameObject> renderList, sbyte maxGroundZ, GpuWorldRenderer gpu, GameScene cached, bool statics)
         {
             int done = 0;
             // FrameStats: time runs of one object kind (a clock read per object cost about 0.5 ms per frame with 20,000
@@ -443,6 +449,11 @@ namespace ClassicUO.Game.Scenes
                 if (obj is Land || obj is Static || obj.Z > maxGroundZ)
                 {
                     continue;
+                }
+
+                if (statics)
+                {
+                    CaptureStaticsIndex = i;
                 }
 
                 if (stats)
