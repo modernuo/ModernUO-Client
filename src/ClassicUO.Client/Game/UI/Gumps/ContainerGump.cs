@@ -675,20 +675,18 @@ namespace ClassicUO.Game.UI.Gumps
 
                 Vector3 hueVector = ShaderHueTranslator.GetHueVector(0);
 
-                renderLists.AddGumpNoAtlas(
-                    batcher =>
-                    {
-                        batcher.DrawRectangle(
-                            SolidColorTextureCache.GetTexture(Color.Red),
-                            x + boundX,
-                            y + boundY,
-                            boundWidth - boundX,
-                            boundHeight - boundY,
-                            hueVector,
-                            layerDepth
-                        );
-                        return true;
-                    }
+                renderLists.AddGumpNoAtlas
+                (
+                    GumpCommand.Outline
+                    (
+                        SolidColorTextureCache.GetTexture(Color.Red),
+                        x + boundX,
+                        y + boundY,
+                        boundWidth - boundX,
+                        boundHeight - boundY,
+                        hueVector,
+                        layerDepth
+                    )
                 );
             }
 

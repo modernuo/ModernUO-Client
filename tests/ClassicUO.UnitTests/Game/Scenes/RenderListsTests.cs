@@ -21,7 +21,7 @@ namespace ClassicUO.UnitTests.Game.Scenes
     /// different control's state before the closure ran. That produced the
     /// intermittent "blank name label" symptom reported on ModernUO's PropsGump.
     /// <para/>
-    /// The fix replaced the closure list with <see cref="NoAtlasGumpCommand"/>
+    /// The fix replaced the closure list with <see cref="GumpCommand"/>
     /// struct values. Text commands carry the <c>RenderedText</c> reference plus
     /// its draw parameters; the flush path validates <c>HasContent</c> before
     /// drawing, so a recycled instance is skipped instead of drawing stale state
@@ -100,13 +100,13 @@ namespace ClassicUO.UnitTests.Game.Scenes
         }
 
         [Fact]
-        public void NoAtlasGumpCommand_TextConstructor_AssignsAllFields()
+        public void GumpCommand_TextConstructor_AssignsAllFields()
         {
             // RenderedText cannot be constructed here (requires graphics init).
             // null is a legal Text value for the struct itself; the RenderLists
             // wrapper is what rejects null inputs. This test checks the struct
             // stores every parameter faithfully.
-            var cmd = new NoAtlasGumpCommand(
+            var cmd = new GumpCommand(
                 text: null,
                 x: 42,
                 y: 99,
@@ -125,11 +125,11 @@ namespace ClassicUO.UnitTests.Game.Scenes
         }
 
         [Fact]
-        public void NoAtlasGumpCommand_CallbackConstructor_OnlyStoresCallback()
+        public void GumpCommand_CallbackConstructor_OnlyStoresCallback()
         {
             Func<UltimaBatcher2D, bool> cb = static _ => true;
 
-            var cmd = new NoAtlasGumpCommand(cb);
+            var cmd = new GumpCommand(cb);
 
             Assert.Null(cmd.Text);
             Assert.Same(cb, cmd.Callback);
@@ -224,6 +224,82 @@ namespace ClassicUO.UnitTests.Game.Scenes
             Assert.Equal(2, lists.GumpTextsCount);
             Assert.Same(cb1, lists.PeekGumpText(0).Callback);
             Assert.Same(cb2, lists.PeekGumpText(1).Callback);
+        }
+
+        [Fact]
+        public void GumpCommand_Sprite_StoresDrawParameters()
+        {
+            var hue = new Microsoft.Xna.Framework.Vector3(1, 2, 3);
+            var cmd = GumpCommand.Sprite(null, new Microsoft.Xna.Framework.Rectangle(1, 2, 3, 4), new Microsoft.Xna.Framework.Rectangle(5, 6, 7, 8), hue, 9f);
+
+            Assert.Equal(GumpCommandKind.Sprite, cmd.Kind);
+            Assert.Equal(new Microsoft.Xna.Framework.Rectangle(1, 2, 3, 4), cmd.Destination);
+            Assert.Equal(new Microsoft.Xna.Framework.Rectangle(5, 6, 7, 8), cmd.Source);
+            Assert.Equal(hue, cmd.HueVector);
+            Assert.Equal(9f, cmd.LayerDepth);
+            Assert.Null(cmd.Callback);
+        }
+
+        private sealed class DeferredProbe : IGumpDeferredDraw
+        {
+            public int Calls, X, Y, Arg;
+            public float Depth;
+
+            public bool DrawDeferred(UltimaBatcher2D batcher, int x, int y, float layerDepth, int arg)
+            {
+                Calls++;
+                X = x;
+                Y = y;
+                Depth = layerDepth;
+                Arg = arg;
+
+                return true;
+            }
+        }
+
+        [Fact]
+        public void GumpCommand_Deferred_CallsTargetWithQueuedArguments()
+        {
+            var probe = new DeferredProbe();
+            var lists = new RenderLists();
+
+            lists.AddGumpNoAtlas(GumpCommand.Deferred(probe, 10, 20, 3.5f, 7));
+            Assert.Equal(1, lists.GumpTextsCount);
+            Assert.True(lists.PeekGumpText(0).Execute(null));
+
+            Assert.Equal(1, probe.Calls);
+            Assert.Equal(10, probe.X);
+            Assert.Equal(20, probe.Y);
+            Assert.Equal(3.5f, probe.Depth);
+            Assert.Equal(7, probe.Arg);
+        }
+
+        [Fact]
+        public void AddGumpCommand_TypedPath_DoesNotAllocatePerCall()
+        {
+            var probe = new DeferredProbe();
+            var lists = new RenderLists();
+
+            // warm up the lists' backing arrays
+            for (int i = 0; i < 64; i++)
+            {
+                lists.AddGumpWithAtlas(GumpCommand.Deferred(probe, i, i, 0f));
+                lists.AddGumpNoAtlas(GumpCommand.Outline(null, i, i, 1, 1, default, 0f));
+            }
+
+            lists.Clear();
+
+            long before = GC.GetAllocatedBytesForCurrentThread();
+
+            for (int i = 0; i < 64; i++)
+            {
+                lists.AddGumpWithAtlas(GumpCommand.Deferred(probe, i, i, 0f));
+                lists.AddGumpNoAtlas(GumpCommand.Outline(null, i, i, 1, 1, default, 0f));
+            }
+
+            long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+
+            Assert.Equal(0, allocated);
         }
     }
 }

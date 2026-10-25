@@ -327,28 +327,17 @@ namespace ClassicUO.Game.UI.Controls
 
         private void DrawDebug(RenderLists renderLists, int x, int y, float layerDepth)
         {
-            if (IsVisible && CUOEnviroment.Debug)
+            // a struct command, not a closure: C# allocates a closure's captures at method entry, so even the
+            // debug-off path allocated one per visible control per frame
+            if (!IsVisible || !CUOEnviroment.Debug)
             {
-                Vector3 hueVector = ShaderHueTranslator.GetHueVector(0);
-
-                renderLists.AddGumpNoAtlas
-                (
-                    (batcher) =>
-                    {
-                        batcher.DrawRectangle
-                        (
-                            SolidColorTextureCache.GetTexture(Color.Green),
-                            x,
-                            y,
-                            Width,
-                            Height,
-                            hueVector,
-                            layerDepth
-                        );
-                        return true;
-                    }
-                );
+                return;
             }
+
+            renderLists.AddGumpNoAtlas
+            (
+                GumpCommand.Outline(SolidColorTextureCache.GetTexture(Color.Green), x, y, Width, Height, ShaderHueTranslator.GetHueVector(0), layerDepth)
+            );
         }
 
         public void BringOnTop()

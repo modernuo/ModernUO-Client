@@ -136,20 +136,7 @@ namespace ClassicUO.Game.UI.Controls
 
             if (gumpInfo.Texture != null)
             {
-                var texture = gumpInfo.Texture;
-                var sourceRectangle = gumpInfo.UV;
-                renderLists.AddGumpWithAtlas(
-                    batcher =>
-                    {
-                        batcher.Draw(
-                            texture,
-                            new Rectangle(x, y, Width, Height),
-                            sourceRectangle,
-                            hueVector,
-                            layerDepth
-                        );
-                        return true;
-                    });
+                renderLists.AddGumpWithAtlas(GumpCommand.Sprite(gumpInfo.Texture, new Rectangle(x, y, Width, Height), gumpInfo.UV, hueVector, layerDepth));
             }
 
             return base.AddToRenderLists(renderLists, x, y, ref layerDepthRef);
@@ -235,19 +222,7 @@ namespace ClassicUO.Game.UI.Controls
             var texture = gumpInfo.Texture;
             if (texture != null)
             {
-                renderLists.AddGumpWithAtlas(
-                    batcher =>
-                    {
-                        batcher.Draw(
-                            texture,
-                            new Rectangle(x, y, Width, Height),
-                            sourceBounds,
-                            hueVector,
-                            layerDepth
-                        );
-                        return true;
-                    }
-                );
+                renderLists.AddGumpWithAtlas(GumpCommand.Sprite(texture, new Rectangle(x, y, Width, Height), sourceBounds, hueVector, layerDepth));
             }
 
             return base.AddToRenderLists(renderLists, x, y, ref layerDepthRef);
