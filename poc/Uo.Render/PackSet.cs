@@ -32,6 +32,10 @@ public sealed class PackSet
     /// <summary>Land graphic replacement (0x4000 entries, e.g. the host's season tiles), or null. Set it through
     /// <see cref="WorldRenderer.SetLandRemap"/>, which rebakes the chunks.</summary>
     public ushort[] LandRemap;
+    /// <summary>Static graphic replacement (0x10000 entries, e.g. the host's season graphics), or null: the bake draws the
+    /// replacement's sprite and tiledata but keeps the original graphic in the object key, so overrides still match. Set
+    /// it through <see cref="WorldRenderer.SetStaticRemap"/>, which rebakes the chunks.</summary>
+    public ushort[] StaticRemap;
 
     /// <summary>Logical page id → file. Art pages first, then texmap pages (offset by <see cref="TexPageBase"/>).</summary>
     public readonly string[] PagePaths;
@@ -134,6 +138,7 @@ public sealed class PackSet
     PackSet(PackSet o, int facet)
     {
         Root = o.Root; Sprites = o.Sprites; Texmaps = o.Texmaps; Land = o.Land; Statics = o.Statics; HueCount = o.HueCount; Hues = o.Hues; StaticNoCot = o.StaticNoCot; LandRemap = o.LandRemap;
+        StaticRemap = o.StaticRemap;
         PagePaths = o.PagePaths; TexPageBase = o.TexPageBase; Format = o.Format; PageSize = o.PageSize; PageMips = o.PageMips;
         AnimBodies = o.AnimBodies; AnimDirs = o.AnimDirs; AnimFrames = o.AnimFrames; AnimDir = o.AnimDir; AnimPageBase = o.AnimPageBase;
         AnimIndexed = o.AnimIndexed; AnimPagePaths = o.AnimPagePaths; AnimFormat = o.AnimFormat; AnimPageSize = o.AnimPageSize;
