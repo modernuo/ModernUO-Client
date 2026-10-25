@@ -79,17 +79,13 @@ namespace ClassicUO
         {
             string sdlDriver = GpuInterop.GetDriverName(gpuDevice);
             string fna3d = GpuInterop.GetFna3dDriverName(device) ?? "unknown";
+            // FNA's GraphicsAdapter.Description is the display's name, not the GPU's; on D3D11/OpenGL FNA3D logs its adapter itself
             string adapter = gpuDevice != IntPtr.Zero ? GpuInterop.GetAdapterName(gpuDevice) : null;
-
-            if (string.IsNullOrEmpty(adapter))
-            {
-                adapter = device.Adapter?.Description;
-            }
 
             PostDeviceDecision post = RendererSelection.AfterDevice(_pre, sdlDriver, () =>
                 _simulateFail == "world" ? "simulated (CUO_RENDERER_PROBE_FAIL=world)" : createWorld());
 
-            string deviceText = sdlDriver != null ? $"SDL_GPU {sdlDriver}, {adapter}" : $"FNA3D {fna3d}, {adapter}";
+            string deviceText = sdlDriver != null ? $"SDL_GPU {sdlDriver}, {adapter ?? "unknown adapter"}" : $"FNA3D {fna3d}";
             string mode = _pre.Mode.ToString().ToLowerInvariant();
 
             Settings.GlobalSettings.WorldRenderer = post.Outcome == RendererOutcome.Gpu ? "gpu" : "legacy";
