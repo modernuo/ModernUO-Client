@@ -186,6 +186,7 @@ namespace ClassicUO.Game
             }
         }
 
+        private static long _corpses, _multis, _corpseInstances;
         private static long _items, _itemMismatched, _itemDrawnMismatched, _itemLightMismatched, _itemCapInstances, _itemEcsInstances, _itemLights;
         private static long _itemCaptureTicks, _itemExtractTicks;
         private static int _itemLogged;
@@ -205,6 +206,16 @@ namespace ClassicUO.Game
             }
 
             _items++;
+
+            if (item.IsCorpse)
+            {
+                _corpses++;
+                _corpseInstances += end - start;
+            }
+            else if (item.IsMulti)
+            {
+                _multis++;
+            }
             _itemCaptureTicks += captureTicks;
             _itemExtractTicks += extractTicks;
             ReadOnlySpan<SpriteInstance> cap = new ReadOnlySpan<SpriteInstance>(buffer, start, end - start);
@@ -312,7 +323,7 @@ namespace ClassicUO.Game
                 (
                     $"[PARITY] items={_items} mismatched={_itemMismatched} drawn-mismatched={_itemDrawnMismatched} lights-mismatched={_itemLightMismatched} lights={_itemLights} " +
                     $"instances capture={_itemCapInstances} ecs={_itemEcsInstances} | per frame: capture {_itemCaptureTicks / f / frames:F2}us, extract {_itemExtractTicks / f / frames:F2}us " +
-                    $"(per item {_itemCaptureTicks / f / _items:F3} / {_itemExtractTicks / f / _items:F3}us)"
+                    $"(per item {_itemCaptureTicks / f / _items:F3} / {_itemExtractTicks / f / _items:F3}us) | corpses={_corpses} (instances {_corpseInstances}) multis={_multis}"
                 );
             }
 

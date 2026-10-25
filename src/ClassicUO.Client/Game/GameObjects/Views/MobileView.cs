@@ -489,13 +489,6 @@ namespace ClassicUO.Game.GameObjects
             }
         }
 
-        /// <summary>The mirror bit Draw keeps (GetAnimDirection history); the ECS sprite path writes it back for picking.</summary>
-        internal bool ViewFlipped
-        {
-            get => IsFlipped;
-            set => IsFlipped = value;
-        }
-
         private void DrawAuraAt(UltimaBatcher2D batcher, int drawX, int drawY, float depth)
         {
             World.AuraManager.Draw(

@@ -122,7 +122,7 @@ Move each per-frame duty that touches land or statics to where it belongs:
   - Parity with `CUO_ANIM_SYNC=1`: 0 mismatches in bank, items, lights and 120-NPC crowd runs (5.2M mobile, 1.5M item comparisons), including the side effects. Screenshots and picking unchanged.
   - Crowd: mobile capture 104 → 45 µs/frame, world prepare 169 → 109 µs. Bank: mobiles 23 → 10 µs, items 6.7 → 2.0 µs.
   - **Next:**
-    1. Corpses and item multis (still captured), then retire the capture hook.
+    1. ~~Corpses and item multis (still captured), then retire the capture hook.~~ Done 2026-10-25 (integration agent): `ItemSpriteExtract` draws every world item, so the capture runs on the default path only for effects, statics/multi components the walk captures and shadow-only draws; `gpu_ecs_sprites off` keeps it for everything. 0 parity mismatches over about 900k corpse and 260k multi comparisons.
     2. Move the sampled inputs (steps, server action, war mode, item hue state) to the ECS with W5.
 
 ### W4: ground-item chunk baking (only if W0–W3 numbers ask for it)

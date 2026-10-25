@@ -568,7 +568,10 @@ namespace ClassicUO.Game.Scenes
             }
 
             long setupStart = FrameStats.Stamp();
-            _alphaChanged = _alphaTimer < Time.Ticks;
+            // while the world settle gate holds the last frame nobody sees the fades: alphas jump to their targets, so the
+            // first frame after the hold doesn't show statics of freshly loaded chunks fading in (they start at 0)
+            _snapAlphas = _settle.Holding;
+            _alphaChanged = _alphaTimer < Time.Ticks || _snapAlphas;
 
             if (_alphaChanged)
             {
@@ -645,6 +648,7 @@ namespace ClassicUO.Game.Scenes
             (var minChunkX, var minChunkY) = (minX >> 3, minY >> 3);
             (var maxChunkX, var maxChunkY) = (maxX >> 3, maxY >> 3);
             FrameStats.AddSince(FramePhase.PrepSetup, setupStart);
+            map.DrawPending = 0;
 
             for (var chunkX = minChunkX; chunkX <= maxChunkX; chunkX++)
             {
@@ -1101,9 +1105,13 @@ namespace ClassicUO.Game.Scenes
                 if (ready)
                 {
                     DrawWorldGpu(batcher, ref matrix, renderTargets, gpu, hold);
-                    _settle.End(gpu.VisibleReady);
 
-                    if (SettleLog && !hold && !gpu.VisibleReady)
+                    // ready = the world pass has everything near its view, and the client has loaded every chunk its walk
+                    // visited (a chunk still in the ChunkLoadQueue has no dynamic objects or overrides yet)
+                    bool visibleReady = gpu.VisibleReady && _world.Map.DrawPending == 0;
+                    _settle.End(visibleReady);
+
+                    if (SettleLog && !hold && !visibleReady)
                     {
                         LogUnsettledFrame(gpu);
                     }

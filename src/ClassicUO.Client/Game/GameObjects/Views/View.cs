@@ -31,6 +31,13 @@ namespace ClassicUO.Game.GameObjects
         public Rectangle FrameInfo;
         protected bool IsFlipped;
 
+        /// <summary>The mirror bit Draw keeps (GetAnimDirection history) for mobiles and corpses; the ECS sprite path writes it back for picking.</summary>
+        internal bool ViewFlipped
+        {
+            get => IsFlipped;
+            set => IsFlipped = value;
+        }
+
         public abstract bool Draw(UltimaBatcher2D batcher, int posX, int posY, float depth);
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

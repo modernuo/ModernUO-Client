@@ -399,10 +399,14 @@ namespace ClassicUO.Game.Scenes
             return (byte)(ratio * ratio * ratio * 255f);
         }
 
+        // set by FillGameObjectList while the world settle gate holds: fades complete at once
+        private static bool _snapAlphas;
+
         private static bool CalculateAlpha(ref byte alphaHue, int maxAlpha)
         {
             if (
-                ProfileManager.CurrentProfile != null
+                _snapAlphas
+                || ProfileManager.CurrentProfile != null
                 && !ProfileManager.CurrentProfile.UseObjectsFading
             )
             {
