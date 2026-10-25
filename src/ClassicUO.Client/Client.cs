@@ -224,6 +224,8 @@ namespace ClassicUO
 
             Log.Trace("Running game...");
 
+            Microsoft.Xna.Framework.FNALoggerEXT.LogError = GpuDeviceLost.OnFnaError;
+
             using (Game = new GameController(pluginHost))
             {
                 // https://github.com/FNA-XNA/FNA/wiki/7:-FNA-Environment-Variables#fna_graphics_enable_highdpi

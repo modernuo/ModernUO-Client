@@ -312,7 +312,7 @@ public sealed unsafe class PageResidency
             layer_count_or_depth = (uint)layers,
             num_levels = (uint)MipCount,
         };
-        Texture = SDL_CreateGPUTexture(device, in ci);
+        Texture = Renderer.CreateNamedTexture(device, ci, $"Uo.Render pages {PageFormats.Name(Format)} {PageSize}px x{layers}");
         if (Texture == IntPtr.Zero) throw new Exception($"atlas texture ({PageFormats.Name(Format)}): " + SDL_GetError());
 
         _layerOf = new int[LogicalCount];

@@ -301,6 +301,11 @@ namespace ClassicUO
             }
             */
 
+            if (GpuDeviceLost.IsLost)
+            {
+                return; // a backbuffer reset stalls on the lost device
+            }
+
             GraphicManager.PreferredBackBufferWidth = width;
             GraphicManager.PreferredBackBufferHeight = height;
             GraphicManager.ApplyChanges();
@@ -637,11 +642,13 @@ namespace ClassicUO
                 FrameStats.BeforeEndDraw();
                 base.EndDraw();
                 FrameStats.AfterEndDraw();
-
-                return;
+            }
+            else
+            {
+                base.EndDraw();
             }
 
-            base.EndDraw();
+            GpuDeviceLost.AfterPresent();
         }
 
         private float _screenScale = Settings.GlobalSettings.ScreenScale;
@@ -1043,6 +1050,30 @@ namespace ClassicUO
             Scene?.Dispose();
 
             base.OnExiting(sender, args);
+        }
+
+        // The saves of OnExiting and UnloadContent, without the GPU teardown (see GpuDeviceLost)
+        internal void SaveOnDeviceLost()
+        {
+            try
+            {
+                Scene?.Dispose(); // GameScene: profile, macros, info bars, disconnect
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"Scene dispose after the GPU device was lost failed: {ex}");
+            }
+
+            SDL_GetWindowBordersSize(Window.Handle, out int top, out int left, out _, out _);
+
+            Settings.GlobalSettings.WindowPosition = new Point(
+                Math.Max(0, Window.ClientBounds.X - left),
+                Math.Max(0, Window.ClientBounds.Y - top)
+            );
+
+            Audio?.StopMusic();
+            Settings.GlobalSettings.Save();
+            Plugin.OnClosing();
         }
 
         // DevBench: the world render target of the next drawn frame, without UI, as a PNG
