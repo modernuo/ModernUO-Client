@@ -5,6 +5,7 @@ Running notes for your return, newest at the top within each section. Started 20
 ## Needs you
 
 - **FPS test**, when you're back: see "Your FPS test" below. The build is ready.
+- **Decision: an FNA3D fork like the SDL one?** Two FNA3D bugs are open. (1) A cycled index buffer isn't rebound; the batcher works around it. (2) After `FreeTextureHandle`, `nextRenderPass*` references dangle (from the Codex audit; lower likelihood). Our FNA3D.dll in `external/x64` is already a local patch with no fork behind it. With your OK I'd create github.com/modernuo/FNA3D (or use a branch on an FNA fork), wire it like SDL (submodule, build script, committed DLL), and fix both properly. Until then the workaround holds.
 - **Optional:** the fork-built SDL3.dll has no libusb HIDAPI support (the old upstream DLL had it). That only matters for unusual controllers. Say if you want it built in.
 
 ## Decisions you made tonight (recorded in README "Decisions so far" and in memory)
