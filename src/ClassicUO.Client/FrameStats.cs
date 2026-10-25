@@ -38,6 +38,8 @@ namespace ClassicUO
         PrepCaptureItem,
         PrepCaptureMobile,
         PrepCaptureOther,
+        PrepItemCache,
+        PrepCaptureCached,
         PrepRest,
         WalkLand,
         WalkStatic,
@@ -99,6 +101,11 @@ namespace ClassicUO
         GpuWalkTiles,
         GpuEdgeTiles,
         GpuPickTiles,
+        // W4 ground-item cache: chunks re-extracted, tiles and items served from it, served tiles walked after a change
+        ItemCacheBuilds,
+        ItemCacheTiles,
+        ItemCacheItems,
+        ItemCacheFallbacks,
         // map loading (Map.UpdateLoading, MapLoader prefetch): chunks loaded and the time they took, chunks queued at the
         // end of the frame, time the main thread waited for a region decode, regions decoded on the main thread, prefetches
         ChunkLoads,
@@ -131,7 +138,7 @@ namespace ClassicUO
             "  world: effects+text", "  world: Ecs.Update", "  scene update rest", "UIManager.Update", "update other", "Update total",
             "draw setup", "lights", "world prepare", "  prep: setup", "  prep: tile walk", "  prep: gpu skip masks", "  prep: gpu hidden collect",
             "  prep: foliage+finish", "  prep: text entities", "  prep: capture multis", "  prep: capture statics",
-            "  prep: capture items", "  prep: capture mobiles", "  prep: capture other", "  prep: rest", "    walk: baked land",
+            "  prep: capture items", "  prep: capture mobiles", "  prep: capture other", "  prep: item cache", "  prep: capture cached", "  prep: rest", "    walk: baked land",
             "    walk: baked statics", "    walk: unmeshed", "    walk: items/mob/fx", "    walk: screen pos", "    walk: picking",
             "    walk: override/mesh", "    walk: lights", "    walk: foliage check", "  (bare list walk)", "world draw", "scene DrawUI", "UIManager.Draw", "cursor", "RT composite",
             "plugin draw", "draw other", "Draw total", "  batcher FNA calls", "Present", "frame"
@@ -142,7 +149,7 @@ namespace ClassicUO
             "pump", "packets", "plugin", "scene_update", "world_mobiles", "world_items", "world_fx_text", "world_ecs", "scene_rest",
             "ui_update", "update_other", "update", "draw_setup", "lights", "world_prepare", "prep_setup", "prep_walk", "prep_gpu_masks", "prep_hidden",
             "prep_foliage_finish", "prep_text", "prep_cap_multi", "prep_cap_static", "prep_cap_item", "prep_cap_mobile", "prep_cap_other",
-            "prep_rest", "walk_land", "walk_static", "walk_unmeshed", "walk_dynamic", "walk_pos", "walk_pick", "walk_override", "walk_light",
+            "prep_item_cache", "prep_cap_cached", "prep_rest", "walk_land", "walk_static", "walk_unmeshed", "walk_dynamic", "walk_pos", "walk_pick", "walk_override", "walk_light",
             "walk_foliage", "bare_walk", "world_draw", "scene_draw_ui", "ui_draw",
             "cursor", "composite", "plugin_draw", "draw_other", "draw", "batcher_fna", "present", "frame"
         };
@@ -151,6 +158,7 @@ namespace ClassicUO
             "gpu_overrides", "gpu_draw_calls", "tiles", "objects", "baked_land", "baked_statics", "unmeshed", "dynamic", "pick_tests",
             "override_calls", "hidden_tiles", "lights_added", "foliage", "cap_multis", "cap_statics", "cap_items", "cap_mobiles", "cap_other", "gpu_mask_rebuilds",
             "gpu_skip_active", "gpu_full_tiles", "gpu_walk_tiles", "gpu_edge_tiles", "gpu_pick_tiles",
+            "item_cache_builds", "item_cache_tiles", "item_cache_items", "item_cache_fallbacks",
             "chunk_loads", "chunk_load_us", "chunk_mesh_us", "chunk_queue", "region_wait_us", "region_sync", "region_prefetch" };
 
         private static readonly long[] _start = new long[PHASES];
@@ -382,7 +390,8 @@ namespace ClassicUO
                                                      _acc[(int)FramePhase.PrepHidden] - _acc[(int)FramePhase.PrepFoliageFinish] -
                                                      _acc[(int)FramePhase.PrepText] - _acc[(int)FramePhase.PrepCaptureMulti] -
                                                      _acc[(int)FramePhase.PrepCaptureStatic] - _acc[(int)FramePhase.PrepCaptureItem] -
-                                                     _acc[(int)FramePhase.PrepCaptureMobile] - _acc[(int)FramePhase.PrepCaptureOther];
+                                                     _acc[(int)FramePhase.PrepCaptureMobile] - _acc[(int)FramePhase.PrepCaptureOther] -
+                                                     _acc[(int)FramePhase.PrepItemCache] - _acc[(int)FramePhase.PrepCaptureCached];
 
                     _cur[(int)FrameCounter.Flushes] = UltimaBatcher2D.FrameFlushes;
                     _cur[(int)FrameCounter.DrawCalls] = UltimaBatcher2D.FrameDrawCalls;

@@ -110,6 +110,10 @@ namespace ClassicUO.Configuration
         // (GameSceneGpuPrepare). Off = the full walk, as Legacy does it.
         [JsonPropertyName("gpu_prepare_skip_baked")] public bool GpuPrepareSkipBaked { get; set; } = true;
 
+        // Gpu world renderer, with gpu_prepare_skip_baked and gpu_ecs_sprites: settled ground items' sprites are cached per
+        // chunk and their tiles left out of the walk (W4, GameSceneGpuItemCache). Off = every item walked and extracted.
+        [JsonPropertyName("gpu_prepare_item_cache")] public bool GpuPrepareItemCache { get; set; } = true;
+
         // Gpu world renderer: mobiles' dynamic sprites come from the ECS (MobileAnimationSystem + MobileSpriteExtract)
         // instead of capturing MobileView.Draw. Off = the capture, the parity yardstick (EcsParity).
         [JsonPropertyName("gpu_ecs_sprites")] public bool GpuEcsSprites { get; set; } = true;

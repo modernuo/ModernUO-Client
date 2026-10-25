@@ -373,6 +373,28 @@ namespace ClassicUO.Game.Scenes
 
             ReadOnlySpan<SpriteInstance> got = _itemExtract.Instances;
 
+            if (GameScene.GpuItemCheckActive)
+            {
+                _scene?.GpuItemCheckDrawn(item, got, _itemExtract.Light, _itemExtract.LightX, _itemExtract.LightY);
+            }
+
+            AppendDynamic(got);
+
+            return drawn;
+        }
+
+        /// <summary>W4 (GameSceneGpuItemCache): <see cref="ItemSpriteExtract.Emit"/> for a chunk's item cache, with the
+        /// scene's draw offset (the frame's <see cref="SetOffset"/> comes after the walk). The result is in <see cref="ItemExtract"/>.</summary>
+        public bool ExtractItem(Item item, int offsetX, int offsetY, int posX, int posY, float depth)
+        {
+            return _itemExtract.Emit(item, _pack, offsetX, offsetY, posX, posY, depth);
+        }
+
+        public ItemSpriteExtract ItemExtract => _itemExtract;
+
+        /// <summary>Appends ready dynamic instances (the item cache's), in capture order.</summary>
+        public void AppendDynamic(ReadOnlySpan<SpriteInstance> got)
+        {
             if (_dynamicCount + got.Length > _dynamic.Length)
             {
                 Array.Resize(ref _dynamic, Math.Max(_dynamic.Length * 2, _dynamicCount + got.Length));
@@ -380,8 +402,6 @@ namespace ClassicUO.Game.Scenes
 
             got.CopyTo(new Span<SpriteInstance>(_dynamic, _dynamicCount, got.Length));
             _dynamicCount += got.Length;
-
-            return drawn;
         }
 
         private bool TryDrawMobileEcs(UltimaBatcher2D batcher, Mobile mobile, float depth, out bool drawn)

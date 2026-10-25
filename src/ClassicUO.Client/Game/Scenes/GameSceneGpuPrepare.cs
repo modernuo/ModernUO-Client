@@ -190,8 +190,14 @@ namespace ClassicUO.Game.Scenes
                 FrameStats.Inc(FrameCounter.GpuMaskRebuilds);
             }
 
+            _gpuServeTiles = 0;
+            _gpuCheckTiles = 0;
+
             if (!_gpuSkipActive || chunk.GpuFreshSteps > 0)
             {
+                // alphas may move, and the max Z, ground Z or roofs that decide which items are cacheable may have changed
+                chunk.GpuItemsDirty = true;
+
                 if (_alphaChanged && chunk.GpuFreshSteps > 0 && --chunk.GpuFreshSteps == 0 && _gpuSkipActive)
                 {
                     // this frame's walk still runs in full; the alphas it leaves are settled
@@ -320,20 +326,40 @@ namespace ClassicUO.Game.Scenes
 
         private void RebuildGpuMask(Chunk chunk)
         {
-            ulong walk = 0, full = 0;
+            ulong walk = 0, full = 0, mobiles = 0, mobileStops = 0;
             int minZ = int.MaxValue, maxZ = int.MinValue, halfW = 22, height = 44;
+            int mobileCount = 0;
 
             for (int x = 0; x < 8; x++)
             {
                 for (int y = 0; y < 8; y++)
                 {
                     ulong bit = 1UL << (x << 3 | y);
+                    chunk.GpuMobileStart[x << 3 | y] = mobileCount;
 
                     for (GameObject obj = chunk.GetHeadObject(x, y); obj != null; obj = obj.TNext)
                     {
                         if (!IsGpuBaked(obj))
                         {
                             walk |= bit;
+
+                            if (obj is Mobile)
+                            {
+                                mobiles |= bit;
+
+                                if (mobileCount == chunk.GpuMobiles.Length)
+                                {
+                                    Array.Resize(ref chunk.GpuMobiles, Math.Max(8, mobileCount * 2));
+                                }
+
+                                chunk.GpuMobiles[mobileCount++] = obj;
+
+                                // AddTileToRenderList stops the tile's walk at this mobile (W4 must not serve the rest)
+                                if (obj.PriorityZ + Constants.DEFAULT_CHARACTER_HEIGHT > GPU_WALK_MAX_Z)
+                                {
+                                    mobileStops |= bit;
+                                }
+                            }
 
                             continue;
                         }
@@ -370,6 +396,14 @@ namespace ClassicUO.Game.Scenes
 
             chunk.GpuWalkMask = walk;
             chunk.GpuFullMask = full;
+            chunk.GpuMobileMask = mobiles;
+            chunk.GpuMobileStopMask = mobileStops;
+            chunk.GpuMobileStart[64] = mobileCount;
+
+            if (mobileCount < chunk.GpuMobiles.Length)
+            {
+                Array.Clear(chunk.GpuMobiles, mobileCount, chunk.GpuMobiles.Length - mobileCount);
+            }
             chunk.GpuMinZ = minZ == int.MaxValue ? 0 : minZ;
             chunk.GpuMaxZ = maxZ == int.MinValue ? 0 : maxZ;
             chunk.GpuMaxHalfWidth = halfW;
