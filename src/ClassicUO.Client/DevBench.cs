@@ -44,6 +44,8 @@ namespace ClassicUO
         private static bool _walkBack;
         private static int _planFrames;
         private static bool _gumpsOpened;
+        private static long _appliesAtStart;
+        private static string _planMode;
         private static long _planStart;
         private static int _spot;
         private static Microsoft.Xna.Framework.Point? _mouse;
@@ -775,7 +777,7 @@ namespace ClassicUO
             if (_step == 4)
             {
                 _planFrames++;
-                string mode = _plan[_planIndex].Split(':')[1].Trim();
+                string mode = _planMode;
 
                 if (mode == "travel" && now >= _travelAt)
                 {
@@ -795,7 +797,7 @@ namespace ClassicUO
                     ClassicUO.FrameStats.StopWindow();
                     world.Player.Pathfinder.StopAutoWalk();
                     Log.Info($"[bench] {_plan[_planIndex]} done at {world.Player.X},{world.Player.Y},{world.Player.Z}, mobiles {world.Mobiles.Count}, items {world.Items.Count}, " +
-                             $"{_planFrames * (double)sec / (now - _planStart):0} fps (update count)");
+                             $"{_planFrames * (double)sec / (now - _planStart):0} fps (update count), {(Renderer.UltimaBatcher2D.EffectApplies - _appliesAtStart) / (double)Math.Max(1, _planFrames):0.0} effect applies/frame");
                     _planIndex++;
                     _step = 1;
                     _stepAt = now + sec;
@@ -1073,6 +1075,8 @@ namespace ClassicUO
                     _travelAt = now;
                     _planStart = now;
                     _planFrames = 0;
+                    _appliesAtStart = Renderer.UltimaBatcher2D.EffectApplies;
+                    _planMode = _plan[_planIndex].Split(':')[1].Trim(); // read every measured frame: split once
                     _stepAt = now + sec * 5 * _planWindows;
 
                     if (FrameStats)
