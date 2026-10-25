@@ -121,7 +121,11 @@ These pay off on FNA today and carry over into the Tier 2 backend. They're also 
 | B8 | Cache the UI render target and redraw it only when dirty | GameController.cs UI pass | UI redraw is skipped on most frames when nothing changed. Needs dirty tracking in `UIManager` |
 | B9 | Batch-key sorting: atlas id, blend, scissor | Batcher flush | Fewer flushes when gumps interleave atlases |
 
-- **B1–B5 are cheap and FNA-independent:** start now.
+- **B1–B5: done** (branch `poc/batcher-ui-alloc`, 2202efb1f and ff81fd332). With paperdoll, backpack, journal and status open (Gpu mode, 1080p): 27.6 KB → 70–250 B allocated per frame and gen0 GCs 1.6–2.2/s → 0 (JIT and NativeAOT); basic-effect `Pass.Apply()` calls about 16 → 3 per frame; UI draw about 10% lower (within run noise). The UI pixels match. Details: poc-log.md, "B1–B5".
+  - B1: `ApplyEffect()` applies only when the viewport, transform, world matrix, brightlight or circle-of-transparency radius changed. `Begin()` and custom-effect passes invalidate, since FNA3D only re-pushes the last committed uniforms.
+  - B2: `GumpCommand` struct values (sprite, stretched, at, tiled, outline, text, deferred control, callback) in both gump lists. Controls whose draw needs their own state implement `IGumpDeferredDraw` and queue themselves.
+  - B3–B5 as listed. Also fixed: GameScene allocated a new lights `BlendState` and two lambdas every frame, and boxed two dictionary enumerators.
+  - Vertex-generation SIMD (owner question), from a micro-benchmark: scalar `SetVertex` costs 8.5 ns/sprite, Vector128 7.3 ns (−13%, bit-exact), plus a 3.1 ns upload copy. A 32-byte B6 instance costs 3.5 ns plus a 0.5 ns copy, about 3× less in total and 6× less upload. At UI sprite counts (hundreds) both are a few µs per frame, so SIMD on the 192-byte path isn't worth it. B6's main win is bandwidth, and only when the batcher draws thousands of sprites (Legacy world).
 - **B6–B7 are Tier 2 work** (or a Tier 1 seam feature). B8 and B9 can come after B2.
 
 ## Order relative to other work
