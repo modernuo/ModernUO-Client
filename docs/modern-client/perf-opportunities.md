@@ -135,6 +135,7 @@ The server sends dynamic objects (mobiles, items, effects) only within its updat
 - **The remaining zoomed-out overrides (182) are the fill's other skips,** mostly land at the view edges (the top strip that `_minPixel` culls when zoomed out). They disappear with the "walk only the screen's diamond / per-tile decision cache" item above.
 - **The circle-of-transparency ring is a CPU scan of the chunks inside the circle's box every frame** (`WorldRenderer.BuildFrame`), 8 ring instances at zoom 1. It is cheap, but it could be cached per player tile and chunk generation.
 - **A season change rebakes by evicting every chunk** (`ChunkStore.EvictAll`), so the view re-streams for a few frames. Fix if it matters: rebake into a second range and swap when ready (double-buffered slots).
+- **The translucent list holds at most 8,192 entries per frame** (`WorldOptions.MaxTranslucent`; overflow is dropped and counted in `OverridesDropped`). Since the 2026-10-25 parity work, effects (all of them, for painter order), seated sections of translucent mobiles and the circle-of-transparency ring share it with translucent statics and overrides; a busy scene with many translucent or seated mobiles could truncate. Fix if it shows up: size it from the dynamic count, or grow it on overflow.
 - **Effects now go through the capture path** (their views run in world prepare). Measured: FNA draw calls in Gpu mode went 24–27 → 23, and Britain world draw 0.086 → 0.059 ms.
 
 ## Robustness

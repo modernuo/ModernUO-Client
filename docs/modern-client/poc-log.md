@@ -1152,3 +1152,58 @@ Branch `worktree-agent-a97d49f3c0ed8a14c`, started on poc/modern-client 905daf31
 **Codex audit (merge with fixes), one P2, fixed:** `Mounted` came from the mirror's equipment index, which is keyed by the item's container. A mount equipped (0x2E) before its rider arrives is mirrored under the rider's serial, but legacy never attaches it to the rider's list (World.GetOrCreateMobile doesn't adopt earlier items), and it can outlive the rider and meet a later mobile with the same serial. Then `Mounted` was true while `IsMounted` was false. The bug was older than this patch; the patch made it visible. Now `Rebuild` computes `Mounted` from the mobile's own list (`MobileAnimationSystem.IsMounted`: first live mount-layer item, not a tiller, mount body). Every `PushToBack` attach in PacketHandlers (0x2E equip, 0x78 mobile equipment, container adds) and `RemoveItemFromContainer` is followed by `Sync`, and the mirror marks the old wearer dirty on any write to a worn item, so the slots are rebuilt whenever the list changes. Regression test: an orphan mount before its rider, a later attach (dirty, mounted), a tiller, and serial reuse.
 
 **Coordination incident:** one profiling run (12:55:25–12:56:20) started a client while `legacyfix` held `bench.lock`: my wait loop timed out without the lock and the script carried on. The client was closed and `legacyfix`'s lock was left alone. Later runs use `round.py`, which exits if it can't take the lock.
+
+## Gpu world parity gaps closed: effect blends, sitting deformation, animated water (2026-10-25)
+
+Branch `worktree-agent-a1570509bc420675c`, on `poc/modern-client` 78061753b (measured on 18becdb4e; the newer commit is docs only). Closes the step 9 gaps "effect blends other than Normal/Screen, the sitting deformation, the water wobble and scaled sprites". All four were still open in the code.
+
+**What changed:**
+- **Effect blends** (`GpuWorldRenderer.CanCapture` now accepts every effect):
+  - The instance's blend is a 3-bit code in `Light` (bits 10-11 plus `LightAdditive`): `InstanceBlend` Normal, Screen, Multiply, ScreenLess, NormalHalf, ShadowBlue. `HueMode` shrank to bits 8-9 (it only has 4 values).
+  - The shader's output is already premultiplied (rgb·a, a), as IsometricWorld.fx's, so each blend is just GameEffect's FNA BlendState factors on a pipeline (alpha One/Zero, FNA's default). Normal and Screen keep the premultiplied pipeline. The four others are created with the world pass, so no pipeline is built mid-frame.
+  - `WorldRenderer.BuildFrame` splits the sorted translucent list into runs of one blend, only on frames that have such an effect. `Renderer` draws one run per draw with `TransBase` moved to the run's start (SV_InstanceID restarts at 0; `first_instance` isn't portable with it). Frames without them are unchanged (one translucent draw).
+  - ScreenRed (and unknown values) draw normally, as in GameEffectView. Before, they and the four blends were FNA draws over the world, not depth-tested.
+- **Sitting deformation** (`SitDeform`, shared by the capture and the ECS extract):
+  - `ISpriteCapture.DrawSitted` receives MobileView's section fractions; `MobileSpriteExtract` computes them with `SitDeform.Mod`, a port of `CalculateSitAnimation` (the body's waist/knee rows carried to its equipment). The parity harness therefore compares the fractions, and the geometry code is one copy.
+  - `SitDeform.Split` replaces the plain frame with up to three sections as Batcher2D draws them: rows shifted 8 px toward the facing side, a sheared middle, the legs in place, each sampling its own (scaled) row range. Section edges are rounded to whole pixels.
+  - New instance flag `FlagDeform` (Corners bits 16-23 = top-edge shear, 24-31 = source rows; the palette id stays in bits 0-15). The shader shears the quad and samples the source rows over its height.
+  - The mobile frame cache now records depth kind/add for every instance a `Write` emits (it recorded only the last one).
+- **Animated water** (profile `AnimatedWaterEffect`, off by default) — the only scaled world sprite:
+  - New `LightWobble` bit (trim offset in Light bits 16-31) and `WaterScaleX/Y` uniforms (the former padding), set each frame from View.DrawStatic's `Time.Ticks` formula.
+  - Baked: `WorldRenderer.SetWaterWobble` bakes a scaled copy of each wet flat land tile before the tile, with the same depth key and object key, so it wins the tie against its own tile, keeps the tile's order against everything else, and overrides reach both. A change rebakes (`EvictAll`, as seasons).
+  - Captured: wet statics drawn by their view (animated ones) get the bit on their scaled draw.
+  - Wet *statics* in the bake get no copy, matching Legacy, whose chunk mesh draws them plain.
+- **DevBench:** `chair:hex|off` (a client-side chair item under the player), `water:on|off`.
+
+**Evidence** (JIT Release, 1920×1080 window, 1280×720 world RT, kbatman4; Legacy and Gpu shots in one session):
+- **Effects** (bags `0x0E75` as non-animated effects, one per blend, next to the player): Gpu and Legacy match in shape and colour for every blend. The remaining differences are under the Multiply/ScreenLess/NormalHalf effects where the stretched land beneath already differs (filtering, known), which those blends carry through. Animated fire columns per blend also look alike (their frames differ between the two shots). The world is 8 draws with 7 effects (runs), 2 without.
+- **Sitting** (`chair:0B4F` and `0B51` at Britain): seated player Gpu vs Legacy at zoom 1: the second chair is identical; the first differs only on helmet/upper-body edge pixels (no pixel shift reduces it; the section edges are rounded). Before, the Gpu drew the seated frame undeformed.
+- **Water** (Britain docks): Gpu with the option on vs off differs over the land water, and Gpu vs Legacy differs over exactly the same area (the wobble phase is time-based, so shots taken seconds apart can't match pixel for pixel). Static water (no wobble in either renderer) is identical. Looked at.
+- **ECS parity** (`CUO_ANIM_SYNC=1`): `cases.txt` 194k mobile comparisons (12.8k CharSitting frames), `bank.txt` 61k, the sitting/water bench run 363k (24.6k CharSitting): 0 mismatches except two dock NPCs that mismatch in the base build as well (known-issues.md, "ECS parity: two Britain dock NPCs"). Items 0 mismatches in every run.
+- **Standard shots, base vs new:** Gpu Britain 0.10%, bank 0.35%, zoom-out 0.03%; Legacy Britain 0.12%, bank 0.53%; UI 0.04%. Only moving creatures and journal times. Looked at.
+- **Builds/tests:** Release and `-p:CuoDevTools=false` build; 322 unit tests pass.
+
+**Timing** (JIT, ms averages, median of 3 windows, base 18becdb4e → new; one run each). The machine was noisy (several agents' clients and NativeAOT benches); base and new ran a few minutes apart, and the base run's frame times show heavy contention (zoom-out frame 2.70 vs 0.54). **Re-measure on a quiet machine.**
+
+| Spot | world prepare | world draw |
+|---|---|---|
+| Britain (Gpu) | 0.062 → 0.081 | 0.071 → 0.095 |
+| Bank (Gpu) | 0.062 → 0.055 | 0.068 → 0.063 |
+| 7 effects at Britain (Gpu) | 0.054 → 0.058 | 0.096 → 0.082 |
+| Zoom-out 2.5 (Gpu) | 0.466 → 0.189 | 0.204 → 0.088 |
+| Britain (Legacy) | 0.274 → 0.171 | 0.257 → 0.212 |
+
+- Nothing per frame scales with the view: blend runs are built only on frames with such an effect (a pass over the translucent list), the seated deformation is two extra instances per seated layer, and the wobble is two uniforms plus baked copies (per chunk, only with the option on). The Britain/zoom-out swings go both ways and exceed anything the change could cost; Legacy's code didn't change and moved as much.
+- Sitting wasn't timed separately (the bench's chair was placed at the wrong spot in the timing run).
+
+**Left:**
+- Lightning (`LightningEffect`) draws gump art, which isn't in the pack, so it stays an FNA overlay (not depth-tested) with Additive blending and `SHADER_LIGHTS`, as before.
+- The water check is visual only (no frozen phase); the effect check is on stretched land (a flat-land spot would give a cleaner diff).
+
+**Codex audit fixes (merge with fixes, same day):**
+- **P2, equal-depth effects across the pass split:** a Normal effect was drawn by the opaque pass and wrote depth, so a later Multiply/ScreenLess/NormalHalf/ShadowBlue effect at the same depth failed the strict depth test (Legacy: LessEqual plus painter order). Normal effects now carry `InstanceBlend.NormalOrdered`: the premultiplied pipeline with opaque output, but in the translucent pass, so every effect is ordered by depth key and then capture order there. Opaque world objects still write depth first, so an object captured after an effect at equal depth still wins, as in Legacy.
+  - Checked: at Britain, Normal→ShadowBlue on one tile now shows ShadowBlue over the bag (before, the bag stayed plain), and Multiply→Normal and ScreenLess→Normal show the plain bag; Gpu and Legacy are identical over those bags. The Normal→Multiply pair on the test tile was hidden by the stairs in both renderers.
+- **P2, animated wet statics on frames with animation offset 0:** with animated water on, animated wet statics always go through view capture (`CollectGpuStatic`). Legacy keeps animated statics out of its chunk mesh, so the view draws their water copy on every frame. Meshed wet statics are unchanged. Not checked live (no animated wet static at the test spots).
+- **P3:** `Renderer.CreateExternal` disposes the renderer if a pipeline fails, and `Pipelines` releases the opaque pipeline if the translucent one fails. No failure injection.
+- The 8,192-entry translucent list is a truncation risk for busy translucent or seated scenes (perf-opportunities.md, "GPU world parity").
+- Re-verified: both build flavours, 322 tests, effect, sitting and water shots (water: same pattern as before), and a parity run with 413k mobile comparisons (24.6k CharSitting frames) and 474k item comparisons, with 0 mismatches except the known dock NPC.

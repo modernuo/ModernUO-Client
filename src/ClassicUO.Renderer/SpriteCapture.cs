@@ -23,6 +23,10 @@ namespace ClassicUO.Renderer
 
         /// <summary>An unscaled sprite rotated by <paramref name="rotation"/> radians about its top-left corner (effects).</summary>
         bool DrawRotated(Texture2D texture, Vector2 position, Rectangle source, Vector3 hue, float rotation, float depth);
+
+        /// <summary>A seated character's frame (Batcher2D.DrawCharacterSitted): <paramref name="mod"/> holds the three
+        /// section fractions MobileView.CalculateSitAnimation computed.</summary>
+        bool DrawSitted(Texture2D texture, Vector2 position, Rectangle source, Vector3 mod, Vector3 hue, bool flip, float depth);
     }
 
     /// <summary>
