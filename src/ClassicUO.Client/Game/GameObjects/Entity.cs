@@ -34,9 +34,29 @@ namespace ClassicUO.Game.GameObjects
         public bool ExecuteAnimation = true;
         internal long LastAnimationChangeTime;
         public Flags Flags;
-        public ushort Hits;
-        public ushort HitsMax;
+        private ushort _hits, _hitsMax;
         public byte HitsPercentage;
+
+        // W5: the percentage (and its cached text) is recomputed when Hits or HitsMax change, not every frame
+        public ushort Hits
+        {
+            get => _hits;
+            set
+            {
+                _hits = value;
+                RefreshHitsPercentage();
+            }
+        }
+
+        public ushort HitsMax
+        {
+            get => _hitsMax;
+            set
+            {
+                _hitsMax = value;
+                RefreshHitsPercentage();
+            }
+        }
         public bool IsClicked;
         public uint LastStepTime;
         public string Name;
@@ -145,12 +165,26 @@ namespace ClassicUO.Game.GameObjects
             }
 
 
-            if (HitsMax > 0)
+            // kept for world_update_active_items off (the old per-frame loop); idempotent with the setters
+            if (_hitsMax > 0 && !Configuration.Settings.GlobalSettings.WorldUpdateActiveItems)
             {
-                var perc = MathHelper.PercetangeOf(Hits, HitsMax);
-                perc = perc > 100 ? 100 : perc < 0 ? 0 : perc;
+                RefreshHitsPercentage();
+            }
+        }
 
-                UpdateHits((byte)perc);
+        /// <summary>The per-frame rule Entity.Update applied: for HitsMax &gt; 0, the clamped percentage of Hits.</summary>
+        public static byte HitsPercent(ushort hits, ushort hitsMax)
+        {
+            int perc = MathHelper.PercetangeOf(hits, hitsMax);
+
+            return (byte)(perc > 100 ? 100 : perc < 0 ? 0 : perc);
+        }
+
+        private void RefreshHitsPercentage()
+        {
+            if (_hitsMax > 0)
+            {
+                UpdateHits(HitsPercent(_hits, _hitsMax));
             }
         }
 
@@ -163,6 +197,11 @@ namespace ClassicUO.Game.GameObjects
             AnimIndex = 0;
             LastAnimationChangeTime = 0;
             World.Ecs.OnDestroyed(this);
+
+            if (this is Item item)
+            {
+                World.OnItemDestroyed(item);
+            }
         }
 
         public Item FindItem(ushort graphic, ushort hue = 0xFFFF)

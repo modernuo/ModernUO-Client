@@ -285,7 +285,7 @@ namespace ClassicUO.Game
 
             if (isShadow)
             {
-                Write(index, x, y, 0, h, new Vector3(0, ShaderHueTranslator.SHADER_SHADOW, 1f), mirror, depth);
+                Write(index, x, y, 0, h, new Vector3(0, ShaderHueTranslator.SHADER_SHADOW, 1f), mirror, depth, 0, 0f);
 
                 return;
             }
@@ -295,7 +295,7 @@ namespace ClassicUO.Game
 
             if (charSitting)
             {
-                Write(index, x, y, 0, h, hueVec, mirror, depth + 1f);
+                Write(index, x, y, 0, h, hueVec, mirror, depth, 1, 0f);
 
                 return;
             }
@@ -307,7 +307,7 @@ namespace ClassicUO.Game
             {
                 if (strips[i].H > 0)
                 {
-                    Write(index, x, y + strips[i].Y, strips[i].Y, strips[i].H, hueVec, mirror, depth + 1f + i * 2);
+                    Write(index, x, y + strips[i].Y, strips[i].Y, strips[i].H, hueVec, mirror, depth, 1, i * 2);
                 }
             }
         }
@@ -322,9 +322,199 @@ namespace ClassicUO.Game
             _lights[_lightCount++] = new LightRequest { Item = item, X = x, Y = y };
         }
 
-        // GpuWorldRenderer.Emit for an animation frame drawn from source rows [srcY, srcY + srcH) at (px, py)
-        private void Write(uint index, int px, int py, int srcY, int srcH, Vector3 hue, bool flip, float depth) =>
-            WriteFrame(_pack, ref _out, ref _count, index, px + _offsetX, py + _offsetY, srcY, srcH, hue, flip, depth, _objX, RANK_MOBILE);
+        // GpuWorldRenderer.Emit for an animation frame drawn from source rows [srcY, srcY + srcH) at (px, py). The depth is
+        // baseDepth (kind 0) or (baseDepth + 1f) + add (kind 1): the shadow, the seated body and the strips' depth + 1f + i * 2.
+        private void Write(uint index, int px, int py, int srcY, int srcH, Vector3 hue, bool flip, float baseDepth, byte kind, float add)
+        {
+            int before = _count;
+            WriteFrame(_pack, ref _out, ref _count, index, px + _offsetX, py + _offsetY, srcY, srcH, hue, flip, DepthOf(baseDepth, kind, add), _objX, RANK_MOBILE);
+
+            if (_record != null && _count > before)
+            {
+                int i = _count - 1 - _recordStart;
+                _record.EnsureCapacity(i + 1);
+                ref MobileFrameCache.Entry entry = ref _record.Entries[i];
+                entry.Kind = kind;
+                entry.Add = add;
+            }
+        }
+
+        internal static float DepthOf(float baseDepth, byte kind, float add) => kind == 0 ? baseDepth : baseDepth + 1f + add;
+
+        private MobileFrameCache _record;
+        private int _recordStart;
+
+        /// <summary>
+        /// W5 (gpu_mobile_frame_cache): <see cref="Emit(EcsEntity, int, int, float)"/>, or the instances, FrameInfo and
+        /// lights <paramref name="cache"/> recorded when the selection (<see cref="MobileFrameCache.SelectGen"/>), alpha,
+        /// override hue, body hue and pack are the same, moved to this frame's position, walking offset and depth.
+        /// </summary>
+        public void Emit(EcsEntity e, int posX, int posY, float depth, MobileFrameCache cache)
+        {
+            ref readonly AnimationState s = ref e.GetComponent<AnimationState>();
+
+            if (cache == null || (s.Flags & AnimStateFlags.Visible) == 0 || _pack == null || !_pack.HasAnims)
+            {
+                if (cache != null)
+                {
+                    cache.EmitValid = false;
+                }
+
+                Emit(e, posX, posY, depth);
+
+                return;
+            }
+
+            ref readonly MobileRenderState rs = ref e.GetComponent<MobileRenderState>();
+            ushort bodyHue = e.GetComponent<Hue>().Value;
+            int baseX = posX + rs.OffsetX, baseY = posY + rs.OffsetY;
+
+            if (cache.EmitValid && cache.EmitSelectGen == cache.SelectGen && cache.Alpha == rs.Alpha && cache.OverrideHue == rs.OverrideHue &&
+                cache.BodyHue == bodyHue && ReferenceEquals(cache.Pack, _pack))
+            {
+                MobileFrameCache.EmitHits++;
+                int start = _count;
+                int lightStart = _lightCount;
+                Replay(cache, baseX, baseY, depth, e.GetComponent<Position>().X);
+
+                if (MobileAnimationSystem.CacheCheck)
+                {
+                    CheckReplay(e, posX, posY, depth, start, lightStart);
+                }
+
+                return;
+            }
+
+            MobileFrameCache.EmitMisses++;
+            int recStart = _count;
+            int recLights = _lightCount;
+            _record = cache;
+            _recordStart = recStart;
+
+            try
+            {
+                Emit(e, posX, posY, depth);
+            }
+            finally
+            {
+                _record = null;
+            }
+
+            int n = _count - recStart;
+            cache.EnsureCapacity(n);
+
+            for (int i = 0; i < n; i++)
+            {
+                SpriteInstance inst = _out[recStart + i];
+                inst.X -= baseX + _offsetX;
+                inst.Y -= baseY + _offsetY;
+                cache.Entries[i].Instance = inst;
+            }
+
+            cache.Count = n;
+            cache.FrameInfo = FrameInfo;
+            int ln = _lightCount - recLights;
+
+            if (cache.Lights.Length < ln)
+            {
+                Array.Resize(ref cache.Lights, ln);
+            }
+
+            for (int i = 0; i < ln; i++)
+            {
+                LightRequest l = _lights[recLights + i];
+                l.X -= baseX;
+                l.Y -= baseY;
+                cache.Lights[i] = l;
+            }
+
+            cache.LightCount = ln;
+            cache.EmitSelectGen = cache.SelectGen;
+            cache.Alpha = rs.Alpha;
+            cache.OverrideHue = rs.OverrideHue;
+            cache.BodyHue = bodyHue;
+            cache.Pack = _pack;
+            cache.EmitValid = true;
+        }
+
+        private void Replay(MobileFrameCache cache, int baseX, int baseY, float depth, int objX)
+        {
+            int n = cache.Count;
+
+            if (_count + n > _out.Length)
+            {
+                Array.Resize(ref _out, Math.Max(_out.Length * 2, _count + n));
+            }
+
+            int dx = baseX + _offsetX, dy = baseY + _offsetY;
+
+            for (int i = 0; i < n; i++)
+            {
+                ref readonly MobileFrameCache.Entry entry = ref cache.Entries[i];
+                ref SpriteInstance inst = ref _out[_count++];
+                inst = entry.Instance;
+                inst.X += dx;
+                inst.Y += dy;
+                inst.Depth = BakeJob.DepthKeyD((int)MathF.Round(DepthOf(depth, entry.Kind, entry.Add) * 100f) - 50, objX, RANK_MOBILE);
+            }
+
+            Rectangle fi = cache.FrameInfo;
+            _fiX = fi.X;
+            _fiY = fi.Y;
+            _fiW = fi.Width;
+            _fiH = fi.Height;
+
+            for (int i = 0; i < cache.LightCount; i++)
+            {
+                LightRequest l = cache.Lights[i];
+                AddLight(l.Item, l.X + baseX, l.Y + baseY);
+            }
+        }
+
+        public static long CheckReplays, CheckReplayDiffs;
+        private static int _checkLogged;
+
+        // CUO_MOBILE_CACHE_CHECK: the replayed instances, FrameInfo and lights against a fresh Emit (appended, compared, dropped)
+        private void CheckReplay(EcsEntity e, int posX, int posY, float depth, int start, int lightStart)
+        {
+            int replayEnd = _count, replayLights = _lightCount;
+            int fx = _fiX, fy = _fiY, fw = _fiW, fh = _fiH;
+            Emit(e, posX, posY, depth);
+            CheckReplays++;
+
+            bool same = _count - replayEnd == replayEnd - start && _lightCount - replayLights == replayLights - lightStart &&
+                        fx == _fiX && fy == _fiY && fw == _fiW && fh == _fiH;
+
+            for (int i = 0; same && i < replayEnd - start; i++)
+            {
+                same = System.Runtime.InteropServices.MemoryMarshal.AsBytes(new ReadOnlySpan<SpriteInstance>(_out, start + i, 1))
+                    .SequenceEqual(System.Runtime.InteropServices.MemoryMarshal.AsBytes(new ReadOnlySpan<SpriteInstance>(_out, replayEnd + i, 1)));
+            }
+
+            for (int i = 0; same && i < replayLights - lightStart; i++)
+            {
+                LightRequest a = _lights[lightStart + i], b = _lights[replayLights + i];
+                same = a.Item == b.Item && a.X == b.X && a.Y == b.Y;
+            }
+
+            if (!same)
+            {
+                CheckReplayDiffs++;
+
+                if (_checkLogged++ < 20)
+                {
+                    ref readonly AnimationState s = ref e.GetComponent<AnimationState>();
+                    ClassicUO.Utility.Logging.Log.Warn($"[mobile-cache-check] instances differ 0x{e.GetComponent<Serial>().Value:X8}: replayed {replayEnd - start} fresh {_count - replayEnd}, lights {replayLights - lightStart}/{_lightCount - replayLights}, frameinfo {fx},{fy},{fw},{fh} vs {_fiX},{_fiY},{_fiW},{_fiH}; body {s.Body} group {s.Group} dir {s.Dir} frame {s.Frame}");
+                }
+            }
+
+            _count = replayEnd;
+            _lightCount = replayLights;
+            _fiX = fx;
+            _fiY = fy;
+            _fiW = fw;
+            _fiH = fh;
+        }
 
         /// <summary>
         /// GpuWorldRenderer.Emit for pack animation frame <paramref name="index"/> drawn from source rows [srcY, srcY + srcH)
