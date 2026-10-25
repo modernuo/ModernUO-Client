@@ -805,7 +805,9 @@ namespace ClassicUO.Game.Scenes
             GameObject obj,
             bool useObjectHandles,
             int maxZ,
-            Chunk chunk
+            Chunk chunk,
+            bool skipBaked = false,
+            bool forcePosition = false
         )
         {
             var profile = ProfileManager.CurrentProfile;
@@ -813,6 +815,12 @@ namespace ClassicUO.Game.Scenes
 
             for (; obj != null; obj = obj.TNext)
             {
+                // Gpu prepare (GameSceneGpuPrepare): settled baked land and statics are the GPU's alone
+                if (skipBaked && IsGpuBaked(obj))
+                {
+                    continue;
+                }
+
                 FrameStats.Inc(FrameCounter.Objects);
 
                 if (FrameStats.Detail)
@@ -820,7 +828,8 @@ namespace ClassicUO.Game.Scenes
                     FrameStats.Enter(WalkBucket(obj));
                 }
 
-                if (UpdateDrawPosition || obj.IsPositionChanged)
+                // forcePosition: objects the Gpu prepare skipped may have missed camera moves
+                if (UpdateDrawPosition || obj.IsPositionChanged || forcePosition)
                 {
                     FramePhase bucket = FrameStats.Enter(FramePhase.WalkPosition);
                     obj.UpdateRealScreenPosition(_offset.X, _offset.Y);

@@ -32,6 +32,16 @@ namespace ClassicUO.Game.Map
         public int X;
         public int Y;
 
+        // Gpu world prepare (GameSceneGpuPrepare): which tiles (bit x * 8 + y) still need the per-frame walk. Rebuilt from
+        // the tile lists when dirty (objects added or removed, mesh rebuilt, text added to a land tile or static).
+        public bool GpuMaskDirty = true;
+        public int GpuMaskGeneration;
+        public ulong GpuWalkMask, GpuFullMask;
+        // extents of the chunk's land and statics, for the targeted picking and screen-edge bands
+        public int GpuMinZ, GpuMaxZ, GpuMaxHalfWidth, GpuMaxHeight;
+        public uint GpuSeenFrame = uint.MaxValue - 1;
+        public int GpuFreshSteps;
+
 
         public static Chunk Create(World world, int x, int y)
         {
@@ -49,6 +59,8 @@ namespace ClassicUO.Game.Map
             c.LastAccessTime = Time.Ticks + Constants.CLEAR_TEXTURES_DELAY;
             c.X = x;
             c.Y = y;
+            c.GpuMaskDirty = true;
+            c.GpuSeenFrame = uint.MaxValue - 1;
 
             return c;
         }
@@ -131,6 +143,7 @@ namespace ClassicUO.Game.Map
         public void AddGameObject(GameObject obj, int x, int y)
         {
             Mesh.MarkDirtyIfNeeded(obj);
+            GpuMaskDirty = true;
             obj.RemoveFromTile();
 
             short priorityZ = obj.Z;
@@ -310,6 +323,7 @@ namespace ClassicUO.Game.Map
         public void RemoveGameObject(GameObject obj, int x, int y)
         {
             Mesh.MarkDirtyIfNeeded(obj);
+            GpuMaskDirty = true;
             ref GameObject firstNode = ref Tiles[x, y];
 
             if (firstNode == null || obj == null)

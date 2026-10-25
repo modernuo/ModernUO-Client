@@ -587,6 +587,7 @@ namespace ClassicUO.Game.Scenes
             }
 
             GetViewPort();
+            GpuPrepareBegin();
 
             var ctrlShiftHeld = Keyboard.Ctrl && Keyboard.Shift;
             var useObjectHandles = _world.NameOverHeadManager.IsToggled || ctrlShiftHeld;
@@ -648,6 +649,9 @@ namespace ClassicUO.Game.Scenes
                     if (chunk.Mesh.IsDirty)
                     {
                         chunk.Mesh.Build(chunk, _world, Client.Game.GraphicsDevice);
+                        // the Gpu prepare's tile masks depend on InChunkMesh, and the chunk's alphas may still move
+                        chunk.GpuMaskDirty = true;
+                        chunk.GpuFreshSteps = GPU_FADE_STEPS;
                     }
 
                     // Reset visibility and alpha for this frame
@@ -662,10 +666,26 @@ namespace ClassicUO.Game.Scenes
                     _visibleChunks.Add(chunk);
                     long walkStart = FrameStats.Stamp();
 
+                    // Gpu prepare skipping baked objects (GameSceneGpuPrepare): fullTiles are walked in full, walkTiles
+                    // without their baked land and statics, the rest not at all
+                    ulong fullTiles = ulong.MaxValue, walkTiles = 0, edgeTiles = 0;
+
+                    if (_gpuSkipEnabled)
+                    {
+                        GpuPrepareChunk(chunk, out fullTiles, out walkTiles, out edgeTiles);
+                        walkStart = FrameStats.AddSince(FramePhase.PrepGpuMasks, walkStart);
+                    }
+
                     for (var x = 0; x < 8; x++)
                     {
                         for (var y = 0; y < 8; y++)
                         {
+                            ulong bit = 1UL << (x << 3 | y);
+                            bool full = (fullTiles & bit) != 0;
+
+                            if (!full && (walkTiles & bit) == 0)
+                                continue;
+
                             var firstObj = chunk.GetHeadObject(x, y);
                             if (firstObj == null || firstObj.IsDestroyed)
                                 continue;
@@ -674,8 +694,10 @@ namespace ClassicUO.Game.Scenes
                             AddTileToRenderList(
                                 firstObj,
                                 use_handles,
-                                150,
-                                chunk
+                                GPU_WALK_MAX_Z,
+                                chunk,
+                                !full,
+                                _gpuSkipEnabled
                             );
                         }
                     }
@@ -690,11 +712,25 @@ namespace ClassicUO.Game.Scenes
                         {
                             for (var y = 0; y < 8; y++)
                             {
+                                ulong bit = 1UL << (x << 3 | y);
+                                bool full = (fullTiles & bit) != 0;
+
+                                if (!full && ((walkTiles | edgeTiles) & bit) == 0)
+                                    continue;
+
                                 var firstObj = chunk.GetHeadObject(x, y);
                                 if (firstObj == null || firstObj.IsDestroyed)
                                     continue;
 
-                                CollectGpuHidden(firstObj);
+                                if (full || (walkTiles & bit) != 0)
+                                {
+                                    CollectGpuHidden(firstObj, !full);
+                                }
+
+                                if ((edgeTiles & bit) != 0)
+                                {
+                                    GpuHideCulledBaked(firstObj);
+                                }
                             }
                         }
 
@@ -711,6 +747,7 @@ namespace ClassicUO.Game.Scenes
             }
 
             long foliageStart = FrameStats.Stamp();
+            GpuPrepareEnd();
 
             if (_alphaChanged)
             {

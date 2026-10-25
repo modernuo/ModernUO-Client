@@ -80,6 +80,7 @@ public sealed class BakeJob : Job
         var landData = Pack.Land;
         var remap = Pack.LandRemap; // season graphics (ClassicUO Land.UpdateGraphicBySeason)
         var staticData = Pack.Statics;
+        var staticRemap = Pack.StaticRemap; // season graphics (ClassicUO Static.UpdateGraphicBySeason)
         int n = 0;
         int baseTx = Bx * 8, baseTy = By * 8;
 
@@ -122,7 +123,7 @@ public sealed class BakeJob : Job
         {
             ref readonly var s = ref statics[j];
             if (s.X >= 8 || s.Y >= 8) continue;
-            int g = s.Graphic;
+            int g = staticRemap != null ? staticRemap[s.Graphic] : s.Graphic;
             if (!CanBeDrawn(g, staticData)) continue;
             ref readonly var data = ref staticData[g];
             int pz = s.Z;
@@ -178,21 +179,22 @@ public sealed class BakeJob : Job
             else
             {
                 ref readonly var s = ref statics[idx - 64];
-                ref readonly var sp = ref sprites[PackConst.StaticSpriteBase + s.Graphic];
+                int g = staticRemap != null ? staticRemap[s.Graphic] : s.Graphic;
+                ref readonly var sp = ref sprites[PackConst.StaticSpriteBase + g];
                 if (!sp.Present) continue;
                 // View.DrawStatic: x -= (w >> 1) - 22; y -= h - 44 (w,h = original art size)
                 int x = sx - ((sp.OrigW >> 1) - 22) + sp.TrimX;
                 int y = (tx + ty) * 22 - (s.Z << 2) - 22 - (sp.OrigH - 44) + sp.TrimY;
                 uint flags = 0, hueRow = 0;
                 int hue = s.Hue;
-                bool partial = (staticData[s.Graphic].Flags & TileFlags.PartialHue) != 0;
+                bool partial = (staticData[g].Flags & TileFlags.PartialHue) != 0;
                 if ((hue & 0x8000) != 0) { partial = true; hue &= 0x7FFF; }
                 if (hue != 0 && (hue & 0x4000) == 0 && hue - 1 < Pack.HueCount)
                 {
                     hueRow = (uint)(hue - 1);
                     flags = SpriteInstance.FlagHued | (partial ? SpriteInstance.FlagPartial : 0);
                 }
-                Emit(x, y, sp, sp.Page, hueRow, flags | SpriteInstance.FlagZTest, depth, 0, ZInfo(s.Graphic, s.Z, staticData));
+                Emit(x, y, sp, sp.Page, hueRow, flags | SpriteInstance.FlagZTest, depth, 0, ZInfo(g, s.Z, staticData));
                 Keys[Count - 1] = ObjectKey(cell, true, s.Z, s.Graphic);
                 Bounds(x, y, x + sp.W, y + sp.H);
             }
