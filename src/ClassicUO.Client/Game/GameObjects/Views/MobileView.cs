@@ -51,15 +51,7 @@ namespace ClassicUO.Game.GameObjects
 
             if (World.AuraManager.IsEnabled)
             {
-                World.AuraManager.Draw(
-                    batcher,
-                    drawX,
-                    drawY,
-                    ProfileManager.CurrentProfile.PartyAura && World.Party.Contains(this)
-                        ? ProfileManager.CurrentProfile.PartyAuraHue
-                        : Notoriety.GetHue(NotorietyFlag),
-                    depth
-                );
+                DrawAuraAt(batcher, drawX, drawY, depth);
             }
 
             bool isHuman = IsHuman;
@@ -486,6 +478,35 @@ namespace ClassicUO.Game.GameObjects
             FrameInfo.Height = FrameInfo.Y + FrameInfo.Height;
 
             return true;
+        }
+
+        /// <summary>The aura Draw paints under the mobile (the Gpu world's ECS sprite path draws it through the batcher).</summary>
+        internal void DrawAura(UltimaBatcher2D batcher, int posX, int posY, float depth)
+        {
+            if (World.AuraManager.IsEnabled)
+            {
+                DrawAuraAt(batcher, posX + (int)Offset.X + 22, posY - 3 + (int)(Offset.Y - Offset.Z) + 22, depth);
+            }
+        }
+
+        /// <summary>The mirror bit Draw keeps (GetAnimDirection history); the ECS sprite path writes it back for picking.</summary>
+        internal bool ViewFlipped
+        {
+            get => IsFlipped;
+            set => IsFlipped = value;
+        }
+
+        private void DrawAuraAt(UltimaBatcher2D batcher, int drawX, int drawY, float depth)
+        {
+            World.AuraManager.Draw(
+                batcher,
+                drawX,
+                drawY,
+                ProfileManager.CurrentProfile.PartyAura && World.Party.Contains(this)
+                    ? ProfileManager.CurrentProfile.PartyAuraHue
+                    : Notoriety.GetHue(NotorietyFlag),
+                depth
+            );
         }
 
         private static ushort GetAnimationInfo(Mobile owner, Item item, bool isGargoyle)

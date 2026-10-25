@@ -23,8 +23,9 @@ namespace ClassicUO.Game.Scenes
     /// Land and statics are baked from the pack's map regions; GameScene's list fill stays the authority for visibility,
     /// alpha and picking and reports the differences as per-sprite overrides. Items, mobiles and multis are dynamic
     /// sprites captured from their views' draw calls (<see cref="ISpriteCapture"/>), so the views' animation, hue and
-    /// layering logic is reused unchanged. The ECS mirror's DynamicSpriteExtract is not the source yet; swapping it in
-    /// means filling <see cref="WorldRenderer.DynamicBuffer"/> from it instead of <see cref="Draw"/>.
+    /// layering logic is reused unchanged. Mobiles are the exception (W3, setting <c>gpu_ecs_sprites</c>): their sprites
+    /// come from the ECS (<see cref="MobileAnimationSystem"/> then <see cref="MobileSpriteExtract"/>), which also reproduces
+    /// what the view does besides drawing (FrameInfo, the mirror bit, lights, the aura). Off, they are captured too.
     /// </summary>
     internal sealed class GpuWorldRenderer : ISpriteCapture, IDisposable
     {
@@ -45,6 +46,8 @@ namespace ClassicUO.Game.Scenes
         private int _offsetX, _offsetY;
         private int _failedFacet = -1;
         private Season _landSeason = (Season)0xFF;
+        private bool _ecsMobiles;
+        private GameScene _scene;
 
         private GpuWorldRenderer(IntPtr device, PackSet pack)
         {
@@ -173,7 +176,12 @@ namespace ClassicUO.Game.Scenes
             _object = null;
             CaptureFallbacks = 0;
             EcsParity.BeginFrame();
+            _ecsMobiles = Configuration.Settings.GlobalSettings.GpuEcsSprites && _pack != null && _pack.HasAnims;
+            _scene = Client.Game.GetScene<GameScene>();
         }
+
+        /// <summary>Mobiles' sprites come from the ECS this frame (gpu_ecs_sprites), not from MobileView.Draw.</summary>
+        public bool EcsMobiles => _ecsMobiles;
 
         /// <summary>GameScene's draw offset: world pixel = screen position + offset.</summary>
         public void SetOffset(int offsetX, int offsetY)
@@ -260,6 +268,11 @@ namespace ClassicUO.Game.Scenes
         /// <summary>Draws a world object's view into the dynamic sprites. Sprites the capture can't map stay with the batcher.</summary>
         public bool DrawObject(UltimaBatcher2D batcher, GameObject obj, float depth, bool shadowOnly = false)
         {
+            if (_ecsMobiles && obj is Mobile m && !shadowOnly && TryDrawMobileEcs(batcher, m, depth, out bool ecsDrawn))
+            {
+                return ecsDrawn;
+            }
+
             _object = obj;
             _shadowOnly = shadowOnly;
             _objectRank = obj is Mobile ? RANK_MOBILE : RANK_ITEM;
@@ -272,10 +285,12 @@ namespace ClassicUO.Game.Scenes
                 if (EcsParity.Active && obj is Mobile mobile && !shadowOnly)
                 {
                     int start = _dynamicCount;
+                    int lightsBefore = _scene?.LightCount ?? 0;
                     long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
                     bool drawn = obj.Draw(batcher, obj.RealScreenPosition.X, obj.RealScreenPosition.Y, depth);
                     long ticks = System.Diagnostics.Stopwatch.GetTimestamp() - t0;
                     EcsParity.OnCaptured(mobile, depth, _dynamic, start, _dynamicCount, _pack, _offsetX, _offsetY, ticks);
+                    EcsParity.CompareViewEffects(mobile, mobile.World.Ecs.MobileExtract, _scene, lightsBefore);
 
                     return drawn;
                 }
@@ -287,6 +302,100 @@ namespace ClassicUO.Game.Scenes
                 batcher.Capture = null;
                 _object = null;
             }
+        }
+
+        /// <summary>
+        /// W3: a mobile's dynamic sprites from the ECS, plus what MobileView.Draw does besides drawing (aura, FrameInfo,
+        /// IsFlipped, lights). On EcsParity frames the view is drawn under capture first as the reference (its side effects
+        /// stand) and its instances are replaced by the ECS ones after the diff. False = not mirrored: capture it instead.
+        /// </summary>
+        private bool TryDrawMobileEcs(UltimaBatcher2D batcher, Mobile mobile, float depth, out bool drawn)
+        {
+            drawn = false;
+
+            if (mobile.IsDestroyed || !mobile.AllowedToDraw)
+            {
+                return true;
+            }
+
+            World world = mobile.World;
+            WorldEcs ecs = world.Ecs;
+
+            if (!ecs.Mirror.TryGetEntity(mobile.Serial, out Friflo.Engine.ECS.Entity e) || !e.HasComponent<ClassicUO.Ecs.AnimationState>())
+            {
+                return false;
+            }
+
+            MobileSpriteExtract extract = ecs.MobileExtract;
+            int posX = mobile.RealScreenPosition.X, posY = mobile.RealScreenPosition.Y;
+            int start = _dynamicCount;
+
+            if (EcsParity.Active)
+            {
+                int lightsBefore = _scene?.LightCount ?? 0;
+                _object = mobile;
+                _shadowOnly = false;
+                _objectRank = RANK_MOBILE;
+                _additive = false;
+                batcher.Capture = this;
+
+                try
+                {
+                    long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                    drawn = mobile.Draw(batcher, posX, posY, depth);
+                    long ticks = System.Diagnostics.Stopwatch.GetTimestamp() - t0;
+                    EcsParity.OnCaptured(mobile, depth, _dynamic, start, _dynamicCount, _pack, _offsetX, _offsetY, ticks);
+                }
+                finally
+                {
+                    batcher.Capture = null;
+                    _object = null;
+                }
+
+                EcsParity.CompareViewEffects(mobile, extract, _scene, lightsBefore);
+                _dynamicCount = start;
+            }
+            else
+            {
+                if (!ecs.Animation.Update(world, mobile))
+                {
+                    return false;
+                }
+
+                mobile.DrawAura(batcher, posX, posY, depth);
+                extract.Begin(_pack, _offsetX, _offsetY);
+                extract.Emit(e, posX, posY, depth);
+                drawn = true;
+
+                // the view's side effects: picking, text and health bars read FrameInfo and IsFlipped
+                mobile.FrameInfo = extract.FrameInfo;
+                mobile.ViewFlipped = (e.GetComponent<ClassicUO.Ecs.AnimationState>().Flags & ClassicUO.Ecs.AnimStateFlags.Mirror) != 0;
+
+                if (_scene != null)
+                {
+                    foreach (ref readonly MobileSpriteExtract.LightRequest light in extract.Lights)
+                    {
+                        Item item = world.Items.Get(light.Item);
+
+                        if (item != null)
+                        {
+                            _scene.AddLight(mobile, item, light.X, light.Y);
+                        }
+                    }
+                }
+            }
+
+            ReadOnlySpan<SpriteInstance> got = extract.Instances;
+
+            if (_dynamicCount + got.Length > _dynamic.Length)
+            {
+                Array.Resize(ref _dynamic, Math.Max(_dynamic.Length * 2, _dynamicCount + got.Length));
+            }
+
+            got.CopyTo(new Span<SpriteInstance>(_dynamic, _dynamicCount, got.Length));
+            _dynamicCount += got.Length;
+
+            return true;
         }
 
         public bool Draw(Texture2D texture, Vector2 position, Rectangle source, Vector3 hue, bool flip, bool scaled, float depth, SpriteCaptureMode mode)
