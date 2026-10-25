@@ -33,6 +33,12 @@ Area-specific procedures live in [`testing/`](testing/), one file per area, writ
   - keep logs, shots and binaries in the session scratchpad, not the repo.
 - **Builds you publish go to your scratch folder,** never `C:\Repositories\cuo-fps-test\bin`. That's the owner's test build, republished only by the main session with `tools/fps-test/publish-aot.ps1`.
 - **Denied tool calls:** report them and skip that step; no workarounds.
+- **Stay current with `poc/modern-client`.** Agents work on their own branch; the main session merges into `poc/modern-client` several times a day.
+  - **When you start:** branch from the current tip of the local `poc/modern-client` and note the commit in your report.
+  - **Before each measurement series and before final verification:** run `git log --oneline HEAD..poc/modern-client` (worktrees share branch refs, so the local branch is always the latest; no fetch needed). If anything new landed, merge it (`git merge poc/modern-client`; never rebase shared work), rebuild every test binary, and re-run base and new from the same tip. Never compare a build on an old base against one on a new base.
+  - **When the coordinator says something merged** that touches your files or your measurements, merge it at your next clean point.
+  - **Your report states** the `poc/modern-client` commit your final numbers were measured on.
+  - **Test binaries** live in your scratch folder, one folder per build, each with `build-info.txt` (commit plus uncommitted state). Rebuild them after every merge; a stale binary is the most common source of "fixed but still broken" reports.
 
 ## Accounts (local ModernUO, 2026-10-24)
 
