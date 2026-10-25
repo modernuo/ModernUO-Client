@@ -89,7 +89,7 @@ namespace ClassicUO.Game
                     e.RemoveTag<EquipmentDirty>();
                 }
 
-                Rebuild(e, in s);
+                Rebuild(e, in s, m);
             }
 
             ref EquipmentSlots eq = ref e.GetComponent<EquipmentSlots>();
@@ -480,7 +480,7 @@ namespace ClassicUO.Game
         /// Rebuilds <see cref="EquipmentSlots"/> from the mirror: the equipment by layer, the PaperdollOrder paint order,
         /// then MobileView's per-layer skips (dead hair, covered layers, items without an equip AnimID) and drawn bodies.
         /// </summary>
-        public void Rebuild(EcsEntity mobile, in AnimationState s)
+        public void Rebuild(EcsEntity mobile, in AnimationState s, Mobile owner = null)
         {
             Rebuilds++;
             ref EquipmentSlots eq = ref mobile.GetComponent<EquipmentSlots>();
@@ -532,8 +532,12 @@ namespace ClassicUO.Game
                 serial[layer] = item.GetComponent<Serial>().Value;
             }
 
-            // Mobile.IsMounted: the mount item (FindItemByLayer's), not a boat's tiller, with a mount body (Item.GetGraphicForAnimation)
-            eq.Mounted = AnimationRules.IsMountedBy(eq.MountItem, eq.MountGraphic, eq.MountAnimId);
+            // Mobile.IsMounted from the mobile's own equipment list, not the mirror's index: the index is keyed by the item's
+            // container, so it also holds equipment that arrived before its mobile and was never attached (0x2E with no parent
+            // yet; World.GetOrCreateMobile doesn't adopt it), and such an orphan can outlive the mobile. Every change of the list
+            // or of a listed item reaches the mirror and marks these slots dirty (attach and detach go through Sync, deletion
+            // through Remove). Without the Mobile (RebuildDirty), the mirror's mount item.
+            eq.Mounted = owner != null ? IsMounted(owner, tiles) : AnimationRules.IsMountedBy(eq.MountItem, eq.MountGraphic, eq.MountAnimId);
 
             if (present[(int)Layer.OneHanded])
             {
@@ -673,6 +677,15 @@ namespace ClassicUO.Game
             }
 
             return m.TryGetSittingInfo(out seat);
+        }
+
+        /// <summary>Mobile.IsMounted: the first live mount-layer item of the mobile's equipment list (FindItemByLayer), not a
+        /// boat's tiller, with a mount body; <paramref name="tiles"/> gives its AnimID (Item.ItemData).</summary>
+        internal static bool IsMounted(Mobile m, StaticTiles[] tiles)
+        {
+            Item it = m.FindItemByLayer(Layer.Mount);
+
+            return it != null && AnimationRules.IsMountedBy(it.Serial, it.Graphic, it.Graphic < tiles.Length ? tiles[it.Graphic].AnimID : (ushort)0);
         }
 
         private static void Select(Mobile m, ref AnimationState s, ref EquipmentSlots eq)
