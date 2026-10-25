@@ -48,7 +48,7 @@ namespace ClassicUO.UnitTests.Game
         [Fact]
         public void Drain_Loads_Nearest_First_Within_Budget()
         {
-            var q = new ChunkLoadQueue();
+            var q = new ChunkLoadQueue(ringRadius: 1);
             var clock = new FakeClock { Step = 10 };
 
             // 11x11 chunks around (100, 100), requested in scan order (as the draw walk does)
@@ -138,7 +138,16 @@ namespace ClassicUO.UnitTests.Game
         [Fact]
         public void Ring_Chunks_Ignore_The_Budget_But_Others_Wait()
         {
-            var q = new ChunkLoadQueue();
+            // the map's queue: only the player's own chunk ignores the budget
+            var own = new ChunkLoadQueue();
+            var ownClock = new FakeClock { Step = 1000 };
+            own.Request(5, 5, 1);
+            own.Request(4, 5, 1);
+            own.Request(6, 6, 1);
+            Drain(own, 5, 5, 1, 0, ownClock).Should().Equal((5, 5), (4, 5));
+            own.LastRingLoaded.Should().Be(1);
+
+            var q = new ChunkLoadQueue(ringRadius: 1);
             var clock = new FakeClock { Step = 1000 };
 
             q.Request(5, 5, 1);

@@ -19,19 +19,27 @@ namespace ClassicUO.Game.Map
     /// The chunks waiting to be loaded, and the rule that loads them a few at a time (Map.UpdateLoading, once per frame):
     /// <list type="bullet">
     /// <item>nearest the player first (Chebyshev distance, then squared distance);</item>
-    /// <item>chunks within <see cref="RingRadius"/> chunks of the player load whatever the budget, because walking, z
-    /// lookups and collision around the player need them;</item>
-    /// <item>the others load until the frame's time budget is spent, and at least one per frame so the queue always
-    /// drains;</item>
+    /// <item>chunks within <see cref="RingRadius"/> chunks of the player (Map uses 0: the player's own chunk) load whatever
+    /// the budget, so the player's tile, its roof test and its z are there as soon as the map data is;</item>
+    /// <item>the others load until the frame's time budget is spent (ring loads count against it), and at least one per
+    /// frame so the queue always drains;</item>
     /// <item>a request not repeated for <see cref="StaleFrames"/> frames is dropped (the chunk left the screen), unless it
     /// is sticky: a chunk that objects are waiting for stays queued until it loads.</item>
     /// </list>
-    /// Main thread only. No allocation per frame once the queue has grown to its working size.
+    /// Game logic that needs another chunk now does not wait for the queue: it loads it on demand (Map.GetChunk with
+    /// load = true, Pathfinder within the view range). Main thread only. No allocation per frame once the queue has
+    /// grown to its working size.
     /// </summary>
     internal sealed class ChunkLoadQueue
     {
-        public const int RingRadius = 1;
         public const uint StaleFrames = 3;
+
+        public ChunkLoadQueue(int ringRadius = 0)
+        {
+            RingRadius = ringRadius;
+        }
+
+        public int RingRadius { get; }
 
         private struct Entry
         {

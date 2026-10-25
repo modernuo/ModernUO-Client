@@ -103,6 +103,7 @@ namespace ClassicUO
         // end of the frame, time the main thread waited for a region decode, regions decoded on the main thread, prefetches
         ChunkLoads,
         ChunkLoadUs,
+        ChunkMeshUs,
         ChunkQueue,
         RegionWaitUs,
         RegionSyncLoads,
@@ -150,7 +151,7 @@ namespace ClassicUO
             "gpu_overrides", "gpu_draw_calls", "tiles", "objects", "baked_land", "baked_statics", "unmeshed", "dynamic", "pick_tests",
             "override_calls", "hidden_tiles", "lights_added", "foliage", "cap_multis", "cap_statics", "cap_items", "cap_mobiles", "cap_other", "gpu_mask_rebuilds",
             "gpu_skip_active", "gpu_full_tiles", "gpu_walk_tiles", "gpu_edge_tiles", "gpu_pick_tiles",
-            "chunk_loads", "chunk_load_us", "chunk_queue", "region_wait_us", "region_sync", "region_prefetch" };
+            "chunk_loads", "chunk_load_us", "chunk_mesh_us", "chunk_queue", "region_wait_us", "region_sync", "region_prefetch" };
 
         private static readonly long[] _start = new long[PHASES];
         private static readonly long[] _acc = new long[PHASES];
@@ -425,8 +426,10 @@ namespace ClassicUO
             double toUs = 1e6 / Stopwatch.Frequency;
             _cur[(int)FrameCounter.ChunkLoads] = Game.Map.Map.FrameChunkLoads;
             _cur[(int)FrameCounter.ChunkLoadUs] = (int)(Game.Map.Map.FrameChunkLoadTicks * toUs);
+            _cur[(int)FrameCounter.ChunkMeshUs] = (int)(Game.Map.Map.FrameMeshTicks * toUs);
             Game.Map.Map.FrameChunkLoads = 0;
             Game.Map.Map.FrameChunkLoadTicks = 0;
+            Game.Map.Map.FrameMeshTicks = 0;
             _cur[(int)FrameCounter.ChunkQueue] = Client.Game?.UO?.World?.Map?.QueuedChunks ?? 0;
 
             var maps = Client.Game?.UO?.FileManager?.Maps;
@@ -444,6 +447,11 @@ namespace ClassicUO
 
         private static void ClearFrameCounters()
         {
+            if (On)
+            {
+                SampleMapLoading(); // so frames that are not recorded do not pile up into the next recorded one
+            }
+
             Array.Clear(_cur, (int)FrameCounter.Tiles, COUNTERS - (int)FrameCounter.Tiles);
         }
 

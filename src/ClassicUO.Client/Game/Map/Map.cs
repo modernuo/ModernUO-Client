@@ -22,8 +22,10 @@ namespace ClassicUO.Game.Map
         // GetTileZ) load it synchronously, as before; if its region is still being decoded by a prefetch they wait for the
         // rest of that decode. Two callers do not: the draw walk (GetChunkForDraw) and objects placed on a tile
         // (GameObject.AddToTile, which parks the object until its chunk is loaded). Their chunks are queued and loaded by
-        // UpdateLoading, once per frame, nearest the player first: the 3x3 chunks around the player whenever their regions
-        // are decoded, the rest within a time budget (CUO_CHUNK_BUDGET_MS, default 2 ms), never waiting for a decode.
+        // UpdateLoading, once per frame, nearest the player first, never waiting for a decode: the player's own chunk as
+        // soon as its regions are decoded, the rest (the 3x3 around the player first) within a time budget that covers
+        // the load and the mesh build (CUO_CHUNK_BUDGET_MS, default 2 ms; at least one chunk per frame). Pathfinding loads
+        // the chunks within the view range on demand, so walking right after a teleport sees the same tiles as before.
         // CUO_CHUNK_SYNC=1 restores the old behaviour (every chunk loads when first asked for, no prefetch).
         public static readonly bool Incremental = Environment.GetEnvironmentVariable("CUO_CHUNK_SYNC") != "1";
         public static readonly double BudgetMs = double.TryParse(Environment.GetEnvironmentVariable("CUO_CHUNK_BUDGET_MS"),
@@ -50,6 +52,8 @@ namespace ClassicUO.Game.Map
         /// <summary>Chunks loaded this frame by UpdateLoading and by synchronous callers (FrameStats).</summary>
         public static int FrameChunkLoads;
         public static long FrameChunkLoadTicks;
+        /// <summary>Time UpdateLoading spent building the meshes of the chunks it loaded this frame (FrameStats).</summary>
+        public static long FrameMeshTicks;
 
 
         public Map(World world, int index)
@@ -272,9 +276,9 @@ namespace ClassicUO.Game.Map
 
             int pcx = playerX >> 3, pcy = playerY >> 3;
 
-            for (int dx = -ChunkLoadQueue.RingRadius; dx <= ChunkLoadQueue.RingRadius; dx++)
+            for (int dx = -1; dx <= 1; dx++)
             {
-                for (int dy = -ChunkLoadQueue.RingRadius; dy <= ChunkLoadQueue.RingRadius; dy++)
+                for (int dy = -1; dy <= 1; dy++)
                 {
                     int cx = pcx + dx, cy = pcy + dy;
 
@@ -325,7 +329,19 @@ namespace ClassicUO.Game.Map
                 return ChunkLoadResult.NotReady;
             }
 
-            GetChunk2(chunkX, chunkY, true);
+            chunk = GetChunk2(chunkX, chunkY, true);
+
+            // build the chunk's mesh here, inside the budget: the draw walk would otherwise build every chunk that loaded
+            // this frame at once (about 230 us per chunk on first sight, most of it art lookups). The draw walk still
+            // builds meshes that go dirty later (objects added, season change). A chunk drawn for the first time is
+            // marked fresh by the Gpu prepare whether or not it built the mesh itself.
+            if (chunk != null && chunk.Mesh.IsDirty && Client.Game.GraphicsDevice != null)
+            {
+                long t0 = Stopwatch.GetTimestamp();
+                chunk.Mesh.Build(chunk, _world, Client.Game.GraphicsDevice);
+                chunk.GpuMaskDirty = true;
+                FrameMeshTicks += Stopwatch.GetTimestamp() - t0;
+            }
 
             return ChunkLoadResult.Loaded;
         }
