@@ -103,3 +103,8 @@ Format: **what**, where (file:line), why it should help, evidence or estimate, a
 
 - **Done (2026-10-24): after a GPU device reset the client now exits cleanly instead of running away on memory.** SDL 3.4's Vulkan backend never cleans a command buffer after `VK_ERROR_DEVICE_LOST`, and FNA3D ignores the failures, so each frame allocated new transfer, uniform and command buffers (50 GB in 3 s in the owner's run). `GpuDeviceLost` detects the loss from SDL's error text after every present, from a failed Uo.Render submit, or from FNA3D's log hook. It then saves, shows a message box and exits with code 0xDEAD, so at most a frame or two leak. Root cause and code references: [device-lost-leak.md](device-lost-leak.md).
   - Remains: **recovery** (recreate the device and reload every texture instead of exiting). Also the cause of the 2026-10-24 21:36:29 GPU page fault, which was in FNA3D's frame submit and points at SDL's defragmenter moving Uo.Render's page atlas; it is not yet reproduced on demand.
+
+## Allocation follow-ups (after B1–B5, 2026-10-24)
+
+- **The NativeAOT remainder of about 250–270 B per frame (JIT: 69–125 B).** Not worth chasing on its own: about one gen0 GC every few tens of seconds at 1,000 fps, and none were seen in the measurement windows. Trace it once on a quiet machine to tell real AOT allocations (boxing, generic paths) from background asset-streaming allocations counted across all threads. Low priority.
+- **What matters is allocation that scales with the scene:** bytes per mobile, per gump, per overhead text line. Check that allocation per frame stays flat in the large-scale test (about 2,000 mobiles and 20,000 items). The FPS test's allocation row guards against regressions.
