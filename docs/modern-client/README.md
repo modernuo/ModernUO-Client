@@ -10,6 +10,7 @@ Recorded 2026-10-23. Nothing here is a final decision unless it is listed under 
 | [classicuo-render-asset-pipeline.md](classicuo-render-asset-pipeline.md) | How ClassicUO draws and loads assets today, and where it is weak |
 | [architecture-recommendations.md](architecture-recommendations.md) | Proposed architecture: world storage, renderer, converter/streaming, protocol, anti-cheat, UI, platforms |
 | [graphics-api.md](graphics-api.md) | FNA vs SDL_GPU vs WebGPU — performance and porting effort |
+| [testing-playbook.md](testing-playbook.md) | How to test the client safely: accounts, locks, DevBench plans, parity/picking/perf checks, GPU crash evidence |
 | [visual-features-roadmap.md](visual-features-roadmap.md) | Particles, dynamic lighting, normal maps, shadows, post-processing; toggles/presets and server-driven effect packets |
 | [world-prepare-ecs-plan.md](world-prepare-ecs-plan.md) | Moving ClassicUO's per-frame world walk onto baked GPU data and the ECS (W0–W6) |
 | [graphics-ownership-plan.md](graphics-ownership-plan.md) | Tiered path off FNA graphics (Tiers 1–4 deferred), batcher/UI improvements, upstream contribution policy |
