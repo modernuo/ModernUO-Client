@@ -517,7 +517,6 @@ namespace ClassicUO.Game.Scenes
 
             var indexBuffer = batcher.GetDynamicIndexBuffer(layer.VisibleSpriteCount * 6);
             layer.UploadVisibleIndices(indexBuffer);
-            batcher.IndexDataChanged();
 
             batcher.GraphicsDevice.SetVertexBuffer(layer.VertexBuffer);
             batcher.GraphicsDevice.Indices = indexBuffer;

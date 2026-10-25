@@ -94,7 +94,7 @@ Supporting material in this branch:
 - **UltimaLive:** optional; drop it if it costs performance. Format v0 supports it cheaply at block granularity.
 - **Team:** a few engineers or engineering-adjacent people with AI assistance; nobody has ECS experience.
 - **SDL3 comes from our fork, github.com/modernuo/SDL (2026-10-25):**
-  - The fork's branch `modernuo/3.4.19` is SDL 3.4.19 plus our patches. It's the `external/SDL` submodule, and its build is committed as `external/x64/SDL3.dll`.
+  - The fork's branch `modernuo/3.4.18-patched` is the SDL 3.4.18 release tag plus our patches (one commit each; owner rule, see sdl-fork.md). It's the `external/SDL` submodule, and its build is committed as `external/x64/SDL3.dll`.
   - The first patch gives Vulkan images of 64 MiB or more dedicated allocations, which stops the page-atlas defragmentation behind our GPU page faults.
   - Agents may push branches to the fork. Upstream libsdl-org gets no AI-written issues or PRs, not even drafts.
   - See [sdl-fork.md](sdl-fork.md).

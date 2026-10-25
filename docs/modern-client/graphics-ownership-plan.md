@@ -115,7 +115,7 @@ The original plan:
 
 ### Tier 3: SdlGpu becomes the default; FNA graphics removed
 - **Switch the default** after the owner's FPS test passes on the SdlGpu backend.
-- **Delete:** `FnaGfxDevice`, the MojoShader `.fx`/`.fxc` files and `fxc.exe`, `external/patches/fna3d-sdlgpu-interop.patch`, the self-built `FNA3D.dll`, `GpuInterop.cs` and the SDL3 extern-alias workaround.
+- **Delete:** `FnaGfxDevice`, the MojoShader `.fx`/`.fxc` files and `fxc.exe`, the FNA and FNA3D forks ([fna-fork.md](fna-fork.md)), the self-built `FNA3D.dll`, `GpuInterop.cs` and the SDL3 extern-alias workaround.
 - **Keep:** FNA referenced for math and audio only. FNA3D isn't loaded unless the audio path needs it (verify).
 - **Gate:** the full test pass, plus a NativeAOT publish with no new trim warnings.
 - **Effort:** 1–2 days.
