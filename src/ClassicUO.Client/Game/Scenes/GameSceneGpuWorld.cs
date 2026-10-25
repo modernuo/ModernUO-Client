@@ -25,7 +25,7 @@ namespace ClassicUO.Game.Scenes
         private readonly List<Static> _gpuFoliage = new List<Static>();
         private Rectangle _gpuView;
         private Uo.Pack.SpriteEntry[] _gpuArt;
-        private bool _gpuTintOutOfRange, _gpuStaticShadows, _gpuStumps;
+        private bool _gpuTintOutOfRange, _gpuStaticShadows, _gpuStumps, _gpuWaterWobble;
         private bool _gpuTintAll;
         // half the widest static art past its tile: tiles further beside the view can't reach into it
         private const int GPU_WIDE_ART = 320;
@@ -192,6 +192,9 @@ namespace ClassicUO.Game.Scenes
                 graphic != st.OriginalGraphic
                 || st.ItemData.IsAnimated && Client.Game.UO.FileManager.Arts.GetEntry(graphic + 0x4000).AnimOffset != 0
                 || _gpuStumps && (kind & GPU_KIND_TREE) != 0
+                // animated water: Legacy keeps animated statics out of its chunk mesh, so their view draws the scaled
+                // water copy on every frame, including frames whose animation offset is 0 (the baked graphic)
+                || _gpuWaterWobble && st.ItemData.IsAnimated && st.ItemData.IsWet
             )
             {
                 GpuReplaceStatic(st);
@@ -351,6 +354,7 @@ namespace ClassicUO.Game.Scenes
             _gpuTintAll = _world.Player.IsDead && profile.EnableBlackWhiteEffect;
             _gpuStaticShadows = profile.ShadowsEnabled && profile.ShadowsStatics;
             _gpuStumps = profile.TreeToStumps;
+            _gpuWaterWobble = profile.AnimatedWaterEffect;
             Point viewMin = Camera.ScreenToWorld(Point.Zero);
             Point viewMax = Camera.ScreenToWorld(new Point(Camera.Bounds.Width, Camera.Bounds.Height));
             _gpuView = new Rectangle(viewMin.X, viewMin.Y, viewMax.X - viewMin.X, viewMax.Y - viewMin.Y);

@@ -408,7 +408,7 @@ namespace ClassicUO.Renderer
             float depth
         )
         {
-            if (Capture != null && Capture.Draw(texture, position, sourceRect, hue, flip, false, depth, SpriteCaptureMode.Sitted))
+            if (Capture != null && Capture.DrawSitted(texture, position, sourceRect, mod, hue, flip, depth))
             {
                 return;
             }
