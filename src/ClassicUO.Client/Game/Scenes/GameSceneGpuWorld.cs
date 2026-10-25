@@ -360,6 +360,7 @@ namespace ClassicUO.Game.Scenes
             FrameStats.AddSince(FramePhase.PrepSetup, stamp);
 
             FillGameObjectList();
+            GpuItemCheckLists();
             stamp = FrameStats.Stamp();
             FinishGpuCollect();
             gpu.SetOffset(_offset.X, _offset.Y);

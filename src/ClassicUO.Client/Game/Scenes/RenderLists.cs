@@ -370,6 +370,33 @@ namespace ClassicUO.Game.Scenes
         /// <summary>Statics queued so far: where the Gpu prepare's cached ground items (GameSceneGpuItemCache) go in capture order.</summary>
         public int StaticsCount => _statics.Count;
 
+        /// <summary>CUO_GPU_ITEM_CHECK: a hash of what the walk queued, in order, leaving out <paramref name="skip"/>'s objects.</summary>
+        internal ulong DebugHash(Func<GameObject, bool> skip)
+        {
+            ulong h = 1469598103934665603UL;
+
+            void Mix(List<GameObject> list, ulong salt)
+            {
+                h = (h ^ salt) * 1099511628211UL;
+
+                foreach (var obj in list)
+                {
+                    if (!skip(obj))
+                    {
+                        h = (h ^ (ulong)System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(obj) ^ (ulong)obj.AlphaHue << 32 ^
+                             (obj.AllowedToDraw ? 1UL << 40 : 0)) * 1099511628211UL;
+                    }
+                }
+            }
+
+            Mix(_statics, 1);
+            Mix(_animations, 2);
+            Mix(_effects, 3);
+            Mix(_transparentObjects, 4);
+
+            return h;
+        }
+
         /// <summary>The statics-list index being captured (-1 outside that list): CUO_GPU_ITEM_CHECK's insertion check.</summary>
         internal static int CaptureStaticsIndex = -1;
 

@@ -546,6 +546,43 @@ namespace ClassicUO.Game.Scenes
         private long _gpuItemCheckAt;
         private string _gpuItemCheckSample;
 
+        // Everything else the walk queued (mobiles walked alone on served tiles, other objects, the selection) must match
+        // between a served frame and the check frame after it, when nothing moves: a hash of the render lists without the
+        // check frame's cacheable items, compared with the frame before.
+        private Func<GameObject, bool> _gpuCheckSkip;
+        private ulong _gpuListHashPrev;
+        private uint _gpuListHashFrame;
+        private bool _gpuListHashPrevServed;
+        private int _gpuListSame, _gpuListDiff;
+
+        private void GpuItemCheckLists()
+        {
+            if (!_gpuItemCheck || !_gpuSkipEnabled)
+            {
+                return;
+            }
+
+            _gpuCheckSkip ??= obj => obj is Item it && it.TileChunk?.GpuItems is { } c && c.CheckFrame == _drawFrame &&
+                                     (c.CheckTiles & 1UL << ((it.X & 7) << 3 | (it.Y & 7))) != 0;
+            ulong h = _renderLists.DebugHash(_gpuCheckSkip) ^ (ulong)RuntimeHelpers.GetHashCode(SelectedObject.Object ?? (object)_renderLists) << 7;
+
+            if (_gpuItemCheckNow && _gpuListHashPrevServed && _gpuListHashFrame == _drawFrame - 1)
+            {
+                if (h == _gpuListHashPrev)
+                {
+                    _gpuListSame++;
+                }
+                else
+                {
+                    _gpuListDiff++;
+                }
+            }
+
+            _gpuListHashPrev = h;
+            _gpuListHashFrame = _drawFrame;
+            _gpuListHashPrevServed = _gpuItemCacheOn && !_gpuItemCheckNow;
+        }
+
         // A check frame reached tile b, which the cache would have served: what it would have queued, in order.
         private void GpuExpectCachedTile(Chunk chunk, int b)
         {
@@ -674,9 +711,11 @@ namespace ClassicUO.Game.Scenes
             {
                 Log.Info($"[gpu-item-check] {_gpuItemChecks} checks, {_gpuItemCheckStale} with differences; {_gpuItemCheckCompared} cached items compared: " +
                          $"{_gpuItemCheckMissing} missing or out of order, {_gpuItemCheckExtra} extra, {_gpuItemCheckDiff} different, {_gpuItemCheckPlace} misplaced; " +
-                         $"{_gpuItemCheckFallbacks} tiles caught by the signature" + (_gpuItemCheckSample != null ? $"; first: {_gpuItemCheckSample}" : ""));
+                         $"{_gpuItemCheckFallbacks} tiles caught by the signature; other queued objects vs the served frame before: " +
+                         $"{_gpuListSame} same, {_gpuListDiff} different" + (_gpuItemCheckSample != null ? $"; first: {_gpuItemCheckSample}" : ""));
                 _gpuItemCheckAt = now;
                 _gpuItemChecks = _gpuItemCheckStale = _gpuItemCheckCompared = _gpuItemCheckMissing = _gpuItemCheckExtra = _gpuItemCheckDiff = _gpuItemCheckFallbacks = _gpuItemCheckPlace = 0;
+                _gpuListSame = _gpuListDiff = 0;
                 _gpuItemCheckSample = null;
             }
         }
