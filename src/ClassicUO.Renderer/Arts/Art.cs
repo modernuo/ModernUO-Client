@@ -49,55 +49,47 @@ namespace ClassicUO.Renderer.Arts
 
             if (spriteInfo.Texture == null)
             {
-                var artInfo = _artLoader.GetArt(idx);
+                // the untrimmed image only lives until the atlas upload: decode into a pooled buffer
+                var buffer = ArrayPool<uint>.Shared.Rent(Math.Max(1, _artLoader.PixelCount(idx)));
 
-                if (artInfo.Pixels.IsEmpty && idx > 0)
+                try
                 {
-                    // Trying to load a texture that does not exist in the client MULs
-                    // Degrading gracefully and only crash if not even the fallback ItemID exists
-                    Log.Error(
-                        $"Texture not found for sprite: idx: {idx}; itemid: {(idx > 0x4000 ? idx - 0x4000 : '-')}"
-                    );
-                    return ref Get(0); // ItemID of "UNUSED" placeholder
-                }
+                    var artInfo = _artLoader.GetArt(idx, buffer);
 
-                spriteInfo.Texture = _atlas.AddSprite(
-                    artInfo.Pixels,
-                    artInfo.Width,
-                    artInfo.Height,
-                    out spriteInfo.UV
-                );
-
-                PackSpriteMap.Register(spriteInfo.Texture, spriteInfo.UV, idx);
-
-                if (idx > 0x4000)
-                {
-                    idx -= 0x4000;
-                    _picker.Set(idx, artInfo.Width, artInfo.Height, artInfo.Pixels);
-
-                    var pos1 = 0;
-                    int minX = artInfo.Width,
-                        minY = artInfo.Height,
-                        maxX = 0,
-                        maxY = 0;
-
-                    for (int y = 0; y < artInfo.Height; ++y)
+                    if (artInfo.Pixels.IsEmpty && idx > 0)
                     {
-                        for (int x = 0; x < artInfo.Width; ++x)
-                        {
-                            if (artInfo.Pixels[pos1++] != 0)
-                            {
-                                minX = Math.Min(minX, x);
-                                maxX = Math.Max(maxX, x);
-                                minY = Math.Min(minY, y);
-                                maxY = Math.Max(maxY, y);
-                            }
-                        }
+                        // Trying to load a texture that does not exist in the client MULs
+                        // Degrading gracefully and only crash if not even the fallback ItemID exists
+                        Log.Error(
+                            $"Texture not found for sprite: idx: {idx}; itemid: {(idx > 0x4000 ? idx - 0x4000 : '-')}"
+                        );
+                        return ref Get(0); // ItemID of "UNUSED" placeholder
                     }
 
-                    _realArtBounds[idx] = new Rectangle(minX, minY, maxX - minX, maxY - minY);
+                    spriteInfo.Texture = _atlas.AddSprite(
+                        artInfo.Pixels,
+                        artInfo.Width,
+                        artInfo.Height,
+                        out spriteInfo.UV
+                    );
+
+                    PackSpriteMap.Register(spriteInfo.Texture, spriteInfo.UV, idx);
+
+                    if (idx > 0x4000)
+                    {
+                        idx -= 0x4000;
+
+                        // texels outside the pack trim rect are 0: the picker mask and the visible bounds only scan inside it
+                        _picker.SetTrimmed(idx, artInfo.Width, artInfo.Height, artInfo.TrimX, artInfo.TrimY, artInfo.TrimW, artInfo.TrimH, artInfo.Pixels);
+                        PixelPicker.VisibleBounds(artInfo.Pixels, artInfo.Width, artInfo.Height, artInfo.TrimX, artInfo.TrimY, artInfo.TrimW, artInfo.TrimH,
+                            out int minX, out int minY, out int maxX, out int maxY);
+                        _realArtBounds[idx] = new Rectangle(minX, minY, maxX - minX, maxY - minY);
+                    }
                 }
-                
+                finally
+                {
+                    ArrayPool<uint>.Shared.Return(buffer);
+                }
             }
 
             return ref spriteInfo;
