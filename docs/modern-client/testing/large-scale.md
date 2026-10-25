@@ -9,7 +9,7 @@ A repeatable busy scene on the local ModernUO shard, for measuring how world pre
   - **1,984 mobiles:** a 32×32 block (5140..5171, 2134..2165), two per tile, 4-row strips of Brigand, SavageRider (mounted), Horse, Orc, EvilMage, Cow, Mongbat, Skeleton, TownCrier (plain `Mobile`, no AI), Ninja, Gargoyle, Llama, Zombie, Dragon. All `Frozen` and `Blessed`, creatures also `CantWalk`: they never move, path or fight. Their stand animations still loop on the client, and the humans wear equipment (about 5,600 worn items).
   - **19,476 ground items:** a 36×36 block (5138..5173, 2132..2167), 15 full layers at z 0..7 (gold and arrow stacks, bandages, a backpack, chest, sword, axe, spellbook, robe, logs, apples, a bottle, single coins) plus four 12×12 blocks of lit or animated art (brazier 0xE31, candle 0xA0F, 0x3996, fire 0x19AB). All non-movable, so they never decay.
   - **A walking lane:** row y 2150 is free of mobiles and items from 5138 to 5173. DevBench `lswalk` walks it end to end.
-- **Server load:** creatures' AI runs only while a player is near (sector activation). With a client standing in the scene ModernUO used about 4% of one core (11 s of CPU in 5 minutes); with nobody there, nothing.
+- **Server load:** creatures' AI runs only while a player is near (sector activation). With a client standing in the scene ModernUO used about 4% of one core (11 s of CPU in 5 minutes); with nobody there, nothing measurable. ModernUO's working set grew from 563 to 711 MB over the session that built (and once rebuilt) it.
 - **Left in place** after 2026-10-25 (frozen and cheap). Wipe it with the script below if it is in the way.
 
 ## Create and wipe
