@@ -27,6 +27,8 @@ public sealed unsafe class Renderer : IDisposable
     public readonly SDL_GPUTextureFormat ColorFormat;
     IntPtr _vs, _ps;
     readonly List<(SDL_GPUTextureFormat Format, IntPtr Opaque, IntPtr Translucent)> _pipelines = new(2);
+    // translucent-pass pipelines for the effect blends other than Normal/Screen, built on first use
+    readonly List<(SDL_GPUTextureFormat Format, InstanceBlend Blend, IntPtr Pipeline)> _blendPipelines = new();
     IntPtr _depth;
     uint _depthW, _depthH;
     readonly IntPtr _samplerPoint, _samplerLinear, _samplerHue;
@@ -95,7 +97,19 @@ public sealed unsafe class Renderer : IDisposable
     {
         if (device == IntPtr.Zero) throw new ArgumentException("no SDL_GPUDevice", nameof(device));
         var r = new Renderer(device, false, IntPtr.Zero, RendererMode.External, pack, instanceCapacity, maxVisibleChunks, maxTranslucent, overrideSlots, colorFormat);
-        r.Pipelines(colorFormat);
+        try
+        {
+            r.Pipelines(colorFormat);
+            // the effect-blend pipelines too, so the first such effect doesn't build one mid-frame
+            foreach (var b in new[] { InstanceBlend.Multiply, InstanceBlend.ScreenLess, InstanceBlend.NormalHalf, InstanceBlend.ShadowBlue })
+                r.BlendPipeline(colorFormat, b);
+        }
+        catch
+        {
+            // the caller never gets r: release its buffers, textures and the pipelines built so far
+            r.Dispose();
+            throw;
+        }
         return r;
     }
 
@@ -230,15 +244,53 @@ public sealed unsafe class Renderer : IDisposable
     {
         foreach (var p in _pipelines)
             if (p.Format == format) return (p.Opaque, p.Translucent);
-        var entry = (format, CreatePipeline(format, false), CreatePipeline(format, true));
+        var opaque = CreatePipeline(format, false);
+        IntPtr translucent;
+        try { translucent = CreatePipeline(format, true); }
+        catch { SDL_ReleaseGPUGraphicsPipeline(Device, opaque); throw; }
+        var entry = (format, opaque, translucent);
         _pipelines.Add(entry);
         return (entry.Item2, entry.Item3);
     }
 
-    IntPtr CreatePipeline(SDL_GPUTextureFormat format, bool translucent)
+    /// <summary>The translucent pipeline for an effect blend (ClassicUO GameEffect's FNA BlendState: the colour factors as
+    /// there, alpha One/Zero as FNA's defaults). Normal and Screen use the premultiplied pipeline.</summary>
+    IntPtr BlendPipeline(SDL_GPUTextureFormat format, InstanceBlend blend)
+    {
+        foreach (var p in _blendPipelines)
+            if (p.Format == format && p.Blend == blend) return p.Pipeline;
+        if (blend == InstanceBlend.NormalOrdered) return Pipelines(format).Translucent;
+        (SDL_GPUBlendFactor src, SDL_GPUBlendFactor dst, SDL_GPUBlendOp op) = blend switch
+        {
+            InstanceBlend.Multiply => (SDL_GPUBlendFactor.SDL_GPU_BLENDFACTOR_ZERO, SDL_GPUBlendFactor.SDL_GPU_BLENDFACTOR_SRC_COLOR, SDL_GPUBlendOp.SDL_GPU_BLENDOP_ADD),
+            InstanceBlend.ScreenLess => (SDL_GPUBlendFactor.SDL_GPU_BLENDFACTOR_DST_COLOR, SDL_GPUBlendFactor.SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_ALPHA, SDL_GPUBlendOp.SDL_GPU_BLENDOP_ADD),
+            InstanceBlend.NormalHalf => (SDL_GPUBlendFactor.SDL_GPU_BLENDFACTOR_DST_COLOR, SDL_GPUBlendFactor.SDL_GPU_BLENDFACTOR_SRC_COLOR, SDL_GPUBlendOp.SDL_GPU_BLENDOP_ADD),
+            InstanceBlend.ShadowBlue => (SDL_GPUBlendFactor.SDL_GPU_BLENDFACTOR_SRC_COLOR, SDL_GPUBlendFactor.SDL_GPU_BLENDFACTOR_ONE_MINUS_SRC_COLOR, SDL_GPUBlendOp.SDL_GPU_BLENDOP_REVERSE_SUBTRACT),
+            _ => throw new ArgumentOutOfRangeException(nameof(blend)),
+        };
+        var state = new SDL_GPUColorTargetBlendState
+        {
+            enable_blend = true,
+            src_color_blendfactor = src,
+            dst_color_blendfactor = dst,
+            color_blend_op = op,
+            src_alpha_blendfactor = SDL_GPUBlendFactor.SDL_GPU_BLENDFACTOR_ONE,
+            dst_alpha_blendfactor = SDL_GPUBlendFactor.SDL_GPU_BLENDFACTOR_ZERO,
+            alpha_blend_op = SDL_GPUBlendOp.SDL_GPU_BLENDOP_ADD,
+        };
+        var pipeline = CreatePipeline(format, true, state);
+        _blendPipelines.Add((format, blend, pipeline));
+        return pipeline;
+    }
+
+    IntPtr CreatePipeline(SDL_GPUTextureFormat format, bool translucent, SDL_GPUColorTargetBlendState? blend = null)
     {
         var color = new SDL_GPUColorTargetDescription { format = format };
-        if (translucent)
+        if (blend.HasValue)
+        {
+            color.blend_state = blend.Value;
+        }
+        else if (translucent)
         {
             // premultiplied output (ClassicUO's AlphaBlend)
             color.blend_state = new SDL_GPUColorTargetBlendState
@@ -390,6 +442,10 @@ public sealed unsafe class Renderer : IDisposable
         /// <summary>Translucent pass: instance indices, back to front (ascending depth key); at most MaxTranslucent.</summary>
         public uint[] Translucent;
         public int TranslucentCount;
+        /// <summary>When the list holds effect blends with their own pipeline: the list as runs of one blend each, in order
+        /// (0 runs = one premultiplied draw).</summary>
+        public TransRun[] TransRuns;
+        public int TransRunCount;
         /// <summary>Override hash (OverrideSlots entries) or null; uploaded only when non-null.</summary>
         public OverrideEntry[] Overrides;
         /// <summary>External mode: the host's colour target this frame (re-fetched every frame: hosts recreate it on resize).</summary>
@@ -563,13 +619,32 @@ public sealed unsafe class Renderer : IDisposable
             SDL_DrawGPUPrimitives(pass, 6, (uint)f.Instances, 0, 0);
             DrawCalls++;
         }
-        if (transCount > 0)
+        if (transCount > 0 && f.TransRunCount == 0)
         {
             Bind(pass, translucentPipe, ref f, vx, vy, vw, vh);
             u.Pass = 1;
             SDL_PushGPUVertexUniformData(cmd, 0, (IntPtr)(&u), (uint)sizeof(FrameUniforms));
             SDL_DrawGPUPrimitives(pass, 6, (uint)transCount, 0, 0);
             DrawCalls++;
+        }
+        else if (transCount > 0)
+        {
+            // effect blends: one draw per run, its first list entry passed as TransBase (SV_InstanceID restarts at 0;
+            // first_instance isn't portable with it)
+            u.Pass = 1;
+            IntPtr bound = IntPtr.Zero;
+            for (int r = 0; r < f.TransRunCount; r++)
+            {
+                var run = f.TransRuns[r];
+                int count = Math.Min(run.Count, transCount - run.Start);
+                if (count <= 0) continue;
+                var pipe = run.Blend is InstanceBlend.Normal or InstanceBlend.NormalOrdered or InstanceBlend.Screen ? translucentPipe : BlendPipeline(format, run.Blend);
+                if (pipe != bound) { Bind(pass, pipe, ref f, vx, vy, vw, vh); bound = pipe; }
+                u.TransBase = TransBase + (uint)run.Start;
+                SDL_PushGPUVertexUniformData(cmd, 0, (IntPtr)(&u), (uint)sizeof(FrameUniforms));
+                SDL_DrawGPUPrimitives(pass, 6, (uint)count, 0, 0);
+                DrawCalls++;
+            }
         }
         SDL_EndGPURenderPass(pass);
 
@@ -734,6 +809,7 @@ public sealed unsafe class Renderer : IDisposable
             SDL_ReleaseGPUGraphicsPipeline(Device, p.Opaque);
             SDL_ReleaseGPUGraphicsPipeline(Device, p.Translucent);
         }
+        foreach (var p in _blendPipelines) SDL_ReleaseGPUGraphicsPipeline(Device, p.Pipeline);
         SDL_ReleaseGPUShader(Device, _vs);
         SDL_ReleaseGPUShader(Device, _ps);
         if (Mode == RendererMode.Window) SDL_ReleaseWindowFromGPUDevice(Device, Window);
