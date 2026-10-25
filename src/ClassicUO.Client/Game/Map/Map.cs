@@ -201,9 +201,16 @@ namespace ClassicUO.Game.Map
             }
 
             _queue.Request(chunkX, chunkY, _frame);
+            DrawPending++;
 
             return null;
         }
+
+        /// <summary>
+        /// Chunks the draw walk asked for since the caller last reset it that are not loaded yet (queued for UpdateLoading).
+        /// GameScene resets it before its walk; while it is not 0 the visible area is not ready (WorldSettleGate).
+        /// </summary>
+        public int DrawPending;
 
         /// <summary>
         /// Called by GameObject.AddToTile: when the chunk of tile (x, y) is not loaded, removes <paramref name="obj"/> from
