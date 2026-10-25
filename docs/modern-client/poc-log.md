@@ -597,3 +597,39 @@ Items from perf-opportunities.md "ClassicUO pack-loading path" and two "Uo.Rende
 - **Teleports still cost one 25–40 ms frame:** about 75 `Chunk.Load` calls (5–14 ms), a region decode (3–9 ms) and the server's packet burst, in the same frame. A diagnostic build confirmed this split. Next steps are listed in perf-opportunities.md.
 - **kbatman4 has staff access** (`[go` worked).
 - **Checks:** client Release build; 199 unit tests (11 new pack-path parity tests); `CUO_BENCH_PICK=1` gave the same selections and pixel-pick results before and after in both renderers; Uo.Render.App `--external-test` on Vulkan passes.
+
+## AOT vs JIT gap: static PGO and OptimizationPreference=Speed measured (2026-10-25)
+
+Setup:
+- Branch `worktree-agent-ae5b80ed17424bf2c`. Measured on base 2bddaf8dc, before the B1–B5/W1 merges; the commit is rebased onto fe5222a4d.
+- 1920×1080, Gpu world, account kbatman4 (staff granted mid-session; verified by `[go` teleporting).
+- Plan: Britain 1495,1629 z1, bank 1430,1690 z1, zoomed out z2.5; 3×5-s windows per spot.
+- Runs: 4 interleaved rounds per variant, with other agents' clients running, so noisy. Medians of window p50 (ms) from the last, quietest set:
+
+| spot | variant | draw | ui_draw | composite | world_prepare | batcher_fna |
+|---|---|---|---|---|---|---|
+| Britain | JIT | 0.395 | 0.076 | 0.050 | 0.171 | 0.081 |
+| Britain | AOT | 0.431 | 0.095 | 0.060 | 0.174 | 0.099 |
+| Britain | AOT+PGO | 0.426 | 0.091 | 0.059 | 0.172 | 0.096 |
+| bank | JIT | 0.425 | 0.079 | 0.051 | 0.182 | 0.089 |
+| bank | AOT | 0.412 | 0.091 | 0.060 | 0.151 | 0.101 |
+| zoomed out | JIT | 1.280 | 0.088 | 0.051 | 0.986 | 0.088 |
+| zoomed out | AOT | 1.236 | 0.105 | 0.061 | 0.935 | 0.106 |
+| zoomed out | AOT+PGO | 1.476 | 0.114 | 0.062 | 1.131 | 0.110 |
+
+Run-to-run stdev: Draw 0.02–0.3 ms; UI and composite 0.002–0.013 ms.
+
+- **Static PGO** (.mibc from a JIT EventPipe trace, 2,178 type-histogram and 17,907 edge-count records): no gain. Britain and bank are within noise; zoomed out it is worse but noisy. Binary +0.7%. **Not kept**; opt-in via `-p:CuoMibcPath`.
+- **`OptimizationPreference=Speed`:** no gain. In an earlier, noisier set it was within noise or worse (zoomed out Draw p50 1.63 vs 1.51 ms). Binary +4%. **Not kept.**
+- **Where AOT still loses** (about 0.03 ms per frame, UI draw plus composite):
+  - It is native time in FNA calls: `batcher_fna` is +0.015–0.018 ms with identical draw and flush counts.
+  - A no-admin IP sampler (tools/aot-bench/sampler.py) shows 4–5% of the game thread's samples in ntdll `RtlpWalkFrameChain` / `RtlpLookupFunctionEntryForStackWalks` / `RtlpUnwindPrologue` under driver frames, against about 2% in JIT.
+  - Suspected cause: stack captures by an injected GPU tool (nv-aftermath-monitor is running and `InProcessClient64.dll` is loaded). They would cost AOT more because they unwind through all AOT frames.
+  - Managed hot spots are the same in both builds (AddTileToRenderList, FillGameObjectList, CollectGpuHidden, batcher SetVertex).
+- **Startup** (to the first window): JIT 2.0 s, AOT 1.6 s, PGO 1.5 s, Speed 1.5 s.
+- **Trim warnings:** no new ones (only the known FNA, cuo `Enum.GetValues` and Friflo warnings).
+- **Next:**
+  - re-measure on a machine with no GPU tools injected;
+  - try `<DirectPInvoke>` for FNA3D and SDL3 with generated import libraries;
+  - re-check on the current base, which now has the B1–B5 UI changes and W1.
+- **Procedure:** testing/aot-performance.md. Tools: tools/aot-bench, tools/pgo/collect_mibc.py.
