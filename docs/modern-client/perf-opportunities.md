@@ -56,11 +56,11 @@ Format: **what**, where (file:line), why it should help, evidence or estimate, a
 - **The Indexed8 shader always does 4 index loads plus 4 palette loads** (sprite.hlsl:181). Fix: a single-tap branch when the sample is sharp and the fraction is 0, as at zoom 1.
 - **Three entity lookups per mobile in the extract** (Flags, Serial, Equipment; Uo.Client RenderExtract.cs:119). Fix: a query over those components, iterating chunk spans.
 - **The extract walks 23 equipment layers per human per frame** (Animation.cs:240). Fix: cache a compacted, ordered slot list when equipment changes.
-- **`ReadHeader` on Kind 2 decodes all of chunk 0 (1 MiB) per page at startup** (PackSet.cs:65,83). Fix: decode only the PageHeader bytes.
+- **Done (pack-hitch agent):** `ReadHeader` on Kind 2 decoded all of chunk 0 (1 MiB) per page at startup (PackSet.cs:65,83). `AtlasPage.ReadHeader` now decodes only the 16 header bytes: 2.8–4.6 → 0.36–0.39 ms per page (PackSet reads 36 headers at startup, so about 100–160 ms → 14 ms).
 - **All 37.9k palettes (18.5 MiB VRAM) plus a 4 MB FramePalette table load at startup** (PackSet.cs:92). Fix: stream them per body.
 - **Done (c18e96a6b):** per-worker Kind 2 decoders, which removed the global lock (anim pages 390 → 2590 pages/s), and an Indexed8 single-tap fast path (GPU 0.565 → 0.50 ms at 4K with 4000 mobiles).
 - **The vertex shader runs the chunk-table binary search on all 6 vertices of each quad** (sprite.hlsl VSMain). An indexed 4-vertex quad would cut vertex work by about a third.
-- **The Kind 2 branch reads the ChunkedHeader twice** (PageResidency.cs; `Decode` re-reads it).
+- **Done (pack-hitch agent):** the Kind 2 branch read the ChunkedHeader twice (PageResidency.cs). `ChunkedBrotliDecoder.Decode` has an overload that takes the header already read.
 - **Decoder and worker threads can oversubscribe small CPUs** (2×8 decoder threads plus 8 workers). Size the pools by core count.
 - **Dynamic-sprite page requests run twice** when the extract already requests them (`WorldRenderer.BuildFrame` and Uo.Client's extract).
 - **Roof hiding through per-sprite overrides can mean thousands of overrides.** A max-Z uniform plus a per-instance z test would be cheaper. **Done in step 9** (see below).
@@ -68,12 +68,18 @@ Format: **what**, where (file:line), why it should help, evidence or estimate, a
 
 ## ClassicUO pack-loading path (pack-assets agent, 2026-10-24)
 
-- **A new 1 MiB buffer plus a compressed buffer per chunk decode** (PackAssets.cs:234,246). Fix: pool them.
-- **A full untrimmed RGBA image is built, then rescanned for the picker and real-art bounds** (PackSprites.cs:16,46; Art.cs:74,82; Animation.cs:204,207). Fix: derive both from the pack's trim and Indexed8 data.
-- **A whole animation direction is decoded synchronously the first time a body is seen** (Animation.cs:204), causing a hitch. Fix: prefetch or decode on a worker.
-- **Region loads copy the file 2–3 times** (MapLoader.cs:222; PackReaders.cs:260-264): a full read, then MemoryStream/ToArray, about 1.2 MB per copy. Fix: decode straight into a pooled buffer.
-- **Stretch calculation takes a lock and a dictionary lookup per neighbour cell** (Chunk.cs:94 → Map.cs:114). Fix: cache the current block.
-- **The palette cache is cleared wholesale at 8,192 entries** (AnimationsLoader.cs:196). Fix: LRU eviction.
+**Done (pack-hitch agent, 2026-10-24; numbers and method in poc-log.md and [testing/pack-loading.md](testing/pack-loading.md)):**
+- **Chunk decode buffers pooled** (PackAssets.cs `PackPages`): evicted 1 MiB buffers are reused and the compressed chunk is rented. Allocation per chunk decode 1.27 MB → about 60 KB; decode now runs outside the lock, so workers decode in parallel.
+- **Picker masks and real-art bounds from the trim rect** (`PixelPicker.SetTrimmed`, `PixelPicker.VisibleBounds`): only the trim rect is scanned, the picker with a Vector256/128 zero test (scalar fallback, parity tests). Picker 4.7 → 3.2 µs per sprite (scalar trimmed 4.7, so SIMD kept); bounds 4.8 → 0.4–1.0 µs. The untrimmed RGBA image is still built because the legacy atlas uploads it, but into a pooled buffer.
+- **First sight of a body decodes on a worker** (Animation.cs): until a body has a direction uploaded, a direction whose chunks are not cached is decoded on the thread pool and drawn as nothing until ready; uploads are budgeted (2 ms per 8 ms). Main-thread cost of a first sight 3.4–4 ms (max 11–14 ms) → 0.2 µs; `bodies` test Update+Draw max 24–25 → 4.3–8.2 ms, frames over 8 ms 43–76 → 0–1, allocation 57–122 → 19 KB per frame. `AnimationExists` no longer decodes. `CUO_ANIM_SYNC=1` restores the old behaviour.
+- **Region loads decode into pooled buffers** (`RegionFile.DecompressInto`, MapLoader buffer recycling): 4.0–4.2 → 3.0–3.3 ms and 3.9 → 1.1 MB per region on average over 60 loads (0 once the pool is warm).
+- **Stretch lookups cache the last block** (`MapLoader.GetLandZ`): 110–180 → 12 ns per lookup.
+- **Palette cache is an LRU** (`LruCache`, evicted arrays reused).
+
+**Still open in this path:**
+- **A teleport still costs one 25–40 ms frame:** about 72–81 `Chunk.Load` calls (5–14 ms) plus a region Brotli decode (3–9 ms) in the same frame, plus the server's packet burst. Fix: load chunks incrementally over frames, and decode regions on a worker (outside MapLoader's lock, as PackPages does) with a prefetch of the neighbouring regions when walking.
+- **A visible body changing to an action it has never shown** still decodes synchronously (about 3 ms, 15 in a 20 s bodies run), to avoid a blink. Prefetch covers its other directions and actions 0–4.
+- **Unattributed 250–750 ms frames** with every phase under 1 ms show up in both builds while other clients run; not pack loading.
 - **The atlases hold RGBA8 and never evict** (TextureAtlas, which predates this work). Fix: 16-bit (`Bgra5551`) atlases at half the memory, plus eviction. Becomes moot for the world once the GPU renderer is the default.
 
 ## Pipelining
