@@ -535,12 +535,14 @@ namespace ClassicUO.Game.Scenes
         {
             public GpuItemCache Cache;
             public int Index;
+            // where the served run would join the statics list: its length at the tile, less the cached items queued before
+            public int InsertAt;
         }
 
         private GpuItemExpect[] _gpuCheckExpect = new GpuItemExpect[1024];
         private int _gpuCheckExpectCount, _gpuCheckPos, _gpuCheckBad, _gpuItemCheckCounter;
         private int _gpuItemChecks, _gpuItemCheckStale, _gpuItemCheckCompared, _gpuItemCheckMissing, _gpuItemCheckExtra, _gpuItemCheckDiff,
-            _gpuItemCheckFallbacks;
+            _gpuItemCheckFallbacks, _gpuItemCheckPlace;
         private long _gpuItemCheckAt;
         private string _gpuItemCheckSample;
 
@@ -559,6 +561,8 @@ namespace ClassicUO.Game.Scenes
                 return;
             }
 
+            int insertAt = _renderLists.StaticsCount - _gpuCheckExpectCount;
+
             for (int i = s; i < e; i++)
             {
                 if (GpuItemCulled(cache, ref cache.Entries[i]))
@@ -571,7 +575,7 @@ namespace ClassicUO.Game.Scenes
                     Array.Resize(ref _gpuCheckExpect, _gpuCheckExpectCount * 2);
                 }
 
-                _gpuCheckExpect[_gpuCheckExpectCount++] = new GpuItemExpect { Cache = cache, Index = i };
+                _gpuCheckExpect[_gpuCheckExpectCount++] = new GpuItemExpect { Cache = cache, Index = i, InsertAt = insertAt };
             }
         }
 
@@ -605,6 +609,15 @@ namespace ClassicUO.Game.Scenes
                 _gpuItemCheckSample ??= $"order: walk drew 0x{item.Serial:X8} at {item.X},{item.Y},{item.Z}, cache has 0x{en.Item.Serial:X8} at {en.Item.X},{en.Item.Y},{en.Item.Z}";
 
                 return;
+            }
+
+            // the walk queued it at statics index CaptureStaticsIndex after _gpuCheckPos - 1 other cached items: served, the
+            // capture has it after the same uncached objects
+            if (RenderLists.CaptureStaticsIndex - (_gpuCheckPos - 1) != ex.InsertAt)
+            {
+                _gpuItemCheckPlace++;
+                _gpuCheckBad++;
+                _gpuItemCheckSample ??= $"place: item 0x{item.Serial:X8} at statics index {RenderLists.CaptureStaticsIndex} after {_gpuCheckPos - 1} cached, run inserted at {ex.InsertAt}";
             }
 
             ReadOnlySpan<SpriteInstance> mine = new ReadOnlySpan<SpriteInstance>(ex.Cache.Instances, en.InstStart, en.InstCount);
@@ -660,10 +673,10 @@ namespace ClassicUO.Game.Scenes
             else if (now - _gpuItemCheckAt >= System.Diagnostics.Stopwatch.Frequency * 5)
             {
                 Log.Info($"[gpu-item-check] {_gpuItemChecks} checks, {_gpuItemCheckStale} with differences; {_gpuItemCheckCompared} cached items compared: " +
-                         $"{_gpuItemCheckMissing} missing or out of order, {_gpuItemCheckExtra} extra, {_gpuItemCheckDiff} different; " +
+                         $"{_gpuItemCheckMissing} missing or out of order, {_gpuItemCheckExtra} extra, {_gpuItemCheckDiff} different, {_gpuItemCheckPlace} misplaced; " +
                          $"{_gpuItemCheckFallbacks} tiles caught by the signature" + (_gpuItemCheckSample != null ? $"; first: {_gpuItemCheckSample}" : ""));
                 _gpuItemCheckAt = now;
-                _gpuItemChecks = _gpuItemCheckStale = _gpuItemCheckCompared = _gpuItemCheckMissing = _gpuItemCheckExtra = _gpuItemCheckDiff = _gpuItemCheckFallbacks = 0;
+                _gpuItemChecks = _gpuItemCheckStale = _gpuItemCheckCompared = _gpuItemCheckMissing = _gpuItemCheckExtra = _gpuItemCheckDiff = _gpuItemCheckFallbacks = _gpuItemCheckPlace = 0;
                 _gpuItemCheckSample = null;
             }
         }
