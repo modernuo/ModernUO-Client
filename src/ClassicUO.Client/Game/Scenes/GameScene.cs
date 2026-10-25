@@ -1103,6 +1103,11 @@ namespace ClassicUO.Game.Scenes
 
                 renderTargets.WorldFade = ready ? _settle.Fade : 0f;
             }
+            else if (GpuDeviceLost.WorldSetupFailed)
+            {
+                // the client exits at the end of this frame: no world, and never Legacy in its place
+                renderTargets.WorldFade = 0f;
+            }
             else
             {
                 // the developer comparison mode (-worldrenderer legacy, DevBench world:legacy), never a fallback
