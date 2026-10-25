@@ -414,6 +414,23 @@ namespace ClassicUO.Game
             }
         }
 
+        // corpses and handle openings keep queuing while the setting is off (WorldEcs, the scene), so the full loop drains the
+        // list each frame: it must not keep destroyed items alive. Turning the setting on rebuilds it from a scan
+        private void ClearActiveItems()
+        {
+            if (_activeItems.Count == 0)
+            {
+                return;
+            }
+
+            foreach (Item item in _activeItems)
+            {
+                item.InUpdateList = false;
+            }
+
+            _activeItems.Clear();
+        }
+
         internal void OnItemDestroyed(Item item)
         {
             _destroyedItems.Add(item);
@@ -425,6 +442,7 @@ namespace ClassicUO.Game
         {
             _activeItemsValid = false;
             _destroyedItems.Clear();
+            ClearActiveItems();
 
             foreach (Item item in Items.Values)
             {
@@ -1152,12 +1170,7 @@ namespace ClassicUO.Game
             _effectManager.Clear();
             _toRemove.Clear();
 
-            foreach (Item item in _activeItems)
-            {
-                item.InUpdateList = false;
-            }
-
-            _activeItems.Clear();
+            ClearActiveItems();
             _destroyedItems.Clear();
             _activeItemsValid = false;
             CorpseManager.Clear();
