@@ -211,8 +211,9 @@ namespace ClassicUO.Game.Scenes
                 return 1;
             }
 
+            // the container a gump drag hovers is extracted with the highlight hue: never bake it, try again later
             if (item.AlphaHue != 0xFF || item.Offset != Vector3.Zero || item.ObjectHandlesStatus != ObjectHandlesStatus.NONE ||
-                item.TextContainer != null && !item.TextContainer.IsEmpty)
+                item.TextContainer != null && !item.TextContainer.IsEmpty || ReferenceEquals(item, _gpuSelContainer))
             {
                 return 2;
             }

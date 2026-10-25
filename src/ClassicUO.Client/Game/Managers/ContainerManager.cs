@@ -188,7 +188,8 @@ namespace ClassicUO.Game.Managers
             }
             else if (item.OnGround)
             {
-                // item is in world
+                // item is in world; the Gpu prepare may have served it from the item cache while the camera moved
+                (Client.Game.Scene as Scenes.GameScene)?.RefreshScreenPosition(item);
                 X = item.RealScreenPosition.X + camera.Bounds.X + 40;
                 Y = item.RealScreenPosition.Y + camera.Bounds.Y - (height >> 1);
             }
