@@ -387,6 +387,14 @@ namespace ClassicUO.Game
 
                     return true;
 
+                // w5 on|off: all W5 update shortcuts (world_update_active_items, gpu_mobile_frame_cache, text_skip_expired)
+                case "w5" when args.Length > 0:
+                    Settings.GlobalSettings.WorldUpdateActiveItems = Settings.GlobalSettings.GpuMobileFrameCache =
+                        Settings.GlobalSettings.TextSkipExpired = args[0] == "on";
+                    Log.Info($"[ECS] driver: W5 shortcuts {args[0]}");
+
+                    return true;
+
                 // mobcache on|off: the Gpu world's mobile frame cache (gpu_mobile_frame_cache, W5)
                 case "mobcache" when args.Length > 0:
                     Settings.GlobalSettings.GpuMobileFrameCache = args[0] == "on";
