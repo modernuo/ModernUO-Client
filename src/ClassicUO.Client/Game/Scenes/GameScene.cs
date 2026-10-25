@@ -568,7 +568,10 @@ namespace ClassicUO.Game.Scenes
             }
 
             long setupStart = FrameStats.Stamp();
-            _alphaChanged = _alphaTimer < Time.Ticks;
+            // while the world settle gate holds the last frame nobody sees the fades: alphas jump to their targets, so the
+            // first frame after the hold doesn't show statics of freshly loaded chunks fading in (they start at 0)
+            _snapAlphas = _settle.Holding;
+            _alphaChanged = _alphaTimer < Time.Ticks || _snapAlphas;
 
             if (_alphaChanged)
             {
