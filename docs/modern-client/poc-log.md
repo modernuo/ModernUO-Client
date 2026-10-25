@@ -919,3 +919,38 @@ Branch `worktree-agent-add0b9e9bfc1fdafb`, started on poc/modern-client 3216539a
 No regression. The crowd's item capture fell because NPCs that kill each other leave corpses.
 
 **Not done:** W2. The house placement preview (multi alpha 0.5) has no scenario; NativeAOT not re-measured.
+
+## Large-scale scene; scale fixes; W2's screen-position half (2026-10-25)
+
+Branch `worktree-agent-aa6a72ed78ad4937a`, started on poc/modern-client 507dc2995 (no merges needed; still current at the final measurements). JIT Release, 1920×1080, kbatman3, no other clients. Procedure and full tables: [testing/large-scale.md](testing/large-scale.md). Scripts and logs: session scratchpad `largescale\`.
+
+**The scene** (`tools/large-scale/make_scene.py create|wipe`, `-ecsdriver` scripts): 1,984 frozen, blessed NPCs (mounted, equipped humans, animals, monsters, a dragon block; about 5,600 worn items) and 19,476 non-movable ground items (stacks, art, lit and animated art) on an empty field in Felucca's east strip at 5156 2150, with a walking lane (`lswalk`). Built with `[TileXYZ` (no targeting) in 95 s; wiped with `[wipe` in 30 s. Server: about 4% of one core while a client stands there. **Left in place** (frozen, cheap); the wipe script removes it.
+
+**Found at scale and fixed:**
+- **Sprites silently dropped** (6c7478749): the Gpu world's dynamic range held 32,768 instances; the scene needs about 33k zoomed out, so the north tip went missing. Now 131,072 (4 MiB), and an overflow is logged.
+- **Anim page thrash** (same commit): 64 Indexed8 anim layers against an 82-page working set: pages evicted and re-uploaded every few frames, sprites missing meanwhile. Now 128 layers (+64 MiB).
+- **FrameStats measured itself** (6ee6e8b09): two clock reads per captured object were about 0.33 ms per frame in the scene. The capture is now timed in runs of one object kind.
+- **Overhead text positions** (59fd92aa7): every frame scanned all of World.Mobiles and World.Items (0.2 ms with 25k items); now only entities that got text (`World.TextOwners`).
+
+**W2:** the screen-position half is done; the ECS in-view query is not, on purpose.
+- **Screen position only on change** (b8fd7756f): with baked tiles skipped, every walked object's position was recomputed every frame (a skipped tile can miss camera moves). A camera generation bumped on each `UpdateDrawPosition` says which objects missed one. Walk 0.84 → 0.65 ms in the scene.
+- **Item picking** (8428f0a9d): the mouse outside an item's art rectangle (from the ArtEntry offsets the view and the extract store) is rejected before the art lookup. Picking 0.29 → 0.11 ms per frame in the scene.
+- **Why not the ECS query:** after these two, the walk costs about 31 ns per dynamic object (9 ns visiting, 15 ns rules, 5 ns picking). An ECS query would only replace the visit: the per-object rules (alpha and roof fades, the per-tile max-Z cut-off, surface-overhead, behind-a-tree, object handles) still read the GameObject, and the tile order decides both the max-Z cut-off and the painter order at equal depth that the Gpu path reproduces. Expected saving about 0.15 ms at 21k objects, nothing at normal scale, for a large parity risk. Item baking (W4) removes both the items' walk share and their extract (about 1.0 of the 1.9 ms world prepare in the scene).
+- **`CUO_PREP_CHECK=1`** verifies both shortcuts against the skipped work: 0 wrong positions in 852M kept, 0 wrong item rejections in 487M, over walks, glides, teleports, zoom changes and pickscans.
+
+**Hot spots in the scene** (new build, Gpu, zoom 1, 2.96 ms frame, 341 fps):
+
+| # | Where | ms | Next step |
+|---|---|---|---|
+| 1 | World prepare: walk over 21k dynamic objects | 0.66 | W4 removes the items' share (about 90% of the objects) |
+| 2 | World prepare: mobile animation + extract, 1.6k mobiles in view | 0.59 | W5 (the ECS samples the Mobile for its inputs; 0.36 µs per mobile) |
+| 3 | World prepare: item extract, 14.6k items in view | 0.42 | W4 (bake settled ground items per chunk) |
+| 4 | Update: `World.Update`'s item loop over 25k items | 0.20 of 0.32 | W5 (active lists; most items are worn or in packs) |
+| 5 | World draw (GPU submit) | 0.31 | – |
+| 6 | Overhead text positions (2k mobiles with incoming-name text) | 0.15 | Inherent while the text shows |
+
+Legacy in the scene: 4.45 ms, of which world draw (the FNA batcher) 2.29 ms. Allocation per frame is flat with scene size (the same as Britain standing; 7–10 KB per frame while walking the lane, from objects leaving and entering range).
+
+**Checks:** ECS parity in the scene with `CUO_ANIM_SYNC=1` (standing and walking the lane): 0 mismatches in 9.46M mobile and 75M item comparisons. `CUO_GPU_SKIP_CHECK`: 0. `pickscan:8x6` at the scene (zoom 1 and 2.5) and Britain: 0 different; `CUO_BENCH_PICK` base vs new: the same objects. Teleports Britain ↔ scene: 0 settle timeouts (the hold into the scene is up to 650 ms while 27k objects arrive). Shots base vs new, Gpu, Legacy and UI, at Britain, bank, zoom 2.5, the scene and its zoom-out: differences only on moving or animating creatures and the journal text; looked at. 263 unit tests pass.
+
+**Not done:** W4, W5, NativeAOT measurements, the 120-NPC crowd and 4K re-runs (the scene covers both directions), night/lights in the scene (lit items were compared only by daylight, `lights=0`).

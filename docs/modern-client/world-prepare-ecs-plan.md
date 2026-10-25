@@ -102,6 +102,10 @@ Move each per-frame duty that touches land or statics to where it belongs:
 - **Iteration:** ground items and mobiles iterate an ECS query over in-view entities, not every tile.
 - **Capture stays at first:** item and mobile views still `Draw` under capture, but only for the entities the query returns.
 - **Effort:** 3–4 days.
+- **Status (2026-10-25, large-scale agent): the screen-position half is done; the ECS query is set aside.** Measured in the large-scale scene ([testing/large-scale.md](testing/large-scale.md): 1,984 mobiles and 19,476 ground items in range). Details in poc-log ("Large-scale scene").
+  - **Screen position only on change:** a camera generation (bumped on each `UpdateDrawPosition`) replaces the per-frame recompute of every walked object in Gpu mode. Walk 0.84 → 0.65 ms in the scene. `CUO_PREP_CHECK=1` verifies it.
+  - **Item picking:** a rectangle test before the art lookup (0.29 → 0.11 ms in the scene).
+  - **Why the query waits:** the walk now costs about 31 ns per dynamic object, and the query would replace only the 9 ns visit. The rules (alpha and roof fades, the tile's max-Z cut-off, surface-overhead, behind-a-tree, handles) still read the GameObject, and the tile order sets both the max-Z cut-off and the equal-depth painter order the Gpu path reproduces. About 0.15 ms at 21k objects, nothing at normal scale, for a large parity risk. W4 is the bigger win (below).
 
 ### W3: animation state into the ECS; `DynamicSpriteExtract` replaces view capture
 - **Components:**
@@ -126,6 +130,8 @@ Move each per-frame duty that touches land or statics to where it belongs:
     2. Move the sampled inputs (steps, server action, war mode, item hue state) to the ECS with W5.
 
 ### W4: ground-item chunk baking (only if W0–W3 numbers ask for it)
+- **The numbers ask for it (2026-10-25):** in the large-scale scene (Gpu, zoom 1) world prepare is 1.92 ms, of which the items' share of the walk is about 0.6 ms and the item extract 0.42 ms. Mobiles: 0.59 ms (extract) plus their walk share.
+- **Suggested shape:** W1's skip machinery for settled ground items. Cache each chunk's item instances (from `ItemSpriteExtract`), re-extract a chunk only on an item change in it, and leave its tiles out of the walk masks. Keep in the walk: animated art, foliage items (behind-a-tree), corpses, multis, items with text or handles, the tiles under the mouse (picking), and everything during fades (W1's full-walk steps). Stamp `DrawnFrame` for cached items (overhead text and bars use it).
 - Bake rarely-changing ground items into the chunk instance buffer and re-bake the chunk on ECS change events. Mobiles stay per frame.
 - **Effort:** 2–3 days. Counterpart of ClassicUO 2.0's `BakeChunkDynamics`.
 

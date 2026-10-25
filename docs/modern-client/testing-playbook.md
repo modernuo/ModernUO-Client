@@ -77,10 +77,11 @@ Driven by environment variables. Read the header comment in DevBench.cs for the 
 | `CUO_BENCH_UI=1`, `CUO_BENCH_SPOTS`, `CUO_BENCH_GO`, `CUO_BENCH_EXIT` | UI tour, screenshot spots, go-to, walk-and-quit |
 | `CUO_GPU_WATCH=1` | **Diagnostic branch `poc/gpu-pagefault-diag` only.** Logs when the SDL texture or memory behind the atlases and RTs changes. The RTs' thousands of `CYCLE` lines are FNA3D cycling on clearing passes, not defragmentation. See [testing/gpu-faults.md](testing/gpu-faults.md) |
 | `CUO_SIMULATE_DEVICE_LOST=<s>`, `CUO_DEVICE_LOST_NOEXIT=1` | Device-loss handler test switches |
+| `CUO_PREP_CHECK=1` | Verifies the world prepare's shortcuts (kept screen positions, item-picking rectangle) against the skipped work; logs `[prep-check]` every 5 s. Don't measure with it on |
 | `CUO_WORLD_HOLD=0`, `CUO_WORLD_SETTLE_LOG=1`, `CUO_BENCH_TPSHOTS=dir\|N` | World-settle switches: observe only (no hold), log each unsettled frame presented, per-frame shots after teleports. See [testing/world-settle.md](testing/world-settle.md) |
 
 **Plan entries:**
-- `name:x y:zoom` (go and measure), `travel`, `walk`, `say:text`;
+- `name:x y:zoom` (go and measure), `travel`, `walk`, `lswalk` (the large-scale scene's lane, [testing/large-scale.md](testing/large-scale.md)), `say:text`;
 - `vsync:on|off`, `world:gpu|legacy`, `size:WxH|max`;
 - `flip:N[:frames[:walk]]` (renderer toggle stress), `gumps` (opens paperdoll, backpack, journal and status at fixed spots);
 - `effect:`, `moving:`, `shot:name`, `season:`, `itemhue:`, `ghost:on|off` (local-only render checks);
