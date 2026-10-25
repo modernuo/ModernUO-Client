@@ -65,6 +65,44 @@ Each client is fresh, so every first visit is a true first sight; within a run, 
 
 `summarize.py` prints one line per plan entry: worst-window p99, frame max, hitch sums for all three definitions, allocation per frame, GC counts and the worst Update+Draw frame's phases.
 
+## 4. Teleport hitches: chunk streaming and region prefetch (added 2026-10-25, teleport agent)
+
+The harness is the same, in the scratchpad's `teleport` folder. It adds:
+- `seq2.py`, which logs to `runs.txt` how many other `cuo.exe` processes were running before each run;
+- a 30 s wait after a GPU fault (exit 0xDEAD), and a stop after two faults;
+- `counters.py tag ...`, which prints each window's map-loading counters.
+
+**Build every test binary, base and new, with the Tier 0 login mitigations** (A and C from `poc/gpu-pagefault` 2ad0e20ec, with the GpuWatchTemp block removed). Apply them as an uncommitted patch (`teleport\tier0.patch`) and revert after building. Without them, about 3% of logins hit the art-atlas defrag page fault, and 3 of 8 runs did on 2026-10-25 while other clients were on the GPU.
+
+**Switches:**
+- `CUO_CHUNK_SYNC=1` restores the old path: every chunk loads when first asked for, and nothing is prefetched.
+- `CUO_CHUNK_BUDGET_MS=<ms>` sets the per-frame chunk budget, which covers load plus mesh build (default 2).
+
+**FrameStats counters** (per frame; `counters.py` shows avg/max per window):
+
+| Counter | Meaning |
+|---|---|
+| `chunk_loads`, `chunk_load_us` | Chunks loaded this frame, and the time spent loading them. Counts both `Map.UpdateLoading` and synchronous game-logic loads |
+| `chunk_mesh_us` | Mesh builds done by the loader inside the budget |
+| `chunk_queue` | Chunks still queued at the end of the frame |
+| `region_wait_us` | Time the main thread waited for a region prefetch that was still decoding (should be 0) |
+| `region_sync` | Regions decoded on the main thread (not prefetched; should be 0 once in game) |
+| `region_prefetch` | Region prefetches started |
+
+**`ltravel` and the z lookup.** `DevBench.LocalTeleport` now takes z only from a region that is already decoded. Otherwise it prefetches the region, keeps the player's z, and `FixTeleportZ` corrects z once the region arrives. A real teleport gets z from the server, so the bench no longer waits for a decode that a real teleport would not wait for.
+
+**Walk check after a teleport: plan entry `bwalk`.** It does `[go 1495 1528`, then walks to (1495,1542) and back every leg. The route crosses:
+- a region edge (y 1536);
+- two chunk edges;
+- a z 40 → 30 land slope.
+
+Each leg logs `[bench] bwalk leg N ended at x,y,z (land z L), server denies D`. **Pass:** the legs alternate between the two ends, z matches the land z, and D stays 0 (the server's 0x21 walk denials, counted by `WalkerManager.ServerDenies`). Run it with `CUO_BENCH_SHOTS` and `shot:` to look at the screen after the teleport.
+
+**Unit tests:** `tests/ClassicUO.UnitTests/Game/ChunkLoadingTests.cs`:
+- the queue order (nearest first), the budget, the at-least-one rule, ring chunks, stale and sticky requests, and no allocation per drain;
+- prefetched regions give the same blocks as synchronous ones, and `IsBlockReady` never blocks;
+- land z stays correct while prefetching across more than the 24 cached regions.
+
 ## Noise and false positives
 
 - Other agents' clients (AOT, GPU, ECS work) run on the same GPU and CPU; FPS and Present swing a lot between runs. Compare without-Present hitch counts and max across alternating runs, not single windows.
