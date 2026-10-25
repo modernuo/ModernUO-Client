@@ -149,6 +149,12 @@ Move each per-frame duty that touches land or statics to where it belongs:
   - compute HP percentage only on change.
 - **The `perf-opportunities.md` update-path items get fixed here:** `WMapManager` per frame, `RootContainer`, LINQ `Reverse`, the 0x78 re-allocation, `ConfirmWalk` re-inserts.
 - **Effort:** 1–2 weeks, piece by piece. Driven by the crowd numbers (the update loop is about 1 µs on the sparse shard, so it matters only in busy scenes).
+- **Status (2026-10-25, W5 agent): first slices done, each behind a setting (default on).** Details in poc-log ("W5: first slices"), procedure in [testing/world-update.md](testing/world-update.md). In the large-scale scene (Gpu, in-session off/on pairs): world prepare 1.66 → 1.17–1.25 ms at zoom 1, 2.35–2.48 → 1.80 at zoom 2.5, 1.79–1.86 → 1.27–1.48 walking; Update 0.45 → 0.17–0.19 ms; frame 2.87 → 2.12–2.20 ms.
+  1. **`world_update_active_items`:** `World.Update` visits only items whose `Update` does something (corpses, items whose handles just opened) plus the 50 ms range sweep; destroyed items leave `Items` via `Entity.Destroy`; the hits percentage is computed in the `Hits`/`HitsMax` setters. Item loop 0.28–0.33 → 0.015–0.02 ms (25,120 items).
+  2. **`gpu_mobile_frame_cache`** (`MobileFrameCache`): selection and sprite instances reused while the sampled inputs, equipment version, seat tile, alpha and hues are unchanged; position, walking offset and depth reapplied. Mobile select + extract 0.71 → 0.35–0.37 ms at zoom 1 (1,611 mobiles, about 0.22 µs each), 1.01–1.05 → 0.54 at zoom 2.5.
+  3. **`text_skip_expired`:** the overhead text pass skips mobiles and corpses whose texts all expired. 0.18 → 0.04 ms.
+  4. **Update-path items:** `WMapManager` asked once per frame (done); LINQ `Reverse` in `FindNext` (done; per keypress, not per frame); `RootContainer` (only on facet change and O(n · depth) with depth 1–3: not a real problem); the 0x78 equipment re-creation and the `ConfirmWalk` re-insert (per packet or step, not per frame; changing them risks tooltip and equal-depth draw-order behaviour for no frame-time gain: left).
+  - **Next:** the remaining per-mobile cost is `Sample` reading the legacy Mobile (about 40% of the 0.22 µs: mount lookups walk the equipment list twice, override-hue inputs, steps). Pushing those changes into the ECS (the mirror's change funnel) instead of polling is the next W5 step; then `World.Update`'s mobile loop (0.05 ms at 2k mobiles) can become a system over animating mobiles.
 
 ### W6: remove the legacy walk
 - Prerequisites:

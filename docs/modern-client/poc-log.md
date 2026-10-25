@@ -1002,3 +1002,45 @@ Branch `worktree-agent-abad0cde09b845af9`, started on poc/modern-client f793e1bb
 | Unit tests | 263 pass |
 
 **Not done:** NativeAOT build and measurements; 4K; the 120-NPC crowd; lit items in the scene by shot at night (their light data is compared by the checker, and the `items` parity run is at night); multis / player houses (none on the shard); hidden items (`[area set hidden` didn't change the flags, so the hidden-hue path had no change test).
+
+## W5: first slices — active item updates, mobile frame cache, expired-text skip (2026-10-25)
+
+Branch `worktree-agent-a869a121fcf3a9548`, started on poc/modern-client 48280a416 (still current at the final measurements). JIT Release, 1920×1080, kbatman3. **Another agent's client (kbatman2) ran during the measurements**, so base-vs-new sessions were noisy; the in-session off/on pairs (`w5:off|on`) are the numbers to trust. Procedure: [testing/world-update.md](testing/world-update.md). Scripts and logs: session scratchpad `w5\`.
+
+**Profiled first** (EventPipe thread-time samples, scratchpad `w5tools\cpu`): of the 0.6 ms of mobile selection plus extract in the scene, selection was 43% (the seat lookup `TryGetSittingInfo` alone 15%), the extract 36% and the lookups 20%. The item loop is a dictionary walk in which `Item.Update` is a no-op for almost every item.
+
+**Slices** (each behind a setting, default on; `w5:off` turns all three off):
+1. `world_update_active_items` (073a27b81): per-frame item updates only for corpses and items whose handles just opened (listed through the ECS sync funnel and the handles code), the range removal and a safety sweep every 50 ms, destroyed items leave `Items` via `Entity.Destroy`; the hits percentage is computed in the `Hits`/`HitsMax` setters.
+2. `gpu_mobile_frame_cache` (1f5e41261): `MobileFrameCache` reuses selection and instances while the sampled inputs, the equipment version (now a shared counter), the seat tile (`Chunk.ContentVersion`), alpha and hues are unchanged. Instances are stored relative to the draw origin with their depth recipe. Not reused with steps queued or after a random action roll.
+3. `text_skip_expired` plus small items (8f28491f3): no text layout for entities whose texts all expired; `WMapManager.AcceptsLocalUpdates` once per frame; `FindNext` without LINQ. Plan/driver switches: a00b7c41d.
+
+**In-session off → on** (scene, Gpu, ms per frame, 2 pairs each):
+
+| Spot | frame | update | item loop | world prepare | mobile select+extract | text |
+|---|---|---|---|---|---|---|
+| Scene, zoom 1 | 2.87, 2.89 → 2.20, 2.12 | 0.45, 0.46 → 0.17, 0.19 | 0.29, 0.28 → 0.017, 0.015 | 1.66, 1.66 → 1.25, 1.17 | 0.71, 0.72 → 0.37, 0.35 | 0.18 → 0.045, 0.042 |
+| Scene, zoom 2.5 | 3.83, 4.07 → 2.98, 3.06 | 0.50, 0.57 → 0.23, 0.24 | 0.30, 0.33 → 0.022, 0.024 | 2.35, 2.48 → 1.80, 1.80 | 1.01, 1.05 → 0.54, 0.54 | 0.21, 0.24 → 0.05 |
+| Scene, walking | 3.59, 3.57 → 2.54, 2.90 | 0.60, 0.59 → 0.23, 0.30 | 0.31, 0.29 → 0.02 | 1.79, 1.86 → 1.27, 1.48 | 0.71, 0.78 → 0.38, 0.47 | 0.19, 0.21 → 0.07, 0.09 |
+| 120-NPC crowd (~100 in view, fighting) | noisy | 0.042, 0.046 → 0.040, 0.032 | 0.015, 0.017 → 0.006, 0.001 | 0.075, 0.072 → 0.066, 0.054 | 0.040, 0.036 → 0.031, 0.023 | 0.007 → 0.003, 0.002 |
+
+- **Base vs new sessions** (2 alternated rounds, noisy): scene zoom 1 world prepare 2.60, 2.31 → 1.62, 1.28; Britain 0.098, 0.074 → 0.065, 0.071; bank 0.082, 0.071 → 0.089, 0.098 (noise; item loop 0.037 → 0.003); Britain zoom 2.5 0.31, 0.23 → 0.32, 0.21. Allocation per frame unchanged (216–350 B standing, walking 6–15 KB both). Peak private bytes 1.97–1.99 GB base, 2.01–2.04 GB new (run-to-run spread; the caches hold about 60 KB at 2k mobiles).
+
+**Verification** (new build, `CUO_ECS_PARITY=1 CUO_ANIM_SYNC=1 CUO_GPU_ITEM_CHECK=1 CUO_W5_CHECK=1 CUO_MOBILE_CACHE_CHECK=1`):
+
+| Run | Parity | W5 checks |
+|---|---|---|
+| bank | 45k mobile, 18k item comparisons, 0 mismatches | 0 unlisted, 0 hits wrong, 0 destroyed left; 17k cached selections and emissions checked, 0 different |
+| items (night, lights) | 74k / 47k, 0 | 0 / 0 / 0; 63k checked, 0 different |
+| corpses | 256k mobile, 613k item (405k corpse, 57k multi), 0 | 405k corpse updates seen, 0 unlisted; 227k checked, 0 different |
+| 120-NPC crowd | 7.5M mobile, 2.0M item (986k corpse), 0 | 1.24M corpse updates, 9.9M hits checks, 0 wrong; 7.1M checked, 0 different; 10.4M skipped text layouts, 0 would have moved a text |
+| w5items (hits, handles, pack hue changes, corpses) | 0 | Hits 7/100 → 8% and 20/100 shown; 7 name gumps for handles; the bandage's hue in the backpack 0 → 0x21 → 0x59 |
+| scene, `ls_parity`, earlier build of the same code | 12.9M mobile, 0 | 11.7M cached selections and 11.6M replays checked, 0 different |
+
+| scene `ls_parity` (final build) | 8.3M mobile, 10.5M item, 0; item check 0 | 7.0M cached selections and 6.9M replays checked, 0 different; 16.3M skipped text layouts, 0 would have moved a text |
+| mixed, cases (equipment changes, sitting, gargoyle, death, hidden) | 981k and 121k, 0 | 1.04M cache reuses checked, 0 different; 0 unlisted, 0 hits wrong |
+| `tr:travel;bo:bodies;wk:walk` | 1.18M / 967k, 0 | 1.1M reuses checked, 0 different; settle: 9 episodes, 0 timeouts, legacy frames 0 |
+
+- **Picking:** `CUO_BENCH_PICK` base vs new: the same objects in both renderers (clicks 0x400200B4 and the player). `pickscan:8x6` new build: Britain, bank, scene zoom 2.5: 0 different; scene zoom 1: 4 different (animating creatures, as with the base build).
+- **Shots base vs new** (Gpu, Legacy, UI) at Britain, bank, zoom 2.5, the scene and its zoom-out: differences only on moving bank NPCs, the scene's flapping dragons and mongbats and other animating creatures, and the journal text. Looked at.
+- **Unit tests:** 277 pass (new: `WorldUpdateActiveItemsTests`, `MobileFrameCacheTests`).
+- **Not done:** NativeAOT; 4K; a base-vs-new series on a quiet machine; the next W5 step (push Sample's inputs into the ECS, see the plan).
