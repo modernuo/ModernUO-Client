@@ -1036,4 +1036,11 @@ Branch `worktree-agent-a869a121fcf3a9548`, started on poc/modern-client 48280a41
 | w5items (hits, handles, pack hue changes, corpses) | 0 | Hits 7/100 → 8% and 20/100 shown; 7 name gumps for handles; the bandage's hue in the backpack 0 → 0x21 → 0x59 |
 | scene, `ls_parity`, earlier build of the same code | 12.9M mobile, 0 | 11.7M cached selections and 11.6M replays checked, 0 different |
 
-See the handoff in the scratchpad (`w5\handoff.md`) for the runs that were still pending when this entry was written (final scene parity, travel+bodies, mixed, cases, picking, shots).
+| scene `ls_parity` (final build) | 8.3M mobile, 10.5M item, 0; item check 0 | 7.0M cached selections and 6.9M replays checked, 0 different; 16.3M skipped text layouts, 0 would have moved a text |
+| mixed, cases (equipment changes, sitting, gargoyle, death, hidden) | 981k and 121k, 0 | 1.04M cache reuses checked, 0 different; 0 unlisted, 0 hits wrong |
+| `tr:travel;bo:bodies;wk:walk` | 1.18M / 967k, 0 | 1.1M reuses checked, 0 different; settle: 9 episodes, 0 timeouts, legacy frames 0 |
+
+- **Picking:** `CUO_BENCH_PICK` base vs new: the same objects in both renderers (clicks 0x400200B4 and the player). `pickscan:8x6` new build: Britain, bank, scene zoom 2.5: 0 different; scene zoom 1: 4 different (animating creatures, as with the base build).
+- **Shots base vs new** (Gpu, Legacy, UI) at Britain, bank, zoom 2.5, the scene and its zoom-out: differences only on moving bank NPCs, the scene's flapping dragons and mongbats and other animating creatures, and the journal text. Looked at.
+- **Unit tests:** 277 pass (new: `WorldUpdateActiveItemsTests`, `MobileFrameCacheTests`).
+- **Not done:** NativeAOT; 4K; a base-vs-new series on a quiet machine; the next W5 step (push Sample's inputs into the ECS, see the plan).
