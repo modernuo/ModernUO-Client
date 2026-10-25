@@ -6,6 +6,16 @@ Drafted 2026-10-24, while the device-lost investigation was still running. The p
 
 Revisit if the root cause turns out to be a pure SDL bug (case 1). Owning the device is still the better design then, but we would also need an SDL fix or workaround.
 
+> **Status (owner decision, 2026-10-24): Tiers 1–4 are deferred.**
+> - **Evidence:** it points mainly at SDL (case 1: leak after device loss, plus a suspected defragmenter page fault). The fix goes into our SDL fork (github.com/modernuo/SDL).
+> - **Performance case:** weak. Owning the device saves about 0.2–0.25 ms per frame at 1080p and 0.5–0.6 ms at 4K, all fixed costs. FNA's draw work doesn't grow with entity count, because Uo.Render draws the world; busy scenes are dominated by world prepare, per-mobile view logic and the update loops (the ECS plan).
+> - **Active:** Tier 0 and the batcher/UI items (B1–B9, all doable on FNA, including instancing).
+> - **Revisit Tiers 1–4 if any of these happens:**
+>   - FNA3D's assumptions prove to be part of the crash;
+>   - the large-scale test (about 2,000 mobiles and 20,000 ground items, with W0 sub-phase timings) shows the FNA path is significant;
+>   - the browser target becomes real.
+> - **Shader tooling isn't a reason to migrate:** the world renderer already uses modern HLSL with DXC. Only FNA's two UI shaders go through MojoShader.
+
 ## Why
 
 - **The fault:** an Aftermath dump (2026-10-24 21:36, `Error_DMA_PageFault`) shows FNA's end-of-frame command buffer (`GameController.EndDraw` → `Present` → FNA3D → SDL) doing a ROP write into memory that 17 ms earlier became Uo.Render's 256 MiB art page array.
