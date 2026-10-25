@@ -29,6 +29,17 @@ Supporting material in this branch:
 
 ## Decisions so far (from the project owner)
 
+- **SIMD where it measurably helps (2026-10-24):**
+  - Use the cross-platform `Vector128`/`Vector256` APIs, not x86-only intrinsics, so the same code runs on ARM NEON and WASM SIMD128.
+  - Always keep a scalar fallback, with a test proving identical output (the `PixelExpand` pattern).
+  - Keep SIMD only when a benchmark shows a real gain.
+  - **Where it fits best:**
+    - ECS packed-array loops: visibility, screen position, animation timers;
+    - writing 32-byte GPU instances: one 256-bit store each;
+    - pixel-row scans: Indexed8 → picking masks, sprite bounds;
+    - pixel expansion.
+  - **Prefer moving less data over vectorising wide data:** the compact 32-byte UI instance (batcher item B6) before SIMD on the 192-byte vertex path.
+  - NativeAOT targets x86-64-v3 (AVX2), so `Vector256` runs at full speed.
 - **Protocol:** our own lean, delta-based protocol. No full-state mirroring. ModernUO will be changed to match.
 - **Prediction / rollback:** wanted where possible (client-side movement prediction at minimum), without giving up ModernUO-style low GC churn.
 - **Rendering scope:** 2.5D with existing assets: dynamic lights, normal maps, shadows, zoom, HiDPI, particles. No camera rotation (a locked-camera 3D engine with new assets is out of scope).
