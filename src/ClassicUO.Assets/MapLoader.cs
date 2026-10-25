@@ -3,6 +3,7 @@
 using ClassicUO.IO;
 using ClassicUO.Utility.Logging;
 using System;
+using System.Buffers;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
@@ -144,6 +145,53 @@ namespace ClassicUO.Assets
             return region != null && region.TryGetBlock(blockX % side, blockY % side, out block);
         }
 
+        /// <summary>
+        /// The land z of cell (x, y), or -125 when the cell has no map block (as Map.GetTileZ). The last block looked up
+        /// is remembered, so the stretch calculation's 13 neighbour lookups per land cell mostly skip the lock and the
+        /// region lookup. Main thread only (the cache is not synchronised).
+        /// </summary>
+        public sbyte GetLandZ(int map, int x, int y)
+        {
+            if (x < 0 || y < 0)
+            {
+                return -125;
+            }
+
+            int bx = x >> 3, by = y >> 3;
+            var c = _zCache;
+
+            if (c == null || c.Map != map || c.BlockX != bx || c.BlockY != by || (c.Region != null && !c.Region.Live))
+            {
+                c = new LandZCache { Map = map, BlockX = bx, BlockY = by };
+
+                if (HasMap(map) && (uint)bx < (uint)_facets[map].BlocksX && (uint)by < (uint)_facets[map].BlocksY)
+                {
+                    var facet = _facets[map];
+                    int side = facet.RegionBlocks;
+
+                    lock (_sync)
+                    {
+                        c.Region = GetRegion(facet, bx / side, by / side);
+                    }
+
+                    c.Offset = c.Region.BlockOffset(bx % side, by % side);
+                }
+
+                _zCache = c;
+            }
+
+            return c.Offset == 0 ? (sbyte)-125 : c.Region.LandZ(c.Offset, ((y & 7) << 3) + (x & 7));
+        }
+
+        private sealed class LandZCache
+        {
+            public int Map, BlockX, BlockY;
+            public RegionData Region;
+            public int Offset; // 0 = no block
+        }
+
+        private LandZCache _zCache;
+
         /// <summary>Reads one region without caching it, for bulk readers such as the world map.</summary>
         public RegionData ReadRegion(int map, int rx, int ry)
         {
@@ -178,8 +226,14 @@ namespace ClassicUO.Assets
         {
             lock (_sync)
             {
+                foreach (var region in _lru)
+                {
+                    region.Live = false;
+                }
+
                 _regions.Clear();
                 _lru.Clear();
+                _zCache = null;
             }
         }
 
@@ -201,12 +255,44 @@ namespace ClassicUO.Assets
 
             if (_lru.Count > CACHED_REGIONS)
             {
+                // the evicted region's buffer goes back to the pool for the next load (the cache and TryGetBlock's
+                // callers are main-thread; a block span never outlives 24 further region loads)
                 var last = _lru.Last;
                 _lru.RemoveLast();
                 _regions.Remove(last.Value.Key);
+                last.Value.Live = false;
+                ReturnBuffer(last.Value.Release());
             }
 
             return region;
+        }
+
+        // logical region buffers (about 1.2 MB each) reused across loads
+        private readonly Stack<byte[]> _freeBuffers = new Stack<byte[]>();
+        private const int MaxFreeBuffers = 4;
+
+        private byte[] RentBuffer()
+        {
+            lock (_freeBuffers)
+            {
+                return _freeBuffers.Count > 0 ? _freeBuffers.Pop() : null;
+            }
+        }
+
+        private void ReturnBuffer(byte[] buffer)
+        {
+            if (buffer == null)
+            {
+                return;
+            }
+
+            lock (_freeBuffers)
+            {
+                if (_freeBuffers.Count < MaxFreeBuffers)
+                {
+                    _freeBuffers.Push(buffer);
+                }
+            }
         }
 
         private RegionData LoadRegion(FacetInfo facet, int rx, int ry)
@@ -216,21 +302,41 @@ namespace ClassicUO.Assets
 
             if (!File.Exists(path))
             {
-                return new RegionData(key, null);
+                return new RegionData(key, null, 0);
             }
 
-            return new RegionData(key, RegionFile.Decompress(File.ReadAllBytes(path)));
+            // the compressed file goes into a pooled buffer and decodes straight into a pooled logical buffer: no
+            // File.ReadAllBytes, MemoryStream or ToArray copies (those were about 3.9 MB of garbage per region)
+            using var fh = File.OpenHandle(path);
+            int size = (int)RandomAccess.GetLength(fh);
+            var file = ArrayPool<byte>.Shared.Rent(size);
+
+            try
+            {
+                RandomAccess.Read(fh, file.AsSpan(0, size), 0);
+                var logical = RentBuffer();
+                int length = RegionFile.DecompressInto(file.AsSpan(0, size), ref logical);
+
+                return new RegionData(key, logical, length);
+            }
+            finally
+            {
+                ArrayPool<byte>.Shared.Return(file);
+            }
         }
 
         public sealed class RegionData
         {
-            private readonly byte[] _logical;
+            private byte[] _logical;
+            private readonly int _length;
             private readonly RegionHeader _header;
 
-            internal RegionData(long key, byte[] logical)
+            internal RegionData(long key, byte[] logical, int length)
             {
                 Key = key;
                 _logical = logical;
+                _length = length;
+                Live = true;
 
                 if (logical != null)
                 {
@@ -240,26 +346,45 @@ namespace ClassicUO.Assets
 
             internal long Key { get; }
 
+            /// <summary>False once evicted from the cache (its buffer may then hold another region).</summary>
+            internal bool Live { get; set; }
+
             public int BlocksW => _header.BlocksW;
             public int BlocksH => _header.BlocksH;
+
+            internal byte[] Release()
+            {
+                var buffer = _logical;
+                _logical = null;
+
+                return buffer;
+            }
+
+            /// <summary>Byte offset of block (x, y) in the logical file, 0 when the block is empty or outside the region.</summary>
+            internal int BlockOffset(int x, int y)
+            {
+                if (_logical == null || (uint)x >= _header.BlocksW || (uint)y >= _header.BlocksH)
+                {
+                    return 0;
+                }
+
+                return (int)MemoryMarshal.Read<uint>(_logical.AsSpan(BlockTableOffset + (y * _header.BlocksW + x) * 4));
+            }
+
+            /// <summary>Land z of cell <paramref name="cell"/> (y * 8 + x) of the block at <paramref name="offset"/>.</summary>
+            internal sbyte LandZ(int offset, int cell) => (sbyte)_logical[offset + cell * 4 + 2];
 
             public bool TryGetBlock(int x, int y, out MapBlockData block)
             {
                 block = default;
+                int offset = BlockOffset(x, y);
 
-                if (_logical == null || (uint)x >= _header.BlocksW || (uint)y >= _header.BlocksH)
+                if (offset == 0 || offset >= _length)
                 {
                     return false;
                 }
 
-                uint offset = MemoryMarshal.Read<uint>(_logical.AsSpan(BlockTableOffset + (y * _header.BlocksW + x) * 4));
-
-                if (offset == 0)
-                {
-                    return false;
-                }
-
-                var span = _logical.AsSpan((int)offset);
+                var span = _logical.AsSpan(offset, _length - offset);
                 var land = MemoryMarshal.Cast<byte, LandCell>(span.Slice(0, PackConst.CellsPerBlock * 4));
                 int statics = MemoryMarshal.Read<ushort>(span.Slice(PackConst.CellsPerBlock * 4));
                 var cells = MemoryMarshal.Cast<byte, StaticCell>(span.Slice(PackConst.CellsPerBlock * 4 + 4, statics * 8));
