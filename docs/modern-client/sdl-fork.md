@@ -16,7 +16,7 @@ The client ships an SDL3.dll built from our fork of SDL, not an upstream release
 | Branch | Base | Contents |
 |---|---|---|
 | `modernuo/3.4.18-patched` | the upstream release tag `release-3.4.18` (829a65d76) | **Exactly the tag plus our patches** (today: 1 commit ahead of the tag). `external/SDL` is pinned here |
-| `modernuo/3.4.19` | `release-3.4.x` at c17029909, an unreleased development snapshot after 3.4.18 (SDL uses odd micro numbers for development) | **Superseded** (owner, 2026-10-25): the name looked like an SDL release that doesn't exist, and GitHub showed it 829 commits ahead of `main` because the release branch's back-ported commits count. Kept until the 3.4.18 switch is verified |
+| tag `archive/modernuo-3.4.19` (b2a3160aa) | `release-3.4.x` at c17029909, a development snapshot after 3.4.18 | The former `modernuo/3.4.19` branch, **deleted 2026-10-25** (owner): its name looked like an SDL release that doesn't exist. The tag keeps the commit reachable, because `poc/modern-client` commits 08b952f3a..072ae4d88 point `external/SDL` at it |
 | `diag/defrag` | the same c17029909 | Diagnostic only: allocator variants behind `CUO_SDL_VARIANT` (`dedicated`, `refguard`, `nodefrag`) and logging of every defrag move (`SDL diag: defrag …`). Never ship it |
 
 The fork's `main` is untouched.
