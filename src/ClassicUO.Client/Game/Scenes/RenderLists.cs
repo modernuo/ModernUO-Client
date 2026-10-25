@@ -367,12 +367,48 @@ namespace ClassicUO.Game.Scenes
             return result;
         }
 
-        /// <summary>GPU world: items, multis, mobiles and corpses go to the world pass through their views (land and statics are baked).</summary>
-        public int CaptureRenderLists(UltimaBatcher2D batcher, sbyte maxGroundZ, GpuWorldRenderer gpu)
+        /// <summary>Statics queued so far: where the Gpu prepare's cached ground items (GameSceneGpuItemCache) go in capture order.</summary>
+        public int StaticsCount => _statics.Count;
+
+        /// <summary>CUO_GPU_ITEM_CHECK: a hash of what the walk queued, in order, leaving out <paramref name="skip"/>'s objects.</summary>
+        internal ulong DebugHash(Func<GameObject, bool> skip)
         {
-            return CaptureRenderList(batcher, _statics, maxGroundZ, gpu) +
-                   CaptureRenderList(batcher, _animations, maxGroundZ, gpu) +
-                   CaptureRenderList(batcher, _transparentObjects, maxGroundZ, gpu);
+            ulong h = 1469598103934665603UL;
+
+            void Mix(List<GameObject> list, ulong salt)
+            {
+                h = (h ^ salt) * 1099511628211UL;
+
+                foreach (var obj in list)
+                {
+                    if (!skip(obj))
+                    {
+                        h = (h ^ (ulong)System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(obj) ^ (ulong)obj.AlphaHue << 32 ^
+                             (obj.AllowedToDraw ? 1UL << 40 : 0)) * 1099511628211UL;
+                    }
+                }
+            }
+
+            Mix(_statics, 1);
+            Mix(_animations, 2);
+            Mix(_effects, 3);
+            Mix(_transparentObjects, 4);
+
+            return h;
+        }
+
+        /// <summary>The statics-list index being captured (-1 outside that list): CUO_GPU_ITEM_CHECK's insertion check.</summary>
+        internal static int CaptureStaticsIndex = -1;
+
+        /// <summary>GPU world: items, multis, mobiles and corpses go to the world pass through their views (land and statics are baked).
+        /// <paramref name="cached"/>: the scene whose cached ground items join the statics list's capture.</summary>
+        public int CaptureRenderLists(UltimaBatcher2D batcher, sbyte maxGroundZ, GpuWorldRenderer gpu, GameScene cached = null)
+        {
+            int done = CaptureRenderList(batcher, _statics, maxGroundZ, gpu, cached, true);
+            CaptureStaticsIndex = -1;
+
+            return done + CaptureRenderList(batcher, _animations, maxGroundZ, gpu, null, false) +
+                   CaptureRenderList(batcher, _transparentObjects, maxGroundZ, gpu, null, false);
         }
 
         /// <summary>GPU world: effects (into the world pass when it can reproduce their blend, else FNA over it) and what FNA
@@ -408,7 +444,7 @@ namespace ClassicUO.Game.Scenes
             return result;
         }
 
-        private static int CaptureRenderList(UltimaBatcher2D batcher, List<GameObject> renderList, sbyte maxGroundZ, GpuWorldRenderer gpu)
+        private static int CaptureRenderList(UltimaBatcher2D batcher, List<GameObject> renderList, sbyte maxGroundZ, GpuWorldRenderer gpu, GameScene cached, bool statics)
         {
             int done = 0;
             // FrameStats: time runs of one object kind (a clock read per object cost about 0.5 ms per frame with 20,000
@@ -416,12 +452,35 @@ namespace ClassicUO.Game.Scenes
             bool stats = FrameStats.On;
             FramePhase runPhase = FramePhase.PrepCaptureOther;
             long stamp = FrameStats.Stamp();
+            // cached ground items (GameSceneGpuItemCache) go where the walk would have queued them
+            int nextCached = cached?.GpuItemNextInsert ?? int.MaxValue;
+            int count = renderList.Count;
 
-            foreach (var obj in renderList)
+            for (int i = 0; i <= count; i++)
             {
+                if (i >= nextCached)
+                {
+                    stamp = FrameStats.AddSince(runPhase, stamp);
+                    done += cached.EmitGpuItemRuns(gpu, i);
+                    stamp = FrameStats.AddSince(FramePhase.PrepCaptureCached, stamp);
+                    nextCached = cached.GpuItemNextInsert;
+                }
+
+                if (i == count)
+                {
+                    break;
+                }
+
+                var obj = renderList[i];
+
                 if (obj is Land || obj is Static || obj.Z > maxGroundZ)
                 {
                     continue;
+                }
+
+                if (statics)
+                {
+                    CaptureStaticsIndex = i;
                 }
 
                 if (stats)
