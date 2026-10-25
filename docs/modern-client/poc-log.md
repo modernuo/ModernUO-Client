@@ -597,3 +597,54 @@ Items from perf-opportunities.md "ClassicUO pack-loading path" and two "Uo.Rende
 - **Teleports still cost one 25–40 ms frame:** about 75 `Chunk.Load` calls (5–14 ms), a region decode (3–9 ms) and the server's packet burst, in the same frame. A diagnostic build confirmed this split. Next steps are listed in perf-opportunities.md.
 - **kbatman4 has staff access** (`[go` worked).
 - **Checks:** client Release build; 199 unit tests (11 new pack-path parity tests); `CUO_BENCH_PICK=1` gave the same selections and pixel-pick results before and after in both renderers; Uo.Render.App `--external-test` on Vulkan passes.
+
+## Teleport frame: region prefetch and incremental chunk loads (2026-10-25)
+
+Branch `worktree-agent-acd66bd79c6a500ba`, from poc/modern-client 7f25fa29d. Follows "Pack-loading hitches and waste": each teleport still cost one 25–40 ms frame. Method: [testing/pack-loading.md](testing/pack-loading.md) §3 and §4.
+
+**Changes.**
+- **MapLoader decodes regions on the thread pool** (`PrefetchRegion`, `PrefetchAround`, `IsBlockReady`, `TryGetLandZ`).
+  - A lookup adopts a finished prefetch. If the prefetch is still decoding, the lookup waits for the rest of it instead of decoding again.
+  - The cache and its pooled buffers are only changed under `_sync`, by lookups.
+  - Prefetch triggers: the 0x1B and 0x20 handlers, and every frame for the regions within 104 tiles of the player (glide and walk).
+- **Chunks load incrementally** (`Map.UpdateLoading`, called from `World.Update`; `ChunkLoadQueue`):
+  - Order: nearest the player first. The player's own chunk loads as soon as its regions are decoded.
+  - Budget: 2 ms per frame (`CUO_CHUNK_BUDGET_MS`), covering the load and the mesh build, with at least one chunk per frame. Nothing waits for a decode.
+  - The draw walk uses `GetChunkForDraw`, a one-line hook in GameScene.cs.
+  - `GameObject.AddToTile` parks objects whose chunk is not loaded (`Map.Park`). They join their tile when the chunk loads.
+- **Rule for game logic:** `GetChunk`/`GetTile` with load = true, `GetMapZ` and `GetTileZ` still load synchronously. `Pathfinder` now loads chunks within the view range on demand; before, the draw walk had already loaded everything on screen.
+- `CUO_CHUNK_SYNC=1` restores the old path.
+- **FrameStats** has map-loading counters. **DevBench** has the `bwalk` entry, and `LocalTeleport` no longer waits for a decode.
+
+**Travel and first-sight test**, Update+Draw only, summed over four 5 s windows per entry, base and new alternated (baseA, newA, baseB, newB).
+- Both builds carry the uncommitted Tier 0 login mitigations A and C.
+- Other clients on the GPU: none for baseA, newA and newB; one for baseB.
+- Allocation is per frame, averaged over the entry's windows.
+
+| Entry | Base max (ms) | Base >8 / >16 | Base alloc | New max (ms) | New >8 / >16 | New alloc |
+|---|---|---|---|---|---|---|
+| `travel` (`[go`, 7 towns) | 36.5–39.6 | 8–31 / 4–14 | 8.6–11.3 KB | 10.4–13.7 | 3 / 0 | 6.1–6.4 KB |
+| `ltravel` (client-only teleports) | 7.9–42.3 | 0–22 / 0–10 | 2.1–3.4 KB | 5.5–13.0 | 0–1 / 0 | 2.3–2.7 KB |
+| `glide` (25 tiles/s) | 11.0–11.8 | 1 / 0 | 1.7–2.6 KB | 10.3–10.5 | 1 / 0 | 1.9–2.2 KB |
+| `bodies` (390 new bodies) | 3.9–29.9 | 0–9 / 0–7 | 2.6–2.9 KB | 5.0–5.5 | 0 / 0 | 3.6–4.4 KB |
+
+- **Base teleport frames:** the worst is `world_prepare` 24–25 ms, which is chunk loads plus mesh builds in the draw walk.
+- **New teleport frames:**
+  - Chunk work is spread over frames: up to 81 chunks queued, `region_wait_us` 0 and no region decoded on the main thread.
+  - The worst frames are the server's packet burst (`packets` 8.0 ms) and UI or GPU noise (`ui_draw` 13 ms in one window).
+  - Map-loading frames peak at 8.3 ms. One chunk with many first-sight statics can take 6–10 ms to mesh, and the at-least-one rule lets it through. That is also glide's 10.3 ms frame, about the same as base.
+- **Target not fully met.** Teleport frames are under 8 ms Update+Draw except for those two causes. perf-opportunities.md lists the next step: worker art decode before the mesh build.
+- **Spikes seen in single windows of both builds:**
+  - base `ltravel` 42 ms (`composite`) and base `bodies` 30 ms (`prep_walk`);
+  - new `ltravel` 13 ms (`prep_cap_mobile`);
+  - earlier new runs, without mitigations: `bodies` 28–34 ms (`update_other`).
+  None of them involve chunk or region loading.
+- Base allocation in `bodies` is 2.6–2.9 KB per frame against 3.6–4.4 KB for new, inside the run-to-run noise of earlier runs (1.6–8 KB). The region buffer pool and pooled chunk buffers are unchanged.
+
+**Checks.**
+- Client Release build: 0 errors.
+- Unit tests: 240 pass, including 7 new in `ChunkLoadingTests`: queue order, budget, stale and sticky requests, no allocation, prefetch parity, land z across 40 regions.
+- `bwalk` after a real teleport crossed the y 1536 region edge and the 40 → 30 slope with 0 server walk denials, and the client z equalled the land z at each leg end.
+- The world screenshot after the walk matches `CUO_CHUNK_SYNC=1`.
+- **Not run:** `CUO_BENCH_PICK=1`. The chunk lookup that picking uses is unchanged, but nobody has checked picking.
+- **GPU faults:** 3 of the first 8 runs (without mitigations) hit the Tier 0 login page fault, one of them on the base build. None in the 6 runs with mitigations.
