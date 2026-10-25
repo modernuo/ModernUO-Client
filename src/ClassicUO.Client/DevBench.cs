@@ -778,7 +778,10 @@ namespace ClassicUO
                     game.RestoreWindow();
                 }
 
-                if (game.Window.ClientBounds.Width != pw || game.Window.ClientBounds.Height != ph)
+                // after a restore from maximised the window is already back at its old size, but the backbuffer
+                // keeps the maximised size until it is set again
+                if (game.Window.ClientBounds.Width != pw || game.Window.ClientBounds.Height != ph ||
+                    game.GraphicManager.PreferredBackBufferWidth != pw || game.GraphicManager.PreferredBackBufferHeight != ph)
                 {
                     game.SetWindowSize(pw, ph);
                 }

@@ -1,12 +1,15 @@
 <#
 .SYNOPSIS
-    Legacy vs Gpu world renderer FPS test for the NativeAOT ClassicUO build. One command, about 5 minutes.
+    Legacy vs Gpu world renderer FPS test for the NativeAOT ClassicUO build. One command, about 6 minutes.
 
 .DESCRIPTION
     Logs in to the local ModernUO shard with a throwaway settings/profile folder under %TEMP% and runs the DevBench
     plan: Britain, Britain bank, zoomed out and a short walk at 1920x1080, then zoomed out in a maximised window,
-    each spot under the Legacy and then the Gpu world renderer. FrameStats is on, FPS uncapped, VSync off,
-    inactive throttling off and the window stays on top. Do not touch the mouse or keyboard while it runs.
+    then the large-scale test scene (about 2,000 mobiles and 19,500 items, Felucca 5156 2150) at 1920x1080, each spot
+    under the Legacy and then the Gpu world renderer. The scene spot needs a GameMaster+ account: it says
+    [TestScene go before and [TestScene return after, so the character ends where (and on the facet where) it
+    started. FrameStats is on, FPS uncapped, VSync off, inactive throttling off and the window stays on top. Do not
+    touch the mouse or keyboard while it runs.
 
     Writes results-<timestamp>.md to -ResultsDir and prints the same tables. The client is closed and the temp
     folder deleted at the end, also on error or Ctrl+C.
@@ -53,7 +56,10 @@ $spots = @(
     @{ Key = 'bank'; Label = 'Britain bank'; Entry = '1430 1690:1' },
     @{ Key = 'zoomout'; Label = 'Zoomed out'; Entry = '1495 1629:2.5' },
     @{ Key = 'walk'; Label = 'Walk'; Entry = 'walk:1' },
-    @{ Key = 'zoomout_large'; Label = 'Zoomed out, large window'; Entry = '1495 1629:2.5'; Large = $true }
+    @{ Key = 'zoomout_large'; Label = 'Zoomed out, large window'; Entry = '1495 1629:2.5'; Large = $true },
+    # the large-scale test scene (docs/modern-client/testing/large-scale.md), built by ModernUO's [TestScene create;
+    # [TestScene go remembers where the character was (any facet) and [TestScene return puts it back
+    @{ Key = 'scene'; Label = 'Large scene'; Entry = '5156 2150:1'; Scene = $true }
 )
 $modes = @('legacy', 'gpu')
 $modeName = @{ legacy = 'Legacy'; gpu = 'Gpu' }
@@ -62,11 +68,25 @@ $planEntries = New-Object System.Collections.Generic.List[string]
 $planEntries.Add('vsync:off')
 $runs = New-Object System.Collections.Generic.List[object]
 $largeAdded = $false
+# plan entries that are not measured spots, in seconds (DevBench waits 4 s after say:, 3 s after size:)
+$extraSeconds = 0
 
 foreach ($s in $spots) {
     if ($s.Large -and -not $largeAdded) {
         $planEntries.Add("size:$LargeSize")
         $largeAdded = $true
+        $extraSeconds += 3
+    }
+    elseif (-not $s.Large -and $largeAdded) {
+        # back to the main size after the large-window spot
+        $planEntries.Add("size:$Size")
+        $largeAdded = $false
+        $extraSeconds += 3
+    }
+
+    if ($s.Scene) {
+        $planEntries.Add('say:[TestScene go')
+        $extraSeconds += 4
     }
 
     foreach ($m in $modes) {
@@ -75,10 +95,15 @@ foreach ($s in $spots) {
         $planEntries.Add("${tag}:$($s.Entry)")
         $runs.Add(@{ Tag = $tag; Spot = $s; Mode = $m; Index = $runs.Count + 1 })
     }
+
+    if ($s.Scene) {
+        $planEntries.Add('say:[TestScene return')
+        $extraSeconds += 4
+    }
 }
 
 $total = $runs.Count
-$estimate = [int](25 + $total * (1 + 8 + 5 * $Windows + 2) + 5)
+$estimate = [int](25 + $total * (1 + 8 + 5 * $Windows + 2) + $extraSeconds + 5)
 
 # ---- pre-flight ----
 $exe = Join-Path $Bin 'cuo.exe'
@@ -207,6 +232,7 @@ try {
     $planDone = $false
     $pending = ''
     $sizeNow = ''
+    $inScene = $false
 
     for ($i = 0; $i -lt 50 -and -not (Test-Path $log); $i++) { Start-Sleep -Milliseconds 100 }
     $fs = [IO.File]::Open($log, 'Open', 'Read', 'ReadWrite, Delete')
@@ -240,11 +266,15 @@ try {
                 $r = $runs | Where-Object { $_.Tag -eq $Matches[1] } | Select-Object -First 1
                 if ($r) {
                     $r.Size = $sizeNow
+                    if ($line -match 'mobiles (\d+), items (\d+); measuring$') { $r.Mobiles = [int]$Matches[1]; $r.Items = [int]$Matches[2] }
                     Write-Host ("Spot {0}/{1}: {2}, {3} ({4}) - measuring {5} s..." -f $r.Index, $total, $r.Spot.Label, $modeName[$r.Mode], $sizeNow, (5 * $Windows))
                 }
             }
             elseif ($line -match '\[bench\] (\w+):.* done at ') {
                 Write-Host '    done'
+            }
+            elseif ($line -match '\[bench\] said \[TestScene (go|return)') {
+                $inScene = $Matches[1] -eq 'go'
             }
             elseif ($line -match '\[bench\] plan done') {
                 $planDone = $true
@@ -334,6 +364,9 @@ if ($failure) {
     Write-Host ''
     Write-Host "FAILED: $failure" -ForegroundColor Red
     Write-Host "Client log (password masked): $failLog"
+    if ($inScene) {
+        Write-Host "The character is still in the large test scene. Log in with $Username and say [TestScene return to go back." -ForegroundColor Yellow
+    }
     $lines | Select-Object -Last 15 | ForEach-Object { Write-Host "  $(Hide-Secret $_)" }
     $password = $null
     exit 1
@@ -444,6 +477,14 @@ foreach ($s in $spots) {
     if (-not $l -or -not $g) {
         $warnings.Add("$($s.Label): missing measurements (legacy $([bool]$l), gpu $([bool]$g)).")
         continue
+    }
+
+    if ($s.Scene) {
+        foreach ($r in @($rl, $rg)) {
+            if ($null -ne $r.Mobiles -and $r.Mobiles -lt 1900) {
+                $warnings.Add("$($s.Label), $($modeName[$r.Mode]): only $($r.Mobiles) mobiles and $($r.Items) items in range; the test scene is missing (ModernUO [TestScene create) or [TestScene go failed (needs GameMaster).")
+            }
+        }
     }
 
     if ($g.gpu_instances -le 0) {
