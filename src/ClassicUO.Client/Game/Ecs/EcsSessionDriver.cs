@@ -237,6 +237,35 @@ namespace ClassicUO.Game
 
                             break;
 
+                        // mobile <dx> <dy>: the mobile (not the player) nearest to that tile, within 3 tiles (e.g. [kill on an NPC)
+                        case "mobile" when args.Length > 2:
+                            int tx = player.X + int.Parse(args[1]), ty = player.Y + int.Parse(args[2]);
+                            Mobile best = null;
+                            int bestDist = 4;
+
+                            foreach (Mobile m in world.Mobiles.Values)
+                            {
+                                int d = Math.Max(Math.Abs(m.X - tx), Math.Abs(m.Y - ty));
+
+                                if (!ReferenceEquals(m, player) && !m.IsDestroyed && d < bestDist)
+                                {
+                                    best = m;
+                                    bestDist = d;
+                                }
+                            }
+
+                            if (best != null)
+                            {
+                                world.TargetManager.Target(best.Serial);
+                            }
+                            else
+                            {
+                                Log.Warn($"[ECS] driver: no mobile near {tx},{ty}");
+                                world.TargetManager.CancelTarget();
+                            }
+
+                            break;
+
                         // item <hex serial>: a known item, e.g. one in the backpack (cleanup with [remove)
                         case "item" when args.Length > 1 && world.Items.Get(Convert.ToUInt32(args[1], 16)) is { } known:
                             world.TargetManager.Target(known.Serial);

@@ -281,7 +281,7 @@ namespace ClassicUO.Game
             }
 
             bool onGround = item.Container == WorldMirror.NO_CONTAINER || item.Container == 0;
-            ParentKind kind = onGround ? ParentKind.None : SerialHelper.IsMobile(item.Container) ? ParentKind.Equipped : ParentKind.Contained;
+            ParentKind kind = onGround ? ParentKind.None : WorldMirror.IsWearerSerial(item.Container) ? ParentKind.Equipped : ParentKind.Contained;
 
             if (r.IsMobile || r.Graphic != item.Graphic || r.Hue != item.Hue || r.X != item.X || r.Y != item.Y || r.Z != item.Z ||
                 r.Facing != (byte)item.Direction || r.Flags != (byte)item.Flags || r.Amount != item.Amount || r.IsMulti != item.IsMulti ||

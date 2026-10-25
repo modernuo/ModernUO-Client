@@ -44,7 +44,7 @@ Written 2026-10-25 by the W3 agent. It covers how the ECS mobile animation path 
 - **Always set `CUO_ANIM_SYNC=1` for parity.** Otherwise the view draws nothing for a body's first-seen direction until a worker decodes it, while the extract draws it at once; those first frames show up as capture-side count mismatches.
 - **More lines in the summary:**
   - `view effects:` mirror bit, FrameInfo and lights compared per mobile;
-  - `[PARITY] items=…` for art items (instances, drawn result, light). Corpses and item multis aren't compared; they still use the capture.
+  - `[PARITY] items=…` for every world item (instances, drawn result, light), ending with `corpses=N (instances M) multis=K`. Since 2026-10-25 (integration agent) corpses and item multis come from `ItemSpriteExtract` too, so check those counters are non-zero when a scenario is meant to cover them.
   - Mismatch lines are `[PARITY] view-effect mismatch` and `[PARITY] item mismatch`.
 - **Scenarios added:** `lights.txt` (night; a torch, then the light-only graphic 0x1647, then a non-human body; about 50 s) and `items.txt` (night; a lit candle, an arrow stack, animated art, bandages; wiped at the end; about 40 s).
 - **Driver commands added:** `light <hex>|off`, `ecssprites on|off`, `window <tag>|stop` (FrameStats windows with `CUO_FRAMESTATS=1`, for in-session A/B timing), and for cleanup `equip`, `items` and `target item <hex serial>`.
@@ -71,9 +71,10 @@ Written 2026-10-25 by the W3 agent. It covers how the ECS mobile animation path 
 | `bank.txt` | Britain bank (1430 1690) | Standing among the bank NPCs, walk and run east/west | ~35 s |
 | `cases.txt` | Green Acres (5445 1153, empty) | Cloak equip (all facings), spectral body hue, gargoyle body 666 and 667, gargoyle flying and running, sitting on a spawned chair, death (ghost) and resurrection | ~100 s |
 | `mixed.txt` | Green Acres | 11 spawned NPCs (brigands, savage riders = mounted humans, horse, orc, evil mage, ninja, gargoyle, dragon), walking/running among them, hidden, worn-item hue changes, unequip/re-equip, gargoyle body, death, chair, then cleanup | ~120 s |
+| `corpses.txt` | Green Acres | Spawns 8 NPCs (brigands, savage rider, orc, horse, evil mage, ninja, gargoyle), `[kill`s each (`target mobile dx dy`), adds a HealerCamp multi, walks among the corpses, then wipes mobiles and items. Covers corpses (human with worn layers, animals, mounted), NPC death re-keys (serial \| 0x80000000) and a camp multi | ~65 s |
 | `make_crowd.py N` | Green Acres | Generates a script that spawns N mixed NPCs on a grid (120 = the crowd case), walks and runs, then wipes them | ~150 s for 120 |
 
-- **Driver commands added for this work** (EcsSessionDriver):
+- **Driver commands added for this work** (EcsSessionDriver; `target mobile <dx> <dy>` added later: the nearest non-player mobile within 3 tiles of that offset, for `[kill`):
   - `target self | ground <dx> <dy> | worn <layer>` answers the target cursor of a staff command;
   - `pick near <hex graphic>` picks a ground item within 2 tiles (then `drop equip` wears it);
   - `parity` logs the parity summary.
@@ -104,6 +105,7 @@ Written 2026-10-25 by the W3 agent. It covers how the ECS mobile animation path 
   - Per mobile at crowd scale: capture 1.5 µs, sample+select 0.23 µs, extract 0.33 µs.
   - "Sample" reads the legacy Mobile (until W5).
 - **Known false positives:**
+  - DevBench's `bodies` and `ghost:` entries swap the player's body locally. Before af894ce94 they didn't sync the mirror, so every `bodies` frame was a mismatch; with parity on, use a build that has the fix.
   - Before the fixes listed in poc-log (W3 entry), the mirror bit diverged after a death re-key and after `-ecscheck` ran selection for undrawn mobiles. If mirror mismatches (`fl` 0x10) come back, look there first.
   - Bodies whose action selection uses `RandomHelper` (LowGroupExtended with server action 5/6) can mismatch for a frame, because both sides roll separately. Not seen in these runs.
 - Unit tests for the pure rules are in `tests/ClassicUO.UnitTests/Ecs/AnimationRulesTests.cs`.

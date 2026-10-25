@@ -1,0 +1,102 @@
+wait 6
+say [go 5445 1153
+wait 3
+say [add Brigand
+wait 0.5
+target ground 3 0
+wait 0.5
+say [add Brigand
+wait 0.5
+target ground -3 0
+wait 0.5
+say [add SavageRider
+wait 0.5
+target ground 0 3
+wait 0.5
+say [add Orc
+wait 0.5
+target ground 0 -3
+wait 0.5
+say [add Horse
+wait 0.5
+target ground 3 3
+wait 0.5
+say [add EvilMage
+wait 0.5
+target ground -3 -3
+wait 0.5
+say [add Ninja
+wait 0.5
+target ground 3 -3
+wait 0.5
+say [add Gargoyle
+wait 0.5
+target ground -3 3
+wait 2
+say [kill
+wait 0.5
+target mobile 3 0
+wait 1
+say [kill
+wait 0.5
+target mobile -3 0
+wait 1
+say [kill
+wait 0.5
+target mobile 0 3
+wait 1
+say [kill
+wait 0.5
+target mobile 0 -3
+wait 1
+say [kill
+wait 0.5
+target mobile 3 3
+wait 1
+say [kill
+wait 0.5
+target mobile -3 -3
+wait 1
+say [kill
+wait 0.5
+target mobile 3 -3
+wait 1
+say [kill
+wait 0.5
+target mobile -3 3
+wait 3
+say [add HealerCamp
+wait 0.5
+target ground 8 0
+wait 3
+parity
+walk 2 3
+walk 6 3
+walk 4 3
+walk 0 3
+walk 2 6
+walk 6 6
+wait 3
+parity
+check
+walk 3 2
+walk 7 2
+walk 1 2
+walk 5 2
+wait 2
+parity
+say [wipe mobiles
+wait 1
+target ground -18 -18
+wait 1
+target ground 18 18
+wait 3
+say [wipe items
+wait 1
+target ground -18 -18
+wait 1
+target ground 18 18
+wait 3
+items
+check
+quit
