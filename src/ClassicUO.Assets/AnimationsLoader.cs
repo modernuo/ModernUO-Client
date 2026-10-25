@@ -24,7 +24,8 @@ namespace ClassicUO.Assets
         private const int MAX_CACHED_PALETTES = 8192;
 
         private readonly Dictionary<ushort, Dictionary<ushort, EquipConvData>> _equipConv = new Dictionary<ushort, Dictionary<ushort, EquipConvData>>();
-        private readonly Dictionary<uint, uint[]> _palettes = new Dictionary<uint, uint[]>();
+        private readonly LruCache<uint, uint[]> _palettes = new LruCache<uint, uint[]>(MAX_CACHED_PALETTES);
+        private uint[] _spare;
         private AnimBodyEntry[] _bodies = Array.Empty<AnimBodyEntry>();
         private AnimDirEntry[] _dirs = Array.Empty<AnimDirEntry>();
         private AnimFrameEntry[] _frames = Array.Empty<AnimFrameEntry>();
@@ -168,44 +169,83 @@ namespace ClassicUO.Assets
         public uint[] DecodeFrame(uint index)
         {
             ref readonly var frame = ref _frames[index];
+            var pixels = new uint[frame.Sprite.OrigW * frame.Sprite.OrigH];
+            DecodeFrame(index, pixels);
+
+            return pixels;
+        }
+
+        /// <summary>
+        /// Decodes frame <paramref name="index"/> into <paramref name="pixels"/> (at least OrigW x OrigH). Thread-safe:
+        /// animation directions decode on worker threads.
+        /// </summary>
+        public void DecodeFrame(uint index, Span<uint> pixels)
+        {
+            ref readonly var frame = ref _frames[index];
 
             if (!frame.Sprite.Present)
             {
-                return new uint[frame.Sprite.OrigW * frame.Sprite.OrigH];
+                pixels.Slice(0, frame.Sprite.OrigW * frame.Sprite.OrigH).Clear();
+
+                return;
             }
 
-            return PackSprites.DecodeIndexed(FileManager.Pack.Anim, in frame.Sprite, GetPalette(_framePalette[index]));
-        }
+            // an evicted palette array is reused, so copy it under the lock and decode (maybe a chunk decompress) outside it
+            Span<uint> palette = stackalloc uint[AnimPaletteFile.Entries];
 
-        private uint[] GetPalette(uint id)
-        {
             lock (_palettes)
             {
-                if (_palettes.TryGetValue(id, out var palette))
-                {
-                    return palette;
-                }
+                GetPaletteLocked(_framePalette[index]).CopyTo(palette);
+            }
 
-                if (id >= (uint)_paletteCount)
-                {
-                    throw new InvalidDataException($"anim palette {id} out of range");
-                }
+            PackSprites.DecodeIndexed(FileManager.Pack.Anim, in frame.Sprite, palette, pixels);
+        }
 
-                Span<ushort> raw = stackalloc ushort[AnimPaletteFile.Entries];
-                RandomAccess.Read(_paletteFile, MemoryMarshal.AsBytes(raw), _paletteDataOffset + (long)id * AnimPaletteFile.Entries * 2);
-                palette = new uint[AnimPaletteFile.Entries];
-                PixelExpand.Expand(raw, palette);
-                palette[0] = 0;
+        /// <summary>True when decoding frame <paramref name="index"/> needs no chunk decompress (its texels are cached, or it has none).</summary>
+        public bool IsFrameResident(uint index)
+        {
+            ref readonly var s = ref _frames[index].Sprite;
 
-                if (_palettes.Count >= MAX_CACHED_PALETTES)
-                {
-                    _palettes.Clear();
-                }
+            return !s.Present || s.W == 0 || s.H == 0 || FileManager.Pack.Anim.IsResident(s.Page, s.X, s.Y, s.W, s.H);
+        }
 
-                _palettes[id] = palette;
+        /// <summary>Decompresses the chunks under frame <paramref name="index"/> into the cache (thread-safe).</summary>
+        public void PrefetchFrame(uint index)
+        {
+            ref readonly var s = ref _frames[index].Sprite;
 
+            if (s.Present && s.W != 0 && s.H != 0)
+            {
+                FileManager.Pack.Anim.Touch(s.Page, s.X, s.Y, s.W, s.H);
+            }
+        }
+
+        private uint[] GetPaletteLocked(uint id)
+        {
+            if (_palettes.TryGet(id, out var palette))
+            {
                 return palette;
             }
+
+            if (id >= (uint)_paletteCount)
+            {
+                throw new InvalidDataException($"anim palette {id} out of range");
+            }
+
+            Span<ushort> raw = stackalloc ushort[AnimPaletteFile.Entries];
+            RandomAccess.Read(_paletteFile, MemoryMarshal.AsBytes(raw), _paletteDataOffset + (long)id * AnimPaletteFile.Entries * 2);
+            palette = _spare ?? new uint[AnimPaletteFile.Entries];
+            _spare = null;
+            PixelExpand.Expand(raw, palette);
+            palette[0] = 0;
+
+            // least recently used palette out (it used to clear all 8,192 at once); its array is reused for the next miss
+            if (_palettes.Add(id, palette, out var evicted))
+            {
+                _spare = evicted;
+            }
+
+            return palette;
         }
 
         public override void ClearResources()

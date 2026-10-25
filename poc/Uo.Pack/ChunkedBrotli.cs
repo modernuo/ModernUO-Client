@@ -231,6 +231,13 @@ public sealed unsafe class ChunkedBrotliDecoder : IDisposable
     {
         ChunkedHeader h = default;
         RandomAccess.Read(fh, MemoryMarshal.AsBytes(new Span<ChunkedHeader>(ref h)), bodyOffset);
+        return Decode(fh, bodyOffset, h, dest, skip, prefix);
+    }
+
+    /// <summary>As <see cref="Decode(SafeFileHandle, long, Span{byte}, long, Span{byte})"/> with the body's ChunkedHeader already read by the caller.</summary>
+    public ChunkedHeader Decode(SafeFileHandle fh, long bodyOffset, in ChunkedHeader header, Span<byte> dest, long skip = 0, Span<byte> prefix = default)
+    {
+        var h = header;
         if ((long)h.LogicalBytes - skip > dest.Length) throw new ArgumentException("destination too small");
         int count = (int)h.ChunkCount;
         if (_sizes.Length < count) { _sizes = new uint[count]; _offs = new long[count]; }

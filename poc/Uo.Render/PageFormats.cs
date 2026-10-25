@@ -68,10 +68,6 @@ public static class PageFormats
         _ => 0u,
     };
 
-    /// <summary>Reads only the page header (Kind 0, 1 or 2; compressed pages decode just their first bytes or chunk).</summary>
-    public static PageHeader ReadHeader(string path)
-    {
-        using var s = AtlasPage.OpenChain(path, out var h);
-        return h;
-    }
+    /// <summary>Reads only the page header (Kind 0, 1 or 2; compressed pages decode just the header's 16 bytes).</summary>
+    public static PageHeader ReadHeader(string path) => AtlasPage.ReadHeader(path);
 }
