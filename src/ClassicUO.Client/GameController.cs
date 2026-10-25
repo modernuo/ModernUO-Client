@@ -142,6 +142,9 @@ namespace ClassicUO
             SetScene(new MainScene(this));
 #else
             UO.Load(this);
+            // the startup renderer decision: with Gpu possible, the world pass is created now, before login; if that
+            // fails, auto uses Legacy for the session and forced gpu exits (0xDEAF)
+            RendererStartup.AfterDevice(GraphicsDevice, _gpuDevice, CreateStartupGpuWorld);
             Audio.Initialize();
             // TODO: temporary fix to avoid crash when laoding plugins
             Settings.GlobalSettings.Encryption = (byte) NetClient.Socket.Load(UO.FileManager.Version, (EncryptionType) Settings.GlobalSettings.Encryption);
@@ -225,8 +228,23 @@ namespace ClassicUO
             Scene?.Load();
         }
 
-        /// <summary>The GPU world renderer; null only in the developer Legacy mode (-worldrenderer legacy) or after a failed
-        /// setup, which exits the client at the end of the frame (GpuDeviceLost.FailWorldSetup): no Legacy fallback.</summary>
+        // RendererStartup's world probe: the Gpu world pass for map 0, kept for the session (a facet change recreates it)
+        private string CreateStartupGpuWorld()
+        {
+            _gpuWorld = GpuWorldRenderer.TryCreate(_gpuDevice, UO.FileManager, out string error);
+
+            if (_gpuWorld != null && !_gpuWorld.TryEnsureFacet(0, out error))
+            {
+                _gpuWorld.Dispose();
+                _gpuWorld = null;
+            }
+
+            return _gpuWorld == null ? error ?? "the GPU world pass could not be created" : null;
+        }
+
+        /// <summary>The GPU world renderer; null in a Legacy session (chosen at startup: forced, or auto without a usable Gpu
+        /// world) or after a failed setup, which exits the client at the end of the frame (GpuDeviceLost.FailWorldSetup):
+        /// a session never falls back to Legacy after startup.</summary>
         internal GpuWorldRenderer GetGpuWorld()
         {
             if (!Settings.GlobalSettings.UseGpuWorldRenderer || _gpuWorldFailed)

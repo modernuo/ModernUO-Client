@@ -121,6 +121,25 @@ namespace ClassicUO.Game.Scenes
         /// exits at the end of the frame), and the caller draws no world.</summary>
         public bool EnsureFacet(int facet)
         {
+            if (TryEnsureFacet(facet, out string error))
+            {
+                return true;
+            }
+
+            if (error != null)
+            {
+                GpuDeviceLost.FailWorldSetup(error);
+            }
+
+            return false;
+        }
+
+        /// <summary>EnsureFacet without the exit: false with <paramref name="error"/> (null if this facet failed before).
+        /// RendererStartup's world probe uses it at startup, where a failure means Legacy (auto), not an exit.</summary>
+        public bool TryEnsureFacet(int facet, out string error)
+        {
+            error = null;
+
             if (_world != null && _pack.Facet == facet)
             {
                 return true;
@@ -172,7 +191,7 @@ namespace ClassicUO.Game.Scenes
                 _world?.Dispose();
                 _world = null;
                 _failedFacet = facet;
-                GpuDeviceLost.FailWorldSetup($"the GPU world pass for map {facet} could not be created: {ex.Message}");
+                error = $"the GPU world pass for map {facet} could not be created: {ex.Message}";
 
                 return false;
             }
