@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using ClassicUO.Game.GameObjects;
 using ClassicUO.Assets;
@@ -15,12 +16,48 @@ namespace ClassicUO.Game.Map
         private readonly LinkedList<int> _usedIndices = new LinkedList<int>();
         private readonly World _world;
 
+        // ---- incremental chunk loading (UpdateLoading, GetChunkForDraw, Park) ----
+        //
+        // Rule: callers that need a chunk's data now (game logic: GetChunk/GetChunk2/GetTile with load = true, GetMapZ,
+        // GetTileZ) load it synchronously, as before; if its region is still being decoded by a prefetch they wait for the
+        // rest of that decode. Two callers do not: the draw walk (GetChunkForDraw) and objects placed on a tile
+        // (GameObject.AddToTile, which parks the object until its chunk is loaded). Their chunks are queued and loaded by
+        // UpdateLoading, once per frame, nearest the player first: the 3x3 chunks around the player whenever their regions
+        // are decoded, the rest within a time budget (CUO_CHUNK_BUDGET_MS, default 2 ms), never waiting for a decode.
+        // CUO_CHUNK_SYNC=1 restores the old behaviour (every chunk loads when first asked for, no prefetch).
+        public static readonly bool Incremental = Environment.GetEnvironmentVariable("CUO_CHUNK_SYNC") != "1";
+        public static readonly double BudgetMs = double.TryParse(Environment.GetEnvironmentVariable("CUO_CHUNK_BUDGET_MS"),
+            System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double ms) ? ms : 2.0;
+        // regions within this many tiles of the player are decoded ahead (the screen at 1920x1080 and zoom 1 reaches about
+        // 40 tiles from the player; at 25 tiles/s, 64 tiles of margin is more than two seconds of travel)
+        public const int PrefetchRadius = 104;
+
+        private readonly ChunkLoadQueue _queue = new ChunkLoadQueue();
+        private readonly Func<int, int, ChunkLoadResult> _tryLoad;
+        private static readonly Func<long> _clock = Stopwatch.GetTimestamp;
+        private uint _frame;
+
+        // objects placed on a tile of a chunk that is not loaded yet, by block; added to the tile when it loads
+        private struct Parked
+        {
+            public GameObject Obj;
+            public byte X, Y;
+        }
+
+        private readonly Dictionary<int, List<Parked>> _parked = new Dictionary<int, List<Parked>>();
+        private readonly Stack<List<Parked>> _parkedPool = new Stack<List<Parked>>();
+
+        /// <summary>Chunks loaded this frame by UpdateLoading and by synchronous callers (FrameStats).</summary>
+        public static int FrameChunkLoads;
+        public static long FrameChunkLoadTicks;
+
 
         public Map(World world, int index)
         {
             _world = world;
             Index = index;
             BlocksCount = Client.Game.UO.FileManager.Maps.MapBlocksSize[Index, 0] * Client.Game.UO.FileManager.Maps.MapBlocksSize[Index, 1];
+            _tryLoad = TryLoadQueued;
 
             if (_terrainChunks == null || BlocksCount > _terrainChunks.Length)
                 _terrainChunks = new Chunk[BlocksCount];
@@ -75,7 +112,7 @@ namespace ClassicUO.Game.Map
 
                 LinkedListNode<int> node = _usedIndices.AddLast(block);
                 chunk = Chunk.Create(_world, chunkX, chunkY);
-                chunk.Load(Index);
+                LoadChunk(chunk, block);
                 chunk.Node = node;
             }
             else if (chunk.IsDestroyed)
@@ -89,7 +126,7 @@ namespace ClassicUO.Game.Map
                 LinkedListNode<int> node = _usedIndices.AddLast(block);
                 chunk.X = chunkX;
                 chunk.Y = chunkY;
-                chunk.Load(Index);
+                LoadChunk(chunk, block);
                 chunk.Node = node;
             }
 
@@ -98,6 +135,213 @@ namespace ClassicUO.Game.Map
             return chunk;
         }
 
+
+        // the one place chunks get their land and statics; objects parked on the chunk follow
+        private void LoadChunk(Chunk chunk, int block)
+        {
+            long t0 = Stopwatch.GetTimestamp();
+            chunk.Load(Index);
+
+            if (_parked.Remove(block, out var list))
+            {
+                // newest first: an object parked twice on this block (a mobile walking) goes to its last tile only
+                for (int i = list.Count - 1; i >= 0; i--)
+                {
+                    var p = list[i];
+
+                    if (p.Obj.PendingBlock == block && !p.Obj.IsDestroyed)
+                    {
+                        p.Obj.AddToTile(chunk, p.X, p.Y); // clears PendingBlock
+                    }
+                }
+
+                list.Clear();
+                _parkedPool.Push(list);
+            }
+
+            _queue.Remove(chunk.X, chunk.Y);
+            FrameChunkLoads++;
+            FrameChunkLoadTicks += Stopwatch.GetTimestamp() - t0;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private bool IsInMap(int chunkX, int chunkY)
+        {
+            var size = Client.Game.UO.FileManager.Maps.MapBlocksSize;
+
+            return (uint)chunkX < (uint)size[Index, 0] && (uint)chunkY < (uint)size[Index, 1];
+        }
+
+        /// <summary>
+        /// The draw walk's lookup: the chunk if it is loaded; otherwise null, and the chunk is queued for UpdateLoading.
+        /// </summary>
+        public Chunk GetChunkForDraw(int chunkX, int chunkY)
+        {
+            if (!Incremental)
+            {
+                return GetChunk2(chunkX, chunkY, true);
+            }
+
+            if (chunkX < 0 || chunkY < 0 || !IsInMap(chunkX, chunkY))
+            {
+                return null;
+            }
+
+            Chunk chunk = _terrainChunks[GetBlock(chunkX, chunkY)];
+
+            if (chunk != null && !chunk.IsDestroyed)
+            {
+                chunk.LastAccessTime = Time.Ticks;
+
+                return chunk;
+            }
+
+            _queue.Request(chunkX, chunkY, _frame);
+
+            return null;
+        }
+
+        /// <summary>
+        /// Called by GameObject.AddToTile: when the chunk of tile (x, y) is not loaded, removes <paramref name="obj"/> from
+        /// its tile, keeps it until the chunk loads (then adds it to (x, y)) and returns true. False when the chunk is loaded
+        /// (or the map has no such tile), so the caller adds the object as usual.
+        /// </summary>
+        public bool Park(GameObject obj, int x, int y)
+        {
+            if (!Incremental || x < 0 || y < 0)
+            {
+                return false;
+            }
+
+            int chunkX = x >> 3, chunkY = y >> 3;
+
+            if (!IsInMap(chunkX, chunkY))
+            {
+                return false;
+            }
+
+            int block = GetBlock(chunkX, chunkY);
+            Chunk chunk = _terrainChunks[block];
+
+            if (chunk != null && !chunk.IsDestroyed)
+            {
+                return false;
+            }
+
+            obj.RemoveFromTile();
+            obj.PendingBlock = block;
+
+            if (!_parked.TryGetValue(block, out var list))
+            {
+                list = _parkedPool.Count > 0 ? _parkedPool.Pop() : new List<Parked>();
+                _parked[block] = list;
+            }
+
+            list.Add(new Parked { Obj = obj, X = (byte)(x & 7), Y = (byte)(y & 7) });
+            _queue.Request(chunkX, chunkY, _frame, sticky: true);
+
+            return true;
+        }
+
+        public int QueuedChunks => _queue.Count;
+
+        /// <summary>Starts decoding the regions around tile (x, y) on the thread pool (a teleport or position packet).</summary>
+        public void Prefetch(int x, int y)
+        {
+            if (Incremental)
+            {
+                Client.Game.UO.FileManager.Maps.PrefetchAround(Index, x, y, PrefetchRadius);
+            }
+        }
+
+        /// <summary>
+        /// Once per frame, before the draw: prefetches the regions around the player and loads queued chunks (see the rule
+        /// at the top of this class).
+        /// </summary>
+        public void UpdateLoading(int playerX, int playerY)
+        {
+            _frame++;
+
+            if (!Incremental)
+            {
+                return;
+            }
+
+            var maps = Client.Game.UO.FileManager.Maps;
+            maps.PrefetchAround(Index, playerX, playerY, PrefetchRadius);
+
+            int pcx = playerX >> 3, pcy = playerY >> 3;
+
+            for (int dx = -ChunkLoadQueue.RingRadius; dx <= ChunkLoadQueue.RingRadius; dx++)
+            {
+                for (int dy = -ChunkLoadQueue.RingRadius; dy <= ChunkLoadQueue.RingRadius; dy++)
+                {
+                    int cx = pcx + dx, cy = pcy + dy;
+
+                    if (cx >= 0 && cy >= 0 && IsInMap(cx, cy))
+                    {
+                        Chunk c = _terrainChunks[GetBlock(cx, cy)];
+
+                        if (c == null || c.IsDestroyed)
+                        {
+                            _queue.Request(cx, cy, _frame);
+                        }
+                    }
+                }
+            }
+
+            long deadline = Stopwatch.GetTimestamp() + (long)(BudgetMs * Stopwatch.Frequency / 1000.0);
+            _queue.Drain(pcx, pcy, _frame, deadline, _clock, _tryLoad);
+        }
+
+        private ChunkLoadResult TryLoadQueued(int chunkX, int chunkY)
+        {
+            if (!IsInMap(chunkX, chunkY))
+            {
+                return ChunkLoadResult.Done;
+            }
+
+            int block = GetBlock(chunkX, chunkY);
+            Chunk chunk = _terrainChunks[block];
+
+            if (chunk != null && !chunk.IsDestroyed)
+            {
+                return ChunkLoadResult.Done;
+            }
+
+            // queued for parked objects that have all moved on or gone: nothing to load (if the chunk is on screen, the
+            // draw walk asks for it again)
+            if (_parked.TryGetValue(block, out var list) && !HasLiveParked(list, block))
+            {
+                _parked.Remove(block);
+                list.Clear();
+                _parkedPool.Push(list);
+
+                return ChunkLoadResult.Done;
+            }
+
+            if (!Client.Game.UO.FileManager.Maps.IsBlockReady(Index, chunkX, chunkY))
+            {
+                return ChunkLoadResult.NotReady;
+            }
+
+            GetChunk2(chunkX, chunkY, true);
+
+            return ChunkLoadResult.Loaded;
+        }
+
+        private static bool HasLiveParked(List<Parked> list, int block)
+        {
+            foreach (var p in list)
+            {
+                if (p.Obj.PendingBlock == block && !p.Obj.IsDestroyed)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
 
         public GameObject GetTile(int x, int y, bool load = true)
         {
@@ -263,6 +507,26 @@ namespace ClassicUO.Game.Map
             }
 
             _usedIndices.Clear();
+
+            // parked objects go the way of the objects in the loaded chunks (Chunk.Destroy): destroyed, except the player
+            foreach (var kv in _parked)
+            {
+                foreach (var p in kv.Value)
+                {
+                    if (p.Obj.PendingBlock == kv.Key)
+                    {
+                        p.Obj.PendingBlock = -1;
+
+                        if (!ReferenceEquals(p.Obj, _world.Player) && !p.Obj.IsDestroyed)
+                        {
+                            p.Obj.Destroy();
+                        }
+                    }
+                }
+            }
+
+            _parked.Clear();
+            _queue.Clear();
         }
     }
 }
