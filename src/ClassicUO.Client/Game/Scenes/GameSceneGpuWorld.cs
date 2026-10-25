@@ -413,7 +413,8 @@ namespace ClassicUO.Game.Scenes
             FrameStats.Set(FrameCounter.CaptureMultis, _gpuMeshMultis.Count);
             FrameStats.Set(FrameCounter.CaptureStatics, _gpuStatics.Count);
 
-            captured += _renderLists.CaptureRenderLists(batcher, _maxGroundZ, gpu);
+            captured += _renderLists.CaptureRenderLists(batcher, _maxGroundZ, gpu, _gpuItemRunCount > 0 ? this : null);
+            GpuItemCheckEnd();
 
             // the multi placement preview is depth-tested against the world, as in Legacy
             if (

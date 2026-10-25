@@ -651,6 +651,7 @@ namespace ClassicUO.Game.Scenes
             int maxY = _maxTile.Y;
             Map.Map map = _world.Map;
             bool use_handles = _useObjectHandles;
+            GpuItemCacheBegin(use_handles);
             (var minChunkX, var minChunkY) = (minX >> 3, minY >> 3);
             (var maxChunkX, var maxChunkY) = (maxX >> 3, maxY >> 3);
             FrameStats.AddSince(FramePhase.PrepSetup, setupStart);
@@ -693,6 +694,13 @@ namespace ClassicUO.Game.Scenes
                     {
                         GpuPrepareChunk(chunk, out fullTiles, out walkTiles, out edgeTiles);
                         walkStart = FrameStats.AddSince(FramePhase.PrepGpuMasks, walkStart);
+
+                        if (_gpuItemCacheOn && walkTiles != 0)
+                        {
+                            // W4: tiles of settled ground items leave walkTiles for _gpuServeTiles
+                            GpuItemCachePrepare(chunk, ref walkTiles);
+                            walkStart = FrameStats.AddSince(FramePhase.PrepItemCache, walkStart);
+                        }
                     }
 
                     for (var x = 0; x < 8; x++)
@@ -702,8 +710,25 @@ namespace ClassicUO.Game.Scenes
                             ulong bit = 1UL << (x << 3 | y);
                             bool full = (fullTiles & bit) != 0;
 
+                            bool skipItems = false;
+
                             if (!full && (walkTiles & bit) == 0)
-                                continue;
+                            {
+                                // W4: settled ground items come from the chunk's item cache; a tile whose items changed
+                                // since it was extracted is walked instead
+                                if ((_gpuServeTiles & bit) == 0 || GpuServeCachedTile(chunk, x << 3 | y))
+                                    continue;
+                            }
+                            else if ((_gpuServeTiles & bit) != 0)
+                            {
+                                // a served tile with mobiles: the walk visits the mobiles only
+                                skipItems = GpuServeCachedTile(chunk, x << 3 | y);
+                            }
+                            else if ((_gpuCheckTiles & bit) != 0)
+                            {
+                                // CUO_GPU_ITEM_CHECK: what the cache would serve, compared with the walk after the capture
+                                GpuExpectCachedTile(chunk, x << 3 | y);
+                            }
 
                             var firstObj = chunk.GetHeadObject(x, y);
                             if (firstObj == null || firstObj.IsDestroyed)
@@ -716,7 +741,8 @@ namespace ClassicUO.Game.Scenes
                                 GPU_WALK_MAX_Z,
                                 chunk,
                                 !full,
-                                _gpuSkipEnabled
+                                _gpuSkipEnabled,
+                                skipItems
                             );
                         }
                     }
