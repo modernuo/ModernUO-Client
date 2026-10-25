@@ -127,11 +127,6 @@ namespace ClassicUO
                 Settings.GlobalSettings.Save();
             }
 
-            if (!string.IsNullOrEmpty(Settings.IgnoredSavedWorldRenderer) && !string.Equals(Settings.IgnoredSavedWorldRenderer, "gpu", StringComparison.OrdinalIgnoreCase))
-            {
-                Log.Warn($"settings.json world_renderer \"{Settings.IgnoredSavedWorldRenderer}\" is ignored: the Legacy world renderer is a developer comparison mode (use -worldrenderer legacy)");
-            }
-
             if (string.IsNullOrWhiteSpace(Settings.GlobalSettings.Language))
             {
                 Log.Trace("language is not set. Trying to get the OS language.");
@@ -208,18 +203,9 @@ namespace ClassicUO
             }
             else
             {
-                switch (Settings.GlobalSettings.ForceDriver)
-                {
-                    case 1: // OpenGL
-                        Environment.SetEnvironmentVariable("FNA3D_FORCE_DRIVER", "OpenGL");
-
-                        break;
-
-                    case 2: // Vulkan
-                        Environment.SetEnvironmentVariable("FNA3D_FORCE_DRIVER", "Vulkan");
-
-                        break;
-                }
+                // world_renderer auto/gpu/legacy: probes SDL_GPU on Vulkan before FNA creates its device and picks FNA3D's
+                // driver (force_driver / FNA3D_FORCE_DRIVER still win)
+                RendererStartup.BeforeDevice();
 
                 Client.Run(pluginHost);
             }
@@ -424,8 +410,8 @@ namespace ClassicUO
                         break;
 
                     case "worldrenderer":
-                        // developer switch: "legacy" is the comparison mode (parity shots, picking, A/B FPS), never saved
-                        Settings.GlobalSettings.WorldRenderer = value;
+                        // auto|gpu|legacy for this run, over settings.json's world_renderer; not saved
+                        Settings.WorldRendererOverride = value;
 
                         break;
 

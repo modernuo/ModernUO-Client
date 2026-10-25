@@ -23,6 +23,17 @@
     <DefineConstants>$(DefineConstants);DEV_BUILD</DefineConstants>
   </PropertyGroup>
 
+  <!-- CUO_DEVTOOLS: developer tooling (runtime world-renderer switching, DevBench). On for every configuration on the PoC
+       branch; a release build turns it off with -p:CuoDevTools=false. Guarded code is tagged CLEANUP(release); the list is
+       in docs/modern-client/release-cleanup.md. -->
+  <PropertyGroup>
+    <CuoDevTools Condition="'$(CuoDevTools)' == ''">true</CuoDevTools>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(CuoDevTools)' == 'true'">
+    <DefineConstants>$(DefineConstants);CUO_DEVTOOLS</DefineConstants>
+  </PropertyGroup>
+
   <ItemGroup Condition="$(TargetFramework.StartsWith('net4'))">
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.*" PrivateAssets="All" />
     <PackageReference Include="System.Buffers" Version="4.5.1" />

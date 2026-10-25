@@ -59,7 +59,36 @@ Area-specific procedures live in [`testing/`](testing/), one file per area, writ
   - `-settings <temp settings.json>` and `-profilespath <temp dir>`;
   - `-ip 127.0.0.1 -port 2593 -autologin true -skiploginscreen -saveaccount false`;
   - `-pack C:\Repositories\uo-packs\classic-1.0` (read-only; don't regenerate it);
-  - `-worldrenderer gpu|legacy`, `-fps 0 -vsync false`, `-nomessagebox`.
+  - `-worldrenderer auto|gpu|legacy` (this run only; see below), `-fps 0 -vsync false`, `-nomessagebox`.
+- **Build flavours:** the default build has the developer tooling (`CUO_DEVTOOLS`: DevBench, runtime renderer switching). `-p:CuoDevTools=false` builds the release flavour without it; DevBench plans and `CUO_FRAMESTATS` do nothing there. See [release-cleanup.md](release-cleanup.md).
+
+## World renderer selection (2026-10-25)
+
+The client picks the world renderer once, at startup (`RendererSelection`/`RendererStartup`). It logs one line, which every run that depends on the renderer should check:
+
+```
+[renderer] auto: Gpu (SDL_GPU vulkan, NVIDIA GeForce RTX 3090 Ti)
+[renderer] auto: Legacy (<reason>; FNA3D D3D11)
+[renderer] legacy: Legacy (forced by settings.json; SDL_GPU vulkan, …)
+[renderer] gpu: unavailable (<reason>; …)      -> error, exit 0xDEAF
+```
+
+A `Trace` line before it shows the setting, its source, the FNA3D driver and the SDL_GPU/Vulkan probe result.
+
+| To get | Do |
+|---|---|
+| The machine's choice | `"world_renderer": "auto"` in settings.json, or leave it out (default) |
+| Forced Gpu | `"world_renderer": "gpu"`, or `-worldrenderer gpu`. If the Gpu world can't run: error message, exit `0xDEAF` |
+| Forced Legacy | `"world_renderer": "legacy"`, or `-worldrenderer legacy`. Runs on the device FNA3D picks by itself (SDL_GPU on this machine), so Legacy-vs-Gpu shots compare the same device |
+| Legacy on D3D11 (auto's fallback when SDL_GPU/Vulkan can't run) | `CUO_RENDERER_PROBE_FAIL=device` with auto |
+| Legacy on OpenGL (auto's fallback where D3D11 can't run) | `CUO_RENDERER_PROBE_FAIL=device` plus `CUO_RENDERER_LEGACY_DRIVER=OpenGL` |
+| Legacy on the SDL_GPU device (the Gpu world pass failed at startup) | `CUO_RENDERER_PROBE_FAIL=world` with auto |
+| A specific FNA3D driver | `FNA3D_FORCE_DRIVER=OpenGL\|D3D11\|Vulkan` or `"force_driver"` (1 OpenGL, 2 Vulkan). With OpenGL or D3D11, auto skips the probe and runs Legacy there; forced gpu exits |
+| The integrated GPU (Intel UHD 770) | `FNA3D_PREFER_LOW_POWER=1` (SDL_GPU's low-power device preference) |
+
+- `-worldrenderer` overrides settings.json for one run and is never saved. `world_renderer` in settings.json is saved.
+- The decision is per session. Device loss and a world-pass failure after startup (a facet change) still exit (`0xDEAD`, `0xDEAF`); nothing switches to Legacy mid-session.
+- Runtime switching (`world:`, `flip:`, `CUO_BENCH_PICK`, the `-worldrenderer` chat command) is dev tooling. In a session whose Gpu world isn't available (an auto fallback), switching to `gpu` is refused with a `[renderer] runtime switch to gpu refused` warning, and the run stays Legacy.
 - **UO data:** `C:\Ultima Online Classic`, client version `7.0.103.0`.
 - **Worktrees:** if `external/FNA` is empty, run `git submodule update --init external/FNA` plus its nested submodules. Never change the gitlink.
 
@@ -98,7 +127,7 @@ Driven by environment variables. Read the header comment in DevBench.cs for the 
 | Build and unit tests | `dotnet test tests/ClassicUO.UnitTests -c Release` | All pass (277 on the W5 branch, 2026-10-25) |
 | World screenshot parity | `CUO_BENCH_SHOTS` at fixed spots (Britain, bank, zoomed out, night); compare before vs after or Legacy vs Gpu | Pixel diff is explained (filtering), and someone **looked at the images** |
 | UI parity | `gumps` plus the `_ui.png` shots | Identical, apart from live journal text |
-| **Legacy world (required for any change to the batcher, the asset loaders, world prepare or GameScene drawing)** | A pure-Legacy session (`-worldrenderer legacy`) with `CUO_BENCH_SHOTS` at a fixed spot, compared with the same spot on the previous build. Legacy is developer-only now, but it is our parity yardstick and the batcher still draws the UI in Gpu mode | Same image apart from moving creatures, and someone **looked at it**. The B1 regression (2026-10-25: missing and wrong land/static tiles in every Legacy frame) passed every Gpu-only check for a day |
+| **Legacy world (required for any change to the batcher, the asset loaders, world prepare or GameScene drawing)** | A pure-Legacy session (`-worldrenderer legacy`) with `CUO_BENCH_SHOTS` at a fixed spot, compared with the same spot on the previous build. Legacy is auto's low-end fallback and our parity yardstick and the batcher still draws the UI in Gpu mode | Same image apart from moving creatures, and someone **looked at it**. The B1 regression (2026-10-25: missing and wrong land/static tiles in every Legacy frame) passed every Gpu-only check for a day |
 | Picking | `CUO_BENCH_PICK=1` | Same object selected in both renderers; clicks reach the server |
 | Performance | `CUO_FRAMESTATS=1` with a plan; quick JIT runs only. Report Update, world prepare, world draw, Draw and Present separately | No regression beyond the run-to-run noise. Other clients running make timings noisy, so say so |
 | Allocation | FrameStats `alloc/frame` and gen0 counts | No new per-frame allocation |
