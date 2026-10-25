@@ -1,6 +1,7 @@
 using System;
 using System.Buffers;
 using System.Collections.Concurrent;
+using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using System.Threading;
 using ClassicUO.Assets;
@@ -312,37 +313,59 @@ namespace ClassicUO.Renderer.Animations
             PackSpriteMap.Register(spriteInfo.Texture, spriteInfo.UV, PackSpriteMap.AnimFrame | index);
         }
 
+        // Upload budget: at most DrainBudgetMs of finished directions per DrainWindowMs, so a crowd's worth of directions
+        // finishing together spreads over a few frames instead of landing in one (the rest stay invisible a little longer).
+        private const double DrainBudgetMs = 2, DrainWindowMs = 8;
+        private long _drainWindowStart, _drainSpent;
+
         // main thread: atlas uploads and picker masks for the directions the workers finished
         private void DrainReady()
         {
-            while (_ready.TryDequeue(out var job))
+            long now = Stopwatch.GetTimestamp();
+
+            if (now - _drainWindowStart > (long)(DrainWindowMs * Stopwatch.Frequency / 1000))
             {
-                Interlocked.Decrement(ref _pendingJobs);
+                _drainWindowStart = now;
+                _drainSpent = 0;
+            }
 
-                for (int i = 0; i < job.Sprites.Length; i++)
+            long budget = (long)(DrainBudgetMs * Stopwatch.Frequency / 1000);
+
+            while (_drainSpent < budget && _ready.TryDequeue(out var job))
+            {
+                long start = Stopwatch.GetTimestamp();
+                Complete(job);
+                _drainSpent += Stopwatch.GetTimestamp() - start;
+            }
+        }
+
+        private void Complete(DirectionJob job)
+        {
+            Interlocked.Decrement(ref _pendingJobs);
+
+            for (int i = 0; i < job.Sprites.Length; i++)
+            {
+                uint index = job.Entry.FirstFrame + (uint)i;
+                ref readonly var frame = ref _animationLoader.GetFrame(index);
+
+                if (frame.Sprite.OrigW == 0 || frame.Sprite.OrigH == 0)
                 {
-                    uint index = job.Entry.FirstFrame + (uint)i;
-                    ref readonly var frame = ref _animationLoader.GetFrame(index);
+                    continue;
+                }
 
-                    if (frame.Sprite.OrigW == 0 || frame.Sprite.OrigH == 0)
-                    {
-                        continue;
-                    }
+                var pixels = job.Pixels?[i];
 
-                    var pixels = job.Pixels?[i];
+                if (pixels == null)
+                {
+                    // the worker failed: decode here
+                    pixels = _animationLoader.DecodeFrame(index);
+                }
 
-                    if (pixels == null)
-                    {
-                        // the worker failed: decode here
-                        pixels = _animationLoader.DecodeFrame(index);
-                    }
+                Upload(job.Body, job.Action, job.Dir, i, index, pixels.AsSpan(0, frame.Sprite.OrigW * frame.Sprite.OrigH), ref job.Sprites[i]);
 
-                    Upload(job.Body, job.Action, job.Dir, i, index, pixels.AsSpan(0, frame.Sprite.OrigW * frame.Sprite.OrigH), ref job.Sprites[i]);
-
-                    if (job.Pixels?[i] != null)
-                    {
-                        ArrayPool<uint>.Shared.Return(pixels);
-                    }
+                if (job.Pixels?[i] != null)
+                {
+                    ArrayPool<uint>.Shared.Return(pixels);
                 }
             }
         }
