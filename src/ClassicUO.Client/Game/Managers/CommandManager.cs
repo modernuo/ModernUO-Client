@@ -76,6 +76,18 @@ namespace ClassicUO.Game.Managers
                 }
             );
 
+            // -gpuskip [on|off]: the Gpu world prepare skips baked land and statics (no argument toggles)
+            Register
+            (
+                "gpuskip",
+                s =>
+                {
+                    var settings = Configuration.Settings.GlobalSettings;
+                    settings.GpuPrepareSkipBaked = s.Length > 1 ? s[1].ToLowerInvariant() == "on" : !settings.GpuPrepareSkipBaked;
+                    GameActions.Print(_world, $"Gpu world prepare skips baked land and statics: {(settings.GpuPrepareSkipBaked ? "on" : "off")}");
+                }
+            );
+
             Register
             (
                 "debug",

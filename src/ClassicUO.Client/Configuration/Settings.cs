@@ -93,6 +93,10 @@ namespace ClassicUO.Configuration
 
         [JsonIgnore] public bool UseGpuWorldRenderer => string.Equals(WorldRenderer, "gpu", StringComparison.OrdinalIgnoreCase);
 
+        // Gpu world renderer: the per-frame world prepare skips baked land and statics that need no per-frame work
+        // (GameSceneGpuPrepare). Off = the full walk, as Legacy does it.
+        [JsonPropertyName("gpu_prepare_skip_baked")] public bool GpuPrepareSkipBaked { get; set; } = true;
+
         [JsonPropertyName("encryption")] public byte Encryption { get; set; }
 
         [JsonPropertyName("plugins")] public string[] Plugins { get; set; } = { @"./Assistant/Razor.dll" };
