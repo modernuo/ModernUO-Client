@@ -30,6 +30,9 @@ namespace ClassicUO.Game.GameObjects
 
         /// <summary>Listed in World.TextOwners.</summary>
         public bool InTextOwners;
+
+        /// <summary>GameScene's camera generation when the world prepare last set RealScreenPosition.</summary>
+        public int ScreenPositionGen;
         private AverageOverTime _averageOverTime;
 
         public int Distance

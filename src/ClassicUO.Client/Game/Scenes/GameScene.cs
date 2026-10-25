@@ -601,6 +601,12 @@ namespace ClassicUO.Game.Scenes
             GetViewPort();
             GpuPrepareBegin();
 
+            if (UpdateDrawPosition)
+            {
+                // a camera move: every RealScreenPosition computed before this frame is stale (ScreenPositionGen)
+                _screenPositionGen++;
+            }
+
             var ctrlShiftHeld = Keyboard.Ctrl && Keyboard.Shift;
             var useObjectHandles = _world.NameOverHeadManager.IsToggled || ctrlShiftHeld;
             if (useObjectHandles != _useObjectHandles)
