@@ -36,6 +36,14 @@ namespace ClassicUO.Renderer
 
         [LibraryImport("SDL3")]
         [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+        private static partial uint SDL_GetGPUDeviceProperties(IntPtr device);
+
+        [LibraryImport("SDL3", StringMarshalling = StringMarshalling.Utf8)]
+        [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
+        private static partial IntPtr SDL_GetStringProperty(uint props, string name, IntPtr defaultValue);
+
+        [LibraryImport("SDL3")]
+        [UnmanagedCallConv(CallConvs = [typeof(CallConvCdecl)])]
         private static partial IntPtr SDL_GetRevision();
 
         /// <summary>SDL3.dll's revision, e.g. "SDL-3.4.18-27ac7d2 (modernuo modernuo/3.4.18-patched 27ac7d26b)" for the fork build
@@ -62,6 +70,41 @@ namespace ClassicUO.Renderer
             FNA3D_GetSysRendererEXT(fna3d, &sys);
 
             return sys.RendererType == RENDERER_TYPE_SDL_GPU ? sys.SdlGpuDevice : IntPtr.Zero;
+        }
+
+        /// <summary>FNA3D's driver for this device: "SDLGPU", "D3D11" or "OpenGL" (FNA3D_SysRendererTypeEXT), or null.</summary>
+        public static string GetFna3dDriverName(GraphicsDevice device)
+        {
+            IntPtr fna3d = GLDevice(device);
+
+            if (fna3d == IntPtr.Zero)
+            {
+                return null;
+            }
+
+            SysRenderer sys = default;
+            FNA3D_GetSysRendererEXT(fna3d, &sys);
+
+            return sys.RendererType switch
+            {
+                0 => "OpenGL",
+                2 => "D3D11",
+                RENDERER_TYPE_SDL_GPU => "SDLGPU",
+                _ => $"type {sys.RendererType}"
+            };
+        }
+
+        /// <summary>The adapter an SDL_GPU device runs on (SDL_PROP_GPU_DEVICE_NAME_STRING), or null.</summary>
+        public static string GetAdapterName(IntPtr gpuDevice)
+        {
+            if (gpuDevice == IntPtr.Zero)
+            {
+                return null;
+            }
+
+            uint props = SDL_GetGPUDeviceProperties(gpuDevice);
+
+            return props == 0 ? null : Marshal.PtrToStringUTF8(SDL_GetStringProperty(props, "SDL.gpu.device.name", IntPtr.Zero));
         }
 
         /// <summary>The SDL_GPUTexture* behind a Texture2D or RenderTarget2D. Re-fetch it every frame: render targets are recreated on resize.</summary>

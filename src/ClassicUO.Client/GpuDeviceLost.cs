@@ -23,7 +23,8 @@ namespace ClassicUO
         public const int ExitCode = 0xDEAD;
 
         /// <summary>Process exit code when the GPU world renderer can't be set up (no SDL_GPU device, the pack can't be
-        /// opened, a facet's world pass can't be created). There is no Legacy fallback for players.</summary>
+        /// opened, a facet's world pass can't be created) after startup, or a forced gpu can't run. Auto picks Legacy at
+        /// startup instead (RendererStartup); a session never switches to Legacy later.</summary>
         public const int WorldSetupExitCode = 0xDEAF;
 
         private static string _worldSetupError;
@@ -38,7 +39,7 @@ namespace ClassicUO
             }
 
             _worldSetupError = error;
-            Log.Error($"GPU world renderer setup failed: {error}. ClassicUO exits with code 0x{WorldSetupExitCode:X} (the Legacy world renderer is a developer mode: -worldrenderer legacy).");
+            Log.Error($"GPU world renderer setup failed: {error}. ClassicUO exits with code 0x{WorldSetupExitCode:X} (world_renderer \"auto\" or \"legacy\" in settings.json, or -worldrenderer, runs Legacy instead).");
         }
 
         public static bool WorldSetupFailed => _worldSetupError != null;

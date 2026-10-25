@@ -63,18 +63,23 @@ namespace ClassicUO.Game.Managers
             );
 
 
-            // -worldrenderer [gpu|legacy]: developer switch of the world renderer for this run (no argument toggles). Legacy is
-            // a comparison mode (parity shots, picking, A/B FPS); it isn't saved.
+#if CUO_DEVTOOLS
+            // CLEANUP(release): -worldrenderer [gpu|legacy] switches the world renderer mid-session (no argument toggles), for
+            // parity shots, picking and A/B FPS. Not saved; players get the startup choice (world_renderer, RendererStartup).
             Register
             (
                 "worldrenderer",
                 s =>
                 {
                     var settings = Configuration.Settings.GlobalSettings;
-                    settings.WorldRenderer = s.Length > 1 ? s[1].ToLowerInvariant() : settings.UseGpuWorldRenderer ? "legacy" : "gpu";
-                    GameActions.Print(_world, $"World renderer: {settings.WorldRenderer}{(settings.UseGpuWorldRenderer ? "" : " (developer comparison mode, not saved)")}");
+                    string target = s.Length > 1 ? s[1] : settings.UseGpuWorldRenderer ? "legacy" : "gpu";
+
+                    GameActions.Print(_world, RendererStartup.TrySwitch(target, out string message)
+                        ? $"World renderer: {settings.WorldRenderer} (developer switch, this session only)"
+                        : $"World renderer not switched: {message}");
                 }
             );
+#endif
 
             // -gpuskip [on|off]: the Gpu world prepare skips baked land and statics (no argument toggles)
             Register

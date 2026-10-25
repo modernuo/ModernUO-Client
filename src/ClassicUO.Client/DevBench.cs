@@ -1,3 +1,6 @@
+// CLEANUP(release): DevBench (scripted runs, CUO_FRAMESTATS, runtime renderer switching) is dev tooling; without
+// CUO_DEVTOOLS only the stub at the end of this file is compiled.
+#if CUO_DEVTOOLS
 using System;
 using System.Diagnostics;
 using ClassicUO.Game;
@@ -583,7 +586,7 @@ namespace ClassicUO
                     _pickTargets[1] = world.Map.GetTile(world.Player.X + 3, world.Player.Y + 3);
                     _pickTargets[2] = FindGroundItem(world);
                     _pickTargets[3] = world.Player;
-                    Configuration.Settings.GlobalSettings.WorldRenderer = "legacy";
+                    RendererStartup.TrySwitch("legacy", out _);
                     _pickIndex = 0;
                     _step = 3;
                     _stepAt = now + sec * 2;
@@ -609,9 +612,9 @@ namespace ClassicUO
                     LogPick(true);
                     _pickIndex++;
 
-                    if (_pickIndex == 4)
+                    if (_pickIndex == 4 && !RendererStartup.TrySwitch("gpu", out string pickRefused))
                     {
-                        Configuration.Settings.GlobalSettings.WorldRenderer = "gpu";
+                        Log.Info($"[bench-pick] second half stays legacy: {pickRefused}");
                     }
 
                     _step = _pickIndex >= 8 ? 5 : 3;
@@ -942,7 +945,7 @@ namespace ClassicUO
                     _flipLeft--;
                     _flipTotal++;
                     var gset = Configuration.Settings.GlobalSettings;
-                    gset.WorldRenderer = _flipLeft == 0 || !gset.UseGpuWorldRenderer ? "gpu" : "legacy";
+                    RendererStartup.TrySwitch(_flipLeft == 0 || !gset.UseGpuWorldRenderer ? "gpu" : "legacy", out _);
 
                     if (_flipLeft == 0)
                     {
@@ -1302,7 +1305,7 @@ namespace ClassicUO
                     if (_plan[_planIndex].StartsWith("world:"))
                     {
                         LogSettle(gs, _plan[_planIndex]);
-                        Configuration.Settings.GlobalSettings.WorldRenderer = _plan[_planIndex].Substring(6);
+                        RendererStartup.TrySwitch(_plan[_planIndex].Substring(6), out _);
                         Log.Info($"[bench] world renderer {Configuration.Settings.GlobalSettings.WorldRenderer} (gpu available: {game.GetGpuWorld() != null})");
                         _planIndex++;
                         _stepAt = now + sec * 2;
@@ -1488,3 +1491,19 @@ namespace ClassicUO
         }
     }
 }
+#else
+namespace ClassicUO
+{
+    // CLEANUP(release): the release build's DevBench: never enabled, so FrameStats and every bench hook stay off.
+    internal static class DevBench
+    {
+        public static readonly bool FrameStats = false;
+
+        public static bool Enabled => false;
+
+        public static void Update(GameController game)
+        {
+        }
+    }
+}
+#endif

@@ -215,6 +215,7 @@ Write-Host "Build: $buildInfo"
 Write-Host ''
 
 $proc = $null
+$rendererLine = 'not logged (a build from before 2026-10-25''s startup renderer selection)'
 $reader = $null
 $lines = New-Object System.Collections.Generic.List[string]
 $failure = $null
@@ -252,6 +253,11 @@ try {
                 if ($Matches[1] -eq 'gpu' -and $Matches[2] -ne 'True') {
                     Write-Host 'WARNING: the Gpu world renderer is not available (FNA3D is not on SDL_GPU); Gpu rows will show Legacy.' -ForegroundColor Red
                 }
+            }
+            elseif ($line -match '\[renderer\] (\w+: .*)$') {
+                # the client's startup renderer decision (world_renderer, RendererStartup); -worldrenderer gpu forces Gpu here
+                $rendererLine = $Matches[1]
+                Write-Host "Renderer: $rendererLine"
             }
             elseif ($line -match '\[bench\] window client (\d+x\d+)') {
                 $sizeNow = $Matches[1]
@@ -440,6 +446,7 @@ $out = New-Object System.Collections.Generic.List[string]
 $out.Add("# ClassicUO FPS test: Legacy vs Gpu world renderer")
 $out.Add('')
 $out.Add("Run $($started.ToString('yyyy-MM-dd HH:mm')), $([math]::Round(((Get-Date) - $started).TotalMinutes, 1)) min. NativeAOT build: $buildInfo.")
+$out.Add("Startup renderer decision: $rendererLine (the plan then switches per spot with world:legacy|gpu).")
 $out.Add('')
 $out.Add('## Machine')
 $out.Add('')
