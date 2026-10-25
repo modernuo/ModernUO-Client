@@ -14,10 +14,12 @@
 //   uint pageHue   logical page | hue row << 16
 //   uint depth     integer depth key (bigger = nearer); camera-relative in the shader
 //   uint light     FLAG_LIT: 4 x u8 per-corner light (stretched land), 170 = 1.0;
-//                  otherwise byte 0 = 255 - alpha (0 = opaque), bits 8-11 hue mode (MODE_*), 12-15 LIGHT_* bits,
-//                  16-31 rotation (u16 turns) when LIGHT_ROTATED
+//                  otherwise byte 0 = 255 - alpha (0 = opaque), bits 8-9 hue mode (MODE_*), 10-11 blend (with
+//                  LIGHT_ADDITIVE as bit 2: InstanceBlend), 12-15 LIGHT_* bits, 16-31 rotation (u16 turns) when
+//                  LIGHT_ROTATED, or the trim offset (x, y bytes) when LIGHT_WOBBLE
 //   uint corners   4 x s8 per-corner z (stretched land), corner order top,right,left,bottom; FLAG_INDEXED: palette id;
-//                  FLAG_ZTEST statics: (u8)z | height << 8 | Z_* bits << 16; FLAG_ZTEST flat land: (u8)z | Z_LAND << 16
+//                  FLAG_ZTEST statics: (u8)z | height << 8 | Z_* bits << 16; FLAG_ZTEST flat land: (u8)z | Z_LAND << 16;
+//                  FLAG_DEFORM (dynamic): bits 16-23 s8 top-edge shear, 24-31 source rows (0 = h)
 //
 // Two draws share the instance buffer: pass 0 (opaque, depth write) walks the visible chunk table and skips translucent
 // instances; pass 1 (premultiplied blend, depth test only) draws the frame table's back-to-front list of translucent
@@ -35,6 +37,7 @@
 #define FLAG_MIRROR   16u     // flip the rect horizontally (mirrored anim directions)
 #define FLAG_INDEXED  32u     // Indexed8 anim page: AnimIdx array + palette lookup, manual filtering
 #define FLAG_ZTEST    64u     // baked land / static: max-Z, roof and circle-of-transparency uniforms apply
+#define FLAG_DEFORM   128u    // seated-character section: sheared top edge, source rows != h (Batcher2D.DrawCharacterSitted)
 #define FLAG_SHARP    0x100u  // set by the vertex shader from the Sharp uniform
 #define FLAG_UNPREMUL 0x200u  // FormatFlags bit 0 << 9
 #define FLAG_GRAYTOL  0x400u  // FormatFlags bit 1 << 9
@@ -51,6 +54,7 @@
 #define LIGHT_COT     0x1000u
 #define LIGHT_ROTATED 0x2000u
 #define LIGHT_ADDITIVE 0x4000u
+#define LIGHT_WOBBLE  0x8000u // animated-water copy: scaled by WaterScale about the untrimmed top-left
 #define Z_LAND        1u
 #define Z_ROOF        2u
 #define Z_COTCAPABLE  4u      // Static._canBeTransparent
@@ -109,8 +113,8 @@ cbuffer Frame : register(b0, space1)
     float  CotCenterY;
     float  CotRadius;      // target pixels, 0 = off
     uint   TintRow;        // hue row + 1 applied whole-sprite to FLAG_ZTEST instances (death screen), 0 = none
-    uint   Pad1;
-    uint   Pad2;
+    float  WaterScaleX;    // LIGHT_WOBBLE scale (ClassicUO's animated water), 1 = off
+    float  WaterScaleY;
 };
 
 [[vk::combinedImageSampler]] Texture2DArray<float4> Atlas    : register(t0, space2);
@@ -183,7 +187,10 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     uint hueRow = inst.pageHue >> 16;
     bool lit = (flags & FLAG_LIT) != 0;
     uint alpha = lit ? 255u : 255u - (inst.light & 0xFFu);
-    uint mode = lit ? MODE_NORMAL : (inst.light >> 8) & 0xFu;
+    uint mode = lit ? MODE_NORMAL : (inst.light >> 8) & 0x3u;
+    // effect blends other than normal draw in the translucent pass; Screen (LIGHT_ADDITIVE alone) outputs alpha 0 under the
+    // premultiplied blend, the others get their own pipeline (the host splits the sorted list into runs)
+    uint blendLo = lit ? 0u : (inst.light >> 10) & 0x3u;
     uint lbits = lit ? 0u : inst.light & 0xF000u;
     bool forceShow = false;
     bool highlighted = false;
@@ -225,7 +232,7 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
         if (zLand ? z > MaxGroundZ : z >= MaxZ || ((ZFlags & 2u) != 0 && ((inst.corners >> 16) & Z_ROOF) != 0))
             alpha = 0u;
     }
-    bool translucent = alpha < 255u || mode == MODE_SPECTRAL || mode == MODE_SHADOW || (lbits & LIGHT_ADDITIVE) != 0;
+    bool translucent = alpha < 255u || mode == MODE_SPECTRAL || mode == MODE_SHADOW || (lbits & LIGHT_ADDITIVE) != 0 || blendLo != 0u;
     if (CotRadius > 0)
     {
         bool cot;
@@ -267,6 +274,23 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     {
         local = cxy * float2(w, h);
     }
+    float srcH = h;
+    if (flags & FLAG_DEFORM)
+    {
+        // Batcher2D.DrawCharacterSitted section: the top edge is shifted by the shear, the bottom edge stays; the quad
+        // samples srcH texture rows over its h screen rows
+        local.x += (float)((int)(inst.corners << 8) >> 24) * (1.0 - cxy.y);
+        uint rows = inst.corners >> 24;
+        srcH = rows != 0u ? (float)rows : h;
+    }
+    if (lbits & LIGHT_WOBBLE)
+    {
+        // View.DrawStatic's water copy: Batcher2D scales about the untrimmed top-left, which is trim pixels up-left of
+        // the instance's (trimmed) corner
+        float2 trim = float2((inst.light >> 16) & 0xFFu, inst.light >> 24);
+        float2 ws = float2(WaterScaleX, WaterScaleY);
+        local = trim * (ws - 1.0) + local * ws;
+    }
     if (lbits & LIGHT_ROTATED)
     {
         // Batcher2D.SetVertex with origin 0: x' = cos x - sin y, y' = sin x + cos y about the quad's top-left
@@ -285,7 +309,7 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     o.pos = float4(ndc.x, -ndc.y, saturate(depth), 1);
     float2 tc = cxy;
     if (flags & FLAG_MIRROR) tc.x = 1.0 - tc.x;
-    float2 uv = float2(inst.uv & 0xFFFF, inst.uv >> 16) + tc * float2(w, h);
+    float2 uv = float2(inst.uv & 0xFFFF, inst.uv >> 16) + tc * float2(w, srcH);
     o.uvw = float3(uv * (indexed ? InvAnimAtlas : InvAtlas), layer);
     uint pal = indexed ? (inst.corners & 0xFFFF) : 0u;
     // Zoomed out, baked tiles that sit edge to edge (land, and statics whose trimmed art fills 44x44: floors, static
@@ -295,7 +319,7 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     o.rect = tile ? float4(uv0, uv0 + float2(w, h)) : 0;
     o.hueFlags = uint2(hueRow | (pal << 16),
         flags | (tile ? FLAG_TILE : 0u) | (Sharp != 0 ? FLAG_SHARP : 0u) | ((FormatFlags & 3u) << 9) | (mode << 12) | (alpha << 16)
-        | ((lbits & LIGHT_ADDITIVE) != 0 ? FLAG_ADDITIVE : 0u));
+        | ((lbits & LIGHT_ADDITIVE) != 0 && blendLo == 0u ? FLAG_ADDITIVE : 0u));
     o.light = light;
     o.atlasSize = indexed ? AnimAtlasSize : AtlasSize;
     o.grayTol = GrayTolerance;
