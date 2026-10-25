@@ -22,6 +22,27 @@ namespace ClassicUO
         /// <summary>Process exit code after a lost GPU device (tools/fps-test/run-fps-test.ps1 recognises it).</summary>
         public const int ExitCode = 0xDEAD;
 
+        /// <summary>Process exit code when the GPU world renderer can't be set up (no SDL_GPU device, the pack can't be
+        /// opened, a facet's world pass can't be created). There is no Legacy fallback for players.</summary>
+        public const int WorldSetupExitCode = 0xDEAF;
+
+        private static string _worldSetupError;
+
+        /// <summary>The GPU world renderer can't be set up: logs why; at the end of the frame ClassicUO saves, tells the
+        /// user and exits with <see cref="WorldSetupExitCode"/>, as for a lost device.</summary>
+        public static void FailWorldSetup(string error)
+        {
+            if (_worldSetupError != null)
+            {
+                return;
+            }
+
+            _worldSetupError = error;
+            Log.Error($"GPU world renderer setup failed: {error}. ClassicUO exits with code 0x{WorldSetupExitCode:X} (the Legacy world renderer is a developer mode: -worldrenderer legacy).");
+        }
+
+        public static bool WorldSetupFailed => _worldSetupError != null;
+
         // CUO_DEVICE_LOST_NOEXIT=1: keep running after the loss and log frames and private bytes (to study SDL's leak)
         private static readonly bool _noExit = Environment.GetEnvironmentVariable("CUO_DEVICE_LOST_NOEXIT") == "1";
         private static bool _shuttingDown;
@@ -49,6 +70,14 @@ namespace ClassicUO
         /// Exits the process if the device is lost.</summary>
         public static void AfterPresent()
         {
+            if (_worldSetupError != null && !IsLost)
+            {
+                Shutdown($"The GPU world renderer could not start ({_worldSetupError}). ClassicUO will close.", WorldSetupExitCode,
+                    "the GPU world renderer setup failed");
+
+                return;
+            }
+
             if (_simulateAfter > 0)
             {
                 SimulateLoss();
@@ -150,6 +179,11 @@ namespace ClassicUO
         /// tells the user unless the run is automated, and exits with <see cref="ExitCode"/>.</summary>
         public static void Shutdown()
         {
+            Shutdown("The graphics driver reset (GPU device lost). ClassicUO will close.", ExitCode, "the GPU device was lost");
+        }
+
+        private static void Shutdown(string userMessage, int exitCode, string why)
+        {
             if (_shuttingDown)
             {
                 return;
@@ -163,7 +197,7 @@ namespace ClassicUO
             }
             catch (Exception ex)
             {
-                Log.Error($"Saving after the GPU device was lost failed: {ex}");
+                Log.Error($"Saving after {why} failed: {ex}");
             }
 
             if (!CUOEnviroment.NoMessageBox && !DevBench.Enabled && !HasBenchEnvironment())
@@ -171,13 +205,13 @@ namespace ClassicUO
                 SDL.SDL_ShowSimpleMessageBox(
                     SDL.SDL_MessageBoxFlags.SDL_MESSAGEBOX_ERROR,
                     "ClassicUO",
-                    "The graphics driver reset (GPU device lost). ClassicUO will close.",
+                    userMessage,
                     IntPtr.Zero
                 );
             }
 
-            Log.Error($"Exiting after the GPU device was lost (exit code 0x{ExitCode:X}).");
-            Environment.Exit(ExitCode);
+            Log.Error($"Exiting after {why} (exit code 0x{exitCode:X}).");
+            Environment.Exit(exitCode);
         }
 
         private static bool HasBenchEnvironment()

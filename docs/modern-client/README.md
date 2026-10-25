@@ -52,6 +52,11 @@ Supporting material in this branch:
 - **Legacy world renderer is a developer comparison mode only (2026-10-24).**
   - No automatic fallback to Legacy. While the GPU world isn't ready (login, facet change), hold the last frame or fade. If GPU setup fails, show an error and exit, the same way device loss does.
   - Keep Legacy only as a developer comparison mode, mainly to catch Gpu bugs (parity shots, picking checks, A/B FPS). It is not a normal player setting.
+  - **Implemented 2026-10-25 (world settle):**
+    - The world renderer is chosen only for the current run. Legacy needs `-worldrenderer legacy`, the `-worldrenderer` in-game command or DevBench `world:legacy`.
+    - A `"world_renderer"` saved in settings.json is ignored with a warning and dropped on the next save.
+    - A failed GPU world setup exits with `0xDEAF`.
+    - The hold is `WorldSettleGate`: see [testing/world-settle.md](testing/world-settle.md).
   - Delete the Legacy world path once the parity tooling compares against saved reference shots instead of a live Legacy render.
 - **The pack replaces MUL/UOP (2026-10-24).**
   - For every asset the pack format covers (art, texmaps, maps/statics, tiledata, hues, animations), the client loads only from the pack. There is no side-by-side MUL/UOP path, so we never support two formats. Those ClassicUO loaders get deleted once the pack path works.

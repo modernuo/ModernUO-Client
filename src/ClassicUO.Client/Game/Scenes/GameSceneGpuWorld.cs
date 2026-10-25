@@ -32,6 +32,38 @@ namespace ClassicUO.Game.Scenes
 
         public bool IsGpuWorldActive => _gpuWorld != null;
 
+        // Holds the last presented world frame across discontinuities (WorldSettleGate). CUO_WORLD_HOLD=0: observe only.
+        private readonly WorldSettleGate _settle = CreateSettleGate();
+        private RenderTarget2D _settleTarget;
+
+        internal WorldSettleGate Settle => _settle;
+
+        // CUO_WORLD_SETTLE_LOG=1: log every presented frame whose view wasn't ready (what was missing)
+        private static readonly bool SettleLog = Environment.GetEnvironmentVariable("CUO_WORLD_SETTLE_LOG") == "1";
+
+        private void LogUnsettledFrame(GpuWorldRenderer gpu)
+        {
+            var w = gpu.World;
+            Utility.Logging.Log.Trace(
+                $"[settle] unsettled frame presented at {Time.Ticks}: chunks missing near view {w.Chunks.MissingNear} (in view {w.Chunks.MissingVisible}), " +
+                $"pages missing {w.Pages.MissingVisible}, anim pages missing {w.AnimPages?.MissingVisible ?? 0}, camera {_world.Player.X},{_world.Player.Y}");
+        }
+
+        private static WorldSettleGate CreateSettleGate()
+        {
+            var gate = new WorldSettleGate { HoldEnabled = Environment.GetEnvironmentVariable("CUO_WORLD_HOLD") != "0" };
+
+            if (double.TryParse(Environment.GetEnvironmentVariable("CUO_WORLD_HOLD_TIMEOUT"), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double timeout))
+            {
+                gate.TimeoutMs = timeout;
+            }
+
+            gate.EpisodeEnded += (kind, ms, held, unsettled, timedOut) =>
+                Utility.Logging.Log.Trace($"[settle] {kind}: {(timedOut ? "timed out" : "ready")} after {ms:0} ms, {held} frames held, {unsettled} unsettled frames presented");
+
+            return gate;
+        }
+
         // The list fill decided to draw obj (called where it stamps DrawnFrame): report what differs from the baked sprite.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void GpuOnDrawn(GameObject obj)
@@ -293,12 +325,15 @@ namespace ClassicUO.Game.Scenes
             return 0;
         }
 
-        private void DrawWorldGpu(UltimaBatcher2D batcher, ref Matrix matrix, RenderTargets renderTargets, GpuWorldRenderer gpu)
+        /// <summary><paramref name="hold"/>: the frame is prepared and streamed as usual, but nothing is drawn into the world
+        /// target, which keeps the last presented frame (FNA's world-space draws go to the backbuffer, cleared before the
+        /// composite).</summary>
+        private void DrawWorldGpu(UltimaBatcher2D batcher, ref Matrix matrix, RenderTargets renderTargets, GpuWorldRenderer gpu, bool hold)
         {
             FrameStats.Begin(FramePhase.WorldPrepare);
             long stamp = FrameStats.Stamp();
             var device = batcher.GraphicsDevice;
-            device.SetRenderTarget(renderTargets.WorldRenderTarget);
+            device.SetRenderTarget(hold ? null : renderTargets.WorldRenderTarget);
             // the world target is preserved (the GPU pass already cleared it); FNA's world-space draws get a fresh depth buffer
             device.Clear(ClearOptions.DepthBuffer | ClearOptions.Stencil, Vector4.Zero, 1f, 0);
             SelectedObject.Object = null;
@@ -407,7 +442,7 @@ namespace ClassicUO.Game.Scenes
             batcher.SetStencil(null);
             batcher.End();
 
-            gpu.Render(target, GetGpuCamera(target));
+            gpu.Render(target, GetGpuCamera(target), hold);
 
             device.SetRenderTarget(null);
             _gpuWorld = null;

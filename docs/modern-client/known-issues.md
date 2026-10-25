@@ -29,18 +29,19 @@ Visual or behavioural defects found in the PoC client that aren't fixed yet. Add
 - **Likely cause:** a scissor rect larger than the render target while the window or back buffer has a transient size (0, or not yet resized).
 - **Fix:** clamp scissor rects to the current target bounds in `ScissorStack`, and skip the UI draw when the target is empty.
 
-## Gpu world renderer: raw pop-in on world entry and teleports (2026-10-24)
+## Gpu world renderer: raw pop-in on world entry and teleports (2026-10-24) — fixed 2026-10-25, leftovers below
 
-- **Seen by:** the owner, watching agent test runs. On first entering the world and after moving to a new location, things pop in quickly, land is partly black for a moment, and there are flashes that look like intermediate drawing.
-- **Two causes in the code:**
-  - **Legacy fallback while Gpu isn't ready.** `GameScene.cs:1065` draws the world with Legacy until `gpu.IsReady(_world.MapIndex)` is true, and also whenever the world RT isn't `PreserveContents`. So entering the world or changing facet shows a few Legacy frames, then switches renderers. Legacy and Gpu filter differently, so the switch is visible.
-  - **Unsettled frames are presented.** `WorldRenderer.Settled` (`poc/Uo.Render/WorldRenderer.cs:216`) is false while chunks are pending or visible pages are missing, but only screenshots and tests wait for it. The live client presents those frames: chunks that aren't built yet show as gaps or black, and missing pages draw as empty or black texels.
-- **Fix candidates:**
-  - on world entry and teleport, hold the last frame (or a loading fade) until `Settled`, with a timeout;
-  - don't draw a chunk until its pages are resident, or draw a low-detail placeholder (architecture-recommendations.md, item 5);
-  - prefetch the destination area on teleport or map change, before the client moves the camera;
-  - once Legacy is removed, drop the Legacy fallback; until then, hold the previous frame instead of drawing Legacy.
-- **Verify:** record the screen during a login and a recall or `[go` teleport. Log `MissingVisible`/`PendingChunks` for each frame until `Settled`, and count the presented frames that weren't settled and the frames drawn by Legacy.
+- **Fixed (world-settle agent; poc-log "World settle"):**
+  - The Legacy fallback is gone.
+  - After a login, a teleport (more than 8 tiles in one frame), a facet change, a world-pass recreation or a switch back from Legacy, the last world frame is held while the GPU world streams, until its view is ready (`WorldRenderer.VisibleReady`) or 1.5 s pass. With no frame to hold, the world area is black and then fades in.
+  - Measured: 0 unsettled frames presented with hold on, against 6–19 per teleport or recreation before. No Legacy frames.
+  - Test procedure: [testing/world-settle.md](testing/world-settle.md).
+- **Left over:**
+  - **Walking:** a dynamic sprite whose art page isn't resident yet is still presented for about 10 ms (one page, 5–20 frames per 10 s walk at ~1000 fps). Walking deliberately never holds; fix it on the streaming side by prefetching item and mobile art pages.
+  - **What a held frame shows:** the old place, while the UI, overhead text, health bars and the mouse picking already follow the new position. That lasts 3–5 frames at 60 fps after a teleport.
+  - **Not detected by the hold:** stale override state. W1's suspected `gpu_prepare_skip_baked` flicker after a recreation would draw wrong tiles while `VisibleReady` is true. The hold only covers missing chunks and pages.
+  - **No live facet-change test:** only unit-tested, and `reinit` exercises the same recreation path.
+  - **Prefetch on the teleport packet:** not done. The packet is applied in the same frame that draws, so there is no gap to use.
 - **Related, from the pack-loading merge (df2fbf8c8):** a body seen for the first time decodes on a worker and draws nothing until its first direction is uploaded. A new equipment item on a human who is already visible can appear a frame or two after the body. Nobody has checked this by eye yet. `CUO_ANIM_SYNC=1` restores synchronous loading for comparison.
 
 ## Single frames with no baked land and statics, or scattered missing and wrong tiles, in a reinit stress run (2026-10-25)
@@ -49,3 +50,4 @@ Visual or behavioural defects found in the PoC client that aren't fixed yet. Add
 - **What happens:** the character stands still in a fully loaded house. In 5 of 234 recorded frames, either nearly all baked land and statics are black (dynamic items, mobiles and the UI still draw), or scattered tiles are missing or show the wrong texture.
 - **Not seen** on the Kbatfour client (the pack-loading build): there, black appears only during teleports, which is the pop-in issue above.
 - **Update (page-fault agent, 2026-10-25):** that recording was a stress run with `CUO_GPU_REINIT=1500`, which drops and recreates the GPU world pass and world RT every 1.5 s. The 5 bad frames match the 5 recreations, so the cause is very likely the test hook, not mitigations A/B/C. Not proven yet: compare normal runs (no reinit) of the mitigation and base builds for unsettled frames. Even so, a recreation should hold the last frame instead of showing a half-built world (see the pop-in entry above).
+- **Update (world-settle agent, 2026-10-25):** recreations now hold the last frame (DevBench `reinit`: 0 unsettled frames presented, against 13–19 before). `CUO_GPU_REINIT` also drops the world RT, so there's nothing to hold: expect black and a 250 ms fade-in per recreation (like DevBench `reinitrt`), not a half-built world.

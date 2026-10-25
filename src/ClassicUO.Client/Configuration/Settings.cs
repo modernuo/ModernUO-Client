@@ -88,8 +88,21 @@ namespace ClassicUO.Configuration
         // Folder of the converted asset pack; empty = "pack" next to the client, else in the UO directory.
         [JsonPropertyName("pack")] public string PackDirectory { get; set; }
 
-        // "gpu" (default: Uo.Render on FNA3D's SDL_GPU device; falls back to legacy without it) or "legacy" (FNA batcher).
-        [JsonPropertyName("world_renderer")] public string WorldRenderer { get; set; } = "gpu";
+        // The world renderer for this run: "gpu" (Uo.Render on FNA3D's SDL_GPU device; the only player renderer) or
+        // "legacy" (the FNA batcher), a developer comparison mode chosen only by -worldrenderer, the -worldrenderer command
+        // or DevBench's world:legacy. Not saved: a "world_renderer" in settings.json is ignored (SavedWorldRenderer).
+        [JsonIgnore] public string WorldRenderer { get; set; } = "gpu";
+
+        // The old saved setting. Read so a "world_renderer": "legacy" left in settings.json can be reported, never applied;
+        // never written (null), so the next save drops it.
+        [JsonPropertyName("world_renderer"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+        public string SavedWorldRenderer
+        {
+            get => null;
+            set => IgnoredSavedWorldRenderer = value;
+        }
+
+        [JsonIgnore] public static string IgnoredSavedWorldRenderer { get; private set; }
 
         [JsonIgnore] public bool UseGpuWorldRenderer => string.Equals(WorldRenderer, "gpu", StringComparison.OrdinalIgnoreCase);
 
