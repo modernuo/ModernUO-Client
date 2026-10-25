@@ -68,13 +68,22 @@ namespace ClassicUO.Ecs
                     new Position { X = x, Y = y, Z = z },
                     new Facing { Value = facing },
                     new Flags { Value = flags },
-                    isPlayer ? Tags.Get<MobileTag, PlayerTag>() : Tags.Get<MobileTag>()
+                    new AnimationState { ServerGroup = 0xFF },
+                    new MobileRenderState { Alpha = 0xFF },
+                    new EquipmentSlots(),
+                    isPlayer ? Tags.Get<MobileTag, PlayerTag, EquipmentDirty>() : Tags.Get<MobileTag, EquipmentDirty>()
                 );
 
                 _bySerial[serial] = e;
                 MobileCount++;
 
                 return;
+            }
+
+            // the equipment's drawn bodies (equipconv, gargoyle remap, covered rules) depend on the body graphic
+            if (e.GetComponent<Graphic>().Value != graphic)
+            {
+                MarkEquipmentDirty(e);
             }
 
             WriteCommon(e, graphic, hue, x, y, z, facing, flags);
@@ -108,7 +117,14 @@ namespace ClassicUO.Ecs
             bool isMulti
         )
         {
-            if (!_bySerial.TryGetValue(serial, out Entity e) || !e.Tags.Has<ItemTag>())
+            uint oldWearer = 0;
+
+            if (_bySerial.TryGetValue(serial, out Entity e) && e.Tags.Has<ItemTag>() && e.TryGetComponent(out EquippedOn worn))
+            {
+                oldWearer = worn.Parent;
+            }
+
+            if (e.IsNull || !e.Tags.Has<ItemTag>())
             {
                 if (!e.IsNull)
                 {
@@ -138,6 +154,17 @@ namespace ClassicUO.Ecs
 
             SetParent(e, container, layer);
 
+            // any write to a worn item (equip, unequip, graphic, hue) invalidates the old and new wearer's slots
+            if (oldWearer != 0)
+            {
+                MarkEquipmentDirty(oldWearer);
+            }
+
+            if (IsMobileSerial(container) && container != oldWearer)
+            {
+                MarkEquipmentDirty(container);
+            }
+
             if (e.Tags.Has<MultiTag>() != isMulti)
             {
                 if (isMulti)
@@ -165,11 +192,32 @@ namespace ClassicUO.Ecs
             else
             {
                 ItemCount--;
+
+                if (e.TryGetComponent(out EquippedOn worn))
+                {
+                    MarkEquipmentDirty(worn.Parent);
+                }
             }
 
             e.DeleteEntity();
 
             return true;
+        }
+
+        public void MarkEquipmentDirty(uint mobileSerial)
+        {
+            if (_bySerial.TryGetValue(mobileSerial, out Entity e))
+            {
+                MarkEquipmentDirty(e);
+            }
+        }
+
+        private static void MarkEquipmentDirty(Entity e)
+        {
+            if (e.HasComponent<EquipmentSlots>() && !e.Tags.Has<EquipmentDirty>())
+            {
+                e.AddTag<EquipmentDirty>();
+            }
         }
 
         public void Clear()

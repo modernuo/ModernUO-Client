@@ -164,6 +164,7 @@ namespace ClassicUO.Game.Scenes
             _dynamicCount = 0;
             _object = null;
             CaptureFallbacks = 0;
+            EcsParity.BeginFrame();
         }
 
         /// <summary>GameScene's draw offset: world pixel = screen position + offset.</summary>
@@ -259,6 +260,18 @@ namespace ClassicUO.Game.Scenes
 
             try
             {
+                // W3 parity harness (CUO_ECS_PARITY): the ECS extract for the same mobile, diffed against this capture
+                if (EcsParity.Active && obj is Mobile mobile && !shadowOnly)
+                {
+                    int start = _dynamicCount;
+                    long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                    bool drawn = obj.Draw(batcher, obj.RealScreenPosition.X, obj.RealScreenPosition.Y, depth);
+                    long ticks = System.Diagnostics.Stopwatch.GetTimestamp() - t0;
+                    EcsParity.OnCaptured(mobile, depth, _dynamic, start, _dynamicCount, _pack, _offsetX, _offsetY, ticks);
+
+                    return drawn;
+                }
+
                 return obj.Draw(batcher, obj.RealScreenPosition.X, obj.RealScreenPosition.Y, depth);
             }
             finally

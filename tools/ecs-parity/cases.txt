@@ -1,0 +1,103 @@
+wait 6
+say [go 5445 1153
+wait 3
+say [set Flying false
+wait 1
+target self
+wait 2
+say [add Cloak
+wait 1
+target ground 1 1
+wait 2
+pick near 1515
+wait 2
+drop equip
+wait 3
+walk 0 2
+walk 4 2
+walk 3 2
+walk 7 2
+walk 2 2
+walk 6 2
+wait 2
+parity
+say [set Hue 0x4001
+wait 1
+target self
+wait 3
+say [set Hue 0x83EA
+wait 1
+target self
+wait 2
+say [set Body 666
+wait 1
+target self
+wait 3
+walk 2 2
+walk 6 2
+walk 0 2
+walk 4 2
+wait 2
+say [set Flying true
+wait 1
+target self
+wait 3
+walk 2 2 run
+walk 6 2 run
+wait 2
+say [set Flying false
+wait 1
+target self
+wait 1
+say [set Body 667
+wait 1
+target self
+wait 3
+walk 3 2
+walk 7 2
+wait 2
+say [set Body 400
+wait 1
+target self
+wait 2
+parity
+say [add WoodenChair
+wait 1
+target ground 1 0
+wait 2
+walk 2 2
+wait 4
+walk 4 1
+wait 2
+walk 0 1
+wait 3
+walk 6 2
+wait 2
+parity
+say [mortal
+wait 1
+target self
+wait 2
+say [kill
+wait 1
+target self
+wait 5
+walk 2 2
+walk 6 2
+wait 2
+say [res
+wait 1
+target self
+wait 4
+say [immortal
+wait 1
+target self
+wait 2
+say [wipe items
+wait 1
+target ground 1 0
+wait 1
+target ground 1 0
+wait 2
+check
+quit

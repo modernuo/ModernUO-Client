@@ -1,5 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
+using System;
+using System.Runtime.CompilerServices;
 using Friflo.Engine.ECS;
 
 namespace ClassicUO.Ecs
@@ -69,6 +71,153 @@ namespace ClassicUO.Ecs
 
     public struct MultiTag : ITag { }
 
+    [Flags]
+    public enum AnimStateFlags : uint
+    {
+        None = 0,
+
+        // selection inputs, sampled from the legacy Mobile until the ECS owns the world update (W5)
+        FromServer = 1 << 0,
+        WarMode = 1 << 1,
+        Walking = 1 << 2,
+        Running = 1 << 3,
+        HasSteps = 1 << 4,
+        StepRun = 1 << 5,
+        Mounted = 1 << 6,
+        Flying = 1 << 7,
+        Dead = 1 << 8,
+        Hidden = 1 << 9,
+        Female = 1 << 10,
+        Human = 1 << 11,
+
+        // Mobile.Draw's gargoyle test (CV_7000+, bodies 666/667/0x2B6/0x2B7) and Mobile.IsGargoyle (with its precedence
+        // quirk: CV_7000+ and 0x29A, or 0x29B on any version) differ; both are kept
+        GargoyleBody = 1 << 12,
+        GargoyleProp = 1 << 13,
+
+        // persistent: GetAnimDirection leaves the mirror untouched for directions 3 and 7, so it carries over frames
+        Mirror = 1 << 14,
+
+        // selection results
+        Visible = 1 << 15,
+        Shadow = 1 << 16,
+        MountDrawn = 1 << 17,
+        Sitting = 1 << 18,
+
+        // seated with the human sitting pose: drawn as one sprite, not in strips
+        CharSitting = 1 << 19
+    }
+
+    /// <summary>
+    /// A mobile's animation: the inputs of ClassicUO's action selection and the selected body/mount action, stored
+    /// direction, frame and seat offsets. Written by AnimationStateSystem; read by the sprite extract.
+    /// </summary>
+    public struct AnimationState : IComponent
+    {
+        public AnimStateFlags Flags;
+
+        // GetGraphicForAnimation: the body the animation is looked up for
+        public ushort Body;
+
+        // server-requested action (0xFF = none)
+        public byte ServerGroup;
+
+        // raw facing 0..7 (the front step's direction while walking): the equipment order key
+        public byte Facing;
+
+        public byte Frame;
+        public byte Group;
+
+        // stored direction 0..4 after GetAnimDirection (and the sitting remap)
+        public byte Dir;
+
+        public byte MountGroup;
+        public ushort MountBody;
+        public sbyte MountOffsetY;
+
+        // seat offsets (FixSittingDirection + SIT_OFFSET_Y, gargoyle lift) added to the draw position
+        public short SitX, SitY;
+
+        // Mobile.LastAnimationChangeTime: when the frame advances next
+        public uint NextFrameTime;
+    }
+
+    /// <summary>Per-frame view context of a mobile: overriding hue (highlight, notoriety, out of range...), alpha, step offset.</summary>
+    public struct MobileRenderState : IComponent
+    {
+        public ushort OverrideHue;
+        public byte Alpha;
+
+        // (int)Offset.X and (int)(Offset.Y - Offset.Z) of the walking step
+        public short OffsetX, OffsetY;
+    }
+
+    [Flags]
+    public enum EquipSlotBits : byte
+    {
+        None = 0,
+        PartialHue = 1,
+        Light = 2,
+        Converted = 4
+    }
+
+    public struct EquipSlot
+    {
+        public uint Item;
+        public ushort Graphic;
+
+        // tiledata AnimID of the item, and the body actually drawn (gargoyle remap, equipconv.def)
+        public ushort AnimId;
+        public ushort DrawBody;
+        public ushort Hue;
+
+        // equipconv.def colour, used when neither the item nor the body file gives a hue
+        public ushort ConvColor;
+        public byte Layer;
+        public EquipSlotBits Bits;
+
+        // per-frame action of this layer: gargoyles select it per equipment body; 0xFF = the body's action
+        public byte Group;
+    }
+
+    // what the action selection reads of a one- or two-handed item
+    public struct HandItem
+    {
+        public bool Present, IsLight;
+        public ushort AnimId;
+    }
+
+    [InlineArray(EquipmentSlots.MAX)]
+    public struct EquipSlotArray
+    {
+        private EquipSlot _e;
+    }
+
+    /// <summary>
+    /// A mobile's drawn equipment, compacted and in paint order (PaperdollOrder table and reorder rules; covered layers,
+    /// light-only items and a dead mobile's hair removed). Rebuilt only when equipment changes (<see cref="EquipmentDirty"/>);
+    /// the facing-dependent cloak move is applied by the extract. Also carries the mount and the hand items that the
+    /// action selection reads.
+    /// </summary>
+    public struct EquipmentSlots : IComponent
+    {
+        public const int MAX = 25;
+
+        public EquipSlotArray Slots;
+        public byte Count;
+
+        public uint MountItem;
+        public ushort MountGraphic, MountAnimId, MountHue;
+
+        public HandItem Hand1, Hand2;
+
+        // bumped on every rebuild
+        public ushort Version;
+    }
+
+    // Equipment (or the body graphic or sex) changed: EquipmentSystem rebuilds EquipmentSlots before the next extract.
+    public struct EquipmentDirty : ITag { }
+
     public static class EcsSchema
     {
         private static readonly object _lock = new object();
@@ -103,6 +252,10 @@ namespace ClassicUO.Ecs
             aot.RegisterTag<PlayerTag>();
             aot.RegisterTag<OnGround>();
             aot.RegisterTag<MultiTag>();
+            aot.RegisterComponent<AnimationState>();
+            aot.RegisterComponent<MobileRenderState>();
+            aot.RegisterComponent<EquipmentSlots>();
+            aot.RegisterTag<EquipmentDirty>();
 
             return aot.CreateSchema();
         }
