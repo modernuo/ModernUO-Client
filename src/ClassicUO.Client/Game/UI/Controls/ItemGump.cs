@@ -135,32 +135,23 @@ namespace ClassicUO.Game.UI.Controls
 
 
                 var sourceRectangle = spriteInfo.UV;
-                renderLists.AddGumpWithAtlas
-                (
-                    batcher =>
-                    {
+                renderLists.AddGumpWithAtlas(GumpCommand.Sprite(texture, rect, sourceRectangle, hueVector, layerDepth));
 
-                        batcher.Draw(texture, rect, sourceRectangle, hueVector, layerDepth);
+                Item item = _gump.World.Items.Get(LocalSerial);
 
-                        Item item = _gump.World.Items.Get(LocalSerial);
+                if (
+                    item != null
+                    && !item.IsMulti
+                    && !item.IsCoin
+                    && item.Amount > 1
+                    && item.ItemData.IsStackable
+                )
+                {
+                    rect.X += 5;
+                    rect.Y += 5;
 
-                        if (
-                            item != null
-                            && !item.IsMulti
-                            && !item.IsCoin
-                            && item.Amount > 1
-                            && item.ItemData.IsStackable
-                        )
-                        {
-                            rect.X += 5;
-                            rect.Y += 5;
-
-                            batcher.Draw(texture, rect, sourceRectangle, hueVector, layerDepth);
-                        }
-
-                        return true;
-                    }
-                );
+                    renderLists.AddGumpWithAtlas(GumpCommand.Sprite(texture, rect, sourceRectangle, hueVector, layerDepth));
+                }
             }
 
             return true;

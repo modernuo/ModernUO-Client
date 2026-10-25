@@ -3,52 +3,164 @@ using ClassicUO.Game;
 using ClassicUO.Game.GameObjects;
 using ClassicUO.Game.Map;
 using ClassicUO.Renderer;
+using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 
 namespace ClassicUO.Game.Scenes
 {
-    /// <summary>
-    /// A queued draw into the non-atlas gump layer. Prefer the typed text path:
-    /// store a reference to the <see cref="RenderedText"/> plus its draw parameters.
-    /// This avoids allocating a closure per frame and makes it safe to skip entries
-    /// whose text was destroyed/recycled (pooled via <see cref="RenderedText"/>'s
-    /// internal pool) between queue and flush.
-    ///
-    /// Callers that need an arbitrary non-text draw (clipping, compound operations,
-    /// solid color rectangles, etc.) use the <see cref="Callback"/> path.
-    /// </summary>
-    internal readonly struct NoAtlasGumpCommand
+    internal enum GumpCommandKind : byte
     {
+        Callback,
+        /// <summary><see cref="RenderedText.Draw(UltimaBatcher2D, int, int, float, float, ushort, float)"/>, skipped when the text no longer has content.</summary>
+        Text,
+        /// <summary><c>batcher.Draw(texture, destination, source, hue, depth)</c></summary>
+        Sprite,
+        /// <summary><c>batcher.Draw(texture, destination, hue, depth)</c> (the whole texture)</summary>
+        SpriteStretched,
+        /// <summary><c>batcher.Draw(texture, new Vector2(x, y), source, hue, depth)</c></summary>
+        SpriteAt,
+        /// <summary><c>batcher.DrawTiled(texture, destination, source, hue, depth)</c></summary>
+        Tiled,
+        /// <summary><c>batcher.DrawRectangle(texture, x, y, w, h, hue, depth)</c> (an outline)</summary>
+        Outline,
+        /// <summary><see cref="IGumpDeferredDraw.DrawDeferred"/> on the queued control.</summary>
+        Deferred
+    }
+
+    /// <summary>A control that queues itself and draws later, during the gump layer flush, instead of queueing a closure.</summary>
+    internal interface IGumpDeferredDraw
+    {
+        bool DrawDeferred(UltimaBatcher2D batcher, int x, int y, float layerDepth, int arg);
+    }
+
+    /// <summary>
+    /// A queued draw into one of the gump layers. A plain value: queueing one allocates nothing, unlike a
+    /// closure per control per frame. Use the typed kinds (text, sprites, tiles, outlines, a deferred control);
+    /// <see cref="Callback"/> remains for one-off compound draws.
+    ///
+    /// Text entries keep a reference to the <see cref="RenderedText"/> and are skipped when it was
+    /// destroyed/recycled (pooled via <see cref="RenderedText"/>'s internal pool) between queue and flush.
+    /// </summary>
+    internal readonly struct GumpCommand
+    {
+        public readonly GumpCommandKind Kind;
         public readonly RenderedText Text;
+        public readonly Texture2D Texture;
+        public readonly IGumpDeferredDraw Target;
+        public readonly Func<UltimaBatcher2D, bool> Callback;
         public readonly int X;
         public readonly int Y;
+        public readonly int Width;
+        public readonly int Height;
+        public readonly Rectangle Source;
+        public readonly Vector3 HueVector;
         public readonly float LayerDepth;
         public readonly float Alpha;
         public readonly ushort Hue;
-        public readonly Func<UltimaBatcher2D, bool> Callback;
+        public readonly int Arg;
 
-        public NoAtlasGumpCommand(RenderedText text, int x, int y, float layerDepth, float alpha, ushort hue)
+        private GumpCommand
+        (
+            GumpCommandKind kind,
+            RenderedText text,
+            Texture2D texture,
+            IGumpDeferredDraw target,
+            Func<UltimaBatcher2D, bool> callback,
+            int x,
+            int y,
+            int width,
+            int height,
+            Rectangle source,
+            Vector3 hueVector,
+            float layerDepth,
+            float alpha,
+            ushort hue,
+            int arg
+        )
         {
+            Kind = kind;
             Text = text;
+            Texture = texture;
+            Target = target;
+            Callback = callback;
             X = x;
             Y = y;
+            Width = width;
+            Height = height;
+            Source = source;
+            HueVector = hueVector;
             LayerDepth = layerDepth;
             Alpha = alpha;
             Hue = hue;
-            Callback = null;
+            Arg = arg;
         }
 
-        public NoAtlasGumpCommand(Func<UltimaBatcher2D, bool> callback)
+        public GumpCommand(RenderedText text, int x, int y, float layerDepth, float alpha, ushort hue)
+            : this(GumpCommandKind.Text, text, null, null, null, x, y, 0, 0, default, default, layerDepth, alpha, hue, 0) { }
+
+        public GumpCommand(Func<UltimaBatcher2D, bool> callback)
+            : this(GumpCommandKind.Callback, null, null, null, callback, 0, 0, 0, 0, default, default, 0f, 0f, 0, 0) { }
+
+        public Rectangle Destination => new Rectangle(X, Y, Width, Height);
+
+        public static GumpCommand Sprite(Texture2D texture, Rectangle destination, Rectangle source, Vector3 hue, float layerDepth)
+            => new(GumpCommandKind.Sprite, null, texture, null, null, destination.X, destination.Y, destination.Width, destination.Height, source, hue, layerDepth, 0f, 0, 0);
+
+        public static GumpCommand SpriteStretched(Texture2D texture, Rectangle destination, Vector3 hue, float layerDepth)
+            => new(GumpCommandKind.SpriteStretched, null, texture, null, null, destination.X, destination.Y, destination.Width, destination.Height, default, hue, layerDepth, 0f, 0, 0);
+
+        public static GumpCommand SpriteAt(Texture2D texture, int x, int y, Rectangle source, Vector3 hue, float layerDepth)
+            => new(GumpCommandKind.SpriteAt, null, texture, null, null, x, y, 0, 0, source, hue, layerDepth, 0f, 0, 0);
+
+        public static GumpCommand Tiled(Texture2D texture, Rectangle destination, Rectangle source, Vector3 hue, float layerDepth)
+            => new(GumpCommandKind.Tiled, null, texture, null, null, destination.X, destination.Y, destination.Width, destination.Height, source, hue, layerDepth, 0f, 0, 0);
+
+        public static GumpCommand Outline(Texture2D texture, int x, int y, int width, int height, Vector3 hue, float layerDepth)
+            => new(GumpCommandKind.Outline, null, texture, null, null, x, y, width, height, default, hue, layerDepth, 0f, 0, 0);
+
+        public static GumpCommand Deferred(IGumpDeferredDraw target, int x, int y, float layerDepth, int arg = 0)
+            => new(GumpCommandKind.Deferred, null, null, target, null, x, y, 0, 0, default, default, layerDepth, 0f, 0, arg);
+
+        public bool Execute(UltimaBatcher2D batcher)
         {
-            Text = null;
-            X = 0;
-            Y = 0;
-            LayerDepth = 0f;
-            Alpha = 0f;
-            Hue = 0;
-            Callback = callback;
+            switch (Kind)
+            {
+                case GumpCommandKind.Text:
+                    // HasContent rejects destroyed/empty text, possible when the instance went back to the pool between queue and flush
+                    return Text != null && Text.HasContent && Text.Draw(batcher, X, Y, LayerDepth, Alpha, Hue);
+
+                case GumpCommandKind.Sprite:
+                    batcher.Draw(Texture, Destination, Source, HueVector, LayerDepth);
+
+                    return true;
+
+                case GumpCommandKind.SpriteStretched:
+                    batcher.Draw(Texture, Destination, HueVector, LayerDepth);
+
+                    return true;
+
+                case GumpCommandKind.SpriteAt:
+                    batcher.Draw(Texture, new Vector2(X, Y), Source, HueVector, LayerDepth);
+
+                    return true;
+
+                case GumpCommandKind.Tiled:
+                    batcher.DrawTiled(Texture, Destination, Source, HueVector, LayerDepth);
+
+                    return true;
+
+                case GumpCommandKind.Outline:
+                    return batcher.DrawRectangle(Texture, X, Y, Width, Height, HueVector, LayerDepth);
+
+                case GumpCommandKind.Deferred:
+                    return Target.DrawDeferred(batcher, X, Y, LayerDepth, Arg);
+
+                default:
+                    return Callback != null && Callback.Invoke(batcher);
+            }
         }
     }
 
@@ -65,8 +177,8 @@ namespace ClassicUO.Game.Scenes
         private readonly List<GameObject> _animations = [];
         private readonly List<GameObject> _effects = [];
         private readonly List<GameObject> _transparentObjects = [];
-        private readonly List<Func<UltimaBatcher2D, bool>> _gumpSprites = [];
-        private readonly List<NoAtlasGumpCommand> _gumpTexts = [];
+        private readonly List<GumpCommand> _gumpSprites = [];
+        private readonly List<GumpCommand> _gumpTexts = [];
 
         public void Clear()
         {
@@ -137,7 +249,19 @@ namespace ClassicUO.Game.Scenes
         /// <param name="toRender"></param>
         public void AddGumpWithAtlas(Func<UltimaBatcher2D, bool> toRender)
         {
-            _gumpSprites.Add(toRender);
+            _gumpSprites.Add(new GumpCommand(toRender));
+        }
+
+        /// <summary>Queue a typed draw (see <see cref="GumpCommand"/>'s factories) into the atlas gump layer; allocation-free.</summary>
+        public void AddGumpWithAtlas(in GumpCommand command)
+        {
+            _gumpSprites.Add(command);
+        }
+
+        /// <summary>Queue a typed draw (see <see cref="GumpCommand"/>'s factories) into the non-atlas gump layer; allocation-free.</summary>
+        public void AddGumpNoAtlas(in GumpCommand command)
+        {
+            _gumpTexts.Add(command);
         }
 
         /// <summary>
@@ -154,7 +278,7 @@ namespace ClassicUO.Game.Scenes
                 return;
             }
 
-            _gumpTexts.Add(new NoAtlasGumpCommand(text, x, y, layerDepth, alpha, hue));
+            _gumpTexts.Add(new GumpCommand(text, x, y, layerDepth, alpha, hue));
         }
 
         /// <summary>
@@ -170,13 +294,13 @@ namespace ClassicUO.Game.Scenes
                 return;
             }
 
-            _gumpTexts.Add(new NoAtlasGumpCommand(toRender));
+            _gumpTexts.Add(new GumpCommand(toRender));
         }
 
         // Test accessors. Kept internal; allow unit tests to inspect what was queued
         // without requiring a live graphics device to invoke the flush path.
         internal int GumpTextsCount => _gumpTexts.Count;
-        internal NoAtlasGumpCommand PeekGumpText(int index) => _gumpTexts[index];
+        internal GumpCommand PeekGumpText(int index) => _gumpTexts[index];
 
         public int DrawRenderLists(UltimaBatcher2D batcher, sbyte maxGroundZ)
         {
@@ -346,47 +470,22 @@ namespace ClassicUO.Game.Scenes
             return done;
         }
 
-        private static int DrawRenderListWithAtlas(UltimaBatcher2D batcher, List<Func<UltimaBatcher2D, bool>> renderList)
+        private static int DrawRenderListWithAtlas(UltimaBatcher2D batcher, List<GumpCommand> renderList)
+            => DrawGumpCommands(batcher, renderList);
+
+        private static int DrawRenderListNoAtlas(UltimaBatcher2D batcher, List<GumpCommand> renderList)
+            => DrawGumpCommands(batcher, renderList);
+
+        private static int DrawGumpCommands(UltimaBatcher2D batcher, List<GumpCommand> renderList)
         {
             int done = 0;
 
-            foreach (var obj in renderList)
-            {
-                if (obj.Invoke(batcher))
-                {
-                    done++;
-                }
-            }
-
-            return done;
-        }
-
-        private static int DrawRenderListNoAtlas(UltimaBatcher2D batcher, List<NoAtlasGumpCommand> renderList)
-        {
-            int done = 0;
-
-            // AsSpan avoids the List<T> enumerator allocation on the hot path.
+            // A span, not the List<T> enumerator. Commands never queue into the list being drawn (nested
+            // controls such as ResizePic draw their children through their own RenderLists).
             var span = CollectionsMarshal.AsSpan(renderList);
             for (int i = 0; i < span.Length; i++)
             {
-                ref readonly var cmd = ref span[i];
-
-                if (cmd.Text != null)
-                {
-                    // Typed fast path. HasContent rejects destroyed/empty text, which is
-                    // possible when the underlying instance was returned to the pool
-                    // between queue and flush.
-                    if (!cmd.Text.HasContent)
-                    {
-                        continue;
-                    }
-
-                    if (cmd.Text.Draw(batcher, cmd.X, cmd.Y, cmd.LayerDepth, cmd.Alpha, cmd.Hue))
-                    {
-                        done++;
-                    }
-                }
-                else if (cmd.Callback != null && cmd.Callback.Invoke(batcher))
+                if (span[i].Execute(batcher))
                 {
                     done++;
                 }
