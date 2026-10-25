@@ -107,5 +107,6 @@ ClassicUO 2.0 ships C# compiled with **NativeAOT-LLVM** (dotnet/runtimelab, expe
   - shaders are WGSL. 2.0 hand-ported its `.fx` shaders to WGSL; we'd translate our HLSL via SPIR-V with naga or tint;
   - check storage-buffer-in-vertex-stage limits (compatibility mode can report 0);
   - uploads go through the host. 2.0 uses an upload worker and arenas on the host side.
+  - **SDL_GPU WebGPU backend** ([libsdl-org/SDL#16020](https://github.com/libsdl-org/SDL/pull/16020), checked 2026-10-24): an experimental, open draft. It's Dawn only (wgpu-native support was dropped), consumes WGSL (SPIR-V→WGSL via shadercross is planned), and is browser-first with native kept for debugging. Buffer and texture cycling and mipmap generation are missing; it isn't thread-safe and still leaks. An FNA trace run had 11 of 21 traces working. If it matures, our SDL_GPU renderer could reach the browser without a separate WebGPU backend. ClassicUO 2.0 doesn't use it: its host is Rust wasmtime + wgpu. Re-check before starting the browser profile.
 - **Compiler choice:** NativeAOT-LLVM (2.0's choice; fastest code, but experimental) vs Mono-WASM AOT (supported). Re-evaluate when the browser build starts.
 - **No plugins.** 2.0 loads WASM-component mods; our owner rules out third-party scripting, so this doesn't apply.
