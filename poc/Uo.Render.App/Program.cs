@@ -9,6 +9,7 @@ public static unsafe class Program
     {
         public string Pack;
         public bool Bench;
+        public bool BenchFixed; // --bench-fixed: hold the --at spot and zoom instead of the bench path
         public string Screenshot;
         public double ViaX = double.NaN, ViaY;  // --via x y: settle there first, then jump (different chunk-table order)
         public string ShotsDir;      // --shots <dir>: offscreen scripted fly-in, saving frames mid-streaming
@@ -70,6 +71,7 @@ public static unsafe class Program
                 }
                 case "--pack": o.Pack = args[++i]; break;
                 case "--bench": o.Bench = true; break;
+                case "--bench-fixed": o.Bench = true; o.BenchFixed = true; break;
                 case "--bench-seconds": o.BenchSeconds = float.Parse(args[++i]); break;
                 case "--shots": o.ShotsDir = args[++i]; break;
                 case "--magenta": o.Magenta = true; break;
@@ -559,7 +561,9 @@ public static unsafe class Program
                         allocTotalStart = GC.GetTotalAllocatedBytes(false);
                     }
                     double bt = benchRunning ? (t0 - benchStart) / freq : 0;
-                    BenchPath(bt / _o.BenchSeconds * 20.0, out double bx, out double by, out _zoom);
+                    double bx = _o.StartX, by = _o.StartY;
+                    if (_o.BenchFixed) _zoom = _o.StartZoom;
+                    else BenchPath(bt / _o.BenchSeconds * 20.0, out bx, out by, out _zoom);
                     SetCameraTile(bx, by);
                     if (benchRunning && bt >= _o.BenchSeconds) running = false;
                 }

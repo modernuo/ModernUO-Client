@@ -117,7 +117,7 @@ public sealed unsafe class Renderer : IDisposable
         _ps = CreateShader("sprite_ps", "PSMain", SDL_GPUShaderStage.SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1, 0);
 
         _samplerPoint = CreateSampler(SDL_GPUFilter.SDL_GPU_FILTER_NEAREST, SDL_GPUSamplerMipmapMode.SDL_GPU_SAMPLERMIPMAPMODE_NEAREST, 0);
-        // zoomed out: trilinear, limited to mips the 2-px gutter still protects
+        // zoomed out: trilinear, limited to mips the 2-px gutter still protects (sprite.hlsl LINEAR_MAX_LOD must match)
         _samplerLinear = CreateSampler(SDL_GPUFilter.SDL_GPU_FILTER_LINEAR, SDL_GPUSamplerMipmapMode.SDL_GPU_SAMPLERMIPMAPMODE_LINEAR, 1.5f);
         _samplerHue = CreateSampler(SDL_GPUFilter.SDL_GPU_FILTER_NEAREST, SDL_GPUSamplerMipmapMode.SDL_GPU_SAMPLERMIPMAPMODE_NEAREST, 0);
 
