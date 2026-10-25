@@ -21,6 +21,7 @@ namespace ClassicUO
     //   itemhue:hex,hex,... sets the hues of the nearest ground items, ghost:on|off swaps the player body (local-only render checks)
     //   CUO_BENCH_TOPMOST=1 keep the window on top while benching (occluded windows are throttled)
     //   plan entries size:WxH|max change the CUO_BENCH_SIZE client area mid-plan (max = maximised window)
+    //   plan entry gumps opens the paperdoll, backpack, journal and status bar (the UI allocation/parity scene); shots also save the UI render target
     internal static class DevBench
     {
         public static readonly bool FrameStats = Environment.GetEnvironmentVariable("CUO_FRAMESTATS") == "1";
@@ -952,6 +953,19 @@ namespace ClassicUO
                         Log.Info($"[bench] {_plan[_planIndex]}");
                         _planIndex++;
                         _stepAt = now + sec;
+
+                        break;
+                    }
+
+                    if (_plan[_planIndex] == "gumps")
+                    {
+                        GameActions.OpenPaperdoll(world, world.Player.Serial);
+                        GameActions.OpenBackpack(world);
+                        GameActions.OpenJournal(world);
+                        GameActions.OpenStatusBar(world);
+                        Log.Info("[bench] gumps: paperdoll, backpack, journal, status");
+                        _planIndex++;
+                        _stepAt = now + sec * 3;
 
                         break;
                     }
