@@ -89,6 +89,11 @@ namespace ClassicUO.Game
             return graphic;
         }
 
+        /// <summary>Mobile.IsMounted for its mount-layer item (0 = none): not a boat's tiller (IsDrivingBoat), and a mount
+        /// body (Item.GetGraphicForAnimation) other than 0xFFFF.</summary>
+        public static bool IsMountedBy(uint mountItem, ushort mountGraphic, ushort mountAnimId) =>
+            mountItem != 0 && mountGraphic != 0x3E96 && MountBody(mountGraphic, mountAnimId) != 0xFFFF;
+
         // MobileView: the rider is drawn this many pixels lower on the mount (Mounts table, keyed by the mount item graphic)
         public static sbyte MountOffsetY(ushort itemGraphic) => Mounts.TryGet(itemGraphic, out MountInfo info) ? info.OffsetY : (sbyte)0;
 

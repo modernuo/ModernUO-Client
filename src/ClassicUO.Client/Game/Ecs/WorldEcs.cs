@@ -94,7 +94,7 @@ namespace ClassicUO.Game
                     return;
                 }
 
-                Mirror.UpsertMobile
+                EcsEntity e = Mirror.UpsertMobile
                 (
                     mobile.Serial,
                     mobile.Graphic,
@@ -106,8 +106,46 @@ namespace ClassicUO.Game
                     (byte)mobile.Flags,
                     ReferenceEquals(mobile, _world.Player)
                 );
+
+                // W5: graphic, flags and direction reach the mirror only here, so the pushed inputs follow them here
+                WriteInputs(mobile, e);
             }
         }
+
+        /// <summary>
+        /// W5 (mobile_push_inputs): recomputes the mobile's <see cref="MobileInputs"/> after a change that doesn't go
+        /// through <see cref="Sync"/> (sex, the dead flag, notoriety, SA poison, the player's war mode, running, the step
+        /// queue and the last step time). Ignores mobiles World doesn't hold, as Sync does.
+        /// </summary>
+        public void PushInputs(Mobile mobile)
+        {
+            if (mobile == null || mobile.IsDestroyed || !ReferenceEquals(_world.Mobiles.Get(mobile.Serial), mobile))
+            {
+                return;
+            }
+
+            if (Mirror.TryGetEntity(mobile.Serial, out EcsEntity e))
+            {
+                WriteInputs(mobile, e);
+            }
+        }
+
+        public static long InputPushes;
+
+        private static void WriteInputs(Mobile mobile, EcsEntity e)
+        {
+            if (!e.HasComponent<MobileInputs>())
+            {
+                return;
+            }
+
+            InputPushes++;
+            MobileInputSource src = MobileInputRules.From(mobile, Cv7000);
+            MobileInputRules.Compute(in src, ref e.GetComponent<MobileInputs>());
+        }
+
+        // Client.Game.UO.Version >= CV_7000 (the rules of IsFlying, IsPoisoned, IsGargoyle); false without a client (tests)
+        private static bool Cv7000 => Client.Game?.UO != null && Client.Game.UO.Version >= Utility.ClientVersion.CV_7000;
 
         public void OnDestroyed(Entity entity)
         {
@@ -156,7 +194,7 @@ namespace ClassicUO.Game
             }
         }
 
-        private uint _cacheLogAt;
+        private uint _cacheLogAt, _inputLogAt;
 
         public void Update()
         {
@@ -164,6 +202,20 @@ namespace ClassicUO.Game
             {
                 _cacheLogAt = Time.Ticks + 5000;
                 Log.Info($"[mobile-cache-check] selections reused {MobileFrameCache.SelectHits}, run {MobileFrameCache.SelectMisses}; checked {MobileAnimationSystem.CheckSelects}, {MobileAnimationSystem.CheckSelectDiffs} different | instances replayed {MobileFrameCache.EmitHits}, emitted {MobileFrameCache.EmitMisses}; checked {MobileSpriteExtract.CheckReplays}, {MobileSpriteExtract.CheckReplayDiffs} different");
+            }
+
+            if ((MobileAnimationSystem.InputCheck || MobileAnimationSystem.InputBench) && Time.Ticks >= _inputLogAt)
+            {
+                _inputLogAt = Time.Ticks + 5000;
+
+                if (MobileAnimationSystem.InputBench && MobileAnimationSystem.BenchSamples > 0)
+                {
+                    double ns = 1e9 / Stopwatch.Frequency;
+                    long seats = Math.Max(1, MobileAnimationSystem.BenchSeats);
+                    Log.Info($"[mobile-input-bench] samples {MobileAnimationSystem.BenchSamples}: legacy {MobileAnimationSystem.BenchLegacyTicks * ns / MobileAnimationSystem.BenchSamples:F1} ns, pushed {MobileAnimationSystem.BenchPushedTicks * ns / MobileAnimationSystem.BenchSamples:F1} ns | seat tests {MobileAnimationSystem.BenchSeats}: legacy {MobileAnimationSystem.BenchSeatLegacyTicks * ns / seats:F1} ns, pushed {MobileAnimationSystem.BenchSeatPushedTicks * ns / seats:F1} ns");
+                }
+
+                Log.Info($"[mobile-input-check] pushed samples checked {MobileAnimationSystem.InputChecks}, {MobileAnimationSystem.InputDiffs} different; seat tests checked {MobileAnimationSystem.SeatChecks}, {MobileAnimationSystem.SeatDiffs} different; pushes {InputPushes}");
             }
 
             int interval = CUOEnviroment.EcsCheckFrames;
@@ -345,6 +397,8 @@ namespace ClassicUO.Game
                 return;
             }
 
+            CompareInputs(mobile, e, ref mismatches);
+
             // The mirror bit is history (GetAnimDirection keeps it for directions 3 and 7) and MobileView advances it only
             // on frames the mobile is drawn; the check must not advance it on frames the view skips.
             AnimStateFlags mirrorBefore = e.GetComponent<AnimationState>().Flags & AnimStateFlags.Mirror;
@@ -362,6 +416,34 @@ namespace ClassicUO.Game
             {
                 ref AnimationState restore = ref e.GetComponent<AnimationState>();
                 restore.Flags = restore.Flags & ~AnimStateFlags.Mirror | mirrorBefore;
+            }
+        }
+
+        // W5: the pushed MobileInputs vs a fresh computation from the Mobile (a missed push leaves them stale)
+        private static void CompareInputs(Mobile mobile, EcsEntity e, ref int mismatches)
+        {
+            if (!e.HasComponent<MobileInputs>())
+            {
+                Report(ref mismatches, $"mobile 0x{mobile.Serial:X8} has no MobileInputs");
+
+                return;
+            }
+
+            MobileInputs pushed = e.GetComponent<MobileInputs>();
+            MobileInputs fresh = default;
+            MobileInputSource src = MobileInputRules.From(mobile, Cv7000);
+            MobileInputRules.Compute(in src, ref fresh);
+
+            if (pushed.Flags != fresh.Flags || pushed.Body != fresh.Body || pushed.Facing != fresh.Facing || pushed.Notoriety != fresh.Notoriety ||
+                pushed.HueBits != fresh.HueBits || pushed.LastStepTime != fresh.LastStepTime || pushed.WalkingDelay != fresh.WalkingDelay)
+            {
+                Report
+                (
+                    ref mismatches,
+                    $"inputs of 0x{mobile.Serial:X8} g=0x{mobile.Graphic:X4}: pushed {pushed.Flags} body 0x{pushed.Body:X4} facing {pushed.Facing} noto {pushed.Notoriety} " +
+                    $"hue {pushed.HueBits} step {pushed.LastStepTime} | fresh {fresh.Flags} body 0x{fresh.Body:X4} facing {fresh.Facing} noto {fresh.Notoriety} " +
+                    $"hue {fresh.HueBits} step {fresh.LastStepTime}"
+                );
             }
         }
 
@@ -413,7 +495,7 @@ namespace ClassicUO.Game
             uint mount = mobile.FindItemByLayer(Layer.Mount)?.Serial ?? 0;
             AnimGroupInput legacy = mobile.GetAnimGroupInput();
 
-            if (!same || eq.MountItem != mount || !legacy.Hand1.Equals(eq.Hand1) || !legacy.Hand2.Equals(eq.Hand2))
+            if (!same || eq.MountItem != mount || eq.Mounted != mobile.IsMounted || !legacy.Hand1.Equals(eq.Hand1) || !legacy.Hand2.Equals(eq.Hand2))
             {
                 var sb = new System.Text.StringBuilder();
 
