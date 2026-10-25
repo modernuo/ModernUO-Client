@@ -341,6 +341,17 @@ namespace ClassicUO.Game.GameObjects
             {
                 IsPositionChanged = true;
                 World.WorldTextManager.AddMessage(msg);
+
+                if (this is Land || this is Static)
+                {
+                    // the Gpu world prepare skips baked land and statics: walk this tile again so the text follows the camera
+                    var chunk = World.Map?.GetChunk(X, Y, false);
+
+                    if (chunk != null)
+                    {
+                        chunk.GpuMaskDirty = true;
+                    }
+                }
             }
         }
 

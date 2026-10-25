@@ -520,3 +520,38 @@ Worktree branch `worktree-agent-a30778aae8d7c73a8` (rebased on dd178a524). Not y
   - Mobile.cs (`ProcessAnimation` uses `AnimationTiming`);
   - MobileAnimation.cs (group selection moved out, `GetAnimGroupInput` added).
   - None of GameSceneDrawingSorting.cs, GameSceneGpuWorld.cs, Batcher2D.cs, RenderLists.cs, the UI controls, GameController.cs or Uo.Render.
+## W0 and W1: world prepare measured, baked tiles no longer walked (2026-10-24)
+
+Branch `worktree-agent-af12d303f4d9e40e7`, on top of 43dec9ae4: W0 78021a764, W1 b63b5b1c6, plus docs. JIT measurements on the desktop with other agents' clients running. Details are in classicuo-perf-baseline.md ("W0", "W1"); the method is in testing/world-prepare.md.
+
+- **W0:**
+  - FrameStats splits world prepare into setup, tile walk, Gpu hidden collect, foliage, text and per-type capture, with per-frame counts.
+  - `CUO_FRAMESTATS_PREP=1` (or `prepdetail:on`) adds exclusive walk buckets and a bare list walk.
+  - **Finding:** at 4K zoomed out the walk is 76% and the hidden collect 17%. Visiting the 140k objects alone costs 2.2–2.4 ms, so the fix is to stop visiting baked tiles, not to make each visit cheaper. Nothing in it is SIMD-friendly.
+- **W1** (`gpu_prepare_skip_baked`, default on; `-gpuskip`; DevBench `gpuskip:`):
+  - **Per-chunk tile masks.** Tiles are walked only if they hold non-baked objects (skipping their baked ones), or baked objects with per-frame duties (translucent, light, unbaked season graphic, hidden land, above the walk's max Z, overhead text); those tiles are walked in full.
+  - **Targeted picking:** the tiles under the mouse are walked in full.
+  - **Screen edges:** a replay of the walk's culling hides exactly what it would.
+  - **Fades:** a full walk runs for 12 alpha steps after max-Z, roof, season or fading changes and for chunks that are built or come back into view. Then baked alphas snap to their settled values.
+  - **Season statics** are baked by Uo.Render (`SetStaticRemap`, keyed by the original graphic).
+- **Result** (4K zoomed out): world prepare 4.86 → 0.73 ms, 179 → 631 fps. 1080p zoomed out: 1.14 → 0.23 ms, 627 → 1086 fps. Britain: 0.226 → 0.079 ms.
+- **Parity:**
+  - Screenshots with skipping off and on are identical apart from moving creatures and rain, at Britain, the bank (roof), the bank wall with the circle of transparency, Yew (foliage), and zoomed out at Britain and the bank. I looked at every differing region.
+  - Base build vs W1 differs only in moving creatures.
+  - `CUO_GPU_SKIP_CHECK=1`: 0 mismatches.
+  - `CUO_BENCH_PICK`: the same objects in Legacy and Gpu.
+  - `pickscan:8x6`: 144 points, 0 different.
+- **Bug found and fixed during testing:** turning skipping off left skipped objects with stale screen positions, which culled land at the bottom of the view. Leaving skip mode now forces a position refresh.
+- **Behaviour difference (minor):** a baked static in a visible chunk that never came within the walk's vertical range during its chunk's fade period appears at full alpha. Legacy would fade it in at the top or bottom edge as you walk.
+- **Environment:**
+  - The NVIDIA driver logged event 153 (GPU reset) five times in an hour (22:19, 22:34, 22:39, 22:40, 23:18 local). Two of them hit my clients: one 4 s after login, one in a 3840×2054 zoomed-out window. Both logged `VK_ERROR_DEVICE_LOST` and the client died.
+  - One startup also failed with FNA's "scissor rectangle is invalid" exception in `ResizePic` on the login gump, right after a reset.
+  - Two sessions were disconnected by another login on kbatman.
+- **Still open:**
+  - translucent statics as a baked alpha flag;
+  - static lights cached per chunk;
+  - foliage fading near the player only, and animated statics (trees and foliage are unmeshed, so still walked);
+  - the out-of-range tint as a shader uniform;
+  - the gradient circle-of-transparency mode;
+  - a shader-side cull for the edge band;
+  - the owner's AOT FPS test.

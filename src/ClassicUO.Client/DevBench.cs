@@ -22,6 +22,10 @@ namespace ClassicUO
     //   CUO_BENCH_TOPMOST=1 keep the window on top while benching (occluded windows are throttled)
     //   plan entries size:WxH|max change the CUO_BENCH_SIZE client area mid-plan (max = maximised window)
     //   plan entry gumps opens the paperdoll, backpack, journal and status bar (the UI allocation/parity scene); shots also save the UI render target
+    //   plan entries prepdetail:on|off switch FrameStats' world prepare detail buckets (CUO_FRAMESTATS_PREP=1 starts with them on)
+    //   plan entries gpuskip:on|off switch the Gpu world prepare's skipping of baked land and statics (gpu_prepare_skip_baked)
+    //   pickscan:CxR hovers a C x R grid of the game view and compares the selection with that skipping off and on; cot:on|off
+    //   switches the circle of transparency
     internal static class DevBench
     {
         public static readonly bool FrameStats = Environment.GetEnvironmentVariable("CUO_FRAMESTATS") == "1";
@@ -569,6 +573,8 @@ namespace ClassicUO
                 return;
             }
 
+            // the Gpu prepare may have skipped this object while the camera moved
+            gs.RefreshScreenPosition(obj);
             var p = obj.RealScreenPosition;
             var target = obj is Game.GameObjects.Mobile
                 ? new Microsoft.Xna.Framework.Point(p.X + 22, p.Y - 15)
@@ -733,6 +739,79 @@ namespace ClassicUO
             Log.Info($"[bench] {entry}: spawned");
         }
 
+        private static int _scanCols, _scanRows, _scanLeft, _scanPhase, _scanFrames, _scanSame, _scanDiff, _scanEmpty;
+        private static string _scanOff;
+
+        private static string Describe(object o)
+        {
+            return o is Game.GameObjects.GameObject g ? $"{g.GetType().Name} 0x{g.Graphic:X4} at {g.X},{g.Y},{g.Z}" : o?.GetType().Name ?? "nothing";
+        }
+
+        // pickscan: per grid point, 3 frames with skipping off, then skipping on until it is active plus 3 frames
+        private static void UpdatePickScan(GameController game, Game.Scenes.GameScene gs)
+        {
+            if (gs == null)
+            {
+                _scanLeft = 0;
+
+                return;
+            }
+
+            int index = _scanCols * _scanRows - _scanLeft;
+            var b = gs.Camera.Bounds;
+            _mouse = new Microsoft.Xna.Framework.Point(
+                b.X + (int)((index % _scanCols + 0.5f) * b.Width / _scanCols),
+                b.Y + (int)((index / _scanCols + 0.5f) * b.Height / _scanRows)
+            );
+            HoldMouse(game);
+            var settings = Configuration.Settings.GlobalSettings;
+            _scanFrames++;
+
+            if (_scanPhase == 0)
+            {
+                settings.GpuPrepareSkipBaked = false;
+
+                if (_scanFrames >= 3)
+                {
+                    _scanOff = Describe(SelectedObject.Object);
+                    settings.GpuPrepareSkipBaked = true;
+                    _scanPhase = 1;
+                    _scanFrames = 0;
+                }
+            }
+            else if (_scanPhase == 1)
+            {
+                if (!gs.IsGpuPrepareSkipping)
+                {
+                    _scanFrames = 0;
+                }
+                else if (_scanFrames >= 3)
+                {
+                    string on = Describe(SelectedObject.Object);
+
+                    if (on == _scanOff)
+                    {
+                        _scanSame++;
+                        _scanEmpty += on == "nothing" ? 1 : 0;
+                    }
+                    else
+                    {
+                        _scanDiff++;
+                        Log.Info($"[bench-scan] point {index} mouse {_mouse}: skip off picks {_scanOff}, skip on picks {on}");
+                    }
+
+                    _scanPhase = 0;
+                    _scanFrames = 0;
+
+                    if (--_scanLeft == 0)
+                    {
+                        _mouse = null;
+                        Log.Info($"[bench-scan] done: {_scanSame} same ({_scanEmpty} of them nothing), {_scanDiff} different");
+                    }
+                }
+            }
+        }
+
         // name:x y:zoom measures a fixed spot; name:travel teleports between towns every 2 s; name:walk paths back and forth near Britain.
         private static void UpdatePlan(GameController game, long now)
         {
@@ -770,6 +849,13 @@ namespace ClassicUO
                         _stepAt = now + sec * 2;
                     }
                 }
+
+                return;
+            }
+
+            if (_scanLeft > 0)
+            {
+                UpdatePickScan(game, gs);
 
                 return;
             }
@@ -905,6 +991,52 @@ namespace ClassicUO
                         _flipFrame = 0;
                         Log.Info($"[bench] flip {_flipLeft} toggles every {_flipEvery} frame(s){(_flipWalk ? ", walking" : "")}");
                         _planIndex++;
+
+                        break;
+                    }
+
+                    if (_plan[_planIndex].StartsWith("prepdetail:"))
+                    {
+                        ClassicUO.FrameStats.PrepDetail = ClassicUO.FrameStats.On && _plan[_planIndex] == "prepdetail:on";
+                        Log.Info($"[bench] world prepare detail timing {ClassicUO.FrameStats.PrepDetail}");
+                        _planIndex++;
+
+                        break;
+                    }
+
+                    if (_plan[_planIndex].StartsWith("pickscan:") && gs != null)
+                    {
+                        // pickscan:CxR hovers a C x R grid over the game view; at each point the selection with the Gpu
+                        // prepare's skipping off and then on must be the same object
+                        string[] g = _plan[_planIndex].Substring(9).Split('x');
+                        _scanCols = int.Parse(g[0]);
+                        _scanRows = int.Parse(g[1]);
+                        _scanLeft = _scanCols * _scanRows;
+                        _scanPhase = 0;
+                        _scanFrames = 0;
+                        _scanSame = _scanDiff = _scanEmpty = 0;
+                        Log.Info($"[bench-scan] {_plan[_planIndex]} at {world.Player.X},{world.Player.Y},{world.Player.Z} zoom {gs.Camera.Zoom:0.0}");
+                        _planIndex++;
+
+                        break;
+                    }
+
+                    if (_plan[_planIndex].StartsWith("cot:") && Configuration.ProfileManager.CurrentProfile is { } cotProfile)
+                    {
+                        cotProfile.UseCircleOfTransparency = _plan[_planIndex] == "cot:on";
+                        Log.Info($"[bench] circle of transparency {cotProfile.UseCircleOfTransparency} (type {cotProfile.CircleOfTransparencyType}, radius {cotProfile.CircleOfTransparencyRadius})");
+                        _planIndex++;
+                        _stepAt = now + sec;
+
+                        break;
+                    }
+
+                    if (_plan[_planIndex].StartsWith("gpuskip:"))
+                    {
+                        Configuration.Settings.GlobalSettings.GpuPrepareSkipBaked = _plan[_planIndex] == "gpuskip:on";
+                        Log.Info($"[bench] gpu prepare skips baked land and statics: {Configuration.Settings.GlobalSettings.GpuPrepareSkipBaked}");
+                        _planIndex++;
+                        _stepAt = now + sec;
 
                         break;
                     }

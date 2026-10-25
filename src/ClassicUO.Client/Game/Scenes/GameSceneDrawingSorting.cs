@@ -283,6 +283,9 @@ namespace ClassicUO.Game.Scenes
         {
             if (obj.Z < _maxZ && itemData.IsFoliage)
             {
+                FrameStats.Inc(FrameCounter.Foliage);
+                FramePhase bucket = FrameStats.Enter(FramePhase.WalkFoliage);
+
                 if (obj.FoliageIndex != FoliageIndex)
                 {
                     sbyte index = 0;
@@ -325,6 +328,7 @@ namespace ClassicUO.Game.Scenes
                 }
 
                 _foliages[_foliageCount++] = obj;
+                FrameStats.Enter(bucket);
             }
         }
 
@@ -598,16 +602,18 @@ namespace ClassicUO.Game.Scenes
                 }
                 else
                 {
+                    FramePhase bucket = FrameStats.Enter(FramePhase.WalkOverride);
                     mesh.Statics.SetVisible(obj.MeshSpriteIndex, obj.AlphaHue, cot);
                     ApplyMeshHue(obj, mesh.Statics);
+                    FrameStats.Enter(bucket);
                 }
 
                 if (itemData.IsLight)
                 {
-                    AddLight(obj, obj, obj.RealScreenPosition.X + 22, obj.RealScreenPosition.Y + 22);
+                    AddLightTimed(obj, obj.RealScreenPosition.X + 22, obj.RealScreenPosition.Y + 22);
                 }
 
-                if (allowSelection && !(cot && IsMouseInsideCotCircle()) && obj.AllowedToDraw && obj.CheckMouseSelection())
+                if (allowSelection && !(cot && IsMouseInsideCotCircle()) && obj.AllowedToDraw && CheckMouseSelectionTimed(obj))
                 {
                     if (SelectedObject.Object is GameObject prev)
                     {
@@ -704,10 +710,42 @@ namespace ClassicUO.Game.Scenes
             return (dx * dx + dy * dy) < _cotRadiusSq;
         }
 
+        // CheckMouseSelection with FrameStats' pick counter and detail bucket
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool CheckMouseSelectionTimed(GameObject obj)
+        {
+            FrameStats.Inc(FrameCounter.PickTests);
+            FramePhase bucket = FrameStats.Enter(FramePhase.WalkPick);
+            bool hit = obj.CheckMouseSelection();
+            FrameStats.Enter(bucket);
+
+            return hit;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private void AddLightTimed(GameObject obj, int x, int y)
+        {
+            FrameStats.Inc(FrameCounter.Lights);
+            FramePhase bucket = FrameStats.Enter(FramePhase.WalkLight);
+            AddLight(obj, obj, x, y);
+            FrameStats.Enter(bucket);
+        }
+
+        // FrameStats detail: which walk bucket an object's own work is charged to
+        private static FramePhase WalkBucket(GameObject obj)
+        {
+            if (obj.InChunkMesh)
+            {
+                return obj is Land ? FramePhase.WalkLand : FramePhase.WalkStatic;
+            }
+
+            return obj is Land || obj is Static || obj is Multi ? FramePhase.WalkUnmeshed : FramePhase.WalkDynamic;
+        }
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private static void TrySelectObject(GameObject obj, bool allowSelection)
         {
-            if (allowSelection && obj.AllowedToDraw && obj.CheckMouseSelection())
+            if (allowSelection && obj.AllowedToDraw && CheckMouseSelectionTimed(obj))
             {
                 if (SelectedObject.Object is GameObject prev)
                 {
@@ -737,7 +775,7 @@ namespace ClassicUO.Game.Scenes
                 && !(ProfileManager.CurrentProfile.UseCircleOfTransparency
                     && obj.TransparentTest(_world.Player.Z + 5)
                     && IsMouseInsideCotCircle())
-                && obj.CheckMouseSelection()
+                && CheckMouseSelectionTimed(obj)
             )
             {
                 if (SelectedObject.Object is GameObject prev)
@@ -767,7 +805,9 @@ namespace ClassicUO.Game.Scenes
             GameObject obj,
             bool useObjectHandles,
             int maxZ,
-            Chunk chunk
+            Chunk chunk,
+            bool skipBaked = false,
+            bool forcePosition = false
         )
         {
             var profile = ProfileManager.CurrentProfile;
@@ -775,9 +815,25 @@ namespace ClassicUO.Game.Scenes
 
             for (; obj != null; obj = obj.TNext)
             {
-                if (UpdateDrawPosition || obj.IsPositionChanged)
+                // Gpu prepare (GameSceneGpuPrepare): settled baked land and statics are the GPU's alone
+                if (skipBaked && IsGpuBaked(obj))
                 {
+                    continue;
+                }
+
+                FrameStats.Inc(FrameCounter.Objects);
+
+                if (FrameStats.Detail)
+                {
+                    FrameStats.Enter(WalkBucket(obj));
+                }
+
+                // forcePosition: objects the Gpu prepare skipped may have missed camera moves
+                if (UpdateDrawPosition || obj.IsPositionChanged || forcePosition)
+                {
+                    FramePhase bucket = FrameStats.Enter(FramePhase.WalkPosition);
                     obj.UpdateRealScreenPosition(_offset.X, _offset.Y);
+                    FrameStats.Enter(bucket);
                 }
 
                 int screenX = obj.RealScreenPosition.X;
@@ -795,6 +851,8 @@ namespace ClassicUO.Game.Scenes
                 {
                     if (obj is Land meshLand)
                     {
+                        FrameStats.Inc(FrameCounter.BakedLand);
+
                         // For stretched tiles, the visible area extends below screenY
                         // based on MinZ, so use adjustedY for the top-of-screen cull.
                         if (meshLand.IsStretched)
@@ -836,14 +894,18 @@ namespace ClassicUO.Game.Scenes
                             }
                             else
                             {
+                                FramePhase bucket = FrameStats.Enter(FramePhase.WalkOverride);
                                 mesh.Land.SetVisible(obj.MeshSpriteIndex, obj.AlphaHue);
                                 ApplyMeshHue(obj, mesh.Land);
+                                FrameStats.Enter(bucket);
                             }
 
                             TrySelectObject(obj, true);
                         }
                         continue;
                     }
+
+                    FrameStats.Inc(FrameCounter.BakedStatics);
 
                     if (screenY < _minPixel.Y || screenY > _maxPixel.Y)
                         continue;
@@ -928,17 +990,24 @@ namespace ClassicUO.Game.Scenes
                     }
                     else
                     {
+                        FramePhase bucket = FrameStats.Enter(FramePhase.WalkOverride);
                         mesh.Statics.SetVisible(obj.MeshSpriteIndex, obj.AlphaHue, meshCot);
                         ApplyMeshHue(obj, mesh.Statics);
+                        FrameStats.Enter(bucket);
                     }
 
                     if (meshItemData.IsLight)
                     {
-                        AddLight(obj, obj, obj.RealScreenPosition.X + 22, obj.RealScreenPosition.Y + 22);
+                        AddLightTimed(obj, obj.RealScreenPosition.X + 22, obj.RealScreenPosition.Y + 22);
                     }
 
                     TrySelectObject(obj, meshAllowSelection && !(meshCot && IsMouseInsideCotCircle()));
                     continue;
+                }
+
+                if (FrameStats.On)
+                {
+                    FrameStats.Inc(obj is Land || obj is Static || obj is Multi ? FrameCounter.Unmeshed : FrameCounter.Dynamic);
                 }
 
                 switch (obj)

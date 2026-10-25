@@ -559,6 +559,7 @@ namespace ClassicUO.Game.Scenes
                 return;
             }
 
+            long setupStart = FrameStats.Stamp();
             _alphaChanged = _alphaTimer < Time.Ticks;
 
             if (_alphaChanged)
@@ -587,6 +588,7 @@ namespace ClassicUO.Game.Scenes
             }
 
             GetViewPort();
+            GpuPrepareBegin();
 
             var ctrlShiftHeld = Keyboard.Ctrl && Keyboard.Shift;
             var useObjectHandles = _world.NameOverHeadManager.IsToggled || ctrlShiftHeld;
@@ -634,6 +636,7 @@ namespace ClassicUO.Game.Scenes
             bool use_handles = _useObjectHandles;
             (var minChunkX, var minChunkY) = (minX >> 3, minY >> 3);
             (var maxChunkX, var maxChunkY) = (maxX >> 3, maxY >> 3);
+            FrameStats.AddSince(FramePhase.PrepSetup, setupStart);
 
             for (var chunkX = minChunkX; chunkX <= maxChunkX; chunkX++)
             {
@@ -647,6 +650,9 @@ namespace ClassicUO.Game.Scenes
                     if (chunk.Mesh.IsDirty)
                     {
                         chunk.Mesh.Build(chunk, _world, Client.Game.GraphicsDevice);
+                        // the Gpu prepare's tile masks depend on InChunkMesh, and the chunk's alphas may still move
+                        chunk.GpuMaskDirty = true;
+                        chunk.GpuFreshSteps = GPU_FADE_STEPS;
                     }
 
                     // Reset visibility and alpha for this frame
@@ -659,30 +665,90 @@ namespace ClassicUO.Game.Scenes
                     }
 
                     _visibleChunks.Add(chunk);
+                    long walkStart = FrameStats.Stamp();
+
+                    // Gpu prepare skipping baked objects (GameSceneGpuPrepare): fullTiles are walked in full, walkTiles
+                    // without their baked land and statics, the rest not at all
+                    ulong fullTiles = ulong.MaxValue, walkTiles = 0, edgeTiles = 0;
+
+                    if (_gpuSkipEnabled)
+                    {
+                        GpuPrepareChunk(chunk, out fullTiles, out walkTiles, out edgeTiles);
+                        walkStart = FrameStats.AddSince(FramePhase.PrepGpuMasks, walkStart);
+                    }
 
                     for (var x = 0; x < 8; x++)
                     {
                         for (var y = 0; y < 8; y++)
                         {
+                            ulong bit = 1UL << (x << 3 | y);
+                            bool full = (fullTiles & bit) != 0;
+
+                            if (!full && (walkTiles & bit) == 0)
+                                continue;
+
                             var firstObj = chunk.GetHeadObject(x, y);
                             if (firstObj == null || firstObj.IsDestroyed)
                                 continue;
 
+                            FrameStats.Inc(FrameCounter.Tiles);
                             AddTileToRenderList(
                                 firstObj,
                                 use_handles,
-                                150,
-                                chunk
+                                GPU_WALK_MAX_Z,
+                                chunk,
+                                !full,
+                                _gpuSkipEnabled
                             );
+                        }
+                    }
 
-                            if (_gpuWorld != null)
+                    FrameStats.Enter(FrameStats.NoBucket);
+                    walkStart = FrameStats.AddSince(FramePhase.PrepWalk, walkStart);
+
+                    // after the chunk's walk: CollectGpuHidden only reads what the walk stamped on this tile's objects
+                    if (_gpuWorld != null)
+                    {
+                        for (var x = 0; x < 8; x++)
+                        {
+                            for (var y = 0; y < 8; y++)
                             {
-                                CollectGpuHidden(firstObj);
+                                ulong bit = 1UL << (x << 3 | y);
+                                bool full = (fullTiles & bit) != 0;
+
+                                if (!full && ((walkTiles | edgeTiles) & bit) == 0)
+                                    continue;
+
+                                var firstObj = chunk.GetHeadObject(x, y);
+                                if (firstObj == null || firstObj.IsDestroyed)
+                                    continue;
+
+                                if (full || (walkTiles & bit) != 0)
+                                {
+                                    CollectGpuHidden(firstObj, !full);
+                                }
+
+                                if ((edgeTiles & bit) != 0)
+                                {
+                                    GpuHideCulledBaked(firstObj);
+                                }
                             }
                         }
+
+                        FrameStats.AddSince(FramePhase.PrepHidden, walkStart);
                     }
                 }
             }
+
+            if (FrameStats.Detail)
+            {
+                FrameStats.End(FramePhase.WorldPrepare);
+                BareWalk(map, minChunkX, minChunkY, maxChunkX, maxChunkY);
+                FrameStats.Begin(FramePhase.WorldPrepare);
+            }
+
+            long foliageStart = FrameStats.Stamp();
+            GpuPrepareEnd();
 
             if (_alphaChanged)
             {
@@ -701,11 +767,49 @@ namespace ClassicUO.Game.Scenes
                 }
             }
 
+            long textStart = FrameStats.AddSince(FramePhase.PrepFoliageFinish, foliageStart);
             UpdateTextServerEntities(_world.Mobiles.Values, true);
             UpdateTextServerEntities(_world.Items.Values, false);
+            FrameStats.AddSince(FramePhase.PrepText, textStart);
 
             UpdateDrawPosition = false;
         }
+
+        // FrameStats detail mode: the floor cost of visiting every object of the walked tiles, with no work per object
+        private void BareWalk(Map.Map map, int minChunkX, int minChunkY, int maxChunkX, int maxChunkY)
+        {
+            long start = FrameStats.Stamp();
+            int n = 0;
+
+            for (int chunkX = minChunkX; chunkX <= maxChunkX; chunkX++)
+            {
+                for (int chunkY = minChunkY; chunkY <= maxChunkY; chunkY++)
+                {
+                    var chunk = map.GetChunk2(chunkX, chunkY, false);
+
+                    if (chunk == null || chunk.IsDestroyed)
+                    {
+                        continue;
+                    }
+
+                    for (int x = 0; x < 8; x++)
+                    {
+                        for (int y = 0; y < 8; y++)
+                        {
+                            for (GameObject obj = chunk.GetHeadObject(x, y); obj != null; obj = obj.TNext)
+                            {
+                                n += obj.Z;
+                            }
+                        }
+                    }
+                }
+            }
+
+            _bareWalkSink = n;
+            FrameStats.AddSince(FramePhase.BareWalk, start);
+        }
+
+        private static int _bareWalkSink;
 
         // the dictionary's value collection, not IEnumerable<T>: that boxed an enumerator twice a frame
         private void UpdateTextServerEntities<T>(Dictionary<uint, T>.ValueCollection entities, bool force)

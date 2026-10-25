@@ -48,6 +48,7 @@ Each step is behind a switch where it changes behaviour, and each must pass this
 - the ECS consistency check (`-ecscheck`).
 
 ### W0: measure inside world prepare
+**Status: done (2026-10-24).** Ranked table in classicuo-perf-baseline.md ("W0"); method in testing/world-prepare.md. At 4K zoomed out the tile walk is 76% and the Gpu hidden collect 17%. More than half of the walk is just visiting the objects (a bare list walk costs 2.2–2.4 ms), so baked tiles must not be visited at all. Nothing in world prepare is SIMD-friendly: it is linked lists and branchy per-object code.
 - **Sub-phase timings** in `FrameStats`:
   - tile walk over land and statics;
   - dynamic objects;
@@ -63,6 +64,19 @@ Each step is behind a switch where it changes behaviour, and each must pass this
 - **Effort:** about 1 day.
 
 ### W1: stop walking baked land and statics every frame (Gpu mode)
+**Status: core done (2026-10-24), setting `gpu_prepare_skip_baked`, default on.** Implemented in GameSceneGpuPrepare.cs:
+- per-chunk tile masks: only tiles with non-baked objects or per-frame duties are walked;
+- targeted picking: the tiles under the mouse are walked in full;
+- screen-edge tiles get a replay of the walk's culling;
+- a full walk for 12 alpha steps after max-Z, roof, season or fading changes and for new chunks, then alphas snap to their settled values;
+- season statics are baked (`WorldRenderer.SetStaticRemap`).
+
+4K zoomed out (JIT): world prepare 4.86 → 0.73 ms, 179 → 631 fps. Pixel and picking parity hold (classicuo-perf-baseline.md "W1").
+
+Still open from the table below:
+- translucent statics and static lights: their tiles are still walked in full;
+- foliage fading and animated statics: trees and foliage are unmeshed, so still walked;
+- the out-of-range tint and gradient circle of transparency fall back to the full walk.
 Move each per-frame duty that touches land or statics to where it belongs:
 
 | Duty | Where it goes |

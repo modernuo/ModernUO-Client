@@ -325,3 +325,68 @@ With the circle of transparency on, at the bank's front wall (1435,1692):
 | zoom 1 | gpu | 0.495 | 0.140 | 0.057 | 0.323 | 8 |
 | zoom 2.5 | legacy | 1.284 | 0.420 | 0.625 | 1.165 | — |
 | zoom 2.5 | gpu | 0.813 | 0.504 | 0.080 | 0.712 | 8 |
+
+## W0: inside world prepare (2026-10-24)
+
+FrameStats now splits world prepare (world-prepare-ecs-plan.md W0); the method is in [testing/world-prepare.md](testing/world-prepare.md). JIT Release, 1920×1080 client (3840×2054 maximised for the last column), FPS uncapped, VSync off, not topmost, display on, 2 windows of 5 s. Other agents' clients were running on the same machine, so absolute numbers are higher than the owner's AOT test (4K zoomed out: 5.2 ms here vs 3.6 ms there). Read the shares, not the absolutes.
+
+#### Gpu mode, ms per frame (avg), ranked by the 4K share
+| Sub-phase | Britain | Bank | Zoomed out | Zoomed out 3840×2054 | Share at 4K | Data shape |
+|---|---|---|---|---|---|---|
+| Tile walk (`AddTileToRenderList` over every tile) | 0.135 | 0.125 | 0.838 | 3.926 | 76% | Pointer chasing (linked tile lists): not vectorisable |
+| Gpu hidden collect (`CollectGpuHidden`, a second pass over the same lists) | 0.056 | 0.054 | 0.247 | 0.874 | 17% | Pointer chasing |
+| Rest (chunk loop, mesh dirty checks, `BeginFrame`, multi preview) | 0.008 | 0.008 | 0.046 | 0.253 | 5% | Mixed |
+| Capture: statics drawn by their view (trees' shadows, season, animated) | 0.002 | 0.002 | 0.009 | 0.071 | 1.4% | Per-sprite view logic |
+| Capture: items | 0.006 | 0.004 | 0.011 | 0.021 | 0.4% | Per-sprite view logic |
+| Capture: mobiles | 0.005 | 0.017 | 0.008 | 0.008 | 0.2% | Per-sprite view logic |
+| Text entities, setup, foliage pass | 0.005 | 0.006 | 0.008 | 0.018 | 0.3% | Small |
+| **World prepare total** | **0.218** | **0.217** | **1.167** | **5.172** | | |
+| Legacy world prepare, same session | 0.237 | 0.154 | 1.042 | 4.531 | | |
+| Tiles / objects walked | 4608 / 8148 | 4608 / 7566 | 25600 / 41553 | 92416 / 140451 | | |
+| Pick tests (`CheckMouseSelection`) | 2699 | 1523 | 12053 | 40527 | | |
+| Override calls (`GpuOnDrawnSlow`) / overrides applied | 1540 / 71 | 321 / 39 | 5828 / 182 | 17492 / 487 | | |
+
+#### Inside the tile walk (detail mode, corrected for its own timestamps)
+Detail mode (`CUO_FRAMESTATS_PREP=1`) charges the walk to exclusive buckets and adds about 20 ns per bucket switch (calibrated: detail-on minus detail-off world prepare, divided by the switch count). After subtracting that:
+
+| Bucket | Zoomed out 1080p | Zoomed out 4K | Data shape |
+|---|---|---|---|
+| Bare list walk: visit every object, no work (`BareWalk`, outside world prepare) | 0.49–0.64 | 2.2–2.4 | Pointer chasing: the floor of any per-tile walk |
+| Baked land (incl. its traversal) | ~0.55 | ~2.6 | Pointer chasing |
+| Baked statics (alpha rules, height cull) | ~0.25 | ~0.9 | Pointer chasing |
+| Picking (pixel tests on every drawn object) | ~0.11 | ~0.28 | Branchy per object |
+| Overrides (`GpuOnDrawnSlow`), lights, foliage, unmeshed, dynamic | < 0.05 | < 0.1 | Small |
+
+**Reading:**
+- **The walk is memory-bound.** Just visiting the 140k objects of a 4K zoomed-out view costs 2.2–2.4 ms, more than half the walk; the per-object rules are the smaller part. Skipping work per object isn't enough: the baked tiles must not be visited at all. That is what W1 does.
+- **The second pass, the hidden collect, is the next 17%.** It exists only because the walk and the bake disagree at the edges; W1 removes it for skipped tiles.
+- **Picking is about 7% at 4K** (40k pixel tests). Targeted picking (only the tiles under the mouse) removes it.
+- **Captures are small on this shard** (60 items, 4 mobiles). They matter in the crowd (step 8: 0.3 ms with 120 mobiles) and are W2/W3 work.
+- **SIMD:** nothing here is SIMD-friendly. The walk and hidden collect chase linked lists, and picking is branchy per object. W1 adds one arithmetic-bound loop (the per-chunk band masks, 0.05 ms at 4K): too small to vectorise. The packed arrays that would suit `Vector256` (screen positions, visibility) arrive with W2's ECS queries.
+
+## W1: the Gpu world prepare stops walking baked land and statics (2026-10-24)
+
+Setting `gpu_prepare_skip_baked` (default on), plus a season static remap baked by Uo.Render. Same conditions as W0; skipping off → on in one session, two alternations at the zoomed-out spots. JIT, ms avg; frame is p50.
+
+| Spot | World prepare off → on | Draw total off → on | Frame p50 off → on | FPS off → on | Tiles walked off → on |
+|---|---|---|---|---|---|
+| Britain 1080p | 0.226 → 0.079 | 0.469 → 0.307 | 0.641 → 0.611 | 1068 → 1128 | 4608 → 119 |
+| Bank 1080p (earlier build, no season remap) | 0.211 → 0.106 | 0.480 → 0.360 | 0.643 → 0.577 | 1077 → 1086 | 4608 → 374 |
+| Zoomed out 1080p | 1.141 → 0.231 | 1.439 → 0.475 | 1.547 → 0.636 | 627 → 1086 | 25600 → 489 |
+| Zoomed out 3840×2054 | 4.856 → 0.727 | 5.388 → 1.105 | 5.406 → 1.551 | 179 → 631 | 92416 → 1565 |
+| Walk 1080p (earlier build; Present stalls from other clients made FPS noisy) | 0.331 → 0.173 | 0.660 → 0.491 | | | 4630 → 772 |
+
+**Where the remaining 0.73 ms at 4K goes:**
+- walk 0.32 ms over 1565 tiles: 904 tiles with trees, foliage, items and mobiles, plus 661 tiles with lights, translucent statics or the mouse;
+- edge replay and hidden collect 0.18 ms (626 screen-edge tiles);
+- rest 0.13, masks 0.05, captures 0.04.
+
+The season remap also cut 4K captures (statics 0.061 → 0.015 ms) and world draw (0.23 → 0.12 ms), because Spring graphics no longer need a hidden override plus a captured sprite each.
+
+**Parity:**
+- **Screenshots, skipping off vs on in the same session:** Britain, the bank (under its roof), the bank's front wall with the circle of transparency on, Yew (foliage), and zoomed out at Britain and the bank. 0 pixels differ outside moving NPCs, animals, the player's idle frame and rain drops (I looked at every differing region). Light RTs are identical.
+- **Base build (43dec9ae4) vs W1 with skipping on,** separate sessions: the differences are again only moving creatures.
+- **`CUO_GPU_SKIP_CHECK=1`:** every 30th skipping frame it checks each skipped object (about 8 million per 5 s zoomed out): 0 unsettled, 0 drawn differently, at all spots and while walking.
+- **Picking:**
+  - `CUO_BENCH_PICK` picks the same static, land tile, ground item and player in Legacy and in Gpu with skipping on;
+  - `pickscan:8x6`, an 8×6 grid of the view with skipping off then on at each point: 3 × 48 points, 0 different, at the bank zoomed out, the bank wall with the circle of transparency, and Britain.
