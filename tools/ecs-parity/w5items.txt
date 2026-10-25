@@ -1,0 +1,104 @@
+wait 6
+say [go 5445 1153
+wait 3
+say [add Brigand
+wait 0.5
+target ground 3 0
+wait 0.5
+say [add Orc
+wait 0.5
+target ground -3 0
+wait 0.5
+say [add SavageRider
+wait 0.5
+target ground 0 3
+wait 0.5
+say [add Horse
+wait 0.5
+target ground 0 -3
+wait 2
+mobiles
+say [set Hits 7
+wait 0.5
+target mobile 3 0
+wait 1
+say [set Hits 20
+wait 0.5
+target mobile -3 0
+wait 1
+mobiles
+say [add Bandage
+wait 0.5
+target ground 1 1
+wait 1
+say [add Apple
+wait 0.5
+target ground -1 1
+wait 1
+handles on
+wait 2
+handles count
+wait 1
+handles off
+wait 1
+handles count
+pick near 0E21
+wait 1
+drop backpack
+wait 1
+backpack
+wait 2
+items
+say [set Hue 0x21
+wait 0.5
+target held
+wait 1
+items
+say [set Hue 0x59
+wait 0.5
+target held
+wait 1
+items
+say [kill
+wait 0.5
+target mobile 3 0
+wait 1
+say [kill
+wait 0.5
+target mobile 0 3
+wait 1
+say [kill
+wait 0.5
+target mobile 0 -3
+wait 6
+handles on
+wait 2
+handles count
+handles off
+parity
+check
+walk 2 3
+walk 6 3
+walk 4 3
+wait 2
+mobiles
+parity
+say [remove
+wait 0.5
+target held
+wait 1
+say [wipe mobiles
+wait 1
+target ground -18 -18
+wait 1
+target ground 18 18
+wait 3
+say [wipe items
+wait 1
+target ground -18 -18
+wait 1
+target ground 18 18
+wait 3
+items
+check
+quit
