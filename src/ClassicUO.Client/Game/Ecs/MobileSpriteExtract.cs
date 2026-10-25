@@ -28,6 +28,16 @@ namespace ClassicUO.Game
         private int _count;
         private int _offsetX, _offsetY;
         private int _objX;
+        private int _fiX, _fiY, _fiW, _fiH;
+        private LightRequest[] _lights = new LightRequest[8];
+        private int _lightCount;
+
+        /// <summary>A light MobileView.Draw would add (GameScene.AddLight(mobile, item, X, Y)), in screen pixels.</summary>
+        public struct LightRequest
+        {
+            public uint Item;
+            public int X, Y;
+        }
 
         public MobileSpriteExtract(AnimationsLoader anims)
         {
@@ -38,15 +48,26 @@ namespace ClassicUO.Game
 
         public int Count => _count;
 
+        /// <summary>The last <see cref="Emit"/>'s MobileView FrameInfo (picking, text and health-bar anchoring).</summary>
+        public Rectangle FrameInfo => new Rectangle(_fiX, _fiY, _fiW, _fiH);
+
+        /// <summary>The lights the last <see cref="Emit"/> asks for, in the view's order.</summary>
+        public ReadOnlySpan<LightRequest> Lights => new ReadOnlySpan<LightRequest>(_lights, 0, _lightCount);
+
         public void Begin(PackSet pack, int offsetX, int offsetY)
         {
             _pack = pack;
             _offsetX = offsetX;
             _offsetY = offsetY;
             _count = 0;
+            _lightCount = 0;
         }
 
-        public void Clear() => _count = 0;
+        public void Clear()
+        {
+            _count = 0;
+            _lightCount = 0;
+        }
 
         /// <summary>Appends the instances of one mobile drawn at screen position (<paramref name="posX"/>, <paramref name="posY"/>) with the scene's base depth.</summary>
         public void Emit(EcsEntity e, int posX, int posY, float depth)
@@ -61,6 +82,7 @@ namespace ClassicUO.Game
             ref readonly MobileRenderState rs = ref e.GetComponent<MobileRenderState>();
             ref readonly EquipmentSlots eq = ref e.GetComponent<EquipmentSlots>();
             _objX = e.GetComponent<Position>().X;
+            _fiX = _fiY = _fiW = _fiH = 0;
             ushort bodyHue = e.GetComponent<Hue>().Value;
 
             int drawX = posX + rs.OffsetX + 22;
@@ -77,11 +99,11 @@ namespace ClassicUO.Game
             {
                 if (shadow)
                 {
-                    Layer(s.Body, s.Group, s.Dir, frame, false, true, drawX, drawY + 10, mirror, alpha, depth, mountOffset, over, 0, false, false, false, 0, charSitting);
-                    Layer(s.MountBody, s.MountGroup, s.Dir, frame, false, true, drawX, drawY, mirror, alpha, depth, mountOffset, over, 0, false, false, false, 0, charSitting);
+                    Layer(s.Body, s.Group, s.Dir, frame, false, true, drawX, drawY + 10, mirror, alpha, depth, mountOffset, over, 0, false, false, false, 0, charSitting, 0);
+                    Layer(s.MountBody, s.MountGroup, s.Dir, frame, false, true, drawX, drawY, mirror, alpha, depth, mountOffset, over, 0, false, false, false, 0, charSitting, 0);
                 }
 
-                Layer(s.MountBody, s.MountGroup, s.Dir, frame, false, false, drawX, drawY, mirror, alpha, depth, mountOffset, over, eq.MountHue, true, true, false, 0, charSitting);
+                Layer(s.MountBody, s.MountGroup, s.Dir, frame, false, false, drawX, drawY, mirror, alpha, depth, mountOffset, over, eq.MountHue, true, true, false, 0, charSitting, 0);
                 drawY += mountOffset;
             }
             else if ((s.Flags & AnimStateFlags.Sitting) != 0)
@@ -91,17 +113,33 @@ namespace ClassicUO.Game
             }
             else if (shadow)
             {
-                Layer(s.Body, s.Group, s.Dir, frame, false, true, drawX, drawY, mirror, alpha, depth, mountOffset, over, 0, false, false, false, 0, charSitting);
+                Layer(s.Body, s.Group, s.Dir, frame, false, true, drawX, drawY, mirror, alpha, depth, mountOffset, over, 0, false, false, false, 0, charSitting, 0);
             }
 
-            Layer(s.Body, s.Group, s.Dir, frame, false, false, drawX, drawY, mirror, alpha, depth, mountOffset, over, bodyHue, false, false, false, 0, charSitting);
+            Layer(s.Body, s.Group, s.Dir, frame, false, false, drawX, drawY, mirror, alpha, depth, mountOffset, over, bodyHue, false, false, false, 0, charSitting, 0);
 
             int n = eq.Count;
 
-            if (n == 0)
+            if (n != 0)
             {
-                return;
+                EmitEquipment(in s, in eq, n, drawX, drawY, mirror, alpha, depth, mountOffset, over, charSitting);
             }
+
+            for (int i = 0; i < eq.LightCount; i++)
+            {
+                AddLight(eq.LightItems[i], drawX, drawY);
+            }
+
+            // MobileView.Draw's final FrameInfo transform
+            _fiX = Math.Abs(_fiX);
+            _fiY = Math.Abs(_fiY);
+            _fiW += _fiX;
+            _fiH += _fiY;
+        }
+
+        private void EmitEquipment(in AnimationState s, in EquipmentSlots eq, int n, int drawX, int drawY, bool mirror, float alpha, float depth, int mountOffset, ushort over, bool charSitting)
+        {
+            byte frame = s.Frame;
 
             // the facing-dependent cloak move (PaperdollOrder.ApplyDirectionCloak) on the slot indices
             Span<byte> order = stackalloc byte[EquipmentSlots.MAX];
@@ -140,7 +178,8 @@ namespace ClassicUO.Game
                     true,
                     (slot.Bits & EquipSlotBits.PartialHue) != 0,
                     slot.ConvColor,
-                    charSitting
+                    charSitting,
+                    (slot.Bits & EquipSlotBits.Light) != 0 ? slot.Item : 0
                 );
             }
         }
@@ -197,7 +236,8 @@ namespace ClassicUO.Game
             bool isItem,
             bool itemPartial,
             ushort convColor,
-            bool charSitting
+            bool charSitting,
+            uint lightItem
         )
         {
             if (id >= _anims.BodyCount || !TryGetFrames(id, group, dir, isEquip, out uint first, out int count, out ushort hueFromFile))
@@ -222,6 +262,22 @@ namespace ClassicUO.Game
 
             x -= mirror ? w - fe.CenterX : fe.CenterX;
             y -= h + fe.CenterY;
+
+            if (!isShadow)
+            {
+                // MobileView.DrawInternal: the frame's bounds relative to the body anchor, and the drawn item's light
+                int xx = mirror ? -(w - fe.CenterX) : -fe.CenterX;
+                int yy = -(h + fe.CenterY + 3);
+                _fiX = Math.Min(_fiX, xx);
+                _fiY = Math.Min(_fiY, yy);
+                _fiW = Math.Max(_fiW, xx + w);
+                _fiH = Math.Max(_fiH, yy + h);
+
+                if (lightItem != 0)
+                {
+                    AddLight(lightItem, mirror ? x + w : x, y);
+                }
+            }
 
             if (isShadow)
             {
@@ -250,6 +306,16 @@ namespace ClassicUO.Game
                     Write(index, x, y + strips[i].Y, strips[i].Y, strips[i].H, hueVec, mirror, depth + 1f + i * 2);
                 }
             }
+        }
+
+        private void AddLight(uint item, int x, int y)
+        {
+            if (_lightCount >= _lights.Length)
+            {
+                Array.Resize(ref _lights, _lights.Length * 2);
+            }
+
+            _lights[_lightCount++] = new LightRequest { Item = item, X = x, Y = y };
         }
 
         // GpuWorldRenderer.Emit for an animation frame drawn from source rows [srcY, srcY + srcH) at (px, py)

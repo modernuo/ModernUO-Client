@@ -88,6 +88,18 @@ namespace ClassicUO.Game.Managers
                 }
             );
 
+            // -ecssprites [on|off]: the Gpu world draws mobiles from the ECS sprite extract instead of capturing their views
+            Register
+            (
+                "ecssprites",
+                s =>
+                {
+                    var settings = Configuration.Settings.GlobalSettings;
+                    settings.GpuEcsSprites = s.Length > 1 ? s[1].ToLowerInvariant() == "on" : !settings.GpuEcsSprites;
+                    GameActions.Print(_world, $"Gpu world mobiles from the ECS sprite extract: {(settings.GpuEcsSprites ? "on" : "off")}");
+                }
+            );
+
             Register
             (
                 "debug",
