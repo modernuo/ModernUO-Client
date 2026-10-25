@@ -16,6 +16,8 @@ Running notes for your return, newest at the top within each section. Started 20
 
 | Commit | What | Verified |
 |---|---|---|
+| 28bb72308 | **Teleport hitch** (verified on its own branch first): region decode on a worker, chunk loads budgeted per frame. `[go` teleport worst frame 35–36 ms → 12–18 ms. Objects on unloaded chunks are parked until the chunk loads (7,626 parked and 7,612 placed in an 18-minute session; the other 14 moved or were destroyed first). | picking identical (pickscan 0 different); teleports with the frame hold show 0 unsettled frames and 0 timeouts; facet change Trammel↔Felucca; region-edge walks with 0 denials; memory flat over 18 minutes; 262 tests |
+| e9f2505c2 | **W3: mobiles and art items in the Gpu world are drawn from the ECS** (`gpu_ecs_sprites`, default on; the old capture is kept behind it). World prepare: Britain 112→90 µs, bank 147→105, zoomed out 389→331, 120-NPC crowd 168→109. Corpses and multis still use the capture. | 0 mismatches across about 7.5 M comparisons (parity runs need `CUO_ANIM_SYNC=1`); Gpu, Legacy, UI and picking shots looked at; 255 tests |
 | cededb3ee | **Land seams fixed when zoomed out** (shader only: tile coverage comes from the full-size texel, as Legacy decides it, while colour stays trilinear, so no new shimmer). Also the **scissor exception fix**: every scissor rect is clipped to the target, and UI drawing is skipped on an empty back buffer. Left over: a few short ticks where shore pieces meet water at zoom 2 (they predate the fix). The scissor crash wasn't reproducible, so 11 unit tests are its only evidence. | Shots looked at (grid gone, matches Legacy); UI and Gpu zoom-1 parity; Legacy shots; `--external-test` on Vulkan and D3D12; 255 tests. GPU cost within noise (no idle GPU available) |
 | 6f2007199 | Playbook: agents must stay current with `poc/modern-client` (merge before measuring and before final checks, rebuild binaries, report the base commit) | docs |
 | a5e43e94c | **Window title shows `[Legacy renderer]`** whenever Legacy draws the world, including runtime switches. You couldn't tell which renderer was drawing. | build, 244 tests |
@@ -27,9 +29,8 @@ Running notes for your return, newest at the top within each section. Started 20
 
 ## Under verification, not merged yet
 
-- **Teleport hitch** (branch `poc/teleport-verify`). Region decode moves to a worker and chunk loads are budgeted per frame.
-  - `[go` teleport worst frame: 36–40 ms → 10–14 ms.
-  - It changes some game logic (objects on unloaded chunks are parked; pathfinding loads chunks on demand), so a verification agent is checking picking, teleports together with the frame hold, a 10-minute session, a facet change and walking across region edges before the merge.
+- **W3 and teleport together:** each was verified alone, so an agent is now checking the combined tip (28bb72308) before more work builds on it.
+
 
 ## In progress
 
@@ -37,7 +38,6 @@ Running notes for your return, newest at the top within each section. Started 20
   - **Cause:** SDL's Vulkan memory defragmenter moving the art-atlas allocation at login.
   - **Evidence:** 0 faults in 100 runs with defrag disabled, against 2 in 72 at baseline.
   - **Fix:** a minimal SDL patch in our fork (Codex/astra suggested dedicated allocations for images of 64 MiB and up), with the client building SDL from the fork.
-- **W3** (an agent started 01:25): the ECS sprite extract becomes the render source for mobiles, then items and corpses, with parity and measurements. It uses kbatman under the lock and stops if `kbatman.owner-hold` appears.
 - **Next:** W2, then the large-scale test scene (about 2,000 mobiles and 20,000 items).
 
 ## Things you saw tonight, explained
@@ -49,6 +49,9 @@ Running notes for your return, newest at the top within each section. Started 20
 
 ## Follow-ups noted (not started)
 
+- **Your kbatman character:** W3's parity scripts kill and resurrect the character. The agent removed the leftover death robes and a test cloak, checked the backpack, and moved it back to Britain 1495,1629. Worth a glance when you log in.
+- **Teleport and frame-hold interplay:** `VisibleReady` ignores the client's chunk queue, so in very slow frames statics can still be fading in when the hold releases. At 60 fps the queue was empty at all 21 releases checked. Fix candidate: count visible queued chunks as not ready.
+- **Unexplained single-frame spikes** (16–50 ms `update_other`, 95 ms at a facet switch) were seen during verification but not compared with base. Not tied to the new loading.
 - **FNA3D:** a proper fix for "a cycled index buffer isn't rebound" (worked around in the batcher). There's also a dangling `nextRenderPass*` reference after `FreeTextureHandle` that the Codex audit flagged. The page-fault agent will ask before forking FNA3D.
 - **Teleport:** the remaining 10–14 ms frame comes from the server packet burst and one first-sight chunk mesh build. Next step: decode art on a worker before the mesh build.
 

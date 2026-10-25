@@ -110,6 +110,10 @@ namespace ClassicUO.Configuration
         // (GameSceneGpuPrepare). Off = the full walk, as Legacy does it.
         [JsonPropertyName("gpu_prepare_skip_baked")] public bool GpuPrepareSkipBaked { get; set; } = true;
 
+        // Gpu world renderer: mobiles' dynamic sprites come from the ECS (MobileAnimationSystem + MobileSpriteExtract)
+        // instead of capturing MobileView.Draw. Off = the capture, the parity yardstick (EcsParity).
+        [JsonPropertyName("gpu_ecs_sprites")] public bool GpuEcsSprites { get; set; } = true;
+
         [JsonPropertyName("encryption")] public byte Encryption { get; set; }
 
         [JsonPropertyName("plugins")] public string[] Plugins { get; set; } = { @"./Assistant/Razor.dll" };

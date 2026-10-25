@@ -17,8 +17,9 @@ namespace ClassicUO.Game
     /// W3 parity harness (<c>CUO_ECS_PARITY=N</c>: every Nth Gpu frame). For each mobile the Gpu world renderer captures
     /// from MobileView.Draw, runs the ECS path for the same mobile — <see cref="MobileAnimationSystem"/> then
     /// <see cref="MobileSpriteExtract"/> with the same screen position, base depth and offset — and diffs the two instance
-    /// lists field by field and in order. Mismatches are logged with the entity's ECS state; a summary with both costs is
-    /// logged every 5 s. The renderer keeps using the captured instances.
+    /// lists field by field and in order, then the view's side effects (<see cref="CompareViewEffects"/>). Mismatches are
+    /// logged with the entity's ECS state; a summary with both costs is logged every 5 s. With gpu_ecs_sprites on the
+    /// renderer draws the ECS instances, otherwise the captured ones.
     /// </summary>
     internal static class EcsParity
     {
@@ -119,21 +120,213 @@ namespace ClassicUO.Game
             }
         }
 
+        private static long _effectChecks, _frameInfoMismatched, _flipMismatched, _lightMismatched, _viewLights, _ecsLights;
+
+        /// <summary>
+        /// After <see cref="OnCaptured"/>: compares what MobileView.Draw did besides drawing with what the ECS path does
+        /// in its place — the mirror bit (IsFlipped), FrameInfo, and the lights it added since
+        /// <paramref name="lightsBefore"/>. The ECS lights are added, compared as a set, then removed again.
+        /// </summary>
+        public static void CompareViewEffects(Mobile mobile, MobileSpriteExtract extract, Scenes.GameScene scene, int lightsBefore)
+        {
+            WorldEcs ecs = mobile.World.Ecs;
+
+            if (mobile.IsDestroyed || !mobile.AllowedToDraw || !ecs.Mirror.TryGetEntity(mobile.Serial, out EcsEntity e) || !e.HasComponent<AnimationState>())
+            {
+                return;
+            }
+
+            _effectChecks++;
+            bool flip = (e.GetComponent<AnimationState>().Flags & AnimStateFlags.Mirror) != 0;
+            Microsoft.Xna.Framework.Rectangle fi = extract.FrameInfo;
+            string problem = null;
+
+            if (flip != mobile.ViewFlipped)
+            {
+                _flipMismatched++;
+                problem = $"mirror view={mobile.ViewFlipped} ecs={flip}";
+            }
+
+            if (fi != mobile.FrameInfo)
+            {
+                _frameInfoMismatched++;
+                problem += $" frameinfo view={mobile.FrameInfo} ecs={fi}";
+            }
+
+            if (scene != null)
+            {
+                int viewEnd = scene.LightCount;
+
+                foreach (ref readonly MobileSpriteExtract.LightRequest light in extract.Lights)
+                {
+                    Item item = mobile.World.Items.Get(light.Item);
+
+                    if (item != null)
+                    {
+                        scene.AddLight(mobile, item, light.X, light.Y);
+                    }
+                }
+
+                int ecsEnd = scene.LightCount;
+                _viewLights += viewEnd - lightsBefore;
+                _ecsLights += ecsEnd - viewEnd;
+
+                if (!SameLights(scene, lightsBefore, viewEnd, ecsEnd))
+                {
+                    _lightMismatched++;
+                    problem += $" lights view={viewEnd - lightsBefore} ecs={ecsEnd - viewEnd} requests={extract.Lights.Length}";
+                }
+
+                scene.TruncateLights(viewEnd);
+            }
+
+            if (problem != null && _logged++ < MAX_LOGGED)
+            {
+                Log.Warn($"[PARITY] view-effect mismatch 0x{mobile.Serial:X8} g=0x{mobile.Graphic:X4}:{problem}");
+            }
+        }
+
+        private static long _items, _itemMismatched, _itemDrawnMismatched, _itemLightMismatched, _itemCapInstances, _itemEcsInstances, _itemLights;
+        private static long _itemCaptureTicks, _itemExtractTicks;
+        private static int _itemLogged;
+
+        /// <summary>
+        /// An art item: the view drew <c>buffer[start..end)</c> under capture (the reference), <paramref name="extract"/>
+        /// holds the <see cref="ItemSpriteExtract"/> output for the same item. Diffs the instances, the drawn result and
+        /// the light (added for the extract, compared, removed again).
+        /// </summary>
+        public static void OnItemCaptured(Item item, SpriteInstance[] buffer, int start, int end, ItemSpriteExtract extract, bool viewDrawn, bool ecsDrawn,
+            Scenes.GameScene scene, int lightsBefore, long captureTicks, long extractTicks)
+        {
+            if (!_frameCounted)
+            {
+                _frameCounted = true;
+                _frames++;
+            }
+
+            _items++;
+            _itemCaptureTicks += captureTicks;
+            _itemExtractTicks += extractTicks;
+            ReadOnlySpan<SpriteInstance> cap = new ReadOnlySpan<SpriteInstance>(buffer, start, end - start);
+            ReadOnlySpan<SpriteInstance> got = extract.Instances;
+            _itemCapInstances += cap.Length;
+            _itemEcsInstances += got.Length;
+            string problem = null;
+            int first = FirstDifference(cap, got);
+
+            if (first >= 0)
+            {
+                _itemMismatched++;
+                problem = $" instances capture={cap.Length} ecs={got.Length} first diff #{first}";
+
+                for (int i = Math.Max(0, first - 1); i < Math.Min(Math.Max(cap.Length, got.Length), first + 2); i++)
+                {
+                    problem += $"\n  #{i} cap {(i < cap.Length ? Fmt(in cap[i]) : "-")}\n     ecs {(i < got.Length ? Fmt(in got[i]) : "-")}";
+                }
+            }
+
+            if (viewDrawn != ecsDrawn)
+            {
+                _itemDrawnMismatched++;
+                problem += $" drawn view={viewDrawn} ecs={ecsDrawn}";
+            }
+
+            if (scene != null)
+            {
+                int viewEnd = scene.LightCount;
+
+                if (extract.Light)
+                {
+                    scene.AddLight(item, item, extract.LightX, extract.LightY);
+                }
+
+                int ecsEnd = scene.LightCount;
+                _itemLights += viewEnd - lightsBefore;
+
+                if (!SameLights(scene, lightsBefore, viewEnd, ecsEnd))
+                {
+                    _itemLightMismatched++;
+                    problem += $" lights view={viewEnd - lightsBefore} ecs={ecsEnd - viewEnd}";
+                }
+
+                scene.TruncateLights(viewEnd);
+            }
+
+            if (problem != null && _itemLogged++ < MAX_LOGGED)
+            {
+                Log.Warn($"[PARITY] item mismatch 0x{item.Serial:X8} g=0x{item.Graphic:X4} shown=0x{item.DisplayedGraphic:X4} h=0x{item.Hue:X4} x{item.Amount} ({item.X},{item.Y},{item.Z}) a={item.AlphaHue}:{problem}");
+            }
+
+            if (Time.Ticks >= _nextSummary)
+            {
+                _nextSummary = Time.Ticks + 5000;
+                Summary();
+            }
+        }
+
+        private static bool SameLights(Scenes.GameScene scene, int a, int b, int end)
+        {
+            if (b - a != end - b)
+            {
+                return false;
+            }
+
+            // order-free: the view interleaves drawn and light-only items, the extract lists light-only ones last
+            Span<bool> used = stackalloc bool[Math.Min(end - b, 64)];
+
+            if (end - b > 64)
+            {
+                return true;
+            }
+
+            for (int i = a; i < b; i++)
+            {
+                var v = scene.LightAt(i);
+                bool found = false;
+
+                for (int j = 0; j < used.Length && !found; j++)
+                {
+                    if (!used[j] && scene.LightAt(b + j) == v)
+                    {
+                        used[j] = found = true;
+                    }
+                }
+
+                if (!found)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
         public static void Summary()
         {
+            double f = Stopwatch.Frequency / 1_000_000.0;
+            double frames = Math.Max(1, _frames);
+
+            if (_items > 0)
+            {
+                Log.Info
+                (
+                    $"[PARITY] items={_items} mismatched={_itemMismatched} drawn-mismatched={_itemDrawnMismatched} lights-mismatched={_itemLightMismatched} lights={_itemLights} " +
+                    $"instances capture={_itemCapInstances} ecs={_itemEcsInstances} | per frame: capture {_itemCaptureTicks / f / frames:F2}us, extract {_itemExtractTicks / f / frames:F2}us " +
+                    $"(per item {_itemCaptureTicks / f / _items:F3} / {_itemExtractTicks / f / _items:F3}us)"
+                );
+            }
+
             if (_mobiles == 0)
             {
                 return;
             }
 
-            double f = Stopwatch.Frequency / 1_000_000.0;
-            double frames = Math.Max(1, _frames);
-
             Log.Info
             (
                 $"[PARITY] frames={_frames} mobiles={_mobiles} mismatched={_mismatched} not-mirrored={_notMirrored} instances capture={_capInstances} ecs={_ecsInstances} | " +
                 $"per frame: capture {_captureTicks / f / frames:F2}us, ecs sample+select {_sampleTicks / f / frames:F2}us, extract {_extractTicks / f / frames:F2}us " +
-                $"(per mobile {_captureTicks / f / _mobiles:F2} / {_sampleTicks / f / _mobiles:F2} / {_extractTicks / f / _mobiles:F2}us)\n  {Cases()}"
+                $"(per mobile {_captureTicks / f / _mobiles:F2} / {_sampleTicks / f / _mobiles:F2} / {_extractTicks / f / _mobiles:F2}us)\n" +
+                $"  view effects: checks={_effectChecks} mirror-mismatched={_flipMismatched} frameinfo-mismatched={_frameInfoMismatched} lights-mismatched={_lightMismatched} lights view={_viewLights} ecs={_ecsLights}\n  {Cases()}"
             );
         }
 

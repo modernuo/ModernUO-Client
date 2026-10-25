@@ -1,0 +1,54 @@
+wait 6
+say [go 5445 1153
+wait 3
+light 1A
+wait 2
+say [add Torch
+wait 1
+target ground 1 1
+wait 2
+pick near F6B
+wait 2
+drop equip
+wait 3
+say [set ItemID 0xA12
+wait 1
+target worn 2
+wait 3
+walk 0 2
+walk 2 2
+walk 4 2
+walk 6 2
+walk 3 2
+walk 7 2
+wait 2
+parity
+say [set ItemID 0x1647
+wait 1
+target worn 2
+wait 3
+walk 2 2
+walk 6 2
+walk 3 2
+wait 2
+parity
+say [set Body 201
+wait 1
+target self
+wait 3
+walk 2 2
+walk 6 2
+wait 2
+parity
+say [set Body 400
+wait 1
+target self
+wait 2
+say [remove
+wait 1
+target worn 2
+wait 2
+light off
+wait 2
+check
+quit
