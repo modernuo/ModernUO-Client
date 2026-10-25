@@ -42,13 +42,12 @@ Running notes for your return, newest at the top within each section. Started 20
 
 ## Under verification, not merged yet
 
-- Nothing waiting. (W3 and teleport are being checked together on the merged tip; see In progress.)
+- **W5 push inputs** (`worktree-agent-a97d49f3c0ed8a14c`, 75cd093ec; setting `mobile_push_inputs`, default on): a mobile's update inputs (war mode, running, dead, hidden, body flags, facing, notoriety, poison and similar bits, steps, mounted) are pushed into the ECS when they change, instead of being read from the legacy Mobile for every mobile every frame. The input checker compared 4.6 M pushed samples with the legacy reads: 0 differences; parity 4.8 M comparisons, 0 mismatches; 321 tests; off/on shots looked at. **The gain is smaller than the plan estimated:** the per-mobile sample went 37 → 10 ns, about 0.045–0.055 ms per frame in the large scene (the legacy read was 17% of the per-mobile cost, not 40%). The `World.Update` mobile loop was left alone: it would save at most about 0.03 ms and needs pushes from many animation writes. **Codex audit running.**
 
 
 ## In progress
 
 - **Legacy regression fix** (an agent started 2026-10-25 afternoon): split W0 from W1, measure with stats off, fix the shared tile walk, verify JIT and NativeAOT for Legacy and Gpu, and re-check your Legacy world-draw rise on a quiet machine.
-- **W5, next step** (an agent started at the same time): push mobile inputs (mount, hues, steps, war mode, server action) into the ECS instead of polling the legacy Mobile each frame. A Codex audit runs before the merge.
 - The two agents share a `bench.lock`, so timing series never overlap.
 
 ## Things you saw tonight, explained
