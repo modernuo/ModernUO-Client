@@ -21,6 +21,7 @@ namespace ClassicUO
     //   itemhue:hex,hex,... sets the hues of the nearest ground items, ghost:on|off swaps the player body (local-only render checks)
     //   CUO_BENCH_TOPMOST=1 keep the window on top while benching (occluded windows are throttled)
     //   plan entries size:WxH|max change the CUO_BENCH_SIZE client area mid-plan (max = maximised window)
+    //   plan entries prepdetail:on|off switch FrameStats' world prepare detail buckets (CUO_FRAMESTATS_PREP=1 starts with them on)
     internal static class DevBench
     {
         public static readonly bool FrameStats = Environment.GetEnvironmentVariable("CUO_FRAMESTATS") == "1";
@@ -894,6 +895,15 @@ namespace ClassicUO
                         _flipWalk = f.Length > 3 && f[3] == "walk";
                         _flipFrame = 0;
                         Log.Info($"[bench] flip {_flipLeft} toggles every {_flipEvery} frame(s){(_flipWalk ? ", walking" : "")}");
+                        _planIndex++;
+
+                        break;
+                    }
+
+                    if (_plan[_planIndex].StartsWith("prepdetail:"))
+                    {
+                        ClassicUO.FrameStats.PrepDetail = ClassicUO.FrameStats.On && _plan[_planIndex] == "prepdetail:on";
+                        Log.Info($"[bench] world prepare detail timing {ClassicUO.FrameStats.PrepDetail}");
                         _planIndex++;
 
                         break;

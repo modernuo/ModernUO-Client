@@ -47,6 +47,14 @@ namespace ClassicUO.Game.Scenes
 
         private void GpuOnDrawnSlow(GameObject obj)
         {
+            FrameStats.Inc(FrameCounter.OverrideCalls);
+            FramePhase bucket = FrameStats.Enter(FramePhase.WalkOverride);
+            GpuOnDrawnSlowCore(obj);
+            FrameStats.Enter(bucket);
+        }
+
+        private void GpuOnDrawnSlowCore(GameObject obj)
+        {
             switch (obj)
             {
                 case Land land:
@@ -115,6 +123,8 @@ namespace ClassicUO.Game.Scenes
                 return;
             }
 
+            FrameStats.Inc(FrameCounter.HiddenTiles);
+
             for (; obj != null; obj = obj.TNext)
             {
                 if (obj.DrawnFrame == _drawFrame)
@@ -162,7 +172,7 @@ namespace ClassicUO.Game.Scenes
             }
             else if (st.ItemData.IsLight)
             {
-                AddLight(st, st, st.RealScreenPosition.X + 22, st.RealScreenPosition.Y + 22);
+                AddLightTimed(st, st.RealScreenPosition.X + 22, st.RealScreenPosition.Y + 22);
             }
 
             GpuStaticOverride(st);
@@ -285,6 +295,7 @@ namespace ClassicUO.Game.Scenes
         private void DrawWorldGpu(UltimaBatcher2D batcher, ref Matrix matrix, RenderTargets renderTargets, GpuWorldRenderer gpu)
         {
             FrameStats.Begin(FramePhase.WorldPrepare);
+            long stamp = FrameStats.Stamp();
             var device = batcher.GraphicsDevice;
             device.SetRenderTarget(renderTargets.WorldRenderTarget);
             // the world target is preserved (the GPU pass already cleared it); FNA's world-space draws get a fresh depth buffer
@@ -308,8 +319,10 @@ namespace ClassicUO.Game.Scenes
             _gpuView = new Rectangle(viewMin.X, viewMin.Y, viewMax.X - viewMin.X, viewMax.Y - viewMin.Y);
             gpu.BeginFrame();
             gpu.SetLandSeason(_world.Season);
+            FrameStats.AddSince(FramePhase.PrepSetup, stamp);
 
             FillGameObjectList();
+            stamp = FrameStats.Stamp();
             FinishGpuCollect();
             gpu.SetOffset(_offset.X, _offset.Y);
             gpu.SetZHiding(_maxZ, _maxGroundZ, _noDrawRoofs);
@@ -332,6 +345,7 @@ namespace ClassicUO.Game.Scenes
             batcher.SetBrightlight(ProfileManager.CurrentProfile.TerrainShadowsLevel * 0.1f);
             batcher.SetCircleOfTransparencyRadius(0f);
             batcher.SetStencil(DepthStencilState.Default);
+            stamp = FrameStats.AddSince(FramePhase.PrepFoliageFinish, stamp);
 
             // dynamic sprites, in the legacy draw order: meshed multis, statics drawn by their view, then the lists
             int captured = 0;
@@ -344,6 +358,8 @@ namespace ClassicUO.Game.Scenes
                 }
             }
 
+            stamp = FrameStats.AddSince(FramePhase.PrepCaptureMulti, stamp);
+
             for (int i = 0; i < _gpuStatics.Count; i++)
             {
                 var st = _gpuStatics[i];
@@ -353,6 +369,11 @@ namespace ClassicUO.Game.Scenes
                     captured++;
                 }
             }
+
+            FrameStats.AddSince(FramePhase.PrepCaptureStatic, stamp);
+
+            FrameStats.Set(FrameCounter.CaptureMultis, _gpuMeshMultis.Count);
+            FrameStats.Set(FrameCounter.CaptureStatics, _gpuStatics.Count);
 
             captured += _renderLists.CaptureRenderLists(batcher, _maxGroundZ, gpu);
 
