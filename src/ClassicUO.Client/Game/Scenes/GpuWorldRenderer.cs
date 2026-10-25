@@ -55,12 +55,16 @@ namespace ClassicUO.Game.Scenes
         public WorldRenderer World => _world;
         public int CaptureFallbacks { get; private set; }
 
-        /// <summary>Null when FNA3D is not on the SDL_GPU driver or the pack can't be opened; the caller stays on Legacy.</summary>
-        public static GpuWorldRenderer TryCreate(IntPtr device, UOFileManager fileManager)
+        /// <summary>Null when FNA3D is not on the SDL_GPU driver or the pack can't be opened (<paramref name="error"/> says
+        /// why). There is no Legacy fallback: the caller reports the error and exits (GpuDeviceLost.FailWorldSetup).</summary>
+        public static GpuWorldRenderer TryCreate(IntPtr device, UOFileManager fileManager, out string error)
         {
+            error = null;
+
             if (device == IntPtr.Zero)
             {
-                Log.Warn("WorldRenderer=Gpu needs FNA3D on the SDL_GPU driver (no SDL_GPUDevice); falling back to Legacy");
+                error = "the GPU world renderer needs FNA3D on the SDL_GPU driver (no SDL_GPUDevice)";
+                Log.Error(error);
 
                 return null;
             }
@@ -86,7 +90,8 @@ namespace ClassicUO.Game.Scenes
             }
             catch (Exception ex)
             {
-                Log.Error($"GPU world renderer unavailable, falling back to Legacy: {ex.Message}");
+                error = $"the asset pack could not be opened for the GPU world renderer: {ex.Message}";
+                Log.Error($"GPU world renderer unavailable: {ex}");
 
                 return null;
             }
@@ -105,7 +110,9 @@ namespace ClassicUO.Game.Scenes
             return table;
         }
 
-        /// <summary>Streams the given map; a facet change recreates the world pass (its chunk store belongs to one facet).</summary>
+        /// <summary>Streams the given map; a facet change recreates the world pass (its chunk store belongs to one facet).
+        /// False only when the world pass can't be created; GpuDeviceLost.FailWorldSetup has then been called (the process
+        /// exits at the end of the frame), and the caller draws no world.</summary>
         public bool EnsureFacet(int facet)
         {
             if (_world != null && _pack.Facet == facet)
@@ -150,10 +157,11 @@ namespace ClassicUO.Game.Scenes
             }
             catch (Exception ex)
             {
-                Log.Error($"GPU world renderer: facet {facet} failed, drawing it with Legacy: {ex}");
+                Log.Error($"GPU world renderer: facet {facet} failed: {ex}");
                 _world?.Dispose();
                 _world = null;
                 _failedFacet = facet;
+                GpuDeviceLost.FailWorldSetup($"the GPU world pass for map {facet} could not be created: {ex.Message}");
 
                 return false;
             }
@@ -467,15 +475,19 @@ namespace ClassicUO.Game.Scenes
             return true;
         }
 
+        /// <summary>The last Render drew everything its view needs (WorldRenderer.VisibleReady).</summary>
+        public bool VisibleReady => _world != null && _world.VisibleReady;
+
         /// <summary>
         /// Streams around the camera and renders into <paramref name="target"/> (cleared first). Call before FNA submits
         /// the frame that samples the target; FNA draws recorded into it this frame execute after the world on the GPU.
+        /// <paramref name="streamOnly"/>: stream and upload only, leaving the target (the held frame) untouched.
         /// </summary>
-        public bool Render(RenderTarget2D target, in WorldCamera camera)
+        public bool Render(RenderTarget2D target, in WorldCamera camera, bool streamOnly = false)
         {
-            IntPtr texture = GpuInterop.GetTexture(target);
+            IntPtr texture = target == null || target.IsDisposed ? IntPtr.Zero : GpuInterop.GetTexture(target);
 
-            if (_world == null || texture == IntPtr.Zero)
+            if (_world == null || texture == IntPtr.Zero && !streamOnly)
             {
                 return false;
             }
@@ -493,7 +505,9 @@ namespace ClassicUO.Game.Scenes
 
             _world.DynamicCount = n;
 
-            bool ok = _world.Render(texture, (uint)target.Width, (uint)target.Height, GpuTextureFormat.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, false);
+            bool ok = streamOnly
+                ? _world.Stream()
+                : _world.Render(texture, (uint)target.Width, (uint)target.Height, GpuTextureFormat.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, false);
 
             if (_world.Renderer.SubmitFailures > 0)
             {
@@ -510,7 +524,7 @@ namespace ClassicUO.Game.Scenes
                     $"{w.OverridesMissed} missed, {w.OverridesDropped} dropped; translucent {w.TranslucentCount} (cot ring {w.CotRingCount}); capture fallbacks {CaptureFallbacks}; " +
                     $"pages {w.Pages.ResidentCount}/{w.Pages.Layers} resident, {w.Pages.MissingVisible} missing, {w.Pages.TotalUploads} uploads, {w.Pages.Evictions} evictions" +
                     (w.AnimPages != null ? $"; anim pages {w.AnimPages.ResidentCount}/{w.AnimPages.Layers}, {w.AnimPages.MissingVisible} missing, {w.AnimPages.TotalUploads} uploads, {w.AnimPages.Evictions} evictions" : "") +
-                    $"; chunks ready {w.Chunks.ReadyChunks} pending {w.Chunks.PendingChunks}; settled {w.Settled}");
+                    $"; chunks ready {w.Chunks.ReadyChunks} pending {w.Chunks.PendingChunks} missing near view {w.Chunks.MissingNear}; settled {w.Settled}, visible ready {w.VisibleReady}");
             }
 
             return ok;
