@@ -28,6 +28,7 @@ namespace ClassicUO
     //   plan entries world:gpu|legacy switch the world renderer at runtime
     //   plan entries effect:x y z:graphic[:blend] and moving:x y z:x y z:graphic[:blend] spawn client-side effects; shot:name saves a world shot now; season:winter changes the season locally
     //   itemhue:hex,hex,... sets the hues of the nearest ground items, ghost:on|off swaps the player body (local-only render checks)
+    //   chair:hex puts a client-side chair item under the player (chair:off removes it); water:on|off sets AnimatedWaterEffect
     //   CUO_BENCH_TOPMOST=1 keep the window on top while benching (occluded windows are throttled)
     //   plan entries size:WxH|max change the CUO_BENCH_SIZE client area mid-plan (max = maximised window)
     //   plan entry gumps opens the paperdoll, backpack, journal and status bar (the UI allocation/parity scene); shots also save the UI render target
@@ -1677,6 +1678,53 @@ namespace ClassicUO
                         var season = Enum.Parse<Game.Managers.Season>(_plan[_planIndex].Substring(7), true);
                         world.ChangeSeason(season, 0);
                         Log.Info($"[bench] season {season}");
+                        _planIndex++;
+                        _stepAt = now + sec;
+
+                        break;
+                    }
+
+                    if (_plan[_planIndex].StartsWith("chair:"))
+                    {
+                        // local-only seat check: chair:hex puts a client-side item with that graphic under the player (who
+                        // sits on it if it's in the chair table), chair:off removes it
+                        const uint chairSerial = 0x7FFFFF00;
+                        string arg = _plan[_planIndex].Substring(6);
+
+                        if (arg == "off")
+                        {
+                            world.RemoveItem(chairSerial, true);
+                        }
+                        else
+                        {
+                            var chair = world.GetOrCreateItem(chairSerial);
+                            chair.Graphic = Convert.ToUInt16(arg, 16);
+                            chair.Amount = 1;
+                            chair.X = world.Player.X;
+                            chair.Y = world.Player.Y;
+                            chair.Z = world.Player.Z;
+                            chair.CheckGraphicChange();
+                            chair.SetInWorldTile(chair.X, chair.Y, chair.Z);
+                            world.Ecs.Sync(chair);
+                        }
+
+                        Log.Info($"[bench] {_plan[_planIndex]} at {world.Player.X},{world.Player.Y},{world.Player.Z}");
+                        _planIndex++;
+                        _stepAt = now + sec;
+
+                        break;
+                    }
+
+                    if (_plan[_planIndex].StartsWith("water:"))
+                    {
+                        // the animated water option (AnimatedWaterEffect); Legacy builds its chunk meshes with the value at
+                        // build time, so set it before going to the spot
+                        if (Configuration.ProfileManager.CurrentProfile is { } waterProfile)
+                        {
+                            waterProfile.AnimatedWaterEffect = _plan[_planIndex] == "water:on";
+                        }
+
+                        Log.Info($"[bench] {_plan[_planIndex]}");
                         _planIndex++;
                         _stepAt = now + sec;
 

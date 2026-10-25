@@ -36,6 +36,9 @@ public sealed class PackSet
     /// replacement's sprite and tiledata but keeps the original graphic in the object key, so overrides still match. Set
     /// it through <see cref="WorldRenderer.SetStaticRemap"/>, which rebakes the chunks.</summary>
     public ushort[] StaticRemap;
+    /// <summary>Bake a <see cref="SpriteInstance.LightWobble"/> copy of each wet flat land tile (the host's animated water).
+    /// Set it through <see cref="WorldRenderer.SetWaterWobble"/>, which rebakes the chunks. Not copied by <see cref="WithFacet"/>.</summary>
+    public bool WaterWobble;
 
     /// <summary>Logical page id → file. Art pages first, then texmap pages (offset by <see cref="TexPageBase"/>).</summary>
     public readonly string[] PagePaths;
