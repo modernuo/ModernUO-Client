@@ -665,7 +665,15 @@ namespace ClassicUO
 
                 StatsI(_counter[c], n, _sortScratchI, out double avg, out int p50, out int p95, out int max);
                 sb.Append(inv, $"  {_counterKeys[c],-24} {avg,7:0.0}  {p50,7}  {p95,7}  {max,7}\n");
-                json.Append(first ? "" : ",").Append(inv, $"\"{_counterKeys[c]}\":[{avg:0.0},{p50},{p95},{max}]");
+                long sum = 0;
+
+                for (int i = 0, m = Math.Min(n, _counter[c].Length); i < m; i++)
+                {
+                    sum += _counter[c][i];
+                }
+
+                // [avg, p50, p95, max, sum over the window]
+                json.Append(first ? "" : ",").Append(inv, $"\"{_counterKeys[c]}\":[{avg:0.0},{p50},{p95},{max},{sum}]");
                 first = false;
             }
 
