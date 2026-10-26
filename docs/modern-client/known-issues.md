@@ -2,10 +2,6 @@
 
 Visual or behavioural defects found in the PoC client that aren't fixed yet. Add new ones here; move them to the poc-log when fixed.
 
-## ECS parity: two Britain dock NPCs mismatch (equipment order) (2026-10-25)
-
-At the Britain docks (1475,1758), the two NPCs 0x00037566 and 0x00037567 (body 0x0190, seven equipment layers, two of them with serials 0x7EEEF81F/0x7EEEF820) mismatch in `CUO_ECS_PARITY` on every compared frame: two layers swap order between the view capture and the ECS extract, and `-ecscheck` reports `mismatch: equipment of ...` with the last two items in the other order. The `poc/modern-client` build at 18becdb4e mismatches the same way (`dock_base`, 60k of 320k mobile comparisons), so it predates the Gpu parity work. Every other mobile in those runs matches. Not investigated: likely the order the mirror's equipment index gets those two items (World vs `EquipmentSlots`). Parity runs that log in at the docks (kbatman4's last position) show these mismatches until the driver teleports away.
-
 ## Ghost mobiles and items at the update-range edge (known before the PoC; recorded 2026-10-25)
 
 Rarely, a mobile or item the server has stopped tracking stays in the client and stands idle forever ("ghosting"), or a mobile at the edge of the update range disappears although it should stay. It is more likely with large viewports, older RunUO-based servers, and houses and boats (they use a larger update range, so a house can arrive without its door). The cause is either the server's create/remove messages around the range edge, or the client's handling of their order and its own out-of-range cleanup. Not reproduced yet. Fixing it is the first part of range-based viewport streaming (perf-opportunities.md, "Server update range vs. large viewports"): repro, audit ModernUO's edge handling, then clean up the client. Deferred. Related: equipment updates for a mobile the client no longer holds, and gump tooltips for items the client never saw (both in that perf-opportunities section).
