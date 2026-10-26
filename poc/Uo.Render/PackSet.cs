@@ -40,6 +40,11 @@ public sealed class PackSet
     /// Set it through <see cref="WorldRenderer.SetWaterWobble"/>, which rebakes the chunks. Not copied by <see cref="WithFacet"/>.</summary>
     public bool WaterWobble;
 
+    /// <summary>Bake tiledata Translucent statics at alpha 178 on the chunk's translucent sub-list (ClassicUO's settled
+    /// alpha). Needs a translucent pass that lists them: <see cref="WorldRenderer"/> sets it; consumers that drive
+    /// <see cref="Renderer"/> directly without one leave it off, and those statics bake opaque.</summary>
+    public bool BakeTranslucentAlpha;
+
     /// <summary>Logical page id → file. Art pages first, then texmap pages (offset by <see cref="TexPageBase"/>).</summary>
     public readonly string[] PagePaths;
     public readonly int TexPageBase;
