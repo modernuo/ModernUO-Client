@@ -44,9 +44,33 @@ namespace ClassicUO.Game
             _anims = anims;
         }
 
-        public ReadOnlySpan<SpriteInstance> Instances => new ReadOnlySpan<SpriteInstance>(_out, 0, _count);
+        // E5: after a cached replay the instances are the cache's own absolute copy (MobileFrameCache.Abs), exposed as is
+        // instead of being copied into _out first; the consumer copies them once, into the dynamic buffer. Only while
+        // nothing else was emitted since Begin (_count == 0); anything emitted after it first moves the view into _out.
+        private SpriteInstance[] _viewArr;
+        private int _viewCount;
 
-        public int Count => _count;
+        public ReadOnlySpan<SpriteInstance> Instances => _viewArr != null ? new ReadOnlySpan<SpriteInstance>(_viewArr, 0, _viewCount) : new ReadOnlySpan<SpriteInstance>(_out, 0, _count);
+
+        public int Count => _viewArr != null ? _viewCount : _count;
+
+        private void MaterializeView()
+        {
+            if (_viewArr == null)
+            {
+                return;
+            }
+
+            if (_count + _viewCount > _out.Length)
+            {
+                Array.Resize(ref _out, Math.Max(_out.Length * 2, _count + _viewCount));
+            }
+
+            Array.Copy(_viewArr, 0, _out, _count, _viewCount);
+            _count += _viewCount;
+            _viewArr = null;
+            _viewCount = 0;
+        }
 
         /// <summary>The last <see cref="Emit"/>'s MobileView FrameInfo (picking, text and health-bar anchoring).</summary>
         public Rectangle FrameInfo => new Rectangle(_fiX, _fiY, _fiW, _fiH);
@@ -60,18 +84,21 @@ namespace ClassicUO.Game
             _offsetX = offsetX;
             _offsetY = offsetY;
             _count = 0;
+            _viewArr = null;
             _lightCount = 0;
         }
 
         public void Clear()
         {
             _count = 0;
+            _viewArr = null;
             _lightCount = 0;
         }
 
         /// <summary>Appends the instances of one mobile drawn at screen position (<paramref name="posX"/>, <paramref name="posY"/>) with the scene's base depth.</summary>
         public void Emit(EcsEntity e, int posX, int posY, float depth)
         {
+            MaterializeView();
             ref readonly AnimationState s = ref e.GetComponent<AnimationState>();
 
             if ((s.Flags & AnimStateFlags.Visible) == 0 || _pack == null || !_pack.HasAnims)
@@ -365,10 +392,15 @@ namespace ClassicUO.Game
         /// lights <paramref name="cache"/> recorded when the selection (<see cref="MobileFrameCache.SelectGen"/>), alpha,
         /// override hue, body hue and pack are the same, moved to this frame's position, walking offset and depth.
         /// </summary>
-        public void Emit(EcsEntity e, int posX, int posY, float depth, MobileFrameCache cache)
-        {
-            ref readonly AnimationState s = ref e.GetComponent<AnimationState>();
+        public void Emit(EcsEntity e, int posX, int posY, float depth, MobileFrameCache cache) =>
+            Emit(e, in e.GetComponent<AnimationState>(), in e.GetComponent<MobileRenderState>(), posX, posY, depth, cache);
 
+        /// <summary>
+        /// <see cref="Emit(EcsEntity, int, int, float, MobileFrameCache)"/> with the entity's <see cref="AnimationState"/> and
+        /// <see cref="MobileRenderState"/> already in hand (E5). They must be <paramref name="e"/>'s own, current components.
+        /// </summary>
+        public void Emit(EcsEntity e, in AnimationState s, in MobileRenderState rs, int posX, int posY, float depth, MobileFrameCache cache)
+        {
             if (cache == null || (s.Flags & AnimStateFlags.Visible) == 0 || _pack == null || !_pack.HasAnims)
             {
                 if (cache != null)
@@ -381,7 +413,6 @@ namespace ClassicUO.Game
                 return;
             }
 
-            ref readonly MobileRenderState rs = ref e.GetComponent<MobileRenderState>();
             ushort bodyHue = e.GetComponent<Hue>().Value;
             int baseX = posX + rs.OffsetX, baseY = posY + rs.OffsetY;
 
@@ -389,9 +420,13 @@ namespace ClassicUO.Game
                 cache.BodyHue == bodyHue && ReferenceEquals(cache.Pack, _pack))
             {
                 MobileFrameCache.EmitHits++;
-                int start = _count;
+                // a pending view from an earlier emit since Begin aliases cache.Abs (the same cache replayed twice): move it
+                // into _out before Replay mutates Abs, and before `start` is taken
+                MaterializeView();
+                int objX = e.GetComponent<Position>().X;
                 int lightStart = _lightCount;
-                Replay(cache, baseX, baseY, depth, e.GetComponent<Position>().X);
+                int start = _count;
+                Replay(cache, baseX + _offsetX, baseY + _offsetY, depth, objX, baseX, baseY);
 
                 if (MobileAnimationSystem.CacheCheck)
                 {
@@ -401,6 +436,7 @@ namespace ClassicUO.Game
                 return;
             }
 
+            MaterializeView();
             MobileFrameCache.EmitMisses++;
             int recStart = _count;
             int recLights = _lightCount;
@@ -428,6 +464,7 @@ namespace ClassicUO.Game
             }
 
             cache.Count = n;
+            cache.AbsValid = false;
             cache.FrameInfo = FrameInfo;
             int ln = _lightCount - recLights;
 
@@ -453,25 +490,70 @@ namespace ClassicUO.Game
             cache.EmitValid = true;
         }
 
-        private void Replay(MobileFrameCache cache, int baseX, int baseY, float depth, int objX)
+        /// <summary>
+        /// Replays <paramref name="cache"/> at screen offset (dx, dy) = (draw origin + the batch offset), base depth
+        /// <paramref name="depth"/> and tile x <paramref name="objX"/>. <see cref="MobileFrameCache.Abs"/> keeps the last
+        /// replay in absolute coordinates, tagged with the (dx, dy, depth, objX) it was made for:
+        /// <list type="bullet">
+        /// <item>same tag (a standing mobile, still camera): nothing to compute;</item>
+        /// <item>same depth and tile x, other (dx, dy) (the camera scrolled, a walking offset changed): X and Y shifted by
+        /// the difference — integer adds, so the result is exactly what a full recompute gives;</item>
+        /// <item>otherwise (depth or tile x changed, or first replay since the entries were recorded): rebuilt from the
+        /// relative entries, per instance, with the same depth key calculation as the extract.</item>
+        /// </list>
+        /// The instances are then exposed as a view when this is the first thing emitted since Begin, else appended to _out.
+        /// </summary>
+        internal void Replay(MobileFrameCache cache, int dx, int dy, float depth, int objX, int baseX, int baseY)
         {
+            // a pending view aliases cache.Abs when this cache was replayed earlier since Begin: keep it before Abs changes
+            MaterializeView();
             int n = cache.Count;
+            SpriteInstance[] abs = cache.Abs;
 
-            if (_count + n > _out.Length)
+            if (!cache.AbsValid || abs.Length < n)
             {
-                Array.Resize(ref _out, Math.Max(_out.Length * 2, _count + n));
+                if (abs.Length < n)
+                {
+                    abs = cache.Abs = new SpriteInstance[Math.Max(n, 16)];
+                }
+
+                RebuildAbs(cache, abs, n, dx, dy, depth, objX);
+            }
+            else if (cache.AbsDepth != depth || cache.AbsObjX != objX)
+            {
+                RebuildAbs(cache, abs, n, dx, dy, depth, objX);
+            }
+            else if (cache.AbsDx != dx || cache.AbsDy != dy)
+            {
+                int ddx = dx - cache.AbsDx, ddy = dy - cache.AbsDy;
+
+                for (int i = 0; i < n; i++)
+                {
+                    ref SpriteInstance inst = ref abs[i];
+                    inst.X += ddx;
+                    inst.Y += ddy;
+                }
+
+                cache.AbsDx = dx;
+                cache.AbsDy = dy;
             }
 
-            int dx = baseX + _offsetX, dy = baseY + _offsetY;
-
-            for (int i = 0; i < n; i++)
+            if (_count == 0 && _viewArr == null)
             {
-                ref readonly MobileFrameCache.Entry entry = ref cache.Entries[i];
-                ref SpriteInstance inst = ref _out[_count++];
-                inst = entry.Instance;
-                inst.X += dx;
-                inst.Y += dy;
-                inst.Depth = BakeJob.DepthKeyD((int)MathF.Round(DepthOf(depth, entry.Kind, entry.Add) * 100f) - 50, objX, RANK_MOBILE);
+                _viewArr = abs;
+                _viewCount = n;
+            }
+            else
+            {
+                MaterializeView();
+
+                if (_count + n > _out.Length)
+                {
+                    Array.Resize(ref _out, Math.Max(_out.Length * 2, _count + n));
+                }
+
+                Array.Copy(abs, 0, _out, _count, n);
+                _count += n;
             }
 
             Rectangle fi = cache.FrameInfo;
@@ -487,24 +569,52 @@ namespace ClassicUO.Game
             }
         }
 
+        private static void RebuildAbs(MobileFrameCache cache, SpriteInstance[] abs, int n, int dx, int dy, float depth, int objX)
+        {
+            for (int i = 0; i < n; i++)
+            {
+                ref readonly MobileFrameCache.Entry entry = ref cache.Entries[i];
+                ref SpriteInstance inst = ref abs[i];
+                inst = entry.Instance;
+                inst.X += dx;
+                inst.Y += dy;
+                inst.Depth = BakeJob.DepthKeyD((int)MathF.Round(DepthOf(depth, entry.Kind, entry.Add) * 100f) - 50, objX, RANK_MOBILE);
+            }
+
+            cache.AbsValid = true;
+            cache.AbsDx = dx;
+            cache.AbsDy = dy;
+            cache.AbsDepth = depth;
+            cache.AbsObjX = objX;
+        }
+
         public static long CheckReplays, CheckReplayDiffs;
         private static int _checkLogged;
 
-        // CUO_MOBILE_CACHE_CHECK: the replayed instances, FrameInfo and lights against a fresh Emit (appended, compared, dropped)
+        // CUO_MOBILE_CACHE_CHECK: the replayed instances (the view, or _out from `start`), FrameInfo and lights against a
+        // fresh Emit (appended, compared, dropped)
         private void CheckReplay(EcsEntity e, int posX, int posY, float depth, int start, int lightStart)
         {
-            int replayEnd = _count, replayLights = _lightCount;
+            SpriteInstance[] replayed = _viewArr != null
+                ? new ReadOnlySpan<SpriteInstance>(_viewArr, 0, _viewCount).ToArray()
+                : new ReadOnlySpan<SpriteInstance>(_out, start, _count - start).ToArray();
+            SpriteInstance[] savedView = _viewArr;
+            int savedViewCount = _viewCount, savedCount = _count;
+            int replayLights = _lightCount;
             int fx = _fiX, fy = _fiY, fw = _fiW, fh = _fiH;
+
+            _viewArr = null;
             Emit(e, posX, posY, depth);
             CheckReplays++;
 
-            bool same = _count - replayEnd == replayEnd - start && _lightCount - replayLights == replayLights - lightStart &&
+            int freshStart = savedCount;
+            bool same = _count - freshStart == replayed.Length && _lightCount - replayLights == replayLights - lightStart &&
                         fx == _fiX && fy == _fiY && fw == _fiW && fh == _fiH;
 
-            for (int i = 0; same && i < replayEnd - start; i++)
+            for (int i = 0; same && i < replayed.Length; i++)
             {
-                same = System.Runtime.InteropServices.MemoryMarshal.AsBytes(new ReadOnlySpan<SpriteInstance>(_out, start + i, 1))
-                    .SequenceEqual(System.Runtime.InteropServices.MemoryMarshal.AsBytes(new ReadOnlySpan<SpriteInstance>(_out, replayEnd + i, 1)));
+                same = System.Runtime.InteropServices.MemoryMarshal.AsBytes(new ReadOnlySpan<SpriteInstance>(replayed, i, 1))
+                    .SequenceEqual(System.Runtime.InteropServices.MemoryMarshal.AsBytes(new ReadOnlySpan<SpriteInstance>(_out, freshStart + i, 1)));
             }
 
             for (int i = 0; same && i < replayLights - lightStart; i++)
@@ -520,11 +630,13 @@ namespace ClassicUO.Game
                 if (_checkLogged++ < 20)
                 {
                     ref readonly AnimationState s = ref e.GetComponent<AnimationState>();
-                    ClassicUO.Utility.Logging.Log.Warn($"[mobile-cache-check] instances differ 0x{e.GetComponent<Serial>().Value:X8}: replayed {replayEnd - start} fresh {_count - replayEnd}, lights {replayLights - lightStart}/{_lightCount - replayLights}, frameinfo {fx},{fy},{fw},{fh} vs {_fiX},{_fiY},{_fiW},{_fiH}; body {s.Body} group {s.Group} dir {s.Dir} frame {s.Frame}");
+                    ClassicUO.Utility.Logging.Log.Warn($"[mobile-cache-check] instances differ 0x{e.GetComponent<Serial>().Value:X8}: replayed {replayed.Length} fresh {_count - freshStart}, lights {replayLights - lightStart}/{_lightCount - replayLights}, frameinfo {fx},{fy},{fw},{fh} vs {_fiX},{_fiY},{_fiW},{_fiH}; body {s.Body} group {s.Group} dir {s.Dir} frame {s.Frame}");
                 }
             }
 
-            _count = replayEnd;
+            _count = savedCount;
+            _viewArr = savedView;
+            _viewCount = savedViewCount;
             _lightCount = replayLights;
             _fiX = fx;
             _fiY = fy;
