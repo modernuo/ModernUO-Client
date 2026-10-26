@@ -1817,6 +1817,10 @@ Unit tests: 567 pass (both build variants) on b59b602b3. There are 7 new tests i
 - **Season change** (DevBench `season:winter`, then `ltravel`, `glide`, Britain, `season:summer`, `ltravel`, Britain): 20 episodes, 0 timeouts, 0 unsettled in an episode. After the change `art_pending` peaked at 74 and `art_upload_us` at 268 µs. Looked at the winter shot: snow land, bare trees, complete.
 - **Facet change:** ready after 53–56 ms, 0 unsettled; `pickscan:8x6` 0 different at Britain and on Felucca.
 - **Legacy** (`travel`, `glide`): glide U+D max 4.9 ms; the shot after the glide is complete (looked at).
+- **Final tip** (5e3c58ff7, poc/modern-client ad378c0bc; 570 tests pass in both build variants). One more pair, baseG against newG:
+  - `travel` 9.4 → 9.0 ms. New's one frame over 8 ms is a 5.6 ms mesh build with 0 art decodes, in a window with a gen1 GC: the GC landed in a mesh build this time.
+  - `glide` 11.3 → 3.3 ms.
+  - 0 timeouts in both.
 - One `season` run hung at "Connecting" before login (server side, before any game code ran). It was killed at the 420 s timeout and rerun.
 
 ## E7: the item cache serves mixed tiles; uncacheable items walked alone (2026-10-26)
