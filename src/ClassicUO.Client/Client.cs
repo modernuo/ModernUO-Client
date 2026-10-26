@@ -68,6 +68,7 @@ namespace ClassicUO
                     (IntPtr)ptr,
                     TEXTURE_WIDTH * TEXTURE_HEIGHT * sizeof(uint)
                 );
+                ClassicUO.Renderer.TextureUploads.Changed();
 
                 LightColors.CreateLightTextures(buffer, LIGHTS_TEXTURE_HEIGHT);
                 hueSamplers[1].SetDataPointerEXT(
@@ -76,6 +77,7 @@ namespace ClassicUO
                     (IntPtr)ptr,
                     LIGHTS_TEXTURE_WIDTH * LIGHTS_TEXTURE_HEIGHT * sizeof(uint)
                 );
+                ClassicUO.Renderer.TextureUploads.Changed();
             }
 
             game.GraphicsDevice.Textures[1] = hueSamplers[0];

@@ -369,12 +369,14 @@ namespace ClassicUO.Game.Managers
 
             float layerDepth = -10000;
 
+            FrameStats.Begin(FramePhase.UiTraverse);
             for (LinkedListNode<Gump> last = Gumps.Last; last != null; last = last.Previous)
             {
                 Control g = last.Value;
                 layerDepth+=10;
                 g.AddToRenderLists(_renderLists, g.X, g.Y, ref layerDepth);
             }
+            FrameStats.End(FramePhase.UiTraverse);
 
             Profiler.EnterContext(Profiler.ProfilerContext.RENDER_FRAME_UI);
             _renderLists.DrawRenderLists(batcher, sbyte.MaxValue);
