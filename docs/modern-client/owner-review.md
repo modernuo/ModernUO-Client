@@ -60,6 +60,8 @@ Running notes for your return, newest at the top within each section. Started 20
 ## In progress
 
 - **Teleport art decode on a worker** (`poc/teleport-art-worker`): first-sight statics decoded off the main thread before a chunk's mesh build, to remove the 6–10 ms single-chunk frames after teleports.
+- **E4: the mobile update loop as an ECS system** (`bg/ecs-e4-update`, Sonnet draft behind a setting with a per-frame checker; audited before any merge).
+- **E7: objects the Gpu path still walks** (`poc/ecs-e7-walk`): animated-art tiles, corpses and other uncached objects; Legacy prepare must not regress.
 - All agents share a `bench.lock`, so client runs, builds and timing series never overlap.
 
 ## Things you saw tonight, explained
