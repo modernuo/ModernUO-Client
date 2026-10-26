@@ -117,7 +117,7 @@ Driven by environment variables. Read the header comment in DevBench.cs for the 
 
 **Plan entries:**
 - `name:x y:zoom` (go and measure), `travel`, `walk`, `lswalk` (the large-scale scene's lane, [testing/large-scale.md](testing/large-scale.md)), `say:text`;
-- `vsync:on|off`, `world:gpu|legacy`, `size:WxH|max`, `gpuskip:on|off`, `itemcache:on|off`;
+- `vsync:on|off`, `world:gpu|legacy`, `size:WxH|max`, `gpuskip:on|off`, `itemcache:on|off`, `itemmixed:on|off` (E7);
 - `activeitems:on|off`, `mobcache:on|off`, `textskip:on|off`, `pushinputs:on|off`, `w5:on|off` (W5's world update shortcuts, [testing/world-update.md](testing/world-update.md));
 - `lsreinit` (`reinit` in the large-scale scene: the GPU world pass dropped every 2 s);
 - `flip:N[:frames[:walk]]` (renderer toggle stress), `gumps` (opens paperdoll, backpack, journal and status at fixed spots);

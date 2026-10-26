@@ -1,7 +1,7 @@
 wait 6
 say [go 5445 1153
 wait 3
-light 1A
+light 1E
 wait 1
 say [add Arrow 50
 wait 1
