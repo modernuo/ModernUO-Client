@@ -79,6 +79,7 @@ public sealed class BakeJob : Job
         var statics = reg.Statics(off);
 
         bool wobble = Pack.WaterWobble;
+        bool bakeTranslucent = Pack.BakeTranslucentAlpha;
         int need = 128 + statics.Length; // land, its animated-water copies, statics
         if (_keys.Length < need) _keys = new long[need * 2];
         if (Instances.Length < need) Instances = new SpriteInstance[need * 2];
@@ -215,7 +216,7 @@ public sealed class BakeJob : Job
                 // the tile's low bytes for the shader's out-of-range tint; tiledata Translucent statics bake ClassicUO's
                 // settled alpha 178 (ProcessAlpha) and go on the chunk's translucent sub-list
                 uint light = SpriteInstance.StaticTileBits(tx, ty);
-                bool translucent = (staticData[g].Flags & TileFlags.Translucent) != 0;
+                bool translucent = bakeTranslucent && (staticData[g].Flags & TileFlags.Translucent) != 0;
                 if (translucent) light |= 255u - TranslucentAlpha;
                 Emit(x, y, sp, sp.Page, hueRow, flags | SpriteInstance.FlagZTest, depth, light, ZInfo(g, s.Z, staticData));
                 Keys[Count - 1] = ObjectKey(cell, true, s.Z, s.Graphic);
@@ -223,7 +224,18 @@ public sealed class BakeJob : Job
                 Bounds(x, y, x + sp.W, y + sp.H);
             }
         }
+
+        // the out-of-range tint reconstructs each instance's tile (SpriteInstance.Tile, mirrored in sprite.hlsl): check it
+        for (int i = 0; i < Count; i++)
+        {
+            int cell = (int)(Keys[i] >> 25);
+            Instances[i].Tile(out int tx, out int ty);
+            if (tx != baseTx + (cell & 7) || ty != baseTy + (cell >> 3)) Interlocked.Increment(ref TileMismatches);
+        }
     }
+
+    /// <summary>Baked instances whose reconstructed tile (<see cref="SpriteInstance.Tile"/>) is wrong, since start (0 expected).</summary>
+    public static int TileMismatches;
 
     /// <summary>Corners of a <see cref="SpriteInstance.FlagZTest"/> static: (u8)z | height &lt;&lt; 8 | Z* bits &lt;&lt; 16, with
     /// Static._canBeTransparent (Static.Create) as <see cref="SpriteInstance.ZCotCapable"/>.</summary>

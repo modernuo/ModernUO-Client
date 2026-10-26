@@ -427,6 +427,9 @@ public sealed unsafe class ChunkStore
 
     public int FirstInstance(int slot) => _first[slot];
 
+    /// <summary>The CPU mirror of the instance at a global index (a ready chunk's, from <see cref="TranslucentKeys"/>).</summary>
+    public ref readonly SpriteInstance CpuInstanceAt(uint gi) => ref _cpuInst[gi];
+
     /// <summary>Translucent-pass sort keys of a ready chunk's baked translucent instances.</summary>
     public ReadOnlySpan<ulong> TranslucentKeys(int slot) => _state[slot] == State.Ready ? _transKeys[slot].AsSpan(0, _transCount[slot]) : default;
 

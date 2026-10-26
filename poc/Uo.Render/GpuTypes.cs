@@ -51,23 +51,27 @@ public struct SpriteInstance
     public static uint StaticTileBits(int tileX, int tileY) => (uint)(byte)tileX << 16 | (uint)(byte)tileY << 24;
 
     /// <summary>The tile of a baked land or static instance as the shader derives it (out-of-range tint): land exactly from
-    /// X/Y (and z for flat land), statics as the low bytes of <see cref="StaticTileBits"/> (<paramref name="lowBytes"/> true).</summary>
-    public readonly void Tile(out int tileX, out int tileY, out bool lowBytes)
+    /// X/Y (and z for flat land); statics from an estimate off the sprite's rectangle (the art's horizontal centre and its
+    /// bottom edge sit within a few tiles of the tile's anchor), corrected to the low bytes of <see cref="StaticTileBits"/>.
+    /// Exact while the estimate is within 128 tiles.</summary>
+    public readonly void Tile(out int tileX, out int tileY)
     {
         uint flags = Flags;
+        int z = (sbyte)Corners;
         if ((flags & FlagStretch) != 0 || (Corners >> 16 & ZLand) != 0)
         {
-            int z = (flags & FlagStretch) != 0 ? 0 : (sbyte)Corners;
+            if ((flags & FlagStretch) != 0) z = 0;
             int d = FloorDiv(X + 33, 22), s = FloorDiv(Y + 33 + z * 4, 22);
             tileX = (s + d) >> 1;
             tileY = (s - d) >> 1;
-            lowBytes = false;
         }
         else
         {
-            tileX = (int)(Light >> 16 & 0xFF);
-            tileY = (int)(Light >> 24);
-            lowBytes = true;
+            // View.DrawStatic: the untrimmed art is centred on x = (tx - ty)·22 and ends at y = (tx + ty)·22 - z·4 + 22
+            int d = FloorDiv(X + (Width >> 1) + 11, 22), s = FloorDiv(Y + Height + z * 4 - 11, 22);
+            int ex = (s + d) >> 1, ey = (s - d) >> 1;
+            tileX = ex + (int)(((Light >> 16) - (uint)ex + 128u) & 0xFF) - 128;
+            tileY = ey + (int)(((Light >> 24) - (uint)ey + 128u) & 0xFF) - 128;
         }
     }
 
