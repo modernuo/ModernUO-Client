@@ -273,6 +273,11 @@ namespace ClassicUO.Game.Scenes
                         {
                             _world.QueueItemUpdate(handleItem);
                         }
+                        else if (obj is Mobile handleMobile)
+                        {
+                            // E4: the mobile's clock must report the pending Update
+                            _world.Ecs.PushClock(handleMobile);
+                        }
                     }
 
                     obj.UpdateTextCoordsV();

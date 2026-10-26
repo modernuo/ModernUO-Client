@@ -202,6 +202,10 @@ namespace ClassicUO.Game.GameObjects
             {
                 World.OnItemDestroyed(item);
             }
+            else if (this is Mobile mobile)
+            {
+                World.OnMobileDestroyed(mobile);
+            }
         }
 
         public Item FindItem(ushort graphic, ushort hue = 0xFFFF)

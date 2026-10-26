@@ -44,6 +44,7 @@ namespace ClassicUO
     //   plan entries activeitems:on|off switch World.Update's active item list (world_update_active_items, W5); CUO_W5_CHECK=1 verifies it
     //   plan entries mobcache:on|off switch the Gpu world's mobile frame cache (gpu_mobile_frame_cache, W5); CUO_MOBILE_CACHE_CHECK=1 verifies it
     //   plan entries w5:on|off switch all four W5 shortcuts (activeitems, mobcache, textskip, pushinputs) together
+    //   plan entries mobsys:on|off switch World.Update's mobile loop by the ECS clocks (world_update_mobile_system, E4); CUO_MOBILE_UPDATE_CHECK=1|stats verifies / counts it
     //   plan entries pushinputs:on|off switch reading mobiles' pushed ECS inputs (mobile_push_inputs, W5); CUO_MOBILE_INPUT_CHECK=1 verifies them
     //   plan entries textskip:on|off switch skipping the text layout of entities whose overhead texts all expired (text_skip_expired, W5)
     //   pickscan:CxR hovers a C x R grid of the game view and compares the selection with that skipping off and on; cot:on|off
@@ -1506,6 +1507,16 @@ namespace ClassicUO
                     {
                         Configuration.Settings.GlobalSettings.TextSkipExpired = _plan[_planIndex] == "textskip:on";
                         Log.Info($"[bench] overhead text pass skips expired texts: {Configuration.Settings.GlobalSettings.TextSkipExpired}");
+                        _planIndex++;
+                        _stepAt = now + sec;
+
+                        break;
+                    }
+
+                    if (_plan[_planIndex].StartsWith("mobsys:"))
+                    {
+                        Configuration.Settings.GlobalSettings.WorldUpdateMobileSystem = _plan[_planIndex] == "mobsys:on";
+                        Log.Info($"[bench] mobile update by clock (E4): {Configuration.Settings.GlobalSettings.WorldUpdateMobileSystem}");
                         _planIndex++;
                         _stepAt = now + sec;
 

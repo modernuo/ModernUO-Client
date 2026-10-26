@@ -31,6 +31,7 @@ namespace ClassicUO.Game
             Mirror = new WorldMirror();
             Extract = new DynamicSpriteExtract(Mirror.Store);
             Animation = new MobileAnimationSystem(Mirror);
+            Clock = new MobileClockSystem(Mirror.Store);
         }
 
         public WorldMirror Mirror { get; }
@@ -38,6 +39,9 @@ namespace ClassicUO.Game
         public DynamicSpriteExtract Extract { get; }
 
         public MobileAnimationSystem Animation { get; }
+
+        /// <summary>E4: picks the mobiles whose Update has work this frame from their <see cref="MobileClock"/>.</summary>
+        public MobileClockSystem Clock { get; }
 
         // created on first use: needs the loaded animation tables
         public MobileSpriteExtract MobileExtract => _mobileExtract ??= new MobileSpriteExtract(Client.Game.UO.FileManager.Animations);
@@ -132,7 +136,7 @@ namespace ClassicUO.Game
 
         public static long InputPushes;
 
-        private static void WriteInputs(Mobile mobile, EcsEntity e)
+        private void WriteInputs(Mobile mobile, EcsEntity e)
         {
             if (!e.HasComponent<MobileInputs>())
             {
@@ -142,6 +146,194 @@ namespace ClassicUO.Game
             InputPushes++;
             MobileInputSource src = MobileInputRules.From(mobile, Cv7000);
             MobileInputRules.Compute(in src, ref e.GetComponent<MobileInputs>());
+
+            // every step-queue change and every new entity passes here, so the clock's Stepping flag follows
+            WriteClock(mobile, e);
+        }
+
+        /// <summary>
+        /// E4: copies the Mobile's due times and update flags into its <see cref="MobileClock"/>. Called from every write
+        /// of those values that happens outside <c>Mobile.Update</c> (SetAnimation, the idle timer, the step queue, the
+        /// handles opening, entity creation) and after each Update the system runs. Ignores mobiles World doesn't hold.
+        /// </summary>
+        public void PushClock(Mobile mobile)
+        {
+            if (!ClockEnabled || mobile == null || mobile.IsDestroyed || !ReferenceEquals(_world.Mobiles.Get(mobile.Serial), mobile))
+            {
+                return;
+            }
+
+            if (Mirror.TryGetEntity(mobile.Serial, out EcsEntity e))
+            {
+                WriteClock(mobile, e);
+            }
+        }
+
+        public static long ClockPushes;
+
+        /// <summary>
+        /// E4: the clock is kept only while the mobile system runs (World.Update sets this each frame from
+        /// <c>world_update_mobile_system</c> and <c>world_update_active_items</c>). With it off there is no component, no write,
+        /// no lookup and no destroyed queue; turning it on builds every clock from the Mobiles (<see cref="ResyncClocks"/>).
+        /// </summary>
+        public bool ClockEnabled;
+
+        private void WriteClock(Mobile mobile, EcsEntity e)
+        {
+            if (!ClockEnabled)
+            {
+                return;
+            }
+
+            if (!e.HasComponent<MobileClock>())
+            {
+                // not at creation (CreateEntity takes 11 arguments at most) and only while the system runs
+                e.AddComponent(new MobileClock());
+            }
+
+            ClockPushes++;
+            ref MobileClock c = ref e.GetComponent<MobileClock>();
+            c.AnimDue = mobile.LastAnimationChangeTime;
+            c.IdleDue = mobile.IdleDue;
+            c.Flags = ClockFlagsOf(mobile);
+        }
+
+        internal static MobileClockFlags ClockFlagsOf(Mobile mobile)
+        {
+            MobileClockFlags f = MobileClockFlags.None;
+
+            if (mobile.Steps.Count != 0) f |= MobileClockFlags.Stepping;
+            if (mobile.ObjectHandlesStatus == ObjectHandlesStatus.OPEN) f |= MobileClockFlags.HandlesOpening;
+
+            return f;
+        }
+
+        // E4 checker (CUO_MOBILE_UPDATE_CHECK=1; "stats" only logs the counts)
+        public static readonly bool MobileUpdateCheck = Environment.GetEnvironmentVariable("CUO_MOBILE_UPDATE_CHECK") == "1";
+        public static readonly bool MobileUpdateStats = MobileUpdateCheck || Environment.GetEnvironmentVariable("CUO_MOBILE_UPDATE_CHECK") == "stats";
+        public static long ClockFrames, ClockDue, ClockScanned, ClockCollectTicks, ClockUpdateTicks;
+        public static long ClockChecks, ClockDiffs, SkippedChecks, SkippedDiffs;
+        private int _clockLogged;
+
+        /// <summary>
+        /// E4 checker, start of the frame: every live Mobile has a clock entity and its clock equals what the Mobile holds.
+        /// A mismatch is a missed push (a write of the due times or flags that didn't reach the ECS).
+        /// </summary>
+        public void CheckClocks()
+        {
+            foreach (Mobile m in _world.Mobiles.Values)
+            {
+                if (m.IsDestroyed)
+                {
+                    continue;
+                }
+
+                ClockChecks++;
+
+                if (!Mirror.TryGetEntity(m.Serial, out EcsEntity e) || !e.HasComponent<MobileClock>())
+                {
+                    ClockDiffs++;
+                    LogClockDiff($"mobile 0x{m.Serial:X8} has no clock entity");
+
+                    continue;
+                }
+
+                MobileClock c = e.GetComponent<MobileClock>();
+
+                // HandlesOpening may be left set after the scene or the name gump cancelled the OPEN: the next Update clears it
+                // (an extra update, never a missed one), so only the other flags and a missing HandlesOpening count
+                MobileClockFlags want = ClockFlagsOf(m);
+                MobileClockFlags have = c.Flags;
+
+                if ((have & MobileClockFlags.HandlesOpening) != 0 && (want & MobileClockFlags.HandlesOpening) == 0)
+                {
+                    have &= ~MobileClockFlags.HandlesOpening;
+                }
+
+                if (c.AnimDue != m.LastAnimationChangeTime || c.IdleDue != m.IdleDue || have != want)
+                {
+                    ClockDiffs++;
+                    LogClockDiff($"clock of 0x{m.Serial:X8}: ecs anim {c.AnimDue} idle {c.IdleDue} {c.Flags} | mobile anim {m.LastAnimationChangeTime} idle {m.IdleDue} {ClockFlagsOf(m)} (tick {Time.Ticks})");
+                    WriteClock(m, e);
+                }
+            }
+        }
+
+        public static long OrdinalRebuilds, OrderChecks, OrderDiffs;
+
+        /// <summary>
+        /// E4 checker: the due mobiles are about to run in <paramref name="due"/>'s order; it must be a subsequence of a fresh
+        /// enumeration of <paramref name="mobiles"/> (the order the legacy loop ran them in).
+        /// </summary>
+        public void CheckOrder(IEnumerable<Mobile> mobiles, List<Mobile> due)
+        {
+            var position = new Dictionary<Mobile, int>(due.Count, ReferenceEqualityComparer.Instance as IEqualityComparer<Mobile>);
+            int i = 0;
+
+            foreach (Mobile m in mobiles)
+            {
+                position[m] = i++;
+            }
+
+            int last = -1;
+
+            foreach (Mobile m in due)
+            {
+                OrderChecks++;
+
+                if (!position.TryGetValue(m, out int p) || p <= last)
+                {
+                    OrderDiffs++;
+                    LogClockDiff($"due update order: 0x{m.Serial:X8} at enumeration position {(position.TryGetValue(m, out int q) ? q : -1)} runs after position {last}");
+                }
+                else
+                {
+                    last = p;
+                }
+            }
+        }
+
+        /// <summary>
+        /// E4 checker, after the system's updates: every mobile it skipped is updated the legacy way and must not change.
+        /// (Mobiles the system updated carry this frame's stamp; they ran the legacy Update, so they are equal by construction.)
+        /// </summary>
+        public void CheckSkipped(IEnumerable<Mobile> mobiles, int stamp)
+        {
+            foreach (Mobile m in mobiles)
+            {
+                if (m.IsDestroyed || m.UpdateStamp == stamp)
+                {
+                    continue;
+                }
+
+                SkippedChecks++;
+                int before = m.UpdateStateHash();
+                m.Update();
+
+                if (m.UpdateStateHash() != before)
+                {
+                    SkippedDiffs++;
+                    LogClockDiff($"skipped mobile 0x{m.Serial:X8} g=0x{m.Graphic:X4} changed in a legacy Update (anim {m.LastAnimationChangeTime}, idle {m.IdleDue}, steps {m.Steps.Count}, tick {Time.Ticks})");
+                    PushClock(m);
+                }
+            }
+        }
+
+        private void LogClockDiff(string message)
+        {
+            if (_clockLogged++ < MAX_LOGGED_MISMATCHES)
+            {
+                Log.Warn($"[mobile-update-check] {message}");
+            }
+        }
+
+        /// <summary>E4: rewrites every mobile's clock from the Mobile (the setting was just turned on: Update advanced the timers unpushed).</summary>
+        public void ResyncClocks()
+        {
+            foreach (Mobile m in _world.Mobiles.Values)
+            {
+                PushClock(m);
+            }
         }
 
         // Client.Game.UO.Version >= CV_7000 (the rules of IsFlying, IsPoisoned, IsGargoyle); false without a client (tests)
@@ -194,7 +386,7 @@ namespace ClassicUO.Game
             }
         }
 
-        private uint _cacheLogAt, _inputLogAt;
+        private uint _cacheLogAt, _inputLogAt, _clockLogAt;
 
         public void Update()
         {
@@ -202,6 +394,13 @@ namespace ClassicUO.Game
             {
                 _cacheLogAt = Time.Ticks + 5000;
                 Log.Info($"[mobile-cache-check] selections reused {MobileFrameCache.SelectHits}, run {MobileFrameCache.SelectMisses}; checked {MobileAnimationSystem.CheckSelects}, {MobileAnimationSystem.CheckSelectDiffs} different | instances replayed {MobileFrameCache.EmitHits}, emitted {MobileFrameCache.EmitMisses}; checked {MobileSpriteExtract.CheckReplays}, {MobileSpriteExtract.CheckReplayDiffs} different");
+            }
+
+            if (MobileUpdateStats && Time.Ticks >= _clockLogAt)
+            {
+                _clockLogAt = Time.Ticks + 5000;
+                long f = Math.Max(1, ClockFrames);
+                Log.Info($"[mobile-update-check] frames {ClockFrames}: due {ClockDue / (double)f:F1} of {ClockScanned / (double)f:F0} mobiles per frame; clocks checked {ClockChecks}, {ClockDiffs} different; skipped updates checked {SkippedChecks}, {SkippedDiffs} changed state; due-update order checked {OrderChecks}, {OrderDiffs} out of order, ordinal rebuilds {OrdinalRebuilds}; clock pushes {ClockPushes}; per frame: scan {ClockCollectTicks * 1000.0 / Stopwatch.Frequency / f:F4} ms, due updates {ClockUpdateTicks * 1000.0 / Stopwatch.Frequency / f:F4} ms");
             }
 
             if ((MobileAnimationSystem.InputCheck || MobileAnimationSystem.InputBench) && Time.Ticks >= _inputLogAt)
