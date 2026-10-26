@@ -1560,3 +1560,29 @@ An earlier series on eaa489c92 (same change): 4.27 -> 3.88.
 **Verification:** Release and `-p:CuoDevTools=false` build; 442 unit tests pass. Shots (NativeAOT, base vs fix): Legacy house shots near-black 1.89% (all three), Legacy world diffs only on the walking NPCs in the house and two mobiles at Britain; Gpu Britain identical, Gpu house diff only on the walking NPCs; UI diffs only in journal text. Looked at. Picking: the walk's pick path is unchanged code (no pickscan run).
 
 **Left:** about 0.65 ms (+20%) of Legacy world prepare at the large spot is still above 613842720. The whole-tile shape and the per-tile W4 branches account for ~0.1 ms between them; the rest is spread over the walk's other additions (detail-mode branches and their bucket locals, `_walkObjects`, ScreenPositionGen). A Legacy-only copy of the 613842720 walk gets it all back but duplicates ~450 lines; not done. World draw is +0.25 ms over 613842720 (draw side, unrelated to this change). Re-measure every table on a quiet machine.
+
+## ECS mirror cost under packet storms (E2) and the ECS inspector (E3) (2026-10-26)
+
+Branch `bg/ecs-e2-e3` from `poc/modern-client` 755f4e119. E2 e1a1511d2, E3 c4870e7a4.
+
+**E2 method:** `EcsPacketCostBench` (xunit, off unless `CUO_ECS_BENCH` is set; no new dependency, no BenchmarkDotNet in the repo). A legacy `World` with N mobiles each wearing 5 items plus a backpack; each scenario calls the hook the packet handler reaches, 100,000 packets after 20,000 warmup, `GC.GetAllocatedBytesForCurrentThread` around the loop. `DOTNET_TieredCompilation=0`, workstation GC, Release. Three runs, N = 500 / 2,000 / 8,000; run-to-run spread was about 5% (noisy machine, so read it as +-10%).
+
+| Packet (hook) | us/packet at 2,000 mobiles | bytes/packet |
+|---|---|---|
+| Mobile move (x, y, dir + `Sync`) | 0.12 | 0 |
+| `Sync`, nothing changed (mobile / worn item) | 0.06 / 0.05 | 0 |
+| Mobile graphic change + `Sync` | 0.06 | 0 |
+| `PushInputs` | 0.025 | 0 |
+| Worn item hue change + `Sync` | 0.05 | 0 |
+| Worn item to backpack and back (indexed component re-add) | 0.16 | 0 |
+| Ground item add + delete (with the legacy object), per packet | 0.13 | 132 |
+| Item into a container + out, per packet | 0.17 | 132 |
+| Serial reuse (delete mobile, create the same serial), per packet | 0.22 | 208 |
+| Mirror only: `UpsertItem` + `Remove`, per packet | 0.06 | 0 |
+| Mirror only: `UpsertMobile` + `Remove`, per packet | 0.10-0.12 | 0 |
+
+**Result: no problem found.** Every hook is 0.02-0.26 us, so a 2,000-packet storm costs under 0.5 ms; the cost does not grow with the entity count (500 -> 8,000 mobiles: 0.12 -> 0.12-0.13 us for a move, 0.22 -> 0.26 for serial reuse). The mirror allocates nothing per packet, creates and deletes included; the 132 and 208 bytes are the legacy `Item`/`Mobile` objects the scenario also creates. Caveats: the dirty tag is added once and stays (the bench never runs the animation system that clears it), so "marks equipment dirty" is the already-dirty path; the loop is single-threaded and cache-warm (8,000 mobiles = 40,000 items is the largest tried).
+
+**E3:** DevBench plan entry `ecsdump:<hex serial>|player|nearest` (`Game/Ecs/EcsInspector.cs`, whole file behind `CUO_DEVTOOLS`). Smoke run on kbatman3 (account lock held, password in a throwaway encrypted settings.json, deleted after; Britain, Gpu, 960x720): `[ecsdump]` lines for the player (entity 1, two worn items, pushed inputs equal to the recomputed ones, slot 0 `item=0x401F0BEB layer=22 g=0x204F anim=0x03DB ... | legacy g=0x204F hue=0x054F layer=22 container=0x0004C222`) and for the nearest mobile (animation not yet built, `EquipmentDirty`, 7 indexed equipment items matching the legacy list). Format and use: [testing/ecs-animation.md](testing/ecs-animation.md).
+
+**Verification:** `tests/ClassicUO.UnitTests` Release 466 passed (the bench is one of them and returns at once without the variable); client builds in Release and with `-p:CuoDevTools=false`. Submodules had to be initialised (`git submodule update --init --recursive`) in the fresh worktree.
