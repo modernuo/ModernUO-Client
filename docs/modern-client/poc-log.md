@@ -1414,6 +1414,34 @@ Branch `worktree-agent-ad5fb48ffeb803a6e` (override-cut agent, kbatman4), starte
   - ECS parity (`cases.txt`, `CUO_ANIM_SYNC=1`, `CUO_GPU_ITEM_CHECK=1`): 189k mobile and 67k item comparisons, 0 mismatches. The run met neither of the two dock NPCs.
 - **Builds and tests:** Release and `-p:CuoDevTools=false` build; all unit tests pass (322 before merging the E1 tests, 434 after).
 
+**Codex audit (merge with fixes), four P2s, fixed in 57b1f117e:**
+1. **Translucent capacity.** The chunk lists used up the 8,192 entries before overrides and z-hiding were evaluated, so hidden baked translucents could push out a visible fading wall, which the opaque pass also rejects.
+   - Baked translucents are now listed after the override loop, and only when the frame shows them (an override can hide or force-show them; z-hidden ones are skipped).
+   - The CPU list grows on demand, and the GPU frame table follows (`Renderer.EnsureTranslucentCapacity`): recreated at the next power of two, up to `Renderer.TranslucentLimit` = 262,144 entries (2 MB, within the 8 MB frame transfer buffer).
+   - Only entries past that limit are dropped. Drops are counted in `OverridesDropped` and logged at most every 10 s; growth is logged.
+   - Seen in the checks run: the large-scale scene grew the list to 16,384 on arrival, with no drops.
+2. **Modulo-256 aliasing.** At 7680×4320, zoom 2.5, range 24, a visible static could wrap to a tile in range and stay untinted.
+   - A static's tile is now estimated from its sprite rectangle (horizontal centre and bottom edge), then corrected to the packed low bytes. The shader and `SpriteInstance.Tile` use the same maths.
+   - A bake-time self-check (`BakeJob.TileMismatches`) compares every baked land tile and static with its real tile, and the client warns if it's ever nonzero. It was 0 in every run.
+3. **Uo.Client.** It drives `Renderer` directly, with no translucent pass, so baked blood and webs vanished there. A new `PackSet.BakeTranslucentAlpha` flag, set only by `WorldRenderer`, makes the alpha-178 bake opt-in; other consumers bake those statics opaque, as before.
+4. **Item cache vs range tint.** Removing the skip exclusion turned on the ground-item cache with the option on, and cached items kept their old tint after a move or a 0xC8 range cut.
+   - The item signature now includes `NoColorObjectsOutOfRange && Distance > ClientViewRange`. A flip sends the tile back to the walk on the same frame, and the chunk is re-extracted on the next one.
+   - The option itself is part of the cache's generation key.
+   - Keeping the cache costs less than turning it off with the option on. Measured standing at the large-scale scene centre (range 10, 2 rounds): world prepare 0.36 ms with the cache vs 0.63 ms without; 5,405 items served; frame 0.90 vs 1.08 ms.
+   - The lane-walk windows saw few items (0.03 ms either way) and can't separate the two.
+
+**Re-verification of the fixes and the first round's key claims** (on f9c5712fa = 57b1f117e plus `poc/modern-client` 56f8fdc4a; plain inline commands, one per run):
+- Both build flavours; 442 unit tests pass.
+- `CUO_GPU_SKIP_CHECK=1` and `CUO_GPU_ITEM_CHECK=1` with the option on: Britain and the bank at `range:5` and `range:18`, a walk, and the large-scale lane at `range:10` and `range:6`.
+  - 32 check intervals: 0 unsettled, 0 drawn differently, 0 cache differences.
+  - Range flips while walking were caught by the item signature (15–20 tiles per interval) and redrawn by the walk.
+- **Shots, Gpu vs Legacy** (looked at):
+  - Britain 7.20%, blood pool 0.70%, Britain with the option on (range 12) 5.54%: identical to the first round's numbers.
+  - The zoomed-out large window (3840×2054 window, 2560×1369 world target), option on: 22.6% at range 12 and 21.2% at range 5, the known zoomed-out filtering difference. The in-range diamond and the gray area match Legacy.
+  - New vs first-round Gpu shots: blood 1 px; Britain 0.12%, the player's idle frame.
+- ECS parity (`cases.txt`, `CUO_ANIM_SYNC=1`, `CUO_GPU_ITEM_CHECK=1`): 201k mobile and 69k item comparisons, 0 mismatches.
+- **Not run:** the Uo.Client offline smoke run. The worktree guard refused the single-command form (`Uo.Client.exe --pack C:\… --screenshots …`), and per the owner's rule it was skipped, not re-wrapped. Fix 3 is unverified at run time; by construction, Uo.Client's bake is the pre-cut bake.
+
 **Left:**
-- The pending-override list (8,192) and the translucent list (8,192) can still overflow in other cases: hidden-tile overrides zoomed out at 4K, translucent-heavy scenes. Overflow is counted in `OverridesDropped`.
 - Captured views (wet animated statics, multis, items, mobiles, effects) keep their own hue and alpha paths (unchanged).
+- The pending-override list (8,192 entries) still drops on overflow (counted and logged). The translucent list grows instead, up to 262,144 entries.
