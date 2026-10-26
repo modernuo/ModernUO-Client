@@ -153,7 +153,11 @@ namespace ClassicUO.Game
                 problem += $" frameinfo view={mobile.FrameInfo} ecs={fi}";
             }
 
-            if (scene != null)
+            if (scene != null && !LightsFit(lightsBefore, scene.LightCount))
+            {
+                _lightsSkippedFull++;
+            }
+            else if (scene != null)
             {
                 int viewEnd = scene.LightCount;
 
@@ -242,7 +246,11 @@ namespace ClassicUO.Game
                 problem += $" drawn view={viewDrawn} ecs={ecsDrawn}";
             }
 
-            if (scene != null)
+            if (scene != null && !LightsFit(lightsBefore, scene.LightCount))
+            {
+                _lightsSkippedFull++;
+            }
+            else if (scene != null)
             {
                 int viewEnd = scene.LightCount;
 
@@ -274,6 +282,17 @@ namespace ClassicUO.Game
                 Summary();
             }
         }
+
+        private static long _lightsSkippedFull;
+
+        /// <summary>
+        /// The checker adds the ECS lights after the view's, so the list holds both at once. GameScene.AddLight stops at
+        /// <see cref="ClassicUO.Assets.LightsLoader.MAX_LIGHTS_DATA_INDEX_COUNT"/>, so near that cap the ECS lights are refused
+        /// only because the view's are still in the list (a checker artifact, not a path difference). False = the doubled
+        /// list would not fit, skip the comparison for this object.
+        /// </summary>
+        internal static bool LightsFit(int lightsBefore, int viewEnd) =>
+            viewEnd + (viewEnd - lightsBefore) <= ClassicUO.Assets.LightsLoader.MAX_LIGHTS_DATA_INDEX_COUNT;
 
         private static bool SameLights(Scenes.GameScene scene, int a, int b, int end)
         {
@@ -321,7 +340,7 @@ namespace ClassicUO.Game
             {
                 Log.Info
                 (
-                    $"[PARITY] items={_items} mismatched={_itemMismatched} drawn-mismatched={_itemDrawnMismatched} lights-mismatched={_itemLightMismatched} lights={_itemLights} " +
+                    $"[PARITY] items={_items} mismatched={_itemMismatched} drawn-mismatched={_itemDrawnMismatched} lights-mismatched={_itemLightMismatched} lights={_itemLights} lights-skipped-full={_lightsSkippedFull} " +
                     $"instances capture={_itemCapInstances} ecs={_itemEcsInstances} | per frame: capture {_itemCaptureTicks / f / frames:F2}us, extract {_itemExtractTicks / f / frames:F2}us " +
                     $"(per item {_itemCaptureTicks / f / _items:F3} / {_itemExtractTicks / f / _items:F3}us) | corpses={_corpses} (instances {_corpseInstances}) multis={_multis}"
                 );
@@ -337,7 +356,7 @@ namespace ClassicUO.Game
                 $"[PARITY] frames={_frames} mobiles={_mobiles} mismatched={_mismatched} not-mirrored={_notMirrored} instances capture={_capInstances} ecs={_ecsInstances} | " +
                 $"per frame: capture {_captureTicks / f / frames:F2}us, ecs sample+select {_sampleTicks / f / frames:F2}us, extract {_extractTicks / f / frames:F2}us " +
                 $"(per mobile {_captureTicks / f / _mobiles:F2} / {_sampleTicks / f / _mobiles:F2} / {_extractTicks / f / _mobiles:F2}us)\n" +
-                $"  view effects: checks={_effectChecks} mirror-mismatched={_flipMismatched} frameinfo-mismatched={_frameInfoMismatched} lights-mismatched={_lightMismatched} lights view={_viewLights} ecs={_ecsLights}\n  {Cases()}"
+                $"  view effects: checks={_effectChecks} mirror-mismatched={_flipMismatched} frameinfo-mismatched={_frameInfoMismatched} lights-mismatched={_lightMismatched} lights view={_viewLights} ecs={_ecsLights} skipped-full={_lightsSkippedFull}\n  {Cases()}"
             );
         }
 
