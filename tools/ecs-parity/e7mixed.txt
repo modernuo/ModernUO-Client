@@ -1,0 +1,103 @@
+wait 6
+say [go 5445 1153
+wait 3
+light 1E
+wait 1
+say [add Arrow 50
+wait 1
+target ground 2 0
+wait 1
+say [add Bandage 20
+wait 1
+target ground 2 0
+wait 1
+say [add Static 0x3996
+wait 1
+target ground 2 0
+wait 1
+say [add Arrow 7
+wait 1
+target ground 2 0
+wait 1
+say [add Arrow 9
+wait 1
+target ground -2 0
+wait 1
+say [add Brigand
+wait 1
+target ground -2 0
+wait 2
+say [kill
+wait 1
+target mobile -2 0
+wait 2
+say [add Bandage 3
+wait 1
+target ground -2 0
+wait 1
+say [add Static 0x19AB
+wait 1
+target ground 0 2
+wait 1
+say [add Apple 4
+wait 1
+target ground 0 2
+wait 1
+say [add Static 0xA0F
+wait 1
+target ground 0 -2
+wait 1
+say [add Bandage 5
+wait 1
+target ground 0 -2
+wait 1
+say [add Static 0x1F1B
+wait 1
+target ground 2 2
+wait 1
+say [add Arrow 11
+wait 1
+target ground 2 2
+wait 3
+items
+parity
+shot e7_on1
+itemmixed off
+wait 1
+shot e7_off1
+itemmixed on
+wait 1
+shot e7_on2
+wait 2
+walk 2 0
+wait 2
+parity
+walk 0 2
+wait 2
+walk -2 0
+wait 2
+parity
+walk 0 0
+wait 2
+check
+walk 4 3
+walk 0 0
+wait 3
+parity
+light off
+wait 1
+say [wipe mobiles
+wait 1
+target ground -6 -6
+wait 1
+target ground 6 6
+wait 3
+say [wipe items
+wait 1
+target ground -6 -6
+wait 1
+target ground 6 6
+wait 3
+items
+check
+quit

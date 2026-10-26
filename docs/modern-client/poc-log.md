@@ -1727,3 +1727,56 @@ Off equals base within the noise (the same configuration moved by 0.01 ms betwee
 **Fix:** `EcsParity.LightsFit(lightsBefore, viewEnd)` skips the light comparison when the doubled list would not fit under the cap (counted as `lights-skipped-full` in the summary, so the skip is visible). Forced night on the fixed build: `lights-mismatched=0`, `lights=931347`, `skipped-full=7531` (matches the unfixed 7511 within run noise), items/mobiles/effects mismatches 0. 5 unit tests in `ParityLightsFitTests`; 550 tests pass, default and `-p:CuoDevTools=false`.
 
 **Note for future parity runs:** run both `light off` and `light 1E` at the start of the driver plan; a day-only run proves nothing about lights. Not covered: a real difference in light lists in the skipped (full-list) frames, which the checker cannot see.
+
+## E7: the item cache serves mixed tiles; uncacheable items walked alone (2026-10-26)
+
+Branch `poc/ecs-e7-walk` (E7 agent, kbatman3), started on `poc/modern-client` 540157a5a, final numbers on 62ac4bdc6 (merged). Scratch: session scratchpad `e7\`.
+
+**How much walk was left (measured first).** A ceiling build (`CUO_E7_EXP=1`: animated art treated as cacheable, so its tiles leave the walk entirely; wrong animation, timing only), JIT with `DOTNET_TieredCompilation=0`, 2 alternated sessions: large scene world prepare 1.08 -> 0.78 ms at zoom 1 (items walked and extracted 2,829 -> 0), 1.59 -> 0.97 at zoom 2.5 (6,912 -> 0). Britain, the bank and Britain zoom 2.5 walk 0-6 items: nothing to gain there. So the cost is real in busy scenes only, and worth taking there.
+
+**Why those items were walked:** W4 left a tile in the walk when any unbaked object on it wasn't cacheable. In the scene the lit and animated art blocks (0x3996, fire 0x19AB) sit on top of 15 item layers and under the mobile block, so one animated item kept 15 items and 2 mobiles in the walk.
+
+**Change** (`GameSceneGpuItemCache.cs`; setting `gpu_prepare_item_cache_mixed`, default on; plan entry `itemmixed:on|off`, driver command `itemmixed`):
+- At extract time, an uncacheable object that is an item and can never end the tile's walk (its `PriorityZ` plus tiledata height is within the walk's max Z of 150, so `AddTileToRenderList` can't `return` at it) no longer blocks the tile. It is recorded as walked-alone, with the number of cached entries before it in the tile list. Anything else (unbaked land or statics, multi components, effects, a too-tall item) still keeps the tile in the walk. Transient reasons (text, fading in, offset, handles, the hovered container) become walked-alone too; the chunk still re-extracts after 30 frames so they get cached once settled.
+- Serving a tile with walked-alone items (`GpuServeMixedTile`, out of line): in tile order, the cached entries before each such item join the capture at the statics list's current length, then the walk visits the item alone (`AddTileToRenderList(item, ..., stopAt: item.TNext)`), then the rest of the cached entries. The statics-list order, and so the dynamic buffer's order and equal-depth ties, is the full walk's.
+- A tile that also holds mobiles leaves `walkTiles` and is walked in one pass over its list: mobiles and walked-alone items in tile order (a corpse and a mobile share the animations list, a fading item and a fading mobile the transparent list), cached items skipped. Tiles with a mobile the max Z stops at stay in the walk, as before.
+- Validity: each walked-alone item must still be on that chunk and tile and not destroyed, else the tile is walked in full that frame and the chunk re-extracted (W4's fallback). Mouse art-box tiles, the hovered container's tile, fades and object handles behave as in W4.
+- `AddTileToRenderList` and the chunk loop in `FillGameObjectList` are unchanged: no new code in the Legacy-shared walk.
+- `CUO_GPU_ITEM_CHECK`: walked-alone items are not "extra"; a cached item's expected statics position is corrected by the walked-alone items of its tile queued before it (counted back in the statics list); the "other queued objects" hash keeps the walked-alone items. New counter `item_cache_walked`.
+
+**Measurements** (NativeAOT, base 62ac4bdc6 vs new 9edb96343; 3 alternated rounds, each a Gpu session and a Legacy session; 1920x1080 at 1.5 DPI, 3 windows per spot; ms, means of the run averages). Other agents' clients and builds ran throughout; the per-run spread is in the last column.
+
+| Spot | world prepare base -> new | prep_walk | item extract (walked items) | cached replay | objects walked | items walked / served / walked alone | runs (new) |
+|---|---|---|---|---|---|---|---|
+| Scene, zoom 1 (Gpu) | 1.175 -> 0.871 | 0.521 -> 0.408 | 0.193 -> 0.024 | 0.036 -> 0.047 | 8,678 -> 2,423 | 2,829 / 11,370 -> 177 / 14,022 / 417 | 0.97, 0.77, 0.87 |
+| Scene, zoom 2.5 (Gpu) | 1.754 -> 1.133 | 0.669 -> 0.463 | 0.430 -> 0.043 | 0.039 -> 0.067 | 8,899 -> 2,419 | 6,912 / 12,564 -> 432 / 19,044 / 432 | 1.25, 1.02, 1.13 |
+| Britain (Gpu) | 0.062 -> 0.062 | | | | 181 | | |
+| Bank (Gpu) | 0.063 -> 0.063 | | | | 208 | | |
+| Britain zoom 2.5 (Gpu) | 0.217 -> 0.226 | | | | 1,086 | | 0.23, 0.20, 0.25 |
+| Legacy Britain | 0.173 -> 0.161 | | | | 8,149 | | |
+| Legacy zoom 2.5 | 1.268 -> 1.108 | | | | 41,543 | | |
+| Legacy large (`size:max`, zoom 2.5) | 4.397 -> 4.317 (p50 4.317 -> 4.239) | | | | 138,872 | | base 4.09-4.62, new 4.14-4.60 |
+
+- Gpu frame in the scene: 2.13 -> 1.78 ms at zoom 1, 2.89 -> 2.19 at zoom 2.5.
+- The items still walked in the scene (177 at zoom 1) are on tiles under the mouse, beside mobiles the max Z stops at, or at screen edges.
+- **Legacy is unchanged** (no code in its path). Its large-spot numbers this afternoon were 4.3-4.4 ms for both builds, above the legacy2 agent's 3.96 from a quiet evening; paired, new is not worse.
+
+**Verification:**
+
+| Check | Result |
+|---|---|
+| `CUO_GPU_ITEM_CHECK=1`, `CUO_GPU_SKIP_CHECK=1`, `CUO_PREP_CHECK=1`: scene zoom 1 and 2.5, lane walks at zoom 1 and 2.5, mixed on/off, Britain, bank, Britain zoom 2.5 | Item check: 4,325 checks, 0 with differences, 26M cached items compared; "other queued objects" different only while walking (41). Prep check: 0 wrong. Skip check: 0 unsettled; 632 "drawn differently" on land at the top edge (anchor y -583) during the zoom-2.5 lane walk only, **in the base build too** (199 in the same plan): pre-existing, not E7's |
+| `pickscan:8x6` (skipping off vs on): scene zoom 2.5, Britain, bank, Britain zoom 2.5 | 0 different in all four |
+| ECS parity `CUO_ECS_PARITY=1 CUO_ANIM_SYNC=1 -ecscheck 120`, with the item and skip checks: `tools/ecs-parity/e7mixed.txt` (new: Green Acres tiles mixing arrows, bandages and apples with 0x3996, fire 0x19AB, a candle, a corpse with items; walking onto them) with `light 1E` and with `light off`; the scene (`[go`, walk and run the lane, `light 1E` then `off`) | 0 mismatches. Mixed, night: 248k item / 133k mobile comparisons (64k corpse), 137k lights, 0 lights mismatched. Mixed, `light off`: 226k / 124k. Scene: 5.5M item (walked items only) / 14.5M mobile, 787k lights (6.5k skipped-full). `-ecscheck` 0. Item check 0 differences in all three |
+| Shots (looked at) | In-session mixed on/off: Britain identical; Green Acres differs only on the animating fire and 0x3996 and the player; the scene only on flapping creatures. Base vs new: Britain 0.18%, bank 0.47% (moving NPCs), zoom 2.5 0.03%. Gpu vs Legacy: Britain 7.2%, bank 16.2% (the known filtering), scene creatures. Legacy base vs new: Britain 0.07%, zoom 2.5 0.01% |
+| Unit tests; build flavours | 550 pass; Release and `-p:CuoDevTools=false` build |
+
+**Process notes:** an early compile check ran without bench.lock while another agent was measuring (my mistake). A build script I stopped kept running in the background (its children survived) and built in my worktree for a few minutes; I rebuilt every binary cleanly afterwards. One `taskkill` of an `ilc.exe` was denied; it was not mine.
+
+**Left:** tiles under the mouse, with a mobile the max Z stops at, or with non-item unbaked objects (multi components, unmeshed statics, effects) are still walked in full. The pre-existing skip-check land difference at the zoom-2.5 top edge while walking is worth a look (W1's edge band).
+
+**Codex audit (no rendering bug; one P2 checker defect), fixed in eed280e77:**
+- **The defect:** the item check's placement test counted the walked-alone items before each cached item in the *reference* walk's statics list, so it never tested the split the serving path made. A tile served as C1, C2, W instead of C1, W, C2 passed it, and the "other queued objects" hash too (it leaves out cached items). `CUO_GPU_ITEM_CHECK=every` made every frame a check frame, so it never ran the serving path at all.
+- **Fix:** while the check is on, the capture mixes every object it reaches, and every cached item the cache emits, into an order-sensitive hash (`RenderLists.CaptureOrderHash`: the dynamic buffer's order, cached runs where they were injected, walked-alone items and mobiles included). A check frame's hash must equal the served frame's just before it; logged as `capture order vs the served frame before: N same, M different`. `=every` now checks every other frame, so every check frame follows a served one. Unit tests (`CaptureOrderHashTests`): the audit's counterexample, plus a missing or extra object, hash differently.
+- **The new check catches a broken split:** a temporary build that queued a mixed tile's cached entries after its walked-alone items (not committed) gave `capture order` 5,705 different of 12,672 in the scene with `=every`, while the old placement check still reported 0 differences. (A first broken build that queued them all *before* the walked-alone items was a no-op here: in the scene and in `e7mixed.txt` the uncacheable item is always last in its tile list.)
+- **Re-verified on eed280e77** (JIT, `TieredCompilation=0`; item, skip and prep checks on): scene zoom 1 and 2.5 with `=1` (840 checks) and `=every` (8,029 checks, 110M cached-item comparisons); `e7mixed.txt` at `light 1E` and `light off` with `=every` and ECS parity. 0 item-check differences, 0 skip-check unsettled or drawn differently, 0 prep-check wrong; ECS parity 0 mismatches (night: 3.8M item / 959k mobile comparisons, 150k lights; `light off`: 523k / 130k, 0 lights); `-ecscheck` 0. Capture order: 0 different in every standing window. The only differences (2 in the scene, 14 and 19 in `e7mixed`) were frames while the teleport or zoom change was settling or while the driver was adding items and the brigand was walking up, which the reference walk can't match by design. 563 unit tests pass; Release and `-p:CuoDevTools=false` build. No serving code changed, so no timing rerun.
