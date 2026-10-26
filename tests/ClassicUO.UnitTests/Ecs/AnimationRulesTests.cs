@@ -71,12 +71,84 @@ namespace ClassicUO.UnitTests.Ecs
                     layerOf[i] = (byte)baseOrder[i];
                 }
 
-                int got = AnimationRules.ApplyDirectionCloak(order, baseOrder.Length, layerOf, dir);
+                byte anchor = AnimationRules.CloakAnchor(baseOrder, layerOf.Slice(0, baseOrder.Length));
+                int got = AnimationRules.ApplyDirectionCloak(order, baseOrder.Length, layerOf, dir, anchor);
                 got.Should().Be(n);
 
                 for (int i = 0; i < n; i++)
                 {
                     ((Layer)layerOf[order[i]]).Should().Be(expected[i], $"dir {dir} index {i}");
+                }
+            }
+        }
+
+        // MobileView moves the cloak on the full layer order (Helmet always there) and then skips empty layers; the ECS
+        // moves it on the drawn slots only. The Britain dock NPCs (cloak, weapon, no helmet) drew the cloak over the
+        // weapon in Gpu and under it in Legacy until the move used the helmet anchor.
+        [Theory]
+        [InlineData("Shirt,Pants,Shoes,Tunic,Cloak,OneHanded,Hair")] // the dock NPCs' 0x78 layers
+        [InlineData("Cloak,Shirt,Pants,Hair,Beard,OneHanded")]
+        [InlineData("Cloak,Shirt,Pants,Shoes,Hair,TwoHanded,OneHanded")]
+        [InlineData("Cloak,Shirt,Hair,Helmet,OneHanded")]
+        [InlineData("Cloak,Robe,Hair,Beard")]
+        [InlineData("Cloak,OneHanded")]
+        [InlineData("Cloak")]
+        [InlineData("Shirt,Hair,OneHanded")]
+        public void Cloak_Order_Matches_MobileView_On_The_Drawn_Layers(string drawnLayers)
+        {
+            Layer[] drawn = Array.ConvertAll(drawnLayers.Split(','), s => Enum.Parse<Layer>(s));
+
+            Span<ushort> gfx = stackalloc ushort[PaperdollOrder.N];
+            gfx.Clear();
+            Span<Layer> raw = stackalloc Layer[PaperdollOrder.N];
+            Span<Layer> full = stackalloc Layer[PaperdollOrder.N];
+            PaperdollOrder.Build(gfx, false, raw);
+            int fullCount = PaperdollOrder.Filter(raw, includeBackpack: false, full);
+
+            // the ECS slots: the drawn layers in table order (Rebuild)
+            Span<byte> slotLayers = stackalloc byte[PaperdollOrder.N];
+            int n = 0;
+
+            for (int i = 0; i < fullCount; i++)
+            {
+                if (Array.IndexOf(drawn, full[i]) >= 0)
+                {
+                    slotLayers[n++] = (byte)full[i];
+                }
+            }
+
+            byte anchor = AnimationRules.CloakAnchor(full.Slice(0, fullCount), slotLayers.Slice(0, n));
+
+            for (byte dir = 0; dir < 8; dir++)
+            {
+                // MobileView: BuildInWorld's cloak move on the full order, then the empty layers skipped
+                Span<Layer> view = stackalloc Layer[PaperdollOrder.N];
+                full.Slice(0, fullCount).CopyTo(view);
+                int vc = PaperdollOrder.ApplyDirectionCloak(view, fullCount, dir);
+                Span<Layer> expected = stackalloc Layer[PaperdollOrder.N];
+                int e = 0;
+
+                for (int i = 0; i < vc; i++)
+                {
+                    if (Array.IndexOf(drawn, view[i]) >= 0)
+                    {
+                        expected[e++] = view[i];
+                    }
+                }
+
+                Span<byte> order = stackalloc byte[PaperdollOrder.N];
+
+                for (int i = 0; i < n; i++)
+                {
+                    order[i] = (byte)i;
+                }
+
+                int got = AnimationRules.ApplyDirectionCloak(order, n, slotLayers, dir, anchor);
+                got.Should().Be(e);
+
+                for (int i = 0; i < e; i++)
+                {
+                    ((Layer)slotLayers[order[i]]).Should().Be(expected[i], $"dir {dir} index {i}");
                 }
             }
         }
@@ -97,7 +169,7 @@ namespace ClassicUO.UnitTests.Ecs
                 layerOf[i] = (byte)layers[i];
             }
 
-            AnimationRules.ApplyDirectionCloak(order, layers.Length, layerOf, dir);
+            AnimationRules.ApplyDirectionCloak(order, layers.Length, layerOf, dir, AnimationRules.CloakAnchor(layers, layerOf));
             ((Layer)layerOf[order[cloakIndex]]).Should().Be(Layer.Cloak);
         }
 
