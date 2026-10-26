@@ -35,8 +35,8 @@ Under Gpu, **most of this repeats work the GPU already does or that changes only
   - `Serial`, `Graphic`, `Hue`, `Position`, `Facing`, `Flags`, `Amount`;
   - `EquippedOn` and `ContainedIn`, indexed by parent serial;
   - tags `MobileTag`, `ItemTag`, `PlayerTag`, `OnGround`, `MultiTag`.
-- It mirrors `World` with 0 mismatches. `DynamicSpriteExtract` exists, but the GPU path doesn't use it yet; `WorldRenderer.DynamicBuffer` is where it would plug in.
-- Mobile animation state is in the ECS (W3 groundwork, below); light, item/corpse sprites and screen position are not yet.
+- It mirrors `World` with 0 mismatches. (This section describes the state when the plan was drafted, 2026-10-24.)
+- **Since then (2026-10-25):** the ECS extract is the Gpu world's source for mobiles and every world item (W3), mobile animation state and update inputs are ECS state (W3, W5), and ground items are cached per chunk (W4). `World` and its GameObjects still own the state; packet handlers sync into the ECS. See the W sections below.
 
 ## Steps
 
