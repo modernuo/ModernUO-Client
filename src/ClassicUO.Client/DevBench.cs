@@ -30,6 +30,7 @@ namespace ClassicUO
     //   itemhue:hex,hex,... sets the hues of the nearest ground items, ghost:on|off swaps the player body (local-only render checks)
     //   chair:hex puts a client-side chair item under the player (chair:off removes it); water:on|off sets AnimatedWaterEffect
     //   outrange:on|off sets NoColorObjectsOutOfRange; range:N sets the client view range locally (as the server's 0xC8)
+    //   plan entry ecsdump:<hex serial>|player|nearest logs that serial's ECS entity (components, equipment slots, inputs, animation state) next to the legacy object's values ([ecsdump], E3)
     //   CUO_BENCH_TOPMOST=1 keep the window on top while benching (occluded windows are throttled)
     //   plan entries size:WxH|max change the CUO_BENCH_SIZE client area mid-plan (max = maximised window)
     //   plan entry gumps opens the paperdoll, backpack, journal and status bar (the UI allocation/parity scene); shots also save the UI render target
@@ -1787,6 +1788,15 @@ namespace ClassicUO
                     if (_plan[_planIndex].StartsWith("effect:") || _plan[_planIndex].StartsWith("moving:"))
                     {
                         SpawnBenchEffect(world, _plan[_planIndex]);
+                        _planIndex++;
+                        _stepAt = now + sec;
+
+                        break;
+                    }
+
+                    if (_plan[_planIndex].StartsWith("ecsdump:"))
+                    {
+                        EcsInspector.Dump(world, _plan[_planIndex].Substring(8));
                         _planIndex++;
                         _stepAt = now + sec;
 
