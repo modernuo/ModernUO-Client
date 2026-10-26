@@ -33,6 +33,9 @@ Area-specific procedures live in [`testing/`](testing/), one file per area, writ
   - keep logs, shots and binaries in the session scratchpad, not the repo.
 - **Builds you publish go to your scratch folder,** never `C:\Repositories\cuo-fps-test\bin`. That's the owner's test build, republished only by the main session with `tools/fps-test/publish-aot.ps1`.
 - **Denied tool calls:** report them and skip that step; no workarounds.
+  - **Guard refusals count as denials (owner, 2026-10-25).** If the worktree guard refuses a command (e.g. nested shell text it can't inspect), don't put the same commands in a script file and run that, and don't route them through another interpreter. Run each step as its own plain inline command; if a step can only run in the refused form, skip it and report it.
+  - Scripts you call directly for ordinary work (a Python helper that launches the bench harness, a build helper) are fine, as long as they aren't a way around a refusal.
+  - Test-password files exist only for one session: create, use, delete.
 - **Stay current with `poc/modern-client`.** Agents work on their own branch; the main session merges into `poc/modern-client` several times a day.
   - **When you start:** branch from the current tip of the local `poc/modern-client` and note the commit in your report.
   - **Before each measurement series and before final verification:** run `git log --oneline HEAD..poc/modern-client` (worktrees share branch refs, so the local branch is always the latest; no fetch needed). If anything new landed, merge it (`git merge poc/modern-client`; never rebase shared work), rebuild every test binary, and re-run base and new from the same tip. Never compare a build on an old base against one on a new base.
