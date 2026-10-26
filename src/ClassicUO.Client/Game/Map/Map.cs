@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
 using ClassicUO.Game.GameObjects;
+using ClassicUO.Game.Managers;
 using ClassicUO.Assets;
 
 namespace ClassicUO.Game.Map
@@ -27,7 +28,15 @@ namespace ClassicUO.Game.Map
         // the load and the mesh build (CUO_CHUNK_BUDGET_MS, default 2 ms; at least one chunk per frame). Pathfinding loads
         // the chunks within the view range on demand, so walking right after a teleport sees the same tiles as before.
         // CUO_CHUNK_SYNC=1 restores the old behaviour (every chunk loads when first asked for, no prefetch).
+        //
+        // First-sight art: a queued chunk is not loaded until the land, texmap and static art its block names is in the
+        // atlases. The missing art is requested from the block data (decoded on worker threads, Art/Texmap
+        // FirstSightDecoder) and uploaded by UpdateLoading inside the same budget, so the mesh build only reads art that
+        // is already there. A chunk that game logic loads before its art is ready is marked ArtPending: the draw walk
+        // skips it (and counts it in DrawPending, so the world-settle hold waits for it) until its art is there and
+        // UpdateLoading builds its mesh. CUO_ART_SYNC=1 turns this off (art decodes in the mesh build, as before).
         public static readonly bool Incremental = Environment.GetEnvironmentVariable("CUO_CHUNK_SYNC") != "1";
+        public static readonly bool ArtWait = Incremental && ClassicUO.Renderer.Arts.Art.AsyncFirstSight;
         public static readonly double BudgetMs = double.TryParse(Environment.GetEnvironmentVariable("CUO_CHUNK_BUDGET_MS"),
             System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double ms) ? ms : 2.0;
         // regions within this many tiles of the player are decoded ahead (the screen at 1920x1080 and zoom 1 reaches about
@@ -145,6 +154,9 @@ namespace ClassicUO.Game.Map
         {
             long t0 = Stopwatch.GetTimestamp();
             chunk.Load(Index);
+            _blockArtWait.Forget(ChunkKey(chunk.X, chunk.Y));
+            _chunkArtWait.Forget(ChunkKey(chunk.X, chunk.Y));
+            chunk.ArtPending = ArtWait && RequestChunkArt(chunk) != ArtCheck.Ready;
 
             if (_parked.Remove(block, out var list))
             {
@@ -197,7 +209,10 @@ namespace ClassicUO.Game.Map
             {
                 chunk.LastAccessTime = Time.Ticks;
 
-                return chunk;
+                if (!chunk.ArtPending)
+                {
+                    return chunk;
+                }
             }
 
             _queue.Request(chunkX, chunkY, _frame);
@@ -293,7 +308,7 @@ namespace ClassicUO.Game.Map
                     {
                         Chunk c = _terrainChunks[GetBlock(cx, cy)];
 
-                        if (c == null || c.IsDestroyed)
+                        if (c == null || c.IsDestroyed || c.ArtPending)
                         {
                             _queue.Request(cx, cy, _frame);
                         }
@@ -302,7 +317,161 @@ namespace ClassicUO.Game.Map
             }
 
             long deadline = Stopwatch.GetTimestamp() + (long)(BudgetMs * Stopwatch.Frequency / 1000.0);
+
+            if (ArtWait)
+            {
+                // atlas uploads of art the workers finished, inside the chunk budget (at least one each)
+                Client.Game.UO.Arts.DrainReady(deadline);
+                Client.Game.UO.Texmaps.DrainReady(deadline);
+            }
+
             _queue.Drain(pcx, pcy, _frame, deadline, _clock, _tryLoad);
+
+            // keys of chunks that left the queue unloaded; a forgotten key only costs one full scan
+            _blockArtWait.Trim(4096);
+            _chunkArtWait.Trim(4096);
+        }
+
+        // queued blocks waiting for art: the first sprite still missing (positions: land cells 0..63, then statics)
+        private readonly ArtWaitTracker _blockArtWait = new ArtWaitTracker();
+        // loaded ArtPending chunks: the art progress (uploads so far) at the last check
+        private readonly ArtWaitTracker _chunkArtWait = new ArtWaitTracker();
+
+        private static long ChunkKey(int chunkX, int chunkY) => ((long)chunkX << 32) | (uint)chunkY;
+
+        // what a remembered "ready" depends on besides the uploads: the atlas contents (Art.Reload) and the season graphics
+        private int ArtGeneration => Client.Game.UO.Arts.Generation * 16 + (int)_world.Season;
+
+        private enum ArtCheck
+        {
+            Ready,
+            /// <summary>Not ready, after a cheap check (counts nothing against the budget).</summary>
+            Waiting,
+            /// <summary>Not ready, after a full scan that requested the missing art (counts against the budget).</summary>
+            Scanned
+        }
+
+        /// <summary>
+        /// Whether the art that chunk (chunkX, chunkY)'s map block names (land art, texmaps, static art, with the current
+        /// season's graphics) is in the atlases. The first check (and the first after a season change or atlas reload)
+        /// requests everything missing at once; later checks resume at the first sprite still missing.
+        /// </summary>
+        private ArtCheck RequestBlockArt(int chunkX, int chunkY)
+        {
+            if (!Client.Game.UO.FileManager.Maps.TryGetBlock(Index, chunkX, chunkY, out var block))
+            {
+                return ArtCheck.Ready;
+            }
+
+            var arts = Client.Game.UO.Arts;
+            var texmaps = Client.Game.UO.Texmaps;
+            var landData = Client.Game.UO.FileManager.TileData.LandData;
+            var season = _world.Season;
+            long key = ChunkKey(chunkX, chunkY);
+            int generation = ArtGeneration;
+            int pos = _blockArtWait.Begin(key, generation, out bool full);
+            int firstMissing = -1;
+            int count = block.Land.Length + block.Statics.Length;
+
+            for (; pos < count; pos++)
+            {
+                bool ready;
+
+                if (pos < block.Land.Length)
+                {
+                    ushort graphic = SeasonManager.GetLandSeasonGraphic(season, block.Land[pos].TileId);
+
+                    if (graphic <= 2)
+                    {
+                        continue; // not drawn (Land.AllowedToDraw)
+                    }
+
+                    // the texmap is used when the tile is stretched (it depends on the neighbours' z): ask for both. A
+                    // failed speculative decode counts as ready, so this can't wait for (or throw on) art the old path
+                    // never decoded
+                    ushort tex = graphic < landData.Length ? landData[graphic].TexID : (ushort)0;
+                    ready = arts.RequestLand(graphic) & (tex == 0 || texmaps.Request(tex));
+                }
+                else
+                {
+                    ready = arts.RequestArt(SeasonManager.GetSeasonGraphic(season, block.Statics[pos - block.Land.Length].Graphic));
+                }
+
+                if (!ready && firstMissing < 0)
+                {
+                    firstMissing = pos;
+
+                    if (!full)
+                    {
+                        break;
+                    }
+                }
+            }
+
+            _blockArtWait.End(key, generation, firstMissing);
+
+            return firstMissing < 0 ? ArtCheck.Ready : full ? ArtCheck.Scanned : ArtCheck.Waiting;
+        }
+
+        /// <summary>
+        /// As <see cref="RequestBlockArt"/>, from a loaded chunk's objects: the art its mesh build and draw walk will look
+        /// up (land art, texmaps of stretched land, static art). Walks the tiles again only when art was uploaded since the
+        /// last check (or the generation changed).
+        /// </summary>
+        private ArtCheck RequestChunkArt(Chunk chunk)
+        {
+            var arts = Client.Game.UO.Arts;
+            var texmaps = Client.Game.UO.Texmaps;
+            long key = ChunkKey(chunk.X, chunk.Y);
+            int generation = ArtGeneration;
+            int progress = (arts.CompletedDecodes + texmaps.CompletedDecodes) & int.MaxValue;
+
+            if (_chunkArtWait.Begin(key, generation, out bool full) == progress && !full)
+            {
+                return ArtCheck.Waiting;
+            }
+
+            bool ready = RequestChunkArtWalk(chunk);
+            _chunkArtWait.End(key, generation, ready ? -1 : progress);
+
+            return ready ? ArtCheck.Ready : ArtCheck.Scanned;
+        }
+
+        private bool RequestChunkArtWalk(Chunk chunk)
+        {
+            var arts = Client.Game.UO.Arts;
+            var texmaps = Client.Game.UO.Texmaps;
+            var landData = Client.Game.UO.FileManager.TileData.LandData;
+            bool ready = true;
+
+            for (int x = 0; x < 8; x++)
+            {
+                for (int y = 0; y < 8; y++)
+                {
+                    for (var obj = chunk.GetHeadObject(x, y); obj != null; obj = obj.TNext)
+                    {
+                        switch (obj)
+                        {
+                            case Land land when land.AllowedToDraw:
+                                ready &= arts.RequestLand(land.Graphic);
+
+                                if (land.IsStretched && land.Graphic < landData.Length)
+                                {
+                                    ready &= texmaps.Request(landData[land.Graphic].TexID);
+                                }
+
+                                break;
+
+                            case Static st:
+                                ready &= arts.RequestArt(st.Graphic);
+
+                                break;
+                        }
+                    }
+                }
+            }
+
+            return ready;
         }
 
         private ChunkLoadResult TryLoadQueued(int chunkX, int chunkY)
@@ -317,7 +486,23 @@ namespace ClassicUO.Game.Map
 
             if (chunk != null && !chunk.IsDestroyed)
             {
-                return ChunkLoadResult.Done;
+                if (!chunk.ArtPending)
+                {
+                    return ChunkLoadResult.Done;
+                }
+
+                // loaded by game logic before its art was there: draw it once the art is uploaded
+                var check = RequestChunkArt(chunk);
+
+                if (check != ArtCheck.Ready)
+                {
+                    return check == ArtCheck.Scanned ? ChunkLoadResult.Scanned : ChunkLoadResult.NotReady;
+                }
+
+                chunk.ArtPending = false;
+                BuildMeshQueued(chunk);
+
+                return ChunkLoadResult.Loaded;
             }
 
             // queued for parked objects that have all moved on or gone: nothing to load (if the chunk is on screen, the
@@ -336,21 +521,40 @@ namespace ClassicUO.Game.Map
                 return ChunkLoadResult.NotReady;
             }
 
+            // the art first (free while it decodes on the workers), so the mesh build below reads no art for the first time
+            if (ArtWait)
+            {
+                var check = RequestBlockArt(chunkX, chunkY);
+
+                if (check != ArtCheck.Ready)
+                {
+                    return check == ArtCheck.Scanned ? ChunkLoadResult.Scanned : ChunkLoadResult.NotReady;
+                }
+            }
+
             chunk = GetChunk2(chunkX, chunkY, true);
 
-            // build the chunk's mesh here, inside the budget: the draw walk would otherwise build every chunk that loaded
-            // this frame at once (about 230 us per chunk on first sight, most of it art lookups). The draw walk still
-            // builds meshes that go dirty later (objects added, season change). A chunk drawn for the first time is
-            // marked fresh by the Gpu prepare whether or not it built the mesh itself.
-            if (chunk != null && chunk.Mesh.IsDirty && Client.Game.GraphicsDevice != null)
+            if (chunk != null && !chunk.ArtPending)
+            {
+                BuildMeshQueued(chunk);
+            }
+
+            return ChunkLoadResult.Loaded;
+        }
+
+        // Builds the chunk's mesh here, inside the budget: the draw walk would otherwise build every chunk that loaded this
+        // frame at once (about 230 us per chunk on first sight, most of it art lookups, which ArtWait moves to workers). The
+        // draw walk still builds meshes that go dirty later (objects added, season change). A chunk drawn for the first
+        // time is marked fresh by the Gpu prepare whether or not it built the mesh itself.
+        private void BuildMeshQueued(Chunk chunk)
+        {
+            if (chunk.Mesh.IsDirty && Client.Game.GraphicsDevice != null)
             {
                 long t0 = Stopwatch.GetTimestamp();
                 chunk.Mesh.Build(chunk, _world, Client.Game.GraphicsDevice);
                 chunk.GpuMaskDirty = true;
                 FrameMeshTicks += Stopwatch.GetTimestamp() - t0;
             }
-
-            return ChunkLoadResult.Loaded;
         }
 
         private static bool HasLiveParked(List<Parked> list, int block)

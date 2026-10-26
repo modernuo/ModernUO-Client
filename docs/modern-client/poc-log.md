@@ -1728,6 +1728,101 @@ Off equals base within the noise (the same configuration moved by 0.01 ms betwee
 
 **Note for future parity runs:** run both `light off` and `light 1E` at the start of the driver plan; a day-only run proves nothing about lights. Not covered: a real difference in light lists in the skipped (full-list) frames, which the checker cannot see.
 
+## Teleport frames: first-sight chunk art decoded on workers (2026-10-26)
+
+Branch `poc/teleport-art-worker`, from poc/modern-client 755f4e119, merged up to b59b602b3. Follows "Teleport frame: region prefetch and incremental chunk loads": a chunk whose mesh build hit many first-sight statics could take 6–10 ms (`chunk_mesh_us`), and the at-least-one-chunk rule let it through. Method: [testing/pack-loading.md](testing/pack-loading.md) §3 and §4. Scripts and logs: session scratchpad `tpart\`.
+
+**Changes.**
+- **`FirstSightDecoder`** (ClassicUO.Renderer) does what the animation path does for first-sight bodies, for single sprites:
+  - `Request` (main thread) queues a decode once per sprite.
+  - A thread-pool worker decodes into a pooled buffer and computes the visible bounds.
+  - `Drain` (main thread) uploads finished decodes (atlas, picker mask, bounds) until a deadline, at least one per call.
+- **`Art` and `Texmap`** have `RequestLand`, `RequestArt` and `Request`, plus `DrainReady`.
+  - A synchronous lookup of a sprite whose decode is in flight still decodes on the spot, and the worker's result is dropped.
+  - A failed worker decode is redone on the main thread.
+- **`Map`:**
+  - A queued chunk loads only when the land art, texmaps and static art its map block names (with the current season's graphics) are in the atlases. The check reads the block data; the first check requests all missing art, later checks stop at the first missing sprite.
+  - `UpdateLoading` uploads finished art inside the same 2 ms chunk budget, before the chunk loads. The mesh build then reads no art for the first time.
+  - A chunk that game logic loads before its art is ready (`GetChunk` with load = true, pathfinding) is marked `ArtPending`. The draw walk skips it and counts it in `DrawPending`, so the world-settle hold waits for it; `UpdateLoading` builds its mesh once its art is there.
+- `CUO_ART_SYNC=1` restores the old path.
+- **FrameStats counters:** `art_sync`, `art_sync_us`, `art_async`, `art_upload_us`, `art_pending`.
+- **Thread safety:** the worker touches only:
+  - the loaders' sprite tables (`ArtLoader._sprites`, `TexmapsLoader._sprites`), assigned once in `Load` and never changed;
+  - the pack pages (`PackPages`, thread-safe; its 8-thread test exists);
+  - `PackSprites`, `PixelExpand` and `PixelPicker.VisibleBounds`, which are pure;
+  - `ArrayPool` and its own job object, handed back through a `ConcurrentQueue`.
+
+  The sprite infos, the atlases, the picker, the bounds, the request flags and the job pool stay on the main thread. `Art.Reload` (options) while a decode is in flight only re-uploads the same image.
+
+**Measurements.** NativeAOT plus `DOTNET_TieredCompilation=0`, Gpu world, 1920×1080, plan `travel;ltravel;glide`, 4 windows of 5 s per entry. Base and new were built from the same tip and alternated. Runs A–C were on 2faa743df (base 540157a5a) and D on a5c4bec3c (base b59b602b3). No other clients were running, except one during the Legacy base run. Update+Draw is summed over windows:
+
+| Entry | Base U+D max (ms) | Base >8 / >16 | Base `chunk_mesh_us` max | New U+D max (ms) | New >8 / >16 | New `chunk_mesh_us` max |
+|---|---|---|---|---|---|---|
+| `travel` | 8.4–10.7 (one 42 ms `lights` outlier) | 1–3 / 0 | 6.7–7.0 ms | 8.0–9.0 | 1 / 0 | 0.65–0.77 ms |
+| `ltravel` | 3.8–5.0 | 0 / 0 | 0.8–3.7 ms | 4.4–6.0 | 0 / 0 | 0.78–0.87 ms |
+| `glide` | 10.8–12.5 | 1 / 0 | 9.8–11.5 ms | 3.7–4.5 | 0 / 0 | 0.30–2.8 ms |
+| Legacy `glide` (one pair) | 10.6 | 1 / 0 | 9.8 ms | 4.0 | 0 / 0 | 0.40 ms |
+
+- **Art moved off the main thread.** Meshes built by the loader spent 0 µs on art in a diagnostic build (`CUO_CHUNK_DIAG`, not committed). Worker uploads cost up to 1.3–2.0 ms in a frame (`art_upload_us`), inside the budget; up to 353 decodes are pending after a teleport.
+- **What's left in the travel frames: GC pauses inside a chunk load.** `chunk_load_us` reaches 3–7 ms in both builds. Over the four series, every window with a load over 2.5 ms had a gen0/gen1 collection (15 of 15), and no window without one. A diagnostic put one chunk's `Chunk.Load` at 3.5–5.6 ms with no region wait or sync decode, and 0 parked objects. perf-opportunities.md lists the fix (pool `Land`/`Static`).
+- **Server packet burst:** `packets` peaked at 1.1–1.3 ms per frame in these runs (once 4.2 ms in the 13-minute session), not the 8 ms seen on 2026-10-25. Out of scope; not map loading.
+- **First-sight art not from chunk loads** still decodes in the draw walk: 11–25 decodes, 2.6–3.0 ms in one `travel` window per run (objects that aren't map statics).
+- **Settle:**
+  - **Holds:** every run had 0 timeouts and 0 unsettled frames in an episode. `travel` holds were 284–285 ms in total against 397–420 ms for base, including the login.
+  - **Walking:** unsettled frames while walking stayed similar in `travel` (12–37 against 7–26). In `glide` they rose from 95–102 to 136–175 per run. All the added frames are "client chunks queued in view" (338 against 198 over three runs): a new column's chunk now waits for its art for a few frames at about 1,500 fps. In the Gpu world that only delays ground items and mobiles on those chunks; Legacy has no hold.
+
+**Checks.**
+- **Unit tests:** 564 pass on the final merge (560 on the tip, plus 4 new `FirstSightDecoderTests`):
+  - each request decodes once, and uploads happen only in `Drain`, on the calling thread;
+  - an expired deadline uploads exactly one;
+  - a failed decode reaches the upload callback without pixels;
+  - 1,500 pack art sprites decoded by the workers against a 3 MiB page cache match a sequential decode, bounds included.
+
+  The `-p:CuoDevTools=false` build passes the same tests.
+- **Legacy** (`-worldrenderer legacy`, base vs new): Britain shot 0.02% of pixels differ (>8), 2.2% near-black in both. Looked at: complete town, no missing tiles.
+- **Picking:** `pickscan:8x6` at Britain, the bank and Moonglow on Felucca: 48 same, 0 different, in base and new.
+- **Facet change** (`[self set map felucca` / `trammel`, kbatman4): `[settle] Facet` ready after 60–61 ms, 0 unsettled, 0 timeouts (base: 55–62 ms).
+  - The same plan's walking-unsettled frames (740 base, 763 new) are Uo.Render chunks missing near the view during the pickscans, in both builds.
+- **13-minute session** (new, `travel`, `glide`, `ltravel` and `bwalk` ×7): 178 settle episodes, 0 timeouts, 0 exceptions, 23 `bwalk` legs with 0 server denies.
+  - Private bytes: 2,117 MB at 1 min, 2,134 MB at 3 min, then 2,134–2,139 MB to the end (flat).
+- **Not run:** ECS parity with `light 1E` / `light off` (this change doesn't touch the ECS or lights); 4K; the owner's FPS test.
+
+**Codex audit fixes** (0ec275e03; the audit found no race in the normal hand-off).
+1. **Failed speculative decodes are terminal** (`FirstSightDecoder.IsFailed`).
+   - The block scan asks for texmaps of flat land that the old path never decodes. A worker failure used to be retried synchronously in the upload, without a catch, so a missing or corrupt page could throw out of `UpdateLoading`.
+   - Now readiness accepts a failed sprite and nothing retries it. A real lookup decodes it, or fails, exactly as before.
+2. **The art readiness work is budgeted.**
+   - A full block scan returns `ChunkLoadResult.Scanned`, which counts against the 2 ms budget like a load. A cold teleport's first scans therefore spread over frames.
+   - Later checks resume at the block's first missing sprite (`ArtWaitTracker`), so they are O(1).
+   - Loaded `ArtPending` chunks walk their tiles again only when art was uploaded since the last check.
+3. **Generations.** Scan positions are keyed by `Art.Generation` (bumped by `Art.Reload`) and the season. A season change or atlas reload makes the next check a full scan that requests everything at once, instead of one sprite per round.
+4. **Logout.** `GameScene.Unload` cancels pending decodes: finished buffers are returned at once, and workers still running return theirs when they finish (an epoch check).
+
+Unit tests: 567 pass (both build variants) on b59b602b3. There are 7 new tests in total, covering:
+- a failed decode never uploads or throws, isn't requested again and counts as ready;
+- cancel drops finished and running decodes without uploading;
+- full scans count against the budget and cheap checks don't;
+- the tracker resumes, and rescans on a new generation.
+
+**Re-measured on b59b602b3** (NativeAOT, TC=0, alternated base/new pairs E and F; one other client during baseE):
+
+| Entry | Base U+D max | Base >8 | Base mesh max | New U+D max | New >8 | New mesh max |
+|---|---|---|---|---|---|---|
+| `travel` | 8.4–11.4 ms | 1–3 | 6.9 ms | 6.8–7.8 ms | 0 | 0.71–0.75 ms |
+| `ltravel` | 4.8–5.1 ms | 0 | 0.8–1.0 ms | 5.2–5.8 ms | 0 | 0.80–0.83 ms |
+| `glide` | 6.6–10.6 ms | 0–1 | 5.8–9.7 ms | 3.9–4.5 ms | 0 | 0.36–0.46 ms |
+
+- The budgeted scans didn't cost the gain. The cold-teleport frame also improved: `travel` had no frame over 8 ms in either new run, and its worst frames are the GC-in-load ones (`scene_rest` 6.4–7.3 ms).
+- **Settle:** 0 timeouts and 0 unsettled frames in any episode. Walking-unsettled in `glide`: 132–140 new against 77–92 base (art latency, as above).
+- **Season change** (DevBench `season:winter`, then `ltravel`, `glide`, Britain, `season:summer`, `ltravel`, Britain): 20 episodes, 0 timeouts, 0 unsettled in an episode. After the change `art_pending` peaked at 74 and `art_upload_us` at 268 µs. Looked at the winter shot: snow land, bare trees, complete.
+- **Facet change:** ready after 53–56 ms, 0 unsettled; `pickscan:8x6` 0 different at Britain and on Felucca.
+- **Legacy** (`travel`, `glide`): glide U+D max 4.9 ms; the shot after the glide is complete (looked at).
+- **Final tip** (5e3c58ff7, poc/modern-client ad378c0bc; 570 tests pass in both build variants). One more pair, baseG against newG:
+  - `travel` 9.4 → 9.0 ms. New's one frame over 8 ms is a 5.6 ms mesh build with 0 art decodes, in a window with a gen1 GC: the GC landed in a mesh build this time.
+  - `glide` 11.3 → 3.3 ms.
+  - 0 timeouts in both.
+- One `season` run hung at "Connecting" before login (server side, before any game code ran). It was killed at the 420 s timeout and rerun.
+
 ## E7: the item cache serves mixed tiles; uncacheable items walked alone (2026-10-26)
 
 Branch `poc/ecs-e7-walk` (E7 agent, kbatman3), started on `poc/modern-client` 540157a5a, final numbers on 62ac4bdc6 (merged). Scratch: session scratchpad `e7\`.
