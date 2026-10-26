@@ -183,6 +183,50 @@ namespace ClassicUO.Ecs
         public uint Pushes;
     }
 
+    [Flags]
+    public enum MobileClockFlags : byte
+    {
+        None = 0,
+
+        // the mobile has queued steps: ProcessSteps runs every frame
+        Stepping = 1,
+
+        // ObjectHandlesStatus is OPEN: Entity.Update opens the name gump on the next update
+        HandlesOpening = 2
+    }
+
+    /// <summary>
+    /// E4 (setting world_update_mobile_system): when a mobile's <c>Mobile.Update</c> has something to do. The legacy Mobile
+    /// stays authoritative for the animation timer (interval, repeat state, group, frame) and writes the two due times
+    /// here whenever it changes them; <see cref="MobileClockSystem"/> reads only this component to pick the mobiles whose
+    /// Update is not a no-op this frame.
+    /// </summary>
+    public struct MobileClock : IComponent
+    {
+        // Mobile.LastAnimationChangeTime: ProcessAnimation advances the frame only when this is before the tick
+        public long AnimDue;
+
+        // Mobile._lastAnimationIdleDelay: SetIdleAnimation runs only when this is before the tick
+        public long IdleDue;
+
+        public MobileClockFlags Flags;
+    }
+
+    /// <summary>The due-time rule of <see cref="MobileClock"/>, the single definition both the system and the checker use.</summary>
+    public static class MobileClockRules
+    {
+        /// <summary>
+        /// True when Mobile.Update can do anything at <paramref name="now"/>: queued steps, a pending handles opening, the
+        /// frame timer expired (<c>LastAnimationChangeTime &lt; Ticks</c>) or the idle timer expired. Conservative by
+        /// construction: Update's other gates (ExecuteAnimation, the recent-step gate) are evaluated by Update itself.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static bool IsDue(in MobileClock c, long now)
+        {
+            return c.Flags != MobileClockFlags.None || c.AnimDue < now || c.IdleDue < now;
+        }
+    }
+
     /// <summary>Per-frame view context of a mobile: overriding hue (highlight, notoriety, out of range...), alpha, step offset.</summary>
     public struct MobileRenderState : IComponent
     {
@@ -319,6 +363,7 @@ namespace ClassicUO.Ecs
             aot.RegisterComponent<EquipmentSlots>();
             aot.RegisterTag<EquipmentDirty>();
             aot.RegisterComponent<MobileInputs>();
+            aot.RegisterComponent<MobileClock>();
 
             return aot.CreateSchema();
         }

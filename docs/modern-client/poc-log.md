@@ -1630,6 +1630,90 @@ Branch `bg/ecs-e2-e3` from `poc/modern-client` 755f4e119. E2 e1a1511d2, E3 c4870
 
 **Verification:** `tests/ClassicUO.UnitTests` Release 466 passed (the bench is one of them and returns at once without the variable); client builds in Release and with `-p:CuoDevTools=false`. Submodules had to be initialised (`git submodule update --init --recursive`) in the fresh worktree.
 
+## E4: World.Update's mobile loop as a due-time system, and the animation clock in the ECS (2026-10-26)
+
+Branch `bg/ecs-e4-update`, from poc/modern-client 540157a5a. Draft quality, needs an audit before merge. Setting `world_update_mobile_system` (default **off**; also needs `world_update_active_items`, see invariants). JIT with `DOTNET_TieredCompilation=0`, kbatman3 (account lock), Gpu, 1920x1080, large scene. Logs and tools: session scratchpad `e4\`.
+
+**1. What the loop does per mobile today** (`World.Update` -> `Mobile.Update`, every frame, every mobile, in dictionary order):
+
+| Step | When it has an effect | Class |
+|---|---|---|
+| `Entity.Update`: `ObjectHandlesStatus == OPEN` -> DISPLAYING, name request, name gump | once, after `GameScene` sets OPEN | event (a flag) |
+| `Entity.Update`: hits percentage | only with `world_update_active_items` off (the setters do it otherwise) | none when on |
+| idle timer: `_lastAnimationIdleDelay < Ticks` -> `SetIdleAnimation` (random fidget action, re-arms 30-60 s) | when the timer expires | **due time** |
+| `ProcessAnimation(true)` -> `ProcessSteps`: step interpolation, step completion, position, text coords, player walker bookkeeping | every frame while `Steps.Count != 0` | **active (every frame)** |
+| `ProcessFootstepsSound` | every frame while it has steps | active |
+| frame advance: `LastAnimationChangeTime >= Ticks` returns; else `GetGroupForAnimation`, frame lookup, `AnimationTiming.Advance`, `LastAnimationChangeTime = Ticks + delay` (80 ms plus the server interval), finish/wrap handling, dying-mobile corpse removal | when the frame timer expires (about every 83 ms for a standing mobile) | **due time** |
+| gates inside it: `ExecuteAnimation` false (server froze the frame), `LastStepTime > Ticks - 150` with no steps | evaluated by Update itself; a mobile with `ExecuteAnimation == false` stays "due" every frame and does a cheap no-op call | - |
+| `do_delete` (every 50 ms): `Distance > ClientViewRange` -> `RemoveMobile` | every 50 ms, needs the player position | periodic sweep |
+| `IsDestroyed` -> queue for removal from `Mobiles` | after a destroy | event |
+| world map pass (`wmap`): allies and party members -> `WMapManager.AddOrUpdate` | only while the map accepts updates (open, recent packet) | rare |
+
+So in the scene (1,985 mobiles, all standing) the work is two timers per mobile and nothing else; `Update` was a no-op for about 96% of the calls.
+
+**2. What changed** (all behind the setting):
+- **`MobileClock`** (new component on every mobile entity, `Components.cs`): `AnimDue` (= `LastAnimationChangeTime`), `IdleDue` (= `_lastAnimationIdleDelay`), `Flags` (`Stepping` = `Steps.Count != 0`, `HandlesOpening` = `ObjectHandlesStatus == OPEN`). `MobileClockRules.IsDue(clock, now)` = `Flags != 0 || AnimDue < now || IdleDue < now`, the same comparisons `Update` makes (strict `<`).
+- **`MobileClockSystem`** (`ClassicUO.Ecs`): iterates the mobile archetypes (`Serial` + `MobileClock` spans), appends the due serials to a list. Read-only: the updates run afterwards because `Update` can delete entities (corpse removal) and moves entities between archetypes (dirty tags).
+- **`World.UpdateMobilesByClock`**: collect -> for each due serial `Mobiles.Get` -> the legacy `mob.Update()` -> `PushClock`. The rest of the old loop body is split out: the range removal is its own pass every 50 ms, destroyed mobiles come from `World.OnMobileDestroyed` (called by `Entity.Destroy`, removed from `Mobiles` only if the dictionary still holds that object), and the world-map block is a separate loop that runs only when `wmap` is true.
+- **Who writes the clock** (everything else is read from the Mobile): `CalculateRandomIdleTime` (called by `SetAnimation`, `SetIdleAnimation`, step completion; `SetAnimation` writes `LastAnimationChangeTime` just before it, so one push carries both), `WriteInputs` (every step-queue change and entity creation, via the W5 `PushInputs`/`Sync` sites), `GameScene.UpdateObjectHandles` (NONE -> OPEN), and the system itself after each due `Update` (which rewrote the timers, may have emptied the queue or consumed the OPEN). The push goes through `WorldEcs.PushClock`, which ignores an object World no longer holds, like `PushInputs`.
+- **The animation clock in the ECS: what moved and what did not.** The two due times are ECS state now and the schedule is read only from there. The per-action timer (interval, repeat mode and count, forward, from-server, group, frame count) stays in the Mobile: only `SetAnimation`/`SetIdleAnimation`/`ProcessAnimation` touch it, and the advance needs `frames.Length`, which comes from `GetGroupForAnimation` (equipment, war mode, mounts, random fidgets) and the animation tables, i.e. the whole legacy selection. Moving the advance itself into the ECS needs the selection to run against ECS state (the W3 `AnimationState` is only sampled for drawn mobiles) and is the next step, not part of this prototype. Mirror write-backs: none from the ECS to the Mobile; the Mobile is authoritative and every field the system reads is pushed from it.
+- Also: `MobileClock` is added with `AddComponent` after `CreateEntity` (Friflo's `CreateEntity` takes at most 11 arguments) and registered in `EcsSchema` (without that registration the client throws "IComponent type not found" at startup although the unit tests pass). Plan entry `mobsys:on|off`, driver command `mobsys on|off`. `Mobile.Create` uses the constructor without timers, so a new mobile's clock is (0, 0) = due at once; its first `Update` arms both timers (the same as the legacy loop).
+
+**Invariants (for the audit):**
+1. A mobile that is not due has `Update` == no-op. Holds because every `Update` effect is gated by `Steps.Count != 0`, `OPEN`, `LastAnimationChangeTime < Ticks` or `_lastAnimationIdleDelay < Ticks`, and `Time.Ticks` is constant within a frame.
+2. The clock equals the Mobile's values at the start of every frame. Every write of `LastAnimationChangeTime` (other than inside `Update`), `_lastAnimationIdleDelay` and the step queue is followed by a push; `Entity.Destroy` writes `LastAnimationChangeTime = 0` but removes the entity. A new write site without a push makes a mobile late or never due (the checker finds it). `ExecuteAnimation` is deliberately not in the clock (a public field written from two packet handlers).
+3. Mobiles without a mirror entity are never updated. `Sync` creates the entity on `GetOrCreateMobile`; the checker verifies every live Mobile has one.
+4. The system needs `world_update_active_items` (hits percentage in the setters, no per-frame refresh); otherwise `Entity.Update` is not a no-op for a quiet mobile and the system is not used. Turning the setting on mid-session first resyncs all clocks (the legacy loop advanced the timers without pushing them).
+5. Order: see the audit fixes below (the due mobiles run in `Mobiles.Values` order; the first version of this invariant claimed order was unobservable, which was wrong).
+6. Dictionary iteration order is no longer the update order (the order of the world-map calls is, in the pass that remains, still the dictionary's).
+
+**3. Checker `CUO_MOBILE_UPDATE_CHECK=1`** (`"stats"` only counts and times the parts): at the start of every frame each live Mobile's clock is compared with the Mobile's values (`AnimDue`, `IdleDue`, flags; missing entities count); after the due updates every **skipped** mobile gets the legacy `Update` anyway and its state hash (frame, timers, group, repeat state, position, offset, steps, last step times, handles status, hits percentage, destroyed) must not change. The due mobiles ran the legacy code themselves, so skipped-is-a-no-op plus clock-equals-Mobile is the whole equivalence; running the legacy loop beside the system would apply every `Update` twice (it mutates). Logged every 5 s as `[mobile-update-check]`. The world-map pass is the old code in a separate loop and is not compared (the map was not open).
+
+| Run (checks on, TieredCompilation=0) | Result |
+|---|---|
+| Large scene `ls_parity.txt` (standing, then the lane walked east, west, running), `CUO_ECS_PARITY=1 CUO_ANIM_SYNC=1 CUO_GPU_ITEM_CHECK=1 CUO_W5_CHECK=1 CUO_MOBILE_INPUT_CHECK=1`, `-ecscheck 120` | clocks checked 24.3M, **0 different**; skipped updates checked 23.3M, **0 changed state**; 69.3 due of 1,784 per frame; parity 10.2M mobile comparisons 0 mismatches; input check 9.4M samples and 449k seat tests 0 different; item check 0; `[w5-check]` 0; `-ecscheck` 0 |
+| `w5push.txt` (mount, dismount, seat, hidden, hue, death, walking NPCs; plus `CUO_MOBILE_CACHE_CHECK=1`) | clocks 4.8M 0 different, skipped 4.5M 0 changed; parity 3.3M comparisons 0 mismatches (Mounted 534k, Hidden 16k, Dead 30k, Running 31k, Walking 105k mobile-frames); input check 3.1M samples and 2.6M seat tests 0 different |
+| `w5items.txt` (corpses, object handles on mobiles) | clocks 457k 0 different, skipped 425k 0 changed; handles: 4 mobiles reached DISPLAYING; parity 0 |
+| Control, same scene with the setting **off** | The item parity line shows `lights-mismatched=5705` (4,324 with the system on). It is in the item path, with the setting off, and the E5 runs had no lights (`lights=0`); not caused by this work, but unexplained: worth a look |
+
+Unit tests: 552 pass (`MobileClockTests`, 6: the due rule, the system's pick over mobiles/items/tag moves/removal, pushes from creation, `SetAnimation`, the step queue, handles, replaced objects, resync). One `ChunkLoadingTests` failure appeared on two consecutive full runs after a build and passed on the next; unrelated (timing under load). Release and `-p:CuoDevTools=false` build.
+
+**4. Measurement** (`mobsys:off` / `mobsys:on` plan entries in one session, interleaved, 3 rounds x 2 windows at zoom 1, 2 rounds at zoom 2.5 and `lswalk`; `world_mobiles` is World.Update's mobile phase, ms; other agents' short runs may have overlapped):
+
+| Spot | off | on | change |
+|---|---|---|---|
+| zoom 1 (1,985 mobiles) | 0.038 | 0.020 | -0.018 |
+| zoom 2.5 | 0.041 | 0.025 | -0.016 |
+| walking the lane | 0.042 | 0.021 | -0.021 |
+
+`update` (the whole World.Update) 0.126 -> 0.105, 0.151 -> 0.142, 0.162 -> 0.143 ms; frame 1.79 -> 1.76 ms at zoom 1 (inside the noise: the same configuration moved 0.03 ms between windows). Honest summary: about **0.02 ms per frame (45-50% of the loop, about 1% of the frame)** in the busiest scene, as the earlier estimate predicted (0.03 ms at most). Where the remaining 0.02 ms goes (stats run): the scan of 1,954 clocks 0.005 ms (2.5 ns per mobile), the 43 due updates 0.014 ms (about 325 ns each: two dictionary lookups, the legacy `Update` with its frame advance, the clock push), the 50 ms range pass amortised. That floor is real work (the frame advance), so the next step is moving the advance, not scanning faster. Sparse scenes (Britain, the bank) were not measured: the loop is a few mobiles there. NativeAOT not measured. The setting-off path adds only the always-on pushes (a few integer writes at existing push sites, one more lookup in `SetAnimation`/step completion); no base-vs-new binary pair was run for that.
+
+**Left / ideas:** (1) move the per-action timer into the ECS (`AnimationTimer` is already a plain struct, `AnimationTiming.Advance` pure) once the frame count can be had from ECS state, so a due frame advance for standing mobiles needs no Mobile and no dictionary; (2) `ExecuteAnimation` into the clock flags; (3) the range sweep as a chunk pass over `Position` (needs the player's position and the step-end rule of `Distance`); (4) the world-map pass from `MobileInputs.Notoriety` + the party list instead of the full loop. For a networking upgrade that adds server-driven animation: every new write of the two due times must push, and the checker will say if one does not.
+
+**E4 audit fixes (Codex, 2026-10-26), after merging poc/modern-client (62ac4bdc6, the parity lights fix):**
+- **P2, update order (my invariant 5 was wrong):** the due list followed archetype order, which equipment tags reshuffle, and tile lists (`AddToTile`), picking ties and footstep sounds depend on the legacy order. Now the due mobiles run in exactly `Mobiles.Values` order: `World.SortInMobilesOrder` gives every Mobile an `Ordinal` (its position in the enumeration) and sorts the (about 40) due mobiles by it. The ordinals are rebuilt with one walk only when `Dictionary._version` (read with `UnsafeAccessor`, works in NativeAOT) changed: every insert (add, overwrite, resize) bumps it and only an insert can change the relative order of entries (a remove leaves a hole, the next add reuses the slot), so a quiet scene never walks the dictionary (52 rebuilds in a 20k-frame login-plus-scene run, 19 in another). Tests: `Due_Mobiles_Run_In_The_Dictionarys_Order_Through_Tag_Moves_And_Slot_Reuse` (200 rounds of random removes, slot-reusing adds, dirty-tag moves and random clocks against the legacy filter of `Values`), `Two_Mobiles_Arriving_In_The_Same_Frame_Keep_The_Dictionarys_Order_After_A_Tag_Move` (the scan order demonstrably differs from the dictionary's). The tile list and sound effects themselves need the map and audio, so the order is tested, and the checker below runs it live.
+- **Checker sees order:** `CheckOrder` (under `CUO_MOBILE_UPDATE_CHECK=1`) builds a fresh enumeration of `Mobiles.Values` each frame and requires the due list to be a subsequence of it (`due-update order checked N, M out of order`). It checks the order of the updates, which is what determines the tile/audio effects; a state hash cannot see reordering, so the equivalence argument is now: skipped mobiles are no-ops (hash), clocks equal the Mobiles (compare), due mobiles run the legacy code in the legacy order (this check).
+- **Setting off costs nothing:** `WorldEcs.ClockEnabled` (set each frame by `World.Update` from the two settings) gates `PushClock`, `WriteClock` (no lookups), the destroyed-mobile queue, and the component itself: `MobileClock` is no longer added at entity creation but by `WriteClock`/`ResyncClocks` when the system first runs. With the setting off the code paths are the old ones plus one bool test per push site. Turning it on builds all clocks from the Mobiles (resync).
+- **Handles wording:** the clock equals the Mobile except that `HandlesOpening` may stay set after the scene (NONE) or the name gump (CLOSED) cancelled an OPEN: that costs one extra `Update`, which clears it, never a missed update. The checker allows exactly that.
+
+Checks on the merged tree (kbatman3, TieredCompilation=0, `CUO_ECS_PARITY=1 CUO_ANIM_SYNC=1 CUO_GPU_ITEM_CHECK=1 CUO_W5_CHECK=1 CUO_MOBILE_INPUT_CHECK=1 CUO_MOBILE_CACHE_CHECK=1 CUO_MOBILE_UPDATE_CHECK=1`, `-ecscheck 120`; driver `light 1E` for night, `light off` for day):
+
+| Run | Result |
+|---|---|
+| Large scene, night (`lights=485k`, `lights-skipped-full=4095`), standing then the lane walked and run | clocks 19.7M 0 different; skipped 18.9M 0 changed; **due-update order 805k checked, 0 out of order**; parity 8.4M mobile comparisons 0 mismatches, items 10.8M 0 (lights-mismatched 0); input check 7.7M 0; cache and item checks 0; `-ecscheck` 0 |
+| Large scene, day (`light off`) | clocks 22.4M 0; skipped 21.4M 0; order 941k 0 out of order; parity 9.4M 0 mismatches; input check 8.7M 0 |
+| `w5push.txt` (mount, dismount, seat, hidden, hue, death, wandering NPCs) | clocks 4.5M 0; skipped 4.2M 0; order 311k 0 out of order; parity 2.5M 0 mismatches; input check 2.5M and 2.1M seat tests 0 |
+
+Unit tests: 560 pass. **Timing** (`DOTNET_TieredCompilation=0`, binaries from the merged tip: `bin-new3` with E4 and `bin-base` = poc/modern-client 62ac4bdc6, interleaved runs; `world_mobiles`, ms; rounds 0 and 2 were quiet, round 1 was disturbed by another process and doubled everything, so I use rounds 0 and 2):
+
+| Spot | base | E4 off | E4 on | on vs off |
+|---|---|---|---|---|
+| zoom 1 | 0.045 / 0.052 | 0.044 / 0.048 | 0.025 / 0.028 | -0.019 / -0.020 |
+| zoom 2.5 | 0.045 / 0.056 | 0.043 / 0.056 | 0.030 / 0.035 | -0.013 / -0.021 |
+| walking | 0.039 (0.076 in the noisy round) / 0.052 | 0.041 / 0.054 | 0.025 / 0.032 | -0.016 / -0.022 |
+
+Off equals base within the noise (the same configuration moved by 0.01 ms between rounds); on saves 0.013-0.022 ms, with the ordering sort and the occasional ordinal rebuild included (the order fix cost about 0.005 ms of the earlier 0.02 saving at zoom 1: 0.020 -> 0.025). The first batch of retries after the internet outage failed at startup with "BackBufferWidth must be greater than zero" (the display, not the code) and was redone.
+
 ### Parity `lights-mismatched` at night: a checker artifact (2026-10-26, branch `fix/ecs-lights-parity`, base 540157a5a)
 
 **Question:** E4 saw `lights-mismatched` 4,324 / 5,705 (item path, `view=1 ecs=0`) in the large-scale parity run; E5 earlier saw `lights=0`.
