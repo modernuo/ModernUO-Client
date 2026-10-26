@@ -17,7 +17,7 @@ namespace ClassicUO.Game.Scenes
     // tests. Once their alpha has settled they need nothing from the per-frame walk, so the walk only visits:
     //   - tiles holding anything else (items, mobiles, effects, multis, unmeshed statics: Chunk.GpuWalkMask), skipping
     //     their baked objects;
-    //   - tiles with baked objects that still need per-frame work (translucent, light sources, season-replaced graphics,
+    //   - tiles with baked objects that still need per-frame work (light sources, season-replaced graphics,
     //     hidden land, too high for the walk's max Z, or carrying overhead text: Chunk.GpuFullMask), in full;
     //   - the tiles under the mouse (picking) and the screen-edge tiles where the walk culls objects the GPU would still
     //     show, in full.
@@ -126,8 +126,8 @@ namespace ClassicUO.Game.Scenes
         {
             var profile = ProfileManager.CurrentProfile;
 
-            // gradient circle of transparency and the out-of-range tint are per-object CPU work on baked statics
-            _gpuSkipEnabled = _gpuWorld != null && Settings.GlobalSettings.GpuPrepareSkipBaked && profile != null && !profile.NoColorObjectsOutOfRange &&
+            // the gradient circle of transparency is per-object CPU work on baked statics (the out-of-range tint is a uniform)
+            _gpuSkipEnabled = _gpuWorld != null && Settings.GlobalSettings.GpuPrepareSkipBaked && profile != null &&
                               !(profile.UseCircleOfTransparency && profile.CircleOfTransparencyType == 1);
 
             if (!_gpuSkipEnabled)
@@ -281,7 +281,7 @@ namespace ClassicUO.Game.Scenes
 
         // CUO_GPU_SKIP_CHECK: how many baked objects needed the walk, by reason (logged with the check)
         private static readonly int[] _gpuWalkReasons = new int[8];
-        private static readonly string[] _gpuWalkReasonNames = { "", "not drawable", "text", "high land", "season graphic", "translucent", "light", "high static" };
+        private static readonly string[] _gpuWalkReasonNames = { "", "not drawable", "text", "high land", "season graphic", "translucent mismatch", "light", "high static" };
 
         private static int GpuWalkReason(GameObject obj)
         {
@@ -308,7 +308,9 @@ namespace ClassicUO.Game.Scenes
                 return 4;
             }
 
-            if (data.IsTranslucent)
+            // translucent statics bake their settled alpha (178) and need no per-frame override; only a static whose client
+            // tiledata disagrees with the pack's (never expected) keeps one
+            if (data.IsTranslucent != (GpuBakedAlpha(st) != 0xFF))
             {
                 return 5;
             }
