@@ -72,7 +72,8 @@ Added 2026-10-25 (W4 agent). Design in world-prepare-ecs-plan.md ("W4") and poc-
 
 - **Switches:**
   - setting `gpu_prepare_item_cache` (default on; it needs `gpu_prepare_skip_baked` and `gpu_ecs_sprites`);
-  - plan entries `itemcache:on|off`, the chat command `-itemcache [on|off]`, and the `-ecsdriver` command `itemcache on|off`.
+  - plan entries `itemcache:on|off`, the chat command `-itemcache [on|off]`, and the `-ecsdriver` command `itemcache on|off`;
+  - E7 (2026-10-26): setting `gpu_prepare_item_cache_mixed` (default on), plan entry `itemmixed:on|off`, `-ecsdriver` command `itemmixed on|off`. A tile whose other unbaked objects are uncacheable items (animated, corpses, fading, text...) is served too; those items and the tile's mobiles are walked alone in tile order. Counter `item_cache_walked`. The item check skips the walked-alone items and corrects the cached runs' expected statics position by the walked-alone items queued before them; `tools/ecs-parity/e7mixed.txt` builds such tiles at Green Acres (run it with `light 1E` and `light off`).
 - **Counters and phases** (FrameStats):
   - `prep_item_cache`: re-extracting chunks and choosing the served tiles, before each chunk's walk;
   - `prep_cap_cached`: copying the served runs into the capture, and their lights;

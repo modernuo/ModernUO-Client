@@ -111,6 +111,8 @@ namespace ClassicUO
         ItemCacheTiles,
         ItemCacheItems,
         ItemCacheFallbacks,
+        // E7: items walked alone on served tiles (animated, corpses, fading...)
+        ItemCacheWalked,
         // map loading (Map.UpdateLoading, MapLoader prefetch): chunks loaded and the time they took, chunks queued at the
         // end of the frame, time the main thread waited for a region decode, regions decoded on the main thread, prefetches
         ChunkLoads,
@@ -178,7 +180,7 @@ namespace ClassicUO
             "gpu_overrides", "gpu_draw_calls", "tiles", "objects", "baked_land", "baked_statics", "unmeshed", "dynamic", "pick_tests",
             "override_calls", "hidden_tiles", "lights_added", "foliage", "cap_multis", "cap_statics", "cap_items", "cap_mobiles", "cap_other", "gpu_mask_rebuilds",
             "gpu_skip_active", "gpu_full_tiles", "gpu_walk_tiles", "gpu_edge_tiles", "gpu_pick_tiles",
-            "item_cache_builds", "item_cache_tiles", "item_cache_items", "item_cache_fallbacks",
+            "item_cache_builds", "item_cache_tiles", "item_cache_items", "item_cache_fallbacks", "item_cache_walked",
             "chunk_loads", "chunk_load_us", "chunk_mesh_us", "chunk_queue", "region_wait_us", "region_sync", "region_prefetch",
             "art_sync", "art_sync_us", "art_async", "art_upload_us", "art_pending",
             "ui_flushes", "ui_draw_calls", "ui_cached", "ui_untouched" };
