@@ -12,7 +12,8 @@ public struct SpriteInstance
     public uint Uv;       // u | v << 16
     public uint PageHue;  // page | hueRow << 16
     public uint Depth;
-    public uint Light;    // FlagLit: 4 x u8, 170 = 1.0; otherwise byte 0 = 255 - alpha, bits 8-9 HueMode, 10-11 blend, 12-15 Light* bits, 16-31 angle / wobble trim
+    public uint Light;    // FlagLit: 4 x u8, 170 = 1.0; otherwise byte 0 = 255 - alpha, bits 8-9 HueMode, 10-11 blend, 12-15 Light* bits, 16-31 angle / wobble trim;
+                          // FlagZTest statics: bits 16-31 = tile x & 0xFF | (tile y & 0xFF) << 8 (the out-of-range tint)
     public uint Corners;  // 4 x s8 corner z (top, right, left, bottom); FlagIndexed: palette id (u16); FlagZTest statics: z | height | Z* bits;
                           // FlagDeform: bits 16-23 s8 shear, 24-31 source rows
 
@@ -43,6 +44,39 @@ public struct SpriteInstance
     /// the frame's <see cref="FrameUniforms.WaterScaleX"/>/Y about its untrimmed top-left, which lies (bits 16-23, bits 24-31)
     /// pixels up-left of X/Y (the trim offset). Never combined with <see cref="LightRotated"/>.</summary>
     public const uint LightWobble = 0x8000;
+
+    /// <summary>Light bits 16-31 of a baked (<see cref="FlagZTest"/>) static: the low bytes of its tile, which the shader's
+    /// out-of-range tint (<see cref="FrameUniforms.RangeTintRow"/>) compares with the player's tile modulo 256. Land needs
+    /// none: its tile follows from X/Y and z.</summary>
+    public static uint StaticTileBits(int tileX, int tileY) => (uint)(byte)tileX << 16 | (uint)(byte)tileY << 24;
+
+    /// <summary>The tile of a baked land or static instance as the shader derives it (out-of-range tint): land exactly from
+    /// X/Y (and z for flat land); statics from an estimate off the sprite's rectangle (the art's horizontal centre and its
+    /// bottom edge sit within a few tiles of the tile's anchor), corrected to the low bytes of <see cref="StaticTileBits"/>.
+    /// Exact while the estimate is within 128 tiles.</summary>
+    public readonly void Tile(out int tileX, out int tileY)
+    {
+        uint flags = Flags;
+        int z = (sbyte)Corners;
+        if ((flags & FlagStretch) != 0 || (Corners >> 16 & ZLand) != 0)
+        {
+            if ((flags & FlagStretch) != 0) z = 0;
+            int d = FloorDiv(X + 33, 22), s = FloorDiv(Y + 33 + z * 4, 22);
+            tileX = (s + d) >> 1;
+            tileY = (s - d) >> 1;
+        }
+        else
+        {
+            // View.DrawStatic: the untrimmed art is centred on x = (tx - ty)·22 and ends at y = (tx + ty)·22 - z·4 + 22
+            int d = FloorDiv(X + (Width >> 1) + 11, 22), s = FloorDiv(Y + Height + z * 4 - 11, 22);
+            int ex = (s + d) >> 1, ey = (s - d) >> 1;
+            tileX = ex + (int)(((Light >> 16) - (uint)ex + 128u) & 0xFF) - 128;
+            tileY = ey + (int)(((Light >> 24) - (uint)ey + 128u) & 0xFF) - 128;
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    static int FloorDiv(int a, int b) => a >= 0 ? a / b : (a - b + 1) / b;
 
     /// <summary>Packs <see cref="LightWobble"/> with the trim offset (clamped to 255).</summary>
     public static uint WobbleBits(int trimX, int trimY)
@@ -181,6 +215,10 @@ public struct FrameUniforms
     public float CotCenterX, CotCenterY, CotRadius;
     public uint TintRow;       // whole-sprite hue row + 1 for every FlagZTest instance (ClassicUO's death screen), 0 = none
     public float WaterScaleX, WaterScaleY; // LightWobble instances' scale this frame (ClassicUO's animated water), 1 = off
+    // ClassicUO's NoColorObjectsOutOfRange for FlagZTest instances: whole-sprite hue row + 1 (0 = off) where the tile's
+    // Chebyshev distance to (RangeX, RangeY) exceeds RangeDist. Wins over TintRow, as in ApplyMeshHue.
+    public uint RangeTintRow;
+    public int RangeX, RangeY, RangeDist;
 }
 
 /// <summary>Slot of the per-frame override hash (in the frame table): <see cref="Index1"/> = instance index + 1
@@ -191,8 +229,9 @@ public struct OverrideEntry
     public uint Index1;
     public uint Value;
 
-    /// <summary><see cref="ForceShow"/>: draw even where the max-Z / roof test would hide it (a roof still fading out).</summary>
-    public const uint Hidden = 1, Highlight = 2, ForceShow = 4;
+    /// <summary><see cref="ForceShow"/>: draw even where the max-Z / roof test would hide it (a roof still fading out).
+    /// The alpha replaces the baked one (translucent statics bake 178), unless <see cref="KeepAlpha"/>.</summary>
+    public const uint Hidden = 1, Highlight = 2, ForceShow = 4, KeepAlpha = 8;
     public const int MaxProbes = 8;
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

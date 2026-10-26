@@ -118,8 +118,8 @@ Driven by environment variables. Read the header comment in DevBench.cs for the 
 - `activeitems:on|off`, `mobcache:on|off`, `textskip:on|off`, `pushinputs:on|off`, `w5:on|off` (W5's world update shortcuts, [testing/world-update.md](testing/world-update.md));
 - `lsreinit` (`reinit` in the large-scale scene: the GPU world pass dropped every 2 s);
 - `flip:N[:frames[:walk]]` (renderer toggle stress), `gumps` (opens paperdoll, backpack, journal and status at fixed spots);
-- `healthbars` (bars for the player and the 3 nearest mobiles), `uicache:on|off` (B8), plan mode `ui` (`name:ui[:zoom]`: a loop of scripted UI changes while measuring, [testing/ui-batcher.md](testing/ui-batcher.md));
-- `effect:x y z:graphic[:blend]`, `moving:`, `shot:name`, `season:`, `itemhue:`, `ghost:on|off`, `chair:hex|off` (a client-side chair under the player), `water:on|off` (animated water) (local-only render checks);
+- `healthbars` (bars for the player and the 3 nearest mobiles), `minimap` (opens the minimap gump), `uicache:on|off` (B8), plan mode `ui` (`name:ui[:zoom]`: a loop of scripted UI changes while measuring, [testing/ui-batcher.md](testing/ui-batcher.md));
+- `effect:x y z:graphic[:blend]`, `moving:`, `shot:name`, `season:`, `itemhue:`, `ghost:on|off`, `chair:hex|off` (a client-side chair under the player), `water:on|off` (animated water), `outrange:on|off` (NoColorObjectsOutOfRange), `range:N` (the client view range, as the server's 0xC8) (local-only render checks);
 - `gumpok` (confirms a server confirmation gump).
 
 ## Standard checks

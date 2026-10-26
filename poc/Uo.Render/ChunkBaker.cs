@@ -25,6 +25,12 @@ public sealed class BakeJob : Job
     public readonly ushort[] Pages = new ushort[ChunkStore.MaxPagesPerChunk];
     public int PageCount;
     public bool PagesOverflow;
+    /// <summary>Chunk-local indices of the baked translucent instances (alpha &lt; 255), ascending.</summary>
+    public int[] Translucent = new int[16];
+    public int TranslucentCount;
+
+    /// <summary>ClassicUO's alpha for tiledata Translucent statics (ProcessAlpha: CalculateAlpha(ref AlphaHue, 178)).</summary>
+    public const byte TranslucentAlpha = 178;
 
     // scratch
     long[] _keys = new long[256];
@@ -61,6 +67,7 @@ public sealed class BakeJob : Job
         Count = 0;
         PageCount = 0;
         PagesOverflow = false;
+        TranslucentCount = 0;
         MinX = MinY = int.MaxValue;
         MaxX = MaxY = int.MinValue;
 
@@ -72,6 +79,7 @@ public sealed class BakeJob : Job
         var statics = reg.Statics(off);
 
         bool wobble = Pack.WaterWobble;
+        bool bakeTranslucent = Pack.BakeTranslucentAlpha;
         int need = 128 + statics.Length; // land, its animated-water copies, statics
         if (_keys.Length < need) _keys = new long[need * 2];
         if (Instances.Length < need) Instances = new SpriteInstance[need * 2];
@@ -205,12 +213,29 @@ public sealed class BakeJob : Job
                     hueRow = (uint)(hue - 1);
                     flags = SpriteInstance.FlagHued | (partial ? SpriteInstance.FlagPartial : 0);
                 }
-                Emit(x, y, sp, sp.Page, hueRow, flags | SpriteInstance.FlagZTest, depth, 0, ZInfo(g, s.Z, staticData));
+                // the tile's low bytes for the shader's out-of-range tint; tiledata Translucent statics bake ClassicUO's
+                // settled alpha 178 (ProcessAlpha) and go on the chunk's translucent sub-list
+                uint light = SpriteInstance.StaticTileBits(tx, ty);
+                bool translucent = bakeTranslucent && (staticData[g].Flags & TileFlags.Translucent) != 0;
+                if (translucent) light |= 255u - TranslucentAlpha;
+                Emit(x, y, sp, sp.Page, hueRow, flags | SpriteInstance.FlagZTest, depth, light, ZInfo(g, s.Z, staticData));
                 Keys[Count - 1] = ObjectKey(cell, true, s.Z, s.Graphic);
+                if (translucent) AddTranslucent(Count - 1);
                 Bounds(x, y, x + sp.W, y + sp.H);
             }
         }
+
+        // the out-of-range tint reconstructs each instance's tile (SpriteInstance.Tile, mirrored in sprite.hlsl): check it
+        for (int i = 0; i < Count; i++)
+        {
+            int cell = (int)(Keys[i] >> 25);
+            Instances[i].Tile(out int tx, out int ty);
+            if (tx != baseTx + (cell & 7) || ty != baseTy + (cell >> 3)) Interlocked.Increment(ref TileMismatches);
+        }
     }
+
+    /// <summary>Baked instances whose reconstructed tile (<see cref="SpriteInstance.Tile"/>) is wrong, since start (0 expected).</summary>
+    public static int TileMismatches;
 
     /// <summary>Corners of a <see cref="SpriteInstance.FlagZTest"/> static: (u8)z | height &lt;&lt; 8 | Z* bits &lt;&lt; 16, with
     /// Static._canBeTransparent (Static.Create) as <see cref="SpriteInstance.ZCotCapable"/>.</summary>
@@ -243,6 +268,12 @@ public sealed class BakeJob : Job
         inst.Light = light;
         inst.Corners = corners;
         AddPage((ushort)page);
+    }
+
+    void AddTranslucent(int local)
+    {
+        if (TranslucentCount == Translucent.Length) Array.Resize(ref Translucent, Translucent.Length * 2);
+        Translucent[TranslucentCount++] = local;
     }
 
     void AddPage(ushort page)
@@ -333,6 +364,6 @@ public sealed class BakeJob : Job
 /// <summary>UO TileFlag bit values used by the renderer.</summary>
 public static class TileFlags
 {
-    public const ulong Background = 0x1, Wall = 0x10, Surface = 0x200, Wet = 0x80, Foliage = 0x20000, PartialHue = 0x40000,
+    public const ulong Background = 0x1, Translucent = 0x8, Wall = 0x10, Surface = 0x200, Wet = 0x80, Foliage = 0x20000, PartialHue = 0x40000,
         NoDiagonal = 0x02000000, Roof = 0x10000000, MultiMovable = 0x10000000000;
 }

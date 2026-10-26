@@ -29,6 +29,7 @@ namespace ClassicUO
     //   plan entries effect:x y z:graphic[:blend] and moving:x y z:x y z:graphic[:blend] spawn client-side effects; shot:name saves a world shot now; season:winter changes the season locally
     //   itemhue:hex,hex,... sets the hues of the nearest ground items, ghost:on|off swaps the player body (local-only render checks)
     //   chair:hex puts a client-side chair item under the player (chair:off removes it); water:on|off sets AnimatedWaterEffect
+    //   outrange:on|off sets NoColorObjectsOutOfRange; range:N sets the client view range locally (as the server's 0xC8)
     //   CUO_BENCH_TOPMOST=1 keep the window on top while benching (occluded windows are throttled)
     //   plan entries size:WxH|max change the CUO_BENCH_SIZE client area mid-plan (max = maximised window)
     //   plan entry gumps opens the paperdoll, backpack, journal and status bar (the UI allocation/parity scene); shots also save the UI render target
@@ -1740,6 +1741,29 @@ namespace ClassicUO
                         }
 
                         Log.Info($"[bench] {_plan[_planIndex]}");
+                        _planIndex++;
+                        _stepAt = now + sec;
+
+                        break;
+                    }
+
+                    if (_plan[_planIndex].StartsWith("outrange:") || _plan[_planIndex].StartsWith("range:"))
+                    {
+                        // outrange:on|off = the NoColorObjectsOutOfRange option; range:N = the client view range, as the
+                        // server's 0xC8 sets it (local only)
+                        if (_plan[_planIndex].StartsWith("outrange:"))
+                        {
+                            if (Configuration.ProfileManager.CurrentProfile is { } rangeProfile)
+                            {
+                                rangeProfile.NoColorObjectsOutOfRange = _plan[_planIndex] == "outrange:on";
+                            }
+                        }
+                        else if (byte.TryParse(_plan[_planIndex].Substring(6), out byte range))
+                        {
+                            world.ClientViewRange = range;
+                        }
+
+                        Log.Info($"[bench] {_plan[_planIndex]} (view range {world.ClientViewRange}, out-of-range tint {Configuration.ProfileManager.CurrentProfile?.NoColorObjectsOutOfRange})");
                         _planIndex++;
                         _stepAt = now + sec;
 

@@ -118,7 +118,7 @@ namespace ClassicUO.Game.Scenes
 
         private bool _gpuItemCacheOn, _gpuItemCheckNow;
         private int _gpuItemGeneration;
-        private bool _gpuItemKeyOn, _gpuItemKeyGray;
+        private bool _gpuItemKeyOn, _gpuItemKeyGray, _gpuItemKeyRange;
         private Uo.Render.WorldRenderer _gpuItemKeyWorld;
         private Item _gpuSelContainer;
         // this chunk's tiles served from its cache, or (check frames) that would be
@@ -154,13 +154,15 @@ namespace ClassicUO.Game.Scenes
             var profile = ProfileManager.CurrentProfile;
             bool want = Settings.GlobalSettings.GpuPrepareItemCache && _gpuWorld.EcsMobiles;
             bool gray = _world.Player.IsDead && profile.EnableBlackWhiteEffect;
+            bool range = profile.NoColorObjectsOutOfRange;
             var world = _gpuWorld.World;
 
-            if (want != _gpuItemKeyOn || gray != _gpuItemKeyGray || !ReferenceEquals(world, _gpuItemKeyWorld))
+            if (want != _gpuItemKeyOn || gray != _gpuItemKeyGray || range != _gpuItemKeyRange || !ReferenceEquals(world, _gpuItemKeyWorld))
             {
                 _gpuItemGeneration++;
                 _gpuItemKeyOn = want;
                 _gpuItemKeyGray = gray;
+                _gpuItemKeyRange = range;
                 _gpuItemKeyWorld = world;
             }
 
@@ -223,11 +225,14 @@ namespace ClassicUO.Game.Scenes
 
         // Everything about the item that the walk's rules and the extract read and that can change while it lies there.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static void GpuItemSignature(Item item, out ulong a, out ulong b)
+        // The out-of-range hue (NoColorObjectsOutOfRange) is part of it: the extract bakes it into the instances, and it flips
+        // when the player moves or the server changes the view range (0xC8).
+        private void GpuItemSignature(Item item, out ulong a, out ulong b)
         {
             a = item.Graphic | (ulong)item.Hue << 16 | (ulong)item.Amount << 32 | (ulong)(byte)item.Flags << 48 | (ulong)item.AlphaHue << 56;
             ulong state = (item.AllowedToDraw ? 1UL : 0) | (item.IsDestroyed ? 2UL : 0) | (item.TextContainer != null && !item.TextContainer.IsEmpty ? 4UL : 0) |
-                          (item.ObjectHandlesStatus != ObjectHandlesStatus.NONE ? 8UL : 0) | (item.Offset != Vector3.Zero ? 16UL : 0);
+                          (item.ObjectHandlesStatus != ObjectHandlesStatus.NONE ? 8UL : 0) | (item.Offset != Vector3.Zero ? 16UL : 0) |
+                          (_gpuItemKeyRange && item.Distance > _world.ClientViewRange ? 32UL : 0);
             b = item.X | (ulong)item.Y << 16 | (ulong)(byte)item.Z << 32 | (ulong)(ushort)item.PriorityZ << 40 | state << 56;
         }
 
