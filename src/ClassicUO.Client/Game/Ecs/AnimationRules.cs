@@ -158,8 +158,14 @@ namespace ClassicUO.Game
             return graphic;
         }
 
-        /// <summary>PaperdollOrder.ApplyDirectionCloak on a slot index list: the cloak goes on top facing north (0), behind facing south (3), else just below the helmet.</summary>
-        public static int ApplyDirectionCloak(Span<byte> order, int count, ReadOnlySpan<byte> layerOf, byte dir)
+        /// <summary>
+        /// PaperdollOrder.ApplyDirectionCloak on a slot index list: the cloak goes on top facing north (0), behind facing
+        /// south (3), else just below the helmet. MobileView moves the cloak on the full layer order, where Helmet is always
+        /// listed, and skips empty layers afterwards; the slots hold only drawn layers, so "below the helmet" is
+        /// <paramref name="helmetAnchor"/>, the number of drawn non-cloak slots before Helmet's place in the full order
+        /// (<see cref="CloakAnchor"/>). With no helmet drawn the cloak still goes under the weapons, as in MobileView.
+        /// </summary>
+        public static int ApplyDirectionCloak(Span<byte> order, int count, ReadOnlySpan<byte> layerOf, byte dir, byte helmetAnchor)
         {
             int idx = -1;
 
@@ -199,17 +205,7 @@ namespace ClassicUO.Game
             }
             else
             {
-                insert = count;
-
-                for (int i = 0; i < count; i++)
-                {
-                    if (layerOf[order[i]] == (byte)Layer.Helmet)
-                    {
-                        insert = i;
-
-                        break;
-                    }
-                }
+                insert = Math.Min(helmetAnchor, count);
             }
 
             for (int i = count; i > insert; i--)
@@ -220,6 +216,31 @@ namespace ClassicUO.Game
             order[insert] = cloak;
 
             return count + 1;
+        }
+
+        /// <summary>
+        /// The cloak's "below the helmet" slot for <see cref="ApplyDirectionCloak"/>: how many drawn layers
+        /// (<paramref name="slotLayers"/>), not counting the cloak, come before Helmet in <paramref name="fullOrder"/>, the
+        /// full layer order (PaperdollOrder.Build plus Filter, which always lists Helmet).
+        /// </summary>
+        public static byte CloakAnchor(ReadOnlySpan<Layer> fullOrder, ReadOnlySpan<byte> slotLayers)
+        {
+            int anchor = 0;
+
+            foreach (Layer layer in fullOrder)
+            {
+                if (layer == Layer.Helmet)
+                {
+                    break;
+                }
+
+                if (layer != Layer.Cloak && slotLayers.IndexOf((byte)layer) >= 0)
+                {
+                    anchor++;
+                }
+            }
+
+            return (byte)anchor;
         }
 
         /// <summary>
