@@ -171,6 +171,7 @@ Bounded ECS tasks that a cheaper model (Sonnet, Haiku, Codex gpt-6-luna) can do 
 Not for cheaper models: anything that changes draw order, the walk, or picking (W2's query half, W6); the parity rules there are subtle and have cost days before.
 
 ### W6: remove the legacy walk
+- **Owner (2026-10-25): Legacy stays** for cross-platform reach (virtual machines and machines without Vulkan). So W6 needs either Legacy rewritten to draw from the ECS (a deferred project, started only when it blocks other important work) or a later decision to drop Legacy. Until then, keep the ECS extract renderer-neutral, so a Legacy-on-ECS renderer can consume it.
 - Prerequisites:
   - picking, lights, foliage and dynamics have moved (W1–W3);
   - Legacy rendering is gone (SDL_GPU becomes a hard requirement after graphics-ownership Tier 3).
