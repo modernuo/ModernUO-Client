@@ -474,9 +474,25 @@ namespace ClassicUO.Game.Scenes
             World world = mobile.World;
             WorldEcs ecs = world.Ecs;
 
-            if (!ecs.Mirror.TryGetEntity(mobile.Serial, out Friflo.Engine.ECS.Entity e) || !e.HasComponent<ClassicUO.Ecs.AnimationState>())
+            // E5: the entity found last frame, while no mirror entity was deleted since (WorldMirror.Epoch; Friflo's 16-bit
+            // revision can wrap, so IsNull is not trusted) and the serial is unchanged. Only entities that had an
+            // AnimationState are cached, and a mirror entity never loses it. Costs two integer compares per mobile; every
+            // deletion makes all mobiles repeat one dictionary lookup.
+            Friflo.Engine.ECS.Entity e = mobile.EcsEntity;
+
+            if (mobile.EcsEntitySerial != mobile.Serial || mobile.EcsEntityEpoch != ecs.Mirror.Epoch)
             {
-                return false;
+                if (!ecs.Mirror.TryGetEntity(mobile.Serial, out e) || !e.HasComponent<ClassicUO.Ecs.AnimationState>())
+                {
+                    mobile.EcsEntity = default;
+                    mobile.EcsEntitySerial = 0;
+
+                    return false;
+                }
+
+                mobile.EcsEntity = e;
+                mobile.EcsEntitySerial = mobile.Serial;
+                mobile.EcsEntityEpoch = ecs.Mirror.Epoch;
             }
 
             MobileSpriteExtract extract = ecs.MobileExtract;
@@ -510,17 +526,22 @@ namespace ClassicUO.Game.Scenes
             }
             else
             {
-                // e was looked up above (mirrored, with AnimationState) and the mobile is not destroyed: Update(world, mobile)'s checks
-                ecs.Animation.Update(world, mobile, e);
+                // e was looked up above (mirrored, with AnimationState) and the mobile is not destroyed: Update(world, mobile)'s checks.
+                // E5: the update works on the entity's own state, which the extract then reads without more lookups.
+                // TakeDirty comes first: removing the tag moves the entity, which would invalidate the refs.
+                bool dirty = MobileAnimationSystem.TakeDirty(e);
+                ref ClassicUO.Ecs.AnimationState state = ref e.GetComponent<ClassicUO.Ecs.AnimationState>();
+                ref ClassicUO.Ecs.MobileRenderState render = ref e.GetComponent<ClassicUO.Ecs.MobileRenderState>();
+                ecs.Animation.UpdateInPlace(world, mobile, e, dirty, ref state, ref render);
 
                 mobile.DrawAura(batcher, posX, posY, depth);
                 extract.Begin(_pack, _offsetX, _offsetY);
-                extract.Emit(e, posX, posY, depth, Configuration.Settings.GlobalSettings.GpuMobileFrameCache ? mobile.FrameCache : null);
+                extract.Emit(e, in state, in render, posX, posY, depth, Configuration.Settings.GlobalSettings.GpuMobileFrameCache ? mobile.FrameCache : null);
                 drawn = true;
 
                 // the view's side effects: picking, text and health bars read FrameInfo and IsFlipped
                 mobile.FrameInfo = extract.FrameInfo;
-                mobile.ViewFlipped = (e.GetComponent<ClassicUO.Ecs.AnimationState>().Flags & ClassicUO.Ecs.AnimStateFlags.Mirror) != 0;
+                mobile.ViewFlipped = (state.Flags & ClassicUO.Ecs.AnimStateFlags.Mirror) != 0;
 
                 if (_scene != null)
                 {
