@@ -37,6 +37,12 @@ public sealed unsafe class ChunkStore
     // 512k instances (19 MB; the 4K bench path, zoom 0.5 included, peaks below that) and doubles past it if ever needed.
     SpriteInstance[] _cpuInst;
     uint[] _cpuKeys;
+    // Per chunk: the translucent pass's sort keys (WorldRenderer.SortKey) of its baked translucent instances, set at
+    // upload; the arrays are kept per slot and only grow (no steady-state allocation).
+    readonly ulong[][] _transKeys = new ulong[MaxSlots][];
+    readonly int[] _transCount = new int[MaxSlots];
+    readonly int[] _visTrans = new int[MaxSlots];
+    int _visTransCount;
     readonly int[] _active = new int[MaxSlots], _activePos = new int[MaxSlots];
     int _activeCount;
     readonly int[] _freeSlots = new int[MaxSlots];
@@ -267,9 +273,15 @@ public sealed unsafe class ChunkStore
         job.Count = count;
         job.MinX = job.MinY = int.MaxValue; job.MaxX = job.MaxY = int.MinValue;
         job.PageCount = 0;
+        job.TranslucentCount = 0;
         for (int i = 0; i < count; i++)
         {
             ref var e = ref instances[i];
+            if (e.Alpha < 255)
+            {
+                if (job.TranslucentCount == job.Translucent.Length) Array.Resize(ref job.Translucent, job.Translucent.Length * 2);
+                job.Translucent[job.TranslucentCount++] = i;
+            }
             job.MinX = Math.Min(job.MinX, e.X); job.MinY = Math.Min(job.MinY, e.Y);
             job.MaxX = Math.Max(job.MaxX, e.X + (int)(e.Whf & 0xFFF)); job.MaxY = Math.Max(job.MaxY, e.Y + (int)((e.Whf >> 12) & 0xFFF));
             ushort pg = (ushort)(e.PageHue & 0xFFFF);
@@ -335,6 +347,18 @@ public sealed unsafe class ChunkStore
             job.Pages.AsSpan(0, pc).CopyTo(_pages.AsSpan(slot * MaxPagesPerChunk, pc));
             _state[slot] = State.Ready;
             _job[slot] = null;
+            int tn = n > 0 ? job.TranslucentCount : 0;
+            _transCount[slot] = tn;
+            if (tn > 0)
+            {
+                ref var tk = ref _transKeys[slot];
+                if (tk == null || tk.Length < tn) tk = new ulong[Math.Max(tn, 16)];
+                for (int t = 0; t < tn; t++)
+                {
+                    int local = job.Translucent[t];
+                    tk[t] = WorldRenderer.SortKey(job.Instances[local].Depth, (uint)(first + local));
+                }
+            }
             if (n > 0)
             {
                 if (first + n > _cpuInst.Length)
@@ -402,6 +426,13 @@ public sealed unsafe class ChunkStore
     }
 
     public int FirstInstance(int slot) => _first[slot];
+
+    /// <summary>Translucent-pass sort keys of a ready chunk's baked translucent instances.</summary>
+    public ReadOnlySpan<ulong> TranslucentKeys(int slot) => _state[slot] == State.Ready ? _transKeys[slot].AsSpan(0, _transCount[slot]) : default;
+
+    /// <summary>The last <see cref="BuildDrawList"/>'s visible chunks that have baked translucent instances.</summary>
+    public ReadOnlySpan<int> VisibleTranslucentSlots => _visTrans.AsSpan(0, _visTransCount);
+    public int VisibleTranslucentCount => _visTransCount;
     public ReadOnlySpan<SpriteInstance> CpuInstances(int slot) => _state[slot] == State.Ready ? _cpuInst.AsSpan(_first[slot], _count[slot]) : default;
     /// <summary>Elements in the CPU instance mirror (grows to the allocator's high-water mark).</summary>
     public int CpuMirrorLength => _cpuInst.Length;
@@ -413,6 +444,7 @@ public sealed unsafe class ChunkStore
         uint total = 0;
         MissingVisible = 0;
         MissingNear = 0;
+        _visTransCount = 0;
         for (int i = 0; i < _activeCount && n < table.Length; i++)
         {
             int slot = _active[i];
@@ -435,6 +467,7 @@ public sealed unsafe class ChunkStore
             table[n].First = (uint)_first[slot];
             table[n].Prefix = total;
             total += (uint)_count[slot];
+            if (_transCount[slot] > 0) _visTrans[_visTransCount++] = slot;
             n++;
         }
         instances = (int)total;

@@ -283,6 +283,13 @@ namespace ClassicUO.Game.Scenes
             _world.SetTint(hue);
         }
 
+        /// <summary>Out-of-range hue (NoColorObjectsOutOfRange) for baked land and statics farther than range tiles from the
+        /// player's tile this frame; 0 = none.</summary>
+        public void SetRangeTint(ushort hue, int tileX, int tileY, int range)
+        {
+            _world.SetRangeTint(hue, tileX, tileY, range);
+        }
+
         /// <summary>Shader-mode circle of transparency: centre and radius in target pixels, z = player z + 5.</summary>
         public void SetCircleOfTransparency(float centerX, float centerY, float radius, int z)
         {
@@ -837,7 +844,7 @@ namespace ClassicUO.Game.Scenes
                 var w = _world;
                 Log.Trace(
                     $"GPU world: {w.ChunkCount} chunks, {w.Instances} baked + {w.DynamicDrawn} dynamic instances, {w.Renderer.DrawCalls} draws; overrides {w.OverridesApplied} applied, " +
-                    $"{w.OverridesMissed} missed, {w.OverridesDropped} dropped; dynamic dropped {DynamicDropped}; translucent {w.TranslucentCount} (cot ring {w.CotRingCount}); capture fallbacks {CaptureFallbacks}; " +
+                    $"{w.OverridesMissed} missed, {w.OverridesDropped} dropped; dynamic dropped {DynamicDropped}; translucent {w.TranslucentCount} (baked {w.BakedTranslucentCount}, cot ring {w.CotRingCount}); capture fallbacks {CaptureFallbacks}; " +
                     $"pages {w.Pages.ResidentCount}/{w.Pages.Layers} resident, {w.Pages.MissingVisible} missing, {w.Pages.TotalUploads} uploads, {w.Pages.Evictions} evictions" +
                     (w.AnimPages != null ? $"; anim pages {w.AnimPages.ResidentCount}/{w.AnimPages.Layers}, {w.AnimPages.MissingVisible} missing, {w.AnimPages.TotalUploads} uploads, {w.AnimPages.Evictions} evictions" : "") +
                     $"; chunks ready {w.Chunks.ReadyChunks} pending {w.Chunks.PendingChunks} missing near view {w.Chunks.MissingNear}; settled {w.Settled}, visible ready {w.VisibleReady}");

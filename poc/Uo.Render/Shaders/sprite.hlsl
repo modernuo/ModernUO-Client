@@ -16,14 +16,16 @@
 //   uint light     FLAG_LIT: 4 x u8 per-corner light (stretched land), 170 = 1.0;
 //                  otherwise byte 0 = 255 - alpha (0 = opaque), bits 8-9 hue mode (MODE_*), 10-11 blend (with
 //                  LIGHT_ADDITIVE as bit 2: InstanceBlend), 12-15 LIGHT_* bits, 16-31 rotation (u16 turns) when
-//                  LIGHT_ROTATED, or the trim offset (x, y bytes) when LIGHT_WOBBLE
+//                  LIGHT_ROTATED, or the trim offset (x, y bytes) when LIGHT_WOBBLE; FLAG_ZTEST statics: the tile's low
+//                  bytes (x, y) for the out-of-range tint
 //   uint corners   4 x s8 per-corner z (stretched land), corner order top,right,left,bottom; FLAG_INDEXED: palette id;
 //                  FLAG_ZTEST statics: (u8)z | height << 8 | Z_* bits << 16; FLAG_ZTEST flat land: (u8)z | Z_LAND << 16;
 //                  FLAG_DEFORM (dynamic): bits 16-23 s8 top-edge shear, 24-31 source rows (0 = h)
 //
 // Two draws share the instance buffer: pass 0 (opaque, depth write) walks the visible chunk table and skips translucent
 // instances; pass 1 (premultiplied blend, depth test only) draws the frame table's back-to-front list of translucent
-// instance indices. A per-frame override hash (instance index -> alpha / hidden / highlight hue) applies to both.
+// instance indices. A per-frame override hash (instance index -> alpha / hidden / highlight hue) applies to both; its alpha
+// replaces the instance's (translucent statics bake alpha 178) unless OV_KEEPALPHA.
 //
 // ClassicUO's max-Z / roof hiding and its circle of transparency (shader mode) are uniforms tested per FLAG_ZTEST
 // instance, so the steady state needs no per-sprite overrides. Circle of transparency: an opaque instance it applies to
@@ -51,6 +53,7 @@
 #define OV_HIDDEN     1u
 #define OV_HIGHLIGHT  2u
 #define OV_FORCESHOW  4u      // ignore the max-Z / roof test (an object still fading out)
+#define OV_KEEPALPHA  8u      // keep the instance's alpha (highlight only)
 #define LIGHT_COT     0x1000u
 #define LIGHT_ROTATED 0x2000u
 #define LIGHT_ADDITIVE 0x4000u
@@ -115,6 +118,10 @@ cbuffer Frame : register(b0, space1)
     uint   TintRow;        // hue row + 1 applied whole-sprite to FLAG_ZTEST instances (death screen), 0 = none
     float  WaterScaleX;    // LIGHT_WOBBLE scale (ClassicUO's animated water), 1 = off
     float  WaterScaleY;
+    uint   RangeTintRow;   // out-of-range hue row + 1 for FLAG_ZTEST instances beyond RangeDist of (RangeX, RangeY), 0 = off
+    int    RangeX;         // player tile (ClassicUO World.RangeSize)
+    int    RangeY;
+    int    RangeDist;      // ClientViewRange
 };
 
 [[vk::combinedImageSampler]] Texture2DArray<float4> Atlas    : register(t0, space2);
@@ -204,7 +211,7 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
             if (e.x == gi + 1)
             {
                 uint ovFlags = (e.y >> 8) & 0xFFu;
-                alpha = (ovFlags & OV_HIDDEN) != 0 ? 0u : alpha * (e.y & 0xFFu) / 255u;
+                alpha = (ovFlags & OV_HIDDEN) != 0 ? 0u : (ovFlags & OV_KEEPALPHA) != 0 ? alpha : (e.y & 0xFFu);
                 forceShow = (ovFlags & OV_FORCESHOW) != 0;
                 if (ovFlags & OV_HIGHLIGHT)
                 {
@@ -220,13 +227,36 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     // when _noDrawRoofs) and Static.TransparentTest for the circle of transparency.
     uint cotMode = COT_NONE;
     bool zTest = (flags & FLAG_ZTEST) != 0;
-    if (zTest && TintRow != 0 && !highlighted)
-    {
-        hueRow = TintRow - 1;
-        flags = (flags | FLAG_HUED) & ~FLAG_PARTIAL;
-    }
     bool zLand = (flags & FLAG_STRETCH) != 0 || ((inst.corners >> 16) & Z_LAND) != 0;
     int z = (int)(inst.corners << 24) >> 24;
+    // ApplyMeshHue: out of range (NoColorObjectsOutOfRange), else the death screen's gray; a highlight wins over both
+    uint tint = TintRow;
+    if (zTest && RangeTintRow != 0 && !highlighted)
+    {
+        int dx, dy;
+        if (zLand)
+        {
+            // baked land sits exactly on its tile: X = (x - y)·22 - 22, Y = (x + y)·22 - 22 - z·4 (stretched: no z term)
+            int zt = (flags & FLAG_STRETCH) != 0 ? 0 : z;
+            int a = inst.x + 33, b = inst.y + 33 + zt * 4;
+            int d = (a >= 0 ? a : a - 21) / 22, s = (b >= 0 ? b : b - 21) / 22;
+            dx = ((s + d) >> 1) - RangeX;
+            dy = ((s - d) >> 1) - RangeY;
+        }
+        else
+        {
+            // statics carry their tile's low bytes; visible tiles are well within 128 of the player
+            dx = (int)((((inst.light >> 16) - (uint)RangeX + 128u) & 0xFFu)) - 128;
+            dy = (int)((((inst.light >> 24) - (uint)RangeY + 128u) & 0xFFu)) - 128;
+        }
+        if (max(abs(dx), abs(dy)) > RangeDist)
+            tint = RangeTintRow;
+    }
+    if (zTest && tint != 0 && !highlighted)
+    {
+        hueRow = tint - 1;
+        flags = (flags | FLAG_HUED) & ~FLAG_PARTIAL;
+    }
     if (zTest && (ZFlags & 1u) != 0 && !forceShow)
     {
         if (zLand ? z > MaxGroundZ : z >= MaxZ || ((ZFlags & 2u) != 0 && ((inst.corners >> 16) & Z_ROOF) != 0))
