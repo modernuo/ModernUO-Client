@@ -1875,3 +1875,62 @@ Branch `poc/ecs-e7-walk` (E7 agent, kbatman3), started on `poc/modern-client` 54
 - **Fix:** while the check is on, the capture mixes every object it reaches, and every cached item the cache emits, into an order-sensitive hash (`RenderLists.CaptureOrderHash`: the dynamic buffer's order, cached runs where they were injected, walked-alone items and mobiles included). A check frame's hash must equal the served frame's just before it; logged as `capture order vs the served frame before: N same, M different`. `=every` now checks every other frame, so every check frame follows a served one. Unit tests (`CaptureOrderHashTests`): the audit's counterexample, plus a missing or extra object, hash differently.
 - **The new check catches a broken split:** a temporary build that queued a mixed tile's cached entries after its walked-alone items (not committed) gave `capture order` 5,705 different of 12,672 in the scene with `=every`, while the old placement check still reported 0 differences. (A first broken build that queued them all *before* the walked-alone items was a no-op here: in the scene and in `e7mixed.txt` the uncacheable item is always last in its tile list.)
 - **Re-verified on eed280e77** (JIT, `TieredCompilation=0`; item, skip and prep checks on): scene zoom 1 and 2.5 with `=1` (840 checks) and `=every` (8,029 checks, 110M cached-item comparisons); `e7mixed.txt` at `light 1E` and `light off` with `=every` and ECS parity. 0 item-check differences, 0 skip-check unsettled or drawn differently, 0 prep-check wrong; ECS parity 0 mismatches (night: 3.8M item / 959k mobile comparisons, 150k lights; `light off`: 523k / 130k, 0 lights); `-ecscheck` 0. Capture order: 0 different in every standing window. The only differences (2 in the scene, 14 and 19 in `e7mixed`) were frames while the teleport or zoom change was settling or while the driver was adding items and the brigand was walking up, which the reference walk can't match by design. 563 unit tests pass; Release and `-p:CuoDevTools=false` build. No serving code changed, so no timing rerun.
+
+## E6: graphic effects no longer keep their tile's items out of the item cache (2026-10-26)
+
+Branch `bg/ecs-e6-effects` (E6 agent, kbatman3), started on `poc/modern-client` 1333ccbbd, final numbers on c527bc21c (merged in). Scratch: session scratchpad `e6\`. Code: commit 047cc06a0 plus the merge.
+
+**Measured first (JIT, `TieredCompilation=0`, in-session; new FrameStats phase `draw_fx` and counter `effects`).** The task assumed effects are mostly capture cost. They are not:
+- **Capture:** the effects list drawn into the world pass costs about 0.07-0.09 us per effect (0.012 ms for 173 effects at Britain, 0.028 ms for 303 in the large scene). A mirror into the ECS and a per-frame extract could save a fraction of that, so **no ECS effect extract was built**: it would be a parity risk for under 0.02 ms at 300 effects.
+- **The walk:** Britain, 173 effects: world prepare 0.059 -> 0.084 ms (walk +0.019). Large scene (`5156 2150`): 84 effects 0.85 -> 0.95 ms, 303 effects 0.85 -> 1.28 ms, i.e. 1.2-1.4 us per effect, 15x the capture. Cause: W4/E7's cache treats an effect on a tile as an unbaked non-item, so the tile is "walked in full" (about 17 objects: all its cached items and mobiles; `objects` 2,423 -> 7,900, items walked 177 -> 3,897). Second cause: `Chunk.OnTileContentChanged` marks the chunk's items dirty for anything that is not a Mobile, so every moving effect crossing a tile re-extracted the whole chunk's items (item cache builds 1 per frame with 54 moving effects, `prep: item cache` 0.007 -> 0.153 ms).
+
+**Change** (`GameSceneGpuItemCache.cs`, `GameSceneGpuPrepare.cs`, `Chunk.cs`; setting `gpu_prepare_item_cache_effects`, default on; plan `fxserve:on|off`, driver `fxserve on|off`):
+- `GameEffect`s are ignored by the cache build (neither a reason to walk the tile nor an entry) and don't set `Chunk.GpuItemsDirty` (`Chunk.GpuEffectsIgnored`, set per frame with the cache key; the setting is part of the cache generation).
+- `RebuildGpuMask` adds `Chunk.GpuEffectMask` (tiles with an effect). It is rebuilt whenever an object joins or leaves a tile list (`GpuMaskDirty`, unchanged), so it is exact.
+- A served tile with effects leaves `walkTiles` like a tile with walked-alone items and goes through `GpuServeMixedTile`'s single pass over its list: mobiles, effects and walked-alone items are walked in tile order (`AddTileToRenderList(obj, ..., stopAt: obj.TNext)`), cached entries queued around the walked-alone items as before.
+- No ECS involvement; `AddTileToRenderList` and the chunk loop are unchanged, so Legacy is untouched (`GpuEffectMask` and the flag are only read by the Gpu prepare).
+
+**Invariants (for the audit):**
+1. An effect never ends a tile's walk: its case in `AddTileToRenderList` neither calls `CalculateObjectHeight` nor returns at the max Z, and the x cull (`break`) depends only on the tile (all objects of a tile share `RealScreenPosition.X`; an effect's `Offset` is not part of it).
+2. An effect goes to the effects list (drawn after every other object, `DrawDeferredRenderLists`) or, when its alpha isn't full, to the transparent list. Its position relative to cached items therefore doesn't matter (they are opaque, in the statics list); only its order among the tile's other transparent objects does, which the single pass keeps. Across tiles the order is the loop's.
+3. `ProcessAlpha` reads only the effect and its tiledata (plus the frame's fade flags); serving runs only when `_gpuSkipActive` (no fade steps, no fresh chunks), so it needs no state from earlier objects of the tile.
+4. `GpuEffectMask` is only used when `_gpuItemKeyEffects`; with the setting off effects are uncacheable objects and dirty chunks, exactly as before.
+5. A served tile that fails validation (`GpuItemTileValid`, `GpuItemWalkedValid`) is walked in full, effects included (the chunk loop's fallback), and a tile stays fully walked when under the mouse, in the selected container's chunk tile, with a stopping mobile, or in a fade.
+6. Effects on tiles with no cacheable item are walked in full as before (the tile isn't in `cache.Tiles`).
+
+**Measurements** (NativeAOT, base = this tip with the 3 feature files reverted to `poc/modern-client` = "base-aot", new = HEAD; 3 alternated rounds, Gpu plan 14 spots then Legacy plan; 1920x1080 at 1.5 DPI, 3 windows per spot; means of the run averages, ms; machine shared with other agents' builds and runs, per-run spread up to +-0.15 ms in the scene):
+
+| Spot (fixed fire columns `3709`) | world prepare base -> new | objects walked | items extracted/walked | runs (new) |
+|---|---|---|---|---|
+| Scene zoom 1, 0 effects | 0.935 -> 0.982 (second block 0.934 -> 0.926) | 2,499 | 252 | 0.86, 0.84, 1.25 |
+| Scene zoom 1, 82 effects | 1.133 -> 0.955 | 3,958 -> 2,599 | 1,371 -> 252 | 0.90, 0.89, 1.08 |
+| Scene zoom 1, 230 effects | 1.376 -> 0.979 | 6,581 -> 2,792 | 3,168 -> 252 | 0.93, 0.89, 1.13 |
+| Scene zoom 1, 54 moving effects (sustained) | 1.205 -> 1.001 | 3,299 -> 2,556 | 958 -> 252 | 0.93, 0.94, 1.13 |
+| Scene zoom 2.5, 0 effects | 1.212 -> 1.197 | | | |
+| Scene zoom 2.5, 150 effects | 1.522 -> 1.234 | 4,635 -> 2,659 | 2,498 -> 522 | 1.13, 1.11, 1.46 |
+| Britain / bank, 0 effects | 0.067 -> 0.063 / 0.068 -> 0.065 | 196 / 197 | | |
+| Britain 38 effects / bank 30 effects | 0.076 -> 0.070 / 0.073 -> 0.069 | 236 / 229 | | |
+| Britain zoom 2.5, 0 / 100 effects | 0.234 -> 0.229 / 0.251 -> 0.245 | 1,094 / 1,199 | | |
+| Legacy Britain / zoom 2.5 / large | 0.191 -> 0.150 / 1.112 -> 1.072 / 4.242 -> 4.395 (runs 4.06-4.58 vs 4.06-5.0) | | | noise; no Legacy code changed |
+
+- Effect cost in the scene (new vs 0 effects, same build): 0.09 us (82), 0.0 (230; within noise), versus 1.2-1.4 us per effect before. The capture side (`draw_fx`) is unchanged: 0.009-0.020 ms.
+- JIT in-session pairs (`fxserve:off` vs `on`, same session): 303 effects 1.192 -> 0.774 ms (0 effects 0.74), 54 moving 1.001 -> 0.777 (0 effects 0.71), item cache builds 1 per frame -> 0.
+
+**Verification:**
+
+| Check | Result |
+|---|---|
+| `CUO_GPU_ITEM_CHECK=every`, `CUO_GPU_SKIP_CHECK=1`, `CUO_PREP_CHECK=1`, scene zoom 1 and 2.5 with 120 fixed fire, all 7 blends (60 each), lightning (3), 60 moving effects | Item check 0 with differences over 13.9M cached-item comparisons; "other queued objects" (the hash includes the effects list: identity, alpha, order) and capture order 0 different in every standing window; only windows with moving effects or a spawn in them differ (227/950, 271/791 frames), as they must; skip check 0 unsettled, 0 drawn differently; prep check 0 wrong |
+| The checker sees a broken serve | Build with the effect `AddTileToRenderList` call left out of `GpuServeMixedTile`: "other queued objects" 0 same, 998 different |
+| ECS parity (`CUO_ECS_PARITY=1`, `CUO_ANIM_SYNC=1`, `-ecscheck 120`, item check `every`) with `tools/ecs-parity/e6fx.txt` (e7mixed's mixed tiles plus fixed effects in every blend, lightning, moving; fxserve on/off; walking), `light 1E` and `light off` | 0 mismatches. Night: 4.0M item / 994k mobile comparisons, 188k lights, 0 lights mismatched; day: 652k / 144k; `-ecscheck` 0; item check 0 differences (4,591 / 4,588 checks) |
+| Pixels: non-animated bags (`0E75`, `0E76`) in every blend over item tiles, `fxserve:on` vs `off` in one session | Identical (0.000%, world and lights images), night and `light off` (looked at the day shot). With animated fire the shots differ by the animation alone (all of it) |
+| Unit tests | 570 pass on the merged tip; Release and `-p:CuoDevTools=false` build |
+
+**Limits / left:**
+- Checker limit: the item check compares two different frames (a served one and the check frame after it), so an effect wrongly left out of the served frame could expire before the reference frame; and the hash covers the effects list (identity, alpha, order) but not an effect's geometry, blend or depth. The effect tooling (`BenchEffects`, the driver's `fx`/`fxserve`, `World.Effects`) is behind `CUO_DEVTOOLS`.
+- Not an ECS effect extract (see measurements): capture is 0.09 us per effect. If a later scene has thousands of effects, a per-frame extract from `EffectManager` would need a sort key reproducing the walk's order (equal-depth effects are ordered by it).
+- Effects still dirty `GpuMaskDirty` (mask rebuild of one chunk per tile crossing), as mobiles do.
+- No unit tests for the mask/ignore rules: `Chunk` needs a `World`. The checkers above are the tests.
+- The e6fx script's moving effects are one-shot (the driver doesn't `Tick`); the sustained moving case was measured with the plan entry.
+- Effects with a translucent graphic (alpha 178, transparent list) were not found in a graphic that the pack has with that flag; the single-pass order logic covers them by construction but no run exercised one.
+- Moving effects that start from a mobile (`SetSource(mobile)`) follow its tile: served tiles with mobiles and effects use the same pass; exercised by the walking part of `e6fx.txt` only partly.
