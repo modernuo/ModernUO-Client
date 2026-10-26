@@ -35,12 +35,20 @@ public sealed unsafe class Renderer : IDisposable
     readonly IntPtr _hueTex;
     readonly IntPtr _paletteBuf, _dummyAnimTex;
     public readonly IntPtr InstanceBuffer;
-    readonly IntPtr _frameTableBuf, _pageTableBuf;
+    IntPtr _frameTableBuf;
+    readonly IntPtr _pageTableBuf;
     readonly IntPtr _frameTransfer, _pageTableTransfer;
     public readonly uint FrameTransferSize;
     /// <summary>Frame table layout (8-byte entries): visible chunks [0, ChunkTableCapacity), translucent list
     /// [TransBase, + MaxTranslucent), override hash [OverrideBase, + OverrideSlots).</summary>
-    public readonly int ChunkTableCapacity, MaxTranslucent, OverrideSlots;
+    public readonly int ChunkTableCapacity, OverrideSlots;
+    /// <summary>Translucent list entries the frame table holds; grows (<see cref="EnsureTranslucentCapacity"/>).</summary>
+    public int MaxTranslucent { get; private set; }
+    /// <summary>The most translucent entries <see cref="EnsureTranslucentCapacity"/> grows to (2 MB of frame table; the
+    /// 8 MB frame transfer buffer keeps room for chunk uploads).</summary>
+    public const int TranslucentLimit = 1 << 18;
+    /// <summary>Times the frame table was regrown for more translucent entries.</summary>
+    public int TranslucentGrowths;
     public uint TransBase => (uint)ChunkTableCapacity;
     public uint OverrideBase => (uint)(ChunkTableCapacity + MaxTranslucent);
     readonly int _pageTableBytes;
@@ -175,6 +183,23 @@ public sealed unsafe class Renderer : IDisposable
         SDL_SubmitGPUCommandBuffer(cmd);
         SDL_ReleaseGPUTransferBuffer(Device, tb);
         return buf;
+    }
+
+    /// <summary>Makes room for <paramref name="count"/> translucent entries (at most <see cref="TranslucentLimit"/>) by
+    /// recreating the frame table at the next power of two; call between frames. The old buffer is released (SDL_GPU
+    /// destroys it after the command buffers using it finish), and the table is uploaded in full every frame. Returns
+    /// false when <paramref name="count"/> exceeds the limit (the capacity is then the limit).</summary>
+    public bool EnsureTranslucentCapacity(int count)
+    {
+        if (count <= MaxTranslucent) return true;
+        int cap = (int)Math.Min(TranslucentLimit, System.Numerics.BitOperations.RoundUpToPowerOf2((uint)Math.Max(count, 1024)));
+        if (cap <= MaxTranslucent) return false;
+        var buf = CreateBuffer((uint)((ChunkTableCapacity + cap + OverrideSlots) * sizeof(ChunkDraw)), "frame table");
+        SDL_ReleaseGPUBuffer(Device, _frameTableBuf);
+        _frameTableBuf = buf;
+        MaxTranslucent = cap;
+        TranslucentGrowths++;
+        return count <= cap;
     }
 
     IntPtr CreateBuffer(uint size, string name)
