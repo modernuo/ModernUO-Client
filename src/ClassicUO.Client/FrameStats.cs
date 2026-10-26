@@ -124,6 +124,9 @@ namespace ClassicUO
         // map land and statics reused by chunk loads, and retired by evictions (MapObjectRecycler)
         ChunkReused,
         ChunkRetired,
+        // bytes allocated by UpdateLoading's mesh builds, chunks allocated because the chunk pool was empty
+        ChunkMeshAlloc,
+        ChunkNew,
         ChunkMeshUs,
         ChunkQueue,
         RegionWaitUs,
@@ -188,7 +191,7 @@ namespace ClassicUO
             "override_calls", "hidden_tiles", "lights_added", "foliage", "cap_multis", "cap_statics", "cap_items", "cap_mobiles", "cap_other", "gpu_mask_rebuilds",
             "gpu_skip_active", "gpu_full_tiles", "gpu_walk_tiles", "gpu_edge_tiles", "gpu_pick_tiles",
             "item_cache_builds", "item_cache_tiles", "item_cache_items", "item_cache_fallbacks", "item_cache_walked",
-            "chunk_loads", "chunk_load_us", "chunk_alloc", "chunk_gc", "chunk_gc_us", "chunk_reused", "chunk_retired", "chunk_mesh_us", "chunk_queue", "region_wait_us", "region_sync", "region_prefetch",
+            "chunk_loads", "chunk_load_us", "chunk_alloc", "chunk_gc", "chunk_gc_us", "chunk_reused", "chunk_retired", "chunk_mesh_alloc", "chunk_new", "chunk_mesh_us", "chunk_queue", "region_wait_us", "region_sync", "region_prefetch",
             "art_sync", "art_sync_us", "art_async", "art_upload_us", "art_pending",
             "ui_flushes", "ui_draw_calls", "ui_cached", "ui_untouched" };
 
@@ -520,6 +523,10 @@ namespace ClassicUO
             _cur[(int)FrameCounter.ChunkReused] = Game.Map.MapObjectRecycler.FrameReused;
             _cur[(int)FrameCounter.ChunkRetired] = Game.Map.MapObjectRecycler.FrameRetired;
             Game.Map.MapObjectRecycler.FrameReused = Game.Map.MapObjectRecycler.FrameRetired = 0;
+            _cur[(int)FrameCounter.ChunkMeshAlloc] = (int)Math.Min(int.MaxValue, Game.Map.Map.FrameMeshBytes);
+            _cur[(int)FrameCounter.ChunkNew] = Game.Map.Chunk.Created;
+            Game.Map.Map.FrameMeshBytes = 0;
+            Game.Map.Chunk.Created = 0;
             Game.Map.Map.FrameMeshTicks = 0;
             _cur[(int)FrameCounter.ChunkQueue] = Client.Game?.UO?.World?.Map?.QueuedChunks ?? 0;
 

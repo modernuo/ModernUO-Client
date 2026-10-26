@@ -68,6 +68,8 @@ namespace ClassicUO.Game.Map
         public static long FrameChunkLoadGcTicks;
         /// <summary>Time UpdateLoading spent building the meshes of the chunks it loaded this frame (FrameStats).</summary>
         public static long FrameMeshTicks;
+        /// <summary>Bytes the main thread allocated in those mesh builds (FrameStats chunk_mesh_alloc).</summary>
+        public static long FrameMeshBytes;
 
 
         public Map(World world, int index)
@@ -562,9 +564,11 @@ namespace ClassicUO.Game.Map
             if (chunk.Mesh.IsDirty && Client.Game.GraphicsDevice != null)
             {
                 long t0 = Stopwatch.GetTimestamp();
+                long bytes0 = GC.GetAllocatedBytesForCurrentThread();
                 chunk.Mesh.Build(chunk, _world, Client.Game.GraphicsDevice);
                 chunk.GpuMaskDirty = true;
                 FrameMeshTicks += Stopwatch.GetTimestamp() - t0;
+                FrameMeshBytes += GC.GetAllocatedBytesForCurrentThread() - bytes0;
             }
         }
 

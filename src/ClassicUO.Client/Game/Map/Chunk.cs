@@ -75,6 +75,9 @@ namespace ClassicUO.Game.Map
         }
 
 
+        /// <summary>Chunks allocated because the pool was empty (FrameStats chunk_new; reset by it).</summary>
+        public static int Created;
+
         public static Chunk Create(World world, int x, int y)
         {
             Chunk c;
@@ -86,6 +89,7 @@ namespace ClassicUO.Game.Map
             else
             {
                 c = new Chunk(world);
+                Created++;
             }
 
             c.LastAccessTime = Time.Ticks + Constants.CLEAR_TEXTURES_DELAY;
