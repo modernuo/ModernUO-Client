@@ -62,7 +62,10 @@ namespace ClassicUO.Renderer.Arts
 
         private bool Request(uint idx)
         {
-            if (idx >= _spriteInfos.Length || _spriteInfos[idx].Texture != null || !AsyncFirstSight || !_artLoader.Exists((int)idx))
+            // a sprite the worker could not decode counts as ready: the request was speculative, and a real lookup decodes
+            // (or fails) on the spot exactly as before
+            if (idx >= _spriteInfos.Length || _spriteInfos[idx].Texture != null || !AsyncFirstSight || !_artLoader.Exists((int)idx)
+                || _decoder.IsFailed(idx))
             {
                 return true;
             }
@@ -130,13 +133,6 @@ namespace ClassicUO.Renderer.Arts
                 return; // a lookup needed it first and decoded it itself
             }
 
-            if (job.Pixels == null)
-            {
-                Get(idx); // the worker failed: decode here (logs and falls back as a lookup does)
-
-                return;
-            }
-
             var pixels = job.Pixels.AsSpan(0, job.Width * job.Height);
             spriteInfo.Texture = _atlas.AddSprite(pixels, job.Width, job.Height, out spriteInfo.UV);
             PackSpriteMap.Register(spriteInfo.Texture, spriteInfo.UV, idx);
@@ -155,7 +151,17 @@ namespace ClassicUO.Renderer.Arts
             Array.Clear(_spriteInfos);
             Array.Clear(_realArtBounds);
             _picker.Clear();
+            Generation++;
         }
+
+        /// <summary>
+        /// Bumped whenever sprites that were in the atlas may be gone again (<see cref="Reload"/>): a caller that remembered
+        /// "these sprites are ready" must look again.
+        /// </summary>
+        public int Generation { get; private set; }
+
+        /// <summary>Scene teardown: drops finished worker decodes and returns their buffers (see FirstSightDecoder.Cancel).</summary>
+        public void CancelPending() => _decoder.Cancel();
 
         public ref readonly SpriteInfo GetLand(uint idx)
             => ref Get((uint)(idx & ~0x4000));

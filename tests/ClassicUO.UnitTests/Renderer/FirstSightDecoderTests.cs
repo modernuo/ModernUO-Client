@@ -132,27 +132,100 @@ namespace ClassicUO.UnitTests.Renderer
         }
 
         [Fact]
-        public void A_Failed_Decode_Reaches_Upload_Without_Pixels()
+        public void A_Failed_Speculative_Decode_Is_Terminal_And_Never_Uploads_Or_Throws()
         {
-            var seen = new List<(uint, bool)>();
+            var seen = new List<uint>();
+            int decodes = 0;
             var d = new FirstSightDecoder("test", 8, job =>
             {
+                Interlocked.Increment(ref decodes);
+
                 if (job.Index == 3)
                 {
                     job.Pixels = ArrayPool<uint>.Shared.Rent(4); // rented before the failure: returned by the decoder
-                    throw new InvalidDataException("corrupt");
+                    throw new InvalidDataException("corrupt page");
                 }
 
                 return job.Index != 5 && FillPattern(job); // 5: nothing to upload
-            }, job => seen.Add((job.Index, job.Pixels != null)));
+            }, job =>
+            {
+                job.Pixels.Should().NotBeNull("only decoded sprites reach the upload");
+                seen.Add(job.Index);
+            });
 
             d.Request(2);
             d.Request(3);
             d.Request(5);
-            WaitReady(d, 3, () => seen.Count);
+            WaitUntil(() => d.Pending == 0, () => d.Drain(long.MaxValue)); // no exception escapes Drain
 
-            seen.Should().BeEquivalentTo(new[] { (2u, true), (3u, false), (5u, false) });
+            seen.Should().Equal(2u);
+            d.IsFailed(3).Should().BeTrue();
+            d.IsFailed(5).Should().BeTrue();
+            d.IsFailed(2).Should().BeFalse();
+
+            // failed sprites are never requested again (readiness accepts them; a real lookup handles them as before)
+            d.Request(3);
+            d.Request(5);
             d.Pending.Should().Be(0);
+            Thread.Sleep(20);
+            decodes.Should().Be(3);
+        }
+
+        private static void WaitUntil(Func<bool> done, Action step)
+        {
+            var sw = Stopwatch.StartNew();
+
+            while (!done() && sw.ElapsedMilliseconds < 10000)
+            {
+                step();
+                Thread.Sleep(1);
+            }
+
+            done().Should().BeTrue();
+        }
+
+        [Fact]
+        public void Cancel_Drops_Finished_And_Running_Decodes_Without_Uploading()
+        {
+            int uploads = 0;
+            using var gate = new ManualResetEventSlim(false);
+            var d = new FirstSightDecoder("test", 16, job =>
+            {
+                if (job.Index >= 8)
+                {
+                    gate.Wait(); // still decoding when the scene goes
+                }
+
+                return FillPattern(job);
+            }, _ => uploads++);
+
+            for (uint i = 0; i < 10; i++)
+            {
+                d.Request(i);
+            }
+
+            WaitUntil(() => d.ReadyCount == 8, () => { });
+
+            // logout: finished decodes are dropped (buffers returned) without an upload
+            d.Cancel();
+            d.ReadyCount.Should().Be(0);
+            d.Pending.Should().Be(2);
+            d.IsRequested(3).Should().BeFalse("a cancelled sprite may be requested again");
+
+            // the two running workers finish after the cancel: they return their buffers themselves, and the next drain
+            // only clears their state
+            gate.Set();
+            WaitUntil(() => d.ReadyCount == 2, () => { });
+            d.Drain(long.MaxValue);
+            d.Drain(long.MaxValue);
+            uploads.Should().Be(0);
+            d.Pending.Should().Be(0);
+            d.IsRequested(9).Should().BeFalse();
+            d.IsFailed(9).Should().BeFalse();
+
+            // and the decoder works normally afterwards
+            d.Request(3);
+            WaitUntil(() => uploads == 1, () => d.Drain(long.MaxValue));
         }
 
         [Fact]

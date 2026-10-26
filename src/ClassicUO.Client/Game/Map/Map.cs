@@ -154,7 +154,9 @@ namespace ClassicUO.Game.Map
         {
             long t0 = Stopwatch.GetTimestamp();
             chunk.Load(Index);
-            chunk.ArtPending = ArtWait && !RequestChunkArt(chunk);
+            _blockArtWait.Forget(ChunkKey(chunk.X, chunk.Y));
+            _chunkArtWait.Forget(ChunkKey(chunk.X, chunk.Y));
+            chunk.ArtPending = ArtWait && RequestChunkArt(chunk) != ArtCheck.Ready;
 
             if (_parked.Remove(block, out var list))
             {
@@ -325,27 +327,40 @@ namespace ClassicUO.Game.Map
 
             _queue.Drain(pcx, pcy, _frame, deadline, _clock, _tryLoad);
 
-            if (_artScanned.Count > 4096)
-            {
-                _artScanned.Clear(); // chunks that left the queue unloaded; a rescan only costs a full pass
-            }
+            // keys of chunks that left the queue unloaded; a forgotten key only costs one full scan
+            _blockArtWait.Trim(4096);
+            _chunkArtWait.Trim(4096);
         }
 
-        // chunks whose art was requested in full once: later checks stop at the first sprite still missing
-        private readonly HashSet<long> _artScanned = new HashSet<long>();
+        // queued blocks waiting for art: the first sprite still missing (positions: land cells 0..63, then statics)
+        private readonly ArtWaitTracker _blockArtWait = new ArtWaitTracker();
+        // loaded ArtPending chunks: the art progress (uploads so far) at the last check
+        private readonly ArtWaitTracker _chunkArtWait = new ArtWaitTracker();
 
         private static long ChunkKey(int chunkX, int chunkY) => ((long)chunkX << 32) | (uint)chunkY;
 
+        // what a remembered "ready" depends on besides the uploads: the atlas contents (Art.Reload) and the season graphics
+        private int ArtGeneration => Client.Game.UO.Arts.Generation * 16 + (int)_world.Season;
+
+        private enum ArtCheck
+        {
+            Ready,
+            /// <summary>Not ready, after a cheap check (counts nothing against the budget).</summary>
+            Waiting,
+            /// <summary>Not ready, after a full scan that requested the missing art (counts against the budget).</summary>
+            Scanned
+        }
+
         /// <summary>
-        /// True when the art that chunk (chunkX, chunkY)'s map block names (land art, texmaps, static art, with the current
-        /// season's graphics) is in the atlases; otherwise requests what is missing (worker decodes) and returns false.
-        /// The first call requests everything; later calls stop at the first sprite still missing (re-requesting it).
+        /// Whether the art that chunk (chunkX, chunkY)'s map block names (land art, texmaps, static art, with the current
+        /// season's graphics) is in the atlases. The first check (and the first after a season change or atlas reload)
+        /// requests everything missing at once; later checks resume at the first sprite still missing.
         /// </summary>
-        private bool RequestBlockArt(int chunkX, int chunkY)
+        private ArtCheck RequestBlockArt(int chunkX, int chunkY)
         {
             if (!Client.Game.UO.FileManager.Maps.TryGetBlock(Index, chunkX, chunkY, out var block))
             {
-                return true;
+                return ArtCheck.Ready;
             }
 
             var arts = Client.Game.UO.Arts;
@@ -353,62 +368,76 @@ namespace ClassicUO.Game.Map
             var landData = Client.Game.UO.FileManager.TileData.LandData;
             var season = _world.Season;
             long key = ChunkKey(chunkX, chunkY);
-            bool full = !_artScanned.Contains(key);
-            bool ready = true;
+            int generation = ArtGeneration;
+            int pos = _blockArtWait.Begin(key, generation, out bool full);
+            int firstMissing = -1;
+            int count = block.Land.Length + block.Statics.Length;
 
-            for (int i = 0; i < block.Land.Length; i++)
+            for (; pos < count; pos++)
             {
-                ushort graphic = SeasonManager.GetLandSeasonGraphic(season, block.Land[i].TileId);
+                bool ready;
 
-                if (graphic <= 2)
+                if (pos < block.Land.Length)
                 {
-                    continue; // not drawn (Land.AllowedToDraw)
+                    ushort graphic = SeasonManager.GetLandSeasonGraphic(season, block.Land[pos].TileId);
+
+                    if (graphic <= 2)
+                    {
+                        continue; // not drawn (Land.AllowedToDraw)
+                    }
+
+                    // the texmap is used when the tile is stretched (it depends on the neighbours' z): ask for both. A
+                    // failed speculative decode counts as ready, so this can't wait for (or throw on) art the old path
+                    // never decoded
+                    ushort tex = graphic < landData.Length ? landData[graphic].TexID : (ushort)0;
+                    ready = arts.RequestLand(graphic) & (tex == 0 || texmaps.Request(tex));
+                }
+                else
+                {
+                    ready = arts.RequestArt(SeasonManager.GetSeasonGraphic(season, block.Statics[pos - block.Land.Length].Graphic));
                 }
 
-                // the texmap is used when the tile is stretched (it depends on the neighbours' z): ask for both
-                ushort tex = graphic < landData.Length ? landData[graphic].TexID : (ushort)0;
-
-                if (!arts.RequestLand(graphic) | (tex != 0 && !texmaps.Request(tex)))
+                if (!ready && firstMissing < 0)
                 {
-                    ready = false;
+                    firstMissing = pos;
 
                     if (!full)
                     {
-                        return false;
+                        break;
                     }
                 }
             }
 
-            foreach (ref readonly var sb in block.Statics)
-            {
-                if (!arts.RequestArt(SeasonManager.GetSeasonGraphic(season, sb.Graphic)))
-                {
-                    ready = false;
+            _blockArtWait.End(key, generation, firstMissing);
 
-                    if (!full)
-                    {
-                        return false;
-                    }
-                }
-            }
-
-            if (ready)
-            {
-                _artScanned.Remove(key);
-            }
-            else
-            {
-                _artScanned.Add(key);
-            }
-
-            return ready;
+            return firstMissing < 0 ? ArtCheck.Ready : full ? ArtCheck.Scanned : ArtCheck.Waiting;
         }
 
         /// <summary>
         /// As <see cref="RequestBlockArt"/>, from a loaded chunk's objects: the art its mesh build and draw walk will look
-        /// up (land art, texmaps of stretched land, static art).
+        /// up (land art, texmaps of stretched land, static art). Walks the tiles again only when art was uploaded since the
+        /// last check (or the generation changed).
         /// </summary>
-        private bool RequestChunkArt(Chunk chunk)
+        private ArtCheck RequestChunkArt(Chunk chunk)
+        {
+            var arts = Client.Game.UO.Arts;
+            var texmaps = Client.Game.UO.Texmaps;
+            long key = ChunkKey(chunk.X, chunk.Y);
+            int generation = ArtGeneration;
+            int progress = (arts.CompletedDecodes + texmaps.CompletedDecodes) & int.MaxValue;
+
+            if (_chunkArtWait.Begin(key, generation, out bool full) == progress && !full)
+            {
+                return ArtCheck.Waiting;
+            }
+
+            bool ready = RequestChunkArtWalk(chunk);
+            _chunkArtWait.End(key, generation, ready ? -1 : progress);
+
+            return ready ? ArtCheck.Ready : ArtCheck.Scanned;
+        }
+
+        private bool RequestChunkArtWalk(Chunk chunk)
         {
             var arts = Client.Game.UO.Arts;
             var texmaps = Client.Game.UO.Texmaps;
@@ -463,9 +492,11 @@ namespace ClassicUO.Game.Map
                 }
 
                 // loaded by game logic before its art was there: draw it once the art is uploaded
-                if (!RequestChunkArt(chunk))
+                var check = RequestChunkArt(chunk);
+
+                if (check != ArtCheck.Ready)
                 {
-                    return ChunkLoadResult.NotReady;
+                    return check == ArtCheck.Scanned ? ChunkLoadResult.Scanned : ChunkLoadResult.NotReady;
                 }
 
                 chunk.ArtPending = false;
@@ -491,9 +522,14 @@ namespace ClassicUO.Game.Map
             }
 
             // the art first (free while it decodes on the workers), so the mesh build below reads no art for the first time
-            if (ArtWait && !RequestBlockArt(chunkX, chunkY))
+            if (ArtWait)
             {
-                return ChunkLoadResult.NotReady;
+                var check = RequestBlockArt(chunkX, chunkY);
+
+                if (check != ArtCheck.Ready)
+                {
+                    return check == ArtCheck.Scanned ? ChunkLoadResult.Scanned : ChunkLoadResult.NotReady;
+                }
             }
 
             chunk = GetChunk2(chunkX, chunkY, true);
