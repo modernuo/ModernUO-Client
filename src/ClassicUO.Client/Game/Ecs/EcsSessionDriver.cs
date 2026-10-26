@@ -377,6 +377,13 @@ namespace ClassicUO.Game
 
                     return true;
 
+                // itemmixed on|off: the item cache's mixed tiles (gpu_prepare_item_cache_mixed, E7)
+                case "itemmixed" when args.Length > 0:
+                    Settings.GlobalSettings.GpuPrepareItemCacheMixed = args[0] == "on";
+                    Log.Info($"[ECS] driver: item cache mixed tiles {args[0]}");
+
+                    return true;
+
                 // handles on|off: the object handles (name overhead) toggle, for every object type; handles count: the
                 // name gumps open and the items/mobiles showing handles (W5's active item check)
                 case "handles" when args.Length > 0:
