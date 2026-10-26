@@ -116,6 +116,9 @@ namespace ClassicUO.Game.GameObjects
 
         /// <summary>E4: the frame number of World.UpdateMobilesByClock that last updated this mobile (checker).</summary>
         internal int UpdateStamp;
+
+        /// <summary>E4: this mobile's position in <c>World.Mobiles.Values</c>'s enumeration, valid while the dictionary has had no insert (World.SortInMobilesOrder).</summary>
+        internal int Ordinal;
         private bool _isAnimationForwardDirection;
         private byte _animationGroup = 0xFF;
         private byte _animationInterval;
