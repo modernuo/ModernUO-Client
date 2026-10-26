@@ -56,6 +56,11 @@ Running notes for your return, newest at the top within each section. Started 20
 
 ## In progress
 
+- **Teleport art decode on a worker** (`poc/teleport-art-worker`): first-sight statics decoded off the main thread before a chunk's mesh build, to remove the 6–10 ms single-chunk frames after teleports.
+- **E5 emission replay cost** (`bg/ecs-e5-replay`, Sonnet draft; audited before any merge).
+- **E9 ECS test seams** (`bg/ecs-e9-seams`, Sonnet; seams only, no behaviour change).
+- **E2 packet-storm micro-benchmark and E3 ECS inspector** (`bg/ecs-e2-e3`, Sonnet).
+- **Your FPS build is not republished yet:** the auto-mode classifier refused `publish-aot.ps1` (2026-10-26). It is still 4ba96f416.
 - All agents share a `bench.lock`, so client runs, builds and timing series never overlap.
 
 ## Things you saw tonight, explained
