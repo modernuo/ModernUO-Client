@@ -444,6 +444,11 @@ namespace ClassicUO
                 _cur[(int)FrameCounter.AllocBytes] = (int)Math.Min(int.MaxValue, alloc - _allocThread);
                 _allocThread = alloc;
 
+                if (GC.CollectionCount(0) != _gcSeen)
+                {
+                    LogGc(now - _lastEnd);
+                }
+
                 for (int p = 0; p < PHASES; p++)
                 {
                     _phase[p][i] = (float)(_acc[p] * toMs);
@@ -470,6 +475,33 @@ namespace ClassicUO
 
         private static int _lastSync, _lastPrefetch;
         private static long _lastWaitTicks;
+
+        private static int _gcSeen = -1;
+
+        // one line per garbage collection seen at the end of a recorded frame: what kind, how long, what it kept
+        private static void LogGc(long frameTicks)
+        {
+            int seen = GC.CollectionCount(0);
+            int missed = _gcSeen < 0 ? 0 : seen - _gcSeen - 1;
+            _gcSeen = seen;
+            GCMemoryInfo gi = GC.GetGCMemoryInfo(GCKind.Any);
+            ReadOnlySpan<TimeSpan> pauses = gi.PauseDurations;
+            ReadOnlySpan<GCGenerationInfo> gens = gi.GenerationInfo;
+            var inv = CultureInfo.InvariantCulture;
+            const double MB = 1024.0 * 1024.0;
+            string sizes = "";
+
+            for (int g = 0; g < gens.Length; g++)
+            {
+                sizes += string.Format(inv, " g{0} {1:0.0}->{2:0.0}", g, gens[g].SizeBeforeBytes / MB, gens[g].SizeAfterBytes / MB);
+            }
+
+            Log.Info(string.Format(inv, "[gc] {0} #{1} gen{2}{3}{4} pause {5:0.00} ms, promoted {6:0.00} MB, heap {7:0.0} MB, pinned {8}, frame {9:0.00} ms{10} (MB){11}",
+                _tag, gi.Index, gi.Generation, gi.Compacted ? " compacting" : "", gi.Concurrent ? " concurrent" : "",
+                pauses.Length > 0 ? pauses[0].TotalMilliseconds + (pauses.Length > 1 ? pauses[1].TotalMilliseconds : 0) : 0,
+                gi.PromotedBytes / MB, gi.HeapSizeBytes / MB, gi.PinnedObjectsCount, frameTicks * 1000.0 / Stopwatch.Frequency, sizes,
+                missed > 0 ? $", {missed} more since the last line" : ""));
+        }
 
         private static void SampleMapLoading()
         {
