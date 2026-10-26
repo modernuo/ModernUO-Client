@@ -403,6 +403,17 @@ namespace ClassicUO.Game.Scenes
         /// <summary>The statics-list index being captured (-1 outside that list): CUO_GPU_ITEM_CHECK's insertion check.</summary>
         internal static int CaptureStaticsIndex = -1;
 
+        /// <summary>CUO_GPU_ITEM_CHECK (E7): when on, the capture mixes every object it reaches, and every cached ground item the
+        /// item cache emits, into <see cref="CaptureOrderHash"/> in capture order (the dynamic buffer's order).</summary>
+        internal static bool CaptureOrderOn;
+        internal static ulong CaptureOrderHash;
+
+        /// <summary>One step of the capture-order hash: order-sensitive, keyed by object identity.</summary>
+        internal static ulong MixCaptureOrder(ulong h, object obj)
+        {
+            return (h ^ (ulong)(uint)System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(obj)) * 1099511628211UL + 0x9E3779B97F4A7C15UL;
+        }
+
         /// <summary>GPU world: items, multis, mobiles and corpses go to the world pass through their views (land and statics are baked).
         /// <paramref name="cached"/>: the scene whose cached ground items join the statics list's capture.</summary>
         public int CaptureRenderLists(UltimaBatcher2D batcher, sbyte maxGroundZ, GpuWorldRenderer gpu, GameScene cached = null)
@@ -484,6 +495,11 @@ namespace ClassicUO.Game.Scenes
                 if (statics)
                 {
                     CaptureStaticsIndex = i;
+                }
+
+                if (CaptureOrderOn)
+                {
+                    CaptureOrderHash = MixCaptureOrder(CaptureOrderHash, obj);
                 }
 
                 if (stats)
