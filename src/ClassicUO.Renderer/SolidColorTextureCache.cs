@@ -34,6 +34,7 @@ namespace ClassicUO.Renderer
             );
 
             texture.SetData(new[] { color });
+            TextureUploads.Changed();
             _textures[color] = texture;
 
             return texture;

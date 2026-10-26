@@ -111,6 +111,10 @@ namespace ClassicUO.Configuration
         // chunk and their tiles left out of the walk (W4, GameSceneGpuItemCache). Off = every item walked and extracted.
         [JsonPropertyName("gpu_prepare_item_cache")] public bool GpuPrepareItemCache { get; set; } = true;
 
+        // B8: the UI pass records its draws and leaves the UI targets untouched when they match the last frame's exactly; the
+        // cursor goes over a kept copy of the UI (GameController.DrawUiCached). Off = the UI drawn every frame.
+        [JsonPropertyName("ui_render_cache")] public bool UiRenderCache { get; set; } = true;
+
         // Gpu world renderer: mobiles' dynamic sprites come from the ECS (MobileAnimationSystem + MobileSpriteExtract)
         // instead of capturing MobileView.Draw. Off = the capture, the parity yardstick (EcsParity).
         [JsonPropertyName("gpu_ecs_sprites")] public bool GpuEcsSprites { get; set; } = true;

@@ -10,6 +10,7 @@ namespace ClassicUO.Renderer
         private RenderTarget2D _uiRenderTarget;
         private RenderTarget2D _lightRenderTarget;
         private RenderTarget2D _worldRenderTarget;
+        private RenderTarget2D _uiCacheRenderTarget;
 
         private Rectangle _gameWindowOnScreen;
         private Rectangle _gameWindowAfterDPI;
@@ -25,6 +26,16 @@ namespace ClassicUO.Renderer
         public RenderTarget2D UiRenderTarget { get => _uiRenderTarget; }
         public RenderTarget2D LightRenderTarget { get => _lightRenderTarget; }
         public RenderTarget2D WorldRenderTarget { get => _worldRenderTarget; }
+
+        /// <summary>B8: the scene UI and gumps without the cursor, kept between frames (null while <see cref="UiCache"/> is off).</summary>
+        public RenderTarget2D UiCacheRenderTarget { get => _uiCacheRenderTarget; }
+
+        /// <summary>B8, the UI render cache: the UI target keeps its contents between frames and a second UI-sized target holds
+        /// the UI without the cursor. Set before <see cref="EnsureSizes"/>.</summary>
+        public bool UiCache { get; set; }
+
+        /// <summary>Changes whenever the UI target or the UI cache target is (re)created: their old pixels are gone.</summary>
+        public int UiTargetsVersion { get; private set; }
 
         // The GPU world pass draws into the world target outside FNA: FNA must load it instead of clearing it on bind.
         public bool PreserveWorldContents { get; set; }
@@ -46,7 +57,25 @@ namespace ClassicUO.Renderer
             _gameWorldSceneOnScreen = ScaleRectangle(gameWorldSceneAfterDPI, 1/dpiScale);
             _gameWorldSceneAfterDPI = gameWorldSceneAfterDPI;
 
-            EnsureSize(graphicsDevice, ref _uiRenderTarget, _gameWindowAfterDPI.Width, _gameWindowAfterDPI.Height);
+            RenderTarget2D ui = _uiRenderTarget, uiCache = _uiCacheRenderTarget;
+            EnsureSize(graphicsDevice, ref _uiRenderTarget, _gameWindowAfterDPI.Width, _gameWindowAfterDPI.Height,
+                UiCache ? RenderTargetUsage.PreserveContents : (RenderTargetUsage?)null);
+
+            if (UiCache)
+            {
+                EnsureSize(graphicsDevice, ref _uiCacheRenderTarget, _gameWindowAfterDPI.Width, _gameWindowAfterDPI.Height,
+                    RenderTargetUsage.PreserveContents);
+            }
+            else if (_uiCacheRenderTarget != null)
+            {
+                _uiCacheRenderTarget.Dispose();
+                _uiCacheRenderTarget = null;
+            }
+
+            if (ui != _uiRenderTarget || uiCache != _uiCacheRenderTarget)
+            {
+                UiTargetsVersion++;
+            }
             EnsureSize(graphicsDevice, ref _lightRenderTarget, _gameWorldSceneAfterDPI.Width, _gameWorldSceneAfterDPI.Height);
             EnsureSize(graphicsDevice, ref _worldRenderTarget, _gameWorldSceneAfterDPI.Width, _gameWorldSceneAfterDPI.Height,
                 PreserveWorldContents ? RenderTargetUsage.PreserveContents : (RenderTargetUsage?)null);

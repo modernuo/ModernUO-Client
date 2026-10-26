@@ -11,12 +11,12 @@ using System.Runtime.InteropServices;
 
 namespace ClassicUO.Renderer
 {
-    public sealed unsafe class UltimaBatcher2D : IDisposable
+    public sealed unsafe partial class UltimaBatcher2D : IDisposable
     {
         private static readonly float[] _cornerOffsetX = new float[] { 0.0f, 1.0f, 0.0f, 1.0f };
         private static readonly float[] _cornerOffsetY = new float[] { 0.0f, 0.0f, 1.0f, 1.0f };
 
-        private const int MAX_SPRITES = 0x800;
+        internal const int MAX_SPRITES = 0x800;
         private const int MAX_VERTICES = MAX_SPRITES * 4;
         private const int MAX_INDICES = MAX_SPRITES * 6;
         private BlendState _blendState;
@@ -972,6 +972,19 @@ namespace ClassicUO.Renderer
         public void Begin(Effect customEffect, Matrix transform_matrix)
         {
             EnsureNotStarted();
+
+            if (_recordPass != null)
+            {
+                if (customEffect != null)
+                {
+                    AbortRecording();
+                }
+                else
+                {
+                    _recBegun = true;
+                }
+            }
+
             _started = true;
             _worldOffsetActive = false;
             TextureSwitches = 0;
@@ -1234,6 +1247,7 @@ namespace ClassicUO.Renderer
 
         public void DirectDraw(Texture2D texture, int spriteStart, int spriteCount)
         {
+            AbortRecordingIfActive();
             InternalDraw(texture, spriteStart, spriteCount);
         }
 
@@ -1254,6 +1268,8 @@ namespace ClassicUO.Renderer
 
         public void DrawDirectIndexed(Texture2D texture, int startIndex, int primitiveCount, int numVertices)
         {
+            AbortRecordingIfActive();
+
             long t0 = CollectFrameStats ? Stopwatch.GetTimestamp() : 0;
 
             GraphicsDevice.Textures[0] = texture;
@@ -1297,6 +1313,7 @@ namespace ClassicUO.Renderer
 
         public void SetWorldOffset(int offsetX, int offsetY)
         {
+            AbortRecordingIfActive();
             Flush();
             ApplyStates();
             _worldOffsetActive = true;
@@ -1308,6 +1325,7 @@ namespace ClassicUO.Renderer
 
         public void ResetWorldOffset()
         {
+            AbortRecordingIfActive();
             Flush();
             _worldOffsetActive = false;
 
@@ -1376,53 +1394,67 @@ namespace ClassicUO.Renderer
 
         private void Flush()
         {
+            if (_recordPass != null)
+            {
+                RecordSegment();
+
+                return;
+            }
+
             if (_numSprites == 0)
             {
                 return;
             }
 
+            DrawRange(_vertexInfo, _textureInfo, 0, _numSprites);
+            _numSprites = 0;
+        }
+
+        // Applies the states and draws sprites [start, start + count) of the arrays: one vertex upload per MAX_SPRITES,
+        // one draw call per run of equal textures. Flush() draws the queue with it; a recorded pass (B8) draws its segments.
+        private void DrawRange(PositionNormalTextureColor4[] vertices, Texture2D[] textures, int start, int count)
+        {
             long t0 = CollectFrameStats ? Stopwatch.GetTimestamp() : 0;
 
             ApplyStates();
 
-            int arrayOffset = 0;
-        nextbatch:
-            ++FlushesDone;
+            int arrayOffset = start;
+            int remaining = count;
 
-            if (CollectFrameStats)
+            while (remaining > 0)
             {
-                FrameFlushes++;
-            }
+                ++FlushesDone;
 
-            int batchSize = Math.Min(_numSprites, MAX_SPRITES);
-            int baseOff = UpdateVertexBuffer(arrayOffset, batchSize);
-            int offset = 0;
-
-            Texture2D curTexture = _textureInfo[arrayOffset];
-
-            for (int i = 1; i < batchSize; ++i)
-            {
-                Texture2D tex = _textureInfo[arrayOffset + i];
-
-                if (tex != curTexture)
+                if (CollectFrameStats)
                 {
-                    ++TextureSwitches;
-                    InternalDraw(curTexture, baseOff + offset, i - offset);
-                    curTexture = tex;
-                    offset = i;
+                    FrameFlushes++;
                 }
+
+                int batchSize = Math.Min(remaining, MAX_SPRITES);
+
+                int baseOff = UpdateVertexBuffer(vertices, arrayOffset, batchSize);
+                int offset = 0;
+
+                Texture2D curTexture = textures[arrayOffset];
+
+                for (int i = 1; i < batchSize; ++i)
+                {
+                    Texture2D tex = textures[arrayOffset + i];
+
+                    if (tex != curTexture)
+                    {
+                        ++TextureSwitches;
+                        InternalDraw(curTexture, baseOff + offset, i - offset);
+                        curTexture = tex;
+                        offset = i;
+                    }
+                }
+
+                InternalDraw(curTexture, baseOff + offset, batchSize - offset);
+
+                remaining -= batchSize;
+                arrayOffset += batchSize;
             }
-
-            InternalDraw(curTexture, baseOff + offset, batchSize - offset);
-
-            if (_numSprites > MAX_SPRITES)
-            {
-                _numSprites -= MAX_SPRITES;
-                arrayOffset += MAX_SPRITES;
-                goto nextbatch;
-            }
-
-            _numSprites = 0;
 
             if (CollectFrameStats)
             {
@@ -1548,7 +1580,7 @@ namespace ClassicUO.Renderer
             _sampler = sampler ?? SamplerState.PointClamp;
         }
 
-        private unsafe int UpdateVertexBuffer(int start, int count)
+        private unsafe int UpdateVertexBuffer(PositionNormalTextureColor4[] vertices, int start, int count)
         {
             int offset;
             SetDataOptions hint;
@@ -1564,7 +1596,7 @@ namespace ClassicUO.Renderer
                 hint = SetDataOptions.NoOverwrite;
             }
 
-            fixed (PositionNormalTextureColor4* p = &_vertexInfo[start])
+            fixed (PositionNormalTextureColor4* p = &vertices[start])
             {
                 _vertexBuffer.SetDataPointerEXT
                 (

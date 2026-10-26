@@ -1445,3 +1445,85 @@ Branch `worktree-agent-ad5fb48ffeb803a6e` (override-cut agent, kbatman4), starte
 **Left:**
 - Captured views (wet animated statics, multis, items, mobiles, effects) keep their own hue and alpha paths (unchanged).
 - The pending-override list (8,192 entries) still drops on overflow (counted and logged). The translucent list grows instead, up to 262,144 entries.
+
+### 2026-10-25 — B8 and B9: UI render cache ready to merge, batch regrouping not worth it (batcher agent)
+
+Branch `worktree-agent-a08462117e88b693a`, from 18becdb4e, merged up to poc/modern-client eaa489c92 (final numbers and checks on that merge, 587a27d24). Commits: 8abd49133 (B8), merges 4613e365b and 587a27d24, docs. B9 experiment: branch `poc/b9-batch-sort-experiment` (8dc645168), not merged. JIT Release, 1920×1080 at DPI 1.5, kbatman3. Procedure: [testing/ui-batcher.md](testing/ui-batcher.md), "UI render cache (B8)".
+
+**B8 design** (setting `ui_render_cache`, default on; `uicache:on|off`, `-uicache`)
+- **True dirty tracking was rejected.** Control draws read time, the mouse and world state everywhere, and some have side effects: `HealthBarGump` and `ContainerGump` set `SelectedObject.HealthbarObject`/`SelectedContainer` while drawing, and the world draw reads them the next frame. GameScene.DrawUI also runs `ProcessWorldText` and clears `SelectedObject.Object`.
+- **So the UI pass still runs in full every frame.** The batcher records it instead of drawing (`Batcher2D.Recording.cs`). Each flush becomes a segment with its sprite range and every state its draw uses: blend, depth-stencil, sampler, scissor enable and rectangle, transform, viewport, brightlight, transparency circle, and whether a `Begin` ran since the last flush (the effect is applied again there, as before).
+  - `StopRecording` compares the segments, the texture references and the vertex bytes with the last submission to the same target.
+  - Same: the target, which keeps its contents (`PreserveContents`), is left alone. Changed: it's cleared and the segments are replayed with the same FNA calls `Flush` makes.
+  - A custom effect, a mesh draw or a world offset during a recording aborts it: what was recorded is drawn, and the rest of the pass draws directly. The UI never does this.
+- **Two stages** (GameControllerUiCache.cs):
+  1. Scene UI and gumps go into a new UI cache target.
+  2. The UI target gets an opaque 1:1 copy of it plus the cursor, recorded the same way. Moving the mouse over the world redraws only stage 2. When neither changed, no UI GPU pass runs at all.
+- **What a recording can't see invalidates both:**
+  - the targets being recreated (`RenderTargets.UiTargetsVersion`: resize, DPI, the setting toggled);
+  - `GraphicsDevice.DeviceReset`;
+  - the hue samplers bound in texture slots 1 and 2;
+  - any texture upload. `TextureUploads.Changed()` follows every `SetData`/`SetDataPointerEXT` on a texture: atlases, the minimap writing into its atlas slot in place, the world map, multi maps, the aura, solid colours, sprite fonts, plugin textures, the screenshot texture. A unit test scans the sources for upload sites without it.
+- **Dirty sources, the complete list:**
+  - anything that changes a vertex, a texture reference or a segment state of the recorded UI pass;
+  - a target recreated; a device reset; the hue sampler bindings; any texture upload;
+  - a recording aborted;
+  - the window too small to draw the UI (the uncached path runs and invalidates).
+- **Fallbacks (drawn every frame):** none per control. A frame whose recording differs is drawn in full, so when the UI changes every frame, every frame is drawn. With the cache off, or no UI target, the old path runs unchanged.
+- **Known limits:**
+  - State objects (BlendState etc.) are compared by reference, so one mutated in place would go unseen. The UI uses the stock ones.
+  - Texture contents changed outside our code (FNA internals) aren't tracked. The UI draws none.
+
+**Results** (µs per frame, FrameStats averages of 3 windows; paperdoll, backpack, journal, status and 4 health bars; `off` and `on` alternate in one session, in both orders; the `ui` plan mode loops scripted UI changes):
+
+| Run | UI pass off → on | UI flushes / draw calls off → on | Draw off → on | UI target kept |
+|---|---|---|---|---|
+| Static, 4613e365b, two orders | 100 / 97 → 54 / 54 | 7–8 / 17–18 → 0 / 0 | 295 / 292 → 248 / 251 | 100% |
+| `ui` scene, 4613e365b, two orders | 104 / 104 → 61 / 61 | 7.4–8.4 / 18 → 0.4 / 0.6 | 307 / 311 → 261 / 264 | 90–93% (gumps target 99%+) |
+| Static, final 587a27d24 | 103 → 52 | 7 / 17 → 0 / 0 | 323 → 260 | 100% |
+| `ui` scene, final 587a27d24 | 110 → 72 | 7.4 / 18 → 0.4 / 0.6 | 358 → 328 | 90% |
+| Every frame changed (`CUO_UI_CACHE_FORCE=1`) | 100 → 117 | 7 / 17 → 8 / 18 | 317 → 351 | 0% |
+
+- **What's left when the UI is kept (about 50 µs)** is the gump tree walk (8–12 µs) and turning the queued commands into vertices, mostly text glyphs. The compare takes a few µs.
+- **Worst case** (+17 µs): the copy draw, one more flush, and recording plus replay.
+- **Noise:** the machine was noisy all session, with two or three other agents' clients and NativeAOT benches. The final-merge runs ran at 1,078–1,469 fps, against about 1,300–1,360 fps earlier. The off/on deltas within a session are consistent (−43 to −51 µs of UI pass); absolute values, Draw and fps aren't. **Re-measure on a quiet machine:** every row of the table. NativeAOT wasn't measured.
+
+**Pixel identity**
+- **Self-check** (`CUO_UI_CACHE_CHECK`): the UI target is read back and compared with a replay of the recordings (no copy) and with a second, direct UI pass, every 5th–10th frame.
+  - The check plan covered the `ui` scene (hover, tooltip, journal moving, chat caret, a held item, health bar and status hits changing, zoom 1 and 1.25, the world map gump), a resize to 1600×900 and back, vsync on and off (device reset), and the `ui` scene again in Legacy.
+  - Result: 12,940 checks (12,800 with the gumps target kept), with **0 replay and 0 direct mismatches**.
+  - The shot run added 6,282 checks, including 20 renderer flips: 0 and 0.
+- **Shots:**
+  - UI target, cache off vs on in one session, moments apart: identical (0 px) at both moments.
+  - New (cache on) vs the base build eaa489c92: only the journal text differs (live messages and times).
+  - Gpu world: Britain is identical; the bank differs only where an NPC moved.
+  - I looked at the overlays and crops.
+- **Legacy (required):** pure Legacy at the house spot: 1.89% near-black in all three new runs and in the base run (clean). New vs base differs only on moving mobiles and on scattered single pixels, which two new runs also show between them. I looked at the images.
+- **Tests:** 338 pass: 322 plus 16 new (recording equality, every segment state, −0 vs 0, and the texture-upload source scan).
+  - `ChunkLoadingTests.Prefetched_Regions_Give_The_Same_Blocks_And_Never_Block_IsBlockReady` is flaky on the final merge: it failed 2 of 5 runs, with no code of this branch involved (chunk prefetch threading). Not looked into.
+- **Builds:** Release and `-p:CuoDevTools=false` both build on the final merge.
+- **Codex audit (merge with fixes), fixed:**
+  - **P2:** the minimap rewrites its atlas slot while it draws, with the same texture, UVs and vertices, so the frame was accepted as Same and showed the old map for one frame. Each stage now also compares `TextureUploads.Epoch` after it draws with the frame's start value and redraws if it changed (`UiCacheState.Resolve`, unit-tested). The start value stays stored, so the next frame redraws too.
+  - **P3:** segments record the full viewport (origin, size, depth range); replay applies it and restores the caller's.
+  - **P3:** an aborted recording restores the caller's vertex and index buffer bindings after the replay (`DrawDirectIndexed` with mesh buffers already bound).
+  - **Checked:** both flavours build; 465 tests pass. A check run with the minimap open while walking (Gpu, then Legacy) plus the `ui` scene: 11,839 checks, 0 replay and 0 direct mismatches. Legacy house shot 1.88% near-black.
+  - Re-checked after merging poc/modern-client bbd86eb37 (11f41fd06): both flavours build, 465 tests pass, the minimap-walk check (Gpu and Legacy) found 0 and 0 in 8,406 checks, and the Legacy house shot is 1.88% near-black.
+  - **Found on the way:** a minimap opened between `UIManager.Update` and drawing (DevBench's position in the frame) throws in `CreateMiniMapTexture` before its first `Update` (stock ClassicUO). The new DevBench `minimap` entry updates the gump once.
+- **Later merge** 70e81df8f (poc/modern-client 56f8fdc4a: ECS tests and cloak order, no UI or batcher files): both flavours build, and 458 tests pass. No client runs were repeated on it.
+
+**B9 (batch-key sorting): not merged**
+- **Tried:**
+  - An order-safe regrouping of each UI flush by texture. A sprite joins an earlier run of its texture only if its box overlaps none of the runs queued after that run. Pixels stay identical: overlapping pairs keep their order, and disjoint ones touch disjoint pixels.
+  - Skipping `Set{BlendState,Stencil,Sampler}` flushes when the state doesn't change.
+- **Measured** (same scene, cache off, one session): UI draw calls 17.6 → 14.6, but UI batcher time 50 → 66 µs and the UI pass 103 → 119 µs. The planning and copying cost more than the three draw calls saved. Skipping redundant states saved no flushes anywhere (13–14 per frame either way).
+- With B8 on, B9 could only help frames whose UI changed, and even at zero cost it would save about 9 µs on them.
+
+**Also**
+- New FrameStats phases and counters: `ui_pass`, `ui_traverse`, `ui_fna`, `ui_flushes`, `ui_draw_calls`, `ui_cached`, `ui_untouched`.
+- New DevBench tooling: `healthbars`, `uicache:`, plan mode `ui` (it moves the mouse through `Input.Mouse.Override`, so the OS cursor stays put), `CUO_UI_CACHE_CHECK[_DIR]` and `CUO_UI_CACHE_FORCE`.
+- Health bar gumps allocate 0.8–1.4 KB per frame on the main thread, in both modes (perf-opportunities.md).
+- **Files outside the batcher/UI that changed:**
+  - texture upload sites, one `TextureUploads.Changed()` line each: Client.cs, AuraManager, MiniMapGump, WorldMapGump, MultiMap, Plugin.cs, Primitives2D, SolidColorTextureCache, SpriteFont, TextureAtlas;
+  - `Input.Mouse.Override`;
+  - Settings, CommandManager, FrameStats, DevBench.
+  - GameScene.cs, GameSceneDrawingSorting.cs and the Gpu world renderer weren't touched.

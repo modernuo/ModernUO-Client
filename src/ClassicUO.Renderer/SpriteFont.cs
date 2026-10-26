@@ -212,6 +212,7 @@ namespace ClassicUO.Renderer
                 {
                     fixed (byte* ptr = levelData)
                         texture.SetDataPointerEXT(0, null, (IntPtr)ptr, levelDataSizeInBytes);
+                    TextureUploads.Changed();
                 }
 
                 reader.Read7BitEncodedInt();

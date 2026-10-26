@@ -1263,6 +1263,7 @@ namespace ClassicUO.Network
                             setTexture2DDataCommand.data,
                             setTexture2DDataCommand.data_length
                         );
+                        ClassicUO.Renderer.TextureUploads.Changed();
 
                         break;
 
