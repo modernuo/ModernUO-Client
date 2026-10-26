@@ -166,6 +166,23 @@ Move each per-frame duty that touches land or statics to where it belongs:
     - The animation clock (server action, frame, frame time, from-server) is still read from the Mobile, because `World.Update`'s mobile loop advances it.
     - That loop (0.035–0.06 ms at 2k mobiles in the scene) would become a system over animating mobiles only with a due-time schedule. That means a push from every write of `LastAnimationChangeTime` and of the idle timer (`SetAnimation` from many packet handlers, `SetIdleAnimation`, `ProcessAnimation`), plus mobiles with steps and handles. Not done: at most about 0.03 ms in the busiest scene, for many more push sites.
 
+### Background backlog (2026-10-25): ECS work for cheaper models
+
+Bounded ECS tasks that a cheaper model (Sonnet, Haiku, Codex gpt-6-luna) can do on its own branch in the background, for a stronger model to review and merge later. Each task: its own worktree branch named `bg/ecs-<task>`, a dated poc-log entry, no merge into `poc/modern-client`; client runs only under the playbook's locks and `bench.lock`. "Blocked" means another agent is working in those files right now.
+
+| # | Task | Tier | Needs the client? | State |
+|---|---|---|---|---|
+| E1 | **Unit tests for the ECS core:** `WorldMirror` (entity create/remove, serial reuse, item↔mobile re-key, equipment index), `EquipmentSlots` rebuild (layer order, PaperdollOrder, skips, mount), `AnimationGroupRules`/`AnimationTiming` edge cases, `ItemSpriteExtract` hue rules, `MobileInputRules`. Tests only, no product changes; any bug found is reported, not fixed | Haiku or Sonnet | No | Unblocked |
+| E2 | **Mirror and push cost under packet storms:** a micro-benchmark (tests project or a bench console) of `WorldEcs.Sync`/`PushInputs` and the mirror's dirty tagging per packet type, e.g. 2,000 mobiles moving and changing equipment. Report µs per packet and allocations | Sonnet | No | Unblocked |
+| E3 | **ECS inspector for debugging:** a DevBench command (behind `CUO_DEVTOOLS`) that dumps one serial's ECS entity (all components, `EquipmentSlots` with serials, inputs, animation state) next to the legacy object's values, to the log | Sonnet | One short smoke run | Unblocked |
+| E4 | **`World.Update`'s mobile loop as a due-time system, plus the animation clock in the ECS** (W5 leftover; owner: deferred, not dropped). Prototype behind a setting, with a checker that compares it with the legacy loop every frame (like `CUO_MOBILE_INPUT_CHECK`). Draft quality is fine; it needs an audit before any merge | Sonnet (gpt-6-luna as a second opinion) | Yes, parity runs | Unblocked (Mobile.cs, MobileAnimation.cs, World.cs) |
+| E5 | **Emission replay cost** (31% of per-mobile time with push on): profile `MobileFrameCache` replay and the ECS access path, then propose or prototype cheaper replay (e.g. contiguous instance spans, fewer component lookups) | Sonnet | Yes | Blocked until the Gpu override agent finishes (the out-of-range tint touches the extract) |
+| E6 | **Effects from the ECS** (effects still go through the view capture) | Sonnet draft, strong review | Yes | Blocked (the override agent works in GameSceneGpuWorld/GpuWorldRenderer) |
+| E7 | **W4 leftover:** items on tiles with animated art, corpses or other unbaked objects are still walked | Strong model | Yes | Blocked (the Legacy profiling agent is in the walk) |
+| E8 | **Docs tidy:** condense the W0–W5 status blocks in this plan into a current-state summary plus links to poc-log, with no content loss | Haiku | No | Unblocked |
+
+Not for cheaper models: anything that changes draw order, the walk, or picking (W2's query half, W6); the parity rules there are subtle and have cost days before.
+
 ### W6: remove the legacy walk
 - Prerequisites:
   - picking, lights, foliage and dynamics have moved (W1–W3);
