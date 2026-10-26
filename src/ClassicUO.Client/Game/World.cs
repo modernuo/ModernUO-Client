@@ -22,6 +22,9 @@ namespace ClassicUO.Game
     internal sealed class World
     {
         private readonly EffectManager _effectManager;
+
+        /// <summary>The graphic effects (moving, fixed, drag, lightning) alive in this world; DevBench and the E6 checks read it.</summary>
+        internal EffectManager Effects => _effectManager;
         private readonly List<uint> _toRemove = new List<uint>();
         private uint _timeToDelete;
 

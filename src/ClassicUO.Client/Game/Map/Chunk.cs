@@ -47,6 +47,13 @@ namespace ClassicUO.Game.Map
         // tiles holding a mobile, and a mobile the walk's max Z stops at (rebuilt with the masks); a mobile on a cached
         // item tile is walked on its own
         public ulong GpuMobileMask, GpuMobileStopMask;
+        // E6: tiles holding a graphic effect (rebuilt with the masks). A tile with a cached item is served and its effects
+        // walked alone, in tile order.
+        public ulong GpuEffectMask;
+
+        /// <summary>E6 (gpu_prepare_item_cache_effects, set per frame by GameScene.GpuItemCacheBegin): effects joining or leaving a
+        /// tile don't change which items are cached, like mobiles.</summary>
+        public static bool GpuEffectsIgnored;
         // the mobiles of tile bit b, in tile-list order: GpuMobiles[GpuMobileStart[b] .. GpuMobileStart[b + 1])
         public GameObject[] GpuMobiles = Array.Empty<GameObject>();
         public readonly int[] GpuMobileStart = new int[65];
@@ -62,7 +69,7 @@ namespace ClassicUO.Game.Map
             ContentVersion++;
             GpuMaskDirty = true;
 
-            if (obj is not Mobile)
+            if (obj is not Mobile && !(GpuEffectsIgnored && obj is GameEffect))
             {
                 GpuItemsDirty = true;
             }
