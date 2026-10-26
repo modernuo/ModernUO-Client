@@ -12,7 +12,12 @@ namespace ClassicUO.Game.Map
         /// <summary>Its map data is still being decoded: the request stays queued.</summary>
         NotReady,
         /// <summary>Nothing to do (already loaded, outside the map): the request is dropped.</summary>
-        Done
+        Done,
+        /// <summary>
+        /// Not ready, but the check did real work (a full art scan that requested the missing art): the request stays
+        /// queued and the work counts against the budget like a load.
+        /// </summary>
+        Scanned
     }
 
     /// <summary>
@@ -22,7 +27,8 @@ namespace ClassicUO.Game.Map
     /// <item>chunks within <see cref="RingRadius"/> chunks of the player (Map uses 0: the player's own chunk) load whatever
     /// the budget, so the player's tile, its roof test and its z are there as soon as the map data is;</item>
     /// <item>the others load until the frame's time budget is spent (ring loads count against it), and at least one per
-    /// frame so the queue always drains;</item>
+    /// frame so the queue always drains; a <see cref="ChunkLoadResult.Scanned"/> check (a full art scan) counts like a
+    /// load, a cheap <see cref="ChunkLoadResult.NotReady"/> check doesn't;</item>
     /// <item>a request not repeated for <see cref="StaleFrames"/> frames is dropped (the chunk left the screen), unless it
     /// is sticky: a chunk that objects are waiting for stays queued until it loads.</item>
     /// </list>
@@ -141,9 +147,15 @@ namespace ClassicUO.Game.Map
 
                 var result = load(c.ChunkX, c.ChunkY);
 
-                if (result == ChunkLoadResult.NotReady)
+                if (result == ChunkLoadResult.NotReady || result == ChunkLoadResult.Scanned)
                 {
                     LastNotReady++;
+
+                    if (result == ChunkLoadResult.Scanned && !ring)
+                    {
+                        // the scan's cost counts like a load: a cold teleport's first scans spread over frames too
+                        budgeted++;
+                    }
 
                     continue;
                 }

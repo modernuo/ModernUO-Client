@@ -65,7 +65,8 @@ namespace ClassicUO.Renderer.Texmaps
         /// </summary>
         public bool Request(uint idx)
         {
-            if (idx >= _spriteInfos.Length || _spriteInfos[idx].Texture != null || !Arts.Art.AsyncFirstSight || !_texmapsLoader.Exists((int)idx))
+            if (idx >= _spriteInfos.Length || _spriteInfos[idx].Texture != null || !Arts.Art.AsyncFirstSight || !_texmapsLoader.Exists((int)idx)
+                || _decoder.IsFailed(idx))
             {
                 return true;
             }
@@ -74,6 +75,9 @@ namespace ClassicUO.Renderer.Texmaps
 
             return false;
         }
+
+        /// <summary>Scene teardown: drops finished worker decodes and returns their buffers (see FirstSightDecoder.Cancel).</summary>
+        public void CancelPending() => _decoder.Cancel();
 
         /// <summary>Uploads finished worker decodes until <paramref name="deadline"/> (Stopwatch ticks), at least one. Main thread.</summary>
         public void DrainReady(long deadline)
@@ -111,13 +115,6 @@ namespace ClassicUO.Renderer.Texmaps
 
             if (spriteInfo.Texture != null)
             {
-                return;
-            }
-
-            if (job.Pixels == null)
-            {
-                GetTexmap(job.Index);
-
                 return;
             }
 
