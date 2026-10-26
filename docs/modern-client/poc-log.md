@@ -1527,3 +1527,36 @@ Branch `worktree-agent-a08462117e88b693a`, from 18becdb4e, merged up to poc/mode
   - `Input.Mouse.Override`;
   - Settings, CommandManager, FrameStats, DevBench.
   - GameScene.cs, GameSceneDrawingSorting.cs and the Gpu world renderer weren't touched.
+
+## Legacy world prepare, part 2: the walk's codegen, not its work (2026-10-26)
+
+Branch `legacy2-prepare` (legacy2 agent, kbatman2), commit 8b156011c on `poc/modern-client` bbd86eb37. All numbers NativeAOT, Legacy unless noted, the large spot (`size:max`, 3840x2054, zoom 2.5 at 1495,1629), ms/frame, per run the median of its window p50s, then the median over 3 alternated runs. The machine was quiet this evening (the same binary moved by under 0.1 ms between rounds); re-measure on a quiet machine anyway.
+
+**Culprit: AddTileToRenderList's native code.** An experiment binary (`CUO_EXP`) ran 613842720's chunk loop and AddTileToRenderList (and the helpers in that file region) inside the tip: world prepare 3.32 vs the tip's own walk 4.20 (613842720: 3.24), so the regression was the walk's code, not the data, the callees or the object layout. Swapping halves: the tip's chunk loop with the old walk 3.61, the old loop with the tip's walk 4.12, so about 0.07 ms is the per-tile W4 branches and the rest the walk method. Disassembly (dbghelp + capstone on cuo.pdb): the tip's AddTileToRenderList zeroed 432 bytes of stack on every call (613842720: 112) and kept `profile`, `mesh` and its flags on the stack (273 stack references vs 122), because of the `PrepCheck.Sample ??= $"..."` string formatting in its body (a DefaultInterpolatedStringHandler and GC temporaries in the frame) and the W1 parameters live through the loop. It runs ~92,000 times a frame here.
+
+**Fix (8b156011c):** the CUO_PREP_CHECK kept-position check moves to a NoInlining helper (`PrepCheckKeptPosition`); behaviour unchanged. The prologue's zeroing drops to 112 bytes.
+
+| NativeAOT, 3 alternated rounds | 613842720 | base bbd86eb37 | fix 8b156011c |
+|---|---|---|---|
+| Legacy large: world prepare | 3.29 | 4.35 | 3.96 |
+| Legacy large: world draw | 4.01 | 4.26 | 4.27 |
+| Legacy large: frame | 7.84 | 9.19 | 8.77 |
+| Legacy Britain 1080p: world prepare | 0.117 | 0.154 | 0.138 |
+| Gpu large: world prepare / prep_walk | | 0.721 / 0.327 | 0.718 / 0.323 |
+| Gpu large: frame | | 1.322 | 1.327 |
+| Gpu Britain 1080p: world prepare | | 0.051 | 0.052 |
+
+An earlier series on eaa489c92 (same change): 4.27 -> 3.88.
+
+**Tried, not kept:**
+- A second compiled shape of the walk for whole tiles (generic over a struct with a static abstract `Partial`, folding skipBaked/forcePosition/stopAt away; `profile` and `mesh` back in registers): another -0.03 ms median (-0.09 min window), within noise.
+- Entity-only state off GameObject (the W5 text cache, InTextOwners, the DPS average) and a byte-sized ObjectHandlesStatus, so Land/Static hot fields sit where they did in 613842720: -0.05 ms, noise level.
+- `CUO_CHUNK_SYNC=1` (no incremental chunk loads, objects allocated in walk order): -0.06 ms.
+
+**Ruled out:** object layout and size (above), allocation order (above), picking/PixelPicker and Art trim bounds (same callees and data in the experiment), CalculateAlpha's snap, the item handle queue (not reached at this spot), FrameStats (stats-off frames show the same gap). A wall-clock suspend/stack-walk sampler (Python, dbghelp) was too intrusive to use (it doubled world draw); the experiment binary and the disassembly did the work.
+
+**NativeAOT bisect (stats on, 2 rounds, world prepare):** W0/W1 755c9599e 4.08, df2fbf8c8 4.45, a6110f967 4.50, e9f2505c2 4.42, 28bb72308 4.07-4.21, cacc27d44 4.27, 08b952f3a 4.20, a122f2cc1 4.36, 786d86c9c 4.66, 47cb613c9 4.70. No single step: small cuts that grew the walk's frame. World draw rose 0.6 ms at e9f2505c2 (the B1 rebind fix, draw side) and fell again by 786d86c9c.
+
+**Verification:** Release and `-p:CuoDevTools=false` build; 442 unit tests pass. Shots (NativeAOT, base vs fix): Legacy house shots near-black 1.89% (all three), Legacy world diffs only on the walking NPCs in the house and two mobiles at Britain; Gpu Britain identical, Gpu house diff only on the walking NPCs; UI diffs only in journal text. Looked at. Picking: the walk's pick path is unchanged code (no pickscan run).
+
+**Left:** about 0.65 ms (+20%) of Legacy world prepare at the large spot is still above 613842720. The whole-tile shape and the per-tile W4 branches account for ~0.1 ms between them; the rest is spread over the walk's other additions (detail-mode branches and their bucket locals, `_walkObjects`, ScreenPositionGen). A Legacy-only copy of the 613842720 walk gets it all back but duplicates ~450 lines; not done. World draw is +0.25 ms over 613842720 (draw side, unrelated to this change). Re-measure every table on a quiet machine.
