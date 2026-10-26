@@ -123,6 +123,7 @@ Driven by environment variables. Read the header comment in DevBench.cs for the 
 - `flip:N[:frames[:walk]]` (renderer toggle stress), `gumps` (opens paperdoll, backpack, journal and status at fixed spots);
 - `healthbars` (bars for the player and the 3 nearest mobiles), `minimap` (opens the minimap gump), `uicache:on|off` (B8), plan mode `ui` (`name:ui[:zoom]`: a loop of scripted UI changes while measuring, [testing/ui-batcher.md](testing/ui-batcher.md));
 - `effect:x y z:graphic[:blend]`, `moving:`, `shot:name`, `season:`, `itemhue:`, `ghost:on|off`, `chair:hex|off` (a client-side chair under the player), `water:on|off` (animated water), `outrange:on|off` (NoColorObjectsOutOfRange), `range:N` (the client view range, as the server's 0xC8) (local-only render checks);
+- `ecsdump:<hex serial>|player|nearest` (logs `[ecsdump]` lines: that serial's ECS entity, every component, the equipment slots with serials, pushed vs recomputed inputs and animation state, each next to the legacy object's values; [testing/ecs-animation.md](testing/ecs-animation.md));
 - `gumpok` (confirms a server confirmation gump).
 
 ## Standard checks

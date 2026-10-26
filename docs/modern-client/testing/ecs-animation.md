@@ -52,6 +52,11 @@ Written 2026-10-25 by the W3 agent. It covers how the ECS mobile animation path 
 - **The mobile frame cache (W5, `gpu_mobile_frame_cache`, default on)** is on the parity path too: the harness's ECS side uses the cached selection and emission, so parity checks what the renderer draws. `mobcache off` (driver) or `mobcache:off` (plan) compares fresh selections instead; `CUO_MOBILE_CACHE_CHECK=1` compares every reuse with a fresh one. See [world-update.md](world-update.md).
 - **The cases and mixed scripts kill and resurrect the character.** That leaves a death robe worn and another in the backpack, plus the cloak. Check with `equip` and `items`, then `[remove` + `target worn 22` / `target item <serial>`. Do this on any account, and always on kbatman.
 
+## ECS inspector and packet-cost bench (2026-10-26, E2/E3)
+
+- **Inspector:** DevBench plan entry `ecsdump:<hex serial>|player|nearest` (`Game/Ecs/EcsInspector.cs`, behind `CUO_DEVTOOLS`; the release flavour doesn't compile it). It logs `[ecsdump]` lines: the legacy object's values, the entity's `Serial/Graphic/Hue/Position/Facing/Flags/Amount`, parent and tags, `MobileInputs` as pushed next to the same rules run on the Mobile now ("same as pushed" / "DIFFERENT"), `AnimationState` next to the Mobile's body/frame/group, `MobileRenderState`, `EquipmentSlots` (header and one line per slot with item serial, layer, bodies, hue, and the legacy item's values), and the mirror's indexed children next to the legacy item list. Run it after a plan entry that gets you in game, e.g. `CUO_BENCH_PLAN="brit:1495 1629:1;ecsdump:player;ecsdump:nearest" CUO_BENCH_WINDOWS=1` (launch with `tools/ecs-parity/run_parity.py --env CUO_BENCH_PLAN=... --script <empty file>`).
+- **Packet-cost bench:** `tests/ClassicUO.UnitTests/Ecs/EcsPacketCostBench.cs`, skipped unless `CUO_ECS_BENCH=<output file>` is set: `DOTNET_TieredCompilation=0 CUO_ECS_BENCH=<file> dotnet test tests/ClassicUO.UnitTests -c Release --no-build --filter EcsPacketCostBench`. Results in the poc-log.
+
 ## Running it
 
 - **Launcher:** `tools/ecs-parity/run_parity.py`. It writes a throwaway `settings.json` with the password encrypted (from `CUO_TEST_PASSWORD`), runs an `-ecsdriver` scenario with `CUO_ECS_PARITY` and `-ecscheck 120`, closes the client, copies the log and deletes the temp folder.
