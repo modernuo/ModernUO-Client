@@ -56,10 +56,50 @@ namespace ClassicUO.Game.Scenes
         public uint CheckFrame;
         public ulong CheckTiles;
 
+        // E7: items of served tiles the cache can't hold (animated art, corpses, fading, text...), walked alone where they lie
+        // in the tile list: before entry Entry. Those of tile bit b: [WalkStart[b], WalkStart[b + 1]); WalkTiles = tiles with any.
+        public struct Walked
+        {
+            public Item Item;
+            public int Entry;
+        }
+
+        public Walked[] WalkedItems = new Walked[4];
+        public int WalkedCount;
+        public readonly int[] WalkStart = new int[65];
+        public ulong WalkTiles;
+
+        public void AddWalked(Item item)
+        {
+            if (WalkedCount == WalkedItems.Length)
+            {
+                Array.Resize(ref WalkedItems, WalkedCount * 2);
+            }
+
+            WalkedItems[WalkedCount++] = new Walked { Item = item, Entry = Count };
+        }
+
+        /// <summary>The item is one of tile <paramref name="b"/>'s walked-alone items.</summary>
+        public bool IsWalked(int b, GameObject obj)
+        {
+            for (int i = WalkStart[b], end = WalkStart[b + 1]; i < end; i++)
+            {
+                if (ReferenceEquals(WalkedItems[i].Item, obj))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         public void Reset()
         {
             Array.Clear(Entries, 0, Count);
             Count = 0;
+            Array.Clear(WalkedItems, 0, WalkedCount);
+            WalkedCount = 0;
+            WalkTiles = 0;
             InstanceCount = 0;
             Tiles = 0;
             LitCount = 0;
@@ -104,7 +144,11 @@ namespace ClassicUO.Game.Scenes
     //     tile of a full-walk step, all items while object handles show;
     //   - the cached instances go into the capture where the walk would have queued the items (the statics render list's
     //     length when the tile is reached), so the dynamic buffer's order, and with it equal-depth ties, is unchanged; their
-    //     lights are added at the same point. DrawnFrame is stamped as the walk does.
+    //     lights are added at the same point. DrawnFrame is stamped as the walk does;
+    //   - E7 (gpu_prepare_item_cache_mixed): a tile whose other unbaked objects are items the cache can't hold (corpses,
+    //     multis, animated / foliage / translucent / roof items, text, fading, ...) that never end the tile's walk is served
+    //     too: those items are walked alone where they lie in the tile list, between the cached runs before and after them.
+    //     A tile that also holds mobiles walks them in the same pass, in tile order with those items.
     // CUO_GPU_ITEM_CHECK=1 (every 30th frame) or =every: the frame walks every item as usual and compares what the cache
     // would have served, item by item and instance by instance, with what the walk and the extract produced.
     internal partial class GameScene
@@ -118,7 +162,7 @@ namespace ClassicUO.Game.Scenes
 
         private bool _gpuItemCacheOn, _gpuItemCheckNow;
         private int _gpuItemGeneration;
-        private bool _gpuItemKeyOn, _gpuItemKeyGray, _gpuItemKeyRange;
+        private bool _gpuItemKeyOn, _gpuItemKeyGray, _gpuItemKeyRange, _gpuItemKeyMixed;
         private Uo.Render.WorldRenderer _gpuItemKeyWorld;
         private Item _gpuSelContainer;
         // this chunk's tiles served from its cache, or (check frames) that would be
@@ -155,14 +199,17 @@ namespace ClassicUO.Game.Scenes
             bool want = Settings.GlobalSettings.GpuPrepareItemCache && _gpuWorld.EcsMobiles;
             bool gray = _world.Player.IsDead && profile.EnableBlackWhiteEffect;
             bool range = profile.NoColorObjectsOutOfRange;
+            bool mixed = Settings.GlobalSettings.GpuPrepareItemCacheMixed;
             var world = _gpuWorld.World;
 
-            if (want != _gpuItemKeyOn || gray != _gpuItemKeyGray || range != _gpuItemKeyRange || !ReferenceEquals(world, _gpuItemKeyWorld))
+            if (want != _gpuItemKeyOn || gray != _gpuItemKeyGray || range != _gpuItemKeyRange || mixed != _gpuItemKeyMixed ||
+                !ReferenceEquals(world, _gpuItemKeyWorld))
             {
                 _gpuItemGeneration++;
                 _gpuItemKeyOn = want;
                 _gpuItemKeyGray = gray;
                 _gpuItemKeyRange = range;
+                _gpuItemKeyMixed = mixed;
                 _gpuItemKeyWorld = world;
             }
 
@@ -174,7 +221,8 @@ namespace ClassicUO.Game.Scenes
             _gpuItemCacheOn = true;
             _gpuSelContainer = SelectedObject.SelectedContainer;
 
-            if (_gpuItemCheck && (_gpuItemCheckEvery || ++_gpuItemCheckCounter % 30 == 0))
+            // =every: every other frame, so each check frame follows a served one (the capture-order comparison needs it)
+            if (_gpuItemCheck && (_gpuItemCheckEvery ? (++_gpuItemCheckCounter & 1) == 0 : ++_gpuItemCheckCounter % 30 == 0))
             {
                 _gpuItemCheckNow = true;
                 _gpuCheckExpectCount = 0;
@@ -223,6 +271,22 @@ namespace ClassicUO.Game.Scenes
             return 0;
         }
 
+        // E7: an uncacheable object the walk can visit alone without changing the rest of its tile: an item (its list,
+        // order and picking are its own) that never ends the tile's walk (AddTileToRenderList returns at the max Z).
+        private static bool GpuItemWalksAlone(GameObject obj)
+        {
+            if (obj is not Item item || item.IsDestroyed)
+            {
+                return false;
+            }
+
+            ref StaticTiles data = ref item.IsMulti ? ref Client.Game.UO.FileManager.TileData.StaticData[item.MultiGraphic] : ref item.ItemData;
+            int maxObjectZ = item.PriorityZ;
+            CalculateObjectHeight(ref maxObjectZ, ref data);
+
+            return maxObjectZ <= GPU_WALK_MAX_Z;
+        }
+
         // Everything about the item that the walk's rules and the extract read and that can change while it lies there.
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         // The out-of-range hue (NoColorObjectsOutOfRange) is part of it: the extract bakes it into the instances, and it flips
@@ -245,11 +309,13 @@ namespace ClassicUO.Game.Scenes
             Uo.Pack.SpriteEntry[] art = _gpuArt;
             int offX = _offset.X, offY = _offset.Y;
             bool transient = false;
+            bool mixed = _gpuItemKeyMixed;
             ulong walk = chunk.GpuWalkMask;
 
             for (int b = 0; b < 64; b++)
             {
                 cache.TileStart[b] = cache.Count;
+                cache.WalkStart[b] = cache.WalkedCount;
 
                 if ((walk & 1UL << b) == 0)
                 {
@@ -258,7 +324,7 @@ namespace ClassicUO.Game.Scenes
 
                 GameObject head = chunk.GetHeadObject(b >> 3, b & 7);
                 int reason = 0;
-                bool any = false;
+                bool any = false, alone = false;
 
                 for (GameObject obj = head; obj != null; obj = obj.TNext)
                 {
@@ -268,19 +334,31 @@ namespace ClassicUO.Game.Scenes
                         continue;
                     }
 
-                    reason = GpuItemCacheReason(obj);
+                    int r = GpuItemCacheReason(obj);
 
-                    if (reason != 0)
+                    if (r == 0)
                     {
-                        break;
+                        any = true;
+
+                        continue;
                     }
 
-                    any = true;
-                }
+                    if (r == 2)
+                    {
+                        transient = true;
+                    }
 
-                if (reason == 2)
-                {
-                    transient = true;
+                    // E7: the tile is still served, this item walked alone
+                    if (mixed && GpuItemWalksAlone(obj))
+                    {
+                        alone = true;
+
+                        continue;
+                    }
+
+                    reason = r;
+
+                    break;
                 }
 
                 if (reason != 0 || !any)
@@ -292,6 +370,13 @@ namespace ClassicUO.Game.Scenes
                 {
                     if (IsGpuBaked(obj) || obj is Mobile)
                     {
+                        continue;
+                    }
+
+                    if (alone && GpuItemCacheReason(obj) != 0)
+                    {
+                        cache.AddWalked(Unsafe.As<Item>(obj));
+
                         continue;
                     }
 
@@ -344,9 +429,15 @@ namespace ClassicUO.Game.Scenes
                 }
 
                 cache.Tiles |= 1UL << b;
+
+                if (alone)
+                {
+                    cache.WalkTiles |= 1UL << b;
+                }
             }
 
             cache.TileStart[64] = cache.Count;
+            cache.WalkStart[64] = cache.WalkedCount;
             cache.Valid = true;
             cache.Generation = _gpuItemGeneration;
             cache.RetryFrame = transient ? _drawFrame + 30 : 0;
@@ -411,8 +502,9 @@ namespace ClassicUO.Game.Scenes
                 return;
             }
 
-            // tiles with mobiles stay in the walk, which then skips their items
-            walkTiles &= ~(serve & ~chunk.GpuMobileMask);
+            // tiles with mobiles stay in the walk, which then skips their items; E7: a tile with walked-alone items leaves it
+            // even with mobiles (GpuServeMixedTile walks them, in tile order with those items)
+            walkTiles &= ~(serve & ~(chunk.GpuMobileMask & ~cache.WalkTiles));
             _gpuServeTiles = serve;
         }
 
@@ -426,6 +518,25 @@ namespace ClassicUO.Game.Scenes
                 GpuItemSignature(item, out ulong a, out ulong b);
 
                 if (a != en.Sig0 || b != en.Sig1 || !ReferenceEquals(item.TileChunk, chunk))
+                {
+                    chunk.GpuItemsDirty = true;
+                    FrameStats.Inc(FrameCounter.ItemCacheFallbacks);
+
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        // E7: the tile's walked-alone items are still where the cache found them (else the tile is walked and re-extracted).
+        private static bool GpuItemWalkedValid(Chunk chunk, GpuItemCache cache, int b)
+        {
+            for (int i = cache.WalkStart[b], end = cache.WalkStart[b + 1]; i < end; i++)
+            {
+                Item item = cache.WalkedItems[i].Item;
+
+                if (item.IsDestroyed || !ReferenceEquals(item.TileChunk, chunk) || ((item.X & 7) << 3 | (item.Y & 7)) != b)
                 {
                     chunk.GpuItemsDirty = true;
                     FrameStats.Inc(FrameCounter.ItemCacheFallbacks);
@@ -462,9 +573,93 @@ namespace ClassicUO.Game.Scenes
                 return false;
             }
 
+            FrameStats.Inc(FrameCounter.ItemCacheTiles);
+
+            if ((cache.WalkTiles & 1UL << b) == 0)
+            {
+                GpuQueueCachedEntries(cache, s, e);
+
+                return true;
+            }
+
+            return GpuServeMixedTile(chunk, cache, b, s, e);
+        }
+
+        // E7: a served tile with walked-alone items: in tile order, the cached entries before each such item join the capture
+        // at the statics list's length there, then the walk visits the item alone, as the full walk would have reached it.
+        // Out of line, so AddTileToRenderList's callers in the chunk loop are unchanged.
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private bool GpuServeMixedTile(Chunk chunk, GpuItemCache cache, int b, int s, int e)
+        {
+            if (!GpuItemWalkedValid(chunk, cache, b))
+            {
+                return false;
+            }
+
+            int w = cache.WalkStart[b], wEnd = cache.WalkStart[b + 1];
+            FrameStats.Add(FrameCounter.ItemCacheWalked, wEnd - w);
+
+            if ((chunk.GpuMobileMask & 1UL << b) != 0)
+            {
+                // mobiles too (the tile left walkTiles): one pass over the tile list, walking the mobiles and the
+                // walked-alone items in their order (a corpse and a mobile share the animations list, a fading item and a
+                // fading mobile the transparent one)
+                for (GameObject obj = chunk.GetHeadObject(b >> 3, b & 7); obj != null; obj = obj.TNext)
+                {
+                    if (obj is Mobile)
+                    {
+                        if (!obj.IsDestroyed)
+                        {
+                            AddTileToRenderList(obj, false, GPU_WALK_MAX_Z, chunk, true, true, obj.TNext);
+                        }
+
+                        continue;
+                    }
+
+                    if (w < wEnd && ReferenceEquals(cache.WalkedItems[w].Item, obj))
+                    {
+                        int entry = cache.WalkedItems[w++].Entry;
+
+                        if (entry > s)
+                        {
+                            GpuQueueCachedEntries(cache, s, entry);
+                            s = entry;
+                        }
+
+                        AddTileToRenderList(obj, false, GPU_WALK_MAX_Z, chunk, true, true, obj.TNext);
+                    }
+                }
+
+                GpuQueueCachedEntries(cache, s, e);
+
+                return true;
+            }
+
+            for (; w < wEnd; w++)
+            {
+                ref GpuItemCache.Walked walked = ref cache.WalkedItems[w];
+
+                if (walked.Entry > s)
+                {
+                    GpuQueueCachedEntries(cache, s, walked.Entry);
+                    s = walked.Entry;
+                }
+
+                Item item = walked.Item;
+                // object handles never show while the cache serves (GpuItemCacheBegin)
+                AddTileToRenderList(item, false, GPU_WALK_MAX_Z, chunk, true, true, item.TNext);
+            }
+
+            GpuQueueCachedEntries(cache, s, e);
+
+            return true;
+        }
+
+        // Cached entries [s, e) join the capture where the walk would have queued them: the statics list's current length.
+        private void GpuQueueCachedEntries(GpuItemCache cache, int s, int e)
+        {
             int insertAt = _renderLists.StaticsCount;
             uint frame = _drawFrame;
-            FrameStats.Inc(FrameCounter.ItemCacheTiles);
 
             for (int i = s; i < e; i++)
             {
@@ -496,8 +691,6 @@ namespace ClassicUO.Game.Scenes
 
                 _gpuItemRuns[_gpuItemRunCount++] = new GpuItemRun { Cache = cache, EntryStart = i, EntryEnd = i + 1, InsertAt = insertAt };
             }
-
-            return true;
         }
 
         /// <summary>The capture reached statics-list index <paramref name="index"/>: append the cached runs queued before it.</summary>
@@ -513,6 +706,14 @@ namespace ClassicUO.Game.Scenes
                 ref GpuItemCache.Entry last = ref cache.Entries[run.EntryEnd - 1];
                 int start = first.InstStart;
                 gpu.AppendDynamic(new ReadOnlySpan<SpriteInstance>(cache.Instances, start, last.InstStart + last.InstCount - start));
+
+                if (RenderLists.CaptureOrderOn)
+                {
+                    for (int i = run.EntryStart; i < run.EntryEnd; i++)
+                    {
+                        RenderLists.CaptureOrderHash = RenderLists.MixCaptureOrder(RenderLists.CaptureOrderHash, cache.Entries[i].Item);
+                    }
+                }
 
                 if (cache.LitCount > 0)
                 {
@@ -560,6 +761,10 @@ namespace ClassicUO.Game.Scenes
         private uint _gpuListHashFrame;
         private bool _gpuListHashPrevServed;
         private int _gpuListSame, _gpuListDiff;
+        private ulong _gpuOrderPrev;
+        private uint _gpuOrderFrame;
+        private bool _gpuOrderPrevServed;
+        private int _gpuOrderSame, _gpuOrderDiff;
 
         private void GpuItemCheckLists()
         {
@@ -569,7 +774,10 @@ namespace ClassicUO.Game.Scenes
             }
 
             _gpuCheckSkip ??= obj => obj is Item it && it.TileChunk?.GpuItems is { } c && c.CheckFrame == _drawFrame &&
-                                     (c.CheckTiles & 1UL << ((it.X & 7) << 3 | (it.Y & 7))) != 0;
+                                     (c.CheckTiles & 1UL << ((it.X & 7) << 3 | (it.Y & 7))) != 0 && !c.IsWalked((it.X & 7) << 3 | (it.Y & 7), it);
+            // E7: the capture order of everything, cached items included (RenderLists.CaptureOrderHash), compared in GpuItemCheckEnd
+            RenderLists.CaptureOrderOn = true;
+            RenderLists.CaptureOrderHash = 1469598103934665603UL;
             ulong h = _renderLists.DebugHash(_gpuCheckSkip) ^ (ulong)RuntimeHelpers.GetHashCode(SelectedObject.Object ?? (object)_renderLists) << 7;
 
             if (_gpuItemCheckNow && _gpuListHashPrevServed && _gpuListHashFrame == _drawFrame - 1)
@@ -595,7 +803,7 @@ namespace ClassicUO.Game.Scenes
             GpuItemCache cache = chunk.GpuItems;
             int s = cache.TileStart[b], e = cache.TileStart[b + 1];
 
-            if (!GpuItemTileValid(chunk, cache, s, e))
+            if (!GpuItemTileValid(chunk, cache, s, e) || (cache.WalkTiles & 1UL << b) != 0 && !GpuItemWalkedValid(chunk, cache, b))
             {
                 // served, this tile would have been walked: nothing to compare
                 cache.CheckTiles &= ~(1UL << b);
@@ -627,7 +835,17 @@ namespace ClassicUO.Game.Scenes
         {
             GpuItemCache cache = item.TileChunk?.GpuItems;
 
-            if (cache == null || cache.CheckFrame != _drawFrame || (cache.CheckTiles & 1UL << ((item.X & 7) << 3 | (item.Y & 7))) == 0)
+            int tile = (item.X & 7) << 3 | (item.Y & 7);
+
+            if (cache == null || cache.CheckFrame != _drawFrame || (cache.CheckTiles & 1UL << tile) == 0)
+            {
+                return;
+            }
+
+            // E7: served, this item would have been walked alone (the walk drew it as usual)
+            bool mixedTile = (cache.WalkTiles & 1UL << tile) != 0;
+
+            if (mixedTile && cache.IsWalked(tile, item))
             {
                 return;
             }
@@ -656,11 +874,33 @@ namespace ClassicUO.Game.Scenes
 
             // the walk queued it at statics index CaptureStaticsIndex after _gpuCheckPos - 1 other cached items: served, the
             // capture has it after the same uncached objects
-            if (RenderLists.CaptureStaticsIndex - (_gpuCheckPos - 1) != ex.InsertAt)
+            // E7: served, the tile's walked-alone items queued before this one in the statics list move its run back by as
+            // many (the walk queues a tile's objects together: count them back from this item)
+            int walkedBefore = 0;
+
+            if (mixedTile)
+            {
+                for (int j = RenderLists.CaptureStaticsIndex - 1; j >= 0; j--)
+                {
+                    GameObject o = _renderLists.StaticAt(j);
+
+                    if (o is not Item || o.X != item.X || o.Y != item.Y)
+                    {
+                        break;
+                    }
+
+                    if (cache.IsWalked(tile, o))
+                    {
+                        walkedBefore++;
+                    }
+                }
+            }
+
+            if (RenderLists.CaptureStaticsIndex - (_gpuCheckPos - 1) != ex.InsertAt + walkedBefore)
             {
                 _gpuItemCheckPlace++;
                 _gpuCheckBad++;
-                _gpuItemCheckSample ??= $"place: item 0x{item.Serial:X8} at statics index {RenderLists.CaptureStaticsIndex} after {_gpuCheckPos - 1} cached, run inserted at {ex.InsertAt}";
+                _gpuItemCheckSample ??= $"place: item 0x{item.Serial:X8} at statics index {RenderLists.CaptureStaticsIndex} after {_gpuCheckPos - 1} cached and {walkedBefore} walked alone, run inserted at {ex.InsertAt}";
             }
 
             ReadOnlySpan<SpriteInstance> mine = new ReadOnlySpan<SpriteInstance>(ex.Cache.Instances, en.InstStart, en.InstCount);
@@ -681,6 +921,30 @@ namespace ClassicUO.Game.Scenes
         // After the capture of a check frame: entries the walk didn't draw, and the totals every 5 s.
         private void GpuItemCheckEnd()
         {
+            if (RenderLists.CaptureOrderOn)
+            {
+                // E7: a served frame's capture order (cached runs where they were injected, walked-alone items, everything
+                // else) must equal the reference walk's on the check frame after it, while nothing moves
+                RenderLists.CaptureOrderOn = false;
+                ulong order = RenderLists.CaptureOrderHash;
+
+                if (_gpuItemCheckNow && _gpuOrderPrevServed && _gpuOrderFrame == _drawFrame - 1)
+                {
+                    if (order == _gpuOrderPrev)
+                    {
+                        _gpuOrderSame++;
+                    }
+                    else
+                    {
+                        _gpuOrderDiff++;
+                    }
+                }
+
+                _gpuOrderPrev = order;
+                _gpuOrderFrame = _drawFrame;
+                _gpuOrderPrevServed = _gpuItemCacheOn && !_gpuItemCheckNow;
+            }
+
             if (!_gpuItemCheckNow)
             {
                 return;
@@ -718,10 +982,10 @@ namespace ClassicUO.Game.Scenes
                 Log.Info($"[gpu-item-check] {_gpuItemChecks} checks, {_gpuItemCheckStale} with differences; {_gpuItemCheckCompared} cached items compared: " +
                          $"{_gpuItemCheckMissing} missing or out of order, {_gpuItemCheckExtra} extra, {_gpuItemCheckDiff} different, {_gpuItemCheckPlace} misplaced; " +
                          $"{_gpuItemCheckFallbacks} tiles caught by the signature; other queued objects vs the served frame before: " +
-                         $"{_gpuListSame} same, {_gpuListDiff} different" + (_gpuItemCheckSample != null ? $"; first: {_gpuItemCheckSample}" : ""));
+                         $"{_gpuListSame} same, {_gpuListDiff} different; capture order vs the served frame before: {_gpuOrderSame} same, {_gpuOrderDiff} different" +(_gpuItemCheckSample != null ? $"; first: {_gpuItemCheckSample}" : ""));
                 _gpuItemCheckAt = now;
                 _gpuItemChecks = _gpuItemCheckStale = _gpuItemCheckCompared = _gpuItemCheckMissing = _gpuItemCheckExtra = _gpuItemCheckDiff = _gpuItemCheckFallbacks = _gpuItemCheckPlace = 0;
-                _gpuListSame = _gpuListDiff = 0;
+                _gpuListSame = _gpuListDiff = _gpuOrderSame = _gpuOrderDiff = 0;
                 _gpuItemCheckSample = null;
             }
         }
