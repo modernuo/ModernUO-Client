@@ -60,7 +60,6 @@ Running notes for your return, newest at the top within each section. Started 20
 - **E5 emission replay cost** (`bg/ecs-e5-replay`, Sonnet draft; audited before any merge).
 - **E9 ECS test seams** (`bg/ecs-e9-seams`, Sonnet; seams only, no behaviour change).
 - **E2 packet-storm micro-benchmark and E3 ECS inspector** (`bg/ecs-e2-e3`, Sonnet).
-- **Your FPS build is not republished yet:** the auto-mode classifier refused `publish-aot.ps1` (2026-10-26). It is still 4ba96f416.
 - All agents share a `bench.lock`, so client runs, builds and timing series never overlap.
 
 ## Things you saw tonight, explained
@@ -95,7 +94,7 @@ Running notes for your return, newest at the top within each section. Started 20
 
 ## Your FPS test
 
-The build at `C:\Repositories\cuo-fps-test\bin` is **4ba96f416** (published 11:26). It has everything in the Merged table: W5, W4, the forks, startup renderer selection (it logs `[renderer] auto: Gpu (...)`), and spot 6, "Large scene" (Felucca, via `[TestScene go`/`return`; your character ends where it started). The run takes about 6 minutes. I ran the real script once on kbatman4 to check it end to end.
+The build at `C:\Repositories\cuo-fps-test\bin` is **cd670ceb9** (you published it 2026-10-26 08:52). It has everything in the Merged table, including the Legacy prepare fixes, Gpu override cuts and the B8 UI cache: W5, W4, the forks, startup renderer selection (it logs `[renderer] auto: Gpu (...)`), and spot 6, "Large scene" (Felucca, via `[TestScene go`/`return`; your character ends where it started). The run takes about 6 minutes. I ran the real script once on kbatman4 to check it end to end.
 
 1. Make sure no agent is running clients (ask me to pause them) and the display is on.
 2. From a normal PowerShell window:
