@@ -25,7 +25,8 @@ namespace ClassicUO.Game.Scenes
         private readonly List<Static> _gpuFoliage = new List<Static>();
         private Rectangle _gpuView;
         private Uo.Pack.SpriteEntry[] _gpuArt;
-        private bool _gpuTintOutOfRange, _gpuStaticShadows, _gpuStumps, _gpuWaterWobble;
+        private static Uo.Pack.StaticTileData[] _gpuStaticData = Array.Empty<Uo.Pack.StaticTileData>();
+        private bool _gpuStaticShadows, _gpuStumps, _gpuWaterWobble;
         private bool _gpuTintAll;
         // half the widest static art past its tile: tiles further beside the view can't reach into it
         private const int GPU_WIDE_ART = 320;
@@ -69,8 +70,9 @@ namespace ClassicUO.Game.Scenes
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private void GpuOnDrawn(GameObject obj)
         {
-            // the common case: an opaque, untinted meshed land tile the shader's max-Z test keeps
-            if (obj.AlphaHue == 0xFF && !_gpuTintOutOfRange && obj.InChunkMesh && obj.AllowedToDraw && obj.Z <= _maxGroundZ && obj is Land)
+            // the common case: an opaque meshed land tile the shader's max-Z test keeps (the out-of-range and death tints
+            // are uniforms)
+            if (obj.AlphaHue == 0xFF && obj.InChunkMesh && obj.AllowedToDraw && obj.Z <= _maxGroundZ && obj is Land)
             {
                 return;
             }
@@ -97,13 +99,12 @@ namespace ClassicUO.Game.Scenes
                     }
                     else
                     {
-                        ushort hue = GpuTintHue(land);
                         // drawn although the shader's max-Z test hides it: fading out, or not meshed (Legacy draws those regardless)
                         bool force = land.Z > _maxGroundZ;
 
-                        if (land.AlphaHue != 0xFF || hue != 0 || force)
+                        if (land.AlphaHue != 0xFF || force)
                         {
-                            _gpuWorld.LandOverride(land.X, land.Y, land.AlphaHue, false, hue, force);
+                            _gpuWorld.LandOverride(land.X, land.Y, land.AlphaHue, false, 0, force);
                         }
                     }
 
@@ -224,14 +225,26 @@ namespace ClassicUO.Game.Scenes
 
         private void GpuStaticOverride(Static st)
         {
-            ushort hue = GpuTintHue(st);
             // drawn although the shader hides it: a roof or above-max-Z static still fading out
             bool force = GpuStaticZHidden(st);
 
-            if (st.AlphaHue != 0xFF || hue != 0 || force)
+            // the bake holds the settled alpha (tiledata Translucent: 178), so only a fade needs an override; its alpha
+            // replaces the baked one
+            if (st.AlphaHue != GpuBakedAlpha(st) || force)
             {
-                _gpuWorld.StaticOverride(st.X, st.Y, st.Z, st.OriginalGraphic, st.AlphaHue, false, hue, force);
+                _gpuWorld.StaticOverride(st.X, st.Y, st.Z, st.OriginalGraphic, st.AlphaHue, false, 0, force);
             }
+        }
+
+        // The alpha baked into a static's sprite (ChunkBaker: the pack's tiledata Translucent flag of the baked graphic).
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static byte GpuBakedAlpha(Static st)
+        {
+            int g = GpuBakedGraphic(st);
+
+            return (uint)g < (uint)_gpuStaticData.Length && (_gpuStaticData[g].Flags & Uo.Render.TileFlags.Translucent) != 0
+                ? Uo.Render.BakeJob.TranslucentAlpha
+                : (byte)0xFF;
         }
 
         // The shader's max-Z / roof test (sprite.hlsl, FLAG_ZTEST) for the baked sprite of a static.
@@ -317,18 +330,6 @@ namespace ClassicUO.Game.Scenes
             return x0 + sp.OrigW > _gpuView.Left && x0 < _gpuView.Right && y1 > _gpuView.Top && y1 - sp.OrigH < _gpuView.Bottom;
         }
 
-        // ApplyMeshHue's out-of-range recolour (the death screen's gray is a uniform: GpuWorldRenderer.SetTint); the static's
-        // own hue is baked
-        private ushort GpuTintHue(GameObject obj)
-        {
-            if (_gpuTintOutOfRange && obj.Distance > _world.ClientViewRange)
-            {
-                return Constants.OUT_RANGE_COLOR;
-            }
-
-            return 0;
-        }
-
         /// <summary><paramref name="hold"/>: the frame is prepared and streamed as usual, but nothing is drawn into the world
         /// target, which keeps the last presented frame (FNA's world-space draws go to the backbuffer, cleared before the
         /// composite).</summary>
@@ -349,8 +350,8 @@ namespace ClassicUO.Game.Scenes
             _gpuStaticsShadowOnly.Clear();
             _gpuFoliage.Clear();
             _gpuArt = Client.Game.UO.FileManager.Arts.PackSpriteEntries;
+            _gpuStaticData = gpu.World?.Pack.Statics ?? Array.Empty<Uo.Pack.StaticTileData>();
             var profile = ProfileManager.CurrentProfile;
-            _gpuTintOutOfRange = profile.NoColorObjectsOutOfRange;
             _gpuTintAll = _world.Player.IsDead && profile.EnableBlackWhiteEffect;
             _gpuStaticShadows = profile.ShadowsEnabled && profile.ShadowsStatics;
             _gpuStumps = profile.TreeToStumps;
@@ -373,6 +374,12 @@ namespace ClassicUO.Game.Scenes
             if (_gpuTintAll)
             {
                 gpu.SetTint(Constants.DEAD_RANGE_COLOR);
+            }
+
+            if (profile.NoColorObjectsOutOfRange)
+            {
+                // ApplyMeshHue / LandView / StaticView: GameObject.Distance = Chebyshev distance to World.RangeSize
+                gpu.SetRangeTint(Constants.OUT_RANGE_COLOR, _world.RangeSize.X, _world.RangeSize.Y, _world.ClientViewRange);
             }
 
             var target = renderTargets.WorldRenderTarget;
