@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
+#if CUO_DEVTOOLS
 using System;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
@@ -104,3 +105,4 @@ namespace ClassicUO.Game
         }
     }
 }
+#endif

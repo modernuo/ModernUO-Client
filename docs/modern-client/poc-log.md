@@ -1927,6 +1927,7 @@ Branch `bg/ecs-e6-effects` (E6 agent, kbatman3), started on `poc/modern-client` 
 | Unit tests | 570 pass on the merged tip; Release and `-p:CuoDevTools=false` build |
 
 **Limits / left:**
+- Checker limit: the item check compares two different frames (a served one and the check frame after it), so an effect wrongly left out of the served frame could expire before the reference frame; and the hash covers the effects list (identity, alpha, order) but not an effect's geometry, blend or depth. The effect tooling (`BenchEffects`, the driver's `fx`/`fxserve`, `World.Effects`) is behind `CUO_DEVTOOLS`.
 - Not an ECS effect extract (see measurements): capture is 0.09 us per effect. If a later scene has thousands of effects, a per-frame extract from `EffectManager` would need a sort key reproducing the walk's order (equal-depth effects are ordered by it).
 - Effects still dirty `GpuMaskDirty` (mask rebuild of one chunk per tile crossing), as mobiles do.
 - No unit tests for the mask/ignore rules: `Chunk` needs a `World`. The checkers above are the tests.
