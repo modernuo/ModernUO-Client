@@ -350,7 +350,7 @@ namespace ClassicUO.Game.Scenes
             _gpuStaticsShadowOnly.Clear();
             _gpuFoliage.Clear();
             _gpuArt = Client.Game.UO.FileManager.Arts.PackSpriteEntries;
-            _gpuStaticData = gpu.World?.Pack.Statics ?? Array.Empty<Uo.Pack.StaticTileData>();
+            _gpuStaticData = gpu.World?.Pack is { BakeTranslucentAlpha: true } pack ? pack.Statics : Array.Empty<Uo.Pack.StaticTileData>();
             var profile = ProfileManager.CurrentProfile;
             _gpuTintAll = _world.Player.IsDead && profile.EnableBlackWhiteEffect;
             _gpuStaticShadows = profile.ShadowsEnabled && profile.ShadowsStatics;

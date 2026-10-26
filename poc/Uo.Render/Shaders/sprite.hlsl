@@ -233,22 +233,30 @@ VSOut VSMain(uint vid : SV_VertexID, uint iid : SV_InstanceID)
     uint tint = TintRow;
     if (zTest && RangeTintRow != 0 && !highlighted)
     {
-        int dx, dy;
+        // must match SpriteInstance.Tile (GpuTypes.cs)
+        int a, b;
         if (zLand)
         {
             // baked land sits exactly on its tile: X = (x - y)·22 - 22, Y = (x + y)·22 - 22 - z·4 (stretched: no z term)
             int zt = (flags & FLAG_STRETCH) != 0 ? 0 : z;
-            int a = inst.x + 33, b = inst.y + 33 + zt * 4;
-            int d = (a >= 0 ? a : a - 21) / 22, s = (b >= 0 ? b : b - 21) / 22;
-            dx = ((s + d) >> 1) - RangeX;
-            dy = ((s - d) >> 1) - RangeY;
+            a = inst.x + 33;
+            b = inst.y + 33 + zt * 4;
         }
         else
         {
-            // statics carry their tile's low bytes; visible tiles are well within 128 of the player
-            dx = (int)((((inst.light >> 16) - (uint)RangeX + 128u) & 0xFFu)) - 128;
-            dy = (int)((((inst.light >> 24) - (uint)RangeY + 128u) & 0xFFu)) - 128;
+            // statics: the untrimmed art is centred on x = (tx - ty)·22 and ends at y = (tx + ty)·22 - z·4 + 22; the
+            // estimate is corrected to the tile's low bytes below
+            a = inst.x + (int)((inst.whf & 0xFFFu) >> 1) + 11;
+            b = inst.y + (int)((inst.whf >> 12) & 0xFFFu) + z * 4 - 11;
         }
+        int d = (a >= 0 ? a : a - 21) / 22, s = (b >= 0 ? b : b - 21) / 22;
+        int tx = (s + d) >> 1, ty = (s - d) >> 1;
+        if (!zLand)
+        {
+            tx += (int)((((inst.light >> 16) - (uint)tx + 128u) & 0xFFu)) - 128;
+            ty += (int)((((inst.light >> 24) - (uint)ty + 128u) & 0xFFu)) - 128;
+        }
+        int dx = tx - RangeX, dy = ty - RangeY;
         if (max(abs(dx), abs(dy)) > RangeDist)
             tint = RangeTintRow;
     }

@@ -77,9 +77,10 @@ public sealed unsafe class WorldRenderer : IDisposable
     readonly SpriteInstance[] _dynamic;
     int _dynCount;
 
-    readonly uint[] _trans;
-    readonly ulong[] _transSort;
-    readonly TransRun[] _transRuns;
+    // the translucent list grows on demand up to Renderer.TranslucentLimit (the frame table follows before the frame)
+    uint[] _trans;
+    ulong[] _transSort;
+    TransRun[] _transRuns;
     int _transCount;
 
     struct PendingOverride
@@ -156,6 +157,7 @@ public sealed unsafe class WorldRenderer : IDisposable
         _o = o;
         _ownsRenderer = ownsRenderer;
         _ownsWorkers = ownsWorkers;
+        pack.BakeTranslucentAlpha = true; // BuildFrame lists the chunks' translucent sub-lists
         Pages = new PageResidency(renderer.Device, pack, workers, o.Layers, o.PageBudget, Math.Max(2, o.PageBudget * 2), o.ForceExpand);
         if (pack.AnimIndexed && o.AnimLayers > 0)
             AnimPages = new PageResidency(renderer.Device, pack.AnimPagePaths, pack.AnimFormat, pack.AnimPageSize, pack.AnimPageMips, workers, o.AnimLayers,
@@ -297,9 +299,8 @@ public sealed unsafe class WorldRenderer : IDisposable
     public bool RangeTinted(in SpriteInstance inst)
     {
         if (_rangeHue == 0 || (inst.Flags & SpriteInstance.FlagZTest) == 0) return false;
-        inst.Tile(out int tx, out int ty, out bool low);
-        int dx = low ? (sbyte)(byte)(tx - _rangeX) : tx - _rangeX, dy = low ? (sbyte)(byte)(ty - _rangeY) : ty - _rangeY;
-        return Math.Max(Math.Abs(dx), Math.Abs(dy)) > _rangeDist;
+        inst.Tile(out int tx, out int ty);
+        return Math.Max(Math.Abs(tx - _rangeX), Math.Abs(ty - _rangeY)) > _rangeDist;
     }
 
     /// <summary>Circle of transparency (ClassicUO's shader mode) for this frame: centre and radius in target pixels,
@@ -431,7 +432,6 @@ public sealed unsafe class WorldRenderer : IDisposable
         if (!_prepared) throw new InvalidOperationException("Prepare before Render");
         int chunkCount = _chunkCount, instances = _instances;
         _transCount = 0;
-        int transCap = _trans.Length;
         OverridesDropped = _droppedPending;
         CotRingCount = 0;
         bool cot = _cotR > 0;
@@ -456,28 +456,13 @@ public sealed unsafe class WorldRenderer : IDisposable
                 if (d.Alpha == 0) continue;
                 // translucent, or opaque with a circle-of-transparency ring to blend (the shader discards the rest)
                 if (!d.Translucent && !(cot && (d.Light & SpriteInstance.LightCot) != 0 && InCotRect(d))) continue;
-                if (_transCount < transCap) _transSort[_transCount++] = SortKey(d.Depth, _dynFirst + (uint)i);
-                else OverridesDropped++;
+                AddTrans(SortKey(d.Depth, _dynFirst + (uint)i));
                 if (d.Blend is not (InstanceBlend.Normal or InstanceBlend.NormalOrdered or InstanceBlend.Screen)) ownBlend++;
             }
             _table[chunkCount].First = _dynFirst;
             _table[chunkCount].Prefix = (uint)instances;
             chunkCount++;
             instances += _dynCount;
-        }
-
-        // baked translucent statics (alpha 178): each visible chunk's precomputed sort keys, no per-instance work. Hidden or
-        // z-hidden ones collapse in the shader; an override changes only their alpha (the override loop doesn't list them).
-        BakedTranslucentCount = 0;
-        var transSlots = Chunks.VisibleTranslucentSlots;
-        for (int c = 0; c < Chunks.VisibleTranslucentCount; c++)
-        {
-            var keys = Chunks.TranslucentKeys(transSlots[c]);
-            int take = Math.Min(keys.Length, transCap - _transCount);
-            keys.Slice(0, take).CopyTo(_transSort.AsSpan(_transCount));
-            _transCount += take;
-            BakedTranslucentCount += take;
-            OverridesDropped += keys.Length - take;
         }
 
         // overrides: resolve against ready chunks into the hash; translucent ones join the sorted list
@@ -503,8 +488,35 @@ public sealed unsafe class WorldRenderer : IDisposable
                 // baked translucent: already listed from its chunk's sub-list; opaque: the circle-of-transparency scan
                 // below lists it if it has a ring
                 if (inst.Translucent || alpha == 255) continue;
-                if (_transCount < transCap) _transSort[_transCount++] = SortKey(inst.Depth, gi);
-                else OverridesDropped++;
+                AddTrans(SortKey(inst.Depth, gi));
+            }
+        }
+
+        // baked translucent statics (alpha 178): each visible chunk's sort keys from upload. Only those the frame shows take
+        // a list entry: hidden (by override) and z-hidden ones are left out, so they never crowd out a visible fade.
+        BakedTranslucentCount = 0;
+        var transSlots = Chunks.VisibleTranslucentSlots;
+        for (int c = 0; c < transSlots.Length; c++)
+        {
+            var keys = Chunks.TranslucentKeys(transSlots[c]);
+            for (int k = 0; k < keys.Length; k++)
+            {
+                uint gi = uint.MaxValue - (uint)keys[k];
+                ref readonly var inst = ref Chunks.CpuInstanceAt(gi);
+                int alpha = inst.Alpha;
+                bool force = false;
+                if (_ovUsedCount > 0)
+                {
+                    uint ov = FindOverride(gi, mask, out bool found);
+                    if (found)
+                    {
+                        alpha = OverrideAlpha(inst, ov);
+                        force = (ov >> 8 & OverrideEntry.ForceShow) != 0;
+                    }
+                }
+                if (alpha == 0 || ZHidden(inst, force)) continue;
+                AddTrans(keys[k]);
+                BakedTranslucentCount++;
             }
         }
 
@@ -528,10 +540,17 @@ public sealed unsafe class WorldRenderer : IDisposable
                     if (ZHidden(inst, found && (ov >> 8 & OverrideEntry.ForceShow) != 0)) continue;
                     // baked translucent: its chunk's sub-list entry draws the ring (or the whole effect)
                     if (inst.Translucent) continue;
-                    if (_transCount < transCap) { _transSort[_transCount++] = SortKey(inst.Depth, gi); CotRingCount++; }
-                    else OverridesDropped++;
+                    AddTrans(SortKey(inst.Depth, gi));
+                    CotRingCount++;
                 }
             }
+        }
+
+        // the frame table must hold the whole list (it grows with the list, up to Renderer.TranslucentLimit)
+        if (!Renderer.EnsureTranslucentCapacity(_transCount))
+        {
+            OverridesDropped += _transCount - Renderer.MaxTranslucent;
+            _transCount = Renderer.MaxTranslucent;
         }
 
         // back to front: ascending depth key; equal keys (a mobile's layers) in reverse emission order, body first
@@ -590,6 +609,26 @@ public sealed unsafe class WorldRenderer : IDisposable
             },
         };
     }
+
+    /// <summary>Appends a translucent-list entry, growing the list (up to <see cref="Renderer.TranslucentLimit"/>; beyond it
+    /// the entry is dropped and counted in <see cref="OverridesDropped"/>).</summary>
+    void AddTrans(ulong key)
+    {
+        if (_transCount == _transSort.Length)
+        {
+            int n = _transSort.Length;
+            if (n >= Renderer.TranslucentLimit) { OverridesDropped++; return; }
+            int m = Math.Min(Renderer.TranslucentLimit, Math.Max(1024, n * 2));
+            Array.Resize(ref _transSort, m);
+            Array.Resize(ref _trans, m);
+            Array.Resize(ref _transRuns, m);
+            TranslucentListGrowths++;
+        }
+        _transSort[_transCount++] = key;
+    }
+
+    /// <summary>Times the CPU translucent list grew (the frame table follows in <see cref="Renderer.EnsureTranslucentCapacity"/>).</summary>
+    public int TranslucentListGrowths;
 
     internal static ulong SortKey(uint depth, uint gi) => (ulong)depth << 32 | (uint.MaxValue - gi);
 
