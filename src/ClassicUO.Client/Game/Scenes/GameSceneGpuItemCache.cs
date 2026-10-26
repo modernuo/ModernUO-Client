@@ -221,7 +221,8 @@ namespace ClassicUO.Game.Scenes
             _gpuItemCacheOn = true;
             _gpuSelContainer = SelectedObject.SelectedContainer;
 
-            if (_gpuItemCheck && (_gpuItemCheckEvery || ++_gpuItemCheckCounter % 30 == 0))
+            // =every: every other frame, so each check frame follows a served one (the capture-order comparison needs it)
+            if (_gpuItemCheck && (_gpuItemCheckEvery ? (++_gpuItemCheckCounter & 1) == 0 : ++_gpuItemCheckCounter % 30 == 0))
             {
                 _gpuItemCheckNow = true;
                 _gpuCheckExpectCount = 0;
@@ -706,6 +707,14 @@ namespace ClassicUO.Game.Scenes
                 int start = first.InstStart;
                 gpu.AppendDynamic(new ReadOnlySpan<SpriteInstance>(cache.Instances, start, last.InstStart + last.InstCount - start));
 
+                if (RenderLists.CaptureOrderOn)
+                {
+                    for (int i = run.EntryStart; i < run.EntryEnd; i++)
+                    {
+                        RenderLists.CaptureOrderHash = RenderLists.MixCaptureOrder(RenderLists.CaptureOrderHash, cache.Entries[i].Item);
+                    }
+                }
+
                 if (cache.LitCount > 0)
                 {
                     for (int i = run.EntryStart; i < run.EntryEnd; i++)
@@ -752,6 +761,10 @@ namespace ClassicUO.Game.Scenes
         private uint _gpuListHashFrame;
         private bool _gpuListHashPrevServed;
         private int _gpuListSame, _gpuListDiff;
+        private ulong _gpuOrderPrev;
+        private uint _gpuOrderFrame;
+        private bool _gpuOrderPrevServed;
+        private int _gpuOrderSame, _gpuOrderDiff;
 
         private void GpuItemCheckLists()
         {
@@ -762,6 +775,9 @@ namespace ClassicUO.Game.Scenes
 
             _gpuCheckSkip ??= obj => obj is Item it && it.TileChunk?.GpuItems is { } c && c.CheckFrame == _drawFrame &&
                                      (c.CheckTiles & 1UL << ((it.X & 7) << 3 | (it.Y & 7))) != 0 && !c.IsWalked((it.X & 7) << 3 | (it.Y & 7), it);
+            // E7: the capture order of everything, cached items included (RenderLists.CaptureOrderHash), compared in GpuItemCheckEnd
+            RenderLists.CaptureOrderOn = true;
+            RenderLists.CaptureOrderHash = 1469598103934665603UL;
             ulong h = _renderLists.DebugHash(_gpuCheckSkip) ^ (ulong)RuntimeHelpers.GetHashCode(SelectedObject.Object ?? (object)_renderLists) << 7;
 
             if (_gpuItemCheckNow && _gpuListHashPrevServed && _gpuListHashFrame == _drawFrame - 1)
@@ -905,6 +921,30 @@ namespace ClassicUO.Game.Scenes
         // After the capture of a check frame: entries the walk didn't draw, and the totals every 5 s.
         private void GpuItemCheckEnd()
         {
+            if (RenderLists.CaptureOrderOn)
+            {
+                // E7: a served frame's capture order (cached runs where they were injected, walked-alone items, everything
+                // else) must equal the reference walk's on the check frame after it, while nothing moves
+                RenderLists.CaptureOrderOn = false;
+                ulong order = RenderLists.CaptureOrderHash;
+
+                if (_gpuItemCheckNow && _gpuOrderPrevServed && _gpuOrderFrame == _drawFrame - 1)
+                {
+                    if (order == _gpuOrderPrev)
+                    {
+                        _gpuOrderSame++;
+                    }
+                    else
+                    {
+                        _gpuOrderDiff++;
+                    }
+                }
+
+                _gpuOrderPrev = order;
+                _gpuOrderFrame = _drawFrame;
+                _gpuOrderPrevServed = _gpuItemCacheOn && !_gpuItemCheckNow;
+            }
+
             if (!_gpuItemCheckNow)
             {
                 return;
@@ -942,10 +982,10 @@ namespace ClassicUO.Game.Scenes
                 Log.Info($"[gpu-item-check] {_gpuItemChecks} checks, {_gpuItemCheckStale} with differences; {_gpuItemCheckCompared} cached items compared: " +
                          $"{_gpuItemCheckMissing} missing or out of order, {_gpuItemCheckExtra} extra, {_gpuItemCheckDiff} different, {_gpuItemCheckPlace} misplaced; " +
                          $"{_gpuItemCheckFallbacks} tiles caught by the signature; other queued objects vs the served frame before: " +
-                         $"{_gpuListSame} same, {_gpuListDiff} different" + (_gpuItemCheckSample != null ? $"; first: {_gpuItemCheckSample}" : ""));
+                         $"{_gpuListSame} same, {_gpuListDiff} different; capture order vs the served frame before: {_gpuOrderSame} same, {_gpuOrderDiff} different" +(_gpuItemCheckSample != null ? $"; first: {_gpuItemCheckSample}" : ""));
                 _gpuItemCheckAt = now;
                 _gpuItemChecks = _gpuItemCheckStale = _gpuItemCheckCompared = _gpuItemCheckMissing = _gpuItemCheckExtra = _gpuItemCheckDiff = _gpuItemCheckFallbacks = _gpuItemCheckPlace = 0;
-                _gpuListSame = _gpuListDiff = 0;
+                _gpuListSame = _gpuListDiff = _gpuOrderSame = _gpuOrderDiff = 0;
                 _gpuItemCheckSample = null;
             }
         }
