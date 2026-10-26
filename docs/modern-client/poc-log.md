@@ -1629,3 +1629,17 @@ Branch `bg/ecs-e2-e3` from `poc/modern-client` 755f4e119. E2 e1a1511d2, E3 c4870
 **E3:** DevBench plan entry `ecsdump:<hex serial>|player|nearest` (`Game/Ecs/EcsInspector.cs`, whole file behind `CUO_DEVTOOLS`). Smoke run on kbatman3 (account lock held, password in a throwaway encrypted settings.json, deleted after; Britain, Gpu, 960x720): `[ecsdump]` lines for the player (entity 1, two worn items, pushed inputs equal to the recomputed ones, slot 0 `item=0x401F0BEB layer=22 g=0x204F anim=0x03DB ... | legacy g=0x204F hue=0x054F layer=22 container=0x0004C222`) and for the nearest mobile (animation not yet built, `EquipmentDirty`, 7 indexed equipment items matching the legacy list). Format and use: [testing/ecs-animation.md](testing/ecs-animation.md).
 
 **Verification:** `tests/ClassicUO.UnitTests` Release 466 passed (the bench is one of them and returns at once without the variable); client builds in Release and with `-p:CuoDevTools=false`. Submodules had to be initialised (`git submodule update --init --recursive`) in the fresh worktree.
+
+### Parity `lights-mismatched` at night: a checker artifact (2026-10-26, branch `fix/ecs-lights-parity`, base 540157a5a)
+
+**Question:** E4 saw `lights-mismatched` 4,324 / 5,705 (item path, `view=1 ecs=0`) in the large-scale parity run; E5 earlier saw `lights=0`.
+
+**Cause (not a regression):**
+- Same plan in both runs (`ls_parity.txt` identical). What differed was the time of day: `GameScene.UseLights` is `RealPersonal < RealOverall` (server light cycle), and `AddLight` returns at once when it is false. E5 ran by day, so `lights=0` meant no lights were ever exercised. E4 ran at dusk; my daytime run at 11:05 PDT had `lights=651`.
+- `EcsParity` adds the ECS light after the view's, so the list holds both. `AddLight` stops at `LightsLoader.MAX_LIGHTS_DATA_INDEX_COUNT` (100): when the view's light was the 100th, the ECS add is refused (`view=1 ecs=0`). The logged items were just the last lights drawn each frame (candles 0x0A0F, 0x19AB lamps), at all alphas. The mobile-effects check had the same flaw (no hit here: mobiles' lights were 0 in this scene).
+
+**Evidence:** the driver's `light 1E` / `light off` (custom light level) makes it deterministic. Same plan, same scene, the forced-night run on 540157a5a: `lights-mismatched=7511` of `lights=932080`; on 755f4e119 (E5's base): 7407 of 926138, so no regression and no bisect needed (E9/E2/E3/E5 did not change it). Forced day: `lights=0`, 0 mismatched.
+
+**Fix:** `EcsParity.LightsFit(lightsBefore, viewEnd)` skips the light comparison when the doubled list would not fit under the cap (counted as `lights-skipped-full` in the summary, so the skip is visible). Forced night on the fixed build: `lights-mismatched=0`, `lights=931347`, `skipped-full=7531` (matches the unfixed 7511 within run noise), items/mobiles/effects mismatches 0. 5 unit tests in `ParityLightsFitTests`; 550 tests pass, default and `-p:CuoDevTools=false`.
+
+**Note for future parity runs:** run both `light off` and `light 1E` at the start of the driver plan; a day-only run proves nothing about lights. Not covered: a real difference in light lists in the skipped (full-list) frames, which the checker cannot see.
