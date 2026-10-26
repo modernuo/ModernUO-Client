@@ -126,7 +126,7 @@ Driven by environment variables. Read the header comment in DevBench.cs for the 
 
 | Check | How | Pass |
 |---|---|---|
-| Build and unit tests | `dotnet test tests/ClassicUO.UnitTests -c Release` | All pass (338 on the B8 branch, 2026-10-25) |
+| Build and unit tests | `dotnet test tests/ClassicUO.UnitTests -c Release` | All pass (465 on the B8 branch after the poc/modern-client bbd86eb37 merge, 2026-10-25) |
 | World screenshot parity | `CUO_BENCH_SHOTS` at fixed spots (Britain, bank, zoomed out, night); compare before vs after or Legacy vs Gpu | Pixel diff is explained (filtering), and someone **looked at the images** |
 | UI parity | `gumps` plus the `_ui.png` shots | Identical, apart from live journal text |
 | **Legacy world (required for any change to the batcher, the asset loaders, world prepare or GameScene drawing)** | A pure-Legacy session (`-worldrenderer legacy`) with `CUO_BENCH_SHOTS` at a fixed spot, compared with the same spot on the previous build. Legacy is auto's low-end fallback and our parity yardstick and the batcher still draws the UI in Gpu mode | Same image apart from moving creatures, and someone **looked at it**. The B1 regression (2026-10-25: missing and wrong land/static tiles in every Legacy frame) passed every Gpu-only check for a day |
