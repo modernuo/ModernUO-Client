@@ -480,7 +480,14 @@ namespace ClassicUO.Game
         /// Rebuilds <see cref="EquipmentSlots"/> from the mirror: the equipment by layer, the PaperdollOrder paint order,
         /// then MobileView's per-layer skips (dead hair, covered layers, items without an equip AnimID) and drawn bodies.
         /// </summary>
-        public void Rebuild(EcsEntity mobile, in AnimationState s, Mobile owner = null)
+        public void Rebuild(EcsEntity mobile, in AnimationState s, Mobile owner = null) =>
+            Rebuild(mobile, in s, owner, Client.Game.UO.FileManager.TileData.StaticData,
+                Client.Game.UO.FileManager.Animations.EquipConversions, Client.Game.UO.Version >= ClientVersion.CV_7000);
+
+        /// <summary>Rebuild with its data sources given (tiledata, the equipconv table, the client's 7.0.0.0 gate): the seam the
+        /// unit tests use in place of the loaded client files; used only when equipment changes, never per frame.</summary>
+        internal void Rebuild(EcsEntity mobile, in AnimationState s, Mobile owner, StaticTiles[] tiles,
+            IReadOnlyDictionary<ushort, Dictionary<ushort, EquipConvData>> equipConversions, bool cv7000)
         {
             Rebuilds++;
             ref EquipmentSlots eq = ref mobile.GetComponent<EquipmentSlots>();
@@ -488,8 +495,6 @@ namespace ClassicUO.Game
             eq.Version = ++_equipVersions;
 
             ushort body = mobile.GetComponent<Graphic>().Value;
-            StaticTiles[] tiles = Client.Game.UO.FileManager.TileData.StaticData;
-
             Span<ushort> gfx = stackalloc ushort[N];
             Span<ushort> anim = stackalloc ushort[N];
             Span<ushort> hue = stackalloc ushort[N];
@@ -552,7 +557,6 @@ namespace ClassicUO.Game
             // MobileView draws equipment only on human bodies; other bodies only light their light items
             bool human = (s.Flags & AnimStateFlags.Human) != 0 || AnimationRules.IsHumanBody(body);
 
-            bool cv7000 = Client.Game.UO.Version >= ClientVersion.CV_7000;
             bool gargoyle = AnimationRules.IsGargoyleDrawBody(body, cv7000);
             bool dead = (s.Flags & AnimStateFlags.Dead) != 0 || AnimationRules.IsDeadBody(body);
             bool female = (s.Flags & AnimStateFlags.Female) != 0;
@@ -571,7 +575,7 @@ namespace ClassicUO.Game
             PaperdollOrder.Build(orderKey, female || gargoyle, raw);
             int count = PaperdollOrder.Filter(raw, includeBackpack: false, order);
 
-            Client.Game.UO.FileManager.Animations.EquipConversions.TryGetValue(body, out Dictionary<ushort, EquipConvData> conv);
+            equipConversions.TryGetValue(body, out Dictionary<ushort, EquipConvData> conv);
 
             for (int i = 0; i < count; i++)
             {

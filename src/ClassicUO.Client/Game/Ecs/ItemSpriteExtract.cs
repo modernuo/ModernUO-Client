@@ -77,15 +77,79 @@ namespace ClassicUO.Game
                 return EmitCorpse(item, pack, offsetX, offsetY, posX, posY - 3, ShaderHueTranslator.GetHueVector(0, false, alpha).Z, depth, profile);
             }
 
-            ushort hue = item.Hue;
-            ushort graphic = displayed;
-            bool partial = item.ItemData.IsPartialHue;
+            bool selected = ReferenceEquals(SelectedObject.Object, item);
 
-            if (item.OnGround)
+            var hueInput = new HueInput
             {
-                if (item.ItemData.IsAnimated && profile.FieldsType == 2)
+                Hue = item.Hue,
+                Graphic = displayed,
+                RawGraphic = item.Graphic,
+                Partial = item.ItemData.IsPartialHue,
+                OnGround = item.OnGround,
+                ReplaceFields = item.ItemData.IsAnimated && profile.FieldsType == 2,
+                SelectedContainer = item.ItemData.IsContainer && SelectedObject.SelectedContainer == item,
+                HighlightSelected = profile.HighlightGameObjects && selected,
+                OutOfRange = profile.NoColorObjectsOutOfRange && item.Distance > world.ClientViewRange,
+                PlayerDeadGray = world.Player.IsDead && profile.EnableBlackWhiteEffect,
+                Selected = selected,
+                Locked = item.IsLocked,
+                Multi = item.IsMulti,
+                Hidden = item.IsHidden
+            };
+
+            ChooseHue(in hueInput, out ushort graphic, out ushort hue, out bool partial);
+
+            Vector3 hueVec = ShaderHueTranslator.GetHueVector(hue, partial, alpha);
+            int objX = item.X;
+
+            if (!item.IsMulti && !item.IsCoin && item.Amount > 1 && item.ItemData.IsStackable)
+            {
+                Art(pack, graphic, posX - 5, posY - 5, hueVec, depth, objX, offsetX, offsetY);
+            }
+
+            // the house placement preview (a local multi item without a serial) is drawn half transparent
+            if (!SerialHelper.IsValid(item.Serial) && item.IsMulti && world.TargetManager.TargetingState == CursorTarget.MultiPlacement)
+            {
+                hueVec.Z = 0.5f;
+            }
+
+            Art(pack, graphic, posX, posY, hueVec, depth, objX, offsetX, offsetY);
+
+            return true;
+        }
+
+        /// <summary>What ItemView.Draw's art hue choice reads from the item, the profile and the selection.</summary>
+        internal struct HueInput
+        {
+            public ushort Hue;
+            public ushort Graphic;       // DisplayedGraphic
+            public ushort RawGraphic;    // Item.Graphic, which the field tests use
+            public bool Partial;
+            public bool OnGround;
+            public bool ReplaceFields;   // animated art and the Fields option is 2
+            public bool SelectedContainer;
+            public bool HighlightSelected;
+            public bool OutOfRange;
+            public bool PlayerDeadGray;
+            public bool Selected;
+            public bool Locked;
+            public bool Multi;
+            public bool Hidden;
+        }
+
+        /// <summary>ItemView.Draw's graphic, hue and partial-hue choice: field replacement and the selected container (ground
+        /// items), then the first that applies of highlight, out of range, player dead gray, mouse selection and hidden.</summary>
+        internal static void ChooseHue(in HueInput i, out ushort graphic, out ushort hue, out bool partial)
+        {
+            hue = i.Hue;
+            graphic = i.Graphic;
+            partial = i.Partial;
+
+            if (i.OnGround)
+            {
+                if (i.ReplaceFields)
                 {
-                    ushort g = item.Graphic;
+                    ushort g = i.RawGraphic;
 
                     if (StaticFilters.IsFireField(g))
                     {
@@ -114,54 +178,34 @@ namespace ClassicUO.Game
                     }
                 }
 
-                if (item.ItemData.IsContainer && SelectedObject.SelectedContainer == item)
+                if (i.SelectedContainer)
                 {
                     hue = 0x0035;
                     partial = false;
                 }
             }
 
-            bool selected = ReferenceEquals(SelectedObject.Object, item);
-
-            if (profile.HighlightGameObjects && selected)
+            if (i.HighlightSelected)
             {
                 hue = Constants.HIGHLIGHT_CURRENT_OBJECT_HUE;
                 partial = false;
             }
-            else if (profile.NoColorObjectsOutOfRange && item.Distance > world.ClientViewRange)
+            else if (i.OutOfRange)
             {
                 hue = Constants.OUT_RANGE_COLOR;
             }
-            else if (world.Player.IsDead && profile.EnableBlackWhiteEffect)
+            else if (i.PlayerDeadGray)
             {
                 hue = Constants.DEAD_RANGE_COLOR;
             }
-            else if (!item.IsLocked && !item.IsMulti && selected)
+            else if (!i.Locked && !i.Multi && i.Selected)
             {
                 hue = 0x0035;
             }
-            else if (item.IsHidden)
+            else if (i.Hidden)
             {
                 hue = 0x038E;
             }
-
-            Vector3 hueVec = ShaderHueTranslator.GetHueVector(hue, partial, alpha);
-            int objX = item.X;
-
-            if (!item.IsMulti && !item.IsCoin && item.Amount > 1 && item.ItemData.IsStackable)
-            {
-                Art(pack, graphic, posX - 5, posY - 5, hueVec, depth, objX, offsetX, offsetY);
-            }
-
-            // the house placement preview (a local multi item without a serial) is drawn half transparent
-            if (!SerialHelper.IsValid(item.Serial) && item.IsMulti && world.TargetManager.TargetingState == CursorTarget.MultiPlacement)
-            {
-                hueVec.Z = 0.5f;
-            }
-
-            Art(pack, graphic, posX, posY, hueVec, depth, objX, offsetX, offsetY);
-
-            return true;
         }
 
         // ItemView.DrawCorpse: the body, then the worn layers in paint order (PaperdollOrder.BuildInWorld)
