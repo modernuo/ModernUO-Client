@@ -430,6 +430,9 @@ namespace ClassicUO.Game.Scenes
         public int DrawDeferredRenderLists(UltimaBatcher2D batcher, sbyte maxGroundZ, GpuWorldRenderer gpu)
         {
             int result = 0;
+            long fxStamp = FrameStats.Stamp();
+
+            FrameStats.Set(FrameCounter.Effects, _effects.Count);
 
             foreach (var obj in _effects)
             {
@@ -448,6 +451,8 @@ namespace ClassicUO.Game.Scenes
                     result++;
                 }
             }
+
+            FrameStats.AddSince(FramePhase.WorldDrawEffects, fxStamp);
 
             if (_gumpSprites.Count > 0 || _gumpTexts.Count > 0)
             {

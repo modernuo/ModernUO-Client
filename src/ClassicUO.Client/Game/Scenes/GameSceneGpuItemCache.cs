@@ -149,6 +149,11 @@ namespace ClassicUO.Game.Scenes
     //     multis, animated / foliage / translucent / roof items, text, fading, ...) that never end the tile's walk is served
     //     too: those items are walked alone where they lie in the tile list, between the cached runs before and after them.
     //     A tile that also holds mobiles walks them in the same pass, in tile order with those items.
+    //   - E6 (gpu_prepare_item_cache_effects): graphic effects (GameEffect) don't count as unbaked objects of a tile for the cache,
+    //     and don't re-extract a chunk when they join or leave a tile (Chunk.GpuEffectsIgnored). A served tile holding effects
+    //     (Chunk.GpuEffectMask, rebuilt with the masks) walks them alone, in tile order with its mobiles and walked-alone items:
+    //     an effect never ends a tile's walk and goes to the effects list (or the transparent one when its alpha isn't full),
+    //     so only its order among the other transparent objects of the tile matters, and the single pass keeps it.
     // CUO_GPU_ITEM_CHECK=1 (every 30th frame) or =every: the frame walks every item as usual and compares what the cache
     // would have served, item by item and instance by instance, with what the walk and the extract produced.
     internal partial class GameScene
@@ -162,7 +167,7 @@ namespace ClassicUO.Game.Scenes
 
         private bool _gpuItemCacheOn, _gpuItemCheckNow;
         private int _gpuItemGeneration;
-        private bool _gpuItemKeyOn, _gpuItemKeyGray, _gpuItemKeyRange, _gpuItemKeyMixed;
+        private bool _gpuItemKeyOn, _gpuItemKeyGray, _gpuItemKeyRange, _gpuItemKeyMixed, _gpuItemKeyEffects;
         private Uo.Render.WorldRenderer _gpuItemKeyWorld;
         private Item _gpuSelContainer;
         // this chunk's tiles served from its cache, or (check frames) that would be
@@ -200,16 +205,19 @@ namespace ClassicUO.Game.Scenes
             bool gray = _world.Player.IsDead && profile.EnableBlackWhiteEffect;
             bool range = profile.NoColorObjectsOutOfRange;
             bool mixed = Settings.GlobalSettings.GpuPrepareItemCacheMixed;
+            bool effects = want && Settings.GlobalSettings.GpuPrepareItemCacheEffects;
             var world = _gpuWorld.World;
 
             if (want != _gpuItemKeyOn || gray != _gpuItemKeyGray || range != _gpuItemKeyRange || mixed != _gpuItemKeyMixed ||
-                !ReferenceEquals(world, _gpuItemKeyWorld))
+                effects != _gpuItemKeyEffects || !ReferenceEquals(world, _gpuItemKeyWorld))
             {
                 _gpuItemGeneration++;
                 _gpuItemKeyOn = want;
                 _gpuItemKeyGray = gray;
                 _gpuItemKeyRange = range;
                 _gpuItemKeyMixed = mixed;
+                _gpuItemKeyEffects = effects;
+                Chunk.GpuEffectsIgnored = effects;
                 _gpuItemKeyWorld = world;
             }
 
@@ -310,6 +318,7 @@ namespace ClassicUO.Game.Scenes
             int offX = _offset.X, offY = _offset.Y;
             bool transient = false;
             bool mixed = _gpuItemKeyMixed;
+            bool fx = _gpuItemKeyEffects;
             ulong walk = chunk.GpuWalkMask;
 
             for (int b = 0; b < 64; b++)
@@ -328,8 +337,8 @@ namespace ClassicUO.Game.Scenes
 
                 for (GameObject obj = head; obj != null; obj = obj.TNext)
                 {
-                    // mobiles are walked on their own (GpuServeCachedTile's callers)
-                    if (IsGpuBaked(obj) || obj is Mobile)
+                    // mobiles are walked on their own (GpuServeCachedTile's callers), E6: effects too
+                    if (IsGpuBaked(obj) || obj is Mobile || fx && obj is GameEffect)
                     {
                         continue;
                     }
@@ -368,7 +377,7 @@ namespace ClassicUO.Game.Scenes
 
                 for (GameObject obj = head; obj != null; obj = obj.TNext)
                 {
-                    if (IsGpuBaked(obj) || obj is Mobile)
+                    if (IsGpuBaked(obj) || obj is Mobile || fx && obj is GameEffect)
                     {
                         continue;
                     }
@@ -504,7 +513,9 @@ namespace ClassicUO.Game.Scenes
 
             // tiles with mobiles stay in the walk, which then skips their items; E7: a tile with walked-alone items leaves it
             // even with mobiles (GpuServeMixedTile walks them, in tile order with those items)
-            walkTiles &= ~(serve & ~(chunk.GpuMobileMask & ~cache.WalkTiles));
+            // E6: so does a tile with effects (walked alone too, in the same pass)
+            ulong fxTiles = _gpuItemKeyEffects ? chunk.GpuEffectMask : 0;
+            walkTiles &= ~(serve & ~(chunk.GpuMobileMask & ~(cache.WalkTiles | fxTiles)));
             _gpuServeTiles = serve;
         }
 
@@ -575,7 +586,7 @@ namespace ClassicUO.Game.Scenes
 
             FrameStats.Inc(FrameCounter.ItemCacheTiles);
 
-            if ((cache.WalkTiles & 1UL << b) == 0)
+            if (((cache.WalkTiles | (_gpuItemKeyEffects ? chunk.GpuEffectMask : 0)) & 1UL << b) == 0)
             {
                 GpuQueueCachedEntries(cache, s, e);
 
@@ -598,18 +609,30 @@ namespace ClassicUO.Game.Scenes
 
             int w = cache.WalkStart[b], wEnd = cache.WalkStart[b + 1];
             FrameStats.Add(FrameCounter.ItemCacheWalked, wEnd - w);
+            bool effects = _gpuItemKeyEffects && (chunk.GpuEffectMask & 1UL << b) != 0;
 
-            if ((chunk.GpuMobileMask & 1UL << b) != 0)
+            if ((chunk.GpuMobileMask & 1UL << b) != 0 || effects)
             {
-                // mobiles too (the tile left walkTiles): one pass over the tile list, walking the mobiles and the
-                // walked-alone items in their order (a corpse and a mobile share the animations list, a fading item and a
-                // fading mobile the transparent one)
+                // mobiles or effects too (the tile left walkTiles): one pass over the tile list, walking the mobiles, effects
+                // and walked-alone items in their order (a corpse and a mobile share the animations list, a fading item, a
+                // fading mobile and a fading effect the transparent one)
                 for (GameObject obj = chunk.GetHeadObject(b >> 3, b & 7); obj != null; obj = obj.TNext)
                 {
                     if (obj is Mobile)
                     {
                         if (!obj.IsDestroyed)
                         {
+                            AddTileToRenderList(obj, false, GPU_WALK_MAX_Z, chunk, true, true, obj.TNext);
+                        }
+
+                        continue;
+                    }
+
+                    if (effects && obj is GameEffect)
+                    {
+                        if (!obj.IsDestroyed)
+                        {
+                            FrameStats.Inc(FrameCounter.ItemCacheFx);
                             AddTileToRenderList(obj, false, GPU_WALK_MAX_Z, chunk, true, true, obj.TNext);
                         }
 

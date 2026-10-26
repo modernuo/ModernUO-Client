@@ -384,6 +384,21 @@ namespace ClassicUO.Game
 
                     return true;
 
+#if CUO_DEVTOOLS
+                // fx N graphic [blend [radius [z [f|m|l]]]]: N client-side effects round the player (BenchEffects), fx 0 removes them all
+                case "fx" when args.Length > 0:
+                    BenchEffects.Spawn(world, "effects:" + string.Join(":", args));
+
+                    return true;
+
+                // fxserve on|off: the item cache serves tiles holding effects (gpu_prepare_item_cache_effects, E6)
+                case "fxserve" when args.Length > 0:
+                    Settings.GlobalSettings.GpuPrepareItemCacheEffects = args[0] == "on";
+                    Log.Info($"[ECS] driver: item cache serves effect tiles {args[0]}");
+
+                    return true;
+#endif
+
                 // handles on|off: the object handles (name overhead) toggle, for every object type; handles count: the
                 // name gumps open and the items/mobiles showing handles (W5's active item check)
                 case "handles" when args.Length > 0:

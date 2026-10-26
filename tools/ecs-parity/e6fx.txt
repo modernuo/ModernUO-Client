@@ -1,0 +1,127 @@
+# E6: tools/ecs-parity/e7mixed.txt plus client-side effects (fixed in every blend, lightning, moving) over the mixed item tiles,
+# and fxserve on/off shots. Run with light 1E (this file) and light off (e6fx_day.txt: replace the first "light 1E").
+wait 6
+say [go 5445 1153
+wait 3
+light 1E
+wait 1
+say [add Arrow 50
+wait 1
+target ground 2 0
+wait 1
+say [add Bandage 20
+wait 1
+target ground 2 0
+wait 1
+say [add Static 0x3996
+wait 1
+target ground 2 0
+wait 1
+say [add Arrow 7
+wait 1
+target ground 2 0
+wait 1
+say [add Arrow 9
+wait 1
+target ground -2 0
+wait 1
+say [add Brigand
+wait 1
+target ground -2 0
+wait 2
+say [kill
+wait 1
+target mobile -2 0
+wait 2
+say [add Bandage 3
+wait 1
+target ground -2 0
+wait 1
+say [add Static 0x19AB
+wait 1
+target ground 0 2
+wait 1
+say [add Apple 4
+wait 1
+target ground 0 2
+wait 1
+say [add Static 0xA0F
+wait 1
+target ground 0 -2
+wait 1
+say [add Bandage 5
+wait 1
+target ground 0 -2
+wait 1
+say [add Static 0x1F1B
+wait 1
+target ground 2 2
+wait 1
+say [add Arrow 11
+wait 1
+target ground 2 2
+wait 3
+items
+fx 30 3709 0 3
+fx 20 3709 2 3
+fx 10 0E75 3 3
+fx 10 3709 4 3
+fx 10 3709 5 3
+fx 10 3709 6 3
+fx 10 3709 1 3
+fx 3 3709 0 3 p l
+wait 3
+parity
+shot e6_on1
+fxserve off
+wait 2
+shot e6_off1
+fxserve on
+wait 2
+shot e6_on2
+fx 20 36D4 0 4 p m
+wait 1
+parity
+wait 2
+parity
+shot e7_on1
+itemmixed off
+wait 1
+shot e7_off1
+itemmixed on
+wait 1
+shot e7_on2
+wait 2
+walk 2 0
+wait 2
+parity
+walk 0 2
+wait 2
+walk -2 0
+wait 2
+parity
+walk 0 0
+wait 2
+check
+walk 4 3
+walk 0 0
+wait 3
+parity
+fx 0
+light off
+wait 1
+say [wipe mobiles
+wait 1
+target ground -6 -6
+wait 1
+target ground 6 6
+wait 3
+say [wipe items
+wait 1
+target ground -6 -6
+wait 1
+target ground 6 6
+wait 3
+items
+check
+quit
