@@ -420,6 +420,9 @@ namespace ClassicUO.Game
                 cache.BodyHue == bodyHue && ReferenceEquals(cache.Pack, _pack))
             {
                 MobileFrameCache.EmitHits++;
+                // a pending view from an earlier emit since Begin aliases cache.Abs (the same cache replayed twice): move it
+                // into _out before Replay mutates Abs, and before `start` is taken
+                MaterializeView();
                 int objX = e.GetComponent<Position>().X;
                 int lightStart = _lightCount;
                 int start = _count;
@@ -500,8 +503,10 @@ namespace ClassicUO.Game
         /// </list>
         /// The instances are then exposed as a view when this is the first thing emitted since Begin, else appended to _out.
         /// </summary>
-        private void Replay(MobileFrameCache cache, int dx, int dy, float depth, int objX, int baseX, int baseY)
+        internal void Replay(MobileFrameCache cache, int dx, int dy, float depth, int objX, int baseX, int baseY)
         {
+            // a pending view aliases cache.Abs when this cache was replayed earlier since Begin: keep it before Abs changes
+            MaterializeView();
             int n = cache.Count;
             SpriteInstance[] abs = cache.Abs;
 

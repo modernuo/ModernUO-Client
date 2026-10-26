@@ -474,12 +474,13 @@ namespace ClassicUO.Game.Scenes
             World world = mobile.World;
             WorldEcs ecs = world.Ecs;
 
-            // E5: the entity found last frame, while it is alive and still this mobile's serial (a deleted entity is IsNull
-            // by revision; a re-keyed or replaced mobile's mirror entity is removed and re-created, so it fails the same way).
-            // Only entities that had an AnimationState are cached, and a mirror entity never loses it.
+            // E5: the entity found last frame, while no mirror entity was deleted since (WorldMirror.Epoch; Friflo's 16-bit
+            // revision can wrap, so IsNull is not trusted) and the serial is unchanged. Only entities that had an
+            // AnimationState are cached, and a mirror entity never loses it. Costs two integer compares per mobile; every
+            // deletion makes all mobiles repeat one dictionary lookup.
             Friflo.Engine.ECS.Entity e = mobile.EcsEntity;
 
-            if (mobile.EcsEntitySerial != mobile.Serial || e.IsNull)
+            if (mobile.EcsEntitySerial != mobile.Serial || mobile.EcsEntityEpoch != ecs.Mirror.Epoch)
             {
                 if (!ecs.Mirror.TryGetEntity(mobile.Serial, out e) || !e.HasComponent<ClassicUO.Ecs.AnimationState>())
                 {
@@ -491,6 +492,7 @@ namespace ClassicUO.Game.Scenes
 
                 mobile.EcsEntity = e;
                 mobile.EcsEntitySerial = mobile.Serial;
+                mobile.EcsEntityEpoch = ecs.Mirror.Epoch;
             }
 
             MobileSpriteExtract extract = ecs.MobileExtract;
