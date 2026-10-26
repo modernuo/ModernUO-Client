@@ -117,6 +117,10 @@ namespace ClassicUO
         // end of the frame, time the main thread waited for a region decode, regions decoded on the main thread, prefetches
         ChunkLoads,
         ChunkLoadUs,
+        // bytes allocated inside chunk loads, collections that started inside one and their pause (Map.LoadChunk)
+        ChunkAlloc,
+        ChunkGcs,
+        ChunkGcUs,
         ChunkMeshUs,
         ChunkQueue,
         RegionWaitUs,
@@ -181,7 +185,7 @@ namespace ClassicUO
             "override_calls", "hidden_tiles", "lights_added", "foliage", "cap_multis", "cap_statics", "cap_items", "cap_mobiles", "cap_other", "gpu_mask_rebuilds",
             "gpu_skip_active", "gpu_full_tiles", "gpu_walk_tiles", "gpu_edge_tiles", "gpu_pick_tiles",
             "item_cache_builds", "item_cache_tiles", "item_cache_items", "item_cache_fallbacks", "item_cache_walked",
-            "chunk_loads", "chunk_load_us", "chunk_mesh_us", "chunk_queue", "region_wait_us", "region_sync", "region_prefetch",
+            "chunk_loads", "chunk_load_us", "chunk_alloc", "chunk_gc", "chunk_gc_us", "chunk_mesh_us", "chunk_queue", "region_wait_us", "region_sync", "region_prefetch",
             "art_sync", "art_sync_us", "art_async", "art_upload_us", "art_pending",
             "ui_flushes", "ui_draw_calls", "ui_cached", "ui_untouched" };
 
@@ -470,8 +474,14 @@ namespace ClassicUO
             _cur[(int)FrameCounter.ChunkLoads] = Game.Map.Map.FrameChunkLoads;
             _cur[(int)FrameCounter.ChunkLoadUs] = (int)(Game.Map.Map.FrameChunkLoadTicks * toUs);
             _cur[(int)FrameCounter.ChunkMeshUs] = (int)(Game.Map.Map.FrameMeshTicks * toUs);
+            _cur[(int)FrameCounter.ChunkAlloc] = (int)Math.Min(int.MaxValue, Game.Map.Map.FrameChunkLoadBytes);
+            _cur[(int)FrameCounter.ChunkGcs] = Game.Map.Map.FrameChunkLoadGcs;
+            _cur[(int)FrameCounter.ChunkGcUs] = (int)(Game.Map.Map.FrameChunkLoadGcTicks / 10);
             Game.Map.Map.FrameChunkLoads = 0;
             Game.Map.Map.FrameChunkLoadTicks = 0;
+            Game.Map.Map.FrameChunkLoadBytes = 0;
+            Game.Map.Map.FrameChunkLoadGcs = 0;
+            Game.Map.Map.FrameChunkLoadGcTicks = 0;
             Game.Map.Map.FrameMeshTicks = 0;
             _cur[(int)FrameCounter.ChunkQueue] = Client.Game?.UO?.World?.Map?.QueuedChunks ?? 0;
 
