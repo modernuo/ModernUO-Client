@@ -51,6 +51,8 @@ Running notes for your return, newest at the top within each section. Started 20
 ## In progress
 
 - **Legacy regression, the remaining ~0.9 ms** (an agent started about 17:20): a NativeAOT bisect and profile over 613842720..tip.
+- **Gpu world override cuts** (an agent started in the evening): translucent statics (windows, some water) baked with their alpha instead of one override per sprite per frame, and the out-of-range tint as a uniform instead of one override per far object. Codex audit before the merge.
+- **Correctness pair** (an agent started at the same time, on your kbatman account, which is free today; it honours `owner-hold`): (1) the two Britain dock NPCs whose equipment layers swap order between Gpu and Legacy (virtual hair/beard serials suspected), checked against what Legacy draws; (2) a re-run of the renderer-selection matrix on the current tip, including a look at the error message box and the `[Legacy renderer]` title.
 - **Batcher B8/B9** (an agent started at the same time): cache the UI render target and redraw it only when something changed (behind a setting, pixel-identical, with an every-frame fallback for controls that can't be tracked), and sort batches by atlas, blend and scissor. Each is dropped if it doesn't pay off. A Codex audit runs on B8 before the merge.
 - All agents share a `bench.lock`, so client runs, builds and timing series never overlap.
 
