@@ -40,7 +40,7 @@ namespace ClassicUO
     //   plan entry healthbars opens health bars for the player and the three nearest mobiles at the right edge
     //   plan entries prepdetail:on|off switch FrameStats' world prepare detail buckets (CUO_FRAMESTATS_PREP=1 starts with them on)
     //   plan entries gpuskip:on|off switch the Gpu world prepare's skipping of baked land and statics (gpu_prepare_skip_baked)
-    //   plan entries itemcache:on|off switch its ground-item cache (gpu_prepare_item_cache); name:lsreinit is reinit in the large-scale scene
+    //   plan entries itemcache:on|off switch its ground-item cache (gpu_prepare_item_cache), itemmixed:on|off its mixed tiles (gpu_prepare_item_cache_mixed, E7); name:lsreinit is reinit in the large-scale scene
     //   plan entries activeitems:on|off switch World.Update's active item list (world_update_active_items, W5); CUO_W5_CHECK=1 verifies it
     //   plan entries mobcache:on|off switch the Gpu world's mobile frame cache (gpu_mobile_frame_cache, W5); CUO_MOBILE_CACHE_CHECK=1 verifies it
     //   plan entries w5:on|off switch all four W5 shortcuts (activeitems, mobcache, textskip, pushinputs) together
@@ -1485,6 +1485,16 @@ namespace ClassicUO
                     {
                         Configuration.Settings.GlobalSettings.GpuPrepareItemCache = _plan[_planIndex] == "itemcache:on";
                         Log.Info($"[bench] gpu prepare caches ground items: {Configuration.Settings.GlobalSettings.GpuPrepareItemCache}");
+                        _planIndex++;
+                        _stepAt = now + sec;
+
+                        break;
+                    }
+
+                    if (_plan[_planIndex].StartsWith("itemmixed:"))
+                    {
+                        Configuration.Settings.GlobalSettings.GpuPrepareItemCacheMixed = _plan[_planIndex] == "itemmixed:on";
+                        Log.Info($"[bench] gpu item cache serves mixed tiles: {Configuration.Settings.GlobalSettings.GpuPrepareItemCacheMixed}");
                         _planIndex++;
                         _stepAt = now + sec;
 

@@ -370,6 +370,9 @@ namespace ClassicUO.Game.Scenes
         /// <summary>Statics queued so far: where the Gpu prepare's cached ground items (GameSceneGpuItemCache) go in capture order.</summary>
         public int StaticsCount => _statics.Count;
 
+        /// <summary>CUO_GPU_ITEM_CHECK: the statics list's entry <paramref name="index"/>.</summary>
+        internal GameObject StaticAt(int index) => _statics[index];
+
         /// <summary>CUO_GPU_ITEM_CHECK: a hash of what the walk queued, in order, leaving out <paramref name="skip"/>'s objects.</summary>
         internal ulong DebugHash(Func<GameObject, bool> skip)
         {
