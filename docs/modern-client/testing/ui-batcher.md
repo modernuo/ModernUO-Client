@@ -100,6 +100,38 @@ dotnet-trace collect -o <scratch>/runs/<tag>.nettrace --providers Microsoft-Wind
   - 25–67% is the B1 corruption (missing or wrong land and statics).
   - Run 3 or more times: it moves around every frame.
 
+## UI render cache (B8)
+
+Added 2026-10-25 by the B8/B9 agent. The cache is described in GameControllerUiCache.cs and poc-log.md ("B8 and B9").
+
+- **Switches:** setting `ui_render_cache` (default on), DevBench `uicache:on|off`, chat command `-uicache [on|off]`. Off is the old UI pass, unchanged.
+- **Counters (FrameStats):**
+  - `ui_pass`: the whole UI pass (scene DrawUI, gumps, cursor, recording, comparing, submitting);
+  - `ui_traverse`: the gump tree walk; `ui_fna`: batcher FNA time into the UI targets;
+  - `ui_flushes`, `ui_draw_calls`: into the UI targets only;
+  - `ui_cached`: 1 when the gumps target was kept; `ui_untouched`: 1 when the UI target was kept too.
+- **Self-check, `CUO_UI_CACHE_CHECK=1|N`:** every N frames (default 30), the UI target is read back and compared with two references:
+  - `replay`: both recordings replayed into a scratch target, without the copy. It catches a kept target that current textures or states would no longer draw, and an inexact copy;
+  - `direct`: the UI pass run a second time with nothing recorded, as with the cache off. It catches recording or replay drawing differently from the batcher's own flushes.
+  - It logs `[ui-cache-check] checks N (gumps kept K, ui kept U), replay mismatched R (px), direct mismatched D (px)` every 5 s. `CUO_UI_CACHE_CHECK_DIR=dir` saves the first mismatches as PNGs.
+  - **Pass:** 0 and 0. Check runs read back two full targets per checked frame, and run the UI pass twice, so don't time them.
+- **The dynamic scene: plan mode `ui`** (`name:ui[:zoom]`, at Britain). While measuring, a 14-second loop:
+  - the cursor circles over the world; a sweep over the paperdoll (hover); the mouse still over a backpack item (tooltip);
+  - the journal moves; the chat box has keyboard focus (caret);
+  - a backpack item is held on the cursor and carried, then dropped back;
+  - the player's hits change locally (health bar, status); the camera zoom alternates; the world map gump opens.
+  - The mouse goes through `Input.Mouse.Override`, so the OS cursor isn't moved. The item pickup talks to the server (the item goes back to the backpack).
+- **Other entries used:** `healthbars` (bars for the player and the 3 nearest mobiles), `size:1600x900` (targets recreated), `vsync:on`/`vsync:off` (device reset), `world:legacy`, `flip:N`.
+- **Worst case, `CUO_UI_CACHE_FORCE=1`:** every frame counts as changed, which measures what the cache costs when the UI never repeats.
+- **Check plan used** (about 2 min, kbatman3):
+
+```
+CUO_UI_CACHE_CHECK=7
+CUO_BENCH_PLAN=vsync:off;world:gpu;gumps;britain:1495 1629:1;healthbars;uiscene:ui:1;size:1600x900;uiscene2:ui:1;size:1920x1080;vsync:on;vsync:off;world:legacy;legacyui:ui:1
+```
+
+- **Perf plan:** `...;healthbars;uicache:off;off:1495 1629:1;uicache:on;on:1495 1629:1;uicache:off;offui:ui:1;uicache:on;onui:ui:1`, and again in the other order. Compare `ui_pass`, not `ui_draw`: with the cache on, the FNA work moves out of `UIManager.Draw` into the submission.
+
 ## Vertex-generation micro-benchmark
 
 - The scratch console app `vbench/` (net10.0, Release, `AllowUnsafeBlocks`) compares, over 2,048 sprites × 20,000 rounds:

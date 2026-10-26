@@ -146,7 +146,11 @@ These pay off on FNA today and carry over into the Tier 2 backend. They're also 
   - B2: `GumpCommand` struct values (sprite, stretched, at, tiled, outline, text, deferred control, callback) in both gump lists. Controls whose draw needs their own state implement `IGumpDeferredDraw` and queue themselves.
   - B3–B5 as listed. Also fixed: GameScene allocated a new lights `BlendState` and two lambdas every frame, and boxed two dictionary enumerators.
   - Vertex-generation SIMD (owner question), from a micro-benchmark: scalar `SetVertex` costs 8.5 ns/sprite, Vector128 7.3 ns (−13%, bit-exact), plus a 3.1 ns upload copy. A 32-byte B6 instance costs 3.5 ns plus a 0.5 ns copy, about 3× less in total and 6× less upload. At UI sprite counts (hundreds) both are a few µs per frame, so SIMD on the 192-byte path isn't worth it. B6's main win is bandwidth, and only when the batcher draws thousands of sprites (Legacy world).
-- **B6–B7 are Tier 2 work** (or a Tier 1 seam feature). B8 and B9 can come after B2.
+- **B6–B7 are Tier 2 work** (or a Tier 1 seam feature).
+- **B8: done** (2026-10-25, setting `ui_render_cache`, default on). The UI pass still runs every frame, but the batcher records it and compares the recording byte for byte with the last one drawn. When they match, the UI targets are left untouched. The cursor goes over a kept copy of the UI, so moving the mouse over the world redraws only the cursor stage.
+  - With paperdoll, backpack, journal, status and 4 health bars: UI pass 97–104 → 51–61 µs, UI flushes 7–8 → 0, and Draw about 45 µs lower (JIT, noisy machine). When every frame changes (forced), it costs about +17 µs.
+  - Pixel identity: a self-check compared the UI target against a replay and against a direct redraw on 12,940 frames: 0 mismatches. The frames covered hover, a tooltip, gump movement, the caret, a held item, health bars, zoom, the world map, a resize, a vsync device reset and Legacy. Details: poc-log.md, "B8 and B9".
+- **B9: measured, not merged.** Order-safe regrouping by texture saved 3 of 17.6 UI draw calls but cost more than it saved (UI batcher time 50 → 66 µs). Skipping redundant state changes saved no flushes. With B8 on, B9 would only matter on frames whose UI changed. The code is on branch `poc/b9-batch-sort-experiment`.
 
 ## Order relative to other work
 

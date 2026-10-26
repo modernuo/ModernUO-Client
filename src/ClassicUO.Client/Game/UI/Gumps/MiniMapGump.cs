@@ -396,6 +396,7 @@ namespace ClassicUO.Game.UI.Gumps
             fixed (uint* ptr = data)
             {
                 texture.SetDataPointerEXT(0, bounds, (IntPtr)ptr, data.Length * sizeof(uint));
+                ClassicUO.Renderer.TextureUploads.Changed();
             }
         }
 

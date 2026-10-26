@@ -109,6 +109,7 @@ Driven by environment variables. Read the header comment in DevBench.cs for the 
 | `CUO_PREP_CHECK=1` | Verifies the world prepare's shortcuts (kept screen positions, item-picking rectangle) against the skipped work; logs `[prep-check]` every 5 s. Don't measure with it on |
 | `CUO_GPU_ITEM_CHECK=1\|every` | Verifies the ground-item cache (W4, `gpu_prepare_item_cache`): every 30th (or every) frame walks all items and compares them with what the cache would serve; logs `[gpu-item-check]` every 5 s. See [testing/world-prepare.md](testing/world-prepare.md). Don't measure with it on |
 | `CUO_W5_CHECK=1`, `CUO_MOBILE_CACHE_CHECK=1`, `CUO_MOBILE_INPUT_CHECK=1` | Verify W5's world update shortcuts: the active item list, hits percentage and skipped text layouts against the full per-frame work (`[w5-check]`), every reused mobile selection and sprite list against a fresh one (`[mobile-cache-check]`), and every sample from the pushed ECS inputs against the legacy one (`[mobile-input-check]`). `CUO_MOBILE_INPUT_BENCH=1` times the legacy and pushed samples side by side (`[mobile-input-bench]`). See [testing/world-update.md](testing/world-update.md). Don't measure with them on |
+| `CUO_UI_CACHE_CHECK=1\|N`, `CUO_UI_CACHE_FORCE=1` | B8: compare the UI target with a replay and a direct redraw every N frames (`[ui-cache-check]`); count every frame as changed (worst-case cost). See [testing/ui-batcher.md](testing/ui-batcher.md). Don't measure with the check on |
 | `CUO_WORLD_HOLD=0`, `CUO_WORLD_SETTLE_LOG=1`, `CUO_BENCH_TPSHOTS=dir\|N` | World-settle switches: observe only (no hold), log each unsettled frame presented, per-frame shots after teleports. See [testing/world-settle.md](testing/world-settle.md) |
 
 **Plan entries:**
@@ -117,6 +118,7 @@ Driven by environment variables. Read the header comment in DevBench.cs for the 
 - `activeitems:on|off`, `mobcache:on|off`, `textskip:on|off`, `pushinputs:on|off`, `w5:on|off` (W5's world update shortcuts, [testing/world-update.md](testing/world-update.md));
 - `lsreinit` (`reinit` in the large-scale scene: the GPU world pass dropped every 2 s);
 - `flip:N[:frames[:walk]]` (renderer toggle stress), `gumps` (opens paperdoll, backpack, journal and status at fixed spots);
+- `healthbars` (bars for the player and the 3 nearest mobiles), `minimap` (opens the minimap gump), `uicache:on|off` (B8), plan mode `ui` (`name:ui[:zoom]`: a loop of scripted UI changes while measuring, [testing/ui-batcher.md](testing/ui-batcher.md));
 - `effect:x y z:graphic[:blend]`, `moving:`, `shot:name`, `season:`, `itemhue:`, `ghost:on|off`, `chair:hex|off` (a client-side chair under the player), `water:on|off` (animated water), `outrange:on|off` (NoColorObjectsOutOfRange), `range:N` (the client view range, as the server's 0xC8) (local-only render checks);
 - `gumpok` (confirms a server confirmation gump).
 
@@ -124,7 +126,7 @@ Driven by environment variables. Read the header comment in DevBench.cs for the 
 
 | Check | How | Pass |
 |---|---|---|
-| Build and unit tests | `dotnet test tests/ClassicUO.UnitTests -c Release` | All pass (321 on the W5 push-inputs branch, 2026-10-25) |
+| Build and unit tests | `dotnet test tests/ClassicUO.UnitTests -c Release` | All pass (465 on the B8 branch after the poc/modern-client bbd86eb37 merge, 2026-10-25) |
 | World screenshot parity | `CUO_BENCH_SHOTS` at fixed spots (Britain, bank, zoomed out, night); compare before vs after or Legacy vs Gpu | Pixel diff is explained (filtering), and someone **looked at the images** |
 | UI parity | `gumps` plus the `_ui.png` shots | Identical, apart from live journal text |
 | **Legacy world (required for any change to the batcher, the asset loaders, world prepare or GameScene drawing)** | A pure-Legacy session (`-worldrenderer legacy`) with `CUO_BENCH_SHOTS` at a fixed spot, compared with the same spot on the previous build. Legacy is auto's low-end fallback and our parity yardstick and the batcher still draws the UI in Gpu mode | Same image apart from moving creatures, and someone **looked at it**. The B1 regression (2026-10-25: missing and wrong land/static tiles in every Legacy frame) passed every Gpu-only check for a day |
