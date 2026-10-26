@@ -1380,6 +1380,7 @@ Branch `worktree-agent-a08462117e88b693a`, from 18becdb4e, merged up to poc/mode
 - **Tests:** 338 pass: 322 plus 16 new (recording equality, every segment state, −0 vs 0, and the texture-upload source scan).
   - `ChunkLoadingTests.Prefetched_Regions_Give_The_Same_Blocks_And_Never_Block_IsBlockReady` is flaky on the final merge: it failed 2 of 5 runs, with no code of this branch involved (chunk prefetch threading). Not looked into.
 - **Builds:** Release and `-p:CuoDevTools=false` both build on the final merge.
+- **Later merge** 70e81df8f (poc/modern-client 56f8fdc4a: ECS tests and cloak order, no UI or batcher files): both flavours build, and 458 tests pass. No client runs were repeated on it.
 
 **B9 (batch-key sorting): not merged**
 - **Tried:**
