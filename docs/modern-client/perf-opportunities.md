@@ -110,7 +110,7 @@ The server sends dynamic objects (mobiles, items, effects) only within its updat
 
 - **First-sight chunk art on worker threads (teleport art agent, 2026-10-26):**
   - A queued chunk loads only once the land, texmap and static art of its map block is in the atlases. Missing art is decoded on the thread pool (`FirstSightDecoder`, the animation path's pattern) and uploaded inside the chunk budget.
-  - `chunk_mesh_us` max went from 6.5–11.3 ms to 0.3–0.9 ms (one 2.8 ms window). `glide` Update+Draw max went from 10.8–12.2 ms to 3.7–4.5 ms, with 0 frames over 8 ms. Numbers are in poc-log.md.
+  - `chunk_mesh_us` max went from 6.7–11.5 ms to 0.3–0.9 ms (one 2.8 ms window). `glide` Update+Draw max went from 10.8–12.5 ms to 3.7–4.5 ms, with 0 frames over 8 ms. Numbers are in poc-log.md.
 
 **Still open in this path:**
 - **The remaining 6–9 ms frames after a teleport are GC pauses** that land inside a chunk load (`chunk_load_us` 3–7 ms). Every window with a load over 2.5 ms had a gen0/gen1 collection in it (15 of 15), and none without. `Chunk.Load` allocates a `Land` and a `Static` object per cell and static. Fix: pool them (the pools are commented out in Land.cs and Static.cs), or cut the travel allocation rate (4–5 KB per frame) that triggers the collections.
