@@ -1507,6 +1507,7 @@ Branch `worktree-agent-a08462117e88b693a`, from 18becdb4e, merged up to poc/mode
   - **P3:** segments record the full viewport (origin, size, depth range); replay applies it and restores the caller's.
   - **P3:** an aborted recording restores the caller's vertex and index buffer bindings after the replay (`DrawDirectIndexed` with mesh buffers already bound).
   - **Checked:** both flavours build; 465 tests pass. A check run with the minimap open while walking (Gpu, then Legacy) plus the `ui` scene: 11,839 checks, 0 replay and 0 direct mismatches. Legacy house shot 1.88% near-black.
+  - Re-checked after merging poc/modern-client bbd86eb37 (11f41fd06): both flavours build, 465 tests pass, the minimap-walk check (Gpu and Legacy) found 0 and 0 in 8,406 checks, and the Legacy house shot is 1.88% near-black.
   - **Found on the way:** a minimap opened between `UIManager.Update` and drawing (DevBench's position in the frame) throws in `CreateMiniMapTexture` before its first `Update` (stock ClassicUO). The new DevBench `minimap` entry updates the gump once.
 - **Later merge** 70e81df8f (poc/modern-client 56f8fdc4a: ECS tests and cloak order, no UI or batcher files): both flavours build, and 458 tests pass. No client runs were repeated on it.
 
