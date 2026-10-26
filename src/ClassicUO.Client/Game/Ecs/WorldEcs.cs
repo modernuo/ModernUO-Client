@@ -484,7 +484,7 @@ namespace ClassicUO.Game
                 layerOf[i] = eq.Slots[i].Layer;
             }
 
-            int got = AnimationRules.ApplyDirectionCloak(order, eq.Count, layerOf, 1);
+            int got = AnimationRules.ApplyDirectionCloak(order, eq.Count, layerOf, 1, eq.CloakAnchor);
             bool same = got == n;
 
             for (int i = 0; same && i < n; i++)
