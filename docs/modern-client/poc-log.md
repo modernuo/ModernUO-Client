@@ -1568,3 +1568,29 @@ Branch `bg/ecs-e9-seams`, started on `poc/modern-client` 755f4e119. Seams only i
 - **`AnimationGroupRules.Select`:** now generic over `IAnimationSource` (struct type argument, so the JIT specialises it; `AnimationsSource` wraps the real `Animations` and the old signature forwards to it, no interface dispatch). The interface has the five table queries plus `IsReplacedObjectAnimation` (was a static call into `Mobile`, which reads the loaded anim1/anim2 tables). Tests (`AnimationGroupSelectTests`): humans, equipment and uop equipment idle/walk/run, war mode, hands, mounted, light in the off hand, gargoyle flight, steps, animals, sea monsters, monsters and their flags, body conversion, server actions and random rolls.
 - **`ItemSpriteExtract` hue choice:** pulled out of `Emit` into `ChooseHue(in HueInput, out graphic, out hue, out partial)`. `Emit` fills the input (a few more field reads per item than before, all side-effect free; the selected-container and out-of-range tests now run for every item, not only when reached). Tests (`ItemHueTests`): field replacement, selected container, and the precedence highlight > out of range > dead gray > mouse selection > hidden, including the out-of-range tint.
 - Found no product bug. Noted, not changed: `Rebuild` indexes `tiles[gfx[...]]` for hands and drawn layers without the `< tiles.Length` guard the mount lines use (fine with a real tiledata, which is sized for 16-bit graphics).
+
+## ECS mirror cost under packet storms (E2) and the ECS inspector (E3) (2026-10-26)
+
+Branch `bg/ecs-e2-e3` from `poc/modern-client` 755f4e119. E2 e1a1511d2, E3 c4870e7a4.
+
+**E2 method:** `EcsPacketCostBench` (xunit, off unless `CUO_ECS_BENCH` is set; no new dependency, no BenchmarkDotNet in the repo). A legacy `World` with N mobiles each wearing 5 items plus a backpack; each scenario calls the hook the packet handler reaches, 100,000 packets after 20,000 warmup, `GC.GetAllocatedBytesForCurrentThread` around the loop. `DOTNET_TieredCompilation=0`, workstation GC, Release. Three runs, N = 500 / 2,000 / 8,000; run-to-run spread was about 5% (noisy machine, so read it as +-10%).
+
+| Packet (hook) | us/packet at 2,000 mobiles | bytes/packet |
+|---|---|---|
+| Mobile move (x, y, dir + `Sync`) | 0.12 | 0 |
+| `Sync`, nothing changed (mobile / worn item) | 0.06 / 0.05 | 0 |
+| Mobile graphic change + `Sync` | 0.06 | 0 |
+| `PushInputs` | 0.025 | 0 |
+| Worn item hue change + `Sync` | 0.05 | 0 |
+| Worn item to backpack and back (indexed component re-add) | 0.16 | 0 |
+| Ground item add + delete (with the legacy object), per packet | 0.13 | 132 |
+| Item into a container + out, per packet | 0.17 | 132 |
+| Serial reuse (delete mobile, create the same serial), per packet | 0.22 | 208 |
+| Mirror only: `UpsertItem` + `Remove`, per packet | 0.06 | 0 |
+| Mirror only: `UpsertMobile` + `Remove`, per packet | 0.10-0.12 | 0 |
+
+**Result: no problem found.** Every hook is 0.02-0.26 us, so a 2,000-packet storm costs under 0.5 ms; the cost does not grow with the entity count (500 -> 8,000 mobiles: 0.12 -> 0.12-0.13 us for a move, 0.22 -> 0.26 for serial reuse). The mirror allocates nothing per packet, creates and deletes included; the 132 and 208 bytes are the legacy `Item`/`Mobile` objects the scenario also creates. Caveats: the dirty tag is added once and stays (the bench never runs the animation system that clears it), so "marks equipment dirty" is the already-dirty path; the loop is single-threaded and cache-warm (8,000 mobiles = 40,000 items is the largest tried).
+
+**E3:** DevBench plan entry `ecsdump:<hex serial>|player|nearest` (`Game/Ecs/EcsInspector.cs`, whole file behind `CUO_DEVTOOLS`). Smoke run on kbatman3 (account lock held, password in a throwaway encrypted settings.json, deleted after; Britain, Gpu, 960x720): `[ecsdump]` lines for the player (entity 1, two worn items, pushed inputs equal to the recomputed ones, slot 0 `item=0x401F0BEB layer=22 g=0x204F anim=0x03DB ... | legacy g=0x204F hue=0x054F layer=22 container=0x0004C222`) and for the nearest mobile (animation not yet built, `EquipmentDirty`, 7 indexed equipment items matching the legacy list). Format and use: [testing/ecs-animation.md](testing/ecs-animation.md).
+
+**Verification:** `tests/ClassicUO.UnitTests` Release 466 passed (the bench is one of them and returns at once without the variable); client builds in Release and with `-p:CuoDevTools=false`. Submodules had to be initialised (`git submodule update --init --recursive`) in the fresh worktree.
