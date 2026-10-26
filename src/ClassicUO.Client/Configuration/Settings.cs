@@ -116,6 +116,11 @@ namespace ClassicUO.Configuration
         // walked in full.
         [JsonPropertyName("gpu_prepare_item_cache_mixed")] public bool GpuPrepareItemCacheMixed { get; set; } = true;
 
+        // E6, with gpu_prepare_item_cache: graphic effects (GameEffect) on a tile no longer keep its items out of the cache, and
+        // a moving effect crossing tiles no longer re-extracts the chunk's items. A served tile's effects are walked alone,
+        // in tile order. Off = a tile holding an effect is walked in full and every effect move re-extracts its chunk.
+        [JsonPropertyName("gpu_prepare_item_cache_effects")] public bool GpuPrepareItemCacheEffects { get; set; } = true;
+
         // B8: the UI pass records its draws and leaves the UI targets untouched when they match the last frame's exactly; the
         // cursor goes over a kept copy of the UI (GameController.DrawUiCached). Off = the UI drawn every frame.
         [JsonPropertyName("ui_render_cache")] public bool UiRenderCache { get; set; } = true;
