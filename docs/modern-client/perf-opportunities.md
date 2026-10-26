@@ -108,11 +108,15 @@ The server sends dynamic objects (mobiles, items, effects) only within its updat
   - The draw walk and `AddToTile` no longer load chunks. Game-logic lookups still do.
   - `travel` Update+Draw max went from 36–40 ms to 10–14 ms, and frames over 16 ms from 4–14 to 0. Numbers are in poc-log.md.
 
+- **First-sight chunk art on worker threads (teleport art agent, 2026-10-26):**
+  - A queued chunk loads only once the land, texmap and static art of its map block is in the atlases. Missing art is decoded on the thread pool (`FirstSightDecoder`, the animation path's pattern) and uploaded inside the chunk budget.
+  - `chunk_mesh_us` max went from 6.5–11.3 ms to 0.3–0.9 ms (one 2.8 ms window). `glide` Update+Draw max went from 10.8–12.2 ms to 3.7–4.5 ms, with 0 frames over 8 ms. Numbers are in poc-log.md.
+
 **Still open in this path:**
-- **The remaining 8–14 ms frames after a teleport or on a new glide column:**
-  - The server's packet burst (`packets` about 8 ms; not map loading).
-  - A single chunk whose mesh build hits many first-sight statics: one chunk can take 6–10 ms (`chunk_mesh_us`), and the at-least-one-per-frame rule lets it through. The time is the art lookups in `ChunkMesh.Build`.
-  - Fix: decode first-sight art on a worker before the chunk is offered for a mesh build. The animation path already does this; art would need the same.
+- **The remaining 6–9 ms frames after a teleport are GC pauses** that land inside a chunk load (`chunk_load_us` 3–7 ms). Every window with a load over 2.5 ms had a gen0/gen1 collection in it (15 of 15), and none without. `Chunk.Load` allocates a `Land` and a `Static` object per cell and static. Fix: pool them (the pools are commented out in Land.cs and Static.cs), or cut the travel allocation rate (4–5 KB per frame) that triggers the collections.
+- **The server's packet burst** was 1.1–1.3 ms in the 2026-10-26 runs, not 8 ms (the 8 ms frames on 2026-10-25 probably also contained a GC). Not map loading.
+- **First-sight art outside chunk loads** still decodes on the main thread, in the draw walk (`world_prepare`): objects that aren't map statics, such as ground items and multis (`art_sync` 11–25 per `travel` run, 2.6–3.0 ms in one window; meshes built by the loader had 0 art time). Fix: request that art when the object arrives (0x1A, 0xF3) the same way.
+- **A chunk now appears a few frames later on a new glide column** (art latency). Walking-unsettled frames with "client chunks queued in view" went from 198 to 338 over three glide runs, at about 1,500 fps. In the Gpu world this only delays ground items and mobiles on edge chunks; Legacy has no hold. Fix if it matters: request art for a ring of chunks beyond the draw range.
 - **A visible body changing to an action it has never shown** still decodes synchronously (about 3 ms, 15 in a 20 s bodies run), to avoid a blink. Prefetch covers its other directions and actions 0–4.
 - **Unattributed 250–750 ms frames** with every phase under 1 ms show up in both builds while other clients run; not pack loading.
 - **The atlases hold RGBA8 and never evict** (TextureAtlas, which predates this work). Fix: 16-bit (`Bgra5551`) atlases at half the memory, plus eviction. Becomes moot for the world once the GPU renderer is the default.
