@@ -1380,6 +1380,12 @@ Branch `worktree-agent-a08462117e88b693a`, from 18becdb4e, merged up to poc/mode
 - **Tests:** 338 pass: 322 plus 16 new (recording equality, every segment state, −0 vs 0, and the texture-upload source scan).
   - `ChunkLoadingTests.Prefetched_Regions_Give_The_Same_Blocks_And_Never_Block_IsBlockReady` is flaky on the final merge: it failed 2 of 5 runs, with no code of this branch involved (chunk prefetch threading). Not looked into.
 - **Builds:** Release and `-p:CuoDevTools=false` both build on the final merge.
+- **Codex audit (merge with fixes), fixed:**
+  - **P2:** the minimap rewrites its atlas slot while it draws, with the same texture, UVs and vertices, so the frame was accepted as Same and showed the old map for one frame. Each stage now also compares `TextureUploads.Epoch` after it draws with the frame's start value and redraws if it changed (`UiCacheState.Resolve`, unit-tested). The start value stays stored, so the next frame redraws too.
+  - **P3:** segments record the full viewport (origin, size, depth range); replay applies it and restores the caller's.
+  - **P3:** an aborted recording restores the caller's vertex and index buffer bindings after the replay (`DrawDirectIndexed` with mesh buffers already bound).
+  - **Checked:** both flavours build; 465 tests pass. A check run with the minimap open while walking (Gpu, then Legacy) plus the `ui` scene: 11,839 checks, 0 replay and 0 direct mismatches. Legacy house shot 1.88% near-black.
+  - **Found on the way:** a minimap opened between `UIManager.Update` and drawing (DevBench's position in the frame) throws in `CreateMiniMapTexture` before its first `Update` (stock ClassicUO). The new DevBench `minimap` entry updates the gump once.
 - **Later merge** 70e81df8f (poc/modern-client 56f8fdc4a: ECS tests and cloak order, no UI or batcher files): both flavours build, and 458 tests pass. No client runs were repeated on it.
 
 **B9 (batch-key sorting): not merged**

@@ -88,15 +88,19 @@ namespace ClassicUO.Renderer
         public bool ScissorEnabled;
         public Rectangle Scissor;
         public Matrix Transform;
-        public int ViewportW, ViewportH;
+        /// <summary>The device viewport at the flush (origin, size and depth range): applied again before the replayed draw.</summary>
+        public Viewport Viewport;
         public float Brightlight, CircleRadius;
         /// <summary>A Begin() ran since the previous flush: the original applied the effect again there.</summary>
         public bool AfterBegin;
 
         public readonly bool SameAs(in RecordedSegment o) =>
             Start == o.Start && Count == o.Count && Blend == o.Blend && Stencil == o.Stencil && Sampler == o.Sampler &&
-            ScissorEnabled == o.ScissorEnabled && Scissor == o.Scissor && Transform == o.Transform && ViewportW == o.ViewportW &&
-            ViewportH == o.ViewportH && Brightlight.Equals(o.Brightlight) && CircleRadius.Equals(o.CircleRadius) && AfterBegin == o.AfterBegin;
+            ScissorEnabled == o.ScissorEnabled && Scissor == o.Scissor && Transform == o.Transform && SameViewport(Viewport, o.Viewport) &&
+            Brightlight.Equals(o.Brightlight) && CircleRadius.Equals(o.CircleRadius) && AfterBegin == o.AfterBegin;
+
+        public static bool SameViewport(in Viewport a, in Viewport b) =>
+            a.X == b.X && a.Y == b.Y && a.Width == b.Width && a.Height == b.Height && a.MinDepth.Equals(b.MinDepth) && a.MaxDepth.Equals(b.MaxDepth);
     }
 
     public sealed unsafe partial class UltimaBatcher2D
@@ -216,8 +220,6 @@ namespace ClassicUO.Renderer
                 return;
             }
 
-            Viewport viewport = GraphicsDevice.Viewport;
-
             _recSegments.Add(new RecordedSegment
             {
                 Start = _recSegmentStart,
@@ -228,8 +230,7 @@ namespace ClassicUO.Renderer
                 ScissorEnabled = _rasterizerState.ScissorTestEnable,
                 Scissor = GraphicsDevice.ScissorRectangle,
                 Transform = _transformMatrix,
-                ViewportW = viewport.Width,
-                ViewportH = viewport.Height,
+                Viewport = GraphicsDevice.Viewport,
                 Brightlight = _brightlight,
                 CircleRadius = _circleRadius,
                 AfterBegin = _recBegun
@@ -252,6 +253,7 @@ namespace ClassicUO.Renderer
             Matrix transform = _transformMatrix;
             bool scissorEnabled = _rasterizerState.ScissorTestEnable;
             Rectangle scissor = GraphicsDevice.ScissorRectangle;
+            Viewport viewport = GraphicsDevice.Viewport;
             float brightlight = _brightlight, radius = _circleRadius;
 
             for (int i = fromSegment; i < segments.Count; i++)
@@ -263,6 +265,11 @@ namespace ClassicUO.Renderer
                 _sampler = seg.Sampler;
                 _transformMatrix = seg.Transform;
                 _rasterizerState.ScissorTestEnable = seg.ScissorEnabled;
+
+                if (!RecordedSegment.SameViewport(GraphicsDevice.Viewport, seg.Viewport))
+                {
+                    GraphicsDevice.Viewport = seg.Viewport;
+                }
 
                 if (GraphicsDevice.ScissorRectangle != seg.Scissor)
                 {
@@ -292,6 +299,11 @@ namespace ClassicUO.Renderer
             _sampler = sampler;
             _transformMatrix = transform;
             _rasterizerState.ScissorTestEnable = scissorEnabled;
+
+            if (!RecordedSegment.SameViewport(GraphicsDevice.Viewport, viewport))
+            {
+                GraphicsDevice.Viewport = viewport;
+            }
 
             if (GraphicsDevice.ScissorRectangle != scissor)
             {
@@ -326,8 +338,22 @@ namespace ClassicUO.Renderer
             _recAborted = true;
             pass.Valid = false;
 
+            // the replay binds the batcher's own buffers: a direct draw that already bound its mesh buffers gets them back
+            IndexBuffer indices = GraphicsDevice.Indices;
+            VertexBufferBinding[] vertexBuffers = GraphicsDevice.GetVertexBuffers();
+
             GraphicsDevice.Clear(_recClearColor);
             Replay(_recSegments, _vertexInfo, _textureInfo, 0);
+
+            if (_recSegments.Count > 0)
+            {
+                if (vertexBuffers.Length > 0)
+                {
+                    GraphicsDevice.SetVertexBuffers(vertexBuffers);
+                }
+
+                GraphicsDevice.Indices = indices;
+            }
 
             int open = _numSprites - _recSegmentStart;
 

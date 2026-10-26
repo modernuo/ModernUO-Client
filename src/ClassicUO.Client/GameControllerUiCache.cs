@@ -32,7 +32,7 @@ namespace ClassicUO
         // CUO_UI_CACHE_FORCE=1 (dev): every frame counts as changed, to measure what the cache costs when the UI never repeats
         private static readonly bool _uiCacheForceDirty = Environment.GetEnvironmentVariable("CUO_UI_CACHE_FORCE") == "1";
 
-        private sealed class UiCacheState
+        internal sealed class UiCacheState
         {
             public readonly RecordedPass Gumps = new();
             public readonly RecordedPass Final = new();
@@ -47,10 +47,10 @@ namespace ClassicUO
                 _targetsVersion = -1;
             }
 
-            // false when something outside the recordings changed since the last frame
-            public bool CheckEnvironment(int targetsVersion, GraphicsDevice device)
+            // false when something outside the recordings changed since the last frame. epoch: TextureUploads.Epoch at the
+            // frame's start, kept as is, so uploads made while this frame draws also count as a change next frame.
+            public bool CheckEnvironment(int targetsVersion, GraphicsDevice device, int epoch)
             {
-                int epoch = TextureUploads.Epoch;
                 Texture hue0 = device.Textures[1], hue1 = device.Textures[2];
                 bool same = targetsVersion == _targetsVersion && epoch == _uploadEpoch && hue0 == _hue0 && hue1 == _hue1;
 
@@ -61,6 +61,14 @@ namespace ClassicUO
 
                 return same;
             }
+
+            /// <summary>
+            /// A stage's outcome. A recording equal to the last one counts as Same only if nothing outside it changed: the
+            /// environment at the frame's start, and no texture upload while the stage drew (the minimap rewrites its atlas
+            /// slot during its own draw, with the same texture, UVs and vertices).
+            /// </summary>
+            public static RecordingResult Resolve(RecordingResult recorded, bool envSame, int epochBefore, int epochAfter)
+                => recorded == RecordingResult.Same && (!envSame || epochBefore != epochAfter) ? RecordingResult.Changed : recorded;
         }
 
         private void DrawSceneUiAndGumps()
@@ -100,18 +108,14 @@ namespace ClassicUO
                 _uiCache.Invalidate();
             }
 
-            bool envSame = _uiCache.CheckEnvironment(_renderTargets.UiTargetsVersion, device);
+            int epoch = TextureUploads.Epoch;
+            bool envSame = _uiCache.CheckEnvironment(_renderTargets.UiTargetsVersion, device, epoch);
 
             // 1. scene UI and gumps
             device.SetRenderTarget(cacheTarget);
             batcher.BeginRecording(_uiCache.Gumps, Color.Transparent);
             DrawSceneUiAndGumps();
-            RecordingResult gumps = batcher.StopRecording();
-
-            if (gumps == RecordingResult.Same && !envSame)
-            {
-                gumps = RecordingResult.Changed;
-            }
+            RecordingResult gumps = UiCacheState.Resolve(batcher.StopRecording(), envSame, epoch, TextureUploads.Epoch);
 
             Submit(gumps, _uiCache.Gumps);
 
@@ -124,12 +128,7 @@ namespace ClassicUO
             batcher.SetBlendState(null);
             batcher.End();
             DrawCursor();
-            RecordingResult final = batcher.StopRecording();
-
-            if (final == RecordingResult.Same && gumps != RecordingResult.Same)
-            {
-                final = RecordingResult.Changed;
-            }
+            RecordingResult final = UiCacheState.Resolve(batcher.StopRecording(), gumps == RecordingResult.Same, epoch, TextureUploads.Epoch);
 
             Submit(final, _uiCache.Final);
 
