@@ -1560,3 +1560,32 @@ An earlier series on eaa489c92 (same change): 4.27 -> 3.88.
 **Verification:** Release and `-p:CuoDevTools=false` build; 442 unit tests pass. Shots (NativeAOT, base vs fix): Legacy house shots near-black 1.89% (all three), Legacy world diffs only on the walking NPCs in the house and two mobiles at Britain; Gpu Britain identical, Gpu house diff only on the walking NPCs; UI diffs only in journal text. Looked at. Picking: the walk's pick path is unchanged code (no pickscan run).
 
 **Left:** about 0.65 ms (+20%) of Legacy world prepare at the large spot is still above 613842720. The whole-tile shape and the per-tile W4 branches account for ~0.1 ms between them; the rest is spread over the walk's other additions (detail-mode branches and their bucket locals, `_walkObjects`, ScreenPositionGen). A Legacy-only copy of the 613842720 walk gets it all back but duplicates ~450 lines; not done. World draw is +0.25 ms over 613842720 (draw side, unrelated to this change). Re-measure every table on a quiet machine.
+
+## E5: cheaper mobile emission replay (2026-10-26)
+
+Branch `bg/ecs-e5-replay`, from poc/modern-client 755f4e119 (docs-only commits landed since). Draft quality, needs an audit before merge. JIT with `DOTNET_TieredCompilation=0`, kbatman3, Gpu, large scene, 1920x1080. Logs, EventPipe traces and tools: session scratchpad `e5\`.
+
+**Profile (EventPipe, push on, base, inclusive share of `TryDrawMobileEcs`):** `MobileAnimationSystem.Update` 28.6% (`SelectCached` 5, `SamplePushed` 3.8, `Select` misses 3.4, seat test 3), cached `Emit` 26.8% (`Replay` 10.1), the serial dictionary lookup (`Mirror.TryGetEntity`) 15.1%, `Entity.GetComponent` calls 13.7% (about 15 per mobile; its `StructHeap<T>` casts are the `ChkCast*` 7%), full `Emit` on emission misses 6.3% + `Layer` 6%. Inlining hides the rest. A miss is about 50x a hit, and the standing scene misses about 2% of frames (a frame change every ~100 ms at ~500 fps), so misses cost about a tenth of the per-mobile time.
+
+**What changed:**
+1. **`Mobile.EcsEntity`/`EcsEntitySerial`:** the mirror entity found last frame is reused while `!IsNull` (the revision check catches deleted/recreated entities; a re-keyed mobile's old entity is removed, so it fails the same way) and the serial matches. Skips the dictionary lookup. Only entities with an `AnimationState` are cached.
+2. **In-place update:** `TakeDirty` (removes `EquipmentDirty` first, since the tag move invalidates component refs) then `UpdateInPlace(..., ref AnimationState, ref MobileRenderState)`; the extract takes those refs (`Emit(e, in s, in rs, ...)`). Removes the two struct copies, two write-backs, the second `HasComponent`, the duplicate `GetComponent` calls in the renderer and `Emit` (about 15 lookups per mobile down to 8). `Update(world, m, e)` is a wrapper with the same behaviour; `EcsParity` still calls the old `Emit(e, x, y, depth, cache)`, which is a wrapper too.
+3. **`MobileFrameCache.Abs`:** the last replay kept in absolute coordinates, tagged with (dx, dy, base depth, tile x). Same tag: no work. Same depth and tile x with other dx/dy (camera scroll, walking offset): X and Y shifted by the difference (integer adds, bit-exact). Otherwise rebuilt from the relative entries with the same depth-key expressions. The extract exposes `Abs` as a view (`Instances`) when nothing else was emitted since `Begin`, so the renderer's copy into the dynamic buffer is the only copy (before: entries -> `_out` -> dynamic).
+
+**Invariants relied on:** the entity cache is valid iff alive and the serial matches; no code in `UpdateInPlace` changes the entity's archetype (Rebuild writes `EquipmentSlots` only); `Abs` is valid only for the entries it was built from (reset on every record and `Invalidate`); the view is read before the next `Begin`/`Emit` (the renderer copies it immediately); a second emit after a view first moves the view into `_out`.
+
+**Tried and dropped:** a per-mobile memo of the last 12 emissions keyed by the AnimationState fields the extract reads, equipment version/slot groups, alpha, hues and pack (to turn the periodic frame-change misses into swaps). No measurable gain over the above (z1 0.295 vs 0.289 ms), more state to audit. Reverted.
+
+**Result (paired, interleaved base/new, 3 rounds x 3 windows, `prep_cap_mobile` = mobile select + extract, ms; per mobile in brackets):**
+
+| Spot | base | new | change |
+|---|---|---|---|
+| zoom 1 (1,611 mobiles) | 0.335 (208 ns) | 0.276 (172 ns) | -0.059 ms |
+| zoom 2.5 (1,985) | 0.413 (208 ns) | 0.365 (184 ns) | -0.048 ms |
+| walking the lane (~1,310) | 0.316 (242 ns) | 0.284 (217 ns) | -0.032 ms |
+
+Two earlier paired series (2 and 3 rounds, same code or the dropped memo) gave -0.046/-0.040 (z1), -0.033/-0.008 (zo), -0.042/-0.035 (walking). So the gain is 0.03-0.06 ms per frame, right at the 0.05 ms bar. World prepare moved 1.29 -> 1.19 ms at z1 (within noise of the machine, which moved the same configuration by ±0.03 ms between runs).
+
+**Checks (all 0):** `CUO_ECS_PARITY=1 CUO_ANIM_SYNC=1 CUO_GPU_ITEM_CHECK=1` + input/cache/w5 checks, large scene standing and walking (`ls_parity.txt`): 10.6M mobile comparisons, 0 mismatches, frameinfo/lights 0; mobile cache check 13.1M replays 0 different (without parity, so the real in-place path runs; parity mode uses the wrapper path); input check 13.8M samples 0 different; item check 0 differences; `-ecscheck` 0. `w5push.txt` (mount, dismount, seat, hidden, hue, death): parity 3.1M, 0 mismatches; non-parity run: 2.2M replays 0 different, 2.1M input samples 0. Unit tests 465 pass.
+
+**Left / ideas:** the remaining per-mobile cost is the 7-8 component lookups (Friflo `GetComponent` casts), `SamplePushed`/`SelectOverrideHue` reading many Mobile fields, `SelectCached`'s 15-field key, and the 480 B per mobile copy into the dynamic buffer. A real step down needs a chunk-iterating system over mobile archetypes (E4's territory), not more micro-work here. NativeAOT not measured.
