@@ -253,6 +253,11 @@ namespace ClassicUO.Ecs
         public EquipSlotArray Slots;
         public byte Count;
 
+        // where the facing-dependent cloak move puts the cloak when it goes "below the helmet": the number of slots, not
+        // counting the cloak, before Helmet's place in the full layer order (AnimationRules.CloakAnchor); MobileView moves
+        // the cloak on the full order, so it lands there even when no helmet is drawn
+        public byte CloakAnchor;
+
         public uint MountItem;
         public ushort MountGraphic, MountAnimId, MountHue;
 
