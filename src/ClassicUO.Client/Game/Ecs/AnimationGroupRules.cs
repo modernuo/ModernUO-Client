@@ -38,6 +38,43 @@ namespace ClassicUO.Game
         }
     }
 
+    /// <summary>The animation table queries <see cref="AnimationGroupRules.Select{TAnims}"/> makes.</summary>
+    internal interface IAnimationSource
+    {
+        int MaxAnimationCount { get; }
+
+        AnimationGroupsType GetAnimType(ushort graphic);
+
+        AnimationFlags GetAnimFlags(ushort graphic);
+
+        void ConvertBodyIfNeeded(ref ushort graphic, bool isParent);
+
+        bool AnimationExists(ushort graphic, byte group);
+
+        // anim1.def / anim2.def: the server action has a replacement for this body family (0 animal, 1 human, 2 monster, 3 sea)
+        bool IsReplacedObjectAnimation(byte family, ushort group);
+    }
+
+    /// <summary><see cref="IAnimationSource"/> over the client's <see cref="Animations"/>.</summary>
+    internal readonly struct AnimationsSource : IAnimationSource
+    {
+        private readonly Animations _animations;
+
+        public AnimationsSource(Animations animations) => _animations = animations;
+
+        public int MaxAnimationCount => _animations.MaxAnimationCount;
+
+        public AnimationGroupsType GetAnimType(ushort graphic) => _animations.GetAnimType(graphic);
+
+        public AnimationFlags GetAnimFlags(ushort graphic) => _animations.GetAnimFlags(graphic);
+
+        public void ConvertBodyIfNeeded(ref ushort graphic, bool isParent) => _animations.ConvertBodyIfNeeded(ref graphic, isParent);
+
+        public bool AnimationExists(ushort graphic, byte group) => _animations.AnimationExists(graphic, group);
+
+        public bool IsReplacedObjectAnimation(byte family, ushort group) => Mobile.IsReplacedObjectAnimation(family, group);
+    }
+
     /// <summary>
     /// ClassicUO's animation action selection (moved verbatim from Mobile.GetGroupForAnimation, which now delegates
     /// here). The legacy views and the ECS sprite extract both call <see cref="Select"/>.
@@ -86,8 +123,8 @@ namespace ClassicUO.Game
             0
         };
 
-        private static void CalculateHight(
-            Animations animations,
+        private static void CalculateHight<TAnims>(
+            TAnims animations,
             ushort graphic,
             in AnimGroupInput mobile,
             AnimationFlags  flags,
@@ -95,6 +132,7 @@ namespace ClassicUO.Game
             bool iswalking,
             ref byte result
         )
+            where TAnims : struct, IAnimationSource
         {
             if ((flags & AnimationFlags.CalculateOffsetByPeopleGroup) != 0)
             {
@@ -518,7 +556,14 @@ namespace ClassicUO.Game
         /// The action (animation group) to draw <paramref name="graphic"/> with: ClassicUO's Mobile.GetGroupForAnimation,
         /// reading its mobile state from <paramref name="m"/> so the legacy Mobile and the ECS share one rule.
         /// </summary>
-        public static byte Select(in AnimGroupInput m, ushort graphic, bool isParent, Animations animations)
+        public static byte Select(in AnimGroupInput m, ushort graphic, bool isParent, Animations animations) =>
+            Select(in m, graphic, isParent, new AnimationsSource(animations));
+
+        /// <summary><see cref="Select(in AnimGroupInput, ushort, bool, Animations)"/> over any animation table source. A struct
+        /// type argument is specialised by the JIT, so the real <see cref="AnimationsSource"/> costs no interface dispatch;
+        /// the unit tests pass a stub.</summary>
+        public static byte Select<TAnims>(in AnimGroupInput m, ushort graphic, bool isParent, TAnims animations)
+            where TAnims : struct, IAnimationSource
         {
             if (graphic >= animations.MaxAnimationCount)
             {
@@ -573,7 +618,7 @@ namespace ClassicUO.Game
                     {
                         if (type == AnimationGroupsType.Animal)
                         {
-                            if (Mobile.IsReplacedObjectAnimation(0, v13))
+                            if (animations.IsReplacedObjectAnimation(0, v13))
                             {
                                 originalType = AnimationGroupsType.Unknown;
                             }
@@ -632,7 +677,7 @@ namespace ClassicUO.Game
                         }
                         else
                         {
-                            if (Mobile.IsReplacedObjectAnimation(1, v13))
+                            if (animations.IsReplacedObjectAnimation(1, v13))
                             {
                                 // LABEL_190:
 
@@ -644,7 +689,7 @@ namespace ClassicUO.Game
                     }
                     else
                     {
-                        if (Mobile.IsReplacedObjectAnimation(3, v13))
+                        if (animations.IsReplacedObjectAnimation(3, v13))
                         {
                             originalType = AnimationGroupsType.Unknown;
                         }
@@ -657,7 +702,7 @@ namespace ClassicUO.Game
                 }
                 else
                 {
-                    if (Mobile.IsReplacedObjectAnimation(2, v13))
+                    if (animations.IsReplacedObjectAnimation(2, v13))
                     {
                         originalType = AnimationGroupsType.Unknown;
                     }
