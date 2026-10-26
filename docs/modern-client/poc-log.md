@@ -1323,3 +1323,125 @@ Re-run of the matrix from "Renderer chosen at startup by capability", which hadn
 3. **The window behind the box says "[Legacy renderer]"** while the box says the GPU renderer (which the user forced) failed and the game will close. The title flag follows `UseGpuWorldRenderer`, which is false at that point. Suggestion: no renderer tag in a session that is exiting, or set the title after the decision.
 4. **"[Legacy renderer]" on an auto fallback.** The title code still treats Legacy as "a developer comparison mode", but it is now auto's normal choice on machines without Vulkan, so real players would see "Legacy renderer" in their title bar, which reads like an error or an outdated mode. Suggestion: keep the tag in the dev flavour only, or call it "Compatibility renderer" in the release flavour.
 5. **"GPU world renderer" vs Legacy:** both draw on the GPU, so "GPU renderer" as the name of one of them is ambiguous to a player. Fine in logs; in user-facing text, "the new renderer" / "compatibility renderer" (or whatever names the owner picks) would read better.
+
+## Per-sprite override cut: baked translucent alpha, out-of-range tint as a uniform (2026-10-25)
+
+Branch `worktree-agent-ad5fb48ffeb803a6e` (override-cut agent, kbatman4), started on `poc/modern-client` af171e7e8, measured on 27e0ff95d (the later merges were docs and tests only). Closes the two "GPU world parity (step 9)" items in perf-opportunities.md: translucent statics and `NoColorObjectsOutOfRange` were one override per sprite per frame.
+
+**What changed:**
+- **Translucent statics** (Uo.Render):
+  - `BakeJob` bakes tiledata Translucent (0x8) statics at alpha 178, ClassicUO's settled `ProcessAlpha` value, and records their chunk-local indices.
+  - At upload, `ChunkStore` turns them into the translucent pass's sort keys (`TranslucentKeys(slot)`), and `BuildDrawList` lists the visible chunks that have any. `WorldRenderer.BuildFrame` copies those keys into the sorted list: per chunk, no per-instance work. Hidden and z-hidden ones collapse in the shader as before.
+  - **An override's alpha now replaces the baked alpha** (sprite.hlsl). Before, it multiplied, which gave the same result while every bake was 255. `OverrideEntry.KeepAlpha` (alpha -1 in `SetLandOverride`/`SetStaticOverride`) keeps the baked alpha, for highlight-only overrides.
+  - A fade still sends an override with the absolute `AlphaHue`. The override loop no longer lists a baked translucent instance, because its chunk's sub-list already does; the circle-of-transparency scan already skipped them.
+  - Client: `GpuStaticOverride` compares `AlphaHue` with the baked alpha (`GpuBakedAlpha`, from the pack's tiledata of the baked graphic), so a settled translucent static needs nothing.
+  - The Gpu prepare skip's walk reason "translucent" is gone. Reason 5 is now "translucent mismatch": the client and pack tiledata disagree (0 seen).
+- **Out-of-range tint** (`NoColorObjectsOutOfRange`):
+  - New uniforms `RangeTintRow`, `RangeX`, `RangeY` and `RangeDist` (`WorldRenderer.SetRangeTint`), set each frame from `World.RangeSize` and `ClientViewRange`.
+  - The shader tints every FLAG_ZTEST instance whose tile's Chebyshev distance exceeds the range. The tint covers the whole sprite and wins over the death tint (`TintRow`); a highlight override wins over both, as in ApplyMeshHue/LandView/StaticView.
+  - Tile per instance:
+    - land: exactly from X/Y and z (stretched land: X/Y only);
+    - statics: the tile's low bytes in Light bits 16-31 (`SpriteInstance.StaticTileBits`), compared modulo 256 (visible tiles are well within 128 of the player).
+    - `SpriteInstance.Tile` and `WorldRenderer.RangeTinted` are the CPU mirrors.
+  - Client: `GpuTintHue` is gone, so land and statics never get a tint override. The land fast path no longer excludes the option, and the Gpu prepare skip no longer turns off with it.
+- **DevBench:** new plan entries `outrange:on|off` and `range:N` (sets `ClientViewRange` locally, as 0xC8 does).
+
+**Where the two overrides used to be generated, and how each is handled now** (for the audit):
+
+| Site (base) | Case | Now |
+|---|---|---|
+| `GameSceneGpuWorld.GpuStaticOverride`: meshed statics from `GpuOnDrawnSlowCore`; unmeshed baked statics from `CollectGpuStatic`, foliage included via `FinishGpuCollect` | Translucent: `AlphaHue` 178 ≠ 255 | Compared with the baked alpha (178): no override when settled. A fade sends the absolute alpha, which replaces the baked one |
+| Same | Out of range: `GpuTintHue` gave the highlight hue `OUT_RANGE_COLOR` | No hue argument; shader uniform |
+| `GpuOnDrawnSlowCore`, `case Land` | Out of range: `GpuTintHue(land)` | No hue |
+| `GpuOnDrawn` fast-path condition `!_gpuTintOutOfRange` | With the option on, every land tile went to the slow path | Removed |
+| `GameSceneGpuPrepare.GpuWalkReason` 5 | Translucent baked statics forced their tile into the full walk every frame, to send the override | Only on a client/pack tiledata mismatch |
+| `GpuPrepareBegin` (`!profile.NoColorObjectsOutOfRange`) | The option disabled the whole prepare skip | Removed |
+| `FinishGpuCollect` highlight | Passes `AlphaHue` explicitly | Unchanged. The explicit alpha replaces the baked one, so a translucent static keeps 178 under the highlight |
+| Views drawn by capture (`GpuReplaceStatic`, multis, items, mobiles, effects) | Their own hue and alpha in the dynamic instance (never overrides) | Unchanged |
+
+**Overrides per frame** (`gpu_overrides`, steady state; `override_calls` in brackets), base → new:
+
+| Spot | Option off | Option on (`outrange:on`, range 24) |
+|---|---|---|
+| Britain 1495,1629, zoom 1 | 49 → 49 (59 → 58) | 331 → 49 (2,698 → 59) |
+| Bank 1430,1690, zoom 1 | 24 → 24 | 316 → 24 (1,522 → 17) |
+| Zoom 2.5 at Britain | 112 → 112 | 8,141 plus about 2,500 dropped → 112 (12,063 → 161) |
+| Large window (3840×2054, zoom 2.5) | 115 → 108 | 8,094 plus dropped → 108 (40,569 → 811) |
+| Blood pool, Trammel 956,700 (120 translucent statics) | 132 → 15 (516 → 49) | – |
+| Large-scale scene, zoom 1 | 0 → 0 | – |
+
+- **Translucent statics are rare in this tiledata:** blood, blood smears, webs and spilled flour. No windows or water carry the flag, and Britain has three. So with the option off, only such spots gain. The 7 fewer overrides at the large window are its translucent statics.
+- **The base build was wrong zoomed out with the option on:** the pending list overflowed (2,500–3,750 dropped per frame), so water, trees and shore were drawn untinted. The new build matches Legacy. Gpu-vs-Legacy differing pixels went 41.6% → 23.8% at range 12 and 47.1% → 18.7% at range 5; the rest is the known zoomed-out filtering difference.
+
+**Timing** (JIT Release, 1920×1080, ms averages; 2 alternated rounds, base then new, then new then base; mean of the rounds).
+- The machine was noisy (three other agents' clients and builds), and round 2 ran with frame times about 0.2 ms lower overall.
+- **Re-measure on a quiet machine:** Britain, bank and zoom-out with the option off, and the large window.
+
+| Spot | World prepare, base → new | World draw, base → new | Frame, base → new |
+|---|---|---|---|
+| Britain | 0.048 → 0.047 | 0.070 → 0.069 | 0.745 → 0.741 |
+| Bank | 0.054 → 0.053 | 0.069 → 0.077 | 0.740 → 0.742 |
+| Zoom 2.5 | 0.182 → 0.187 | 0.074 → 0.073 | 0.754 → 0.755 |
+| Large window | 0.720 → 0.700 | 0.127 → 0.120 | 1.763 → 1.724 |
+| Large-scale scene, zoom 1 | 0.934 → 0.938 | 0.277 → 0.274 | 1.657 → 1.660 |
+| Blood pool | 0.092 → 0.071 | 0.073 → 0.061 | 0.747 → 0.745 |
+| Britain, option on | 0.204 → 0.047 | 0.093 → 0.061 | 0.759 → 0.737 |
+| Bank, option on | 0.169 → 0.054 | 0.083 → 0.057 | 0.748 → 0.736 |
+| Zoom 2.5, option on | 1.173 → 0.194 | 0.618 → 0.086 | 2.060 → 0.763 |
+| Large window, option on | 4.651 → 0.712 | 0.690 → 0.121 | 5.799 → 1.720 |
+
+- **Option off:** unchanged within noise. The bank's world draw went 0.079 → 0.071 in round 1 and 0.059 → 0.082 in round 2.
+- **Option on:** the prepare skip stays on and the override resolve is gone. At the large window the frame goes from 5.8 to 1.7 ms.
+- **Nothing new scales with the view per frame:** the translucent lists are built per chunk at upload and copied per visible chunk, and the range test is a few ALU operations in the vertex shader per baked instance.
+
+**Parity** (one session per build, with Gpu and Legacy shots of each spot in the same session; all looked at):
+- **Base vs new, Gpu:**
+  - 0 differing pixels: Britain, Britain with the option on (two player positions), Britain at the end of the plan.
+  - 0.00–0.47%, only moving NPCs and ghosts: bank, bank zoomed out, the bank wall with the circle of transparency, the blood pool (zoom 1, zoom 2, with the circle), the death screen with and without the option.
+  - Zoomed out with the option on: the base build's untinted areas (above).
+- **Gpu vs Legacy** (new / base): equal or closer everywhere.
+  - Britain 7.20 / 7.20%, bank 16.0 / 16.1%, circle of transparency 15.5 / 15.4%.
+  - Blood pool 0.70 / 0.70%; the translucent pentagram is identical.
+  - Out of range at Britain 5.54 / 5.54%, and 5.65 / 5.65% after a 4-tile move: the range diamond follows the player, as in Legacy.
+  - Death screen 0.19 / 0.36% with the option, 0.47 / 0.58% without.
+- **Fades** (per-frame shots after client-side teleports with the settle hold off: `CUO_WORLD_HOLD=0`, `CUO_BENCH_TPSHOTS`, option on, range 10):
+  - Walls fading in look the same in both builds.
+  - Base drew out-of-range objects untinted for the first 2 frames after a teleport; new tints them from the first frame.
+  - The settled frames are identical apart from rain.
+- **Checkers:**
+  - `CUO_GPU_SKIP_CHECK` over the whole shot plan (option on and off): 0 unsettled, 0 drawn differently, 0 "translucent mismatch".
+  - `CUO_GPU_ITEM_CHECK`: 0 differences.
+  - ECS parity (`cases.txt`, `CUO_ANIM_SYNC=1`, `CUO_GPU_ITEM_CHECK=1`): 189k mobile and 67k item comparisons, 0 mismatches. The run met neither of the two dock NPCs.
+- **Builds and tests:** Release and `-p:CuoDevTools=false` build; all unit tests pass (322 before merging the E1 tests, 434 after).
+
+**Codex audit (merge with fixes), four P2s, fixed in 57b1f117e:**
+1. **Translucent capacity.** The chunk lists used up the 8,192 entries before overrides and z-hiding were evaluated, so hidden baked translucents could push out a visible fading wall, which the opaque pass also rejects.
+   - Baked translucents are now listed after the override loop, and only when the frame shows them (an override can hide or force-show them; z-hidden ones are skipped).
+   - The CPU list grows on demand, and the GPU frame table follows (`Renderer.EnsureTranslucentCapacity`): recreated at the next power of two, up to `Renderer.TranslucentLimit` = 262,144 entries (2 MB, within the 8 MB frame transfer buffer).
+   - Only entries past that limit are dropped. Drops are counted in `OverridesDropped` and logged at most every 10 s; growth is logged.
+   - Seen in the checks run: the large-scale scene grew the list to 16,384 on arrival, with no drops.
+2. **Modulo-256 aliasing.** At 7680×4320, zoom 2.5, range 24, a visible static could wrap to a tile in range and stay untinted.
+   - A static's tile is now estimated from its sprite rectangle (horizontal centre and bottom edge), then corrected to the packed low bytes. The shader and `SpriteInstance.Tile` use the same maths.
+   - A bake-time self-check (`BakeJob.TileMismatches`) compares every baked land tile and static with its real tile, and the client warns if it's ever nonzero. It was 0 in every run.
+3. **Uo.Client.** It drives `Renderer` directly, with no translucent pass, so baked blood and webs vanished there. A new `PackSet.BakeTranslucentAlpha` flag, set only by `WorldRenderer`, makes the alpha-178 bake opt-in; other consumers bake those statics opaque, as before.
+4. **Item cache vs range tint.** Removing the skip exclusion turned on the ground-item cache with the option on, and cached items kept their old tint after a move or a 0xC8 range cut.
+   - The item signature now includes `NoColorObjectsOutOfRange && Distance > ClientViewRange`. A flip sends the tile back to the walk on the same frame, and the chunk is re-extracted on the next one.
+   - The option itself is part of the cache's generation key.
+   - Keeping the cache costs less than turning it off with the option on. Measured standing at the large-scale scene centre (range 10, 2 rounds): world prepare 0.36 ms with the cache vs 0.63 ms without; 5,405 items served; frame 0.90 vs 1.08 ms.
+   - The lane-walk windows saw few items (0.03 ms either way) and can't separate the two.
+
+**Re-verification of the fixes and the first round's key claims** (on f9c5712fa = 57b1f117e plus `poc/modern-client` 56f8fdc4a; plain inline commands, one per run):
+- Both build flavours; 442 unit tests pass.
+- `CUO_GPU_SKIP_CHECK=1` and `CUO_GPU_ITEM_CHECK=1` with the option on: Britain and the bank at `range:5` and `range:18`, a walk, and the large-scale lane at `range:10` and `range:6`.
+  - 32 check intervals: 0 unsettled, 0 drawn differently, 0 cache differences.
+  - Range flips while walking were caught by the item signature (15–20 tiles per interval) and redrawn by the walk.
+- **Shots, Gpu vs Legacy** (looked at):
+  - Britain 7.20%, blood pool 0.70%, Britain with the option on (range 12) 5.54%: identical to the first round's numbers.
+  - The zoomed-out large window (3840×2054 window, 2560×1369 world target), option on: 22.6% at range 12 and 21.2% at range 5, the known zoomed-out filtering difference. The in-range diamond and the gray area match Legacy.
+  - New vs first-round Gpu shots: blood 1 px; Britain 0.12%, the player's idle frame.
+- ECS parity (`cases.txt`, `CUO_ANIM_SYNC=1`, `CUO_GPU_ITEM_CHECK=1`): 201k mobile and 69k item comparisons, 0 mismatches.
+- **Not run:** the Uo.Client offline smoke run. The worktree guard refused the single-command form (`Uo.Client.exe --pack C:\… --screenshots …`), and per the owner's rule it was skipped, not re-wrapped. Fix 3 is unverified at run time; by construction, Uo.Client's bake is the pre-cut bake.
+
+**Left:**
+- Captured views (wet animated statics, multis, items, mobiles, effects) keep their own hue and alpha paths (unchanged).
+- The pending-override list (8,192 entries) still drops on overflow (counted and logged). The translucent list grows instead, up to 262,144 entries.

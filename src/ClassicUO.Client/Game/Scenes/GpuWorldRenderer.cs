@@ -283,6 +283,13 @@ namespace ClassicUO.Game.Scenes
             _world.SetTint(hue);
         }
 
+        /// <summary>Out-of-range hue (NoColorObjectsOutOfRange) for baked land and statics farther than range tiles from the
+        /// player's tile this frame; 0 = none.</summary>
+        public void SetRangeTint(ushort hue, int tileX, int tileY, int range)
+        {
+            _world.SetRangeTint(hue, tileX, tileY, range);
+        }
+
         /// <summary>Shader-mode circle of transparency: centre and radius in target pixels, z = player z + 5.</summary>
         public void SetCircleOfTransparency(float centerX, float centerY, float radius, int z)
         {
@@ -831,13 +838,33 @@ namespace ClassicUO.Game.Scenes
                 GpuDeviceLost.Report("GPU world submit", _world.Renderer.LastSubmitError);
             }
 
+            if (_world.Renderer.TranslucentGrowths != _loggedGrowths)
+            {
+                _loggedGrowths = _world.Renderer.TranslucentGrowths;
+                Log.Info($"GPU world: translucent list grown to {_world.Renderer.MaxTranslucent} entries");
+            }
+
+            if (BakeJob.TileMismatches != _loggedTileMismatches)
+            {
+                // the out-of-range tint's tile reconstruction disagreed with the bake (never expected)
+                _loggedTileMismatches = BakeJob.TileMismatches;
+                Log.Warn($"GPU world: {_loggedTileMismatches} baked instances with a wrong reconstructed tile");
+            }
+
+            if (_world.OverridesDropped > 0 && Time.Ticks >= _nextDropLog)
+            {
+                // the override hash or pending list, or the translucent list at its limit, was full: sprites may be missing
+                _nextDropLog = Time.Ticks + 10000;
+                Log.Warn($"GPU world: {_world.OverridesDropped} overrides or translucent entries dropped this frame");
+            }
+
             if (DevBench.Enabled && Time.Ticks >= _nextStatsLog)
             {
                 _nextStatsLog = Time.Ticks + 5000;
                 var w = _world;
                 Log.Trace(
                     $"GPU world: {w.ChunkCount} chunks, {w.Instances} baked + {w.DynamicDrawn} dynamic instances, {w.Renderer.DrawCalls} draws; overrides {w.OverridesApplied} applied, " +
-                    $"{w.OverridesMissed} missed, {w.OverridesDropped} dropped; dynamic dropped {DynamicDropped}; translucent {w.TranslucentCount} (cot ring {w.CotRingCount}); capture fallbacks {CaptureFallbacks}; " +
+                    $"{w.OverridesMissed} missed, {w.OverridesDropped} dropped; dynamic dropped {DynamicDropped}; translucent {w.TranslucentCount} (baked {w.BakedTranslucentCount}, cot ring {w.CotRingCount}); capture fallbacks {CaptureFallbacks}; " +
                     $"pages {w.Pages.ResidentCount}/{w.Pages.Layers} resident, {w.Pages.MissingVisible} missing, {w.Pages.TotalUploads} uploads, {w.Pages.Evictions} evictions" +
                     (w.AnimPages != null ? $"; anim pages {w.AnimPages.ResidentCount}/{w.AnimPages.Layers}, {w.AnimPages.MissingVisible} missing, {w.AnimPages.TotalUploads} uploads, {w.AnimPages.Evictions} evictions" : "") +
                     $"; chunks ready {w.Chunks.ReadyChunks} pending {w.Chunks.PendingChunks} missing near view {w.Chunks.MissingNear}; settled {w.Settled}, visible ready {w.VisibleReady}");
@@ -846,7 +873,8 @@ namespace ClassicUO.Game.Scenes
             return ok;
         }
 
-        private uint _nextStatsLog;
+        private uint _nextStatsLog, _nextDropLog;
+        private int _loggedGrowths, _loggedTileMismatches;
 
         public void Dispose()
         {
