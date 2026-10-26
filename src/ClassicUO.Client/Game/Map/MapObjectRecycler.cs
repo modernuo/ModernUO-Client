@@ -56,6 +56,8 @@ namespace ClassicUO.Game.Map
 
         /// <summary>Objects handed out again, retired, and dropped because the pool was full (FrameStats; reset by it).</summary>
         public static int FrameReused, FrameRetired;
+        /// <summary>The same over the session (the [recycle-check] line).</summary>
+        public static long TotalReused, TotalRetired;
 
         public MapObjectRecycler() : this(Enabled, QuarantineMs) { }
 
@@ -83,6 +85,7 @@ namespace ClassicUO.Game.Map
             {
                 land.InRecycler = true;
                 FrameRetired++;
+                TotalRetired++;
 
                 if (_enabled && _lands.Count < MaxLands)
                 {
@@ -93,6 +96,7 @@ namespace ClassicUO.Game.Map
             {
                 st.InRecycler = true;
                 FrameRetired++;
+                TotalRetired++;
 
                 if (_enabled && _statics.Count < MaxStatics)
                 {
@@ -107,6 +111,7 @@ namespace ClassicUO.Game.Map
             if (_lands.Count != 0 && now - _lands.Peek().Tick >= _quarantineMs)
             {
                 FrameReused++;
+                TotalReused++;
 
                 return _lands.Dequeue().Obj;
             }
@@ -120,6 +125,7 @@ namespace ClassicUO.Game.Map
             if (_statics.Count != 0 && now - _statics.Peek().Tick >= _quarantineMs)
             {
                 FrameReused++;
+                TotalReused++;
 
                 return _statics.Dequeue().Obj;
             }
@@ -192,7 +198,8 @@ namespace ClassicUO.Game.Map
             if (Time.Ticks >= _nextLog)
             {
                 _nextLog = Time.Ticks + 5000;
-                var sb = new System.Text.StringBuilder("[recycle-check] mode ").Append(CheckMode).Append(", touched after retire:");
+                var sb = new System.Text.StringBuilder("[recycle-check] mode ").Append(CheckMode).Append(", retired ").Append(TotalRetired)
+                    .Append(", reused ").Append(TotalReused).Append(", touched after retire:");
 
                 for (int i = 0; i < _siteNames.Length; i++)
                 {
