@@ -1560,3 +1560,72 @@ An earlier series on eaa489c92 (same change): 4.27 -> 3.88.
 **Verification:** Release and `-p:CuoDevTools=false` build; 442 unit tests pass. Shots (NativeAOT, base vs fix): Legacy house shots near-black 1.89% (all three), Legacy world diffs only on the walking NPCs in the house and two mobiles at Britain; Gpu Britain identical, Gpu house diff only on the walking NPCs; UI diffs only in journal text. Looked at. Picking: the walk's pick path is unchanged code (no pickscan run).
 
 **Left:** about 0.65 ms (+20%) of Legacy world prepare at the large spot is still above 613842720. The whole-tile shape and the per-tile W4 branches account for ~0.1 ms between them; the rest is spread over the walk's other additions (detail-mode branches and their bucket locals, `_walkObjects`, ScreenPositionGen). A Legacy-only copy of the 613842720 walk gets it all back but duplicates ~450 lines; not done. World draw is +0.25 ms over 613842720 (draw side, unrelated to this change). Re-measure every table on a quiet machine.
+
+## E5: cheaper mobile emission replay (2026-10-26)
+
+Branch `bg/ecs-e5-replay`, from poc/modern-client 755f4e119 (docs-only commits landed since). Draft quality, needs an audit before merge. JIT with `DOTNET_TieredCompilation=0`, kbatman3, Gpu, large scene, 1920x1080. Logs, EventPipe traces and tools: session scratchpad `e5\`.
+
+**Profile (EventPipe, push on, base, inclusive share of `TryDrawMobileEcs`):** `MobileAnimationSystem.Update` 28.6% (`SelectCached` 5, `SamplePushed` 3.8, `Select` misses 3.4, seat test 3), cached `Emit` 26.8% (`Replay` 10.1), the serial dictionary lookup (`Mirror.TryGetEntity`) 15.1%, `Entity.GetComponent` calls 13.7% (about 15 per mobile; its `StructHeap<T>` casts are the `ChkCast*` 7%), full `Emit` on emission misses 6.3% + `Layer` 6%. Inlining hides the rest. A miss is about 50x a hit, and the standing scene misses about 2% of frames (a frame change every ~100 ms at ~500 fps), so misses cost about a tenth of the per-mobile time.
+
+**What changed:**
+1. **`Mobile.EcsEntity`/`EcsEntitySerial`:** the mirror entity found last frame is reused while `!IsNull` (the revision check catches deleted/recreated entities; a re-keyed mobile's old entity is removed, so it fails the same way) and the serial matches. Skips the dictionary lookup. Only entities with an `AnimationState` are cached.
+2. **In-place update:** `TakeDirty` (removes `EquipmentDirty` first, since the tag move invalidates component refs) then `UpdateInPlace(..., ref AnimationState, ref MobileRenderState)`; the extract takes those refs (`Emit(e, in s, in rs, ...)`). Removes the two struct copies, two write-backs, the second `HasComponent`, the duplicate `GetComponent` calls in the renderer and `Emit` (about 15 lookups per mobile down to 8). `Update(world, m, e)` is a wrapper with the same behaviour; `EcsParity` still calls the old `Emit(e, x, y, depth, cache)`, which is a wrapper too.
+3. **`MobileFrameCache.Abs`:** the last replay kept in absolute coordinates, tagged with (dx, dy, base depth, tile x). Same tag: no work. Same depth and tile x with other dx/dy (camera scroll, walking offset): X and Y shifted by the difference (integer adds, bit-exact). Otherwise rebuilt from the relative entries with the same depth-key expressions. The extract exposes `Abs` as a view (`Instances`) when nothing else was emitted since `Begin`, so the renderer's copy into the dynamic buffer is the only copy (before: entries -> `_out` -> dynamic).
+
+**Invariants relied on:** the entity cache is valid iff alive and the serial matches; no code in `UpdateInPlace` changes the entity's archetype (Rebuild writes `EquipmentSlots` only); `Abs` is valid only for the entries it was built from (reset on every record and `Invalidate`); the view is read before the next `Begin`/`Emit` (the renderer copies it immediately); a second emit after a view first moves the view into `_out`.
+
+**Tried and dropped:** a per-mobile memo of the last 12 emissions keyed by the AnimationState fields the extract reads, equipment version/slot groups, alpha, hues and pack (to turn the periodic frame-change misses into swaps). No measurable gain over the above (z1 0.295 vs 0.289 ms), more state to audit. Reverted.
+
+**Result (paired, interleaved base/new, 3 rounds x 3 windows, `prep_cap_mobile` = mobile select + extract, ms; per mobile in brackets):**
+
+| Spot | base | new | change |
+|---|---|---|---|
+| zoom 1 (1,611 mobiles) | 0.335 (208 ns) | 0.276 (172 ns) | -0.059 ms |
+| zoom 2.5 (1,985) | 0.413 (208 ns) | 0.365 (184 ns) | -0.048 ms |
+| walking the lane (~1,310) | 0.316 (242 ns) | 0.284 (217 ns) | -0.032 ms |
+
+Two earlier paired series (2 and 3 rounds, same code or the dropped memo) gave -0.046/-0.040 (z1), -0.033/-0.008 (zo), -0.042/-0.035 (walking). So the gain is 0.03-0.06 ms per frame, right at the 0.05 ms bar. World prepare moved 1.29 -> 1.19 ms at z1 (within noise of the machine, which moved the same configuration by ±0.03 ms between runs).
+
+**Checks (all 0):** `CUO_ECS_PARITY=1 CUO_ANIM_SYNC=1 CUO_GPU_ITEM_CHECK=1` + input/cache/w5 checks, large scene standing and walking (`ls_parity.txt`): 10.6M mobile comparisons, 0 mismatches, frameinfo/lights 0; mobile cache check 13.1M replays 0 different (without parity, so the real in-place path runs; parity mode uses the wrapper path); input check 13.8M samples 0 different; item check 0 differences; `-ecscheck` 0. `w5push.txt` (mount, dismount, seat, hidden, hue, death): parity 3.1M, 0 mismatches; non-parity run: 2.2M replays 0 different, 2.1M input samples 0. Unit tests 465 pass.
+
+**Left / ideas:** the remaining per-mobile cost is the 7-8 component lookups (Friflo `GetComponent` casts), `SamplePushed`/`SelectOverrideHue` reading many Mobile fields, `SelectCached`'s 15-field key, and the 480 B per mobile copy into the dynamic buffer. A real step down needs a chunk-iterating system over mobile archetypes (E4's territory), not more micro-work here. NativeAOT not measured.
+
+**E5 audit fixes (Codex, 2026-10-26), after merging poc/modern-client (E9):**
+- **P2, cached entity revision rollover:** Friflo's revision is a short, so `IsNull` can pass for a stale handle after 65,536 deletions of one id. The cached handle is now tagged with `WorldMirror.Epoch`, bumped on every entity deletion (`Remove`, `Clear`); a mobile uses its handle only while the epoch and its serial are unchanged, else it repeats the dictionary lookup. Cost: two integer compares per mobile; every deletion makes all mobiles repeat one lookup that frame (deletions are per packet, not per frame). `IsNull` is no longer relied on.
+- **P3, double replay of one cache in a Begin:** `Replay` now moves a pending view into `_out` before mutating `Abs`, and `Emit` does so before taking the checker's start index. New `MobileReplayTests` (3): same-tag no-op and dx/dy shift equal to a fresh rebuild, depth and tile-x changes rebuild, same cache replayed twice keeps the first emission.
+- **Checks on the merged tree:** 544 unit tests pass (one unrelated ChunkLoading test failed once under load and passed on re-run). Non-parity large-scene run (standing, walking): cache check 12.7M replays 0 different, input check 13.4M samples 0 different, seat tests 12.1M 0 different.
+- **Timing, zoom 1, 3 interleaved rounds, `prep_cap_mobile`:** base 0.345 ms (214 ns/mobile; one noisy run at 0.410) -> 0.243 ms (151 ns). The base binary is 755f4e119 (without the E9 seams, which don't touch the draw path), the new one is the merged tree.
+
+## 2026-10-26 - E9: test seams for what E1 couldn't reach
+
+Branch `bg/ecs-e9-seams`, started on `poc/modern-client` 755f4e119. Seams only in the product (no behaviour change), plus tests. Release and `-p:CuoDevTools=false` build; 541 unit tests pass.
+- **`MobileAnimationSystem.Rebuild`:** the public `Rebuild(mobile, in s, owner)` now reads the tiledata array, the equipconv table and the 7.0.0.0 gate and calls an internal overload that takes them. Rebuild-time only, never per frame. Tests (`MobileRebuildTests`): empty set and versions, a slot's fields, partial hue and light bits, items without an AnimID (dropped, or lit if a light), the light-only cap, non-human bodies (lights only) and the Human flag, dead hair/beard and ghost bodies, covered shoes, hands, equipconv remap, gargoyle remap by client version, cloak anchor, the mirror's mount item, tiller and bodyless mount, `owner == null` fallback vs the Mobile's own list (both directions), and `IsMounted(Mobile, StaticTiles[])`.
+- **`AnimationGroupRules.Select`:** now generic over `IAnimationSource` (struct type argument, so the JIT specialises it; `AnimationsSource` wraps the real `Animations` and the old signature forwards to it, no interface dispatch). The interface has the five table queries plus `IsReplacedObjectAnimation` (was a static call into `Mobile`, which reads the loaded anim1/anim2 tables). Tests (`AnimationGroupSelectTests`): humans, equipment and uop equipment idle/walk/run, war mode, hands, mounted, light in the off hand, gargoyle flight, steps, animals, sea monsters, monsters and their flags, body conversion, server actions and random rolls.
+- **`ItemSpriteExtract` hue choice:** pulled out of `Emit` into `ChooseHue(in HueInput, out graphic, out hue, out partial)`. `Emit` fills the input (a few more field reads per item than before, all side-effect free; the selected-container and out-of-range tests now run for every item, not only when reached). Tests (`ItemHueTests`): field replacement, selected container, and the precedence highlight > out of range > dead gray > mouse selection > hidden, including the out-of-range tint.
+- Found no product bug. Noted, not changed: `Rebuild` indexes `tiles[gfx[...]]` for hands and drawn layers without the `< tiles.Length` guard the mount lines use (fine with a real tiledata, which is sized for 16-bit graphics).
+
+## ECS mirror cost under packet storms (E2) and the ECS inspector (E3) (2026-10-26)
+
+Branch `bg/ecs-e2-e3` from `poc/modern-client` 755f4e119. E2 e1a1511d2, E3 c4870e7a4.
+
+**E2 method:** `EcsPacketCostBench` (xunit, off unless `CUO_ECS_BENCH` is set; no new dependency, no BenchmarkDotNet in the repo). A legacy `World` with N mobiles each wearing 5 items plus a backpack; each scenario calls the hook the packet handler reaches, 100,000 packets after 20,000 warmup, `GC.GetAllocatedBytesForCurrentThread` around the loop. `DOTNET_TieredCompilation=0`, workstation GC, Release. Three runs, N = 500 / 2,000 / 8,000; run-to-run spread was about 5% (noisy machine, so read it as +-10%).
+
+| Packet (hook) | us/packet at 2,000 mobiles | bytes/packet |
+|---|---|---|
+| Mobile move (x, y, dir + `Sync`) | 0.12 | 0 |
+| `Sync`, nothing changed (mobile / worn item) | 0.06 / 0.05 | 0 |
+| Mobile graphic change + `Sync` | 0.06 | 0 |
+| `PushInputs` | 0.025 | 0 |
+| Worn item hue change + `Sync` | 0.05 | 0 |
+| Worn item to backpack and back (indexed component re-add) | 0.16 | 0 |
+| Ground item add + delete (with the legacy object), per packet | 0.13 | 132 |
+| Item into a container + out, per packet | 0.17 | 132 |
+| Serial reuse (delete mobile, create the same serial), per packet | 0.22 | 208 |
+| Mirror only: `UpsertItem` + `Remove`, per packet | 0.06 | 0 |
+| Mirror only: `UpsertMobile` + `Remove`, per packet | 0.10-0.12 | 0 |
+
+**Result: no problem found.** Every hook is 0.02-0.26 us, so a 2,000-packet storm costs under 0.5 ms; the cost does not grow with the entity count (500 -> 8,000 mobiles: 0.12 -> 0.12-0.13 us for a move, 0.22 -> 0.26 for serial reuse). The mirror allocates nothing per packet, creates and deletes included; the 132 and 208 bytes are the legacy `Item`/`Mobile` objects the scenario also creates. Caveats: the dirty tag is added once and stays (the bench never runs the animation system that clears it), so "marks equipment dirty" is the already-dirty path; the loop is single-threaded and cache-warm (8,000 mobiles = 40,000 items is the largest tried).
+
+**E3:** DevBench plan entry `ecsdump:<hex serial>|player|nearest` (`Game/Ecs/EcsInspector.cs`, whole file behind `CUO_DEVTOOLS`). Smoke run on kbatman3 (account lock held, password in a throwaway encrypted settings.json, deleted after; Britain, Gpu, 960x720): `[ecsdump]` lines for the player (entity 1, two worn items, pushed inputs equal to the recomputed ones, slot 0 `item=0x401F0BEB layer=22 g=0x204F anim=0x03DB ... | legacy g=0x204F hue=0x054F layer=22 container=0x0004C222`) and for the nearest mobile (animation not yet built, `EquipmentDirty`, 7 indexed equipment items matching the legacy list). Format and use: [testing/ecs-animation.md](testing/ecs-animation.md).
+
+**Verification:** `tests/ClassicUO.UnitTests` Release 466 passed (the bench is one of them and returns at once without the variable); client builds in Release and with `-p:CuoDevTools=false`. Submodules had to be initialised (`git submodule update --init --recursive`) in the fresh worktree.
