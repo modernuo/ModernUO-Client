@@ -136,6 +136,77 @@ namespace ClassicUO.UnitTests.Game
         }
 
         [Fact]
+        public void Full_Art_Scans_Count_Against_The_Budget_And_Cheap_Checks_Do_Not()
+        {
+            var q = new ChunkLoadQueue();
+            var clock = new FakeClock();
+
+            for (int x = 1; x <= 6; x++)
+            {
+                q.Request(x, 0, 1);
+            }
+
+            // cold teleport: every block needs its first art scan; with the budget spent only one scan happens per frame
+            var scanned = new List<int>();
+            Drain(q, 0, 0, 1, 0, clock, (x, y) => { scanned.Add(x); return ChunkLoadResult.Scanned; }).Should().BeEmpty();
+            scanned.Should().Equal(1);
+            q.Count.Should().Be(6, "a scanned chunk stays queued");
+
+            // cheap checks (already scanned, art still decoding) don't stop the drain: the next block still gets its scan
+            scanned.Clear();
+            Drain(q, 0, 0, 2, 0, clock, (x, y) =>
+            {
+                scanned.Add(x);
+
+                return x == 1 ? ChunkLoadResult.NotReady : ChunkLoadResult.Scanned;
+            }).Should().BeEmpty();
+            scanned.Should().Equal(1, 2);
+
+            // with budget left, scans go on until it is spent (the clock moves 10 per scan)
+            scanned.Clear();
+            Drain(q, 0, 0, 3, 25, clock, (x, y) =>
+            {
+                scanned.Add(x);
+                clock.Now += 10;
+
+                return ChunkLoadResult.Scanned;
+            });
+            scanned.Should().Equal(1, 2, 3);
+        }
+
+        [Fact]
+        public void ArtWaitTracker_Resumes_And_Rescans_On_A_New_Generation()
+        {
+            var t = new ArtWaitTracker();
+
+            t.Begin(7, 1, out bool full).Should().Be(0);
+            full.Should().BeTrue("first check scans everything");
+            t.End(7, 1, 42);
+
+            t.Begin(7, 1, out full).Should().Be(42);
+            full.Should().BeFalse("later checks resume at the first missing sprite");
+
+            // a season change or atlas reload: the remembered position is no longer valid
+            t.Begin(7, 2, out full).Should().Be(0);
+            full.Should().BeTrue();
+
+            t.End(7, 1, -1);
+            t.Begin(7, 1, out full);
+            full.Should().BeTrue("ready forgets the key");
+            t.Count.Should().Be(0);
+
+            for (int i = 0; i < 10; i++)
+            {
+                t.End(i, 1, 1);
+            }
+
+            t.Trim(20);
+            t.Count.Should().Be(10);
+            t.Trim(5);
+            t.Count.Should().Be(0);
+        }
+
+        [Fact]
         public void Ring_Chunks_Ignore_The_Budget_But_Others_Wait()
         {
             // the map's queue: only the player's own chunk ignores the budget

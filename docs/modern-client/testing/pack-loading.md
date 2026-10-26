@@ -88,6 +88,11 @@ The harness is the same, in the scratchpad's `teleport` folder. It adds:
 | `region_wait_us` | Time the main thread waited for a region prefetch that was still decoding (should be 0) |
 | `region_sync` | Regions decoded on the main thread (not prefetched; should be 0 once in game) |
 | `region_prefetch` | Region prefetches started |
+| `art_sync`, `art_sync_us` | First-sight art and texmap decodes on the main thread (a lookup that had to decode), and their time. Chunk meshes built by the loader should add none |
+| `art_async`, `art_upload_us` | Worker art decodes uploaded to the atlases this frame, and the upload time (inside the chunk budget) |
+| `art_pending` | Worker art decodes requested and not uploaded yet |
+
+**First-sight chunk art (added 2026-10-26, teleport art agent).** A queued chunk loads only once its block's land, texmap and static art is in the atlases; the missing art decodes on the thread pool (`FirstSightDecoder`). `CUO_ART_SYNC=1` restores the old path (art decodes inside `ChunkMesh.Build`). A block's first art scan counts against the chunk budget (`ChunkLoadResult.Scanned`); later checks resume at its first missing sprite and are rescanned in full after a season change or `Art.Reload`. A sprite the worker fails to decode counts as ready (a real lookup handles it as before). Check a season change with DevBench `season:winter` followed by `ltravel`: 0 settle timeouts. `chunk_mesh_us` should then stay under about 1 ms per frame; the remaining `chunk_load_us` spikes of 3–7 ms come with a GC in the same window (FrameStats `gc0`/`gc1`, `gc_pause_ms`).
 
 **`ltravel` and the z lookup.** `DevBench.LocalTeleport` now takes z only from a region that is already decoded. Otherwise it prefetches the region, keeps the player's z, and `FixTeleportZ` corrects z once the region arrives. A real teleport gets z from the server, so the bench no longer waits for a decode that a real teleport would not wait for.
 
