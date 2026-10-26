@@ -34,6 +34,7 @@ namespace ClassicUO
     //   plan entry gumps opens the paperdoll, backpack, journal and status bar (the UI allocation/parity scene); shots also save the UI render target
     //   plan entries uicache:on|off switch the UI render cache (ui_render_cache, B8); CUO_UI_CACHE_CHECK=1|N compares the UI
     //   target with a replay of the recordings and with a direct redraw every N frames (default 30)
+    //   plan entry minimap opens the minimap gump
     //   plan entry healthbars opens health bars for the player and the three nearest mobiles at the right edge
     //   plan entries prepdetail:on|off switch FrameStats' world prepare detail buckets (CUO_FRAMESTATS_PREP=1 starts with them on)
     //   plan entries gpuskip:on|off switch the Gpu world prepare's skipping of baked land and statics (gpu_prepare_skip_baked)
@@ -1638,6 +1639,20 @@ namespace ClassicUO
                         Log.Info("[bench] gumps: paperdoll, backpack, journal, status");
                         _planIndex++;
                         _stepAt = now + sec * 2;
+
+                        break;
+                    }
+
+                    if (_plan[_planIndex] == "minimap")
+                    {
+                        // the minimap rewrites its atlas slot in place while drawing when the player moves (UI cache check)
+                        GameActions.OpenMiniMap(world);
+                        // DevBench runs after UIManager.Update: the new gump would draw before its first Update builds the map
+                        // (a NullReferenceException in CreateMiniMapTexture), so update it once here
+                        Game.Managers.UIManager.GetGump<Game.UI.Gumps.MiniMapGump>()?.Update();
+                        Log.Info("[bench] minimap");
+                        _planIndex++;
+                        _stepAt = now + sec;
 
                         break;
                     }

@@ -21,8 +21,7 @@ namespace ClassicUO.UnitTests.Renderer
             Count = count,
             Scissor = new Rectangle(0, 0, 1280, 720),
             Transform = Matrix.Identity,
-            ViewportW = 1280,
-            ViewportH = 720,
+            Viewport = new Microsoft.Xna.Framework.Graphics.Viewport(0, 0, 1280, 720),
             Brightlight = float.NaN,
             CircleRadius = float.NaN,
             AfterBegin = true
@@ -96,7 +95,9 @@ namespace ClassicUO.UnitTests.Renderer
             yield return new object[] { "scissor on", (Func<RecordedSegment, RecordedSegment>)(s => { s.ScissorEnabled = true; return s; }) };
             yield return new object[] { "scissor rect", (Func<RecordedSegment, RecordedSegment>)(s => { s.Scissor = new Rectangle(10, 10, 100, 100); return s; }) };
             yield return new object[] { "transform", (Func<RecordedSegment, RecordedSegment>)(s => { s.Transform = Matrix.CreateScale(1.5f); return s; }) };
-            yield return new object[] { "viewport", (Func<RecordedSegment, RecordedSegment>)(s => { s.ViewportW = 1920; return s; }) };
+            yield return new object[] { "viewport size", (Func<RecordedSegment, RecordedSegment>)(s => { s.Viewport.Width = 1920; return s; }) };
+            yield return new object[] { "viewport origin", (Func<RecordedSegment, RecordedSegment>)(s => { s.Viewport.X = 10; return s; }) };
+            yield return new object[] { "viewport depth", (Func<RecordedSegment, RecordedSegment>)(s => { s.Viewport.MaxDepth = 0.5f; return s; }) };
             yield return new object[] { "brightlight", (Func<RecordedSegment, RecordedSegment>)(s => { s.Brightlight = 1.5f; return s; }) };
             yield return new object[] { "transparency circle", (Func<RecordedSegment, RecordedSegment>)(s => { s.CircleRadius = 64; return s; }) };
             yield return new object[] { "effect apply", (Func<RecordedSegment, RecordedSegment>)(s => { s.AfterBegin = false; return s; }) };
@@ -117,6 +118,32 @@ namespace ClassicUO.UnitTests.Renderer
             var pass = new RecordedPass();
             pass.IsValid.Should().BeFalse("the first frame after creation always draws");
         }
+    }
+
+    // B8: a stage's outcome (GameController.UiCacheState.Resolve)
+    public class UiCacheResolveTests
+    {
+        private static RecordingResult Resolve(RecordingResult r, bool env, int before, int after)
+            => ClassicUO.GameController.UiCacheState.Resolve(r, env, before, after);
+
+        [Fact]
+        public void SameRecording_NothingElseChanged_IsKept()
+            => Resolve(RecordingResult.Same, true, 7, 7).Should().Be(RecordingResult.Same);
+
+        [Fact]
+        public void SameRecording_TextureUploadedWhileDrawing_IsRedrawn()
+            // the minimap rewrites its atlas slot during its draw: same texture, UVs and vertices (Codex audit P2)
+            => Resolve(RecordingResult.Same, true, 7, 8).Should().Be(RecordingResult.Changed);
+
+        [Fact]
+        public void SameRecording_EnvironmentChanged_IsRedrawn()
+            => Resolve(RecordingResult.Same, false, 7, 7).Should().Be(RecordingResult.Changed);
+
+        [Theory]
+        [InlineData(RecordingResult.Changed)]
+        [InlineData(RecordingResult.Aborted)]
+        public void OtherResults_PassThrough(RecordingResult r)
+            => Resolve(r, true, 7, 8).Should().Be(r);
     }
 
     // B8 compares recorded draws by texture reference, so every texture upload must bump TextureUploads (a texture changed in
