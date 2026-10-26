@@ -1306,6 +1306,8 @@ Branch `worktree-agent-a08462117e88b693a`, from 18becdb4e, merged up to poc/mode
   - I looked at the overlays and crops.
 - **Legacy (required):** pure Legacy at the house spot: 1.89% near-black in all three new runs and in the base run (clean). New vs base differs only on moving mobiles and on scattered single pixels, which two new runs also show between them. I looked at the images.
 - **Tests:** 338 pass: 322 plus 16 new (recording equality, every segment state, −0 vs 0, and the texture-upload source scan).
+  - `ChunkLoadingTests.Prefetched_Regions_Give_The_Same_Blocks_And_Never_Block_IsBlockReady` is flaky on the final merge: it failed 2 of 5 runs, with no code of this branch involved (chunk prefetch threading). Not looked into.
+- **Builds:** Release and `-p:CuoDevTools=false` both build on the final merge.
 
 **B9 (batch-key sorting): not merged**
 - **Tried:**
