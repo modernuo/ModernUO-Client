@@ -69,6 +69,14 @@ namespace ClassicUO.Game
             public float Add;
             public byte Kind;
         }
+
+        /// <summary>E5: the last replay of <see cref="Entries"/> in absolute (buffer) coordinates, valid for the tag below
+        /// (see MobileSpriteExtract.Replay). Reset whenever the entries are re-recorded.</summary>
+        public SpriteInstance[] Abs = Array.Empty<SpriteInstance>();
+        public bool AbsValid;
+        public int AbsDx, AbsDy, AbsObjX;
+        public float AbsDepth;
+
         public Rectangle FrameInfo;
         public MobileSpriteExtract.LightRequest[] Lights = new MobileSpriteExtract.LightRequest[2];
         public int LightCount;
@@ -85,6 +93,7 @@ namespace ClassicUO.Game
         {
             SelectValid = false;
             EmitValid = false;
+            AbsValid = false;
         }
 
         // hit counters for FrameStats / the check log

@@ -68,27 +68,49 @@ namespace ClassicUO.Game
         /// up by the caller (it must have an <see cref="AnimationState"/>).</summary>
         public void Update(World world, Mobile m, EcsEntity e)
         {
-            // copies: removing the dirty tag moves the entity to another archetype, which invalidates component refs
-            AnimationState s = e.GetComponent<AnimationState>();
-            MobileRenderState rs = e.GetComponent<MobileRenderState>();
+            bool dirty = TakeDirty(e);
+            UpdateInPlace(world, m, e, dirty, ref e.GetComponent<AnimationState>(), ref e.GetComponent<MobileRenderState>());
+        }
 
+        /// <summary>
+        /// E5: step one of the in-place update. Removes the <see cref="EquipmentDirty"/> tag and says whether it was set.
+        /// This must come before the caller takes component refs: removing the tag moves the entity to another archetype,
+        /// which invalidates every ref taken earlier (<see cref="Update(World, Mobile, EcsEntity)"/> used copies for that).
+        /// </summary>
+        public static bool TakeDirty(EcsEntity e)
+        {
+            if (e.Tags.Has<EquipmentDirty>())
+            {
+                e.RemoveTag<EquipmentDirty>();
+
+                return true;
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// E5: <see cref="Update(World, Mobile, EcsEntity)"/> working on the entity's own <see cref="AnimationState"/> and
+        /// <see cref="MobileRenderState"/> (<paramref name="s"/>, <paramref name="rs"/>, taken after
+        /// <see cref="TakeDirty"/>; <paramref name="dirty"/> is its result) instead of copies, so the caller can pass them
+        /// on to the extract without more lookups. Nothing in here changes the entity's archetype.
+        /// </summary>
+        public void UpdateInPlace(World world, Mobile m, EcsEntity e, bool dirty, ref AnimationState s, ref MobileRenderState rs)
+        {
             // W5 (mobile_push_inputs): the slow-changing inputs come from MobileInputs, pushed at their mutation sites;
             // off = all of them read from the Mobile every frame
-            bool push = Configuration.Settings.GlobalSettings.MobilePushInputs && e.HasComponent<MobileInputs>();
+            MobileInputs inp = default;
+            bool push = Configuration.Settings.GlobalSettings.MobilePushInputs && e.TryGetComponent(out inp);
 
             if (InputBench && push)
             {
                 BenchSample(world, m, e, in s, in rs);
             }
-            bool keysChanged = push ? SamplePushed(world, m, in e.GetComponent<MobileInputs>(), ref s, ref rs) : Sample(world, m, ref s, ref rs);
 
-            if (keysChanged || e.Tags.Has<EquipmentDirty>())
+            bool keysChanged = push ? SamplePushed(world, m, in inp, ref s, ref rs) : Sample(world, m, ref s, ref rs);
+
+            if (keysChanged || dirty)
             {
-                if (e.Tags.Has<EquipmentDirty>())
-                {
-                    e.RemoveTag<EquipmentDirty>();
-                }
-
                 Rebuild(e, in s, m);
             }
 
@@ -117,9 +139,6 @@ namespace ClassicUO.Game
                 m.FrameCache?.Invalidate();
                 Select(m, ref s, ref eq);
             }
-
-            e.GetComponent<AnimationState>() = s;
-            e.GetComponent<MobileRenderState>() = rs;
         }
 
         // W5: Select, or the last frame's result when the sampled inputs are the same (MobileFrameCache)

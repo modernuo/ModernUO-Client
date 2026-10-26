@@ -18,6 +18,11 @@ namespace ClassicUO.Game.GameObjects
         /// <summary>W5: the Gpu world's reused selection and sprite instances (gpu_mobile_frame_cache).</summary>
         internal MobileFrameCache FrameCache;
 
+        /// <summary>E5: the mirror entity the Gpu world last found for <see cref="EcsEntitySerial"/>, so the per-frame
+        /// draw skips the serial dictionary. Valid while the entity is alive and the serial is the mobile's own.</summary>
+        internal Friflo.Engine.ECS.Entity EcsEntity;
+        internal uint EcsEntitySerial;
+
         //private static readonly QueuedPool<Mobile> _pool = new QueuedPool<Mobile>(
         //    Constants.PREDICTABLE_CHUNKS,
         //    mobile =>
