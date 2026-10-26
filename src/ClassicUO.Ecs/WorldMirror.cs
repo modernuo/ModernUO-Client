@@ -41,6 +41,11 @@ namespace ClassicUO.Ecs
 
         public int Count => _bySerial.Count;
 
+        /// <summary>E5: bumped whenever an entity is deleted (or the map cleared). A handle cached together with the epoch it
+        /// was looked up at is still the serial's entity while the epoch is unchanged, with no reliance on Friflo's 16-bit
+        /// revision (which wraps after 65,536 deletions of one id).</summary>
+        public uint Epoch { get; private set; }
+
         public int MobileCount { get; private set; }
 
         public int ItemCount { get; private set; }
@@ -209,6 +214,7 @@ namespace ClassicUO.Ecs
                 }
             }
 
+            Epoch++;
             e.DeleteEntity();
 
             return true;
@@ -241,6 +247,7 @@ namespace ClassicUO.Ecs
 
             foreach (Entity e in _scratch)
             {
+                Epoch++;
                 e.DeleteEntity();
             }
 
