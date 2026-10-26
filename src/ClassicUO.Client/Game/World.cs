@@ -423,7 +423,7 @@ namespace ClassicUO.Game
 
         private readonly List<Mobile> _dueObjects = new List<Mobile>();
         private int _ordinalVersion = -1;
-        private static readonly Comparison<Mobile> s_byOrdinal = (a, b) => a.Ordinal.CompareTo(b.Ordinal);
+        private static readonly System.Comparison<Mobile> s_byOrdinal = (a, b) => a.Ordinal.CompareTo(b.Ordinal);
 
         // Dictionary<,>'s private mutation counter: bumped by every insert (add, overwrite, resize), and an insert is the only
         // thing that can change the relative order of entries (a remove leaves a hole; the next add reuses the freed slot)
