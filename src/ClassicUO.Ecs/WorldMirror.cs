@@ -87,6 +87,9 @@ namespace ClassicUO.Ecs
                     isPlayer ? Tags.Get<MobileTag, PlayerTag, EquipmentDirty>() : Tags.Get<MobileTag, EquipmentDirty>()
                 );
 
+                // CreateEntity takes at most 11 arguments; a default clock is due at once (E4)
+                e.AddComponent(new MobileClock());
+
                 _bySerial[serial] = e;
                 MobileCount++;
 

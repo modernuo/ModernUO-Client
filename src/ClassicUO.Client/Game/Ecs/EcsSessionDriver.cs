@@ -444,6 +444,13 @@ namespace ClassicUO.Game
 
                     return true;
 
+                // mobsys on|off: World.Update's mobile loop by the ECS clocks (world_update_mobile_system, E4)
+                case "mobsys" when args.Length > 0:
+                    Settings.GlobalSettings.WorldUpdateMobileSystem = args[0] == "on";
+                    Log.Info($"[ECS] driver: mobile update by clock {args[0]}");
+
+                    return true;
+
                 // pushinputs on|off: mobiles' pushed ECS inputs (mobile_push_inputs, W5)
                 case "pushinputs" when args.Length > 0:
                     Settings.GlobalSettings.MobilePushInputs = args[0] == "on";
