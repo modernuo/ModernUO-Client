@@ -113,6 +113,12 @@ namespace ClassicUO.Game.GameObjects
         internal int _surfaceOverheadCacheMaxZ = int.MinValue;
 
         private long _lastAnimationIdleDelay;
+
+        /// <summary>E4: the frame number of World.UpdateMobilesByClock that last updated this mobile (checker).</summary>
+        internal int UpdateStamp;
+
+        /// <summary>E4: this mobile's position in <c>World.Mobiles.Values</c>'s enumeration, valid while the dictionary has had no insert (World.SortInMobilesOrder).</summary>
+        internal int Ordinal;
         private bool _isAnimationForwardDirection;
         private byte _animationGroup = 0xFF;
         private byte _animationInterval;
@@ -296,6 +302,49 @@ namespace ClassicUO.Game.GameObjects
         {
             const int TIME = 30000;
             _lastAnimationIdleDelay = Time.Ticks + (TIME + RandomHelper.GetValue(0, TIME));
+
+            // E4: the idle due time (and, from SetAnimation, the frame due time written just before) reach the ECS clock
+            PushClock();
+        }
+
+        /// <summary>E4: the idle timer's due time (<c>Update</c> runs SetIdleAnimation when it is before the tick).</summary>
+        internal long IdleDue => _lastAnimationIdleDelay;
+
+        /// <summary>E4 (world_update_mobile_system): writes the due times and flags of <see cref="MobileClock"/> after a change to one.</summary>
+        protected void PushClock()
+        {
+            World?.Ecs.PushClock(this);
+        }
+
+        /// <summary>E4 checker: every field <see cref="Update"/> can change, so a skipped Update can be shown to be a no-op.</summary>
+        internal int UpdateStateHash()
+        {
+            var h = new HashCode();
+            h.Add(AnimIndex);
+            h.Add(AnimationFrameCount);
+            h.Add(AnimationFromServer);
+            h.Add(LastAnimationChangeTime);
+            h.Add(_lastAnimationIdleDelay);
+            h.Add(_animationGroup);
+            h.Add(_animationInterval);
+            h.Add(_animationRepeat);
+            h.Add(_animationRepeateMode);
+            h.Add(_animationRepeatModeCount);
+            h.Add(_isAnimationForwardDirection);
+            h.Add(X);
+            h.Add(Y);
+            h.Add(Z);
+            h.Add((byte)Direction);
+            h.Add(Offset);
+            h.Add(Steps.Count);
+            h.Add(LastStepTime);
+            h.Add(LastStepSoundTime);
+            h.Add(StepSoundOffset);
+            h.Add((byte)ObjectHandlesStatus);
+            h.Add(HitsPercentage);
+            h.Add(IsDestroyed);
+
+            return h.ToHashCode();
         }
 
         public override void Update()
