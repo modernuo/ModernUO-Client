@@ -126,6 +126,13 @@ namespace ClassicUO
         RegionWaitUs,
         RegionSyncLoads,
         RegionPrefetches,
+        // first-sight art (Art and Texmap): decodes on the main thread (a lookup that had to decode) and their time, worker
+        // decodes uploaded and the upload time, worker decodes still pending at the end of the frame
+        ArtSyncLoads,
+        ArtSyncUs,
+        ArtAsyncUploads,
+        ArtUploadUs,
+        ArtPending,
         // the UI pass: batcher flushes and draw calls into the UI targets; B8: 1 when the gumps (cache) target was reused, 1 when
         // the UI target was left untouched too
         UiFlushes,
@@ -181,6 +188,7 @@ namespace ClassicUO
             "gpu_skip_active", "gpu_full_tiles", "gpu_walk_tiles", "gpu_edge_tiles", "gpu_pick_tiles",
             "item_cache_builds", "item_cache_tiles", "item_cache_items", "item_cache_fallbacks", "item_cache_walked", "item_cache_fx",
             "chunk_loads", "chunk_load_us", "chunk_mesh_us", "chunk_queue", "region_wait_us", "region_sync", "region_prefetch",
+            "art_sync", "art_sync_us", "art_async", "art_upload_us", "art_pending",
             "ui_flushes", "ui_draw_calls", "ui_cached", "ui_untouched", "effects" };
 
         private static readonly long[] _start = new long[PHASES];
@@ -484,6 +492,14 @@ namespace ClassicUO
                 _lastSync = maps.SyncLoads;
                 _lastPrefetch = maps.PrefetchesStarted;
             }
+
+            _cur[(int)FrameCounter.ArtSyncLoads] = Renderer.Arts.Art.FrameSyncLoads;
+            _cur[(int)FrameCounter.ArtSyncUs] = (int)(Renderer.Arts.Art.FrameSyncTicks * toUs);
+            _cur[(int)FrameCounter.ArtAsyncUploads] = Renderer.Arts.Art.FrameAsyncUploads;
+            _cur[(int)FrameCounter.ArtUploadUs] = (int)(Renderer.Arts.Art.FrameUploadTicks * toUs);
+            _cur[(int)FrameCounter.ArtPending] = (Client.Game?.UO?.Arts?.PendingDecodes ?? 0) + (Client.Game?.UO?.Texmaps?.PendingDecodes ?? 0);
+            Renderer.Arts.Art.FrameSyncLoads = Renderer.Arts.Art.FrameAsyncUploads = 0;
+            Renderer.Arts.Art.FrameSyncTicks = Renderer.Arts.Art.FrameUploadTicks = 0;
         }
 
         private static void ClearFrameCounters()

@@ -32,6 +32,12 @@ namespace ClassicUO.Game.Map
         public int X;
         public int Y;
 
+        /// <summary>
+        /// Loaded, but some of its land or static art is still decoding on a worker (Map.LoadChunk): the draw walk skips
+        /// it (Map.GetChunkForDraw) until Map.UpdateLoading finds the art uploaded and builds its mesh.
+        /// </summary>
+        public bool ArtPending;
+
         // Gpu world prepare (GameSceneGpuPrepare): which tiles (bit x * 8 + y) still need the per-frame walk. Rebuilt from
         // the tile lists when dirty (objects added or removed, mesh rebuilt, text added to a land tile or static).
         public bool GpuMaskDirty = true;
