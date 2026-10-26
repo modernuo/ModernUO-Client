@@ -1251,3 +1251,14 @@ Branch `worktree-agent-a3e5dca4a0e9e616d` (legacyfix agent, kbatman2). Final num
 - Re-measure on a quiet machine: every table above, the W0/W1 split in NativeAOT, and the owner's world-draw rise (FPS test at 10-24 vs today's build).
 
 **Verification:** both build flavours (Release, `-p:CuoDevTools=false`); 322 unit tests pass. Shots (NativeAOT, tip 898d4c5c6 vs fix, then the fix on 47cb613c9): house spot near-black 1.88% in all three Legacy house shots (clean); Legacy and Gpu world diffs only on walking NPCs in the house and one mobile at the large spot; UI diffs only in the journal text. Looked at.
+
+## 2026-10-25: world-prepare-ecs-plan.md condensed (E8)
+
+The W0–W5 status blocks in `docs/modern-client/world-prepare-ecs-plan.md` now give the goal, the current state and a link to the matching poc-log section. The background backlog, W6 and the order are unchanged. Every setting name, number and open item from the old blocks is kept in the plan.
+
+## 2026-10-25 - E1: ECS core unit tests
+
+Tests only, no product code changed. 322 -> 434 unit tests, all passing, no bugs found.
+- WorldMirrorLifecycleTests (26 methods): create/update/remove and counts, serial reuse, item/mobile re-key, equipment and contents indexes (keyed by container, children before parent), EquipmentDirty on equip, unequip, wearer swap, layer/graphic/hue change, deletion, body change, dying-mobile key, Clear.
+- AnimationRulesEdgeTests (37 methods): body ranges, ethereal mounts, IsMountedBy, LayerHue/OverrideHue precedence, Strips tiling, IsCovered per layer, AnimationTiming, PaperdollOrder.Build/Filter tables and reorder rules, AnimGroupInput.From.
+- Not testable without the client file loaders: MobileAnimationSystem.Rebuild (reads Client.Game.UO.FileManager tiledata and equipconv), AnimationGroupRules.Select (needs an Animations loader), ItemSpriteExtract hue rules (inline in Emit, needs an Item and a PackSet). MobileInputRules was already covered by MobileInputsTests.
