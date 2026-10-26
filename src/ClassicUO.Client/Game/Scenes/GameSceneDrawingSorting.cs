@@ -774,6 +774,21 @@ namespace ClassicUO.Game.Scenes
             _walkPickTests = 0;
         }
 
+        // CUO_PREP_CHECK: a kept RealScreenPosition must equal a fresh one. Out of line: with this string formatting in
+        // AddTileToRenderList's body NativeAOT zeroed 432 bytes of stack and spilled the walk's locals on each of its
+        // ~92,000 calls a frame at the 4K zoom-out, 0.4 ms of Legacy world prepare (poc-log 2026-10-26)
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private void PrepCheckKeptPosition(GameObject obj)
+        {
+            PrepCheck.PositionsKept++;
+
+            if (obj.RealScreenPosition.X != ((obj.X - obj.Y) * 22) - _offset.X - 22 || obj.RealScreenPosition.Y != ((obj.X + obj.Y) * 22 - (obj.Z << 2)) - _offset.Y - 22)
+            {
+                PrepCheck.PositionsWrong++;
+                PrepCheck.Sample ??= $"{obj.GetType().Name} {obj.X},{obj.Y},{obj.Z} at {obj.RealScreenPosition}";
+            }
+        }
+
         // FrameStats detail mode, per walked object: its category counter and walk bucket (out of line; detail mode only)
         [MethodImpl(MethodImplOptions.NoInlining)]
         private static void DetailObject(GameObject obj)
@@ -919,13 +934,7 @@ namespace ClassicUO.Game.Scenes
                 }
                 else if (prepCheck)
                 {
-                    PrepCheck.PositionsKept++;
-
-                    if (obj.RealScreenPosition.X != ((obj.X - obj.Y) * 22) - _offset.X - 22 || obj.RealScreenPosition.Y != ((obj.X + obj.Y) * 22 - (obj.Z << 2)) - _offset.Y - 22)
-                    {
-                        PrepCheck.PositionsWrong++;
-                        PrepCheck.Sample ??= $"{obj.GetType().Name} {obj.X},{obj.Y},{obj.Z} at {obj.RealScreenPosition}";
-                    }
+                    PrepCheckKeptPosition(obj);
                 }
 
                 int screenX = obj.RealScreenPosition.X;
