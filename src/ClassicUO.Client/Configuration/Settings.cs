@@ -139,6 +139,11 @@ namespace ClassicUO.Configuration
         // run. Off = sampled from the Mobile every frame.
         [JsonPropertyName("mobile_push_inputs")] public bool MobilePushInputs { get; set; } = true;
 
+        // E4 (prototype, needs world_update_active_items): World.Update updates only the mobiles whose per-mobile clock is
+        // due (queued steps, frame or idle timer expired, handles opening), picked from the ECS (MobileClock) instead of
+        // calling Mobile.Update on every mobile every frame. Off = the full per-frame loop.
+        [JsonPropertyName("world_update_mobile_system")] public bool WorldUpdateMobileSystem { get; set; } = false;
+
         // W5: the per-frame overhead text pass skips the text layout of mobiles and corpses whose texts have all expired
         // (expired texts stay in the entity's container; the layout would place nothing). Off = laid out every frame.
         [JsonPropertyName("text_skip_expired")] public bool TextSkipExpired { get; set; } = true;

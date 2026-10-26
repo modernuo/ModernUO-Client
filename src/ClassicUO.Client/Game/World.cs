@@ -315,58 +315,69 @@ namespace ClassicUO.Game
                 // nothing in the loop changes them
                 bool wmap = !Settings.GlobalSettings.WorldUpdateActiveItems || WMapManager.AcceptsLocalUpdates;
 
-                foreach (Mobile mob in Mobiles.Values)
+                if (Settings.GlobalSettings.WorldUpdateMobileSystem && Settings.GlobalSettings.WorldUpdateActiveItems)
                 {
-                    mob.Update();
-
-                    if (do_delete && mob.Distance > ClientViewRange /*CheckToRemove(mob, ClientViewRange)*/)
-                    {
-                        RemoveMobile(mob);
-                    }
-
-                    if (mob.IsDestroyed)
-                    {
-                        _toRemove.Add(mob.Serial);
-                    }
-                    else if (wmap)
-                    {
-                        if (mob.NotorietyFlag == NotorietyFlag.Ally)
-                        {
-                            WMapManager.AddOrUpdate
-                            (
-                                mob.Serial,
-                                mob.X,
-                                mob.Y,
-                                MathHelper.PercetangeOf(mob.Hits, mob.HitsMax),
-                                MapIndex,
-                                true,
-                                mob.Name
-                            );
-                        }
-                        else if (Party.Leader != 0 && Party.Contains(mob))
-                        {
-                            WMapManager.AddOrUpdate
-                            (
-                                mob.Serial,
-                                mob.X,
-                                mob.Y,
-                                MathHelper.PercetangeOf(mob.Hits, mob.HitsMax),
-                                MapIndex,
-                                false,
-                                mob.Name
-                            );
-                        }
-                    }
+                    UpdateMobilesByClock(do_delete, wmap);
                 }
-
-                if (_toRemove.Count != 0)
+                else
                 {
-                    for (int i = 0; i < _toRemove.Count; i++)
+                    _mobileClocksSynced = false;
+                    Ecs.ClockEnabled = false;
+                    _destroyedMobiles.Clear();
+
+                    foreach (Mobile mob in Mobiles.Values)
                     {
-                        Mobiles.Remove(_toRemove[i]);
+                        mob.Update();
+
+                        if (do_delete && mob.Distance > ClientViewRange /*CheckToRemove(mob, ClientViewRange)*/)
+                        {
+                            RemoveMobile(mob);
+                        }
+
+                        if (mob.IsDestroyed)
+                        {
+                            _toRemove.Add(mob.Serial);
+                        }
+                        else if (wmap)
+                        {
+                            if (mob.NotorietyFlag == NotorietyFlag.Ally)
+                            {
+                                WMapManager.AddOrUpdate
+                                (
+                                    mob.Serial,
+                                    mob.X,
+                                    mob.Y,
+                                    MathHelper.PercetangeOf(mob.Hits, mob.HitsMax),
+                                    MapIndex,
+                                    true,
+                                    mob.Name
+                                );
+                            }
+                            else if (Party.Leader != 0 && Party.Contains(mob))
+                            {
+                                WMapManager.AddOrUpdate
+                                (
+                                    mob.Serial,
+                                    mob.X,
+                                    mob.Y,
+                                    MathHelper.PercetangeOf(mob.Hits, mob.HitsMax),
+                                    MapIndex,
+                                    false,
+                                    mob.Name
+                                );
+                            }
+                        }
                     }
 
-                    _toRemove.Clear();
+                    if (_toRemove.Count != 0)
+                    {
+                        for (int i = 0; i < _toRemove.Count; i++)
+                        {
+                            Mobiles.Remove(_toRemove[i]);
+                        }
+
+                        _toRemove.Clear();
+                    }
                 }
 
                 FrameStats.End(FramePhase.WorldMobiles);
@@ -392,6 +403,182 @@ namespace ClassicUO.Game
                 FrameStats.End(FramePhase.WorldEcs);
                 FrameStats.Set(FrameCounter.Mobiles, Mobiles.Count);
                 FrameStats.Set(FrameCounter.Items, Items.Count);
+            }
+        }
+
+        // E4 (world_update_mobile_system) ---------------------------------------------------------------------------
+        private readonly List<uint> _dueMobiles = new List<uint>();
+        private readonly List<Mobile> _destroyedMobiles = new List<Mobile>();
+        private bool _mobileClocksSynced;
+        private int _mobileUpdateStamp;
+
+        internal void OnMobileDestroyed(Mobile mobile)
+        {
+            // only the clock path reads the queue; with it off the legacy loop finds destroyed mobiles itself
+            if (Ecs.ClockEnabled)
+            {
+                _destroyedMobiles.Add(mobile);
+            }
+        }
+
+        private readonly List<Mobile> _dueObjects = new List<Mobile>();
+        private int _ordinalVersion = -1;
+        private static readonly System.Comparison<Mobile> s_byOrdinal = (a, b) => a.Ordinal.CompareTo(b.Ordinal);
+
+        // Dictionary<,>'s private mutation counter: bumped by every insert (add, overwrite, resize), and an insert is the only
+        // thing that can change the relative order of entries (a remove leaves a hole; the next add reuses the freed slot)
+        [System.Runtime.CompilerServices.UnsafeAccessor(System.Runtime.CompilerServices.UnsafeAccessorKind.Field, Name = "_version")]
+        private static extern ref int DictionaryVersion(Dictionary<uint, Mobile> dictionary);
+
+        /// <summary>
+        /// E4: sorts <paramref name="list"/> into the order <c>Mobiles.Values</c> enumerates, which is the order the legacy loop
+        /// updated mobiles in and which tile lists, picking ties and footstep sounds depend on. Every mobile gets an ordinal
+        /// (its position in the enumeration); the ordinals are rebuilt (one walk) only when the dictionary has had an insert
+        /// since, so a quiet scene never walks it. The checker proves the result against a fresh enumeration every frame.
+        /// </summary>
+        internal void SortInMobilesOrder(List<Mobile> list)
+        {
+            int version = DictionaryVersion(Mobiles);
+
+            if (version != _ordinalVersion)
+            {
+                int i = 0;
+
+                foreach (Mobile m in Mobiles.Values)
+                {
+                    m.Ordinal = i++;
+                }
+
+                _ordinalVersion = version;
+                WorldEcs.OrdinalRebuilds++;
+            }
+
+            list.Sort(s_byOrdinal);
+        }
+
+        /// <summary>
+        /// The mobile loop of <see cref="Update"/> driven by the ECS clocks. What <c>Mobile.Update</c> would do for a mobile that
+        /// is not due is nothing (see <see cref="MobileClockRules.IsDue"/>), so only due mobiles are updated; the rest of the
+        /// legacy loop body is split out: the range removal runs in its own pass every 50 ms, destroyed mobiles come from
+        /// <see cref="OnMobileDestroyed"/>, and the world-map pass runs only while the map accepts updates.
+        /// </summary>
+        private void UpdateMobilesByClock(bool do_delete, bool wmap)
+        {
+            Ecs.ClockEnabled = true;
+
+            if (!_mobileClocksSynced)
+            {
+                // the clock was not kept while the setting was off (no component, no pushes): build it from the Mobiles
+                Ecs.ResyncClocks();
+                _mobileClocksSynced = true;
+            }
+
+            bool check = WorldEcs.MobileUpdateCheck;
+
+            if (check)
+            {
+                Ecs.CheckClocks();
+            }
+
+            _dueMobiles.Clear();
+            long t0 = WorldEcs.MobileUpdateStats ? System.Diagnostics.Stopwatch.GetTimestamp() : 0;
+            Ecs.Clock.CollectDue(Time.Ticks, _dueMobiles);
+
+            if (t0 != 0)
+            {
+                WorldEcs.ClockCollectTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
+                t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            }
+
+            _mobileUpdateStamp++;
+            WorldEcs.ClockFrames++;
+            WorldEcs.ClockDue += _dueMobiles.Count;
+            WorldEcs.ClockScanned += Ecs.Clock.Scanned;
+
+            // the due list follows archetype order, which equipment tags reshuffle; the legacy loop's order decides tile lists,
+            // picking ties and which footstep wins, so the due mobiles run in Mobiles.Values order
+            _dueObjects.Clear();
+
+            for (int i = 0; i < _dueMobiles.Count; i++)
+            {
+                Mobile due = Mobiles.Get(_dueMobiles[i]);
+
+                if (due != null)
+                {
+                    _dueObjects.Add(due);
+                }
+            }
+
+            SortInMobilesOrder(_dueObjects);
+
+            if (check)
+            {
+                Ecs.CheckOrder(Mobiles.Values, _dueObjects);
+            }
+
+            for (int i = 0; i < _dueObjects.Count; i++)
+            {
+                Mobile mob = _dueObjects[i];
+
+                mob.UpdateStamp = _mobileUpdateStamp;
+                mob.Update();
+
+                // Update rewrote the timers (and may have emptied the step queue or opened the handles)
+                Ecs.PushClock(mob);
+            }
+
+            if (t0 != 0)
+            {
+                WorldEcs.ClockUpdateTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
+            }
+
+            if (check)
+            {
+                Ecs.CheckSkipped(Mobiles.Values, _mobileUpdateStamp);
+            }
+
+            if (do_delete)
+            {
+                foreach (Mobile mob in Mobiles.Values)
+                {
+                    if (mob.Distance > ClientViewRange)
+                    {
+                        RemoveMobile(mob);
+                    }
+                }
+            }
+
+            for (int i = 0; i < _destroyedMobiles.Count; i++)
+            {
+                Mobile dead = _destroyedMobiles[i];
+
+                // a newer mobile may hold the serial by now
+                if (ReferenceEquals(Mobiles.Get(dead.Serial), dead))
+                {
+                    Mobiles.Remove(dead.Serial);
+                }
+            }
+
+            _destroyedMobiles.Clear();
+
+            if (wmap)
+            {
+                foreach (Mobile mob in Mobiles.Values)
+                {
+                    if (mob.IsDestroyed)
+                    {
+                        continue;
+                    }
+
+                    if (mob.NotorietyFlag == NotorietyFlag.Ally)
+                    {
+                        WMapManager.AddOrUpdate(mob.Serial, mob.X, mob.Y, MathHelper.PercetangeOf(mob.Hits, mob.HitsMax), MapIndex, true, mob.Name);
+                    }
+                    else if (Party.Leader != 0 && Party.Contains(mob))
+                    {
+                        WMapManager.AddOrUpdate(mob.Serial, mob.X, mob.Y, MathHelper.PercetangeOf(mob.Hits, mob.HitsMax), MapIndex, false, mob.Name);
+                    }
+                }
             }
         }
 
@@ -1157,6 +1344,7 @@ namespace ClassicUO.Game
             LastObject = 0;
             Items.Clear();
             Mobiles.Clear();
+            _destroyedMobiles.Clear();
             Player?.Destroy();
             Player = null;
             Map?.Destroy();
