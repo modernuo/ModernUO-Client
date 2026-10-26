@@ -322,6 +322,7 @@ namespace ClassicUO.Game
                 else
                 {
                     _mobileClocksSynced = false;
+                    Ecs.ClockEnabled = false;
                     _destroyedMobiles.Clear();
 
                     foreach (Mobile mob in Mobiles.Values)
@@ -413,7 +414,46 @@ namespace ClassicUO.Game
 
         internal void OnMobileDestroyed(Mobile mobile)
         {
-            _destroyedMobiles.Add(mobile);
+            // only the clock path reads the queue; with it off the legacy loop finds destroyed mobiles itself
+            if (Ecs.ClockEnabled)
+            {
+                _destroyedMobiles.Add(mobile);
+            }
+        }
+
+        private readonly List<Mobile> _dueObjects = new List<Mobile>();
+        private int _ordinalVersion = -1;
+        private static readonly Comparison<Mobile> s_byOrdinal = (a, b) => a.Ordinal.CompareTo(b.Ordinal);
+
+        // Dictionary<,>'s private mutation counter: bumped by every insert (add, overwrite, resize), and an insert is the only
+        // thing that can change the relative order of entries (a remove leaves a hole; the next add reuses the freed slot)
+        [System.Runtime.CompilerServices.UnsafeAccessor(System.Runtime.CompilerServices.UnsafeAccessorKind.Field, Name = "_version")]
+        private static extern ref int DictionaryVersion(Dictionary<uint, Mobile> dictionary);
+
+        /// <summary>
+        /// E4: sorts <paramref name="list"/> into the order <c>Mobiles.Values</c> enumerates, which is the order the legacy loop
+        /// updated mobiles in and which tile lists, picking ties and footstep sounds depend on. Every mobile gets an ordinal
+        /// (its position in the enumeration); the ordinals are rebuilt (one walk) only when the dictionary has had an insert
+        /// since, so a quiet scene never walks it. The checker proves the result against a fresh enumeration every frame.
+        /// </summary>
+        internal void SortInMobilesOrder(List<Mobile> list)
+        {
+            int version = DictionaryVersion(Mobiles);
+
+            if (version != _ordinalVersion)
+            {
+                int i = 0;
+
+                foreach (Mobile m in Mobiles.Values)
+                {
+                    m.Ordinal = i++;
+                }
+
+                _ordinalVersion = version;
+                WorldEcs.OrdinalRebuilds++;
+            }
+
+            list.Sort(s_byOrdinal);
         }
 
         /// <summary>
@@ -424,9 +464,11 @@ namespace ClassicUO.Game
         /// </summary>
         private void UpdateMobilesByClock(bool do_delete, bool wmap)
         {
+            Ecs.ClockEnabled = true;
+
             if (!_mobileClocksSynced)
             {
-                // the legacy loop advanced the timers without pushing them
+                // the clock was not kept while the setting was off (no component, no pushes): build it from the Mobiles
                 Ecs.ResyncClocks();
                 _mobileClocksSynced = true;
             }
@@ -453,14 +495,30 @@ namespace ClassicUO.Game
             WorldEcs.ClockDue += _dueMobiles.Count;
             WorldEcs.ClockScanned += Ecs.Clock.Scanned;
 
+            // the due list follows archetype order, which equipment tags reshuffle; the legacy loop's order decides tile lists,
+            // picking ties and which footstep wins, so the due mobiles run in Mobiles.Values order
+            _dueObjects.Clear();
+
             for (int i = 0; i < _dueMobiles.Count; i++)
             {
-                Mobile mob = Mobiles.Get(_dueMobiles[i]);
+                Mobile due = Mobiles.Get(_dueMobiles[i]);
 
-                if (mob == null)
+                if (due != null)
                 {
-                    continue;
+                    _dueObjects.Add(due);
                 }
+            }
+
+            SortInMobilesOrder(_dueObjects);
+
+            if (check)
+            {
+                Ecs.CheckOrder(Mobiles.Values, _dueObjects);
+            }
+
+            for (int i = 0; i < _dueObjects.Count; i++)
+            {
+                Mobile mob = _dueObjects[i];
 
                 mob.UpdateStamp = _mobileUpdateStamp;
                 mob.Update();
