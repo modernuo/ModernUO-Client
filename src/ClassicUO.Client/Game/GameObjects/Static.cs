@@ -37,9 +37,21 @@ namespace ClassicUO.Game.GameObjects
         public int Index;
 
 
-        public static Static Create(World world, ushort graphic, ushort hue, int index)
+        /// <summary>A new Static, or <paramref name="reuse"/> (a retired Static from MapObjectRecycler) put back to a new one's state.</summary>
+        public static Static Create(World world, ushort graphic, ushort hue, int index, Static reuse = null)
         {
-            Static s = new Static(world); // _pool.GetOne();
+            Static s;
+
+            if (reuse != null && ReferenceEquals(reuse.World, world))
+            {
+                s = reuse;
+                s.ResetForReuse();
+            }
+            else
+            {
+                s = new Static(world);
+            }
+
             s.Graphic = s.OriginalGraphic = graphic;
             s.Hue = hue;
             s.UpdateGraphicBySeason();
@@ -90,7 +102,16 @@ namespace ClassicUO.Game.GameObjects
             }
 
             base.Destroy();
-            //_pool.ReturnOne(this);
+            // reuse: Chunk.Destroy retires evicted map objects into MapObjectRecycler (the QueuedPool above predates World)
+        }
+
+        public override void ResetForReuse()
+        {
+            base.ResetForReuse();
+            OriginalGraphic = 0;
+            IsVegetation = false;
+            Index = 0;
+            _canBeTransparent = 0;
         }
     }
 }

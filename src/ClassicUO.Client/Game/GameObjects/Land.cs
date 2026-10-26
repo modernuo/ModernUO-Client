@@ -39,9 +39,21 @@ namespace ClassicUO.Game.GameObjects
 
         private Land(World world) : base(world) { }
 
-        public static Land Create(World world, ushort graphic)
+        /// <summary>A new Land, or <paramref name="reuse"/> (a retired Land from MapObjectRecycler) put back to a new one's state.</summary>
+        public static Land Create(World world, ushort graphic, Land reuse = null)
         {
-            Land land = new Land(world); // _pool.GetOne();
+            Land land;
+
+            if (reuse != null && ReferenceEquals(reuse.World, world))
+            {
+                land = reuse;
+                land.ResetForReuse();
+            }
+            else
+            {
+                land = new Land(world);
+            }
+
             land.AlphaHue = 0xFF;
             land.Graphic = graphic;
             land.OriginalGraphic = graphic;
@@ -60,7 +72,18 @@ namespace ClassicUO.Game.GameObjects
             }
 
             base.Destroy();
-            //_pool.ReturnOne(this);
+            // reuse: Chunk.Destroy retires evicted map objects into MapObjectRecycler (the QueuedPool above predates World)
+        }
+
+        public override void ResetForReuse()
+        {
+            base.ResetForReuse();
+            AverageZ = 0;
+            IsStretched = false;
+            MinZ = 0;
+            NormalTop = NormalRight = NormalLeft = NormalBottom = Vector3.Zero;
+            OriginalGraphic = 0;
+            YOffsets = default;
         }
 
         public override void UpdateGraphicBySeason()

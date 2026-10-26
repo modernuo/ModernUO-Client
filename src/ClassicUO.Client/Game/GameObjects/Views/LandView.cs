@@ -13,6 +13,11 @@ namespace ClassicUO.Game.GameObjects
     {
         public override bool Draw(UltimaBatcher2D batcher, int posX, int posY, float depth)
         {
+            if (Map.MapObjectRecycler.Check && InRecycler)
+            {
+                Map.MapObjectRecycler.Touched(this, Map.MapObjectRecycler.Site.LandDraw);
+            }
+
             if (!AllowedToDraw || IsDestroyed)
             {
                 return false;
@@ -138,6 +143,11 @@ namespace ClassicUO.Game.GameObjects
 
         public override bool CheckMouseSelection()
         {
+            if (Map.MapObjectRecycler.Check && InRecycler)
+            {
+                Map.MapObjectRecycler.Touched(this, Map.MapObjectRecycler.Site.LandPick);
+            }
+
             if (IsStretched)
             {
                 return SelectedObject.IsPointInStretchedLand(

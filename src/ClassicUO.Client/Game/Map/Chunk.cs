@@ -122,6 +122,8 @@ namespace ClassicUO.Game.Map
 
             int bx = X << 3;
             int by = Y << 3;
+            MapObjectRecycler recycler = _world.MapRecycler;
+            uint now = Time.Ticks;
 
             for (int y = 0; y < 8; ++y)
             {
@@ -133,7 +135,7 @@ namespace ClassicUO.Game.Map
                     ushort tileID = block.Land[pos].TileId;
                     sbyte z = block.Land[pos].Z;
 
-                    Land land = Land.Create(_world, tileID);
+                    Land land = Land.Create(_world, tileID, recycler.TakeLand(now));
 
                     ushort tileX = (ushort)(bx + x);
 
@@ -151,7 +153,7 @@ namespace ClassicUO.Game.Map
             {
                 int pos = (sb.Y << 3) + sb.X;
 
-                Static staticObject = Static.Create(_world, sb.Graphic, sb.Hue, pos);
+                Static staticObject = Static.Create(_world, sb.Graphic, sb.Hue, pos, recycler.TakeStatic(now));
                 staticObject.X = (ushort)(bx + sb.X);
                 staticObject.Y = (ushort)(by + sb.Y);
                 staticObject.Z = sb.Z;
@@ -393,6 +395,10 @@ namespace ClassicUO.Game.Map
 
         public void Destroy()
         {
+            MapObjectRecycler recycler = _world.MapRecycler;
+            uint now = Time.Ticks;
+            bool retired = false;
+
             for (int i = 0; i < 8; i++)
             {
                 for (int j = 0; j < 8; j++)
@@ -409,6 +415,9 @@ namespace ClassicUO.Game.Map
                     while (first != null)
                     {
                         GameObject next = first.TNext;
+                        // map land and statics live only in tile lists (Chunk.Load): once destroyed and unlinked here they go
+                        // to the recycler, which hands them out again after its quarantine (MapObjectRecycler invariants)
+                        bool recycle = (first is Land || first is Static) && !first.IsDestroyed;
 
                         if (!ReferenceEquals(first, _world.Player))
                         {
@@ -418,10 +427,32 @@ namespace ClassicUO.Game.Map
                         first.TPrevious = null;
                         first.TNext = null;
                         first.TileChunk = null;
+
+                        if (recycle)
+                        {
+                            recycler.Retire(first, now);
+                            retired = true;
+                        }
+
                         first = next;
                     }
 
                     Tiles[i, j] = null;
+                }
+            }
+
+            if (retired)
+            {
+                // the selection holders keep an object across a frame boundary (set in the draw walk, read in the next
+                // Update and input handling); a destroyed map object there would be a different tile once reused
+                if (SelectedObject.Object is GameObject sel && sel.IsDestroyed)
+                {
+                    SelectedObject.Object = null;
+                }
+
+                if (SelectedObject.LastLeftDownObject is GameObject down && down.IsDestroyed)
+                {
+                    SelectedObject.LastLeftDownObject = null;
                 }
             }
 

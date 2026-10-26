@@ -32,6 +32,11 @@ namespace ClassicUO.Game.GameObjects
 
         public override bool Draw(UltimaBatcher2D batcher, int posX, int posY, float depth)
         {
+            if (Map.MapObjectRecycler.Check && InRecycler)
+            {
+                Map.MapObjectRecycler.Touched(this, Map.MapObjectRecycler.Site.StaticDraw);
+            }
+
             if (!AllowedToDraw || IsDestroyed)
             {
                 return false;
@@ -94,6 +99,11 @@ namespace ClassicUO.Game.GameObjects
 
         public override bool CheckMouseSelection()
         {
+            if (Map.MapObjectRecycler.Check && InRecycler)
+            {
+                Map.MapObjectRecycler.Touched(this, Map.MapObjectRecycler.Site.StaticPick);
+            }
+
             if (
                 !(
                     SelectedObject.Object == this
