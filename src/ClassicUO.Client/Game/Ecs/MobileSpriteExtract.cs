@@ -152,7 +152,7 @@ namespace ClassicUO.Game
                 layerOf[i] = eq.Slots[i].Layer;
             }
 
-            n = AnimationRules.ApplyDirectionCloak(order, n, layerOf, s.Facing);
+            n = AnimationRules.ApplyDirectionCloak(order, n, layerOf, s.Facing, eq.CloakAnchor);
 
             for (int i = 0; i < n; i++)
             {

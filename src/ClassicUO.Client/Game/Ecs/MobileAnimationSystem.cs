@@ -626,6 +626,15 @@ namespace ClassicUO.Game
                     slot.Bits |= EquipSlotBits.Converted;
                 }
             }
+
+            Span<byte> slotLayers = stackalloc byte[EquipmentSlots.MAX];
+
+            for (int i = 0; i < eq.Count; i++)
+            {
+                slotLayers[i] = eq.Slots[i].Layer;
+            }
+
+            eq.CloakAnchor = AnimationRules.CloakAnchor(order.Slice(0, count), slotLayers.Slice(0, eq.Count));
         }
 
         /// <summary>
