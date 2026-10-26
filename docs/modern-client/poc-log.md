@@ -1089,7 +1089,7 @@ Owner decision (README "Decisions so far"): `auto` / `gpu` / `legacy`, never a m
 
 - **Legacy on D3D11/OpenGL:** nothing broken. The observations (OpenGL on the iGPU, D3D11's Present at 2.5× SDL_GPU's, no FNA3D fall-through past a forced driver) are in known-issues.md, as input for the deferred Legacy project.
 - **Not verified:**
-  - the full matrix re-run after merging e0d93d0a4 (both builds and the 307 tests pass there);
+  - the full matrix re-run after merging e0d93d0a4 (both builds and the 307 tests pass there). **Done later the same day** on 3f1e70d53, with the message box and title looked at: see "Renderer selection: matrix re-run on the merged tip";
   - a real (not simulated) machine without Vulkan;
   - a world-pass failure at a facet change after a successful startup (code path unchanged, not exercised);
   - the message box (runs use `-nomessagebox`);
@@ -1251,6 +1251,78 @@ Branch `worktree-agent-a3e5dca4a0e9e616d` (legacyfix agent, kbatman2). Final num
 - Re-measure on a quiet machine: every table above, the W0/W1 split in NativeAOT, and the owner's world-draw rise (FPS test at 10-24 vs today's build).
 
 **Verification:** both build flavours (Release, `-p:CuoDevTools=false`); 322 unit tests pass. Shots (NativeAOT, tip 898d4c5c6 vs fix, then the fix on 47cb613c9): house spot near-black 1.88% in all three Legacy house shots (clean); Legacy and Gpu world diffs only on walking NPCs in the house and one mobile at the large spot; UI diffs only in the journal text. Looked at.
+
+## 2026-10-25: world-prepare-ecs-plan.md condensed (E8)
+
+The W0–W5 status blocks in `docs/modern-client/world-prepare-ecs-plan.md` now give the goal, the current state and a link to the matching poc-log section. The background backlog, W6 and the order are unchanged. Every setting name, number and open item from the old blocks is kept in the plan.
+
+## 2026-10-25 - E1: ECS core unit tests
+
+Tests only, no product code changed. 322 -> 434 unit tests, all passing, no bugs found.
+- WorldMirrorLifecycleTests (26 methods): create/update/remove and counts, serial reuse, item/mobile re-key, equipment and contents indexes (keyed by container, children before parent), EquipmentDirty on equip, unequip, wearer swap, layer/graphic/hue change, deletion, body change, dying-mobile key, Clear.
+- AnimationRulesEdgeTests (37 methods): body ranges, ethereal mounts, IsMountedBy, LayerHue/OverrideHue precedence, Strips tiling, IsCovered per layer, AnimationTiming, PaperdollOrder.Build/Filter tables and reorder rules, AnimGroupInput.From.
+- Not testable without the client file loaders: MobileAnimationSystem.Rebuild (reads Client.Game.UO.FileManager tiledata and equipconv), AnimationGroupRules.Select (needs an Animations loader), ItemSpriteExtract hue rules (inline in Emit, needs an Item and a PackSet). MobileInputRules was already covered by MobileInputsTests.
+
+## Britain dock NPCs' parity mismatch: the Gpu world drew the cloak over the weapon (2026-10-25)
+
+Branch `worktree-agent-ae6cfc1a46b55b33e`, started on `poc/modern-client` af171e7e8; fix in 328cae47f; verified on af171e7e8 + fix, then merged 6de44bab9 (tests and docs only). Was the known issue "ECS parity: two Britain dock NPCs mismatch (equipment order)". Account kbatman, JIT Release, 1280×720. Logs, packet logs and shots: session scratchpad `correct\`.
+
+**Cause: the ECS was wrong; Legacy (MobileView) is the reference.**
+- MobileView builds the full layer order (`PaperdollOrder.BuildInWorld`: base table, reorder rules, then `ApplyDirectionCloak` on the whole layer list, empty layers included) and skips empty layers while drawing. For facings other than north (0) and south (3), the cloak goes just before Helmet, which every table lists, so it lands under the weapons even when no helmet is worn.
+- The ECS (`EquipmentSlots` + `AnimationRules.ApplyDirectionCloak`) moved the cloak on the drawn slots only. With no helmet drawn it found no Helmet and put the cloak last, over the weapon.
+- The two NPCs are the only cloak + weapon + no-helmet humans in the parity scenes, which is why only they mismatched (every frame in which they face 1, 2, 4–7). Not a World-vs-mirror equipment index problem and not the virtual hair: both sides held the same items on the same layers.
+- **Visible:** in a pure Legacy vs Gpu pair of the same frame (base build, pair 13 of `shots3-base`), Legacy draws the longsword's blade over the cloak's top corner; Gpu hides that part of the blade under the cloak. Only a few pixels where the two overlap, in back-facing poses. Looked at (`correct\p13_base_zoom.png`, `evidence_base_p15.png`).
+
+**Fix (328cae47f):** `EquipmentSlots.CloakAnchor`, set by `Rebuild` through `AnimationRules.CloakAnchor`: the number of drawn non-cloak slots that come before Helmet in the full order. `ApplyDirectionCloak` inserts the cloak there for the "below the helmet" facings; the extract and `-ecscheck` both pass it. New test `Cloak_Order_Matches_MobileView_On_The_Drawn_Layers` compares the slot ordering with MobileView's full-order move for 8 layer sets (the dock NPCs' set, no helmet with one or two weapons, with a helmet, robe, cloak only, no cloak) in all 8 facings; the old code fails it.
+
+**What the server sent (predicted from ModernUO, then checked in the client's packet log, `-packetlog`):**
+- `OutgoingMobilePackets.SendMobileIncoming` (0x78) writes the mobile's `Items` in list order, skipping deleted, invisible and repeated layers, then the virtual hair (`HairSerial`, layer 11) and facial hair (`FacialHairSerial`, layer 16) if the mobile has them. `Mobile.HairSerial` takes `World.NewVirtual` (a counter from `World.MaxItemSerial`) on first use, so each mobile gets its own serial.
+- Observed for 0x00037567 (and the same shape for 0x00037566): Shirt 0x1EFD, Pants 0x152E, Shoes 0x170B, Tunic 0x1541, Cloak 0x1515, OneHanded 0x0F61 (longsword), Backpack, then the virtual hair 0x7EEEF820 (0x00037566's is 0x7EEEF81F). No facial hair, no duplicate layers, no 0x2E for them, serials not shared between the two. Exactly as predicted. **No ModernUO issue.**
+
+**Verification (after the fix):**
+
+| Run | Result |
+|---|---|
+| Dock (`CUO_ECS_PARITY=1`, `CUO_ANIM_SYNC=1`, `CUO_GPU_ITEM_CHECK=1`, `-ecscheck 30`) | Base: 124,915 of 484,359 mobile comparisons mismatched, 3,869 `-ecscheck` lines per NPC (cloak and sword swapped). Fix: 558,973 comparisons, **0 mismatched**; `-ecscheck` 0; items 0; item cache 0 differences |
+| `cases.txt` (copy without the death section, see below) | 138,886 mobile comparisons (15.3k CharSitting, 101.7k cloak frames), 0 mismatched; items 156,651, 0; `-ecscheck` 0; item cache 0 differences |
+| `bank.txt` | 71,447 mobile comparisons, 0 mismatched; items 25,957, 0; item cache 0 differences |
+| Legacy world (`-worldrenderer legacy`, house and Britain, base vs fix) | Britain identical; house differs only in one walking NPC (0.22% of pixels); near-black 3.28% vs 3.29% (853×480 shots). Looked at |
+| Unit tests | 330 before the merge, 442 after (434 + 8 new) |
+
+- **kbatman is the owner's character, so the cases run used a copy of `cases.txt`** (`correct\cases-kb.txt`) without `[mortal`/`[kill`/`[res`/`[immortal` (a death moves worn items and the pack into a corpse) and with cleanup at the end: the added cloak removed (`[remove` + `target worn 20`), `equip` showing only hair and backpack, and `[go 1495 1629`. Body, hue and flying were reset by the script as usual.
+
+## Renderer selection: matrix re-run on the merged tip; message box and title looked at (2026-10-25)
+
+Re-run of the matrix from "Renderer chosen at startup by capability", which hadn't been run since the merges. Builds of 3f1e70d53 (`poc/modern-client` 6de44bab9 + the cloak fix above), default flavour (`bin-dev`) and `-p:CuoDevTools=false` (`bin-nodev`; the dev strings `flip done`, `[bench-pick]`, `CUO_BENCH_PLAN` are absent from its cuo.dll). Release JIT, kbatman, 1280×720, other agents' clients running. Procedure: [testing/renderer-selection.md](testing/renderer-selection.md) (new). Logs and shots: session scratchpad `correct\rendsel\`.
+
+| Case | Dev | Release flavour |
+|---|---|---|
+| auto → Gpu | Pass: `auto: Gpu (SDL_GPU vulkan, NVIDIA GeForce RTX 3090 Ti)` | Pass |
+| Forced legacy, settings.json | Pass: `legacy: Legacy (forced by settings.json; SDL_GPU vulkan, …)` | Pass |
+| Forced gpu, settings.json | Pass | (not run) |
+| Forced legacy, `-worldrenderer` (gpu saved) | Pass: `forced by -worldrenderer` | (not run) |
+| Forced gpu, `-worldrenderer` (legacy saved) | Pass; saved file still `legacy` | Pass; saved file still `legacy` |
+| `PROBE_FAIL=device` → Legacy on D3D11 | Pass: `auto: Legacy (…; FNA3D D3D11)` on the RTX; full plan (Britain, gumps, bank, walk, house), `world:gpu` refused with the warning, picking (static, land, item, player selected; item and player clicked), 0 errors; house near-black 3.26% | Pass (`[renderer]` line, title, 0 errors) |
+| Same on OpenGL (`CUO_RENDERER_LEGACY_DRIVER=OpenGL`) | Pass: `FNA3D OpenGL` on the Intel UHD 770; same checks; house 3.27% | Pass |
+| `PROBE_FAIL=world` → Legacy on the SDL_GPU device | Pass: `auto: Legacy (…; SDL_GPU vulkan, …)`; same checks; house 3.28% | Pass |
+| User-forced `FNA3D_FORCE_DRIVER=OpenGL` with auto | Pass: `auto: Legacy (FNA3D driver forced to OpenGL; …)` | (not run) |
+| Forced gpu + `PROBE_FAIL=device` (settings) | Pass: `gpu: unavailable`, exit 0xDEAF | Pass |
+| Forced gpu + `PROBE_FAIL=world` (`-worldrenderer`) | Pass: exit 0xDEAF | Pass |
+| Message box (forced gpu failing, no plan, no `-nomessagebox`) | Shown, OK pressed, exit 0xDEAF (device and world) | Shown, exit 0xDEAF |
+
+- The three house shots (853×480) match a pure-Legacy SDL_GPU house shot of the same size from today (3.28%), so no B1-style corruption on any device.
+- Release-flavour sessions ignore the plan (no bench lines) and were closed after 35 s; they exit 0.
+
+**What the owner hasn't seen yet (captured with `PrintWindow`):**
+- **Message box** (Windows dialog, title "ClassicUO", red error icon, one OK button): "The GPU world renderer could not start (simulated (CUO_RENDERER_PROBE_FAIL=device)). ClassicUO will close." With a real failure the parentheses hold the probe's reason instead of "simulated (…)". Behind it, the client window is already up and showing the login screen.
+- **Title:** `ClassicUO - 1.1.0.0` in Gpu mode; `ClassicUO [Legacy renderer] - 1.1.0.0` in Legacy, `Kamron - ClassicUO [Legacy renderer] - 1.1.0.0` once logged in. Same in both flavours.
+
+**Wording that may confuse (suggestions; nothing changed):**
+1. **The box gives no way out.** The log says `world_renderer "auto" or "legacy" in settings.json, or -worldrenderer, runs Legacy instead`; the box doesn't. A player who set `gpu` (or got a settings file with it) only learns that the game closes. Suggestion: "ClassicUO can't start the GPU renderer that is selected in settings.json (world_renderer: gpu). Reason: <reason>. Set world_renderer to "auto" to let ClassicUO choose a renderer this computer supports. ClassicUO will close."
+2. **Nested parentheses and internal names:** "(simulated (CUO_RENDERER_PROBE_FAIL=device))" in tests; real reasons are probe texts (SDL/Vulkan wording). Put the reason on its own line after "Reason:".
+3. **The window behind the box says "[Legacy renderer]"** while the box says the GPU renderer (which the user forced) failed and the game will close. The title flag follows `UseGpuWorldRenderer`, which is false at that point. Suggestion: no renderer tag in a session that is exiting, or set the title after the decision.
+4. **"[Legacy renderer]" on an auto fallback.** The title code still treats Legacy as "a developer comparison mode", but it is now auto's normal choice on machines without Vulkan, so real players would see "Legacy renderer" in their title bar, which reads like an error or an outdated mode. Suggestion: keep the tag in the dev flavour only, or call it "Compatibility renderer" in the release flavour.
+5. **"GPU world renderer" vs Legacy:** both draw on the GPU, so "GPU renderer" as the name of one of them is ambiguous to a player. Fine in logs; in user-facing text, "the new renderer" / "compatibility renderer" (or whatever names the owner picks) would read better.
 
 ### 2026-10-25 — B8 and B9: UI render cache ready to merge, batch regrouping not worth it (batcher agent)
 
