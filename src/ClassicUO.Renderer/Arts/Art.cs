@@ -6,6 +6,7 @@ using Microsoft.Xna.Framework.Graphics;
 using SDL3;
 using System;
 using System.Buffers;
+using System.Diagnostics;
 
 namespace ClassicUO.Renderer.Arts
 {
@@ -25,6 +26,128 @@ namespace ClassicUO.Renderer.Arts
             _atlas = new TextureAtlas(device, 4096, 4096, SurfaceFormat.Color);
             _spriteInfos = new SpriteInfo[_artLoader.Count];
             _realArtBounds = new Rectangle[_spriteInfos.Length];
+            _decoder = new FirstSightDecoder("art", _spriteInfos.Length, DecodeOnWorker, UploadDecoded);
+        }
+
+        /// <summary>
+        /// First-sight art requested ahead of use (<see cref="RequestLand"/>, <see cref="RequestArt"/>, by the chunk loader)
+        /// decodes on a worker; its atlas upload waits for <see cref="DrainReady"/>. CUO_ART_SYNC=1 turns requests off:
+        /// every first lookup decodes on the spot, as before.
+        /// </summary>
+        public static readonly bool AsyncFirstSight = Environment.GetEnvironmentVariable("CUO_ART_SYNC") != "1";
+
+        private readonly FirstSightDecoder _decoder;
+
+        /// <summary>Main-thread first-sight decodes (a lookup that had to decode) and their time; FrameStats resets them.</summary>
+        public static int FrameSyncLoads;
+        public static long FrameSyncTicks;
+        /// <summary>Worker decodes uploaded by <see cref="DrainReady"/> and the time spent there; FrameStats resets them.</summary>
+        public static int FrameAsyncUploads;
+        public static long FrameUploadTicks;
+
+        /// <summary>Worker decodes requested and not uploaded yet.</summary>
+        public int PendingDecodes => _decoder.Pending;
+
+        /// <summary>Worker decodes uploaded so far: a caller waiting on requests only needs to look again when it changed.</summary>
+        public int CompletedDecodes => _decoder.Completed;
+
+        /// <summary>
+        /// True when land tile <paramref name="idx"/> is in the atlas, or has no image (a lookup would not decode it);
+        /// otherwise queues its worker decode, once, and returns false. Main thread.
+        /// </summary>
+        public bool RequestLand(uint idx) => Request(idx & ~0x4000u);
+
+        /// <summary>As <see cref="RequestLand"/>, for static art <paramref name="idx"/>.</summary>
+        public bool RequestArt(uint idx) => Request(idx + 0x4000);
+
+        private bool Request(uint idx)
+        {
+            if (idx >= _spriteInfos.Length || _spriteInfos[idx].Texture != null || !AsyncFirstSight || !_artLoader.Exists((int)idx))
+            {
+                return true;
+            }
+
+            _decoder.Request(idx);
+
+            return false;
+        }
+
+        /// <summary>Uploads finished worker decodes until <paramref name="deadline"/> (Stopwatch ticks), at least one. Main thread.</summary>
+        public void DrainReady(long deadline)
+        {
+            if (_decoder.HasReady)
+            {
+                long t0 = Stopwatch.GetTimestamp();
+                _decoder.Drain(deadline);
+                FrameUploadTicks += Stopwatch.GetTimestamp() - t0;
+            }
+        }
+
+        // Worker thread. Touches only the loader's sprite table (immutable after Load), the pack pages (thread-safe) and
+        // ArrayPool, plus the job; the atlas, the picker, the bounds and the sprite infos stay on the main thread.
+        private bool DecodeOnWorker(FirstSightDecoder.Job job)
+        {
+            int count = _artLoader.PixelCount(job.Index);
+
+            if (count == 0)
+            {
+                return false;
+            }
+
+            job.Pixels = ArrayPool<uint>.Shared.Rent(count);
+            var artInfo = _artLoader.GetArt(job.Index, job.Pixels);
+
+            if (artInfo.Pixels.IsEmpty)
+            {
+                return false;
+            }
+
+            job.Width = artInfo.Width;
+            job.Height = artInfo.Height;
+            job.TrimX = artInfo.TrimX;
+            job.TrimY = artInfo.TrimY;
+            job.TrimW = artInfo.TrimW;
+            job.TrimH = artInfo.TrimH;
+
+            if (job.Index > 0x4000)
+            {
+                PixelPicker.VisibleBounds(artInfo.Pixels, artInfo.Width, artInfo.Height, artInfo.TrimX, artInfo.TrimY, artInfo.TrimW, artInfo.TrimH,
+                    out int minX, out int minY, out int maxX, out int maxY);
+                job.Bounds = new Rectangle(minX, minY, maxX - minX, maxY - minY);
+            }
+
+            return true;
+        }
+
+        // main thread: what Get does after its decode
+        private void UploadDecoded(FirstSightDecoder.Job job)
+        {
+            uint idx = job.Index;
+            ref var spriteInfo = ref _spriteInfos[idx];
+
+            if (spriteInfo.Texture != null)
+            {
+                return; // a lookup needed it first and decoded it itself
+            }
+
+            if (job.Pixels == null)
+            {
+                Get(idx); // the worker failed: decode here (logs and falls back as a lookup does)
+
+                return;
+            }
+
+            var pixels = job.Pixels.AsSpan(0, job.Width * job.Height);
+            spriteInfo.Texture = _atlas.AddSprite(pixels, job.Width, job.Height, out spriteInfo.UV);
+            PackSpriteMap.Register(spriteInfo.Texture, spriteInfo.UV, idx);
+
+            if (idx > 0x4000)
+            {
+                _picker.SetTrimmed(idx - 0x4000, job.Width, job.Height, job.TrimX, job.TrimY, job.TrimW, job.TrimH, pixels);
+                _realArtBounds[idx - 0x4000] = job.Bounds;
+            }
+
+            FrameAsyncUploads++;
         }
 
         public void Reload()
@@ -49,6 +172,9 @@ namespace ClassicUO.Renderer.Arts
 
             if (spriteInfo.Texture == null)
             {
+                long syncStart = Stopwatch.GetTimestamp();
+                FrameSyncLoads++;
+
                 // the untrimmed image only lives until the atlas upload: decode into a pooled buffer
                 var buffer = ArrayPool<uint>.Shared.Rent(Math.Max(1, _artLoader.PixelCount(idx)));
 
@@ -89,6 +215,7 @@ namespace ClassicUO.Renderer.Arts
                 finally
                 {
                     ArrayPool<uint>.Shared.Return(buffer);
+                    FrameSyncTicks += Stopwatch.GetTimestamp() - syncStart;
                 }
             }
 
