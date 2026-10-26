@@ -86,6 +86,18 @@ Added 2026-10-25 (W4 agent). Design in world-prepare-ecs-plan.md ("W4") and poc-
 - **Item changes:** `-ecsdriver` scripts can drive them. The W4 agent's script (`[TileXYZ` blocks at Green Acres, then `[area set hue`, `[area set amount`, `[area increase x|y`, `[area delete` with `gumpok`, `[add`, `pick near`/`drop ground`, a walk, `[wipe items`) ran with `CUO_GPU_ITEM_CHECK=every` and, separately, with a `shot <name>` before and after `itemcache off` at each step. The driver's `items` command logs each ground item's graphic, amount, hue, flags and position, so the log shows that every change happened.
 - **Visual check:** in one session, `shot:X_on;itemcache:off;shot:X_off;itemcache:on` at a spot, then compare `X_on` with `X_off`. At Britain, zoom 2.5 and after every item change, the world shots were pixel-identical. In the large-scale scene the creatures animate between the two shots, so use the checker there.
 
+## Tiles holding graphic effects (E6, `gpu_prepare_item_cache_effects`)
+
+Added 2026-10-26 (E6 agent). Design and numbers in poc-log ("E6").
+
+- **Switches:** setting `gpu_prepare_item_cache_effects` (default on; it needs the item cache), plan entry `fxserve:on|off`, `-ecsdriver` command `fxserve on|off`. Counter `item_cache_fx` (effects walked alone on served tiles); FrameStats phase `draw_fx` (the effects list captured into the world pass, inside world draw) and counter `effects` (the world's effects list this frame).
+- **Making effects:** client-side only, nothing to clean up on the server.
+  - Plan entry `effects:N:graphic[:blend[:radius[:z[:kind]]]]` (driver: `fx N graphic [blend [radius [z [kind]]]]`): N effects on random tiles within `radius` (default 12) of the player at the player's Z (`z`; `p` = the player's). Graphic is hex, blend the `GraphicEffectBlendMode` number, kind `f` fixed and endless (default), `m` moving to another random tile (the plan keeps N of them alive: `BenchEffects.Tick`), `l` lightning. `effects:0` destroys every effect. Fire columns (`3709`, animated) and bags (`0E75`, `0E76`, not animated: use them for pixel diffs) are good graphics.
+  - Effects die when farther than the client view range from the player, so keep `radius` below it.
+- **Measuring:** `effects:100:3709:0:14;fxserve:off;ls100off:5156 2150:1;fxserve:on;ls100on:5156 2150:1;effects:0` in the large-scale scene (in-session pairs), or two builds in alternating sessions. An effect on a tile of the scene used to put about 17 objects of that tile in the walk.
+- **Checkers:** `CUO_GPU_ITEM_CHECK=every` with `CUO_GPU_SKIP_CHECK=1` and `CUO_PREP_CHECK=1` (a plan with `effects:` entries), and `tools/ecs-parity/e6fx.txt` with ECS parity (`-ecscheck`, `CUO_ECS_PARITY=1`, `CUO_ANIM_SYNC=1`), run with `light 1E` and with the first `light 1E` changed to `light off`. The check frame walks every effect, the served frame before it served the tiles: "other queued objects vs the served frame before" hashes the effects list (identity, alpha, order) and must say `0 different` while nothing moves. Moving effects and spawns legitimately differ between two frames, so read standing windows. Verify the checker still sees a broken serve by leaving the `AddTileToRenderList` call for effects out of `GpuServeMixedTile`: it must report `0 same, N different`.
+- **Pixels:** non-animated effects (`0E75`) in every blend over the cached item tiles, `fxserve:on` vs `off` shots at night and by day: identical (0.000%). With animated fire the shots differ by the animation alone.
+
 ## Cleanup
 
 - The run script removes the temp settings/profile folder, the lock file and any `Data/` the client created in the bin folder.

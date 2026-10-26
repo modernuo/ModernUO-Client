@@ -328,7 +328,7 @@ namespace ClassicUO.Game.Scenes
 
         private void RebuildGpuMask(Chunk chunk)
         {
-            ulong walk = 0, full = 0, mobiles = 0, mobileStops = 0;
+            ulong walk = 0, full = 0, mobiles = 0, mobileStops = 0, effects = 0;
             int minZ = int.MaxValue, maxZ = int.MinValue, halfW = 22, height = 44;
             int mobileCount = 0;
 
@@ -361,6 +361,11 @@ namespace ClassicUO.Game.Scenes
                                 {
                                     mobileStops |= bit;
                                 }
+                            }
+
+                            if (obj is GameEffect)
+                            {
+                                effects |= bit;
                             }
 
                             continue;
@@ -400,6 +405,7 @@ namespace ClassicUO.Game.Scenes
             chunk.GpuFullMask = full;
             chunk.GpuMobileMask = mobiles;
             chunk.GpuMobileStopMask = mobileStops;
+            chunk.GpuEffectMask = effects;
             chunk.GpuMobileStart[64] = mobileCount;
 
             if (mobileCount < chunk.GpuMobiles.Length)

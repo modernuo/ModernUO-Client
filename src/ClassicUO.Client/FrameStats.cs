@@ -67,6 +67,8 @@ namespace ClassicUO
         UiTraverse,
         UiFna,
         UiPass,
+        // E6: inside world draw, the effects list captured into the world pass
+        WorldDrawEffects,
         Count
     }
 
@@ -113,6 +115,8 @@ namespace ClassicUO
         ItemCacheFallbacks,
         // E7: items walked alone on served tiles (animated, corpses, fading...)
         ItemCacheWalked,
+        // E6: effects walked alone on served tiles
+        ItemCacheFx,
         // map loading (Map.UpdateLoading, MapLoader prefetch): chunks loaded and the time they took, chunks queued at the
         // end of the frame, time the main thread waited for a region decode, regions decoded on the main thread, prefetches
         ChunkLoads,
@@ -135,6 +139,8 @@ namespace ClassicUO
         UiDrawCalls,
         UiCached,
         UiUntouched,
+        // E6: effects in the world's effects list this frame
+        Effects,
         Count
     }
 
@@ -162,7 +168,7 @@ namespace ClassicUO
             "    walk: baked statics", "    walk: unmeshed", "    walk: items/mob/fx", "    walk: screen pos", "    walk: picking",
             "    walk: override/mesh", "    walk: lights", "    walk: foliage check", "  (bare list walk)", "world draw", "scene DrawUI", "UIManager.Draw", "cursor", "RT composite",
             "plugin draw", "draw other", "Draw total", "  batcher FNA calls", "Present", "frame",
-            "  UI tree walk", "  UI batcher FNA", "UI pass total"
+            "  UI tree walk", "  UI batcher FNA", "UI pass total", "  world draw: effects"
         };
 
         private static readonly string[] _phaseKeys =
@@ -173,17 +179,17 @@ namespace ClassicUO
             "prep_item_cache", "prep_cap_cached", "prep_rest", "walk_land", "walk_static", "walk_unmeshed", "walk_dynamic", "walk_pos", "walk_pick", "walk_override", "walk_light",
             "walk_foliage", "bare_walk", "world_draw", "scene_draw_ui", "ui_draw",
             "cursor", "composite", "plugin_draw", "draw_other", "draw", "batcher_fna", "present", "frame",
-            "ui_traverse", "ui_fna", "ui_pass"
+            "ui_traverse", "ui_fna", "ui_pass", "draw_fx"
         };
 
         private static readonly string[] _counterKeys = { "items", "mobiles", "gumps", "render_list", "flushes", "draw_calls", "alloc_bytes", "gpu_instances", "gpu_dynamic",
             "gpu_overrides", "gpu_draw_calls", "tiles", "objects", "baked_land", "baked_statics", "unmeshed", "dynamic", "pick_tests",
             "override_calls", "hidden_tiles", "lights_added", "foliage", "cap_multis", "cap_statics", "cap_items", "cap_mobiles", "cap_other", "gpu_mask_rebuilds",
             "gpu_skip_active", "gpu_full_tiles", "gpu_walk_tiles", "gpu_edge_tiles", "gpu_pick_tiles",
-            "item_cache_builds", "item_cache_tiles", "item_cache_items", "item_cache_fallbacks", "item_cache_walked",
+            "item_cache_builds", "item_cache_tiles", "item_cache_items", "item_cache_fallbacks", "item_cache_walked", "item_cache_fx",
             "chunk_loads", "chunk_load_us", "chunk_mesh_us", "chunk_queue", "region_wait_us", "region_sync", "region_prefetch",
             "art_sync", "art_sync_us", "art_async", "art_upload_us", "art_pending",
-            "ui_flushes", "ui_draw_calls", "ui_cached", "ui_untouched" };
+            "ui_flushes", "ui_draw_calls", "ui_cached", "ui_untouched", "effects" };
 
         private static readonly long[] _start = new long[PHASES];
         private static readonly long[] _acc = new long[PHASES];
