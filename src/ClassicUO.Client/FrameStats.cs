@@ -121,6 +121,16 @@ namespace ClassicUO
         // end of the frame, time the main thread waited for a region decode, regions decoded on the main thread, prefetches
         ChunkLoads,
         ChunkLoadUs,
+        // bytes allocated inside chunk loads, collections that started inside one and their pause (Map.LoadChunk)
+        ChunkAlloc,
+        ChunkGcs,
+        ChunkGcUs,
+        // map land and statics reused by chunk loads, and retired by evictions (MapObjectRecycler)
+        ChunkReused,
+        ChunkRetired,
+        // bytes allocated by UpdateLoading's mesh builds, chunks allocated because the chunk pool was empty
+        ChunkMeshAlloc,
+        ChunkNew,
         ChunkMeshUs,
         ChunkQueue,
         RegionWaitUs,
@@ -187,7 +197,7 @@ namespace ClassicUO
             "override_calls", "hidden_tiles", "lights_added", "foliage", "cap_multis", "cap_statics", "cap_items", "cap_mobiles", "cap_other", "gpu_mask_rebuilds",
             "gpu_skip_active", "gpu_full_tiles", "gpu_walk_tiles", "gpu_edge_tiles", "gpu_pick_tiles",
             "item_cache_builds", "item_cache_tiles", "item_cache_items", "item_cache_fallbacks", "item_cache_walked", "item_cache_fx",
-            "chunk_loads", "chunk_load_us", "chunk_mesh_us", "chunk_queue", "region_wait_us", "region_sync", "region_prefetch",
+            "chunk_loads", "chunk_load_us", "chunk_alloc", "chunk_gc", "chunk_gc_us", "chunk_reused", "chunk_retired", "chunk_mesh_alloc", "chunk_new", "chunk_mesh_us", "chunk_queue", "region_wait_us", "region_sync", "region_prefetch",
             "art_sync", "art_sync_us", "art_async", "art_upload_us", "art_pending",
             "ui_flushes", "ui_draw_calls", "ui_cached", "ui_untouched", "effects" };
 
@@ -349,6 +359,8 @@ namespace ClassicUO
             _tag = tag ?? "";
             _recording = true;
             _windowStart = 0;
+            // [gc] lines cover collections from here on, not ones from before the window
+            _gcSeen = GC.CollectionCount(0);
         }
 
         public static bool Recording => _recording;
@@ -392,6 +404,7 @@ namespace ClassicUO
                 _allocThread = GC.GetAllocatedBytesForCurrentThread();
                 _allocTotalStart = GC.GetTotalAllocatedBytes();
                 _gc0 = GC.CollectionCount(0);
+                _gcSeen = _gc0; // the [gc] lines and the window's gc counts start at the same frame
                 _gc1 = GC.CollectionCount(1);
                 _gc2 = GC.CollectionCount(2);
                 _pauseStart = GC.GetTotalPauseDuration();
@@ -443,6 +456,11 @@ namespace ClassicUO
                 _cur[(int)FrameCounter.AllocBytes] = (int)Math.Min(int.MaxValue, alloc - _allocThread);
                 _allocThread = alloc;
 
+                if (GC.CollectionCount(0) != _gcSeen)
+                {
+                    LogGc(now - _lastEnd);
+                }
+
                 for (int p = 0; p < PHASES; p++)
                 {
                     _phase[p][i] = (float)(_acc[p] * toMs);
@@ -470,14 +488,54 @@ namespace ClassicUO
         private static int _lastSync, _lastPrefetch;
         private static long _lastWaitTicks;
 
+        private static int _gcSeen;
+
+        // one line per garbage collection seen at the end of a recorded frame: what kind, how long, what it kept
+        private static void LogGc(long frameTicks)
+        {
+            int seen = GC.CollectionCount(0);
+            int missed = seen - _gcSeen - 1;
+            _gcSeen = seen;
+            GCMemoryInfo gi = GC.GetGCMemoryInfo(GCKind.Any);
+            ReadOnlySpan<TimeSpan> pauses = gi.PauseDurations;
+            ReadOnlySpan<GCGenerationInfo> gens = gi.GenerationInfo;
+            var inv = CultureInfo.InvariantCulture;
+            const double MB = 1024.0 * 1024.0;
+            string sizes = "";
+
+            for (int g = 0; g < gens.Length; g++)
+            {
+                sizes += string.Format(inv, " g{0} {1:0.0}->{2:0.0}", g, gens[g].SizeBeforeBytes / MB, gens[g].SizeAfterBytes / MB);
+            }
+
+            Log.Info(string.Format(inv, "[gc] {0} #{1} gen{2}{3}{4} pause {5:0.00} ms, promoted {6:0.00} MB, heap {7:0.0} MB, pinned {8}, frame {9:0.00} ms{10} (MB){11}",
+                _tag, gi.Index, gi.Generation, gi.Compacted ? " compacting" : "", gi.Concurrent ? " concurrent" : "",
+                pauses.Length > 0 ? pauses[0].TotalMilliseconds + (pauses.Length > 1 ? pauses[1].TotalMilliseconds : 0) : 0,
+                gi.PromotedBytes / MB, gi.HeapSizeBytes / MB, gi.PinnedObjectsCount, frameTicks * 1000.0 / Stopwatch.Frequency, sizes,
+                missed > 0 ? $", {missed} more since the last line" : ""));
+        }
+
         private static void SampleMapLoading()
         {
             double toUs = 1e6 / Stopwatch.Frequency;
             _cur[(int)FrameCounter.ChunkLoads] = Game.Map.Map.FrameChunkLoads;
             _cur[(int)FrameCounter.ChunkLoadUs] = (int)(Game.Map.Map.FrameChunkLoadTicks * toUs);
             _cur[(int)FrameCounter.ChunkMeshUs] = (int)(Game.Map.Map.FrameMeshTicks * toUs);
+            _cur[(int)FrameCounter.ChunkAlloc] = (int)Math.Min(int.MaxValue, Game.Map.Map.FrameChunkLoadBytes);
+            _cur[(int)FrameCounter.ChunkGcs] = Game.Map.Map.FrameChunkLoadGcs;
+            _cur[(int)FrameCounter.ChunkGcUs] = (int)(Game.Map.Map.FrameChunkLoadGcTicks / 10);
             Game.Map.Map.FrameChunkLoads = 0;
             Game.Map.Map.FrameChunkLoadTicks = 0;
+            Game.Map.Map.FrameChunkLoadBytes = 0;
+            Game.Map.Map.FrameChunkLoadGcs = 0;
+            Game.Map.Map.FrameChunkLoadGcTicks = 0;
+            _cur[(int)FrameCounter.ChunkReused] = Game.Map.MapObjectRecycler.FrameReused;
+            _cur[(int)FrameCounter.ChunkRetired] = Game.Map.MapObjectRecycler.FrameRetired;
+            Game.Map.MapObjectRecycler.FrameReused = Game.Map.MapObjectRecycler.FrameRetired = 0;
+            _cur[(int)FrameCounter.ChunkMeshAlloc] = (int)Math.Min(int.MaxValue, Game.Map.Map.FrameMeshBytes);
+            _cur[(int)FrameCounter.ChunkNew] = Game.Map.Chunk.Created;
+            Game.Map.Map.FrameMeshBytes = 0;
+            Game.Map.Chunk.Created = 0;
             Game.Map.Map.FrameMeshTicks = 0;
             _cur[(int)FrameCounter.ChunkQueue] = Client.Game?.UO?.World?.Map?.QueuedChunks ?? 0;
 
@@ -661,7 +719,15 @@ namespace ClassicUO
 
                 StatsI(_counter[c], n, _sortScratchI, out double avg, out int p50, out int p95, out int max);
                 sb.Append(inv, $"  {_counterKeys[c],-24} {avg,7:0.0}  {p50,7}  {p95,7}  {max,7}\n");
-                json.Append(first ? "" : ",").Append(inv, $"\"{_counterKeys[c]}\":[{avg:0.0},{p50},{p95},{max}]");
+                long sum = 0;
+
+                for (int i = 0, m = Math.Min(n, _counter[c].Length); i < m; i++)
+                {
+                    sum += _counter[c][i];
+                }
+
+                // [avg, p50, p95, max, sum over the window]
+                json.Append(first ? "" : ",").Append(inv, $"\"{_counterKeys[c]}\":[{avg:0.0},{p50},{p95},{max},{sum}]");
                 first = false;
             }
 

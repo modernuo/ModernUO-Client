@@ -471,6 +471,56 @@ namespace ClassicUO.Game.GameObjects
             FrameInfo = Rectangle.Empty;
         }
 
+        /// <summary>Retired by Chunk.Destroy into the map object recycler and not handed out again yet (MapObjectRecycler).</summary>
+        public bool InRecycler;
+
+        /// <summary>Bumped each time the object is reused for another map cell (MapObjectRecycler). A holder that keeps a map
+        /// object across frames can compare it to tell a reused object from the one it kept.</summary>
+        public uint Incarnation;
+
+        /// <summary>
+        /// Puts every instance field back to the constructor's value (World excepted, which never changes), and bumps
+        /// <see cref="Incarnation"/>. MapObjectRecycler reuse only; Land and Static add their own fields. The unit test
+        /// MapObjectRecyclerTests checks every field by reflection, so a new field must be reset here or in the subclass.
+        /// </summary>
+        public virtual void ResetForReuse()
+        {
+            // LinkedObject, BaseGameObject
+            Previous = Next = Items = null;
+            RealScreenPosition = Point.Zero;
+            // GameObject
+            IsDestroyed = false;
+            IsPositionChanged = false;
+            TextContainer = null;
+            InTextOwners = false;
+            ScreenPositionGen = 0;
+            _averageOverTime = null;
+            FoliageIndex = -1;
+            Graphic = 0;
+            Hue = 0;
+            Offset = Vector3.Zero;
+            PriorityZ = 0;
+            TNext = TPrevious = null;
+            TileChunk = null;
+            X = Y = 0;
+            Z = 0;
+            PendingBlock = -1;
+            _textExpiredContainer = null;
+            _textExpiredVersion = 0;
+            // views (View.cs)
+            AlphaHue = 0;
+            AllowedToDraw = true;
+            InChunkMesh = false;
+            MeshSpriteIndex = -1;
+            DrawnFrame = 0;
+            ObjectHandlesStatus = ObjectHandlesStatus.NONE;
+            FrameInfo = Rectangle.Empty;
+            IsFlipped = false;
+            // recycler
+            InRecycler = false;
+            Incarnation++;
+        }
+
         public static bool CanBeDrawn(World world, ushort g)
         {
             if (Client.Game == null)

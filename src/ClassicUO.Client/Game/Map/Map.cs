@@ -61,8 +61,15 @@ namespace ClassicUO.Game.Map
         /// <summary>Chunks loaded this frame by UpdateLoading and by synchronous callers (FrameStats).</summary>
         public static int FrameChunkLoads;
         public static long FrameChunkLoadTicks;
+        /// <summary>Bytes the main thread allocated inside chunk loads this frame, garbage collections that started inside one
+        /// and their pause time (FrameStats chunk_alloc, chunk_gc, chunk_gc_us).</summary>
+        public static long FrameChunkLoadBytes;
+        public static int FrameChunkLoadGcs;
+        public static long FrameChunkLoadGcTicks;
         /// <summary>Time UpdateLoading spent building the meshes of the chunks it loaded this frame (FrameStats).</summary>
         public static long FrameMeshTicks;
+        /// <summary>Bytes the main thread allocated in those mesh builds (FrameStats chunk_mesh_alloc).</summary>
+        public static long FrameMeshBytes;
 
 
         public Map(World world, int index)
@@ -153,6 +160,9 @@ namespace ClassicUO.Game.Map
         private void LoadChunk(Chunk chunk, int block)
         {
             long t0 = Stopwatch.GetTimestamp();
+            long bytes0 = GC.GetAllocatedBytesForCurrentThread();
+            int gcs0 = GC.CollectionCount(0);
+            TimeSpan pause0 = GC.GetTotalPauseDuration();
             chunk.Load(Index);
             _blockArtWait.Forget(ChunkKey(chunk.X, chunk.Y));
             _chunkArtWait.Forget(ChunkKey(chunk.X, chunk.Y));
@@ -178,6 +188,9 @@ namespace ClassicUO.Game.Map
             _queue.Remove(chunk.X, chunk.Y);
             FrameChunkLoads++;
             FrameChunkLoadTicks += Stopwatch.GetTimestamp() - t0;
+            FrameChunkLoadBytes += GC.GetAllocatedBytesForCurrentThread() - bytes0;
+            FrameChunkLoadGcs += GC.CollectionCount(0) - gcs0;
+            FrameChunkLoadGcTicks += (GC.GetTotalPauseDuration() - pause0).Ticks;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -551,9 +564,11 @@ namespace ClassicUO.Game.Map
             if (chunk.Mesh.IsDirty && Client.Game.GraphicsDevice != null)
             {
                 long t0 = Stopwatch.GetTimestamp();
+                long bytes0 = GC.GetAllocatedBytesForCurrentThread();
                 chunk.Mesh.Build(chunk, _world, Client.Game.GraphicsDevice);
                 chunk.GpuMaskDirty = true;
                 FrameMeshTicks += Stopwatch.GetTimestamp() - t0;
+                FrameMeshBytes += GC.GetAllocatedBytesForCurrentThread() - bytes0;
             }
         }
 

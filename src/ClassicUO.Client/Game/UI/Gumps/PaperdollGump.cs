@@ -856,29 +856,17 @@ namespace ClassicUO.Game.UI.Gumps
                     {
                         float layerDepth = layerDepthRef;
                         var sourceRectangle = artInfo.UV;
+                        // a value command: the closure it replaces (plus its display class) was allocated per slot per frame
                         renderLists.AddGumpWithAtlas
                         (
-                            (batcher) =>
-                            {
-                                batcher.Draw(
-                                    texture,
-                                    new Rectangle(
-                                        x + _point.X,
-                                        y + _point.Y,
-                                        _originalSize.X,
-                                        _originalSize.Y
-                                    ),
-                                    new Rectangle(
-                                        sourceRectangle.X + _rect.X,
-                                        sourceRectangle.Y + _rect.Y,
-                                        _rect.Width,
-                                        _rect.Height
-                                    ),
-                                    hueVector,
-                                    layerDepth
-                                );
-                                return true;
-                            }
+                            GumpCommand.Sprite
+                            (
+                                texture,
+                                new Rectangle(x + _point.X, y + _point.Y, _originalSize.X, _originalSize.Y),
+                                new Rectangle(sourceRectangle.X + _rect.X, sourceRectangle.Y + _rect.Y, _rect.Width, _rect.Height),
+                                hueVector,
+                                layerDepth
+                            )
                         );
 
                         return true;
