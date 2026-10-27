@@ -1967,7 +1967,7 @@ The same risk is real in this repo: 664bd36b7 fixed a chunk pooled while the map
 3. **Cross-frame holders are scrubbed on retire.**
    - The holder audit found one production holder that keeps a land or static across a frame boundary: `SelectedObject.Object`, set in the draw walk and read in the next Update. `ClearUnusedBlocks` runs at the top of that Update. `Chunk.Destroy` now nulls it, and `LastLeftDownObject`, when they hold a destroyed object.
    - Everything else that sees land and statics either finds them through the tile lists every frame, or keeps a per-frame list read only up to its count: render lists, the foliage array, the Gpu capture lists, `GpuWorldRenderer._object`, lights (values only), the mesh (no object references), the item cache and walked-alone sets (items only), the art wait tracker (keys), MobileFrameCache (chunk plus ContentVersion), text (`Destroy` clears the container and unlinks the texts; TextOwners holds entities only), the pathfinder (per call) and `TargetManager` (values).
-   - `_prevMeshHighlight` (Legacy) is read and nulled in the next draw. `InspectorGump` keeps its object and now compares `GameObject.Incarnation`. DevBench's pick targets are dev-only.
+   - `_prevMeshHighlight` (Legacy) is read and nulled in the next draw, but updates without draws can outlast the quarantine (`Time.Ticks` moves in Update), so it also keeps the object's `Incarnation` and skips the hue restore when the object was reused (Codex audit). `InspectorGump` keeps its object and compares `GameObject.Incarnation` too. DevBench's pick targets are dev-only.
 4. **Reuse starts from the constructor's state.** `GameObject.ResetForReuse` (plus the Land and Static overrides) sets every instance field back to its initial value and bumps `Incarnation`; `Land.Create`/`Static.Create` then run as for a new object, season graphic included. A reflection unit test dirties every field of a Land and a Static and fails if any differs from a new object after the reset, so a field added later must be reset too.
 
 `CUO_RECYCLE=0` turns reuse off. `CUO_RECYCLE_CHECK=1` never reuses but keeps retired objects marked and counts every later use: Legacy draw and picking, the Gpu capture, the selection holders, the mesh highlight and the inspector. It also sweeps every loaded chunk's tile lists every 64 frames. `=reuse` runs the same checks with reuse on.
@@ -2020,6 +2020,7 @@ Final series, on 3f0edbc0f: three alternated pairs, D–F. The machine was quiet
 | Unit tests | 578 pass, in both build variants (`-p:CuoDevTools=false` too). 8 are new (`MapObjectRecyclerTests`): every field reset, the field check catches a missed field, quarantine and FIFO, time wrap, live, linked or other objects never pooled, disabled never reuses, a reused object comes back live with a new incarnation |
 
 **Not done or noted:**
+- **Known, pre-existing (not from this branch):** a second `Chunk.Destroy` on the same chunk can queue it in the chunk pool twice. The emptied tile lists stop a double retire of its objects.
 - `pickscan` in a pure Legacy session (`gpu available: False`) waits until the run's timeout. It compares the two renderers, so it can't run there. Picking was checked in Gpu sessions; the Legacy strict check covered Legacy picking calls.
 - No 4K run, and not the owner's FPS test.
 - Process: two cherry-pick conflicts while building the base branch; one was committed with markers for a minute and amended before any build.
@@ -2028,3 +2029,9 @@ Final series, on 3f0edbc0f: three alternated pairs, D–F. The machine was quiet
 - The login warm-up collections: pre-fill the pools during the login hold, or trigger the collection inside a settle hold.
 - Legacy `MeshLayer` growth (size the arrays from the block once, or skip the Legacy mesh in Gpu mode).
 - Health bar gump allocations (already listed).
+
+**Codex audit (no use-after-reuse found), fixed:**
+- `[gc]` lines: the GC baseline is taken when a window starts (and at its first frame, with the window's gc counts), so an earlier collection is no longer logged under the next window's tag, and nothing is logged for a frame without one.
+- The recycler's field test: every non-exempt field must really change when dirtied (strings, arrays and abstract `GameObject`-typed fields get non-null sentinels; an unsupported type fails explicitly), so a nullable cache left out of `ResetForReuse` fails. A new test checks that a reference field left out is caught.
+- `_prevMeshHighlight` checks the object's incarnation (above).
+- 579 unit tests pass in both build variants. One `CUO_RECYCLE_CHECK=reuse` pass (`travel`, `glide`, Legacy, where the mesh highlight lives): RECHECK.

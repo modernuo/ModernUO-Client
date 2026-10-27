@@ -359,6 +359,8 @@ namespace ClassicUO
             _tag = tag ?? "";
             _recording = true;
             _windowStart = 0;
+            // [gc] lines cover collections from here on, not ones from before the window
+            _gcSeen = GC.CollectionCount(0);
         }
 
         public static bool Recording => _recording;
@@ -402,6 +404,7 @@ namespace ClassicUO
                 _allocThread = GC.GetAllocatedBytesForCurrentThread();
                 _allocTotalStart = GC.GetTotalAllocatedBytes();
                 _gc0 = GC.CollectionCount(0);
+                _gcSeen = _gc0; // the [gc] lines and the window's gc counts start at the same frame
                 _gc1 = GC.CollectionCount(1);
                 _gc2 = GC.CollectionCount(2);
                 _pauseStart = GC.GetTotalPauseDuration();
@@ -485,13 +488,13 @@ namespace ClassicUO
         private static int _lastSync, _lastPrefetch;
         private static long _lastWaitTicks;
 
-        private static int _gcSeen = -1;
+        private static int _gcSeen;
 
         // one line per garbage collection seen at the end of a recorded frame: what kind, how long, what it kept
         private static void LogGc(long frameTicks)
         {
             int seen = GC.CollectionCount(0);
-            int missed = _gcSeen < 0 ? 0 : seen - _gcSeen - 1;
+            int missed = seen - _gcSeen - 1;
             _gcSeen = seen;
             GCMemoryInfo gi = GC.GetGCMemoryInfo(GCKind.Any);
             ReadOnlySpan<TimeSpan> pauses = gi.PauseDurations;

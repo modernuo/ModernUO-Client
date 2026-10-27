@@ -70,6 +70,9 @@ namespace ClassicUO.Game.Scenes
 
         // Track the previously highlighted mesh sprite so we can restore its hue
         private GameObject _prevMeshHighlight;
+        // its Incarnation when highlighted: a land or static can be retired and reused for another cell (MapObjectRecycler)
+        // before the next draw restores its hue (updates without draws can outlast the recycler's quarantine)
+        private uint _prevMeshHighlightIncarnation;
 
         public GameScene(World world)
         {
@@ -1270,6 +1273,7 @@ namespace ClassicUO.Game.Scenes
             // Restore previous highlight's original hue before applying new one
             if (_prevMeshHighlight != null
                 && !_prevMeshHighlight.IsDestroyed
+                && _prevMeshHighlight.Incarnation == _prevMeshHighlightIncarnation
                 && _prevMeshHighlight.InChunkMesh
                 && _prevMeshHighlight.MeshSpriteIndex >= 0)
             {
@@ -1301,6 +1305,7 @@ namespace ClassicUO.Game.Scenes
                         shaderType
                     );
                     _prevMeshHighlight = selObj;
+                    _prevMeshHighlightIncarnation = selObj.Incarnation;
                 }
             }
 
