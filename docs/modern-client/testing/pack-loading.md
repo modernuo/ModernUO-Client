@@ -129,7 +129,7 @@ Evicted chunks' `Land` and `Static` objects are reused by later chunk loads (`Ma
 
 Counters in the `FRAMESTATS {` json now carry a fifth value, the window sum (`[avg, p50, p95, max, sum]`). Every garbage collection seen at the end of a recorded frame logs one `[gc]` line: generation, pause, promoted MB and each generation's size before and after. **Read GC pauses from these lines**, not from frame phases: the pause lands in whatever phase was running.
 
-**What to expect:** the first `travel` window after login has 2 gen1 collections (5–10 ms; the chunk pool, recycler and mesh arrays fill up and the server's objects arrive). After that, steady teleporting allocates about 0.2–1 KB per frame and a collection comes every minute or so. Base collects every 10–15 s of teleporting.
+**What to expect:** the first `travel` window after login has 2 gen1 collections (5–10 ms; the chunk pool, recycler and mesh arrays fill up and the server's objects arrive). After that, steady teleporting allocates about 0.2–1 KB per frame and a collection comes every 2–4 minutes (3–6 ms). Base collects every 10–15 s of teleporting.
 
 ## Noise and false positives
 
