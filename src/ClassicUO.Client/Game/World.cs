@@ -114,6 +114,9 @@ namespace ClassicUO.Game
 
         public Map.Map Map { get; private set; }
 
+        /// <summary>Land and statics of evicted chunks, reused by later chunk loads (Chunk.Destroy, Chunk.Load).</summary>
+        public Map.MapObjectRecycler MapRecycler { get; } = new Map.MapObjectRecycler();
+
         public byte ClientViewRange { get; set; } = Constants.MAX_VIEW_RANGE;
 
         public bool SkillsRequested { get; set; }

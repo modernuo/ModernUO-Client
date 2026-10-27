@@ -19,12 +19,15 @@ namespace ClassicUO.Game.UI.Gumps
         private const int WIDTH = 500;
         private const int HEIGHT = 400;
         private readonly GameObject _obj;
+        // a land or static can be reused for another cell once its chunk is evicted (MapObjectRecycler)
+        private readonly uint _incarnation;
 
         public InspectorGump(World world, GameObject obj) : base(world, 0, 0)
         {
             X = 200;
             Y = 100;
             _obj = obj;
+            _incarnation = obj.Incarnation;
             CanMove = true;
             AcceptMouseInput = false;
             CanCloseWithRightClick = true;
@@ -192,6 +195,18 @@ namespace ClassicUO.Game.UI.Gumps
         {
             if (buttonID == 0) // dump
             {
+                if (_obj.Incarnation != _incarnation || _obj.InRecycler)
+                {
+                    if (Map.MapObjectRecycler.Check)
+                    {
+                        Map.MapObjectRecycler.Touched(_obj, Map.MapObjectRecycler.Site.Inspector);
+                    }
+
+                    GameActions.Print(World, "The inspected object is gone (its map chunk was unloaded).");
+
+                    return;
+                }
+
                 Dictionary<string, string> dict = GetGameObjectProperties(_obj);
 
                 if (dict != null)

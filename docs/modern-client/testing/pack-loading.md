@@ -108,6 +108,29 @@ Each leg logs `[bench] bwalk leg N ended at x,y,z (land z L), server denies D`. 
 - prefetched regions give the same blocks as synchronous ones, and `IsBlockReady` never blocks;
 - land z stays correct while prefetching across more than the 24 cached regions.
 
+## 5. Chunk loads without allocation; GC pauses (added 2026-10-26, chunk-alloc agent)
+
+Evicted chunks' `Land` and `Static` objects are reused by later chunk loads (`MapObjectRecycler`; the lifetime rules are in its header comment and in the poc-log entry "Chunk loads without allocation"). Same harness, scratchpad `chunkalloc\` (`run.py`, `summ.py`, `tab.py`).
+
+**Switches:**
+- `CUO_RECYCLE=0` turns reuse off (chunk loads allocate as before; the rest of the build stays).
+- `CUO_RECYCLE_QUARANTINE_MS=<ms>`: how long a retired object stays destroyed before it can be reused (default 1000).
+- `CUO_RECYCLE_CHECK=1`: never reuses, but marks retired objects and counts every later use of one (Legacy draw and picking of land and statics, the Gpu capture, `SelectedObject.Object` and `LastLeftDownObject` at the start of Update, the Legacy mesh highlight, the inspector), plus a sweep of every loaded chunk's tile lists every 64 frames (a retired object in a list, a wrong `TileChunk`, broken links, a map object off its tile). `=reuse` runs the same checks with reuse on. Logs `[recycle-check] ... touched after retire: ... bad N` every 5 s. **Pass:** every count 0. Don't measure with it on.
+
+**FrameStats counters and lines:**
+
+| Counter | Meaning |
+|---|---|
+| `chunk_alloc` | Bytes the main thread allocated inside chunk loads (was about 25 KB per load; 0 once the recycler has objects) |
+| `chunk_gc`, `chunk_gc_us` | Collections that started inside a chunk load, and their pause |
+| `chunk_reused`, `chunk_retired` | Land and statics reused by loads, and retired by evictions |
+| `chunk_mesh_alloc` | Bytes allocated by the loader's mesh builds (Legacy `MeshLayer` arrays growing in pooled chunks) |
+| `chunk_new` | Chunks allocated because the chunk pool was empty (the first teleports after login) |
+
+Counters in the `FRAMESTATS {` json now carry a fifth value, the window sum (`[avg, p50, p95, max, sum]`). Every garbage collection seen at the end of a recorded frame logs one `[gc]` line: generation, pause, promoted MB and each generation's size before and after. **Read GC pauses from these lines**, not from frame phases: the pause lands in whatever phase was running.
+
+**What to expect:** the first `travel` window after login has 2 gen1 collections (5–10 ms; the chunk pool, recycler and mesh arrays fill up and the server's objects arrive). After that, steady teleporting allocates about 0.2–1 KB per frame and a collection comes every 2–4 minutes (3–6 ms). Base collects every 10–15 s of teleporting.
+
 ## Noise and false positives
 
 - Other agents' clients (AOT, GPU, ECS work) run on the same GPU and CPU; FPS and Present swing a lot between runs. Compare without-Present hitch counts and max across alternating runs, not single windows.
