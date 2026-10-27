@@ -49,7 +49,7 @@ namespace ClassicUO.UnitTests.Game.Map
 
             if (t.IsValueType)
             {
-                object boxed = current;
+                object boxed = RuntimeHelpers.GetObjectValue(current); // a copy: the caller compares against current
                 int i = 0;
 
                 foreach (FieldInfo f in t.GetFields(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic))
@@ -60,17 +60,31 @@ namespace ClassicUO.UnitTests.Game.Map
                 return boxed;
             }
 
-            // a reference: any non-null instance of the field's type (a different Static for GameObject-typed fields)
-            if (t.IsAbstract || t.IsInterface || t == typeof(string) || t.IsArray)
+            // a reference: always a new, non-null instance, so a field ResetForReuse leaves out can't pass by staying null
+            if (t == typeof(string))
             {
-                Type concrete = typeof(GameObject).IsAssignableFrom(t) || t.IsAssignableFrom(typeof(Static)) ? typeof(Static) : null;
+                return "dirty" + salt;
+            }
 
-                if (concrete == null)
+            if (t.IsArray)
+            {
+                return Array.CreateInstance(t.GetElementType(), 1 + salt % 3);
+            }
+
+            if (typeof(Delegate).IsAssignableFrom(t))
+            {
+                throw new NotSupportedException($"no sentinel for delegate type {t}: teach Dirty about it");
+            }
+
+            if (t.IsAbstract || t.IsInterface)
+            {
+                // GameObject-typed fields (TNext, Previous...) get a Static; any other abstract type needs a case here
+                if (t.IsAssignableFrom(typeof(Static)))
                 {
-                    return current;
+                    return RuntimeHelpers.GetUninitializedObject(typeof(Static));
                 }
 
-                return RuntimeHelpers.GetUninitializedObject(concrete);
+                throw new NotSupportedException($"no sentinel for abstract type {t}: teach Dirty about it");
             }
 
             return RuntimeHelpers.GetUninitializedObject(t);
@@ -90,7 +104,13 @@ namespace ClassicUO.UnitTests.Game.Map
                 object before = f.GetValue(obj);
                 object after = Dirty(f.FieldType, before, salt++);
                 f.SetValue(obj, after);
-                Assert.False(Equals(before, after) && !f.FieldType.IsValueType && before != null, $"could not dirty {f.DeclaringType.Name}.{f.Name}");
+                object stored = f.GetValue(obj);
+
+                // every field must really change, or the reset check could not see a field ResetForReuse misses
+                Assert.True(
+                    f.FieldType.IsValueType ? !Equals(before, stored) : stored != null && !ReferenceEquals(before, stored),
+                    $"could not dirty {f.DeclaringType.Name}.{f.Name}"
+                );
             }
         }
 
@@ -157,6 +177,22 @@ namespace ClassicUO.UnitTests.Game.Map
             DirtyAll(dirty);
 
             Assert.ThrowsAny<Exception>(() => AssertSameState(fresh, dirty, dirty.Incarnation));
+        }
+
+        [Fact]
+        public void The_Field_Check_Catches_A_Reference_Field_Left_Out_Of_The_Reset()
+        {
+            // a nullable reference cache that ResetForReuse forgot: simulated by dirtying it again after the reset
+            var world = new World();
+            Static fresh = NewStatic(world);
+            Static reused = NewStatic(world);
+            DirtyAll(reused);
+            uint incarnation = reused.Incarnation;
+            reused.ResetForReuse();
+            FieldInfo cache = typeof(GameObject).GetField("_textExpiredContainer", BindingFlags.Instance | BindingFlags.NonPublic);
+            cache.SetValue(reused, Dirty(cache.FieldType, null, 0));
+
+            Assert.ThrowsAny<Exception>(() => AssertSameState(fresh, reused, incarnation + 1));
         }
 
         private static Land RetiredLand(World world)
