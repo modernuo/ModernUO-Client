@@ -366,8 +366,12 @@ namespace ClassicUO.Assets
             }
 
             PrefetchesStarted++;
-            _pending[key] = Task.Run(() => LoadRegion(facet, rx, ry));
+            _pending[key] = StartLoad(facet, rx, ry);
         }
+
+        // out of line: a lambda in StartPrefetch made it allocate its closure on entry, on every call (several per frame,
+        // nearly all of them returning early above)
+        private Task<RegionData> StartLoad(FacetInfo facet, int rx, int ry) => Task.Run(() => LoadRegion(facet, rx, ry));
 
         public RegionData ReadRegion(int map, int rx, int ry)
         {

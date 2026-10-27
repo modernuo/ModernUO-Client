@@ -1934,3 +1934,104 @@ Branch `bg/ecs-e6-effects` (E6 agent, kbatman3), started on `poc/modern-client` 
 - The e6fx script's moving effects are one-shot (the driver doesn't `Tick`); the sustained moving case was measured with the plan entry.
 - Effects with a translucent graphic (alpha 178, transparent list) were not found in a graphic that the pack has with that flag; the single-pass order logic covers them by construction but no run exercised one.
 - Moving effects that start from a mobile (`SetSource(mobile)`) follow its tile: served tiles with mobiles and effects use the same pass; exercised by the walking part of `e6fx.txt` only partly.
+
+## Chunk loads without allocation: evicted land and statics reused (2026-10-26)
+
+Branch `poc/chunk-load-alloc` (chunk-alloc agent, kbatman4 and kbatman3), from poc/modern-client 24a7e1504; final numbers on 3f0edbc0f (merged). Follows "Teleport frames: first-sight chunk art decoded on workers", whose remaining travel frames were GC pauses inside chunk loads. Method: [testing/pack-loading.md](testing/pack-loading.md) §5. Scripts and logs: session scratchpad `chunkalloc\`.
+
+**What was measured first** (new FrameStats counters `chunk_alloc`, `chunk_gc`, `chunk_gc_us`, window sums in the json, and a `[gc]` line per collection):
+- A chunk load allocated **about 25 KB** (23–26 KB averaged over 550–830 loads per entry): 64 `Land` objects and one `Static` per map static. All of it survives, so every collection promoted it.
+- The gen0 budget here is 15 MB. In base, collections are mostly gen1 and promote 9–24 MB each, with 3–11 ms pauses. Base collects about every 10–15 s while teleporting: 5–7 collections per 55 s after login.
+- Heap dumps (JIT build, `dotnet-dump`, `dumpheap -stat -gen gen0|gen1`) showed two more allocators:
+  - `MapLoader.StartPrefetch` allocated its `Task.Run` closure on entry, on every call (43k closures between two collections). It is called several times a frame and nearly always returns early.
+  - `PaperDollGump`'s `ItemGumpFixed` queued a lambda per slot per frame.
+  - What survives besides land and statics: the Legacy `MeshLayer` vertex arrays of new and growing chunks, Uo.Render bake arrays, and the server's objects after a `[go`.
+
+**Why upstream's pools were commented out:** `git log -S` finds pools for Land, Static, Item, Mobile and Multi since 2019 (`QueuedPool<T>`, d9f332931). They were commented out together in upstream's "net8 porting" (0ad5ee274, 2024-01), which gave every GameObject a `World` constructor argument; `QueuedPool<T>` needs `new()`. That commit gives no lifetime reason. Two things the old pools did badly:
+- They reset 3–6 fields per type (IsDestroyed, AlphaHue and a few others), not the whole object.
+- They put an object back into the pool from `Destroy`, the moment it died, with nothing to protect anyone still holding it.
+
+The same risk is real in this repo: 664bd36b7 fixed a chunk pooled while the map still owned it (UltimaLive reload).
+
+**Design.** Options weighed:
+- **A per-chunk struct-of-arrays land:** every tile list, picking, the mesh builder, the Gpu prepare and the ECS caches walk `GameObject` lists. A rewrite of the world model; not this task.
+- **Reusing a chunk's own objects with the chunk:** chunks are reused for any block, and a pooled chunk can be handed out in the same frame it was retired, so lifetimes are no different from a pool. The statics count also varies per block.
+- **Avoiding promotion without reuse:** .NET has no pretenuring for ordinary objects, and a larger gen0 budget only makes each collection bigger.
+- **Chosen: a per-World recycler** (`MapObjectRecycler`) with the invariants below. Each one closes a way the old pools could fail.
+
+**Lifetime invariants** (also in `MapObjectRecycler`'s header comment):
+1. **Only `Chunk.Destroy` retires objects** (evictions from `Map.ClearUnusedBlocks`, `Map.Destroy` on facet change or logout). It retires an exact `Land` or `Static` that it found live in the chunk's tile lists, after `GameObject.Destroy` and after unlinking it (TPrevious, TNext and TileChunk null; `Retire` rejects anything else).
+   - Land and statics are created only by `Chunk.Load` and live only in tile lists. Nothing else calls `Create`, and `ClearForReload` doesn't recycle.
+   - Evicted chunks hold only land and statics (`HasNoExternalData`).
+2. **Quarantine:** a retired object stays destroyed (IsDestroyed, Graphic 0, `InRecycler`) for at least 1 s (`CUO_RECYCLE_QUARANTINE_MS`) before `TakeLand`/`TakeStatic` hand it out, oldest first.
+3. **Cross-frame holders are scrubbed on retire.**
+   - The holder audit found one production holder that keeps a land or static across a frame boundary: `SelectedObject.Object`, set in the draw walk and read in the next Update. `ClearUnusedBlocks` runs at the top of that Update. `Chunk.Destroy` now nulls it, and `LastLeftDownObject`, when they hold a destroyed object.
+   - Everything else that sees land and statics either finds them through the tile lists every frame, or keeps a per-frame list read only up to its count: render lists, the foliage array, the Gpu capture lists, `GpuWorldRenderer._object`, lights (values only), the mesh (no object references), the item cache and walked-alone sets (items only), the art wait tracker (keys), MobileFrameCache (chunk plus ContentVersion), text (`Destroy` clears the container and unlinks the texts; TextOwners holds entities only), the pathfinder (per call) and `TargetManager` (values).
+   - `_prevMeshHighlight` (Legacy) is read and nulled in the next draw, but updates without draws can outlast the quarantine (`Time.Ticks` moves in Update), so it also keeps the object's `Incarnation` and skips the hue restore when the object was reused (Codex audit). `InspectorGump` keeps its object and compares `GameObject.Incarnation` too. DevBench's pick targets are dev-only.
+4. **Reuse starts from the constructor's state.** `GameObject.ResetForReuse` (plus the Land and Static overrides) sets every instance field back to its initial value and bumps `Incarnation`; `Land.Create`/`Static.Create` then run as for a new object, season graphic included. A reflection unit test dirties every field of a Land and a Static and fails if any differs from a new object after the reset, so a field added later must be reset too.
+
+`CUO_RECYCLE=0` turns reuse off. `CUO_RECYCLE_CHECK=1` never reuses but keeps retired objects marked and counts every later use: Legacy draw and picking, the Gpu capture, the selection holders, the mesh highlight and the inspector. It also sweeps every loaded chunk's tile lists every 64 frames. `=reuse` runs the same checks with reuse on.
+
+**Other changes:**
+- The prefetch closure moved out of line.
+- The paperdoll slot draw is a `GumpCommand.Sprite`, which draws the same `batcher.Draw` call.
+- New FrameStats counters: `chunk_reused`, `chunk_retired`, `chunk_mesh_alloc`, `chunk_new`.
+
+**Measurements.** NativeAOT, `DOTNET_TieredCompilation=0`, Gpu world, 1920×1080, plan `travel;ltravel;glide`, 4 windows of 5 s. Base is poc/modern-client plus the counter commits only (branch `poc/chunk-load-alloc-base`). The first `travel` window, which holds the login warm-up, is shown apart. GC counts are gen0 (gen1); pauses are summed.
+
+Final series, on 3f0edbc0f: three alternated pairs, D–F. The machine was quiet (no other client).
+
+| | Base D/E/F | New D/E/F |
+|---|---|---|
+| bytes per chunk load | 24.1–25.4 KB | 0 (0.2 KB in `travel`: chunks loaded before the first eviction) |
+| `chunk_load_us` max after login | 6.0, 6.3, 6.8 ms | 0.7–1.2 ms (one 5.1 ms: a GC inside the load) |
+| collections after login (55 s) | 7, 5, 5 (25.7, 20.3, 20.4 ms of pauses) | 1, 2, 2 (4.0, 11.3, 12.4 ms) |
+| `travel` w2–4 U+D max / >8 ms | 7.0–7.8 / 0 | 5.7–6.2 / 0 |
+| `ltravel` U+D max | 4.2–6.9 | 2.8 (0 collections in all three) |
+| `glide` U+D max / >8 ms | 3.7–4.4 / 0 | 2.1, 7.8, 8.5 / 0, 0, 1 |
+| login window (`travel` w1) | 5.3–5.8, 1 collection | 6.0–10.7, 2 collections |
+
+- The earlier series (A–C on c527bc21c, one other client running) agreed. After login, base had 4–7 collections per run, new 1, and new with `CUO_RECYCLE=0` 5. Reuse is what removes the collections; the two closures alone don't. `travel` U+D max was base 8.2–14.5 against new 4.1–8.5.
+- **Every remaining collection in new's short runs is login warm-up.** At first the chunk pool and the recycler are empty, and the evictions that feed them start 3 s after a chunk was last drawn. The first teleports allocate about 150 new chunks, about 6 MB of land and statics, and their mesh arrays.
+  - That gives two gen1 collections in the login window (4–8 ms) and, about 30 s later, one more compacting gen1 that promotes that warm-up (18–19 MB, 7–7.5 ms). In newE and newF it landed in `glide`, which is the 7.8 and 8.5 ms frames.
+  - Base pays the same warm-up, but its collections are already every 10–15 s.
+- **Long session** (13 minutes, 7× `travel`, `glide`, `ltravel`, `bwalk`; c527bc21c, one other client, run back to back):
+  - base: 39 collections, 142 ms of pauses;
+  - new: 6 collections, 25 ms (3–5 ms each after the warm-up, about one every 2 minutes);
+  - frames over 8 ms after the first window: base 2, new 1.
+  - Private bytes: new 2,100 MB at 1 min, 2,129 MB at 5 min, 2,145 MB from 10 min to the end (flat); base 2,143 → 2,168 MB.
+  - Recycler cap: 19,200 land and 38,400 statics (300 chunks' worth).
+  - 23 `bwalk` legs, 0 server denies, 0 exceptions, 178 settle episodes with 0 timeouts.
+  - Re-run of new on 3f0edbc0f (quiet machine): 7 collections in all. Four are login warm-up in the first 2 entries; then 3 in 11 minutes (5.7, 2.9 and 4.1 ms). After the first window: 2 frames over 8 ms (max 8.8 ms), 19.5 ms of pauses. Private bytes 2,103 MB at 1 min, 2,140 MB at 3 min, 2,147–2,164 MB from 5 min, 2,152 MB at the end. 0 exceptions, 23 `bwalk` legs with 0 denies, 178 episodes with 0 timeouts.
+- **Still allocating while teleporting:** the Legacy `MeshLayer` arrays of pooled chunks growing to a busier block (`chunk_mesh_alloc` 0.3–1 MB per 5 s, falling as capacities settle), and in `travel` the server's objects. A gen0 collection that promotes only 2–3 MB still pauses about 3 ms here. perf-opportunities.md lists what's left.
+
+**Verification** (final tip, new binary):
+
+| Check | Result |
+|---|---|
+| Settle | 0 timeouts and 0 unsettled frames in an episode in every run (pairs, checks, facet, season, long). Walking-unsettled in the pairs: 122–152 new against 120–128 base (the art-wait latency the art agent described) |
+| `CUO_RECYCLE_CHECK=reuse` with `CUO_GPU_SKIP_CHECK=1`, `CUO_PREP_CHECK=1`, `CUO_GPU_ITEM_CHECK=1` (`travel`, `ltravel`, `glide`, Britain, the bank, Britain at zoom 2.5) | 264k retired, 260k reused, 0 uses after retire, 4,298 sweeps (75M objects), 0 bad. Skip check 222 checks, 0 unsettled, 0 drawn differently. Prep check 0 wrong. Item check 0 with differences; capture order 222 same |
+| `CUO_RECYCLE_CHECK=1` (strict: never reuses, retired objects marked forever) | Gpu (`travel`, `ltravel`, `glide`): 248k retired, 0 uses. Legacy (`travel`, `glide`): 107k retired, 0 uses, 0 bad sweeps |
+| Picking: `pickscan:8x6` at Britain, the bank and on Felucca and Trammel, with the reuse check | 48 same, 0 different, in all four (101k objects reused during the run) |
+| Facet change (`[self set map felucca`, then `trammel`) | Ready after 56 and 52 ms, 0 unsettled |
+| Season (`season:winter`, `ltravel`, `glide`, Britain, `season:summer`, `ltravel`, Britain; reuse check on) | 0 timeouts; 159k reused; 0 uses after retire. Looked at the winter shot (snow, bare trees, complete) and the summer shot (complete) |
+| ECS parity: `CUO_ECS_PARITY=1 CUO_ANIM_SYNC=1 -ecscheck 120`, kbatman3, driver `chunkalloc\parity-travel.txt` (11 `[go` teleports between towns with walks: `light 1E`, then `light off`) with the reuse, item and skip checks | 0 mismatched: 234k item / 158k mobile comparisons, 7,380 lights, 0 lights mismatched, `-ecscheck` 0 in 772 checks. 24k reused, 0 uses after retire. Skip check 0, item check 0 |
+| Legacy shots (`-worldrenderer legacy`, base vs new: Britain, after `travel`, after `glide`, Britain again) | 0.01–0.02% of pixels differ (>8); near-black 2.2–2.8% in both. Looked at: complete town, no missing or wrong tiles |
+| Unit tests | 578 pass, in both build variants (`-p:CuoDevTools=false` too). 8 are new (`MapObjectRecyclerTests`): every field reset, the field check catches a missed field, quarantine and FIFO, time wrap, live, linked or other objects never pooled, disabled never reuses, a reused object comes back live with a new incarnation |
+
+**Not done or noted:**
+- **Known, pre-existing (not from this branch):** a second `Chunk.Destroy` on the same chunk can queue it in the chunk pool twice. The emptied tile lists stop a double retire of its objects.
+- `pickscan` in a pure Legacy session (`gpu available: False`) waits until the run's timeout. It compares the two renderers, so it can't run there. Picking was checked in Gpu sessions; the Legacy strict check covered Legacy picking calls.
+- No 4K run, and not the owner's FPS test.
+- Process: two cherry-pick conflicts while building the base branch; one was committed with markers for a minute and amended before any build.
+
+**Follow-ups:**
+- The login warm-up collections: pre-fill the pools during the login hold, or trigger the collection inside a settle hold.
+- Legacy `MeshLayer` growth (size the arrays from the block once, or skip the Legacy mesh in Gpu mode).
+- Health bar gump allocations (already listed).
+
+**Codex audit (no use-after-reuse found), fixed:**
+- `[gc]` lines: the GC baseline is taken when a window starts (and at its first frame, with the window's gc counts), so an earlier collection is no longer logged under the next window's tag, and nothing is logged for a frame without one.
+- The recycler's field test: every non-exempt field must really change when dirtied (strings, arrays and abstract `GameObject`-typed fields get non-null sentinels; an unsupported type fails explicitly), so a nullable cache left out of `ResetForReuse` fails. A new test checks that a reference field left out is caught.
+- `_prevMeshHighlight` checks the object's incarnation (above).
+- 579 unit tests pass in both build variants. One `CUO_RECYCLE_CHECK=reuse` pass (`travel` and `glide`, NativeAOT on 51c9333f3): Legacy, where the mesh highlight lives, 137k reused; Gpu, 128k reused. In both, 0 uses after retire, 0 bad sweeps and 0 exceptions; Gpu settle 0 timeouts and 0 unsettled frames in an episode. The `[gc]` lines now begin at the window's first collection (#9), not at one from login.

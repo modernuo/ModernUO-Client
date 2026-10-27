@@ -90,6 +90,11 @@ namespace ClassicUO.Game.Scenes
 
         private void GpuOnDrawnSlowCore(GameObject obj)
         {
+            if (Map.MapObjectRecycler.Check && obj.InRecycler)
+            {
+                Map.MapObjectRecycler.Touched(obj, Map.MapObjectRecycler.Site.GpuCapture);
+            }
+
             switch (obj)
             {
                 case Land land:
