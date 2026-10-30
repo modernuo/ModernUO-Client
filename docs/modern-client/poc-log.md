@@ -2049,3 +2049,28 @@ Base: poc/modern-client f2668520f. Branch `bg/ecs-e11-hygiene`.
 **Tests.** New `SetInWorldTileSyncTests` (audit fixes): a mobile removed from the mirror is created by the placement; each move adds exactly one `MobileInputs.Pushes` (the old double Sync gives 2, verified: the test fails on the old code); `IsPositionChanged` is cleared then set again; a bag item dropped to the ground is re-keyed (`ParentKind.Contained` to `None`, gone from `GetContents(BAG)`). Not covered: the parked and loaded-chunk paths, because a `Map` needs the UO file manager and cannot be built in a unit test. 582 unit tests pass.
 
 **Verification.** Default and `CuoDevTools=false` builds compile. Smoke run (tools/ecs-parity/run_parity.py, account kbatman3, a short script: `[go`, 4 steps, backpack, check, quit): driver loaded and ran in the default build, `-ecscheck 120` 0 mismatches (442 checks), exit 0.
+
+## L7: pack page handles (2026-10-30)
+
+Base: poc/modern-client fdfcc9813. Branch `poc/pack-handles`. Result: **measured, negligible gain, no cache added.** The only change is docs.
+
+**Question.** `PackPages.DecodeChunk` (`src/ClassicUO.Assets/PackAssets.cs`) calls `File.OpenHandle` and disposes it for every chunk decode. Is a bounded `SafeFileHandle` cache worth it?
+
+**Measurement.** A throwaway console bench (session scratchpad `packh\bench`, JIT Release, `DOTNET_TieredCompilation=0`; open and close cost is the same system calls on NativeAOT) over the real pack `classic-1.0`. Per kind (art, anim, tex), 3 repetitions: 2,000 `File.OpenHandle` plus dispose over the kind's 32 pages round robin, and about 300 chunk decodes at random pages and positions through the public `PackPages.Touch` with a 1 MiB cache, so nearly every touch decodes. Machine noisy (other agents' clients); the repetitions agree within 1 µs and a few percent.
+
+| Kind | Open + close | Decode per 1 MiB chunk (includes the open) | Open's share |
+|---|---|---|---|
+| art | 20.1, 22.6, 27.0 µs | 2.14–2.17 ms | 0.9–1.3% |
+| anim | 22.0, 28.1, 26.8 µs | 2.48–2.53 ms | 0.9–1.1% |
+| tex | 23.1, 20.9, 21.6 µs | 2.83–2.87 ms | 0.7–0.8% |
+
+So the open is about 1% of a decode, at the low end of the 20–100 µs estimate (Defender's scan on repeated opens of the same files is cheap here; the first open of each page is not repeated). The decodes run on the chunk workers, not the main thread, and chunk decodes are a small part of a teleport frame. At about 25 µs per chunk, a teleport that decodes a few hundred chunks saves about 10 ms of worker time in total, spread over several threads. That is below the noise of every in-client metric (chunk load max, teleport worst frame), so the paired NativeAOT travel and glide runs were not done: they could not resolve it.
+
+**Other readers.** Uo.Render `PageResidency`/`PageJob.Run` opens once per whole atlas page load (multi-MiB read), as do `Uo.Pack` `PackReaders` and `PackTables` once per file or region. None opens per chunk, so none has the pattern. `GetPage` opens once per page, the first time only.
+
+**Why not add it anyway.**
+- A handle cache needs bounding, LRU eviction that waits for in-flight reads, and closing on `Clear`, logout, pack switch and dispose; that is real complexity and a concurrency surface for 1%.
+- Open handles block replacing or deleting page files while the client runs (the pack is opened with the default share mode, which allows others to read but not delete or rename over an open file on Windows). Today a page file can be swapped between decodes. Nothing in the repo replaces pages at runtime (the converter writes a pack folder offline), but a future patcher or in-place converter run during development would hit it.
+- The `Brotli` (kind 1) path wraps the handle in a `FileStream`, which takes ownership and closes it, so it would need a separate open anyway.
+
+**Revisit if:** a profile of the main thread shows chunk decodes on it (a `ReadRect` miss) with the open visible, or the pack moves to many small files (gumps, fonts, cliloc) read per use, where the open could rival the read. Then cache handles per file with the requirements above.
