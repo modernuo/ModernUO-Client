@@ -81,37 +81,38 @@ namespace ClassicUO.UnitTests.Ecs
                 }
             }
 
-            // a shrinking count is progress, not a failure: say so, so the allowlist gets tightened
-            if (stale.Count > 0)
-            {
-                _output.WriteLine($"{stale.Count} allowlist entries are above the current count (lower them with CUO_WRITE_BUDGET_REGEN=1):");
-
-                foreach (string s in stale.Take(40))
-                {
-                    _output.WriteLine("  " + s);
-                }
-            }
-
             _output.WriteLine($"direct A-field writes: {sites.Count} in {found.Count} (file, field) pairs; budget {allowed.Values.Sum()}");
+
+            // a downward ratchet: a removed write must lower the budget, or it would free room for a new write in the same pair
+            stale.Should().BeEmpty(
+                "the allowlist is above the current count: lower it with CUO_WRITE_BUDGET_REGEN=1 dotnet test --filter WriteSiteBudgetTests " +
+                "(a removed write must not leave budget for a new write in the same file and field)");
 
             grown.Should().BeEmpty(
                 "direct writes to world-object state must go through the funnel (ecs-transition-plan.md, T1); if the new write is " +
                 "not a world-object write, or a write moved between files, regenerate the allowlist with CUO_WRITE_BUDGET_REGEN=1");
-            sites.Count.Should().BeLessThanOrEqualTo(allowed.Values.Sum());
         }
 
         [Fact]
-        public void The_Scanner_Finds_The_Source_Tree_And_The_Known_Hot_Writers()
+        public void Source_Discovery_Enumerates_The_Client_Files()
         {
-            // guards against a scanner that silently scans nothing (a wrong root, a renamed folder)
+            // guards against a scanner that scans nothing (a wrong root, a renamed folder); it does not look at counts, so a
+            // successful migration (fewer writes) cannot fail it
             string root = WriteSiteScanner.FindRepoRoot();
-            List<WriteSite> sites = WriteSiteScanner.ScanClientSources(root);
+            List<string> files = WriteSiteScanner.EnumerateClientFiles(root).Select(f => Path.GetRelativePath(root, f).Replace(Path.DirectorySeparatorChar, '/')).ToList();
 
-            sites.Count.Should().BeGreaterThan(200);
-            sites.Select(s => s.File).Should().Contain("src/ClassicUO.Client/Network/PacketHandlers.cs");
-            sites.Select(s => s.File).Should().Contain("src/ClassicUO.Client/Game/World.cs");
-            sites.Select(s => s.File).Should().Contain("src/ClassicUO.Client/Game/GameObjects/Mobile.cs");
-            sites.Select(s => s.Field).Should().Contain(new[] { "Graphic", "Hue", "X", "Y", "Z", "Flags", "Container", "Amount" });
+            files.Should().Contain(new[]
+            {
+                "src/ClassicUO.Client/Network/PacketHandlers.cs",
+                "src/ClassicUO.Client/Game/World.cs",
+                "src/ClassicUO.Client/Game/GameObjects/GameObject.cs",
+                "src/ClassicUO.Client/Game/GameObjects/Entity.cs",
+                "src/ClassicUO.Client/Game/GameObjects/Item.cs",
+                "src/ClassicUO.Client/Game/GameObjects/Mobile.cs",
+                "src/ClassicUO.Client/Game/GameObjects/PlayerMobile.cs"
+            });
+            files.Count.Should().BeGreaterThan(100);
+            files.Should().NotContain(f => f.Contains("/obj/") || f.Contains("/bin/"));
         }
 
         // ---- the scanner's own behaviour on small sources ----
@@ -172,6 +173,26 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Fact]
+        public void Receiverless_Prefix_Ref_Out_And_Private_State_Writes_Inside_A_GameObject_Class_Are_Found()
+        {
+            const string Src = "class C { private byte _animationGroup = 0xFF; void F() { ++AnimIndex; Interlocked.Exchange(ref LastAnimationChangeTime, 0L); " +
+                               "Reset(out X); _animationGroup = 3; _lastAnimationIdleDelay += 5; (Y, Z) = (1, 2); var d = ref X ? ref a : ref b; _isSA_Poisoned = v; } void G(out Direction endDir, ref Layer l) { } }";
+
+            WriteSiteScanner.ScanSource(Src, "src/ClassicUO.Client/Game/GameObjects/Foo.cs", new HashSet<string> { "Player" }, true)
+                .Select(s => s.Field).Should().BeEquivalentTo(
+                    "AnimIndex", "LastAnimationChangeTime", "X", "_animationGroup", "_lastAnimationIdleDelay", "Y", "Z", "_isSA_Poisoned");
+            WriteSiteScanner.ScanSource(Src, "src/ClassicUO.Client/Game/Other.cs", new HashSet<string> { "Player" }, false).Should().BeEmpty();
+        }
+
+        [Fact]
+        public void Dotted_Deconstruction_NullConditional_Prefix_And_Ref_Writes_Are_Found()
+        {
+            Fields("void F(Item i) { (i.X, i.Y) = (1, 2); i?.Hue = 3; ++i.Amount; Interlocked.Exchange(ref i.Amount, 0); }")
+                .Split(',').Should().BeEquivalentTo("X", "Y", "Hue", "Amount", "Amount");
+            Fields("void F(Item i, Control c) { var (a, b) = (i.X, i.Y); (c.X, c.Y) = (1, 2); }").Should().BeEmpty();
+        }
+
+        [Fact]
         public void Locals_Typed_Through_Var_And_Foreach_Are_Recognised()
         {
             const string Src = "void F(World world) { var p = world.Player; p.X = 1; var m = world.Mobiles.Get(1); m.Y = 2; " +
@@ -203,7 +224,11 @@ namespace ClassicUO.UnitTests.Ecs
             "Amount", "Container", "Layer", "Price", "IsDamageable", "LightID", "UsedLayer", "DisplayedGraphic", "IsMulti",
             "Race", "SpeedMode", "Stamina", "StaminaMax", "Mana", "ManaMax", "IsRenamable", "IsFemale", "IsRunning",
             "NotorietyFlag", "IsDead", "InWarMode", "AnimIndex", "ExecuteAnimation", "LastAnimationChangeTime",
-            "LastStepTime", "AnimationFrameCount", "AnimationFromServer", "LastStepSoundTime", "StepSoundOffset"
+            "LastStepTime", "AnimationFrameCount", "AnimationFromServer", "LastStepSoundTime", "StepSoundOffset",
+            // private A state (written by name only inside the classes): the animation timer, the pushed-input backing fields
+            "_animationGroup", "_animationInterval", "_animationRepeat", "_animationRepeateMode", "_animationRepeatModeCount",
+            "_isAnimationForwardDirection", "_lastAnimationIdleDelay", "_isSA_Poisoned", "_isDead", "_isFemale", "_isRunning",
+            "_notorietyFlag", "_inWarMode", "_direction", "_hits", "_hitsMax", "_isMulti", "_displayedGraphic"
         };
 
         // GameEffect and its subclasses are GameObjects but not Entities: only the GameObject fields count there
@@ -237,7 +262,13 @@ namespace ClassicUO.UnitTests.Ecs
         private const string StepsMutators = @"(?:AddToBack|AddToFront|RemoveFromBack|RemoveFromFront|Clear|Insert|RemoveAt)\b";
         private static readonly Regex StepsCall = new Regex(@"\.\s*Steps\s*\.\s*" + StepsMutators, RegexOptions.Compiled);
         private static readonly Regex BareStepsCall = new Regex(@"(?<![\w\.])Steps\s*\.\s*" + StepsMutators, RegexOptions.Compiled);
-        private static readonly Regex BareSub =new Regex(@"(?<![\w\.])Offset\s*\.\s*\w+\s*(?<op>" + Op + ")", RegexOptions.Compiled);
+        // `++Field`, `Interlocked.Exchange(ref Field, 0)`, `Reset(out Field)` with no receiver (inside a GameObject class)
+        private static readonly Regex BarePrefix = new Regex(
+            @"(?:(?<![\w+])(?:\+\+|--)|\b(?:ref|out))\s*(?<f>" + FieldAlt + @")\b(?!\s+[A-Za-z_])", RegexOptions.Compiled);
+        // `(a.X, a.Y) = (1, 2)`: the left tuple of a deconstruction
+        private static readonly Regex Deconstruct = new Regex(@"\((?<l>[^()=;{}]*)\)\s*=(?![=>])", RegexOptions.Compiled);
+        private static readonly Regex TupleItem = new Regex(@"^(?:(?<recv>.+)\.\s*)?(?<f>" + FieldAlt + @")$", RegexOptions.Compiled);
+        private static readonly Regex BareSub = new Regex(@"(?<![\w\.])Offset\s*\.\s*\w+\s*(?<op>" + Op + ")", RegexOptions.Compiled);
 
         // `Type name` declarations: locals, parameters, fields, foreach variables, pattern variables
         private static readonly Regex Decl = new Regex(
@@ -292,7 +323,7 @@ namespace ClassicUO.UnitTests.Ecs
             File.Exists(Path.Combine(dir, "src", "ClassicUO.Client", "ClassicUO.Client.csproj"))
             && Directory.Exists(Path.Combine(dir, "tests", "ClassicUO.UnitTests"));
 
-        private static IEnumerable<string> ClientFiles(string root)
+        internal static IEnumerable<string> EnumerateClientFiles(string root)
         {
             string sep = Path.DirectorySeparatorChar.ToString();
 
@@ -304,7 +335,7 @@ namespace ClassicUO.UnitTests.Ecs
         internal static List<WriteSite> ScanClientSources(string root)
         {
             var result = new List<WriteSite>();
-            var files = ClientFiles(root).Select(f => (Path: f, Text: File.ReadAllText(f))).ToList();
+            var files = EnumerateClientFiles(root).Select(f => (Path: f, Text: File.ReadAllText(f))).ToList();
 
             // member names (fields and properties, indented as class members) whose declared type is a world object, from every
             // file: the receivers of chains such as `SelectedObject.HealthbarObject.X`, `_world.Player.X`
@@ -380,6 +411,32 @@ namespace ClassicUO.UnitTests.Ecs
                 }
             }
 
+            // deconstruction: `(item.X, item.Y) = (1, 2)`, `(X, Y) = (1, 2)` inside a GameObject class
+            foreach (Match m in Deconstruct.Matches(code))
+            {
+                int offset = m.Groups["l"].Index;
+
+                foreach (string part in m.Groups["l"].Value.Split(','))
+                {
+                    Match ti = TupleItem.Match(part.Trim());
+                    int at = offset + part.Length - part.TrimStart().Length;
+                    offset += part.Length + 1;
+
+                    if (!ti.Success)
+                    {
+                        continue;
+                    }
+
+                    string recv = ti.Groups["recv"].Success ? Space.Replace(ti.Groups["recv"].Value, string.Empty) : string.Empty;
+                    bool world = recv.Length == 0 ? insideGameObjectClass : IsWorldReceiver(recv, worldNames, globalMembers, insideGameObjectClass);
+
+                    if (world && seen.Add(at + 100000000))
+                    {
+                        result.Add(new WriteSite(path, LineOf(code, at), ti.Groups["f"].Value, recv.Length == 0 ? "this" : recv, "deconstruct"));
+                    }
+                }
+            }
+
             // the walk queue is world state too: `recv.Steps.AddToBack(...)` and the other calls that change it
             foreach (Match m in StepsCall.Matches(code))
             {
@@ -393,6 +450,16 @@ namespace ClassicUO.UnitTests.Ecs
 
             if (insideGameObjectClass)
             {
+                foreach (Match m in BarePrefix.Matches(code))
+                {
+                    if (QuestionAfter.IsMatch(code, m.Index + m.Length) || !seen.Add(m.Groups["f"].Index))
+                    {
+                        continue;
+                    }
+
+                    result.Add(new WriteSite(path, LineOf(code, m.Index), m.Groups["f"].Value, "this", "ref/prefix"));
+                }
+
                 foreach (Match m in BareStepsCall.Matches(code))
                 {
                     if (seen.Add(m.Index))
