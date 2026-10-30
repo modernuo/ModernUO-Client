@@ -112,6 +112,8 @@ Newest at the bottom. Each item says what I did meanwhile.
 - **ECS transition:** T6a tile-order proof (`poc/ecs-t6a-tile-order`, Opus): 0 out of order; fixing the audit findings, including two old tile-link bugs on tiles without land.
 - **E4 default-on gate** (`bg/ecs-e4-gate`, Sonnet): resumed through the fair queue.
 - **Flaky prefetch test** (`poc/fix-flaky-prefetch-test`, Sonnet).
+- **T0c: ECS fields become properties** (`bg/ecs-t0c-properties`, Sonnet): no behaviour change; prepares the mutation funnel (T1).
+- **Text into the pack** (`poc/pack-text`, Opus): fonts, cliloc and speech, on the gumps record-store pattern, with lazy glyphs and strings (the `legacy-main` lessons).
 - All agents share a `bench.lock`, so client runs, builds and timing series never overlap.
 
 ## Things you saw tonight, explained
