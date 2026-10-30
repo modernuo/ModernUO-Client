@@ -702,6 +702,27 @@ namespace ClassicUO
             switch (_gumpOpenName)
             {
                 case "paperdoll": GameActions.OpenPaperdoll(world, world.Player.Serial); break;
+                case "mobpaperdoll":
+                {
+                    // the player's own paperdoll is opened at login: the nearest other human's is a cold first open
+                    Game.GameObjects.Mobile best = null;
+
+                    foreach (var m in world.Mobiles.Values)
+                    {
+                        if (m != world.Player && m.IsHuman && (best == null || m.Distance < best.Distance))
+                        {
+                            best = m;
+                        }
+                    }
+
+                    if (best != null)
+                    {
+                        GameActions.OpenPaperdoll(world, best.Serial);
+                        Log.Info($"[bench-gumpopen] mobpaperdoll: 0x{best.Serial:X8} body 0x{best.Graphic:X4} at distance {best.Distance}");
+                    }
+
+                    break;
+                }
                 case "backpack": GameActions.OpenBackpack(world); break;
                 case "status": GameActions.OpenStatusBar(world); break;
                 case "journal": GameActions.OpenJournal(world); break;
