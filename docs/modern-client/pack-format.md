@@ -421,7 +421,7 @@ A record store with magic `GUMP` holding every gump id the client's `GumpsLoader
   | ≤ 64 KiB | 470 | 15.8 | 4.7 | 110.3 | 32.6 |
   | larger | 380 | 104.9 | 28.6 | 595.1 | 275.6 |
 
-  The 64 KiB threshold stores 3,915 of the 4,290 records this way (37.9 → 58.2 MiB) and makes them decode in under 35 µs; 16 KiB would give 3,459 records and 47.5 MiB, but in the client the journal, status and spellbook opens (mostly 16–64 KiB images) were then 0.1–0.7 ms slower than the MUL path. The 375 larger ones keep Brotli:
+  The 64 KiB threshold stores 3,915 of the 4,290 records this way (37.9 → 58.2 MiB) and makes them decode in under 35 µs; 16 KiB would give 3,459 records and 47.5 MiB, but in the client the journal, status and spellbook opens were then 0.1–0.7 ms slower than the MUL path, and with 64 KiB they match it (poc-log "Gumps in the pack"). The 375 larger ones keep Brotli:
 - Sizes for the 4,438 gumps: 4,290 records after sharing (16 gump.def/index aliases, 132 identical images), 58.2 MiB file in the ship profile, of which the tables are 0.6 MiB.
 
 ## Manifest (`manifest.json`)
