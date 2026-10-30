@@ -33,9 +33,15 @@ namespace ClassicUO.Game.Map
         public static readonly int Chunks = int.TryParse(Environment.GetEnvironmentVariable("CUO_WARMUP_CHUNKS"), NumberStyles.Integer,
             CultureInfo.InvariantCulture, out int c) ? Math.Clamp(c, 0, Constants.PREDICTABLE_CHUNKS) : DefaultChunks;
 
-        // Sizes from a base session (travel, glide, ltravel, bwalk; Gpu world at 1920x1080): 225 chunks were allocated by the
-        // end of the login and 289 in all (none after 40 s), with 19,584 lands and 16,387 statics (57 per chunk); after two
-        // minutes the statics mesh capacities were 64: 15 chunks, 128: 128, 256: 143, 512: 3.
+        // The sizes follow the chunk cache limit, not one viewport: the pool and the recycler already stop at
+        // Constants.PREDICTABLE_CHUNKS chunks (300) and 64 lands per chunk, so the prefill fills them exactly to their caps, and
+        // statics get the measured average per chunk. Measured in a base session (travel, glide, ltravel, bwalk; Gpu world at
+        // 1920x1080): 225 chunks allocated by the end of the login and 289 in all (none after 40 s), 19,584 lands and 16,387
+        // statics (57 per chunk); after two minutes the statics mesh capacities were 64: 15 chunks, 128: 128, 256: 143, 512: 3.
+        // A much larger view (4K, or zoomed far out) needs more chunks than the caps, before and after this change: the
+        // prefill covers the first 300 and the rest allocate as before (raising the caps is a separate decision). A small view
+        // (800x600) uses perhaps a quarter of them: the rest of the 32 MB sits in the pools, the deliberate price of a login
+        // that doesn't allocate while playing.
         public const int DefaultChunks = Constants.PREDICTABLE_CHUNKS;
         /// <summary>Statics mesh layer capacity of a prefilled chunk (sprites; 48 KB of vertices, below the large object heap):
         /// nearly every block fits, busier ones grow as before.</summary>
@@ -61,7 +67,7 @@ namespace ClassicUO.Game.Map
             long start = Stopwatch.GetTimestamp();
             long before = GC.GetAllocatedBytesForCurrentThread();
             int chunks = Chunk.Prefill(world, Chunks, StaticsMeshCapacity);
-            world.MapRecycler.Prefill(world, Chunks * 64, Chunks * StaticsPerChunk, Time.Ticks);
+            world.MapRecycler.Prefill(world, Chunks * MapObjectRecycler.MaxLands / Constants.PREDICTABLE_CHUNKS, Chunks * StaticsPerChunk, Time.Ticks);
             double ms = Stopwatch.GetElapsedTime(start).TotalMilliseconds;
 
             Log.Info(string.Format(CultureInfo.InvariantCulture, "[warmup] pools filled in {0:0.0} ms: {1} chunks (statics mesh {2}), {3} lands, {4} statics, {5:0.0} MB",
