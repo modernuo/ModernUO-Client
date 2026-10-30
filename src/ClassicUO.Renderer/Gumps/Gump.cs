@@ -113,11 +113,24 @@ namespace ClassicUO.Renderer.Gumps
         public static int TotalPrefetched;
         public static long TotalPrefetchTicks;
 
+        /// <summary>Most gumps one <see cref="Prefetch"/> batch queues, and most decoded RGBA bytes it puts in flight.</summary>
+        public const int PrefetchMaxBatch = 64;
+        public const long PrefetchMaxBytes = 64L << 20;
+
         /// <summary>
         /// A window about to be built from many gumps (a server gump's layout): decodes the ones not in the atlas on
-        /// worker threads at once and waits for them (at most <paramref name="timeoutMs"/>), so the controls' synchronous
-        /// <see cref="GetGump"/> calls find them uploaded. The main thread then waits for the slowest decode instead of
-        /// doing every decode in turn. Fewer than two missing gumps: nothing to gain, nothing is queued. Main thread; pack only.
+        /// worker threads at once and waits for them, so the controls' synchronous <see cref="GetGump"/> calls find them
+        /// uploaded. The main thread then waits for the slowest decode instead of doing every decode in turn. Main thread;
+        /// pack only. Fewer than two missing gumps: nothing to gain, nothing is queued.
+        /// <list type="bullet">
+        /// <item>The batch is bounded: at most <see cref="PrefetchMaxBatch"/> distinct gumps and <see cref="PrefetchMaxBytes"/>
+        /// of decoded pixels; the rest decode on the spot when the controls ask, as before.</item>
+        /// <item><paramref name="timeoutMs"/> bounds queueing and waiting. The wait uploads finished decodes only before the
+        /// deadline; one atlas upload (a GPU copy) can't be interrupted, so the call can overrun by one upload.</item>
+        /// <item>After a timeout, decodes still running keep their jobs: a <see cref="GetGump"/> for one of them takes the
+        /// worker's result if it has finished by then, else decodes on the spot and the worker's result is dropped (at most
+        /// one duplicate decode per gump of the batch).</item>
+        /// </list>
         /// </summary>
         public int Prefetch(ReadOnlySpan<uint> ids, int timeoutMs = 20)
         {
@@ -126,43 +139,58 @@ namespace ClassicUO.Renderer.Gumps
                 return 0;
             }
 
-            int missing = 0;
+            long t0 = Stopwatch.GetTimestamp();
+            long deadline = t0 + Stopwatch.Frequency * timeoutMs / 1000;
+            Span<uint> batch = stackalloc uint[PrefetchMaxBatch];
+            int n = 0;
+            long bytes = 0;
 
             foreach (uint id in ids)
             {
-                if (id < _spriteInfos.Length && _spriteInfos[id].Texture == null && !_decoder.IsRequested(id) && !_decoder.IsFailed(id)
-                    && _gumpsLoader.PixelCount(id) > 0 && ++missing >= 2)
+                if (n == batch.Length)
                 {
                     break;
                 }
+
+                if (id >= _spriteInfos.Length || _spriteInfos[id].Texture != null || _decoder.IsRequested(id) || _decoder.IsFailed(id)
+                    || batch.Slice(0, n).Contains(id))
+                {
+                    continue;
+                }
+
+                long b = _gumpsLoader.PixelCount(id) * 4L;
+
+                if (b == 0 || bytes + b > PrefetchMaxBytes)
+                {
+                    continue;
+                }
+
+                batch[n++] = id;
+                bytes += b;
             }
 
-            if (missing < 2)
+            if (n < 2)
             {
                 return 0;
             }
 
-            long t0 = Stopwatch.GetTimestamp();
             int queued = 0;
 
-            foreach (uint id in ids)
+            for (int i = 0; i < n && Stopwatch.GetTimestamp() < deadline; i++)
             {
-                if (!Request(id))
+                if (!Request(batch[i]))
                 {
                     queued++;
                 }
             }
 
-            long deadline = t0 + Stopwatch.Frequency * timeoutMs / 1000;
-
             while (true)
             {
-                _decoder.Drain(long.MaxValue);
                 bool waiting = false;
 
-                foreach (uint id in ids)
+                for (int i = 0; i < n; i++)
                 {
-                    if (_decoder.IsRequested(id))
+                    if (_decoder.IsRequested(batch[i]))
                     {
                         waiting = true;
 
@@ -175,7 +203,14 @@ namespace ClassicUO.Renderer.Gumps
                     break;
                 }
 
-                System.Threading.Thread.Yield();
+                if (_decoder.HasReady)
+                {
+                    _decoder.Drain(deadline);
+                }
+                else
+                {
+                    System.Threading.Thread.Yield();
+                }
             }
 
             TotalPrefetched += queued;
@@ -250,6 +285,16 @@ namespace ClassicUO.Renderer.Gumps
                 return ref SpriteInfo.Empty;
 
             ref var spriteInfo = ref _spriteInfos[idx];
+
+            if (spriteInfo.Texture == null && _decoder.IsRequested(idx))
+            {
+                // a worker is on it (a prefetch that timed out, a request): take its result if it has finished instead
+                // of decoding the same gump again (Drain uploads one finished job per call)
+                while (spriteInfo.Texture == null && _decoder.IsRequested(idx) && _decoder.HasReady)
+                {
+                    _decoder.Drain(0);
+                }
+            }
 
             if (spriteInfo.Texture == null)
             {

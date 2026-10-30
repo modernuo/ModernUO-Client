@@ -311,6 +311,139 @@ namespace ClassicUO.UnitTests.Assets
             GumpCodec.DecodeRle(bad, 1, 2, new ushort[2]).Should().BeFalse();
         }
 
+        // ---- untrusted packs (Codex audit, 2026-10-30) ----
+
+        private static string TempDir()
+        {
+            var dir = Path.Combine(Path.GetTempPath(), "cuo-gumpstore-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(dir);
+
+            return dir;
+        }
+
+        private static byte[] Header(uint slots, uint records)
+        {
+            var b = new byte[32];
+            BitConverter.GetBytes(StoreConst.MagicGumps).CopyTo(b, 0);
+            BitConverter.GetBytes((ushort)1).CopyTo(b, 4);
+            BitConverter.GetBytes(slots).CopyTo(b, 16);
+            BitConverter.GetBytes(records).CopyTo(b, 20);
+
+            return b;
+        }
+
+        [Fact]
+        public void RecordStore_Rejects_Truncated_Huge_And_Wrapped_Tables_Before_Allocating()
+        {
+            var dir = TempDir();
+
+            try
+            {
+                var p = Path.Combine(dir, "s.bin");
+
+                // a 32-byte file claiming 16M slots: rejected from the length, before any slot array exists
+                File.WriteAllBytes(p, Header(RecordStore.MaxSlots, 0));
+                long before = GC.GetAllocatedBytesForCurrentThread();
+                var huge = () => RecordStore.Open(p, StoreConst.MagicGumps);
+                huge.Should().Throw<InvalidDataException>();
+                (GC.GetAllocatedBytesForCurrentThread() - before).Should().BeLessThan(1 << 20);
+
+                // more than the cap, records > slots, too short for a header
+                File.WriteAllBytes(p, Header(RecordStore.MaxSlots + 1, 0));
+                huge.Should().Throw<InvalidDataException>();
+                File.WriteAllBytes(p, Header(1, 2));
+                huge.Should().Throw<InvalidDataException>();
+                File.WriteAllBytes(p, new byte[20]);
+                huge.Should().Throw<InvalidDataException>();
+
+                // one slot, one record whose offset wraps when its size is added, and offsets into the tables
+                foreach (var (offset, stored) in new (ulong, uint)[] { (ulong.MaxValue - 4, 16), (0, 8), (32, 8), (100, 8), (68, 1000) })
+                {
+                    var ms = new MemoryStream();
+                    ms.Write(Header(1, 1));
+                    ms.Write(BitConverter.GetBytes(1u));
+                    ms.Write(new byte[4]);
+                    ms.Write(BitConverter.GetBytes(offset));
+                    ms.Write(BitConverter.GetBytes(stored));
+                    ms.Write(BitConverter.GetBytes(stored));
+                    ms.Write(new byte[8]);
+                    ms.Write(new byte[8]); // payload area: bytes 64..72
+                    File.WriteAllBytes(p, ms.ToArray());
+                    var bad = () => RecordStore.Open(p, StoreConst.MagicGumps);
+                    bad.Should().Throw<InvalidDataException>($"offset {offset} stored {stored}");
+                }
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
+        }
+
+        [Fact]
+        public void Gump_Records_With_Impossible_Sizes_Or_Payloads_Fail_The_Load_Checks()
+        {
+            StoreRecord R(int w, int h, ushort layout, uint raw, ushort codec = StoreConst.CodecRaw, uint stored = 0) =>
+                new StoreRecord { Meta0 = (ushort)w, Meta1 = (ushort)h, Meta2 = layout, RawBytes = raw, Codec = codec, StoredBytes = codec == StoreConst.CodecRaw ? raw : stored };
+
+            GumpsLoader.CheckRecord(R(10, 10, GumpCodec.LayoutTexels, 200)).Should().BeNull();
+            GumpsLoader.CheckRecord(R(10, 10, GumpCodec.LayoutRle, 40)).Should().BeNull();
+            GumpsLoader.CheckRecord(R(4096, 4096, GumpCodec.LayoutTexels, 4096u * 4096 * 2, StoreConst.CodecBrotli, 1000)).Should().BeNull();
+
+            GumpsLoader.CheckRecord(R(4097, 1, GumpCodec.LayoutRle, 4)).Should().NotBeNull("wider than the atlas");
+            GumpsLoader.CheckRecord(R(65535, 65535, GumpCodec.LayoutTexels, 0)).Should().NotBeNull("w·h overflows an int");
+            GumpsLoader.CheckRecord(R(0, 5, GumpCodec.LayoutRle, 20)).Should().NotBeNull();
+            GumpsLoader.CheckRecord(R(1, 1, GumpCodec.LayoutTexels, 1u << 30, StoreConst.CodecBrotli, 10)).Should().NotBeNull("a 1x1 texel payload is 2 bytes");
+            GumpsLoader.CheckRecord(R(1, 1, GumpCodec.LayoutRle, uint.MaxValue, StoreConst.CodecBrotli, 10)).Should().NotBeNull();
+            GumpsLoader.CheckRecord(R(10, 10, GumpCodec.LayoutRle, 36)).Should().NotBeNull("shorter than the row table");
+            GumpsLoader.CheckRecord(R(10, 10, GumpCodec.LayoutRle, 42)).Should().NotBeNull("not whole runs");
+            GumpsLoader.CheckRecord(R(10, 10, GumpCodec.LayoutRle, 4 * 10 + 4 * 100 + 4)).Should().NotBeNull("more runs than texels");
+            GumpsLoader.CheckRecord(R(10, 10, 7, 200)).Should().NotBeNull("unknown layout");
+            GumpsLoader.CheckRecord(R(10, 10, GumpCodec.LayoutTexels, 200, StoreConst.CodecBrotli, 100000)).Should().NotBeNull("more than Brotli can produce");
+        }
+
+        [Fact]
+        public void A_Corrupt_Or_Invalid_Record_Makes_Its_Gumps_Absent_Without_Throwing()
+        {
+            var dir = TempDir();
+
+            try
+            {
+                var p = Path.Combine(dir, "gumps.bin");
+                var texels = Enumerable.Range(0, 64 * 64).Select(i => (ushort)(i % 3 == 0 ? 0 : 0x8000 | i)).ToArray();
+                var good = GumpCodec.Encode(GumpCodec.LayoutTexels, texels, 64, 64);
+                var w = new RecordStoreWriter(4);
+                int r0 = w.Add(RecordStoreWriter.Encode(good, StoreConst.CodecBrotli), (uint)good.Length, StoreConst.CodecBrotli, 64, 64, GumpCodec.LayoutTexels);
+                var corrupt = RecordStoreWriter.Encode(good, StoreConst.CodecBrotli);
+                corrupt.AsSpan(corrupt.Length / 2).Fill(0x5A);
+                int r1 = w.Add(corrupt, (uint)good.Length, StoreConst.CodecBrotli, 64, 64, GumpCodec.LayoutTexels);
+                int r2 = w.Add(new byte[8], 8, StoreConst.CodecRaw, 4097, 1, GumpCodec.LayoutRle); // fails the load checks
+                w.Slots[0] = new StoreSlot { Record = (uint)r0 + 1 };
+                w.Slots[1] = new StoreSlot { Record = (uint)r1 + 1 };
+                w.Slots[2] = new StoreSlot { Record = (uint)r2 + 1 };
+                w.Write(p, StoreConst.MagicGumps, 0);
+
+                var loader = new GumpsLoader(new UOFileManager(default, dir, null));
+                loader.LoadStore(p);
+                loader.BadRecords.Should().Be(1);
+                loader.PixelCount(2).Should().Be(0);
+                loader.TryGetSize(2, out _, out _).Should().BeFalse();
+
+                loader.GetGump(0).Width.Should().Be(64);
+                loader.PixelCount(1).Should().Be(64 * 64, "not known to be corrupt until decoded");
+                loader.GetGump(1).Pixels.IsEmpty.Should().BeTrue();
+                loader.PixelCount(1).Should().Be(0, "a failed decode makes the record invalid for good");
+                loader.TryGetSize(1, out _, out _).Should().BeFalse();
+                loader.GetGump(1).Pixels.IsEmpty.Should().BeTrue();
+                loader.BadRecords.Should().Be(2);
+                loader.GetGump(0).Width.Should().Be(64);
+                loader.Dispose();
+            }
+            finally
+            {
+                Directory.Delete(dir, true);
+            }
+        }
+
         [Fact]
         public void RecordStore_Round_Trips_Raw_And_Brotli_And_Rejects_Bad_Files()
         {

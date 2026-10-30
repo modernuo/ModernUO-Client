@@ -65,7 +65,9 @@ public static class GumpConvert
         // Which ids the client resolves, and which share an index entry (gump.def copies the entry; UOP/MUL may too).
         // An id with a loose file of ours is decoded on its own (its file replaces the entry).
         var canonical = new int[entries.Length];
-        var byEntry = new Dictionary<(long, int, int), int>();
+        // every field the decode reads (GumpsLoader.GetGump16): file, offset, lengths, compression and the index's size;
+        // only the hue is left out, it rides on the slot
+        var byEntry = new Dictionary<(UOFile?, long, int, int, CompressionType, int, int), int>();
         for (int id = 0; id < entries.Length; id++)
         {
             canonical[id] = -1;
@@ -73,7 +75,7 @@ public static class GumpConvert
             bool archive = e.CompressionFlag == CompressionType.ZlibBwt || e.Width > 0 || e.Height > 0;
             if (ours.Contains(id)) { canonical[id] = id; continue; }
             if (!archive) continue;
-            var key = (e.Offset, e.Length, e.DecompressedLength);
+            var key = (e.File, e.Offset, e.Length, e.DecompressedLength, e.CompressionFlag, e.Width, e.Height);
             canonical[id] = byEntry.TryGetValue(key, out int first) ? first : (byEntry[key] = id);
         }
 

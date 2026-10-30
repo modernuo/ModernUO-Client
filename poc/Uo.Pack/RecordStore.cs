@@ -150,21 +150,29 @@ public sealed class RecordStore : IDisposable
         {
             FileHeader fileHeader = default;
             StoreHeader header = default;
+            long length = RandomAccess.GetLength(fh);
+            if (length < StructIo.SizeOf<FileHeader>() + StructIo.SizeOf<StoreHeader>())
+                throw new InvalidDataException($"'{path}' is too short to be a record store");
             ReadExactly(fh, MemoryMarshal.AsBytes(new Span<FileHeader>(ref fileHeader)), 0);
             if (fileHeader.Magic != magic || !PackConst.VersionSupported(fileHeader.Version) || fileHeader.Kind != FileKind.Raw)
                 throw new InvalidDataException($"'{path}' is not a supported record store (magic 0x{fileHeader.Magic:X8}, version {fileHeader.Version}, kind {fileHeader.Kind})");
             long pos = StructIo.SizeOf<FileHeader>();
             ReadExactly(fh, MemoryMarshal.AsBytes(new Span<StoreHeader>(ref header)), pos);
             pos += StructIo.SizeOf<StoreHeader>();
-            if (header.SlotCount > 1 << 24 || header.RecordCount > header.SlotCount)
+            if (header.SlotCount > MaxSlots || header.RecordCount > header.SlotCount)
                 throw new InvalidDataException($"'{path}': bad store header");
+            // the tables must fit in the file before anything is allocated for them (a truncated or forged header
+            // must not ask for a large array)
+            long payloadStart = checked(pos + (long)header.SlotCount * StructIo.SizeOf<StoreSlot>() + (long)header.RecordCount * StructIo.SizeOf<StoreRecord>());
+            if (payloadStart > length)
+                throw new InvalidDataException($"'{path}': the slot and record tables run past the end of the file");
             var slots = new StoreSlot[header.SlotCount];
             ReadExactly(fh, MemoryMarshal.AsBytes(slots.AsSpan()), pos);
             pos += (long)slots.Length * StructIo.SizeOf<StoreSlot>();
             var records = new StoreRecord[header.RecordCount];
             ReadExactly(fh, MemoryMarshal.AsBytes(records.AsSpan()), pos);
             var store = new RecordStore(fh, header, slots, records);
-            store.Validate(path);
+            store.Validate(path, payloadStart);
             return store;
         }
         catch
@@ -174,13 +182,25 @@ public sealed class RecordStore : IDisposable
         }
     }
 
-    private void Validate(string path)
+    /// <summary>Most slots a store may declare (16M ids).</summary>
+    public const uint MaxSlots = 1 << 24;
+
+    // Every slot points into the record table; every payload lies in the payload area (after the tables) and inside
+    // the file, compared without overflow; raw payloads are exactly their raw size; the codec is known. Type-specific
+    // checks (sizes, layouts, raw-size bounds) are the content type's (GumpsLoader).
+    private void Validate(string path, long payloadStart)
     {
         foreach (ref readonly var s in Slots.AsSpan())
             if (s.Record > Records.Length) throw new InvalidDataException($"'{path}': slot points past the record table");
-        foreach (ref readonly var r in Records.AsSpan())
-            if (r.Offset + r.StoredBytes > (ulong)_length || (r.Codec == StoreConst.CodecRaw && r.StoredBytes != r.RawBytes) || r.Codec > StoreConst.CodecBrotli)
-                throw new InvalidDataException($"'{path}': bad record");
+        ulong len = (ulong)_length;
+        for (int i = 0; i < Records.Length; i++)
+        {
+            ref readonly var r = ref Records[i];
+            if (r.Offset < (ulong)payloadStart || r.Offset > len || r.StoredBytes > len - r.Offset)
+                throw new InvalidDataException($"'{path}': record {i} lies outside the payload area");
+            if (r.Codec > StoreConst.CodecBrotli || (r.Codec == StoreConst.CodecRaw && r.StoredBytes != r.RawBytes))
+                throw new InvalidDataException($"'{path}': record {i} has a bad codec or size");
+        }
     }
 
     public int SlotCount => Slots.Length;
@@ -202,6 +222,10 @@ public sealed class RecordStore : IDisposable
     /// <summary>Decodes <paramref name="record"/>'s payload into <paramref name="dst"/> (at least RawBytes long). Thread-safe.</summary>
     public void Read(in StoreRecord record, Span<byte> dst)
     {
+        if (record.RawBytes > int.MaxValue || record.StoredBytes > int.MaxValue)
+            throw new InvalidDataException($"record at offset {record.Offset} is too large");
+        if ((uint)dst.Length < record.RawBytes)
+            throw new ArgumentException("destination smaller than the record's raw size", nameof(dst));
         var raw = dst.Slice(0, (int)record.RawBytes);
         if (record.Codec == StoreConst.CodecRaw)
         {
