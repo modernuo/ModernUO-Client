@@ -52,12 +52,19 @@ namespace ClassicUO.Renderer
                     ClassicUO.Utility.Logging.Log.Warn($"{Owner._name} {Index}: worker decode failed ({ex.Message})");
                 }
 
-                if (Epoch != Volatile.Read(ref Owner._epoch))
+                // the epoch check and the publish are one step against Cancel: otherwise a Cancel between them (it bumps
+                // the epoch and drains an empty queue) leaves this buffer in the queue until the next session's Drain
+                lock (Owner._publishLock)
                 {
-                    ReturnPixels(); // cancelled while decoding: nobody may drain this for a long time
-                }
+                    Owner.BeforePublishForTests?.Invoke();
 
-                Owner._ready.Enqueue(this);
+                    if (Epoch != Owner._epoch)
+                    {
+                        ReturnPixels(); // cancelled while decoding: nobody may drain this for a long time
+                    }
+
+                    Owner._ready.Enqueue(this);
+                }
             }
 
             public void ReturnPixels()
@@ -160,16 +167,26 @@ namespace ClassicUO.Renderer
         /// </summary>
         public void Cancel()
         {
-            Interlocked.Increment(ref _epoch);
-
-            while (_ready.TryDequeue(out var job))
+            // under the publish lock: a worker publishes either before (drained here) or after the bump (it returns its
+            // buffer itself, and its empty job is dropped by a later Drain)
+            lock (_publishLock)
             {
-                _state[job.Index] = StateNone;
-                Pending--;
-                job.ReturnPixels();
-                _free.Push(job);
+                _epoch++;
+
+                while (_ready.TryDequeue(out var job))
+                {
+                    _state[job.Index] = StateNone;
+                    Pending--;
+                    job.ReturnPixels();
+                    _free.Push(job);
+                }
             }
         }
+
+        private readonly object _publishLock = new object();
+
+        /// <summary>Tests only: runs on the worker inside the publish step, before its epoch check.</summary>
+        public Action BeforePublishForTests;
 
         public bool HasReady => !_ready.IsEmpty;
 
