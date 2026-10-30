@@ -281,7 +281,8 @@ Sizes: T0a 1–1.5, T0b 0.5, T0c 1.5–2.
 - **Result (2026-10-30, branch `poc/ecs-t6a-tile-order`, poc-log "T6a"): 0 out of order.** About 290M tile-list objects checked in Legacy and Gpu (plan spots, pickscan, travel, ltravel, glide, lswalk, `ls_parity`, `w5push`, `w5items`, `corpses` with a camp multi), plus 2G with the check on every frame. Unit tests cover each insertion rule and 3,000 random operations.
   - Rank 1 is any multi that is generic-internal, or not a preview (generic-internal wins over preview). Rank 2 includes preview multis.
   - Not exercised live: custom-house components, the customization preview and boats (unit tests only).
-  - What T6b must keep: store (priority, rank, seq) at insertion, never recompute them from current fields (graphic and multi state change without a re-insert); stamp at the same point in update order as `AddGameObject`; don't copy the stale `Chunk.Tiles` head pointer (`RemoveFromTile` leaves it, and a re-add of that object follows the container links). A 64-bit seq is enough.
+  - What T6b must keep: store (priority, rank, seq) at insertion, never recompute them from current fields (graphic and multi state change without a re-insert); stamp at the same point in update order as `AddGameObject`; compare with `TileOrderKey` (a struct: priority, rank, 64-bit seq; newest first for ranks 0 and 1).
+  - Audit fixes (same branch): the sequence is 64-bit (a 32-bit wrap reversed two equal inserts); `GameObject.TileCell` stores the cell, and `RemoveFromTile` hands a departing `Chunk.Tiles` anchor to a neighbour, so landless tiles no longer lose their list or follow container links into another tile; the checker walks lists in full with cycle detection and checks membership both ways.
 
 **T6b: `DynamicTileIndex`.**
 - A per-chunk, per-tile small sorted array of `(key, entity id, GameObject handle)` for items, mobiles and (after T8) effects.
