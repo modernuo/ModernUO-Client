@@ -97,6 +97,9 @@ namespace ClassicUO.Game.Map
 
         private const int MaxOffenders = 25;
         private static long _checks, _tiles, _objects, _outOfOrder, _badTiles;
+        // objects seen per rank, and preview multis (rank 2): shows which insertion rules the runs exercised
+        private static readonly long[] _ranks = new long[3];
+        private static long _previews;
         private static int _offenders;
         private static uint _frame, _nextLog;
 
@@ -127,6 +130,18 @@ namespace ClassicUO.Game.Map
 
                             _tiles++;
                             int bad = CountOutOfOrder(head, out int objects);
+
+                            for (GameObject o = head; o != null; o = o.TNext)
+                            {
+                                int rank = Rank(o);
+                                _ranks[rank]++;
+
+                                if (rank == 2 && o is Multi)
+                                {
+                                    _previews++;
+                                }
+                            }
+
                             _objects += objects;
 
                             if (bad != 0)
@@ -143,7 +158,7 @@ namespace ClassicUO.Game.Map
             if (Time.Ticks >= _nextLog)
             {
                 _nextLog = Time.Ticks + 5000;
-                Log.Info($"[tile-order] tiles {_tiles}, objects {_objects}, out of order {_outOfOrder} (tiles {_badTiles}), checks {_checks}, every {CheckInterval} frames, seq {NextSeq}");
+                Log.Info($"[tile-order] tiles {_tiles}, objects {_objects}, out of order {_outOfOrder} (tiles {_badTiles}), checks {_checks}; land {_ranks[0]}, multi {_ranks[1]}, other {_ranks[2]} (preview multis {_previews}), every {CheckInterval} frames, seq {NextSeq}");
             }
         }
 
