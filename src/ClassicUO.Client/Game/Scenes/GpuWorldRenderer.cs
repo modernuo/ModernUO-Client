@@ -60,6 +60,21 @@ namespace ClassicUO.Game.Scenes
         public WorldRenderer World => _world;
         public int CaptureFallbacks { get; private set; }
 
+        /// <summary>E12 (CUO_GPU_ITEM_CHECK): the probe pass runs the capture before the batcher begins and discards what it
+        /// can't map (the batcher would draw it); <see cref="ProbeFallbacks"/> counts those.</summary>
+        internal bool Probe;
+        internal int ProbeFallbacks;
+
+        /// <summary>E12: the dynamic instances captured so far this frame.</summary>
+        internal ReadOnlySpan<SpriteInstance> DynamicInstances => new ReadOnlySpan<SpriteInstance>(_dynamic, 0, _dynamicCount);
+
+        /// <summary>E12: forgets the dynamic instances captured so far (the probe pass's).</summary>
+        internal void ResetDynamic()
+        {
+            _dynamicCount = 0;
+            _object = null;
+        }
+
         /// <summary>Dynamic instances not drawn because a frame had more than WorldOptions.MaxDynamic (cumulative).</summary>
         public long DynamicDropped { get; private set; }
 
@@ -650,6 +665,13 @@ namespace ClassicUO.Game.Scenes
             {
                 CaptureFallbacks++;
 
+                if (Probe)
+                {
+                    ProbeFallbacks++;
+
+                    return true;
+                }
+
                 return false;
             }
 
@@ -701,6 +723,13 @@ namespace ClassicUO.Game.Scenes
 
                 default:
                     CaptureFallbacks++;
+
+                    if (Probe)
+                    {
+                        ProbeFallbacks++;
+
+                        return true;
+                    }
 
                     return false;
             }
