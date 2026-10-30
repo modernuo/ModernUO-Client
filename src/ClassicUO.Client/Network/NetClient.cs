@@ -291,7 +291,7 @@ namespace ClassicUO.Network
             }
 
             var emptied = false;
-            var closeSeen = false;
+            Connection closeSeen = null; // the connection whose close was seen
 
             while (_socket != null && LastDrainBytes < maxBytes && packets < maxPackets)
             {
@@ -307,16 +307,16 @@ namespace ClassicUO.Network
                     // enqueues its last frame and then reports the close, so a read that was empty a moment earlier can
                     // be followed by that frame. Seeing the close sends us round once more; the caps still apply, and a
                     // capped frame carries on next time.
-                    if (closeSeen)
+                    if (closeSeen != null && ReferenceEquals(closeSeen, _connection))
                     {
                         emptied = true;
 
                         break;
                     }
 
-                    if (_connection is { Closed: true })
+                    if (_connection is { Closed: true } seen)
                     {
-                        closeSeen = true;
+                        closeSeen = seen;
 
                         continue;
                     }
