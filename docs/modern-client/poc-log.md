@@ -2157,11 +2157,11 @@ Base: poc/modern-client 3681f25b3. Branch `poc/ecs-t6a-tile-order`. No behaviour
 - So by induction each list is sorted by the key. The new `TileOrderTests` check the priorities, each rule, re-inserts, removal, a graphic change without a re-insert, and 3,000 random operations over land, statics, plain, preview and generic-internal multis, comparing the list with its stable sort after every step.
 
 **What changed.**
-- `GameObject.TileSeq` (uint), stamped in `Chunk.AddGameObject` from the global `TileOrder.NextSeq` (pre-increment, so 0 is never a stamp). Reset in `GameObject.ResetForReuse`; the recycler's reflection test enforces it. `MapObjectRecycler.cs` itself is untouched.
+- `GameObject.TileSeq` (uint; a ulong since the audit fixes below), stamped in `Chunk.AddGameObject` from the global `TileOrder.NextSeq` (pre-increment, so 0 is never a stamp). Reset in `GameObject.ResetForReuse`; the recycler's reflection test enforces it. `MapObjectRecycler.cs` itself is untouched.
 - `Game/Map/TileOrder.cs`: `Rank`, `Key`, `CountOutOfOrder` and the checker.
-  - `CUO_TILE_ORDER_CHECK=1` (every 30 frames), `every`, or `N`. From `GameScene.Update`, every tile of every loaded chunk (a superset of the tiles either walk visits) must be non-decreasing in key, which is exactly "equals its stable sort".
+  - `CUO_TILE_ORDER_CHECK=1` (every 30 frames), `every`, or `N`. From `GameScene.Update` (since the audit fixes: the start of the world prepare), every tile of every loaded chunk (a superset of the tiles either walk visits) must be non-decreasing in key, which is exactly "equals its stable sort".
   - Logs `[tile-order] tiles N, objects M, out of order K (tiles T), checks C; land, multi, other (preview multis)` every 5 s, and the first 25 offending tiles with each object's kind, rank, priority, Z, sequence and graphic.
-- Test seam: `Chunk.StaticDataForTests` (null in the client), read instead of the loaded tiledata by `AddGameObject`'s default branch.
+- Test seam: `Chunk.StaticDataForTests` (null in the client), read instead of the loaded tiledata by `AddGameObject`'s default branch. Replaced in the audit fixes by `Chunk.StaticTileData`, with no per-insert branch.
 
 **Runs** (JIT Release, kbatman3, `CUO_TILE_ORDER_CHECK=1 CUO_RECYCLE_CHECK=1`; drivers with `-ecscheck 120`, Gpu drivers with `CUO_ECS_PARITY=1`):
 
@@ -2185,11 +2185,11 @@ Base: poc/modern-client 3681f25b3. Branch `poc/ecs-t6a-tile-order`. No behaviour
    - `PriorityZ` comes from the graphic, Z and flags at that moment. The graphic (seasons, some `Graphic =` sites) and multi state can change later without a re-insert.
    - The checker recomputes the rank from the current `Multi.State`. That is only safe because no code sets or clears `CHMOF_PREVIEW`/`CHMOF_GENERIC_INTERNAL` on a placed multi between placements: `House.Generate(removePreview)` clears preview only after `SetInWorldTile`, and only on house components, which never carry it; the floor-plane multis get `GENERIC_INTERNAL` after `Add`, which is rank 1 either way.
    - T6b should store (priority, rank, seq) per entry.
-2. **A stale head pointer.**
+2. **A stale head pointer** (fixed in the audit fixes below).
    - `RemoveFromTile` does not update `Chunk.Tiles[x, y]`, which stays the first object ever placed on the empty tile. The walk finds the head by following `TPrevious` from it.
    - Harmless while that object is the land, which never leaves. On a tile with no land (a block without map data), the first dynamic object leaving would orphan the rest of the list, and re-adding it takes the `o == obj` branch, which follows the `LinkedObject` container links (`Previous`/`Next`), not the tile links.
    - Not reached in any run. T6b's own storage should not reproduce it.
-3. **Seq is a 32-bit counter.** About 250k stamps in a 4-minute travel session, so a wrap would take weeks. T6b can use 64 bits.
+3. **Seq was a 32-bit counter.** About 250k stamps in a 4-minute travel session, so a wrap would take weeks, but a wrap reverses two equal-priority inserts (audit). Now 64-bit, with a struct comparator.
 4. **Insertion order is the only tie-break between equal non-land, non-multi objects** (items, mobiles, effects, statics). T6b must take its stamp at the same point in update order as `AddGameObject` (E4's observation).
 
 **Cost when unset.** NativeAOT, paired, checker unset, `world_prepare` in ms, 2 windows per spot. Series 1 (base/new/new/base) on 19d295c5a; series 2 (new/base/base/new) on 1b3518b55, which adds only checker code. The machine was noisy: base alone spread up to 25% between sessions.
@@ -2205,6 +2205,47 @@ Base: poc/modern-client 3681f25b3. Branch `poc/ecs-t6a-tile-order`. No behaviour
 | Legacy zoom 2.5 | 1.365 1.300 1.447 1.603 | 1.392 1.423 1.306 1.344 |
 | Legacy large scene | 1.283 1.230 1.362 1.398 | 1.224 1.219 1.200 1.197 |
 
-Equal within noise. With the variable unset, the change costs one static `bool` test per frame and one counter increment per placement.
+No measured regression. With the variable unset, the change still costs one static `bool` test per frame and, per placement, a counter increment and a field store (the audit fixes add a cell store and remove the test-seam branch).
 
 **Tests:** 599 pass in both `CuoDevTools` variants (10 new in `TileOrderTests`), and `-p:CuoDevTools=false` builds. `ChunkLoadingTests.Prefetched_Regions_...` failed once on the first run under load and passed on the rerun, as in E4 and E10.
+
+### T6a audit fixes (Codex audit of 634cd24b9)
+
+The audit confirmed the key matches normal insertion (priorities, equal-priority placement, no insertion bypass, no stamping off the main thread) but found the proof incomplete. Fixed in two commits:
+
+**0259870f9, tile membership (pre-existing bug, behaviour change on landless tiles only).**
+- The bug: `RemoveFromTile` never updated `Chunk.Tiles[x, y]`, the anchor the walk starts from. On a landless tile (`Chunk.Load` places nothing when `TryGetBlock` fails), removing the anchor A left `Tiles[x, y] == A` with its links cleared, so the rest of the list was unreachable. Re-adding A then took `AddGameObject`'s `o == obj` branch, which followed the `LinkedObject` container links (`Previous`/`Next`: for an effect, its EffectManager sibling) into another tile's list.
+- The fix: `GameObject.TileCell` stores the cell, set with `TileChunk` in `AddGameObject` (X/Y can change before removal: `SetInWorldTile`). `RemoveFromTile` calls `Chunk.ReleaseAnchor`, which hands a departing anchor to `TPrevious ?? TNext`, or null. The `o == obj` branch and the unused `RemoveGameObject` are gone. Tiles with land are unchanged: the land is the anchor and never leaves.
+- Tests: anchor removal on a landless tile, re-insertion with a stale container link (the old code put the object into the other tile's list), moving the anchor away and back, the stored cell surviving an X/Y change, and the random test now also uses a landless cell and checks membership both ways after every step.
+
+**55b15f1ee, the checker and the key.**
+- **64-bit sequence and a struct key.** `TileSeq`/`NextSeq` are `ulong`; `TileOrder.Key` returns `TileOrderKey` (priority, rank, seq) with a comparator (rank 2 oldest first, ranks 0 and 1 newest first). A 32-bit stamp wrapping between two equal-priority inserts reversed them. Tests cross the 2^32 boundary and check the comparator at the extremes.
+- **Full traversal.** No 10,000-object cap: each list is walked once from its head, with Floyd cycle detection on `TPrevious` (head search) and `TNext`. A cycle, a broken back link (`TNext.TPrevious != o`) or an object whose stored chunk/cell is another tile fails the tile; nothing unchecked is reported as clean. The other direction: every item, mobile, house component and (dev builds, where `World.Effects` exists) effect whose `TileChunk` is set must be reachable from its stored tile's anchor. Not covered: land and statics that fell out of a list (they are only reachable through lists), the multi-placement preview item and the cursor's preview multis (not in any world collection).
+- **Reports** are counted independently of the descent, capped at 25, and print a 16-object window around the first descent.
+- **Where it runs.** It ran in `GameScene.Update` before `World.Update`, the boat updates and the rest of Update, so it did not see the state walked that frame. It now runs at the start of `FillGameObjectList` (both renderers), on exactly the lists the walk then reads.
+- **No test-seam branch.** `AddGameObject` reads `Chunk.StaticTileData`, assigned once in `Client.cs` right after `FileManager.Load` (`TileDataLoader.Load` is the only place that array is replaced); unit tests assign their own. The per-insert null test is gone. What placement still costs: the counter increment and the 8-byte stamp store, plus the cell store.
+
+**Runs on 55b15f1ee** (JIT, kbatman3, `CUO_TILE_ORDER_CHECK=1 CUO_RECYCLE_CHECK=1`; the four drivers `ls_parity`, `w5push`, `w5items`, `corpses` in one session per renderer to save bench-queue turns, `-ecscheck 120`, Gpu with `CUO_ECS_PARITY=1`):
+
+| Run | Tiles | Objects | Out of order / cycles / broken / foreign | Owned checked, unreachable | Recycle |
+|---|---|---|---|---|---|
+| Plan Gpu (Britain + pickscan, bank + pickscan, house spot, travel, ltravel, glide, lswalk) | 69.9M | 130.2M | 0 / 0 / 0 / 0 | 2.93M, 0 | all 0 |
+| Plan Legacy (same, no pickscan) | 36.5M | 67.9M | 0 / 0 / 0 / 0 | 2.08M, 0 | all 0 |
+| `ls_parity` Gpu | 0.97M | 8.03M | 0 / 0 / 0 / 0 | 7.05M, 0 | all 0 |
+| Four drivers, Legacy | 30.4M | 39.6M (multi 453k) | 0 / 0 / 0 / 0 | 9.21M, 0 | all 0 |
+| Four drivers, Gpu | 30.2M | 42.7M (multi 4.85M) | 0 / 0 / 0 / 0 | 12.5M, 0 | all 0 |
+
+- `pickscan:8x6`: Britain and the bank 48 same, 0 different. `-ecscheck`: 0 mismatches. Parity items 4.34M, 0 mismatches.
+- Gpu mobile parity: 190 (drivers) and 340 (`ls_parity`) mismatched mobile-frames, all in the first 6 s after login and at the arrival in the large scene (capture 3 layers vs ECS 10–11, FrameInfo). Base 3681f25b3 with the same `ls_parity` run: 64, at the same two moments, same mobiles' kind. The count depends on arrival timing; it's the known login-mismatch issue (owner review), not tile order.
+
+**Chunk-load cost** (NativeAOT, checker unset, paired base 3681f25b3 / new 55b15f1ee, base-new-new-base, 3 windows of `travel` (real teleports), `ltravel` and `glide`; totals over the windows; noisy, other agents' clients running):
+
+| Mode | base 1 | new 1 | new 2 | base 2 |
+|---|---|---|---|---|
+| travel, µs per chunk load (loads) | 41.7 (595) | 27.2 (595) | 27.3 (595) | 35.8 (595) |
+| ltravel | 19.5 (605) | 19.3 (604) | 18.9 (604) | 19.7 (605) |
+| glide | 23.8 (280) | 23.4 (328) | 23.0 (328) | 23.2 (329) |
+
+No measured regression (travel's base rounds include GC-heavy frames: max 5.4 and 6.4 ms per frame vs 1.1–1.2 ms). The world prepare series above stands as "no measured regression", not "no cost".
+
+**Tests:** 607 pass in both `CuoDevTools` variants (18 in `TileOrderTests`); both client flavours build.
