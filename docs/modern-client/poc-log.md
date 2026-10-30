@@ -2158,6 +2158,102 @@ Base: poc/modern-client 3681f25b3. Branch `bg/ecs-t0-census`. Task 1 of ecs-tran
 **Environment notes.** A fresh worktree needs `git submodule update --init --recursive` before it builds (FNA and its nested libraries are empty otherwise). About 70 minutes were spent waiting for `bench.lock`, which other agents kept re-taking within a second of each other; the census builds and test runs themselves took a few minutes.
 
 **Audit fixes (Codex gate, 2026-10-30).** The scanner now also counts receiverless `++X`, `ref X` and `out X` (for example `Interlocked.Exchange(ref LastAnimationChangeTime, 0L)`), tuple deconstruction, and the 18 private A fields (animation timer, `_lastAnimationIdleDelay`, `_isSA_Poisoned`, the setters' backing fields); fixtures cover each form, `?.` assignment and the `out Direction d` type-name false positive. A stale budget now fails (the same-pair swap limit is documented). The sanity test became a discovery test (expected source files enumerated; no minimum counts). The census names construction writes (field initialisers, section 3.1a) separately from the 266 mutation count, and its claim about `?.` assignment is corrected. The census scripts are committed under `tools/ecs-census/` with a README (repo root through `CENSUS_ROOT`; the pipeline was re-run from the saved build logs and reproduced the document). Roslyn was considered and not used: a syntax-only scan has no receiver types, and a semantic one needs the whole client compiled inside a unit test (census section 8, limit 8).
+## First-sight item and multi art on the art workers (2026-10-30)
+
+Branch `poc/item-art-worker` (item art agent, kbatman4), from poc/modern-client 9312ec338, merged up to de98a6d1a; the final numbers were measured on 7cbda7d68. This follows "Teleport frames: first-sight chunk art decoded on workers", which left 11–25 main-thread decodes in one `travel` window per run, outside the map statics. Method: [testing/pack-loading.md](testing/pack-loading.md) §3, §4 and the new paragraph on item art. Scripts and logs are in the session scratchpad `itemart\`.
+
+**What decoded on the main thread (measured first).** A JIT diagnostic build logged every main-thread art decode with its callers (`CUO_ART_SYNC_LOG=1`, now committed). It ran Gpu and Legacy sessions with `travel`, `glide`, the bank, the KamDos house and Britain:
+- **Gpu, 130 decodes:**
+  - 90 came from the **item pick test** (`Item.CheckMouseSelection` in the draw walk). A ground item that hasn't been drawn yet has no stored draw offset (`ArtEntry.Width/Height` 0,0), so the cheap reject was skipped and `GetArt` decoded the art of every new item, on or off screen. In the Gpu world nothing else needs these items' atlas art: the world draws them from the pack.
+  - 39 came from **animated statics' frames** (`Static.Draw` through `GpuWorldRenderer.DrawObject`). The chunk scan asked for the graphic the block names; the view draws graphic + the frame offset.
+  - 1 was the paperdoll's equipment icon (UI art, out of scope).
+- **Legacy, 146 decodes:** the same split (111 pick, 34 animated static frames, 1 UI). The pick test runs before the draw, so the Legacy draw then finds the art in the atlas.
+- **Multis:** none appeared in a measured window. Their art decoded during the settle hold of the teleport that brought them into view, which FrameStats windows don't count.
+- **Corpses** draw from the animation path, which already decodes on workers.
+- **Cost in NativeAOT** (the base runs below): 48–56 decodes and 0.9–1.3 ms per `travel` run, 26–29 decodes and 0.66–0.73 ms per `glide` run. The worst frame spent 0.21–0.27 ms decoding. The 2.6–3.0 ms quoted before came from JIT builds.
+
+**Design.**
+- **Items arrive after their chunk is built, so nothing waits for them.** A ground item (`Item`, on the ground, not a corpse or a multi) and a multi component (`Multi`: house or boat parts) request their art when they are placed on the map (`GameObject.AddToTile(x, y)`, parked or not, through `FirstSightArt.RequestPlaced`). The request covers the graphic the view draws (`DisplayedGraphic`: coin and stack variants) and every animation frame (AnimData offsets). A multi component also requests its new graphic after a season change. Hues don't matter: art is decoded unhued.
+  - In practice the art is in the atlas before anything needs it. Items that arrive in a teleport's packet burst are parked until their chunk loads (Map.Park), and the chunk waits for its own art. Legacy, which draws items from the atlas, had 0 main-thread decodes after the change.
+  - Where art is still pending, the old lookup still works: it decodes on the spot and the worker's result is dropped. Nothing draws a placeholder, and nothing new is held.
+- **Pick test.** When an item has no stored draw offset yet, the test stores the one the view and `ItemSpriteExtract` store when they draw it, computed from the pack's sprite size (`OrigW/OrigH`). The reject then works from the first frame, 44×44 art included (its offset is 0,0).
+  - An item outside the reject rectangle never needs its art. One the reject doesn't exclude is still tested against its exact pixels, decoding on the spot if it must, so selection is exactly as before: at most the few items under the mouse decode.
+  - A rejected item whose art is missing (a graphic changed in place, an atlas reload) is requested from the workers then.
+- **Animated statics:** the chunk scans (block scan and loaded-chunk walk) wait for the frame shown now and request every other frame in the full scan.
+- **Settle hold:** unchanged and honest. Nothing new is skipped in the draw walk. The Gpu world draws ground items from the pack (`ItemSpriteExtract`); multi components still go through `Multi.Draw` (`GpuWorldRenderer.DrawObject`, whose direct extract handles only items and mobiles), so a component whose art is still pending decodes on the spot there, as before.
+- **Audit lessons kept:**
+  - A failed worker decode is terminal (`RequestArt` treats it as ready).
+  - Requests cost O(1); the extra frame requests run only in the full block scan and in the loaded-chunk walk, which already runs only after uploads.
+  - Uploads stay inside the 2 ms chunk budget (`DrainReady` in `Map.UpdateLoading`).
+  - `GameScene.Unload`'s `CancelPending` covers these decodes.
+  - The season generation already rescans statics; multi components re-request on season change.
+- **Switches:**
+  - `CUO_ART_SYNC=1` (or `CUO_CHUNK_SYNC=1`, which turns off the drain) turns all of this off, including the pack-sized pick reject: the old path.
+  - FrameStats counter `art_obj`: placements whose art was requested.
+
+**Measurements.** NativeAOT, `DOTNET_TieredCompilation=0`, Gpu world, 1920×1080, plan `house;bank;travel;ltravel;glide;far` (4 windows of 5 s). The character starts every run at Jhelom (the `far` entry), so the house and bank are cold teleports. Base is poc/modern-client de98a6d1a and new is 7cbda7d68, both built from the same tip, run alternated A–C: base, new, new, base, base, new. The machine was busy (eight agents share it; one other client during baseA). Main-thread art decodes come from FrameStats `art_sync`/`art_sync_us`, window sums:
+
+| Entry | Base decodes / ms (per run) | New | Base U+D max (ms) / >8 | New U+D max / >8 |
+|---|---|---|---|---|
+| `travel` | 48–56 / 0.87–1.27 (worst frame 0.21–0.27 ms) | **0 / 0** | 4.9, 6.0, 10.2 / 0, 0, 1 | 5.1, 5.1, 5.9 / 0 |
+| `ltravel` | 1–3 / 0.04–0.11 | **0** | 2.8–8.1 / 0–1 | 3.0–7.7 / 0 |
+| `glide` | 26–29 / 0.66–0.73 | **0** | 2.1–4.3 / 0 | 2.2–4.7 / 0 |
+| house, bank, Jhelom | 0 in the windows (decoded during the hold) | 0 | ≤ 2.1 | ≤ 2.3 |
+
+- **Whole session, JIT diagnostic builds** (counting the login and the settle holds too, from the `[artsync]` lines):
+  - Gpu: base 130 main-thread decodes, new 1 (the paperdoll icon);
+  - Legacy: base 146, new 1.
+- **Every frame over 7 ms in both builds is a GC**: the login warm-up's compacting gen1 (6.7–7.6 ms, `[gc]` lines), in `ltravel` or `travel`. Base's two frames over 8 ms (baseB `ltravel` 8.1, baseC `travel` 10.2) are both that collection; new had none over 8 ms in three runs. That depends on where the collection lands, not on this change.
+- **Uploads:** `art_obj` was 446 requests over the three new runs (up to 67 placements in a frame after a teleport). `art_upload_us` peaked at 1.7–2.0 ms (base 1.0–2.0), inside the chunk budget as designed; `art_pending` peaked at 263–272 in both builds.
+- **Settle:** every run had 0 timeouts and 0 unsettled frames in an episode. Walking-unsettled frames: base 113–147, new 113–143.
+
+**Verification** (new binary unless noted):
+
+| Check | Result |
+|---|---|
+| `CUO_GPU_SKIP_CHECK=1 CUO_PREP_CHECK=1 CUO_GPU_ITEM_CHECK=1` with `pickscan:8x6` at the house, the bank and Britain, plus `travel`, `ltravel`, `glide` and Britain at zoom 2.5 | Prep check: 0 wrong positions and **0 wrong item-pick rejects** (up to 187k rejects per window, now including first-sight items). Item check: 0 with differences. Skip check: 0 unsettled, 0 drawn differently. Pickscan: 48 same, 0 different at all three. Settle: 0 timeouts, 0 unsettled in an episode |
+| Season (`season:winter`, `ltravel`, `glide`, Britain, the house, `season:summer`, Britain) and facet change (`[self set map felucca`, `trammel`, with `pickscan:8x6` on each) | 0 timeouts, 0 unsettled in an episode, 0 main-thread art decodes. Facet ready after 68 and 53 ms. Pickscan 48 same, 0 different on both facets. Looked at the shots: the winter house (snow, bare tree, house complete) and summer Britain (complete) |
+| ECS parity: `CUO_ECS_PARITY=1 CUO_ANIM_SYNC=1 -ecscheck 120`, driver `parity-travel.txt` (`[go` teleports between towns with walks, `light 1E` then `light off`), plus the item and skip checks | Items: 343k compared, 0 mismatched, 3,516 lights with 0 mismatched. Mobiles: 181k, 0 mismatched. `-ecscheck` 0 mismatched in 23 checks. Item check 0 |
+| Legacy (`-worldrenderer legacy`, base against new: the house, the bank, Britain, after `travel`, after `glide`, Britain again, Jhelom) | Identical (0.00% of pixels differ by more than 8) apart from the bank (0.42%) and Jhelom (0.12%). Looked at the bank: only NPC positions differ; the counters and furniture are identical. Near-black 1.2–2.4%, the same in both |
+| `CUO_ART_SYNC=1` on the new binary, with the prep check | The old path: 579 main-thread decodes in `travel`, 0 worker uploads, 0 wrong rejects, 0 timeouts |
+| Unit tests | 590 pass in both build variants (`-p:CuoDevTools=false` too); 626 after merging poc/modern-client 80ccb1a24 (the T0 write-site budget test passes). New: `ItemPickBoundsTests` decodes about 870 pack art sprites, including 200 that are 44×44, and checks that the reject from the pack size never drops a pixel the picker would hit, the stack's second sprite included |
+
+- **A unit-test catch from the merge:** E11's `SetInWorldTileSyncTests` places items without a game. `FirstSightArt` now does nothing when no art is loaded (a null check, fixed after the measurements).
+- `ChunkLoadingTests.Prefetched_Regions_Give_The_Same_Blocks_And_Never_Block_IsBlockReady` failed once while the machine was busy (2.65 ms against a 2 ms limit) and passed on reruns, as E10 saw.
+
+**Not done or noted:**
+- **No boats and few houses on the local server.** Multis were checked with KamDos (`house:1427 1691`) only.
+- **Correction (Codex audit):** an earlier version of this entry said house components had no atlas art in the Gpu world. That was wrong: they reach `Multi.Draw` through `GpuWorldRenderer.DrawObject`, which decodes their art and stores the pick anchor on the art entry. The real change was a regression, fixed below: the prefetch could fill a component's pixel mask before its first draw had stored the anchor.
+- **Placement requests sit outside the chunk budget, and nothing caps the bytes of decodes in flight.** Requests are O(1) and the uploads are budgeted, but a teleport into a town queues every new item's and component's decode at once, each holding its untrimmed buffer until its upload. All animated bases together come to about 76 MiB untrimmed. A cap on in-flight decode bytes is a follow-up.
+- **After `Art.Reload`**, multi components aren't re-requested. A Legacy draw then decodes their art on the spot, as before.
+- **UI art** (gumps, the paperdoll's item icons) still decodes on the main thread.
+- No 4K run, no 13-minute session, and not the owner's FPS test.
+
+**Codex audit fixes** (no P0 or P1 found; object lifetime, worker safety, generations, item bounds and Gpu readiness checked out):
+1. **Multi pick anchor (P2, a regression from this branch).** The prefetch filled a component's pixel mask before the first draw stored `ArtEntry.Width/Height`. Picking runs before drawing, and components the mesh build skips (`CHMOF_DONT_REMOVE`) had their first pick at anchor (0,0). The wooden wall 0x0006 (44×106) was 62 px off: false hits and misses. `MultiView.CheckMouseSelection` now tests the sprite `Multi.Draw` draws, with its anchor computed from the pack's size (`Multi.SpriteTopLeft`, the anchor `DrawStaticAnimated` stores). The same change fixes two older mismatches between pick and draw: the pick now uses the current animation frame (graphic + `AnimOffset`) and the boat's `Offset`. New test: wall 0x0006's drawn pixels all pick, where the old anchor missed most of them.
+2. **A parked seasonal component missed a season change (P2, inherited).** `World.ChangeSeason` only visits loaded chunks, so a component parked on an unloaded chunk kept the old season's graphic. `Map.LoadChunk` now refreshes the seasonal graphic of each parked object it attaches (a no-op for items and mobiles), which also requests the new art.
+3. **Logout race in `FirstSightDecoder` (P2, inherited).** A worker could pass its epoch check, then `Cancel` bumped the epoch and drained an empty queue, then the worker queued its buffer, which stayed held until the next session's `Drain`. The epoch check and the publish now run under a lock that `Cancel` takes too. New test at that boundary: `Cancel` waits for the publish and drains the job, so no buffer stays queued.
+4. **The animated frame waited for (P3).** The chunk loader (in `World.Update`) read `AnimOffset` before `AnimatedStaticsManager.Process` advanced it, so the frame drawn could be the next one, still pending. `Process` now runs before `World.Update`.
+5. **Docs:** the multi explanation and the two notes above.
+
+**Checks on the fixes** (c68c63985, NativeAOT):
+- **Unit tests:** 628 pass in both build variants. `ChunkLoadingTests.Prefetched_Regions…` hit its timing limit once more under load (2.8 ms) and passed on the rerun.
+- **One run,** with `CUO_PREP_CHECK=1 CUO_GPU_ITEM_CHECK=1 CUO_GPU_SKIP_CHECK=1`: the house with `pickscan:8x6`, `travel`, `season:winter`, the house with `pickscan:8x6`, `glide`, `season:summer`, the house with `pickscan:8x6`, Jhelom.
+  - Pickscan: 48 same, 0 different, all three times.
+  - Prep check: 0 wrong. Item check: 0 with differences. Skip check: 0 drawn differently.
+  - Settle: 0 timeouts, 0 unsettled in an episode. 0 main-thread art decodes in every window.
+  - The worst frame (9.4 ms, `travel`) is the login warm-up's compacting gen1. The run had the checks on, so its frame times aren't a measurement.
+  - The Jhelom entry also had one 7.5 ms frame, almost all of it `prep_foliage_finish` (7.06 ms), in its second window rather than at the teleport.
+    - A pair with the checks off (same `house`, `travel`, `far` entries, base `bin-base` against `bin-fix`) had no such frame: Jhelom's worst frame was 1.45 and 1.48 ms in base, 1.38 and 1.67 ms in fix.
+    - Over every run of this branch, `prep_foliage_finish` went above 1 ms only in the two runs with `CUO_PREP_CHECK`, `CUO_GPU_ITEM_CHECK` and `CUO_GPU_SKIP_CHECK` on (3.05 ms in `chk1`, 7.06 ms here); it never did in the 11 runs without them.
+    - So it looks like checker overhead, which these phases include, not a product cost. Which check causes it wasn't narrowed down.
+- **ECS parity after the frame reorder (fix 4),** with `tools/ecs-parity/e7mixed.txt` (kbatman3, Green Acres: ground items, animated statics, a corpse and mixed served tiles), extended to compare by day too (`parity`, a walk and `check` after `light off`). Run with `CUO_ECS_PARITY=1 CUO_ANIM_SYNC=1 -ecscheck 120`, the item and skip checks, on `bin-fix`:
+  - items: 844k compared, 0 mismatched, 49,087 lights with 0 mismatched;
+  - mobiles: 131k, 0 mismatched;
+  - `-ecscheck`: 22 checks, 0 mismatched;
+  - item check: 0 with differences; skip check: 0 drawn differently, 0 unsettled;
+  - the spawned items and the brigand were wiped by the script.
+
 
 ## Gumps in the pack (2026-10-30)
 

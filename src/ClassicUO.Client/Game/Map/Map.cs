@@ -177,6 +177,9 @@ namespace ClassicUO.Game.Map
 
                     if (p.Obj.PendingBlock == block && !p.Obj.IsDestroyed)
                     {
+                        // World.ChangeSeason only visits loaded chunks: a parked multi component takes the season it
+                        // missed now (the same graphic otherwise; a no-op for items and mobiles)
+                        p.Obj.UpdateGraphicBySeason();
                         p.Obj.AddToTile(chunk, p.X, p.Y); // clears PendingBlock
                     }
                 }
@@ -407,7 +410,16 @@ namespace ClassicUO.Game.Map
                 }
                 else
                 {
-                    ready = arts.RequestArt(SeasonManager.GetSeasonGraphic(season, block.Statics[pos - block.Land.Length].Graphic));
+                    ushort graphic = SeasonManager.GetSeasonGraphic(season, block.Statics[pos - block.Land.Length].Graphic);
+
+                    // an animated static draws graphic + the frame offset AnimatedStaticsManager advances: wait for the
+                    // frame shown now, and request the rest of its frames in the full scan
+                    if (full)
+                    {
+                        FirstSightArt.RequestFrames(graphic);
+                    }
+
+                    ready = arts.RequestArt(graphic) & FirstSightArt.RequestCurrentFrame(graphic);
                 }
 
                 if (!ready && firstMissing < 0)
@@ -476,7 +488,8 @@ namespace ClassicUO.Game.Map
                                 break;
 
                             case Static st:
-                                ready &= arts.RequestArt(st.Graphic);
+                                FirstSightArt.RequestFrames(st.Graphic);
+                                ready &= arts.RequestArt(st.Graphic) & FirstSightArt.RequestCurrentFrame(st.Graphic);
 
                                 break;
                         }
