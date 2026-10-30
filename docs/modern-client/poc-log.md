@@ -2254,3 +2254,38 @@ Branch `poc/item-art-worker` (item art agent, kbatman4), from poc/modern-client 
   - `-ecscheck`: 22 checks, 0 mismatched;
   - item check: 0 with differences; skip check: 0 drawn differently, 0 unsettled;
   - the spawned items and the brigand were wiped by the script.
+
+## E4 default-on gate (2026-10-30)
+
+Branch `bg/ecs-e4-gate`, from poc/modern-client b9f9419db (E10's `MobileTable` merged; no `src` change since 59e1c6da3). No code change. Account kbatman3 (the character-creation run used a new account, kbatman5), Gpu, 1920x1080 except where noted. Binaries: `bin-jit` (Release, `DOTNET_TieredCompilation=0`) and `bin-aot` (devtools NativeAOT publish), both from b9f9419db, in the session scratchpad `e4gate\`. `world_update_mobile_system` on (settings.json) in every checker run. Unit tests: 625 pass.
+
+**Checkers, JIT** (`CUO_ECS_PARITY=1 CUO_ANIM_SYNC=1 CUO_GPU_ITEM_CHECK=1 CUO_MOBILE_UPDATE_CHECK=1 CUO_W5_CHECK=1 CUO_MOBILE_INPUT_CHECK=1 CUO_MOBILE_CACHE_CHECK=1 CUO_PREP_CHECK=1 CUO_GPU_SKIP_CHECK=1`, `-ecscheck 120`). Every failure count in every run below is 0 (clocks different, skipped updates that changed state, due updates out of order, table-vs-dictionary differences, parity mismatches for mobiles and items, input check and seat tests, item check, w5-check, mobile-cache-check, prep-check wrong, skip-check, `-ecscheck`):
+
+| Run | table checks / clocks / skipped / order | parity mobiles / items | input samples / seat tests |
+|---|---|---|---|
+| large scene `ls_day` (`light off`; standing, lane walked and run) | 8,181 / 14.37M / 13.69M / 685k | 5.87M / 2.80M | 5.64M / 5.10M |
+| large scene `ls_night` (`light 1E`; lights=312k exercised) | 8,101 / 14.45M / 13.74M / 710k | 5.76M / 2.72M | 5.63M / 5.09M |
+| `w5push` day | 309,526 / 3.39M / 3.18M / 205k | 2.03M / 640k | 1.95M / 1.61M |
+| `w5push` night | 343,321 / 1.80M / 1.71M / 89k | 1.33M / 391k | 1.24M / 937k |
+| `w5items` day | 143,414 / 346k / 316k / 30k | 296k / 501k | 288k / 228k |
+| `w5items` night | 117,661 / 286k / 264k / 22k | 251k / 435k | 240k / 193k |
+
+The `w5push`/`w5items` scripts are the repo ones with `light off` or `light 1E` inserted after the first line; in Green Acres no lights are in range, so `lights=0` there (the night lights path is exercised by the large scene).
+
+**NativeAOT** (devtools build, the same checkers; the devtools variant is needed for `mobsys:` and FrameStats, `CUO_MOBILE_UPDATE_CHECK` itself is not devtools-only): `ls_day`, `ls_night` and `w5push` day, all checkers 0 (table checks 20,757 / 7,841 / 252,356; clocks 11.8M / 13.8M / 2.35M; parity 4.90M / 5.43M / 1.47M mobile comparisons 0 mismatched; lights 302k and 331k at night and 6k in `w5push`).
+
+**Character creation** (once, JIT build, checkers on, via synthetic mouse and keyboard input, `tools` scratch `cc.py`): a new account (kbatman5) logs in to the character-creation gumps, the preview mobile (human male) is on screen, name typed, Next, Warrior, New Haven, Next: the character is created and the world loads (Trammel 3503 2574). Afterwards 65,111 frames: clocks 186,940 checked 0 different, skipped 182,113 0 changed, order 4,827 0, **table checks 65,111, table-vs-dictionary differences 0**, input check 66,664 samples 0, parity 66,380 mobile comparisons 0 mismatched, `-ecscheck` 0 in 571 checks. `World.Update` does not run during character creation, so the preview mobile only exercises `MobileTable` add and the `LoginScene` clear; the first game frames show the table matches the shadow dictionary afterwards. **A character "Gatetest" now exists on account kbatman5** (left in place).
+
+**Soak** (NativeAOT, E4 on, `CUO_MOBILE_UPDATE_CHECK=stats`, about 13 minutes of plan: large scene zoom 1 and 2.5, the lane walk, `travel` (server teleports Britain to the towns every 2 s), `glide`, `ltravel`, repeated; 126 FrameStats windows): no exception; `dynamic dropped 0` throughout; 840,963 frames, 10.07M clock pushes. Private bytes (sampled every 10 s): 1,915 MB at 1 min, 2,199 at 2, 2,276 at 3, then 2,277 (4), 2,286 (5), 2,294 (6), **2,347 (7), 2,345 (13)**; working set 1,269 MB at the end. Flat after the 3-minute warm-up: +50 MB from minute 4 to 7 (the first travel/glide caches), and 0 from minute 7 to 13. This is a 13-minute run, not a leak proof; the plan is sequential teleports plus the scene, not login-heavy crowds.
+
+**Timing: setting off vs on** (NativeAOT devtools, in-session `mobsys:off`/`mobsys:on` alternation, 3 windows of 5 s per entry, each pair twice per session, 3 sessions, so n=6 per cell; ms; FrameStats on; machine noisy but the pairs are in-session; ranges are the 6 cell averages):
+
+| Spot | `world_mobiles` off | on | `update` off | on | `frame` off | on |
+|---|---|---|---|---|---|---|
+| zoom 1 | 0.041 (0.036-0.043) | **0.020** (0.017-0.022) | 0.131 | 0.112 | 1.595 (1.53-1.65) | 1.601 (1.52-1.67) |
+| zoom 2.5 | 0.044 (0.041-0.049) | **0.024** (0.021-0.027) | 0.153 | 0.126 | 2.079 (2.00-2.23) | 1.997 (1.89-2.09) |
+| walking the lane | 0.040 (0.038-0.043) | **0.022** (0.021-0.023) | 0.163 | 0.141 | 1.935 (1.89-2.02) | 1.926 (1.87-1.99) |
+
+On halves the mobile loop (about -0.02 ms) and takes 0.02-0.03 ms off `update`; the whole-frame difference is inside the noise (zoom 2.5 -0.08 ms, the others ±0.01), as E4 and E10 found. The frame's cost is the GPU world prepare, not this loop.
+
+**Proposal.** Turn `world_update_mobile_system` on by default. All checkers were 0 over about 60M clock comparisons, 60M skipped-update comparisons, 3M due-update order checks and about 1.3M table-vs-dictionary comparisons, in JIT and NativeAOT, by day and night, in the large scene, with mounts, deaths and corpses (`w5push`, `w5items`), through the character-creation preview mobile, and over a 13-minute travel-and-crowd soak with flat memory; E4 passed its Codex audit and E10's table passed its own, and the unit tests pass (625). The gain is small (0.02 ms of the mobile loop, 0.02-0.03 ms of `update` in a 2,000-mobile scene, nothing measurable in the frame), so the case for the switch is not speed but that the ECS clock becomes the thing the world runs on, which E4's later steps (selection against ECS state, then a chunk-iterating system) need; the risk side is the due-time logic being the only reader of the clocks, so keep the checker (`CUO_MOBILE_UPDATE_CHECK`) in the standard gate and keep the off path for one phase, as the plan says. What the gate did not cover: a live 0xBB serial change (unit-tested only), a multi-hour session, and login-heavy crowds. If the owner wants those first, the switch can wait; I see no failing evidence against flipping it.
