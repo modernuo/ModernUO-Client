@@ -21,7 +21,7 @@ public static class GumpConvert
     /// --gump-small n: an image whose run-length payload is at most n bytes is stored that way, uncompressed (a Brotli
     /// decode has a fixed cost of tens of µs that dominates small images; they add little to the file). 0 = off.
     /// </summary>
-    public static int SmallRle = 16384;
+    public static int SmallRle = 65536;
 
     public sealed record Stats(int Slots, int Present, int Records, int Aliases, int ContentShared, int Hued, int SmallRaw, long RawBytes, long StoredBytes, long FileBytes)
     {
