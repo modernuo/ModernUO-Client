@@ -48,7 +48,9 @@ namespace ClassicUO.Game
 
         private MobileSpriteExtract _mobileExtract;
 
+#if CUO_DEVTOOLS
         public EcsSessionDriver Driver { get; private set; }
+#endif
 
         public int MismatchesTotal => _mismatchesTotal;
 
@@ -424,6 +426,7 @@ namespace ClassicUO.Game
                 return;
             }
 
+#if CUO_DEVTOOLS
             if (Driver == null && CUOEnviroment.EcsDriverScript != null)
             {
                 Driver = EcsSessionDriver.Load(CUOEnviroment.EcsDriverScript);
@@ -431,6 +434,7 @@ namespace ClassicUO.Game
             }
 
             Driver?.EnsureAttached(_world);
+#endif
 
             if (_world.Player != null)
             {
