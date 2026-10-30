@@ -519,6 +519,8 @@ namespace ClassicUO
             }
 
             FrameStats.Begin(FramePhase.UiUpdate);
+            // gumps decoded ahead on workers (Gump.Request): into the atlas before the UI asks for them, 1 ms at most
+            UO.Gumps?.DrainReady(System.Diagnostics.Stopwatch.GetTimestamp() + System.Diagnostics.Stopwatch.Frequency / 1000);
             UIManager.Update();
             FrameStats.End(FramePhase.UiUpdate);
 

@@ -359,7 +359,7 @@ namespace ClassicUO.Game.UI.Controls
                 if (Client.Game.UO.FileManager.TileArt.TryGetAppearance(itemGraphic, mobileGraphic, out var appareanceId))
                 {
                     var gumpId = (ushort)(Constants.MALE_GUMP_OFFSET + appareanceId);
-                    if (Client.Game.UO.Gumps.GetGump(gumpId).Texture != null)
+                    if (Client.Game.UO.Gumps.Exists(gumpId))
                     {
                         Log.Info($"Equip conversion through tileart.uop done: old {animID} -> new {appareanceId}");
                         return gumpId;
@@ -376,14 +376,14 @@ namespace ClassicUO.Game.UI.Controls
         {
             if (
                     animID + offset > GumpsLoader.MAX_GUMP_DATA_INDEX_COUNT
-                    || Client.Game.UO.Gumps.GetGump((ushort)(animID + offset)).Texture == null
+                    || !Client.Game.UO.Gumps.Exists((ushort)(animID + offset))
                 )
             {
                 // inverse
                 offset = isFemale ? Constants.MALE_GUMP_OFFSET : Constants.FEMALE_GUMP_OFFSET;
             }
 
-            if (Client.Game.UO.Gumps.GetGump((ushort)(animID + offset)).Texture == null)
+            if (!Client.Game.UO.Gumps.Exists((ushort)(animID + offset)))
             {
                 Log.Error(
                     $"Texture not found in paperdoll: gump_graphic: {(ushort)(animID + offset)}"

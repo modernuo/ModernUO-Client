@@ -8,6 +8,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
+using Uo.Pack;
 
 namespace ClassicUO.Assets
 {
@@ -35,8 +36,65 @@ namespace ClassicUO.Assets
         public bool UseUOPGumps = false;
         public UOFile File => _file;
 
+        /// <summary>
+        /// The pack's gump section (gumps/gumps.bin, pack-format.md "Gumps"), or null when the pack has none and gumps come
+        /// from MUL/UOP. With it, every gump is read from the pack: gump.def and loose Gumps/*.gump files were applied by
+        /// the converter, and decodes are thread-safe (<see cref="GetGump(uint, Span{uint})"/>).
+        /// </summary>
+        private RecordStore _pack;
+
+        /// <summary>ClassicUO's 5-to-8-bit table (HuesHelper.Color16To32), so pack decodes give the MUL decode's RGBA exactly.</summary>
+        private static readonly uint[] _expand = BuildExpand();
+        private static readonly uint[] _lut = GumpCodec.BuildLut(_expand);
+
+        private static uint[] BuildExpand()
+        {
+            var t = new uint[32];
+
+            for (int c = 0; c < 32; c++)
+            {
+                t[c] = HuesHelper.Color16To32((ushort)(c << 10)) & 0xFF;
+            }
+
+            return t;
+        }
+
+        /// <summary>
+        /// Read the pack's gump section when it has one (set before <see cref="Load"/>). CUO_PACK_GUMPS=0 starts it false:
+        /// MUL/UOP even with a gump section, for side-by-side measurements and parity checks.
+        /// </summary>
+        public bool UsePack = Environment.GetEnvironmentVariable("CUO_PACK_GUMPS") != "0";
+
+        /// <summary>The pack's gump store (null on the MUL/UOP path); tests and tools only.</summary>
+        public RecordStore PackStore => _pack;
+
+        /// <summary>True when gumps come from the pack.</summary>
+        public bool FromPack => _pack != null;
+
+        /// <summary>Gump ids the index covers: a larger id has no gump.</summary>
+        public int Count => _pack?.SlotCount ?? _file.Entries.Length;
+
+        /// <summary>Worker threads may decode (<see cref="GetGump(uint, Span{uint})"/>): only the pack path is thread-safe.</summary>
+        public bool CanDecodeOnWorker => _pack != null;
+
         public override void Load()
         {
+            string packPath = FileManager.Pack?.PathOf(StoreConst.GumpsFile);
+
+            if (UsePack && packPath != null && System.IO.File.Exists(packPath))
+            {
+                _pack = RecordStore.Open(packPath, StoreConst.MagicGumps);
+                UseUOPGumps = (_pack.Header.Flags & StoreConst.GumpFlagUop) != 0;
+                Log.Trace($"Gumps: pack ({_pack.Records.Length} images for {_pack.SlotCount} ids{(UseUOPGumps ? ", from UOP" : "")})");
+
+                return;
+            }
+
+            if (FileManager.Pack != null)
+            {
+                Log.Trace("Gumps: the pack has no gump section; reading gumpart MUL/UOP");
+            }
+
             string path = FileManager.GetUOFilePath("gumpartLegacyMUL.uop");
 
             if (FileManager.IsUOPInstallation && System.IO.File.Exists(path))
@@ -131,6 +189,11 @@ namespace ClassicUO.Assets
         {
             _ours.Clear();
 
+            if (_pack != null)
+            {
+                return; // the converter folded the loose files into the pack (re-run it with --only gumps after changing them)
+            }
+
             string folder = Path.Combine(FileManager.BasePath, "Gumps");
 
             if (!Directory.Exists(folder))
@@ -203,8 +266,130 @@ namespace ClassicUO.Assets
             return Decode(ref reader, w, h, 0);
         }
 
+        /// <summary>
+        /// Width and height of gump <paramref name="index"/> without decoding it (the pack's size table, or the MUL/UOP
+        /// index; an entry whose size sits inside its compressed data reports 0 until first decoded). False = no gump.
+        /// </summary>
+        public bool TryGetSize(uint index, out int width, out int height)
+        {
+            if (_pack != null)
+            {
+                if (_pack.TryGet((int)index, out _, out var record))
+                {
+                    width = record.Meta0;
+                    height = record.Meta1;
+
+                    return true;
+                }
+
+                width = height = 0;
+
+                return false;
+            }
+
+            ref var entry = ref _file.GetValidRefEntry((int)index);
+            width = Math.Max(0, entry.Width);
+            height = Math.Max(0, entry.Height);
+
+            return entry.CompressionFlag == CompressionType.ZlibBwt || entry.Width > 0 || entry.Height > 0
+                || (_ours.Count > 0 && _ours.ContainsKey((int)index));
+        }
+
+        /// <summary>Texels <see cref="GetGump(uint, Span{uint})"/> needs in its buffer (pack path; 0 = no gump).</summary>
+        public int PixelCount(uint index)
+            => _pack != null && _pack.TryGet((int)index, out _, out var record) ? record.Meta0 * record.Meta1 : 0;
+
+        /// <summary>
+        /// Pack path: decodes gump <paramref name="index"/> into <paramref name="buffer"/> (at least
+        /// <see cref="PixelCount"/> texels; every texel of the image is written, so a dirty pooled buffer is fine) and
+        /// returns it as a slice. Thread-safe. On the MUL/UOP path this is <see cref="GetGump(uint)"/> (main thread only;
+        /// the buffer is unused).
+        /// </summary>
+        public GumpInfo GetGump(uint index, Span<uint> buffer)
+        {
+            if (_pack == null)
+            {
+                return GetGump(index);
+            }
+
+            if (!_pack.TryGet((int)index, out var slot, out var record))
+            {
+                return default;
+            }
+
+            int w = record.Meta0, h = record.Meta1;
+
+            if (w == 0 || h == 0 || buffer.Length < w * h)
+            {
+                return default;
+            }
+
+            // the gump.def hue, as GetColor16 applies it: only a hue the table has
+            Span<ushort> shades = stackalloc ushort[32];
+            var hues = FileManager.Hues;
+            bool hued = slot.Arg != 0 && slot.Arg < hues.HuesCount;
+
+            if (hued)
+            {
+                int c = slot.Arg - 1;
+                ref var block = ref hues.HuesRange[c >> 3].Entries[c & 7];
+
+                for (int k = 0; k < 32; k++)
+                {
+                    shades[k] = block.ColorTable[k];
+                }
+            }
+
+            var pixels = buffer.Slice(0, w * h);
+
+            if (record.Meta2 == GumpCodec.LayoutTexels && record.RawBytes == (uint)(w * h * 2))
+            {
+                // no intermediate buffer: the 16-bit texels decode into the upper half of the pixel buffer and expand
+                // in place, front to back (texel i is read before RGBA texel i overwrites anything unread)
+                var texels = MemoryMarshal.Cast<uint, ushort>(pixels).Slice(w * h, w * h);
+                _pack.Read(record, MemoryMarshal.AsBytes(texels));
+                GumpCodec.ExpandTexels(texels, pixels, _lut, hued ? shades : default);
+
+                return new GumpInfo { Pixels = pixels, Width = w, Height = h };
+            }
+
+            var raw = System.Buffers.ArrayPool<byte>.Shared.Rent((int)record.RawBytes);
+
+            try
+            {
+                _pack.Read(record, raw);
+
+                if (!GumpCodec.Decode(record.Meta2, raw.AsSpan(0, (int)record.RawBytes), w, h, pixels, _lut, _expand, hued ? shades : default))
+                {
+                    Log.Warn($"gump {index}: corrupt record in the pack");
+
+                    return default;
+                }
+
+                return new GumpInfo { Pixels = pixels, Width = w, Height = h };
+            }
+            finally
+            {
+                System.Buffers.ArrayPool<byte>.Shared.Return(raw);
+            }
+        }
+
+        public override void Dispose()
+        {
+            _pack?.Dispose();
+            _pack = null;
+            base.Dispose();
+        }
+
         public GumpInfo GetGump(uint index)
         {
+            if (_pack != null)
+            {
+                int count = PixelCount(index);
+
+                return count == 0 ? default : GetGump(index, new uint[count]);
+            }
+
             // Ours first, so a file can correct a gump the archive already has and not only fill
             // a number it lacks.
             if (_ours.Count > 0 && _ours.TryGetValue((int)index, out string ours))

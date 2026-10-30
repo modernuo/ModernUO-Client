@@ -1,20 +1,45 @@
+using System;
+using System.Buffers;
+using System.Diagnostics;
 using ClassicUO.Assets;
 using Microsoft.Xna.Framework.Graphics;
 
 namespace ClassicUO.Renderer.Gumps
 {
+    /// <summary>
+    /// Gump textures. <see cref="GetGump"/> is synchronous: gump controls take their size and their existence from it
+    /// at construction, so a gump the client asks for is always decoded by the time the call returns. With a pack the
+    /// decode reads one record (pooled buffers, no copies) and the size and existence of any gump are known without
+    /// decoding (<see cref="TryGetSize"/>, <see cref="Exists"/>). Gumps that will be needed soon can be decoded ahead on
+    /// worker threads (<see cref="Request"/>, uploaded by <see cref="DrainReady"/>); a <see cref="GetGump"/> that comes
+    /// first decodes on the spot and the worker's result is dropped. CUO_GUMP_SYNC=1 turns requests off.
+    /// </summary>
     public sealed class Gump
     {
         private readonly TextureAtlas _atlas;
         private readonly SpriteInfo[] _spriteInfos;
         private readonly PixelPicker _picker = new PixelPicker();
         private readonly GumpsLoader _gumpsLoader;
+        private readonly FirstSightDecoder _decoder;
+
+        public static readonly bool AsyncRequests = Environment.GetEnvironmentVariable("CUO_GUMP_SYNC") != "1";
+
+        /// <summary>Main-thread first-sight decodes and their time; FrameStats resets them.</summary>
+        public static int FrameSyncLoads;
+        public static long FrameSyncTicks;
+        /// <summary>Worker decodes uploaded by <see cref="DrainReady"/> and the time spent there; FrameStats resets them.</summary>
+        public static int FrameAsyncUploads;
+        public static long FrameUploadTicks;
+        /// <summary>Main-thread decodes and their time since start (never reset; for scripted measurements).</summary>
+        public static int TotalSyncLoads;
+        public static long TotalSyncTicks;
 
         public Gump(GumpsLoader gumpsLoader, GraphicsDevice device)
         {
             _gumpsLoader = gumpsLoader;
             _atlas = new TextureAtlas(device, 4096, 4096, SurfaceFormat.Color);
-            _spriteInfos = new SpriteInfo[gumpsLoader.File.Entries.Length];
+            _spriteInfos = new SpriteInfo[gumpsLoader.Count];
+            _decoder = new FirstSightDecoder("gump", _spriteInfos.Length, DecodeOnWorker, UploadDecoded);
         }
 
         public void Reload()
@@ -22,6 +47,126 @@ namespace ClassicUO.Renderer.Gumps
             _gumpsLoader.LoadOurs();
             System.Array.Clear(_spriteInfos);
             _picker.Clear();
+        }
+
+        /// <summary>Worker decodes requested and not uploaded yet.</summary>
+        public int PendingDecodes => _decoder.Pending;
+
+        /// <summary>
+        /// Same answer as <c>GetGump(idx).Texture != null</c>. With a pack it comes from the size table without decoding;
+        /// on the MUL/UOP path it is that lookup (an index entry alone doesn't say whether it decodes).
+        /// </summary>
+        public bool Exists(uint idx)
+        {
+            if (idx >= _spriteInfos.Length)
+            {
+                return false;
+            }
+
+            if (_spriteInfos[idx].Texture != null)
+            {
+                return true;
+            }
+
+            return _gumpsLoader.FromPack ? _gumpsLoader.PixelCount(idx) > 0 : GetGump(idx).Texture != null;
+        }
+
+        /// <summary>Width and height of gump <paramref name="idx"/> without decoding it. False = no such gump.</summary>
+        public bool TryGetSize(uint idx, out int width, out int height)
+        {
+            if (idx < _spriteInfos.Length && _spriteInfos[idx].Texture != null)
+            {
+                width = _spriteInfos[idx].UV.Width;
+                height = _spriteInfos[idx].UV.Height;
+
+                return true;
+            }
+
+            if (idx < _spriteInfos.Length)
+            {
+                return _gumpsLoader.TryGetSize(idx, out width, out height);
+            }
+
+            width = height = 0;
+
+            return false;
+        }
+
+        /// <summary>
+        /// Queues a worker decode of gump <paramref name="idx"/> if it exists and isn't in the atlas (pack only; main
+        /// thread). Returns true when nothing needs to wait for it.
+        /// </summary>
+        public bool Request(uint idx)
+        {
+            if (idx >= _spriteInfos.Length || _spriteInfos[idx].Texture != null || !AsyncRequests || !_gumpsLoader.CanDecodeOnWorker
+                || _decoder.IsFailed(idx) || _gumpsLoader.PixelCount(idx) == 0)
+            {
+                return true;
+            }
+
+            _decoder.Request(idx);
+
+            return false;
+        }
+
+        /// <summary>Uploads finished worker decodes until <paramref name="deadline"/> (Stopwatch ticks), at least one. Main thread.</summary>
+        public void DrainReady(long deadline)
+        {
+            if (_decoder.HasReady)
+            {
+                long t0 = Stopwatch.GetTimestamp();
+                _decoder.Drain(deadline);
+                FrameUploadTicks += Stopwatch.GetTimestamp() - t0;
+            }
+        }
+
+        /// <summary>Drops finished worker decodes and returns their buffers (scene teardown).</summary>
+        public void CancelPending() => _decoder.Cancel();
+
+        // Worker thread: touches only the loader's pack store and size table (immutable after Load, reads thread-safe),
+        // the hue table (immutable) and ArrayPool, plus the job.
+        private bool DecodeOnWorker(FirstSightDecoder.Job job)
+        {
+            int count = _gumpsLoader.PixelCount(job.Index);
+
+            if (count == 0)
+            {
+                return false;
+            }
+
+            job.Pixels = ArrayPool<uint>.Shared.Rent(count);
+            var info = _gumpsLoader.GetGump(job.Index, job.Pixels);
+
+            if (info.Pixels.IsEmpty)
+            {
+                return false;
+            }
+
+            job.Width = info.Width;
+            job.Height = info.Height;
+
+            return true;
+        }
+
+        // main thread: what GetGump does after its decode
+        private void UploadDecoded(FirstSightDecoder.Job job)
+        {
+            ref var spriteInfo = ref _spriteInfos[job.Index];
+
+            if (spriteInfo.Texture != null)
+            {
+                return; // a lookup needed it first and decoded it itself
+            }
+
+            Upload(job.Index, ref spriteInfo, job.Pixels.AsSpan(0, job.Width * job.Height), job.Width, job.Height);
+            FrameAsyncUploads++;
+        }
+
+        private void Upload(uint idx, ref SpriteInfo spriteInfo, ReadOnlySpan<uint> pixels, int width, int height)
+        {
+            spriteInfo.Texture = _atlas.AddSprite(pixels, width, height, out spriteInfo.UV);
+            // the whole image is the "trim rect": SetTrimmed gives Set's mask with the SIMD run scan
+            _picker.SetTrimmed(idx, width, height, 0, 0, width, height, pixels);
         }
 
         public ref readonly SpriteInfo GetGump(uint idx)
@@ -33,17 +178,50 @@ namespace ClassicUO.Renderer.Gumps
 
             if (spriteInfo.Texture == null)
             {
-                var gumpInfo = _gumpsLoader.GetGump(idx);
-                if (!gumpInfo.Pixels.IsEmpty)
-                {
-                    spriteInfo.Texture = _atlas.AddSprite(
-                        gumpInfo.Pixels,
-                        gumpInfo.Width,
-                        gumpInfo.Height,
-                        out spriteInfo.UV
-                    );
+                long t0 = Stopwatch.GetTimestamp();
 
-                    _picker.Set(idx, gumpInfo.Width, gumpInfo.Height, gumpInfo.Pixels);
+                if (_gumpsLoader.FromPack)
+                {
+                    int count = _gumpsLoader.PixelCount(idx);
+
+                    if (count > 0)
+                    {
+                        FrameSyncLoads++;
+                        // the image only lives until the atlas upload: decode into a pooled buffer
+                        var buffer = ArrayPool<uint>.Shared.Rent(count);
+
+                        try
+                        {
+                            var gumpInfo = _gumpsLoader.GetGump(idx, buffer);
+
+                            if (!gumpInfo.Pixels.IsEmpty)
+                            {
+                                Upload(idx, ref spriteInfo, gumpInfo.Pixels, gumpInfo.Width, gumpInfo.Height);
+                            }
+                        }
+                        finally
+                        {
+                            ArrayPool<uint>.Shared.Return(buffer);
+                        }
+                    }
+                }
+                else
+                {
+                    var gumpInfo = _gumpsLoader.GetGump(idx);
+
+                    if (!gumpInfo.Pixels.IsEmpty)
+                    {
+                        FrameSyncLoads++;
+                        Upload(idx, ref spriteInfo, gumpInfo.Pixels, gumpInfo.Width, gumpInfo.Height);
+                    }
+                }
+
+                if (spriteInfo.Texture != null)
+                {
+                    long dt = Stopwatch.GetTimestamp() - t0;
+                    FrameSyncTicks += dt;
+                    TotalSyncTicks += dt;
+                    TotalSyncLoads++;
                 }
             }
 
