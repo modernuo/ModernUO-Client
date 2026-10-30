@@ -238,12 +238,13 @@ namespace ClassicUO.UnitTests.Ecs
             return mobiles.ConvertAll(x => x.Serial);
         }
 
-        private static List<uint> Expected(World world, long now)
+        private static List<uint> Expected(World world, long now, Dictionary<uint, Mobile> oracle = null)
         {
-            // the legacy loop: every mobile in Values order, filtered by the due rule
+            // the legacy loop: every mobile in Values order, filtered by the due rule. With an oracle, the order comes from a
+            // plain Dictionary that saw the same operations (what Mobiles was before E10), not from the table under test
             var list = new List<uint>();
 
-            foreach (Mobile m in world.Mobiles.Values)
+            foreach (Mobile m in oracle != null ? (IEnumerable<Mobile>)oracle.Values : world.Mobiles.Values)
             {
                 world.Ecs.Mirror.TryGetEntity(m.Serial, out EcsEntity e).Should().BeTrue();
 
@@ -262,10 +263,12 @@ namespace ClassicUO.UnitTests.Ecs
             var world = new World();
             world.Ecs.ClockEnabled = true;
             var rng = new System.Random(12345);
+            var oracle = new Dictionary<uint, Mobile>();
 
             void Add(uint serial)
             {
                 Mobile m = world.GetOrCreateMobile(serial);
+                oracle[serial] = m;
                 m.Graphic = 0x190;
                 world.Ecs.Sync(m);
             }
@@ -296,6 +299,7 @@ namespace ClassicUO.UnitTests.Ecs
                     if (world.Mobiles.TryGetValue(victim, out Mobile gone))
                     {
                         world.Mobiles.Remove(victim);
+                        oracle.Remove(victim);
                         world.Ecs.Mirror.Remove(victim);
                     }
                 }
@@ -312,7 +316,7 @@ namespace ClassicUO.UnitTests.Ecs
                     e.GetComponent<MobileClock>() = Clock(rng.Next(0, 2) == 0 ? 0 : 1000, 1000, rng.Next(8) == 0 ? MobileClockFlags.Stepping : MobileClockFlags.None);
                 }
 
-                DueInMobilesOrder(world, 500).Should().Equal(Expected(world, 500), "round " + round);
+                DueInMobilesOrder(world, 500).Should().Equal(Expected(world, 500, oracle), "round " + round);
             }
         }
 
