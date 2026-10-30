@@ -2181,7 +2181,7 @@ Branch `poc/item-art-worker` (item art agent, kbatman4), from poc/modern-client 
   - An item outside the reject rectangle never needs its art. One the reject doesn't exclude is still tested against its exact pixels, decoding on the spot if it must, so selection is exactly as before: at most the few items under the mouse decode.
   - A rejected item whose art is missing (a graphic changed in place, an atlas reload) is requested from the workers then.
 - **Animated statics:** the chunk scans (block scan and loaded-chunk walk) wait for the frame shown now and request every other frame in the full scan.
-- **Settle hold:** unchanged and honest. Nothing new is skipped in the draw walk, and the Gpu world never drew items or multis from the atlas.
+- **Settle hold:** unchanged and honest. Nothing new is skipped in the draw walk. The Gpu world draws ground items from the pack (`ItemSpriteExtract`); multi components still go through `Multi.Draw` (`GpuWorldRenderer.DrawObject`, whose direct extract handles only items and mobiles), so a component whose art is still pending decodes on the spot there, as before.
 - **Audit lessons kept:**
   - A failed worker decode is terminal (`RequestArt` treats it as ready).
   - Requests cost O(1); the extra frame requests run only in the full block scan and in the loaded-chunk walk, which already runs only after uploads.
@@ -2224,7 +2224,15 @@ Branch `poc/item-art-worker` (item art agent, kbatman4), from poc/modern-client 
 
 **Not done or noted:**
 - **No boats and few houses on the local server.** Multis were checked with KamDos (`house:1427 1691`) only.
-- **A behaviour change in the Gpu world.** House components had no atlas art there (they draw from the pack, and nothing decoded them), so their pixel pick (`MultiView.CheckMouseSelection`) found nothing unless a static with the same graphic had been decoded. Now their art is requested, so they pick as in Legacy.
+- **Correction (Codex audit):** an earlier version of this entry said house components had no atlas art in the Gpu world. That was wrong: they reach `Multi.Draw` through `GpuWorldRenderer.DrawObject`, which decodes their art and stores the pick anchor on the art entry. The real change was a regression, fixed below: the prefetch could fill a component's pixel mask before its first draw had stored the anchor.
+- **Placement requests sit outside the chunk budget, and nothing caps the bytes of decodes in flight.** Requests are O(1) and the uploads are budgeted, but a teleport into a town queues every new item's and component's decode at once, each holding its untrimmed buffer until its upload. All animated bases together come to about 76 MiB untrimmed. A cap on in-flight decode bytes is a follow-up.
 - **After `Art.Reload`**, multi components aren't re-requested. A Legacy draw then decodes their art on the spot, as before.
 - **UI art** (gumps, the paperdoll's item icons) still decodes on the main thread.
-- No 4K run, no 13-minute session, and not the owner's FPS test. No Codex audit was run on this branch.
+- No 4K run, no 13-minute session, and not the owner's FPS test.
+
+**Codex audit fixes** (no P0 or P1 found; object lifetime, worker safety, generations, item bounds and Gpu readiness checked out):
+1. **Multi pick anchor (P2, a regression from this branch).** The prefetch filled a component's pixel mask before the first draw stored `ArtEntry.Width/Height`. Picking runs before drawing, and components the mesh build skips (`CHMOF_DONT_REMOVE`) had their first pick at anchor (0,0). The wooden wall 0x0006 (44×106) was 62 px off: false hits and misses. `MultiView.CheckMouseSelection` now tests the sprite `Multi.Draw` draws, with its anchor computed from the pack's size (`Multi.SpriteTopLeft`, the anchor `DrawStaticAnimated` stores). The same change fixes two older mismatches between pick and draw: the pick now uses the current animation frame (graphic + `AnimOffset`) and the boat's `Offset`. New test: wall 0x0006's drawn pixels all pick, where the old anchor missed most of them.
+2. **A parked seasonal component missed a season change (P2, inherited).** `World.ChangeSeason` only visits loaded chunks, so a component parked on an unloaded chunk kept the old season's graphic. `Map.LoadChunk` now refreshes the seasonal graphic of each parked object it attaches (a no-op for items and mobiles), which also requests the new art.
+3. **Logout race in `FirstSightDecoder` (P2, inherited).** A worker could pass its epoch check, then `Cancel` bumped the epoch and drained an empty queue, then the worker queued its buffer, which stayed held until the next session's `Drain`. The epoch check and the publish now run under a lock that `Cancel` takes too. New test at that boundary: `Cancel` waits for the publish and drains the job, so no buffer stays queued.
+4. **The animated frame waited for (P3).** The chunk loader (in `World.Update`) read `AnimOffset` before `AnimatedStaticsManager.Process` advanced it, so the frame drawn could be the next one, still pending. `Process` now runs before `World.Update`.
+5. **Docs:** the multi explanation and the two notes above.

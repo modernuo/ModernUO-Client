@@ -177,6 +177,9 @@ namespace ClassicUO.Game.Map
 
                     if (p.Obj.PendingBlock == block && !p.Obj.IsDestroyed)
                     {
+                        // World.ChangeSeason only visits loaded chunks: a parked multi component takes the season it
+                        // missed now (the same graphic otherwise; a no-op for items and mobiles)
+                        p.Obj.UpdateGraphicBySeason();
                         p.Obj.AddToTile(chunk, p.X, p.Y); // clears PendingBlock
                     }
                 }
