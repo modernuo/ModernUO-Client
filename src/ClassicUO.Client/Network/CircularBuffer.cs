@@ -73,7 +73,7 @@ namespace ClassicUO.Network
         {
             if (Length + size >= _buffer.Length)
             {
-                SetCapacity((Length + size + 2047) & ~2047);
+                SetCapacity(Math.Max((Length + size + 2047) & ~2047, _buffer.Length * 2)); // geometric, not exact-fit
             }
 
             if (_head < _tail)

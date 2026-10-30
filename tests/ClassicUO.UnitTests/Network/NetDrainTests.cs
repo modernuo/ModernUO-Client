@@ -96,6 +96,7 @@ namespace ClassicUO.UnitTests.Network
 
             return (client, socket, received, sizes, data =>
             {
+                if (data.Count == 0) return 0; // the idle pump
                 received.AddRange(data.AsSpan());
                 sizes.Add(data.Count);
 
