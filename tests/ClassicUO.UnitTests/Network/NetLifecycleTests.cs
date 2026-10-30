@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using System.Net;
 using System.Net.Sockets;
 using ClassicUO.Game;
@@ -104,7 +105,7 @@ namespace ClassicUO.UnitTests.Network
             client.AttachSocket(new IdleSocket());
             var (handlers, seen) = MakeHandlers();
 
-            handlers.ParsePackets(client, null!, new byte[] { 0x03, 0x00, 0x05, 0xAA, 0xBB, 0x73, 0x02 }).Should().Be(2);
+            handlers.ParsePackets(client, null!, new byte[] { 0x03, 0x00, 0x03, 0x73, 0x02 }).Should().Be(2); // length 3 = the header alone
 
             seen.Should().HaveCount(2);
         }
@@ -281,6 +282,200 @@ namespace ClassicUO.UnitTests.Network
             }
 
             buffer.Length.Should().Be(64 * 4096);
+
+            var all = new byte[buffer.Length];
+            buffer.Dequeue(all, 0, all.Length).Should().Be(all.Length);
+            all.Should().Equal(expected);
+        }
+
+        // ---- terminal events are handled on the update thread, after the connection's data ----
+
+        private sealed class QueueSocket : SocketWrapper
+        {
+            private readonly object _lock = new();
+            private byte[] _data = Array.Empty<byte>();
+            private int _pos;
+
+            public override bool IsConnected => true;
+            public override EndPoint LocalEndPoint => null;
+            public override void Connect(Uri uri) { }
+            public override void Send(byte[] buffer, int offset, int count) { }
+            public override void Disconnect() { }
+            public override void Dispose() { }
+
+            public void Queue(byte[] data)
+            {
+                lock (_lock)
+                {
+                    var rest = _data.AsSpan(_pos).ToArray();
+                    _data = rest.Concat(data).ToArray();
+                    _pos = 0;
+                }
+            }
+
+            public void RaiseClose() => InvokeOnDisconnected();
+            public void RaiseError(SocketError e) => InvokeOnError(e);
+
+            public override int Read(byte[] buffer)
+            {
+                lock (_lock)
+                {
+                    var n = Math.Min(buffer.Length, _data.Length - _pos);
+                    Array.Copy(_data, _pos, buffer, 0, n);
+                    _pos += n;
+
+                    return n;
+                }
+            }
+        }
+
+        [Fact]
+        public void Close_Reported_From_Another_Thread_Still_Delivers_The_Queued_Compressed_Data_First()
+        {
+            var client = MakeClient();
+            var socket = new QueueSocket();
+            client.AttachSocket(socket);
+            client.EnableCompression();
+
+            var plain = new byte[20_000];
+
+            for (var i = 0; i < plain.Length; i++)
+                plain[i] = (byte)(i % 3 == 0 ? 1 : 0);
+
+            socket.Queue(NetDrainTests.HuffmanEncode(plain)); // a game frame the receive task already queued
+            System.Threading.Tasks.Task.Run(socket.RaiseClose).Wait(); // ... and then it saw the close, off the update thread
+
+            var order = new List<string>();
+            var got = new List<byte>();
+            client.Disconnected += (_, _) => order.Add("closed");
+
+            client.Drain(d => { if (d.Count > 0) { got.AddRange(d.AsSpan()); order.Add("data"); } return 0; }, maxMs: 0);
+
+            got.Should().Equal(plain); // decoded as game data, not handed over after compression was reset
+            order.Should().Equal(Enumerable.Repeat("data", order.Count - 1).Append("closed"));
+            order.Count(o => o == "closed").Should().Be(1);
+        }
+
+        [Fact]
+        public void Two_Reports_Of_One_Close_Are_One_Disconnected()
+        {
+            var client = MakeClient();
+            var socket = new QueueSocket();
+            client.AttachSocket(socket);
+            var closed = new List<SocketError>();
+            client.Disconnected += (_, e) => closed.Add(e);
+
+            socket.RaiseError(SocketError.SocketError); // the receive exception ...
+            socket.RaiseError(SocketError.ConnectionReset); // ... and then the end of the receive loop
+            socket.RaiseClose();
+
+            closed.Should().BeEmpty(); // nothing happens off the update thread
+
+            client.Drain(d => 0, maxMs: 0);
+            client.Drain(d => 0, maxMs: 0);
+
+            closed.Should().Equal(SocketError.SocketError);
+        }
+
+        [Fact]
+        public void A_Late_Callback_Of_A_Replaced_Connection_Does_Not_Kill_The_New_One()
+        {
+            var client = MakeClient();
+            var old = new QueueSocket();
+            client.AttachSocket(old);
+            var replacement = new QueueSocket();
+            client.AttachSocket(replacement); // the update thread replaced the connection ...
+            var closed = 0;
+            client.Disconnected += (_, _) => closed++;
+
+            old.RaiseClose(); // ... then the old socket's task reports its close
+            old.RaiseError(SocketError.ConnectionReset);
+            replacement.Queue(new byte[] { 0x73, 0x01 });
+
+            var got = new List<byte>();
+            client.Drain(d => { got.AddRange(d.AsSpan()); return 0; }, maxMs: 0);
+
+            closed.Should().Be(0);
+            got.Should().Equal(0x73, 0x01);
+        }
+
+        [Fact]
+        public void An_Explicit_Disconnect_Ignores_The_Sockets_Late_Close_Report()
+        {
+            var client = MakeClient();
+            var socket = new QueueSocket();
+            client.AttachSocket(socket);
+            var closed = 0;
+            client.Disconnected += (_, _) => closed++;
+
+            client.Disconnect();
+            socket.RaiseClose(); // a WebSocket's receive loop ending after our own Close
+            client.Drain(d => 0, maxMs: 0);
+
+            closed.Should().Be(0);
+        }
+
+        // ---- plugin injections are tagged with the connection they were made under ----
+
+        [Fact]
+        public void Plugin_Packet_Injected_After_Connect_Is_Kept_And_One_Injected_Before_Is_Dropped()
+        {
+            var (listener, port) = Listen();
+            var client = MakeClient();
+            var (handlers, seen) = MakeHandlers();
+
+            try
+            {
+                client.Connect("127.0.0.1", port);
+                var server = listener.AcceptSocket();
+
+                handlers.Append(new byte[] { 0x73, 0x01 }, true, client); // injected under the first connection
+                client.Disconnect();
+
+                client.Connect("127.0.0.1", port); // new generation ...
+                var server2 = listener.AcceptSocket();
+                handlers.Append(new byte[] { 0x73, 0x02 }, true, client); // ... injected before the next ParsePackets (a login send hook)
+
+                handlers.ParsePackets(client, null!, Span<byte>.Empty).Should().Be(1);
+
+                seen.Should().ContainSingle().Which.Should().Equal(0x73, 0x02);
+                server.Close();
+                server2.Close();
+            }
+            finally
+            {
+                client.Disconnect();
+                listener.Stop();
+            }
+        }
+
+        // ---- circular buffer ----
+
+        [Fact]
+        public void CircularBuffer_Growth_While_Wrapped_Keeps_Order()
+        {
+            var buffer = new CircularBuffer(4096);
+            var expected = new List<byte>();
+            byte next = 0;
+
+            byte[] Chunk(int n)
+            {
+                var c = new byte[n];
+
+                for (var i = 0; i < n; i++)
+                    c[i] = next++;
+
+                expected.AddRange(c);
+
+                return c;
+            }
+
+            buffer.Enqueue(Chunk(3000));
+            var sink = new byte[2500];
+            buffer.Dequeue(sink, 0, 2500);
+            expected.RemoveRange(0, 2500); // head is now deep into the array
+            buffer.Enqueue(Chunk(3000)); // tail wraps around
+            buffer.Enqueue(Chunk(9000)); // forces growth while the data wraps
 
             var all = new byte[buffer.Length];
             buffer.Dequeue(all, 0, all.Length).Should().Be(all.Length);

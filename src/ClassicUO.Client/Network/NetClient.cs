@@ -8,6 +8,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Net.WebSockets;
 using System.Diagnostics;
+using System.Threading;
 using ClassicUO.Network.Socket;
 
 namespace ClassicUO.Network
@@ -118,17 +119,47 @@ namespace ClassicUO.Network
                 Connected?.Invoke(this, EventArgs.Empty);
             };
 
-            // every way a connection ends goes through Terminate, whoever noticed it; events from a socket that was
-            // replaced already are ignored
-            _socket.OnDisconnected += (o, _) =>
-            {
-                if (ReferenceEquals(o, _socket)) Terminate(SocketError.Success);
-            };
-            _socket.OnError += (o, e) =>
-            {
-                if (ReferenceEquals(o, _socket)) Terminate(e);
-            };
+            // A close or error may be reported from any thread (a WebSocket's receive task). The callbacks only record it
+            // against the connection they belong to; Drain, on the update thread, reads that connection's data first and only
+            // then runs Terminate. A connection already ended or replaced (Retired) ignores late callbacks, and the first
+            // close wins, so two reports of one close (an exception and then the end of the receive loop) are one Terminate.
+            var conn = new Connection();
+            _connection?.Retire();
+            _connection = conn;
+
+            _socket.OnDisconnected += (_, _) => conn.Report(SocketError.Success);
+            _socket.OnError += (_, e) => conn.Report(e);
         }
+
+        private sealed class Connection
+        {
+            private int _closed;
+            private volatile bool _retired;
+            private SocketError _error;
+
+            public bool Retired => _retired;
+
+            /// <summary>Set once a close or error was reported (and not retired).</summary>
+            public bool Closed => !_retired && Volatile.Read(ref _closed) == 2;
+
+            public SocketError Error => _error;
+
+            public void Retire() => _retired = true;
+
+            public void Report(SocketError error)
+            {
+                if (_retired)
+                    return;
+
+                if (Interlocked.CompareExchange(ref _closed, 1, 0) == 0)
+                {
+                    _error = error;
+                    Volatile.Write(ref _closed, 2);
+                }
+            }
+        }
+
+        private Connection _connection;
 
         /// <summary>Bumped whenever a connection starts or ends; the packet parser drops its partial data when it changes.</summary>
         public int ConnectionGeneration { get; private set; }
@@ -152,6 +183,7 @@ namespace ClassicUO.Network
         /// </summary>
         private void Terminate(SocketError error)
         {
+            _connection?.Retire(); // late callbacks of this connection, and its unread data, are void from here on
             ResetProtocolState();
             Statistics.Reset();
             _socket?.Disconnect();
@@ -188,6 +220,7 @@ namespace ClassicUO.Network
 
         public void Disconnect()
         {
+            _connection?.Retire();
             ResetProtocolState();
             Statistics.Reset();
             _socket?.Disconnect();
@@ -246,6 +279,8 @@ namespace ClassicUO.Network
                 LastDrainAvailable = _socket.Available;
             }
 
+            var emptied = false;
+
             while (_socket != null && LastDrainBytes < maxBytes && packets < maxPackets)
             {
                 // always one slice, then stop once the frame's time budget is spent
@@ -256,6 +291,8 @@ namespace ClassicUO.Network
 
                 if (!ReadSlice(out var raw, out var data))
                 {
+                    emptied = true;
+
                     break;
                 }
 
@@ -266,6 +303,21 @@ namespace ClassicUO.Network
                 {
                     packets += sink(data);
                     sinkCalled = true;
+                }
+            }
+
+            if (emptied && _connection is { Closed: true } closing)
+            {
+                // everything the connection delivered before it closed has been read and handed to the parser: now end it
+                if (!sinkCalled)
+                {
+                    packets += sink(ArraySegment<byte>.Empty);
+                    sinkCalled = true;
+                }
+
+                if (ReferenceEquals(closing, _connection))
+                {
+                    Terminate(closing.Error);
                 }
             }
 
@@ -291,7 +343,7 @@ namespace ClassicUO.Network
             rawBytes = 0;
             data = ArraySegment<byte>.Empty;
 
-            if (_socket == null)
+            if (_socket == null || _connection is { Retired: true })
             {
                 return false;
             }
