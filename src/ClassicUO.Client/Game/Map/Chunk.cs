@@ -151,6 +151,28 @@ namespace ClassicUO.Game.Map
             return c;
         }
 
+        /// <summary>
+        /// Login warm-up (<see cref="MapWarmup"/>): fills the pool up to <paramref name="count"/> chunks (at most
+        /// <see cref="Constants.PREDICTABLE_CHUNKS"/>) with statics mesh layers sized for <paramref name="staticsCapacity"/>
+        /// sprites, so the first teleports take pooled chunks instead of allocating them and their mesh arrays while playing.
+        /// A new chunk is in the same state as a pooled one (Destroy: no tiles, no node, cleared mesh). Returns the chunks added.
+        /// </summary>
+        public static int Prefill(World world, int count, int staticsCapacity)
+        {
+            int added = 0;
+            count = Math.Min(count, Constants.PREDICTABLE_CHUNKS);
+
+            while (_pool.Count < count)
+            {
+                var c = new Chunk(world) { IsDestroyed = true };
+                c.Mesh.Statics.EnsureCapacity(staticsCapacity);
+                _pool.Enqueue(c);
+                added++;
+            }
+
+            return added;
+        }
+
         public static void ClearPool()
         {
             while (_pool.Count > 0)

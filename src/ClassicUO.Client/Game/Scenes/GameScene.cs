@@ -1222,6 +1222,12 @@ namespace ClassicUO.Game.Scenes
                     bool visibleReady = gpu.VisibleReady && _world.Map.DrawPending == 0;
                     _settle.End(visibleReady);
 
+                    if (Map.MapWarmup.CollectPending)
+                    {
+                        // the login's deliberate collection, in a frame whose world isn't shown (MapWarmup)
+                        Map.MapWarmup.OnWorldFrame(true, hold, visibleReady);
+                    }
+
                     if (SettleLog && !hold && !visibleReady)
                     {
                         LogUnsettledFrame(gpu);
@@ -1246,6 +1252,12 @@ namespace ClassicUO.Game.Scenes
                 DrawWorld(batcher, ref matrix, renderTargets);
                 _settle.OnOtherRenderer();
                 FrameStats.WorldShown = true;
+
+                if (Map.MapWarmup.CollectPending)
+                {
+                    // no settle hold in Legacy: the first world frame is the login transition (MapWarmup)
+                    Map.MapWarmup.OnWorldFrame(false, false, true);
+                }
 
                 _settleTarget = renderTargets.WorldRenderTarget;
                 renderTargets.WorldFade = 1f;
