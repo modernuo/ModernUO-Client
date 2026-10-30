@@ -8,7 +8,8 @@ using Uo.Pack;
 string uoPath = @"C:\Ultima Online Classic";
 string outDir = @"C:\Repositories\uo-packs\classic";
 string debugDir = @"C:\Repositories\uo-packs\debug";
-bool useX = false, maps = true, convert = true, anims = true, formatGiven = false;
+bool useX = false, maps = true, convert = true, anims = true, gumps = true, formatGiven = false, gumpReport = false;
+string? gumpDef = null;
 HashSet<string>? only = null; // --only: convert just these stages into an existing pack, keeping everything else
 for (int i = 0; i < args.Length; i++)
 {
@@ -23,6 +24,10 @@ for (int i = 0; i < args.Length; i++)
         case "--only": only = args[++i].Split(',').Select(s => s.Trim().ToLowerInvariant()).ToHashSet(); break;
         case "--anims-only": only = ["anims"]; break;
         case "--no-anims": anims = false; break;
+        case "--no-gumps": gumps = false; break;
+        case "--gump-def": gumpDef = args[++i]; break;
+        case "--gump-report": gumpReport = true; break;
+        case "--raw-gumps": GumpConvert.Raw = true; break;
         case "--bodies":
             AnimConvert.Bodies = args[++i].Split(',').Select(s => s.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? Convert.ToInt32(s[2..], 16) : int.Parse(s)).ToHashSet();
             break;
@@ -65,12 +70,12 @@ for (int i = 0; i < args.Length; i++)
         case "--regions": ConvertOptions.MaxRegions = int.Parse(args[++i]); break;
         case "--bench-bc7": Bench.Bc7(args[++i]); return 0;
         default:
-            Console.WriteLine("usage: Uo.Converter [--uo <client dir>] [--out <pack dir>] [--debug <png dir>] [--format b5g5r5a1|rgba8|bc7] [--bc7-quality fast|balanced|bestquality] [--bc7-refine-db 28] [--raw-regions] [--raw-pages|--compress-pages[=chunked]] [--chunk-bytes n] [--page-size 2048] [--anim-page-size 1024] [--anim-format indexed8|page] [--indexed-mips none|b16] [--threads n] [--pages a-b] [--facets 0,1] [--regions n] [--xfiles] [--no-maps] [--no-anims] [--only art,tex,hues,tiledata,data,maps,anims] [--anims-only] [--bodies 400,0xC8] [--verify-only]");
+            Console.WriteLine("usage: Uo.Converter [--uo <client dir>] [--out <pack dir>] [--debug <png dir>] [--format b5g5r5a1|rgba8|bc7] [--bc7-quality fast|balanced|bestquality] [--bc7-refine-db 28] [--raw-regions] [--raw-pages|--compress-pages[=chunked]] [--chunk-bytes n] [--page-size 2048] [--anim-page-size 1024] [--anim-format indexed8|page] [--indexed-mips none|b16] [--threads n] [--pages a-b] [--facets 0,1] [--regions n] [--xfiles] [--no-maps] [--no-anims] [--no-gumps] [--raw-gumps] [--gump-def <file>] [--only art,tex,hues,tiledata,data,gumps,maps,anims] [--anims-only] [--bodies 400,0xC8] [--verify-only]");
             return 1;
     }
 }
 
-bool Want(string stage) => only != null ? only.Contains(stage) : stage switch { "maps" => maps, "anims" => anims, _ => true };
+bool Want(string stage) => only != null ? only.Contains(stage) : stage switch { "maps" => maps, "anims" => anims, "gumps" => gumps, _ => true };
 if (only != null && !formatGiven && File.Exists(PackConst.PagePath(Path.Combine(outDir, "art"), 0)))
 {
     // Match the pack being extended: page format and compression come from its first art page.
@@ -114,6 +119,9 @@ var fm = Stage("load UOFileManager", () =>
 Console.WriteLine($"  uop={fm.IsUOPInstallation} artEntries={fm.Arts.File.Entries.Length} texEntries={fm.Texmaps.File.Entries.Length} " +
                   $"land={fm.TileData.LandData.Length} statics={fm.TileData.StaticData.Length} hues={fm.Hues.HuesCount}");
 
+fm.Gumps.DefPath = gumpDef;
+if (gumpReport) return GumpExperiments.Report(fm);
+
 var stats = new Dictionary<string, object>();
 if (convert)
 {
@@ -145,6 +153,7 @@ if (convert)
         Stage("tileart", () => TableConvert.TileArt(fm, outDir));
         Stage("equipconv", () => TableConvert.EquipConv(fm, outDir));
     }
+    if (Want("gumps")) stats["gumps"] = Stage("gumps", () => GumpConvert.Run(fm, outDir));
 
     if (Want("maps"))
     {

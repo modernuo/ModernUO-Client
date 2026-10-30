@@ -648,6 +648,83 @@ namespace ClassicUO
         private static ushort _uiHits;
         private static uint _uiHeld;
 
+        // gumpopen: the first open of each large window, one every 2.5 s, cold (a fresh client). For each open, the worst
+        // frame of the next 1.5 s (DevBench's own frame-to-frame time) and the gumps decoded on the main thread meanwhile.
+        // CUO_BENCH_GUMPOPEN overrides the list: names (paperdoll, backpack, status, journal, worldmap, combatbook,
+        // spellbook) or pics:HEX,HEX (a plain gump with those gump pictures).
+        private static readonly string[] _gumpOpenList = (Environment.GetEnvironmentVariable("CUO_BENCH_GUMPOPEN")
+            ?? "paperdoll;spellbook;status;backpack;worldmap;combatbook;journal").Split(';', StringSplitOptions.RemoveEmptyEntries);
+        private static int _gumpOpenIndex;
+        private static long _gumpOpenAt, _gumpOpenLast, _gumpOpenWorst, _gumpOpenTicks0;
+        private static int _gumpOpenLoads0;
+        private static string _gumpOpenName;
+
+        private static void GumpOpenFrame(GameController game, World world, long now)
+        {
+            long sec = Stopwatch.Frequency;
+
+            if (_gumpOpenName != null)
+            {
+                _gumpOpenWorst = Math.Max(_gumpOpenWorst, now - _gumpOpenLast);
+
+                if (now - _gumpOpenAt > sec * 3 / 2)
+                {
+                    Log.Info($"[bench-gumpopen] {_gumpOpenName}: worst frame {_gumpOpenWorst * 1000.0 / sec:0.00} ms in 1.5 s, " +
+                             $"main-thread gump decodes {Renderer.Gumps.Gump.TotalSyncLoads - _gumpOpenLoads0} " +
+                             $"({(Renderer.Gumps.Gump.TotalSyncTicks - _gumpOpenTicks0) * 1000.0 / sec:0.000} ms), pack {game.UO.FileManager.Gumps.FromPack}");
+                    _gumpOpenName = null;
+                }
+            }
+
+            _gumpOpenLast = now;
+
+            if (_gumpOpenName != null || _gumpOpenIndex >= _gumpOpenList.Length || now - _gumpOpenAt < sec * 5 / 2)
+            {
+                return;
+            }
+
+            _gumpOpenName = _gumpOpenList[_gumpOpenIndex++];
+            _gumpOpenAt = now;
+            _gumpOpenWorst = 0;
+            _gumpOpenLoads0 = Renderer.Gumps.Gump.TotalSyncLoads;
+            _gumpOpenTicks0 = Renderer.Gumps.Gump.TotalSyncTicks;
+
+            switch (_gumpOpenName)
+            {
+                case "paperdoll": GameActions.OpenPaperdoll(world, world.Player.Serial); break;
+                case "backpack": GameActions.OpenBackpack(world); break;
+                case "status": GameActions.OpenStatusBar(world); break;
+                case "journal": GameActions.OpenJournal(world); break;
+                case "worldmap": GameActions.OpenWorldMap(world); break;
+                case "combatbook": GameActions.OpenAbilitiesBook(world); break;
+                case "spellbook": OpenPics(world, "08AC,08BA,08BB"); break;
+                default:
+                    if (_gumpOpenName.StartsWith("pics:"))
+                    {
+                        OpenPics(world, _gumpOpenName.Substring(5));
+                    }
+
+                    break;
+            }
+
+            Log.Info($"[bench-gumpopen] opening {_gumpOpenName}");
+        }
+
+        private static void OpenPics(World world, string list)
+        {
+            var g = new Game.UI.Gumps.Gump(world, 0, 0) { X = 600, Y = 100, CanMove = true, CanCloseWithRightClick = true };
+            int x = 0;
+
+            foreach (var hex in list.Split(',', StringSplitOptions.RemoveEmptyEntries))
+            {
+                var pic = new Game.UI.Controls.GumpPic(x, 0, Convert.ToUInt16(hex, 16), 0);
+                g.Add(pic);
+                x += 20;
+            }
+
+            Game.Managers.UIManager.Add(g);
+        }
+
         private static void UiSceneFrame(GameController game, Game.Scenes.GameScene gs, World world, long now)
         {
             double t = (now - _planStart) / (double)Stopwatch.Frequency;
@@ -1287,6 +1364,10 @@ namespace ClassicUO
                     _travelAt = now + sec / 4;
                 }
 
+                else if (mode == "gumpopen")
+                {
+                    GumpOpenFrame(game, world, now);
+                }
                 else if (mode == "ui")
                 {
                     UiSceneFrame(game, gs, world, now);
@@ -1865,7 +1946,7 @@ namespace ClassicUO
                         gs.Camera.Zoom = zoom;
                     }
 
-                    GameActions.Say(mode == "bwalk" ? "[go 1495 1528" : mode == "lswalk" || mode == "lsreinit" ? "[go 5156 2150" : mode == "travel" || mode == "walk" || mode == "bodies" || mode == "ltravel" || mode == "glide" || mode == "reinit" || mode == "reinitrt" || mode == "ui" ? "[go 1495 1629" : $"[go {mode}");
+                    GameActions.Say(mode == "bwalk" ? "[go 1495 1528" : mode == "lswalk" || mode == "lsreinit" ? "[go 5156 2150" : mode == "travel" || mode == "walk" || mode == "bodies" || mode == "ltravel" || mode == "glide" || mode == "reinit" || mode == "reinitrt" || mode == "ui" || mode == "gumpopen" ? "[go 1495 1629" : $"[go {mode}");
                     _step = 2;
                     _stepAt = now + sec * 8;
 
