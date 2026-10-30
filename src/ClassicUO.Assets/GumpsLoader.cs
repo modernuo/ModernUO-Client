@@ -7,6 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Threading;
 using System.Threading.Tasks;
 using Uo.Pack;
 
@@ -85,6 +86,15 @@ namespace ClassicUO.Assets
             Log.Trace($"Gumps loaded in {System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds:0.0} ms, {(GC.GetAllocatedBytesForCurrentThread() - a0) / 1024} KB allocated ({(_pack != null ? "pack" : "MUL/UOP")})");
         }
 
+        /// <summary>Tests and tools: read gumps from this store file (a gumps.bin), as <see cref="Load"/> does with a pack.</summary>
+        public void LoadStore(string path)
+        {
+            _pack?.Dispose();
+            _pack = RecordStore.Open(path, StoreConst.MagicGumps);
+            UseUOPGumps = (_pack.Header.Flags & StoreConst.GumpFlagUop) != 0;
+            ValidateRecords();
+        }
+
         private void LoadCore()
         {
             string packPath = FileManager.Pack?.PathOf(StoreConst.GumpsFile);
@@ -93,6 +103,7 @@ namespace ClassicUO.Assets
             {
                 _pack = RecordStore.Open(packPath, StoreConst.MagicGumps);
                 UseUOPGumps = (_pack.Header.Flags & StoreConst.GumpFlagUop) != 0;
+                ValidateRecords();
                 Log.Trace($"Gumps: pack ({_pack.Records.Length} images for {_pack.SlotCount} ids{(UseUOPGumps ? ", from UOP" : "")})");
 
                 return;
@@ -282,7 +293,7 @@ namespace ClassicUO.Assets
         {
             if (_pack != null)
             {
-                if (_pack.TryGet((int)index, out _, out var record))
+                if (TryGetRecord(index, out _, out var record, out _))
                 {
                     width = record.Meta0;
                     height = record.Meta1;
@@ -305,7 +316,113 @@ namespace ClassicUO.Assets
 
         /// <summary>Texels <see cref="GetGump(uint, Span{uint})"/> needs in its buffer (pack path; 0 = no gump).</summary>
         public int PixelCount(uint index)
-            => _pack != null && _pack.TryGet((int)index, out _, out var record) ? record.Meta0 * record.Meta1 : 0;
+            => _pack != null && TryGetRecord(index, out _, out var record, out _) ? record.Meta0 * record.Meta1 : 0;
+
+        /// <summary>Largest gump side the client accepts (the gump atlas is 4096², as ReadOurs' limit).</summary>
+        public const int MaxGumpSide = 4096;
+
+        // per record: 0 = usable, 1 = invalid (failed the load-time checks or a decode); set once, never cleared
+        private int[] _badRecords;
+
+        /// <summary>Records found invalid at load or at decode; their ids behave as absent (Exists, sizes, GetGump).</summary>
+        public int BadRecords => _badRecords == null ? 0 : Array.FindAll(_badRecords, b => b != 0).Length;
+
+        private bool TryGetRecord(uint index, out StoreSlot slot, out StoreRecord record, out int recordIndex)
+        {
+            if (_pack.TryGet((int)index, out slot, out record))
+            {
+                recordIndex = (int)slot.Record - 1;
+
+                return Volatile.Read(ref _badRecords[recordIndex]) == 0;
+            }
+
+            recordIndex = -1;
+
+            return false;
+        }
+
+        /// <summary>
+        /// A pack is shipped by shards, so its records are untrusted: sizes within the atlas, a known layout and a raw
+        /// size that layout allows (texels: exactly w·h·2; run-length: whole runs, at least the row table and at most a
+        /// run per texel), and a compressed size Brotli could produce. Anything else is marked invalid and its ids are absent.
+        /// </summary>
+        private void ValidateRecords()
+        {
+            var records = _pack.Records;
+            _badRecords = new int[records.Length];
+            int bad = 0;
+
+            for (int i = 0; i < records.Length; i++)
+            {
+                string reason = CheckRecord(in records[i]);
+
+                if (reason != null)
+                {
+                    _badRecords[i] = 1;
+
+                    if (bad++ < 8)
+                    {
+                        Log.Warn($"gump pack: record {i} is invalid ({reason}); its gumps are treated as absent");
+                    }
+                }
+            }
+
+            if (bad > 8)
+            {
+                Log.Warn($"gump pack: {bad} invalid records in total");
+            }
+        }
+
+        /// <summary>Null when a gump record passes the load-time checks, else why not.</summary>
+        public static string CheckRecord(in StoreRecord r)
+        {
+            int w = r.Meta0, h = r.Meta1;
+
+            if (w <= 0 || h <= 0 || w > MaxGumpSide || h > MaxGumpSide)
+            {
+                return $"size {w}x{h}";
+            }
+
+            long texels = (long)w * h;
+
+            switch (r.Meta2)
+            {
+                case GumpCodec.LayoutTexels:
+                    if (r.RawBytes != texels * 2)
+                    {
+                        return $"texel payload of {r.RawBytes} bytes for {w}x{h}";
+                    }
+
+                    break;
+
+                case GumpCodec.LayoutRle:
+                    if (r.RawBytes % 4 != 0 || r.RawBytes < 4L * h || r.RawBytes > 4L * h + 4L * texels)
+                    {
+                        return $"run-length payload of {r.RawBytes} bytes for {w}x{h}";
+                    }
+
+                    break;
+
+                default:
+                    return $"layout {r.Meta2}";
+            }
+
+            if (r.Codec == StoreConst.CodecBrotli && r.StoredBytes > (ulong)System.IO.Compression.BrotliEncoder.GetMaxCompressedLength((int)r.RawBytes))
+            {
+                return $"{r.StoredBytes} compressed bytes for {r.RawBytes}";
+            }
+
+            return null;
+        }
+
+        // a decode failed (corrupt payload, I/O error): the record is invalid from now on, logged once; any thread
+        private void MarkBad(int recordIndex, uint index, string reason)
+        {
+            if (Interlocked.Exchange(ref _badRecords[recordIndex], 1) == 0)
+            {
+                Log.Warn($"gump {index}: record {recordIndex} in the pack can't be decoded ({reason}); treated as absent");
+            }
+        }
 
         /// <summary>
         /// Pack path: decodes gump <paramref name="index"/> into <paramref name="buffer"/> (at least
@@ -320,17 +437,33 @@ namespace ClassicUO.Assets
                 return GetGump(index);
             }
 
-            if (!_pack.TryGet((int)index, out var slot, out var record))
+            if (!TryGetRecord(index, out var slot, out var record, out int recordIndex))
             {
                 return default;
             }
 
+            // validated at load: 1..MaxGumpSide each way, so w·h fits an int
             int w = record.Meta0, h = record.Meta1;
 
-            if (w == 0 || h == 0 || buffer.Length < w * h)
+            if (buffer.Length < w * h)
             {
                 return default;
             }
+
+            try
+            {
+                return DecodeRecord(index, slot, record, recordIndex, w, h, buffer);
+            }
+            catch (Exception e) when (e is InvalidDataException || e is IOException || e is UnauthorizedAccessException)
+            {
+                MarkBad(recordIndex, index, e.Message);
+
+                return default;
+            }
+        }
+
+        private GumpInfo DecodeRecord(uint index, StoreSlot slot, StoreRecord record, int recordIndex, int w, int h, Span<uint> buffer)
+        {
 
             // the gump.def hue, as GetColor16 applies it: only a hue the table has
             Span<ushort> shades = stackalloc ushort[32];
@@ -369,7 +502,7 @@ namespace ClassicUO.Assets
 
                 if (!GumpCodec.Decode(record.Meta2, raw.AsSpan(0, (int)record.RawBytes), w, h, pixels, _lut, _expand, hued ? shades : default))
                 {
-                    Log.Warn($"gump {index}: corrupt record in the pack");
+                    MarkBad(recordIndex, index, "malformed run-length rows");
 
                     return default;
                 }

@@ -6540,7 +6540,7 @@ namespace ClassicUO.Network
         /// checkbox, radio), decoded on workers in one batch before the controls are built (Renderer.Gumps.Gump.Prefetch;
         /// pack only). The controls then find them in the atlas; what the batch misses decodes on the spot as before.
         /// </summary>
-        internal static void PrefetchLayoutGumps(List<string> cmdlist)
+        internal static void PrefetchLayoutGumps(List<string>[] commands)
         {
             if (!Renderer.Gumps.Gump.AsyncRequests || !Client.Game.UO.FileManager.Gumps.CanDecodeOnWorker)
             {
@@ -6549,9 +6549,9 @@ namespace ClassicUO.Network
 
             _layoutGumps.Clear();
 
-            for (int cnt = 0; cnt < cmdlist.Count; cnt++)
+            for (int cnt = 0; cnt < commands.Length; cnt++)
             {
-                List<string> p = _cmdparser.GetTokens(cmdlist[cnt], false);
+                List<string> p = commands[cnt];
 
                 if (p.Count == 0)
                 {
@@ -6664,7 +6664,15 @@ namespace ClassicUO.Network
                 };
             }
 
-            PrefetchLayoutGumps(cmdlist);
+            // the layout is tokenized once: the prefetch scan and the control loop below share the tokens
+            var commands = new List<string>[cmdlen];
+
+            for (int cnt = 0; cnt < cmdlen; cnt++)
+            {
+                commands[cnt] = _cmdparser.GetTokens(cmdlist[cnt], false);
+            }
+
+            PrefetchLayoutGumps(commands);
 
             int group = 0;
             int page = 0;
@@ -6673,7 +6681,7 @@ namespace ClassicUO.Network
 
             for (int cnt = 0; cnt < cmdlen; cnt++)
             {
-                List<string> gparams = _cmdparser.GetTokens(cmdlist[cnt], false);
+                List<string> gparams = commands[cnt];
 
                 if (gparams.Count == 0)
                 {
