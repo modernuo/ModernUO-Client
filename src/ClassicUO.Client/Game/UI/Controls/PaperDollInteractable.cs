@@ -111,20 +111,6 @@ namespace ClassicUO.Game.UI.Controls
                 body = 0x000C;
             }
 
-            // body
-            Add(new GumpPic(0, 0, body, hue) { IsPartialHue = true });
-
-            if (mobile.Graphic == 0x03DB)
-            {
-                Add(
-                    new GumpPic(0, 0, 0xC72B, mobile.Hue)
-                    {
-                        AcceptMouseInput = true,
-                        IsPartialHue = true
-                    }
-                );
-            }
-
             // equipment — draw order built from the paperdoll layer algorithm
             // (PaperdollOrder), keyed on the equipped item graphics. This subsumes the
             // old _layerOrder / quiver-fix tables and the hardcoded arms<->torso swap.
@@ -156,6 +142,41 @@ namespace ClassicUO.Game.UI.Controls
 
             Span<Layer> layers = stackalloc Layer[PaperdollOrder.N];
             int layerCount = PaperdollOrder.Filter(order, includeBackpack: false, layers);
+
+            // the body and every visible equipment gump, decoded on workers in one batch (pack only; Gump.Prefetch does
+            // nothing when fewer than two are missing, as on most re-layouts after an equip change)
+            if (Renderer.Gumps.Gump.AsyncRequests && Client.Game.UO.FileManager.Gumps.CanDecodeOnWorker)
+            {
+                Span<uint> prefetch = stackalloc uint[PaperdollOrder.N + 2];
+                int prefetchCount = 0;
+                prefetch[prefetchCount++] = body;
+
+                for (int i = 0; i < layerCount; i++)
+                {
+                    Item item = mobile.FindItemByLayer(layers[i]);
+
+                    if (item != null && !Mobile.IsCovered(mobile, layers[i]))
+                    {
+                        prefetch[prefetchCount++] = GetAnimID(mobile.Graphic, item.Graphic, item.ItemData.AnimID, mobile.IsFemale);
+                    }
+                }
+
+                Client.Game.UO.Gumps.Prefetch(prefetch.Slice(0, prefetchCount));
+            }
+
+            // body
+            Add(new GumpPic(0, 0, body, hue) { IsPartialHue = true });
+
+            if (mobile.Graphic == 0x03DB)
+            {
+                Add(
+                    new GumpPic(0, 0, 0xC72B, mobile.Hue)
+                    {
+                        AcceptMouseInput = true,
+                        IsPartialHue = true
+                    }
+                );
+            }
 
             Item equipItem;
 

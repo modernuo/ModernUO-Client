@@ -109,6 +109,81 @@ namespace ClassicUO.Renderer.Gumps
             return false;
         }
 
+        /// <summary>Gumps decoded by <see cref="Prefetch"/> batches, and their wall time (never reset; for scripted measurements).</summary>
+        public static int TotalPrefetched;
+        public static long TotalPrefetchTicks;
+
+        /// <summary>
+        /// A window about to be built from many gumps (a server gump's layout): decodes the ones not in the atlas on
+        /// worker threads at once and waits for them (at most <paramref name="timeoutMs"/>), so the controls' synchronous
+        /// <see cref="GetGump"/> calls find them uploaded. The main thread then waits for the slowest decode instead of
+        /// doing every decode in turn. Fewer than two missing gumps: nothing to gain, nothing is queued. Main thread; pack only.
+        /// </summary>
+        public int Prefetch(ReadOnlySpan<uint> ids, int timeoutMs = 20)
+        {
+            if (!AsyncRequests || !_gumpsLoader.CanDecodeOnWorker)
+            {
+                return 0;
+            }
+
+            int missing = 0;
+
+            foreach (uint id in ids)
+            {
+                if (id < _spriteInfos.Length && _spriteInfos[id].Texture == null && !_decoder.IsRequested(id) && !_decoder.IsFailed(id)
+                    && _gumpsLoader.PixelCount(id) > 0 && ++missing >= 2)
+                {
+                    break;
+                }
+            }
+
+            if (missing < 2)
+            {
+                return 0;
+            }
+
+            long t0 = Stopwatch.GetTimestamp();
+            int queued = 0;
+
+            foreach (uint id in ids)
+            {
+                if (!Request(id))
+                {
+                    queued++;
+                }
+            }
+
+            long deadline = t0 + Stopwatch.Frequency * timeoutMs / 1000;
+
+            while (true)
+            {
+                _decoder.Drain(long.MaxValue);
+                bool waiting = false;
+
+                foreach (uint id in ids)
+                {
+                    if (_decoder.IsRequested(id))
+                    {
+                        waiting = true;
+
+                        break;
+                    }
+                }
+
+                if (!waiting || Stopwatch.GetTimestamp() >= deadline)
+                {
+                    break;
+                }
+
+                System.Threading.Thread.Yield();
+            }
+
+            TotalPrefetched += queued;
+            TotalPrefetchTicks += Stopwatch.GetTimestamp() - t0;
+
+            return queued;
+        }
+
         /// <summary>Uploads finished worker decodes until <paramref name="deadline"/> (Stopwatch ticks), at least one. Main thread.</summary>
         public void DrainReady(long deadline)
         {
