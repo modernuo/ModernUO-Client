@@ -34,6 +34,8 @@ namespace ClassicUO
     //   CUO_BENCH_TOPMOST=1 keep the window on top while benching (occluded windows are throttled)
     //   plan entries size:WxH|max change the CUO_BENCH_SIZE client area mid-plan (max = maximised window)
     //   plan entry gumps opens the paperdoll, backpack, journal and status bar (the UI allocation/parity scene); shots also save the UI render target
+    //   plan mode gumpopen (name:gumpopen) opens large windows one by one, cold, and logs their gump decode cost ([bench-gumpopen]), then
+    //   the gump picker check ([bench-gumppick]); CUO_BENCH_GUMPOPEN sets the list. eqhue:hex,... hues the player's equipped items locally
     //   plan entries uicache:on|off switch the UI render cache (ui_render_cache, B8); CUO_UI_CACHE_CHECK=1|N compares the UI
     //   target with a replay of the recordings and with a direct redraw every N frames (default 30)
     //   plan entry minimap opens the minimap gump
@@ -1770,30 +1772,7 @@ namespace ClassicUO
                         break;
                     }
 
-                    if (_plan[_planIndex].StartsWith("eqhue:"))
-                    {
-                        // local-only: the player's equipped items get these hues in turn (comma-separated, hex; a hue with
-                        // bit 15 set is drawn partial-hue as the server would send it), for paperdoll hue checks
-                        string[] hues = _plan[_planIndex].Substring(6).Split(',');
-                        int n = 0;
-
-                        for (var it = world.Player.Items; it != null; it = it.Next)
-                        {
-                            if (it is Game.GameObjects.Item item && item.Layer != Game.Data.Layer.Backpack && item.Layer != Game.Data.Layer.Hair && item.Layer != Game.Data.Layer.Beard)
-                            {
-                                item.Hue = Convert.ToUInt16(hues[n++ % hues.Length], 16);
-                                Log.Info($"[bench] equipped 0x{item.Graphic:X4} layer {item.Layer} hue 0x{item.Hue:X4}");
-                            }
-                        }
-
-                        Game.Managers.UIManager.GetGump<Game.UI.Gumps.PaperDollGump>(world.Player.Serial)?.RequestUpdateContents();
-                        _planIndex++;
-                        _stepAt = now + sec;
-
-                        break;
-                    }
-
-                    if (_plan[_planIndex].StartsWith("itemhue:") || _plan[_planIndex].StartsWith("ghost:"))
+                    if (_plan[_planIndex].StartsWith("itemhue:") || _plan[_planIndex].StartsWith("eqhue:") || _plan[_planIndex].StartsWith("ghost:"))
                     {
                         // local-only hue checks: the nearest ground items get these hues (comma-separated);
                         // ghost:on|off swaps the player's body for a ghost (the death screen's gray world)
@@ -1818,20 +1797,42 @@ namespace ClassicUO
                             string[] hues = arg.Split(',');
                             var items = new System.Collections.Generic.List<Game.GameObjects.Item>();
 
-                            foreach (var item in world.Items.Values)
+                            bool equipped = _plan[_planIndex].StartsWith("eqhue:");
+
+                            if (equipped)
                             {
-                                if (item.OnGround && !item.IsMulti && item.Distance < 6)
+                                // eqhue: the player's equipped items (not backpack, hair, beard) get the hues in turn, for
+                                // paperdoll hue checks (bit 15 set = partial hue, as the server sends it)
+                                for (var it = world.Player.Items; it != null; it = it.Next)
                                 {
-                                    items.Add(item);
+                                    if (it is Game.GameObjects.Item item && item.Layer != Game.Data.Layer.Backpack && item.Layer != Game.Data.Layer.Hair && item.Layer != Game.Data.Layer.Beard)
+                                    {
+                                        items.Add(item);
+                                    }
                                 }
                             }
+                            else
+                            {
+                                foreach (var item in world.Items.Values)
+                                {
+                                    if (item.OnGround && !item.IsMulti && item.Distance < 6)
+                                    {
+                                        items.Add(item);
+                                    }
+                                }
 
-                            items.Sort((a, b) => a.Distance != b.Distance ? a.Distance.CompareTo(b.Distance) : a.Serial.CompareTo(b.Serial));
+                                items.Sort((a, b) => a.Distance != b.Distance ? a.Distance.CompareTo(b.Distance) : a.Serial.CompareTo(b.Serial));
+                            }
 
                             for (int i = 0; i < hues.Length && i < items.Count; i++)
                             {
                                 items[i].Hue = Convert.ToUInt16(hues[i], 16);
                                 Log.Info($"[bench] item 0x{items[i].Graphic:X4} at {items[i].X},{items[i].Y},{items[i].Z} hue 0x{items[i].Hue:X4}");
+                            }
+
+                            if (equipped)
+                            {
+                                Game.Managers.UIManager.GetGump<Game.UI.Gumps.PaperDollGump>(world.Player.Serial)?.RequestUpdateContents();
                             }
                         }
 
