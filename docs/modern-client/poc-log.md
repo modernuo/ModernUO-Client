@@ -2364,6 +2364,7 @@ Branch `poc/pack-gumps`, from poc/modern-client fdfcc9813, merged up to 80ccb1a2
   Counts without the variable are 11 to 39 on every build, including the pre-recycler and pre-E11 ones, so no merge changed them beyond the race. The E11 and E10 rows and the older builds with the variable were dropped for time: the bench.lock queue made each run take 20 to 40 minutes and the answer did not depend on them. Earlier agents' 0 (E6 and before) is consistent: they set the variable.
 - **Fix.** `EcsParity` now sets `Animations.AsyncFirstSight = false` when `CUO_ECS_PARITY` is on, so parity no longer depends on remembering the variable (harness-only; the normal render path is untouched). Verified by two runs without the variable: 0 mismatches.
 - **Open point (not changed).** With `gpu_ecs_sprites` on, the extract draws a first-sight body at once while the legacy view skips it for a few frames. Not a Gpu bug (the body appears sooner), but Gpu and Legacy differ for those frames.
+
 ## Login warm-up collections: pools filled and one collection inside the login hold (2026-10-30)
 
 Branch `poc/login-warmup-gc` (warmgc agent, kbatman3), from poc/modern-client 3685c30f0; final numbers on 80ccb1a24 (base: branch `poc/login-warmup-gc-base`, the same tip plus the measurement commits only). Follows "Chunk loads without allocation", whose remaining collections were all login warm-up. Scripts, logs and traces: session scratchpad `warmgc\`.
