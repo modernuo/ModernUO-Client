@@ -477,6 +477,15 @@ namespace ClassicUO
             }
         }
 
+        // L1: the per-frame network drain. CUO_NET_CAP_BYTES / CUO_NET_CAP_PACKETS override the caps for measurements
+        // (CUO_NET_CAP_BYTES=1 reads one 4 KB slice per frame, as before the drain loop).
+        private static readonly int _netCapBytes = int.TryParse(Environment.GetEnvironmentVariable("CUO_NET_CAP_BYTES"), out var cb) && cb > 0 ? cb : NetClient.DefaultFrameByteCap;
+        private static readonly int _netCapPackets = int.TryParse(Environment.GetEnvironmentVariable("CUO_NET_CAP_PACKETS"), out var cp) && cp > 0 ? cp : NetClient.DefaultFramePacketCap;
+        private static readonly bool _netTrace = (NetClient.TrackAvailable = Environment.GetEnvironmentVariable("CUO_NET_TRACE") == "1");
+        private Func<ArraySegment<byte>, int> _parseSlice;
+
+        private int ParseSlice(ArraySegment<byte> data) => PacketHandlers.Handler.ParsePackets(NetClient.Socket, UO.World, data);
+
         protected override void Update(GameTime gameTime)
         {
             FrameStats.Begin(FramePhase.Update);
@@ -498,8 +507,22 @@ namespace ClassicUO
             Mouse.Update();
 
             FrameStats.Begin(FramePhase.Packets);
-            var data = NetClient.Socket.CollectAvailableData();
-            var packetsCount = PacketHandlers.Handler.ParsePackets(NetClient.Socket, UO.World, data);
+            _parseSlice ??= ParseSlice;
+            var drainStart = _netTrace ? Stopwatch.GetTimestamp() : 0;
+            var packetsCount = NetClient.Socket.Drain(_parseSlice, _netCapBytes, _netCapPackets);
+
+            if (_netTrace && (NetClient.Socket.LastDrainAvailable > 0 || NetClient.Socket.LastDrainBytes > 0))
+            {
+                Log.Info($"[net] frame={_totalFrames} avail={NetClient.Socket.LastDrainAvailable} bytes={NetClient.Socket.LastDrainBytes} slices={NetClient.Socket.LastDrainSlices} packets={packetsCount} ms={Stopwatch.GetElapsedTime(drainStart).TotalMilliseconds:0.00}");
+            }
+
+            if (FrameStats.On)
+            {
+                FrameStats.Set(FrameCounter.NetAvail, NetClient.Socket.LastDrainAvailable);
+                FrameStats.Set(FrameCounter.NetBytes, NetClient.Socket.LastDrainBytes);
+                FrameStats.Set(FrameCounter.NetSlices, NetClient.Socket.LastDrainSlices);
+                FrameStats.Set(FrameCounter.NetPackets, packetsCount);
+            }
 
             NetClient.Socket.Statistics.TotalPacketsReceived += (uint)packetsCount;
             NetClient.Socket.Flush();

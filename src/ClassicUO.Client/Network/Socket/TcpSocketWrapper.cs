@@ -54,20 +54,47 @@ sealed class TcpSocketWrapper : SocketWrapper
         stream.Flush();
     }
 
+    public override int Available
+    {
+        get
+        {
+            try
+            {
+                return _socket?.Client?.Available ?? 0;
+            }
+            catch (Exception)
+            {
+                return 0;
+            }
+        }
+    }
+
     public override int Read(byte[] buffer)
     {
-        if (!IsConnected)
+        var client = _socket?.Client;
+
+        if (client == null || !client.Connected)
             return 0;
 
-        var available = Math.Min(buffer.Length, _socket.Available);
-        var done = 0;
-
-        var stream = _socket.GetStream();
-
-        while (done < available)
+        try
         {
-            var toRead = Math.Min(buffer.Length, available - done);
-            var read = stream.Read(buffer, done, toRead);
+            // Readable means data, or a FIN/RST waiting to be read. Checking the data length alone (the old
+            // `Available`) never noticed a peer close while the connection was idle.
+            if (!client.Poll(0, SelectMode.SelectRead))
+                return 0;
+
+            var read = client.Receive(buffer, 0, buffer.Length, SocketFlags.None, out var error);
+
+            if (error == SocketError.WouldBlock || error == SocketError.Interrupted)
+                return 0;
+
+            if (error != SocketError.Success)
+            {
+                InvokeOnError(error);
+                Disconnect();
+
+                return 0;
+            }
 
             if (read <= 0)
             {
@@ -77,10 +104,12 @@ sealed class TcpSocketWrapper : SocketWrapper
                 return 0;
             }
 
-            done += read;
+            return read;
         }
-
-        return done;
+        catch (ObjectDisposedException)
+        {
+            return 0;
+        }
     }
 
     public override void Disconnect()

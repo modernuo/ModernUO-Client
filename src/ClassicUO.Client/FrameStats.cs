@@ -151,6 +151,11 @@ namespace ClassicUO
         UiUntouched,
         // E6: effects in the world's effects list this frame
         Effects,
+        // L1 network drain: bytes the socket had ready when the frame drained it, raw bytes read, 4 KB slices read, packets dispatched
+        NetAvail,
+        NetBytes,
+        NetSlices,
+        NetPackets,
         Count
     }
 
@@ -199,7 +204,8 @@ namespace ClassicUO
             "item_cache_builds", "item_cache_tiles", "item_cache_items", "item_cache_fallbacks", "item_cache_walked", "item_cache_fx",
             "chunk_loads", "chunk_load_us", "chunk_alloc", "chunk_gc", "chunk_gc_us", "chunk_reused", "chunk_retired", "chunk_mesh_alloc", "chunk_new", "chunk_mesh_us", "chunk_queue", "region_wait_us", "region_sync", "region_prefetch",
             "art_sync", "art_sync_us", "art_async", "art_upload_us", "art_pending",
-            "ui_flushes", "ui_draw_calls", "ui_cached", "ui_untouched", "effects" };
+            "ui_flushes", "ui_draw_calls", "ui_cached", "ui_untouched", "effects",
+            "net_avail", "net_bytes", "net_slices", "net_packets" };
 
         private static readonly long[] _start = new long[PHASES];
         private static readonly long[] _acc = new long[PHASES];
