@@ -6533,6 +6533,74 @@ namespace ClassicUO.Network
             container.Items = remove_unequipped ? new_first : null;
         }
 
+        private static readonly List<uint> _layoutGumps = new List<uint>();
+
+        /// <summary>
+        /// The gump pictures a server gump's layout names (gumppic, button, resizepic's nine pieces, gumppictiled,
+        /// checkbox, radio), decoded on workers in one batch before the controls are built (Renderer.Gumps.Gump.Prefetch;
+        /// pack only). The controls then find them in the atlas; what the batch misses decodes on the spot as before.
+        /// </summary>
+        internal static void PrefetchLayoutGumps(List<string>[] commands)
+        {
+            if (!Renderer.Gumps.Gump.AsyncRequests || !Client.Game.UO.FileManager.Gumps.CanDecodeOnWorker)
+            {
+                return;
+            }
+
+            _layoutGumps.Clear();
+
+            for (int cnt = 0; cnt < commands.Length; cnt++)
+            {
+                List<string> p = commands[cnt];
+
+                if (p.Count == 0)
+                {
+                    continue;
+                }
+
+                string entry = p[0];
+
+                if (string.Equals(entry, "gumppic", StringComparison.InvariantCultureIgnoreCase))
+                {
+                    AddLayoutGump(p, 3);
+                }
+                else if (string.Equals(entry, "button", StringComparison.InvariantCultureIgnoreCase)
+                    || string.Equals(entry, "checkbox", StringComparison.InvariantCultureIgnoreCase)
+                    || string.Equals(entry, "radio", StringComparison.InvariantCultureIgnoreCase))
+                {
+                    AddLayoutGump(p, 3);
+                    AddLayoutGump(p, 4);
+                }
+                else if (string.Equals(entry, "gumppictiled", StringComparison.InvariantCultureIgnoreCase))
+                {
+                    AddLayoutGump(p, 5);
+                }
+                else if (string.Equals(entry, "resizepic", StringComparison.InvariantCultureIgnoreCase)
+                    && p.Count > 3)
+                {
+                    ushort first = UInt16Converter.Parse(p[3]);
+
+                    for (int i = 0; i < 9; i++)
+                    {
+                        _layoutGumps.Add((uint)(first + i));
+                    }
+                }
+            }
+
+            if (_layoutGumps.Count >= 2)
+            {
+                Client.Game.UO.Gumps.Prefetch(System.Runtime.InteropServices.CollectionsMarshal.AsSpan(_layoutGumps));
+            }
+        }
+
+        private static void AddLayoutGump(List<string> p, int index)
+        {
+            if (p.Count > index)
+            {
+                _layoutGumps.Add(UInt16Converter.Parse(p[index]));
+            }
+        }
+
         private static Gump CreateGump(
             World world,
             uint sender,
@@ -6596,6 +6664,16 @@ namespace ClassicUO.Network
                 };
             }
 
+            // the layout is tokenized once: the prefetch scan and the control loop below share the tokens
+            var commands = new List<string>[cmdlen];
+
+            for (int cnt = 0; cnt < cmdlen; cnt++)
+            {
+                commands[cnt] = _cmdparser.GetTokens(cmdlist[cnt], false);
+            }
+
+            PrefetchLayoutGumps(commands);
+
             int group = 0;
             int page = 0;
 
@@ -6603,7 +6681,7 @@ namespace ClassicUO.Network
 
             for (int cnt = 0; cnt < cmdlen; cnt++)
             {
-                List<string> gparams = _cmdparser.GetTokens(cmdlist[cnt], false);
+                List<string> gparams = commands[cnt];
 
                 if (gparams.Count == 0)
                 {

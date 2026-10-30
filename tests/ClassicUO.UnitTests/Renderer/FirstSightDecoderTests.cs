@@ -229,6 +229,40 @@ namespace ClassicUO.UnitTests.Renderer
         }
 
         [Fact]
+        public void Cancel_At_The_Publish_Boundary_Leaves_No_Buffer_Queued()
+        {
+            // the audit's logout race: a worker past its epoch check but not yet queued, while Cancel bumps the epoch and
+            // drains. The check and the publish are one step against Cancel, so either Cancel drains the published job
+            // (returning its buffer) or the worker sees the new epoch and returns the buffer itself
+            int uploads = 0;
+            using var atBoundary = new ManualResetEventSlim(false);
+            using var release = new ManualResetEventSlim(false);
+            var d = new FirstSightDecoder("test", 4, FillPattern, _ => uploads++);
+            d.BeforePublishForTests = () =>
+            {
+                atBoundary.Set();
+                release.Wait();
+            };
+
+            d.Request(1);
+            atBoundary.Wait(10000).Should().BeTrue();
+
+            var cancel = Task.Run(d.Cancel); // logout while the worker is publishing
+            Thread.Sleep(50);
+            cancel.IsCompleted.Should().BeFalse("Cancel waits for the publish step");
+            release.Set();
+            cancel.Wait(10000).Should().BeTrue();
+
+            d.ReadyCount.Should().Be(0, "the published job was drained, buffer returned, by Cancel");
+            d.Pending.Should().Be(0);
+            d.IsRequested(1).Should().BeFalse();
+
+            d.BeforePublishForTests = null;
+            d.Request(1);
+            WaitUntil(() => uploads == 1, () => d.Drain(long.MaxValue));
+        }
+
+        [Fact]
         public void Worker_Art_Decodes_Match_The_Main_Thread_Decode()
         {
             // the worker path is ArtLoader.GetArt (PackSprites.DecodeColor into a pooled buffer) plus VisibleBounds, on
