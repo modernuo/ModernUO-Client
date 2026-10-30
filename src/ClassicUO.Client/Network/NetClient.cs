@@ -162,7 +162,9 @@ namespace ClassicUO.Network
         private Connection _connection;
 
         /// <summary>Bumped whenever a connection starts or ends; the packet parser drops its partial data when it changes.</summary>
-        public int ConnectionGeneration { get; private set; }
+        public int ConnectionGeneration => Volatile.Read(ref _generation);
+
+        private int _generation;
 
         /// <summary>
         /// Puts the protocol back to its start state: login-server mode (no compression, so no game-server encryption mode), a
@@ -173,7 +175,7 @@ namespace ClassicUO.Network
             _isCompressionEnabled = false;
             _huffman.Reset();
             _sendStream.Clear();
-            ConnectionGeneration++;
+            Interlocked.Increment(ref _generation);
         }
 
         /// <summary>
@@ -181,9 +183,18 @@ namespace ClassicUO.Network
         /// protocol state is reset first, so whatever the Disconnected handlers do next (a reconnect to the login server)
         /// starts clean, then the socket is closed and the handlers are told.
         /// </summary>
-        private void Terminate(SocketError error)
+        private void Terminate(SocketError error, Connection only = null)
         {
-            _connection?.Retire(); // late callbacks of this connection, and its unread data, are void from here on
+            // Idempotent per connection: a connection that already ended (a malformed-header ProtocolError inside the parser
+            // pump, then the Drain that saw the close) or was replaced (a Disconnected handler reconnected) is not ended again.
+            var current = _connection;
+
+            if (current != null && (current.Retired || (only != null && !ReferenceEquals(only, current))))
+            {
+                return;
+            }
+
+            current?.Retire(); // late callbacks of this connection, and its unread data, are void from here on
             ResetProtocolState();
             Statistics.Reset();
             _socket?.Disconnect();
@@ -280,6 +291,7 @@ namespace ClassicUO.Network
             }
 
             var emptied = false;
+            var closeSeen = false;
 
             while (_socket != null && LastDrainBytes < maxBytes && packets < maxPackets)
             {
@@ -291,7 +303,23 @@ namespace ClassicUO.Network
 
                 if (!ReadSlice(out var raw, out var data))
                 {
-                    emptied = true;
+                    // An empty read only ends the connection if it was made after the close had been seen: a receive task
+                    // enqueues its last frame and then reports the close, so a read that was empty a moment earlier can
+                    // be followed by that frame. Seeing the close sends us round once more; the caps still apply, and a
+                    // capped frame carries on next time.
+                    if (closeSeen)
+                    {
+                        emptied = true;
+
+                        break;
+                    }
+
+                    if (_connection is { Closed: true })
+                    {
+                        closeSeen = true;
+
+                        continue;
+                    }
 
                     break;
                 }
@@ -315,10 +343,7 @@ namespace ClassicUO.Network
                     sinkCalled = true;
                 }
 
-                if (ReferenceEquals(closing, _connection))
-                {
-                    Terminate(closing.Error);
-                }
+                Terminate(closing.Error, closing);
             }
 
             if (!sinkCalled)

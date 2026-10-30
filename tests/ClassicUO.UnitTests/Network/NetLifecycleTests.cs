@@ -481,5 +481,145 @@ namespace ClassicUO.UnitTests.Network
             buffer.Dequeue(all, 0, all.Length).Should().Be(all.Length);
             all.Should().Equal(expected);
         }
+
+        // ---- third audit: locks, the final frame, stale injections, double termination ----
+
+        [Fact]
+        public void Handler_That_Triggers_An_Injecting_Hook_Does_Not_Deadlock_With_A_Background_Injector()
+        {
+            var client = MakeClient();
+            client.AttachSocket(new IdleSocket());
+            var handlers = new PacketHandlers();
+            var handled = 0;
+            var gate = new object(); // stands in for a plugin host's own lock (what Plugin used to take on the Handler)
+
+            // a handler that "sends a response": its outgoing hook takes the plugin lock and injects
+            handlers.Add(0x73, (World _, ref StackDataReader p) =>
+            {
+                System.Threading.Interlocked.Increment(ref handled);
+
+                lock (gate)
+                {
+                    handlers.Append(new byte[] { 0x04, 0x00 }, true, client); // a 2-byte packet nobody handles
+                }
+            });
+
+            var stop = false;
+            var injector = System.Threading.Tasks.Task.Run(() =>
+            {
+                while (!System.Threading.Volatile.Read(ref stop))
+                {
+                    lock (gate)
+                    {
+                        handlers.Append(new byte[] { 0x73, 0x01 }, true, client);
+                    }
+
+                    System.Threading.Thread.Sleep(1);
+                }
+            });
+
+            var parser = System.Threading.Tasks.Task.Run(() =>
+            {
+                for (var i = 0; i < 2000; i++)
+                {
+                    handlers.ParsePackets(client, null!, new byte[] { 0x73, 0x01 });
+                }
+            });
+
+            var finished = parser.Wait(TimeSpan.FromSeconds(20));
+            System.Threading.Volatile.Write(ref stop, true);
+            injector.Wait(TimeSpan.FromSeconds(5)).Should().BeTrue();
+
+            finished.Should().BeTrue("a handler dispatched with a queue lock held would deadlock against the injector");
+            handled.Should().BeGreaterThanOrEqualTo(2000);
+        }
+
+        [Fact]
+        public void A_Frame_Enqueued_Just_After_An_Empty_Read_And_Before_The_Close_Is_Not_Lost()
+        {
+            var client = MakeClient();
+            var socket = new RacingSocket();
+            client.AttachSocket(socket);
+            var got = new List<byte>();
+            var order = new List<string>();
+            client.Disconnected += (_, _) => order.Add("closed");
+
+            client.Drain(d => { if (d.Count > 0) { got.AddRange(d.AsSpan()); order.Add("data"); } return 0; }, maxMs: 0);
+
+            got.Should().Equal(0x73, 0x07);
+            order.Should().Equal("data", "closed");
+        }
+
+        // The first read finds nothing; right after it the receive task enqueues its last frame and reports the close.
+        private sealed class RacingSocket : SocketWrapper
+        {
+            private int _reads;
+            private byte[] _frame = Array.Empty<byte>();
+            private int _pos;
+
+            public override bool IsConnected => true;
+            public override EndPoint LocalEndPoint => null;
+            public override void Connect(Uri uri) { }
+            public override void Send(byte[] buffer, int offset, int count) { }
+            public override void Disconnect() { }
+            public override void Dispose() { }
+
+            public override int Read(byte[] buffer)
+            {
+                if (_reads++ == 0)
+                {
+                    _frame = new byte[] { 0x73, 0x07 };
+                    InvokeOnDisconnected(); // frame enqueued, then the close reported, both after the empty read above
+                    return 0;
+                }
+
+                var n = Math.Min(buffer.Length, _frame.Length - _pos);
+                Array.Copy(_frame, _pos, buffer, 0, n);
+                _pos += n;
+
+                return n;
+            }
+        }
+
+        [Fact]
+        public void Plugin_Injection_From_An_Older_Connection_Is_Dropped_Without_Touching_Newer_Packets()
+        {
+            var client = MakeClient();
+            client.AttachSocket(new IdleSocket());
+            var (handlers, seen) = MakeHandlers();
+
+            var oldGeneration = client.ConnectionGeneration;
+            client.Disconnect(); // reconnect: a new generation
+            var newGeneration = client.ConnectionGeneration;
+            newGeneration.Should().BeGreaterThan(oldGeneration);
+
+            handlers.ParsePackets(client, null!, Span<byte>.Empty); // the parser has moved to the new generation
+            handlers.AppendPlugin(new byte[] { 0x73, 0x02 }, newGeneration); // a new-connection injection
+            handlers.AppendPlugin(new byte[] { 0x73, 0x01 }, oldGeneration); // a slow injector that sampled the old generation
+
+            handlers.ParsePackets(client, null!, Span<byte>.Empty).Should().Be(1);
+
+            seen.Should().ContainSingle().Which.Should().Equal(0x73, 0x02);
+        }
+
+        [Fact]
+        public void Malformed_Plugin_Bytes_At_Close_Give_One_Disconnected()
+        {
+            var client = MakeClient();
+            var socket = new QueueSocket();
+            client.AttachSocket(socket);
+            var (handlers, seen) = MakeHandlers();
+            var closed = new List<SocketError>();
+            client.Disconnected += (_, e) => closed.Add(e);
+
+            handlers.Append(new byte[] { 0x03, 0x00, 0x00 }, true, client); // malformed, in the plugin queue
+            socket.RaiseClose();
+
+            client.Drain(d => handlers.ParsePackets(client, null!, d), maxMs: 0);
+            client.Drain(d => handlers.ParsePackets(client, null!, d), maxMs: 0);
+
+            closed.Should().HaveCount(1);
+            closed[0].Should().Be(SocketError.ProtocolNotSupported);
+        }
     }
 }
