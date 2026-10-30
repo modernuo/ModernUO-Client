@@ -44,6 +44,8 @@ For every content type described here, the client reads only the pack. MUL/UOP s
   map/<facet>/
     facet.json             facet size and region grid
     r_<rx>_<ry>.bin        map region (UORG)
+  gumps/
+    gumps.bin              gump images, sizes and gump.def aliases: a record store (GUMP)
 ```
 
 `NNNN` is the zero-padded decimal page index (`page_0000.bin`). Page indices are contiguous from 0.
@@ -76,6 +78,7 @@ Every binary file starts with a 16-byte `FileHeader`:
 | `ANIM` 0x4D494E41 | anim/anim.bin |
 | `APAL` 0x4C415041 | anim/palettes.bin |
 | `ANDT` 0x54444E41 | anim/animdata.bin |
+| `GUMP` 0x504D5547 | gumps/gumps.bin (a record store) |
 
 **Reader rule.** A reader accepts `version` 0 and 1 and rejects anything higher. Version 0 files come from pre-1.0 packs. Every version-0 file has the same layout as its version-1 counterpart, so no reader branches on the version. What version-0 packs lack:
 
@@ -105,7 +108,7 @@ In every kind, the *logical payload* is the bytes a raw file has after its `File
 
   Decode each chunk straight into the destination buffer at its logical offset. Chunk 0 always contains the `PageHeader` (and for regions the `RegionHeader` and offset table). `Uo.Pack` provides `ChunkedBrotli.Decode` (single thread, in memory), `ChunkedBrotliStream` (sequential) and `ChunkedBrotliDecoder` (persistent worker pool, used by `AtlasPage.Read(path, span, decoder)`).
 
-Which files use which kind is a profile choice (see "Ship profile"). Only pages and regions are ever compressed; all other files are raw.
+Which files use which kind is a profile choice (see "Ship profile"). Only pages and regions are compressed as whole files; all other files are Kind 0. Record stores (gumps) are Kind 0 files whose records are compressed one by one (see "Record stores").
 
 ## Atlas pages (`page_NNNN.bin`)
 
@@ -356,6 +359,53 @@ The rows are Equipconv.def as ClassicUO resolves it in `ProcessEquipConvDef` (cl
 
 At runtime, an equipped item on body `body` with animId `graphic` is drawn as `newGraphic`, and the paperdoll uses `gump`.
 
+## Record stores
+
+Content that the client reads one item at a time and that is not sampled by the GPU from pack pages goes into a record store: one Kind 0 file per content type, read by offset through one file handle kept open. Gumps are the first; sounds, fonts and the other "Not in the pack" types are meant to use the same layout with their own magic, slot argument and record meta. Reader and writer: `Uo.Pack.RecordStore`, `RecordStoreWriter`.
+
+| Part | Layout |
+|---|---|
+| `FileHeader` | magic = the content type, version 1, kind 0 |
+| `StoreHeader` (16 bytes) | slotCount u32, recordCount u32, flags u32 (type-specific), reserved u32 |
+| `StoreSlot[slotCount]` (8 bytes each) | record u32 (record index + 1; 0 = no such id), arg u16 (type-specific), reserved u16 |
+| `StoreRecord[recordCount]` (24 bytes each) | offset u64 (from the start of the file), storedBytes u32, rawBytes u32, codec u16, meta0, meta1, meta2 u16 (type-specific) |
+| payloads | back to back, each decodable on its own |
+
+- Slot `i` is id `i`. Several ids may share one record (aliases, identical content).
+- Codec 0: the payload as is (`storedBytes = rawBytes`). Codec 1: one Brotli stream (window 22) that decodes to `rawBytes` bytes. Readers reject other codecs.
+- A reader reads the header, the slot table and the record table once (one read each) and validates them: every slot points into the record table, every record lies inside the file. A record is then one positional read plus its decode, from any thread, into the caller's buffer.
+- No whole-file compression and no per-record files: a store is read by offset (the per-open cost of a file is 20–28 µs, L7), and a record decodes alone.
+
+## Gumps (`gumps/gumps.bin`)
+
+A record store with magic `GUMP` holding every gump id the client's `GumpsLoader` resolves, with `gump.def` and loose `Gumps/*.gump` files already applied. The client reads gumps only from here when the file exists (`GumpsLoader.FromPack`); without it, it reads gumpart MUL/UOP as before.
+
+- **`StoreHeader.flags`** bit 0: converted from `gumpartLegacyMUL.uop` (ClassicUO's `UseUOPGumps`; the status gump's layout depends on it).
+- **Slots:** `slotCount` = highest present id + 1 (69,986 for 7.0.103, whose UOP has gumps above 0xFFFF). `arg` = the gump.def alias hue (0 = none).
+- **Records:** `meta0` = width, `meta1` = height, `meta2` = payload layout. The record table is the size table: width and height of any gump without decoding it.
+- **Payload layouts** (`Uo.Pack.GumpCodec`), both lossless 16-bit:
+  - 0, texels: `width·height` B5G5R5A1 `u16`, row-major. Texel 0 = transparent, else bit 15 set and bits 0–14 the source colour. Ship profile, with codec 1.
+  - 1, run-length rows: `u32 rowStart[height]` (in 4-byte units from the start of this table), then `(u16 texel, u16 run)` pairs. Row `y`'s runs end where row `y+1`'s start (the last row's at the end of the payload); texels no run reaches are transparent. This is the client's own entry layout, re-encoded canonically (a run per change of texel, no trailing transparent run). `--raw-gumps`, with codec 0.
+- **Lossless:** the stored texel is the source value's colour bits plus bit 15 = visible. ClassicUO's decode ignores bit 15 (`Color16To32`, `GetColor16`), so every image the client draws is reproduced exactly; hueing needs the exact 5-bit gray texels, which no lossy format keeps (see BC7 in the appendix).
+- **Drawing a gump** (ClassicUO `GumpsLoader.GetGump`): each visible texel `v` becomes RGBA8 with ClassicUO's 5→8-bit table (`HuesHelper.Color16To32`, not the canonical expansion: gumps go through the CPU and the batcher's RGBA8 atlas, and parity is with the MUL path) and alpha 255. With a slot hue `h`, `1 ≤ h < hue count`, first `v = hues[h − 1].colors[(v >> 10) & 31]`, and the texel stays visible only if that is not 0 (`GetColor16`).
+- **Converter resolution:** ids whose index entries are identical (gump.def copies the entry and sets a hue; UOP/MUL may alias too) share one record, and so do ids with identical decoded images. An id with a loose `Gumps/<id>.gump` file gets its own record from that file, with no hue, as the client's `ReadOurs`; a broken file falls back to the archive entry with its hue, as the client does. The client no longer reads loose gump files when the pack has gumps; re-run the converter (`--only gumps`, about 6 s) after changing them.
+
+**Why per-gump records and not atlas pages** (`--gump-report`, 7.0.103, 4,438 gumps):
+
+| Candidate | Size | Decode of a 670×670 gump (µs, JIT, median) |
+|---|---|---|
+| Client MUL/UOP entries (reference) | 136.9 MiB | 1,250–1,740 (the client's own RLE decode) |
+| Atlas pages, 2048², no mips | 289 MiB raw (36 pages) | whole 1 MiB chunks: a 600-row gump touches 3 (2.4 MB) |
+| Raw texels + Brotli (ship) | 37.9 MiB | 1,800–2,150 (Brotli 1,750–2,000, expand 90) |
+| Raw texels + zlib | 39.2 MiB | 1,220–1,990 |
+| RLE + Brotli | 41.2 MiB | 2,650–3,250 |
+| RLE uncompressed (`--raw-gumps`) | 133 MiB | 880–960 |
+
+- Gumps are drawn through the CPU into the batcher's own RGBA8 atlas; nothing samples pack pages, so pages buy no GPU residency and cost gutters, chunk-granular reads (neighbours decode with every gump) and 2× the raw bytes.
+- 66% of gump texels are transparent and the images are large (up to 781×800), so per-record compression does well: 280 MiB of raw texels → 37.3 MiB.
+- Raw texels + Brotli is the smallest; it decodes without allocation (`BrotliDecoder.TryDecompress`) and straight into the pixel buffer: the 16-bit texels land in its upper half and expand in place, front to back. zlib decodes 30–40% faster but needs a stream object per decode (no span API in .NET 10). `--raw-gumps` gives the fastest decode at the source's size.
+- Sizes for the 4,438 gumps: 4,290 records after sharing (16 gump.def/index aliases, 132 identical images), 37.9 MiB file, of which the tables are 0.6 MiB.
+
 ## Manifest (`manifest.json`)
 
 camelCase JSON, read case-insensitively:
@@ -382,18 +432,21 @@ camelCase JSON, read case-insensitively:
 | Art, texmaps | B5G5R5A1, 2048², full mip chain (6 levels) | Kind 2, 1 MiB chunks |
 | Animations | Indexed8, 1024², mip0 only, plus `palettes.bin` | Kind 2, 1 MiB chunks; the 16-byte PageHeader puts the last 16 bytes of a full page in a second, tiny chunk |
 | Map regions | — | Kind 1 |
+| Gumps | record store, texel layout | Kind 0 file, every record Brotli (quality 9) |
 | Everything else | — | Kind 0 |
 
 - No install-time unpacking is required. A patcher may still rewrite any file to Kind 0, since raw is always valid.
 - Variant flags (experimental or for measurement):
   - formats: `--format rgba8|bc7`, `--anim-format page` (anims use `--format`), `--indexed-mips b16`;
   - page sizes: `--page-size n`, `--anim-page-size n`;
-  - compression: `--raw-pages`, `--compress-pages` (Kind 1), `--chunk-bytes n`, `--raw-regions`.
-- Stages: `--only art,tex,hues,tiledata,data,maps,anims` (into an existing pack), `--no-maps`, `--no-anims`, `--verify-only`. `hues` also writes `hues_raw.bin` and `radarcol.bin`, `tiledata` writes both tiledata files, and `data` writes multis, lights, tileart and equipconv. `animdata.bin` belongs to `anims`.
+  - compression: `--raw-pages`, `--compress-pages` (Kind 1), `--chunk-bytes n`, `--raw-regions`, `--raw-gumps` (gump records uncompressed, run-length layout);
+  - testing: `--gump-def <file>` (read this gump.def instead of the client's), `--gump-report` (the gump storage measurements above; writes nothing).
+- Stages: `--only art,tex,hues,tiledata,data,gumps,maps,anims` (into an existing pack), `--no-maps`, `--no-anims`, `--no-gumps`, `--verify-only`. `hues` also writes `hues_raw.bin` and `radarcol.bin`, `tiledata` writes both tiledata files, and `data` writes multis, lights, tileart and equipconv. `animdata.bin` belongs to `anims`.
 
 **Verification.** Every conversion ends with a verify step that reads the pack back with the `Uo.Pack` readers. It compares against ClassicUO's own loaders:
 - **Sampled.** Sprites are bit-exact including gutters. Indexed8 frames are bit-exact after the palette lookup.
 - **Every record and field, exact:** tiledata (all fields and names), hues (raw entries and the LUT), radarcol, animdata, multis, lights, tileart appearances and equipconv.
+- **Every gump slot of the client's index (81,919 for 7.0.103), exact:** present or not, width and height, and the RGBA8 image with the alias hue, against the converter's copy of `GumpsLoader.GetGump`. The client test `GumpPackTests` repeats it against the client's own MUL/UOP loader.
 
 ## Reference sizes (7.0.103, ship profile)
 
@@ -406,6 +459,7 @@ camelCase JSON, read case-insensitively:
 | Tile data | tiledata.bin, tiledata_ext.bin | 0.9 + 2.1 MiB |
 | Hues, radarcol | hues.bin, hues_raw.bin, radarcol.bin | 0.4 + 0.3 + 0.2 MiB |
 | Multis, lights, tileart, equipconv | | 1.8 MiB, 2.8 MiB, 692 B, 1,060 B |
+| Gumps | gumps/gumps.bin | 37.9 MiB (270 MiB of raw texels; 133.7 MiB with `--raw-gumps`); 4,438 gumps, 4,290 records |
 
 Decode cost on one worker (i9-12900K): an anim page ≈2.6 ms, an art page ≈23 ms (≈4 ms with 8 workers on Kind 2), a region ≈2.4 ms.
 
@@ -413,15 +467,16 @@ Decode cost on one worker (i9-12900K): an anim page ≈2.6 ms, an art page ≈23
 
 | Content | ClassicUO loader | Notes |
 |---|---|---|
-| Gumps (incl. paperdoll gump art) | `GumpsLoader` | next large content type |
-| Fonts | `FontsLoader` | |
+| Fonts | `FontsLoader` | next; a record store like gumps |
 | Cliloc, speech | `ClilocLoader`, `SpeechesLoader` | |
 | Sounds and music | `SoundsLoader` | |
 | Skills, professions | `SkillsLoader`, `ProfessionLoader` | |
 | World map images | `MultiMapLoader` (Multimap.rle, facet*.mul) | |
 | Anim1.def / Anim2.def group replaces, animinfo.mul, sitting tables | `AnimationsLoader` and client tables | runtime fallbacks for mounts and missing groups |
 
-Picking needs CPU-side alpha. The client decodes pack pages on the CPU (B5G5R5A1 bit 15; Indexed8 index ≠ 0). Mask sidecars are not part of 1.0.
+Gumps moved into the pack on 2026-10-30 ("Gumps"); a pack without `gumps/gumps.bin` still works, and the client then reads gumpart MUL/UOP.
+
+Picking needs CPU-side alpha. The client decodes pack pages on the CPU (B5G5R5A1 bit 15; Indexed8 index ≠ 0), and gump records likewise (the picker mask is built from the decoded image at upload). Mask sidecars are not part of 1.0.
 
 ## Appendix: experimental formats (not shipped)
 
