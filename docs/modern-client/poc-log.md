@@ -2236,3 +2236,11 @@ Branch `poc/item-art-worker` (item art agent, kbatman4), from poc/modern-client 
 3. **Logout race in `FirstSightDecoder` (P2, inherited).** A worker could pass its epoch check, then `Cancel` bumped the epoch and drained an empty queue, then the worker queued its buffer, which stayed held until the next session's `Drain`. The epoch check and the publish now run under a lock that `Cancel` takes too. New test at that boundary: `Cancel` waits for the publish and drains the job, so no buffer stays queued.
 4. **The animated frame waited for (P3).** The chunk loader (in `World.Update`) read `AnimOffset` before `AnimatedStaticsManager.Process` advanced it, so the frame drawn could be the next one, still pending. `Process` now runs before `World.Update`.
 5. **Docs:** the multi explanation and the two notes above.
+
+**Checks on the fixes** (c68c63985, NativeAOT):
+- **Unit tests:** 628 pass in both build variants. `ChunkLoadingTests.Prefetched_Regions…` hit its timing limit once more under load (2.8 ms) and passed on the rerun.
+- **One run,** with `CUO_PREP_CHECK=1 CUO_GPU_ITEM_CHECK=1 CUO_GPU_SKIP_CHECK=1`: the house with `pickscan:8x6`, `travel`, `season:winter`, the house with `pickscan:8x6`, `glide`, `season:summer`, the house with `pickscan:8x6`, Jhelom.
+  - Pickscan: 48 same, 0 different, all three times.
+  - Prep check: 0 wrong. Item check: 0 with differences. Skip check: 0 drawn differently.
+  - Settle: 0 timeouts, 0 unsettled in an episode. 0 main-thread art decodes in every window.
+  - The worst frame (9.4 ms, `travel`) is the login warm-up's compacting gen1. The run had the checks on, so its frame times aren't a measurement.
