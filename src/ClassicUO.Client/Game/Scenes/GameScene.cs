@@ -984,8 +984,10 @@ namespace ClassicUO.Game.Scenes
                 _timePing = (long)Time.Ticks + 1000;
             }
 
-            _world.Update();
+            // the animated statics advance first: World.Update's chunk loader waits for the frame an animated static
+            // shows (FirstSightArt.RequestCurrentFrame), which must be the frame this frame's draw uses
             _animatedStaticsManager.Process();
+            _world.Update();
             _world.BoatMovingManager.Update();
             _world.Player.Pathfinder.ProcessAutoWalk();
             _world.DelayedObjectClickManager.Update();
