@@ -187,6 +187,16 @@ namespace ClassicUO.Game.GameObjects
             return i;
         }
 
+        // ground items arrive after their chunk was built: their art (the graphic the view draws, and its animation frames)
+        // decodes on the first-sight workers from here. Corpses draw from the animation path; a multi's art is its components'
+        protected override void RequestFirstSightArt()
+        {
+            if (OnGround && !IsCorpse && !IsMulti)
+            {
+                global::ClassicUO.Game.Map.FirstSightArt.RequestPlaced(DisplayedGraphic);
+            }
+        }
+
         public override void Destroy()
         {
             if (IsDestroyed)
