@@ -2207,3 +2207,9 @@ Branch `poc/net-drain` (base poc/modern-client fdfcc9813, merged up to 3681f25b3
 - **Final frame vs close:** `Drain` ends a connection only after an empty read made after it had seen the close (one extra read round after seeing it; the caps still apply, a capped frame carries on next frame).
 - **Idempotent termination:** `Terminate(error, connection)` ignores a connection that was already ended or replaced, so a `ProtocolError` inside the parser pump followed by the Drain that saw the close fires `Disconnected` once.
 - Tests (626 pass): background injector plus a hook-injecting handler (2000 parses, 20 s timeout), final frame after an empty read, stale-generation injection, malformed plugin bytes at close.
+
+**L1 final audit (Codex, 2026-10-30).** `Drain` remembers the specific `Connection` whose close it saw (`closeSeen`), and an empty read ends a connection only when it comes from that same one; a connection replaced inside the sink (the 0x8C relay) starts over. Test: two `RacingSocket`s chained, replacement inside the first sink.
+
+**Follow-ups (not fixed on this branch).**
+- Pre-existing send-side race in `NetClient.Send`: encryption happens before the send lock, so concurrent plugin-thread and main-thread sends can encrypt in one order and be queued in another (a stream cipher then desyncs), and `ResetProtocolState` / `EnableCompression` clear `_sendStream` without taking its lock. The fix is to encrypt and enqueue under one lock, and to take that lock when clearing.
+- Continuous background plugin injection can keep the (unbudgeted) plugin-queue pump running for a whole frame; if a plugin ever injects bulk data, give the plugin pass a packet or time cap too.

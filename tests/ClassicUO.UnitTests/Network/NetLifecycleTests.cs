@@ -553,9 +553,12 @@ namespace ClassicUO.UnitTests.Network
         // The first read finds nothing; right after it the receive task enqueues its last frame and reports the close.
         private sealed class RacingSocket : SocketWrapper
         {
+            private readonly byte[] _final;
             private int _reads;
             private byte[] _frame = Array.Empty<byte>();
             private int _pos;
+
+            public RacingSocket(byte[] final = null) => _final = final ?? new byte[] { 0x73, 0x07 };
 
             public override bool IsConnected => true;
             public override EndPoint LocalEndPoint => null;
@@ -568,7 +571,7 @@ namespace ClassicUO.UnitTests.Network
             {
                 if (_reads++ == 0)
                 {
-                    _frame = new byte[] { 0x73, 0x07 };
+                    _frame = _final;
                     InvokeOnDisconnected(); // frame enqueued, then the close reported, both after the empty read above
                     return 0;
                 }
@@ -620,6 +623,38 @@ namespace ClassicUO.UnitTests.Network
 
             closed.Should().HaveCount(1);
             closed[0].Should().Be(SocketError.ProtocolNotSupported);
+        }
+
+        [Fact]
+        public void A_Close_Seen_On_One_Connection_Does_Not_End_The_Connection_That_Replaced_It()
+        {
+            var client = MakeClient();
+            var a = new RacingSocket(new byte[] { 0x73, 0x01 });
+            var b = new RacingSocket(new byte[] { 0x73, 0x02 });
+            client.AttachSocket(a);
+            var got = new List<byte>();
+            var closed = 0;
+            client.Disconnected += (_, _) => closed++;
+            var replaced = false;
+
+            client.Drain(d =>
+            {
+                if (d.Count == 0)
+                    return 0;
+
+                got.AddRange(d.AsSpan());
+
+                if (!replaced)
+                {
+                    replaced = true;
+                    client.AttachSocket(b); // A's final frame was the 0x8C: the handler moves to connection B
+                }
+
+                return 0;
+            }, maxMs: 0);
+
+            got.Should().Equal(0x73, 0x01, 0x73, 0x02); // B's final frame was read before B was ended
+            closed.Should().Be(1);
         }
     }
 }
