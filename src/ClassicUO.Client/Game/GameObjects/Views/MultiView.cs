@@ -101,6 +101,18 @@ namespace ClassicUO.Game.GameObjects
             return true;
         }
 
+        /// <summary>
+        /// Where View.DrawStaticAnimated puts the top left of a <paramref name="width"/> x <paramref name="height"/> art
+        /// sprite drawn at (<paramref name="x"/>, <paramref name="y"/>): the anchor it stores on the art entry, from the
+        /// atlas UV (the pack's untrimmed size).
+        /// </summary>
+        internal static void SpriteTopLeft(int x, int y, int width, int height, out int left, out int top)
+        {
+            Item.PickEntryFromSize(width, height, out int entryWidth, out int entryHeight);
+            left = x - entryWidth;
+            top = y - entryHeight;
+        }
+
         public override bool CheckMouseSelection()
         {
             if (
@@ -128,16 +140,28 @@ namespace ClassicUO.Game.GameObjects
                     }
                 }
 
-                ref ArtEntry index = ref Client.Game.UO.FileManager.Arts.GetEntry(Graphic + 0x4000);
+                // the sprite Draw draws (DrawStaticAnimated: the current animation frame, the boat's Offset), anchored from
+                // the pack's sprite size: the art can be in the atlas (first-sight prefetch) before the first draw stores
+                // the anchor on the art entry
+                var arts = Client.Game.UO.FileManager.Arts;
+                ushort drawn = (ushort)(Graphic + arts.GetEntry(Graphic + 0x4000).AnimOffset);
+                var sprites = arts.PackSpriteEntries;
+                uint idx = drawn + 0x4000u;
+
+                if (idx >= (uint)sprites.Length || sprites[idx].OrigW == 0 || sprites[idx].OrigH == 0)
+                {
+                    return false;
+                }
 
                 Point position = RealScreenPosition;
-                position.X -= index.Width;
-                position.Y -= index.Height;
+                position.X += (int)Offset.X;
+                position.Y += (int)(Offset.Y + Offset.Z);
+                SpriteTopLeft(position.X, position.Y, sprites[idx].OrigW, sprites[idx].OrigH, out int left, out int top);
 
                 return Client.Game.UO.Arts.PixelCheck(
-                    Graphic,
-                    SelectedObject.TranslatedMousePositionByViewport.X - position.X,
-                    SelectedObject.TranslatedMousePositionByViewport.Y - position.Y
+                    drawn,
+                    SelectedObject.TranslatedMousePositionByViewport.X - left,
+                    SelectedObject.TranslatedMousePositionByViewport.Y - top
                 );
             }
 
