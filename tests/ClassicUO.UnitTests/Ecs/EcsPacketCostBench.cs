@@ -107,7 +107,9 @@ namespace ClassicUO.UnitTests.Ecs
             rows.Add(("mobile SetInWorldTile (position + AddToTile, no map)", Measure(packets, i =>
             {
                 Mobile m = s.Mobiles[i % n];
-                m.SetInWorldTile((ushort)(1000 + (i & 63)), (ushort)(2000 + (i & 31)), (sbyte)(i & 7));
+                // coordinates advance per visit of each mobile (i / n), so no call repeats its mobile's previous position
+                int visit = i / n;
+                m.SetInWorldTile((ushort)(1000 + (visit & 1023)), (ushort)(2000 + ((visit >> 3) & 511)), (sbyte)(visit & 7));
             })));
 
             // 0x78/0x20 resend with nothing changed
