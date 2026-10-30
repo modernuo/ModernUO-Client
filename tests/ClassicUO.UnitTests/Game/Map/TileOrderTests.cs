@@ -246,6 +246,78 @@ namespace ClassicUO.UnitTests.Game.Map
             Assert.Equal(3, n);
         }
 
+        // ---- membership on a landless tile (Chunk.Load leaves a tile empty when the block has no map data) ----
+
+        [Fact]
+        public void Landless_Tile_Anchor_Removal_Keeps_The_Rest_Reachable()
+        {
+            Static a = NewStatic(Plain, 5), b = NewStatic(Plain, 5), c = NewStatic(Plain, 5);
+            Add(a); // a is the anchor (Tiles[0, 0])
+            Add(b);
+            Add(c);
+            Assert.Same(a, _chunk.Tiles[0, 0]);
+
+            a.RemoveFromTile();
+            Assert.Equal(new GameObject[] { b, c }, List());
+            Assert.NotSame(a, _chunk.Tiles[0, 0]);
+            Assert.Null(a.TileChunk);
+
+            b.RemoveFromTile();
+            c.RemoveFromTile();
+            Assert.Null(_chunk.Tiles[0, 0]);
+            Assert.Empty(List());
+        }
+
+        [Fact]
+        public void Landless_Tile_Anchor_Reinsert_And_Move_Back_Stay_In_Their_Own_Tile()
+        {
+            Static a = NewStatic(Plain, 5), b = NewStatic(Plain, 5), other = NewStatic(Plain, 5);
+            Add(other, 4, 4);
+            Add(a);
+            Add(b);
+
+            // a stale container link, like a GameEffect's EffectManager sibling: the old "o == obj" branch followed it into
+            // another tile's list
+            a.Next = other;
+            Add(a);
+            Assert.Equal(new GameObject[] { b, a }, List());
+            Assert.Equal(new GameObject[] { other }, List(4, 4));
+            AssertKeySorted();
+
+            // move the anchor away and back
+            GameObject anchor = _chunk.Tiles[0, 0];
+            Add(anchor, 2, 2);
+            Assert.Equal(new GameObject[] { anchor }, List(2, 2));
+            Assert.Single(List());
+            Add(anchor);
+            Assert.Equal(2, List().Count);
+            Assert.Empty(List(2, 2));
+            Assert.Null(_chunk.Tiles[2, 2]);
+            AssertKeySorted();
+
+            foreach (GameObject o in List())
+            {
+                Assert.Same(_chunk, o.TileChunk);
+                Assert.Equal(0, o.TileCell);
+            }
+        }
+
+        [Fact]
+        public void TileCell_Is_The_Insertion_Cell_Even_After_X_Y_Change()
+        {
+            Land land = NewLand(_world, 0);
+            Add(land, 3, 5);
+            Static s = NewStatic(Plain, 5);
+            Add(s, 3, 5);
+            Assert.Equal((3 << 3) | 5, s.TileCell);
+
+            s.X = 100; // SetInWorldTile changes X/Y before AddToTile removes the object from its old tile
+            s.Y = 200;
+            Add(s, 1, 1);
+            Assert.Equal(new GameObject[] { land }, List(3, 5));
+            Assert.Equal(new GameObject[] { s }, List(1, 1));
+        }
+
         [Fact]
         public void Random_Inserts_And_Moves_Always_Match_The_Key()
         {
@@ -273,13 +345,13 @@ namespace ClassicUO.UnitTests.Game.Map
                         _ => NewStatic(g, z)
                     };
                     objects.Add(obj);
-                    Add(obj, rng.Next(2), 0);
+                    Add(obj, rng.Next(3), 0);
                 }
                 else if (op < 7)
                 {
                     GameObject obj = objects[rng.Next(objects.Count)];
                     obj.Z = (sbyte)rng.Next(0, 6);
-                    Add(obj, rng.Next(2), 0);
+                    Add(obj, rng.Next(3), 0);
                 }
                 else if (op < 8)
                 {
@@ -293,8 +365,25 @@ namespace ClassicUO.UnitTests.Game.Map
                     objects[rng.Next(objects.Count)].Graphic = (ushort)rng.Next(Plain, TallBackground + 1);
                 }
 
-                AssertKeySorted(0, 0);
-                AssertKeySorted(1, 0);
+                // cells 0 and 1 have land, cell 2 is landless
+                var listed = new HashSet<GameObject>();
+
+                for (int x = 0; x < 3; x++)
+                {
+                    AssertKeySorted(x, 0);
+
+                    foreach (GameObject o in List(x, 0))
+                    {
+                        Assert.Same(_chunk, o.TileChunk);
+                        Assert.Equal(x << 3, o.TileCell);
+                        listed.Add(o);
+                    }
+                }
+
+                foreach (GameObject o in objects)
+                {
+                    Assert.Equal(o.TileChunk != null, listed.Contains(o));
+                }
             }
         }
     }
