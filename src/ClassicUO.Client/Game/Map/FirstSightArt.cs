@@ -18,6 +18,9 @@ namespace ClassicUO.Game.Map
     /// </summary>
     internal static class FirstSightArt
     {
+        // requests on, and a game with its art loaded (unit tests place objects without one)
+        private static bool On => Map.ArtWait && Client.Game?.UO?.Arts != null;
+
         /// <summary>
         /// Requests static art <paramref name="graphic"/> and, when <paramref name="frames"/> is set and the tile is
         /// animated, every frame of its animation. True when <paramref name="graphic"/> itself needs nothing (in the atlas,
@@ -25,7 +28,7 @@ namespace ClassicUO.Game.Map
         /// </summary>
         public static bool RequestStatic(ushort graphic, bool frames)
         {
-            if (!Map.ArtWait)
+            if (!On)
             {
                 return true;
             }
@@ -46,7 +49,7 @@ namespace ClassicUO.Game.Map
         /// </summary>
         public static bool RequestCurrentFrame(ushort graphic)
         {
-            if (!Map.ArtWait)
+            if (!On)
             {
                 return true;
             }
@@ -66,7 +69,7 @@ namespace ClassicUO.Game.Map
         /// <summary>Requests every frame of animated tile <paramref name="graphic"/> (its AnimData offsets); nothing for other tiles.</summary>
         public static unsafe void RequestFrames(ushort graphic)
         {
-            if (!Map.ArtWait)
+            if (!On)
             {
                 return;
             }
@@ -97,7 +100,7 @@ namespace ClassicUO.Game.Map
         /// <summary>A ground item or multi component was placed on the map (GameObject.AddToTile): request what its view draws.</summary>
         public static void RequestPlaced(ushort graphic)
         {
-            if (Map.ArtWait && !RequestStatic(graphic, frames: true))
+            if (On && !RequestStatic(graphic, frames: true))
             {
                 FrameObjectRequests++;
             }
