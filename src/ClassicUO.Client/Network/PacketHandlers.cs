@@ -54,8 +54,27 @@ namespace ClassicUO.Network
         private readonly CircularBuffer _buffer = new CircularBuffer();
         private readonly CircularBuffer _pluginsBuffer = new CircularBuffer();
 
+        private int _generation;
+
         public int ParsePackets(NetClient socket, World world, Span<byte> data)
         {
+            // A new connection (or the end of one) starts with empty queues: half a packet from the old stream must not be
+            // glued to the first bytes of the next one.
+            if (socket.ConnectionGeneration != _generation)
+            {
+                _generation = socket.ConnectionGeneration;
+
+                lock (_buffer)
+                {
+                    _buffer.Clear();
+                }
+
+                lock (_pluginsBuffer)
+                {
+                    _pluginsBuffer.Clear();
+                }
+            }
+
             Append(data, false);
 
             return ParsePackets(socket, world, _buffer, true) + ParsePackets(socket, world, _pluginsBuffer, false);
@@ -71,6 +90,14 @@ namespace ClassicUO.Network
 
                 while (stream.Length > 0)
                 {
+                    if (socket.ConnectionGeneration != _generation)
+                    {
+                        // the connection changed while a packet was being handled (the 0x8C relay): the rest is old stream
+                        stream.Clear();
+
+                        break;
+                    }
+
                     if (
                         !GetPacketInfo(
                             socket,
@@ -85,6 +112,17 @@ namespace ClassicUO.Network
                         Log.Warn(
                             $"Invalid ID: {packetID:X2} | off: {offset} | len: {packetlength} | stream.pos: {stream.Length}"
                         );
+
+                        break;
+                    }
+
+                    if (packetlength < offset)
+                    {
+                        // a length that can't even hold its own header (03 00 00): the stream is lost, and looping on it
+                        // would never end
+                        Log.Error($"Malformed packet ID: {packetID:X2} | off: {offset} | len: {packetlength}; dropping the connection");
+                        stream.Clear();
+                        socket.ProtocolError();
 
                         break;
                     }

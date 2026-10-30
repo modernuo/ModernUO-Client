@@ -118,14 +118,55 @@ namespace ClassicUO.Network
                 Connected?.Invoke(this, EventArgs.Empty);
             };
 
-            _socket.OnDisconnected += (_, _) => Disconnected?.Invoke(this, SocketError.Success);
-            _socket.OnError += (_, e) => Disconnected?.Invoke(this, e);
+            // every way a connection ends goes through Terminate, whoever noticed it; events from a socket that was
+            // replaced already are ignored
+            _socket.OnDisconnected += (o, _) =>
+            {
+                if (ReferenceEquals(o, _socket)) Terminate(SocketError.Success);
+            };
+            _socket.OnError += (o, e) =>
+            {
+                if (ReferenceEquals(o, _socket)) Terminate(e);
+            };
+        }
+
+        /// <summary>Bumped whenever a connection starts or ends; the packet parser drops its partial data when it changes.</summary>
+        public int ConnectionGeneration { get; private set; }
+
+        /// <summary>
+        /// Puts the protocol back to its start state: login-server mode (no compression, so no game-server encryption mode), a
+        /// fresh Huffman state, nothing queued to send, and a new connection generation.
+        /// </summary>
+        private void ResetProtocolState()
+        {
+            _isCompressionEnabled = false;
+            _huffman.Reset();
+            _sendStream.Clear();
+            ConnectionGeneration++;
+        }
+
+        /// <summary>
+        /// The one place a connection ends from the receive or send side (peer close, reset, socket error, a bad stream):
+        /// protocol state is reset first, so whatever the Disconnected handlers do next (a reconnect to the login server)
+        /// starts clean, then the socket is closed and the handlers are told.
+        /// </summary>
+        private void Terminate(SocketError error)
+        {
+            ResetProtocolState();
+            Statistics.Reset();
+            _socket?.Disconnect();
+            Disconnected?.Invoke(this, error);
+        }
+
+        /// <summary>The stream can't be parsed any more (a malformed packet header): drop the connection.</summary>
+        internal void ProtocolError()
+        {
+            Terminate(SocketError.ProtocolNotSupported);
         }
 
         public void Connect(string ip, ushort port)
         {
-            _sendStream.Clear();
-            _huffman.Reset();
+            ResetProtocolState();
             Statistics.Reset();
 
             if (string.IsNullOrEmpty(ip))
@@ -147,9 +188,9 @@ namespace ClassicUO.Network
 
         public void Disconnect()
         {
-            _isCompressionEnabled = false;
+            ResetProtocolState();
             Statistics.Reset();
-            _socket.Disconnect();
+            _socket?.Disconnect();
         }
 
         public void EnableCompression()
@@ -196,20 +237,16 @@ namespace ClassicUO.Network
             LastDrainBytes = 0;
             LastDrainSlices = 0;
 
-            if (_socket == null)
-            {
-                return 0;
-            }
+            var packets = 0;
+            var start = maxMs > 0 ? Stopwatch.GetTimestamp() : 0;
+            var sinkCalled = false;
 
-            if (TrackAvailable || FrameStats.On)
+            if (_socket != null && (TrackAvailable || FrameStats.On))
             {
                 LastDrainAvailable = _socket.Available;
             }
 
-            var packets = 0;
-            var start = maxMs > 0 ? Stopwatch.GetTimestamp() : 0;
-
-            while (LastDrainBytes < maxBytes && packets < maxPackets)
+            while (_socket != null && LastDrainBytes < maxBytes && packets < maxPackets)
             {
                 // always one slice, then stop once the frame's time budget is spent
                 if (LastDrainSlices > 0 && maxMs > 0 && Stopwatch.GetElapsedTime(start).TotalMilliseconds >= maxMs)
@@ -228,7 +265,15 @@ namespace ClassicUO.Network
                 if (data.Count > 0)
                 {
                     packets += sink(data);
+                    sinkCalled = true;
                 }
+            }
+
+            if (!sinkCalled)
+            {
+                // The parser also owns the plugin queue (packets plugins inject), which has to be worked every frame whether
+                // or not the socket had anything: pump it with an empty slice. This is inside the frame's time budget too.
+                packets += sink(ArraySegment<byte>.Empty);
             }
 
             return packets;
@@ -276,8 +321,7 @@ namespace ClassicUO.Network
             {
                 Log.Error("socket error when receving:\n" + ex);
 
-                Disconnect();
-                Disconnected?.Invoke(this, ex.SocketErrorCode);
+                Terminate(ex.SocketErrorCode);
             }
             catch (Exception ex)
             {
@@ -286,15 +330,13 @@ namespace ClassicUO.Network
                     Log.Error("main exception:\n" + ex);
                     Log.Error("socket error when receving:\n" + socketEx);
 
-                    Disconnect();
-                    Disconnected?.Invoke(this, socketEx.SocketErrorCode);
+                    Terminate(socketEx.SocketErrorCode);
                 }
                 else
                 {
                     Log.Error("fatal error when receving:\n" + ex);
 
-                    Disconnect();
-                    Disconnected?.Invoke(this, SocketError.SocketError);
+                    Terminate(SocketError.SocketError);
 
                     throw;
                 }
@@ -375,8 +417,7 @@ namespace ClassicUO.Network
             {
                 Log.Error("socket error when sending:\n" + ex);
 
-                Disconnect();
-                Disconnected?.Invoke(this, ex.SocketErrorCode);
+                Terminate(ex.SocketErrorCode);
             }
             catch (Exception ex)
             {
@@ -385,15 +426,13 @@ namespace ClassicUO.Network
                     Log.Error("main exception:\n" + ex);
                     Log.Error("socket error when sending:\n" + socketEx);
 
-                    Disconnect();
-                    Disconnected?.Invoke(this, socketEx.SocketErrorCode);
+                    Terminate(socketEx.SocketErrorCode);
                 }
                 else
                 {
                     Log.Error("fatal error when sending:\n" + ex);
 
-                    Disconnect();
-                    Disconnected?.Invoke(this, SocketError.SocketError);
+                    Terminate(SocketError.SocketError);
 
                     throw;
                 }
@@ -409,8 +448,7 @@ namespace ClassicUO.Network
 
             if (!_huffman.Decompress(buffer, _uncompressedBuffer, ref size))
             {
-                Disconnect();
-                Disconnected?.Invoke(this, SocketError.SocketError);
+                Terminate(SocketError.SocketError);
 
                 return ArraySegment<byte>.Empty;
             }

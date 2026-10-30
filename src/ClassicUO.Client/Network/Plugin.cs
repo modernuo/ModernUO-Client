@@ -511,7 +511,7 @@ namespace ClassicUO.Network
 
         internal static bool ProcessRecvPacket(byte[] data, ref int length)
         {
-            bool result = Client.Game.PluginHost?.PacketIn(new ArraySegment<byte>(data, 0, length)) ?? true;
+            bool result = Client.Game?.PluginHost?.PacketIn(new ArraySegment<byte>(data, 0, length)) ?? true;
 
             foreach (Plugin plugin in Plugins)
             {
