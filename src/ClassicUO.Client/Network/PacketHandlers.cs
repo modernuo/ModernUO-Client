@@ -54,7 +54,11 @@ namespace ClassicUO.Network
         private readonly CircularBuffer _buffer = new CircularBuffer();
         private readonly CircularBuffer _pluginsBuffer = new CircularBuffer();
 
+        // The connection generation the received-bytes queue belongs to, and the one the plugin queue's contents were injected
+        // under (a plugin packet is tagged by the generation current when it is injected, so one injected after Connect but
+        // before the next ParsePackets - e.g. from an outgoing hook during the 0x8C relay's login sends - is kept).
         private int _generation;
+        private int _pluginGeneration;
 
         public int ParsePackets(NetClient socket, World world, Span<byte> data)
         {
@@ -68,12 +72,9 @@ namespace ClassicUO.Network
                 {
                     _buffer.Clear();
                 }
-
-                lock (_pluginsBuffer)
-                {
-                    _pluginsBuffer.Clear();
-                }
             }
+
+            DropOldPluginPackets(socket.ConnectionGeneration);
 
             Append(data, false);
 
@@ -90,10 +91,16 @@ namespace ClassicUO.Network
 
                 while (stream.Length > 0)
                 {
-                    if (socket.ConnectionGeneration != _generation)
+                    if (allowPlugins ? socket.ConnectionGeneration != _generation : socket.ConnectionGeneration != _pluginGeneration)
                     {
-                        // the connection changed while a packet was being handled (the 0x8C relay): the rest is old stream
+                        // the connection changed while a packet was being handled (the 0x8C relay): the rest is old stream,
+                        // or, in the plugin queue, packets injected before the change (newer ones carry the new generation)
                         stream.Clear();
+
+                        if (allowPlugins)
+                            _generation = socket.ConnectionGeneration;
+                        else
+                            _pluginGeneration = socket.ConnectionGeneration;
 
                         break;
                     }
@@ -161,12 +168,34 @@ namespace ClassicUO.Network
             return packetsCount;
         }
 
-        public void Append(Span<byte> data, bool fromPlugins)
+        private void DropOldPluginPackets(int generation)
+        {
+            lock (_pluginsBuffer)
+            {
+                if (_pluginGeneration != generation)
+                {
+                    _pluginGeneration = generation;
+                    _pluginsBuffer.Clear();
+                }
+            }
+        }
+
+        /// <param name="socket">The connection a plugin packet is injected under (default: the game's).</param>
+        public void Append(Span<byte> data, bool fromPlugins, NetClient socket = null)
         {
             if (data.IsEmpty)
                 return;
 
-            (fromPlugins ? _pluginsBuffer : _buffer).Enqueue(data);
+            if (fromPlugins)
+            {
+                // older injections are dropped as of the first one under the new generation
+                DropOldPluginPackets((socket ?? NetClient.Socket).ConnectionGeneration);
+                _pluginsBuffer.Enqueue(data);
+            }
+            else
+            {
+                _buffer.Enqueue(data);
+            }
         }
 
         private void AnalyzePacket(World world, ReadOnlySpan<byte> data, int offset)

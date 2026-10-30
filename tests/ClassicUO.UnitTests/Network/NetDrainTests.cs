@@ -262,7 +262,7 @@ namespace ClassicUO.UnitTests.Network
 
         // ---- compressed stream ----
 
-        private static byte[] HuffmanEncode(byte[] data)
+        internal static byte[] HuffmanEncode(byte[] data)
         {
             var field = typeof(Huffman).GetField("_decTree", BindingFlags.NonPublic | BindingFlags.Static)!;
             var tree = (int[])field.GetValue(null)!;
