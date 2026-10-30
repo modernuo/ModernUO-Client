@@ -427,6 +427,45 @@ namespace ClassicUO.Game
 
             BenchSamples += N;
             _benchSink ^= (uint)sink;
+            BenchClockReads(m, e, in inp);
+        }
+
+        // E10: the four clock reads alone (server action, frame, frame time, from-server), paired in the same frame.
+        // Each variant goes through the same non-inlined call so the call cost cancels: from the Mobile (what SamplePushed
+        // does), from the already fetched MobileInputs copy (the clock as part of that component: no extra lookup), and from a
+        // fresh entity lookup (a separate component).
+        public static long BenchClockMobileTicks, BenchClockInputsTicks, BenchClockLookupTicks, BenchClockCount;
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static uint ClockFromMobile(Mobile m) => (uint)(m.AnimationGroupRaw + m.AnimIndex + (uint)m.LastAnimationChangeTime + (m.AnimationFromServer ? 1u : 0u));
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static uint ClockFromInputs(in MobileInputs i) => (uint)i.Body + i.Facing + i.LastStepTime + i.Notoriety;
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static uint ClockFromLookup(EcsEntity e)
+        {
+            ref MobileInputs i = ref e.GetComponent<MobileInputs>();
+
+            return (uint)i.Body + i.Facing + i.LastStepTime + i.Notoriety;
+        }
+
+        private static void BenchClockReads(Mobile m, EcsEntity e, in MobileInputs inp)
+        {
+            const int N = 32;
+            uint sink = 0;
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            for (int i = 0; i < N; i++) sink += ClockFromMobile(m);
+            long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
+            for (int i = 0; i < N; i++) sink += ClockFromInputs(in inp);
+            long t2 = System.Diagnostics.Stopwatch.GetTimestamp();
+            for (int i = 0; i < N; i++) sink += ClockFromLookup(e);
+            long t3 = System.Diagnostics.Stopwatch.GetTimestamp();
+            BenchClockMobileTicks += t1 - t0;
+            BenchClockInputsTicks += t2 - t1;
+            BenchClockLookupTicks += t3 - t2;
+            BenchClockCount += N;
+            _benchSink ^= sink;
         }
 
         private static uint _benchSink;
