@@ -31,6 +31,7 @@ Newest at the bottom. Each item says what I did meanwhile.
    - **h. W2's in-view ECS query:** not part of the transition.
    - **i. Effects:** move them into the ECS last.
 5. **ECS parity mismatches at login and spawns (possible regression, being looked at).** The T6a agent saw 29–75 Gpu mobile mismatches per parity run, all at the login frame or a spawn; base 3681f25b3 showed 7. On 2026-10-26, E6 and earlier agents saw 0. Candidates: the chunk-load recycler, E11 (one sync per tile placement), E10. *Meanwhile:* a bisect agent is finding the first bad merge and whether it is a mirror bug or checker timing.
+6. **The machine is the bottleneck.** With 8–9 agents sharing one bench lock, the E4 default-on gate agent waited 3 hours and never got a turn. The old lock was a race; one agent kept renewing its hold for 50 minutes, and another's script once ran a build without the lock. *Meanwhile:* the lock is now a fair first-come queue (`benchlock.sh`), with one step of at most 20 minutes per hold. I'm keeping client-running agents at about 6 at a time. A second test machine, or a quiet window, would speed things up and make the timings more trustworthy.
 
 ## Decisions you made tonight (recorded in README "Decisions so far" and in memory)
 
