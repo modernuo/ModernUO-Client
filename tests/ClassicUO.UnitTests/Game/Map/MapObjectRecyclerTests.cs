@@ -359,17 +359,26 @@ namespace ClassicUO.UnitTests.Game.Map
         public void Prefilled_Chunks_Come_From_The_Pool_With_A_Presized_Statics_Mesh()
         {
             var world = new World();
-            Chunk.Prefill(world, 2, 128);
 
-            Assert.True(Chunk.PooledCount >= 2);
+            try
+            {
+                Chunk.Prefill(world, 2, 128);
 
-            Chunk c = Chunk.Create(world, 3, 4);
-            Assert.False(c.IsDestroyed);
-            Assert.Equal(3, c.X);
-            Assert.Equal(4, c.Y);
-            Assert.True(c.Mesh.Statics.Vertices.Length >= 128);
-            Assert.Equal(0, c.Mesh.Statics.Count);
-            Assert.Null(c.Node);
+                Assert.True(Chunk.PooledCount >= 2);
+
+                Chunk c = Chunk.Create(world, 3, 4);
+                Assert.False(c.IsDestroyed);
+                Assert.Equal(3, c.X);
+                Assert.Equal(4, c.Y);
+                Assert.True(c.Mesh.Statics.Vertices.Length >= 128);
+                Assert.Equal(0, c.Mesh.Statics.Count);
+                Assert.Null(c.Node);
+            }
+            finally
+            {
+                // the pool is static: leave no chunk of this test's World in it
+                Chunk.ClearPool();
+            }
         }
 
         [Fact]
