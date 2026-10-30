@@ -133,6 +133,40 @@ namespace ClassicUO.Game.Map
             return null;
         }
 
+        /// <summary>
+        /// Login warm-up (<see cref="MapWarmup"/>): fills the pools up to <paramref name="lands"/> and <paramref name="statics"/>
+        /// with new objects in the retired state (destroyed, <see cref="GameObject.InRecycler"/>), stamped one quarantine ago so they
+        /// can be handed out at once: they were never in a tile list, so nothing can hold them. Also sizes both queues for a full
+        /// pool, so they don't grow (into the large object heap) while playing.
+        /// </summary>
+        public void Prefill(World world, int lands, int statics, uint now)
+        {
+            if (!_enabled)
+            {
+                return;
+            }
+
+            _lands.EnsureCapacity(MaxLands);
+            _statics.EnsureCapacity(MaxStatics);
+            uint tick = now - _quarantineMs;
+
+            while (_lands.Count < Math.Min(lands, MaxLands))
+            {
+                Land land = Land.NewForRecycler(world);
+                land.Destroy();
+                land.InRecycler = true;
+                _lands.Enqueue(new Retired<Land> { Obj = land, Tick = tick });
+            }
+
+            while (_statics.Count < Math.Min(statics, MaxStatics))
+            {
+                var st = new Static(world);
+                st.Destroy();
+                st.InRecycler = true;
+                _statics.Enqueue(new Retired<Static> { Obj = st, Tick = tick });
+            }
+        }
+
         public void Clear()
         {
             _lands.Clear();

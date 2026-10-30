@@ -39,6 +39,9 @@ namespace ClassicUO.Game.GameObjects
 
         private Land(World world) : base(world) { }
 
+        /// <summary>A new Land for MapObjectRecycler.Prefill (login warm-up); Create puts it to use like any retired one.</summary>
+        internal static Land NewForRecycler(World world) => new Land(world);
+
         /// <summary>Allocated because the recycler had none ([gcs] pool lines).</summary>
         public static long TotalNew;
 
