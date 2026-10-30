@@ -34,6 +34,8 @@ namespace ClassicUO
     //   CUO_BENCH_TOPMOST=1 keep the window on top while benching (occluded windows are throttled)
     //   plan entries size:WxH|max change the CUO_BENCH_SIZE client area mid-plan (max = maximised window)
     //   plan entry gumps opens the paperdoll, backpack, journal and status bar (the UI allocation/parity scene); shots also save the UI render target
+    //   plan mode gumpopen (name:gumpopen) opens large windows one by one, cold, and logs their gump decode cost ([bench-gumpopen]), then
+    //   the gump picker check ([bench-gumppick]); CUO_BENCH_GUMPOPEN sets the list. eqhue:hex,... hues the player's equipped items locally
     //   plan entries uicache:on|off switch the UI render cache (ui_render_cache, B8); CUO_UI_CACHE_CHECK=1|N compares the UI
     //   target with a replay of the recordings and with a direct redraw every N frames (default 30)
     //   plan entry minimap opens the minimap gump
@@ -647,6 +649,177 @@ namespace ClassicUO
         private static int _uiPhase = -1;
         private static ushort _uiHits;
         private static uint _uiHeld;
+
+        // gumpopen: the first open of each large window, one every 2.5 s, cold (a fresh client). For each open, the worst
+        // frame of the next 1.5 s (DevBench's own frame-to-frame time) and the gumps decoded on the main thread meanwhile.
+        // CUO_BENCH_GUMPOPEN overrides the list: names (paperdoll, backpack, status, journal, worldmap, combatbook,
+        // spellbook) or pics:HEX,HEX (a plain gump with those gump pictures).
+        private static readonly string[] _gumpOpenList = (Environment.GetEnvironmentVariable("CUO_BENCH_GUMPOPEN")
+            ?? "paperdoll;spellbook;status;backpack;worldmap;combatbook;journal").Split(';', StringSplitOptions.RemoveEmptyEntries);
+        private static int _gumpOpenIndex;
+        private static long _gumpOpenAt, _gumpOpenLast, _gumpOpenWorst, _gumpOpenTicks0;
+        private static int _gumpOpenLoads0, _gumpOpenPf0;
+        private static long _gumpOpenPfTicks0, _gumpOpenCall;
+        private static string _gumpOpenName;
+
+        private static void GumpOpenFrame(GameController game, World world, long now)
+        {
+            long sec = Stopwatch.Frequency;
+
+            if (_gumpOpenName != null)
+            {
+                _gumpOpenWorst = Math.Max(_gumpOpenWorst, now - _gumpOpenLast);
+
+                if (now - _gumpOpenAt > sec * 3 / 2)
+                {
+                    Log.Info($"[bench-gumpopen] {_gumpOpenName}: worst frame {_gumpOpenWorst * 1000.0 / sec:0.00} ms in 1.5 s, " +
+                             $"main-thread gump decodes {Renderer.Gumps.Gump.TotalSyncLoads - _gumpOpenLoads0} " +
+                             $"({(Renderer.Gumps.Gump.TotalSyncTicks - _gumpOpenTicks0) * 1000.0 / sec:0.000} ms), prefetched {Renderer.Gumps.Gump.TotalPrefetched - _gumpOpenPf0} ({(Renderer.Gumps.Gump.TotalPrefetchTicks - _gumpOpenPfTicks0) * 1000.0 / sec:0.000} ms), open call {_gumpOpenCall * 1000.0 / sec:0.000} ms, pack {game.UO.FileManager.Gumps.FromPack}, gumps open: {string.Join(",", System.Linq.Enumerable.Select(Game.Managers.UIManager.Gumps, g => g.GetType().Name))}");
+                    _gumpOpenName = null;
+                }
+            }
+
+            _gumpOpenLast = now;
+
+            if (_gumpOpenName == null && _gumpOpenIndex >= _gumpOpenList.Length && !_gumpPickDone && now - _gumpOpenAt >= sec * 5 / 2)
+            {
+                _gumpPickDone = true;
+                GumpPickCheck(world);
+            }
+
+            if (_gumpOpenName != null || _gumpOpenIndex >= _gumpOpenList.Length || now - _gumpOpenAt < sec * 5 / 2)
+            {
+                return;
+            }
+
+            _gumpOpenName = _gumpOpenList[_gumpOpenIndex++];
+            _gumpOpenAt = now;
+            _gumpOpenWorst = 0;
+            _gumpOpenLoads0 = Renderer.Gumps.Gump.TotalSyncLoads;
+            _gumpOpenTicks0 = Renderer.Gumps.Gump.TotalSyncTicks;
+            _gumpOpenPf0 = Renderer.Gumps.Gump.TotalPrefetched;
+            _gumpOpenPfTicks0 = Renderer.Gumps.Gump.TotalPrefetchTicks;
+            long callStart = Stopwatch.GetTimestamp();
+
+            switch (_gumpOpenName)
+            {
+                case "paperdoll": GameActions.OpenPaperdoll(world, world.Player.Serial); break;
+                case "mobpaperdoll":
+                {
+                    // the player's own paperdoll is opened at login: the nearest other human's is a cold first open
+                    Game.GameObjects.Mobile best = null;
+
+                    foreach (var m in world.Mobiles.Values)
+                    {
+                        if (m != world.Player && m.IsHuman && (best == null || m.Distance < best.Distance))
+                        {
+                            best = m;
+                        }
+                    }
+
+                    if (best != null)
+                    {
+                        GameActions.OpenPaperdoll(world, best.Serial);
+                        Log.Info($"[bench-gumpopen] mobpaperdoll: 0x{best.Serial:X8} body 0x{best.Graphic:X4} at distance {best.Distance}");
+                    }
+
+                    break;
+                }
+                case "backpack": GameActions.OpenBackpack(world); break;
+                case "status": GameActions.OpenStatusBar(world); break;
+                case "journal": GameActions.OpenJournal(world); break;
+                case "worldmap": GameActions.OpenWorldMap(world); break;
+                case "combatbook": GameActions.OpenAbilitiesBook(world); break;
+                case "spellbook": OpenPics(world, "08AC,08BA,08BB"); break;
+                default:
+                    if (_gumpOpenName.StartsWith("pics:"))
+                    {
+                        OpenPics(world, _gumpOpenName.Substring(5));
+                    }
+
+                    break;
+            }
+
+            _gumpOpenCall = Stopwatch.GetTimestamp() - callStart;
+            Log.Info($"[bench-gumpopen] opening {_gumpOpenName} (gumps open before: {string.Join(",", System.Linq.Enumerable.Select(Game.Managers.UIManager.Gumps, gg => gg.GetType().Name))})");
+        }
+
+        private static bool _gumpPickDone;
+
+        // gump picking: each gump's picker answers on a 2-px grid (one bit per point, FNV-1a hashed; compare a pack run
+        // with a CUO_PACK_GUMPS=0 run), then a click-through check: hit-testing a plain gump showing the paperdoll at a
+        // transparent and at a visible texel must find nothing and the picture.
+        private static void GumpPickCheck(World world)
+        {
+            var gumps = Client.Game.UO.Gumps;
+
+            foreach (uint id in new uint[] { 0x07D0, 0x08AC, 0x2A6C, 0x003C, 0x0802, 0x2C00, 0x0A3C })
+            {
+                ref readonly var info = ref gumps.GetGump(id);
+                int w = info.UV.Width, h = info.UV.Height, set = 0;
+                uint hash = 2166136261;
+
+                for (int y = -1; y <= h; y += 2)
+                {
+                    for (int x = -1; x <= w; x += 2)
+                    {
+                        bool hit = gumps.PixelCheck(id, x, y);
+                        set += hit ? 1 : 0;
+                        hash = (hash ^ (hit ? 1u : 0u)) * 16777619;
+                    }
+                }
+
+                Log.Info($"[bench-gumppick] 0x{id:X4} {w}x{h}: {set} visible grid points, hash {hash:X8}");
+            }
+
+            const ushort Pic = 0x07D0;
+            var g = new Game.UI.Gumps.Gump(world, 0, 0) { X = 600, Y = 100 };
+            g.Width = gumps.GetGump(Pic).UV.Width;
+            g.Height = gumps.GetGump(Pic).UV.Height;
+            g.Add(new Game.UI.Controls.GumpPic(0, 0, Pic, 0));
+            Game.Managers.UIManager.Add(g);
+            ref readonly var pd = ref gumps.GetGump(Pic);
+            (int X, int Y) clear = (-1, -1), solid = (-1, -1);
+
+            for (int y = 0; y < pd.UV.Height && (clear.X < 0 || solid.X < 0); y++)
+            {
+                for (int x = 0; x < pd.UV.Width; x++)
+                {
+                    if (gumps.PixelCheck(Pic, x, y))
+                    {
+                        if (solid.X < 0) solid = (x, y);
+                    }
+                    else if (clear.X < 0)
+                    {
+                        clear = (x, y);
+                    }
+                }
+            }
+
+            Game.UI.Controls.Control atClear = null, atSolid = null;
+            g.HitTest(new Microsoft.Xna.Framework.Point(g.X + clear.X, g.Y + clear.Y), ref atClear);
+            g.HitTest(new Microsoft.Xna.Framework.Point(g.X + solid.X, g.Y + solid.Y), ref atSolid);
+            Log.Info($"[bench-gumppick] click-through 0x{Pic:X4}: transparent texel {clear} hits {atClear?.GetType().Name ?? "nothing"}, visible texel {solid} hits {atSolid?.GetType().Name ?? "nothing"}");
+            g.Dispose();
+        }
+
+        private static void OpenPics(World world, string list)
+        {
+            var g = new Game.UI.Gumps.Gump(world, 0, 0) { X = 600, Y = 100, CanMove = true, CanCloseWithRightClick = true };
+            int x = 0;
+            var ids = System.Linq.Enumerable.ToArray(System.Linq.Enumerable.Select(list.Split(',', StringSplitOptions.RemoveEmptyEntries), h => (uint)Convert.ToUInt16(h, 16)));
+            // what the server gump path does before building its controls (PacketHandlers.PrefetchLayoutGumps)
+            Client.Game.UO.Gumps.Prefetch(ids);
+
+            foreach (var id in ids)
+            {
+                var pic = new Game.UI.Controls.GumpPic(x, 0, (ushort)id, 0);
+                g.Add(pic);
+                x += 20;
+            }
+
+            Game.Managers.UIManager.Add(g);
+        }
 
         private static void UiSceneFrame(GameController game, Game.Scenes.GameScene gs, World world, long now)
         {
@@ -1287,6 +1460,10 @@ namespace ClassicUO
                     _travelAt = now + sec / 4;
                 }
 
+                else if (mode == "gumpopen")
+                {
+                    GumpOpenFrame(game, world, now);
+                }
                 else if (mode == "ui")
                 {
                     UiSceneFrame(game, gs, world, now);
@@ -1595,7 +1772,7 @@ namespace ClassicUO
                         break;
                     }
 
-                    if (_plan[_planIndex].StartsWith("itemhue:") || _plan[_planIndex].StartsWith("ghost:"))
+                    if (_plan[_planIndex].StartsWith("itemhue:") || _plan[_planIndex].StartsWith("eqhue:") || _plan[_planIndex].StartsWith("ghost:"))
                     {
                         // local-only hue checks: the nearest ground items get these hues (comma-separated);
                         // ghost:on|off swaps the player's body for a ghost (the death screen's gray world)
@@ -1620,20 +1797,42 @@ namespace ClassicUO
                             string[] hues = arg.Split(',');
                             var items = new System.Collections.Generic.List<Game.GameObjects.Item>();
 
-                            foreach (var item in world.Items.Values)
+                            bool equipped = _plan[_planIndex].StartsWith("eqhue:");
+
+                            if (equipped)
                             {
-                                if (item.OnGround && !item.IsMulti && item.Distance < 6)
+                                // eqhue: the player's equipped items (not backpack, hair, beard) get the hues in turn, for
+                                // paperdoll hue checks (bit 15 set = partial hue, as the server sends it)
+                                for (var it = world.Player.Items; it != null; it = it.Next)
                                 {
-                                    items.Add(item);
+                                    if (it is Game.GameObjects.Item item && item.Layer != Game.Data.Layer.Backpack && item.Layer != Game.Data.Layer.Hair && item.Layer != Game.Data.Layer.Beard)
+                                    {
+                                        items.Add(item);
+                                    }
                                 }
                             }
+                            else
+                            {
+                                foreach (var item in world.Items.Values)
+                                {
+                                    if (item.OnGround && !item.IsMulti && item.Distance < 6)
+                                    {
+                                        items.Add(item);
+                                    }
+                                }
 
-                            items.Sort((a, b) => a.Distance != b.Distance ? a.Distance.CompareTo(b.Distance) : a.Serial.CompareTo(b.Serial));
+                                items.Sort((a, b) => a.Distance != b.Distance ? a.Distance.CompareTo(b.Distance) : a.Serial.CompareTo(b.Serial));
+                            }
 
                             for (int i = 0; i < hues.Length && i < items.Count; i++)
                             {
                                 items[i].Hue = Convert.ToUInt16(hues[i], 16);
                                 Log.Info($"[bench] item 0x{items[i].Graphic:X4} at {items[i].X},{items[i].Y},{items[i].Z} hue 0x{items[i].Hue:X4}");
+                            }
+
+                            if (equipped)
+                            {
+                                Game.Managers.UIManager.GetGump<Game.UI.Gumps.PaperDollGump>(world.Player.Serial)?.RequestUpdateContents();
                             }
                         }
 
@@ -1865,7 +2064,7 @@ namespace ClassicUO
                         gs.Camera.Zoom = zoom;
                     }
 
-                    GameActions.Say(mode == "bwalk" ? "[go 1495 1528" : mode == "lswalk" || mode == "lsreinit" ? "[go 5156 2150" : mode == "travel" || mode == "walk" || mode == "bodies" || mode == "ltravel" || mode == "glide" || mode == "reinit" || mode == "reinitrt" || mode == "ui" ? "[go 1495 1629" : $"[go {mode}");
+                    GameActions.Say(mode == "bwalk" ? "[go 1495 1528" : mode == "lswalk" || mode == "lsreinit" ? "[go 5156 2150" : mode == "travel" || mode == "walk" || mode == "bodies" || mode == "ltravel" || mode == "glide" || mode == "reinit" || mode == "reinitrt" || mode == "ui" || mode == "gumpopen" ? "[go 1495 1629" : $"[go {mode}");
                     _step = 2;
                     _stepAt = now + sec * 8;
 

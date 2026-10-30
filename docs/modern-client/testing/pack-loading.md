@@ -134,6 +134,29 @@ Counters in the `FRAMESTATS {` json now carry a fifth value, the window sum (`[a
 
 **What to expect:** the first `travel` window after login has 2 gen1 collections (5–10 ms; the chunk pool, recycler and mesh arrays fill up and the server's objects arrive). After that, steady teleporting allocates about 0.2–1 KB per frame and a collection comes every 2–4 minutes (3–6 ms). Base collects every 10–15 s of teleporting.
 
+## 6. Gumps from the pack (added 2026-10-30, pack-gumps agent)
+
+Gumps come from `gumps/gumps.bin` when the pack has it (pack-format.md "Gumps"). Scratchpad `pgumps\` (`run.py`, `summ.py`).
+
+**Packs.** `C:\Repositories\uo-packs\classic-1.0` has no gump section until the main session regenerates it. To test without touching it, hard-link a copy and add the gumps (the manifest must be a real copy, since the converter rewrites it):
+```
+cp -al /c/Repositories/uo-packs/classic-1.0 pack-gumps && rm pack-gumps/manifest.json && cp /c/Repositories/uo-packs/classic-1.0/manifest.json pack-gumps/
+Uo.Converter.exe --only gumps --out pack-gumps            (about 6 s, verify included)
+Uo.Converter.exe --only gumps --raw-gumps --out pack-raw  (the run-length layout, uncompressed)
+Uo.Converter.exe --only gumps --gump-def gump-hued.def --out pack-hued   (hued gump.def aliases)
+```
+
+**Switches:**
+- `CUO_PACK_GUMPS=0`: read gumpart MUL/UOP even when the pack has gumps (same binary, for paired runs).
+- `CUO_GUMP_SYNC=1`: no worker decodes (`Gump.Request` and the batch prefetch are off); every gump decodes on the main thread when first asked for.
+
+**Unit tests** (`tests/ClassicUO.UnitTests/Assets/GumpPackTests.cs`; they return early without data):
+- `CUO_TEST_GUMP_PACK=<pack with gumps>`: every gump id against the client's MUL/UOP `GumpsLoader` (presence, size table, pixels into a dirty pooled buffer, the UOP flag); every hue kind (valid, the last, out of range, 0x8000, 0xFFFF) on 40 gumps; picker masks; decodes from 8 threads.
+- `CUO_TEST_GUMP_DEF=<gump.def>` with `CUO_TEST_GUMP_DEF_PACK=<pack converted with --gump-def it>`: hued aliases end to end (the MUL side reads the same gump.def through `UOFilesOverrideMap`).
+- Codec and store tests need no data.
+
+**In-client first open: plan mode `gumpopen`** (`g:gumpopen` with `CUO_BENCH_WINDOWS=4`; account with `[go`, it starts at Britain). Opens paperdoll, spellbook (gumps 0x08AC/0x08BA/0x08BB), status, backpack, world map, combat book and journal, one every 2.5 s, in a fresh client. `CUO_BENCH_GUMPOPEN="a;b;pics:2C00,067E"` sets the list (`pics:` = a plain gump of those pictures, prefetched like a server gump). Each open logs `[bench-gumpopen] <name>: worst frame … main-thread gump decodes N (ms), prefetched N (ms), open call ms, gumps open: …`. FrameStats counters `gump_sync`, `gump_sync_us`, `gump_async`, `gump_upload_us`, `gump_pending`.
+
 ## Noise and false positives
 
 - Other agents' clients (AOT, GPU, ECS work) run on the same GPU and CPU; FPS and Present swing a lot between runs. Compare without-Present hitch counts and max across alternating runs, not single windows.
