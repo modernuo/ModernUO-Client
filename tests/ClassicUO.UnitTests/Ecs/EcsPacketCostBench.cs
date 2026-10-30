@@ -103,6 +103,15 @@ namespace ClassicUO.UnitTests.Ecs
                 ecs.Sync(m);
             })));
 
+            // E11: SetInWorldTile (a teleport, a spawn, a multi/house piece): the position write plus one mirror Sync
+            rows.Add(("mobile SetInWorldTile (position + AddToTile, no map)", Measure(packets, i =>
+            {
+                Mobile m = s.Mobiles[i % n];
+                // coordinates advance per visit of each mobile (i / n), so no call repeats its mobile's previous position
+                int visit = i / n;
+                m.SetInWorldTile((ushort)(1000 + (visit & 1023)), (ushort)(2000 + ((visit >> 3) & 511)), (sbyte)(visit & 7));
+            })));
+
             // 0x78/0x20 resend with nothing changed
             rows.Add(("mobile Sync, nothing changed", Measure(packets, i => ecs.Sync(s.Mobiles[i % n]))));
 

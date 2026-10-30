@@ -42,7 +42,17 @@ namespace ClassicUO.Game
         {
             string v = Environment.GetEnvironmentVariable("CUO_ECS_PARITY");
 
-            return int.TryParse(v, out int n) && n > 0 ? n : 0;
+            bool on = int.TryParse(v, out int n) && n > 0;
+
+            if (on)
+            {
+                // The view draws nothing for a body's first-seen direction while a worker decodes it, the extract draws it at
+                // once: those frames (the player at login, every spawn) showed up as capture-side count mismatches unless
+                // CUO_ANIM_SYNC=1 was set. Parity compares paths, not load timing, so it loads synchronously.
+                ClassicUO.Renderer.Animations.Animations.AsyncFirstSight = false;
+            }
+
+            return on ? n : 0;
         }
 
         public static void BeginFrame()

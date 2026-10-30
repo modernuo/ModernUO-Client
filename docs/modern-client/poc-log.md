@@ -2035,3 +2035,332 @@ Final series, on 3f0edbc0f: three alternated pairs, D–F. The machine was quiet
 - The recycler's field test: every non-exempt field must really change when dirtied (strings, arrays and abstract `GameObject`-typed fields get non-null sentinels; an unsupported type fails explicitly), so a nullable cache left out of `ResetForReuse` fails. A new test checks that a reference field left out is caught.
 - `_prevMeshHighlight` checks the object's incarnation (above).
 - 579 unit tests pass in both build variants. One `CUO_RECYCLE_CHECK=reuse` pass (`travel` and `glide`, NativeAOT on 51c9333f3): Legacy, where the mesh highlight lives, 137k reused; Gpu, 128k reused. In both, 0 uses after retire, 0 bad sweeps and 0 exceptions; Gpu settle 0 timeouts and 0 unsettled frames in an episode. The `[gc]` lines now begin at the window's first collection (#9), not at one from login.
+
+## E11: ECS test driver behind CUO_DEVTOOLS; one mirror Sync per SetInWorldTile (2026-10-30)
+
+Base: poc/modern-client f2668520f. Branch `bg/ecs-e11-hygiene`.
+
+**Driver guard.** `EcsSessionDriver.cs` (whole file), the `-ecsdriver` case in `Main.cs`, `CUOEnviroment.EcsDriverScript` and `WorldEcs.Driver` plus its load/attach block are now inside `#if CUO_DEVTOOLS`. `-p:CuoDevTools=false` builds with 0 errors and its `cuo.dll` holds neither `EcsSessionDriver` nor `DriverGump`. The driver uses no helper that only it needs (it calls existing World, FrameStats and Settings members; its `fx`/`fxserve` cases were already guarded), so nothing else moved. `-ecscheck` (the mirror consistency checker, `WorldEcs.RunCheck`) is left in every build: testing/ecs-animation.md uses it as the standing parity check and it costs nothing unless the switch is given; owner decision (2026-10-30): it stays in every build during the PoC and is to be compiled out of Release builds for release (release-cleanup.md records it).
+
+**Double Sync.** `SetInWorldTile` ran `UpdateScreenPosition()` (which calls `World.Ecs.Sync`) and then `AddToTile`, which always ends in a `Sync` of its own (parked, chunkless and placed paths all do). `Sync` reads only the entity's fields (graphic, hue, x/y/z, direction, flags, amount, container, layer); `AddToTile`, `RemoveFromTile`, `Map.Park` and `Chunk.AddGameObject` change none of them, and `PlayerMobile.OnPositionChanged` (doors, corpses, plugin) does not read the mirror. So the first call wrote the values the second writes. It is redundant in every case, including a container-to-ground re-key (the caller clears `Container` before `SetInWorldTile`) and equipment/mobile index updates (they come from the second call's values). `SetInWorldTile` now sets `IsPositionChanged`, calls `OnPositionChanged` and `AddToTile`; every other `UpdateScreenPosition` caller keeps its Sync.
+
+**Measured** (E2 bench, new row "mobile SetInWorldTile"; coordinates advance per visit of each mobile, so no call repeats its mobile's position; `DOTNET_TieredCompilation=0`, Release, 100k calls, noisy machine; us per call at N=500/2000/8000 mobiles; one base run between two new runs, same tip): base 0.121/0.125/0.134; new 0.068/0.068/0.091 and 0.071/0.069/0.091. About 40-45% less; 0 bytes either way. Not a per-frame cost, so no FPS effect expected.
+
+**Tests.** New `SetInWorldTileSyncTests` (audit fixes): a mobile removed from the mirror is created by the placement; each move adds exactly one `MobileInputs.Pushes` (the old double Sync gives 2, verified: the test fails on the old code); `IsPositionChanged` is cleared then set again; a bag item dropped to the ground is re-keyed (`ParentKind.Contained` to `None`, gone from `GetContents(BAG)`). Not covered: the parked and loaded-chunk paths, because a `Map` needs the UO file manager and cannot be built in a unit test. 582 unit tests pass.
+
+**Verification.** Default and `CuoDevTools=false` builds compile. Smoke run (tools/ecs-parity/run_parity.py, account kbatman3, a short script: `[go`, 4 steps, backpack, check, quit): driver loaded and ran in the default build, `-ecscheck 120` 0 mismatches (442 checks), exit 0.
+
+## L7: pack page handles (2026-10-30)
+
+Base: poc/modern-client fdfcc9813. Branch `poc/pack-handles`. Result: **measured, negligible gain, no cache added.** The only change is docs.
+
+**Question.** `PackPages.DecodeChunk` (`src/ClassicUO.Assets/PackAssets.cs`) calls `File.OpenHandle` and disposes it for every chunk decode. Is a bounded `SafeFileHandle` cache worth it?
+
+**Measurement.** A throwaway console bench (session scratchpad `packh\bench`, JIT Release, `DOTNET_TieredCompilation=0`; open and close cost is the same system calls on NativeAOT) over the real pack `classic-1.0`. Per kind (art, anim, tex), 3 repetitions: 2,000 `File.OpenHandle` plus dispose over the kind's 32 pages round robin, and about 300 chunk decodes at random pages and positions through the public `PackPages.Touch` with a 1 MiB cache, so nearly every touch decodes. Machine noisy (other agents' clients); the repetitions agree within 1 µs and a few percent.
+
+| Kind | Open + close | Decode per 1 MiB chunk (includes the open) | Open's share |
+|---|---|---|---|
+| art | 20.1, 22.6, 27.0 µs | 2.14–2.17 ms | 0.9–1.3% |
+| anim | 22.0, 28.1, 26.8 µs | 2.48–2.53 ms | 0.9–1.1% |
+| tex | 23.1, 20.9, 21.6 µs | 2.83–2.87 ms | 0.7–0.8% |
+
+So the open is about 1% of a decode, at the low end of the 20–100 µs estimate (Defender's scan on repeated opens of the same files is cheap here; the first open of each page is not repeated). The decodes run on the chunk workers, not the main thread, and chunk decodes are a small part of a teleport frame. At about 25 µs per chunk, a teleport that decodes a few hundred chunks saves about 10 ms of worker time in total, spread over several threads. That is below the noise of every in-client metric (chunk load max, teleport worst frame), so the paired NativeAOT travel and glide runs were not done: they could not resolve it.
+
+**Other readers.** Uo.Render `PageResidency`/`PageJob.Run` opens once per whole atlas page load (multi-MiB read), as do `Uo.Pack` `PackReaders` and `PackTables` once per file or region. None opens per chunk, so none has the pattern. `GetPage` opens once per page, the first time only.
+
+**Why not add it anyway.**
+- A handle cache needs bounding, LRU eviction that waits for in-flight reads, and closing on `Clear`, logout, pack switch and dispose; that is real complexity and a concurrency surface for 1%.
+- Open handles block replacing or deleting page files while the client runs (the pack is opened with the default share mode, which allows others to read but not delete or rename over an open file on Windows). Today a page file can be swapped between decodes. Nothing in the repo replaces pages at runtime (the converter writes a pack folder offline), but a future patcher or in-place converter run during development would hit it.
+- The `Brotli` (kind 1) path wraps the handle in a `FileStream`, which takes ownership and closes it, so it would need a separate open anyway.
+
+**Revisit if:** a profile of the main thread shows chunk decodes on it (a `ReadRect` miss) with the open visible, or the pack moves to many small files (gumps, fonts, cliloc) read per use, where the open could rival the read. Then cache handles per file with the requirements above.
+## E10: the animation clock into the ECS (measured, not done) and an owned mobile order (2026-10-30)
+
+Branch `bg/ecs-e10-clock`, from poc/modern-client f2668520f. Draft quality, needs a Codex audit before merge. JIT with `DOTNET_TieredCompilation=0`, kbatman3, Gpu, 1920x1080, large scene. Logs and tools: session scratchpad `e10\`. The machine was noisy (other projects running; `world_mobiles` for the same configuration moved from 0.053 to 0.089 ms between sessions), so only paired and in-session numbers are used.
+
+**1. Measurement: moving the clock reads is not worth it, so step 2 was not built.**
+- What `SamplePushed` reads from the Mobile for the clock: `AnimationGroupRaw`, `AnimIndex`, `LastAnimationChangeTime` (cast), `AnimationFromServer`. The same function already reads the Mobile for `ViewFlipped`, `AllowedToDraw`, `AlphaHue`, `Offset` and the view context, so the Mobile's cache line is touched anyway; moving the clock does not remove the Mobile from the path.
+- Paired micro-bench (`CUO_MOBILE_INPUT_BENCH=1`, new `[mobile-clock-bench]`; 32 reads of each kind per sampled mobile per frame through the same non-inlined call, 917M reads, large scene, three spots):
+
+| The four clock reads | ns per mobile |
+|---|---|
+| From the Mobile (today) | 1.30 |
+| From the already fetched `MobileInputs` copy (the clock as part of that component) | 1.21 |
+| From a fresh `GetComponent` lookup (a separate component) | 4.54 |
+
+  The pushed sample as a whole is 14.6 ns (legacy 57 ns) in this session, so the clock is under 10% of it. Best case 0.1 ns x 1,985 mobiles = **0.0002 ms per frame**; as a separate component it would be 3 ns slower per mobile (+0.006 ms).
+- The price on the other side: the frame advance would have to push the clock for every advancing mobile (about 43 per frame in the scene, each with an entity lookup, about 30-100 ns), plus pushes from the write sites below. That alone cancels the gain.
+- E4 on/off, the mobile loop (`world_mobiles`, ms, in-session `mobsys:off`/`mobsys:on` pairs, 2 windows each): z1 0.053 -> 0.031 and walking 0.064 -> 0.041 (first session); in the paired runs below on the new build 0.069 -> 0.039, 0.056 -> 0.034 (z1), 0.059 -> 0.046, 0.056 -> 0.034 (zoom 2.5), 0.077 -> 0.042, 0.050 -> 0.031 (walking). About 0.02-0.03 ms, as E4 found. What remains there is real work (the due updates), not the clock reads.
+- **Decision: stop after step 3.** If the advance is ever moved into the ECS (E4's "Left" item 1: the selection against ECS state, so a standing mobile's advance needs no Mobile), the clock goes with it in the same change; on its own it buys nothing.
+- **Write sites of the clock, for whoever does that** (grep over `src`; the Mobile fields are `AnimIndex`, `AnimationFromServer`, `LastAnimationChangeTime`, `_animationGroup`, `AnimationFrameCount`, `_lastAnimationIdleDelay`, `ExecuteAnimation`):
+  - `Mobile.SetAnimation` (Mobile.cs 465-474: group, `AnimIndex`, frame count, from-server, `LastAnimationChangeTime`), called from PacketHandlers 2429 (0x6E), 3753 (0xAF death animation, then `AnimIndex = 0`), 4501 (0xBF 0x19 frozen frame, then `ExecuteAnimation = false`, `AnimIndex`), 4726 (an animation packet with frame count, then `AnimIndex`, `ExecuteAnimation = false`), 5617 (0xE2).
+  - `Mobile.SetIdleAnimation` (485-492) and `CalculateRandomIdleTime` (304), from `Update` (361) and step completion.
+  - `Mobile.ProcessAnimation` (722 frame count, 737 `AnimIndex`, 751 `LastAnimationChangeTime`); `_animationGroup` also in `GetGroupForAnimation` (559-616, random fidget picks).
+  - `Mobile` constructor (131), `Entity.Destroy` (197-198), and the commented-out pool reset in `Mobile`/`Item` (dead code).
+  - `Item.ProcessAnimation` (540, 544) and `Item` 341 write the same `Entity` fields for items; a mobile-only component would not cover them.
+
+**2. Step 3: an owned ordered mobile table replaces the `Dictionary._version` trick.**
+- **`MobileTable`** (new, `GameObjects/MobileTable.cs`) is now `World.Mobiles` (was `Dictionary<uint, Mobile>`). It has the dictionary's API as the world used it (`Get`, `Contains`, `TryGetValue`, `Add(Mobile)`, indexer get/set, `Remove`, `Clear`, `Count`, `Values`) and enumerates in the dictionary's order: lookups go through an inner `Dictionary<uint, Mobile>`, the order lives in a slot array (`Mobile[]`) with a LIFO free-slot stack. Add takes the most recently freed slot else appends; setting an existing key keeps its slot; `Remove` frees the slot; `Clear` resets. `Mobile.Ordinal` is the slot, set on insert.
+- `World.SortInMobilesOrder` is now a plain sort by `Ordinal`. No `UnsafeAccessor`, no version counter, no ordinal rebuild walk (E4's stats line had "ordinal rebuilds N"; it now reports `table-vs-dictionary differences`).
+- `Values` is a struct enumerator (no allocation in `foreach`); removing during enumeration is allowed as before, adding during one is not supported (the dictionary threw).
+- Cost: one array store per add/remove, `Ordinal` kept for free; lookups are the same dictionary lookup as before.
+
+**Invariants for the audit:**
+1. The table enumerates exactly like the `Dictionary<uint, Mobile>` it replaced under every operation sequence the world uses. This rests on .NET's dictionary behaviour: freed entries form a LIFO free list that inserts consume first, resize and overwrite keep positions, `Clear` resets. `MobileTableTests` check it against a real dictionary over 6,000 random operations (add including refused duplicates, remove, overwrite, the 0xBB serial change as remove + set under a new key, clear, removal during enumeration). Nothing else in the client depends on the dictionary's order any more, only on the table's own.
+2. `Mobile.Ordinal` equals the mobile's slot while it is in the table; an overwrite gives the new Mobile the old slot. A Mobile that is not in the table has a stale ordinal: `SortInMobilesOrder` must only get mobiles fetched from `Mobiles` this frame (the due list does: `Mobiles.Get` of each due serial).
+3. The key and `Mobile.Serial` can differ for a moment (0xBB: `Remove(old)`, then `Mobiles[new] = owner`, then `owner.Serial = new`): the table keys by the argument, never reads `Serial` except in `Add(Mobile)`.
+4. With `CUO_MOBILE_UPDATE_CHECK`, `World` enables a shadow `Dictionary` that receives every operation (only possible on an empty table, so it is set in the constructor), and `VerifyAgainstShadow` compares the table's enumeration, count and every `Ordinal` with it each frame under the clock path. The old order check (`CheckOrder`: the due list is a subsequence of a fresh enumeration) still runs, now against the table's enumeration.
+5. Single-threaded, like the world.
+
+**Verification** (default build and `-p:CuoDevTools=false` both build; the second also logged in and ran `-ecscheck` in the scene, 0 mismatches):
+
+| Run (kbatman3, TieredCompilation=0, `CUO_ECS_PARITY=1 CUO_ANIM_SYNC=1 CUO_GPU_ITEM_CHECK=1 CUO_W5_CHECK=1 CUO_MOBILE_INPUT_CHECK=1 CUO_MOBILE_CACHE_CHECK=1 CUO_MOBILE_UPDATE_CHECK=1`, `world_update_mobile_system` on, `-ecscheck 120`) | Result |
+|---|---|
+| Large scene, `ls_parity` (standing, then the lane walked and run), day | clocks 16.6M 0 different; skipped updates 15.8M 0 changed; due-update order 801k, 0 out of order; **table vs dictionary 0 differences**; parity 7.07M mobile comparisons 0 mismatches, items 2.93M 0; input check 6.5M samples and 5.9M seat tests 0 different; item check 0; `[w5-check]` 0; `-ecscheck` 0 |
+| `w5push.txt` (mount, dismount, seat, hidden, hue, death, walking NPCs) | clocks 3.5M 0 different; skipped 3.3M 0; order 237k 0 out of order; table 0 differences; parity 2.32M 0 mismatches; input check 2.24M and 1.86M seat tests 0 |
+| `w5items.txt` (corpses, object handles on mobiles) | clocks 386k 0; skipped 346k 0; order 40k 0; table 0; parity 395k 0 |
+
+Not run: the night (`light 1E`) variant (the lights path is untouched), NativeAOT. The 0xBB serial change and the char-creation preview mobile (added to `World.Mobiles` by `CreateCharAppearanceGump`) were not exercised live; the unit test covers the first.
+
+Unit tests: 582 pass (3 new in `MobileTableTests`). `ChunkLoadingTests.Prefetched_Regions_Give_The_Same_Blocks_And_Never_Block_IsBlockReady` failed on the first run after a build and passed on the rerun, as in E4 (timing under load, unrelated).
+
+**Timing** (paired builds: `bin-base` = f2668520f plus the inert clock micro-bench, dictionary and `UnsafeAccessor`; `bin-new` = the table; `world_mobiles`, ms, 2 rounds, interleaved, round 1 / round 2; noisy machine):
+
+| Spot | base | new, E4 off | new, E4 on |
+|---|---|---|---|
+| zoom 1 | 0.089 / 0.067 | 0.069 / 0.056 | 0.039 / 0.034 |
+| zoom 2.5 | 0.094 / 0.066 | 0.059 / 0.056 | 0.046 / 0.034 |
+| walking | 0.077 / 0.070 | 0.077 / 0.050 | 0.042 / 0.031 |
+
+Off equals or beats base inside the noise (a slot-array walk instead of the dictionary's entries); on saves 0.02-0.03 ms over off, including the sort. The table's gain over the old trick is the removed rebuild walk (52 per login-plus-scene run, 19 in another, each a 2k-mobile walk); it does not show in the frame time.
+
+**E10 audit fixes (Codex, 2026-10-30):**
+- **Clock bench wording (P3):** `[mobile-clock-bench]` is a surrogate hot-read measurement, not a precise bound. Its "inputs" variants read `MobileInputs` fields (Body, Facing, LastStepTime, Notoriety), not real clock fields; the "separate component" variant is a second `GetComponent` of the existing `MobileInputs`; the read order is fixed (Mobile, inputs, lookup), and everything is cache-hot. It shows that a handful of field reads cost on the order of 1 ns per mobile, so the saving is far below what the frame-time noise can show. "Don't move the clock on its own" stands on that, and on the push cost of every frame advance.
+- **P2, ownership:** a Mobile can sit in one `MobileTable` under one key only (`Mobile.OwnerTable`, set on insert and overwrite, cleared on remove, replace and `Clear`). A second key or table throws `InvalidOperationException` before any change; the same mobile under its own key is a no-op. This keeps `Ordinal` (the storage address) trustworthy. The audit's sequence (`t[1]=a; t[2]=a; Remove(1); Add(b); Remove(2)`) now throws at `t[2]=a`.
+- **P2, enumeration:** an insert of a new key bumps a version that enumerators capture and check in `MoveNext` and `Reset`, throwing like the dictionary did. Removal, overwrite of an existing key, `Clear` and a refused duplicate `Add` do not invalidate.
+- **P3, `FindNext`:** `AddRange(Mobiles.Values)` replaced by a concrete `foreach` with capacity reserved. No other `ToList`, LINQ or `AddRange` over `Mobiles.Values` exists (grep).
+- **P3, checker:** the shadow comparison now runs every frame under `CUO_MOBILE_UPDATE_CHECK`, whichever mobile loop runs (E4 off included), counts `table checks`, and compares key-to-value mappings and `OwnerTable` as well as order and ordinals.
+- **P3, tests (586 pass, 4 new):** ownership refusals (aliases, two tables, the audit sequence, release on remove/replace/Clear); Clear and remove-all then repopulate past the first array size against a dictionary; the full death re-key with `Serial` updated (also in the random model) and a re-key onto an existing key; enumeration with removal of an unvisited entry, overwrite, `Clear` and insert invalidation (and a refused duplicate not invalidating). The E4 random order test now takes its expected order from an independent `Dictionary` oracle fed the same operations.
+- **Checks on the fix** (kbatman3, TieredCompilation=0): large scene `ls_parity` with `CUO_MOBILE_UPDATE_CHECK=1`, **E4 off**: table checks 22,375, 0 differences; parity 10.4M mobile comparisons 0 mismatches; `-ecscheck` 0. `w5push` with E4 on and all checkers: table checks 241,343, 0 differences; clocks 3.07M 0; skipped 2.84M 0; order 238k 0; input check 1.57M and 1.45M seat tests 0; parity 1.6M 0. Default and `-p:CuoDevTools=false` builds both build.
+
+## T0a/b: ECS state census and a write-site budget test (2026-10-30)
+
+Base: poc/modern-client 3681f25b3. Branch `bg/ecs-t0-census`. Task 1 of ecs-transition-plan.md section 6. No product code changed; no client run.
+
+**Census.** [ecs-state-census.md](ecs-state-census.md) classifies every member of `GameObject`, `Entity`, `Item`, `Mobile` (with `MobileAnimation` and the views) and `PlayerMobile` as A (world state), B (derived), C (view scratch), D (session/UI) or E (structure), lists every write site of the 41 A fields (file:line, receiver type) and their readers split hot and cold, the mutator methods and the tile-list, child-list and `Steps` writers, and every holder of a world-object reference across frames. The lists are **compiler-derived**: each A member was renamed in a scratch copy and the errors of `dotnet build` give every reference with its receiver's static type (a grep cannot tell `item.X = 1` from `control.X = 1`; `X` and `Y` have about 1,000 textual hits). The sources were reverted afterwards. Every textual `.Field op` hit in the client (1,136) is either in the world write list or in the census' appendix of non-world hits; the audit script found 0 missing (it also sampled 20 random hits: all listed).
+
+**Numbers.** 266 world write sites in 14 files (`Graphic` 33, `Hue` 17, `Flags` 15, `X` and `Y` 14 each, `Z` 12, `Offset` 25 member writes); 121 are in `PacketHandlers.cs` (31 in the shared `UpdateGameObject`), 66 inside the entity classes, 34 in the character-creation gumps (detached preview objects), 24 in `BoatMovingManager`, 12 in `DevBench`. 32 more writes are on map and effect objects. About 2,270 reads, 9 per write. Findings for T0c and T1 are in section 9 of the census: `Offset` is a struct written member by member; `DisplayedGraphic` has no world writer; five `Graphic` writes skip `CheckGraphicChange`; `BoatMovingManager` is a second position writer; `ContainerGump` writes contained items' `X`/`Y`.
+
+**Budget test.** `tests/ClassicUO.UnitTests/Ecs/WriteSiteBudgetTests.cs` scans `src/ClassicUO.Client/**/*.cs` with a regex scanner (comments, strings and char literals blanked; the receiver type guessed per file from declarations, `var` producers, casts and call receivers) and compares counts per (file, field) with `WriteSiteAllowlist.txt` (130 pairs, 326 sites). It fails when a pair grows or a new one appears and names the new sites, and also when a count has shrunk (a downward ratchet, so a removed write cannot free budget for a new one; the allowlist is lowered in the same change; `CUO_WRITE_BUDGET_REGEN=1` rewrites the allowlist, `CUO_WRITE_BUDGET_DUMP=<file>` dumps the sites). The repository root is found by walking up from the test binary to the folder holding `src/ClassicUO.Client/ClassicUO.Client.csproj` and `tests/ClassicUO.UnitTests` (`CUO_REPO_ROOT` overrides); a sanity test fails if the scan finds fewer than 200 sites. Against the compiler list the scanner finds all 266 world sites and the 16 effect-object sites, plus 5 false positives (same-named locals of another type) and 6 `Steps` mutator calls; its limits are census section 8. A copy of the tree with a new `item.Hue = 1; m.X++;` made the test fail with those two sites named.
+
+**Verification.** 623 tests pass in both variants (default and `-p:CuoDevTools=false`; 34 of them are new: the scanner's positive and negative cases, locals, bare writes, the allowlist round trip, the live scan). The Client builds in both variants with 0 errors. The new test reads sources only, so it behaves the same in both variants.
+
+**Environment notes.** A fresh worktree needs `git submodule update --init --recursive` before it builds (FNA and its nested libraries are empty otherwise). About 70 minutes were spent waiting for `bench.lock`, which other agents kept re-taking within a second of each other; the census builds and test runs themselves took a few minutes.
+
+**Audit fixes (Codex gate, 2026-10-30).** The scanner now also counts receiverless `++X`, `ref X` and `out X` (for example `Interlocked.Exchange(ref LastAnimationChangeTime, 0L)`), tuple deconstruction, and the 18 private A fields (animation timer, `_lastAnimationIdleDelay`, `_isSA_Poisoned`, the setters' backing fields); fixtures cover each form, `?.` assignment and the `out Direction d` type-name false positive. A stale budget now fails (the same-pair swap limit is documented). The sanity test became a discovery test (expected source files enumerated; no minimum counts). The census names construction writes (field initialisers, section 3.1a) separately from the 266 mutation count, and its claim about `?.` assignment is corrected. The census scripts are committed under `tools/ecs-census/` with a README (repo root through `CENSUS_ROOT`; the pipeline was re-run from the saved build logs and reproduced the document). Roslyn was considered and not used: a syntax-only scan has no receiver types, and a semantic one needs the whole client compiled inside a unit test (census section 8, limit 8).
+## First-sight item and multi art on the art workers (2026-10-30)
+
+Branch `poc/item-art-worker` (item art agent, kbatman4), from poc/modern-client 9312ec338, merged up to de98a6d1a; the final numbers were measured on 7cbda7d68. This follows "Teleport frames: first-sight chunk art decoded on workers", which left 11–25 main-thread decodes in one `travel` window per run, outside the map statics. Method: [testing/pack-loading.md](testing/pack-loading.md) §3, §4 and the new paragraph on item art. Scripts and logs are in the session scratchpad `itemart\`.
+
+**What decoded on the main thread (measured first).** A JIT diagnostic build logged every main-thread art decode with its callers (`CUO_ART_SYNC_LOG=1`, now committed). It ran Gpu and Legacy sessions with `travel`, `glide`, the bank, the KamDos house and Britain:
+- **Gpu, 130 decodes:**
+  - 90 came from the **item pick test** (`Item.CheckMouseSelection` in the draw walk). A ground item that hasn't been drawn yet has no stored draw offset (`ArtEntry.Width/Height` 0,0), so the cheap reject was skipped and `GetArt` decoded the art of every new item, on or off screen. In the Gpu world nothing else needs these items' atlas art: the world draws them from the pack.
+  - 39 came from **animated statics' frames** (`Static.Draw` through `GpuWorldRenderer.DrawObject`). The chunk scan asked for the graphic the block names; the view draws graphic + the frame offset.
+  - 1 was the paperdoll's equipment icon (UI art, out of scope).
+- **Legacy, 146 decodes:** the same split (111 pick, 34 animated static frames, 1 UI). The pick test runs before the draw, so the Legacy draw then finds the art in the atlas.
+- **Multis:** none appeared in a measured window. Their art decoded during the settle hold of the teleport that brought them into view, which FrameStats windows don't count.
+- **Corpses** draw from the animation path, which already decodes on workers.
+- **Cost in NativeAOT** (the base runs below): 48–56 decodes and 0.9–1.3 ms per `travel` run, 26–29 decodes and 0.66–0.73 ms per `glide` run. The worst frame spent 0.21–0.27 ms decoding. The 2.6–3.0 ms quoted before came from JIT builds.
+
+**Design.**
+- **Items arrive after their chunk is built, so nothing waits for them.** A ground item (`Item`, on the ground, not a corpse or a multi) and a multi component (`Multi`: house or boat parts) request their art when they are placed on the map (`GameObject.AddToTile(x, y)`, parked or not, through `FirstSightArt.RequestPlaced`). The request covers the graphic the view draws (`DisplayedGraphic`: coin and stack variants) and every animation frame (AnimData offsets). A multi component also requests its new graphic after a season change. Hues don't matter: art is decoded unhued.
+  - In practice the art is in the atlas before anything needs it. Items that arrive in a teleport's packet burst are parked until their chunk loads (Map.Park), and the chunk waits for its own art. Legacy, which draws items from the atlas, had 0 main-thread decodes after the change.
+  - Where art is still pending, the old lookup still works: it decodes on the spot and the worker's result is dropped. Nothing draws a placeholder, and nothing new is held.
+- **Pick test.** When an item has no stored draw offset yet, the test stores the one the view and `ItemSpriteExtract` store when they draw it, computed from the pack's sprite size (`OrigW/OrigH`). The reject then works from the first frame, 44×44 art included (its offset is 0,0).
+  - An item outside the reject rectangle never needs its art. One the reject doesn't exclude is still tested against its exact pixels, decoding on the spot if it must, so selection is exactly as before: at most the few items under the mouse decode.
+  - A rejected item whose art is missing (a graphic changed in place, an atlas reload) is requested from the workers then.
+- **Animated statics:** the chunk scans (block scan and loaded-chunk walk) wait for the frame shown now and request every other frame in the full scan.
+- **Settle hold:** unchanged and honest. Nothing new is skipped in the draw walk. The Gpu world draws ground items from the pack (`ItemSpriteExtract`); multi components still go through `Multi.Draw` (`GpuWorldRenderer.DrawObject`, whose direct extract handles only items and mobiles), so a component whose art is still pending decodes on the spot there, as before.
+- **Audit lessons kept:**
+  - A failed worker decode is terminal (`RequestArt` treats it as ready).
+  - Requests cost O(1); the extra frame requests run only in the full block scan and in the loaded-chunk walk, which already runs only after uploads.
+  - Uploads stay inside the 2 ms chunk budget (`DrainReady` in `Map.UpdateLoading`).
+  - `GameScene.Unload`'s `CancelPending` covers these decodes.
+  - The season generation already rescans statics; multi components re-request on season change.
+- **Switches:**
+  - `CUO_ART_SYNC=1` (or `CUO_CHUNK_SYNC=1`, which turns off the drain) turns all of this off, including the pack-sized pick reject: the old path.
+  - FrameStats counter `art_obj`: placements whose art was requested.
+
+**Measurements.** NativeAOT, `DOTNET_TieredCompilation=0`, Gpu world, 1920×1080, plan `house;bank;travel;ltravel;glide;far` (4 windows of 5 s). The character starts every run at Jhelom (the `far` entry), so the house and bank are cold teleports. Base is poc/modern-client de98a6d1a and new is 7cbda7d68, both built from the same tip, run alternated A–C: base, new, new, base, base, new. The machine was busy (eight agents share it; one other client during baseA). Main-thread art decodes come from FrameStats `art_sync`/`art_sync_us`, window sums:
+
+| Entry | Base decodes / ms (per run) | New | Base U+D max (ms) / >8 | New U+D max / >8 |
+|---|---|---|---|---|
+| `travel` | 48–56 / 0.87–1.27 (worst frame 0.21–0.27 ms) | **0 / 0** | 4.9, 6.0, 10.2 / 0, 0, 1 | 5.1, 5.1, 5.9 / 0 |
+| `ltravel` | 1–3 / 0.04–0.11 | **0** | 2.8–8.1 / 0–1 | 3.0–7.7 / 0 |
+| `glide` | 26–29 / 0.66–0.73 | **0** | 2.1–4.3 / 0 | 2.2–4.7 / 0 |
+| house, bank, Jhelom | 0 in the windows (decoded during the hold) | 0 | ≤ 2.1 | ≤ 2.3 |
+
+- **Whole session, JIT diagnostic builds** (counting the login and the settle holds too, from the `[artsync]` lines):
+  - Gpu: base 130 main-thread decodes, new 1 (the paperdoll icon);
+  - Legacy: base 146, new 1.
+- **Every frame over 7 ms in both builds is a GC**: the login warm-up's compacting gen1 (6.7–7.6 ms, `[gc]` lines), in `ltravel` or `travel`. Base's two frames over 8 ms (baseB `ltravel` 8.1, baseC `travel` 10.2) are both that collection; new had none over 8 ms in three runs. That depends on where the collection lands, not on this change.
+- **Uploads:** `art_obj` was 446 requests over the three new runs (up to 67 placements in a frame after a teleport). `art_upload_us` peaked at 1.7–2.0 ms (base 1.0–2.0), inside the chunk budget as designed; `art_pending` peaked at 263–272 in both builds.
+- **Settle:** every run had 0 timeouts and 0 unsettled frames in an episode. Walking-unsettled frames: base 113–147, new 113–143.
+
+**Verification** (new binary unless noted):
+
+| Check | Result |
+|---|---|
+| `CUO_GPU_SKIP_CHECK=1 CUO_PREP_CHECK=1 CUO_GPU_ITEM_CHECK=1` with `pickscan:8x6` at the house, the bank and Britain, plus `travel`, `ltravel`, `glide` and Britain at zoom 2.5 | Prep check: 0 wrong positions and **0 wrong item-pick rejects** (up to 187k rejects per window, now including first-sight items). Item check: 0 with differences. Skip check: 0 unsettled, 0 drawn differently. Pickscan: 48 same, 0 different at all three. Settle: 0 timeouts, 0 unsettled in an episode |
+| Season (`season:winter`, `ltravel`, `glide`, Britain, the house, `season:summer`, Britain) and facet change (`[self set map felucca`, `trammel`, with `pickscan:8x6` on each) | 0 timeouts, 0 unsettled in an episode, 0 main-thread art decodes. Facet ready after 68 and 53 ms. Pickscan 48 same, 0 different on both facets. Looked at the shots: the winter house (snow, bare tree, house complete) and summer Britain (complete) |
+| ECS parity: `CUO_ECS_PARITY=1 CUO_ANIM_SYNC=1 -ecscheck 120`, driver `parity-travel.txt` (`[go` teleports between towns with walks, `light 1E` then `light off`), plus the item and skip checks | Items: 343k compared, 0 mismatched, 3,516 lights with 0 mismatched. Mobiles: 181k, 0 mismatched. `-ecscheck` 0 mismatched in 23 checks. Item check 0 |
+| Legacy (`-worldrenderer legacy`, base against new: the house, the bank, Britain, after `travel`, after `glide`, Britain again, Jhelom) | Identical (0.00% of pixels differ by more than 8) apart from the bank (0.42%) and Jhelom (0.12%). Looked at the bank: only NPC positions differ; the counters and furniture are identical. Near-black 1.2–2.4%, the same in both |
+| `CUO_ART_SYNC=1` on the new binary, with the prep check | The old path: 579 main-thread decodes in `travel`, 0 worker uploads, 0 wrong rejects, 0 timeouts |
+| Unit tests | 590 pass in both build variants (`-p:CuoDevTools=false` too); 626 after merging poc/modern-client 80ccb1a24 (the T0 write-site budget test passes). New: `ItemPickBoundsTests` decodes about 870 pack art sprites, including 200 that are 44×44, and checks that the reject from the pack size never drops a pixel the picker would hit, the stack's second sprite included |
+
+- **A unit-test catch from the merge:** E11's `SetInWorldTileSyncTests` places items without a game. `FirstSightArt` now does nothing when no art is loaded (a null check, fixed after the measurements).
+- `ChunkLoadingTests.Prefetched_Regions_Give_The_Same_Blocks_And_Never_Block_IsBlockReady` failed once while the machine was busy (2.65 ms against a 2 ms limit) and passed on reruns, as E10 saw.
+
+**Not done or noted:**
+- **No boats and few houses on the local server.** Multis were checked with KamDos (`house:1427 1691`) only.
+- **Correction (Codex audit):** an earlier version of this entry said house components had no atlas art in the Gpu world. That was wrong: they reach `Multi.Draw` through `GpuWorldRenderer.DrawObject`, which decodes their art and stores the pick anchor on the art entry. The real change was a regression, fixed below: the prefetch could fill a component's pixel mask before its first draw had stored the anchor.
+- **Placement requests sit outside the chunk budget, and nothing caps the bytes of decodes in flight.** Requests are O(1) and the uploads are budgeted, but a teleport into a town queues every new item's and component's decode at once, each holding its untrimmed buffer until its upload. All animated bases together come to about 76 MiB untrimmed. A cap on in-flight decode bytes is a follow-up.
+- **After `Art.Reload`**, multi components aren't re-requested. A Legacy draw then decodes their art on the spot, as before.
+- **UI art** (gumps, the paperdoll's item icons) still decodes on the main thread.
+- No 4K run, no 13-minute session, and not the owner's FPS test.
+
+**Codex audit fixes** (no P0 or P1 found; object lifetime, worker safety, generations, item bounds and Gpu readiness checked out):
+1. **Multi pick anchor (P2, a regression from this branch).** The prefetch filled a component's pixel mask before the first draw stored `ArtEntry.Width/Height`. Picking runs before drawing, and components the mesh build skips (`CHMOF_DONT_REMOVE`) had their first pick at anchor (0,0). The wooden wall 0x0006 (44×106) was 62 px off: false hits and misses. `MultiView.CheckMouseSelection` now tests the sprite `Multi.Draw` draws, with its anchor computed from the pack's size (`Multi.SpriteTopLeft`, the anchor `DrawStaticAnimated` stores). The same change fixes two older mismatches between pick and draw: the pick now uses the current animation frame (graphic + `AnimOffset`) and the boat's `Offset`. New test: wall 0x0006's drawn pixels all pick, where the old anchor missed most of them.
+2. **A parked seasonal component missed a season change (P2, inherited).** `World.ChangeSeason` only visits loaded chunks, so a component parked on an unloaded chunk kept the old season's graphic. `Map.LoadChunk` now refreshes the seasonal graphic of each parked object it attaches (a no-op for items and mobiles), which also requests the new art.
+3. **Logout race in `FirstSightDecoder` (P2, inherited).** A worker could pass its epoch check, then `Cancel` bumped the epoch and drained an empty queue, then the worker queued its buffer, which stayed held until the next session's `Drain`. The epoch check and the publish now run under a lock that `Cancel` takes too. New test at that boundary: `Cancel` waits for the publish and drains the job, so no buffer stays queued.
+4. **The animated frame waited for (P3).** The chunk loader (in `World.Update`) read `AnimOffset` before `AnimatedStaticsManager.Process` advanced it, so the frame drawn could be the next one, still pending. `Process` now runs before `World.Update`.
+5. **Docs:** the multi explanation and the two notes above.
+
+**Checks on the fixes** (c68c63985, NativeAOT):
+- **Unit tests:** 628 pass in both build variants. `ChunkLoadingTests.Prefetched_Regions…` hit its timing limit once more under load (2.8 ms) and passed on the rerun.
+- **One run,** with `CUO_PREP_CHECK=1 CUO_GPU_ITEM_CHECK=1 CUO_GPU_SKIP_CHECK=1`: the house with `pickscan:8x6`, `travel`, `season:winter`, the house with `pickscan:8x6`, `glide`, `season:summer`, the house with `pickscan:8x6`, Jhelom.
+  - Pickscan: 48 same, 0 different, all three times.
+  - Prep check: 0 wrong. Item check: 0 with differences. Skip check: 0 drawn differently.
+  - Settle: 0 timeouts, 0 unsettled in an episode. 0 main-thread art decodes in every window.
+  - The worst frame (9.4 ms, `travel`) is the login warm-up's compacting gen1. The run had the checks on, so its frame times aren't a measurement.
+  - The Jhelom entry also had one 7.5 ms frame, almost all of it `prep_foliage_finish` (7.06 ms), in its second window rather than at the teleport.
+    - A pair with the checks off (same `house`, `travel`, `far` entries, base `bin-base` against `bin-fix`) had no such frame: Jhelom's worst frame was 1.45 and 1.48 ms in base, 1.38 and 1.67 ms in fix.
+    - Over every run of this branch, `prep_foliage_finish` went above 1 ms only in the two runs with `CUO_PREP_CHECK`, `CUO_GPU_ITEM_CHECK` and `CUO_GPU_SKIP_CHECK` on (3.05 ms in `chk1`, 7.06 ms here); it never did in the 11 runs without them.
+    - So it looks like checker overhead, which these phases include, not a product cost. Which check causes it wasn't narrowed down.
+- **ECS parity after the frame reorder (fix 4),** with `tools/ecs-parity/e7mixed.txt` (kbatman3, Green Acres: ground items, animated statics, a corpse and mixed served tiles), extended to compare by day too (`parity`, a walk and `check` after `light off`). Run with `CUO_ECS_PARITY=1 CUO_ANIM_SYNC=1 -ecscheck 120`, the item and skip checks, on `bin-fix`:
+  - items: 844k compared, 0 mismatched, 49,087 lights with 0 mismatched;
+  - mobiles: 131k, 0 mismatched;
+  - `-ecscheck`: 22 checks, 0 mismatched;
+  - item check: 0 with differences; skip check: 0 drawn differently, 0 unsettled;
+  - the spawned items and the brigand were wiped by the script.
+
+## E4 default-on gate (2026-10-30)
+
+Branch `bg/ecs-e4-gate`, from poc/modern-client b9f9419db (E10's `MobileTable` merged; no `src` change since 59e1c6da3). No code change. Account kbatman3 (the character-creation run used a new account, kbatman5), Gpu, 1920x1080 except where noted. Binaries: `bin-jit` (Release, `DOTNET_TieredCompilation=0`) and `bin-aot` (devtools NativeAOT publish), both from b9f9419db, in the session scratchpad `e4gate\`. `world_update_mobile_system` on (settings.json) in every checker run. Unit tests: 625 pass.
+
+**Checkers, JIT** (`CUO_ECS_PARITY=1 CUO_ANIM_SYNC=1 CUO_GPU_ITEM_CHECK=1 CUO_MOBILE_UPDATE_CHECK=1 CUO_W5_CHECK=1 CUO_MOBILE_INPUT_CHECK=1 CUO_MOBILE_CACHE_CHECK=1 CUO_PREP_CHECK=1 CUO_GPU_SKIP_CHECK=1`, `-ecscheck 120`). Every failure count in every run below is 0 (clocks different, skipped updates that changed state, due updates out of order, table-vs-dictionary differences, parity mismatches for mobiles and items, input check and seat tests, item check, w5-check, mobile-cache-check, prep-check wrong, skip-check, `-ecscheck`):
+
+| Run | table checks / clocks / skipped / order | parity mobiles / items | input samples / seat tests |
+|---|---|---|---|
+| large scene `ls_day` (`light off`; standing, lane walked and run) | 8,181 / 14.37M / 13.69M / 685k | 5.87M / 2.80M | 5.64M / 5.10M |
+| large scene `ls_night` (`light 1E`; lights=312k exercised) | 8,101 / 14.45M / 13.74M / 710k | 5.76M / 2.72M | 5.63M / 5.09M |
+| `w5push` day | 309,526 / 3.39M / 3.18M / 205k | 2.03M / 640k | 1.95M / 1.61M |
+| `w5push` night | 343,321 / 1.80M / 1.71M / 89k | 1.33M / 391k | 1.24M / 937k |
+| `w5items` day | 143,414 / 346k / 316k / 30k | 296k / 501k | 288k / 228k |
+| `w5items` night | 117,661 / 286k / 264k / 22k | 251k / 435k | 240k / 193k |
+
+The `w5push`/`w5items` scripts are the repo ones with `light off` or `light 1E` inserted after the first line; in Green Acres no lights are in range, so `lights=0` there (the night lights path is exercised by the large scene).
+
+**NativeAOT** (devtools build, the same checkers; the devtools variant is needed for `mobsys:` and FrameStats, `CUO_MOBILE_UPDATE_CHECK` itself is not devtools-only): `ls_day`, `ls_night` and `w5push` day, all checkers 0 (table checks 20,757 / 7,841 / 252,356; clocks 11.8M / 13.8M / 2.35M; parity 4.90M / 5.43M / 1.47M mobile comparisons 0 mismatched; lights 302k and 331k at night and 6k in `w5push`).
+
+**Character creation** (once, JIT build, checkers on, via synthetic mouse and keyboard input, `tools` scratch `cc.py`): a new account (kbatman5) logs in to the character-creation gumps, the preview mobile (human male) is on screen, name typed, Next, Warrior, New Haven, Next: the character is created and the world loads (Trammel 3503 2574). Afterwards 65,111 frames: clocks 186,940 checked 0 different, skipped 182,113 0 changed, order 4,827 0, **table checks 65,111, table-vs-dictionary differences 0**, input check 66,664 samples 0, parity 66,380 mobile comparisons 0 mismatched, `-ecscheck` 0 in 571 checks. `World.Update` does not run during character creation, so the preview mobile only exercises `MobileTable` add and the `LoginScene` clear; the first game frames show the table matches the shadow dictionary afterwards. **A character "Gatetest" now exists on account kbatman5** (left in place).
+
+**Soak** (NativeAOT, E4 on, `CUO_MOBILE_UPDATE_CHECK=stats`, about 13 minutes of plan: large scene zoom 1 and 2.5, the lane walk, `travel` (server teleports Britain to the towns every 2 s), `glide`, `ltravel`, repeated; 126 FrameStats windows): no exception; `dynamic dropped 0` throughout; 840,963 frames, 10.07M clock pushes. Private bytes (sampled every 10 s): 1,915 MB at 1 min, 2,199 at 2, 2,276 at 3, then 2,277 (4), 2,286 (5), 2,294 (6), **2,347 (7), 2,345 (13)**; working set 1,269 MB at the end. Flat after the 3-minute warm-up: +50 MB from minute 4 to 7 (the first travel/glide caches), and 0 from minute 7 to 13. This is a 13-minute run, not a leak proof; the plan is sequential teleports plus the scene, not login-heavy crowds.
+
+**Timing: setting off vs on** (NativeAOT devtools, in-session `mobsys:off`/`mobsys:on` alternation, 3 windows of 5 s per entry, each pair twice per session, 3 sessions, so n=6 per cell; ms; FrameStats on; machine noisy but the pairs are in-session; ranges are the 6 cell averages):
+
+| Spot | `world_mobiles` off | on | `update` off | on | `frame` off | on |
+|---|---|---|---|---|---|---|
+| zoom 1 | 0.041 (0.036-0.043) | **0.020** (0.017-0.022) | 0.131 | 0.112 | 1.595 (1.53-1.65) | 1.601 (1.52-1.67) |
+| zoom 2.5 | 0.044 (0.041-0.049) | **0.024** (0.021-0.027) | 0.153 | 0.126 | 2.079 (2.00-2.23) | 1.997 (1.89-2.09) |
+| walking the lane | 0.040 (0.038-0.043) | **0.022** (0.021-0.023) | 0.163 | 0.141 | 1.935 (1.89-2.02) | 1.926 (1.87-1.99) |
+
+On halves the mobile loop (about -0.02 ms) and takes 0.02-0.03 ms off `update`; the whole-frame difference is inside the noise (zoom 2.5 -0.08 ms, the others ±0.01), as E4 and E10 found. The frame's cost is the GPU world prepare, not this loop.
+
+**Proposal.** Turn `world_update_mobile_system` on by default. All checkers were 0 over about 60M clock comparisons, 60M skipped-update comparisons, 3M due-update order checks and about 1.3M table-vs-dictionary comparisons, in JIT and NativeAOT, by day and night, in the large scene, with mounts, deaths and corpses (`w5push`, `w5items`), through the character-creation preview mobile, and over a 13-minute travel-and-crowd soak with flat memory; E4 passed its Codex audit and E10's table passed its own, and the unit tests pass (625). The gain is small (0.02 ms of the mobile loop, 0.02-0.03 ms of `update` in a 2,000-mobile scene, nothing measurable in the frame), so the case for the switch is not speed but that the ECS clock becomes the thing the world runs on, which E4's later steps (selection against ECS state, then a chunk-iterating system) need; the risk side is the due-time logic being the only reader of the clocks, so keep the checker (`CUO_MOBILE_UPDATE_CHECK`) in the standard gate and keep the off path for one phase, as the plan says. What the gate did not cover: a live 0xBB serial change (unit-tested only), a multi-hour session, and login-heavy crowds. If the owner wants those first, the switch can wait; I see no failing evidence against flipping it.
+
+## Gumps in the pack (2026-10-30)
+
+Branch `poc/pack-gumps`, from poc/modern-client fdfcc9813, merged up to 80ccb1a24 (timings on de98a6d1a; 80ccb1a24 adds only tests and tools). The first "Not in the pack" content type to move. Spec: pack-format.md "Record stores" and "Gumps"; procedures: testing/pack-loading.md §6. Scripts, packs and logs: session scratchpad `pgumps\`.
+
+**Design (evidence in pack-format.md).**
+- **Storage: a record store, not atlas pages.** `gumps/gumps.bin` is one Kind 0 file: header, a slot per id (record + gump.def hue), a record table (offset, sizes, codec, width, height, layout), then one independently decodable payload per distinct image. It is read by offset through one handle kept open (L7: a per-file open costs 20–28 µs). Gumps go through the CPU into the batcher's RGBA8 atlas, so pages would buy no GPU residency and would cost gutters, 1 MiB chunk reads (a 600-row gump touches 3 chunks) and 2× the raw bytes (289 MiB).
+- **Lossless 16-bit:** texel = the source colour bits plus bit 15 = visible. ClassicUO's decode and `GetColor16` ignore bit 15, so every image and hue result is reproduced; the hue rule (shade = red5, visible only if the hued value is not 0) is the client's.
+- **Compression, per record.** Images with at most 64 KiB of run-length payload (3,915 of 4,290 records) are stored as the client's run-length rows, uncompressed (decode 0.6–33 µs). The 375 larger ones are raw texels + Brotli q9, decoded in place into the pixel buffer (texels in its upper half, expanded front to back), with no other buffer. Per size bucket over every gump (`--gump-report`), Brotli has a fixed cost of 50–70 µs that dominates small images. A 16 KiB threshold (47.5 MiB) left the journal, status and spellbook opens 0.1–0.7 ms slower than MUL in the client; 64 KiB fixed that for 10.7 MiB.
+- **Size table:** the record table. `TryGetSize`, `Exists` and `PixelCount` need no decode. Controls still size themselves from the synchronous `GetGump`; existence probes that decoded only to test `Texture != null` (paperdoll gender fallback, tileart appearance) now use `Exists`.
+- **gump.def** and loose `Gumps/*.gump` files are resolved by the converter (a frozen copy of `GumpsLoader` in tools/ClassicUO.Assets.Mul): aliases share records and carry their hue on the slot. The 7.0.103 gump.def has 4 hued aliases (hue 35). With a gump section the runtime no longer reads loose gump files (as with art).
+- **Hit-testing:** the picker mask is built from the decoded image at upload (`SetTrimmed` over the whole image, which equals `Set`'s mask, with SIMD).
+- **Decode on workers:** decodes are thread-safe (positional reads, `BrotliDecoder.TryDecompress`, pooled buffers). Gump sizes come from the image synchronously and a window is built and drawn in the frame it opens, so a plain async request rarely beats the first `GetGump`. Instead, a window built from many gumps decodes them on workers in one batch and waits for the slowest (`Gump.Prefetch`: server gump layouts' gumppic, button, checkbox, radio, gumppictiled and resizepic pieces; the paperdoll's body and equipment). `Request` and `DrainReady` (1 ms per frame) remain for ahead-of-time requests. `CUO_GUMP_SYNC=1` turns the worker paths off; `CUO_PACK_GUMPS=0` reads MUL/UOP even with a gump section.
+- **Fallback:** a pack without `gumps/gumps.bin` reads gumpart MUL/UOP exactly as before, and says so in the log.
+- **Status gump:** a store flag keeps `UseUOPGumps` (the status gump's layout depends on it). 7.0.103's UOP has gumps above 0xFFFF (highest 69,985), so the slot table has 69,986 entries.
+
+**Converter.** A `gumps` stage (`--only gumps`, `--no-gumps`, `--raw-gumps`, `--gump-small n`, `--gump-def <file>` for tests, `--gump-report`). 4,438 gumps → 4,290 records (16 index/gump.def aliases, 132 identical images shared) in 2.0 s on 12 threads; `--only gumps` with verify takes 3.9 s. Verify compares every one of the 81,919 index slots with the frozen loader's `GetGump`: presence, size, RGBA pixels with hue. EXACT for the ship profile, `--raw-gumps`, and a test gump.def (10 aliases, hued and chained, an out-of-range hue, a missing first group member, an alias over an existing gump).
+
+**Sizes:** 58.2 MiB in the ship profile (123.5 MiB of payloads; tables 0.6 MiB); 37.9 MiB with every record Brotli (`--gump-small 0`); 133.7 MiB uncompressed (`--raw-gumps`). The source gumpartLegacyMUL.uop is 137.7 MiB.
+
+**Measurements.** NativeAOT, Gpu world, 1920×1080, kbatman4 at Britain, plan mode `gumpopen` (each window opened once in a fresh client; logs the main-thread decode time, the batch prefetch wall time and the open call). Same binary, paired: pack (P), `CUO_PACK_GUMPS=0` (M, MUL/UOP), pack with `CUO_GUMP_SYNC=1` (S). Two runs each, interleaved, no other client running, 64 KiB threshold (runs P5/P6, M5/M6, S5/S6). Decode plus prefetch wall time, ms:
+
+| Open | Gumps decoded | Pack | MUL/UOP | Pack, no workers |
+|---|---|---|---|---|
+| 6 large pictures (0x2C00, 0x067E–0x0682, 657–670²), a server-gump-style window | 6 | **3.0–3.4** (batch on workers) | 11.4–11.5 | 12.0–12.1 |
+| Spellbook pictures (0x08AC, 0x08BA, 0x08BB) | 3 | 0.75–0.78 (batch) | 0.69 | 0.69–0.79 |
+| Status (modern) | 3 | 0.72–0.78 | 0.64–0.77 | 0.80–0.88 |
+| Backpack | 1 | 0.34 | 0.36–0.38 | 0.29 |
+| Combat book | 34 | 1.09–1.12 | 1.00–1.03 | 1.04–1.15 |
+| Journal | 10 | 0.41–0.42 | 0.43–0.44 | 0.41–0.44 |
+| World map | 0 | open call 2.0–2.3 | open call 2.0–2.5 | open call 2.1–2.5 |
+
+- **Frames over 8 ms:** the large-picture open costs 3 ms of decoding with the pack and 11.4 ms with MUL; only with MUL is that frame over 8 ms. Every other window costs under 1.2 ms of decoding either way. The windows that had a frame over 8 ms had it in every mode: the world map's first open (`lights`/`world_draw` 10–50 ms) and the end-of-plan picker check, not gump decoding. DevBench's own frame-to-frame "worst frame" showed 500 ms stalls in every mode (the OS not scheduling the window, as in pack-loading.md's noise notes), so it is not used.
+- **The player's paperdoll** opens at login (the server's paperdoll packet), before any measurement window, so its first open isn't in the table. A request for another mobile's paperdoll got no reply within 1.5 s. The paperdoll path is covered by the parity checks, the screenshots and the prefetch code path (`PaperDollInteractable`).
+- **Startup:** `GumpsLoader.Load` takes 0.5 ms and allocates 648 KB from the pack, against 25.5–26.2 ms and 13.8 MB from UOP (81,919 formatted names hashed, extras read across the 144 MB file). "Files loaded" was 130–143 ms in every mode and 131–154 ms in base (B1/B2): noise hides the 25 ms.
+- **Memory:** private bytes sampled each second are dominated by GC timing (0.7–2.5 GB at exit within one mode); the peak was 1.95–2.68 GB in every mode and in base. No gump-related difference is measurable this way; the loader's own allocation above is the gump share.
+- **The 16 KiB pack** (P3/P4 against M3/M4): journal 0.79–1.17 ms against 0.45–0.49, status 0.68–0.98 against 0.59–0.62. That is why the threshold is 64 KiB.
+
+**Checks.**
+- **Unit tests** (`GumpPackTests`, 7 tests; the data tests return early without `CUO_TEST_GUMP_PACK`): every gump id against the client's MUL/UOP `GumpsLoader` (presence, size table, pixels into a dirty pooled buffer, the UOP flag); 9 hue kinds on 40 gumps (valid, last, equal to the hue count, 0x8000, 0xFFFF); the custom gump.def pack end to end; picker masks (`SetTrimmed` equals `Set`) on 400 pack gumps; decodes from 8 threads; codec round trips (a 70,000-wide row; malformed data rejected); record store round trip, rejection of a bad magic and of a truncated file. Run against the ship, `--raw-gumps` and hued packs.
+- **Screenshots** (`gumps;eqhue:0021,8481,0035,0480;s:1495 1629:1`, pack against `CUO_PACK_GUMPS=0`): the world shot has 0 differing pixels. In the UI shot 6,883 pixels differ, all inside the journal box, where the live timestamps read 13:21 against 13:22. Looked at both: paperdoll (robe hued 0x8481, partial hue), backpack, status, journal and top bar are identical.
+- **Picking in the client:** `[bench-gumppick]` hashes each gump's picker on a 2-px grid (paperdoll, spellbook, both status gumps, backpack, 0x2C00, a resizepic corner); they are equal in pack and MUL runs. Click-through: a transparent paperdoll texel hits nothing and a visible one hits the GumpPic, in both modes.
+- **Build variants and tests** (after the merge of 80ccb1a24): 632 unit tests pass in the default build and in `-p:CuoDevTools=false`, with the gump data tests run against the ship and hued packs (and the 7 gump tests against the `--raw-gumps` pack). T0's write-site budget caught the first version of `eqhue:` (a second `Hue` write in DevBench); it now shares `itemhue:`'s write site. `ChunkLoadingTests.Prefetched_Regions_Give_The_Same_Blocks_And_Never_Block_IsBlockReady` failed twice on a first run (3.07 ms against a 2 ms bound, a timing test on a loaded machine) and passed on reruns, as E10 saw.
+- **Codex audit fixes** (packs are untrusted input):
+  1. **Dimensions (P1):** each record is checked at load (`GumpsLoader.CheckRecord`): sides 1..4096, so `w·h` and byte counts can't overflow and every image fits the 4096² gump atlas. `TextureAtlas.AddSprite` now rejects a rect that can't fit an empty page instead of creating pages forever.
+  2. **Raw sizes (P1):** layout 0 must be exactly `w·h·2`; layout 1 whole runs between the row table and one run per texel; a Brotli record no larger than Brotli's bound. Nothing is rented before these checks. `RecordStore.Read` refuses sizes above `int.MaxValue` and a short destination.
+  3. **Store extents (P2):** the tables must fit in the file before they are allocated (a 32-byte file claiming 2²⁴ slots is rejected having allocated under 1 MiB); payloads must lie in `[payloadStart, fileLength]` and be compared without wrap-around.
+  4. **Corrupt payloads (P2):** data and I/O errors are caught at the loader. The record becomes invalid for the session (logged once): `Exists`, sizes and `GetGump` treat its ids as absent, so the paperdoll's fallbacks still work and nothing retries the decode.
+  5. **Converter dedup (P2):** the entry key now holds every field the decode reads (file, offset, lengths, compression, the index's width and height); only the hue is left out.
+  6. **Prefetch bounds (P2):** the 20 ms deadline now covers queueing and draining; a batch holds at most 64 distinct gumps and 64 MiB of decoded pixels. One atlas upload in progress can overrun the deadline. After a timeout, `GetGump` takes a finished worker result before decoding again (at most one duplicate decode per batched gump, documented).
+  7. **Tokenizing (P3):** a server gump's layout is tokenized once; the prefetch scan and the control loop share the tokens.
+  - New tests: truncated, oversized and wrapped store tables; impossible record sizes and payloads (4097×1, 65535², a 1×1 record asking for 1 GiB, partial runs, unknown layout, more than Brotli's bound); a corrupt Brotli record and an invalid one in a real store (absent without throwing, decoded once, a good record next to them still decodes).
+  - Checks after the fixes: the converter's output is byte-identical (same sha256 of gumps.bin) and verifies EXACT. 635 tests pass in both build variants; `ChunkLoadingTests` timing and allocation tests failed once each on a loaded machine and passed on reruns. One short NativeAOT pair (P7 pack, M7 MUL): large pictures 3.38 against 11.59 ms; spellbook 0.79/0.65, status 0.72/0.59, backpack 0.30/0.33, combat book 1.07/1.00, journal 0.40/0.51 ms. These are within the earlier spread, so nothing regressed. The shipped pack has 0 invalid records. Picking and click-through are unchanged. The one frame over 50 ms is the world map's first `world_draw`, in both modes.
+- **Follow-up (not a defect today):** replacing the pack while the client runs isn't coordinated with the gump workers. `Gump.CancelPending` has no caller, and nothing switches packs at runtime. A runtime pack switch must cancel pending gump decodes and drop the atlas, as `GameScene.Unload` does for art.
+- **Not done:** the main pack `C:\Repositories\uo-packs\classic-1.0` was not regenerated (read-only for agents): `Uo.Converter --only gumps --out <pack>` adds the section in about 4 s. Tests use `CUO_TEST_GUMP_PACK` until then. Not measured: the first open of the player's own paperdoll (opened by the server at login), Legacy world renderer (gumps are UI only; the batcher path is unchanged), 4K. Codex audit pending.
+## Parity mismatches at login (bisect)
+
+2026-10-30, `bg/ecs-parity-bisect`. **Not a regression: the T6a runs did not set `CUO_ANIM_SYNC=1`.** Every mismatch is the parity checker comparing a view that has not loaded a body's first-seen direction with an extract that draws it at once. The player at login and each spawn are first sights, which is why they were "all at the login frame or a spawn".
+
+- **Mechanism.** `Animations.LoadDirection` (`src/ClassicUO.Renderer/Animations/Animation.cs:225`, `AsyncFirstSight` at `:199`) queues the first direction of a body on the thread pool and returns frames without textures, so `MobileView.Draw` emits nothing for it. The parity checker (`EcsParity.OnCaptured`, `Game/Ecs/EcsParity.cs`) then runs the ECS extract, which reads the pack tables directly and draws the layers at once. Result: capture count smaller than ECS count (capture=3 ecs=5 for the player at login, capture=2 ecs=8 for a spawned body, `first diff` at the first missing instance) and a `frameinfo` view-effect mismatch for the same mobile. The doc already says this ("Always set `CUO_ANIM_SYNC=1` for parity"); the T6a runs, and the base 7, did not. The worker finishes within a few frames, so the number is racy (2 to 3 first-sight mobiles per run).
+- **All T6a logs fit it.** In `scratchpad/t6a/logs/{w5items,base_w5items,ls_parity,w5push}_gpu.log` every mismatch has capture < ecs and a first diff at the end of the capture side; none has a field difference with equal counts.
+- **Bisect** (`w5items`, kbatman3, JIT Release, Gpu, `CUO_ECS_PARITY=1`; count = mismatched in the parity summary):
+
+| Build | without `CUO_ANIM_SYNC` | with `CUO_ANIM_SYNC=1` |
+|---|---|---|
+| 8a2bcb876 (E6) | 23 (3 mobiles) | not run |
+| 0069120eb^1 (before recycler) | 39 (4 mobiles) | not run |
+| 0069120eb (recycler) | 26 (3 mobiles) | not run |
+| 98654f96f^1 (before E11) | 11 (3 mobiles) | not run |
+| 98654f96f (E11), fdd40344a (E10) | not run | not run |
+| de98a6d1a (tip) | 22 (2 mobiles) | **0** (423k and 323k comparisons, two runs) |
+| tip + checker fix (9dde20480) | **0** (236k and 272k comparisons, two runs) | n/a |
+
+  Counts without the variable are 11 to 39 on every build, including the pre-recycler and pre-E11 ones, so no merge changed them beyond the race. The E11 and E10 rows and the older builds with the variable were dropped for time: the bench.lock queue made each run take 20 to 40 minutes and the answer did not depend on them. Earlier agents' 0 (E6 and before) is consistent: they set the variable.
+- **Fix.** `EcsParity` now sets `Animations.AsyncFirstSight = false` when `CUO_ECS_PARITY` is on, so parity no longer depends on remembering the variable (harness-only; the normal render path is untouched). Verified by two runs without the variable: 0 mismatches.
+- **Open point (not changed).** With `gpu_ecs_sprites` on, the extract draws a first-sight body at once while the legacy view skips it for a few frames. Not a Gpu bug (the body appears sooner), but Gpu and Legacy differ for those frames.
