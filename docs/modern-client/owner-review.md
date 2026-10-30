@@ -20,6 +20,16 @@ Newest at the bottom. Each item says what I did meanwhile.
 1. **"Fully on the ECS" vs. keeping Legacy.** Your earlier decision: Legacy stays, and Legacy drawing from the ECS is deferred until it blocks other work. Full transition (the ECS owns world state, with GameObjects as thin views or gone) eventually needs Legacy to read from the ECS too. *Meanwhile:* I'm planning the ECS-authoritative state first and keeping Legacy working through compatibility views. I'll ask before deleting or rewriting Legacy.
 2. **`world_update_mobile_system` (E4) is still off by default.** It saves 0.02–0.03 ms in the large scene, and with E10's owned table it no longer depends on .NET internals. *Meanwhile:* I'll propose turning it on once E10 is audited and merged.
 3. **Flaky `ChunkLoadingTests` prefetch test** (fails about 1 run in 5 under full-suite load). *Meanwhile:* noted; I'll get it fixed when a loader agent is in that area.
+4. **ECS transition plan, your questions** ([ecs-transition-plan.md](ecs-transition-plan.md) §9; phases T0–T9, about 51–72 agent-days). I'm following each recommended answer until you say otherwise; nothing irreversible depends on them before T7:
+   - **a. Scope:** does "fully on the ECS" include land, statics and multi components? *Recommended:* no. Dynamic objects (items, mobiles, effects) and the world update move; the static world stays in chunk data and GPU buffers.
+   - **b. Legacy:** it keeps working through compatibility views until T6. At T7b it draws dynamics from the same extract as the Gpu path, keeping its own land and statics. *Recommended:* approve T7b as the point where Legacy "blocks other work". **I'll wait for your answer before starting T7b.**
+   - **c. Plugins:** keep the C interface (packets, player position, `RequestMove`) working; make no promise for reflection-based assistants.
+   - **d. Player stats, skills, buffs, tooltips:** a plain typed store, not the ECS.
+   - **e. Switches:** default on when the checkers are 0 and the audit is done; delete the off path one phase later.
+   - **f. Legacy quirks:** reproduce them exactly; fix them separately behind their own switches.
+   - **g. `Item`/`Mobile`:** keep them as thin handle classes.
+   - **h. W2's in-view ECS query:** not part of the transition.
+   - **i. Effects:** move them into the ECS last.
 
 ## Decisions you made tonight (recorded in README "Decisions so far" and in memory)
 
