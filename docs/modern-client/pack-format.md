@@ -384,8 +384,9 @@ A record store with magic `GUMP` holding every gump id the client's `GumpsLoader
 - **Slots:** `slotCount` = highest present id + 1 (69,986 for 7.0.103, whose UOP has gumps above 0xFFFF). `arg` = the gump.def alias hue (0 = none).
 - **Records:** `meta0` = width, `meta1` = height, `meta2` = payload layout. The record table is the size table: width and height of any gump without decoding it.
 - **Payload layouts** (`Uo.Pack.GumpCodec`), both lossless 16-bit:
-  - 0, texels: `width·height` B5G5R5A1 `u16`, row-major. Texel 0 = transparent, else bit 15 set and bits 0–14 the source colour. Ship profile, with codec 1.
-  - 1, run-length rows: `u32 rowStart[height]` (in 4-byte units from the start of this table), then `(u16 texel, u16 run)` pairs. Row `y`'s runs end where row `y+1`'s start (the last row's at the end of the payload); texels no run reaches are transparent. This is the client's own entry layout, re-encoded canonically (a run per change of texel, no trailing transparent run). `--raw-gumps`, with codec 0.
+  - 0, texels: `width·height` B5G5R5A1 `u16`, row-major. Texel 0 = transparent, else bit 15 set and bits 0–14 the source colour. Used with codec 1.
+  - 1, run-length rows: `u32 rowStart[height]` (in 4-byte units from the start of this table), then `(u16 texel, u16 run)` pairs. Row `y`'s runs end where row `y+1`'s start (the last row's at the end of the payload); texels no run reaches are transparent. This is the client's own entry layout, re-encoded canonically (a run per change of texel, no trailing transparent run). Used with codec 0.
+  - Any (layout, codec) pair is valid for a reader. Ship profile: an image whose run-length payload is at most 16 KiB (`--gump-small n`) is stored as layout 1, codec 0; every other image as layout 0, codec 1. `--raw-gumps` stores every image as layout 1, codec 0.
 - **Lossless:** the stored texel is the source value's colour bits plus bit 15 = visible. ClassicUO's decode ignores bit 15 (`Color16To32`, `GetColor16`), so every image the client draws is reproduced exactly; hueing needs the exact 5-bit gray texels, which no lossy format keeps (see BC7 in the appendix).
 - **Drawing a gump** (ClassicUO `GumpsLoader.GetGump`): each visible texel `v` becomes RGBA8 with ClassicUO's 5→8-bit table (`HuesHelper.Color16To32`, not the canonical expansion: gumps go through the CPU and the batcher's RGBA8 atlas, and parity is with the MUL path) and alpha 255. With a slot hue `h`, `1 ≤ h < hue count`, first `v = hues[h − 1].colors[(v >> 10) & 31]`, and the texel stays visible only if that is not 0 (`GetColor16`).
 - **Converter resolution:** ids whose index entries are identical (gump.def copies the entry and sets a hue; UOP/MUL may alias too) share one record, and so do ids with identical decoded images. An id with a loose `Gumps/<id>.gump` file gets its own record from that file, with no hue, as the client's `ReadOurs`; a broken file falls back to the archive entry with its hue, as the client does. The client no longer reads loose gump files when the pack has gumps; re-run the converter (`--only gumps`, about 6 s) after changing them.
@@ -396,15 +397,26 @@ A record store with magic `GUMP` holding every gump id the client's `GumpsLoader
 |---|---|---|
 | Client MUL/UOP entries (reference) | 136.9 MiB | 1,250–1,740 (the client's own RLE decode) |
 | Atlas pages, 2048², no mips | 289 MiB raw (36 pages) | whole 1 MiB chunks: a 600-row gump touches 3 (2.4 MB) |
-| Raw texels + Brotli (ship) | 37.9 MiB | 1,800–2,150 (Brotli 1,750–2,000, expand 90) |
+| Raw texels + Brotli (ship, images over 16 KiB) | 37.9 MiB | 1,800–2,150 (Brotli 1,750–2,000, expand 90) |
 | Raw texels + zlib | 39.2 MiB | 1,220–1,990 |
 | RLE + Brotli | 41.2 MiB | 2,650–3,250 |
-| RLE uncompressed (`--raw-gumps`) | 133 MiB | 880–960 |
+| RLE uncompressed (ship for small images; all with `--raw-gumps`) | 133 MiB | 880–960 |
 
 - Gumps are drawn through the CPU into the batcher's own RGBA8 atlas; nothing samples pack pages, so pages buy no GPU residency and cost gutters, chunk-granular reads (neighbours decode with every gump) and 2× the raw bytes.
 - 66% of gump texels are transparent and the images are large (up to 781×800), so per-record compression does well: 280 MiB of raw texels → 37.3 MiB.
 - Raw texels + Brotli is the smallest; it decodes without allocation (`BrotliDecoder.TryDecompress`) and straight into the pixel buffer: the 16-bit texels land in its upper half and expand in place, front to back. zlib decodes 30–40% faster but needs a stream object per decode (no span API in .NET 10). `--raw-gumps` gives the fastest decode at the source's size.
-- Sizes for the 4,438 gumps: 4,290 records after sharing (16 gump.def/index aliases, 132 identical images), 37.9 MiB file, of which the tables are 0.6 MiB.
+- A Brotli decode has a fixed cost that dominates small images, so small ones are stored run-length and uncompressed (every gump, best of 3, JIT):
+
+  | Run-length payload | Gumps | RLE MiB | Texels + Brotli MiB | µs, texels + Brotli | µs, RLE |
+  |---|---|---|---|---|---|
+  | ≤ 1 KiB | 496 | 0.2 | 0.1 | 7.7 | 0.6 |
+  | ≤ 4 KiB | 1,640 | 3.8 | 1.2 | 69.4 | 3.3 |
+  | ≤ 16 KiB | 1,436 | 10.5 | 3.3 | 53.4 | 6.5 |
+  | ≤ 64 KiB | 470 | 15.8 | 4.7 | 110.3 | 32.6 |
+  | larger | 380 | 104.9 | 28.6 | 595.1 | 275.6 |
+
+  The 16 KiB threshold stores 3,459 of the 4,290 records this way (37.9 → 47.5 MiB) and makes them decode in under 7 µs. The 831 larger ones keep Brotli: there the decode is 0.1–2 ms either way, and the worker prefetch (see the poc-log entry "Gumps in the pack") takes it off the main thread.
+- Sizes for the 4,438 gumps: 4,290 records after sharing (16 gump.def/index aliases, 132 identical images), 47.5 MiB file in the ship profile, of which the tables are 0.6 MiB.
 
 ## Manifest (`manifest.json`)
 
@@ -432,7 +444,7 @@ camelCase JSON, read case-insensitively:
 | Art, texmaps | B5G5R5A1, 2048², full mip chain (6 levels) | Kind 2, 1 MiB chunks |
 | Animations | Indexed8, 1024², mip0 only, plus `palettes.bin` | Kind 2, 1 MiB chunks; the 16-byte PageHeader puts the last 16 bytes of a full page in a second, tiny chunk |
 | Map regions | — | Kind 1 |
-| Gumps | record store, texel layout | Kind 0 file, every record Brotli (quality 9) |
+| Gumps | record store | Kind 0 file; images up to 16 KiB of run-length payload uncompressed, larger ones as texels with Brotli (quality 9) |
 | Everything else | — | Kind 0 |
 
 - No install-time unpacking is required. A patcher may still rewrite any file to Kind 0, since raw is always valid.
@@ -459,7 +471,7 @@ camelCase JSON, read case-insensitively:
 | Tile data | tiledata.bin, tiledata_ext.bin | 0.9 + 2.1 MiB |
 | Hues, radarcol | hues.bin, hues_raw.bin, radarcol.bin | 0.4 + 0.3 + 0.2 MiB |
 | Multis, lights, tileart, equipconv | | 1.8 MiB, 2.8 MiB, 692 B, 1,060 B |
-| Gumps | gumps/gumps.bin | 37.9 MiB (270 MiB of raw texels; 133.7 MiB with `--raw-gumps`); 4,438 gumps, 4,290 records |
+| Gumps | gumps/gumps.bin | 47.5 MiB (137.4 MiB of payloads; 37.9 MiB with every record Brotli, `--gump-small 0`; 133.7 MiB with `--raw-gumps`); 4,438 gumps, 4,290 records |
 
 Decode cost on one worker (i9-12900K): an anim page ≈2.6 ms, an art page ≈23 ms (≈4 ms with 8 workers on Kind 2), a region ≈2.4 ms.
 

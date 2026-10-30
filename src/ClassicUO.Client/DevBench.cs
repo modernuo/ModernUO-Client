@@ -718,7 +718,7 @@ namespace ClassicUO
             }
 
             _gumpOpenCall = Stopwatch.GetTimestamp() - callStart;
-            Log.Info($"[bench-gumpopen] opening {_gumpOpenName}");
+            Log.Info($"[bench-gumpopen] opening {_gumpOpenName} (gumps open before: {string.Join(",", System.Linq.Enumerable.Select(Game.Managers.UIManager.Gumps, gg => gg.GetType().Name))})");
         }
 
         private static bool _gumpPickDone;
@@ -751,6 +751,8 @@ namespace ClassicUO
 
             const ushort Pic = 0x07D0;
             var g = new Game.UI.Gumps.Gump(world, 0, 0) { X = 600, Y = 100 };
+            g.Width = gumps.GetGump(Pic).UV.Width;
+            g.Height = gumps.GetGump(Pic).UV.Height;
             g.Add(new Game.UI.Controls.GumpPic(0, 0, Pic, 0));
             Game.Managers.UIManager.Add(g);
             ref readonly var pd = ref gumps.GetGump(Pic);
