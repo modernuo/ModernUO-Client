@@ -1196,6 +1196,7 @@ namespace ClassicUO.Game.Scenes
                 }
 
                 FrameStats.WorldHeld = hold;
+                FrameStats.WorldShown |= !hold;
 
                 if (!hold)
                 {
@@ -1244,6 +1245,8 @@ namespace ClassicUO.Game.Scenes
 
                 DrawWorld(batcher, ref matrix, renderTargets);
                 _settle.OnOtherRenderer();
+                FrameStats.WorldShown = true;
+
                 _settleTarget = renderTargets.WorldRenderTarget;
                 renderTargets.WorldFade = 1f;
                 FrameStats.Set(FrameCounter.GpuInstances, 0);
