@@ -2343,3 +2343,24 @@ Branch `poc/pack-gumps`, from poc/modern-client fdfcc9813, merged up to 80ccb1a2
   - Checks after the fixes: the converter's output is byte-identical (same sha256 of gumps.bin) and verifies EXACT. 635 tests pass in both build variants; `ChunkLoadingTests` timing and allocation tests failed once each on a loaded machine and passed on reruns. One short NativeAOT pair (P7 pack, M7 MUL): large pictures 3.38 against 11.59 ms; spellbook 0.79/0.65, status 0.72/0.59, backpack 0.30/0.33, combat book 1.07/1.00, journal 0.40/0.51 ms. These are within the earlier spread, so nothing regressed. The shipped pack has 0 invalid records. Picking and click-through are unchanged. The one frame over 50 ms is the world map's first `world_draw`, in both modes.
 - **Follow-up (not a defect today):** replacing the pack while the client runs isn't coordinated with the gump workers. `Gump.CancelPending` has no caller, and nothing switches packs at runtime. A runtime pack switch must cancel pending gump decodes and drop the atlas, as `GameScene.Unload` does for art.
 - **Not done:** the main pack `C:\Repositories\uo-packs\classic-1.0` was not regenerated (read-only for agents): `Uo.Converter --only gumps --out <pack>` adds the section in about 4 s. Tests use `CUO_TEST_GUMP_PACK` until then. Not measured: the first open of the player's own paperdoll (opened by the server at login), Legacy world renderer (gumps are UI only; the batcher path is unchanged), 4K. Codex audit pending.
+## Parity mismatches at login (bisect)
+
+2026-10-30, `bg/ecs-parity-bisect`. **Not a regression: the T6a runs did not set `CUO_ANIM_SYNC=1`.** Every mismatch is the parity checker comparing a view that has not loaded a body's first-seen direction with an extract that draws it at once. The player at login and each spawn are first sights, which is why they were "all at the login frame or a spawn".
+
+- **Mechanism.** `Animations.LoadDirection` (`src/ClassicUO.Renderer/Animations/Animation.cs:225`, `AsyncFirstSight` at `:199`) queues the first direction of a body on the thread pool and returns frames without textures, so `MobileView.Draw` emits nothing for it. The parity checker (`EcsParity.OnCaptured`, `Game/Ecs/EcsParity.cs`) then runs the ECS extract, which reads the pack tables directly and draws the layers at once. Result: capture count smaller than ECS count (capture=3 ecs=5 for the player at login, capture=2 ecs=8 for a spawned body, `first diff` at the first missing instance) and a `frameinfo` view-effect mismatch for the same mobile. The doc already says this ("Always set `CUO_ANIM_SYNC=1` for parity"); the T6a runs, and the base 7, did not. The worker finishes within a few frames, so the number is racy (2 to 3 first-sight mobiles per run).
+- **All T6a logs fit it.** In `scratchpad/t6a/logs/{w5items,base_w5items,ls_parity,w5push}_gpu.log` every mismatch has capture < ecs and a first diff at the end of the capture side; none has a field difference with equal counts.
+- **Bisect** (`w5items`, kbatman3, JIT Release, Gpu, `CUO_ECS_PARITY=1`; count = mismatched in the parity summary):
+
+| Build | without `CUO_ANIM_SYNC` | with `CUO_ANIM_SYNC=1` |
+|---|---|---|
+| 8a2bcb876 (E6) | 23 (3 mobiles) | not run |
+| 0069120eb^1 (before recycler) | 39 (4 mobiles) | not run |
+| 0069120eb (recycler) | 26 (3 mobiles) | not run |
+| 98654f96f^1 (before E11) | 11 (3 mobiles) | not run |
+| 98654f96f (E11), fdd40344a (E10) | not run | not run |
+| de98a6d1a (tip) | 22 (2 mobiles) | **0** (423k and 323k comparisons, two runs) |
+| tip + checker fix (9dde20480) | **0** (236k and 272k comparisons, two runs) | n/a |
+
+  Counts without the variable are 11 to 39 on every build, including the pre-recycler and pre-E11 ones, so no merge changed them beyond the race. The E11 and E10 rows and the older builds with the variable were dropped for time: the bench.lock queue made each run take 20 to 40 minutes and the answer did not depend on them. Earlier agents' 0 (E6 and before) is consistent: they set the variable.
+- **Fix.** `EcsParity` now sets `Animations.AsyncFirstSight = false` when `CUO_ECS_PARITY` is on, so parity no longer depends on remembering the variable (harness-only; the normal render path is untouched). Verified by two runs without the variable: 0 mismatches.
+- **Open point (not changed).** With `gpu_ecs_sprites` on, the extract draws a first-sight body at once while the legacy view skips it for a few frames. Not a Gpu bug (the body appears sooner), but Gpu and Legacy differ for those frames.
