@@ -79,6 +79,14 @@ namespace ClassicUO.Assets
 
         public override void Load()
         {
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            long a0 = GC.GetAllocatedBytesForCurrentThread();
+            LoadCore();
+            Log.Trace($"Gumps loaded in {System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds:0.0} ms, {(GC.GetAllocatedBytesForCurrentThread() - a0) / 1024} KB allocated ({(_pack != null ? "pack" : "MUL/UOP")})");
+        }
+
+        private void LoadCore()
+        {
             string packPath = FileManager.Pack?.PathOf(StoreConst.GumpsFile);
 
             if (UsePack && packPath != null && System.IO.File.Exists(packPath))
