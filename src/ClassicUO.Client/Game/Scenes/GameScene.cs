@@ -956,6 +956,11 @@ namespace ClassicUO.Game.Scenes
                 Map.MapObjectRecycler.CheckFrame(_world, _prevMeshHighlight);
             }
 
+            if (Map.TileOrder.Check)
+            {
+                Map.TileOrder.CheckFrame(_world);
+            }
+
             if (_time_cleanup < Time.Ticks)
             {
                 _world.Map?.ClearUnusedBlocks();

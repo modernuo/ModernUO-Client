@@ -187,6 +187,9 @@ namespace ClassicUO.Game.Map
             return obj;
         }
 
+        /// <summary>Unit tests only: the tiledata AddGameObject's priority reads instead of the loaded one (null in the client).</summary>
+        internal static StaticTiles[] StaticDataForTests;
+
         public void AddGameObject(GameObject obj, int x, int y)
         {
             Mesh.MarkDirtyIfNeeded(obj);
@@ -272,7 +275,7 @@ namespace ClassicUO.Game.Map
                     goto default;
 
                 default:
-                    ref StaticTiles data = ref Client.Game.UO.FileManager.TileData.StaticData[graphic];
+                    ref StaticTiles data = ref (StaticDataForTests ?? Client.Game.UO.FileManager.TileData.StaticData)[graphic];
 
                     if (data.IsBackground)
                     {
@@ -298,6 +301,8 @@ namespace ClassicUO.Game.Map
             }
 
             obj.PriorityZ = priorityZ;
+            // T6a: insertion stamp; TileOrder.Key(obj) predicts this list's order from it (CUO_TILE_ORDER_CHECK)
+            obj.TileSeq = ++TileOrder.NextSeq;
 
             if (Tiles[x, y] == null)
             {

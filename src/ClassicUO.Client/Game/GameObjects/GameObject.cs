@@ -82,6 +82,9 @@ namespace ClassicUO.Game.GameObjects
         public GameObject TPrevious;
         /// <summary>The chunk whose tile list holds this object (Chunk.AddGameObject); null once removed (RemoveFromTile).</summary>
         public Chunk TileChunk;
+        /// <summary>T6a: the global insertion stamp of the last Chunk.AddGameObject of this object (TileOrder.NextSeq); with
+        /// PriorityZ it gives the tile-list order key (TileOrder.Key).</summary>
+        public uint TileSeq;
         public ushort X,
             Y;
         public sbyte Z;
@@ -506,6 +509,7 @@ namespace ClassicUO.Game.GameObjects
             PriorityZ = 0;
             TNext = TPrevious = null;
             TileChunk = null;
+            TileSeq = 0;
             X = Y = 0;
             Z = 0;
             PendingBlock = -1;
