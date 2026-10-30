@@ -259,7 +259,7 @@ namespace ClassicUO.Game
             }
         }
 
-        public static long TableDiffs, OrderChecks, OrderDiffs;
+        public static long TableChecks, TableDiffs, OrderChecks, OrderDiffs;
 
         /// <summary>
         /// E4 checker: the due mobiles are about to run in <paramref name="due"/>'s order; it must be a subsequence of a fresh
@@ -400,7 +400,7 @@ namespace ClassicUO.Game
             {
                 _clockLogAt = Time.Ticks + 5000;
                 long f = Math.Max(1, ClockFrames);
-                Log.Info($"[mobile-update-check] frames {ClockFrames}: due {ClockDue / (double)f:F1} of {ClockScanned / (double)f:F0} mobiles per frame; clocks checked {ClockChecks}, {ClockDiffs} different; skipped updates checked {SkippedChecks}, {SkippedDiffs} changed state; due-update order checked {OrderChecks}, {OrderDiffs} out of order, table-vs-dictionary differences {TableDiffs}; clock pushes {ClockPushes}; per frame: scan {ClockCollectTicks * 1000.0 / Stopwatch.Frequency / f:F4} ms, due updates {ClockUpdateTicks * 1000.0 / Stopwatch.Frequency / f:F4} ms");
+                Log.Info($"[mobile-update-check] frames {ClockFrames}: due {ClockDue / (double)f:F1} of {ClockScanned / (double)f:F0} mobiles per frame; clocks checked {ClockChecks}, {ClockDiffs} different; skipped updates checked {SkippedChecks}, {SkippedDiffs} changed state; due-update order checked {OrderChecks}, {OrderDiffs} out of order, table checks {TableChecks}, table-vs-dictionary differences {TableDiffs}; clock pushes {ClockPushes}; per frame: scan {ClockCollectTicks * 1000.0 / Stopwatch.Frequency / f:F4} ms, due updates {ClockUpdateTicks * 1000.0 / Stopwatch.Frequency / f:F4} ms");
             }
 
             if ((MobileAnimationSystem.InputCheck || MobileAnimationSystem.InputBench) && Time.Ticks >= _inputLogAt)

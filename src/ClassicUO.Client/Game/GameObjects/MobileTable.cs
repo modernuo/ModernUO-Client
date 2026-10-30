@@ -19,8 +19,8 @@ namespace ClassicUO.Game.GameObjects
     /// <c>CUO_MOBILE_UPDATE_CHECK</c> a shadow dictionary receives every operation and is compared every frame
     /// (<see cref="VerifyAgainstShadow"/>).
     /// </para>
-    /// Single-threaded, like the world. Removing during enumeration is allowed (as with the dictionary); adding during one is
-    /// not supported.
+    /// Single-threaded, like the world. Removing, overwriting and clearing during enumeration are allowed (as with the dictionary); inserting a new key
+    /// invalidates active enumerators (they throw <see cref="InvalidOperationException"/> on the next step).
     /// </summary>
     internal sealed class MobileTable
     {
@@ -29,6 +29,7 @@ namespace ClassicUO.Game.GameObjects
         private int _count; // slots ever used since the last Clear (the dictionary's _count)
         private readonly Stack<int> _free = new Stack<int>();
         private Dictionary<uint, Mobile> _shadow;
+        private int _version; // bumped by every insert of a new key (the dictionary's enumerators threw on those, and only those)
 
         /// <summary>
         /// Keeps a real dictionary beside the table, fed every operation, for <see cref="VerifyAgainstShadow"/>. Only on an
@@ -69,13 +70,23 @@ namespace ClassicUO.Game.GameObjects
             {
                 if (_byKey.TryGetValue(serial, out Mobile old))
                 {
+                    if (ReferenceEquals(old, value))
+                    {
+                        return;
+                    }
+
+                    CheckUnowned(value);
+
                     // the dictionary overwrites the value in place: the slot stays
                     value.Ordinal = old.Ordinal;
-                    _slots[old.Ordinal] = value;
+                    value.OwnerTable = this;
+                    old.OwnerTable = null;
+                    _slots[value.Ordinal] = value;
                     _byKey[serial] = value;
                 }
                 else
                 {
+                    CheckUnowned(value);
                     Insert(serial, value);
                 }
 
@@ -94,6 +105,7 @@ namespace ClassicUO.Game.GameObjects
                 return false;
             }
 
+            CheckUnowned(mobile);
             Insert(mobile.Serial, mobile);
 
             if (_shadow != null)
@@ -112,6 +124,7 @@ namespace ClassicUO.Game.GameObjects
             }
 
             int slot = m.Ordinal;
+            m.OwnerTable = null;
             _slots[slot] = null;
             _free.Push(slot);
             _shadow?.Remove(serial);
@@ -121,6 +134,14 @@ namespace ClassicUO.Game.GameObjects
 
         public void Clear()
         {
+            for (int i = 0; i < _count; i++)
+            {
+                if (_slots[i] != null)
+                {
+                    _slots[i].OwnerTable = null;
+                }
+            }
+
             _byKey.Clear();
             Array.Clear(_slots, 0, _count);
             _count = 0;
@@ -128,8 +149,20 @@ namespace ClassicUO.Game.GameObjects
             _shadow?.Clear();
         }
 
+        // Ordinal is the mobile's storage address, so a mobile may sit in one table under one key only: a second key or a
+        // second table would let one removal free the slot the other still points at. Checked before any change.
+        private static void CheckUnowned(Mobile mobile)
+        {
+            if (mobile.OwnerTable != null)
+            {
+                throw new InvalidOperationException("a Mobile can be in one MobileTable under one key only");
+            }
+        }
+
         private void Insert(uint serial, Mobile mobile)
         {
+            _version++;
+            mobile.OwnerTable = this;
             int slot;
 
             if (_free.Count != 0)
@@ -163,6 +196,15 @@ namespace ClassicUO.Game.GameObjects
             }
 
             int diffs = _shadow.Count == _byKey.Count ? 0 : 1;
+
+            foreach (KeyValuePair<uint, Mobile> kv in _shadow)
+            {
+                if (!_byKey.TryGetValue(kv.Key, out Mobile have) || !ReferenceEquals(have, kv.Value) || !ReferenceEquals(have.OwnerTable, this))
+                {
+                    diffs++;
+                }
+            }
+
             IEnumerator<Mobile> expected = _shadow.Values.GetEnumerator();
 
             for (int i = 0; i < _count; i++)
@@ -205,12 +247,14 @@ namespace ClassicUO.Game.GameObjects
         public struct Enumerator : IEnumerator<Mobile>
         {
             private readonly MobileTable _table;
+            private readonly int _version;
             private int _index;
             private Mobile _current;
 
             internal Enumerator(MobileTable table)
             {
                 _table = table;
+                _version = table._version;
                 _index = 0;
                 _current = null;
             }
@@ -221,7 +265,13 @@ namespace ClassicUO.Game.GameObjects
 
             public bool MoveNext()
             {
-                // removals during the walk null their slot; _count is read live (adds are not supported mid-walk)
+                // removals, overwrites and Clear during the walk are fine (a removed slot is null); an insert of a new key
+                // throws, as the dictionary's enumerator did
+                if (_version != _table._version)
+                {
+                    throw new InvalidOperationException("the table was modified during enumeration");
+                }
+
                 while (_index < _table._count)
                 {
                     Mobile m = _table._slots[_index++];
@@ -241,6 +291,11 @@ namespace ClassicUO.Game.GameObjects
 
             public void Reset()
             {
+                if (_version != _table._version)
+                {
+                    throw new InvalidOperationException("the table was modified during enumeration");
+                }
+
                 _index = 0;
                 _current = null;
             }

@@ -322,6 +322,13 @@ namespace ClassicUO.Game
                     _timeToDelete = Time.Ticks + 50;
                 }
 
+                if (WorldEcs.MobileUpdateCheck)
+                {
+                    // E10: the table against its shadow dictionary every frame, whichever mobile loop runs
+                    WorldEcs.TableChecks++;
+                    WorldEcs.TableDiffs += Mobiles.VerifyAgainstShadow();
+                }
+
                 FrameStats.Begin(FramePhase.WorldMobiles);
 
                 // W5: AddOrUpdate's own early-outs (no recent party/guild packet, the world map closed), asked once per frame;
@@ -506,7 +513,6 @@ namespace ClassicUO.Game
             if (check)
             {
                 Ecs.CheckOrder(Mobiles.Values, _dueObjects);
-                WorldEcs.TableDiffs += Mobiles.VerifyAgainstShadow();
             }
 
             for (int i = 0; i < _dueObjects.Count; i++)
@@ -1252,7 +1258,12 @@ namespace ClassicUO.Game
             {
                 List<Mobile> mobiles = _scanMobiles;
                 mobiles.Clear();
-                mobiles.AddRange(Mobiles.Values);
+                mobiles.Capacity = System.Math.Max(mobiles.Capacity, Mobiles.Count);
+
+                foreach (Mobile m in Mobiles.Values)
+                {
+                    mobiles.Add(m);
+                }
 
                 if (reverse)
                 {
