@@ -385,6 +385,7 @@ namespace ClassicUO
         public static void AfterEndDraw()
         {
             long now = Stopwatch.GetTimestamp();
+            SessionTick(now);
 
             if (!_recording)
             {
@@ -490,6 +491,101 @@ namespace ClassicUO
 
         private static int _gcSeen;
 
+        /// <summary>Set by GameScene's draw: this frame's world was held (WorldSettleGate) or not drawn, so a hitch in it is
+        /// not seen as a stalled world. Cleared after every frame.</summary>
+        public static bool WorldHeld;
+
+        // Session timeline (CUO_FRAMESTATS=1), independent of the plan's windows: every collection and every frame over 8 ms
+        // from the first in-game frame on, marked held (the world was held this frame) or play, and summaries at +40 s and
+        // +60 s. The login warm-up collections happen before the first plan window, where the [gc] lines don't look.
+        private static long _sessionStart, _sessionLast;
+        private static int _sessionGcSeen, _sessionGcs, _sessionGc1, _sessionGc2, _sessionGcsPlay, _sessionSlowPlay, _sessionSlowHeld, _sessionNextSummary = 40;
+        private static double _sessionPause, _sessionPausePlay, _sessionSlowPlayMax;
+
+        private static bool _sessionAfterReport;
+
+        private static void SessionTick(long now)
+        {
+            bool held = WorldHeld;
+            WorldHeld = false;
+            // the window report (string building and logging, 20-30 ms) ran after the previous frame's end: not the game's
+            bool afterReport = _sessionAfterReport;
+            _sessionAfterReport = false;
+
+            if (_sessionStart == 0)
+            {
+                _sessionLast = now;
+
+                if (!(Client.Game?.UO?.World?.InGame ?? false))
+                {
+                    return;
+                }
+
+                _sessionStart = now;
+                _sessionGcSeen = GC.CollectionCount(0);
+                Log.Info(string.Format(CultureInfo.InvariantCulture, "[gcs] in game: collections before gen0 {0} gen1 {1} gen2 {2}, pause {3:0.0} ms, heap {4:0.0} MB, allocated {5:0} MB",
+                    _sessionGcSeen, GC.CollectionCount(1), GC.CollectionCount(2), GC.GetTotalPauseDuration().TotalMilliseconds,
+                    GC.GetGCMemoryInfo(GCKind.Any).HeapSizeBytes / 1048576.0, GC.GetTotalAllocatedBytes() / 1048576.0));
+
+                return;
+            }
+
+            double t = (now - _sessionStart) / (double)Stopwatch.Frequency;
+            double frameMs = (now - _sessionLast) * 1000.0 / Stopwatch.Frequency;
+            _sessionLast = now;
+            int seen = GC.CollectionCount(0);
+            var inv = CultureInfo.InvariantCulture;
+
+            if (seen != _sessionGcSeen)
+            {
+                int count = seen - _sessionGcSeen;
+                _sessionGcSeen = seen;
+                GCMemoryInfo gi = GC.GetGCMemoryInfo(GCKind.Any);
+                ReadOnlySpan<TimeSpan> pauses = gi.PauseDurations;
+                double pause = pauses.Length > 0 ? pauses[0].TotalMilliseconds + (pauses.Length > 1 ? pauses[1].TotalMilliseconds : 0) : 0;
+                _sessionGcs += count;
+                _sessionGc1 += gi.Generation >= 1 ? 1 : 0;
+                _sessionGc2 += gi.Generation >= 2 ? 1 : 0;
+                _sessionPause += pause;
+
+                if (!held)
+                {
+                    _sessionGcsPlay += count;
+                    _sessionPausePlay += pause;
+                }
+
+                Log.Info(string.Format(inv, "[gcs] +{0:0.00}s #{1} gen{2}{3}{4} pause {5:0.00} ms, promoted {6:0.00} MB, heap {7:0.0} MB, frame {8:0.00} ms, {9}{10}, tag {11}",
+                    t, gi.Index, gi.Generation, gi.Compacted ? " compacting" : "", gi.Concurrent ? " concurrent" : "", pause, gi.PromotedBytes / 1048576.0,
+                    gi.HeapSizeBytes / 1048576.0, frameMs, held ? "held" : "play", count > 1 ? $" ({count - 1} more)" : "", _recording ? _tag : "-"));
+            }
+
+            if (frameMs > 8 && afterReport)
+            {
+                Log.Info(string.Format(inv, "[gcs] +{0:0.00}s slow frame {1:0.00} ms, after a window report (not counted)", t, frameMs));
+            }
+            else if (frameMs > 8)
+            {
+                if (held)
+                {
+                    _sessionSlowHeld++;
+                }
+                else
+                {
+                    _sessionSlowPlay++;
+                    _sessionSlowPlayMax = Math.Max(_sessionSlowPlayMax, frameMs);
+                }
+
+                Log.Info(string.Format(inv, "[gcs] +{0:0.00}s slow frame {1:0.00} ms, {2}, tag {3}", t, frameMs, held ? "held" : "play", _recording ? _tag : "-"));
+            }
+
+            if (t >= _sessionNextSummary && _sessionNextSummary <= 60)
+            {
+                Log.Info(string.Format(inv, "[gcs] summary +{0}s: collections {1} (gen1+ {2}, gen2 {3}), pause {4:0.0} ms; in play frames {5} ({6:0.0} ms); frames over 8 ms: play {7} (max {8:0.0} ms), held {9}",
+                    _sessionNextSummary, _sessionGcs, _sessionGc1, _sessionGc2, _sessionPause, _sessionGcsPlay, _sessionPausePlay, _sessionSlowPlay, _sessionSlowPlayMax, _sessionSlowHeld));
+                _sessionNextSummary += 20;
+            }
+        }
+
         // one line per garbage collection seen at the end of a recorded frame: what kind, how long, what it kept
         private static void LogGc(long frameTicks)
         {
@@ -572,6 +668,7 @@ namespace ClassicUO
 
         private static void Report(long now)
         {
+            _sessionAfterReport = true;
             double seconds = (now - _windowStart) / (double)Stopwatch.Frequency;
             long allocTotal = GC.GetTotalAllocatedBytes() - _allocTotalStart;
             int gc0 = GC.CollectionCount(0) - _gc0, gc1 = GC.CollectionCount(1) - _gc1, gc2 = GC.CollectionCount(2) - _gc2;

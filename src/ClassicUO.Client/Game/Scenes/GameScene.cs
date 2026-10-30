@@ -1195,6 +1195,8 @@ namespace ClassicUO.Game.Scenes
                     _settleTarget = target;
                 }
 
+                FrameStats.WorldHeld = hold;
+
                 if (!hold)
                 {
                     FrameStats.Begin(FramePhase.Lights);
