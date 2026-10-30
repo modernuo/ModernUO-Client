@@ -2265,4 +2265,4 @@ The audit confirmed the key matches normal insertion (priorities, equal-priority
 
 No measured regression (travel's base rounds include GC-heavy frames: max 5.4 and 6.4 ms per frame vs 1.1–1.2 ms). The world prepare series above stands as "no measured regression", not "no cost".
 
-**Tests:** 607 pass in both `CuoDevTools` variants (18 in `TileOrderTests`); both client flavours build.
+**Tests:** 607 pass in both `CuoDevTools` variants (18 in `TileOrderTests`); both client flavours build. After merging poc/modern-client 80ccb1a24 (T0 census and write-site budget test): 643 pass in both variants, both flavours build.
