@@ -27,10 +27,10 @@ namespace ClassicUO.Game.GameObjects
             Vector3 hueVec = ShaderHueTranslator.GetHueVector(hue, false, 1);
             hueVec.Y = hueVec.X > 1.0f ? ShaderHueTranslator.SHADER_LIGHTS : ShaderHueTranslator.SHADER_NONE;
 
-            ref var index = ref Client.Game.UO.FileManager.Gumps.File.GetValidRefEntry(AnimationGraphic);
+            Client.Game.UO.FileManager.Gumps.TryGetSize(AnimationGraphic, out int gumpWidth, out int gumpHeight);
 
-            posX -= index.Width >> 1;
-            posY -= index.Height;
+            posX -= gumpWidth >> 1;
+            posY -= gumpHeight;
 
             batcher.SetBlendState(BlendState.Additive);
 
