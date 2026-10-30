@@ -156,6 +156,12 @@ namespace ClassicUO.Game.GameObjects
             }
         }
 
+        /// <summary>
+        /// The object has a world placement: it is in a tile list (TileChunk) or parked until its chunk loads (PendingBlock).
+        /// Movers re-add on this, not on having list neighbours: a lone object on a landless tile has none.
+        /// </summary>
+        public bool IsPlaced => TileChunk != null || PendingBlock >= 0;
+
         public void RemoveFromTile()
         {
             if (TileChunk != null)
