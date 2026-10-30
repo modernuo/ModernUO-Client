@@ -32,7 +32,7 @@ Started 2026-10-25 (renderer-selection agent), from the owner's decision that ru
 These are dev-only too, but they're inert unless an environment variable or a plan turns them on, and they're interleaved with product code. Candidates for the release pass:
 
 - `FrameStats` (the phase timers stay compiled, but off: `On` is false without DevBench).
-- The parity and checker hooks: `CUO_ECS_PARITY`, `CUO_GPU_ITEM_CHECK`, `CUO_PREP_CHECK`, `CUO_W5_CHECK`, `CUO_MOBILE_CACHE_CHECK`, `-ecscheck`, `-ecsdriver`.
+- The parity and checker hooks: `CUO_ECS_PARITY`, `CUO_GPU_ITEM_CHECK`, `CUO_PREP_CHECK`, `CUO_W5_CHECK`, `CUO_MOBILE_CACHE_CHECK`, `-ecscheck` (`-ecsdriver` is guarded since E11: `EcsSessionDriver`, its switch and `WorldEcs`'s attach path).
 - The test switches: `CUO_SIMULATE_DEVICE_LOST`, `CUO_DEVICE_LOST_NOEXIT`, `CUO_RENDERER_PROBE_FAIL`, `CUO_RENDERER_LEGACY_DRIVER`, `CUO_WORLD_HOLD*`, `CUO_WORLD_SETTLE_LOG`.
 - `GameController.DebugRecreateGpuWorld` (only DevBench calls it).
 - Chat commands that flip renderer options for A/B runs (`-gpuskip`, `-itemcache`, …). They don't switch the renderer, but they aren't player settings either.

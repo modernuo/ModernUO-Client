@@ -2035,3 +2035,17 @@ Final series, on 3f0edbc0f: three alternated pairs, D–F. The machine was quiet
 - The recycler's field test: every non-exempt field must really change when dirtied (strings, arrays and abstract `GameObject`-typed fields get non-null sentinels; an unsupported type fails explicitly), so a nullable cache left out of `ResetForReuse` fails. A new test checks that a reference field left out is caught.
 - `_prevMeshHighlight` checks the object's incarnation (above).
 - 579 unit tests pass in both build variants. One `CUO_RECYCLE_CHECK=reuse` pass (`travel` and `glide`, NativeAOT on 51c9333f3): Legacy, where the mesh highlight lives, 137k reused; Gpu, 128k reused. In both, 0 uses after retire, 0 bad sweeps and 0 exceptions; Gpu settle 0 timeouts and 0 unsettled frames in an episode. The `[gc]` lines now begin at the window's first collection (#9), not at one from login.
+
+## E11: ECS test driver behind CUO_DEVTOOLS; one mirror Sync per SetInWorldTile (2026-10-30)
+
+Base: poc/modern-client f2668520f. Branch `bg/ecs-e11-hygiene`.
+
+**Driver guard.** `EcsSessionDriver.cs` (whole file), the `-ecsdriver` case in `Main.cs`, `CUOEnviroment.EcsDriverScript` and `WorldEcs.Driver` plus its load/attach block are now inside `#if CUO_DEVTOOLS`. `-p:CuoDevTools=false` builds with 0 errors and its `cuo.dll` holds neither `EcsSessionDriver` nor `DriverGump`. The driver uses no helper that only it needs (it calls existing World, FrameStats and Settings members; its `fx`/`fxserve` cases were already guarded), so nothing else moved. `-ecscheck` (the mirror consistency checker, `WorldEcs.RunCheck`) is left in every build: testing/ecs-animation.md uses it as the standing parity check and it costs nothing unless the switch is given; whether releases should carry it is the owner's call (release-cleanup.md still lists it under "not guarded").
+
+**Double Sync.** `SetInWorldTile` ran `UpdateScreenPosition()` (which calls `World.Ecs.Sync`) and then `AddToTile`, which always ends in a `Sync` of its own (parked, chunkless and placed paths all do). `Sync` reads only the entity's fields (graphic, hue, x/y/z, direction, flags, amount, container, layer); `AddToTile`, `RemoveFromTile`, `Map.Park` and `Chunk.AddGameObject` change none of them, and `PlayerMobile.OnPositionChanged` (doors, corpses, plugin) does not read the mirror. So the first call wrote the values the second writes. It is redundant in every case, including a container-to-ground re-key (the caller clears `Container` before `SetInWorldTile`) and equipment/mobile index updates (they come from the second call's values). `SetInWorldTile` now sets `IsPositionChanged`, calls `OnPositionChanged` and `AddToTile`; every other `UpdateScreenPosition` caller keeps its Sync.
+
+**Measured** (E2 bench, new row "mobile SetInWorldTile", `DOTNET_TieredCompilation=0`, Release, 100k calls, noisy machine; us per call at N=500/2000/8000 mobiles): before 0.124/0.163/0.217; after 0.066/0.114/0.096 and a repeat 0.066/0.068/0.079. About 40-60% less; 0 bytes either way. Not a per-frame cost, so no FPS effect expected.
+
+**Tests.** New `SetInWorldTileSyncTests` (mobile mirror follows two moves; a bag item dropped to the ground is re-keyed and positioned), passing before and after the change. 581 unit tests pass.
+
+**Verification.** Default and `CuoDevTools=false` builds compile. Smoke run (tools/ecs-parity/run_parity.py, account kbatman3, a short script: `[go`, 4 steps, backpack, check, quit): driver loaded and ran in the default build, `-ecscheck 120` 0 mismatches (442 checks), exit 0.

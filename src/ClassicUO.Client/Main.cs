@@ -420,10 +420,12 @@ namespace ClassicUO
 
                         break;
 
+#if CUO_DEVTOOLS
                     case "ecsdriver":
                         CUOEnviroment.EcsDriverScript = value;
 
                         break;
+#endif
 
                     case "encryption":
                         Settings.GlobalSettings.Encryption = byte.Parse(value);
