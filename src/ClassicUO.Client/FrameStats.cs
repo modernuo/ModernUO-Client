@@ -495,6 +495,9 @@ namespace ClassicUO
         /// not seen as a stalled world. Cleared after every frame.</summary>
         public static bool WorldHeld;
 
+        /// <summary>Set by GameScene when it presents a world frame: until the first one, frames are the login's (not played).</summary>
+        public static bool WorldShown;
+
         // Session timeline (CUO_FRAMESTATS=1), independent of the plan's windows: every collection and every frame over 8 ms
         // from the first in-game frame on, marked held (the world was held this frame) or play, and summaries at +40 s and
         // +60 s. The login warm-up collections happen before the first plan window, where the [gc] lines don't look.
@@ -506,7 +509,9 @@ namespace ClassicUO
 
         private static void SessionTick(long now)
         {
-            bool held = WorldHeld;
+            // before the first presented world frame (the login), a frame counts as held: nothing of the world is shown yet
+            bool held = WorldHeld || !WorldShown;
+            string kind = !WorldShown ? "login" : WorldHeld ? "held" : "play";
             WorldHeld = false;
             // the window report (string building and logging, 20-30 ms) ran after the previous frame's end: not the game's
             bool afterReport = _sessionAfterReport;
@@ -556,7 +561,7 @@ namespace ClassicUO
 
                 Log.Info(string.Format(inv, "[gcs] +{0:0.00}s #{1} gen{2}{3}{4} pause {5:0.00} ms, promoted {6:0.00} MB, heap {7:0.0} MB, frame {8:0.00} ms, {9}{10}, tag {11}",
                     t, gi.Index, gi.Generation, gi.Compacted ? " compacting" : "", gi.Concurrent ? " concurrent" : "", pause, gi.PromotedBytes / 1048576.0,
-                    gi.HeapSizeBytes / 1048576.0, frameMs, held ? "held" : "play", count > 1 ? $" ({count - 1} more)" : "", _recording ? _tag : "-"));
+                    gi.HeapSizeBytes / 1048576.0, frameMs, kind, count > 1 ? $" ({count - 1} more)" : "", _recording ? _tag : "-"));
             }
 
             if (frameMs > 8 && afterReport)
@@ -575,12 +580,12 @@ namespace ClassicUO
                     _sessionSlowPlayMax = Math.Max(_sessionSlowPlayMax, frameMs);
                 }
 
-                Log.Info(string.Format(inv, "[gcs] +{0:0.00}s slow frame {1:0.00} ms, {2}, tag {3}", t, frameMs, held ? "held" : "play", _recording ? _tag : "-"));
+                Log.Info(string.Format(inv, "[gcs] +{0:0.00}s slow frame {1:0.00} ms, {2}, tag {3}", t, frameMs, kind, _recording ? _tag : "-"));
             }
 
             if (t >= _sessionNextSummary && _sessionNextSummary <= 60)
             {
-                Log.Info(string.Format(inv, "[gcs] summary +{0}s: collections {1} (gen1+ {2}, gen2 {3}), pause {4:0.0} ms; in play frames {5} ({6:0.0} ms); frames over 8 ms: play {7} (max {8:0.0} ms), held {9}",
+                Log.Info(string.Format(inv, "[gcs] summary +{0}s: collections {1} (gen1+ {2}, gen2 {3}), pause {4:0.0} ms; in play frames {5} ({6:0.0} ms); frames over 8 ms: play {7} (max {8:0.0} ms), held or login {9}",
                     _sessionNextSummary, _sessionGcs, _sessionGc1, _sessionGc2, _sessionPause, _sessionGcsPlay, _sessionPausePlay, _sessionSlowPlay, _sessionSlowPlayMax, _sessionSlowHeld));
                 _sessionNextSummary += 20;
             }
