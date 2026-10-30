@@ -63,6 +63,14 @@ Running notes for your return, newest at the top within each section. Started 20
 - Nothing waiting.
 
 
+## Repository (your decision, 2026-10-30)
+
+- Work is pushed to https://github.com/modernuo/ModernUO-Client (remote `modernuo`).
+- `cuo` and `main` were fast-forwarded to upstream ee79d7ebc, the ClassicUO commit our work starts from. Both were plain ancestors, so no force push was needed.
+- `legacy-main` (Max Kellermann's file loading and reading optimisations) is left as is, for separate evaluation against our own file format.
+- `poc/modern-client` is pushed as its own branch. Before the first push I checked its history: no secrets, the largest files are the SDL3 binaries (7 MB at most), and the FNA and SDL submodule commits are on the public `modernuo/*-patched` branches.
+- I push the branch after each merge, never forced.
+
 ## In progress
 
 - **Login warm-up GCs** (`poc/login-warmup-gc`): the 2–4 collections in the first ~40 s after login; measure first, then pre-fill pools, pre-size buffers or collect inside a settle hold.
