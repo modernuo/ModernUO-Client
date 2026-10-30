@@ -67,6 +67,7 @@ Running notes for your return, newest at the top within each section. Started 20
 
 - **Login warm-up GCs** (`poc/login-warmup-gc`): the 2–4 collections in the first ~40 s after login; measure first, then pre-fill pools, pre-size buffers or collect inside a settle hold.
 - **Ground-item and multi art on workers** (`poc/item-art-worker`): the first-sight decode still on the main thread (about 2.6–3.0 ms per teleport), moved onto the teleport art worker.
+- **ECS backlog E10–E12** (Sonnet, each audited by Codex before merging): E10 the animation clock into the ECS plus an owned ordered mobile list (`bg/ecs-e10-clock`); E11 the ECS test driver behind devtools and the double mirror sync (`bg/ecs-e11-hygiene`); E12 a same-frame item checker (`bg/ecs-e12-checker`).
 - All agents share a `bench.lock`, so client runs, builds and timing series never overlap.
 
 ## Things you saw tonight, explained
