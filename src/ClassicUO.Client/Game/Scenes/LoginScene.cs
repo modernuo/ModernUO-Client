@@ -525,6 +525,15 @@ namespace ClassicUO.Game.Scenes
                 return;
             }
 
+            // A clean close by the server (Success) while we are still waiting on it is a lost connection too: before the
+            // network drain loop the client never noticed an idle close and sat on "Verifying Account". Once a step has
+            // ended in a popup (a login denial the server follows with a close) the message is kept.
+            if (e == 0 && CurrentLoginStep is LoginSteps.Connecting or LoginSteps.VerifyingAccount or LoginSteps.ServerSelection
+                or LoginSteps.LoginInToServer or LoginSteps.CharacterSelection or LoginSteps.EnteringBritania)
+            {
+                e = SocketError.ConnectionReset;
+            }
+
             if (e != 0)
             {
                 Characters = null;

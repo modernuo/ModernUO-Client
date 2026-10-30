@@ -7,6 +7,7 @@ using System;
 using System.Net;
 using System.Net.Sockets;
 using System.Net.WebSockets;
+using System.Diagnostics;
 using ClassicUO.Network.Socket;
 
 namespace ClassicUO.Network
@@ -168,6 +169,9 @@ namespace ClassicUO.Network
         /// <summary>Default most packets dispatched in one frame; checked between slices.</summary>
         public const int DefaultFramePacketCap = 1500;
 
+        /// <summary>Default time budget for one frame's drain, in ms: the drain stops after the slice that passes it (0 = none).</summary>
+        public const double DefaultFrameMs = 4;
+
         /// <summary>Also read the socket's available byte count in each drain (CUO_NET_TRACE; FrameStats does it anyway).</summary>
         public static bool TrackAvailable { get; set; }
 
@@ -183,10 +187,10 @@ namespace ClassicUO.Network
         /// <summary>
         /// Reads what the socket has ready in <see cref="SliceSize"/> slices, in order, handing each decoded slice to
         /// <paramref name="sink"/> (which parses it and returns the packets it dispatched). Stops when the socket is empty, a
-        /// close or error was raised, or the byte or packet cap is reached (the rest stays queued for the next frame, so a
+        /// close or error was raised, or the byte, packet or time cap (maxMs, 0 = none) is reached (the rest stays queued for the next frame, so a
         /// burst cannot stall one). The caps are checked between slices, so a frame can go over by up to one slice.
         /// </summary>
-        public int Drain(Func<ArraySegment<byte>, int> sink, int maxBytes = DefaultFrameByteCap, int maxPackets = DefaultFramePacketCap)
+        public int Drain(Func<ArraySegment<byte>, int> sink, int maxBytes = DefaultFrameByteCap, int maxPackets = DefaultFramePacketCap, double maxMs = 0)
         {
             LastDrainAvailable = 0;
             LastDrainBytes = 0;
@@ -203,9 +207,16 @@ namespace ClassicUO.Network
             }
 
             var packets = 0;
+            var start = maxMs > 0 ? Stopwatch.GetTimestamp() : 0;
 
             while (LastDrainBytes < maxBytes && packets < maxPackets)
             {
+                // always one slice, then stop once the frame's time budget is spent
+                if (LastDrainSlices > 0 && maxMs > 0 && Stopwatch.GetElapsedTime(start).TotalMilliseconds >= maxMs)
+                {
+                    break;
+                }
+
                 if (!ReadSlice(out var raw, out var data))
                 {
                     break;
