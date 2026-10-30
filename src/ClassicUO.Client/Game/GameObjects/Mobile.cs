@@ -119,6 +119,9 @@ namespace ClassicUO.Game.GameObjects
 
         /// <summary>E10: this mobile's slot in <see cref="MobileTable"/> (its position in <c>World.Mobiles.Values</c>'s enumeration order), kept by the table on add and remove.</summary>
         internal int Ordinal;
+
+        /// <summary>E10: the table this mobile sits in (at most one, under one key); <see cref="Ordinal"/> is its storage address there.</summary>
+        internal MobileTable OwnerTable;
         private bool _isAnimationForwardDirection;
         private byte _animationGroup = 0xFF;
         private byte _animationInterval;
