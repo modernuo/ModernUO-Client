@@ -2142,3 +2142,42 @@ Off equals or beats base inside the noise (a slot-array walk instead of the dict
 - **P3, checker:** the shadow comparison now runs every frame under `CUO_MOBILE_UPDATE_CHECK`, whichever mobile loop runs (E4 off included), counts `table checks`, and compares key-to-value mappings and `OwnerTable` as well as order and ordinals.
 - **P3, tests (586 pass, 4 new):** ownership refusals (aliases, two tables, the audit sequence, release on remove/replace/Clear); Clear and remove-all then repopulate past the first array size against a dictionary; the full death re-key with `Serial` updated (also in the random model) and a re-key onto an existing key; enumeration with removal of an unvisited entry, overwrite, `Clear` and insert invalidation (and a refused duplicate not invalidating). The E4 random order test now takes its expected order from an independent `Dictionary` oracle fed the same operations.
 - **Checks on the fix** (kbatman3, TieredCompilation=0): large scene `ls_parity` with `CUO_MOBILE_UPDATE_CHECK=1`, **E4 off**: table checks 22,375, 0 differences; parity 10.4M mobile comparisons 0 mismatches; `-ecscheck` 0. `w5push` with E4 on and all checkers: table checks 241,343, 0 differences; clocks 3.07M 0; skipped 2.84M 0; order 238k 0; input check 1.57M and 1.45M seat tests 0; parity 1.6M 0. Default and `-p:CuoDevTools=false` builds both build.
+
+## L1: TCP receive drain loop and server-close detection (2026-10-30)
+
+Branch `poc/net-drain` (base poc/modern-client fdfcc9813, merged up to 3681f25b3).
+
+**Problem.** `TcpSocketWrapper.Read` returned 0 whenever `Available` was 0, so a server FIN while the client was idle was never noticed (stuck "Verifying Account"), and `GameController.Update` read at most one 4 KB slice per frame.
+
+**Change.**
+- `TcpSocketWrapper.Read`: `Socket.Poll(0, SelectRead)` then a non-blocking-style `Receive(..., out error)`. Readable with 0 bytes is a close (`OnDisconnected`), an error is `OnError`; data that arrived before the close is delivered first.
+- `NetClient.Drain(sink, maxBytes, maxPackets, maxMs)`: reads 4 KB slices (Huffman output stays under the 64 KB buffer) and hands each decoded slice to the parser in order, until the socket is empty, a close was raised, or a cap is hit: 128 KB raw, 1500 packets, 4 ms per frame (checked between slices, always at least one slice). `CollectAvailableData` is kept as a single-slice read. Packet order and plugin handling are unchanged (same `ParsePackets` call, once per slice).
+- `Huffman.Decompress` no longer clears the whole 64 KB output buffer per call (it would now run per slice).
+- `LoginScene.OnNetClientDisconnected`: a clean server close (`Success`) during Connecting, VerifyingAccount, ServerSelection, LoginInToServer, CharacterSelection or EnteringBritania is now a lost connection (popup, reconnect if enabled). It was ignored before, so the FIN fix alone would still have left the screen stuck. After a login denial the step is already PopUpMessage, so the denial text is kept. `GameScene` shows `ConnectionReset` instead of "Success" and logs `Disconnected from the game server: <error>`.
+- Diagnostics: FrameStats counters `net_avail`, `net_bytes`, `net_slices`, `net_packets`; `CUO_NET_TRACE=1` logs `[net]` lines per frame with data; `CUO_NET_CAP_BYTES/PACKETS/MS` override the caps (`CUO_NET_CAP_BYTES=1` = one slice per frame, the old behaviour, used as the base).
+
+**Measured** (kbatman2, JIT, TieredCompilation=0, VSync on, 1920x1080, the same binary with `CUO_NET_CAP_BYTES=1` as base; 3 rounds interleaved; plan: Britain, `[TestScene go`, scene, `[TestScene return`; machine shared, other agents idle on the GPU, so only the ratios matter). Bursts are frames with more than 4 KB available.
+
+| Burst | duration | frames | KB | packets | bytes per frame (avg / max) | drain ms sum / max | frames >8 ms / >16 ms |
+|---|---|---|---|---|---|---|---|
+| Teleport into the scene, base (one slice per frame) | 3734-3750 ms | 226-227 | 904-908 | 55k | 4096 / 4096 | 255-278 / 16-27 | 2-3 / 1 |
+| same, drain with packet cap only (1500) | 578-610 ms | 30 | 811 | 51k | 27.7k / 53k | 236-258 / 40-48 | 5 / 2-3 |
+| same, drain + 4 ms budget (the default) | 797-1000 ms | 49-58 | 822-827 | 52k | 14.6-17.2k / 28.7k | 235-316 / 15-20 | 2-5 / 0-1 |
+| Return to Britain, base | 500 ms | 31 | 124 | 21.5k | 4096 / 4096 | 14-19 / 2-3 | 0 / 0 |
+| same, new | 141-172 ms | 11-12 | 124-126 | 21.7k | 11.7k / 12.3k | 13-18 / 3-6 | 0 / 0 |
+
+- `Available` after the teleport reaches 65,536 (the socket's receive window) from the first frame, so the base kept the window full for 3.7 s. The packet work is the same either way (about 250 ms of parsing in total, 5 us per packet); the drain just spends it in fewer frames. Without a time budget the first frames cost 40-48 ms; the 4 ms budget keeps the worst frame near the base's (15-20 ms, the first frame, which also pays one-off setup).
+- Login: only 6 KB / 239 packets arrive (largest `Available` 2.4 KB), so login-to-world-ready is unchanged: `[settle] Entry: ready` 746-828 ms in every variant. L1 changes nothing at login except the close detection.
+- Cross-facet `[settle] Facet: ready` times (134-682 ms) are unchanged by the drain (the hold ends when the GPU world is ready, not when the scene's objects have arrived).
+
+**Tests.** `NetDrainTests` (15): partial reads in order, slice size, 200 KB in slices, byte cap and resume, packet cap, time budget, nothing ready, data then close, close mid-packet, close while idle, a Huffman stream over 64 KB decompressed cut at arbitrary slice boundaries, and four real loopback `TcpSocketWrapper` tests (idle close, data then close, reset, partial reads). Against the old `TcpSocketWrapper` the idle-close, reset and data-then-close loopback tests fail. Full `dotnet test`: 604 passed. Both builds (default and `-p:CuoDevTools=false`) build with 0 errors (the DevTools=false one was built, not run).
+
+**Normal session** (`b1;travel;ltravel;scene;return;b2`, new default build): `[settle]` 0 unsettled frames in every Teleport/Facet episode, 0 timeouts; 12 unsettled frames "while walking", the known single-page misses of walking (world-settle.md), same as before.
+
+**Server close, live** (kbatman2, through a TCP relay `127.0.0.1:2594 -> 2593` that rewrites the 0x8C redirect; the real ModernUO was not stopped, because `stop-modernuo.ps1` needs PowerShell, which this task bars, and force-killing a shared server is not allowed; the relay closes the client-side connections, which is what the client sees when the server closes):
+- In game, relay FIN: `Disconnected from the game server: ConnectionReset` in the same second (log has 1 s resolution), message box path as for any disconnect.
+- In game, relay RST: same line, same second.
+- Login connection idle, relay FIN: `Disconnected` warning at once (LoginScene popup path). Whether the screen was server select or character select was not captured (no screenshot); the character-select-specific popup is covered by the same code path (`CharacterSelection` is in the list) but not seen.
+- Not done: a real server stop/restart, NativeAOT, a screenshot of the popups.
+
+**Process note.** One batch (10:17) built and ran a 19 s client without holding bench.lock because its lock helper file was missing and the script carried on; found and stopped within a minute. All later steps took the lock first and held it for one step each.

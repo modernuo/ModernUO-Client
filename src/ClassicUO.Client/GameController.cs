@@ -481,6 +481,7 @@ namespace ClassicUO
         // (CUO_NET_CAP_BYTES=1 reads one 4 KB slice per frame, as before the drain loop).
         private static readonly int _netCapBytes = int.TryParse(Environment.GetEnvironmentVariable("CUO_NET_CAP_BYTES"), out var cb) && cb > 0 ? cb : NetClient.DefaultFrameByteCap;
         private static readonly int _netCapPackets = int.TryParse(Environment.GetEnvironmentVariable("CUO_NET_CAP_PACKETS"), out var cp) && cp > 0 ? cp : NetClient.DefaultFramePacketCap;
+        private static readonly double _netCapMs = double.TryParse(Environment.GetEnvironmentVariable("CUO_NET_CAP_MS"), out var cm) && cm > 0 ? cm : NetClient.DefaultFrameMs;
         private static readonly bool _netTrace = (NetClient.TrackAvailable = Environment.GetEnvironmentVariable("CUO_NET_TRACE") == "1");
         private Func<ArraySegment<byte>, int> _parseSlice;
 
@@ -509,11 +510,11 @@ namespace ClassicUO
             FrameStats.Begin(FramePhase.Packets);
             _parseSlice ??= ParseSlice;
             var drainStart = _netTrace ? Stopwatch.GetTimestamp() : 0;
-            var packetsCount = NetClient.Socket.Drain(_parseSlice, _netCapBytes, _netCapPackets);
+            var packetsCount = NetClient.Socket.Drain(_parseSlice, _netCapBytes, _netCapPackets, _netCapMs);
 
             if (_netTrace && (NetClient.Socket.LastDrainAvailable > 0 || NetClient.Socket.LastDrainBytes > 0))
             {
-                Log.Info($"[net] frame={_totalFrames} avail={NetClient.Socket.LastDrainAvailable} bytes={NetClient.Socket.LastDrainBytes} slices={NetClient.Socket.LastDrainSlices} packets={packetsCount} ms={Stopwatch.GetElapsedTime(drainStart).TotalMilliseconds:0.00}");
+                Log.Info($"[net] t={Environment.TickCount64} frame={_totalFrames} avail={NetClient.Socket.LastDrainAvailable} bytes={NetClient.Socket.LastDrainBytes} slices={NetClient.Socket.LastDrainSlices} packets={packetsCount} ms={Stopwatch.GetElapsedTime(drainStart).TotalMilliseconds:0.00}");
             }
 
             if (FrameStats.On)

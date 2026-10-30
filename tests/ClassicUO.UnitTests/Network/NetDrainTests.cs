@@ -110,7 +110,7 @@ namespace ClassicUO.UnitTests.Network
             var data = Pattern(10_000);
             socket.Enqueue(data, 1000); // ten 1000-byte partial reads
 
-            client.Drain(sink);
+            client.Drain(sink, maxMs: 0);
 
             received.Should().Equal(data);
             sizes.Should().HaveCount(10).And.OnlyContain(s => s == 1000);
@@ -125,7 +125,7 @@ namespace ClassicUO.UnitTests.Network
             var data = Pattern(NetClient.SliceSize * 2 + 100);
             socket.Enqueue(data);
 
-            client.Drain(sink);
+            client.Drain(sink, maxMs: 0);
 
             received.Should().Equal(data);
             sizes.Should().Equal(NetClient.SliceSize, NetClient.SliceSize, 100);
@@ -138,7 +138,7 @@ namespace ClassicUO.UnitTests.Network
             var data = Pattern(200_000);
             socket.Enqueue(data);
 
-            client.Drain(sink, maxBytes: int.MaxValue, maxPackets: int.MaxValue);
+            client.Drain(sink, maxBytes: int.MaxValue, maxPackets: int.MaxValue, maxMs: 0);
 
             received.Should().Equal(data);
             sizes.Should().OnlyContain(s => s <= NetClient.SliceSize);
@@ -151,17 +151,17 @@ namespace ClassicUO.UnitTests.Network
             var data = Pattern(200_000);
             socket.Enqueue(data);
 
-            client.Drain(sink, maxBytes: 64 * 1024, maxPackets: int.MaxValue);
+            client.Drain(sink, maxBytes: 64 * 1024, maxPackets: int.MaxValue, maxMs: 0);
 
             client.LastDrainBytes.Should().Be(64 * 1024);
             client.LastDrainSlices.Should().Be(16);
             received.Should().Equal(data.AsSpan(0, 64 * 1024).ToArray());
 
             // the cap is checked between slices, so it can be overshot by up to one slice
-            client.Drain(sink, maxBytes: 100, maxPackets: int.MaxValue);
+            client.Drain(sink, maxBytes: 100, maxPackets: int.MaxValue, maxMs: 0);
             client.LastDrainBytes.Should().Be(NetClient.SliceSize);
 
-            while (client.Drain(sink, maxBytes: 64 * 1024, maxPackets: int.MaxValue) >= 0 && client.LastDrainBytes > 0)
+            while (client.Drain(sink, maxBytes: 64 * 1024, maxPackets: int.MaxValue, maxMs: 0) >= 0 && client.LastDrainBytes > 0)
             {
             }
 
@@ -174,10 +174,33 @@ namespace ClassicUO.UnitTests.Network
             var (client, socket, _, sizes, sink, _) = Make(packetsPerSlice: 2);
             socket.Enqueue(Pattern(100_000));
 
-            var packets = client.Drain(sink, maxBytes: int.MaxValue, maxPackets: 7);
+            var packets = client.Drain(sink, maxBytes: int.MaxValue, maxPackets: 7, maxMs: 0);
 
             sizes.Should().HaveCount(4); // 2, 4, 6, 8 packets: stops after the slice that reaches the cap
             packets.Should().Be(8);
+        }
+
+        [Fact]
+        public void Drain_Stops_At_The_Time_Budget_After_At_Least_One_Slice()
+        {
+            var (client, socket, _, sizes, _, _) = Make();
+            socket.Enqueue(Pattern(100_000));
+
+            int Slow(ArraySegment<byte> data)
+            {
+                sizes.Add(data.Count);
+                System.Threading.Thread.Sleep(8);
+
+                return 1;
+            }
+
+            client.Drain(Slow, maxBytes: int.MaxValue, maxPackets: int.MaxValue, maxMs: 1);
+
+            sizes.Should().HaveCount(1); // one slice always, the budget (1 ms) is spent by the first
+
+            sizes.Clear();
+            client.Drain(Slow, maxBytes: int.MaxValue, maxPackets: int.MaxValue, maxMs: 0); // 0 = no budget
+            client.LastDrainBytes.Should().Be(100_000 - NetClient.SliceSize);
         }
 
         [Fact]
@@ -185,7 +208,7 @@ namespace ClassicUO.UnitTests.Network
         {
             var (client, socket, _, sizes, sink, disconnects) = Make();
 
-            client.Drain(sink).Should().Be(0);
+            client.Drain(sink, maxMs: 0).Should().Be(0);
 
             sizes.Should().BeEmpty();
             socket.Reads.Should().Be(1);
@@ -200,13 +223,13 @@ namespace ClassicUO.UnitTests.Network
             socket.Enqueue(data);
             socket.CloseWhenDrained = true;
 
-            client.Drain(sink);
+            client.Drain(sink, maxMs: 0);
 
             received.Should().Equal(data);
             disconnects[0].Should().Be(1);
             client.IsConnected.Should().BeFalse();
 
-            client.Drain(sink).Should().Be(0); // nothing more, no second event
+            client.Drain(sink, maxMs: 0).Should().Be(0); // nothing more, no second event
             disconnects[0].Should().Be(1);
         }
 
@@ -218,7 +241,7 @@ namespace ClassicUO.UnitTests.Network
             socket.Enqueue(partial);
             socket.CloseWhenDrained = true;
 
-            client.Drain(sink);
+            client.Drain(sink, maxMs: 0);
 
             received.Should().Equal(partial);
             disconnects[0].Should().Be(1);
@@ -230,7 +253,7 @@ namespace ClassicUO.UnitTests.Network
             var (client, socket, _, sizes, sink, disconnects) = Make();
             socket.CloseWhenDrained = true;
 
-            client.Drain(sink).Should().Be(0);
+            client.Drain(sink, maxMs: 0).Should().Be(0);
 
             sizes.Should().BeEmpty();
             disconnects[0].Should().Be(1);
@@ -306,7 +329,7 @@ namespace ClassicUO.UnitTests.Network
             client.EnableCompression();
             socket.Enqueue(compressed, 1500); // slices cut the code stream at arbitrary byte boundaries
 
-            client.Drain(sink, maxBytes: int.MaxValue, maxPackets: int.MaxValue);
+            client.Drain(sink, maxBytes: int.MaxValue, maxPackets: int.MaxValue, maxMs: 0);
 
             received.Count.Should().BeGreaterThan(64 * 1024);
             received.Should().Equal(plain);

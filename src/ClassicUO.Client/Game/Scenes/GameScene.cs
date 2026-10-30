@@ -350,6 +350,14 @@ namespace ClassicUO.Game.Scenes
 
         private void SocketOnDisconnected(object sender, SocketError e)
         {
+            Log.Warn($"Disconnected from the game server: {e}");
+
+            // a clean close by the server reports Success; say what it is
+            if (e == SocketError.Success)
+            {
+                e = SocketError.ConnectionReset;
+            }
+
             if (Settings.GlobalSettings.Reconnect)
             {
                 _forceStopScene = true;
