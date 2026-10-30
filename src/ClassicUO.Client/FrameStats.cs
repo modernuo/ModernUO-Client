@@ -143,6 +143,15 @@ namespace ClassicUO
         ArtAsyncUploads,
         ArtUploadUs,
         ArtPending,
+        // ground items and multi components placed on the map whose art was requested from the workers (FirstSightArt)
+        ArtObjectRequests,
+        // first-sight gumps (Renderer.Gumps.Gump): main-thread decodes and their time, worker decodes uploaded and the upload
+        // time, worker decodes still pending
+        GumpSyncLoads,
+        GumpSyncUs,
+        GumpAsyncUploads,
+        GumpUploadUs,
+        GumpPending,
         // the UI pass: batcher flushes and draw calls into the UI targets; B8: 1 when the gumps (cache) target was reused, 1 when
         // the UI target was left untouched too
         UiFlushes,
@@ -198,7 +207,8 @@ namespace ClassicUO
             "gpu_skip_active", "gpu_full_tiles", "gpu_walk_tiles", "gpu_edge_tiles", "gpu_pick_tiles",
             "item_cache_builds", "item_cache_tiles", "item_cache_items", "item_cache_fallbacks", "item_cache_walked", "item_cache_fx",
             "chunk_loads", "chunk_load_us", "chunk_alloc", "chunk_gc", "chunk_gc_us", "chunk_reused", "chunk_retired", "chunk_mesh_alloc", "chunk_new", "chunk_mesh_us", "chunk_queue", "region_wait_us", "region_sync", "region_prefetch",
-            "art_sync", "art_sync_us", "art_async", "art_upload_us", "art_pending",
+            "art_sync", "art_sync_us", "art_async", "art_upload_us", "art_pending", "art_obj",
+            "gump_sync", "gump_sync_us", "gump_async", "gump_upload_us", "gump_pending",
             "ui_flushes", "ui_draw_calls", "ui_cached", "ui_untouched", "effects" };
 
         private static readonly long[] _start = new long[PHASES];
@@ -668,8 +678,17 @@ namespace ClassicUO
             _cur[(int)FrameCounter.ArtAsyncUploads] = Renderer.Arts.Art.FrameAsyncUploads;
             _cur[(int)FrameCounter.ArtUploadUs] = (int)(Renderer.Arts.Art.FrameUploadTicks * toUs);
             _cur[(int)FrameCounter.ArtPending] = (Client.Game?.UO?.Arts?.PendingDecodes ?? 0) + (Client.Game?.UO?.Texmaps?.PendingDecodes ?? 0);
+            _cur[(int)FrameCounter.ArtObjectRequests] = Game.Map.FirstSightArt.FrameObjectRequests;
+            Game.Map.FirstSightArt.FrameObjectRequests = 0;
             Renderer.Arts.Art.FrameSyncLoads = Renderer.Arts.Art.FrameAsyncUploads = 0;
             Renderer.Arts.Art.FrameSyncTicks = Renderer.Arts.Art.FrameUploadTicks = 0;
+            _cur[(int)FrameCounter.GumpSyncLoads] = Renderer.Gumps.Gump.FrameSyncLoads;
+            _cur[(int)FrameCounter.GumpSyncUs] = (int)(Renderer.Gumps.Gump.FrameSyncTicks * toUs);
+            _cur[(int)FrameCounter.GumpAsyncUploads] = Renderer.Gumps.Gump.FrameAsyncUploads;
+            _cur[(int)FrameCounter.GumpUploadUs] = (int)(Renderer.Gumps.Gump.FrameUploadTicks * toUs);
+            _cur[(int)FrameCounter.GumpPending] = Client.Game?.UO?.Gumps?.PendingDecodes ?? 0;
+            Renderer.Gumps.Gump.FrameSyncLoads = Renderer.Gumps.Gump.FrameAsyncUploads = 0;
+            Renderer.Gumps.Gump.FrameSyncTicks = Renderer.Gumps.Gump.FrameUploadTicks = 0;
         }
 
         private static void ClearFrameCounters()
