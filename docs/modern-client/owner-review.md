@@ -8,6 +8,19 @@ Running notes for your return, newest at the top within each section. Started 20
 - **Renderer wording (your call):** the renderer-selection error box and title, as players would see them. Box: "The GPU world renderer could not start (<reason>). ClassicUO will close." Title: `ClassicUO [Legacy renderer] - 1.1.0.0`. The agent suggests: (1) say how to recover ("Set world_renderer to \"auto\"…") and put the reason on its own line; (2) since Legacy is now auto's normal choice on machines without Vulkan, show "[Legacy renderer]" only in dev builds or rename it (e.g. "Compatibility renderer"); (3) "GPU world renderer" is ambiguous, because Legacy also uses the GPU; (4) when forced gpu fails, the title behind the box already says Legacy. Nothing changed yet. Tell me which wording you want.
 - **Optional:** the fork-built SDL3.dll has no libusb HIDAPI support (the old upstream DLL had it). That only matters for unusual controllers. Say if you want it built in.
 
+## Goal while you're away (2026-10-30)
+
+- **Your instruction:** keep working autonomously until the client is optimised, fully on the ECS, and on our file format for every file where it applies. Test and benchmark everything. I may push `poc/modern-client` whenever needed.
+- **`legacy-main`:** take what the review proposed. L3 (UOP indexes) is my call. Since gumps, fonts, cliloc and the rest are moving into the pack, I fold its lessons into the pack design and drop the MUL-side fixes it would replace (L2 fonts, L3, L4 gump decode, L5 cliloc). What still applies outside the pack: L1 (network) and L7 (pack page handles).
+
+## Questions, concerns and issues to go over (running list)
+
+Newest at the bottom. Each item says what I did meanwhile.
+
+1. **"Fully on the ECS" vs. keeping Legacy.** Your earlier decision: Legacy stays, and Legacy drawing from the ECS is deferred until it blocks other work. Full transition (the ECS owns world state, with GameObjects as thin views or gone) eventually needs Legacy to read from the ECS too. *Meanwhile:* I'm planning the ECS-authoritative state first and keeping Legacy working through compatibility views. I'll ask before deleting or rewriting Legacy.
+2. **`world_update_mobile_system` (E4) is still off by default.** It saves 0.02–0.03 ms in the large scene, and with E10's owned table it no longer depends on .NET internals. *Meanwhile:* I'll propose turning it on once E10 is audited and merged.
+3. **Flaky `ChunkLoadingTests` prefetch test** (fails about 1 run in 5 under full-suite load). *Meanwhile:* noted; I'll get it fixed when a loader agent is in that area.
+
 ## Decisions you made tonight (recorded in README "Decisions so far" and in memory)
 
 - **Legacy is a developer-only comparison mode** (2026-10-24). There's no automatic fallback to it. It's kept mainly to catch Gpu bugs, and it will be deleted once parity uses saved reference shots. *Implemented in a6110f967.*
