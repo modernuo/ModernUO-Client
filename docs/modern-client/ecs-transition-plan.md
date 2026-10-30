@@ -22,7 +22,7 @@ Drafted 2026-10-30 from a read-only review of `poc/modern-client` at 6d2159563, 
 
 `WorldEcs.PushInputs` and `PushClock` are called from the Mobile's setters, step-queue changes and `SetAnimation`.
 
-The mirror's fields are plain public fields on `GameObject`/`Entity`/`Item`: `Graphic`, `Hue`, `X`, `Y`, `Z`, `Flags`, `Serial`, `Amount`, `Container`, `Layer`. Handlers write them directly and rely on a later `Sync`. A rough grep finds about 68 `.Graphic =` writes in 26 files, 125 `.Hue =` writes in 41 files, and 27 `.Flags =` writes. Some of these are UI controls, not world objects; T0 makes the exact census.
+The mirror's fields are plain public fields on `GameObject`/`Entity`/`Item`: `Graphic`, `Hue`, `X`, `Y`, `Z`, `Flags`, `Serial`, `Amount`, `Container`, `Layer`. Handlers write them directly and rely on a later `Sync`. A rough grep finds about 68 `.Graphic =` writes in 26 files, 125 `.Hue =` writes in 41 files, and 27 `.Flags =` writes. Most of these are UI controls, not world objects. The T0a census ([ecs-state-census.md](ecs-state-census.md)) replaced the rough grep with a compiler-derived list: **266 world write sites in 14 files** (`Graphic` 33, `Hue` 17, `Flags` 15, `X` and `Y` 14 each, `Z` 12; 121 of the 266 in `PacketHandlers.cs`), plus 32 on map and effect objects.
 
 **Who reads the ECS.**
 - The Gpu world: `MobileSpriteExtract` reads ECS state. `ItemSpriteExtract.Emit` still takes the `Item` GameObject.
@@ -138,6 +138,8 @@ Total: about 51–72 agent-days. With two or three agents in parallel (T2/T3 nex
 - Gate: tests, `-ecscheck`, and Legacy and Gpu paired AOT world prepare unchanged within noise (Legacy large spot about 4.3–4.4 ms).
 
 Sizes: T0a 1–1.5, T0b 0.5, T0c 1.5–2.
+
+**Status (2026-10-30):** T0a and T0b are done on `bg/ecs-t0-census`: [ecs-state-census.md](ecs-state-census.md) (the classification, the write sites, the readers, the reference holders) and `tests/ClassicUO.UnitTests/Ecs/WriteSiteBudgetTests.cs` with its allowlist `WriteSiteAllowlist.txt`. Two results change T0c and T1: `Offset` is a struct that is written member by member (`item.Offset.Z = `), and `DisplayedGraphic` has no world writer; see census section 9.
 
 ### T1: the mutation funnel (dual write)
 
