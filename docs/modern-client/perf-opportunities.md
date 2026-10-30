@@ -16,7 +16,7 @@ Format: **what**, where (file:line), why it should help, evidence or estimate, a
   - **Left, not per frame:** every 0x78 destroys and re-creates all non-backpack equipment as new `Item`s (PacketHandlers.cs `UpdateObject`). Reusing them would keep OPL and other per-item state the destroy clears, a behaviour change, for a cost paid once per packet.
   - **Left, not per frame:** ConfirmWalk calls `Player.AddToTile()` (unlink plus a sorted re-insert) per step. Skipping it can change the order among equal-priority objects on the player's tile (the painter order), for about a microsecond per step.
   - **Done:** the HP percentage is computed in the `Hits`/`HitsMax` setters instead of every frame (Entity.cs).
-  - The ECS mirror's `Sync` runs twice per SetInWorldTile; not measured (it is per change, not per frame).
+  - Done (E11): the ECS mirror's `Sync` ran twice per SetInWorldTile; the first (inside UpdateScreenPosition) is gone, AddToTile always ends in one. Mobile SetInWorldTile cost 0.12-0.22 us before, 0.07-0.10 us after (poc-log "E11").
 - **Done (W5, `gpu_mobile_frame_cache`): a mobile's action selection and sprite extract ran every frame although most mobiles change frame only every 80–100 ms.** `MobileFrameCache` reuses both while the inputs are the same. Scene: 0.71 → 0.35–0.37 ms for 1,611 mobiles. What remains (about 0.22 µs per mobile) is mostly `Sample` reading the legacy Mobile: `IsMounted` walks the equipment list twice and looks up the mount table, plus the override-hue inputs and steps. Fix: the mirror's change funnel pushes these into the ECS (W5's next step).
 - **Done (W5, `text_skip_expired`): expired overhead texts stay in an entity's text container, so every mobile that ever showed text (incoming names) was laid out every frame**, an animation-dimensions lookup and two mount lookups each, for nothing. Scene: 0.18 → 0.04 ms for 1,985 mobiles.
 - **Done for the Gpu walk (2026-10-25, large-scale agent):** a camera generation replaces the per-frame recompute of walked objects (`forcePosition`). Original finding: **screen position recomputed for every object every frame** in `FillGameObjectList`. Fix: recompute only when the world position changes, via an ECS change query. Source: impl/ecs 827e54185.
@@ -159,3 +159,28 @@ The server sends dynamic objects (mobiles, items, effects) only within its updat
 
 - **The NativeAOT remainder of about 250–270 B per frame (JIT: 69–125 B).** Not worth chasing on its own: about one gen0 GC every few tens of seconds at 1,000 fps, and none were seen in the measurement windows. Trace it once on a quiet machine to tell real AOT allocations (boxing, generic paths) from background asset-streaming allocations counted across all threads. Low priority.
 - **What matters is allocation that scales with the scene:** bytes per mobile, per gump, per overhead text line. Check that allocation per frame stays flat in the large-scale test (about 2,000 mobiles and 20,000 items). The FPS test's allocation row guards against regressions.
+
+## MUL/UOP runtime loaders and networking, learned from `legacy-main` (review 2026-10-30)
+
+From the review of Max Kellermann's `legacy-main` branch ([legacy-main-review.md](legacy-main-review.md), which has the themes, evidence, and rejected items). The pack replaces his work for art, maps, anims and tiledata. These items apply to what still reads MUL/UOP at runtime (gumps, fonts, cliloc, sounds, multimap, professions) and to the network read. Estimates aren't measured yet. Suggested order: L1, L2, L3, L7 first; then L5, L6; then L4a; L4b and L8 only if measured.
+
+- **L1. TCP receive: drain the socket and detect a server close** (Sonnet). `TcpSocketWrapper.Read` doesn't notice a peer close while the client is idle (the stuck "Verifying Account" screen), and reads at most 4 KB per frame (about 240 KB/s at 60 Hz VSync, est.). Port Uo.Net's non-blocking `Poll` loop: `NetClient.CollectAvailableData` in 4 KB slices (Huffman output is capped at 64 KB), with a per-frame cap, and plugin packet order kept. Measure `Available` after a teleport into the large scene first.
+- **L2. Unicode fonts without the 21 MB table** (Sonnet). `FontsLoader.cs` allocates every font's 65,536-glyph row at startup. Allocate on first use, cache missing glyphs, and dispose fonts.mul after the ASCII copy. Saves 21 MB at startup. Low risk.
+- **L3. UOP index without a string per entry; right-sized arrays; gump sizes on demand** (Sonnet). `UOFileUop.cs` and `GumpsLoader.cs`:
+  - hash a stack-formatted name instead of making about 246k `string.Format` calls (about 20 MB of startup garbage, 30–60 ms, est.);
+  - size `Entries` to the loader's maximum instead of 81,919 (about 4 MB);
+  - read each gump's width and height on first decode, so startup stops touching 3,542 pages of the 144 MB gump UOP.
+
+  Needs a test over every index for hash parity, and a check that gump.def aliases keep the right size and hue.
+- **L4a. Gump decode without copies** (Sonnet). Decode from a bounds-checked view of the entry with pooled buffers, keeping zlib/BWT for flagged entries, and switch the gump picker to art's trimmed path. Removes the 3–4 allocations per first-sight gump. Add a parity test over every gump id.
+- **L4b. Gump art prefetched on a worker when its packet arrives** (Opus), using the `FirstSightDecoder` pattern. Measure frames that open a gump first, and skip this if gumps move into the pack soon.
+- **L5. Cliloc: one read, strings created on demand** (Sonnet). `ClilocLoader.cs` makes 920 reads of 4 KB and creates 117,725 strings at startup (about 8–9 MB plus a 3 MB dictionary, est.). Keep the UTF-8 blob and an index instead. The lazy cache must be thread-safe for plugins.
+- **L6. Startup: time each loader, then defer** (Sonnet, after L3). Sounds load on a background task after login, multimap when the world map first opens, professions at character creation.
+- **L7. Pack pages: keep file handles open** (Sonnet). `PackPages.DecodeChunk` opens and closes its page file for every chunk; keep a small handle cache (`PackAssets.cs`, and check Uo.Render's `PageResidency` for the same pattern). That saves 2 system calls and one antivirus-filtered open per chunk (est. 20–100 µs). The trade-off is that the open handles block replacing page files while the client runs.
+- **L8. Tile names decoded on first access** (optional, Sonnet). Avoids about 80k strings at startup, but changes two widely used structs.
+- **L9. The same entry views in the converter** (optional, after L4a). Drops `WorkerReaders`. Mainly simpler code; the converter already runs in about 4 s.
+- **Rejected from `legacy-main`:**
+  - raw memory-mapped pointers as the main read path: page faults on the render thread, no bounds checks, use-after-free risk, and mapped files locked against patching;
+  - removing verdata, dif and UOP support: the converter applies verdata for shards on purpose;
+  - compile-time feature flags, and the refactors.
+- **Max's "300/600 MB saved"** figures are mapped virtual size, not resident memory; the fork point already memory-mapped every file.
