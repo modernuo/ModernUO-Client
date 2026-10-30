@@ -30,6 +30,7 @@ Newest at the bottom. Each item says what I did meanwhile.
    - **g. `Item`/`Mobile`:** keep them as thin handle classes.
    - **h. W2's in-view ECS query:** not part of the transition.
    - **i. Effects:** move them into the ECS last.
+5. **ECS parity mismatches at login and spawns (possible regression, being looked at).** The T6a agent saw 29–75 Gpu mobile mismatches per parity run, all at the login frame or a spawn; base 3681f25b3 showed 7. On 2026-10-26, E6 and earlier agents saw 0. Candidates: the chunk-load recycler, E11 (one sync per tile placement), E10. *Meanwhile:* a bisect agent is finding the first bad merge and whether it is a mirror bug or checker timing.
 
 ## Decisions you made tonight (recorded in README "Decisions so far" and in memory)
 
