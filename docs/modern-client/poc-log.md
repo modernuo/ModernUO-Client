@@ -2142,3 +2142,69 @@ Off equals or beats base inside the noise (a slot-array walk instead of the dict
 - **P3, checker:** the shadow comparison now runs every frame under `CUO_MOBILE_UPDATE_CHECK`, whichever mobile loop runs (E4 off included), counts `table checks`, and compares key-to-value mappings and `OwnerTable` as well as order and ordinals.
 - **P3, tests (586 pass, 4 new):** ownership refusals (aliases, two tables, the audit sequence, release on remove/replace/Clear); Clear and remove-all then repopulate past the first array size against a dictionary; the full death re-key with `Serial` updated (also in the random model) and a re-key onto an existing key; enumeration with removal of an unvisited entry, overwrite, `Clear` and insert invalidation (and a refused duplicate not invalidating). The E4 random order test now takes its expected order from an independent `Dictionary` oracle fed the same operations.
 - **Checks on the fix** (kbatman3, TieredCompilation=0): large scene `ls_parity` with `CUO_MOBILE_UPDATE_CHECK=1`, **E4 off**: table checks 22,375, 0 differences; parity 10.4M mobile comparisons 0 mismatches; `-ecscheck` 0. `w5push` with E4 on and all checkers: table checks 241,343, 0 differences; clocks 3.07M 0; skipped 2.84M 0; order 238k 0; input check 1.57M and 1.45M seat tests 0; parity 1.6M 0. Default and `-p:CuoDevTools=false` builds both build.
+
+## T6a: one sort key reproduces every tile list (2026-10-30)
+
+Base: poc/modern-client 3681f25b3. Branch `poc/ecs-t6a-tile-order`. No behaviour change. Logs and tools: session scratchpad `t6a\`.
+
+**Result: proved for everything the runs reached, 0 out of order.** The key is (stored `PriorityZ`, rank, rank 2 ? +seq : −seq), with rank 0 land, rank 1 a `Multi` that `AddGameObject` inserts with `state` 1, rank 2 everything else. The real rules, read from `Chunk.AddGameObject` rather than the plan's summary:
+- **Priority** is computed once, at insertion, and stored in `PriorityZ`. Nothing changes it while the object is in a list (only `Destroy` and `ResetForReuse` zero it, both after unlinking).
+  - Land: Z−2, or AverageZ−2 when stretched. Mobile: Z+1. Corpse item: Z+1. GameEffect: Z+2. Multi with `CHMOF_GENERIC_INTERNAL`: Z−1, no tiledata terms.
+  - Everything else (statics, other items, multi items with `MultiGraphic`'s tiledata, other multis, preview multis after a +1): Z, −1 if Background, +1 if Height ≠ 0, +1 if MultiMovable.
+- **Tie placement:** the scan from the head stops at the first object with a higher priority, or at an equal one when the new object is land (`state` 0: before every equal), or at a non-land equal when it is a `state` 1 multi. Generic-internal is tested first, so generic-internal plus preview is still state 1; any other non-preview multi is state 1. Everything else, preview multis included (`state` 2), goes after all equals.
+- **Every placement** goes through `AddGameObject` (`AddToTile`, `SetInWorldTile`, `Map.Park`'s deferred add, chunk loads), which first unlinks the object (`RemoveFromTile`), so a move or any re-add restamps it. `RemoveGameObject` is never called; removal is `RemoveFromTile`/`Destroy`, which only unlink.
+- **Graphic changes** re-insert only where the code calls `SetInWorldTile`/`AddToTile` (0x1A world items do; season changes and `Graphic =` sites without a re-add do not). The stored priority then stays, and the key uses it, never the current graphic.
+- So by induction each list is sorted by the key. The new `TileOrderTests` check the priorities, each rule, re-inserts, removal, a graphic change without a re-insert, and 3,000 random operations over land, statics, plain, preview and generic-internal multis, comparing the list with its stable sort after every step.
+
+**What changed.**
+- `GameObject.TileSeq` (uint), stamped in `Chunk.AddGameObject` from the global `TileOrder.NextSeq` (pre-increment, so 0 is never a stamp). Reset in `GameObject.ResetForReuse`; the recycler's reflection test enforces it. `MapObjectRecycler.cs` itself is untouched.
+- `Game/Map/TileOrder.cs`: `Rank`, `Key`, `CountOutOfOrder` and the checker.
+  - `CUO_TILE_ORDER_CHECK=1` (every 30 frames), `every`, or `N`. From `GameScene.Update`, every tile of every loaded chunk (a superset of the tiles either walk visits) must be non-decreasing in key, which is exactly "equals its stable sort".
+  - Logs `[tile-order] tiles N, objects M, out of order K (tiles T), checks C; land, multi, other (preview multis)` every 5 s, and the first 25 offending tiles with each object's kind, rank, priority, Z, sequence and graphic.
+- Test seam: `Chunk.StaticDataForTests` (null in the client), read instead of the loaded tiledata by `AddGameObject`'s default branch.
+
+**Runs** (JIT Release, kbatman3, `CUO_TILE_ORDER_CHECK=1 CUO_RECYCLE_CHECK=1`; drivers with `-ecscheck 120`, Gpu drivers with `CUO_ECS_PARITY=1`):
+
+| Run | Renderer | Tiles checked | Objects checked | Out of order | Recycle check |
+|---|---|---|---|---|---|
+| Plan: Britain, `pickscan:8x6`, bank, `pickscan:8x6`, house spot at zoom 1 and 2.5, `travel` (real teleports), `ltravel`, `glide`, `lswalk` | Gpu | 72.7M | 136.0M | 0 | 195,752 retired, all 0 |
+| Same plan without pickscan | Legacy | 48.6M | 90.6M | 0 | 198,824 retired, all 0 |
+| `ls_parity` (large scene) | Gpu / Legacy | 1.07M / 1.09M | 12.8M / 13.5M | 0 / 0 | 0 / 0 |
+| `w5push` | Gpu / Legacy | 10.7M / 11.4M | 11.5M / 11.4M | 0 / 0 | 0 / 0 |
+| `w5items` | Gpu / Legacy | 4.30M / 4.27M | 4.32M / 4.28M | 0 / 0 | 0 / 0 |
+| `corpses` (corpses, HealerCamp multi) | Gpu / Legacy | 4.57M / 4.20M | 4.90M / 5.18M | 0 / 0 | 0 / 0 |
+| Rank counts, `=every`: house spot, Britain, bank, glide | Gpu | 931M | 1.72G (land 931M, other 794M, multi 0) | 0 | 0 |
+| Rank counts, `=every`: `corpses` with the camp | Legacy | 200M | 309M (land 200M, multi 64.5M, other 44.3M) | 0 | 0 |
+
+- `pickscan:8x6` at Britain and the bank: 48 same, 0 different each. `-ecscheck`: 0 mismatches in every run.
+- **Gpu parity** showed 29–75 mobile mismatches per driver run, all at the login frame or a spawn (the capture has fewer layers than the ECS, e.g. 3 vs 5, plus FrameInfo). **Pre-existing:** base 3681f25b3 in the same `w5items` run had 7 of the same kind (the player at login, a spawned NPC). Not tile order. The 40 and 54 came from two runs that logged in inside the large scene (the previous run had left the character there).
+- **Not exercised live:** custom-house components (generic-internal multis), house-customization preview multis (`GameCursor`) and boats. The "house" spot (1427 1691) had no multi in range (multi count 0), so the multi rank was exercised only by the HealerCamp (64.5M multi-object checks). The other kinds are covered by the unit tests only.
+
+**Exceptions: none observed. Hazards for T6b, from the code:**
+1. **Compute the key at insertion, not from current fields.**
+   - `PriorityZ` comes from the graphic, Z and flags at that moment. The graphic (seasons, some `Graphic =` sites) and multi state can change later without a re-insert.
+   - The checker recomputes the rank from the current `Multi.State`. That is only safe because no code sets or clears `CHMOF_PREVIEW`/`CHMOF_GENERIC_INTERNAL` on a placed multi between placements: `House.Generate(removePreview)` clears preview only after `SetInWorldTile`, and only on house components, which never carry it; the floor-plane multis get `GENERIC_INTERNAL` after `Add`, which is rank 1 either way.
+   - T6b should store (priority, rank, seq) per entry.
+2. **A stale head pointer.**
+   - `RemoveFromTile` does not update `Chunk.Tiles[x, y]`, which stays the first object ever placed on the empty tile. The walk finds the head by following `TPrevious` from it.
+   - Harmless while that object is the land, which never leaves. On a tile with no land (a block without map data), the first dynamic object leaving would orphan the rest of the list, and re-adding it takes the `o == obj` branch, which follows the `LinkedObject` container links (`Previous`/`Next`), not the tile links.
+   - Not reached in any run. T6b's own storage should not reproduce it.
+3. **Seq is a 32-bit counter.** About 250k stamps in a 4-minute travel session, so a wrap would take weeks. T6b can use 64 bits.
+4. **Insertion order is the only tie-break between equal non-land, non-multi objects** (items, mobiles, effects, statics). T6b must take its stamp at the same point in update order as `AddGameObject` (E4's observation).
+
+**Cost when unset.** NativeAOT, paired, checker unset, `world_prepare` in ms, 2 windows per spot. Series 1 (base/new/new/base) on 19d295c5a; series 2 (new/base/base/new) on 1b3518b55, which adds only checker code. The machine was noisy: base alone spread up to 25% between sessions.
+
+| Spot | base (4 sessions) | new (4 sessions) |
+|---|---|---|
+| Gpu Britain | 0.071 0.064 0.069 0.066 | 0.063 0.068 0.068 0.073 |
+| Gpu bank | 0.073 0.069 0.089 0.071 | 0.067 0.073 0.072 0.079 |
+| Gpu zoom 2.5 | 0.252 0.249 0.321 0.254 | 0.235 0.241 0.231 0.288 |
+| Gpu large scene | 0.934 1.052 0.967 1.146 | 1.120 1.001 0.989 1.147 |
+| Legacy Britain | 0.189 0.207 0.218 0.309 | 0.207 0.209 0.208 0.292 |
+| Legacy bank | 0.155 0.143 0.164 0.200 | 0.143 0.146 0.141 0.153 |
+| Legacy zoom 2.5 | 1.365 1.300 1.447 1.603 | 1.392 1.423 1.306 1.344 |
+| Legacy large scene | 1.283 1.230 1.362 1.398 | 1.224 1.219 1.200 1.197 |
+
+Equal within noise. With the variable unset, the change costs one static `bool` test per frame and one counter increment per placement.
+
+**Tests:** 599 pass in both `CuoDevTools` variants (10 new in `TileOrderTests`), and `-p:CuoDevTools=false` builds. `ChunkLoadingTests.Prefetched_Regions_...` failed once on the first run under load and passed on the rerun, as in E4 and E10.
