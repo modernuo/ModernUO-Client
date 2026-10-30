@@ -98,14 +98,18 @@ namespace ClassicUO.Network
 
         private void SetupSocket(SocketWrapperType wrapperType)
         {
-            _socket?.Dispose();
-
-            _socket = wrapperType switch
+            AttachSocket(wrapperType switch
             {
                 SocketWrapperType.TcpSocket => new TcpSocketWrapper(),
                 SocketWrapperType.WebSocket => new WebSocketWrapper(),
                 _ => throw new ArgumentOutOfRangeException(nameof(wrapperType), wrapperType, null)
-            };
+            });
+        }
+
+        internal void AttachSocket(SocketWrapper socket)
+        {
+            _socket?.Dispose();
+            _socket = socket;
 
             _socket.OnConnected += (o, e) =>
             {
@@ -155,11 +159,85 @@ namespace ClassicUO.Network
         }
 
 
-        public ArraySegment<byte> CollectAvailableData()
+        /// <summary>Raw bytes read per slice. Huffman output for one slice stays under the 64 KB decompression buffer.</summary>
+        public const int SliceSize = 4096;
+
+        /// <summary>Default most raw bytes drained in one frame (about 7.7 MB/s at 60 Hz).</summary>
+        public const int DefaultFrameByteCap = 128 * 1024;
+
+        /// <summary>Default most packets dispatched in one frame; checked between slices.</summary>
+        public const int DefaultFramePacketCap = 1500;
+
+        /// <summary>Also read the socket's available byte count in each drain (CUO_NET_TRACE; FrameStats does it anyway).</summary>
+        public static bool TrackAvailable { get; set; }
+
+        /// <summary>Bytes the socket had ready (the kernel receive queue) when the drain started (FrameStats runs only).</summary>
+        public int LastDrainAvailable { get; private set; }
+
+        /// <summary>Raw bytes read by the last <see cref="Drain"/>.</summary>
+        public int LastDrainBytes { get; private set; }
+
+        /// <summary>Slices read by the last <see cref="Drain"/>.</summary>
+        public int LastDrainSlices { get; private set; }
+
+        /// <summary>
+        /// Reads what the socket has ready in <see cref="SliceSize"/> slices, in order, handing each decoded slice to
+        /// <paramref name="sink"/> (which parses it and returns the packets it dispatched). Stops when the socket is empty, a
+        /// close or error was raised, or the byte or packet cap is reached (the rest stays queued for the next frame, so a
+        /// burst cannot stall one). The caps are checked between slices, so a frame can go over by up to one slice.
+        /// </summary>
+        public int Drain(Func<ArraySegment<byte>, int> sink, int maxBytes = DefaultFrameByteCap, int maxPackets = DefaultFramePacketCap)
         {
+            LastDrainAvailable = 0;
+            LastDrainBytes = 0;
+            LastDrainSlices = 0;
+
             if (_socket == null)
             {
-                return ArraySegment<byte>.Empty;
+                return 0;
+            }
+
+            if (TrackAvailable || FrameStats.On)
+            {
+                LastDrainAvailable = _socket.Available;
+            }
+
+            var packets = 0;
+
+            while (LastDrainBytes < maxBytes && packets < maxPackets)
+            {
+                if (!ReadSlice(out var raw, out var data))
+                {
+                    break;
+                }
+
+                LastDrainBytes += raw;
+                LastDrainSlices++;
+
+                if (data.Count > 0)
+                {
+                    packets += sink(data);
+                }
+            }
+
+            return packets;
+        }
+
+        /// <summary>One slice, for callers that do not drain (kept for compatibility). Empty when nothing is ready.</summary>
+        public ArraySegment<byte> CollectAvailableData()
+        {
+            return ReadSlice(out _, out var data) ? data : ArraySegment<byte>.Empty;
+        }
+
+        // False when nothing was read (empty socket, close, error); true with the decoded slice otherwise (possibly empty).
+        private bool ReadSlice(out int rawBytes, out ArraySegment<byte> data)
+        {
+            rawBytes = 0;
+            data = ArraySegment<byte>.Empty;
+
+            if (_socket == null)
+            {
+                return false;
             }
 
             try
@@ -168,9 +246,10 @@ namespace ClassicUO.Network
 
                 if (size <= 0)
                 {
-                    return ArraySegment<byte>.Empty;
+                    return false;
                 }
 
+                rawBytes = size;
                 Statistics.TotalBytesReceived += (uint)size;
 
                 var segment = new ArraySegment<byte>(_compressedBuffer, 0, size);
@@ -178,7 +257,9 @@ namespace ClassicUO.Network
 
                 ProcessEncryption(span);
 
-                return DecompressBuffer(segment);
+                data = DecompressBuffer(segment);
+
+                return true;
             }
             catch (SocketException ex)
             {
@@ -208,7 +289,7 @@ namespace ClassicUO.Network
                 }
             }
 
-            return ArraySegment<byte>.Empty;
+            return false;
         }
 
         public void Flush()
