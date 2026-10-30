@@ -89,6 +89,10 @@ Newest at the bottom. Each item says what I did meanwhile.
 - **Login warm-up GCs** (`poc/login-warmup-gc`): the 2–4 collections in the first ~40 s after login; measure first, then pre-fill pools, pre-size buffers or collect inside a settle hold.
 - **Ground-item and multi art on workers** (`poc/item-art-worker`): the first-sight decode still on the main thread (about 2.6–3.0 ms per teleport), moved onto the teleport art worker.
 - **ECS backlog E10–E12** (Sonnet, each audited by Codex before merging): E10 the animation clock into the ECS plus an owned ordered mobile list (`bg/ecs-e10-clock`); E11 the ECS test driver behind devtools and the double mirror sync (`bg/ecs-e11-hygiene`); E12 a same-frame item checker (`bg/ecs-e12-checker`).
+- **L1 network drain** (`poc/net-drain`, Sonnet): notice a server close while idle; read more than 4 KB per frame.
+- **L7 pack page handles** (`poc/pack-handles`, Sonnet): stop opening a page file for every chunk decode (measure first).
+- **Gumps into the pack** (`poc/pack-gumps`, Opus): the first remaining content type; designed as the pattern for fonts, cliloc and the others.
+- **ECS transition plan** (read-only, Opus): phases to make the ECS the owner of world state, where Legacy is affected, your questions, and the first tasks.
 - All agents share a `bench.lock`, so client runs, builds and timing series never overlap.
 
 ## Things you saw tonight, explained
