@@ -32,6 +32,11 @@ namespace ClassicUO.Game
 
         public World()
         {
+            if (WorldEcs.MobileUpdateCheck)
+            {
+                Mobiles.EnableShadow();
+            }
+
             WMapManager = new WorldMapEntityManager(this);
             CorpseManager = new CorpseManager(this);
             Party = new PartyManager(this);
@@ -110,7 +115,7 @@ namespace ClassicUO.Game
 
         public Dictionary<uint, Item> Items { get; } = new Dictionary<uint, Item>();
 
-        public Dictionary<uint, Mobile> Mobiles { get; } = new Dictionary<uint, Mobile>();
+        public MobileTable Mobiles { get; } = new MobileTable();
 
         public Map.Map Map { get; private set; }
 
@@ -319,6 +324,13 @@ namespace ClassicUO.Game
                     _timeToDelete = Time.Ticks + 50;
                 }
 
+                if (WorldEcs.MobileUpdateCheck)
+                {
+                    // E10: the table against its shadow dictionary every frame, whichever mobile loop runs
+                    WorldEcs.TableChecks++;
+                    WorldEcs.TableDiffs += Mobiles.VerifyAgainstShadow();
+                }
+
                 FrameStats.Begin(FramePhase.WorldMobiles);
 
                 // W5: AddOrUpdate's own early-outs (no recent party/guild packet, the world map closed), asked once per frame;
@@ -432,37 +444,16 @@ namespace ClassicUO.Game
         }
 
         private readonly List<Mobile> _dueObjects = new List<Mobile>();
-        private int _ordinalVersion = -1;
         private static readonly System.Comparison<Mobile> s_byOrdinal = (a, b) => a.Ordinal.CompareTo(b.Ordinal);
 
-        // Dictionary<,>'s private mutation counter: bumped by every insert (add, overwrite, resize), and an insert is the only
-        // thing that can change the relative order of entries (a remove leaves a hole; the next add reuses the freed slot)
-        [System.Runtime.CompilerServices.UnsafeAccessor(System.Runtime.CompilerServices.UnsafeAccessorKind.Field, Name = "_version")]
-        private static extern ref int DictionaryVersion(Dictionary<uint, Mobile> dictionary);
-
         /// <summary>
-        /// E4: sorts <paramref name="list"/> into the order <c>Mobiles.Values</c> enumerates, which is the order the legacy loop
-        /// updated mobiles in and which tile lists, picking ties and footstep sounds depend on. Every mobile gets an ordinal
-        /// (its position in the enumeration); the ordinals are rebuilt (one walk) only when the dictionary has had an insert
-        /// since, so a quiet scene never walks it. The checker proves the result against a fresh enumeration every frame.
+        /// E4/E10: sorts <paramref name="list"/> into the order <c>Mobiles.Values</c> enumerates, which is the order the legacy
+        /// loop updated mobiles in and which tile lists, picking ties and footstep sounds depend on. <see cref="MobileTable"/>
+        /// keeps each mobile's slot in <see cref="Mobile.Ordinal"/> on add and remove, so this is a plain sort; every mobile in
+        /// <paramref name="list"/> must be in <c>Mobiles</c> (the caller fetched it from there this frame).
         /// </summary>
         internal void SortInMobilesOrder(List<Mobile> list)
         {
-            int version = DictionaryVersion(Mobiles);
-
-            if (version != _ordinalVersion)
-            {
-                int i = 0;
-
-                foreach (Mobile m in Mobiles.Values)
-                {
-                    m.Ordinal = i++;
-                }
-
-                _ordinalVersion = version;
-                WorldEcs.OrdinalRebuilds++;
-            }
-
             list.Sort(s_byOrdinal);
         }
 
@@ -1269,7 +1260,12 @@ namespace ClassicUO.Game
             {
                 List<Mobile> mobiles = _scanMobiles;
                 mobiles.Clear();
-                mobiles.AddRange(Mobiles.Values);
+                mobiles.Capacity = System.Math.Max(mobiles.Capacity, Mobiles.Count);
+
+                foreach (Mobile m in Mobiles.Values)
+                {
+                    mobiles.Add(m);
+                }
 
                 if (reverse)
                 {
