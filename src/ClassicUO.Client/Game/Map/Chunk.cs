@@ -196,6 +196,7 @@ namespace ClassicUO.Game.Map
             obj.RemoveFromTile();
             OnTileContentChanged(obj);
             obj.TileChunk = this;
+            obj.TileCell = (byte)((x << 3) | y);
 
             short priorityZ = obj.Z;
             sbyte state = -1;
@@ -314,23 +315,10 @@ namespace ClassicUO.Game.Map
             }
 
 
+            // Tiles[x, y] is never obj here: RemoveFromTile above moved the anchor off it (ReleaseAnchor). The old code had an
+            // "o == obj" branch for a stale anchor that followed the LinkedObject container links (Previous/Next), which on a
+            // landless tile could put obj into another tile's list (T6a audit).
             GameObject o = Tiles[x, y];
-
-            if (o == obj)
-            {
-                if (o.Previous != null)
-                {
-                    o = (GameObject) o.Previous;
-                }
-                else if (o.Next != null)
-                {
-                    o = (GameObject) o.Next;
-                }
-                else
-                {
-                    return;
-                }
-            }
 
             while (o?.TPrevious != null)
             {
@@ -373,39 +361,20 @@ namespace ClassicUO.Game.Map
             }
         }
 
-        public void RemoveGameObject(GameObject obj, int x, int y)
+        /// <summary>
+        /// RemoveFromTile only (the one place objects leave a tile list): when <paramref name="obj"/> is the anchor of its
+        /// cell (Tiles[x, y], the node the walk starts from), a surviving neighbour takes its place, or null when it was
+        /// alone. Normally the anchor is the land, which never leaves; on a landless tile (a block without map data) the
+        /// first object placed used to stay the anchor after leaving, which hid the rest of the list.
+        /// </summary>
+        public void ReleaseAnchor(GameObject obj)
         {
-            Mesh.MarkDirtyIfNeeded(obj);
-            OnTileContentChanged(obj);
+            ref GameObject anchor = ref Tiles[obj.TileCell >> 3, obj.TileCell & 7];
 
-            if (obj != null && obj.TileChunk == this)
+            if (ReferenceEquals(anchor, obj))
             {
-                obj.TileChunk = null;
+                anchor = obj.TPrevious ?? obj.TNext;
             }
-            ref GameObject firstNode = ref Tiles[x, y];
-
-            if (firstNode == null || obj == null)
-            {
-                return;
-            }
-
-            if (firstNode == obj)
-            {
-                firstNode = obj.TNext;
-            }
-
-            if (obj.TNext != null)
-            {
-                obj.TNext.TPrevious = obj.TPrevious;
-            }
-
-            if (obj.TPrevious != null)
-            {
-                obj.TPrevious.TNext = obj.TNext;
-            }
-
-            obj.TPrevious = null;
-            obj.TNext = null;
         }
 
 
