@@ -37,6 +37,7 @@ namespace ClassicUO.Renderer.Arts
         public static readonly bool AsyncFirstSight = Environment.GetEnvironmentVariable("CUO_ART_SYNC") != "1";
 
         private readonly FirstSightDecoder _decoder;
+        private static readonly bool DiagSyncLog = Environment.GetEnvironmentVariable("CUO_ART_SYNC_LOG") == "1";
 
         /// <summary>Main-thread first-sight decodes (a lookup that had to decode) and their time; FrameStats resets them.</summary>
         public static int FrameSyncLoads;
@@ -180,6 +181,13 @@ namespace ClassicUO.Renderer.Arts
             {
                 long syncStart = Stopwatch.GetTimestamp();
                 FrameSyncLoads++;
+                if (DiagSyncLog)
+                {
+                    var st = new StackTrace(1, false);
+                    var sb = new System.Text.StringBuilder();
+                    for (int i = 0; i < Math.Min(6, st.FrameCount); i++) { var m = st.GetFrame(i)?.GetMethod(); sb.Append(m?.DeclaringType?.Name).Append('.').Append(m?.Name).Append(" < "); }
+                    Log.Info($"[artsync] idx 0x{idx:X} {(idx >= 0x4000 ? "art 0x" + (idx - 0x4000).ToString("X") : "land")} {sb}");
+                }
 
                 // the untrimmed image only lives until the atlas upload: decode into a pooled buffer
                 var buffer = ArrayPool<uint>.Shared.Rent(Math.Max(1, _artLoader.PixelCount(idx)));

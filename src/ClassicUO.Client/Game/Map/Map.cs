@@ -407,7 +407,16 @@ namespace ClassicUO.Game.Map
                 }
                 else
                 {
-                    ready = arts.RequestArt(SeasonManager.GetSeasonGraphic(season, block.Statics[pos - block.Land.Length].Graphic));
+                    ushort graphic = SeasonManager.GetSeasonGraphic(season, block.Statics[pos - block.Land.Length].Graphic);
+
+                    // an animated static draws graphic + the frame offset AnimatedStaticsManager advances: wait for the
+                    // frame shown now, and request the rest of its frames in the full scan
+                    if (full)
+                    {
+                        FirstSightArt.RequestFrames(graphic);
+                    }
+
+                    ready = arts.RequestArt(graphic) & FirstSightArt.RequestCurrentFrame(graphic);
                 }
 
                 if (!ready && firstMissing < 0)
@@ -476,7 +485,8 @@ namespace ClassicUO.Game.Map
                                 break;
 
                             case Static st:
-                                ready &= arts.RequestArt(st.Graphic);
+                                FirstSightArt.RequestFrames(st.Graphic);
+                                ready &= arts.RequestArt(st.Graphic) & FirstSightArt.RequestCurrentFrame(st.Graphic);
 
                                 break;
                         }
