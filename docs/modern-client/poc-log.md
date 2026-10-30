@@ -2142,3 +2142,70 @@ Off equals or beats base inside the noise (a slot-array walk instead of the dict
 - **P3, checker:** the shadow comparison now runs every frame under `CUO_MOBILE_UPDATE_CHECK`, whichever mobile loop runs (E4 off included), counts `table checks`, and compares key-to-value mappings and `OwnerTable` as well as order and ordinals.
 - **P3, tests (586 pass, 4 new):** ownership refusals (aliases, two tables, the audit sequence, release on remove/replace/Clear); Clear and remove-all then repopulate past the first array size against a dictionary; the full death re-key with `Serial` updated (also in the random model) and a re-key onto an existing key; enumeration with removal of an unvisited entry, overwrite, `Clear` and insert invalidation (and a refused duplicate not invalidating). The E4 random order test now takes its expected order from an independent `Dictionary` oracle fed the same operations.
 - **Checks on the fix** (kbatman3, TieredCompilation=0): large scene `ls_parity` with `CUO_MOBILE_UPDATE_CHECK=1`, **E4 off**: table checks 22,375, 0 differences; parity 10.4M mobile comparisons 0 mismatches; `-ecscheck` 0. `w5push` with E4 on and all checkers: table checks 241,343, 0 differences; clocks 3.07M 0; skipped 2.84M 0; order 238k 0; input check 1.57M and 1.45M seat tests 0; parity 1.6M 0. Default and `-p:CuoDevTools=false` builds both build.
+
+## Login warm-up collections: pools filled and one collection inside the login hold (2026-10-30)
+
+Branch `poc/login-warmup-gc` (warmgc agent, kbatman3), from poc/modern-client 3685c30f0; final numbers on 80ccb1a24 (base: branch `poc/login-warmup-gc-base`, the same tip plus the measurement commits only). Follows "Chunk loads without allocation", whose remaining collections were all login warm-up. Scripts, logs and traces: session scratchpad `warmgc\`.
+
+**New measurement: the session GC timeline.** The `[gc]` lines only cover plan windows, which start about 10 s after login. With `CUO_FRAMESTATS=1`, FrameStats now also logs from the first in-game frame:
+- `[gcs] +12.34s #n genN ...`: every collection, with seconds since login, pause, promoted MB and the frame's time, marked `login` (before the first presented world frame), `held` (WorldSettleGate held the world that frame) or `play`;
+- `[gcs] slow frame`: every frame over 8 ms, marked the same way. The frame after a window report is logged as such and not counted: the report itself takes 20–30 ms;
+- `[gcs] summary +40s/+60s`: counts and pauses, play against held;
+- `[gcs] pools`: chunks, lands and statics allocated and pooled, and the statics mesh capacities.
+
+**What allocates after login** (base; dotnet-trace allocation ticks on a JIT build plus the pool lines):
+- In the first 40 s, the client allocated about 155 MB. 125 MB of it is large-object-heap `byte[]`: region decompression in `MapLoader.LoadRegion` and Uo.Render `Region.Parse`, and pack page buffers. Large objects don't fill gen0.
+- About 30 MB of small objects fill gen0 twice:
+  - the Legacy `MeshLayer` arrays of new chunks (5.8 MB) and their growth (5.2 MB);
+  - new `Land` and `Static` objects (4.7 MB);
+  - chunks, tile arrays, list nodes and the recycler queues growing (the queues reach the large object heap);
+  - Uo.Render bake arrays, misses in the art and texmap decode buffer pools, strings, and the server's items.
+- Over the session: 225 chunks by the end of the login, 289 in all (none after 40 s), 19,584 lands and 16,387 statics. Statics mesh capacity after 2 minutes: 64 sprites: 15 chunks; 128: 128; 256: 143; 512: 3.
+- Collections: in base, every one of the first 40 s is a gen1 that promotes 21–28 MB: one at login, two at about +19 s and a compacting one at +33–38 s (4–12 ms each). The warm-up is promoted again by the next gen1, which can fall anywhere: at +79 s in `glide`, compacting, 8.3 ms, a 10.0 ms frame (Pb0). That is the glide hitch the chunk-alloc agent saw.
+
+**Fix: `MapWarmup`** (Game/Map/MapWarmup.cs).
+- When World creates its first map (login, before the first world frame), it fills:
+  - the chunk pool to 300 chunks, with the statics mesh layer pre-sized to 256 sprites (48 KB, below the large object heap);
+  - the recycler to 19,200 lands and 16,800 statics (56 per chunk, the measured average), with both queues sized for a full pool.
+- The sizes follow the chunk cache limit, not one viewport. The pool and the recycler already stop at `PREDICTABLE_CHUNKS` (300) and 64 lands per chunk, and the prefill fills them to those caps.
+  - A 4K or far-zoomed-out view needs more chunks than the caps, before and after this change: the first 300 come from the prefill and the rest allocate as before. Raising the caps is a separate decision.
+  - A small view (800×600) uses perhaps a quarter of them, and the rest stays in the pools.
+- **The 32 MB up front is a deliberate trade:** prefill takes 22–31 ms and 32 MB at login, in exchange for a first minute that doesn't allocate while playing.
+- Prefilled objects are new objects in the retired state (destroyed, `InRecycler`), stamped one quarantine ago so they can be handed out at once. They were never in a tile list, so nothing can hold them, and `Create` resets them as it resets any retired object.
+- Then one deliberate collection, in a frame where the world isn't visible: two induced gen1s, so everything login allocated that's still alive lands in gen2 without marking all of gen2.
+  - Gpu world: the last held frame of the login's settle hold, or a held frame 1.2 s in, before the hold's 1.5 s timeout.
+  - Legacy: the first world frame, which is the login transition.
+  - Cost: 4–12 ms (`[warmup] collected ...`).
+- **Switches:** `CUO_WARMUP=0` restores the old behaviour; `CUO_WARMUP_GC=0` keeps the prefill and skips the collection; `CUO_WARMUP_GC=2` makes it a full compacting gen2; `CUO_WARMUP_CHUNKS=n` sets the chunk count.
+- **Not done:** a collection in later teleport holds. .NET has no API for how full gen0 is, so there is no honest trigger. `DOTNET_GCgen0size` is ignored by NativeAOT: the gen0 budget stayed 15 MB (one run).
+
+**Measurements.** NativeAOT, `DOTNET_TieredCompilation=0`, Gpu world, 1920×1080, plan `travel;ltravel;glide`, 4 windows each.
+- Three alternated pairs (Pb0/Pn0, Pn1/Pb1, Pb2/Pn2), times from the first in-game frame.
+- The machine was noisy: other agents' work caused 0.5 s stalls about every 2 s in the first four runs, and those runs' logins were slower. Frame counts over 8 ms are dominated by those stalls, so the collections are the measure.
+
+| | Base Pb0 / Pb1 / Pb2 | New Pn0 / Pn1 / Pn2 |
+|---|---|---|
+| natural collections, 0–60 s after login | 7, 4, 4 | 4, 1, 0 (plus the 2 induced: 7.3, 11.6, 7.9 ms) |
+| of these in play frames (after the 1st s) | 1 (gen0 8.5 ms, +5.6 s), 0, 0 | 1 (gen0 5.3 ms, +5.4 s), 0, 0 |
+| promoted per collection after login | 21–28 MB (gen1) | 2–11 MB (gen0) |
+| 60–100 s | gen1 in `glide` 8.3 ms (frame 10.0), gen1 3.1 ms, none | none, none, gen0 3.9 ms (6 MB) |
+| chunks / lands allocated after login | 289 / 19,584 | 0 / 384 |
+
+- **Pb0 and Pn0 ran in the noisiest period.** Each has 2–3 collections in login frames before the hold ended, and one gen0 at about +5.5 s while idle after login. On the quiet runs, new has 0–1 natural collections in the first minute instead of 4.
+- **The one collection new still has** comes at about +31–36 s in `travel` (Pn1, and two earlier single runs). It is a gen0 of 3.5–5 ms that promotes about 10 MB: buffers rented from the art and texmap decode pools on first sight, Uo.Render bake arrays and the server's objects. Whether it lands in a held or a play frame is chance; it stays under 8 ms.
+- **Long session** (13 minutes, 7× `travel`, `glide`, `ltravel`, `bwalk`; new only):
+  - 4 natural collections after login (3 held, 1 play at 2.6 ms; max pause 4.6 ms; 13.6 ms of pauses in all), plus the 2 induced at login (7.6 ms). The chunk-alloc agent's re-run on its tip had 7 collections, 4 of them login warm-up.
+  - Chunks allocated after login: 0. Statics mesh capacities at the end: 256: 278 chunks, 512: 22.
+  - Private bytes: 2,147 MB at 1 min, 2,180 MB at 3 min, 2,186–2,192 MB from 5 min to the end (flat). That is about 35–40 MB above the chunk-alloc agent's 2,150 MB, on a different tip; the prefill is 32 MB of it.
+  - 23 `bwalk` legs with 0 denies, 178 settle episodes with 0 timeouts, 0 exceptions. The machine was noisy: 49 play frames over 100 ms, none of them with a collection.
+
+**Verification** (new binary on 80ccb1a24):
+
+| Check | Result |
+|---|---|
+| `CUO_RECYCLE_CHECK=reuse` with `CUO_GPU_SKIP_CHECK=1`, `CUO_PREP_CHECK=1`, `CUO_GPU_ITEM_CHECK=1` (`travel`, `ltravel`, `glide`, Britain, the bank, zoom 2.5) | 271k retired, 300k reused (the prefilled ones included), 0 uses after retire, 4,216 sweeps (77M objects), 0 bad. Prep check 0 wrong; item check 237 checks, 0 with differences; skip check reasons only (light 6) |
+| Legacy (`-worldrenderer legacy`, `travel`, `glide`) with `CUO_RECYCLE_CHECK=reuse` | 102k reused, 0 uses after retire, 0 bad sweeps; the collection ran in the first Legacy world frame (7.3 ms) |
+| Settle | 0 timeouts in every run |
+| Unit tests | 594 pass, default and `-p:CuoDevTools=false`. New tests: prefilled objects are retired and handed out at once, before later retirees; the prefill is capped and only tops up; a disabled recycler isn't prefilled; a prefilled object reset for reuse equals a new one (field check); prefilled chunks come from the pool with a pre-sized statics mesh |
+
+**Not done:** no 4K run; no Legacy timing pair (the Legacy run is the reuse check only); not the owner's FPS test.
