@@ -211,7 +211,11 @@ namespace ClassicUO.Game.GameObjects
             X = x;
             Y = y;
             Z = z;
-            UpdateScreenPosition();
+
+            // E11: no mirror Sync here: AddToTile below always ends in one (parked, chunkless or placed), and nothing between
+            // the two reads the mirror, so the first Sync only wrote the same values the second one does
+            IsPositionChanged = true;
+            OnPositionChanged();
             AddToTile(x, y);
         }
 
