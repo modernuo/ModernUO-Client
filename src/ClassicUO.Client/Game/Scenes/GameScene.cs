@@ -575,6 +575,12 @@ namespace ClassicUO.Game.Scenes
                 return;
             }
 
+            // T6a: the tile lists exactly as this frame's walk (both renderers) is about to read them
+            if (Map.TileOrder.Check)
+            {
+                Map.TileOrder.CheckFrame(_world);
+            }
+
             long setupStart = FrameStats.Stamp();
             // while the world settle gate holds the last frame nobody sees the fades: alphas jump to their targets, so the
             // first frame after the hold doesn't show statics of freshly loaded chunks fading in (they start at 0)
@@ -954,11 +960,6 @@ namespace ClassicUO.Game.Scenes
             if (Map.MapObjectRecycler.Check)
             {
                 Map.MapObjectRecycler.CheckFrame(_world, _prevMeshHighlight);
-            }
-
-            if (Map.TileOrder.Check)
-            {
-                Map.TileOrder.CheckFrame(_world);
             }
 
             if (_time_cleanup < Time.Ticks)

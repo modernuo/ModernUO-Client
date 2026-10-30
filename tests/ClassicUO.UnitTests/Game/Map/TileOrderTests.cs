@@ -30,11 +30,14 @@ namespace ClassicUO.UnitTests.Game.Map
             data[MultiMovable].Flags = TileFlag.MultiMovable;
             data[TallBackground].Height = 3;
             data[TallBackground].Flags = TileFlag.Background;
-            Chunk.StaticDataForTests = data;
+            _savedStaticData = Chunk.StaticTileData;
+            Chunk.StaticTileData = data;
             _chunk = new Chunk(_world);
         }
 
-        public void Dispose() => Chunk.StaticDataForTests = null;
+        private readonly StaticTiles[] _savedStaticData;
+
+        public void Dispose() => Chunk.StaticTileData = _savedStaticData;
 
         private static Land NewLand(World world, sbyte z)
         {
@@ -75,8 +78,9 @@ namespace ClassicUO.UnitTests.Game.Map
             List<GameObject> actual = List(x, y);
             List<GameObject> sorted = actual.OrderBy(TileOrder.Key).ToList(); // OrderBy is stable
             Assert.Equal(sorted, actual);
-            Assert.Equal(0, TileOrder.CountOutOfOrder(_chunk.GetHeadObject(x, y), out int n));
-            Assert.Equal(actual.Count, n);
+            TileOrder.TileCheck r = TileOrder.CheckTile(_chunk, x, y);
+            Assert.False(r.Failed, $"out of order {r.OutOfOrder}, cycle {r.Cycle}, broken {r.BrokenLinks}, foreign {r.Foreign}");
+            Assert.Equal(actual.Count, r.Objects);
         }
 
         [Fact]
@@ -185,7 +189,7 @@ namespace ClassicUO.UnitTests.Game.Map
             Add(a); Add(b); Add(m1); Add(m2);
             AssertOrder(land, m2, m1, a, b);
 
-            uint before = a.TileSeq;
+            ulong before = a.TileSeq;
             Add(a); // a move onto the same tile (AddToTile -> RemoveFromTile + AddGameObject)
             Assert.True(a.TileSeq > before);
             AssertOrder(land, m2, m1, b, a);
@@ -225,7 +229,7 @@ namespace ClassicUO.UnitTests.Game.Map
             Add(land);
             Static a = NewStatic(Plain, 5), b = NewStatic(Plain, 5), c = NewStatic(Plain, 5);
             Add(a); Add(b); Add(c);
-            uint seqC = c.TileSeq;
+            ulong seqC = c.TileSeq;
             b.RemoveFromTile();
             AssertOrder(land, a, c);
             Assert.Equal(seqC, c.TileSeq);
@@ -238,12 +242,134 @@ namespace ClassicUO.UnitTests.Game.Map
             Add(land);
             Static a = NewStatic(Plain, 5), b = NewStatic(Plain, 5);
             Add(a); Add(b);
-            Assert.Equal(0, TileOrder.CountOutOfOrder(_chunk.GetHeadObject(0, 0), out _));
+            Assert.False(TileOrder.CheckTile(_chunk, 0, 0).Failed);
 
             // swap a and b by hand: same priority, but a is older, so it must come first
             land.TNext = b; b.TPrevious = land; b.TNext = a; a.TPrevious = b; a.TNext = null;
-            Assert.Equal(1, TileOrder.CountOutOfOrder(_chunk.GetHeadObject(0, 0), out int n));
-            Assert.Equal(3, n);
+            TileOrder.TileCheck r = TileOrder.CheckTile(_chunk, 0, 0);
+            Assert.Equal(1, r.OutOfOrder);
+            Assert.Equal(2, r.FirstDescent);
+            Assert.Equal(3, r.Objects);
+            Assert.True(r.Failed);
+        }
+
+        // ---- the sequence and the comparator ----
+
+        [Fact]
+        public void Sequence_Crosses_The_32_Bit_Boundary_Without_Breaking_The_Order()
+        {
+            ulong saved = TileOrder.NextSeq;
+
+            try
+            {
+                TileOrder.NextSeq = uint.MaxValue - 2;
+                Land land = NewLand(_world, 12); // PriorityZ 10
+                Add(land);
+                Static a = NewStatic(Plain, 10), b = NewStatic(Plain, 10);
+                Multi m1 = NewMulti(Plain, 10), m2 = NewMulti(Plain, 10);
+                Add(a); // uint.MaxValue
+                Add(m1);
+                Add(b); // past 2^32: a 32-bit stamp would wrap to 0 here and sort before a
+                Add(m2);
+                Assert.True(a.TileSeq == uint.MaxValue && b.TileSeq > uint.MaxValue);
+                AssertOrder(land, m2, m1, a, b);
+            }
+            finally
+            {
+                TileOrder.NextSeq = Math.Max(saved, TileOrder.NextSeq);
+            }
+        }
+
+        [Fact]
+        public void Key_Compares_Priority_Then_Rank_Then_Sequence_By_Rank()
+        {
+            static int Cmp(short p1, byte r1, ulong s1, short p2, byte r2, ulong s2) =>
+                Math.Sign(new TileOrderKey(p1, r1, s1).CompareTo(new TileOrderKey(p2, r2, s2)));
+
+            Assert.Equal(-1, Cmp(-5, 2, 1, 4, 0, 9));                          // priority first
+            Assert.Equal(-1, Cmp(short.MinValue, 2, 0, short.MaxValue, 0, 0));
+            Assert.Equal(-1, Cmp(3, 0, 1, 3, 1, ulong.MaxValue));              // then rank
+            Assert.Equal(-1, Cmp(3, 1, 1, 3, 2, 0));
+            Assert.Equal(-1, Cmp(3, 2, 7, 3, 2, 8));                           // rank 2: oldest first
+            Assert.Equal(-1, Cmp(3, 2, uint.MaxValue, 3, 2, (ulong)uint.MaxValue + 1));
+            Assert.Equal(1, Cmp(3, 1, uint.MaxValue, 3, 1, (ulong)uint.MaxValue + 1)); // ranks 0, 1: newest first
+            Assert.Equal(-1, Cmp(3, 0, ulong.MaxValue, 3, 0, ulong.MaxValue - 1));
+            Assert.Equal(0, Cmp(3, 2, 5, 3, 2, 5));
+        }
+
+        // ---- the checker's traversal ----
+
+        [Fact]
+        public void Checker_Reports_A_Cycle_And_Never_Calls_It_Clean()
+        {
+            Land land = NewLand(_world, 0);
+            Add(land);
+            Static a = NewStatic(Plain, 5), b = NewStatic(Plain, 5);
+            Add(a); Add(b);
+
+            b.TNext = a; // a TNext cycle a -> b -> a
+            TileOrder.TileCheck r = TileOrder.CheckTile(_chunk, 0, 0);
+            Assert.True(r.Cycle);
+            Assert.True(r.Failed);
+            Assert.False(TileOrder.IsReachable(NewStaticOn(_chunk, 0, 0)));
+
+            b.TNext = null;
+            a.TPrevious = b; // a TPrevious cycle: no head
+            Assert.Null(TileOrder.FindHead(a, out bool cycle));
+            Assert.True(cycle);
+            Assert.True(TileOrder.CheckTile(_chunk, 0, 0).Cycle || TileOrder.CheckTile(_chunk, 0, 0).Failed);
+        }
+
+        private Static NewStaticOn(Chunk chunk, int x, int y) => new Static(_world) { TileChunk = chunk, TileCell = (byte)((x << 3) | y) };
+
+        [Fact]
+        public void Checker_Reports_Broken_Links_And_Foreign_Members()
+        {
+            Land land = NewLand(_world, 0);
+            Add(land);
+            Static a = NewStatic(Plain, 5), b = NewStatic(Plain, 5), c = NewStatic(Plain, 5);
+            Add(a); Add(b); Add(c, 1, 1);
+
+            b.TPrevious = land; // a.TNext is b, but b points back at land
+            TileOrder.TileCheck r = TileOrder.CheckTile(_chunk, 0, 0);
+            Assert.Equal(1, r.BrokenLinks);
+            Assert.True(r.Failed);
+            b.TPrevious = a;
+
+            b.TileCell = (1 << 3) | 1; // says it is on another cell
+            r = TileOrder.CheckTile(_chunk, 0, 0);
+            Assert.Equal(1, r.Foreign);
+            Assert.False(TileOrder.IsReachable(b));
+            b.TileCell = 0;
+            Assert.True(TileOrder.IsReachable(b));
+            Assert.True(TileOrder.IsReachable(c));
+        }
+
+        [Fact]
+        public void Checker_Traverses_Long_Lists_In_Full()
+        {
+            Land land = NewLand(_world, 0);
+            Add(land);
+            var all = new List<Static>();
+
+            for (int i = 0; i < 12000; i++)
+            {
+                Static s = NewStatic(Plain, 5);
+                Add(s); // equal priority: appended, so each insertion walks the list once
+                all.Add(s);
+            }
+
+            TileOrder.TileCheck r = TileOrder.CheckTile(_chunk, 0, 0);
+            Assert.Equal(12001, r.Objects);
+            Assert.False(r.Failed);
+
+            // a descent past the old 10,000 cap
+            Static x = all[11000], y = all[11001];
+            (x.TileSeq, y.TileSeq) = (y.TileSeq, x.TileSeq);
+            r = TileOrder.CheckTile(_chunk, 0, 0);
+            Assert.Equal(1, r.OutOfOrder);
+            Assert.Equal(11002, r.FirstDescent);
+            Assert.True(TileOrder.IsReachable(all[11999]));
         }
 
         // ---- membership on a landless tile (Chunk.Load leaves a tile empty when the block has no map data) ----
