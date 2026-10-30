@@ -87,7 +87,7 @@ namespace ClassicUO.Game.GameObjects
         public byte TileCell;
         /// <summary>T6a: the global insertion stamp of the last Chunk.AddGameObject of this object (TileOrder.NextSeq); with
         /// PriorityZ it gives the tile-list order key (TileOrder.Key).</summary>
-        public uint TileSeq;
+        public ulong TileSeq;
         public ushort X,
             Y;
         public sbyte Z;

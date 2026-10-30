@@ -187,8 +187,9 @@ namespace ClassicUO.Game.Map
             return obj;
         }
 
-        /// <summary>Unit tests only: the tiledata AddGameObject's priority reads instead of the loaded one (null in the client).</summary>
-        internal static StaticTiles[] StaticDataForTests;
+        /// <summary>The static tiledata AddGameObject's priority reads: the loaded array (Client's FileManager setup assigns
+        /// it once after TileDataLoader.Load, which is the only place that array is replaced); unit tests set their own.</summary>
+        internal static StaticTiles[] StaticTileData = Array.Empty<StaticTiles>();
 
         public void AddGameObject(GameObject obj, int x, int y)
         {
@@ -276,7 +277,7 @@ namespace ClassicUO.Game.Map
                     goto default;
 
                 default:
-                    ref StaticTiles data = ref (StaticDataForTests ?? Client.Game.UO.FileManager.TileData.StaticData)[graphic];
+                    ref StaticTiles data = ref StaticTileData[graphic];
 
                     if (data.IsBackground)
                     {
