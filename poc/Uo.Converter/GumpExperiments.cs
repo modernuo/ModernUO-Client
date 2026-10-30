@@ -78,6 +78,42 @@ public static class GumpExperiments
         Console.WriteLine($"  canonical RLE:  {M(rle):F1} MiB   Brotli q5 per gump {M(rleQ5):F1} MiB   q9 {M(rleQ9):F1} MiB   zlib (smallest) {M(rleZ):F1} MiB");
         Console.WriteLine($"  atlas estimate (2 px gutters, 100% occupancy, no mips): {M(cells * 2):F1} MiB raw = {cells * 2.0 / (2048.0 * 2048 * 2):F1} pages of 2048^2");
 
+        // Small images: per-gump decode cost by run-length payload size (every gump, each timed as the best of 3).
+        {
+            long[] edges = [1024, 4096, 16384, 65536, long.MaxValue];
+            var n = new int[edges.Length];
+            var rleSum = new long[edges.Length];
+            var brSum = new long[edges.Length];
+            var tBr = new double[edges.Length];
+            var tRle = new double[edges.Length];
+            var dst = new uint[800 * 800];
+            var tmp = new byte[800 * 800 * 2];
+            foreach (var (id, _, _) in sizes)
+            {
+                var t = loader.GetGump16((uint)id, out int w, out int h, out _)!;
+                var rawBytes = System.Runtime.InteropServices.MemoryMarshal.AsBytes(t.AsSpan()).ToArray();
+                var rleBytes = GumpCodec.EncodeRle(t, w, h);
+                var br = BrotliBytes(rawBytes, 9);
+                int bkt = Array.FindIndex(edges, e => rleBytes.Length <= e);
+                double best1 = double.MaxValue, best2 = double.MaxValue;
+                for (int r = 0; r < 3; r++)
+                {
+                    long s0 = Stopwatch.GetTimestamp();
+                    BrotliDecoder.TryDecompress(br, tmp, out int nb);
+                    GumpCodec.ExpandTexels(System.Runtime.InteropServices.MemoryMarshal.Cast<byte, ushort>(tmp.AsSpan(0, nb)), dst, Lut, default);
+                    long s1 = Stopwatch.GetTimestamp();
+                    GumpCodec.DecodeRle(rleBytes, w, h, dst, Expand, default);
+                    long s2 = Stopwatch.GetTimestamp();
+                    best1 = Math.Min(best1, (s1 - s0) * 1e6 / Stopwatch.Frequency);
+                    best2 = Math.Min(best2, (s2 - s1) * 1e6 / Stopwatch.Frequency);
+                }
+                n[bkt]++; rleSum[bkt] += rleBytes.Length; brSum[bkt] += br.Length; tBr[bkt] += best1; tRle[bkt] += best2;
+            }
+            Console.WriteLine("  per-gump decode by run-length payload size: count, RLE MiB, texels+Brotli MiB, mean us Brotli texels+expand, mean us RLE fill");
+            for (int b = 0; b < edges.Length; b++)
+                Console.WriteLine($"    <= {(edges[b] == long.MaxValue ? "max" : (edges[b] / 1024) + " KiB"),7}: {n[b],5}  {M(rleSum[b]),7:F1}  {M(brSum[b]),7:F1}  {tBr[b] / Math.Max(1, n[b]),8:F1}  {tRle[b] / Math.Max(1, n[b]),8:F1}");
+        }
+
         // Latency: the largest gumps plus the ones the main windows open.
         var named = new (int Id, string Name)[] { (0x07D0, "paperdoll"), (0x08AC, "spellbook"), (0x2A6C, "status (new)"), (0x0802, "status (old)"), (0x003C, "backpack"), (0x0A3C, "resizepic tl") };
         var probe = named.Where(n => sizes.Any(s => s.Id == n.Id)).Select(n => (n.Id, n.Name))

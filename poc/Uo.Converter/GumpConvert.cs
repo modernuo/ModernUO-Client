@@ -17,11 +17,16 @@ public static class GumpConvert
     public const int Quality = 9;
     /// <summary>Ship: raw texels with Brotli (smallest, fastest Brotli decode). --raw-gumps: the RLE rows uncompressed (fastest decode).</summary>
     public static ushort Layout => Raw ? GumpCodec.LayoutRle : GumpCodec.LayoutTexels;
+    /// <summary>
+    /// --gump-small n: an image whose run-length payload is at most n bytes is stored that way, uncompressed (a Brotli
+    /// decode has a fixed cost of tens of µs that dominates small images; they add little to the file). 0 = off.
+    /// </summary>
+    public static int SmallRle = 16384;
 
-    public sealed record Stats(int Slots, int Present, int Records, int Aliases, int ContentShared, int Hued, long RawBytes, long StoredBytes, long FileBytes)
+    public sealed record Stats(int Slots, int Present, int Records, int Aliases, int ContentShared, int Hued, int SmallRaw, long RawBytes, long StoredBytes, long FileBytes)
     {
         public override string ToString() =>
-            $"{Slots} slots, {Present} gumps, {Records} records ({Aliases} gump.def/index aliases, {ContentShared} identical images shared, {Hued} hued), " +
+            $"{Slots} slots, {Present} gumps, {Records} records ({Aliases} gump.def/index aliases, {ContentShared} identical images shared, {Hued} hued; {SmallRaw} small images stored run-length uncompressed), " +
             $"payload {RawBytes / 1048576.0:F1} MiB -> {StoredBytes / 1048576.0:F1} MiB, file {FileBytes / 1048576.0:F1} MiB";
     }
 
@@ -97,15 +102,20 @@ public static class GumpConvert
         var recordOf = new Dictionary<int, int>();          // canonical id -> record
         var byContent = new Dictionary<(int, int, int), List<(int Id, int Record)>>();
         var encoded = new byte[entries.Length][];
+        var layouts = new ushort[entries.Length];
         Parallel.For(0, entries.Length, ConvertOptions.Par, id =>
         {
             var img = images[id];
             if (img.Texels == null) return;
-            encoded[id] = GumpCodec.Encode(Layout, img.Texels, img.W, img.H);
+            var rle = GumpCodec.EncodeRle(img.Texels, img.W, img.H);
+            bool useRle = Raw || rle.Length <= SmallRle;
+            layouts[id] = useRle ? GumpCodec.LayoutRle : GumpCodec.LayoutTexels;
+            encoded[id] = useRle ? rle : GumpCodec.Encode(GumpCodec.LayoutTexels, img.Texels, img.W, img.H);
         });
         int present = 0, aliases = 0, shared = 0, hued = 0;
         long rawBytes = 0;
-        var toCompress = new List<(int Record, byte[] Raw)>();
+        var toCompress = new List<(int Record, byte[] Raw, ushort Codec)>();
+        int small = 0;
         for (int id = 0; id <= highest; id++)
         {
             int c = canonical[id];
@@ -122,8 +132,11 @@ public static class GumpConvert
                         if (images[other].Texels.AsSpan().SequenceEqual(img.Texels)) { rec = r; shared++; break; }
                 if (rec < 0)
                 {
-                    rec = writer.Add([], (uint)encoded[c].Length, Raw ? StoreConst.CodecRaw : StoreConst.CodecBrotli, (ushort)img.W, (ushort)img.H, Layout);
-                    toCompress.Add((rec, encoded[c]));
+                    ushort layout = layouts[c];
+                    ushort codec = layout == GumpCodec.LayoutRle ? StoreConst.CodecRaw : StoreConst.CodecBrotli;
+                    if (!Raw && layout == GumpCodec.LayoutRle) small++;
+                    rec = writer.Add([], (uint)encoded[c].Length, codec, (ushort)img.W, (ushort)img.H, layout);
+                    toCompress.Add((rec, encoded[c], codec));
                     rawBytes += encoded[c].Length;
                     (byContent.TryGetValue(ck, out list) ? list : byContent[ck] = new()).Add((c, rec));
                 }
@@ -139,7 +152,7 @@ public static class GumpConvert
 
         var stored = new byte[toCompress.Count][];
         Parallel.For(0, toCompress.Count, ConvertOptions.Par, i =>
-            stored[i] = RecordStoreWriter.Encode(toCompress[i].Raw, Raw ? StoreConst.CodecRaw : StoreConst.CodecBrotli, Quality));
+            stored[i] = RecordStoreWriter.Encode(toCompress[i].Raw, toCompress[i].Codec, Quality));
         long storedBytes = 0;
         for (int i = 0; i < toCompress.Count; i++)
         {
@@ -149,6 +162,6 @@ public static class GumpConvert
 
         var path = Path.Combine(outDir, StoreConst.GumpsFile);
         writer.Write(path, StoreConst.MagicGumps, loader.UseUOPGumps ? StoreConst.GumpFlagUop : 0);
-        return new Stats(highest + 1, present, writer.RecordCount, aliases, shared, hued, rawBytes, storedBytes, new FileInfo(path).Length);
+        return new Stats(highest + 1, present, writer.RecordCount, aliases, shared, hued, small, rawBytes, storedBytes, new FileInfo(path).Length);
     }
 }

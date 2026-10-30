@@ -92,7 +92,7 @@ namespace ClassicUO.Assets
 
             if (FileManager.Pack != null)
             {
-                Log.Trace("Gumps: the pack has no gump section; reading gumpart MUL/UOP");
+                Log.Trace(UsePack ? "Gumps: the pack has no gump section; reading gumpart MUL/UOP" : "Gumps: CUO_PACK_GUMPS=0; reading gumpart MUL/UOP");
             }
 
             string path = FileManager.GetUOFilePath("gumpartLegacyMUL.uop");
