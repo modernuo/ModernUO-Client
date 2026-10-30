@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
+// CLEANUP(release): developer tooling (E11). Compiled only with CUO_DEVTOOLS; the -ecsdriver switch, WorldEcs's attach path
+// and CUOEnviroment.EcsDriverScript are guarded the same way.
+#if CUO_DEVTOOLS
 using System;
 using System.IO;
 using ClassicUO.Configuration;
@@ -644,3 +647,5 @@ namespace ClassicUO.Game
         }
     }
 }
+
+#endif
