@@ -2244,3 +2244,13 @@ Branch `poc/item-art-worker` (item art agent, kbatman4), from poc/modern-client 
   - Prep check: 0 wrong. Item check: 0 with differences. Skip check: 0 drawn differently.
   - Settle: 0 timeouts, 0 unsettled in an episode. 0 main-thread art decodes in every window.
   - The worst frame (9.4 ms, `travel`) is the login warm-up's compacting gen1. The run had the checks on, so its frame times aren't a measurement.
+  - The Jhelom entry also had one 7.5 ms frame, almost all of it `prep_foliage_finish` (7.06 ms), in its second window rather than at the teleport.
+    - A pair with the checks off (same `house`, `travel`, `far` entries, base `bin-base` against `bin-fix`) had no such frame: Jhelom's worst frame was 1.45 and 1.48 ms in base, 1.38 and 1.67 ms in fix.
+    - Over every run of this branch, `prep_foliage_finish` went above 1 ms only in the two runs with `CUO_PREP_CHECK`, `CUO_GPU_ITEM_CHECK` and `CUO_GPU_SKIP_CHECK` on (3.05 ms in `chk1`, 7.06 ms here); it never did in the 11 runs without them.
+    - So it looks like checker overhead, which these phases include, not a product cost. Which check causes it wasn't narrowed down.
+- **ECS parity after the frame reorder (fix 4),** with `tools/ecs-parity/e7mixed.txt` (kbatman3, Green Acres: ground items, animated statics, a corpse and mixed served tiles), extended to compare by day too (`parity`, a walk and `check` after `light off`). Run with `CUO_ECS_PARITY=1 CUO_ANIM_SYNC=1 -ecscheck 120`, the item and skip checks, on `bin-fix`:
+  - items: 844k compared, 0 mismatched, 49,087 lights with 0 mismatched;
+  - mobiles: 131k, 0 mismatched;
+  - `-ecscheck`: 22 checks, 0 mismatched;
+  - item check: 0 with differences; skip check: 0 drawn differently, 0 unsettled;
+  - the spawned items and the brigand were wiped by the script.
