@@ -2142,3 +2142,25 @@ Off equals or beats base inside the noise (a slot-array walk instead of the dict
 - **P3, checker:** the shadow comparison now runs every frame under `CUO_MOBILE_UPDATE_CHECK`, whichever mobile loop runs (E4 off included), counts `table checks`, and compares key-to-value mappings and `OwnerTable` as well as order and ordinals.
 - **P3, tests (586 pass, 4 new):** ownership refusals (aliases, two tables, the audit sequence, release on remove/replace/Clear); Clear and remove-all then repopulate past the first array size against a dictionary; the full death re-key with `Serial` updated (also in the random model) and a re-key onto an existing key; enumeration with removal of an unvisited entry, overwrite, `Clear` and insert invalidation (and a refused duplicate not invalidating). The E4 random order test now takes its expected order from an independent `Dictionary` oracle fed the same operations.
 - **Checks on the fix** (kbatman3, TieredCompilation=0): large scene `ls_parity` with `CUO_MOBILE_UPDATE_CHECK=1`, **E4 off**: table checks 22,375, 0 differences; parity 10.4M mobile comparisons 0 mismatches; `-ecscheck` 0. `w5push` with E4 on and all checkers: table checks 241,343, 0 differences; clocks 3.07M 0; skipped 2.84M 0; order 238k 0; input check 1.57M and 1.45M seat tests 0; parity 1.6M 0. Default and `-p:CuoDevTools=false` builds both build.
+
+## Parity mismatches at login (bisect)
+
+2026-10-30, `bg/ecs-parity-bisect`. **Not a regression: the T6a runs did not set `CUO_ANIM_SYNC=1`.** Every mismatch is the parity checker comparing a view that has not loaded a body's first-seen direction with an extract that draws it at once. The player at login and each spawn are first sights, which is why they were "all at the login frame or a spawn".
+
+- **Mechanism.** `Animations.LoadDirection` (`src/ClassicUO.Renderer/Animations/Animation.cs:225`, `AsyncFirstSight` at `:199`) queues the first direction of a body on the thread pool and returns frames without textures, so `MobileView.Draw` emits nothing for it. The parity checker (`EcsParity.OnCaptured`, `Game/Ecs/EcsParity.cs`) then runs the ECS extract, which reads the pack tables directly and draws the layers at once. Result: capture count smaller than ECS count (capture=3 ecs=5 for the player at login, capture=2 ecs=8 for a spawned body, `first diff` at the first missing instance) and a `frameinfo` view-effect mismatch for the same mobile. The doc already says this ("Always set `CUO_ANIM_SYNC=1` for parity"); the T6a runs, and the base 7, did not. The worker finishes within a few frames, so the number is racy (2 to 3 first-sight mobiles per run).
+- **All T6a logs fit it.** In `scratchpad/t6a/logs/{w5items,base_w5items,ls_parity,w5push}_gpu.log` every mismatch has capture < ecs and a first diff at the end of the capture side; none has a field difference with equal counts.
+- **Bisect** (`w5items`, kbatman3, JIT Release, Gpu, `CUO_ECS_PARITY=1`; count = mismatched in the parity summary):
+
+| Build | without `CUO_ANIM_SYNC` | with `CUO_ANIM_SYNC=1` |
+|---|---|---|
+| 8a2bcb876 (E6) | 23 (3 mobiles) | not run |
+| 0069120eb^1 (before recycler) | 39 (4 mobiles) | not run |
+| 0069120eb (recycler) | 26 (3 mobiles) | not run |
+| 98654f96f^1 (before E11) | 11 (3 mobiles) | not run |
+| 98654f96f (E11), fdd40344a (E10) | not run | not run |
+| de98a6d1a (tip) | 22 (2 mobiles) | **0** (423k and 323k comparisons, two runs) |
+| tip + checker fix (9dde20480) | **0** (236k and 272k comparisons, two runs) | n/a |
+
+  Counts without the variable are 11 to 39 on every build, including the pre-recycler and pre-E11 ones, so no merge changed them beyond the race. The E11 and E10 rows and the older builds with the variable were dropped for time: the bench.lock queue made each run take 20 to 40 minutes and the answer did not depend on them. Earlier agents' 0 (E6 and before) is consistent: they set the variable.
+- **Fix.** `EcsParity` now sets `Animations.AsyncFirstSight = false` when `CUO_ECS_PARITY` is on, so parity no longer depends on remembering the variable (harness-only; the normal render path is untouched). Verified by two runs without the variable: 0 mismatches.
+- **Open point (not changed).** With `gpu_ecs_sprites` on, the extract draws a first-sight body at once while the legacy view skips it for a few frames. Not a Gpu bug (the body appears sooner), but Gpu and Legacy differ for those frames.
