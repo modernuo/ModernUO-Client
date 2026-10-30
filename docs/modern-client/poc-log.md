@@ -2035,3 +2035,110 @@ Final series, on 3f0edbc0f: three alternated pairs, D–F. The machine was quiet
 - The recycler's field test: every non-exempt field must really change when dirtied (strings, arrays and abstract `GameObject`-typed fields get non-null sentinels; an unsupported type fails explicitly), so a nullable cache left out of `ResetForReuse` fails. A new test checks that a reference field left out is caught.
 - `_prevMeshHighlight` checks the object's incarnation (above).
 - 579 unit tests pass in both build variants. One `CUO_RECYCLE_CHECK=reuse` pass (`travel` and `glide`, NativeAOT on 51c9333f3): Legacy, where the mesh highlight lives, 137k reused; Gpu, 128k reused. In both, 0 uses after retire, 0 bad sweeps and 0 exceptions; Gpu settle 0 timeouts and 0 unsettled frames in an episode. The `[gc]` lines now begin at the window's first collection (#9), not at one from login.
+
+## E11: ECS test driver behind CUO_DEVTOOLS; one mirror Sync per SetInWorldTile (2026-10-30)
+
+Base: poc/modern-client f2668520f. Branch `bg/ecs-e11-hygiene`.
+
+**Driver guard.** `EcsSessionDriver.cs` (whole file), the `-ecsdriver` case in `Main.cs`, `CUOEnviroment.EcsDriverScript` and `WorldEcs.Driver` plus its load/attach block are now inside `#if CUO_DEVTOOLS`. `-p:CuoDevTools=false` builds with 0 errors and its `cuo.dll` holds neither `EcsSessionDriver` nor `DriverGump`. The driver uses no helper that only it needs (it calls existing World, FrameStats and Settings members; its `fx`/`fxserve` cases were already guarded), so nothing else moved. `-ecscheck` (the mirror consistency checker, `WorldEcs.RunCheck`) is left in every build: testing/ecs-animation.md uses it as the standing parity check and it costs nothing unless the switch is given; owner decision (2026-10-30): it stays in every build during the PoC and is to be compiled out of Release builds for release (release-cleanup.md records it).
+
+**Double Sync.** `SetInWorldTile` ran `UpdateScreenPosition()` (which calls `World.Ecs.Sync`) and then `AddToTile`, which always ends in a `Sync` of its own (parked, chunkless and placed paths all do). `Sync` reads only the entity's fields (graphic, hue, x/y/z, direction, flags, amount, container, layer); `AddToTile`, `RemoveFromTile`, `Map.Park` and `Chunk.AddGameObject` change none of them, and `PlayerMobile.OnPositionChanged` (doors, corpses, plugin) does not read the mirror. So the first call wrote the values the second writes. It is redundant in every case, including a container-to-ground re-key (the caller clears `Container` before `SetInWorldTile`) and equipment/mobile index updates (they come from the second call's values). `SetInWorldTile` now sets `IsPositionChanged`, calls `OnPositionChanged` and `AddToTile`; every other `UpdateScreenPosition` caller keeps its Sync.
+
+**Measured** (E2 bench, new row "mobile SetInWorldTile"; coordinates advance per visit of each mobile, so no call repeats its mobile's position; `DOTNET_TieredCompilation=0`, Release, 100k calls, noisy machine; us per call at N=500/2000/8000 mobiles; one base run between two new runs, same tip): base 0.121/0.125/0.134; new 0.068/0.068/0.091 and 0.071/0.069/0.091. About 40-45% less; 0 bytes either way. Not a per-frame cost, so no FPS effect expected.
+
+**Tests.** New `SetInWorldTileSyncTests` (audit fixes): a mobile removed from the mirror is created by the placement; each move adds exactly one `MobileInputs.Pushes` (the old double Sync gives 2, verified: the test fails on the old code); `IsPositionChanged` is cleared then set again; a bag item dropped to the ground is re-keyed (`ParentKind.Contained` to `None`, gone from `GetContents(BAG)`). Not covered: the parked and loaded-chunk paths, because a `Map` needs the UO file manager and cannot be built in a unit test. 582 unit tests pass.
+
+**Verification.** Default and `CuoDevTools=false` builds compile. Smoke run (tools/ecs-parity/run_parity.py, account kbatman3, a short script: `[go`, 4 steps, backpack, check, quit): driver loaded and ran in the default build, `-ecscheck 120` 0 mismatches (442 checks), exit 0.
+
+## L7: pack page handles (2026-10-30)
+
+Base: poc/modern-client fdfcc9813. Branch `poc/pack-handles`. Result: **measured, negligible gain, no cache added.** The only change is docs.
+
+**Question.** `PackPages.DecodeChunk` (`src/ClassicUO.Assets/PackAssets.cs`) calls `File.OpenHandle` and disposes it for every chunk decode. Is a bounded `SafeFileHandle` cache worth it?
+
+**Measurement.** A throwaway console bench (session scratchpad `packh\bench`, JIT Release, `DOTNET_TieredCompilation=0`; open and close cost is the same system calls on NativeAOT) over the real pack `classic-1.0`. Per kind (art, anim, tex), 3 repetitions: 2,000 `File.OpenHandle` plus dispose over the kind's 32 pages round robin, and about 300 chunk decodes at random pages and positions through the public `PackPages.Touch` with a 1 MiB cache, so nearly every touch decodes. Machine noisy (other agents' clients); the repetitions agree within 1 µs and a few percent.
+
+| Kind | Open + close | Decode per 1 MiB chunk (includes the open) | Open's share |
+|---|---|---|---|
+| art | 20.1, 22.6, 27.0 µs | 2.14–2.17 ms | 0.9–1.3% |
+| anim | 22.0, 28.1, 26.8 µs | 2.48–2.53 ms | 0.9–1.1% |
+| tex | 23.1, 20.9, 21.6 µs | 2.83–2.87 ms | 0.7–0.8% |
+
+So the open is about 1% of a decode, at the low end of the 20–100 µs estimate (Defender's scan on repeated opens of the same files is cheap here; the first open of each page is not repeated). The decodes run on the chunk workers, not the main thread, and chunk decodes are a small part of a teleport frame. At about 25 µs per chunk, a teleport that decodes a few hundred chunks saves about 10 ms of worker time in total, spread over several threads. That is below the noise of every in-client metric (chunk load max, teleport worst frame), so the paired NativeAOT travel and glide runs were not done: they could not resolve it.
+
+**Other readers.** Uo.Render `PageResidency`/`PageJob.Run` opens once per whole atlas page load (multi-MiB read), as do `Uo.Pack` `PackReaders` and `PackTables` once per file or region. None opens per chunk, so none has the pattern. `GetPage` opens once per page, the first time only.
+
+**Why not add it anyway.**
+- A handle cache needs bounding, LRU eviction that waits for in-flight reads, and closing on `Clear`, logout, pack switch and dispose; that is real complexity and a concurrency surface for 1%.
+- Open handles block replacing or deleting page files while the client runs (the pack is opened with the default share mode, which allows others to read but not delete or rename over an open file on Windows). Today a page file can be swapped between decodes. Nothing in the repo replaces pages at runtime (the converter writes a pack folder offline), but a future patcher or in-place converter run during development would hit it.
+- The `Brotli` (kind 1) path wraps the handle in a `FileStream`, which takes ownership and closes it, so it would need a separate open anyway.
+
+**Revisit if:** a profile of the main thread shows chunk decodes on it (a `ReadRect` miss) with the open visible, or the pack moves to many small files (gumps, fonts, cliloc) read per use, where the open could rival the read. Then cache handles per file with the requirements above.
+## E10: the animation clock into the ECS (measured, not done) and an owned mobile order (2026-10-30)
+
+Branch `bg/ecs-e10-clock`, from poc/modern-client f2668520f. Draft quality, needs a Codex audit before merge. JIT with `DOTNET_TieredCompilation=0`, kbatman3, Gpu, 1920x1080, large scene. Logs and tools: session scratchpad `e10\`. The machine was noisy (other projects running; `world_mobiles` for the same configuration moved from 0.053 to 0.089 ms between sessions), so only paired and in-session numbers are used.
+
+**1. Measurement: moving the clock reads is not worth it, so step 2 was not built.**
+- What `SamplePushed` reads from the Mobile for the clock: `AnimationGroupRaw`, `AnimIndex`, `LastAnimationChangeTime` (cast), `AnimationFromServer`. The same function already reads the Mobile for `ViewFlipped`, `AllowedToDraw`, `AlphaHue`, `Offset` and the view context, so the Mobile's cache line is touched anyway; moving the clock does not remove the Mobile from the path.
+- Paired micro-bench (`CUO_MOBILE_INPUT_BENCH=1`, new `[mobile-clock-bench]`; 32 reads of each kind per sampled mobile per frame through the same non-inlined call, 917M reads, large scene, three spots):
+
+| The four clock reads | ns per mobile |
+|---|---|
+| From the Mobile (today) | 1.30 |
+| From the already fetched `MobileInputs` copy (the clock as part of that component) | 1.21 |
+| From a fresh `GetComponent` lookup (a separate component) | 4.54 |
+
+  The pushed sample as a whole is 14.6 ns (legacy 57 ns) in this session, so the clock is under 10% of it. Best case 0.1 ns x 1,985 mobiles = **0.0002 ms per frame**; as a separate component it would be 3 ns slower per mobile (+0.006 ms).
+- The price on the other side: the frame advance would have to push the clock for every advancing mobile (about 43 per frame in the scene, each with an entity lookup, about 30-100 ns), plus pushes from the write sites below. That alone cancels the gain.
+- E4 on/off, the mobile loop (`world_mobiles`, ms, in-session `mobsys:off`/`mobsys:on` pairs, 2 windows each): z1 0.053 -> 0.031 and walking 0.064 -> 0.041 (first session); in the paired runs below on the new build 0.069 -> 0.039, 0.056 -> 0.034 (z1), 0.059 -> 0.046, 0.056 -> 0.034 (zoom 2.5), 0.077 -> 0.042, 0.050 -> 0.031 (walking). About 0.02-0.03 ms, as E4 found. What remains there is real work (the due updates), not the clock reads.
+- **Decision: stop after step 3.** If the advance is ever moved into the ECS (E4's "Left" item 1: the selection against ECS state, so a standing mobile's advance needs no Mobile), the clock goes with it in the same change; on its own it buys nothing.
+- **Write sites of the clock, for whoever does that** (grep over `src`; the Mobile fields are `AnimIndex`, `AnimationFromServer`, `LastAnimationChangeTime`, `_animationGroup`, `AnimationFrameCount`, `_lastAnimationIdleDelay`, `ExecuteAnimation`):
+  - `Mobile.SetAnimation` (Mobile.cs 465-474: group, `AnimIndex`, frame count, from-server, `LastAnimationChangeTime`), called from PacketHandlers 2429 (0x6E), 3753 (0xAF death animation, then `AnimIndex = 0`), 4501 (0xBF 0x19 frozen frame, then `ExecuteAnimation = false`, `AnimIndex`), 4726 (an animation packet with frame count, then `AnimIndex`, `ExecuteAnimation = false`), 5617 (0xE2).
+  - `Mobile.SetIdleAnimation` (485-492) and `CalculateRandomIdleTime` (304), from `Update` (361) and step completion.
+  - `Mobile.ProcessAnimation` (722 frame count, 737 `AnimIndex`, 751 `LastAnimationChangeTime`); `_animationGroup` also in `GetGroupForAnimation` (559-616, random fidget picks).
+  - `Mobile` constructor (131), `Entity.Destroy` (197-198), and the commented-out pool reset in `Mobile`/`Item` (dead code).
+  - `Item.ProcessAnimation` (540, 544) and `Item` 341 write the same `Entity` fields for items; a mobile-only component would not cover them.
+
+**2. Step 3: an owned ordered mobile table replaces the `Dictionary._version` trick.**
+- **`MobileTable`** (new, `GameObjects/MobileTable.cs`) is now `World.Mobiles` (was `Dictionary<uint, Mobile>`). It has the dictionary's API as the world used it (`Get`, `Contains`, `TryGetValue`, `Add(Mobile)`, indexer get/set, `Remove`, `Clear`, `Count`, `Values`) and enumerates in the dictionary's order: lookups go through an inner `Dictionary<uint, Mobile>`, the order lives in a slot array (`Mobile[]`) with a LIFO free-slot stack. Add takes the most recently freed slot else appends; setting an existing key keeps its slot; `Remove` frees the slot; `Clear` resets. `Mobile.Ordinal` is the slot, set on insert.
+- `World.SortInMobilesOrder` is now a plain sort by `Ordinal`. No `UnsafeAccessor`, no version counter, no ordinal rebuild walk (E4's stats line had "ordinal rebuilds N"; it now reports `table-vs-dictionary differences`).
+- `Values` is a struct enumerator (no allocation in `foreach`); removing during enumeration is allowed as before, adding during one is not supported (the dictionary threw).
+- Cost: one array store per add/remove, `Ordinal` kept for free; lookups are the same dictionary lookup as before.
+
+**Invariants for the audit:**
+1. The table enumerates exactly like the `Dictionary<uint, Mobile>` it replaced under every operation sequence the world uses. This rests on .NET's dictionary behaviour: freed entries form a LIFO free list that inserts consume first, resize and overwrite keep positions, `Clear` resets. `MobileTableTests` check it against a real dictionary over 6,000 random operations (add including refused duplicates, remove, overwrite, the 0xBB serial change as remove + set under a new key, clear, removal during enumeration). Nothing else in the client depends on the dictionary's order any more, only on the table's own.
+2. `Mobile.Ordinal` equals the mobile's slot while it is in the table; an overwrite gives the new Mobile the old slot. A Mobile that is not in the table has a stale ordinal: `SortInMobilesOrder` must only get mobiles fetched from `Mobiles` this frame (the due list does: `Mobiles.Get` of each due serial).
+3. The key and `Mobile.Serial` can differ for a moment (0xBB: `Remove(old)`, then `Mobiles[new] = owner`, then `owner.Serial = new`): the table keys by the argument, never reads `Serial` except in `Add(Mobile)`.
+4. With `CUO_MOBILE_UPDATE_CHECK`, `World` enables a shadow `Dictionary` that receives every operation (only possible on an empty table, so it is set in the constructor), and `VerifyAgainstShadow` compares the table's enumeration, count and every `Ordinal` with it each frame under the clock path. The old order check (`CheckOrder`: the due list is a subsequence of a fresh enumeration) still runs, now against the table's enumeration.
+5. Single-threaded, like the world.
+
+**Verification** (default build and `-p:CuoDevTools=false` both build; the second also logged in and ran `-ecscheck` in the scene, 0 mismatches):
+
+| Run (kbatman3, TieredCompilation=0, `CUO_ECS_PARITY=1 CUO_ANIM_SYNC=1 CUO_GPU_ITEM_CHECK=1 CUO_W5_CHECK=1 CUO_MOBILE_INPUT_CHECK=1 CUO_MOBILE_CACHE_CHECK=1 CUO_MOBILE_UPDATE_CHECK=1`, `world_update_mobile_system` on, `-ecscheck 120`) | Result |
+|---|---|
+| Large scene, `ls_parity` (standing, then the lane walked and run), day | clocks 16.6M 0 different; skipped updates 15.8M 0 changed; due-update order 801k, 0 out of order; **table vs dictionary 0 differences**; parity 7.07M mobile comparisons 0 mismatches, items 2.93M 0; input check 6.5M samples and 5.9M seat tests 0 different; item check 0; `[w5-check]` 0; `-ecscheck` 0 |
+| `w5push.txt` (mount, dismount, seat, hidden, hue, death, walking NPCs) | clocks 3.5M 0 different; skipped 3.3M 0; order 237k 0 out of order; table 0 differences; parity 2.32M 0 mismatches; input check 2.24M and 1.86M seat tests 0 |
+| `w5items.txt` (corpses, object handles on mobiles) | clocks 386k 0; skipped 346k 0; order 40k 0; table 0; parity 395k 0 |
+
+Not run: the night (`light 1E`) variant (the lights path is untouched), NativeAOT. The 0xBB serial change and the char-creation preview mobile (added to `World.Mobiles` by `CreateCharAppearanceGump`) were not exercised live; the unit test covers the first.
+
+Unit tests: 582 pass (3 new in `MobileTableTests`). `ChunkLoadingTests.Prefetched_Regions_Give_The_Same_Blocks_And_Never_Block_IsBlockReady` failed on the first run after a build and passed on the rerun, as in E4 (timing under load, unrelated).
+
+**Timing** (paired builds: `bin-base` = f2668520f plus the inert clock micro-bench, dictionary and `UnsafeAccessor`; `bin-new` = the table; `world_mobiles`, ms, 2 rounds, interleaved, round 1 / round 2; noisy machine):
+
+| Spot | base | new, E4 off | new, E4 on |
+|---|---|---|---|
+| zoom 1 | 0.089 / 0.067 | 0.069 / 0.056 | 0.039 / 0.034 |
+| zoom 2.5 | 0.094 / 0.066 | 0.059 / 0.056 | 0.046 / 0.034 |
+| walking | 0.077 / 0.070 | 0.077 / 0.050 | 0.042 / 0.031 |
+
+Off equals or beats base inside the noise (a slot-array walk instead of the dictionary's entries); on saves 0.02-0.03 ms over off, including the sort. The table's gain over the old trick is the removed rebuild walk (52 per login-plus-scene run, 19 in another, each a 2k-mobile walk); it does not show in the frame time.
+
+**E10 audit fixes (Codex, 2026-10-30):**
+- **Clock bench wording (P3):** `[mobile-clock-bench]` is a surrogate hot-read measurement, not a precise bound. Its "inputs" variants read `MobileInputs` fields (Body, Facing, LastStepTime, Notoriety), not real clock fields; the "separate component" variant is a second `GetComponent` of the existing `MobileInputs`; the read order is fixed (Mobile, inputs, lookup), and everything is cache-hot. It shows that a handful of field reads cost on the order of 1 ns per mobile, so the saving is far below what the frame-time noise can show. "Don't move the clock on its own" stands on that, and on the push cost of every frame advance.
+- **P2, ownership:** a Mobile can sit in one `MobileTable` under one key only (`Mobile.OwnerTable`, set on insert and overwrite, cleared on remove, replace and `Clear`). A second key or table throws `InvalidOperationException` before any change; the same mobile under its own key is a no-op. This keeps `Ordinal` (the storage address) trustworthy. The audit's sequence (`t[1]=a; t[2]=a; Remove(1); Add(b); Remove(2)`) now throws at `t[2]=a`.
+- **P2, enumeration:** an insert of a new key bumps a version that enumerators capture and check in `MoveNext` and `Reset`, throwing like the dictionary did. Removal, overwrite of an existing key, `Clear` and a refused duplicate `Add` do not invalidate.
+- **P3, `FindNext`:** `AddRange(Mobiles.Values)` replaced by a concrete `foreach` with capacity reserved. No other `ToList`, LINQ or `AddRange` over `Mobiles.Values` exists (grep).
+- **P3, checker:** the shadow comparison now runs every frame under `CUO_MOBILE_UPDATE_CHECK`, whichever mobile loop runs (E4 off included), counts `table checks`, and compares key-to-value mappings and `OwnerTable` as well as order and ordinals.
+- **P3, tests (586 pass, 4 new):** ownership refusals (aliases, two tables, the audit sequence, release on remove/replace/Clear); Clear and remove-all then repopulate past the first array size against a dictionary; the full death re-key with `Serial` updated (also in the random model) and a re-key onto an existing key; enumeration with removal of an unvisited entry, overwrite, `Clear` and insert invalidation (and a refused duplicate not invalidating). The E4 random order test now takes its expected order from an independent `Dictionary` oracle fed the same operations.
+- **Checks on the fix** (kbatman3, TieredCompilation=0): large scene `ls_parity` with `CUO_MOBILE_UPDATE_CHECK=1`, **E4 off**: table checks 22,375, 0 differences; parity 10.4M mobile comparisons 0 mismatches; `-ecscheck` 0. `w5push` with E4 on and all checkers: table checks 241,343, 0 differences; clocks 3.07M 0; skipped 2.84M 0; order 238k 0; input check 1.57M and 1.45M seat tests 0; parity 1.6M 0. Default and `-p:CuoDevTools=false` builds both build.
