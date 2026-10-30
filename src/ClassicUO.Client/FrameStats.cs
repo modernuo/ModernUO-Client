@@ -499,7 +499,7 @@ namespace ClassicUO
         // from the first in-game frame on, marked held (the world was held this frame) or play, and summaries at +40 s and
         // +60 s. The login warm-up collections happen before the first plan window, where the [gc] lines don't look.
         private static long _sessionStart, _sessionLast;
-        private static int _sessionGcSeen, _sessionGcs, _sessionGc1, _sessionGc2, _sessionGcsPlay, _sessionSlowPlay, _sessionSlowHeld, _sessionNextSummary = 40;
+        private static int _sessionGcSeen, _sessionGcs, _sessionGc1, _sessionGc2, _sessionGcsPlay, _sessionSlowPlay, _sessionSlowHeld, _sessionNextSummary = 40, _sessionNextPools = 20;
         private static double _sessionPause, _sessionPausePlay, _sessionSlowPlayMax;
 
         private static bool _sessionAfterReport;
@@ -583,6 +583,17 @@ namespace ClassicUO
                 Log.Info(string.Format(inv, "[gcs] summary +{0}s: collections {1} (gen1+ {2}, gen2 {3}), pause {4:0.0} ms; in play frames {5} ({6:0.0} ms); frames over 8 ms: play {7} (max {8:0.0} ms), held {9}",
                     _sessionNextSummary, _sessionGcs, _sessionGc1, _sessionGc2, _sessionPause, _sessionGcsPlay, _sessionPausePlay, _sessionSlowPlay, _sessionSlowPlayMax, _sessionSlowHeld));
                 _sessionNextSummary += 20;
+            }
+
+            if (t >= _sessionNextPools)
+            {
+                _sessionNextPools += _sessionNextPools < 120 ? 20 : 60;
+                var world = Client.Game?.UO?.World;
+                var recycler = world?.MapRecycler;
+                Log.Info(string.Format(inv, "[gcs] pools +{0:0}s: chunks created {1}, pooled {2}; lands new {3}, pooled {4}; statics new {5}, pooled {6}; statics mesh capacity (sprites:chunks){7}",
+                    t, Game.Map.Chunk.TotalCreated, Game.Map.Chunk.PooledCount, Game.GameObjects.Land.TotalNew, recycler?.PooledLands ?? 0,
+                    Game.GameObjects.Static.TotalNew, recycler?.PooledStatics ?? 0, Game.Map.Chunk.DescribeMeshCapacities(world?.Map)));
+                _sessionAfterReport = true;
             }
         }
 

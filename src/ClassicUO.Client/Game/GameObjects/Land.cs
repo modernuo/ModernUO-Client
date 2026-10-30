@@ -39,6 +39,9 @@ namespace ClassicUO.Game.GameObjects
 
         private Land(World world) : base(world) { }
 
+        /// <summary>Allocated because the recycler had none ([gcs] pool lines).</summary>
+        public static long TotalNew;
+
         /// <summary>A new Land, or <paramref name="reuse"/> (a retired Land from MapObjectRecycler) put back to a new one's state.</summary>
         public static Land Create(World world, ushort graphic, Land reuse = null)
         {
@@ -52,6 +55,7 @@ namespace ClassicUO.Game.GameObjects
             else
             {
                 land = new Land(world);
+                TotalNew++;
             }
 
             land.AlphaHue = 0xFF;

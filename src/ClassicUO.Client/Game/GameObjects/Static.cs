@@ -37,6 +37,9 @@ namespace ClassicUO.Game.GameObjects
         public int Index;
 
 
+        /// <summary>Allocated because the recycler had none ([gcs] pool lines).</summary>
+        public static long TotalNew;
+
         /// <summary>A new Static, or <paramref name="reuse"/> (a retired Static from MapObjectRecycler) put back to a new one's state.</summary>
         public static Static Create(World world, ushort graphic, ushort hue, int index, Static reuse = null)
         {
@@ -50,6 +53,7 @@ namespace ClassicUO.Game.GameObjects
             else
             {
                 s = new Static(world);
+                TotalNew++;
             }
 
             s.Graphic = s.OriginalGraphic = graphic;
