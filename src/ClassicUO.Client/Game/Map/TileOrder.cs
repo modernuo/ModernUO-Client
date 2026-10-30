@@ -120,14 +120,24 @@ namespace ClassicUO.Game.Map
             public int BrokenLinks;
             /// <summary>Objects in the list whose stored TileChunk/TileCell is not this tile.</summary>
             public int Foreign;
+            /// <summary>The forward walk from the head never met the anchor (Tiles[x, y]): the list the walk reads is not the
+            /// one the anchor belongs to (a TPrevious link without a matching TNext, found during head discovery or here).</summary>
+            public bool AnchorMissed;
+            /// <summary>Objects (not effects) whose X/Y is not this tile: moved without being re-added.</summary>
+            public int Misplaced;
 
-            public readonly bool Failed => OutOfOrder != 0 || Cycle || BrokenLinks != 0 || Foreign != 0;
+            public readonly bool Failed => OutOfOrder != 0 || Cycle || BrokenLinks != 0 || Foreign != 0 || AnchorMissed || Misplaced != 0;
         }
 
         /// <summary>The head of a tile list from any node, by TPrevious, with Floyd cycle detection; null on a cycle.</summary>
-        public static GameObject FindHead(GameObject anchor, out bool cycle)
+        public static GameObject FindHead(GameObject anchor, out bool cycle) => FindHead(anchor, out cycle, out _);
+
+        /// <summary><see cref="FindHead(GameObject, out bool)"/>, also counting TPrevious links whose target does not point back
+        /// (p.TNext != the node it was reached from).</summary>
+        public static GameObject FindHead(GameObject anchor, out bool cycle, out int brokenBack)
         {
             cycle = false;
+            brokenBack = 0;
 
             if (anchor == null)
             {
@@ -138,6 +148,11 @@ namespace ClassicUO.Game.Map
 
             while (slow.TPrevious != null)
             {
+                if (!ReferenceEquals(slow.TPrevious.TNext, slow))
+                {
+                    brokenBack++;
+                }
+
                 slow = slow.TPrevious;
                 fast = fast?.TPrevious?.TPrevious;
 
@@ -159,7 +174,9 @@ namespace ClassicUO.Game.Map
         public static TileCheck CheckTile(Chunk chunk, int x, int y)
         {
             var r = new TileCheck { FirstDescent = -1 };
-            GameObject head = FindHead(chunk.Tiles[x, y], out bool cycle);
+            GameObject anchor = chunk.Tiles[x, y];
+            GameObject head = FindHead(anchor, out bool cycle, out int brokenBack);
+            r.BrokenLinks = brokenBack;
 
             if (cycle)
             {
@@ -169,6 +186,8 @@ namespace ClassicUO.Game.Map
             }
 
             byte cell = (byte)((x << 3) | y);
+            int tileX = chunk.X * 8 + x, tileY = chunk.Y * 8 + y;
+            bool anchorSeen = false;
             GameObject fast = head;
             TileOrderKey prev = default;
 
@@ -194,6 +213,14 @@ namespace ClassicUO.Game.Map
                     r.Foreign++;
                 }
 
+                // effects place themselves at their own positions (moving effects); everything else lives at its X/Y
+                if (o is not GameEffect && (o.X != tileX || o.Y != tileY))
+                {
+                    r.Misplaced++;
+                }
+
+                anchorSeen |= ReferenceEquals(o, anchor);
+
                 prev = k;
                 r.Objects++;
                 fast = fast?.TNext?.TNext;
@@ -205,6 +232,8 @@ namespace ClassicUO.Game.Map
                     break;
                 }
             }
+
+            r.AnchorMissed = !r.Cycle && anchor != null && !anchorSeen;
 
             return r;
         }
@@ -233,7 +262,7 @@ namespace ClassicUO.Game.Map
         // ---- CUO_TILE_ORDER_CHECK ----
 
         private const int MaxReports = 25;
-        private static long _checks, _tiles, _objects, _outOfOrder, _badTiles, _cycles, _brokenLinks, _foreign, _ownedChecked, _unreachable;
+        private static long _checks, _tiles, _objects, _outOfOrder, _badTiles, _cycles, _brokenLinks, _foreign, _ownedChecked, _unreachable, _anchorMissed, _misplaced;
         // objects seen per rank, and preview multis (rank 2): shows which insertion rules the runs exercised
         private static readonly long[] _ranks = new long[3];
         private static long _previews;
@@ -269,6 +298,12 @@ namespace ClassicUO.Game.Map
                             _outOfOrder += r.OutOfOrder;
                             _brokenLinks += r.BrokenLinks;
                             _foreign += r.Foreign;
+                            _misplaced += r.Misplaced;
+
+                            if (r.AnchorMissed)
+                            {
+                                _anchorMissed++;
+                            }
 
                             if (r.Cycle)
                             {
@@ -320,7 +355,7 @@ namespace ClassicUO.Game.Map
             {
                 _nextLog = Time.Ticks + 5000;
                 Log.Info(
-                    $"[tile-order] tiles {_tiles}, objects {_objects}, out of order {_outOfOrder}, cycles {_cycles}, broken links {_brokenLinks}, foreign {_foreign}, " +
+                    $"[tile-order] tiles {_tiles}, objects {_objects}, out of order {_outOfOrder}, cycles {_cycles}, broken links {_brokenLinks}, foreign {_foreign}, anchor missed {_anchorMissed}, misplaced {_misplaced}, " +
                     $"unreachable {_unreachable} of {_ownedChecked} owned; failed tiles {_badTiles}; checks {_checks}; land {_ranks[0]}, multi {_ranks[1]}, " +
                     $"other {_ranks[2]} (preview multis {_previews}), every {CheckInterval} frames, seq {NextSeq}"
                 );
@@ -373,7 +408,8 @@ namespace ClassicUO.Game.Map
             var sb = new StringBuilder();
             sb.Append("[tile-order] tile ").Append(chunk.X * 8 + x).Append(',').Append(chunk.Y * 8 + y).Append(": ").Append(r.Objects)
               .Append(" objects, out of order ").Append(r.OutOfOrder).Append(", cycle ").Append(r.Cycle).Append(", broken links ")
-              .Append(r.BrokenLinks).Append(", foreign ").Append(r.Foreign);
+              .Append(r.BrokenLinks).Append(", foreign ").Append(r.Foreign).Append(", anchor missed ").Append(r.AnchorMissed)
+              .Append(", misplaced ").Append(r.Misplaced);
 
             if (!r.Cycle)
             {

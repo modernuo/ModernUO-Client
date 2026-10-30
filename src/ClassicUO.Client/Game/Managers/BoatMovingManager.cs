@@ -276,7 +276,7 @@ namespace ClassicUO.Game.Managers
                         deques.RemoveFromFront();
 
 
-                        if (item.TNext != null || item.TPrevious != null)
+                        if (item.IsPlaced)
                         {
                             item.AddToTile();
                         }
@@ -378,7 +378,7 @@ namespace ClassicUO.Game.Managers
                         entity.Offset.Y = 0;
                         entity.Offset.Z = 0;
 
-                        if (entity.TPrevious != null || entity.TNext != null)
+                        if (entity.IsPlaced)
                         {
                             entity.AddToTile();
                         }

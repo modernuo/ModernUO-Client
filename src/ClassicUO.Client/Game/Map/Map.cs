@@ -607,9 +607,16 @@ namespace ClassicUO.Game.Map
                 return;
             }
 
-            GameObject obj = chunk.Tiles[x % 8, y % 8];
+            ScanMapZ(chunk, x % 8, y % 8, out groundZ, out staticZ);
+        }
 
-            while (obj != null)
+        /// <summary>GetMapZ's scan: the land's Z and the highest other Z on tile (cellX, cellY), from the list's head (it used to
+        /// start at Tiles[x, y], an interior node on a landless tile; T6a re-audit).</summary>
+        internal static void ScanMapZ(Chunk chunk, int cellX, int cellY, out sbyte groundZ, out sbyte staticZ)
+        {
+            groundZ = staticZ = 0;
+
+            for (GameObject obj = chunk.GetHeadObject(cellX, cellY); obj != null; obj = obj.TNext)
             {
                 if (obj is Land)
                 {
@@ -619,8 +626,6 @@ namespace ClassicUO.Game.Map
                 {
                     staticZ = obj.Z;
                 }
-
-                obj = obj.TNext;
             }
         }
 
@@ -643,27 +648,7 @@ namespace ClassicUO.Game.Map
 
             if (chunk != null)
             {
-                GameObject obj = chunk.Tiles[x % 8, y % 8];
-
-                for (; obj != null; obj = obj.TNext)
-                {
-                    if (!(obj is Static) && !(obj is Multi))
-                    {
-                        continue;
-                    }
-
-                    if (obj.Graphic >= Client.Game.UO.FileManager.TileData.StaticData.Length)
-                    {
-                        continue;
-                    }
-
-                    if (!Client.Game.UO.FileManager.TileData.StaticData[obj.Graphic].IsRoof || Math.Abs(z - obj.Z) > 6)
-                    {
-                        continue;
-                    }
-
-                    break;
-                }
+                GameObject obj = FindNearRoof(chunk, x % 8, y % 8, z, Client.Game.UO.FileManager.TileData.StaticData);
 
                 if (obj == null)
                 {
@@ -686,6 +671,36 @@ namespace ClassicUO.Game.Map
             return defaultZ;
         }
 
+
+        /// <summary>
+        /// CalculateNearZ's scan: the first static or multi of tile (cellX, cellY) that is a roof within 6 of <paramref name="z"/>.
+        /// It scans from the list's head; it used to start at Tiles[x, y], which on a landless tile can be an interior node, so
+        /// a roof before it was missed (T6a re-audit).
+        /// </summary>
+        internal static GameObject FindNearRoof(Chunk chunk, int cellX, int cellY, int z, StaticTiles[] tiles)
+        {
+            for (GameObject obj = chunk.GetHeadObject(cellX, cellY); obj != null; obj = obj.TNext)
+            {
+                if (!(obj is Static) && !(obj is Multi))
+                {
+                    continue;
+                }
+
+                if (obj.Graphic >= tiles.Length)
+                {
+                    continue;
+                }
+
+                if (!tiles[obj.Graphic].IsRoof || Math.Abs(z - obj.Z) > 6)
+                {
+                    continue;
+                }
+
+                return obj;
+            }
+
+            return null;
+        }
 
         public bool TryGetBlock(int blockX, int blockY, out MapBlockData block)
         {

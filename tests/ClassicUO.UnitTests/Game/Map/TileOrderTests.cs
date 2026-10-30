@@ -17,7 +17,7 @@ namespace ClassicUO.UnitTests.Game.Map
     public sealed class TileOrderTests : IDisposable
     {
         // tiledata for the default branch: plain, tall (+1), background (-1), multi-movable (+1), tall background (0)
-        private const ushort Plain = 1, Tall = 2, Background = 3, MultiMovable = 4, TallBackground = 5;
+        private const ushort Plain = 1, Tall = 2, Background = 3, MultiMovable = 4, TallBackground = 5, Roof = 6;
 
         private readonly World _world = new World();
         private readonly Chunk _chunk;
@@ -30,6 +30,7 @@ namespace ClassicUO.UnitTests.Game.Map
             data[MultiMovable].Flags = TileFlag.MultiMovable;
             data[TallBackground].Height = 3;
             data[TallBackground].Flags = TileFlag.Background;
+            data[Roof].Flags = TileFlag.Roof;
             _savedStaticData = Chunk.StaticTileData;
             Chunk.StaticTileData = data;
             _chunk = new Chunk(_world);
@@ -51,7 +52,13 @@ namespace ClassicUO.UnitTests.Game.Map
         private Multi NewMulti(ushort graphic, sbyte z, CUSTOM_HOUSE_MULTI_OBJECT_FLAGS state = 0) =>
             new Multi(_world) { Graphic = graphic, Z = z, State = state };
 
-        private void Add(GameObject obj, int x = 0, int y = 0) => _chunk.AddGameObject(obj, x, y);
+        // the chunk is chunk (0, 0), so cell (x, y) is world tile (x, y); objects live at their X/Y (the checker's misplaced test)
+        private void Add(GameObject obj, int x = 0, int y = 0)
+        {
+            obj.X = (ushort)x;
+            obj.Y = (ushort)y;
+            _chunk.AddGameObject(obj, x, y);
+        }
 
         private List<GameObject> List(int x = 0, int y = 0)
         {
@@ -370,6 +377,124 @@ namespace ClassicUO.UnitTests.Game.Map
             Assert.Equal(1, r.OutOfOrder);
             Assert.Equal(11002, r.FirstDescent);
             Assert.True(TileOrder.IsReachable(all[11999]));
+        }
+
+        // ---- movers re-add on placement ownership, not on list neighbours ----
+
+        [Fact]
+        public void Lone_Mobile_On_A_Landless_Tile_Is_Placed_And_A_Step_Moves_It()
+        {
+            Mobile m = _world.GetOrCreateMobile(0x2000);
+            Add(m, 2, 2);
+            Assert.Null(m.TNext);
+            Assert.Null(m.TPrevious); // the old "TNext != null || TPrevious != null" test said: not placed, don't re-add
+            Assert.True(m.IsPlaced);
+
+            // a finished step: coordinates first, then the re-add (Mobile.ProcessSteps; the Map half of AddToTile is not
+            // reachable in a unit test, so this calls the chunk directly, as AddToTile does for a loaded chunk)
+            m.X = 3;
+            Assert.Equal(1, TileOrder.CheckTile(_chunk, 2, 2).Misplaced); // what the old code left behind, and the checker sees
+
+            if (m.IsPlaced)
+            {
+                _chunk.AddGameObject(m, 3, 2);
+            }
+
+            Assert.Empty(List(2, 2));
+            Assert.Null(_chunk.Tiles[2, 2]);
+            Assert.Equal(new GameObject[] { m }, List(3, 2));
+            Assert.Equal((3 << 3) | 2, m.TileCell);
+            Assert.False(TileOrder.CheckTile(_chunk, 3, 2).Failed);
+        }
+
+        [Fact]
+        public void Parked_Mover_Is_Placed_Unplaced_Is_Not()
+        {
+            Mobile m = _world.GetOrCreateMobile(0x2001);
+            Assert.False(m.IsPlaced);
+
+            m.PendingBlock = 1234; // Map.Park: off every tile list, waiting for its chunk
+            Assert.Null(m.TileChunk);
+            Assert.True(m.IsPlaced); // so a step re-adds it, which re-parks it at the new tile
+
+            Add(m, 1, 1); // the chunk loaded: placed for real, PendingBlock cleared by RemoveFromTile
+            Assert.Equal(-1, m.PendingBlock);
+            Assert.True(m.IsPlaced);
+
+            m.RemoveFromTile();
+            Assert.False(m.IsPlaced);
+        }
+
+        [Fact]
+        public void Boat_Carried_Entities_Alone_On_Landless_Tiles_Follow_The_Boat()
+        {
+            Item cargo = _world.GetOrCreateItem(0x4000_1000);
+            cargo.Graphic = Plain;
+            Mobile rider = _world.GetOrCreateMobile(0x2002);
+            Add(cargo, 4, 4);
+            Add(rider, 5, 4);
+
+            // BoatMovingManager: each carried entity's X/Y moves with the boat, then it is re-added if placed
+            foreach (GameObject e in new GameObject[] { cargo, rider })
+            {
+                Assert.True(e.IsPlaced);
+                e.Y = 5;
+                _chunk.AddGameObject(e, e.X, e.Y);
+            }
+
+            Assert.Empty(List(4, 4));
+            Assert.Empty(List(5, 4));
+            Assert.Equal(new GameObject[] { cargo }, List(4, 5));
+            Assert.Equal(new GameObject[] { rider }, List(5, 5));
+
+            for (int x = 0; x < 8; x++)
+            {
+                for (int y = 0; y < 8; y++)
+                {
+                    Assert.False(TileOrder.CheckTile(_chunk, x, y).Failed);
+                }
+            }
+        }
+
+        [Fact]
+        public void Checker_Fails_A_Tile_Whose_Anchor_Is_Not_In_The_Walked_List()
+        {
+            Land land = NewLand(_world, 0);
+            Add(land);
+            Static s = NewStatic(Plain, 5);
+            s.TileChunk = _chunk; // a stray node: the anchor's TPrevious points at it, it points nowhere
+            land.TPrevious = s;
+            s.TNext = null;
+
+            TileOrder.TileCheck r = TileOrder.CheckTile(_chunk, 0, 0);
+            Assert.True(r.AnchorMissed);
+            Assert.Equal(1, r.BrokenLinks);
+            Assert.True(r.Failed);
+        }
+
+        // ---- forward-only scans start at the head, not at Tiles[x, y] ----
+
+        [Fact]
+        public void Near_Roof_And_Map_Z_Scans_See_Objects_Before_An_Interior_Anchor()
+        {
+            // landless tile: the first object placed (Z 50) is the anchor; a roof at Z 20 and a roof multi at Z 40 sort before it
+            Static top = NewStatic(Plain, 50);
+            Add(top, 6, 6);
+            Static roof = NewStatic(Roof, 20);
+            Add(roof, 6, 6);
+            Multi roofMulti = NewMulti(Roof, 40);
+            Add(roofMulti, 6, 6);
+            Assert.Same(top, _chunk.Tiles[6, 6]);
+            Assert.Equal(new GameObject[] { roof, roofMulti, top }, List(6, 6));
+
+            // CalculateNearZ at z 24: the roof at 20 (from Tiles[x, y] the scan saw only the anchor and found nothing)
+            Assert.Same(roof, ClassicUO.Game.Map.Map.FindNearRoof(_chunk, 6, 6, 24, Chunk.StaticTileData));
+            Assert.Same(roofMulti, ClassicUO.Game.Map.Map.FindNearRoof(_chunk, 6, 6, 42, Chunk.StaticTileData));
+            Assert.Null(ClassicUO.Game.Map.Map.FindNearRoof(_chunk, 6, 6, 30, Chunk.StaticTileData));
+
+            ClassicUO.Game.Map.Map.ScanMapZ(_chunk, 6, 6, out sbyte groundZ, out sbyte staticZ);
+            Assert.Equal(0, groundZ);
+            Assert.Equal(50, staticZ);
         }
 
         // ---- membership on a landless tile (Chunk.Load leaves a tile empty when the block has no map data) ----
