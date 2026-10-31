@@ -11,8 +11,12 @@ public static class TableConvert
 {
     public static string TileData(UOFileManager fm, string outDir)
     {
-        var land = fm.TileData.LandData;
-        var stat = fm.TileData.StaticData;
+        // The pack's tiledata is a standardized format (PackConst.LandTileCount, PackConst.StaticTileCount). A pre-7.0.9
+        // install has 0x4000 statics: the rest are padded with empty source entries, which then go through the same rules
+        // as a modern install's genuinely empty entries. A source with more entries than the format holds is refused.
+        var land = PadSource(fm.TileData.LandData, PackConst.LandTileCount, "land");
+        var stat = PadSource(fm.TileData.StaticData, PackConst.StaticTileCount, "static");
+        int sourceStatics = fm.TileData.StaticData.Length;
         var names = new string?[land.Length + stat.Length];
         for (int i = 0; i < land.Length; i++) names[i] = land[i].Name;
         for (int i = 0; i < stat.Length; i++) names[land.Length + i] = stat[i].Name;
@@ -41,7 +45,20 @@ public static class TableConvert
         // tiledata_ext.bin is retired (tiledata.bin is the only tile data file). Drop a stale copy, e.g. one hard-linked
         // from an older pack into an --only output, so the manifest does not list it. Deleting a hard link leaves the source intact.
         PackOutputFiles.Delete(Path.Combine(outDir, TableConst.TileDataExtFileRetired));
-        return $"{l.Length} land, {s.Length} statics, names {table.Length} B; {new FileInfo(path).Length} B";
+        var padded = sourceStatics < s.Length ? $" ({sourceStatics} from the source, {s.Length - sourceStatics} padded empty)" : "";
+        return $"{l.Length} land, {s.Length} statics{padded}, names {table.Length} B; {new FileInfo(path).Length} B";
+    }
+
+    /// <summary>The source entries padded with empty (default) entries to the format's count. Throws when the source has
+    /// more entries than the format holds: truncating would silently drop tiles.</summary>
+    public static T[] PadSource<T>(T[] source, int count, string kind)
+    {
+        if (source.Length > count)
+            throw new InvalidDataException($"tiledata.mul has {source.Length} {kind} entries; the pack format holds exactly {count} (0x{count:X}). Refusing to truncate.");
+        if (source.Length == count) return source;
+        var padded = new T[count];
+        source.CopyTo(padded, 0);
+        return padded;
     }
 
     public static string HuesRaw(UOFileManager fm, string outDir)

@@ -20,12 +20,17 @@ namespace ClassicUO.Game.Managers
 
         public void Initialize()
         {
-            var animData = Client.Game.UO.FileManager.AnimData;
+            Initialize(Client.Game.UO.FileManager.TileData.StaticData, Client.Game.UO.FileManager.AnimData);
+        }
+
+        /// <summary>The registration itself, on explicit tables (tests run it on a loaded pack without a game).</summary>
+        internal void Initialize(StaticTiles[] statics, AnimDataLoader animData)
+        {
             var infos = new List<StaticAnimationInfo>();
 
-            for (int i = 0; i < Client.Game.UO.FileManager.TileData.StaticData.Length; i++)
+            for (int i = 0; i < statics.Length; i++)
             {
-                if (Client.Game.UO.FileManager.TileData.StaticData[i].IsAnimated)
+                if (statics[i].IsAnimated)
                 {
                     if (animData.TryGetAnimData((ushort)i, out _))
                     {
@@ -42,6 +47,18 @@ namespace ClassicUO.Game.Managers
             }
 
             _staticInfos = infos.ToArray();
+        }
+
+        /// <summary>The registered static ids, in table order (for tests).</summary>
+        internal IEnumerable<ushort> RegisteredIds
+        {
+            get
+            {
+                foreach (var info in _staticInfos)
+                {
+                    yield return info.Index;
+                }
+            }
         }
 
         public unsafe void Process()

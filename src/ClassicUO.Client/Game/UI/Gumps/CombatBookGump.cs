@@ -232,7 +232,9 @@ namespace ClassicUO.Game.UI.Gumps
 
                     ushort id = list[j];
 
-                    if (id >= maxStaticCount)
+                    // Every pack has 0x10000 static entries (an old install's are padded with empty ones), so an id outside the
+                    // source's era has an empty name: skip it, as the bounds check did before the padding.
+                    if (id >= maxStaticCount || string.IsNullOrEmpty(Client.Game.UO.FileManager.TileData.StaticData[id].Name))
                     {
                         continue;
                     }
