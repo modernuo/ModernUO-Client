@@ -140,7 +140,7 @@ if (only != null && !formatGiven && File.Exists(PackConst.PagePath(Path.Combine(
 }
 
 var total = Stopwatch.StartNew();
-Directory.CreateDirectory(debugDir);
+if (audioReport == null) Directory.CreateDirectory(debugDir); // --audio-report writes nothing, not even this folder
 ConvertOptions.DebugDir = debugDir;
 Console.WriteLine($"format {ConvertOptions.Format} (bc7 quality {ConvertOptions.Bc7Quality}), compress regions {ConvertOptions.CompressRegions}, compress pages {(ConvertOptions.ChunkedPages ? $"chunked ({ConvertOptions.ChunkBytes} B)" : ConvertOptions.CompressPages.ToString())}, page size {ConvertOptions.PageSize} (anims {ConvertOptions.AnimPageSize}{(ConvertOptions.AnimIndexed ? ", indexed8" + (ConvertOptions.IndexedMips ? " + b16 mips" : ", no mips") : "")}), threads {ConvertOptions.Threads}" +
                   (ConvertOptions.PartialPages ? $", pages {ConvertOptions.Pages.Lo}-{ConvertOptions.Pages.Hi}" : "") +

@@ -74,6 +74,12 @@ namespace ClassicUO.IO.Audio
             }
         }
 
+        /// <summary>
+        /// False when the instance's volume (<see cref="Volume"/> less <see cref="VolumeFactor"/>, as the setter applies it)
+        /// is 0: such a sound gives way to audible ones in AudioManager's playing limits.
+        /// </summary>
+        public bool IsAudible => m_volume - m_volumeFactor > 0f;
+
         public bool IsPlaying(uint curTime) => SoundInstance != null && SoundInstance.State == SoundState.Playing && DurationTime > curTime;
 
         /// <summary>
@@ -94,10 +100,10 @@ namespace ClassicUO.IO.Audio
         {
             OnDispose();
 
+            UnsubscribeBufferNeeded();
+
             if (SoundInstance != null)
             {
-                SoundInstance.BufferNeeded -= OnBufferNeeded;
-
                 if (!SoundInstance.IsDisposed)
                 {
                     SoundInstance.Stop();
@@ -158,7 +164,7 @@ namespace ClassicUO.IO.Audio
             {
                 _lastPlayedTime = curTime + Delay;
 
-                SoundInstance.BufferNeeded += OnBufferNeeded;
+                SubscribeBufferNeeded();
                 SoundInstance.SubmitBuffer(buffer.Array, buffer.Offset, buffer.Count);
                 VolumeFactor = volumeFactor;
                 Volume = volume;
@@ -187,11 +193,45 @@ namespace ClassicUO.IO.Audio
                 && count > 0 && (uint) (offset + count) <= (uint) array.Length && count % align == 0;
         }
 
-        public void Stop()
+        // The instance BufferNeeded is subscribed on (null: none). A replay used to add a subscription each time, and
+        // AudioManager's limiter drops a replayed sound from its list without calling Stop (FNA's own Stop keeps the
+        // event), so N overlapping replays left N subscriptions and one cleanup removed one (Codex round 2, P2). The
+        // subscription is now owned here, independent of any list: at most one, whatever plays, stops or replays.
+        private DynamicSoundEffectInstance _subscribedTo;
+
+        /// <summary>Subscribes <see cref="OnBufferNeeded"/> to the current instance, once (idempotent).</summary>
+        internal void SubscribeBufferNeeded()
         {
+            if (_subscribedTo == SoundInstance)
+            {
+                return;
+            }
+
+            UnsubscribeBufferNeeded();
+
             if (SoundInstance != null)
             {
-                SoundInstance.BufferNeeded -= OnBufferNeeded;
+                SoundInstance.BufferNeeded += OnBufferNeeded;
+                _subscribedTo = SoundInstance;
+            }
+        }
+
+        /// <summary>Removes the subscription, if any (idempotent).</summary>
+        internal void UnsubscribeBufferNeeded()
+        {
+            if (_subscribedTo != null)
+            {
+                _subscribedTo.BufferNeeded -= OnBufferNeeded;
+                _subscribedTo = null;
+            }
+        }
+
+        public void Stop()
+        {
+            UnsubscribeBufferNeeded();
+
+            if (SoundInstance != null)
+            {
                 SoundInstance.Stop();
             }
 

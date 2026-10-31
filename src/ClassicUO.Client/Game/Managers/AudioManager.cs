@@ -103,12 +103,14 @@ namespace ClassicUO.Game.Managers
 
             UOSound sound = (UOSound) Client.Game.UO.Sounds.GetSound(index);
 
-            if (sound != null && sound.CanPlayAt(Time.Ticks))
+            // a silent sound (sound off, or in the background) still plays, as before, but never stops another one
+            if (sound == null || !sound.CanPlayAt(Time.Ticks)
+                || ClassicUO.Renderer.Sounds.Sound.LimitPlaying(_currentSounds, sound, audible: volume > 0) < 0)
             {
-                ClassicUO.Renderer.Sounds.Sound.LimitPlaying(_currentSounds, sound);
+                return;
             }
 
-            if (sound != null && sound.Play(Time.Ticks, volume))
+            if (sound.Play(Time.Ticks, volume))
             {
                 sound.X = -1;
                 sound.Y = -1;
@@ -141,7 +143,11 @@ namespace ClassicUO.Game.Managers
 
             if (distance > world.ClientViewRange)
             {
-                volume = 0;
+                // Out of range: ClassicUO played it at volume 0 (and its distance factor is the whole volume anyway). It
+                // is not submitted at all now: nothing is read, and it takes no voice from an audible sound (Codex round
+                // 2, P2). The one difference: ClassicUO's silent play started the id's replay delay, so the same id
+                // coming from within range in the next half-length was dropped; now that one plays.
+                return;
             }
 
             if (volume < -1 || volume > 1f)
@@ -156,12 +162,14 @@ namespace ClassicUO.Game.Managers
 
             UOSound sound = (UOSound)Client.Game.UO.Sounds.GetSound(index);
 
-            if (sound != null && sound.CanPlayAt(Time.Ticks))
+            // a silent sound (sound off, or in the background) still plays, as before, but never stops another one
+            if (sound == null || !sound.CanPlayAt(Time.Ticks)
+                || ClassicUO.Renderer.Sounds.Sound.LimitPlaying(_currentSounds, sound, audible: volume - distanceFactor > 0) < 0)
             {
-                ClassicUO.Renderer.Sounds.Sound.LimitPlaying(_currentSounds, sound);
+                return;
             }
 
-            if (sound != null && sound.Play(Time.Ticks, volume, distanceFactor))
+            if (sound.Play(Time.Ticks, volume, distanceFactor))
             {
                 sound.X = x;
                 sound.Y = y;

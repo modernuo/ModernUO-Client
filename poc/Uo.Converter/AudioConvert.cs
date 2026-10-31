@@ -118,7 +118,8 @@ public static class AudioConvert
                 string path = Path.GetFullPath(fm.Sounds.MusicPath(name));
                 if (!cache.TryGetValue(path, out expect))
                 {
-                    expect = File.Exists(path) ? File.ReadAllBytes(path) : null;
+                    // bounded: an MP3 over Mp3Validator's limit is never read (the client's guard refuses it by size)
+                    expect = File.Exists(path) ? AudioConst.ReadFileBounded(path, Mp3Validator.MaxBytes, out _) : null;
                     if (expect != null && !Mp3Validator.Validate(expect).IsValid) expect = null; // the pack leaves out what the client's guard refuses
                     cache[path] = expect;
                 }
