@@ -1765,6 +1765,8 @@ namespace ClassicUO.Game.Managers
 
                 case MacroType.ToggleDrawRoofs:
                     ProfileManager.CurrentProfile.DrawRoofs = !ProfileManager.CurrentProfile.DrawRoofs;
+                    // as the Options dialog does (DrawRoofs is also part of the decision's validity, MaxDrawZState)
+                    Client.Game.GetScene<GameScene>()?.UpdateMaxDrawZ(true);
 
                     break;
 
