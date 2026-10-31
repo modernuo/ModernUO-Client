@@ -251,11 +251,27 @@ public struct AnimBodyEntry
     /// <summary>Corpse.def replacement for corpses (0xFFFF = none), with CorpseHue.</summary>
     public ushort CorpseBody;
     public ushort CorpseHue;
-    /// <summary>Bodyconv.def mounted height offset.</summary>
+    /// <summary>Bodyconv.def mounted height offset of this entry's own conversion (informational; the client reads MountShift).</summary>
     public sbyte MountHeight;
-    public byte Pad;
+    /// <summary>
+    /// Rider seat for this body as a mount (<see cref="MountSeat"/>). Without <see cref="MountAbsoluteFlag"/>: a shift the
+    /// client adds to the Mounts table's per-item offset, the mount height of the art the pack draws minus that of the
+    /// default (aos) art, so 0 (every default pack, and packs before this field, where it was padding) draws riders as
+    /// the table says. With it: the rider offset itself, for every item (a mount body drawn as a Body.def stand-in it
+    /// doesn't draw by default sits as on the stand-in).
+    /// </summary>
+    public sbyte MountShift;
+
+    /// <summary>
+    /// Pack-only bit of <see cref="Flags"/>: <see cref="MountShift"/> is the absolute rider offset. mobtypes.txt never
+    /// defines it (ClassicUO's AnimationFlags stop at 0x80000 plus Found = bit 31); the converter clears it from the
+    /// mobtypes flags and the client's GetAnimFlags masks it.
+    /// </summary>
+    public const uint MountAbsoluteFlag = 0x40000000;
 
     public readonly bool HasFrames => ActionCount != 0;
+
+    public readonly MountSeat MountSeat => new(MountShift, (Flags & MountAbsoluteFlag) != 0);
 }
 
 [Flags]
@@ -330,6 +346,39 @@ public sealed class Manifest
     public DateTime Created { get; set; }
     public List<FacetInfo> Facets { get; set; } = new();
     public List<ManifestFile> Files { get; set; } = new();
+    /// <summary>The body import choices anim/ was built with (bodies.json, resolved); null in packs from before them (= the legacy rules, policy 0).</summary>
+    public BodyChoicesRecord? Bodies { get; set; }
+}
+
+/// <summary>Manifest record of the body import choices (docs/modern-client/bodies.md), for diagnostics and --verify-only.</summary>
+public sealed class BodyChoicesRecord
+{
+    /// <summary>The converter's body resolver policy (Uo.Converter.BodyChoices.CurrentPolicy); 0 never appears in a record.</summary>
+    public int Policy { get; set; }
+    public string Preset { get; set; } = "aos";
+    public bool ForceOldAnimations { get; set; }
+    public string Additions { get; set; } = "standins";
+    /// <summary>"none" or "target": whether converted MUL bodies follow their target's AnimationSequence.</summary>
+    public string Sequences { get; set; } = "none";
+    public List<BodyRemodelRecord> Remodels { get; set; } = new();
+    public List<BodyExtraRecord> Extras { get; set; } = new();
+    /// <summary>"default" or the bodies.json path, and that file's SHA-256.</summary>
+    public string Source { get; set; } = "default";
+    public string Sha256 { get; set; } = "";
+}
+
+public sealed class BodyRemodelRecord
+{
+    public int Id { get; set; }
+    public string Use { get; set; } = "";
+}
+
+public sealed class BodyExtraRecord
+{
+    public int Id { get; set; }
+    public string From { get; set; } = "";
+    /// <summary>Set only when bodies.json gave it.</summary>
+    public int? MountHeight { get; set; }
 }
 
 public static class StructIo

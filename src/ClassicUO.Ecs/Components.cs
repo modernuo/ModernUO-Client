@@ -133,7 +133,8 @@ namespace ClassicUO.Ecs
 
         public byte MountGroup;
         public ushort MountBody;
-        public sbyte MountOffsetY;
+        // Mounts table offset + pack MountShift (-256..254: both sbytes, summed without clamping)
+        public short MountOffsetY;
 
         // seat offsets (FixSittingDirection + SIT_OFFSET_Y, gargoyle lift) added to the draw position
         public short SitX, SitY;

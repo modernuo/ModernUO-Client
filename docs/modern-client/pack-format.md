@@ -328,8 +328,10 @@ Mobiles, equipment and corpses. Frames are resolved at conversion time exactly a
 - Bodies 0..max(2047, highest id in mobtypes.txt and Bodyconv/Body/Corpse.def) are scanned.
 - mobtypes.txt gives type and flags; flag 0x10000 means frames come from `AnimationFrame*.uop`.
 - AnimationSequence.uop group replacement is applied: UOP action `a` holds what ClassicUO draws for `a`. The renderer must not remap UOP actions.
-- Bodyconv.def is applied with every column enabled (all expansion flags, as a modern server sends).
-- Body.def and Corpse.def stay as aliases and apply only to plain anim.mul bodies.
+- **Bodyconv.def is applied per the import choices** (`bodies.json`, see [bodies.md](bodies.md)): the pack holds exactly one resolved body set, and the client does no body remapping at run time (it ignores the body bits of 0xB9). The default preset `aos` applies every column (as before), plus the three 7.x all `-1` lines (9, 26, 28) as their column-1 targets (anim2 7, 24, 5). `mountHeight` follows the chosen column. The manifest's `bodies` record holds the choices (preset, flags, overrides, extras, bodies.json SHA-256); `--verify-only` rebuilds the plan from it.
+- **A converted MUL body's actions follow the converted target's AnimationSequence.uop entry** (owner, 2026-10-31): daemon 9 drawn as anim2 body 7 uses 7's replacements (12→4, 13→4, 20→1), not 9's. Action `a` of such a body holds the stored group the target's sequence names. Bodies drawing their own anim.mul art use no sequence (as ClassicUO). The converter prints the bodies this affects.
+- **Extras** (`bodies.json` `extras`): a new, unused body id whose entry copies another variant's frames (`anim.mul:76`, `anim2.mul:7`), with the type and mobtypes flags of the body that variant belongs to, and that body's mount height.
+- Body.def and Corpse.def stay as aliases (single hop for the client: the converter stores the final target) and apply only to plain anim.mul bodies, so a stand-in follows its target's resolved art.
 - Frame counts: MUL directions carry their own; for UOP, a group's frames split into `round(n / 5)` per direction (minimum 10 for equipment), with gaps filled by empty frames.
 - Equipment uses the item's animId (tiledata) as the body. ClassicUO draws it only when that body's type is equipment or human, checked at runtime.
 

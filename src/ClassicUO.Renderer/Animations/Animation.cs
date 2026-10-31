@@ -36,7 +36,17 @@ namespace ClassicUO.Renderer.Animations
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public AnimationFlags GetAnimFlags(ushort graphic) =>
-            graphic < _animationLoader.BodyCount ? (AnimationFlags)_animationLoader.GetBody(graphic).Flags : 0;
+            graphic < _animationLoader.BodyCount ? (AnimationFlags)(_animationLoader.GetBody(graphic).Flags & ~AnimBodyEntry.MountAbsoluteFlag) : 0;
+
+        /// <summary>
+        /// The pack's rider seat for <paramref name="graphic"/> as a mount (AnimBodyEntry.MountSeat): a shift added to the
+        /// Mounts table's item offset (the mount-height difference of the drawn art; 0 on default packs and packs from
+        /// before the field), or, for a body drawn as a Body.def stand-in it doesn't draw by default, the stand-in's
+        /// absolute offset for every item.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public MountSeat GetMountSeat(ushort graphic) =>
+            graphic < _animationLoader.BodyCount ? _animationLoader.GetBody(graphic).MountSeat : default;
 
         public bool PixelCheck(
             ushort animID,
@@ -493,11 +503,6 @@ namespace ClassicUO.Renderer.Animations
 
                 _owner._queue.Publish(this); // cancelled meanwhile: returns the buffers and the bytes here
             }
-        }
-
-        public void UpdateAnimationTable(BodyConvFlags flags)
-        {
-            // Bodyconv.def is resolved by the pack converter with every expansion enabled.
         }
 
         public void ConvertBodyIfNeeded(
