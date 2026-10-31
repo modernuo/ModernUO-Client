@@ -12,42 +12,31 @@ public static class MapConvert
     private const int MapBlockBytes = 4 + 64 * 3; // header + MapCells[64]
     private const int StaticRecBytes = 7;          // StaticsBlock
 
-    /// <summary>Facets the client actually has: a map file on disk, or (below 6.0.0.0, as ModernUO's
-    /// <c>maps.enablePre6000Trammel</c>) Trammel read from map0 plus its own diffs (ClientLoad.ApplyLegacyMapRules).
-    /// ClassicUO's unconditional map1 := map0 fallback is not followed for newer clients.</summary>
+    /// <summary>Facets the client actually has: those whose source files <see cref="FacetSources.Resolve"/> finds (a map
+    /// file on disk; below 6.0.0.0 Trammel is map0, as ModernUO's <c>maps.enablePre6000Trammel</c>). ClassicUO's
+    /// unconditional map1 := map0 fallback is not followed for newer clients.</summary>
     public static IEnumerable<int> AvailableFacets(UOFileManager fm)
     {
         for (int i = 0; i < MapLoader.MAPS_COUNT; i++)
-        {
-            bool uop = File.Exists(fm.GetUOFilePath($"map{i}LegacyMUL.uop"));
-            bool mul = File.Exists(fm.GetUOFilePath($"map{i}.mul"));
-            if (i == 1 && !uop && !mul && fm.Version < ClientVersion.CV_6000) mul = File.Exists(fm.GetUOFilePath("map0.mul"));
-            if ((uop || mul) && (ConvertOptions.Facets == null || ConvertOptions.Facets.Contains(i))) yield return i;
-        }
+            if (FacetSources.Resolve(fm, i) != null && (ConvertOptions.Facets == null || ConvertOptions.Facets.Contains(i))) yield return i;
     }
 
-    public static Stats Facet(UOFileManager fm, int facet, string outDir, bool useXFiles)
+    public static Stats Facet(UOFileManager fm, int facet, string outDir)
     {
         var sw = System.Diagnostics.Stopwatch.StartNew();
-        var maps = fm.Maps;
-        maps.LoadMap(facet, useXFiles);
-        var index = maps.BlockData[facet] ?? throw new InvalidOperationException($"facet {facet} has no block table");
-        int bw = maps.MapBlocksSize[facet, 0], bh = maps.MapBlocksSize[facet, 1];
+        var src = FacetSources.Resolve(fm, facet) ?? throw new InvalidOperationException($"facet {facet} has no map file");
+        int bw = fm.Maps.MapsDefaultSize[facet, 0] >> 3, bh = fm.Maps.MapsDefaultSize[facet, 1] >> 3;
+        // Base files first, then the diffs on top.
+        var table = FacetTable.Build(fm, src, bw, bh, ClientLoad.MapDiffs);
+        Console.WriteLine($"  facet {facet}: {Path.GetFileName(src.Map)}{(src.FileIndex != facet ? $" (file index {src.FileIndex})" : "")}, " +
+                          $"{(src.StaIdx != null ? $"{Path.GetFileName(src.StaIdx)} + {Path.GetFileName(src.Statics)}" : "no statics")}" +
+                          (table.LandPatches + table.StaticPatches > 0 ? $"; diffs applied as ModernUO serves them: {table.LandPatches} land blocks, {table.StaticPatches} static blocks" : "") +
+                          (table.BadStaticEntries > 0 ? $"; {table.BadStaticEntries} static index entries out of range (read as empty)" : ""));
         var info = new FacetInfo
         {
-            Index = facet, Width = maps.MapsDefaultSize[facet, 0], Height = maps.MapsDefaultSize[facet, 1],
+            Index = facet, Width = fm.Maps.MapsDefaultSize[facet, 0], Height = fm.Maps.MapsDefaultSize[facet, 1],
             BlocksX = bw, BlocksY = bh, RegionBlocks = PackConst.RegionBlocks,
         };
-
-        // The block table references a small set of files (map uop/mul, statics mul). Slurp each once so regions can be
-        // read in parallel without touching ClassicUO's stateful readers.
-        var files = new Dictionary<string, byte[]>(StringComparer.OrdinalIgnoreCase);
-        foreach (ref readonly var im in index.AsSpan())
-        {
-            if (!im.IsValid()) continue;
-            if (im.MapFile != null && !files.ContainsKey(im.MapFile.FilePath)) files[im.MapFile.FilePath] = File.ReadAllBytes(im.MapFile.FilePath);
-            if (im.StaticFile != null && !files.ContainsKey(im.StaticFile.FilePath)) files[im.StaticFile.FilePath] = File.ReadAllBytes(im.StaticFile.FilePath);
-        }
 
         var dir = Path.Combine(outDir, "map", facet.ToString());
         Directory.CreateDirectory(dir);
@@ -71,30 +60,25 @@ public static class MapConvert
                 for (int bx = 0; bx < w; bx++)
                 {
                     // UO block numbering is column-major: block = x * blocksY + y.
-                    ref readonly var im = ref index[(bx0 + bx) * bh + (by0 + by)];
-                    if (!im.IsValid() || im.MapFile == null) continue;
-                    var mapBytes = files[im.MapFile.FilePath];
-                    if (im.MapAddress + MapBlockBytes > (ulong)mapBytes.Length) continue;
-                    var cells = mapBytes.AsSpan((int)im.MapAddress + 4, 64 * 3);
+                    int id = (bx0 + bx) * bh + (by0 + by);
+                    if (table.LandSrc[id] == FacetTable.None) continue;
+                    var cells = table.Sources[table.LandSrc[id]].AsSpan((int)table.LandOff[id] + 4, 64 * 3);
                     var land = new LandCell[PackConst.CellsPerBlock];
                     for (int c = 0; c < 64; c++)
                         land[c] = new LandCell { TileId = (ushort)((cells[c * 3] | (cells[c * 3 + 1] << 8)) & 0x3FFF), Z = (sbyte)cells[c * 3 + 2] };
 
                     tmp.Clear();
-                    if (im.StaticFile != null && im.StaticCount > 0) // address 0 is valid: the first block of statics*.mul or stadif*.mul
+                    if (table.StaSrc[id] != FacetTable.None) // offset 0 is valid; the range was checked when the table was built
                     {
-                        var sb = files[im.StaticFile.FilePath];
-                        long start = (long)im.StaticAddress, end = start + im.StaticCount * StaticRecBytes;
-                        if (end <= sb.Length)
+                        var sb = table.Sources[table.StaSrc[id]];
+                        int start = table.StaOff[id], end = start + table.StaCount[id] * StaticRecBytes;
+                        for (int p = start; p < end; p += StaticRecBytes)
                         {
-                            for (long p = start; p < end; p += StaticRecBytes)
-                            {
-                                ushort g = (ushort)(sb[p] | (sb[p + 1] << 8));
-                                byte x = sb[p + 2], y = sb[p + 3];
-                                // Same filter ClassicUO's Chunk.Load applies.
-                                if (g == 0 || g == 0xFFFF || x > 7 || y > 7) continue;
-                                tmp.Add(new StaticCell { Graphic = g, X = x, Y = y, Z = (sbyte)sb[p + 4], Hue = (ushort)(sb[p + 5] | (sb[p + 6] << 8)) });
-                            }
+                            ushort g = (ushort)(sb[p] | (sb[p + 1] << 8));
+                            byte x = sb[p + 2], y = sb[p + 3];
+                            // Same filter ClassicUO's Chunk.Load applies.
+                            if (g == 0 || g == 0xFFFF || x > 7 || y > 7) continue;
+                            tmp.Add(new StaticCell { Graphic = g, X = x, Y = y, Z = (sbyte)sb[p + 4], Hue = (ushort)(sb[p + 5] | (sb[p + 6] << 8)) });
                         }
                     }
                     blocks[by * w + bx] = new BlockData(land, tmp.ToArray());

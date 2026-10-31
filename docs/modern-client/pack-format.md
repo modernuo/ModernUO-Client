@@ -4,7 +4,7 @@ The authoritative specification of the asset pack the modern client loads instea
 
 Revision 1.1 (pack classic-1.1, 2026-10-31): one tile data file with the draw rules as per-tile flags ("Tile data"), and the sprite table's partial-hue bit retired. `FileHeader.version` and the manifest version stay 1; the new `TILE` magic identifies the tile data layout, and a client of this revision rejects a 1.0 pack (it lacks a `TILE` `tiledata.bin`), while a 1.0 client rejects a 1.1 pack (it lacks `tiledata_ext.bin`).
 
-For every content type described here, the client reads only the pack. MUL/UOP stay only for the content listed in "Not in the pack" at the end. Patch formats (`verdata.mul`, `mapdif*`, `mapdifl*`, `stadif*`, `stadifi*`, `stadifl*`) are never read. Shard owners merge patches into the base files before converting. The `map*x`/`statics*x`/`staidx*x` files (`--xfiles`) are base files and are supported.
+For every content type described here, the client reads only the pack. MUL/UOP stay only for the content listed in "Not in the pack" at the end. The client never reads a patch format. `verdata.mul` is not imported (shard owners merge it into the base files before converting); legacy map patches (`mapdif*`, `mapdifl*`, `stadif*`, `stadifi*`, `stadifl*`) are merged into the maps by the converter at import (owner, 2026-10-31; data-formats.md 4.9). The `map*x`/`statics*x`/`staidx*x` files are not read; a shard that wants them renames them to the regular names before converting (owner, 2026-10-31).
 
 ## Conventions
 

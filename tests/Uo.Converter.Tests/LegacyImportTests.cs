@@ -111,8 +111,9 @@ public sealed class LegacyImportTests : IDisposable
         LegacyClientVersion.DetectFromVersionFormat(VersionExe("c", (4, 0, 11))).Should().Be("4.0.11c");
         LegacyClientVersion.DetectFromVersionInfo(VersionExe("c", (4, 0, 11))).Should().BeNull();
 
-        // ClassicUO's parser maps the letter from 'a' = 0, so "4.0.11c" is 4.0.11.2 (ModernUO's ClientVersion says .3)
-        ((uint)Cv("4.0.11c")).Should().Be(0x04000B02u);
+        // letters count from 'a' = 1, as ModernUO's ClientVersion: "4.0.11c" is 4.0.11.3 = CV_4011C
+        ((uint)Cv("4.0.11c")).Should().Be(0x04000B03u);
+        Cv("4.0.11c").Should().Be(ClientVersion.CV_4011C);
         LegacyClientVersion.MinSupported.Should().Be(Cv("4.0.11c"));
         (Cv("4.0.11c") < ClientVersion.CV_6000).Should().BeTrue();
 
@@ -339,46 +340,73 @@ public sealed class LegacyImportTests : IDisposable
 
     private static byte[] Ints(params int[] v) => v.SelectMany(BitConverter.GetBytes).ToArray();
 
-    private void WriteFacet()
+    private void Write(string name, byte[] data) => File.WriteAllBytes(Path.Combine(_uo, name), data);
+
+    private static byte[] Map(int columns, ushort tile)
+    {
+        var map = new byte[columns * Bh * 196];
+        for (int b = 0; b < columns * Bh; b++) Block(tile, 0).CopyTo(map, b * 196);
+        return map;
+    }
+
+    /// <summary>Base facet 4 (tile 3; statics in blocks 0 and 5), no diffs.</summary>
+    private void WriteBaseFacet(string suffix = "", ushort tile = 3, int columns = Bw)
     {
         // map0 only has to exist (MapLoader.Load reads its length); facet 4 holds the data
-        File.WriteAllBytes(Path.Combine(_uo, "map0.mul"), Block(3, 0));
-        File.WriteAllBytes(Path.Combine(_uo, "staidx0.mul"), Ints(-1, 0, 0));
-        File.WriteAllBytes(Path.Combine(_uo, "statics0.mul"), []);
-
-        var map = new byte[Bw * Bh * 196];
-        for (int b = 0; b < Bw * Bh; b++) Block(3, 0).CopyTo(map, b * 196);
-        File.WriteAllBytes(Path.Combine(_uo, $"map{Facet}.mul"), map);
+        Write("map0.mul", Block(3, 0));
+        Write("staidx0.mul", Ints(-1, 0, 0));
+        Write("statics0.mul", []);
+        Write($"map{Facet}{suffix}.mul", Map(columns, tile));
 
         // block 0's statics start at offset 0 of statics4.mul (a valid address), block 5 has two more
         var sta = Statics((0x100, 1, 2, 5, 0), (0x101, 7, 7, -5, 0x22), (0x200, 3, 3, 0, 0), (0x201, 9, 0, 0, 0));
-        var idx = new byte[Bw * Bh * 12];
-        for (int b = 0; b < Bw * Bh; b++) Ints(-1, 0, 0).CopyTo(idx, b * 12);
+        var idx = new byte[columns * Bh * 12];
+        for (int b = 0; b < columns * Bh; b++) Ints(-1, 0, 0).CopyTo(idx, b * 12);
         Ints(0, 14, 0).CopyTo(idx, 0);
         Ints(14, 14, 0).CopyTo(idx, 5 * 12);
-        File.WriteAllBytes(Path.Combine(_uo, $"staidx{Facet}.mul"), idx);
-        File.WriteAllBytes(Path.Combine(_uo, $"statics{Facet}.mul"), sta);
+        Write($"staidx{Facet}{suffix}.mul", idx);
+        Write($"statics{Facet}{suffix}.mul", sta);
+    }
 
-        // land diff: block 7; statics diffs: block 5 replaced by the first record of stadif4 (offset 0), block 0 emptied
-        File.WriteAllBytes(Path.Combine(_uo, $"mapdifl{Facet}.mul"), Ints(7));
-        File.WriteAllBytes(Path.Combine(_uo, $"mapdif{Facet}.mul"), Block(0x77, 10));
-        File.WriteAllBytes(Path.Combine(_uo, $"stadifl{Facet}.mul"), Ints(5, 0));
-        File.WriteAllBytes(Path.Combine(_uo, $"stadifi{Facet}.mul"), Ints(0, 7, 0, -1, 0, 0));
-        File.WriteAllBytes(Path.Combine(_uo, $"stadif{Facet}.mul"), Statics((0x300, 0, 0, 1, 0)));
+    private void WriteLandDiffs() // block 7
+    {
+        Write($"mapdifl{Facet}.mul", Ints(7));
+        Write($"mapdif{Facet}.mul", Block(0x77, 10));
+    }
+
+    private void WriteStaticDiffs() // block 5 replaced by the first record of stadif4 (offset 0), block 0 emptied
+    {
+        Write($"stadifl{Facet}.mul", Ints(5, 0));
+        Write($"stadifi{Facet}.mul", Ints(0, 7, 0, -1, 0, 0));
+        Write($"stadif{Facet}.mul", Statics((0x300, 0, 0, 1, 0)));
+    }
+
+    private void WriteFacet()
+    {
+        WriteBaseFacet();
+        WriteLandDiffs();
+        WriteStaticDiffs();
     }
 
     private BlockData[] ConvertFacet(string version, out UOFileManager fm)
     {
         fm = new UOFileManager(Cv(version), _uo);
-        fm.Maps.Load();
         ClientLoad.ApplyLegacyMapRules(fm);
-        MapConvert.Facet(fm, Facet, _out, useXFiles: false);
+        MapConvert.Facet(fm, Facet, _out);
         var (h, blocks) = RegionFile.Read(PackConst.RegionPath(Path.Combine(_out, "map", Facet.ToString()), 0, 0));
         (h.BlocksW, h.BlocksH).Should().Be(((ushort)PackConst.RegionBlocks, (ushort)PackConst.RegionBlocks));
         return blocks;
     }
 
     private static int At(int blockId) => blockId % Bh * PackConst.RegionBlocks + blockId / Bh; // column-major id -> region row-major
+
+    private static void OracleAgrees(UOFileManager fm, BlockData[] blocks)
+    {
+        var oracle = MulMapOracle.TryOpen(fm, Facet, Bw, Bh)!;
+        oracle.Should().NotBeNull();
+        for (int id = 0; id < 64 * Bh; id++)
+            if (id % Bh < PackConst.RegionBlocks) oracle.Matches(id, in blocks[At(id)]).Should().BeTrue($"block {id}");
+    }
 
     [Fact]
     public void Map_Diffs_Are_Baked_Below_6000_And_Statics_At_Address_0_Survive()
@@ -394,8 +422,7 @@ public sealed class LegacyImportTests : IDisposable
 
         var oracle = MulMapOracle.TryOpen(fm, Facet, Bw, Bh)!;
         (oracle.LandPatches, oracle.StaticPatches).Should().Be((1, 2));
-        for (int id = 0; id < 64 * Bh && id / Bh < PackConst.RegionBlocks; id++)
-            if (id % Bh < PackConst.RegionBlocks) oracle.Matches(id, in blocks[At(id)]).Should().BeTrue($"block {id}");
+        OracleAgrees(fm, blocks);
     }
 
     [Fact]
@@ -411,11 +438,302 @@ public sealed class LegacyImportTests : IDisposable
         blocks[At(5)].Statics.Select(s => s.Graphic).Should().Equal((ushort)0x200);
     }
 
-    [Fact]
-    public void Trammel_Comes_From_Map0_Below_6000_When_There_Is_No_Map1()
+    // finding 1: offset 0 with length 0xFFFFFFFF read unsigned became 1,024 records from the start of the file
+
+    [Theory]
+    [InlineData(0, 14, 14, true, 2)]       // offset 0 is valid
+    [InlineData(7, 7, 14, true, 1)]
+    [InlineData(0, -1, 7168, false, 0)]    // length 0xFFFFFFFF: negative, empty (was 1,024 records)
+    [InlineData(-1, 0, 7168, false, 0)]    // offset 0xFFFFFFFF
+    [InlineData(-1, 14, 7168, false, 0)]
+    [InlineData(0, 0, 7168, false, 0)]
+    [InlineData(0, 6, 7168, false, 0)]     // shorter than one record
+    [InlineData(7, 14, 14, false, 0)]      // runs past the end of the file
+    [InlineData(0, 7 * 2000, 7 * 2000, true, 1024)] // ClassicUO's cap, applied after the checks
+    public void Static_Index_Entries_Are_Checked_Signed_And_In_Range_Before_The_Count(int offset, int length, long fileLength, bool ok, int count)
     {
-        File.WriteAllBytes(Path.Combine(_uo, "map0.mul"), []);
+        FacetTable.TryStaticRange(offset, length, fileLength, out int c).Should().Be(ok);
+        c.Should().Be(count);
+    }
+
+    [Theory]
+    [InlineData("4.0.11c")] // through stadifi as well
+    [InlineData("7.0.9.0")] // base statics only
+    public void Negative_Length_At_Offset_0_Is_An_Empty_Block_In_Staidx_And_Stadifi(string version)
+    {
+        WriteBaseFacet();
+        // 1,100 records, so 1,024 records from offset 0 would be in range; block 9 = (0, 0xFFFFFFFF)
+        var recs = Enumerable.Range(0, 1100).Select(i => ((ushort)(0x400 + i), (byte)1, (byte)1, (sbyte)0, (ushort)0)).ToArray();
+        Write($"statics{Facet}.mul", Statics(recs));
+        var idx = File.ReadAllBytes(Path.Combine(_uo, $"staidx{Facet}.mul"));
+        Ints(0, 14, 0).CopyTo(idx, 0);
+        Ints(0, -1, 0).CopyTo(idx, 9 * 12);
+        Write($"staidx{Facet}.mul", idx);
+        // stadif: block 0 replaced by (0, 0xFFFFFFFF) of a 1,100-record stadif, block 5 by a valid offset-0 entry
+        Write($"stadifl{Facet}.mul", Ints(0, 5));
+        Write($"stadifi{Facet}.mul", Ints(0, -1, 0, 0, 7, 0));
+        Write($"stadif{Facet}.mul", Statics(recs));
+
+        var blocks = ConvertFacet(version, out var fm);
+        blocks[At(9)].Statics.Should().BeEmpty();
+        if (version == "4.0.11c")
+        {
+            blocks[At(0)].Statics.Should().BeEmpty("the diff entry has a negative length");
+            blocks[At(5)].Statics.Select(s => s.Graphic).Should().Equal((ushort)0x400);
+        }
+        else
+        {
+            blocks[At(0)].Statics.Select(s => s.Graphic).Should().Equal((ushort)0x400, (ushort)0x401);
+        }
+
+        OracleAgrees(fm, blocks);
+    }
+
+    // finding 2: the two diff families are independent, and deletions need no stadif payload
+
+    [Fact]
+    public void Land_Diffs_Alone_Are_Applied()
+    {
+        WriteBaseFacet();
+        WriteLandDiffs();
+        var blocks = ConvertFacet("4.0.11c", out var fm);
+        blocks[At(7)].Land[0].TileId.Should().Be(0x77);
+        blocks[At(5)].Statics.Select(s => s.Graphic).Should().Equal(new ushort[] { 0x200 }, "no statics diffs");
+        OracleAgrees(fm, blocks);
+    }
+
+    [Fact]
+    public void Static_Diffs_Alone_Are_Applied()
+    {
+        WriteBaseFacet();
+        WriteStaticDiffs();
+        var blocks = ConvertFacet("4.0.11c", out var fm);
+        blocks[At(7)].Land[0].TileId.Should().Be(3, "no land diffs");
+        blocks[At(5)].Statics.Select(s => s.Graphic).Should().Equal((ushort)0x300);
+        blocks[At(0)].Statics.Should().BeEmpty();
+        OracleAgrees(fm, blocks);
+    }
+
+    [Fact]
+    public void Static_Diffs_That_Only_Delete_Are_Applied_With_An_Empty_Stadif()
+    {
+        WriteBaseFacet();
+        Write($"stadifl{Facet}.mul", Ints(5, 0));
+        Write($"stadifi{Facet}.mul", Ints(-1, 0, 0, 0, -1, 0));
+        Write($"stadif{Facet}.mul", []);
+        var blocks = ConvertFacet("4.0.11c", out var fm);
+        blocks[At(5)].Statics.Should().BeEmpty();
+        blocks[At(0)].Statics.Should().BeEmpty();
+        MulMapOracle.TryOpen(fm, Facet, Bw, Bh)!.StaticPatches.Should().Be(2);
+        OracleAgrees(fm, blocks);
+    }
+
+    // finding 3 is resolved by removing --xfiles (owner, 2026-10-31): x files are never read
+
+    [Fact]
+    public void X_Files_Are_Never_Read()
+    {
+        WriteFacet();
+        WriteBaseFacet("x", tile: 9);
+        var blocks = ConvertFacet("4.0.11c", out var fm);
+        blocks[At(6)].Land[0].TileId.Should().Be(3, "map4.mul, not map4x.mul");
+        blocks[At(7)].Land[0].TileId.Should().Be(0x77);
+        blocks[At(5)].Statics.Select(s => s.Graphic).Should().Equal((ushort)0x300);
+        var src = FacetSources.Resolve(fm, Facet)!;
+        (Path.GetFileName(src.Map), Path.GetFileName(src.StaIdx), Path.GetFileName(src.Statics)).Should().Be(($"map{Facet}.mul", $"staidx{Facet}.mul", $"statics{Facet}.mul"));
+        MulMapOracle.TryOpen(fm, Facet, Bw, Bh)!.MapFile.Should().Be($"map{Facet}.mul");
+        SourceFacets.MapPath(fm, Facet, out _, out _).Should().EndWith($"map{Facet}.mul");
+        OracleAgrees(fm, blocks);
+    }
+
+    // finding 4: the oracle selects its source the converter's way and stands aside for UOP
+
+    [Fact]
+    public void Oracle_Is_Not_Applicable_When_The_Converter_Reads_The_Uop_Map()
+    {
+        WriteBaseFacet();
+        Write($"map{Facet}LegacyMUL.uop", [1, 2, 3]); // only its existence matters here
+        Write("MainMisc.uop", []);                    // makes it a UOP installation (7.0+)
+        var fm = new UOFileManager(Cv("7.0.15.1"), _uo);
+        FacetSources.Resolve(fm, Facet)!.MapIsUop.Should().BeTrue();
+        MulMapOracle.TryOpen(fm, Facet, Bw, Bh).Should().BeNull("a stale map4.mul next to the UOP map is not what was converted");
+        SourceFacets.MapPath(fm, Facet, out bool uop, out _).Should().EndWith($"map{Facet}LegacyMUL.uop");
+        uop.Should().BeTrue();
+
+        File.Delete(Path.Combine(_uo, "MainMisc.uop")); // not a UOP installation: MUL, for both
+        fm = new UOFileManager(Cv("7.0.15.1"), _uo);
+        FacetSources.Resolve(fm, Facet)!.MapIsUop.Should().BeFalse();
+        MulMapOracle.TryOpen(fm, Facet, Bw, Bh)!.MapFile.Should().Be($"map{Facet}.mul");
+    }
+
+    // finding 5: expected facets and sizes come from the source files, not from the pack
+
+    [Fact]
+    public void Verify_Fails_A_Pack_Narrower_Than_Its_Source_Map()
+    {
+        WriteBaseFacet(columns: Bw + 1); // the source holds 1456x1448; ClassicUO's table (and so the pack) says 1448
+        var expected = SourceFacets.For(new UOFileManager(Cv("4.0.11c"), _uo), [Facet]).Single();
+        (expected.Width, expected.Height, expected.Problem).Should().Be((1456, 1448, (string?)null));
+
+        var failures = ConvertAndCheckMaps();
+        failures.Should().Contain(f => f.Contains("pack 1448x1448") && f.Contains("holds 1456x1448"));
+
+        WriteBaseFacet(); // the right size passes
+        ConvertAndCheckMaps().Should().BeEmpty();
+    }
+
+    [Fact]
+    public void Verify_Fails_A_Pack_Missing_A_Facet_The_Source_Has()
+    {
+        WriteBaseFacet();
+        Write("map2.mul", new byte[2304 / 8 * 1600 / 8 * 196]);
+        var fm = new UOFileManager(Cv("4.0.11c"), _uo);
+        MapConvert.Facet(fm, Facet, _out);
+        var manifest = new Manifest { Facets = [FacetFileIo.Read(Path.Combine(_out, "map", Facet.ToString()))] };
+        WithFacets([2, Facet], () =>
+        {
+            Verify.Reset();
+            Verify.CheckMaps(fm, _out, manifest, new()).Should().BeGreaterThan(0);
+            Verify.Failures.Should().Contain(f => f.Contains("pack has no facet 2"));
+        });
+        WithFacets([Facet], () => // --facets 4: facet 2 is not expected
+        {
+            Verify.Reset();
+            Verify.CheckMaps(fm, _out, manifest, new()).Should().Be(0);
+        });
+    }
+
+    private List<string> ConvertAndCheckMaps()
+    {
+        var fm = new UOFileManager(Cv("4.0.11c"), _uo);
+        MapConvert.Facet(fm, Facet, _out);
+        var manifest = new Manifest { Facets = [FacetFileIo.Read(Path.Combine(_out, "map", Facet.ToString()))] };
+        var failures = new List<string>();
+        WithFacets([Facet], () =>
+        {
+            Verify.Reset();
+            Verify.CheckMaps(fm, _out, manifest, new());
+            failures.AddRange(Verify.Failures);
+        });
+        return failures;
+    }
+
+    private static void WithFacets(HashSet<int> facets, Action a)
+    {
+        var old = ConvertOptions.Facets;
+        ConvertOptions.Facets = facets;
+        try { a(); }
+        finally { ConvertOptions.Facets = old; }
+    }
+
+    [LegacyUoFact]
+    public void Verify_Fails_A_6144_Wide_Felucca_Built_From_The_7168_Wide_Uoml_Map0()
+    {
+        var uo = Environment.GetEnvironmentVariable("CUO_LEGACY_UO")!;
+        var fm = new UOFileManager(Cv("4.0.11c"), uo);
+        fm.Maps.MapsDefaultSize[0, 0] = 6144; // what ClassicUO's version rule (below CV_4011D) produced before the fix
+        int oldMax = ConvertOptions.MaxRegions;
+        ConvertOptions.MaxRegions = 1;
+        try
+        {
+            MapConvert.Facet(fm, 0, _out);
+            var manifest = new Manifest { Facets = [FacetFileIo.Read(Path.Combine(_out, "map", "0"))] };
+            WithFacets([0], () =>
+            {
+                Verify.Reset();
+                Verify.CheckMaps(fm, _out, manifest, new()).Should().BeGreaterThan(0);
+                Verify.Failures.Should().Contain(f => f.Contains("pack 6144x4096, the source map0.mul holds 7168x4096"));
+            });
+
+            ClientLoad.ApplyLegacyMapRules(fm); // the fix: 7168 from the file size
+            fm.Maps.MapsDefaultSize[0, 0].Should().Be(7168);
+            MapConvert.Facet(fm, 0, _out);
+            manifest = new Manifest { Facets = [FacetFileIo.Read(Path.Combine(_out, "map", "0"))] };
+            WithFacets([0], () =>
+            {
+                Verify.Reset();
+                Verify.CheckMaps(fm, _out, manifest, new()).Should().Be(0, string.Join("; ", Verify.Failures));
+            });
+        }
+        finally
+        {
+            ConvertOptions.MaxRegions = oldMax;
+        }
+    }
+
+    // ModernUO parity: below 6.0 Trammel is map0 even when map1 exists
+
+    [Fact]
+    public void Trammel_Comes_From_Map0_Below_6000_Even_When_There_Is_A_Map1()
+    {
+        Write("map0.mul", []);
         MapConvert.AvailableFacets(new UOFileManager(Cv("4.0.11c"), _uo)).Should().Equal(0, 1);
         MapConvert.AvailableFacets(new UOFileManager(Cv("6.0.1.3"), _uo)).Should().Equal(0);
+
+        Write("map1.mul", []);
+        Write("staidx1.mul", []);
+        Write("statics1.mul", []);
+        var old = FacetSources.Resolve(new UOFileManager(Cv("4.0.11c"), _uo), 1)!;
+        (old.FileIndex, Path.GetFileName(old.Map)).Should().Be((0, "map0.mul"));
+        var v6 = FacetSources.Resolve(new UOFileManager(Cv("6.0.1.3"), _uo), 1)!;
+        (v6.FileIndex, Path.GetFileName(v6.Map)).Should().Be((1, "map1.mul"));
+        SourceFacets.MapPath(new UOFileManager(Cv("4.0.11c"), _uo), 1, out _, out int fi).Should().EndWith("map0.mul");
+        fi.Should().Be(0);
+    }
+
+    [Fact]
+    public void Trammel_Below_6000_Is_Map0_With_The_Facet_1_Diffs()
+    {
+        // map1 differs from map0 (tile 5 vs 3); below 6.0 the pack's Trammel is map0 + mapdif1, as ModernUO serves it
+        int bh = 4096 / 8, bw = 64; // one region of a 7168-wide facet is enough
+        var map0 = new byte[bw * bh * 196]; // only the first region's columns; the rest of the facet reads as empty
+        for (int b = 0; b < bw * bh; b++) Block(3, 0).CopyTo(map0, b * 196);
+        Write("map0.mul", map0);
+        Write("map1.mul", map0.Select((v, i) => i % 196 == 4 ? (byte)5 : v).ToArray());
+        Write("mapdifl1.mul", Ints(2));
+        Write("mapdif1.mul", Block(0x66, 1));
+        var fm = new UOFileManager(Cv("4.0.11c"), _uo);
+        ClientLoad.ApplyLegacyMapRules(fm);
+        int oldMax = ConvertOptions.MaxRegions;
+        ConvertOptions.MaxRegions = 1;
+        try { MapConvert.Facet(fm, 1, _out); }
+        finally { ConvertOptions.MaxRegions = oldMax; }
+        var (_, blocks) = RegionFile.Read(PackConst.RegionPath(Path.Combine(_out, "map", "1"), 0, 0));
+        blocks[0].Land[0].TileId.Should().Be(3, "map0, not map1");
+        blocks[2 * PackConst.RegionBlocks].Land[0].TileId.Should().Be(0x66, "mapdif1 on top"); // block 2 = (x 0, y 2)
+    }
+
+    // finding 7: a tiledata size that fits both layouts proves nothing
+
+    [Fact]
+    public void Tiledata_Size_That_Fits_Both_Layouts_Needs_An_Explicit_Version()
+    {
+        var path = Path.Combine(_uo, "tiledata.mul");
+        File.WriteAllBytes(path, new byte[1_383_184]); // 804 old or 676 new static groups
+        ClientLoad.TileDataSizeIsAmbiguous(1_383_184).Should().BeTrue();
+        foreach (var v in new[] { "4.0.11c", "7.0.9.0" })
+        {
+            ClientLoad.CheckTileDataLayout(path, Cv(v)).Should().Contain("fits both").And.Contain("--client-version");
+            ClientLoad.CheckTileDataLayout(path, Cv(v), versionExplicit: true).Should().BeNull();
+        }
+
+        // stock sizes fit exactly one layout and pass with the matching version
+        foreach (var (size, v) in new[] { (1_036_288L, "4.0.11c"), (1_644_544L, "7.0.0.0"), (3_188_736L, "7.0.9.0") })
+        {
+            ClientLoad.TileDataSizeIsAmbiguous(size).Should().BeFalse($"{size}");
+            File.WriteAllBytes(path, new byte[size]);
+            ClientLoad.CheckTileDataLayout(path, Cv(v)).Should().BeNull($"{size} with {v}");
+        }
+    }
+}
+
+/// <summary>Runs only when CUO_LEGACY_UO names a pre-UOP install (read-only); otherwise reported as skipped.</summary>
+public sealed class LegacyUoFactAttribute : FactAttribute
+{
+    public LegacyUoFactAttribute()
+    {
+        var uo = Environment.GetEnvironmentVariable("CUO_LEGACY_UO");
+        if (string.IsNullOrEmpty(uo) || !File.Exists(Path.Combine(uo, "map0.mul")))
+            Skip = "CUO_LEGACY_UO does not name a pre-UOP install with map0.mul";
     }
 }
