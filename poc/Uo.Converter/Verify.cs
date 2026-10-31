@@ -715,10 +715,22 @@ public static class Verify
             return -1;
         }).ToArray();
 
-        // The body set the pack was built with (manifest; packs from before bodies.json used the default).
+        // The body set the pack was built with (manifest; no bodies record = the legacy rules of packs up to classic-1.2).
         var manifestPath = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(dir))!, "manifest.json");
-        var plan = BodyPlan.Build(fm, BodyChoices.FromRecord(File.Exists(manifestPath) ? ManifestFileIo.Read(manifestPath).Bodies : null));
+        BodyPlan plan;
+        try
+        {
+            plan = BodyPlan.Build(fm, BodyChoices.FromRecord(File.Exists(manifestPath) ? ManifestFileIo.Read(manifestPath).Bodies : null));
+        }
+        catch (BodyChoicesException e)
+        {
+            Fail($"anim: the pack's body choices cannot be rebuilt: {e.Message}");
+            return;
+        }
+        Console.WriteLine($"  anim: body choices {plan.Choices}");
         if (plan.BodyCount != bodies.Length) Fail($"anim body table has {bodies.Length} bodies, the body choices give {plan.BodyCount}");
+        foreach (var b in plan.StandInIds)
+            if (b < bodies.Length && (bodies[b].HasFrames || bodies[b].AliasBody == AnimConst.NoBody)) Fail($"anim body {b}: the choices draw its Body.def stand-in, the pack has {(bodies[b].HasFrames ? "frames" : "no alias")}");
         var conv = plan.Conv;
         long checkedFrames = 0, exact = 0, crossPage = 0, absent = 0;
         double se = 0; long nRgb = 0, flips = 0, nPx = 0;
@@ -734,7 +746,7 @@ public static class Verify
             long ck = 0, ex = 0, cp = 0, ab = 0, fl = 0, np = 0, nr = 0; double sse = 0;
             foreach (var (b, a, sd, de) in g)
             {
-                if (!metas.TryGetValue(b, out var m)) metas[b] = m = AnimConvert.Meta(w.Loader, fm.Version, b, conv);
+                if (!metas.TryGetValue(b, out var m)) metas[b] = m = AnimConvert.Meta(w.Loader, fm.Version, b, plan);
                 var job = AnimConvert.Job(w.Loader, m, a, sd);
                 var src = job == null ? default : AnimConvert.Read(w.Loader, job);
                 if (src.Length != de.FrameCount) { Fail($"anim body {b} action {a} dir {sd}: {de.FrameCount} frames, source {src.Length}"); continue; }

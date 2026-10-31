@@ -647,6 +647,25 @@ namespace ClassicUO.Assets
         /// <summary>True when mobtypes.txt lists <paramref name="body"/>.</summary>
         public bool HasMobType(int body) => _mobTypes.ContainsKey(body);
 
+        /// <summary>The mobtypes.txt entry of <paramref name="body"/> (as installed now), if any.</summary>
+        public bool TryGetMobType(int body, out AnimationGroupsType type, out AnimationFlags flags)
+        {
+            bool found = _mobTypes.TryGetValue(body, out var info);
+            type = found ? info.Type : AnimationGroupsType.Unknown;
+            flags = found ? info.Flags : AnimationFlags.None;
+            return found;
+        }
+
+        /// <summary>Installs a mobtypes entry for <paramref name="body"/> (kind and flags, which also pick the MUL layout).</summary>
+        public void SetMobType(int body, AnimationGroupsType type, AnimationFlags flags) =>
+            _mobTypes[body] = new MobTypeInfo { Type = type, Flags = flags };
+
+        /// <summary>Removes the mobtypes entry of <paramref name="body"/>.</summary>
+        public void RemoveMobType(int body) => _mobTypes.Remove(body);
+
+        /// <summary>The kind (and so the layout) a body id has in an anim file without mobtypes.txt, as pre-5.0 clients read it.</summary>
+        public AnimationGroupsType TypeByGraphic(ushort graphic, int fileIndex) => CalculateTypeByGraphic(graphic, fileIndex);
+
         /// <summary>True when AnimationSequence.uop has an entry for <paramref name="body"/>.</summary>
         public bool HasUopGroups(ushort body) => _uopInfos.ContainsKey(body);
 

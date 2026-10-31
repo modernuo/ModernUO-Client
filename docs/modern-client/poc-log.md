@@ -4232,3 +4232,38 @@ Owner decisions of 2026-10-31 (survey `cuo-poc-state/surveys/bodies.md` §6): on
 **Tests.** `tests/Uo.Converter.Tests/BodyChoicesTests.cs`: synthetic resolution (presets, standins, overrides, extras with mount height, 18 bad-input cases, 4 bad-id cases, manifest round trip) and, when `C:\Ultima Online Classic` (or `CUO_CLASSIC_UO`) exists, real-data checks of 10, 11, 76, 157, 791, 793, 9, 26, 28, 43 under `aos`, `t2a`, `uor`, `lbr`, `forceOldAnimations`, `standins`, a remodel override and extras; the 9 → 7 sequence (12→4, 13→4, 20→1, not 9's 13→12/20→19; action 13 draws stored group 4); the spider guard; and a small pack conversion (bodies 9, 11, 28, 43 and an extra) checking the entries and that 43's stand-in follows 9's resolved art.
 
 **Client check: bench-000058** (bench-000057 ran while the server was down and never connected; resubmitted unchanged). Release JIT build of be0de57aa, Gpu, the default (`aos`) test pack, kbatman3 at Green Acres: `[set Body 9` / `[set Body 28` on the player, shots standing, walking, and during `[Animate 12 7 3 true false 0` and `[Animate 6 ...`, then `[set Body 400`. Status ok, 41 s, 0 ECS mismatches. **Daemon 9 and giant spider 28 draw the anim2 art** (slim daemon with long thin wings; brown spider without the grey abdomen), matching the right-hand renders of the survey's `daemon.png`/`spider.png`. The `[Animate` shots look like the idle/stand pose, so they don't show whether group 4 replaced 12 or 6: the 0x6E action for a monster body may be remapped by the client first. **Left for the owner's in-game test:** a daemon (body 9 or 10) attacking or casting, where 7's list replaces 6, 12 and 13 with 4.
+
+### Body import choices: audit fixes and the owner's era rules (2026-10-31, `poc/body-profile`)
+
+Codex audit of be0de57aa (seven findings) plus the owner's rules of 2026-10-31 (coordinator messages). Base 83156345b.
+
+| # | Finding | Disposition |
+|---|---|---|
+| 1 (P1) | Remodels were found with today's mobtypes layout; for 253, 689, 704 (and 318, 319, the mounts) it reads other bodies' anim.mul slots. | Fixed. Own art = every stored direction of walk and stand decodes to a non-empty frame in the body's own anim.mul layout (pre-mobtypes, by id). **Remodels on 7.0.103: 9, 10, 26, 28, 76, 95** (was 17). 318 → stand-in 9, 319 → 51, 791 → 220 hue 11, 793 → 200, 794 → 219, 796 → 39, 797 → 12, 798 → 59, 799 → 218: additions with a Body.def stand-in. 253, 689, 704: additions with no older look. New: 95 (turkey; mobtypes says animal, its monster-layout slot holds an older grey creature, same in UOAOS) is a remodel; old 95 is read with an installed monster layout (`BodyPlan.MobTypes`). The converter prints every remodel's old and new source and the misread bodies. |
+| 2 | Extras could take equipment AnimIDs. | Fixed: nonzero tiledata AnimIDs and Equipconv.def sources/targets are reserved; the error names the item (`tiledata item 0x108A "…" uses it as its AnimID`) or the Equipconv line. |
+| 3 | An explicit MUL extra inherited UseUopAnimation and became a UOP lookup. | Fixed: kind and flags are inherited (from the lowest non-UOP body converting to the art, else a UOP one), UseUopAnimation never; anim.mul sources are read in their own layout. The importer checks the extra resolves to exactly the requested file and body with walk/stand frames. `"mountHeight"` sets an extra's height; default = that same body's column height (0 for anim.mul). |
+| 4 | bodies.json was loaded after the previous output was cleared. | Fixed: the file is parsed before the guard/clear step, and the plan is resolved right after the client files load, before `ClearPreviousOutput`. Test runs the converter's entry point with a bad extra and a missing file: rc 1, the previous output file is still there. |
+| 5 | No bodies record = today's default (9/26/28 and sequences). | Fixed: no record = **resolver policy 0** (classic-1.2 rules: every column, last wins, no 9/26/28 lines, no sequences). Records carry `policy` (1 now) and `sequences`; a record with policy 0 or above 1 is refused. |
+| 6 | `additions: newest` could pick column 1. | Fixed: newest = the last column; the era fallback applies to `standins` only. |
+| 7 | Duplicate properties inside an extra overwrote silently. | Fixed: rejected with the extra's position (`extras[1]: "from" is given twice in the same extra`). |
+
+**Owner rules (coordinator, 2026-10-31), each one constant or method so it is easy to flip:**
+- Eras: anim.mul T2A/UOR; Bodyconv column 1 LBR, 2 AOS, 3 SE, 4 ML, 5+ later. Presets show up to t2a/uor: T2A, lbr: LBR, aos: everything.
+- Remodels count as AOS for the presets whatever their column (`BodyPlan.RemodelEra`): t2a, uor and lbr show every remodel old, aos new. 9/26/28 have era LBR (`RevertedEra`), which only matters if one were an addition.
+- `additions` default is now `standins` = the era rule: an addition later than the preset draws its Body.def stand-in (the pre-AOS per-expansion behaviour), else keeps its art; `newest` never falls back. aos: nothing falls back.
+- `forceOldAnimations`: every remodel old, additions untouched (`BodyPlan.ForceOldReverts`, under the owner's investigation).
+- `sequences`: `"none"` (default, as ClassicUO) or `"target"` (the earlier rule). `--no-target-sequence` is gone.
+- Also: a body drawn as its Body.def stand-in stores no frames (the client draws the alias only; for 318, 319 and the mounts the mobtypes-layout index pointed at other bodies' slots, which the pack used to store unused). `--verify-only` checks those entries have an alias and no frames.
+
+**Results (7.0.103, `--only anims` into hard-linked test packs of classic-1.2; `--compare-bodies`).**
+- **Default (aos) vs classic-1.2: exactly 9, 26, 28 differ** (anim.mul → anim2 7/24/5), plus alias 153 → 26 (Body.def and Corpse.def). No client job needed.
+- **aos + forceOldAnimations vs aos:** 6 entries, the remodels 9 10 26 28 76 95; aliases 153 → 26, 156 → 95.
+- **lbr vs aos:** 38 entries = 6 remodels old + 32 AOS-or-later additions as stand-ins (300–319, 747, 930–940); aliases 153, 156. Column-1 additions (11, 43, 157, the mounts…) keep their art.
+- **t2a vs aos:** 128 entries = 6 remodels old + 122 additions as stand-ins (incl. 318 → 9, 319 → 51 and the mounts 791 → 220 hue 11 …); aliases 153, 156.
+- Anim pages (brotli): aos 623.2 MiB, aos+force 630.3, lbr 616.8, t2a 559.7 (stand-ins store no frames).
+- `--verify-only`: aos pack OK (108,430 of 112,267 sampled frames BIT-EXACT, rest absent or on another page), t2a OK (105,233 of 108,607), **classic-1.2 (published, read only; file list, sizes and mtimes compared before/after: unchanged) OK with the legacy policy** (107,647 of 111,610).
+- Montages (first walk frame, direction 2): `…/scratchpad/body-profile/fix/remodels.png` (old | new of the 6 remodels) and `…/fix/not-remodels.png` (what the mobtypes layout read | the Body.def stand-in, unhued | the new art) for 253, 318, 319, 689, 704 and the mounts; script `fix/gen.py` + `fix/montage.py` (copied from the survey's render.py).
+
+**Tests.** Converter tests 87 pass, 1 skipped (`BodyChoicesTests`: 52, including a test per finding, a pre-AOS stand-in test per preset, era/forceOld/newest/legacy/policy tests and the entry-point clear-order test). Unit tests both flavours (default and `-p:CuoDevTools=false`): 1159 pass, 2 skipped. No write-site change. Memory: none per client.
+
+**Follow-ups:** the owner's in-game checks (which AnimationSequence list the OSI client uses; forceOldAnimations scope); whether 95 should count as a remodel.
