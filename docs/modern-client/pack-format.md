@@ -226,7 +226,8 @@ The pack's only tile data file (one source of truth, owner decision 2026-10-31).
 
 - Flags keep UO's `TileFlag` bit values (64-bit; pre-7.0.9.0 clients' 32-bit flags are widened). Values are after `art.def` substitution.
 - A name is the UTF-8 encoding of ClassicUO's string: the 20-byte field decoded as UTF-8 with leading and trailing NULs trimmed. Length 0 = empty name. Duplicate names share bytes in the table.
-- **Untrusted input.** `TileDataFile.Read` checks the magic, version and Kind 0, `landCount` = 0x4000 (the client indexes land by `tile & 0x3FFF`), `staticCount` in 1..0x10000, `nameBytes` ≥ 0, the file size equal to what the counts give (before allocating), and every name reference inside the table.
+- **Untrusted input.** `TileDataFile.Read` checks the magic, version and Kind 0, `landCount` = 0x4000 (the client indexes land by `tile & 0x3FFF`), `staticCount` in 1..0x10000, `nameBytes` in 0..5,242,880 (`MaxNameTableBytes`: every entry with a longest name), the file size equal to what the counts give (before allocating), and every name reference inside the table and at most 64 bytes long (`MaxNameBytes`; source names are 20 single-byte characters, at most 40 bytes as UTF-8). The references are checked before the name table is allocated. The converter refuses to write a longer name.
+- **Names are decoded once per distinct (offset, length)** (`TileDataFile.DecodeNames`): entries that share a reference share the string. With the caps, decoded names stay under about 10 MB even for a hostile file (81,920 distinct references of 64 bytes); before the caps, 81,920 references to one 65,535-byte name decoded to about 10 GiB.
 - **The renderer's compact arrays** (`LandTileData`: flags u64, texId u16, packFlags u16; `StaticTileData`: flags u64, height u8, layer u8, packFlags u16; 12 bytes each) are built at load by `TileDataFile.Compact` (`PackSet`, used by the client's `GpuWorldRenderer` and the poc apps). They are not stored. Cost on the 7.0.103 pack (2.50 MB file): read and validate 0.93 ms median, building the compact arrays 0.25 ms median (i9-12900K, JIT, 100 runs; `TileDrawOracleTests.Compact_Arrays_Load_Time`).
 
 ### NoDraw flags (`TilePackFlags`, in `packFlags`)
@@ -246,7 +247,7 @@ What the converter writes (the client code these rules came from, now gone from 
   1. 0x0001, 0x21BC, 0xA1FE..0xA201: `NoDraw`.
   2. 0x9E4C, 0x9E64, 0x9E65, 0x9E7D: `NoDraw` only with `Background` or `Surface`.
   3. 0x63D3 and 0x2198..0x21A4: `NoDraw`.
-  4. 0x0F65 (easel): drawn on clients older than 6.0.14.4 (the source client's version), whatever its flags.
+  4. 0x0F65 (easel): drawn on clients older than 6.0.14.4 (the source client's version), whatever its flags. See "The easel" below.
   5. A name starting with `nodraw`: `NoDraw`.
   6. `NoDiagonal` (0x02000000): `NoDraw`, or `NoDrawUnlessGargoyle` with `Animation`.
 - **Multi items** (`Item.RefreshGraphicState`: `AllowedToDraw = MultiGraphic > 2`): `NoDrawAsMulti` for statics 0, 1 and 2.
@@ -256,6 +257,10 @@ At runtime:
 - The gargoyle exception stays runtime: `TileDraw.Static(flags, playerIsGargoyle)`.
 - The poc renderer (`ChunkBaker`) bakes as for a non-gargoyle player; the client shows `NoDrawUnlessGargoyle` statics through its own objects.
 - There is no fallback for packs without the flags: a pack without a `TILE` `tiledata.bin` is rejected.
+- The poc client's ground items (`Uo.Client` `RenderExtract`, through `Uo.Render.GroundItemDraw`) use the same flags with the player's race; a corpse (0x2006) is always drawn, as ClassicUO's `Item` does.
+- A static the client draws but the bake left out (a `NoDrawUnlessGargoyle` static seen by a gargoyle, e.g. 0x5683) is drawn by the Gpu host's list fill on every frame, as Legacy's `StaticView` draws it (`GameScene.BakeOmits`, the bake's own predicate).
+
+**The easel: a deliberate behaviour change (owner rule: the pack's data decides, not code).** ClassicUO hid the easel 0x0F65 by its `NoDiagonal` flag except on clients older than 6.0.14.4, and it asked the *runtime* client-version setting. The converter now applies that rule once with the *source* client's version, and the client never looks at the version for it. So the easel's visibility is whatever the pack says, and changing the client-version setting no longer changes it. The two can differ only when the pack was converted from a client on one side of 6.0.14.4 and the profile names a version on the other side; the pack wins. To change it, an admin edits the flag in the source tiledata (today: set or clear `NoDraw` in `packFlags` of static 0x0F65 in `tiledata.bin`; with a source tree, the `noDraw` column) and rebuilds the pack. There is no runtime version rule, by design (`TileDataAuditTests.The_Easel_Follows_Its_Pack_Flag_And_The_Runtime_Client_Version_Has_No_Effect`).
 
 Pixel-neutral: on the 7.0.103 pack, the flags give the same decision as the old code for all 212,992 cases (16,384 land ids; 65,536 static ids × 2 player races; 65,536 multi display graphics): 0 mismatches. Both the converter's verify step (`Verify.CheckNoDraw`, on the source client's tiledata) and the client's unit test (`TileDrawOracleTests`, through the client's own loader and draw functions, on the pack alone) compare against a verbatim copy of the old client code. Counts: 3 land `NoDraw`, 31 statics `NoDraw` (32 hidden for a non-gargoyle, 31 for a gargoyle), 1 `NoDrawUnlessGargoyle`, 20 named `nodraw`, 3 `NoDrawAsMulti`.
 

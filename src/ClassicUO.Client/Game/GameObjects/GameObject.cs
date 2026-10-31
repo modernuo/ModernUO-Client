@@ -567,11 +567,17 @@ namespace ClassicUO.Game.GameObjects
         /// tiledata draw flags (<see cref="Uo.Pack.TilePackFlags"/>); only the player's race is decided here.</summary>
         public static bool CanBeDrawn(World world, ushort g)
         {
-            if (Client.Game == null)
+            ClassicUO.Assets.StaticTiles[] data = Client.Game != null ? Client.Game.UO.FileManager.TileData.StaticData : TestStaticData;
+
+            if (data == null)
                 return true;
 
-            return CanBeDrawn(Client.Game.UO.FileManager.TileData.StaticData, g, world.Player != null && world.Player.Race == RaceType.GARGOYLE);
+            return CanBeDrawn(data, g, world.Player != null && world.Player.Race == RaceType.GARGOYLE);
         }
+
+        /// <summary>Unit tests only: the static tile data <see cref="CanBeDrawn(World, ushort)"/> reads when there is no
+        /// running client (per thread, so parallel tests don't see it).</summary>
+        [ThreadStatic] internal static ClassicUO.Assets.StaticTiles[] TestStaticData;
 
         internal static bool CanBeDrawn(ClassicUO.Assets.StaticTiles[] staticData, ushort g, bool playerIsGargoyle) =>
             g < staticData.Length && Uo.Pack.TileDraw.Static(staticData[g].PackFlags, playerIsGargoyle);
