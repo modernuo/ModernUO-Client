@@ -150,7 +150,7 @@ namespace ClassicUO.Game.GameObjects
             byte animIndex = AnimIndex;
 
             Item mount = FindItemByLayer(Layer.Mount);
-            sbyte mountOffsetY = 0;
+            int mountOffsetY = 0;
 
             if (isHuman && mount != null && mount.Graphic != 0x3E96)
             {
@@ -669,7 +669,7 @@ namespace ClassicUO.Game.GameObjects
             bool isMount,
             bool forceUOP,
             float depth,
-            sbyte mountOffset,
+            int mountOffset,
             ushort overridedHue,
             bool charIsSitting
         )

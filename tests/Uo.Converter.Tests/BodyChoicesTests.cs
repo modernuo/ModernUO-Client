@@ -613,33 +613,178 @@ public sealed class BodyChoicesInstallTests
     [ClassicUoFact]
     public void Unsupported_Manifest_Policy_Stops_Every_Path_Before_Writing()
     {
-        // Finding 4: a retained bodies record is validated before any output, manifest or debug write.
+        // Round 2 finding 4 and round 3 finding 1: every entry path that keeps the pack's bodies record validates it
+        // before any output, manifest or debug write, and the read-only reports (--gump-report, --audio-report) never
+        // create, clear or write anything. The pack lists a file in its manifest, so ClearPreviousOutput would delete it.
         var root = Path.Combine(Path.GetTempPath(), $"uo_body_policy_{Guid.NewGuid():N}");
         var dir = Path.Combine(root, "pack");
         var debug = Path.Combine(root, "debug");
         try
         {
-            Directory.CreateDirectory(dir);
-            var manifest = new Manifest { Bodies = new BodyChoicesRecord { Policy = BodyChoices.CurrentPolicy + 1 } };
+            Directory.CreateDirectory(Path.Combine(dir, "art"));
+            File.WriteAllText(Path.Combine(dir, "art", "a.bin"), "previous output");
+            var manifest = new Manifest
+            {
+                Bodies = new BodyChoicesRecord { Policy = BodyChoices.CurrentPolicy + 1 },
+                Files = [new ManifestFile { Path = "art/a.bin", Size = 15, Sha256 = "" }],
+            };
             ManifestFileIo.Write(Path.Combine(dir, "manifest.json"), manifest);
             var before = File.ReadAllText(Path.Combine(dir, "manifest.json"));
+            string[] files = [Path.Combine(dir, "art", "a.bin"), Path.Combine(dir, "manifest.json")];
             var entry = typeof(BodyPlan).Assembly.EntryPoint!;
-            foreach (var args in new[]
+            foreach (var (args, rc) in new (string[], int?)[]
             {
-                new[] { "--only", "hues" }, new[] { "--only", "tiledata,hues" }, new[] { "--verify-only" }, new[] { "--no-anims", "--no-maps" },
+                (["--only", "hues"], 1), (["--only", "tiledata,hues"], 1), (["--verify-only"], 1), (["--no-anims", "--no-maps"], 1),
+                (["--gump-report", "--no-anims"], 0), // the auditor's case: the report runs, nothing is touched
+                (["--audio-report", dir], null),      // the fake pack has no audio stores: the report fails after loading, nothing is touched
             })
             {
-                var rc = entry.Invoke(null, [new[] { "--uo", ClassicUoFactAttribute.Dir, "--out", dir, "--debug", debug }.Concat(args).ToArray()]);
-                rc.Should().Be(1, string.Join(" ", args));
-                Directory.GetFiles(dir, "*", SearchOption.AllDirectories).Should().Equal([Path.Combine(dir, "manifest.json")], $"{string.Join(" ", args)} writes nothing");
+                string name = string.Join(" ", args);
+                object? result = null;
+                try { result = entry.Invoke(null, [new[] { "--uo", ClassicUoFactAttribute.Dir, "--out", dir, "--debug", debug }.Concat(args).ToArray()]); }
+                catch (System.Reflection.TargetInvocationException) when (rc == null) { }
+                if (rc != null) result.Should().Be(rc.Value, name);
+                Directory.GetFiles(dir, "*", SearchOption.AllDirectories).Order().Should().Equal(files.Order(), $"{name} deletes and writes nothing");
                 File.ReadAllText(Path.Combine(dir, "manifest.json")).Should().Be(before);
-                Directory.Exists(debug).Should().BeFalse($"{string.Join(" ", args)} writes no debug output");
+                Directory.Exists(debug).Should().BeFalse($"{name} writes no debug output");
             }
         }
         finally
         {
             try { Directory.Delete(root, recursive: true); } catch (IOException) { }
         }
+    }
+
+    // ---- round 3 ----
+
+    private static readonly ushort N = AnimConst.NoBody;
+
+    /// <summary>
+    /// A synthetic body graph: <paramref name="corpse"/> = Corpse.def lines (target, hue; target == id for a self-target),
+    /// <paramref name="live"/> = Body.def stand-ins, <paramref name="standIns"/> = additions drawn as their stand-in.
+    /// Every body is a plain anim.mul body.
+    /// </summary>
+    private static ((ushort, ushort) Corpse, bool Drop) Resolve(int body, Dictionary<int, (int, int)> corpse, Dictionary<int, (int, int)> live, params int[] standIns)
+    {
+        (ushort, ushort)? Hop(ushort id) => corpse.TryGetValue(id, out var c) ? ((ushort)c.Item1, (ushort)c.Item2) : null;
+        (ushort, ushort) Live(int id) => live.TryGetValue(id, out var a) ? ((ushort)a.Item1, (ushort)a.Item2) : (N, (ushort)0);
+        bool Plain(int _) => true;
+        bool Drop(int id) => AnimConvert.DropsFrames(id, standIns.Contains, Plain, Hop, Live);
+        return (AnimConvert.CorpseTarget(body, Plain, Hop, Drop, Live), Drop(body));
+    }
+
+    [Fact]
+    public void Corpse_Targets_End_At_A_Body_With_Frames()
+    {
+        // Finding 2: Corpse.def 43 {191} with t2a's frame-less 191 (stand-in 228 hue 16385) ends at 228, not 191.
+        var live = new Dictionary<int, (int, int)> { [191] = (228, 16385), [9] = (9, 0) };
+        var corpse = new Dictionary<int, (int, int)> { [43] = (191, 0) };
+        Resolve(43, corpse, live, 191).Should().Be(((228, 16385), false), "191 stores no frames: 43's corpse continues to its stand-in");
+        Resolve(191, corpse, live, 191).Should().Be(((228, 16385), true));
+        // the same chain without the stand-in: 191 keeps its frames and is the terminal
+        Resolve(43, corpse, live).Should().Be(((191, 0), false));
+        // absent mapping, not a stand-in: the body's own frames
+        Resolve(50, corpse, live).Should().Be(((N, 0), false));
+        // absent mapping, stand-in: the live stand-in
+        Resolve(60, corpse, new() { [60] = (9, 5) }, 60).Should().Be(((9, 5), true));
+    }
+
+    [Fact]
+    public void Explicit_Corpse_Self_Targets_Keep_Their_Frames()
+    {
+        // Finding 2: a Corpse.def self-target (usually to hue the corpse) is not an absent mapping: the body keeps its
+        // frames and the corpse draws them with the line's hue, even when the live body draws a stand-in.
+        var live = new Dictionary<int, (int, int)> { [70] = (9, 5) };
+        Resolve(70, new() { [70] = (70, 33) }, live, 70).Should().Be(((70, 33), false));
+        Resolve(70, new() { [70] = (70, 0) }, live, 70).Should().Be(((N, 0), false), "hue 0: its own frames, unhued");
+        Resolve(70, new(), live, 70).Should().Be(((9, 5), true), "no line: the stand-in");
+        // a chain ending in a self-target takes that line's hue
+        Resolve(71, new() { [71] = (72, 1), [72] = (72, 44) }, new()).Should().Be(((72, 44), false));
+    }
+
+    [Fact]
+    public void Corpse_Target_Cycles_Are_Refused()
+    {
+        var a = () => Resolve(80, new() { [80] = (81, 0), [81] = (80, 0) }, new());
+        a.Should().Throw<BodyChoicesException>().WithMessage("*80 -> 81 -> 80*cycle*");
+        // through a frame-less stand-in: 90's corpse goes to 91, which is drawn as 90
+        var b = () => Resolve(90, new() { [90] = (91, 0) }, new() { [91] = (90, 0) }, 91);
+        b.Should().Throw<BodyChoicesException>().WithMessage("*90 -> 91 -> 90*");
+    }
+
+    [ClassicUoFact]
+    public void Corpse_Targets_On_Real_Data_Have_Death_Frames()
+    {
+        // Finding 2 on real data: under every preset, each body with a Corpse.def line or a dropped stand-in has an
+        // effective corpse target that stores frames, and when the corpse is drawn as another body, that body has frames
+        // for its first death action in every stored direction.
+        var fm = Fm();
+        foreach (var json in new[] { "{}", "{\"preset\":\"t2a\"}", "{\"preset\":\"lbr\"}", "{\"forceOldAnimations\":true}" })
+        {
+            var plan = BodyPlan.Build(fm, BodyChoices.Parse(json));
+            using var w = new AnimWorker(fm, plan);
+            var l = w.Loader;
+            var metas = new Dictionary<int, AnimConvert.BodyMeta>();
+            AnimConvert.BodyMeta MetaOf(int b) => metas.TryGetValue(b, out var m) ? m : metas[b] = AnimConvert.Meta(l, fm.Version, b, plan);
+            var standIns = plan.StandInIds.ToHashSet();
+            int checkedBodies = 0, missing = 0;
+            var report = new List<string>();
+            for (int b = 0; b < plan.BodyCount; b++)
+            {
+                bool line = AnimConvert.CorpseHop(l, (ushort)b) != null;
+                var (_, _, cb, _, drop) = AnimConvert.Targets(l, b, standIns.Contains, MetaOf);
+                if (!line && !drop) continue;
+                int t = cb == AnimConst.NoBody ? b : cb;
+                var (_, _, _, _, tDrop) = AnimConvert.Targets(l, t, standIns.Contains, MetaOf);
+                tDrop.Should().BeFalse($"{json}: corpse of {b} ends at {t}, which stores no frames");
+                var tm = MetaOf(t);
+                // t == b: the corpse draws the body's own art, exactly as the source does (786's Corpse.def self-target on
+                // 7.0.103 has no death frames in every direction, in the original client too)
+                if (t == b || tm.Uop || tm.Idx.Length == 0) continue;
+                checkedBodies++;
+                var type = (AnimationGroupsType)tm.Type;
+                byte die = l.GetDeathAction((ushort)t, (AnimationFlags)tm.Flags, type, false);
+                bool all = Enumerable.Range(0, 5).All(d => AnimConvert.Job(l, tm, die, d) != null);
+                if (!all) { missing++; report.Add($"{b}->{t}"); }
+            }
+            checkedBodies.Should().BeGreaterThan(0);
+            missing.Should().Be(0, $"{json}: corpse targets without death frames: {string.Join(" ", report)}");
+        }
+    }
+
+    [ClassicUoFact]
+    public void Stand_In_Mounts_Seat_The_Rider_As_On_The_Stand_In()
+    {
+        // Owner, 2026-10-31: a mount body drawn as a Body.def stand-in takes the stand-in's own table offset. t2a: unicorn
+        // 122 (0x3EB4, table -9) draws horse 228 (0x3EA1, 0): shift +9, rider at 0. aos: no shift anywhere.
+        var fm = Fm();
+        var offsets = BodyPlan.MountOffsets.FromTileData(fm);
+        offsets.Conflicts.Should().BeEmpty("every mount body's table items agree on the offset");
+        var aos = BodyPlan.Build(fm, BodyChoices.Default);
+        using var w = new AnimWorker(fm, aos);
+        var uop = new Dictionary<int, bool>();
+        bool Uop(int id) => uop.TryGetValue(id, out var u) ? u : uop[id] = AnimConvert.Meta(w.Loader, fm.Version, id, aos).Uop;
+        ushort? Def(ushort id) => AnimConvert.BodyDefNext(w.Loader, id);
+        for (int b = 0; b < aos.BodyCount; b++) aos.MountShift(b, aos.MountBaseline(), Uop, Def, offsets).Should().Be(0);
+        foreach (var preset in new[] { "t2a", "lbr" })
+        {
+            var p = BodyPlan.Build(fm, BodyChoices.Parse($"{{\"preset\":\"{preset}\"}}"));
+            var pb = p.MountBaseline();
+            if (fm.TileData.StaticData is not { Length: > 0 }) fm.TileData.Load();
+            foreach (var (item, _, off) in MountTable.Entries)
+            {
+                int body = MountTable.MountBody(item, fm.TileData.StaticData[item].AnimID);
+                if (body >= p.BodyCount) continue;
+                int shift = p.MountShift(body, pb, Uop, Def, offsets);
+                int drawn = BodyPlan.DrawnBody(body, p.Conv, Uop, Def);
+                if (shift != 0) Console.WriteLine($"{preset}: mount item 0x{item:X4} body {body} drawn as {drawn}: {off} -> {off + shift}");
+                if (drawn != body && drawn != BodyPlan.DrawnBody(body, pb.Conv, Uop, Def))
+                    (off + shift).Should().Be(offsets.Offset(drawn), $"{preset}: 0x{item:X4} (body {body}) is drawn as {drawn}");
+            }
+        }
+        var t2a = BodyPlan.Build(fm, BodyChoices.Parse("{\"preset\":\"t2a\"}"));
+        t2a.MountShift(122, t2a.MountBaseline(), Uop, Def, offsets).Should().Be(9, "unicorn 122 draws horse 228");
+        t2a.MountShift(793, t2a.MountBaseline(), Uop, Def, offsets).Should().Be(9, "skeletal mount 793 draws horse 200");
     }
 }
 

@@ -59,35 +59,8 @@ namespace ClassicUO.Game
             return g;
         }
 
-        // Item.GetGraphicForAnimation for an item on Layer.Mount
-        public static ushort MountBody(ushort itemGraphic, ushort animId)
-        {
-            // ethereal unicorn
-            if (itemGraphic == 0x3E9B || itemGraphic == 0x3E9D)
-            {
-                return 0x00C0;
-            }
-
-            // ethereal kirin
-            if (itemGraphic == 0x3E9C)
-            {
-                return 0x00BF;
-            }
-
-            ushort graphic = itemGraphic;
-
-            if (Mounts.TryGet(itemGraphic, out MountInfo info))
-            {
-                graphic = info.Graphic;
-            }
-
-            if (animId != 0)
-            {
-                graphic = animId;
-            }
-
-            return graphic;
-        }
+        // Item.GetGraphicForAnimation for an item on Layer.Mount (shared with the converter and Uo.Client)
+        public static ushort MountBody(ushort itemGraphic, ushort animId) => Uo.Pack.MountTable.MountBody(itemGraphic, animId);
 
         /// <summary>Mobile.IsMounted for its mount-layer item (0 = none): not a boat's tiller (IsDrivingBoat), and a mount
         /// body (Item.GetGraphicForAnimation) other than 0xFFFF.</summary>
@@ -95,16 +68,17 @@ namespace ClassicUO.Game
             mountItem != 0 && mountGraphic != 0x3E96 && MountBody(mountGraphic, mountAnimId) != 0xFFFF;
 
         // The Mounts table's per-item rider offset (keyed by the mount item graphic), set for the default (aos) art
-        public static sbyte MountOffsetY(ushort itemGraphic) => Mounts.TryGet(itemGraphic, out MountInfo info) ? info.OffsetY : (sbyte)0;
+        public static sbyte MountOffsetY(ushort itemGraphic) => Uo.Pack.MountTable.OffsetY(itemGraphic);
 
         /// <summary>
-        /// The rider offset both renderers use: the Mounts table's per-item offset plus the pack's shift for the mount body
-        /// (<see cref="Renderer.Animations.Animation.GetMountShift"/>), which is the drawn art's mount height minus the
-        /// default art's. Default packs: the table value exactly. A t2a pack drawing skeletal mount 793 as horse 200
-        /// moves the rider by +9 (the horse's 0 instead of 793's -9).
+        /// The rider offset every renderer uses (Gpu, Legacy draw and pick, Uo.Client): the Mounts table's per-item offset
+        /// plus the pack's shift for the mount body (<see cref="Renderer.Animations.Animation.GetMountShift"/>). Default
+        /// packs: the table value exactly. A mount body drawn as a Body.def stand-in gets the stand-in's own offset (t2a:
+        /// skeletal mount 793 as horse 200 and unicorn 122 as horse 228 sit at 0, not -9); other art changes move the
+        /// rider by the mount-height difference (docs/modern-client/bodies.md). The packed shift is an sbyte; the sum is
+        /// carried as an int (-256..254), never clamped.
         /// </summary>
-        public static sbyte MountOffsetY(ushort itemGraphic, sbyte mountShift) =>
-            (sbyte)Math.Clamp(MountOffsetY(itemGraphic) + mountShift, sbyte.MinValue, sbyte.MaxValue);
+        public static int MountOffsetY(ushort itemGraphic, sbyte mountShift) => MountOffsetY(itemGraphic) + mountShift;
 
         /// <summary>
         /// Animations.GetAnimDirection: UO direction 0..7 to the stored direction 0..4 plus mirroring. Directions 3 and 7

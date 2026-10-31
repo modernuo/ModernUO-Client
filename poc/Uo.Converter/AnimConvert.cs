@@ -345,34 +345,85 @@ public static class AnimConvert
         public uint U32() { if (Pos < 0 || Pos + 4 > b.Length) return 0; Pos += 4; return System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(b.AsSpan(Pos - 4)); }
     }
 
-    // Body.def / Corpse.def chain, as Animations.GetAnimationFrames walks it (only while the body is a plain anim.mul body).
-    private static (ushort Body, ushort Hue) Chain(AnimationsLoader l, int body, bool corpse, Func<int, BodyMeta> meta)
+    // Body.def chain, as Animations.GetAnimationFrames walks it (only while the body is a plain anim.mul body).
+    private static (ushort Body, ushort Hue) LiveChain(AnimationsLoader l, int body, Func<int, bool> plain)
     {
         ushort id = (ushort)body, hue = 0;
-        var m = meta(id);
-        for (int guard = 0; !m.Uop && m.FileIndex == 0 && guard < 16; guard++)
-        {
-            bool replaced = corpse ? l.ReplaceCorpse(ref id, ref hue) : l.ReplaceBody(ref id, ref hue);
-            if (!replaced) break;
-            m = meta(id);
-        }
+        for (int guard = 0; plain(id) && guard < 16; guard++)
+            if (!l.ReplaceBody(ref id, ref hue)) break;
         return id == body && hue == 0 ? (AnimConst.NoBody, (ushort)0) : (id, hue);
     }
 
     /// <summary>
-    /// The live (Body.def) and corpse (Corpse.def) targets of a body, resolved independently, and whether its frames are
-    /// dropped. An addition drawn as its Body.def stand-in stores no frames: the client draws the alias only, and its
-    /// anim.mul index, read in the mobtypes layout, may point into other bodies' slots (318, 319, the mount ids). Its
-    /// corpse then needs a target too: Corpse.def when it has a line, else the live stand-in (drawing the stand-in
-    /// implies its corpse; t2a 191-195). Frames are dropped only when both targets point elsewhere.
+    /// One Corpse.def hop as the loader reads it: the target and hue, (<paramref name="id"/>, hue) for an explicit
+    /// self-target (a line mapping the body to itself, usually to hue it), null when the body has no line. The loader
+    /// returns false for both of the last two; a self-target is told apart by the hue it writes.
     /// </summary>
-    public static (ushort Alias, ushort AliasHue, ushort Corpse, ushort CorpseHue, bool DropFrames) Targets(AnimationsLoader l, int body, bool standIn, Func<int, BodyMeta> meta)
+    public static (ushort Body, ushort Hue)? CorpseHop(AnimationsLoader l, ushort id)
     {
-        var (ab, ah) = Chain(l, body, false, meta);
-        var (cb, ch) = Chain(l, body, true, meta);
-        if (!standIn || ab == AnimConst.NoBody) return (ab, ah, cb, ch, false);
-        if (cb == AnimConst.NoBody) (cb, ch) = (ab, ah);
-        return (ab, ah, cb, ch, true);
+        ushort b = id, hue = 0xFFFF;
+        if (l.ReplaceCorpse(ref b, ref hue)) return (b, hue);
+        return hue != 0xFFFF ? (id, hue) : null;
+    }
+
+    /// <summary>
+    /// Whether body <paramref name="x"/> stores no frames: an addition the plan draws as its Body.def stand-in (the
+    /// client draws the alias only), unless its corpse explicitly needs its own frames (a Corpse.def self-target).
+    /// </summary>
+    public static bool DropsFrames(int x, Func<int, bool> standIn, Func<int, bool> plain, Func<ushort, (ushort Body, ushort Hue)?> corpseHop, Func<int, (ushort Body, ushort Hue)> live)
+    {
+        if (!standIn(x)) return false;
+        var a = live(x).Body;
+        if (a == AnimConst.NoBody || a == x) return false;
+        return !(plain(x) && corpseHop((ushort)x) is { } h && h.Body == x);
+    }
+
+    /// <summary>
+    /// The effective corpse target of <paramref name="body"/>, as the pack stores it for the client's single-hop lookup
+    /// (AnimationsLoader.ResolveBody): Corpse.def hops are followed while the body is a plain anim.mul body (as the
+    /// loader does), and a body that stores no frames (<paramref name="drop"/>) continues to its live stand-in, so a
+    /// chain such as Corpse.def <c>43 {191}</c> with t2a's frame-less 191 ends at 191's stand-in 228. An explicit
+    /// self-target ends the walk at that body with its hue. Absent mapping and no hops: (NoBody, 0) = the body's own
+    /// frames. A cycle throws.
+    /// </summary>
+    public static (ushort Body, ushort Hue) CorpseTarget(int body, Func<int, bool> plain, Func<ushort, (ushort Body, ushort Hue)?> corpseHop,
+        Func<int, bool> drop, Func<int, (ushort Body, ushort Hue)> live)
+    {
+        ushort cur = (ushort)body, hue = 0;
+        var path = new List<int> { body };
+        while (true)
+        {
+            if (plain(cur) && corpseHop(cur) is { } h)
+            {
+                if (h.Body == cur) { hue = h.Hue; break; } // explicit self-target: its own frames, with its hue
+                (cur, hue) = h;
+            }
+            else if (drop(cur))
+            {
+                (cur, hue) = live(cur);
+            }
+            else break;
+            if (path.Contains(cur))
+                throw new BodyChoicesException($"body {body}: its corpse target never ends: {string.Join(" -> ", path)} -> {cur} (Corpse.def lines and Body.def stand-ins form a cycle)");
+            path.Add(cur);
+        }
+        return cur == body && hue == 0 ? (AnimConst.NoBody, (ushort)0) : (cur, hue);
+    }
+
+    /// <summary>
+    /// The live (Body.def) and corpse targets of a body, and whether its frames are dropped (<see cref="DropsFrames"/>).
+    /// The corpse target is the effective one (<see cref="CorpseTarget"/>): it follows Corpse.def, and through bodies
+    /// that store no frames to their live stand-in (t2a 191-195: the corpse of 192 is drawn as 228's death frames).
+    /// </summary>
+    public static (ushort Alias, ushort AliasHue, ushort Corpse, ushort CorpseHue, bool DropFrames) Targets(AnimationsLoader l, int body, Func<int, bool> standIn, Func<int, BodyMeta> meta)
+    {
+        bool Plain(int id) { var m = meta(id); return !m.Uop && m.FileIndex == 0; }
+        (ushort, ushort) Live(int id) => LiveChain(l, id, Plain);
+        (ushort, ushort)? Hop(ushort id) => CorpseHop(l, id);
+        bool Drop(int id) => DropsFrames(id, standIn, Plain, Hop, Live);
+        var (ab, ah) = Live(body);
+        var (cb, ch) = CorpseTarget(body, Plain, Hop, Drop, Live);
+        return (ab, ah, cb, ch, Drop(body));
     }
 
     /// <summary>One Body.def hop (null = none), as the loader reads it.</summary>
@@ -407,15 +458,17 @@ public static class AnimConvert
         var jobOf = new Dictionary<DirKey, int>();
         int dirRecords = 0, withFrames = 0, aliased = 0, uopBodies = 0;
         var baseline = plan.MountBaseline();
+        var mountOffsets = BodyPlan.MountOffsets.FromTileData(fm);
+        if (mountOffsets.Conflicts.Count > 0) Console.WriteLine($"  warning: Mounts table items disagree on the rider offset of bodies {string.Join(" ", mountOffsets.Conflicts)}; their stand-in shifts use the mount-height rule");
         for (int b = 0; b < bodyCount; b++)
         {
             var m = MetaOf(b);
-            var (ab, ah, cb, ch, dropFrames) = Targets(l, b, standIns.Contains(b), MetaOf);
+            var (ab, ah, cb, ch, dropFrames) = Targets(l, b, standIns.Contains, MetaOf);
             bodies[b] = new AnimBodyEntry
             {
                 Type = m.Type, Source = AnimSource.None, Flags = m.Flags, SourceBody = m.SourceBody, MountHeight = m.MountHeight,
                 AliasBody = ab, AliasHue = ah, CorpseBody = cb, CorpseHue = ch,
-                MountShift = plan.MountShift(b, baseline, id => MetaOf(id).Uop, id => BodyDefNext(l, id)),
+                MountShift = plan.MountShift(b, baseline, id => MetaOf(id).Uop, id => BodyDefNext(l, id), mountOffsets),
             };
             if (ab != AnimConst.NoBody) aliased++;
             if (Bodies != null && !Bodies.Contains(b)) continue;

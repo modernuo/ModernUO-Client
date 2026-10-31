@@ -747,14 +747,30 @@ public static class Verify
             var baseline = plan.MountBaseline();
             var metaCache = new Dictionary<int, AnimConvert.BodyMeta>();
             bool Uop(int id) => (metaCache.TryGetValue(id, out var mm) ? mm : metaCache[id] = AnimConvert.Meta(sw.Loader, fm.Version, id, plan)).Uop;
+            var mountOffsets = BodyPlan.MountOffsets.FromTileData(fm);
             int shifted = 0, badShift = 0;
             for (int b = 0; b < bodies.Length; b++)
             {
-                var want = plan.MountShift(b, baseline, Uop, id => AnimConvert.BodyDefNext(sw.Loader, id));
+                var want = plan.MountShift(b, baseline, Uop, id => AnimConvert.BodyDefNext(sw.Loader, id), mountOffsets);
                 if (want != 0) shifted++;
                 if (bodies[b].MountShift != want && badShift++ < 5) Fail($"anim body {b}: mount shift {bodies[b].MountShift}, the choices give {want}");
             }
             Console.WriteLine($"  anim: mount shifts {(badShift == 0 ? "match" : "MISMATCH")} ({shifted} bodies shifted against the default art)");
+
+            // aliases and effective corpse targets, recomputed; a corpse target must store frames (the client looks it up
+            // once and draws its death action)
+            var standIns = plan.StandInIds.ToHashSet();
+            AnimConvert.BodyMeta MetaOf(int id) => metaCache.TryGetValue(id, out var mm) ? mm : metaCache[id] = AnimConvert.Meta(sw.Loader, fm.Version, id, plan);
+            int badTarget = 0, corpseNoFrames = 0;
+            var noFrames = new List<int>();
+            for (int b = 0; b < bodies.Length; b++)
+            {
+                var (ab, ah, cb, ch, _) = AnimConvert.Targets(sw.Loader, b, standIns.Contains, MetaOf);
+                if ((bodies[b].AliasBody, bodies[b].AliasHue, bodies[b].CorpseBody, bodies[b].CorpseHue) != (ab, ah, cb, ch) && badTarget++ < 5)
+                    Fail($"anim body {b}: alias/corpse {bodies[b].AliasBody}/{bodies[b].AliasHue} {bodies[b].CorpseBody}/{bodies[b].CorpseHue}, the choices give {ab}/{ah} {cb}/{ch}");
+                if (cb != AnimConst.NoBody && cb < bodies.Length && !bodies[cb].HasFrames) { corpseNoFrames++; if (noFrames.Count < 10) noFrames.Add(b); }
+            }
+            Console.WriteLine($"  anim: aliases and corpse targets {(badTarget == 0 ? "match" : "MISMATCH")}; corpse targets without frames: {corpseNoFrames}{(noFrames.Count > 0 ? " (" + string.Join(" ", noFrames) + ")" : "")}");
         }
         var conv = plan.Conv;
         long checkedFrames = 0, exact = 0, crossPage = 0, absent = 0;

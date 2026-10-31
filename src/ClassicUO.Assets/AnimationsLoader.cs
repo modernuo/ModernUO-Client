@@ -435,13 +435,64 @@ namespace ClassicUO.Assets
             return AnimationGroups.High;
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        /// <summary>
+        /// The death action a corpse of <paramref name="animID"/> (the drawn body, after its Corpse.def alias) plays.
+        /// <paramref name="second"/> (the corpse item's UsedLayer bit) selects the second death action; when the body has
+        /// no frames for it in any direction, the first one is used instead (turkey 95 has death 8 but no 12, and so
+        /// does its Corpse.def alias 156). ClassicUO main has no such fallback: it draws nothing. Every corpse path
+        /// (Gpu extract, Legacy draw and pick, the corpse animation tick, 0xAF) goes through here.
+        /// </summary>
         public byte GetDeathAction(
             ushort animID,
             AnimationFlags animFlags,
             AnimationGroupsType animType,
             bool second,
             bool isRunning = false
+        )
+        {
+            byte group = DeathGroup(animID, animFlags, animType, second, isRunning);
+
+            if (second && !HasAction(animID, group))
+            {
+                byte first = DeathGroup(animID, animFlags, animType, false, isRunning);
+
+                if (HasAction(animID, first))
+                {
+                    return first;
+                }
+            }
+
+            return group;
+        }
+
+        /// <summary>Whether <paramref name="body"/> stores frames for <paramref name="action"/> in any direction.</summary>
+        public bool HasAction(ushort body, int action)
+        {
+            if (body >= _bodies.Length || action < 0 || action >= _bodies[body].ActionCount)
+            {
+                return false;
+            }
+
+            long first = _bodies[body].FirstDir + (long)action * AnimConst.Directions;
+
+            for (int d = 0; d < AnimConst.Directions; d++)
+            {
+                if (_dirs[first + d].FrameCount != 0)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static byte DeathGroup(
+            ushort animID,
+            AnimationFlags animFlags,
+            AnimationGroupsType animType,
+            bool second,
+            bool isRunning
         )
         {
             //ConvertBodyIfNeeded(ref animID);

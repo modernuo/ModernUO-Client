@@ -50,7 +50,7 @@ for (int i = 0; i < args.Length; i++)
         case "--cliloc-skip": foreach (var s in args[++i].Split(',')) TextConvert.ClilocSkip.Add(s.Trim()); break;
         case "--no-cliloc-overrides": TextConvert.ClilocOverridesOff = true; break;
         case "--gump-def": gumpDef = args[++i]; break;
-        case "--gump-report": gumpReport = true; break;
+        case "--gump-report": gumpReport = true; convert = false; break; // read-only report: writes nothing, --out is not cleared
         case "--audio-report": audioReport = args[++i]; convert = false; break; // writes nothing: --out is not cleared
         case "--raw-gumps": GumpConvert.Raw = true; break;
         case "--gump-small": GumpConvert.SmallRle = int.Parse(args[++i]); break;
@@ -85,7 +85,7 @@ for (int i = 0; i < args.Length; i++)
         case "--anim-report": return AnimExperiments.Report(args[++i]);
         case "--compare-bodies": return AnimExperiments.CompareBodies(args[++i], args[++i]);
         case "--compare-indexed": return AnimExperiments.CompareIndexed(args[++i], args[++i]);
-        case "--filter-ref": return AnimExperiments.FilterRef(args[++i], args[++i], args[++i]);
+        case "--filter-ref": return Guarded(() => AnimExperiments.FilterRef(args[++i], args[++i], args[++i]));
         case "--bc7-refine-db": ConvertOptions.Bc7RefineDb = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture); break;
         case "--threads": ConvertOptions.Threads = Math.Max(1, int.Parse(args[++i])); break;
         case "--pages":
@@ -103,6 +103,9 @@ for (int i = 0; i < args.Length; i++)
     }
 }
 
+// Read-only reports (--gump-report, --audio-report) load the client files, print and return before anything is created,
+// cleared or written: no debug folder, no ClearPreviousOutput, no body plan (docs/modern-client/bodies.md, entry paths).
+bool readOnlyReport = gumpReport || audioReport != null;
 if (outDir.Length == 0)
 {
     Console.Error.WriteLine("--out <pack dir> is required");
@@ -136,7 +139,7 @@ bool Want(string stage) => only != null ? only.Contains(stage) : stage switch { 
 // The bodies record a pack keeps: a run that does not rebuild the anims carries the previous manifest's record forward
 // (--only without anims, --no-anims) and --verify-only checks the pack against it. Validate it before anything is
 // written (output, manifest or debug files); only a run that rebuilds the anims may replace an unsupported record.
-if (!gumpReport && audioReport == null && !(convert && Want("anims")) && File.Exists(Path.Combine(outDir, "manifest.json")))
+if (!readOnlyReport && !(convert && Want("anims")) && File.Exists(Path.Combine(outDir, "manifest.json")))
 {
     try { BodyChoices.FromRecord(ManifestFileIo.Read(Path.Combine(outDir, "manifest.json")).Bodies); }
     catch (BodyChoicesException e)
@@ -157,7 +160,7 @@ if (only != null && !formatGiven && File.Exists(PackConst.PagePath(Path.Combine(
 }
 
 var total = Stopwatch.StartNew();
-if (audioReport == null) Directory.CreateDirectory(debugDir); // --audio-report writes nothing, not even this folder
+if (!readOnlyReport) Directory.CreateDirectory(debugDir); // the read-only reports write nothing, not even this folder
 ConvertOptions.DebugDir = debugDir;
 Console.WriteLine($"format {ConvertOptions.Format} (bc7 quality {ConvertOptions.Bc7Quality}), compress regions {ConvertOptions.CompressRegions}, compress pages {(ConvertOptions.ChunkedPages ? $"chunked ({ConvertOptions.ChunkBytes} B)" : ConvertOptions.CompressPages.ToString())}, page size {ConvertOptions.PageSize} (anims {ConvertOptions.AnimPageSize}{(ConvertOptions.AnimIndexed ? ", indexed8" + (ConvertOptions.IndexedMips ? " + b16 mips" : ", no mips") : "")}), threads {ConvertOptions.Threads}" +
                   (ConvertOptions.PartialPages ? $", pages {ConvertOptions.Pages.Lo}-{ConvertOptions.Pages.Hi}" : "") +
@@ -210,8 +213,13 @@ var fm = Stage("load UOFileManager", () =>
 Console.WriteLine($"  uop={fm.IsUOPInstallation} artEntries={fm.Arts.File.Entries.Length} texEntries={fm.Texmaps.File.Entries.Length} " +
                   $"land={fm.TileData.LandData.Length} statics={fm.TileData.StaticData.Length} hues={fm.Hues.HuesCount}");
 
+// Read-only reports return here, before the body plan and before any clear or write.
+fm.Gumps.DefPath = gumpDef;
+if (gumpReport) return GumpExperiments.Report(fm);
+if (audioReport != null) return AudioReport.Run(fm, audioReport);
+
 BodyPlan? bodyPlan = null;
-if (convert && Want("anims") && !gumpReport && audioReport == null)
+if (convert && Want("anims"))
 {
     try { bodyPlan = BodyPlan.Build(fm, bodyChoices ??= BodyChoices.Default); }
     catch (BodyChoicesException e) { Console.Error.WriteLine($"body choices: {e.Message}"); return 1; }
@@ -232,10 +240,6 @@ if (convert && only == null)
         return 1;
     }
 }
-
-fm.Gumps.DefPath = gumpDef;
-if (gumpReport) return GumpExperiments.Report(fm);
-if (audioReport != null) return AudioReport.Run(fm, audioReport);
 
 var stats = new Dictionary<string, object>();
 if (convert)
