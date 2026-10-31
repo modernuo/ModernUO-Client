@@ -74,15 +74,25 @@ namespace ClassicUO.Game.Map
         /// (MobileFrameCache keys a mobile's seat lookup on it).</summary>
         public uint ContentVersion;
 
+        /// <summary>The Map that loaded this chunk (Map.LoadChunk): told about content changes, which can invalidate its
+        /// max-Z decision (Map.NoteContentChanged). Cleared by Destroy.</summary>
+        internal Map OwnerMap;
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public void OnTileContentChanged(GameObject obj)
         {
             ContentVersion++;
             GpuMaskDirty = true;
 
-            if (obj is not Mobile && !(GpuEffectsIgnored && obj is GameEffect))
+            if (obj is not Mobile)
             {
-                GpuItemsDirty = true;
+                // the max-Z decision skips mobiles; everything else on its tiles can change it
+                OwnerMap?.NoteContentChanged(X, Y);
+
+                if (!(GpuEffectsIgnored && obj is GameEffect))
+                {
+                    GpuItemsDirty = true;
+                }
             }
         }
 
@@ -493,6 +503,10 @@ namespace ClassicUO.Game.Map
                     SelectedObject.LastLeftDownObject = null;
                 }
             }
+
+            // an evicted chunk the max-Z decision read: recompute (it requests the chunk again and recomputes on its load)
+            OwnerMap?.NoteContentChanged(X, Y);
+            OwnerMap = null;
 
             if (Node != null)
             {

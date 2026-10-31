@@ -77,7 +77,23 @@ namespace ClassicUO.Game.GameObjects
         // T1: every A setter reports to FunnelCheck (CUO_FUNNEL_CHECK=1, CUO_DEVTOOLS builds only; the call is compiled out
         // otherwise). Writes on world objects outside a WorldWriter scope are counted as direct writes.
         private ushort _graphic, _hue;
-        public ushort Graphic { get => _graphic; set { FunnelCheck.Write(this, FunnelField.Graphic); _graphic = value; } }
+        public ushort Graphic
+        {
+            get => _graphic;
+            set
+            {
+                FunnelCheck.Write(this, FunnelField.Graphic);
+
+                // a placed object's graphic changed in place (no tile-list change: the 0xBF/0x1B spellbook content, a
+                // season swap, Static.SetGraphic): its tiledata flags are an input of the max-Z decision (mobiles are not)
+                if (value != _graphic && TileChunk != null && this is not Mobile)
+                {
+                    TileChunk.OwnerMap?.NoteContentChanged(TileChunk.X, TileChunk.Y);
+                }
+
+                _graphic = value;
+            }
+        }
         public ushort Hue { get => _hue; set { FunnelCheck.Write(this, FunnelField.Hue); _hue = value; } }
         // A struct property: `obj.Offset.Z = v` does not compile (CS1612, it would write a copy).
         // Write members through OffsetX/OffsetY/OffsetZ, or assign a whole Vector3.
