@@ -42,6 +42,7 @@ Newest at the bottom. Each item says what I did meanwhile.
 
 ## Decisions you made tonight (recorded in README "Decisions so far" and in memory)
 
+- **Several clients at once is a requirement** (2026-10-30): players run 3–4 clients, and problems have appeared with 3 or more. No instance may corrupt or block another (profiles, settings, logs, packs), and per-instance memory must suit 4 instances. The static chunk pool you asked about was upstream (in `Chunk.cs` since 2023) and can't affect separate instances: each client is its own process. Recorded in README "Decisions so far".
 - **Legacy is a developer-only comparison mode** (2026-10-24). There's no automatic fallback to it. It's kept mainly to catch Gpu bugs, and it will be deleted once parity uses saved reference shots. *Implemented in a6110f967.*
 - **SDL fork:** agents may push fixes to github.com/modernuo/SDL without asking first. The client may build SDL3.dll from the fork. Upstream (libsdl-org) contributions stay forbidden. *In progress (page-fault agent).*
 - **Keep Legacy for now** (2026-10-25, after your FPS test): it may be the low-end-hardware path. Delete it only once the supported hardware range is decided. The Legacy regression is therefore being fixed, not just explained.
@@ -135,6 +136,7 @@ Newest at the bottom. Each item says what I did meanwhile.
 
 ## Follow-ups noted (not started)
 
+- **Multi-instance audit** (your requirement, 2026-10-30): find and fix everything several clients share on one machine. First: **profiles and settings shared across instances** (read/write races: two clients saving the same profile, one reading while another writes, lost or torn files); then logs, journal logs, screenshot names, any cache files, the pack opened read-only with shared access, a pack regenerated while clients run, and per-instance memory/GPU with 4 clients (prefill pools, GC heaps). Method: run 4 clients through the job runner and check each shared file's open modes and write patterns (atomic write-and-rename, per-instance names or locking).
 - **Static Chunk pool is not per World** (login warm-up audit): the pool filled at login outlives a World. Also, Legacy `MeshLayer` arrays keep growing in reused chunks (0.3–1 MB per 5 s while teleporting).
 - **`Chunk.Destroy` called twice queues the chunk twice** (chunk-load audit; predates it). Harmless for map objects today.
 - **Ground-item and multi art still decodes on the main thread** in the draw walk on first sight (about 2.6–3.0 ms in one teleport window per run).

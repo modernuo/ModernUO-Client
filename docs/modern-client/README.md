@@ -116,6 +116,12 @@ Supporting material in this branch:
   - Agents may push branches to the fork. Upstream libsdl-org gets no AI-written issues or PRs, not even drafts.
   - See [sdl-fork.md](sdl-fork.md).
 
+- **Several instances at once (2026-10-30):** players often run 3 or 4 clients on one machine, and issues have shown up with 3 or more. The client must run as many instances as a player wants without conflict:
+  - nothing one instance writes may corrupt or block another (profiles, settings, logs, journal logs, screenshots, caches, packs);
+  - shared inputs (the pack, the UO folder) open read-only with shared access, and regenerating a pack must never break running clients (write aside, swap atomically);
+  - per-instance memory and GPU costs (pools, prefills, GC heaps, textures) stay sized for 4 instances on one machine;
+  - in-process statics are fine across instances (each instance is its own process) but must still not assume one `World` per process.
+
 ## Open items
 
 - ~~Upgrade FNA 25.09 → 26.10~~ (done, merged to `poc/modern-client`; the submodule checkout is still pending).
