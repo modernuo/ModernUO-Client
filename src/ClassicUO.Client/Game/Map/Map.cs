@@ -12,7 +12,9 @@ namespace ClassicUO.Game.Map
 {
     internal sealed class Map
     {
-        private static Chunk[] _terrainChunks;
+        // instance-owned: two Worlds (or a World's old and new Map) never share chunk slots
+        private readonly Chunk[] _terrainChunks;
+        private bool _slotsReturned;
         private static readonly bool[] _blockAccessList = new bool[0x1000];
         private readonly LinkedList<int> _usedIndices = new LinkedList<int>();
         private readonly World _world;
@@ -73,14 +75,18 @@ namespace ClassicUO.Game.Map
 
 
         public Map(World world, int index)
+            : this(world, index, Client.Game.UO.FileManager.Maps.MapBlocksSize[index, 0] * Client.Game.UO.FileManager.Maps.MapBlocksSize[index, 1])
+        {
+        }
+
+        /// <summary>Test seam: a map of <paramref name="blocksCount"/> blocks without the map files.</summary>
+        internal Map(World world, int index, int blocksCount)
         {
             _world = world;
             Index = index;
-            BlocksCount = Client.Game.UO.FileManager.Maps.MapBlocksSize[Index, 0] * Client.Game.UO.FileManager.Maps.MapBlocksSize[Index, 1];
+            BlocksCount = blocksCount;
             _tryLoad = TryLoadQueued;
-
-            if (_terrainChunks == null || BlocksCount > _terrainChunks.Length)
-                _terrainChunks = new Chunk[BlocksCount];
+            _terrainChunks = world.RentChunkSlots(BlocksCount);
 
             ClearBockAccess();
         }
@@ -116,7 +122,7 @@ namespace ClassicUO.Game.Map
         {
             int block = GetBlock(chunkX, chunkY);
 
-            if (block >= BlocksCount || block >= _terrainChunks.Length)
+            if (block >= BlocksCount)
             {
                 return null;
             }
@@ -808,6 +814,14 @@ namespace ClassicUO.Game.Map
 
             _parked.Clear();
             _queue.Clear();
+
+            // the slot array goes back to the World for the next Map (exclusive: this Map no longer owns it)
+            if (!_slotsReturned)
+            {
+                _slotsReturned = true;
+                Array.Clear(_terrainChunks);
+                _world.ReturnChunkSlots(_terrainChunks);
+            }
         }
     }
 }

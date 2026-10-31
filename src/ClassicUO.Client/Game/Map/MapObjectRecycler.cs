@@ -52,6 +52,7 @@ namespace ClassicUO.Game.Map
         private readonly Queue<Retired<Land>> _lands = new Queue<Retired<Land>>();
         private readonly Queue<Retired<Static>> _statics = new Queue<Retired<Static>>();
         private readonly bool _enabled;
+        private bool _closed;
         private readonly uint _quarantineMs;
 
         /// <summary>Objects handed out again, retired, and dropped because the pool was full (FrameStats; reset by it).</summary>
@@ -59,12 +60,18 @@ namespace ClassicUO.Game.Map
         /// <summary>The same over the session (the [recycle-check] line).</summary>
         public static long TotalReused, TotalRetired;
 
+        private readonly World _owner;
+
         public MapObjectRecycler() : this(Enabled, QuarantineMs) { }
 
-        public MapObjectRecycler(bool enabled, uint quarantineMs)
+        /// <summary>The recycler of <paramref name="owner"/>: it keeps and hands out only objects built for that World.</summary>
+        public MapObjectRecycler(World owner) : this(Enabled, QuarantineMs, owner) { }
+
+        public MapObjectRecycler(bool enabled, uint quarantineMs, World owner = null)
         {
             _enabled = enabled;
             _quarantineMs = quarantineMs;
+            _owner = owner;
         }
 
         public int PooledLands => _lands.Count;
@@ -75,9 +82,15 @@ namespace ClassicUO.Game.Map
         /// </summary>
         public void Retire(GameObject obj, uint now)
         {
-            if (!obj.IsDestroyed || obj.TileChunk != null || obj.TNext != null || obj.TPrevious != null)
+            if (obj.InRecycler || !obj.IsDestroyed || obj.TileChunk != null || obj.TNext != null || obj.TPrevious != null)
             {
                 // not retired by Chunk.Destroy's rules: never reuse it
+                return;
+            }
+
+            if (_owner != null && !ReferenceEquals(obj.World, _owner))
+            {
+                // built for another World: never handed out into this one
                 return;
             }
 
@@ -87,7 +100,7 @@ namespace ClassicUO.Game.Map
                 FrameRetired++;
                 TotalRetired++;
 
-                if (_enabled && _lands.Count < MaxLands)
+                if (_enabled && !_closed && _lands.Count < MaxLands)
                 {
                     _lands.Enqueue(new Retired<Land> { Obj = land, Tick = now });
                 }
@@ -98,7 +111,7 @@ namespace ClassicUO.Game.Map
                 FrameRetired++;
                 TotalRetired++;
 
-                if (_enabled && _statics.Count < MaxStatics)
+                if (_enabled && !_closed && _statics.Count < MaxStatics)
                 {
                     _statics.Enqueue(new Retired<Static> { Obj = st, Tick = now });
                 }
@@ -141,7 +154,7 @@ namespace ClassicUO.Game.Map
         /// </summary>
         public void Prefill(World world, int lands, int statics, uint now)
         {
-            if (!_enabled)
+            if (!_enabled || _closed || (_owner != null && !ReferenceEquals(world, _owner)))
             {
                 return;
             }
@@ -171,6 +184,13 @@ namespace ClassicUO.Game.Map
         {
             _lands.Clear();
             _statics.Clear();
+        }
+
+        /// <summary>Terminal release (<see cref="World.ReleasePools"/>): empties the pools and keeps nothing retired afterwards.</summary>
+        public void Close()
+        {
+            _closed = true;
+            Clear();
         }
 
         // ---- CUO_RECYCLE_CHECK ----
