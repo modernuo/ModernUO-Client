@@ -88,6 +88,79 @@ namespace ClassicUO.UnitTests.Game.Map
         }
 
         [Fact]
+        public void A_Double_Destroy_Does_Not_Alias_Two_Creates()
+        {
+            var w = new World();
+            Chunk c = Chunk.Create(w, 1, 1);
+
+            c.Destroy();
+            c.Destroy();
+
+            Assert.Equal(1, w.ChunkPool.Count);
+            Chunk a = Chunk.Create(w, 2, 2);
+            Chunk b = Chunk.Create(w, 3, 3);
+            Assert.Same(c, a);
+            Assert.NotSame(a, b);
+        }
+
+        [Fact]
+        public void A_Recycler_Retires_An_Object_Only_Once()
+        {
+            var w = new World();
+            var recycler = new MapObjectRecycler(true, 0, w);
+            var st = new Static(w);
+            st.Destroy();
+
+            recycler.Retire(st, 0);
+            recycler.Retire(st, 0);
+
+            Assert.Equal(1, recycler.PooledStatics);
+            Assert.NotNull(recycler.TakeStatic(1000));
+            Assert.Null(recycler.TakeStatic(1000));
+        }
+
+        [Fact]
+        public void A_Destroy_After_ReleasePools_Is_Not_Pooled()
+        {
+            var w = new World();
+            Chunk c = Chunk.Create(w, 1, 1);
+
+            w.ReleasePools();
+            c.Destroy();
+
+            Assert.Equal(0, w.ChunkPool.Count);
+            Assert.Equal(0, w.ChunkPool.Prefill(5, 16)); // closed pools take no new prefill either
+            Assert.Equal(0, w.ChunkPool.Count);
+
+            var st = new Static(w);
+            st.Destroy();
+            w.MapRecycler.Retire(st, 0);
+            w.MapRecycler.Prefill(w, 5, 5, 0);
+            Assert.Equal(0, w.MapRecycler.PooledStatics);
+            Assert.Equal(0, w.MapRecycler.PooledLands);
+        }
+
+        [Fact]
+        public void Two_Maps_Keep_Their_Own_Chunks()
+        {
+            var w1 = new World();
+            var w2 = new World();
+            var m1 = new ClassicUO.Game.Map.Map(w1, 0, 16);
+            var m2 = new ClassicUO.Game.Map.Map(w2, 0, 4096); // larger: must not replace or orphan m1's array
+            var slots = typeof(ClassicUO.Game.Map.Map).GetField("_terrainChunks", BindingFlags.Instance | BindingFlags.NonPublic);
+            var a = new Chunk(w1);
+            var b = new Chunk(w2);
+
+            ((Chunk[])slots.GetValue(m1))[3] = a;
+            ((Chunk[])slots.GetValue(m2))[3] = b;
+
+            Assert.Same(a, m1.GetChunk(3));
+            Assert.Same(b, m2.GetChunk(3));
+            Assert.Null(m1.GetChunk(16)); // past its own BlocksCount
+            Assert.Null(m2.GetChunk(4095));
+        }
+
+        [Fact]
         public void Release_Empties_The_Chunk_And_Object_Pools()
         {
             var w = new World();
@@ -141,9 +214,9 @@ namespace ClassicUO.UnitTests.Game.Map
         [Fact]
         public void Warmup_Prefills_Once_Per_World_And_Login()
         {
-            if (!MapWarmup.Enabled)
+            if (!MapWarmup.Enabled || MapWarmup.Chunks <= 0)
             {
-                return;
+                return; // CUO_WARMUP=0 / CUO_WARMUP_CHUNKS=0: nothing is prefilled to observe
             }
 
             var w1 = new World();

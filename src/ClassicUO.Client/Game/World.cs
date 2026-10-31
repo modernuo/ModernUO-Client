@@ -135,8 +135,8 @@ namespace ClassicUO.Game
         /// keeps its chunks or map objects alive.</summary>
         public void ReleasePools()
         {
-            ChunkPool.Clear();
-            MapRecycler.Clear();
+            ChunkPool.Close();
+            MapRecycler.Close();
             WarmupDone = false;
         }
 

@@ -2746,3 +2746,13 @@ Base: poc/modern-client c6bd97205. Branch `poc/chunk-pool-per-world`.
 - New's warm-up per login is a top-up: with the pool still full from the previous session it fills 0 chunks, so a relog costs nothing extra. The pool is only re-filled when `ReleasePools` ran (client unload) or a new World is built.
 
 **Verification.** Both builds (`-c Release`, `-p:CuoDevTools=false`) 0 errors; `dotnet test -c Release` 728 tests pass after merging poc/modern-client f912272b8. DevBench got `CUO_BENCH_RELOG=cycles:dwellSec` (Socket.Disconnect + new LoginScene with SkipLoginScreen so autologin logs in again).
+
+### Codex audit round 1 (chunk pool per World, 2026-10-30)
+
+All four findings re-verified against the code; none changed the one-World relog/unload result above.
+- **#1 static `Map._terrainChunks` (pre-existing): fixed.** The array is now an instance `readonly` field, allocated per Map at its `BlocksCount` (the `block >= _terrainChunks.Length` check in `GetChunk2` is gone: the length equals `BlocksCount`). Hot path: static array access became an instance field access, no new indirection. Cost: every `new Map` allocates its own array (up to ~3.6 MB for a 458k-block map) instead of reusing the static one; this happens per login and per map change, and in `WorldMapGump.ChangeMap`, which builds a second Map only for `Index`/`GetTileZ` (the old code shared the main map's chunk slots there by accident). Test seam `internal Map(World, index, blocksCount)`; test `Two_Maps_Keep_Their_Own_Chunks` (a larger second map does not replace or orphan the first). `_blockAccessList` stays static (scratch cleared per call, main thread only).
+- **#2 duplicate returns (pre-existing): fixed.** `Chunk.InPool` (set/cleared by `ChunkPool`); `Chunk.Destroy` returns at once when pooled and `CanAdd` refuses a chunk already in the pool. `MapObjectRecycler.Retire` returns when `InRecycler` is set. Tests: `A_Double_Destroy_Does_Not_Alias_Two_Creates`, `A_Recycler_Retires_An_Object_Only_Once`.
+- **#3 `ReleasePools` not terminal: fixed.** `ChunkPool.Close()` / `MapObjectRecycler.Close()` clear and then refuse returns and prefill; a chunk destroyed after release clears its mesh (`Mesh.Clear`) instead of re-pooling. Test `A_Destroy_After_ReleasePools_Is_Not_Pooled`.
+- **#4 warm-up test with `CUO_WARMUP_CHUNKS=0`: fixed.** The test returns early when `MapWarmup.Chunks <= 0`. The WorldPoolOwnership tests pass with `CUO_WARMUP_CHUNKS=0`.
+
+Verification after the round: both builds 0 errors; `dotnet test -c Release` 732 pass.
