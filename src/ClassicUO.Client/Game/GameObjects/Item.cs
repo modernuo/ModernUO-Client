@@ -112,6 +112,7 @@ namespace ClassicUO.Game.GameObjects
             get => _isMulti;
             set
             {
+                FunnelCheck.Write(this, FunnelField.IsMulti);
                 _isMulti = value;
 
                 if (!value)
@@ -158,18 +159,25 @@ namespace ClassicUO.Game.GameObjects
             && ItemData.Layer != (int)Layer.Face
             && Graphic != 0;
 
-        public ushort Amount { get; set; }
-        public uint Container { get; set; } = 0xFFFF_FFFF;
+        private ushort _amount;
+        private uint _container = 0xFFFF_FFFF;
+        private bool _isDamageable;
+        private Layer _layer;
+        private byte _lightID;
+        public ushort Amount { get => _amount; set { FunnelCheck.Write(this, FunnelField.Amount); _amount = value; } }
+        public uint Container { get => _container; set { FunnelCheck.Write(this, FunnelField.Container); _container = value; } }
 
-        public bool IsDamageable { get; set; }
-        public Layer Layer { get; set; }
-        public byte LightID { get; set; }
+        public bool IsDamageable { get => _isDamageable; set { FunnelCheck.Write(this, FunnelField.IsDamageable); _isDamageable = value; } }
+        public Layer Layer { get => _layer; set { FunnelCheck.Write(this, FunnelField.Layer); _layer = value; } }
+        public byte LightID { get => _lightID; set { FunnelCheck.Write(this, FunnelField.LightID); _lightID = value; } }
 
         public Rectangle? MultiInfo;
         public bool Opened;
 
-        public uint Price { get; set; }
-        public bool UsedLayer { get; set; }
+        private uint _price;
+        private bool _usedLayer;
+        public uint Price { get => _price; set { FunnelCheck.Write(this, FunnelField.Price); _price = value; } }
+        public bool UsedLayer { get => _usedLayer; set { FunnelCheck.Write(this, FunnelField.UsedLayer); _usedLayer = value; } }
         public bool WantUpdateMulti = true;
 
         public static Item Create(World world, uint serial)
@@ -333,29 +341,50 @@ namespace ClassicUO.Game.GameObjects
 
         public override void CheckGraphicChange(byte animIndex = 0)
         {
+            if (!IsMulti && IsCorpse)
+            {
+                Direction dir = Direction;
+                CorpseState(ref dir, out bool usedLayer, out Layer layer);
+                AnimIndex = 99;
+                UsedLayer = usedLayer;
+
+                if (usedLayer)
+                {
+                    Direction = dir;
+                }
+
+                Layer = layer;
+            }
+
+            RefreshGraphicState();
+        }
+
+        /// <summary>
+        /// T1: what <see cref="CheckGraphicChange"/> makes of a corpse's direction (the running bit sets UsedLayer and is
+        /// stripped; the remaining direction is the corpse's layer). Its animation index becomes 99. Pure: the funnel computes
+        /// a corpse's values with it before it writes them.
+        /// </summary>
+        internal static void CorpseState(ref Direction direction, out bool usedLayer, out Layer layer)
+        {
+            usedLayer = (direction & Direction.Running) != 0;
+
+            if (usedLayer)
+            {
+                direction &= (Direction)0x7F;
+            }
+
+            layer = (Layer)direction;
+        }
+
+        /// <summary>
+        /// T1: the part of <see cref="CheckGraphicChange"/> that writes no ECS-owned value: whether the item is drawn, and a
+        /// multi's (re)load. Reads Graphic, IsMulti, WantUpdateMulti, X and Y, so it runs after the funnel wrote them.
+        /// </summary>
+        internal void RefreshGraphicState()
+        {
             if (!IsMulti)
             {
-                if (!IsCorpse)
-                {
-                    AllowedToDraw = CanBeDrawn(World, Graphic);
-                }
-                else
-                {
-                    AnimIndex = 99;
-
-                    if ((Direction & Direction.Running) != 0)
-                    {
-                        UsedLayer = true;
-                        Direction &= (Direction)0x7F;
-                    }
-                    else
-                    {
-                        UsedLayer = false;
-                    }
-
-                    Layer = (Layer)Direction;
-                    AllowedToDraw = true;
-                }
+                AllowedToDraw = IsCorpse || CanBeDrawn(World, Graphic);
             }
             else if (WantUpdateMulti)
             {
