@@ -120,11 +120,12 @@ Newest at the bottom. Each item says what I did meanwhile.
 
 ## In progress
 
-- **E12: same-frame item checker** (`bg/ecs-e12-checker`, Sonnet): built and verified; NativeAOT timing, then a Codex audit.
-- **Text into the pack** (`poc/pack-text`, Opus): done by the agent (startup text loaders 55 → 3 ms, heap −28 MB, exact parity, screenshots identical); in Codex audit.
-- **In-flight decode cap** (`poc/decode-inflight-cap`, Sonnet): measure the peak bytes held by worker decodes during teleports, then a byte budget that never drops requests.
-- **Chunk pool per World** (`poc/chunk-pool-per-world`, Sonnet): the pools filled at login belong to the World that uses them and are freed with it.
-- All agents share a `bench.lock`, so client runs, builds and timing series never overlap.
+- **E12: same-frame item checker** (`bg/ecs-e12-checker`): the Codex audit found that the probe pass is not side-effect isolated. Two paths can change the drawn frame: auras draw outside the capture, and world-renderer overrides get applied twice. There are also cases where the checker reports a difference that isn't there, or misses one that is. So its "0 differences" isn't proof yet. A fresh agent is fixing the two drawn-frame paths, and either fixing the checker cases or reporting those frames as partially checked.
+- **T1: the mutation funnel** (`bg/ecs-t1-funnel`, new): the `WorldWriter` API, `CUO_FUNNEL_CHECK`, and the world-items packet group first; the other groups follow in later agents.
+- **Text into the pack** (`poc/pack-text`): fixing the Codex findings (P1: a font record the pack accepts can crash rendering); adding cliloc overrides (a packed binary override, with a loose `Clilocs.txt` winning); measuring block-compressed cliloc (measurement only, you decide).
+- **In-flight decode cap** (`poc/decode-inflight-cap`): a 16 MiB cap as a safety net (the measured peak is about 7.3 MiB); paired timing running.
+- **Chunk pool per World** (`poc/chunk-pool-per-world`): fixes a latent upstream bug where a second World reused the first World's chunks; relog series running.
+- **Job runner:** client runs and timing series now go through `rf-agent job` (v0.1.49, resource `bench`), one at a time under `bench.lock`. The old scratch queue finishes its last jobs and is then retired.
 
 ## Things you saw tonight, explained
 
