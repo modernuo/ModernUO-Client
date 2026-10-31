@@ -201,7 +201,7 @@ namespace ClassicUO.UnitTests.Ecs
             return mobile;
         }
 
-        public enum Start { None, Standing, Walking, FullQueue, Unplaced, DestroyedHeld }
+        public enum Start { None, Standing, OneStep, Walking, FullQueue, Unplaced, DestroyedHeld }
 
         private const uint NOW = 100_000;
 
@@ -258,6 +258,14 @@ namespace ClassicUO.UnitTests.Ecs
 
             switch (start)
             {
+                case Start.OneStep:
+                    // one queued step from an earlier frame (a walk start sets LastStepTime only on an empty queue)
+                    Time.Ticks = NOW - 1000;
+                    OldEnqueueStep(m, 1001, 1000, 0, Direction.East, false);
+                    Time.Ticks = NOW;
+
+                    break;
+
                 case Start.Walking:
                     Time.Ticks = NOW - 1000;
                     OldEnqueueStep(m, 1001, 1000, 0, Direction.East, false);
@@ -455,7 +463,8 @@ namespace ClassicUO.UnitTests.Ecs
             }
             else
             {
-                world.Writer.SetMobileBody(m, graphic, hue, flags, checkBody: true, setDirection: false, 0);
+                // the packet's direction is passed and must not be written (0x77/0x78 keep the player's)
+                world.Writer.SetMobileBody(m, graphic, hue, flags, checkBody: true, setDirection: false, dir);
             }
         }
 
@@ -484,6 +493,7 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 NotorietyFlag n = (NotorietyFlag)((byte)x.Flags % 7 + 1);
                 Pair(() => a.NotorietyFlag = n, () => newWorld.Writer.SetNotoriety(b, n));
+                AssertSameWorld(oldWorld, newWorld); // the notoriety's push on its own
                 Pair(() => OldBody(oldWorld, a, kind, x.Graphic, x.Hue, x.Flags, x.Dir, x.X, x.Y, x.Z), () => NewBody(newWorld, b, kind, x.Graphic, x.Hue, x.Flags, x.Dir, x.X, x.Y, x.Z));
                 AssertSameWorld(oldWorld, newWorld);
             }
@@ -934,6 +944,7 @@ namespace ClassicUO.UnitTests.Ecs
 
         [Theory]
         [InlineData(Start.Standing)]
+        [InlineData(Start.OneStep)]
         [InlineData(Start.Walking)]
         [InlineData(Start.FullQueue)]
         public void EnqueueStep_Equals_The_Old_EnqueueStep(Start start)
