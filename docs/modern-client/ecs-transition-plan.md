@@ -209,6 +209,21 @@ Sizes: T0a 1–1.5, T0b 0.5, T0c 1.5–2.
 
 **Gate:** the standard gate, `w5push` (mount, dismount, equip changes), and paperdoll screenshots.
 
+**Equipment layering as data (owner, 2026-10-31).** The EA client hides and reorders worn layers with hard-coded logic that no data file records. ModernUO-Client issue #39 shows the bleed: a layer under the ringmail arms shows through in ClassicUO but not in the EA client. ClassicUO hard-codes its version of these rules:
+- `MobileView.IsCovered`: shoes under pants/legs, pants under legs/skirt/robe, a tunic under a robe, open-robe graphics;
+- `AnimationRules.IsCovered` (its ECS copy);
+- the cloak-before-helmet anchoring;
+- the tunic-over-robe (surcoat) reordering.
+
+When T3 moves equipment into the ECS, it replaces these with a pack data file of layering rules:
+- per layer and direction: draw order;
+- per item (graphic or AnimID): which layers it hides, conditions on other worn items, and order overrides;
+- separate tables for the paperdoll and the world, because the two use different gumps and art;
+- the importer writes today's rules as the default file;
+- shard admins add entries for custom equipment.
+
+The rules must stay exactly equal to today's, so a checker compares the data-driven result with the hard-coded one over the parity scripts before the hard-coded copy goes. Issue #39's fix comes after that: find the EA rule it shows, and add it as data.
+
 ### T4: thin handles; the ECS owns scalar state
 
 **What changes:**
