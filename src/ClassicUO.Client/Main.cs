@@ -51,6 +51,9 @@ namespace ClassicUO
             CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
 
             Log.Start(LogTypes.All);
+#if CUO_DEVTOOLS
+            MemLog.Start();
+#endif
 
             DllMap.Init();
 
