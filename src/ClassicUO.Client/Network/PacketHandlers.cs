@@ -1232,29 +1232,24 @@ namespace ClassicUO.Network
             else
             {
                 Item item = (Item)entity;
-
-                if (item.IsMulti)
-                {
-                    world.HouseManager.Remove(serial);
-                }
-
                 Entity cont = world.Get(item.Container);
+                bool wasMulti = item.IsMulti;
+                Layer layer = item.Layer;
+
+                // T1: the house, the parent's child list and the removal (contents, OPL, Destroy, the ECS entity)
+                world.Writer.RemoveWorldItem(item, cont);
 
                 if (cont != null)
                 {
-                    cont.Remove(item);
-
-                    if (item.Layer != Layer.Invalid)
+                    if (layer != Layer.Invalid)
                     {
                         UIManager.GetGump<PaperDollGump>(cont)?.RequestUpdateContents();
                     }
                 }
-                else if (item.IsMulti)
+                else if (wasMulti)
                 {
                     UIManager.GetGump<MiniMapGump>()?.RequestUpdateContents();
                 }
-
-                world.RemoveItem(serial, true);
 
                 if (updateAbilities)
                 {
@@ -6335,182 +6330,30 @@ namespace ClassicUO.Network
 
             bool created = false;
 
-            if (obj == null || obj.IsDestroyed)
+            // T1: a serial that is (or becomes) an item goes through the funnel: create or take out of its container, the
+            // fields, CheckGraphicChange, the tile and the ECS entity in one operation
+            if (obj == null || obj.IsDestroyed ? !(SerialHelper.IsMobile(serial) && type != 3) : obj is Item)
             {
-                created = true;
+                item = world.Writer.UpsertWorldItem(obj, serial, graphic, graphic_inc, count, x, y, z, direction, hue, flagss, type, out created);
 
-                if (SerialHelper.IsMobile(serial) && type != 3)
+                if (item == null)
                 {
-                    mobile = world.GetOrCreateMobile(serial);
-
-                    if (mobile == null)
-                    {
-                        return;
-                    }
-
-                    obj = mobile;
-                    mobile.Graphic = (ushort)(graphic + graphic_inc);
-                    mobile.CheckGraphicChange();
-                    mobile.Direction = direction & Direction.Up;
-                    mobile.FixHue(hue);
-                    mobile.X = x;
-                    mobile.Y = y;
-                    mobile.Z = z;
-                    mobile.Flags = flagss;
+                    return;
                 }
-                else
-                {
-                    item = world.GetOrCreateItem(serial);
 
-                    if (item == null)
-                    {
-                        return;
-                    }
-
-                    obj = item;
-                }
-            }
-            else
-            {
-                if (obj is Item item1)
-                {
-                    item = item1;
-
-                    if (SerialHelper.IsValid(item.Container))
-                    {
-                        world.RemoveItemFromContainer(item);
-                    }
-                }
-                else
-                {
-                    mobile = (Mobile)obj;
-                }
-            }
-
-            if (obj == null)
-            {
-                return;
-            }
-
-            if (item != null)
-            {
                 if (graphic != 0x2006)
                 {
                     graphic += graphic_inc;
                 }
 
-                if (type == 2)
-                {
-                    item.IsMulti = true;
-                    item.WantUpdateMulti =
-                        (graphic & 0x3FFF) != item.Graphic
-                        || item.X != x
-                        || item.Y != y
-                        || item.Z != z
-                        || item.Hue != hue;
-                    item.Graphic = (ushort)(graphic & 0x3FFF);
-                }
-                else
-                {
-                    item.IsDamageable = type == 3;
-                    item.IsMulti = false;
-                    item.Graphic = graphic;
-                }
-
-                item.X = x;
-                item.Y = y;
-                item.Z = z;
-                item.LightID = (byte)direction;
-
-                if (graphic == 0x2006)
-                {
-                    item.Layer = (Layer)direction;
-                }
-
-                item.FixHue(hue);
-
-                if (count == 0)
-                {
-                    count = 1;
-                }
-
-                item.Amount = count;
-                item.Flags = flagss;
-                item.Direction = direction;
-                item.CheckGraphicChange(item.AnimIndex);
-            }
-            else
-            {
-                graphic += graphic_inc;
-
-                if (serial != world.Player)
-                {
-                    Direction cleaned_dir = direction & Direction.Up;
-                    bool isrun = (direction & Direction.Running) != 0;
-
-                    if (world.Get(mobile) == null || mobile.X == 0xFFFF && mobile.Y == 0xFFFF)
-                    {
-                        mobile.X = x;
-                        mobile.Y = y;
-                        mobile.Z = z;
-                        mobile.Direction = cleaned_dir;
-                        mobile.IsRunning = isrun;
-                        mobile.ClearSteps();
-                    }
-
-                    if (!mobile.EnqueueStep(x, y, z, cleaned_dir, isrun))
-                    {
-                        mobile.X = x;
-                        mobile.Y = y;
-                        mobile.Z = z;
-                        mobile.Direction = cleaned_dir;
-                        mobile.IsRunning = isrun;
-                        mobile.ClearSteps();
-                    }
-                }
-
-                mobile.Graphic = (ushort)(graphic & 0x3FFF);
-                mobile.FixHue(hue);
-                mobile.Flags = flagss;
-            }
-
-            if (created && !obj.IsClicked)
-            {
-                if (mobile != null)
-                {
-                    if (ProfileManager.CurrentProfile.ShowNewMobileNameIncoming)
-                    {
-                        GameActions.SingleClick(world, serial);
-                    }
-                }
-                else if (graphic == 0x2006)
+                if (created && !item.IsClicked && graphic == 0x2006)
                 {
                     if (ProfileManager.CurrentProfile.ShowNewCorpseNameIncoming)
                     {
                         GameActions.SingleClick(world, serial);
                     }
                 }
-            }
 
-            if (mobile != null)
-            {
-                mobile.SetInWorldTile(mobile.X, mobile.Y, mobile.Z);
-
-                if (created)
-                {
-                    // This is actually a way to get all Hp from all new mobiles.
-                    // Real UO client does it only when LastAttack == serial.
-                    // We force to close suddenly.
-                    GameActions.RequestMobileStatus(world, serial);
-
-                    //if (TargetManager.LastAttack != serial)
-                    //{
-                    //    GameActions.SendCloseStatus(serial);
-                    //}
-                }
-            }
-            else
-            {
                 if (
                     Client.Game.UO.GameCursor.ItemHold.Serial == serial
                     && Client.Game.UO.GameCursor.ItemHold.Dropped
@@ -6522,15 +6365,93 @@ namespace ClassicUO.Network
                     Client.Game.UO.GameCursor.ItemHold.Dropped = false;
                 }
 
-                if (item.OnGround)
+                if (item.OnGround && graphic == 0x2006 && ProfileManager.CurrentProfile.AutoOpenCorpses)
                 {
-                    item.SetInWorldTile(item.X, item.Y, item.Z);
-
-                    if (graphic == 0x2006 && ProfileManager.CurrentProfile.AutoOpenCorpses)
-                    {
-                        world.Player.TryOpenCorpses();
-                    }
+                    world.Player.TryOpenCorpses();
                 }
+
+                return;
+            }
+
+            if (obj == null || obj.IsDestroyed)
+            {
+                created = true;
+
+                mobile = world.GetOrCreateMobile(serial);
+
+                if (mobile == null)
+                {
+                    return;
+                }
+
+                obj = mobile;
+                mobile.Graphic = (ushort)(graphic + graphic_inc);
+                mobile.CheckGraphicChange();
+                mobile.Direction = direction & Direction.Up;
+                mobile.FixHue(hue);
+                mobile.X = x;
+                mobile.Y = y;
+                mobile.Z = z;
+                mobile.Flags = flagss;
+            }
+            else
+            {
+                mobile = (Mobile)obj;
+            }
+
+            graphic += graphic_inc;
+
+            if (serial != world.Player)
+            {
+                Direction cleaned_dir = direction & Direction.Up;
+                bool isrun = (direction & Direction.Running) != 0;
+
+                if (world.Get(mobile) == null || mobile.X == 0xFFFF && mobile.Y == 0xFFFF)
+                {
+                    mobile.X = x;
+                    mobile.Y = y;
+                    mobile.Z = z;
+                    mobile.Direction = cleaned_dir;
+                    mobile.IsRunning = isrun;
+                    mobile.ClearSteps();
+                }
+
+                if (!mobile.EnqueueStep(x, y, z, cleaned_dir, isrun))
+                {
+                    mobile.X = x;
+                    mobile.Y = y;
+                    mobile.Z = z;
+                    mobile.Direction = cleaned_dir;
+                    mobile.IsRunning = isrun;
+                    mobile.ClearSteps();
+                }
+            }
+
+            mobile.Graphic = (ushort)(graphic & 0x3FFF);
+            mobile.FixHue(hue);
+            mobile.Flags = flagss;
+
+            if (created && !obj.IsClicked)
+            {
+                if (ProfileManager.CurrentProfile.ShowNewMobileNameIncoming)
+                {
+                    GameActions.SingleClick(world, serial);
+                }
+            }
+
+            mobile.SetInWorldTile(mobile.X, mobile.Y, mobile.Z);
+
+            if (created)
+            {
+                // This is actually a way to get all Hp from all new mobiles.
+                // Real UO client does it only when LastAttack == serial.
+                // We force to close suddenly.
+                GameActions.RequestMobileStatus(world, serial);
+
+                //if (TargetManager.LastAttack != serial)
+                //{
+                //    GameActions.SendCloseStatus(serial);
+                //}
             }
         }
 

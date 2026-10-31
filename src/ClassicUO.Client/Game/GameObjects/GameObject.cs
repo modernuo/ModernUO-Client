@@ -74,15 +74,18 @@ namespace ClassicUO.Game.GameObjects
 
         // FIXME: remove it
         public sbyte FoliageIndex = -1;
-        public ushort Graphic { get; set; }
-        public ushort Hue { get; set; }
+        // T1: every A setter reports to FunnelCheck (CUO_FUNNEL_CHECK=1, CUO_DEVTOOLS builds only; the call is compiled out
+        // otherwise). Writes on world objects outside a WorldWriter scope are counted as direct writes.
+        private ushort _graphic, _hue;
+        public ushort Graphic { get => _graphic; set { FunnelCheck.Write(this, FunnelField.Graphic); _graphic = value; } }
+        public ushort Hue { get => _hue; set { FunnelCheck.Write(this, FunnelField.Hue); _hue = value; } }
         // A struct property: `obj.Offset.Z = v` does not compile (CS1612, it would write a copy).
         // Write members through OffsetX/OffsetY/OffsetZ, or assign a whole Vector3.
         private Vector3 _offset;
-        public Vector3 Offset { get => _offset; set => _offset = value; }
-        public float OffsetX { get => _offset.X; set => _offset.X = value; }
-        public float OffsetY { get => _offset.Y; set => _offset.Y = value; }
-        public float OffsetZ { get => _offset.Z; set => _offset.Z = value; }
+        public Vector3 Offset { get => _offset; set { FunnelCheck.Write(this, FunnelField.Offset); _offset = value; } }
+        public float OffsetX { get => _offset.X; set { FunnelCheck.Write(this, FunnelField.OffsetX); _offset.X = value; } }
+        public float OffsetY { get => _offset.Y; set { FunnelCheck.Write(this, FunnelField.OffsetY); _offset.Y = value; } }
+        public float OffsetZ { get => _offset.Z; set { FunnelCheck.Write(this, FunnelField.OffsetZ); _offset.Z = value; } }
         public short PriorityZ;
         public GameObject TNext;
         public GameObject TPrevious;
@@ -94,9 +97,11 @@ namespace ClassicUO.Game.GameObjects
         /// <summary>T6a: the global insertion stamp of the last Chunk.AddGameObject of this object (TileOrder.NextSeq); with
         /// PriorityZ it gives the tile-list order key (TileOrder.Key).</summary>
         public ulong TileSeq;
-        public ushort X { get; set; }
-        public ushort Y { get; set; }
-        public sbyte Z { get; set; }
+        private ushort _x, _y;
+        private sbyte _z;
+        public ushort X { get => _x; set { FunnelCheck.Write(this, FunnelField.X); _x = value; } }
+        public ushort Y { get => _y; set { FunnelCheck.Write(this, FunnelField.Y); _y = value; } }
+        public sbyte Z { get => _z; set { FunnelCheck.Write(this, FunnelField.Z); _z = value; } }
 
         public void AddDamage(int damage)
         {

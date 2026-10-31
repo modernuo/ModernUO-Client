@@ -65,33 +65,13 @@ namespace ClassicUO.Game
 
             if (entity is Item item)
             {
-                // Only the instance World currently holds for this serial; stale or detached objects are ignored.
-                if (!ReferenceEquals(_world.Items.Get(item.Serial), item))
+                // T1: a WorldWriter operation commits this item itself, once, after its last write
+                if (_folding && item.Serial == _foldSerial)
                 {
                     return;
                 }
 
-                Mirror.UpsertItem
-                (
-                    item.Serial,
-                    item.Graphic,
-                    item.Hue,
-                    item.X,
-                    item.Y,
-                    item.Z,
-                    (byte)item.Direction,
-                    (byte)item.Flags,
-                    item.Amount,
-                    item.Container,
-                    (byte)item.Layer,
-                    item.IsMulti
-                );
-
-                // W5: corpses animate in World.Update; every item change reaches the mirror here
-                if (item.IsCorpse)
-                {
-                    _world.QueueItemUpdate(item);
-                }
+                SyncItem(item);
             }
             else if (entity is Mobile mobile)
             {
@@ -115,6 +95,63 @@ namespace ClassicUO.Game
 
                 // W5: graphic, flags and direction reach the mirror only here, so the pushed inputs follow them here
                 WriteInputs(mobile, e);
+            }
+        }
+
+        // T1: the item whose hook Syncs fold into its WorldWriter operation's commit (one operation at a time; they don't nest)
+        private bool _folding;
+        private uint _foldSerial;
+
+        /// <summary>T1, <see cref="WorldWriter"/>: from here until <see cref="EndFold"/>, Syncs of the item with this serial are
+        /// skipped; the operation calls <see cref="Commit"/> once at the point the last of them would have run.</summary>
+        internal void BeginFold(uint serial)
+        {
+            _foldSerial = serial;
+            _folding = true;
+        }
+
+        internal void EndFold()
+        {
+            _folding = false;
+        }
+
+        /// <summary>T1: the funnel's ECS write for an item: what <see cref="Sync"/> does, with no fold check.</summary>
+        internal void Commit(Item item)
+        {
+            if (item != null && !item.IsDestroyed)
+            {
+                SyncItem(item);
+            }
+        }
+
+        private void SyncItem(Item item)
+        {
+            // Only the instance World currently holds for this serial; stale or detached objects are ignored.
+            if (!ReferenceEquals(_world.Items.Get(item.Serial), item))
+            {
+                return;
+            }
+
+            Mirror.UpsertItem
+            (
+                item.Serial,
+                item.Graphic,
+                item.Hue,
+                item.X,
+                item.Y,
+                item.Z,
+                (byte)item.Direction,
+                (byte)item.Flags,
+                item.Amount,
+                item.Container,
+                (byte)item.Layer,
+                item.IsMulti
+            );
+
+            // W5: corpses animate in World.Update; every item change reaches the mirror here
+            if (item.IsCorpse)
+            {
+                _world.QueueItemUpdate(item);
             }
         }
 
@@ -392,6 +429,8 @@ namespace ClassicUO.Game
 
         public void Update()
         {
+            FunnelCheck.LogSummary();
+
             if (MobileAnimationSystem.CacheCheck && Time.Ticks >= _cacheLogAt)
             {
                 _cacheLogAt = Time.Ticks + 5000;
