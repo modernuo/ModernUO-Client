@@ -139,28 +139,43 @@ namespace ClassicUO.Assets
         public void Load(string lang)
         {
             Stopwatch stopwatch = Stopwatch.StartNew();
+            long alloc0 = GC.GetTotalAllocatedBytes(true);
+            var timings = new System.Text.StringBuilder();
 
-            Animations.Load();
-            AnimData.Load();
-            Arts.Load();
-            Maps.Load();
-            Clilocs.Load(lang);
-            Gumps.Load();
-            Fonts.Load();
-            Hues.Load();
-            TileData.Load();
-            Multis.Load();
-            Skills.Load();
-            Professions.Load();
-            Texmaps.Load();
-            Speeches.Load();
-            Lights.Load();
-            Sounds.Load();
-            MultiMaps.Load();
-            TileArt.Load();
-            StringDictionary.Load();
+            void Timed(string name, Action load)
+            {
+                long t = Stopwatch.GetTimestamp();
+                long a = GC.GetAllocatedBytesForCurrentThread();
+                load();
+                timings.Append($" {name} {Stopwatch.GetElapsedTime(t).TotalMilliseconds:0.0}ms/{(GC.GetAllocatedBytesForCurrentThread() - a) / 1024}KB");
+            }
+
+            Timed("anims", Animations.Load);
+            Timed("animdata", AnimData.Load);
+            Timed("art", Arts.Load);
+            Timed("maps", Maps.Load);
+            Timed("cliloc", () => Clilocs.Load(lang));
+            Timed("gumps", Gumps.Load);
+            Timed("fonts", Fonts.Load);
+            Timed("hues", Hues.Load);
+            Timed("tiledata", TileData.Load);
+            Timed("multis", Multis.Load);
+            Timed("skills", Skills.Load);
+            Timed("professions", Professions.Load);
+            Timed("texmaps", Texmaps.Load);
+            Timed("speech", Speeches.Load);
+            Timed("lights", Lights.Load);
+            Timed("sounds", Sounds.Load);
+            Timed("multimaps", MultiMaps.Load);
+            Timed("tileart", TileArt.Load);
+            Timed("stringdict", StringDictionary.Load);
 
             Log.Trace($"Files loaded in: {stopwatch.ElapsedMilliseconds} ms!");
+            double ms = stopwatch.Elapsed.TotalMilliseconds;
+            long allocated = GC.GetTotalAllocatedBytes(true) - alloc0;
+            // CUO_LOAD_MEM=1: a full collection first, so the heap size is what the loaders keep (measurements only)
+            long heap = GC.GetTotalMemory(Environment.GetEnvironmentVariable("CUO_LOAD_MEM") == "1");
+            Log.Trace($"[load] {ms:0.0} ms, {allocated / 1024} KB allocated, GC heap {heap / 1024} KB after:{timings}");
             stopwatch.Stop();
         }
     }
