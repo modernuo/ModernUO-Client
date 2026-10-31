@@ -83,7 +83,7 @@ namespace ClassicUO.Assets
 
             foreach (var required in new[]
             {
-                "tiledata_ext.bin", "hues.bin", "hues_raw.bin", "radarcol.bin", "multis.bin", "lights.bin",
+                "tiledata_ext.bin", "hues_raw.bin", "radarcol.bin", "multis.bin", "lights.bin",
                 "tileart.bin", "equipconv.bin", "art/sprites.bin", "tex/texmaps.bin", "anim/anim.bin",
                 "anim/palettes.bin", "anim/animdata.bin"
             })
