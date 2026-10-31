@@ -50,7 +50,7 @@ namespace ClassicUO.Game.Map
         /// <summary>Map statics prefilled per chunk.</summary>
         public const int StaticsPerChunk = 56;
 
-        private static bool _prefilled;
+        private static bool _collectArmed;
         private static long _collectDeadline;
         private static int _worldFrames;
 
@@ -60,12 +60,13 @@ namespace ClassicUO.Game.Map
         /// <summary>World.MapIndex created a map. The first time: fill the pools and arm the collection.</summary>
         public static void OnMapCreated(World world)
         {
-            if (!Enabled || _prefilled)
+            // once per World and login (facet changes inside a login don't refill): World.Clear re-arms it
+            if (!Enabled || world.WarmupDone)
             {
                 return;
             }
 
-            _prefilled = true;
+            world.WarmupDone = true;
             long start = Stopwatch.GetTimestamp();
             long before = GC.GetAllocatedBytesForCurrentThread();
             int chunks = Chunk.Prefill(world, Chunks, StaticsMeshCapacity);
@@ -76,9 +77,15 @@ namespace ClassicUO.Game.Map
                 ms, chunks, StaticsMeshCapacity, world.MapRecycler.PooledLands, world.MapRecycler.PooledStatics,
                 (GC.GetAllocatedBytesForCurrentThread() - before) / 1048576.0));
 
-            CollectPending = CollectEnabled;
-            _collectDeadline = 0;
-            _worldFrames = 0;
+            // the deliberate collection stays the process's first login only (as before the pools were per World): a relog
+            // finds the World's pools still full (they survive World.Clear), so the top-up above allocates little to promote
+            if (!_collectArmed)
+            {
+                _collectArmed = true;
+                CollectPending = CollectEnabled;
+                _collectDeadline = 0;
+                _worldFrames = 0;
+            }
         }
 
         /// <summary>

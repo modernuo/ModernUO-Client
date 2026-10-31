@@ -59,12 +59,18 @@ namespace ClassicUO.Game.Map
         /// <summary>The same over the session (the [recycle-check] line).</summary>
         public static long TotalReused, TotalRetired;
 
+        private readonly World _owner;
+
         public MapObjectRecycler() : this(Enabled, QuarantineMs) { }
 
-        public MapObjectRecycler(bool enabled, uint quarantineMs)
+        /// <summary>The recycler of <paramref name="owner"/>: it keeps and hands out only objects built for that World.</summary>
+        public MapObjectRecycler(World owner) : this(Enabled, QuarantineMs, owner) { }
+
+        public MapObjectRecycler(bool enabled, uint quarantineMs, World owner = null)
         {
             _enabled = enabled;
             _quarantineMs = quarantineMs;
+            _owner = owner;
         }
 
         public int PooledLands => _lands.Count;
@@ -78,6 +84,12 @@ namespace ClassicUO.Game.Map
             if (!obj.IsDestroyed || obj.TileChunk != null || obj.TNext != null || obj.TPrevious != null)
             {
                 // not retired by Chunk.Destroy's rules: never reuse it
+                return;
+            }
+
+            if (_owner != null && !ReferenceEquals(obj.World, _owner))
+            {
+                // built for another World: never handed out into this one
                 return;
             }
 
@@ -141,7 +153,7 @@ namespace ClassicUO.Game.Map
         /// </summary>
         public void Prefill(World world, int lands, int statics, uint now)
         {
-            if (!_enabled)
+            if (!_enabled || (_owner != null && !ReferenceEquals(world, _owner)))
             {
                 return;
             }
