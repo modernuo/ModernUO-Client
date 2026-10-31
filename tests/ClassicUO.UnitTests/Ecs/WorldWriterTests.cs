@@ -1931,6 +1931,9 @@ namespace ClassicUO.UnitTests.Ecs
             new[] { (WORN_BEFORE, (ushort)0x1F7B, Layer.Pants, (ushort)0), (ITEM, (ushort)0x2006, Layer.Cloak, (ushort)0x455), (NEWITEM, (ushort)0x1F03, Layer.Robe, (ushort)0x8BB9) },
             // the same item twice
             new[] { (ITEM, (ushort)0x1515, Layer.Shirt, (ushort)0), (ITEM, (ushort)0x1516, Layer.Pants, (ushort)1) },
+            // the kept children (the opened container, the backpack) re-listed on their own layers: each moves to the end of
+            // the equipment index (the detached commit), as before T1
+            new[] { (WORN_AFTER, (ushort)0x1F7C, Layer.Helmet, (ushort)0), (PACK, (ushort)0x0E75, Layer.Backpack, (ushort)0) },
             // the clear alone
             Array.Empty<(uint, ushort, Layer, ushort)>(),
             // a mobile's serial as an entry: found among the items (created there)
@@ -2033,6 +2036,33 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.PlaceWorldItem(inPack);
             world.Writer.PlaceWorldItem(inOpened);
             world.Writer.OutstandingPlacements.Should().Be(0);
+        }
+
+        [Fact]
+        public void Equip_And_WearItem_Supersede_The_Items_Placement()
+        {
+            // an item written by 0x1A and equipped before its placement is not placed later: the equip cancels the token
+            foreach (bool wear in new[] { false, true })
+            {
+                World world = Build(Start.None);
+                world.Writer.ThrowOnViolation = true;
+                WorldWriter.Placement p = Upsert(world, ITEM);
+                world.Writer.OutstandingPlacements.Should().Be(1);
+
+                if (wear)
+                {
+                    world.Writer.WearItem(MOB, ITEM, 0x1515, Layer.Shirt, 0);
+                }
+                else
+                {
+                    world.Writer.Equip(ITEM, 0x1515, Layer.Shirt, MOB, 0, out _, out _);
+                }
+
+                world.Writer.OutstandingPlacements.Should().Be(0);
+                Action stale = () => world.Writer.PlaceWorldItem(p);
+                stale.Should().Throw<ArgumentException>();
+                world.Items.Get(ITEM).Container.Should().Be(MOB);
+            }
         }
 
         [Fact]
