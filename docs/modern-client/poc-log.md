@@ -3662,15 +3662,71 @@ Branch `poc/mem-reduce-3` from poc/modern-client 75747c25b. Owner-approved follo
 - Tests: `StagingSlotsTests` (10 cases, fake fences, no GPU): a slot is reused only after its fence; retirement is in order (a later fence signalling first retires nothing); a frame without copies takes no fence; a failed submit or an outside wait retires the serial; without a tracker everything is reusable and cycles; dispose releases pending fences; wait statistics. A burst model (4 slots; 40, 13 and 4 pages; copies retiring 1–3 frames after submit) checks that no slot is rewritten while its copy is in flight, that every page loads, that each frame with copies takes one fence, and that only bursts larger than the slots wait.
 - Verified: unit tests 1078 pass, 1 skipped; client Release build and the `-p:CuoDevTools=false` build have 0 errors; Uo.Render.App and Uo.Client build.
 
-**Memory trade-off log (per client), computed; the measurement is pending:**
+**Memory trade-off log (per client), computed, then measured by bench-000048 (results below):**
 
-| item | before | after | saving | what it costs |
+| item | before | after (measured) | saving | what it costs |
 |---|---|---|---|---|
-| art page staging (4 slots × 10.67 MiB chain, B5G5R5A1 2048², 6 mips; private read-write, host-cached, fully resident) | 6–8 buffers, 64–85 MiB, created in the login burst and never freed; varies by run in 10.7 MiB steps | exactly 4 buffers, 42.7 MiB | 21–43 MiB resident per client, and no run-to-run steps | during a burst, a slot waits until its last copy retires (about 1–3 frames) before it loads its next page. Counted as slot waits; the login load time is measured by bench-000048. One fence per frame that carries page copies (acquire, query, release) |
-| anim page staging (8 slots × 1 MiB, Indexed8 1024²) | 8+ buffers, cycled the same way (below the walk's 1 MiB floor) | exactly 8 MiB | 0–a few MiB | same wait rule |
+| art page staging (4 slots × 10.67 MiB chain, B5G5R5A1 2048², 6 mips; private read-write, host-cached, fully resident) | 6–8 buffers, 64–85 MiB, created in the login burst and never freed; varies by run in 10.7 MiB steps (bench-000048 base: 7 and 8 buffers, 74.9 and 85.6 MiB) | exactly 4 buffers, 42.8 MiB, in both new runs at 60 and 120 s | 32 and 43 MiB of staging in this job's runs (21–43 MiB per client over the 6–8 range), and no run-to-run steps. Window medians: **26–37 MiB less private WS and 29–39 MiB less commit** from the login to the large scene (beyond noise); 42–47 MiB after the round trip and idle (below the 2× rule only because base's own spread there is one extra buffer) | during a burst, a slot waits until its last copy retires (about 1–3 frames) before it loads its next page. Counted as slot waits. Measured (bench-000048): **0 slot waits** in both new runs (login, facet switch, return, every 5 s stats line); login settled in 177 / 172 ms vs base 167 / 167 ms, within noise. One fence per frame that carries page copies (acquire, query, release; 7–9 at login, 23–29 by 132 s) |
+| anim page staging (8 slots × 1 MiB, Indexed8 1024²) | 8+ buffers, cycled the same way (below the walk's 1 MiB floor) | exactly 8 MiB (computed; below the walk's floor, not measured) | 0–a few MiB | same wait rule; 0 slot waits measured |
 
-**Measurement: job bench-000048** (`mem-reduce-3-ab`, queued). It runs base 756365911 (75747c25b plus the settle log line only) against new cc3f904ee, interleaved base1 new1 base2 new2. The plan, windows, sampling and region walks are the same as bench-000044's (JIT Release dev builds, through benchpin, `CUO_MEM_REGIONS=5,15,30,60,120` in both arms). It also reports the time until the login scene settles, the last page upload, slot waits during the login burst, and the number of 10.4–10.9 MiB read-write allocations in the walks at 60 and 120 s. A smoke run of the new binary is bench-000047. Results below once the job finishes.
+**Measurement: job bench-000048** (`mem-reduce-3-ab`, finished ok in 1,685 s). It runs base 756365911 (75747c25b plus the settle log line only) against new cc3f904ee, interleaved base1 new1 base2 new2. The plan, windows, sampling and region walks are the same as bench-000044's (JIT Release dev builds, through benchpin, `CUO_MEM_REGIONS=5,15,30,60,120` in both arms). It also reports the time until the login scene settles, the last page upload, slot waits during the login burst, and the number of 10.4–10.9 MiB read-write allocations in the walks at 60 and 120 s. A smoke run of the new binary is bench-000047. Results below.
 - **Smoke run bench-000047 (new binary only, one run, 90 s):** ok. The login (facet 1) settled 176 ms after the first world frame (12 frames; last page upload at 171 ms; 8 art and 8 anim pages), with 0 slot waits in art and anim and 8 copy fences taken, none pending. The external walk at 60 s lists exactly **4** art staging chains (10.4–10.9 MiB read-write): 42.8 MiB committed and resident. bench-000044's runs had 6–8. This is a single run and not the A/B; the A/B is bench-000048.
+
+### Measured: bench-000048
+
+Status ok (1,685 s). All four runs (base1 new1 base2 new2, interleaved, through benchpin) completed the plan (`q` done in each); every large-scene window had 1,985 mobiles and 25,161 items. Same windows and rule as bench-000044: medians in MiB, each arm as run 1 / run 2; spread = (max-min)/min within an arm; a difference counts only if it is more than twice the larger within-arm spread. Base is 756365911 (75747c25b plus the `[load]` log line), new is cc3f904ee. **The binaries predate the Codex fixes** (c4316f088, c747433ab, head c747433ab): those change only the failed-submit and teardown paths. On the normal path measured here the same fences are taken, polled and released, so the numbers stand for the head.
+
+| window | metric | base 756365911 | new cc3f904ee | new - base | spread base / new | counts? |
+|---|---|---|---|---|---|---|
+| login transient (max, 2–10 s) | commit | 1905 / 1913 | 1873 / 1886 | **-29.5** | 0.4 % / 0.7 % | **yes** |
+| login transient (max, 2–10 s) | private WS | 770 / 779 | 742 / 754 | **-26.5** | 1.2 % / 1.6 % | **yes** |
+| login (3 s before b1) | commit | 1754 / 1757 | 1723 / 1736 | -26.0 | 0.2 % / 0.8 % | no (just under the 2× limit) |
+| login | private WS | 767 / 773 | 738 / 750 | **-26.0** | 0.8 % / 1.6 % | **yes** |
+| login | GC committed | 368 / 362 | 368 / 371 | +4.5 | 1.7 % / 0.8 % | no |
+| Britain b3 | commit | 1749 / 1750 | 1715 / 1726 | **-29.0** | 0.1 % / 0.6 % | **yes** |
+| Britain b3 | private WS | 767 / 769 | 733 / 744 | **-29.5** | 0.3 % / 1.5 % | **yes** |
+| Britain b3 | GC committed | 368 / 362 | 368 / 371 | +4.5 | 1.7 % / 0.8 % | no |
+| large scene ls_z1 | commit | 2028 / 2046 | 1996 / 2001 | **-38.5** | 0.9 % / 0.3 % | **yes** |
+| large scene ls_z1 | private WS | 916 / 932 | 885 / 890 | **-36.5** | 1.7 % / 0.6 % | **yes** |
+| large scene ls_z1 | GC committed | 511 / 518 | 516 / 516 | +1.5 | 1.4 % / 0.0 % | no |
+| large scene ls_zo | commit | 2030 / 2047 | 2000 / 2005 | **-36.0** | 0.8 % / 0.2 % | **yes** |
+| large scene ls_zo | private WS | 919 / 936 | 889 / 895 | **-35.5** | 1.8 % / 0.7 % | **yes** |
+| large scene ls_zo | GC committed | 515 / 522 | 521 / 521 | +2.5 | 1.4 % / 0.0 % | no |
+| after round trip q | commit | 2069 / 2100 | 2032 / 2044 | -46.5 | 1.5 % / 0.6 % | no |
+| after round trip q | private WS | 952 / 978 | 918 / 928 | -42.0 | 2.7 % / 1.1 % | no |
+| after round trip q | GC committed | 545 / 572 | 552 / 550 | -7.5 | 5.0 % / 0.4 % | no |
+| idle (last 60 s) | commit | 2071 / 2102 | 2034 / 2044 | -47.5 | 1.5 % / 0.5 % | no |
+| idle (last 60 s) | private WS | 954 / 980 | 920 / 929 | -42.5 | 2.7 % / 1.0 % | no |
+| peak | commit | 2155 / 2142 | 2057 / 2128 | -56.0 | 0.6 % / 3.5 % | no |
+| peak | private WS | 954 / 980 | 920 / 931 | -41.5 | 2.7 % / 1.2 % | no |
+
+**Art staging buffers** (10.4–10.9 MiB read-write allocations in the external walks; commit = resident):
+
+| run | at 60 s | at 120 s |
+|---|---|---|
+| base1 | 7 buffers, 74.9 MiB | 7, 74.9 MiB |
+| new1 | **4**, 42.8 MiB | **4**, 42.8 MiB |
+| base2 | 8 buffers, 85.6 MiB | 8, 85.6 MiB |
+| new2 | **4**, 42.8 MiB | **4**, 42.8 MiB |
+
+The region walks agree: private commit at 60 s 1682 / 1683 MiB (base) vs 1648 / 1659 (new); private WS at 120 s 908 / 925 vs 878 / 884.
+
+**Scene load and slot waits** (`[load] GPU world settled` lines; ms from the first world frame):
+
+| run | login (facet 1): settled, frames, last page upload | facet switch to 0 (`[TestScene go`) | return to facet 1 | slot waits art / anim (episodes, frames, ms, longest) | copy fences taken (login / switch / return, cumulative) |
+|---|---|---|---|---|---|
+| base1 | 167 ms, 17, 165 ms | 133 ms, 18, 127 ms | 52 ms, 9, 46 ms | (not tracked) | – |
+| new1 | 177 ms, 17, 175 ms | 138 ms, 18, 130 ms | 48 ms, 9, 44 ms | 0, 0, 0.0, 0.0 / 0, 0, 0.0, 0.0 | 9 / 19 / 29 |
+| base2 | 167 ms, 17, 165 ms | 134 ms, 18, 128 ms | 57 ms, 10, 53 ms | (not tracked) | – |
+| new2 | 172 ms, 17, 170 ms | 133 ms, 18, 127 ms | 50 ms, 9, 44 ms | 0, 0, 0.0, 0.0 / 0, 0, 0.0, 0.0 | 7 / 15 / 23 |
+
+Every slot-wait counter was 0 on every settled line and on every DevBench 5 s stats line of both new runs, with 0 fences pending. Pages resident and uploaded were the same in both arms (art 9 at login, 11 after the return; anim 3, then 67–68, then 81–82).
+
+**Verdict.**
+- **New held exactly 4 art staging buffers (42.8 MiB) in every run, at 60 and at 120 s.** Base held 7 and 8 (bench-000044's runs had 6, 7, 8, 8). The run-to-run 10.7 MiB steps are gone: new's within-arm spread is 0.2–1.6 % in every steady window, base's up to 2.7 %.
+- **Saving beyond noise:** 26–37 MiB private WS and 29–39 MiB commit per client in the login transient, the login (WS; commit is just under the limit), Britain and both large-scene windows. That matches the staging alone: 3 and 4 fewer buffers are 32 and 43 MiB, mean 37. After the round trip, idle and at peak the difference is larger (42–47 MiB WS and commit, 56 commit at peak) but does not pass the 2× rule, because base's own spread there is about one staging buffer (base2 had one more). Every new run is still below every base run in those windows (WS by at least 24 MiB). GC committed is unchanged everywhere, as expected: the change is native staging memory.
+- **Login delay:** login settled in 177 / 172 ms in new vs 167 / 167 ms in base (median +7.5 ms, +4.5 %; 17 frames in all four runs). With 0 slot waits, none of it comes from slots waiting for copies, and it is within noise (one sample per run; new's spread is 2.9 %, so the 2× limit is about 10 ms). The facet switch (138 / 133 vs 133 / 134 ms) and the return (48 / 50 vs 52 / 57 ms) show no direction. **No load delay from slot waits is measurable: there were none.**
+- Compared with bench-000044 (same plan and windows, but a separate job, so context only): this job's base matches 000044's new arm (round 2) in the steady windows within about 25 MiB (Britain WS 767 / 769 vs 766 / 791), and new here is below 000044's new arm by 40 MiB WS in Britain and 64 MiB after the round trip (medians). This job's base login transient commit (1905 / 1913) is about 55 MiB above 000044's new arm (1847 / 1859); that comes from code merged between the two jobs, not this change, and new still lowers it by 29.5 MiB.
 
 ### Codex audit (coordinator scratchpad `astra-memreduce3/out.md`) and dispositions (2026-10-31)
 
