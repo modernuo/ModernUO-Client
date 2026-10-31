@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: BSD-2-Clause
+// SPDX-License-Identifier: BSD-2-Clause
 
 using System;
 
@@ -6,12 +6,13 @@ namespace ClassicUO.IO.Audio
 {
     public class UOSound : Sound
     {
-        private readonly byte[] _waveBuffer;
+        private readonly ArraySegment<byte> _waveBuffer;
 
-        public UOSound(string name, int index, byte[] buffer) : base(name, index)
+        /// <param name="buffer">22,050 Hz mono 16-bit PCM (a pack record's PCM is the start of the record's array).</param>
+        public UOSound(string name, int index, ArraySegment<byte> buffer) : base(name, index)
         {
             _waveBuffer = buffer;
-            Delay = (uint) ((buffer.Length - 32) / 88.2f);
+            Delay = (uint) ((buffer.Count - 32) / 88.2f);
         }
 
         public bool CalculateByDistance { get; set; }

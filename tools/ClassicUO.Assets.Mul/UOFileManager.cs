@@ -43,12 +43,14 @@ namespace ClassicUO.Assets
             Fonts = new FontsLoader(this);
             Clilocs = new ClilocLoader(this);
             Speeches = new SpeechesLoader(this);
+            Sounds = new SoundsLoader(this);
         }
 
         public GumpsLoader Gumps { get; }
         public FontsLoader Fonts { get; }
         public ClilocLoader Clilocs { get; }
         public SpeechesLoader Speeches { get; }
+        public SoundsLoader Sounds { get; }
 
         public ClientVersion Version { get; }
         public string BasePath { get; }
@@ -85,6 +87,7 @@ namespace ClassicUO.Assets
             Fonts.Dispose();
             Clilocs.Dispose();
             Speeches.Dispose();
+            Sounds.Dispose();
         }
 
         public string GetUOFilePath(string file)

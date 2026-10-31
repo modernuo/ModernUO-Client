@@ -32,13 +32,26 @@ namespace ClassicUO.IO.Audio
         private volatile int _loops;
         private volatile bool _cancelled, _opened, _failed, _ended;
 
-        public MusicStream(string path, string name, bool loop)
+        /// <summary>A track read from a file (tests and tools).</summary>
+        public MusicStream(string path, string name, bool loop) : this(null, path, name, loop)
         {
+        }
+
+        /// <summary>
+        ///     A track whose MP3 bytes <paramref name="open" /> returns (the client: a positional stream over the pack's
+        ///     music record). The worker calls it once per play, reads the bytes into native memory, validates them
+        ///     (Mp3Validator) and disposes the stream. Null: <paramref name="path" /> is a file.
+        /// </summary>
+        public MusicStream(Func<System.IO.Stream> open, string path, string name, bool loop)
+        {
+            _open = open;
             Path = path;
             Name = name;
             Loop = loop;
             Created = Stopwatch.GetTimestamp();
         }
+
+        private readonly Func<System.IO.Stream> _open;
 
         public string Path { get; }
         public string Name { get; }
@@ -114,7 +127,20 @@ namespace ClassicUO.IO.Audio
 
                     long t0 = Stopwatch.GetTimestamp();
 
-                    if (!Mp3Decoder.TryOpenFile(Path, out _decoder, out string error))
+                    string error;
+                    bool opened;
+
+                    if (_open != null)
+                    {
+                        using System.IO.Stream source = _open();
+                        opened = Mp3Decoder.TryOpen(source, out _decoder, out error);
+                    }
+                    else
+                    {
+                        opened = Mp3Decoder.TryOpenFile(Path, out _decoder, out error);
+                    }
+
+                    if (!opened)
                     {
                         Fail(error);
 
