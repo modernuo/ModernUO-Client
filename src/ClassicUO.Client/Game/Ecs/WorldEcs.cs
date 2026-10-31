@@ -120,42 +120,14 @@ namespace ClassicUO.Game
             }
 
             _foldItem = item;
-            _foldReconcile = false;
         }
 
-        /// <summary>
-        /// Ends the fold of <paramref name="item"/>; a call for another instance (a stale scope) does nothing. When a pre-T1
-        /// path ran meanwhile (<see cref="ReconcileFoldOnEnd"/>), the item is synced from its cache here, so the hook syncs
-        /// the fold skipped are not lost.
-        /// </summary>
+        /// <summary>Ends the fold of <paramref name="item"/>; a call for another instance (a stale scope) does nothing.</summary>
         internal void EndFold(Item item)
         {
             if (ReferenceEquals(_foldItem, item))
             {
                 _foldItem = null;
-
-                if (_foldReconcile)
-                {
-                    _foldReconcile = false;
-                    Sync(item);
-                }
-            }
-        }
-
-        // a pre-T1 path wrote while the fold was open (Codex audit round 3, #1)
-        private bool _foldReconcile;
-
-        /// <summary>
-        /// T1, a release build's pre-T1 fallback (<see cref="WorldWriter"/>): the old writes rely on the hook syncs, which the
-        /// open fold (of an outer operation, or of the same item) skips. Marks the fold so <see cref="EndFold"/> syncs its item
-        /// from its cache once it closes; then the mirror holds what the cache holds, whichever of the outer operation's and
-        /// the fallback's writes came last, as before T1. No fold open: nothing (the hook syncs run).
-        /// </summary>
-        internal void ReconcileFoldOnEnd()
-        {
-            if (_foldItem != null)
-            {
-                _foldReconcile = true;
             }
         }
 
