@@ -116,6 +116,13 @@ namespace ClassicUO.UnitTests.Ecs
         private static Item NewUpsert(World world, in Packet p, out bool created, Action<Item> beforePlacement = null)
         {
             Item item = world.Writer.UpsertWorldItem(p.Serial, p.Graphic, p.GraphicInc, p.Count, p.X, p.Y, p.Z, p.Direction, p.Hue, p.Flags, p.Type, out created, out WorldWriter.Placement placement);
+
+            // as the handler: no item, no callbacks and no placement
+            if (item == null)
+            {
+                return null;
+            }
+
             beforePlacement?.Invoke(item);
             world.Writer.PlaceWorldItem(placement);
 
@@ -470,25 +477,25 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.PlaceWorldItem(pending);
         }
 
-        // ---- the release build's path after a violation (ThrowOnViolation false): an error log, then the pre-T1 code
+        // ---- the release build's path after a violation (ThrowOnViolation false): an error log; a nesting is rejected
+        // (T1 round 4), a bad placement or removal takes the pre-T1 code
 
         [Fact]
-        public void Release_A_Nested_Upsert_Takes_The_Pre_T1_Path()
+        public void Release_A_Nested_Upsert_Is_Rejected()
         {
-            World oldWorld = Build(Start.InBag), newWorld = Build(Start.InBag);
+            World untouched = Build(Start.InBag), newWorld = Build(Start.InBag);
             newWorld.Writer.ThrowOnViolation = false;
             Item replacement = Item.Create(newWorld, BAG);
             Packet p = Packets[3];
 
-            OldUpsert(oldWorld, p);
             newWorld.Ecs.BeginFold(replacement); // an operation is open
-            NewUpsert(newWorld, p, out bool created);
+            NewUpsert(newWorld, p, out bool created).Should().BeNull("a nested upsert is rejected");
             newWorld.Ecs.EndFold(replacement);
 
             created.Should().BeFalse();
             newWorld.Writer.Violations.Should().Be(1);
-            newWorld.Writer.OutstandingPlacements.Should().Be(0, "a pre-T1 upsert issues no outstanding placement");
-            AssertSameWorld(oldWorld, newWorld);
+            newWorld.Writer.OutstandingPlacements.Should().Be(0);
+            AssertSameWorld(untouched, newWorld);
         }
 
         [Fact]
@@ -516,60 +523,150 @@ namespace ClassicUO.UnitTests.Ecs
             newWorld.Writer.InScope.Should().BeFalse();
         }
 
-        // ---- Codex audit round 3, #1: a fallback while the fold of its own item is open (the hook syncs the old writes rely
-        // on are folded): the fold's end syncs the item from its cache
+        // ---- T1 round 4 (Codex audit round 4, #1 and #2): production code cannot re-enter the writer during an operation
+        // (see WorldWriter.Admitted), so a nested operation is forbidden, not recovered from: it throws in CUO_DEVTOOLS
+        // builds, and in a release build it is rejected and changes nothing. Codex's scenarios, from inside an outer
+        // operation's commit: a removal of its item (was: a ghost mirror record), a world upsert of its item (was: stale
+        // container links), a container placement and a placement. The outer operation completes as without the nested call.
+
+        public enum Outer { Upsert, PlaceInContainer }
+
+        public enum Nested { Upsert, Remove, PlaceInContainer, Place }
+
+        public static IEnumerable<object[]> NestingCases()
+        {
+            foreach (bool throws in new[] { true, false })
+            {
+                foreach (Outer o in Enum.GetValues(typeof(Outer)))
+                {
+                    foreach (Nested n in Enum.GetValues(typeof(Nested)))
+                    {
+                        yield return new object[] { throws, o, n };
+                    }
+                }
+            }
+        }
+
+        [Theory]
+        [MemberData(nameof(NestingCases))]
+        public void A_Nested_Operation_During_A_Commit_Is_A_Violation_And_Changes_Nothing(bool throws, Outer outer, Nested nested)
+        {
+            const uint OTHER = 0x4000_7600;
+            World oldWorld = Build(Start.InBag), newWorld = Build(Start.InBag);
+            newWorld.Writer.ThrowOnViolation = throws;
+
+            // an outstanding placement of another item, for the nested Place (placed after the outer operation)
+            OldUpsert(oldWorld, new Packet { Serial = OTHER, Graphic = 0xEED, Count = 1, X = 1050, Y = 1050 });
+            WorldWriter.Placement pending = newWorld.Writer.UpsertWorldItem(OTHER, 0xEED, 0, 1, 1050, 1050, 0, Direction.North, 0, Flags.None, 0, out _, out WorldWriter.Placement issued) == null ? default : issued;
+            Exception seen = null;
+            object nestedResult = "not run";
+            newWorld.Ecs.CommitObserver = (_, _) =>
+            {
+                newWorld.Ecs.CommitObserver = null;
+
+                try
+                {
+                    switch (nested)
+                    {
+                        case Nested.Upsert:
+                            nestedResult = NewUpsert(newWorld, Packets[2], out _);
+
+                            break;
+
+                        case Nested.Remove:
+                            newWorld.Writer.RemoveWorldItem(newWorld.Items.Get(ITEM), out Entity parent);
+                            nestedResult = parent;
+
+                            break;
+
+                        case Nested.PlaceInContainer:
+                            nestedResult = newWorld.Writer.PlaceInContainer(ITEM, 0x1516, 2, 9, 9, 0, MOB, out Entity container);
+                            container.Should().BeNull();
+
+                            break;
+
+                        case Nested.Place:
+                            newWorld.Writer.PlaceWorldItem(pending);
+                            nestedResult = null;
+
+                            break;
+                    }
+                }
+                catch (InvalidOperationException e)
+                {
+                    seen = e;
+                }
+            };
+
+            Item it;
+
+            if (outer == Outer.Upsert)
+            {
+                OldUpsert(oldWorld, Packets[1]);
+                it = NewUpsert(newWorld, Packets[1], out _);
+            }
+            else
+            {
+                OldAddToContainer(oldWorld, ITEM, 0x1517, 4, 11, 12, 0x33, BAG);
+                it = newWorld.Writer.PlaceInContainer(ITEM, 0x1517, 4, 11, 12, 0x33, BAG, out _);
+            }
+
+            newWorld.Ecs.CommitObserver.Should().BeNull("the observer ran: the nested call happened during the commit");
+            newWorld.Writer.Violations.Should().Be(1);
+
+            if (throws)
+            {
+                seen.Should().NotBeNull("CUO_DEVTOOLS: a nested operation throws");
+            }
+            else
+            {
+                seen.Should().BeNull();
+                nestedResult.Should().BeNull("release: the nested operation is rejected and returns nothing");
+            }
+
+            newWorld.Writer.InScope.Should().BeFalse();
+            newWorld.Ecs.IsFolding.Should().BeFalse();
+            it.Should().BeSameAs(newWorld.Items.Get(ITEM));
+
+            // the nested placement was rejected, so the earlier placement is still outstanding: it places as the old path did
+            newWorld.Writer.PlaceWorldItem(pending);
+            newWorld.Writer.OutstandingPlacements.Should().Be(0);
+            AssertSameWorld(oldWorld, newWorld);
+
+            // no ghost record and no stale link: the mirror holds what the cache holds, and the bag lists the item iff it holds it
+            newWorld.Ecs.Mirror.TryGet(ITEM, out MirrorRecord mirrored).Should().BeTrue();
+            newWorld.Ecs.Sync(it);
+            newWorld.Ecs.Mirror.TryGet(ITEM, out MirrorRecord fromCache);
+            mirrored.Should().BeEquivalentTo(fromCache, "the mirror holds what the cache holds");
+            ChildSerials(newWorld.Items.Get(BAG)).Contains(ITEM).Should().Be(it.Container == BAG);
+        }
 
         [Theory]
         [InlineData(Start.Ground, 0)]
         [InlineData(Start.InBag, 3)]
         [InlineData(Start.Worn, 1)]
         [InlineData(Start.GroundCorpse, 4)]
-        public void Release_A_Fallback_Inside_The_Fold_Of_Its_Own_Item_Reaches_The_Mirror(Start start, int packet)
+        public void Release_Any_Operation_Inside_The_Fold_Of_Its_Own_Item_Is_Rejected(Start start, int packet)
         {
-            World oldWorld = Build(start), newWorld = Build(start);
+            World untouched = BuildWithCorpse(start), newWorld = BuildWithCorpse(start);
             newWorld.Writer.ThrowOnViolation = false;
             Item it = newWorld.Items.Get(ITEM);
             Packet p = Packets[packet];
 
-            OldUpsert(oldWorld, p);
             newWorld.Ecs.BeginFold(it); // an operation on this very instance is open
-            NewUpsert(newWorld, p, out bool created).Should().BeSameAs(it);
+            NewUpsert(newWorld, p, out bool created).Should().BeNull();
+            newWorld.Writer.PlaceInContainer(ITEM, 0x1516, 2, 3, 4, 0x21, BAG, out Entity container).Should().BeNull();
+            container.Should().BeNull();
+            newWorld.Writer.RemoveWorldItem(it, out Entity parent);
+            parent.Should().BeNull();
             newWorld.Ecs.EndFold(it);
 
             created.Should().BeFalse();
-            newWorld.Writer.Violations.Should().Be(1);
+            newWorld.Writer.Violations.Should().Be(3);
             newWorld.Ecs.IsFolding.Should().BeFalse();
-            AssertSameWorld(oldWorld, newWorld);
-        }
-
-        [Fact]
-        public void Release_A_Nested_Upsert_Inside_A_Real_Operation_Leaves_The_Mirror_Equal_To_The_Cache()
-        {
-            // a real nesting: an upsert of the same item started from inside the outer upsert's commit (before its writes). The
-            // nested one takes the pre-T1 path under the outer fold; the outer operation's writes come after it, as a pre-T1
-            // handler's continuation would; when the outer fold ends, the mirror holds what the cache holds.
-            World world = Build(Start.InBag);
-            world.Writer.ThrowOnViolation = false;
-            Packet outer = Packets[1], inner = Packets[2];
-            world.Ecs.CommitObserver = (_, _) =>
-            {
-                world.Ecs.CommitObserver = null;
-                NewUpsert(world, inner, out _);
-            };
-
-            Item it = NewUpsert(world, outer, out _);
-
-            world.Writer.Violations.Should().Be(1);
-            world.Writer.InScope.Should().BeFalse();
-            world.Ecs.IsFolding.Should().BeFalse();
-            world.Writer.OutstandingPlacements.Should().Be(0);
-            it.Should().BeSameAs(world.Items.Get(ITEM));
-            (it.X, it.Y, it.Z, it.Flags, it.Amount).Should().Be((outer.X, outer.Y, outer.Z, outer.Flags, outer.Count), "the outer operation wrote last");
-
-            world.Ecs.Mirror.TryGet(ITEM, out MirrorRecord mirrored).Should().BeTrue();
-            world.Ecs.Sync(it); // the record of what the cache holds
-            world.Ecs.Mirror.TryGet(ITEM, out MirrorRecord fromCache);
-            mirrored.Should().BeEquivalentTo(fromCache, "the mirror holds what the cache holds");
+            it.IsDestroyed.Should().BeFalse();
+            AssertSameWorld(untouched, newWorld);
+            AssertSameCorpseBox(untouched, newWorld);
         }
 
         // ---- Codex audit round 2, #1: results are computed, never read back after the operation's own unlink or write
@@ -945,70 +1042,37 @@ namespace ClassicUO.UnitTests.Ecs
             late.Should().Throw<ArgumentException>();
         }
 
-        [Fact]
-        public void Release_A_Nested_PlaceInContainer_Takes_The_Pre_T1_Path()
-        {
-            World oldWorld = BuildWithCorpse(Start.Worn), newWorld = BuildWithCorpse(Start.Worn);
-            newWorld.Writer.ThrowOnViolation = false;
-            Item replacement = Item.Create(newWorld, BAG);
-
-            OldAddToContainer(oldWorld, ITEM, 0x1515, 2, 3, 4, 0x21, BAG);
-            newWorld.Ecs.BeginFold(replacement);
-            newWorld.Writer.PlaceInContainer(ITEM, 0x1515, 2, 3, 4, 0x21, BAG, out _);
-            newWorld.Ecs.EndFold(replacement);
-
-            newWorld.Writer.Violations.Should().Be(1);
-            AssertSameWorld(oldWorld, newWorld);
-        }
-
-        [Fact]
-        public void Release_A_PlaceInContainer_Inside_The_Fold_Of_Its_Own_Item_Reaches_The_Mirror()
-        {
-            // Codex audit round 3, #1: the same container, so the fallback reuses the folded instance
-            World oldWorld = Build(Start.InBag), newWorld = Build(Start.InBag);
-            newWorld.Writer.ThrowOnViolation = false;
-            Item it = newWorld.Items.Get(ITEM);
-
-            OldAddToContainer(oldWorld, ITEM, 0x1516, 2, 3, 4, 0x21, BAG);
-            newWorld.Ecs.BeginFold(it);
-            newWorld.Writer.PlaceInContainer(ITEM, 0x1516, 2, 3, 4, 0x21, BAG, out _).Should().BeSameAs(it);
-            newWorld.Ecs.EndFold(it);
-
-            newWorld.Writer.Violations.Should().Be(1);
-            AssertSameWorld(oldWorld, newWorld);
-        }
-
         [Theory]
-        [InlineData(BAG, false)]
-        [InlineData(CORPSEBOX, false)]
-        [InlineData(BAG, true)]
-        public void PlaceInContainer_Of_A_Live_Mobile_Serial_Equals_The_Old_Path(uint containerSerial, bool fallback)
+        [InlineData(BAG)]
+        [InlineData(CORPSEBOX)]
+        public void PlaceInContainer_Of_A_Live_Mobile_Serial_Equals_The_Old_Path(uint containerSerial)
         {
             // Codex audit round 3, #3: a live mobile holding the incoming serial is removed with its equipment and the
-            // equipment's contents, by the operation and by its release fallback alike
+            // equipment's contents. Codex audit round 4, #5: the replacement item (serial MOB) is compared directly, cache and
+            // mirror (AssertSameWorld now visits every item either World holds), and the removed instances are destroyed.
             World oldWorld = BuildWithCorpse(Start.Worn), newWorld = BuildWithCorpse(Start.Worn);
-            Item replacement = Item.Create(newWorld, BAG);
+            var removedOld = new Entity[] { oldWorld.Mobiles.Get(MOB), oldWorld.Items.Get(ITEM), oldWorld.Items.Get(CHILD), oldWorld.Items.Get(GRANDCHILD) };
+            var removedNew = new Entity[] { newWorld.Mobiles.Get(MOB), newWorld.Items.Get(ITEM), newWorld.Items.Get(CHILD), newWorld.Items.Get(GRANDCHILD) };
 
-            if (fallback)
-            {
-                newWorld.Writer.ThrowOnViolation = false;
-                newWorld.Ecs.BeginFold(replacement);
-            }
-
-            OldAddToContainer(oldWorld, MOB, 0x1515, 1, 2, 3, 0x21, containerSerial);
-            newWorld.Writer.PlaceInContainer(MOB, 0x1515, 1, 2, 3, 0x21, containerSerial, out _);
-
-            if (fallback)
-            {
-                newWorld.Ecs.EndFold(replacement);
-                newWorld.Writer.Violations.Should().Be(1);
-            }
+            Item a = OldAddToContainer(oldWorld, MOB, 0x1515, 1, 2, 3, 0x21, containerSerial);
+            Item b = newWorld.Writer.PlaceInContainer(MOB, 0x1515, 1, 2, 3, 0x21, containerSerial, out _);
 
             oldWorld.Mobiles.Get(MOB).Should().BeNull("the old handler removed the mobile");
             oldWorld.Items.Get(ITEM).Should().BeNull("with its equipment");
+            removedOld.Should().OnlyContain(e => e.IsDestroyed, "the old path destroyed the mobile, its equipment and contents");
+            removedNew.Should().OnlyContain(e => e.IsDestroyed, "the operation destroys the mobile, its equipment and contents");
+
+            b.Should().NotBeNull().And.BeSameAs(newWorld.Items.Get(MOB));
+            a.Should().BeSameAs(oldWorld.Items.Get(MOB));
+            AssertSameItem(a, b);
             AssertSameWorld(oldWorld, newWorld);
             AssertSameCorpseBox(oldWorld, newWorld);
-            (newWorld.Items.Get(MOB) == null).Should().Be(oldWorld.Items.Get(MOB) == null);
+
+            // negative fixture: a replacement whose cache differs after its commit (the mirror record still equal) is found
+            b.Hue ^= 1;
+            Action corrupted = () => AssertSameWorld(oldWorld, newWorld);
+            corrupted.Should().Throw<Exception>("the replacement item's cache is compared");
+            b.Hue ^= 1;
         }
 
         private static List<uint> ChildSerials(Entity e)
@@ -1032,7 +1096,10 @@ namespace ClassicUO.UnitTests.Ecs
             (b.Mobiles.Get(MOB) == null).Should().Be(a.Mobiles.Get(MOB) == null, "the mobile exists in both or neither");
             b.ActiveItems.Select(i => i.Serial).Should().Equal(a.ActiveItems.Select(i => i.Serial), "the active-items list, in order");
 
-            foreach (uint serial in new[] { ITEM, CHILD, GRANDCHILD, BAG })
+            // every item either World holds (Codex audit round 4, #5: a replacement item under another serial, e.g. MOB, too)
+            List<uint> serials = a.Items.Keys.Union(b.Items.Keys).Union(new[] { ITEM, CHILD, GRANDCHILD, BAG }).OrderBy(s => s).ToList();
+
+            foreach (uint serial in serials)
             {
                 Item x = a.Items.Get(serial), y = b.Items.Get(serial);
                 (x == null).Should().Be(y == null, $"0x{serial:X8} exists in both or neither");
@@ -1051,7 +1118,7 @@ namespace ClassicUO.UnitTests.Ecs
             mb.MobileCount.Should().Be(ma.MobileCount);
             mb.Epoch.Should().Be(ma.Epoch);
 
-            foreach (uint serial in new[] { ITEM, CHILD, GRANDCHILD, BAG, MOB })
+            foreach (uint serial in serials.Union(new[] { MOB }))
             {
                 bool ha = ma.TryGet(serial, out MirrorRecord ra), hb = mb.TryGet(serial, out MirrorRecord rb);
                 hb.Should().Be(ha, $"0x{serial:X8} mirrored in both or neither");

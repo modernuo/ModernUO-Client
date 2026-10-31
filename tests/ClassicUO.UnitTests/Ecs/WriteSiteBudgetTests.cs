@@ -5,6 +5,9 @@ using System.Linq;
 using System.Text;
 using System.Text.RegularExpressions;
 using FluentAssertions;
+using Microsoft.CodeAnalysis;
+using Microsoft.CodeAnalysis.CSharp;
+using Microsoft.CodeAnalysis.CSharp.Syntax;
 using Xunit;
 using Xunit.Abstractions;
 
@@ -124,7 +127,7 @@ namespace ClassicUO.UnitTests.Ecs
             WriteSiteScanner.FunnelFile.Should().Be("src/ClassicUO.Client/Game/Ecs/WorldWriter.cs");
             WriteSiteScanner.FunnelClass.Should().Be("WorldWriter");
             WriteSiteScanner.FunnelOperations.Should().BeEquivalentTo("UpsertWorldItem", "PlaceWorldItem", "RemoveWorldItem", "PlaceInContainer");
-            WriteSiteScanner.FunnelFallbacks.Should().BeEquivalentTo("UpsertPreT1", "PlacePreT1", "RemovePreT1", "PlaceInContainerPreT1");
+            WriteSiteScanner.FunnelFallbacks.Should().BeEquivalentTo("PlacePreT1", "RemovePreT1");
 
             // each listed method is a method body of the real class
             string code = WriteSiteScanner.StripCommentsAndStrings(File.ReadAllText(Path.Combine(root, "src", "ClassicUO.Client", "Game", "Ecs", "WorldWriter.cs")));
@@ -136,12 +139,12 @@ namespace ClassicUO.UnitTests.Ecs
         public void The_Fallbacks_Are_Called_Only_From_The_Violation_Paths()
         {
             // coordinator, T1 round 3: the pre-T1 fallbacks are exempt like the operations, so they must not become a general
-            // bypass. Each use is a call inside an operation's body, in a block entered on a rejection (`!Admitted(...)`, a
-            // block that called Reject before it) or for a pre-T1 upsert's token (`placement.Id == 0`).
+            // bypass. T1 round 4 (Codex audit round 4, #3): checked on the syntax tree; each use is a direct call in an
+            // operation's body that an unconditional Reject(...) in the enclosing if's then-block precedes (UnguardedFallbackUses)
             string root = WriteSiteScanner.FindRepoRoot();
-            string code = WriteSiteScanner.StripCommentsAndStrings(File.ReadAllText(Path.Combine(root, "src", "ClassicUO.Client", "Game", "Ecs", "WorldWriter.cs")));
+            string source = File.ReadAllText(Path.Combine(root, "src", "ClassicUO.Client", "Game", "Ecs", "WorldWriter.cs"));
 
-            WriteSiteScanner.UnguardedFallbackUses(code, out Dictionary<string, int> calls).Should().BeEmpty();
+            WriteSiteScanner.UnguardedFallbackUses(source, out Dictionary<string, int> calls).Should().BeEmpty();
             calls.Keys.Should().BeEquivalentTo(WriteSiteScanner.FunnelFallbacks, "each fallback has a violation path that calls it");
 
             // nothing else in the client names them (they are private; this also catches a copy in another class)
@@ -160,26 +163,41 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void An_Unguarded_Fallback_Use_Is_Found()
         {
+            // the guarded shapes the real operations use, and Codex's round-4 counterexamples (each a use)
             const string Src =
                 "internal sealed class WorldWriter {\n" +
-                "    public Item UpsertWorldItem(uint s) {\n" +
-                "        if (!Admitted(nameof(UpsertWorldItem), s)) { return UpsertPreT1(s); }\n" +   // guarded
-                "        if (bad) { Reject(Violation.NotHeld, m); if (x) { RemovePreT1(s); } }\n" +   // guarded (Reject first)
-                "        if (x) { Reject(Violation.NotHeld, m); }\n" +
-                "        RemovePreT1(s);\n" +                                                         // line 6: after a closed block: unguarded
-                "        if (placement.Id == 0) { PlacePreT1(item); }\n" +                            // guarded (a pre-T1 token)
-                "        if (item != null) { PlacePreT1(item); }\n" +                                 // line 8: unguarded
-                "        Action a = () => PlaceInContainerPreT1(s);\n" +                              // line 9: unguarded
-                "        return null;\n" +
+                "    public void PlaceWorldItem(in Placement placement) {\n" +
+                "        if (!Consume(placement)) { Reject(Violation.Placement, m); if (item != null) { PlacePreT1(item); } return; }\n" + // guarded
+                "        if (bad) { Reject(Violation.NotHeld, m); RemovePreT1(s, out parent); return; }\n" +             // guarded
+                "        if (bad) {\n" +
+                "            Reject (Violation.NotHeld, m);\n" +                                                            // whitespace: still a Reject
+                "            if (item != null) PlacePreT1(item);\n" +                                                      // guarded (braceless nested if)
+                "        }\n" +
+                "        if (fast || !Admitted(nameof(PlaceWorldItem), s)) { PlacePreT1(item); }\n" +                     // line 9: no Reject
+                "        if (x) { if (y) Reject(Violation.NotHeld, m); RemovePreT1(s, out _); }\n" +                     // line 10: conditional Reject
+                "        if (x) { Reject(Violation.NotHeld, m); Action a = () => PlacePreT1(item); }\n" +               // line 11: deferred lambda
+                "        if (x) { Reject(Violation.NotHeld, m); Run(delegate { RemovePreT1(s, out _); }); }\n" +       // line 12: anonymous method
+                "        if (placement.Id == 0) { PlacePreT1(item); }\n" +                                                // line 13: the old zero-token branch
+                "        if (!(placement.Id == 0)) { PlacePreT1(item); }\n" +                                             // line 14: negated
+                "        if (x) { PlacePreT1(item); Reject(Violation.Placement, m); }\n" +                               // line 15: Reject after the call
+                "        if (x) { Reject(Violation.Placement, m); } else { PlacePreT1(item); }\n" +                      // line 16: the else
+                "        if (x) { Reject(Violation.Placement, m); for (;;) { PlacePreT1(item); } }\n" +                  // line 17: a loop
+                "        if (x) { Reject(Violation.Placement, m); var q = PlacePreT1(item) ?? y; }\n" +                  // line 18: not its own statement
+                "        if (x) { Reject(Violation.Placement, m); }\n" +
+                "        RemovePreT1(s, out _);\n" +                                                                      // line 20: after a closed block
+                "        if (x) { Reject(Violation.Placement, m); void L() { PlacePreT1(item); } L(); }\n" +            // line 21: a local function
                 "    }\n" +
-                "    private void Helper() { if (!Admitted(\"x\", 0)) { UpsertPreT1(0); } }\n" +   // line 12: not an operation
-                "    private Item UpsertPreT1(uint s) { return null; }\n" +                           // the declaration
-                "    private void Bypass() { Func<uint, Item> f = UpsertPreT1; }\n" +                 // line 14: a method group
+                "    private void Helper() { if (x) { Reject(Violation.Placement, m); PlacePreT1(0); } }\n" +          // line 23: not an operation
+                "    private void PlacePreT1(Item item) { }\n" +                                                          // the declaration
+                "    private void Bypass() { Action<Item> f = PlacePreT1; }\n" +                                        // line 25: a method group
+                "    private Action<Item> Bypass2 => PlacePreT1;\n" +                                                   // line 26: a delegate property
+                "    private sealed class Nested { void RemoveWorldItem() { if (x) { Reject(k, m); RemovePreT1(1, out _); } } }\n" + // line 27: a nested type
                 "}\n" +
-                "internal static class Other { static void PlaceWorldItem() { RemovePreT1(1); } }\n"; // line 16: another class
+                "internal static class Other { static void PlaceWorldItem() { if (x) { Reject(k, m); RemovePreT1(1, out _); } } }\n"; // line 29: another class
 
-            WriteSiteScanner.UnguardedFallbackUses(WriteSiteScanner.StripCommentsAndStrings(Src), out _)
-                .Select(u => u.Line).Should().BeEquivalentTo(new[] { 6, 8, 9, 12, 14, 16 });
+            WriteSiteScanner.UnguardedFallbackUses(Src, out Dictionary<string, int> calls)
+                .Select(u => u.Line).Should().BeEquivalentTo(new[] { 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 21, 23, 25, 26, 27, 29 });
+            calls.Should().BeEquivalentTo(new Dictionary<string, int> { ["PlacePreT1"] = 2, ["RemovePreT1"] = 1 });
         }
 
         [Fact]
@@ -253,12 +271,20 @@ namespace ClassicUO.UnitTests.Ecs
                 "    void H() { _walkSteps.Front().Run = true; ref Step r = ref _walkSteps.Back(); var q = _walkSteps; bool c = _walkSteps[0] == b; }\n" +
                 "    private readonly Deque<Step> _walkSteps = new Deque<Step>(8);\n" +
                 "    public StepQueue Steps => new StepQueue(_walkSteps);\n" +
+                // Codex audit round 4, #4: an allowed access on a line does not exempt the other accesses on it
+                "    public StepQueue Steps2 { get { _walkSteps.Clear(); return new StepQueue(_walkSteps); } }\n" +                          // line 9: Clear
+                "    internal void ClearStepQueue() { FunnelCheck.Write(this, FunnelField.Steps); _walkSteps.Clear(); } void L() { _walkSteps.Clear(); }\n" + // line 10: L's
+                "    internal void AddStep(in Step s) { FunnelCheck.Write(this, FunnelField.Steps); _walkSteps.AddToBack(s); _walkSteps.Clear(); }\n" + // line 11: three statements: both
+                "    void Sneak() { FunnelCheck.Write(this, FunnelField.Steps); _walkSteps.Clear(); }\n" +                                     // line 12: not a checked method
+                "    internal void RemoveFirstStep() { FunnelCheck.Write(this, FunnelField.Steps); Run(() => _walkSteps.Clear()); }\n" +       // line 13: in a lambda
+                "    public StepQueue Steps3 => new StepQueue(_walkSteps, _walkSteps);\n" +                                                    // line 14: not the view's one argument
                 "}\n";
 
             WriteSiteScanner.ScanSource(Src, "src/ClassicUO.Client/Game/GameObjects/MobileAnimation.cs", new HashSet<string> { "Player" }, true)
                 .Select(s => (s.Field, s.Line)).Should().BeEquivalentTo(new[]
                 {
-                    ("Steps", 4), ("Steps", 4), ("Steps", 4), ("Steps", 4), ("Steps", 6), ("Steps", 6), ("Steps", 6), ("Steps", 6)
+                    ("Steps", 4), ("Steps", 4), ("Steps", 4), ("Steps", 4), ("Steps", 6), ("Steps", 6), ("Steps", 6), ("Steps", 6),
+                    ("Steps", 9), ("Steps", 10), ("Steps", 11), ("Steps", 11), ("Steps", 12), ("Steps", 13), ("Steps", 14), ("Steps", 14)
                 });
         }
 
@@ -475,8 +501,9 @@ namespace ClassicUO.UnitTests.Ecs
 
         // T1 (coordinator, round 3): the release build's pre-T1 fallbacks of the operations, exempt like them (funnel code).
         // They are reached only after a rejection; The_Fallbacks_Are_Called_Only_From_The_Violation_Paths pins that, so they
-        // cannot become a general bypass.
-        internal static readonly string[] FunnelFallbacks = { "UpsertPreT1", "PlacePreT1", "RemovePreT1", "PlaceInContainerPreT1" };
+        // cannot become a general bypass. T1 round 4: a nesting is rejected without a fallback, so UpsertPreT1 and
+        // PlaceInContainerPreT1 are gone; the placement and removal violations keep theirs.
+        internal static readonly string[] FunnelFallbacks = { "PlacePreT1", "RemovePreT1" };
 
         private static readonly string FieldAlt = string.Join("|", AFields);
         private const string WorldTypes = "Item|Mobile|Entity|PlayerMobile|GameObject";
@@ -501,8 +528,6 @@ namespace ClassicUO.UnitTests.Ecs
         // any access of the private queue (Codex audit round 3, #2: `_walkSteps.Front().Run = true`, `ref _walkSteps.Back()`, an
         // alias), except its declaration, the read-only view and the checked methods
         private static readonly Regex StepsBackingCall = new Regex(@"(?<!\w)_walkSteps\b", RegexOptions.Compiled);
-        private static readonly Regex AllowedStepsLine = new Regex(@"\bDeque\s*<\s*Step\s*>\s+_walkSteps\s*=|\bnew\s+StepQueue\s*\(\s*_walkSteps\s*\)", RegexOptions.Compiled);
-        private static readonly Regex CheckedStepsLine = new Regex(@"\{\s*FunnelCheck\.Write\s*\(\s*this\s*,\s*FunnelField\.Steps\s*\)\s*;\s*_walkSteps\b[^;]*;\s*\}", RegexOptions.Compiled);
         // `++Field`, `Interlocked.Exchange(ref Field, 0)`, `Reset(out Field)` with no receiver (inside a GameObject class)
         private static readonly Regex BarePrefix = new Regex(
             @"(?:(?<![\w+])(?:\+\+|--)|\b(?:ref|out))\s*(?<f>" + FieldAlt + @")\b(?!\s+[A-Za-z_])", RegexOptions.Compiled);
@@ -706,119 +731,143 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         /// <summary>
-        /// The uses of the <see cref="FunnelFallbacks"/> in <paramref name="code"/> (without comments and strings) that are not
-        /// a call inside an operation's body (<see cref="FunnelOperations"/> of <see cref="FunnelClass"/>) in a block entered on
-        /// a violation: its header tests `!Admitted(` or `.Id == 0` (a pre-T1 upsert's token), or it called `Reject(` before.
-        /// The declarations are not uses. <paramref name="calls"/>: the guarded calls per fallback.
+        /// The uses of the <see cref="FunnelFallbacks"/> in <paramref name="source"/> that are not a guarded call (T1 round 4,
+        /// Codex audit round 4, #3: syntax trees, not text). A guarded call is a direct call (`Name(...)`) that is the whole
+        /// expression of its statement, in the body of an operation (<see cref="FunnelOperations"/>) declared directly in
+        /// <see cref="FunnelClass"/>, with no lambda, anonymous method or local function around it, reached from the
+        /// then-block of an `if` only through nested then-branches and blocks, where that then-block runs an unconditional
+        /// `Reject(...)` statement before the statement holding the call. Anything else that names a fallback is a use:
+        /// a method group, a delegate property, nameof, a call under another condition, in a loop, an else, a switch or a try.
+        /// The declarations are not uses (their names are tokens, not references). <paramref name="calls"/>: the guarded calls
+        /// per fallback.
         /// </summary>
-        internal static List<(int Line, string Use)> UnguardedFallbackUses(string code, out Dictionary<string, int> calls)
+        internal static List<(int Line, string Use)> UnguardedFallbackUses(string source, out Dictionary<string, int> calls)
         {
             var bad = new List<(int, string)>();
             calls = new Dictionary<string, int>(StringComparer.Ordinal);
-            Match cls = new Regex(@"\bclass\s+" + FunnelClass + @"\b[^{]*\{").Match(code);
-            int clsOpen = cls.Success ? cls.Index + cls.Length - 1 : -1;
-            int clsClose = cls.Success ? MatchBrace(code, clsOpen, '{', '}') : -1;
-            var ops = new List<(int Open, int Close)>();
+            var fallbacks = new HashSet<string>(FunnelFallbacks, StringComparer.Ordinal);
+            SyntaxNode root = CSharpSyntaxTree.ParseText(source).GetRoot();
 
-            if (cls.Success)
+            foreach (IdentifierNameSyntax id in root.DescendantNodes().OfType<IdentifierNameSyntax>())
             {
-                foreach (Match m in new Regex(@"\b(?:" + string.Join("|", FunnelOperations) + @")\s*\(").Matches(code, clsOpen))
-                {
-                    if (m.Index > clsClose || Depth(code, clsOpen, m.Index) != 1)
-                    {
-                        continue;
-                    }
+                string name = id.Identifier.ValueText;
 
-                    int k = MatchBrace(code, m.Index + m.Length - 1, '(', ')') + 1;
-
-                    while (k < code.Length && char.IsWhiteSpace(code[k]))
-                    {
-                        k++;
-                    }
-
-                    if (k < code.Length && code[k] == '{')
-                    {
-                        ops.Add((k, MatchBrace(code, k, '{', '}')));
-                    }
-                }
-            }
-
-            foreach (Match m in new Regex(@"\b(?:" + string.Join("|", FunnelFallbacks) + @")\b").Matches(code))
-            {
-                bool inClass = cls.Success && m.Index > clsOpen && m.Index < clsClose;
-
-                // the declaration: a class member of the funnel class
-                if (inClass && Depth(code, clsOpen, m.Index) == 1)
+                if (!fallbacks.Contains(name))
                 {
                     continue;
                 }
 
-                bool call = Regex.IsMatch(code.Substring(m.Index + m.Length, Math.Min(64, code.Length - m.Index - m.Length)), @"^\s*\(");
-                int op = ops.FindIndex(o => m.Index > o.Open && m.Index < o.Close);
-
-                if (!inClass || !call || op < 0 || !GuardedByViolation(code, ops[op].Open, m.Index))
+                if (IsGuardedFallbackCall(id))
                 {
-                    bad.Add((LineOf(code, m.Index), m.Value));
-
-                    continue;
+                    calls[name] = calls.TryGetValue(name, out int n) ? n + 1 : 1;
                 }
-
-                calls[m.Value] = calls.TryGetValue(m.Value, out int n) ? n + 1 : 1;
+                else
+                {
+                    bad.Add((id.GetLocation().GetLineSpan().StartLinePosition.Line + 1, name));
+                }
             }
 
             return bad;
         }
 
-        // one of the blocks enclosing `at` (inside the body opened at `bodyOpen`) is a violation path. A lambda's body is not a
-        // block of the operation: an expression lambda has no brace, so a call in one is found unguarded unless the lambda sits
-        // in a guarded block, which no operation does.
-        private static bool GuardedByViolation(string code, int bodyOpen, int at)
+        private static bool IsGuardedFallbackCall(IdentifierNameSyntax id)
         {
-            int depth = 0;
-
-            for (int i = at - 1; i > bodyOpen; i--)
+            if (id.Parent is not InvocationExpressionSyntax inv || inv.Expression != id
+                || inv.Parent is not (ExpressionStatementSyntax or ReturnStatementSyntax))
             {
-                if (code[i] == '}')
+                return false;
+            }
+
+            var stmt = (StatementSyntax)inv.Parent;
+            MethodDeclarationSyntax method = stmt.FirstAncestorOrSelf<MethodDeclarationSyntax>();
+
+            if (method?.Body == null
+                || Array.IndexOf(FunnelOperations, method.Identifier.ValueText) < 0
+                || method.Parent is not ClassDeclarationSyntax cls
+                || cls.Identifier.ValueText != FunnelClass
+                || cls.Parent is TypeDeclarationSyntax
+                || stmt.Ancestors().TakeWhile(a => a != method).Any(a => a is AnonymousFunctionExpressionSyntax or LocalFunctionStatementSyntax))
+            {
+                return false;
+            }
+
+            SyntaxNode child = stmt;
+
+            for (SyntaxNode n = stmt.Parent; n != null && n != method.Body; child = n, n = n.Parent)
+            {
+                if (n is BlockSyntax block)
                 {
-                    depth++;
+                    if (block.Parent is IfStatementSyntax guard && guard.Statement == block)
+                    {
+                        int at = block.Statements.IndexOf((StatementSyntax)child);
+
+                        if (block.Statements.Take(at).Any(IsRejectStatement))
+                        {
+                            return true;
+                        }
+                    }
+
+                    continue;
                 }
-                else if (code[i] == '{')
+
+                // a nested `if (...) Call(...);` or `if (...) { ... }` inside the guarded block: its then-branch only
+                if (n is IfStatementSyntax inner && inner.Statement == child)
                 {
-                    if (depth > 0)
-                    {
-                        depth--;
-
-                        continue;
-                    }
-
-                    int h = code.LastIndexOfAny(new[] { ';', '{', '}' }, i - 1);
-                    string header = code.Substring(h + 1, i - h - 1);
-
-                    if (header.Contains("!Admitted(") || Regex.IsMatch(header, @"\.Id\s*==\s*0\b"))
-                    {
-                        return true;
-                    }
-
-                    // a Reject( among this block's own statements before `at` (not in a nested block that closed before it)
-                    var own = new StringBuilder();
-                    int d = 0;
-
-                    for (int j = i + 1; j < at; j++)
-                    {
-                        if (code[j] == '{') d++;
-                        else if (code[j] == '}') d--;
-                        else if (d == 0) own.Append(code[j]);
-                    }
-
-                    if (Regex.IsMatch(own.ToString(), @"\bReject\s*\("))
-                    {
-                        return true;
-                    }
+                    continue;
                 }
+
+                return false; // an else, a loop, a switch, a try, a using, ...
             }
 
             return false;
         }
+
+        // `Reject(...);` as a statement of its own (not under a condition)
+        private static bool IsRejectStatement(StatementSyntax s) =>
+            s is ExpressionStatementSyntax { Expression: InvocationExpressionSyntax { Expression: IdentifierNameSyntax { Identifier.ValueText: "Reject" } } };
+
+        /// <summary>
+        /// T1 round 4 (Codex audit round 4, #4): whether the `_walkSteps` token at <paramref name="position"/> of
+        /// <paramref name="root"/> is one of the queue's allowed accesses, by its own syntax node (not its line): the field's
+        /// declaration, the one argument of `new StepQueue(_walkSteps)` (the read-only view), or an access inside the second
+        /// and last statement of a checked method (<see cref="StepsMethodNames"/>) whose body is exactly
+        /// `{ FunnelCheck.Write(this, FunnelField.Steps); &lt;one statement&gt; }`, not inside a lambda there.
+        /// </summary>
+        internal static bool IsAllowedWalkStepsAccess(SyntaxNode root, int position)
+        {
+            SyntaxToken tok = root.FindToken(position);
+
+            if (tok.ValueText != "_walkSteps" || tok.SpanStart != position)
+            {
+                return false;
+            }
+
+            if (tok.Parent is VariableDeclaratorSyntax)
+            {
+                return true;
+            }
+
+            if (tok.Parent is not IdentifierNameSyntax id)
+            {
+                return false;
+            }
+
+            if (id.Parent is ArgumentSyntax { Parent: ArgumentListSyntax { Arguments.Count: 1, Parent: ObjectCreationExpressionSyntax view } }
+                && view.Type is IdentifierNameSyntax { Identifier.ValueText: "StepQueue" })
+            {
+                return true;
+            }
+
+            MethodDeclarationSyntax method = id.FirstAncestorOrSelf<MethodDeclarationSyntax>();
+
+            return method?.Body is { Statements.Count: 2 } body
+                   && Array.IndexOf(StepsMethodNames, method.Identifier.ValueText) >= 0
+                   && Space.Replace(body.Statements[0].ToString(), "") == "FunnelCheck.Write(this,FunnelField.Steps);"
+                   && body.Statements[1].Span.Contains(id.Span)
+                   && !id.Ancestors().TakeWhile(a => a != method).Any(a => a is AnonymousFunctionExpressionSyntax or LocalFunctionStatementSyntax);
+        }
+
+        internal static readonly string[] StepsMethodNames = { "AddStep", "RemoveFirstStep", "ReplaceStep", "ClearStepQueue" };
 
         /// <summary>
         /// The line ranges of the bodies of the named methods declared directly in class <paramref name="className"/> (brace
@@ -975,17 +1024,17 @@ namespace ClassicUO.UnitTests.Ecs
                 }
             }
 
-            // the private queue itself: only the one-line checked methods may change it
-            string[] codeLines = null;
+            // the private queue itself: only its declaration, the read-only view and the checked methods' own statement may
+            // touch it, each judged by its own syntax node (T1 round 4, Codex audit round 4, #4: not by its line)
+            SyntaxNode stepsRoot = null;
 
             foreach (Match m in StepsBackingCall.Matches(code))
             {
-                codeLines ??= code.Split('\n');
-                int line = LineOf(code, m.Index);
+                stepsRoot ??= CSharpSyntaxTree.ParseText(source).GetRoot();
 
-                if (!CheckedStepsLine.IsMatch(codeLines[line - 1]) && !AllowedStepsLine.IsMatch(codeLines[line - 1]) && seen.Add(m.Index))
+                if (!IsAllowedWalkStepsAccess(stepsRoot, m.Index) && seen.Add(m.Index))
                 {
-                    result.Add(new WriteSite(path, line, "Steps", "_walkSteps", "call"));
+                    result.Add(new WriteSite(path, LineOf(code, m.Index), "Steps", "_walkSteps", "call"));
                 }
             }
 

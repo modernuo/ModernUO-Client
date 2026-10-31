@@ -31,8 +31,10 @@ namespace ClassicUO.Game
     /// <para>
     /// Operations do not nest, and only operations open a scope. A violation (nesting, a placement that is not outstanding,
     /// a removal of an item this World does not hold, an item upsert of a live mobile) is a bug in the caller: it throws in
-    /// CUO_DEVTOOLS builds; in a release build it logs an error once per kind and the packet takes the pre-T1 path (the old
-    /// writes, no fold of its own, the hook syncs; a fold left open by the operation it nested in syncs its item when it ends), so a funnel bug never disconnects a player (coordinator, T1 round 2). While one runs,
+    /// CUO_DEVTOOLS builds; in a release build it logs an error once per kind, so a funnel bug never disconnects a player
+    /// (coordinator, T1 round 2). A nested operation is then rejected outright (nothing changes; T1 round 4: production code
+    /// cannot re-enter the writer, see <see cref="Admitted"/>); the other violations happen with nothing open, and the packet
+    /// takes the pre-T1 path (the old writes, the hook syncs). While one runs,
     /// writes to its own object (and, for a removal, to the removed subtree) are funnel writes for <see cref="FunnelCheck"/>;
     /// writes to any other object are still direct writes. Converted so far: world items (0x1A, 0xF3 and the item branch of
     /// 0x1D) and items into containers (0x25, 0x3C's items, 0x27's deny path: <see cref="PlaceInContainer"/>). Every other writer still relies on <see cref="WorldEcs.Sync"/> and <see cref="WorldEcs.PushInputs"/>, which
@@ -65,7 +67,7 @@ namespace ClassicUO.Game
         /// between the two halves leaves this one valid. A placement is consumed by its PlaceWorldItem. It is cancelled when a
         /// later upsert of the same item supersedes it, when the item is removed, or, abandoned (a callback threw, so the
         /// handler never placed), when <see cref="MaxOutstanding"/> newer ones were issued. Using a consumed or cancelled one is
-        /// a violation. Id 0 is the token of a pre-T1 upsert (a release-build violation): its placement is the old one.
+        /// a violation. Id 0 is never issued (a default token is not outstanding).
         /// </summary>
         internal readonly struct Placement
         {
@@ -109,8 +111,9 @@ namespace ClassicUO.Game
         }
 
         /// <summary>
-        /// True: a violation throws (the CUO_DEVTOOLS default). False: it logs an error once per kind and the packet takes the
-        /// pre-T1 path (the release default; tests set it to check that path in either build).
+        /// True: a violation throws (the CUO_DEVTOOLS default). False: it logs an error once per kind; a nested operation is
+        /// rejected (changes nothing), any other violation takes the pre-T1 path (the release default; tests set it to check
+        /// that path in either build).
         /// </summary>
         internal bool ThrowOnViolation = DefaultThrowOnViolation;
 
@@ -180,7 +183,12 @@ namespace ClassicUO.Game
             return new Scope(this, ++_scopeId, fold);
         }
 
-        // the admission check every operation makes before its first side effect: no operation and no fold open
+        // the admission check every operation makes before its first side effect: no operation and no fold open. Re-entry is
+        // forbidden, not recovered from (T1 round 4, after the Codex round-4 audit): the operations are called only by the 0x1A/
+        // 0xF3, 0x1D, 0x25/0x3C and 0x27 handlers, which run only from ParsePackets in GameController's update; inside an
+        // operation nothing parses packets (a plugin's injected packet, also from a send hook, is only queued by Append), so
+        // a nested operation is a bug: it throws in CUO_DEVTOOLS builds; in a release build it logs once and is rejected (the
+        // caller gets null / nothing), so no stale outer continuation can publish over a nested change.
         private bool Admitted(string operation, uint serial)
         {
             if (!_open && !_world.Ecs.IsFolding)
@@ -193,7 +201,8 @@ namespace ClassicUO.Game
             return false;
         }
 
-        // a caller bug: throws in a CUO_DEVTOOLS build; otherwise logs once per kind, and the caller takes the pre-T1 path
+        // a caller bug: throws in a CUO_DEVTOOLS build; otherwise logs once per kind (the caller rejects a nesting, and takes
+        // the pre-T1 path for the others)
         private void Reject(Violation kind, string message)
         {
             Violations++;
@@ -208,7 +217,7 @@ namespace ClassicUO.Game
             if ((_loggedViolations & bit) == 0)
             {
                 _loggedViolations |= bit;
-                Log.Error(message + " (logged once per kind; the packet takes the pre-T1 path)");
+                Log.Error(message + (kind == Violation.Nesting ? " (logged once per kind; rejected)" : " (logged once per kind; the packet takes the pre-T1 path)"));
             }
         }
 
@@ -241,10 +250,13 @@ namespace ClassicUO.Game
         {
             placement = default;
 
-            // 0. admission, before anything changes (no item is created and no outstanding placement touched on a rejection)
+            // 0. admission, before anything changes (no item is created and no outstanding placement touched on a rejection;
+            // a nested upsert is rejected outright, also in a release build: see Admitted)
             if (!Admitted(nameof(UpsertWorldItem), serial))
             {
-                return UpsertPreT1(serial, graphic, graphicInc, count, x, y, z, direction, hue, flags, type, out created, out placement);
+                created = false;
+
+                return null;
             }
 
             // 1. resolve: what the handler's World.Get(serial) returned
@@ -383,22 +395,9 @@ namespace ClassicUO.Game
         {
             Item item = placement.Item;
 
-            // a pre-T1 upsert's token: the old placement
-            if (placement.Id == 0 && item != null)
-            {
-                PlacePreT1(item);
-
-                return;
-            }
-
+            // a nested placement is rejected; its token stays outstanding (the handler that nested is a bug)
             if (!Admitted(nameof(PlaceWorldItem), item?.Serial ?? 0))
             {
-                if (item != null)
-                {
-                    Consume(placement);
-                    PlacePreT1(item);
-                }
-
                 return;
             }
 
@@ -447,8 +446,6 @@ namespace ClassicUO.Game
 
             if (!Admitted(nameof(RemoveWorldItem), item.Serial))
             {
-                RemovePreT1(item.Serial, out parent);
-
                 return;
             }
 
@@ -507,7 +504,7 @@ namespace ClassicUO.Game
 
             if (!Admitted(nameof(PlaceInContainer), serial))
             {
-                return PlaceInContainerPreT1(serial, graphic, amount, x, y, hue, containerSerial, out container);
+                return null;
             }
 
             // 1. resolve, in the old order: the container, the item, a mobile holding the serial
@@ -630,7 +627,7 @@ namespace ClassicUO.Game
 
             if (++_placementId == 0)
             {
-                _placementId = 1; // 0 is the pre-T1 token
+                _placementId = 1; // 0 is a default token's
             }
 
             var p = new Placement(item, _placementId);
@@ -665,105 +662,14 @@ namespace ClassicUO.Game
             }
         }
 
-        // ---- the pre-T1 paths: a release build's fallback after a violation (the old handler code: no fold, the hook syncs).
-        // The write-site budget exempts them by name like the operations (coordinator, T1 round 3); its tests pin that they are
-        // called only after a rejection (or for a pre-T1 upsert's token), so they cannot become a general bypass. A violation
-        // can happen while a fold is open (a nesting): each marks the fold, so its item is synced from its cache when the fold
-        // closes (Codex audit round 3, #1).
-
-        // the item branch of UpdateGameObject before T1, up to its callbacks
-        private Item UpsertPreT1
-        (
-            uint serial,
-            ushort graphic,
-            byte graphicInc,
-            ushort count,
-            ushort x,
-            ushort y,
-            sbyte z,
-            Direction direction,
-            ushort hue,
-            Flags flags,
-            byte type,
-            out bool created,
-            out Placement placement
-        )
-        {
-            _world.Ecs.ReconcileFoldOnEnd();
-            placement = default;
-            Entity obj = _world.Get(serial);
-            Item item;
-
-            if (obj == null || obj.IsDestroyed)
-            {
-                created = true;
-                item = _world.GetOrCreateItem(serial);
-
-                if (item == null)
-                {
-                    return null;
-                }
-            }
-            else if (obj is Item it)
-            {
-                created = false;
-                item = it;
-
-                if (SerialHelper.IsValid(item.Container))
-                {
-                    _world.RemoveItemFromContainer(item);
-                }
-            }
-            else
-            {
-                created = false;
-
-                return null;
-            }
-
-            if (graphic != 0x2006)
-            {
-                graphic += graphicInc;
-            }
-
-            if (type == 2)
-            {
-                item.IsMulti = true;
-                item.WantUpdateMulti = (graphic & 0x3FFF) != item.Graphic || item.X != x || item.Y != y || item.Z != z || item.Hue != hue;
-                item.Graphic = (ushort)(graphic & 0x3FFF);
-            }
-            else
-            {
-                item.IsDamageable = type == 3;
-                item.IsMulti = false;
-                item.Graphic = graphic;
-            }
-
-            item.X = x;
-            item.Y = y;
-            item.Z = z;
-            item.LightID = (byte)direction;
-
-            if (graphic == 0x2006)
-            {
-                item.Layer = (Layer)direction;
-            }
-
-            item.FixHue(hue);
-            item.Amount = count == 0 ? (ushort)1 : count;
-            item.Flags = flags;
-            item.Direction = direction;
-            item.CheckGraphicChange(item.AnimIndex);
-
-            placement = new Placement(item, 0);
-
-            return item;
-        }
+        // ---- the pre-T1 paths: a release build's fallback after a placement or removal violation (the old handler code, the
+        // hook syncs). Both run with no operation or fold open (a nesting is rejected, not given a fallback). The write-site
+        // budget exempts them by name like the operations (coordinator, T1 round 3); its tests pin that each call follows an
+        // unconditional Reject in the violation branch of an operation, so they cannot become a general bypass.
 
         // the placement of UpdateGameObject's item branch before T1
         private void PlacePreT1(Item item)
         {
-            _world.Ecs.ReconcileFoldOnEnd();
 
             if (item.OnGround)
             {
@@ -771,56 +677,9 @@ namespace ClassicUO.Game
             }
         }
 
-        // AddItemToContainer before T1, its world-state part
-        private Item PlaceInContainerPreT1(uint serial, ushort graphic, ushort amount, ushort x, ushort y, ushort hue, uint containerSerial, out Entity container)
-        {
-            _world.Ecs.ReconcileFoldOnEnd();
-            container = _world.Get(containerSerial);
-
-            if (container == null)
-            {
-                return null;
-            }
-
-            Item item = _world.Items.Get(serial);
-
-            if (SerialHelper.IsMobile(serial))
-            {
-                _world.RemoveMobile(serial, true);
-                Log.Warn("AddItemToContainer function adds mobile as Item");
-            }
-
-            if (item != null && item.Container != containerSerial && (container.Graphic != 0x2006 || item.Layer == Layer.Invalid))
-            {
-                CancelPlacements(item);
-                _world.RemoveItem(item.Serial, true);
-            }
-
-            item = _world.GetOrCreateItem(serial);
-            item.Graphic = graphic;
-            item.CheckGraphicChange();
-            item.Amount = amount;
-            item.FixHue(hue);
-            item.X = x;
-            item.Y = y;
-            item.Z = 0;
-
-            if (item.Container != containerSerial)
-            {
-                _world.RemoveItemFromContainer(item);
-                item.Container = containerSerial;
-            }
-
-            container.PushToBack(item);
-            _world.Ecs.Sync(item);
-
-            return item;
-        }
-
         // DeleteObject's item branch before T1, by serial
         private void RemovePreT1(uint serial, out Entity parent)
         {
-            _world.Ecs.ReconcileFoldOnEnd();
             parent = null;
             Item item = _world.Items.Get(serial);
 
