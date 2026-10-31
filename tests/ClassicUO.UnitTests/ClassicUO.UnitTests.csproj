@@ -29,8 +29,16 @@
     <None Include="IO/Fixtures/seam-noise.mp3;IO/Fixtures/mp3-regressions/*.bin" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
+  <!-- The converter's audio importer (it depends only on ClassicUO.IO and Uo.Pack), run on synthetic MUL files. -->
+  <ItemGroup>
+    <Compile Include="..\..\poc\Uo.Converter\AudioImport.cs" Link="Assets\AudioImport.cs" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\..\src\ClassicUO.Client\ClassicUO.Client.csproj" />
+    <!-- The converter's frozen pre-pack loaders, under an extern alias (their types share the client's names): the audio
+         tests run verify's model of the client's sound resolution on the real frozen SoundsLoader. -->
+    <ProjectReference Include="..\..\tools\ClassicUO.Assets.Mul\ClassicUO.Assets.Mul.csproj" Aliases="frozen" />
   </ItemGroup>
 
 </Project>

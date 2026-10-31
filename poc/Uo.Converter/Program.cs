@@ -18,8 +18,9 @@ catch (ArgumentException e)
     Console.Error.WriteLine(e.Message);
     return 1;
 }
-bool maps = true, convert = true, anims = true, gumps = true, fonts = true, cliloc = true, speech = true, formatGiven = false, gumpReport = false;
+bool maps = true, convert = true, anims = true, gumps = true, fonts = true, cliloc = true, speech = true, sounds = true, music = true, formatGiven = false, gumpReport = false;
 string? gumpDef = null;
+string? audioReport = null;
 string? clientVersionArg = null, cuoSettingsArg = null;
 HashSet<string>? only = null; // --only: convert just these stages into an existing pack, keeping everything else
 for (int i = 0; i < args.Length; i++)
@@ -41,6 +42,8 @@ for (int i = 0; i < args.Length; i++)
         case "--no-fonts": fonts = false; break;
         case "--no-cliloc": cliloc = false; break;
         case "--no-speech": speech = false; break;
+        case "--no-sounds": sounds = false; break;
+        case "--no-music": music = false; break;
         case "--raw-text": TextConvert.Raw = true; break;
         case "--text-small": TextConvert.SmallRaw = int.Parse(args[++i]); break;
         case "--cliloc-brotli": TextConvert.ClilocBrotli = true; break;
@@ -48,6 +51,7 @@ for (int i = 0; i < args.Length; i++)
         case "--no-cliloc-overrides": TextConvert.ClilocOverridesOff = true; break;
         case "--gump-def": gumpDef = args[++i]; break;
         case "--gump-report": gumpReport = true; break;
+        case "--audio-report": audioReport = args[++i]; convert = false; break; // writes nothing: --out is not cleared
         case "--raw-gumps": GumpConvert.Raw = true; break;
         case "--gump-small": GumpConvert.SmallRle = int.Parse(args[++i]); break;
         case "--bodies":
@@ -92,7 +96,7 @@ for (int i = 0; i < args.Length; i++)
         case "--regions": ConvertOptions.MaxRegions = int.Parse(args[++i]); break;
         case "--bench-bc7": Bench.Bc7(args[++i]); return 0;
         default:
-            Console.WriteLine("usage: Uo.Converter [--uo <client dir>] --out <pack dir> [--client-version x.y.z.w | --cuo-settings <settings.json>] [--debug <png dir>] [--packs-root <published packs root>] [--format b5g5r5a1|rgba8|bc7] [--bc7-quality fast|balanced|bestquality] [--bc7-refine-db 28] [--raw-regions] [--raw-pages|--compress-pages[=chunked]] [--chunk-bytes n] [--page-size 2048] [--anim-page-size 1024] [--anim-format indexed8|page] [--indexed-mips none|b16] [--threads n] [--pages a-b] [--facets 0,1] [--regions n] [--no-maps] [--no-map-diffs] [--no-anims] [--no-gumps] [--no-fonts] [--no-cliloc] [--no-speech] [--raw-gumps] [--raw-text] [--text-small n] [--cliloc-brotli] [--cliloc-skip ext,ext] [--no-cliloc-overrides] [--gump-small n] [--gump-def <file>] [--gump-report] [--only art,tex,hues,tiledata,data,gumps,fonts,cliloc,speech,maps,anims] [--anims-only] [--bodies 400,0xC8] [--verify-only]");
+            Console.WriteLine("usage: Uo.Converter [--uo <client dir>] --out <pack dir> [--client-version x.y.z.w | --cuo-settings <settings.json>] [--debug <png dir>] [--packs-root <published packs root>] [--format b5g5r5a1|rgba8|bc7] [--bc7-quality fast|balanced|bestquality] [--bc7-refine-db 28] [--raw-regions] [--raw-pages|--compress-pages[=chunked]] [--chunk-bytes n] [--page-size 2048] [--anim-page-size 1024] [--anim-format indexed8|page] [--indexed-mips none|b16] [--threads n] [--pages a-b] [--facets 0,1] [--regions n] [--no-maps] [--no-map-diffs] [--no-anims] [--no-gumps] [--no-fonts] [--no-cliloc] [--no-speech] [--no-sounds] [--no-music] [--raw-gumps] [--raw-text] [--text-small n] [--cliloc-brotli] [--cliloc-skip ext,ext] [--no-cliloc-overrides] [--gump-small n] [--gump-def <file>] [--gump-report] [--audio-report <pack>] [--only art,tex,hues,tiledata,data,gumps,fonts,cliloc,speech,sounds,music,maps,anims] [--anims-only] [--bodies 400,0xC8] [--verify-only]");
             return 1;
     }
 }
@@ -124,7 +128,7 @@ catch (InvalidOperationException e)
     return 1;
 }
 
-bool Want(string stage) => only != null ? only.Contains(stage) : stage switch { "maps" => maps, "anims" => anims, "gumps" => gumps, "fonts" => fonts, "cliloc" => cliloc, "speech" => speech, _ => true };
+bool Want(string stage) => only != null ? only.Contains(stage) : stage switch { "maps" => maps, "anims" => anims, "gumps" => gumps, "fonts" => fonts, "cliloc" => cliloc, "speech" => speech, "sounds" => sounds, "music" => music, _ => true };
 if (only != null && !formatGiven && File.Exists(PackConst.PagePath(Path.Combine(outDir, "art"), 0)))
 {
     // Match the pack being extended: page format and compression come from its first art page.
@@ -137,7 +141,7 @@ if (only != null && !formatGiven && File.Exists(PackConst.PagePath(Path.Combine(
 }
 
 var total = Stopwatch.StartNew();
-Directory.CreateDirectory(debugDir);
+if (audioReport == null) Directory.CreateDirectory(debugDir); // --audio-report writes nothing, not even this folder
 ConvertOptions.DebugDir = debugDir;
 Console.WriteLine($"format {ConvertOptions.Format} (bc7 quality {ConvertOptions.Bc7Quality}), compress regions {ConvertOptions.CompressRegions}, compress pages {(ConvertOptions.ChunkedPages ? $"chunked ({ConvertOptions.ChunkBytes} B)" : ConvertOptions.CompressPages.ToString())}, page size {ConvertOptions.PageSize} (anims {ConvertOptions.AnimPageSize}{(ConvertOptions.AnimIndexed ? ", indexed8" + (ConvertOptions.IndexedMips ? " + b16 mips" : ", no mips") : "")}), threads {ConvertOptions.Threads}" +
                   (ConvertOptions.PartialPages ? $", pages {ConvertOptions.Pages.Lo}-{ConvertOptions.Pages.Hi}" : "") +
@@ -192,6 +196,7 @@ Console.WriteLine($"  uop={fm.IsUOPInstallation} artEntries={fm.Arts.File.Entrie
 
 fm.Gumps.DefPath = gumpDef;
 if (gumpReport) return GumpExperiments.Report(fm);
+if (audioReport != null) return AudioReport.Run(fm, audioReport);
 
 var stats = new Dictionary<string, object>();
 if (convert)
@@ -225,6 +230,8 @@ if (convert)
     if (Want("fonts")) stats["fonts"] = Stage("fonts", () => TextConvert.Fonts(fm, outDir));
     if (Want("cliloc")) stats["cliloc"] = Stage("cliloc", () => TextConvert.Cliloc(fm, outDir));
     if (Want("speech")) stats["speech"] = Stage("speech", () => TextConvert.Speech(fm, outDir));
+    if (Want("sounds")) stats["sounds"] = Stage("sounds", () => AudioConvert.Sounds(fm, outDir));
+    if (Want("music")) stats["music"] = Stage("music", () => AudioConvert.Music(fm, outDir));
 
     if (Want("maps"))
     {
@@ -262,6 +269,8 @@ if (convert)
 
 Verify.Only = only;
 Verify.Maps = Want("maps");
+if (only == null && !sounds) Verify.Off.Add("sounds");
+if (only == null && !music) Verify.Off.Add("music");
 bool ok = Stage("verify (round-trip)", () => Verify.Run(fm, outDir, stats));
 if (only == null || only.Contains("art")) Stage("debug PNGs", () => DebugOut.Run(fm, outDir, debugDir));
 if (Directory.Exists(Path.Combine(outDir, "anim")) && (only == null || only.Contains("anims")))
