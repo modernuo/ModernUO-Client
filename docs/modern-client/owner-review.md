@@ -114,6 +114,7 @@ Newest at the bottom. Each item says what I did meanwhile.
 - **Flaky prefetch test** (`poc/fix-flaky-prefetch-test`, Sonnet).
 - **T0c: ECS fields become properties** (`bg/ecs-t0c-properties`, Sonnet): no behaviour change; prepares the mutation funnel (T1). Done by the agent; in Codex audit.
 - **Text into the pack** (`poc/pack-text`, Opus): fonts, cliloc and speech, on the gumps record-store pattern, with lazy glyphs and strings (the `legacy-main` lessons).
+- **Send-side encryption race** (`poc/net-send-lock`, Sonnet): plugin-thread and main-thread sends encrypt and enqueue under one lock; resets take that lock (follow-up from L1).
 - All agents share a `bench.lock`, so client runs, builds and timing series never overlap.
 
 ## Things you saw tonight, explained
