@@ -68,6 +68,63 @@ namespace ClassicUO.Renderer.Sounds
             return null;
         }
 
+        /// <summary><see cref="GetSoundToPlay(SoundCache, int, LinkedList{UOSound}, bool)"/> on this <see cref="Cache"/>.</summary>
+        public UOSound GetSoundToPlay(int index, LinkedList<UOSound> playing, bool audible) => GetSoundToPlay(Cache, index, playing, audible);
+
+        /// <summary>
+        /// The sound to play for <paramref name="index"/>, before <see cref="LimitPlaying"/>. When the cache cannot admit
+        /// it because playing sounds hold its budget, an AUDIBLE request stops silent sounds in <paramref name="playing"/>
+        /// (oldest first, removed from the list) to make room, then asks again (Codex round 3, P2: background play could
+        /// pin the whole budget with silent sounds, and the limiter, which would stop them, ran only after the cache had
+        /// already refused). Whether that helps, and how many to stop, is decided from the source's size alone
+        /// (<see cref="SoundCache.CouldAdmit"/>): nothing is stopped when stopping every silent sound would not be enough.
+        /// A silent request never stops anything.
+        /// </summary>
+        public static UOSound GetSoundToPlay(SoundCache cache, int index, LinkedList<UOSound> playing, bool audible)
+        {
+            if (index < 0 || index >= MAX_SOUND_DATA_INDEX_COUNT)
+            {
+                return null;
+            }
+
+            UOSound sound = cache.Get(index);
+
+            if (sound != null || !audible)
+            {
+                return sound;
+            }
+
+            HashSet<UOSound> silent = null;
+
+            for (LinkedListNode<UOSound> n = playing.First; n != null; n = n.Next)
+            {
+                if (!n.Value.IsAudible)
+                {
+                    (silent ??= new HashSet<UOSound>()).Add(n.Value);
+                }
+            }
+
+            if (silent == null || !cache.CouldAdmit(index, silent.Contains))
+            {
+                return null;
+            }
+
+            for (LinkedListNode<UOSound> n = playing.First; n != null && !cache.CouldAdmit(index);)
+            {
+                LinkedListNode<UOSound> after = n.Next;
+
+                if (silent.Contains(n.Value))
+                {
+                    playing.Remove(n);
+                    n.Value.Stop();
+                }
+
+                n = after;
+            }
+
+            return cache.Get(index);
+        }
+
         public IO.Audio.Sound GetMusic(int index)
         {
             if (index >= 0 && index < MAX_SOUND_DATA_INDEX_COUNT)
@@ -237,7 +294,11 @@ namespace ClassicUO.Renderer.Sounds
 
             if (!_byKey.TryGetValue(key, out Pcm pcm))
             {
-                if (!Trim(Math.Max(size, 0), null))
+                size = Math.Clamp(size, 0, int.MaxValue);
+
+                // admission is decided from the size alone, and nothing is evicted yet: a request refused below (here,
+                // or by the read because the source grew) leaves the cache as it was (Codex round 3, P2)
+                if (!CanTrim(size, null))
                 {
                     Refuse(id, size);
 
@@ -246,13 +307,22 @@ namespace ClassicUO.Renderer.Sounds
 
                 long t0 = Stopwatch.GetTimestamp();
 
-                if (!_loader.TryGetSound(id, out byte[] data, out string name, out long got))
+                // read at most the admitted size: a source that grew since its size was taken is not read (no allocation
+                // beyond the cap) and not played this time; the loader remembers the new size for the next request
+                if (!_loader.TryGetSound(id, (int)size, out byte[] data, out string name, out long got, out bool changed))
                 {
+                    if (changed)
+                    {
+                        Refuse(id, size, "its source changed size since it was looked at");
+                    }
+
                     return null;
                 }
 
                 // the source changed between the two calls (a loose file was replaced, or became unreadable and the
-                // pack's record answered): it may already be cached, else it is budgeted again at its real size
+                // pack's record answered): it may already be cached, else it is budgeted at its real size, at most the
+                // admitted one, so this Trim succeeds. Idle sounds are evicted only now, once the read succeeded: the
+                // PCM briefly sits beside them (at most the admitted size).
                 if (got == key || !_byKey.TryGetValue(got, out pcm))
                 {
                     if (!Trim(data.Length, null))
@@ -285,6 +355,38 @@ namespace ClassicUO.Renderer.Sounds
             }
 
             return e.Sound;
+        }
+
+        /// <summary>
+        /// Whether <see cref="Get"/> could admit <paramref name="id"/> if the sounds <paramref name="released"/> accepts
+        /// were no longer playing, decided from the source's size (<see cref="SoundsLoader.TryGetSoundSource"/>) without
+        /// reading or evicting anything. True for a cached id; false for an id without a source.
+        /// </summary>
+        public bool CouldAdmit(int id, Func<UOSound, bool> released = null)
+        {
+            SweepRetired();
+
+            if (_byId.ContainsKey(id))
+            {
+                return true;
+            }
+
+            if (!_loader.TryGetSoundSource(id, out long key, out long size))
+            {
+                return false;
+            }
+
+            long bytes = _byKey.ContainsKey(key) ? 0 : Math.Max(size, 0);
+
+            return Bytes + bytes <= Budget && Ids + 1 <= MaxIds || Fits(bytes, 1, null, released);
+        }
+
+        // Trim's answer without evicting anything
+        private bool CanTrim(long extraBytes, Entry keep)
+        {
+            int extraIds = keep == null ? 1 : 0;
+
+            return Bytes + extraBytes <= Budget && Ids + extraIds <= MaxIds || Fits(extraBytes, extraIds, keep);
         }
 
         // Evicts the least recently played idle ids (never keep) until extraBytes more fit in the budget and the id count
@@ -323,15 +425,22 @@ namespace ClassicUO.Renderer.Sounds
         }
 
         // Whether evicting every idle id would make room: the arrays of busy ids, keep and retired sounds stay. So a
-        // refusal evicts nothing and costs this scan only.
-        private bool Fits(long extraBytes, int extraIds, Entry keep)
+        // refusal evicts nothing and costs this scan only. Sounds released accepts count as idle (CouldAdmit: as if stopped).
+        private bool Fits(long extraBytes, int extraIds, Entry keep, Func<UOSound, bool> released = null)
         {
             int mark = ++_mark;
             long held = 0;
-            int ids = _retired.Count;
+            int ids = 0;
 
             foreach (Entry r in _retired)
             {
+                if (released != null && released(r.Sound))
+                {
+                    continue;
+                }
+
+                ids++;
+
                 if (r.Pcm.Mark != mark)
                 {
                     r.Pcm.Mark = mark;
@@ -341,7 +450,7 @@ namespace ClassicUO.Renderer.Sounds
 
             foreach (Entry e in _lru)
             {
-                if (e == keep || _isBusy(e.Sound))
+                if (e == keep || _isBusy(e.Sound) && (released == null || !released(e.Sound)))
                 {
                     ids++;
 
@@ -368,11 +477,13 @@ namespace ClassicUO.Renderer.Sounds
             }
         }
 
-        private void Refuse(int id, long bytes)
+        private void Refuse(int id, long bytes, string why = null)
         {
             if (++Refusals <= 10)
             {
-                Log.Warn($"sound {id}: {bytes} bytes do not fit the sound cache ({Bytes} of {Budget} bytes held by playing sounds); not played");
+                Log.Warn(why == null
+                    ? $"sound {id}: {bytes} bytes do not fit the sound cache ({Bytes} of {Budget} bytes held by playing sounds); not played"
+                    : $"sound {id}: {why} ({bytes} bytes admitted); not played this time");
             }
         }
 
