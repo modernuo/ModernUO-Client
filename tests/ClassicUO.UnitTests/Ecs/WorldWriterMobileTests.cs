@@ -23,7 +23,7 @@ namespace ClassicUO.UnitTests.Ecs
     // Not covered here: the player's own branch of UpdateGameObject (serial == World.Player: no step) and the PlayerMobile
     // callbacks (door and corpse checks), because a PlayerMobile needs the UO files; the client gate (0x20, 0x77, 0x78 on a
     // live server) covers them. SetMobileBody and MoveMobile, the player's operations, are compared here on a plain mobile.
-    public class WorldWriterMobileTests
+    public partial class WorldWriterMobileTests
     {
         private const uint MOB = 0x0000_3000, OTHER = 0x0000_3001, NEWMOB = 0x0000_3002, DEAD = 0x8000_3000, BAG = 0x4000_7000, ITEM = 0x4000_7001;
 
@@ -679,7 +679,7 @@ namespace ClassicUO.UnitTests.Ecs
             n.Should().BeSameAs(m);
         }
 
-        public enum MobileOp { Upsert, Place, Notoriety, Body, Move }
+        public enum MobileOp { Upsert, Place, Notoriety, Body, Move, Graphic, Turn }
 
         private static void Run(World world, MobileOp op, Mobile m, WorldWriter.Placement placement = default)
         {
@@ -689,6 +689,8 @@ namespace ClassicUO.UnitTests.Ecs
                 case MobileOp.Place: world.Writer.PlaceMobile(placement); break;
                 case MobileOp.Notoriety: world.Writer.SetNotoriety(m, NotorietyFlag.Enemy); break;
                 case MobileOp.Body: world.Writer.SetMobileBody(m, 0x191, 0x21, Flags.Hidden, true, true, Direction.East); break;
+                case MobileOp.Graphic: world.Writer.SetMobileGraphic(m, 0x25E, checkBody: true); break;
+                case MobileOp.Turn: world.Writer.SetMobileDirection(m, Direction.West); break;
                 default: world.Writer.MoveMobile(m, 1200, 1200, 0); break;
             }
         }
@@ -704,6 +706,10 @@ namespace ClassicUO.UnitTests.Ecs
         [InlineData(MobileOp.Body, false)]
         [InlineData(MobileOp.Move, true)]
         [InlineData(MobileOp.Move, false)]
+        [InlineData(MobileOp.Graphic, true)]
+        [InlineData(MobileOp.Graphic, false)]
+        [InlineData(MobileOp.Turn, true)]
+        [InlineData(MobileOp.Turn, false)]
         public void A_Mobile_Operation_Inside_An_Operation_Is_Rejected_Before_Any_Change(MobileOp op, bool throws)
         {
             World world = Build(Start.Standing), reference = Build(Start.Standing);
@@ -745,6 +751,10 @@ namespace ClassicUO.UnitTests.Ecs
         [InlineData(MobileOp.Body, false)]
         [InlineData(MobileOp.Move, true)]
         [InlineData(MobileOp.Move, false)]
+        [InlineData(MobileOp.Graphic, true)]
+        [InlineData(MobileOp.Graphic, false)]
+        [InlineData(MobileOp.Turn, true)]
+        [InlineData(MobileOp.Turn, false)]
         public void A_Mobile_This_World_Does_Not_Hold_Is_Rejected_Before_Any_Change(MobileOp op, bool throws)
         {
             foreach (bool foreign in new[] { true, false })
@@ -940,6 +950,7 @@ namespace ClassicUO.UnitTests.Ecs
         internal sealed class TestPlayer : PlayerMobile
         {
             public Action<TestPlayer> OnMoved;
+            public Action<TestPlayer> OnTurned; // funnel part 5: a stand-in for the door check's packet (plugin send hooks)
             public int PositionCallbacks;
 
             public TestPlayer(World world, uint serial) : base(world, serial) { } // never runs
@@ -960,7 +971,12 @@ namespace ClassicUO.UnitTests.Ecs
                 walk?.Invoke(this);
             }
 
-            protected override void OnDirectionChanged() { }
+            protected override void OnDirectionChanged()
+            {
+                Action<TestPlayer> turn = OnTurned;
+                OnTurned = null; // once
+                turn?.Invoke(this);
+            }
         }
 
         private static World BuildPlayer(out TestPlayer player)

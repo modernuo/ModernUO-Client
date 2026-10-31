@@ -1458,6 +1458,98 @@ namespace ClassicUO.Game
         }
 
         /// <summary>
+        /// 0x1B (EnterWorld): the player's body graphic, then <c>CheckGraphicChange</c>'s sex and race
+        /// (<paramref name="checkBody"/>), nothing else (hue, flags, direction and position stay; 0x1B moves the player with
+        /// <see cref="MoveMobile"/> and turns it with <see cref="SetMobileDirection"/>). No callback runs in these setters, so the
+        /// mobile is folded: one record commit, then the cache, then the derived inputs. A mobile this World does not hold is
+        /// a violation, rejected (no pre-T1 path), except the detached <c>World.Player</c>, written as before T1.
+        /// </summary>
+        public void SetMobileGraphic(Mobile mobile, ushort graphic, bool checkBody)
+        {
+            if (mobile == null || !Admitted(nameof(SetMobileGraphic), mobile.Serial))
+            {
+                return;
+            }
+
+            bool detached = !Holds(mobile);
+
+            if (detached && !IsDetachedPlayer(mobile))
+            {
+                Reject(Violation.NotHeld, $"WorldWriter.SetMobileGraphic: 0x{mobile.Serial:X8} is not the mobile this World holds for its serial", rejected: true);
+
+                return;
+            }
+
+            bool body = Mobile.BodyState(graphic, out bool isFemale, out RaceType race) && checkBody;
+
+            MobileState v;
+            v.Serial = mobile.Serial;
+            v.Graphic = graphic;
+            v.Hue = mobile.Hue;
+            v.X = mobile.X;
+            v.Y = mobile.Y;
+            v.Z = mobile.Z;
+            v.Direction = mobile.Direction;
+            v.Flags = mobile.Flags;
+            v.IsPlayer = ReferenceEquals(mobile, _world.Player);
+
+            using (Open(mobile, detached ? null : mobile))
+            {
+                EcsEntity e = _world.Ecs.CommitMobile(mobile, in v);
+
+                mobile.Graphic = v.Graphic;
+
+                if (body)
+                {
+                    mobile.IsFemale = isFemale;
+                    mobile.Race = race;
+                }
+
+                _world.Ecs.CommitMobileInputs(mobile, e);
+            }
+        }
+
+        /// <summary>
+        /// 0x1B (EnterWorld) and 0x21 (DenyWalk): the player's direction from the packet. The record is committed with the new
+        /// direction first, then the setter runs <b>unfolded</b>: the player's direction change runs its door check, which can
+        /// send a packet (plugin send hooks run synchronously), so the setter's Sync publishes as before T1. Then the derived
+        /// inputs. A mobile this World does not hold is a violation, rejected (no pre-T1 path), except the detached
+        /// <c>World.Player</c>, written as before T1.
+        /// </summary>
+        public void SetMobileDirection(Mobile mobile, Direction direction)
+        {
+            if (mobile == null || !Admitted(nameof(SetMobileDirection), mobile.Serial))
+            {
+                return;
+            }
+
+            if (!Holds(mobile) && !IsDetachedPlayer(mobile))
+            {
+                Reject(Violation.NotHeld, $"WorldWriter.SetMobileDirection: 0x{mobile.Serial:X8} is not the mobile this World holds for its serial", rejected: true);
+
+                return;
+            }
+
+            MobileState v;
+            v.Serial = mobile.Serial;
+            v.Graphic = mobile.Graphic;
+            v.Hue = mobile.Hue;
+            v.X = mobile.X;
+            v.Y = mobile.Y;
+            v.Z = mobile.Z;
+            v.Direction = direction;
+            v.Flags = mobile.Flags;
+            v.IsPlayer = ReferenceEquals(mobile, _world.Player);
+
+            using (Open(mobile, null))
+            {
+                EcsEntity e = _world.Ecs.CommitMobile(mobile, in v);
+                mobile.Direction = v.Direction;
+                _world.Ecs.CommitMobileInputs(mobile, e);
+            }
+        }
+
+        /// <summary>
         /// 0x1D (DeleteObject) for a mobile: removes it and everything it wears or holds, at any depth (<c>World.RemoveMobile</c>
         /// before T1: each child's removal with its contents, OPL, Destroy, which deletes the ECS entities through
         /// <see cref="WorldEcs.OnDestroyed"/>, then out of the mobiles table). A removal: it owns the removed subtree, writes no

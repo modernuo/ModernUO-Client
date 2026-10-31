@@ -103,10 +103,10 @@ src/ClassicUO.Client/Game/World.cs|Container|1
 src/ClassicUO.Client/Network/PacketHandlers.cs|Amount|1
 src/ClassicUO.Client/Network/PacketHandlers.cs|AnimIndex|3
 src/ClassicUO.Client/Network/PacketHandlers.cs|Container|3
-src/ClassicUO.Client/Network/PacketHandlers.cs|Direction|2
+src/ClassicUO.Client/Network/PacketHandlers.cs|Direction|1
 src/ClassicUO.Client/Network/PacketHandlers.cs|ExecuteAnimation|2
 src/ClassicUO.Client/Network/PacketHandlers.cs|Flags|4
-src/ClassicUO.Client/Network/PacketHandlers.cs|Graphic|3
+src/ClassicUO.Client/Network/PacketHandlers.cs|Graphic|2
 src/ClassicUO.Client/Network/PacketHandlers.cs|Hits|3
 src/ClassicUO.Client/Network/PacketHandlers.cs|HitsMax|3
 src/ClassicUO.Client/Network/PacketHandlers.cs|InWarMode|1
