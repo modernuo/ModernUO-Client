@@ -98,7 +98,7 @@ public sealed class BakeJob : Job
         {
             ushort tile = (ushort)(land[i].TileId & 0x3FFF);
             if (remap != null) tile = remap[tile];
-            if (tile <= 2) continue; // Land.AllowedToDraw = graphic > 2
+            if (!TileDraw.Land(landData[tile].PackFlags)) continue; // the pack's draw flag (ClassicUO Land.AllowedToDraw)
             int z = land[i].Z;
             int tx = baseTx + (i & 7), ty = baseTy + (i >> 3);
             int pz = z - 2;
@@ -133,7 +133,9 @@ public sealed class BakeJob : Job
             ref readonly var s = ref statics[j];
             if (s.X >= 8 || s.Y >= 8) continue;
             int g = staticRemap != null ? staticRemap[s.Graphic] : s.Graphic;
-            if (!CanBeDrawn(g, staticData)) continue;
+            // the pack's draw flags (ClassicUO GameObject.CanBeDrawn). Baked as for a non-gargoyle player: the host shows
+            // NoDrawUnlessGargoyle statics through its own objects.
+            if (g >= staticData.Length || !TileDraw.Static(staticData[g].PackFlags, playerIsGargoyle: false)) continue;
             ref readonly var data = ref staticData[g];
             int pz = s.Z;
             if ((data.Flags & TileFlags.Background) != 0) pz--;
@@ -341,23 +343,6 @@ public sealed class BakeJob : Job
         float b = MathF.Max(Vector3.Dot(Vector3.Normalize(n), l), 0) / 2 + 0.5f;
         float r = b + (bright * (b - 0.85355339f) - (b - 0.85355339f));
         return (uint)Math.Clamp((int)MathF.Round(r * 170), 0, 255);
-    }
-
-    /// <summary>GameObject.CanBeDrawn for statics; the tiledata "nodraw" name check is the converter's
-    /// <see cref="TilePackFlags.NameNoDraw"/> (0 in v0 packs, which lack it).</summary>
-    static bool CanBeDrawn(int g, StaticTileData[] data)
-    {
-        switch (g)
-        {
-            case 0x0001: case 0x21BC: case 0xA1FE: case 0xA1FF: case 0xA200: case 0xA201:
-                return false;
-            case 0x9E4C: case 0x9E64: case 0x9E65: case 0x9E7D:
-                return g < data.Length && (data[g].Flags & (TileFlags.Background | TileFlags.Surface)) == 0;
-        }
-        if (g != 0x63D3 && g >= 0x2198 && g <= 0x21A4) return false;
-        if (g >= data.Length) return false;
-        if (g != 0x63D3 && (data[g].PackFlags & TilePackFlags.NameNoDraw) != 0) return false;
-        return (data[g].Flags & TileFlags.NoDiagonal) == 0;
     }
 }
 

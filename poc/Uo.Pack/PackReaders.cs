@@ -400,31 +400,6 @@ public static class RegionFile
     }
 }
 
-public static class TileDataFile
-{
-    public static void Write(string path, ReadOnlySpan<LandTileData> land, ReadOnlySpan<StaticTileData> statics)
-    {
-        using var fs = ReplacingFile.Create(path);
-        StructIo.WriteHeader(fs, PackConst.MagicTileData);
-        StructIo.Write(fs, land.Length);
-        StructIo.Write(fs, statics.Length);
-        StructIo.WriteSpan(fs, land);
-        StructIo.WriteSpan(fs, statics);
-        fs.Commit();
-    }
-
-    public static (LandTileData[] Land, StaticTileData[] Statics) Read(string path)
-    {
-        using var fs = File.OpenRead(path);
-        StructIo.ReadHeader(fs, PackConst.MagicTileData);
-        var land = new LandTileData[StructIo.Read<int>(fs)];
-        var statics = new StaticTileData[StructIo.Read<int>(fs)];
-        StructIo.ReadSpan<LandTileData>(fs, land);
-        StructIo.ReadSpan<StaticTileData>(fs, statics);
-        return (land, statics);
-    }
-}
-
 /// <summary>Retired hues.bin: count, then count rows of 32 RGBA8 shades. Packs made before the one-source-of-truth change
 /// (e.g. classic-1.0) still carry it, but nothing loads it: the LUT is built from hues_raw.bin by <see cref="HueLut"/>.
 /// Only kept so tests and tools can compare an old pack's file with the built LUT.</summary>

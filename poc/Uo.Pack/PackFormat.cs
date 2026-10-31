@@ -18,7 +18,9 @@ public static class PackConst
     public const uint MagicPage = 0x4B415050;    // "PPAK"
     public const uint MagicSprites = 0x53525053; // "SPRS"
     public const uint MagicRegion = 0x47524F55;  // "UORG"
-    public const uint MagicTileData = 0x44544C54; // "TLTD"
+    /// <summary>Retired: the pre-1.1 compact tiledata.bin (the renderer copy). tiledata.bin is now the single full file
+    /// (<see cref="TableConst.MagicTileData"/>); a reader that meets this magic reports an outdated pack.</summary>
+    public const uint MagicTileDataCompactRetired = 0x44544C54; // "TLTD"
     public const uint MagicHues = 0x53455548;    // "HUES": retired hues.bin, read only by the legacy HueFile reader
 
     public const int StaticSpriteBase = 0x4000;
@@ -85,7 +87,9 @@ public enum SpriteFlags : ushort
     None = 0,
     Land = 1 << 0,
     Texmap = 1 << 1,
-    PartialHue = 1 << 2,
+    /// <summary>Retired (pack 1.1): bit 2 copied the tiledata PartialHue flag. It is no longer written and readers ignore
+    /// it; the flag comes from tiledata.bin. Packs before 1.1 may still have it set.</summary>
+    RetiredPartialHue = 1 << 2,
 }
 
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
@@ -125,6 +129,8 @@ public struct StaticCell
     public ushort Hue;
 }
 
+/// <summary>The renderer's compact land entry (12 bytes). Not stored: built at load from tiledata.bin by
+/// <see cref="TileDataFile.Compact"/>.</summary>
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
 public struct LandTileData
 {
@@ -133,6 +139,8 @@ public struct LandTileData
     public TilePackFlags PackFlags;
 }
 
+/// <summary>The renderer's compact static entry (12 bytes). Not stored: built at load from tiledata.bin by
+/// <see cref="TileDataFile.Compact"/>.</summary>
 [StructLayout(LayoutKind.Sequential, Pack = 1)]
 public struct StaticTileData
 {
@@ -142,17 +150,38 @@ public struct StaticTileData
     public TilePackFlags PackFlags;
 }
 
-/// <summary>Converter-derived tile flags (v1), stored in what was the pad u16 of LandTileData/StaticTileData. 0 in v0 packs.</summary>
+/// <summary>
+/// Per-tile draw rules, stored in tiledata.bin's packFlags. The converter derives them once from ClassicUO's former
+/// hard-coded rules (see "NoDraw flags" in pack-format.md); afterwards they are data: a shard admin hides or shows a tile
+/// by editing the flag. Clients and the renderer read only these bits (<see cref="TileDraw"/>), never ids or names.
+/// </summary>
 [Flags]
 public enum TilePackFlags : ushort
 {
     None = 0,
-    /// <summary>ClassicUO never draws this tile (Land.AllowedToDraw / GameObject.CanBeDrawn, static-data part).</summary>
+    /// <summary>Never drawn: land, or a static/item/multi component/effect graphic.</summary>
     NoDraw = 1 << 0,
-    /// <summary>Static hidden unless the player is a gargoyle (NoDiagonal + Animation in CanBeDrawn).</summary>
+    /// <summary>Static graphic hidden unless the player is a gargoyle.</summary>
     NoDrawUnlessGargoyle = 1 << 1,
-    /// <summary>The tiledata name starts with "nodraw" (case-insensitive). Informational for land: ClassicUO hides land by id only.</summary>
+    /// <summary>Informational: the tiledata name starts with "nodraw" (case-insensitive). Nothing reads it; the converter
+    /// folds the name rule into <see cref="NoDraw"/> for statics.</summary>
     NameNoDraw = 1 << 2,
+    /// <summary>A multi item whose display graphic (the multi's first component) is this static is not drawn.</summary>
+    NoDrawAsMulti = 1 << 3,
+}
+
+/// <summary>The draw decisions made from <see cref="TilePackFlags"/>. Data only: no tile ids or names.</summary>
+public static class TileDraw
+{
+    /// <summary>A land tile (its graphic after the season swap) is drawn.</summary>
+    public static bool Land(TilePackFlags f) => (f & TilePackFlags.NoDraw) == 0;
+
+    /// <summary>A static, item, multi component or effect graphic (after the season swap) is drawn.</summary>
+    public static bool Static(TilePackFlags f, bool playerIsGargoyle) =>
+        (f & TilePackFlags.NoDraw) == 0 && ((f & TilePackFlags.NoDrawUnlessGargoyle) == 0 || playerIsGargoyle);
+
+    /// <summary>A multi item with this display graphic is drawn.</summary>
+    public static bool MultiItem(TilePackFlags f) => (f & TilePackFlags.NoDrawAsMulti) == 0;
 }
 
 // ---- v1 animations (anim/anim.bin, anim/animdata.bin). See "v1 animations" in docs/modern-client/pack-format-v0.md.

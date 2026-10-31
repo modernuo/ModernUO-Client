@@ -403,7 +403,7 @@ namespace ClassicUO.Game.Map
                 {
                     ushort graphic = SeasonManager.GetLandSeasonGraphic(season, block.Land[pos].TileId);
 
-                    if (graphic <= 2)
+                    if (!Land.IsDrawn(landData, graphic))
                     {
                         continue; // not drawn (Land.AllowedToDraw)
                     }

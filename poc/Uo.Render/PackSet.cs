@@ -94,7 +94,8 @@ public sealed class PackSet
         Sprites = shared?.Sprites ?? SpriteTable.Read(Path.Combine(root, "art", "sprites.bin"));
         var texPath = Path.Combine(root, "tex", "texmaps.bin");
         Texmaps = shared?.Texmaps ?? (File.Exists(texPath) ? SpriteTable.Read(texPath) : []);
-        (Land, Statics) = TileDataFile.Read(Path.Combine(root, "tiledata.bin"));
+        // The compact 12-byte arrays are built from the pack's single tiledata.bin (no separate renderer copy since pack 1.1).
+        (Land, Statics) = TileDataFile.ReadCompact(Path.Combine(root, TableConst.TileDataFile));
         if (shared?.Hues != null) (HueCount, Hues) = (shared.HueCount, shared.Hues);
         else
         {

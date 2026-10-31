@@ -1,6 +1,7 @@
 using System.Runtime.InteropServices;
 using System.Security.Cryptography;
 using ClassicUO.Assets;
+using ClassicUO.Utility;
 using Uo.Pack;
 
 namespace Uo.Converter;
@@ -81,14 +82,18 @@ public static class Verify
         // hues_raw.bin is the only hue source (the client builds the LUT from it; hues.bin is retired), so a pack without
         // it cannot load. Checked before the tiledata early return so --only hues cannot pass on a pack that lacks it.
         if (Want("hues") && !File.Exists(Path.Combine(outDir, TableConst.HueRawFile))) Fail($"missing {TableConst.HueRawFile} (the pack's only hue source)");
-        if (!File.Exists(Path.Combine(outDir, "tiledata.bin")))
+        // tiledata.bin is the only tile data file since pack 1.1; the converter deletes the retired tiledata_ext.bin.
+        if (Want("tiledata") && File.Exists(Path.Combine(outDir, TableConst.TileDataExtFileRetired))) Fail($"retired {TableConst.TileDataExtFileRetired} still in the pack");
+        // ...and a pack without it cannot load, even when the manifest does not list it
+        if (Want("tiledata") && !File.Exists(Path.Combine(outDir, TableConst.TileDataFile))) Fail($"missing {TableConst.TileDataFile} (the pack's only tile data)");
+        if (!File.Exists(Path.Combine(outDir, TableConst.TileDataFile)))
         {
             Console.WriteLine(_errors == 0 ? "  all checks passed" : $"  {_errors} errors");
             return _errors == 0;
         }
 
         // Tile data and hues.
-        var (land, statics) = TileDataFile.Read(Path.Combine(outDir, "tiledata.bin"));
+        var (land, statics) = TileDataFile.ReadCompact(Path.Combine(outDir, TableConst.TileDataFile));
         if (land.Length != fm.TileData.LandData.Length || statics.Length != fm.TileData.StaticData.Length) Fail("tiledata counts");
         for (int i = 0; i < Math.Min(land.Length, fm.TileData.LandData.Length); i++)
             if (land[i].Flags != (ulong)fm.TileData.LandData[i].Flags || land[i].TexId != fm.TileData.LandData[i].TexID) { Fail($"tiledata land {i}"); break; }
@@ -167,6 +172,10 @@ public static class Verify
 
     private static void CheckAtlas(UOFileManager fm, string dir, string table, bool tex, StaticTileData[] statics)
     {
+        // Partial hue comes from tiledata (the sprite flag bit 2 that copied it is retired; packs before 1.1 still set it).
+        bool Ph(int id) => !tex && id >= PackConst.StaticSpriteBase && id - PackConst.StaticSpriteBase < statics.Length
+                           && (statics[id - PackConst.StaticSpriteBase].Flags & (ulong)TileFlag.PartialHue) != 0;
+        int legacyPh = 0;
         const int G = PackConst.Gutter;
         int S = PageSide(dir);
         var entries = SpriteTable.Read(Path.Combine(dir, table));
@@ -188,14 +197,11 @@ public static class Verify
             bool isLand = (e.Flags & SpriteFlags.Land) != 0;
             if (!tex && isLand != (id < PackConst.StaticSpriteBase)) Fail($"{table} {id}: land flag");
             if (tex != ((e.Flags & SpriteFlags.Texmap) != 0)) Fail($"{table} {id}: tex flag");
-            if (!tex && id >= PackConst.StaticSpriteBase)
-            {
-                bool ph = (statics[id - PackConst.StaticSpriteBase].Flags & (ulong)TileFlag.PartialHue) != 0;
-                if (ph != ((e.Flags & SpriteFlags.PartialHue) != 0)) Fail($"{table} {id}: partial hue flag");
-            }
+            if ((e.Flags & SpriteFlags.RetiredPartialHue) != 0) legacyPh++;
+            if ((e.Flags & ~(SpriteFlags.Land | SpriteFlags.Texmap | SpriteFlags.RetiredPartialHue)) != 0) Fail($"{table} {id}: unknown flags {e.Flags}");
             bool alias = !firstAtRect.TryAdd((e.Page, e.X, e.Y), id); // aliases are sampled too: verifies they really match
             // Sample: every 23rd id, all aliases, and every partial-hue sprite (for hue-fidelity metrics).
-            if (alias || id % 23 == 0 || id == 0x4000 + 0x0E75 || id == 3 || (e.Flags & SpriteFlags.PartialHue) != 0) byPage[e.Page].Add(id);
+            if (alias || id % 23 == 0 || id == 0x4000 + 0x0E75 || id == 3 || Ph(id)) byPage[e.Page].Add(id);
         }
 
         int sampled = 0;
@@ -226,7 +232,7 @@ public static class Verify
                     if ((e.X - G) % 4 != 0 || (e.Y - G) % 4 != 0) Fail($"{dir} {id}: cell not 4-aligned");
                     double sr = 0, sa = 0; long nr = 0, na = 0, flips = 0;
                     int mRgb = 0, mA = 0; long op = 0, opL = 0, cl = 0, clG = 0, gray = 0, grayB = 0, col = 0, colG = 0;
-                    bool ph = (e.Flags & SpriteFlags.PartialHue) != 0;
+                    bool ph = Ph(id);
                     for (int y = 0; y < e.H; y++)
                         for (int x = 0; x < e.W; x++)
                         {
@@ -296,35 +302,36 @@ public static class Verify
             Console.WriteLine($"  {Path.GetFileName(dir)}/{table}: {entries.Length} entries, {present} present, {pageCount} B5G5R5A1 pages, {sampled} sprites BIT-EXACT vs source 16-bit colour (incl. gutters)");
         else
             Console.WriteLine($"  {Path.GetFileName(dir)}/{table}: {entries.Length} entries, {present} present, {pageCount} pages, {sampled} sprites pixel-verified against source");
+        if (legacyPh > 0) Console.WriteLine($"  {Path.GetFileName(dir)}/{table}: {legacyPh} entries carry the retired partial-hue bit (pack before 1.1; readers ignore it)");
     }
 
     /// <summary>Format 1.0 game data tables against ClassicUO's own loaders, every record and field.</summary>
     private static void CheckTables(UOFileManager fm, string outDir)
     {
         string P(string f) => Path.Combine(outDir, f);
-        if (StructIo.SizeOf<LandTileInfo>() != 16 || StructIo.SizeOf<StaticTileInfo>() != 28 || StructIo.SizeOf<HueEntry>() != 88 || StructIo.SizeOf<MultiComponent>() != 10
+        if (StructIo.SizeOf<LandTileInfo>() != TileDataFile.LandEntryBytes || StructIo.SizeOf<StaticTileInfo>() != TileDataFile.StaticEntryBytes || StructIo.SizeOf<HueEntry>() != 88 || StructIo.SizeOf<MultiComponent>() != 10
             || StructIo.SizeOf<LightEntry>() != 8 || StructIo.SizeOf<TileArtAppearance>() != 8 || StructIo.SizeOf<EquipConvEntry>() != 10)
             Fail("table struct sizes");
 
-        if (Want("tiledata") && File.Exists(P(TableConst.TileDataExtFile)))
+        if (Want("tiledata") && File.Exists(P(TableConst.TileDataFile)))
         {
-            var (l, st, names) = TileDataExtFile.Read(P(TableConst.TileDataExtFile));
+            var (l, st, names) = TileDataFile.Read(P(TableConst.TileDataFile));
             var ld = fm.TileData.LandData;
             var sd = fm.TileData.StaticData;
-            if (l.Length != ld.Length || st.Length != sd.Length) Fail("tiledata_ext counts");
+            if (l.Length != ld.Length || st.Length != sd.Length) Fail("tiledata counts (full)");
             int bad = 0;
             for (int i = 0; i < Math.Min(l.Length, ld.Length); i++)
-                if ((l[i].Flags != (ulong)ld[i].Flags || l[i].TexId != ld[i].TexID || TileDataExtFile.Name(names, l[i].NameOffset, l[i].NameLength) != (ld[i].Name ?? "")) && bad++ == 0)
-                    Fail($"tiledata_ext land {i}");
+                if ((l[i].Flags != (ulong)ld[i].Flags || l[i].TexId != ld[i].TexID || TileDataFile.Name(names, l[i].NameOffset, l[i].NameLength) != (ld[i].Name ?? "")) && bad++ == 0)
+                    Fail($"tiledata land {i}");
             for (int i = 0; i < Math.Min(st.Length, sd.Length); i++)
             {
                 ref readonly var t = ref sd[i];
                 var e = st[i];
                 if ((e.Flags != (ulong)t.Flags || e.Weight != t.Weight || e.Layer != t.Layer || e.Count != t.Count || e.AnimId != t.AnimID || e.Hue != t.Hue
-                     || e.LightIndex != t.LightIndex || e.Height != t.Height || TileDataExtFile.Name(names, e.NameOffset, e.NameLength) != (t.Name ?? "")) && bad++ == 0)
-                    Fail($"tiledata_ext static {i}");
+                     || e.LightIndex != t.LightIndex || e.Height != t.Height || TileDataFile.Name(names, e.NameOffset, e.NameLength) != (t.Name ?? "")) && bad++ == 0)
+                    Fail($"tiledata static {i}");
             }
-            Console.WriteLine($"  tiledata_ext: {l.Length} land, {st.Length} statics, every field and name {(bad == 0 ? "EXACT" : $"{bad} MISMATCHES")} vs TileDataLoader; names {names.Length} B");
+            Console.WriteLine($"  tiledata (full): {l.Length} land, {st.Length} statics, every field and name {(bad == 0 ? "EXACT" : $"{bad} MISMATCHES")} vs TileDataLoader; names {names.Length} B");
         }
 
         if (Want("hues") && File.Exists(P(TableConst.HueRawFile)))
@@ -454,30 +461,106 @@ public static class Verify
         Console.WriteLine($"  animdata: {pack.Length} entries {(bad == 0 && n == pack.Length ? "EXACT" : "MISMATCH")} vs AnimDataLoader.CalculateCurrentGraphic");
     }
 
-    /// <summary>NoDraw flags against the converter's CanBeDrawn port, plus a few fixed cases.</summary>
+    /// <summary>
+    /// The stored draw flags (1) equal the converter's rules (<see cref="TileRules"/>) and (2) give, for every land and
+    /// static id and both player races, the same draw decision as the oracle: a verbatim copy of the client code they
+    /// replaced (Land.AllowedToDraw, GameObject.CanBeDrawn, Item.RefreshGraphicState's multi test), evaluated on the
+    /// source client's tiledata. The client's unit test TileDrawOracleTests repeats (2) against the pack alone.
+    /// </summary>
     private static void CheckNoDraw(UOFileManager fm, LandTileData[] land, StaticTileData[] statics)
     {
         var sd = fm.TileData.StaticData;
-        int landNo = 0, landName = 0, statNo = 0, statGarg = 0, statName = 0;
+        int landNo = 0, landName = 0, statNo = 0, statGarg = 0, statName = 0, statMulti = 0, compared = 0, mismatches = 0;
         for (int i = 0; i < land.Length; i++)
         {
-            if (land[i].PackFlags != ArtConvert.LandPackFlags(i, fm.TileData.LandData[i])) { Fail($"land {i} pack flags"); break; }
+            if (land[i].PackFlags != TileRules.Land(i, fm.TileData.LandData[i])) { Fail($"land {i} pack flags"); break; }
             if ((land[i].PackFlags & TilePackFlags.NoDraw) != 0) landNo++;
             if ((land[i].PackFlags & TilePackFlags.NameNoDraw) != 0) landName++;
+        }
+        for (int i = 0; i < land.Length; i++, compared++)
+            if (TileDraw.Land(land[i].PackFlags) != OracleLand((ushort)i) && mismatches++ == 0) Fail($"land {i}: draw decision differs from the oracle");
+        for (int i = 0; i < statics.Length; i++)
+        {
+            var f = statics[i].PackFlags;
+            if (f != TileRules.Static(i, sd, fm.Version)) { Fail($"static {i} pack flags"); break; }
+            if ((f & TilePackFlags.NoDraw) != 0) statNo++;
+            if ((f & TilePackFlags.NoDrawUnlessGargoyle) != 0) statGarg++;
+            if ((f & TilePackFlags.NameNoDraw) != 0) statName++;
+            if ((f & TilePackFlags.NoDrawAsMulti) != 0) statMulti++;
         }
         for (int i = 0; i < statics.Length; i++)
         {
             var f = statics[i].PackFlags;
-            if (f != ArtConvert.StaticPackFlags(i, sd, fm.Version)) { Fail($"static {i} pack flags"); break; }
-            if ((f & TilePackFlags.NameNoDraw) != 0 && (f & TilePackFlags.NoDraw) == 0 && i is not (0x9E4C or 0x9E64 or 0x9E65 or 0x9E7D or 0x0F65))
-                Fail($"static {i}: nodraw name but drawable");
-            if ((f & TilePackFlags.NoDraw) != 0) statNo++;
-            if ((f & TilePackFlags.NoDrawUnlessGargoyle) != 0) statGarg++;
-            if ((f & TilePackFlags.NameNoDraw) != 0) statName++;
+            foreach (bool garg in (ReadOnlySpan<bool>)[false, true])
+            {
+                compared++;
+                if (TileDraw.Static(f, garg) != OracleCanBeDrawn(sd, (ushort)i, garg, fm.Version) && mismatches++ == 0)
+                    Fail($"static {i} (gargoyle {garg}): draw decision differs from the oracle");
+            }
+            compared++;
+            if (TileDraw.MultiItem(f) != OracleMultiItem((ushort)i) && mismatches++ == 0) Fail($"static {i}: multi item draw decision differs from the oracle");
         }
         if ((land[2].PackFlags & TilePackFlags.NoDraw) == 0 || (land[3].PackFlags & TilePackFlags.NoDraw) != 0) Fail("land 2/3 NoDraw");
         if ((statics[0x0001].PackFlags & TilePackFlags.NoDraw) == 0 || (statics[0x21A0].PackFlags & TilePackFlags.NoDraw) == 0) Fail("static 0x1/0x21A0 NoDraw");
-        Console.WriteLine($"  nodraw: land {landNo} NoDraw (id <= 2), {landName} named nodraw; statics {statNo} NoDraw, {statGarg} NoDrawUnlessGargoyle, {statName} named nodraw");
+        Console.WriteLine($"  nodraw: land {landNo} NoDraw, {landName} named nodraw; statics {statNo} NoDraw, {statGarg} NoDrawUnlessGargoyle, " +
+                          $"{statName} named nodraw, {statMulti} NoDrawAsMulti; oracle: {compared} decisions, {mismatches} mismatches");
+    }
+
+    // ---- The oracle: the client code the flags replaced, copied verbatim (only the data access is adapted). Keep it
+    // unchanged: it defines "pixel-neutral" for the flags. The rules themselves live in TileRules.
+
+    private static bool OracleLand(ushort graphic) => graphic > 2; // Land.Create / UpdateGraphicBySeason
+
+    private static bool OracleMultiItem(ushort multiGraphic) => multiGraphic > 2; // Item.RefreshGraphicState
+
+    private static bool OracleCanBeDrawn(StaticTiles[] staticData, ushort g, bool playerIsGargoyle, ClientVersion version)
+    {
+        switch (g)
+        {
+            case 0x0001:
+            case 0x21BC:
+            case 0xA1FE:
+            case 0xA1FF:
+            case 0xA200:
+            case 0xA201:
+                return false;
+
+            case 0x9E4C:
+            case 0x9E64:
+            case 0x9E65:
+            case 0x9E7D:
+                ref var data = ref staticData[g];
+
+                return !data.IsBackground && !data.IsSurface;
+        }
+
+        if (g != 0x63D3)
+        {
+            if (g >= 0x2198 && g <= 0x21A4)
+            {
+                return false;
+            }
+
+            if (g == 0x0F65 && version < ClientVersion.CV_60144)
+            {
+                return true;
+            }
+
+            if (g < staticData.Length)
+            {
+                ref var data = ref staticData[g];
+
+                if (!string.IsNullOrEmpty(data.Name) && data.Name.StartsWith("nodraw", StringComparison.OrdinalIgnoreCase))
+                    return false;
+
+                if (!data.IsNoDiagonal || data.IsAnimated && playerIsGargoyle)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
     }
 
     /// <summary>

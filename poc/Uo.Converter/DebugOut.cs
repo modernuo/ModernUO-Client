@@ -91,9 +91,11 @@ public static class DebugOut
         // (b2) partial-hue fidelity: source | stored (decoded) | gray-broken map, 4x. Red = was exact gray, no longer is
         // (would not be hued); blue = was coloured, became exact gray (would be hued wrongly); dim = unchanged.
         {
+            var stat = fm.TileData.StaticData;
+            bool Ph(int i) => i - 0x4000 < stat.Length && stat[i - 0x4000].IsPartialHue; // tiledata, not the retired sprite bit
             int pid = 0x4000 + 0x1F00; // partial-hue in this client
-            if (!art[pid].Present || (art[pid].Flags & SpriteFlags.PartialHue) == 0)
-                pid = Enumerable.Range(0x4000, art.Length - 0x4000).FirstOrDefault(i => art[i].Present && (art[i].Flags & SpriteFlags.PartialHue) != 0 && art[i].W * art[i].H > 1500);
+            if (!art[pid].Present || !Ph(pid))
+                pid = Enumerable.Range(0x4000, art.Length - 0x4000).FirstOrDefault(i => art[i].Present && Ph(i) && art[i].W * art[i].H > 1500);
             var e = art[pid];
             if (pid != 0 && File.Exists(PackConst.PagePath(artDir, e.Page)))
             {
