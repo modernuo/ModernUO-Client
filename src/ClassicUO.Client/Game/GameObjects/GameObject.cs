@@ -82,6 +82,12 @@ namespace ClassicUO.Game.GameObjects
         public GameObject TPrevious;
         /// <summary>The chunk whose tile list holds this object (Chunk.AddGameObject); null once removed (RemoveFromTile).</summary>
         public Chunk TileChunk;
+        /// <summary>The cell (x &lt;&lt; 3 | y) of <see cref="TileChunk"/> whose tile list holds this object; meaningful only while
+        /// TileChunk is set. Stored because X/Y can change before the object leaves its tile (SetInWorldTile).</summary>
+        public byte TileCell;
+        /// <summary>T6a: the global insertion stamp of the last Chunk.AddGameObject of this object (TileOrder.NextSeq); with
+        /// PriorityZ it gives the tile-list order key (TileOrder.Key).</summary>
+        public ulong TileSeq;
         public ushort X,
             Y;
         public sbyte Z;
@@ -161,12 +167,20 @@ namespace ClassicUO.Game.GameObjects
             }
         }
 
+        /// <summary>
+        /// The object has a world placement: it is in a tile list (TileChunk) or parked until its chunk loads (PendingBlock).
+        /// Movers re-add on this, not on having list neighbours: a lone object on a landless tile has none.
+        /// </summary>
+        public bool IsPlaced => TileChunk != null || PendingBlock >= 0;
+
         public void RemoveFromTile()
         {
             if (TileChunk != null)
             {
                 // the Gpu prepare's tile masks and item cache (GameSceneGpuItemCache) follow the tile lists
                 TileChunk.OnTileContentChanged(this);
+                // Chunk.Tiles[cell] must not keep pointing at an object that left (it is how the walk finds the list)
+                TileChunk.ReleaseAnchor(this);
                 TileChunk = null;
             }
 
@@ -517,6 +531,8 @@ namespace ClassicUO.Game.GameObjects
             PriorityZ = 0;
             TNext = TPrevious = null;
             TileChunk = null;
+            TileCell = 0;
+            TileSeq = 0;
             X = Y = 0;
             Z = 0;
             PendingBlock = -1;
