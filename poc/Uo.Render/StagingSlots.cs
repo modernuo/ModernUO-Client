@@ -40,32 +40,55 @@ public sealed class CopyRetirement : IDisposable
     }
 
     /// <summary>Takes ownership of <paramref name="fence"/> for the submitted command buffer <paramref name="serial"/>;
-    /// it is released once seen signalled (or on <see cref="Dispose"/>).</summary>
+    /// it is released once seen signalled (or on <see cref="Dispose"/>). A zero fence means the submit failed: see
+    /// <see cref="Failed"/>.</summary>
     public void Track(long serial, IntPtr fence)
     {
         if (fence == IntPtr.Zero)
         {
-            // no fence (the submit failed): the GPU never runs these copies
-            MarkRetired(serial);
+            Failed(serial);
             return;
         }
         _pending.Enqueue((serial, fence));
         FencesTaken++;
     }
 
-    /// <summary>The caller waited for <paramref name="serial"/> (or for the whole GPU) itself.</summary>
+    /// <summary>The submit of command buffer <paramref name="serial"/> failed or returned no fence. That does not prove
+    /// the GPU never runs it (D3D12 executes the list before it acquires the fence; Vulkan can queue it and then fail at
+    /// present), and it never proves that earlier frames finished. So nothing retires here: its copies stay pending
+    /// until a later fence signals or a wait for a later serial or for the whole GPU succeeds (the queue runs in submit
+    /// order, so that also covers this serial if it ran). Until then <see cref="NeedsFence"/> asks for a fence on the next
+    /// frame, so the slots free up without a blocking wait once the GPU works again.</summary>
+    public void Failed(long serial)
+    {
+        if (serial > _unresolved) _unresolved = serial;
+        FailedSubmits++;
+    }
+
+    long _unresolved;
+    /// <summary>Frame submits that failed (or returned no fence) while carrying copies.</summary>
+    public long FailedSubmits;
+    /// <summary>A failed submit's copies are not yet known to be finished.</summary>
+    public bool Unresolved => _unresolved > Retired;
+    /// <summary>Submit the frame command buffer with a fence: it carries copies, or a failed submit waits for a later
+    /// fence to resolve it.</summary>
+    public bool NeedsFence => Staged || Unresolved;
+
+    /// <summary>The caller waited successfully for <paramref name="serial"/> (or for the whole GPU) itself. Never call it
+    /// for a failed submit or a failed wait.</summary>
     public void MarkRetired(long serial)
     {
         if (serial > Retired) Retired = serial;
     }
 
-    /// <summary>Retires every leading fence that has signalled; never blocks.</summary>
+    /// <summary>Retires every leading fence that has signalled, and releases fences a wait elsewhere already covered;
+    /// never blocks.</summary>
     public void Poll()
     {
         while (_pending.Count > 0)
         {
             var (serial, fence) = _pending.Peek();
-            if (!_signalled(fence)) break;
+            if (serial > Retired && !_signalled(fence)) break;
             _pending.Dequeue();
             _release(fence);
             MarkRetired(serial);
@@ -139,5 +162,28 @@ public sealed class StagingSlots
     {
         double f = 1000.0 / System.Diagnostics.Stopwatch.Frequency;
         return $"{Stalls} slot waits, {StallFrames} frames, {StallTicks * f:F1} ms (max {MaxStallTicks * f:F1} ms)";
+    }
+}
+
+/// <summary>Runs teardown steps so one failure doesn't skip the rest: every step runs in order, and the first exception
+/// is rethrown (with its stack) once they all ran; later ones go to stderr. <see cref="WorldRenderer.Dispose"/> uses it,
+/// so a drain that throws after device loss still disposes the workers, the page residencies and the owned renderer,
+/// whose Dispose releases the fences <see cref="CopyRetirement"/> still holds.</summary>
+public static class Teardown
+{
+    public static void Run(string what, params Action[] steps)
+    {
+        System.Runtime.ExceptionServices.ExceptionDispatchInfo first = null;
+        foreach (var step in steps)
+        {
+            if (step == null) continue;
+            try { step(); }
+            catch (Exception e)
+            {
+                if (first == null) first = System.Runtime.ExceptionServices.ExceptionDispatchInfo.Capture(e);
+                else Console.Error.WriteLine($"{what}: a later teardown step also failed: {e.Message}");
+            }
+        }
+        first?.Throw();
     }
 }

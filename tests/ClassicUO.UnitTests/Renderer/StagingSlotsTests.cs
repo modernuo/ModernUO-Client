@@ -104,25 +104,239 @@ namespace ClassicUO.UnitTests.Renderer
             retire.FencesTaken.Should().Be(2);
         }
 
+        // The renderer's SubmitFrame on the fakes: a fence when NeedsFence, none otherwise; a failed submit passes zero.
+        private static long SubmitFrame(CopyRetirement retire, FakeGpu gpu, bool fails, out IntPtr fence)
+        {
+            fence = IntPtr.Zero;
+            if (!retire.NeedsFence)
+            {
+                return retire.Submit();
+            }
+            if (!fails) fence = gpu.NewFence();
+            long serial = retire.Submit();
+            retire.Track(serial, fence);
+            return serial;
+        }
+
         [Fact]
-        public void A_failed_submit_or_a_wait_elsewhere_retires_the_serial()
+        public void A_failed_submit_retires_nothing_and_a_later_fence_resolves_it()
         {
             var gpu = new FakeGpu();
             var retire = gpu.Tracker();
             var slots = new StagingSlots(2) { Retire = retire };
 
             slots.Copied(0);
-            retire.Track(retire.Submit(), IntPtr.Zero); // submit failed: the GPU never reads the slot
-            slots.Reusable(0).Should().BeTrue();
-            retire.PendingFences.Should().Be(0);
+            SubmitFrame(retire, gpu, fails: true, out _); // no fence: the GPU may still run it
+            retire.Poll();
+            slots.Reusable(0).Should().BeFalse("a failed submit is no proof the copy never runs");
+            retire.Retired.Should().Be(0);
+            retire.FailedSubmits.Should().Be(1);
+            retire.Unresolved.Should().BeTrue();
+            retire.NeedsFence.Should().BeTrue("the next frame takes a fence even without copies");
 
-            slots.Copied(1);
-            long serial = retire.Submit();
+            SubmitFrame(retire, gpu, fails: false, out var f2); // frame 2 carries no copies but is fenced
+            retire.Staged.Should().BeFalse();
+            retire.Poll();
+            slots.Reusable(0).Should().BeFalse("frame 2 has not finished");
+
+            gpu.Signalled.Add(f2);
+            retire.Poll();
+            slots.Reusable(0).Should().BeTrue("frame 2 finished, so frame 1 did too if it ran at all");
+            retire.Unresolved.Should().BeFalse();
+            retire.NeedsFence.Should().BeFalse("no more fences once resolved");
+            gpu.Released.Should().Equal(f2);
+        }
+
+        [Fact]
+        public void A_failed_submit_never_retires_an_earlier_unsignalled_frame()
+        {
+            var gpu = new FakeGpu();
+            var retire = gpu.Tracker();
+            var slots = new StagingSlots(2) { Retire = retire };
+
+            slots.Copied(0); // slot A in frame 1, still running
+            SubmitFrame(retire, gpu, fails: false, out var f1);
+            slots.Copied(1); // slot B in frame 2, whose submit fails
+            SubmitFrame(retire, gpu, fails: true, out _);
+            retire.Poll();
+            slots.Reusable(0).Should().BeFalse("frame 1's fence has not signalled");
             slots.Reusable(1).Should().BeFalse();
-            retire.MarkRetired(serial); // the caller waited (offscreen throttle, GPU idle, screenshot)
+
+            SubmitFrame(retire, gpu, fails: false, out var f3); // fenced for the unresolved frame 2
+            gpu.Signalled.Add(f3); // seen out of order: still wait for f1 first
+            retire.Poll();
+            slots.Reusable(0).Should().BeFalse();
+            slots.Reusable(1).Should().BeFalse();
+
+            gpu.Signalled.Add(f1);
+            retire.Poll();
+            slots.Reusable(0).Should().BeTrue();
             slots.Reusable(1).Should().BeTrue();
-            retire.MarkRetired(serial - 1);
-            retire.Retired.Should().Be(serial, "retirement never goes back");
+            gpu.Released.Should().Equal(f1, f3);
+        }
+
+        // D3D12 executes the command list before it acquires the fence, and Vulkan can queue it and then fail at present:
+        // the copy really runs. On the fake GPU slot 0 stays busy until a later fenced frame, and nothing may map it before.
+        [Fact]
+        public void A_failure_after_execution_started_keeps_the_slot_until_proven_done()
+        {
+            var gpu = new FakeGpu();
+            var retire = gpu.Tracker();
+            var slots = new StagingSlots(1) { Retire = retire };
+
+            slots.Copied(0);
+            SubmitFrame(retire, gpu, fails: true, out _); // ran on the GPU, but returned no fence
+            for (int frame = 0; frame < 5; frame++)
+            {
+                retire.Poll();
+                slots.Reusable(0).Should().BeFalse("the GPU may still read the slot");
+                SubmitFrame(retire, gpu, fails: true, out _); // the device keeps failing: stay blocked
+            }
+            retire.FailedSubmits.Should().Be(6);
+
+            SubmitFrame(retire, gpu, fails: false, out var ok);
+            retire.Poll();
+            slots.Reusable(0).Should().BeFalse("the fenced frame has not finished yet");
+            gpu.Signalled.Add(ok); // the queue finished frame 1 before this later frame
+            retire.Poll();
+            slots.Reusable(0).Should().BeTrue();
+            retire.Unresolved.Should().BeFalse();
+        }
+
+        [Fact]
+        public void A_gpu_idle_wait_resolves_a_failed_submit_and_releases_every_fence()
+        {
+            var gpu = new FakeGpu();
+            var retire = gpu.Tracker();
+            var slots = new StagingSlots(2) { Retire = retire };
+
+            slots.Copied(0);
+            SubmitFrame(retire, gpu, fails: false, out var f1);
+            slots.Copied(1);
+            SubmitFrame(retire, gpu, fails: true, out _);
+
+            // Renderer.DrainInFlight after SDL_WaitForGPUIdle succeeded: everything submitted is done
+            retire.MarkRetired(retire.Serial - 1);
+            retire.Poll();
+            slots.Reusable(0).Should().BeTrue();
+            slots.Reusable(1).Should().BeTrue();
+            retire.Unresolved.Should().BeFalse();
+            retire.PendingFences.Should().Be(0);
+            gpu.Released.Should().Equal(new[] { f1 }, "released without a query: the idle wait proved it signalled");
+        }
+
+        // The offscreen throttle holds its own 2 fences and marks a frame retired after waiting on it; GPU samples and
+        // frame screenshots wait on the frame they submit; DrainInFlight waits for the whole GPU. Ordinary frames go
+        // through the tracker's own fences. All of them share one serial line and one watermark.
+        [Fact]
+        public void Throttle_screenshot_and_drain_waits_retire_in_one_line()
+        {
+            var gpu = new FakeGpu();
+            var retire = gpu.Tracker();
+            var slots = new StagingSlots(4) { Retire = retire };
+
+            // throttle frames 1 and 2 (fences held by the throttle, not the tracker); frame 2's submit fails
+            slots.Copied(0);
+            long t1 = retire.Submit();
+            slots.Copied(1);
+            long t2 = retire.Submit();
+            retire.Failed(t2);
+            // frame 3: throttle again; its submit waits on the oldest throttle fence (frame 1)
+            long t3 = retire.Submit();
+            retire.MarkRetired(t1);
+            slots.Reusable(0).Should().BeTrue();
+            slots.Reusable(1).Should().BeFalse("frame 2 failed: only a later wait resolves it");
+
+            // frame 4: a frame screenshot copies slot 2 and waits on its own fence, covering the failed frame 2
+            slots.Copied(2);
+            long s4 = retire.Submit();
+            retire.MarkRetired(s4);
+            slots.Reusable(1).Should().BeTrue();
+            slots.Reusable(2).Should().BeTrue();
+            retire.Unresolved.Should().BeFalse();
+
+            // frame 5: an ordinary tracked frame, then an earlier throttle wait arrives late: never goes back
+            slots.Copied(3);
+            SubmitFrame(retire, gpu, fails: false, out _);
+            retire.MarkRetired(t3);
+            retire.Retired.Should().Be(s4, "retirement never goes back");
+            slots.Reusable(3).Should().BeFalse();
+
+            // drain: GPU idle covers frame 5 and releases its fence unqueried
+            retire.MarkRetired(retire.Serial - 1);
+            retire.Poll();
+            slots.Reusable(3).Should().BeTrue();
+            retire.PendingFences.Should().Be(0);
+            gpu.Released.Should().HaveCount(1);
+        }
+
+        // Art and anim PageResidency each own a StagingSlots, and the renderer hands both the one CopyRetirement
+        // (RenderFrame sets f.Pages.Retire and f.AnimPages.Retire). PageResidency itself needs a GPU device, so this
+        // models it with its StagingSlots: one fence per frame covers both, and each slot set keeps its own serials.
+        [Fact]
+        public void Art_and_anim_slots_share_one_tracker()
+        {
+            var gpu = new FakeGpu();
+            var retire = gpu.Tracker();
+            var art = new StagingSlots(4) { Retire = retire };
+            var anim = new StagingSlots(2) { Retire = retire };
+
+            art.Copied(0);
+            anim.Copied(0);
+            SubmitFrame(retire, gpu, fails: false, out var f1);
+            retire.FencesTaken.Should().Be(1, "one fence per frame for both residencies");
+
+            anim.Copied(1); // frame 2: only anim copies
+            SubmitFrame(retire, gpu, fails: false, out var f2);
+            retire.FencesTaken.Should().Be(2);
+
+            art.Reusable(1).Should().BeTrue("art slot 1 was never copied; anim's slot 1 is a different buffer");
+            gpu.Signalled.Add(f1);
+            retire.Poll();
+            art.Reusable(0).Should().BeTrue();
+            anim.Reusable(0).Should().BeTrue();
+            anim.Reusable(1).Should().BeFalse("its frame 2 copy is still in flight");
+
+            art.Copied(0); // frame 3: art only, its submit fails
+            SubmitFrame(retire, gpu, fails: true, out _);
+            gpu.Signalled.Add(f2);
+            retire.Poll();
+            anim.Reusable(1).Should().BeTrue();
+            art.Reusable(0).Should().BeFalse("anim's earlier fence says nothing about art's failed frame 3");
+            retire.NeedsFence.Should().BeTrue();
+
+            SubmitFrame(retire, gpu, fails: false, out var f4);
+            gpu.Signalled.Add(f4);
+            retire.Poll();
+            art.Reusable(0).Should().BeTrue();
+        }
+
+        // WorldRenderer.Dispose runs drain, workers, pages, anim pages and the owned renderer through Teardown.Run. The
+        // real steps need a GPU device; here the drain throws as after device loss, and the renderer step releases the
+        // tracker's fences as Renderer.Dispose does (_copies.Dispose after its own failed drain).
+        [Fact]
+        public void A_failed_world_disposal_still_releases_the_fences()
+        {
+            var gpu = new FakeGpu();
+            var retire = gpu.Tracker();
+            var slots = new StagingSlots(2) { Retire = retire };
+            slots.Copied(0);
+            SubmitFrame(retire, gpu, fails: false, out var f1);
+            slots.Copied(1);
+            SubmitFrame(retire, gpu, fails: false, out var f2);
+
+            var ran = new List<string>();
+            var drainFailure = new GpuFenceException("drain in-flight frames: GPU wait failed: device lost");
+            Action act = () => Teardown.Run("world renderer dispose",
+                () => { ran.Add("drain"); throw drainFailure; },
+                () => ran.Add("workers"),
+                () => { ran.Add("pages"); throw new InvalidOperationException("pages"); },
+                null, // no anim residency
+                () => { ran.Add("renderer"); retire.Dispose(); });
+
+            act.Should().Throw<GpuFenceException>().Which.Should().BeSameAs(drainFailure, "the first failure is reported");
+            ran.Should().Equal("drain", "workers", "pages", "renderer");
+            gpu.Released.Should().Equal(f1, f2);
         }
 
         [Fact]
@@ -217,9 +431,9 @@ namespace ClassicUO.UnitTests.Renderer
                     loaded[s] = null;
                     uploaded++;
                 }
-                bool staged = retire.Staged;
+                bool fenced = retire.NeedsFence;
                 long serial = retire.Submit();
-                if (staged)
+                if (fenced)
                 {
                     var fence = gpu.NewFence();
                     retire.Track(serial, fence);
@@ -228,6 +442,22 @@ namespace ClassicUO.UnitTests.Renderer
             }
 
             uploaded.Should().Be(pages);
+
+            // the final submissions: let the fake GPU finish them, then poll until every fence retired
+            for (int drain = 0; retire.PendingFences > 0 && drain < latency + 2; drain++, frame++)
+            {
+                foreach (var (fence, (f, s)) in inFlight)
+                {
+                    if (f + latency > frame || !gpu.Signalled.Add(fence)) continue;
+                    foreach (int x in s) busy.Remove(x);
+                }
+                retire.Poll();
+            }
+            retire.PendingFences.Should().Be(0, "every final submission drains");
+            busy.Should().BeEmpty();
+            gpu.Released.Should().HaveCount((int)retire.FencesTaken).And.OnlyHaveUniqueItems();
+            for (int s = 0; s < SlotCount; s++) slots.Reusable(s).Should().BeTrue();
+            retire.Retired.Should().Be(retire.Serial - 1);
             retire.FencesTaken.Should().Be((pages + SlotCount - 1) / SlotCount, "one fence per frame that carried copies");
             if (pages > SlotCount)
             {

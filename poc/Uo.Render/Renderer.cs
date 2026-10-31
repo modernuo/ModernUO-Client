@@ -866,7 +866,7 @@ public sealed unsafe class Renderer : IDisposable
             long serial = _copies.Submit();
             if (fence == IntPtr.Zero)
             {
-                _copies.MarkRetired(serial); // not submitted: the GPU never runs its copies
+                _copies.Failed(serial); // no proof either way: its copies stay pending (CopyRetirement.Failed)
                 SubmitFailures++;
                 LastSubmitError = SDL_GetError();
                 return false;
@@ -908,10 +908,11 @@ public sealed unsafe class Renderer : IDisposable
     public string LastSubmitError;
 
     /// <summary>Submits the frame command buffer; with a fence (tracked by <see cref="Copies"/>) when it carries page
-    /// staging copies, so their slots can be reused once it signals.</summary>
+    /// staging copies, so their slots can be reused once it signals, or when an earlier failed submit still waits for a
+    /// later fence (<see cref="CopyRetirement.Failed"/>).</summary>
     bool SubmitFrame(IntPtr cmd)
     {
-        if (!_copies.Staged)
+        if (!_copies.NeedsFence)
         {
             bool ok = SDL_SubmitGPUCommandBuffer(cmd);
             _copies.Submit();
@@ -1032,6 +1033,7 @@ public sealed unsafe class Renderer : IDisposable
         SDL_EndGPUCopyPass(copy);
         var fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
         long serial = frame ? _copies.Submit() : 0; // the frame command buffer: it carries this frame's uploads
+        if (frame && fence == IntPtr.Zero) _copies.Failed(serial); // the wait below throws; its copies stay pending
         byte[] px;
         try
         {
