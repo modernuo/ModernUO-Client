@@ -921,10 +921,11 @@ namespace ClassicUO.Game.GameObjects
                             float steps = maxDelay / (float)Constants.CHARACTER_ANIMATION_DELAY;
                             float x = delay / (float)Constants.CHARACTER_ANIMATION_DELAY;
                             float y = x;
-                            OffsetZ = (sbyte)((step.Z - Z) * x * (4.0f / steps));
+                            sbyte offsetZ = (sbyte)((step.Z - Z) * x * (4.0f / steps));
                             MovementSpeed.GetPixelOffset(step.Direction, ref x, ref y, steps);
-                            OffsetX = (sbyte)x;
-                            OffsetY = (sbyte)y;
+
+                            // T1 (funnel part 7, group 4): the walk offset through the funnel
+                            World.Writer.InterpolateStep(this, (sbyte)x, (sbyte)y, offsetZ);
                         }
                     }
                     else

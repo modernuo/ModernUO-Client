@@ -43,7 +43,7 @@ src/ClassicUO.Client/Game/GameObjects/Mobile.cs|IsFemale|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|LastAnimationChangeTime|2
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|LastStepSoundTime|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|LastStepTime|1
-src/ClassicUO.Client/Game/GameObjects/Mobile.cs|Offset|4
+src/ClassicUO.Client/Game/GameObjects/Mobile.cs|Offset|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|Race|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|Serial|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|StepSoundOffset|1
@@ -69,7 +69,6 @@ src/ClassicUO.Client/Game/GameObjects/PlayerMobile.cs|LastStepTime|1
 src/ClassicUO.Client/Game/GameObjects/PlayerMobile.cs|Steps|1
 src/ClassicUO.Client/Game/GameObjects/PlayerMobile.cs|_inWarMode|1
 src/ClassicUO.Client/Game/GameObjects/Static.cs|Graphic|2
-src/ClassicUO.Client/Game/Managers/BoatMovingManager.cs|Offset|4
 src/ClassicUO.Client/Game/Managers/BoatMovingManager.cs|X|1
 src/ClassicUO.Client/Game/Managers/BoatMovingManager.cs|Y|1
 src/ClassicUO.Client/Game/Managers/BoatMovingManager.cs|Z|1
