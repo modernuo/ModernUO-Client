@@ -10,6 +10,8 @@ using System.Globalization;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
+using System.Threading;
+using Uo.Pack;
 
 namespace ClassicUO.Assets
 {
@@ -70,13 +72,62 @@ namespace ClassicUO.Assets
 
         private HtmlStatus _htmlStatus;
 
-        private FontCharacterData[,] _fontDataASCII;
-        private FontCharacterDataUnicode[,] _fontDataUNICODE;
+        // ASCII fonts: one row of 224 glyphs per font. MUL: filled at Load. Pack: a font's row is read on its first use.
+        private FontCharacterData[][] _asciiRows = Array.Empty<FontCharacterData[]>();
+        // Unicode fonts: font -> 256 pages -> 256 glyphs, each page read on its first use (from the pack's page record,
+        // or that page's MUL glyphs), instead of a [20, 0x10000] table allocated at startup (21 MB).
+        private readonly FontCharacterDataUnicode[][][] _uniPages = new FontCharacterDataUnicode[20][][];
+        private readonly bool[] _uniExists = new bool[20];
         private readonly UOFile[] _unicodeFontAddress = new UOFile[20];
-        private readonly long[] _unicodeFontSize = new long[20];
+        private readonly object _mulLock = new object();
+        // the pack's text/fonts.bin and text/unifont.bin (null = MUL)
+        private RecordStore _asciiStore, _uniStore;
+        // records found invalid (ASCII records first, then unicode records): absent for the session
+        private bool[] _badRecords = Array.Empty<bool>();
         private readonly VisitedUrlCache _visitedUrls = new VisitedUrlCache(1024);
         private readonly int[] _offsetCharTable = { 2, 0, 2, 2, 0, 0, 2, 2, 0, 0 };
         private readonly int[] _offsetSymbolTable = { 1, 0, 1, 1, -1, 0, 1, 1, 0, 0 };
+
+        private static readonly FontCharacterDataUnicode[] _emptyPage = new FontCharacterDataUnicode[TextConst.PageChars];
+
+        /// <summary>
+        /// Read fonts from the pack's text section when it has one (set before <see cref="Load"/>). CUO_PACK_TEXT=0 starts
+        /// it false: fonts.mul and unifont*.mul even with a text section.
+        /// </summary>
+        public bool UsePack = Environment.GetEnvironmentVariable("CUO_PACK_TEXT") != "0";
+
+        /// <summary>True when ASCII fonts come from the pack.</summary>
+        public bool AsciiFromPack => _asciiStore != null;
+
+        /// <summary>True when unicode fonts come from the pack.</summary>
+        public bool UnicodeFromPack => _uniStore != null;
+
+        /// <summary>Unicode pages read so far (tests and measurements).</summary>
+        public int LoadedUnicodePages
+        {
+            get
+            {
+                int n = 0;
+
+                foreach (var pages in _uniPages)
+                {
+                    if (pages == null)
+                    {
+                        continue;
+                    }
+
+                    foreach (var page in pages)
+                    {
+                        if (page != null)
+                        {
+                            n++;
+                        }
+                    }
+                }
+
+                return n;
+            }
+        }
 
         public FontsLoader(UOFileManager fileManager) : base(fileManager) { }
 
@@ -112,21 +163,149 @@ namespace ClassicUO.Assets
 
         public bool IsUsingHTML { get; set; }
 
-        public override unsafe void Load()
+        public override void Load()
         {
-            UOFileMul fonts = new UOFileMul(FileManager.GetUOFilePath("fonts.mul"));
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            long a0 = GC.GetAllocatedBytesForCurrentThread();
+            string asciiPath = UsePack ? FileManager.Pack?.PathOf(TextConst.AsciiFontsFile) : null;
+            string uniPath = UsePack ? FileManager.Pack?.PathOf(TextConst.UnicodeFontsFile) : null;
 
-            for (int i = 0; i < 20; i++)
+            if (asciiPath != null && File.Exists(asciiPath))
             {
-                string path = FileManager.GetUOFilePath(
-                    "unifont" + (i == 0 ? "" : i.ToString()) + ".mul"
-                );
+                _asciiStore = OpenStore(asciiPath, TextConst.MagicFontsAscii);
+            }
 
-                if (File.Exists(path))
+            if (uniPath != null && File.Exists(uniPath))
+            {
+                _uniStore = OpenStore(uniPath, TextConst.MagicFontsUnicode);
+            }
+
+            if (_asciiStore != null)
+            {
+                FontCount = _asciiStore.SlotCount;
+                _asciiRows = new FontCharacterData[FontCount][];
+            }
+            else
+            {
+                LoadAsciiMul();
+            }
+
+            if (_uniStore != null)
+            {
+                SetUnicodeExists(_uniStore.Header.Flags);
+            }
+            else
+            {
+                OpenUnicodeMul();
+            }
+
+            CheckRecords();
+
+            if (FileManager.Pack != null && (_asciiStore == null || _uniStore == null))
+            {
+                Log.Trace(UsePack ? "Fonts: the pack has no font section; reading fonts.mul / unifont*.mul" : "Fonts: CUO_PACK_TEXT=0; reading fonts.mul / unifont*.mul");
+            }
+
+            Log.Trace($"Fonts loaded in {System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds:0.0} ms, {(GC.GetAllocatedBytesForCurrentThread() - a0) / 1024} KB allocated (ASCII {(_asciiStore != null ? "pack" : "MUL")}, unicode {(_uniStore != null ? "pack" : "MUL")})");
+        }
+
+        /// <summary>Tests and tools: read fonts from these store files (a fonts.bin and a unifont.bin), as <see cref="Load"/> does with a pack.</summary>
+        public void LoadStores(string asciiPath, string unicodePath)
+        {
+            ClearResources();
+            var ascii = RecordStore.Open(asciiPath, TextConst.MagicFontsAscii);
+
+            try
+            {
+                _uniStore = RecordStore.Open(unicodePath, TextConst.MagicFontsUnicode);
+            }
+            catch
+            {
+                ascii.Dispose();
+
+                throw;
+            }
+
+            _asciiStore = ascii;
+            FontCount = _asciiStore.SlotCount;
+            _asciiRows = new FontCharacterData[FontCount][];
+            SetUnicodeExists(_uniStore.Header.Flags);
+            CheckRecords();
+        }
+
+        private void SetUnicodeExists(uint flags)
+        {
+            for (int i = 0; i < _uniExists.Length; i++)
+            {
+                _uniExists[i] = (flags & (1u << i)) != 0;
+            }
+        }
+
+        private static RecordStore OpenStore(string path, uint magic)
+        {
+            try
+            {
+                return RecordStore.Open(path, magic);
+            }
+            catch (Exception e) when (e is IOException || e is InvalidDataException || e is UnauthorizedAccessException)
+            {
+                // an unreadable or malformed store: the MUL files serve instead
+                Log.Error($"Fonts: '{path}' is invalid ({e.Message}); reading the MUL fonts");
+
+                return null;
+            }
+        }
+
+        // Type checks of the pack's records (RecordStore checked extents and codecs): a size a font record can have, a
+        // Brotli payload no larger than Brotli's bound. A failing record is absent for the session.
+        private void CheckRecords()
+        {
+            int asciiRecords = _asciiStore?.Records.Length ?? 0;
+            _badRecords = new bool[asciiRecords + (_uniStore?.Records.Length ?? 0)];
+
+            for (int i = 0; i < asciiRecords; i++)
+            {
+                ref readonly var r = ref _asciiStore.Records[i];
+
+                if (!SaneRecord(r, AsciiFontCodec.HeaderBytes, AsciiFontCodec.MaxRawBytes))
                 {
-                    _unicodeFontAddress[i] = new UOFileMul(path);
+                    MarkBad(i, $"ASCII font record {i} has an impossible size ({r.RawBytes} bytes)");
                 }
             }
+
+            for (int i = 0; i < (_uniStore?.Records.Length ?? 0); i++)
+            {
+                ref readonly var r = ref _uniStore.Records[i];
+
+                if (!SaneRecord(r, UnicodePageCodec.HeaderBytes, UnicodePageCodec.MaxRawBytes))
+                {
+                    MarkBad(asciiRecords + i, $"unicode font record {i} has an impossible size ({r.RawBytes} bytes)");
+                }
+            }
+        }
+
+        private static bool SaneRecord(in StoreRecord r, int min, int max)
+        {
+            if (r.RawBytes < min || r.RawBytes > max)
+            {
+                return false;
+            }
+
+            return r.Codec != StoreConst.CodecBrotli || r.StoredBytes <= System.IO.Compression.BrotliEncoder.GetMaxCompressedLength((int)r.RawBytes);
+        }
+
+        private void MarkBad(int index, string why)
+        {
+            if (!Volatile.Read(ref _badRecords[index]))
+            {
+                Volatile.Write(ref _badRecords[index], true);
+                Log.Error($"Fonts: {why}; it is treated as absent");
+            }
+        }
+
+        private unsafe void LoadAsciiMul()
+        {
+            UOFileMul fonts = new UOFileMul(FileManager.GetUOFilePath("fonts.mul"));
 
             int fontHeaderSize = sizeof(FontHeader);
             FontCount = 0;
@@ -173,16 +352,18 @@ namespace ClassicUO.Assets
             if (FontCount < 1)
             {
                 FontCount = 0;
+                fonts.Dispose();
 
                 return;
             }
 
-            _fontDataASCII = new FontCharacterData[FontCount, 224];
+            _asciiRows = new FontCharacterData[FontCount][];
             fonts.Seek(0, SeekOrigin.Begin);
 
             for (int i = 0; i < FontCount; i++)
             {
                 byte header = fonts.ReadUInt8();
+                var row = _asciiRows[i] = new FontCharacterData[TextConst.AsciiGlyphs];
 
                 for (int j = 0; j < 224; j++)
                 {
@@ -196,17 +377,110 @@ namespace ClassicUO.Assets
                     fonts.ReadUInt8();
                     var data = new ushort[w * h];
                     int read = fonts.Read(MemoryMarshal.AsBytes(data.AsSpan()));
-                    _fontDataASCII[i, j] = new FontCharacterData(w, h, data);
+                    row[j] = new FontCharacterData(w, h, data);
+                }
+            }
+
+            // the glyphs are copied: the file isn't needed any more
+            fonts.Dispose();
+        }
+
+        private void OpenUnicodeMul()
+        {
+            for (int i = 0; i < 20; i++)
+            {
+                string path = FileManager.GetUOFilePath(
+                    "unifont" + (i == 0 ? "" : i.ToString()) + ".mul"
+                );
+
+                if (File.Exists(path))
+                {
+                    _unicodeFontAddress[i] = new UOFileMul(path);
                 }
             }
 
             if (_unicodeFontAddress[1] == null)
             {
                 _unicodeFontAddress[1] = _unicodeFontAddress[0];
-                _unicodeFontSize[1] = _unicodeFontSize[0];
             }
 
-            _fontDataUNICODE = new FontCharacterDataUnicode[_unicodeFontAddress.Length, 0x10000];
+            for (int i = 0; i < _uniExists.Length; i++)
+            {
+                _uniExists[i] = _unicodeFontAddress[i] != null;
+            }
+        }
+
+        public override void ClearResources()
+        {
+            _asciiStore?.Dispose();
+            _asciiStore = null;
+            _uniStore?.Dispose();
+            _uniStore = null;
+
+            for (int i = 0; i < _unicodeFontAddress.Length; i++)
+            {
+                if (_unicodeFontAddress[i] != null && (i != 1 || _unicodeFontAddress[1] != _unicodeFontAddress[0]))
+                {
+                    _unicodeFontAddress[i].Dispose();
+                }
+
+                _uniPages[i] = null;
+                _uniExists[i] = false;
+            }
+
+            Array.Clear(_unicodeFontAddress);
+            _asciiRows = Array.Empty<FontCharacterData[]>();
+            _badRecords = Array.Empty<bool>();
+        }
+
+        /// <summary>A font's 224 ASCII glyphs; with the pack, read on the font's first use. Thread-safe.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private FontCharacterData[] AsciiRow(int font)
+        {
+            // a font index of FontCount or more throws here, as the [FontCount, 224] table did
+            return Volatile.Read(ref _asciiRows[font]) ?? LoadAsciiRow(font);
+        }
+
+        private FontCharacterData[] LoadAsciiRow(int font)
+        {
+            // a font whose record is missing or invalid has 224 empty glyphs (width and height 0)
+            var row = new FontCharacterData[TextConst.AsciiGlyphs];
+            var store = _asciiStore;
+            Interlocked.Increment(ref StatAsciiLoads);
+
+            if (store != null && store.TryGet(font, out var slot, out var rec) && !Volatile.Read(ref _badRecords[slot.Record - 1]))
+            {
+                int bad = (int)slot.Record - 1;
+                byte[] buf = System.Buffers.ArrayPool<byte>.Shared.Rent((int)rec.RawBytes);
+
+                try
+                {
+                    store.Read(rec, buf);
+                    var glyphs = new AsciiGlyph[TextConst.AsciiGlyphs];
+
+                    if (AsciiFontCodec.TryDecode(buf.AsSpan(0, (int)rec.RawBytes), glyphs))
+                    {
+                        for (int i = 0; i < row.Length; i++)
+                        {
+                            row[i] = new FontCharacterData(glyphs[i].Width, glyphs[i].Height, glyphs[i].Texels);
+                        }
+                    }
+                    else
+                    {
+                        MarkBad(bad, $"ASCII font {font} is malformed");
+                    }
+                }
+                catch (Exception e) when (e is IOException || e is InvalidDataException)
+                {
+                    MarkBad(bad, $"ASCII font {font} could not be read ({e.Message})");
+                }
+                finally
+                {
+                    System.Buffers.ArrayPool<byte>.Shared.Return(buf);
+                }
+            }
+
+            return Interlocked.CompareExchange(ref _asciiRows[font], row, null) ?? row;
         }
 
         private static FontCharacterDataUnicode _nullChar = new FontCharacterDataUnicode();
@@ -215,27 +489,136 @@ namespace ClassicUO.Assets
         {
             int index = (int)c; /*((int)c & 0xFFFFF) - 0x20*/;
 
-            if (index < 0)
+            // a font index of 20 or more throws here, as the [20, 0x10000] table did
+            var pages = Volatile.Read(ref _uniPages[font]);
+
+            if (pages == null)
             {
-                return ref _nullChar;
+                Interlocked.CompareExchange(ref _uniPages[font], new FontCharacterDataUnicode[TextConst.PagesPerFont][], null);
+                pages = _uniPages[font];
             }
 
-            ref var cc = ref _fontDataUNICODE[font, index];
+            var page = Volatile.Read(ref pages[index >> 8]) ?? LoadPage(font, index >> 8, pages);
+            ref var cc = ref page[index & 0xFF];
 
             if (cc.Data == null)
             {
-                LoadChar(font, index);
-
-                if (cc.Data == null)
-                {
-                    return ref _nullChar;
-                }
+                return ref _nullChar;
             }
 
             return ref cc;
         }
 
-        private void LoadChar(byte font, int index)
+        // One page (256 characters) of a unicode font: from the pack's page record, else that page's MUL glyphs. A glyph
+        // without data (none in the file, or a width or height that isn't positive) is the null glyph, as before.
+        /// <summary>Measurements: unicode pages loaded, the Stopwatch ticks spent on them, and ASCII fonts read from the pack.</summary>
+        public static long StatPageLoads, StatPageTicks, StatAsciiLoads;
+
+        private FontCharacterDataUnicode[] LoadPage(byte font, int page, FontCharacterDataUnicode[][] pages)
+        {
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            var result = LoadPageCore(font, page);
+            Interlocked.Increment(ref StatPageLoads);
+            Interlocked.Add(ref StatPageTicks, System.Diagnostics.Stopwatch.GetTimestamp() - t0);
+
+            return Interlocked.CompareExchange(ref pages[page], result, null) ?? result;
+        }
+
+        private FontCharacterDataUnicode[] LoadPageCore(byte font, int page)
+        {
+            FontCharacterDataUnicode[] result;
+
+            if (_uniStore != null)
+            {
+                result = ReadPackPage(font, page);
+            }
+            else if (_unicodeFontAddress[font] == null)
+            {
+                result = _emptyPage;
+            }
+            else
+            {
+                result = new FontCharacterDataUnicode[TextConst.PageChars];
+
+                // the MUL file reads through a seek position
+                lock (_mulLock)
+                {
+                    for (int i = 0; i < result.Length; i++)
+                    {
+                        try
+                        {
+                            LoadChar(font, page * TextConst.PageChars + i, ref result[i]);
+                        }
+                        catch (EndOfStreamException)
+                        {
+                            // the glyph runs past the end of the file: no glyph (it used to throw when drawn; the
+                            // converter stores none too)
+                            result[i] = default;
+                        }
+                    }
+                }
+            }
+
+            return result;
+        }
+
+        private FontCharacterDataUnicode[] ReadPackPage(byte font, int page)
+        {
+            var store = _uniStore;
+
+            if (!store.TryGet(font * TextConst.PagesPerFont + page, out var slot, out var rec))
+            {
+                return _emptyPage;
+            }
+
+            int bad = (_asciiStore?.Records.Length ?? 0) + (int)slot.Record - 1;
+
+            if (Volatile.Read(ref _badRecords[bad]))
+            {
+                return _emptyPage;
+            }
+
+            byte[] buf = System.Buffers.ArrayPool<byte>.Shared.Rent((int)rec.RawBytes);
+
+            try
+            {
+                store.Read(rec, buf);
+                var payload = buf.AsSpan(0, (int)rec.RawBytes);
+
+                if (UnicodePageCodec.Validate(payload) < 0)
+                {
+                    MarkBad(bad, $"unicode font {font} page {page} is malformed");
+
+                    return _emptyPage;
+                }
+
+                var result = new FontCharacterDataUnicode[TextConst.PageChars];
+
+                for (int i = 0; i < result.Length; i++)
+                {
+                    var h = UnicodePageCodec.Header(payload, i);
+
+                    if (h.DataOffset != UnicodePageCodec.NoGlyph)
+                    {
+                        result[i] = new FontCharacterDataUnicode(h.Width, h.Height, h.OffsetX, h.OffsetY, UnicodePageCodec.Bits(payload, h).ToArray());
+                    }
+                }
+
+                return result;
+            }
+            catch (Exception e) when (e is IOException || e is InvalidDataException)
+            {
+                MarkBad(bad, $"unicode font {font} page {page} could not be read ({e.Message})");
+
+                return _emptyPage;
+            }
+            finally
+            {
+                System.Buffers.ArrayPool<byte>.Shared.Return(buf);
+            }
+        }
+
+        private void LoadChar(byte font, int index, ref FontCharacterDataUnicode cc)
         {
             var file = _unicodeFontAddress[font];
 
@@ -252,8 +635,6 @@ namespace ClassicUO.Assets
             }
 
             file.Seek(lookup, SeekOrigin.Begin);
-
-            ref var cc = ref _fontDataUNICODE[font, index];
 
             cc.OffsetX = file.ReadInt8();
             cc.OffsetY = file.ReadInt8();
@@ -296,8 +677,14 @@ namespace ClassicUO.Assets
 
         public bool UnicodeFontExists(byte font)
         {
-            return font < 20 && _unicodeFontAddress[font] != null;
+            return font < 20 && _uniExists[font];
         }
+
+        /// <summary>Tests: the unicode glyph the text code draws for <paramref name="c"/> (Data null = none).</summary>
+        public FontCharacterDataUnicode GetUnicodeGlyph(byte font, char c) => GetCharUni(font, c);
+
+        /// <summary>Tests: ASCII glyph <paramref name="index"/> (0..223) of <paramref name="font"/>.</summary>
+        public FontCharacterData GetAsciiGlyph(byte font, int index) => AsciiRow(font)[index];
 
         /// <summary> Get the index in ASCII fonts of a character. </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
@@ -324,7 +711,7 @@ namespace ClassicUO.Assets
 
             foreach (char c in str)
             {
-                textLength += _fontDataASCII[font, GetASCIIIndex(c)].Width;
+                textLength += AsciiRow(font)[GetASCIIIndex(c)].Width;
             }
 
             return textLength;
@@ -339,14 +726,14 @@ namespace ClassicUO.Assets
 
             if (c < NOPRINT_CHARS)
             {
-                return _fontDataASCII[font, 0].Width;
+                return AsciiRow(font)[0].Width;
             }
 
             int index = c - NOPRINT_CHARS;
 
-            if (index < _fontDataASCII.GetLength(1))
+            if (index < TextConst.AsciiGlyphs)
             {
-                return _fontDataASCII[font, index].Width;
+                return AsciiRow(font)[index].Width;
             }
 
             return 0;
@@ -575,14 +962,14 @@ namespace ClassicUO.Assets
 
             if (isCropped)
             {
-                width -= _fontDataASCII[font, '.' - NOPRINT_CHARS].Width * 3;
+                width -= AsciiRow(font)['.' - NOPRINT_CHARS].Width * 3;
             }
 
             int textLength = 0;
 
             foreach (char c in str)
             {
-                textLength += _fontDataASCII[font, GetASCIIIndex(c)].Width;
+                textLength += AsciiRow(font)[GetASCIIIndex(c)].Width;
 
                 if (textLength > width)
                 {
@@ -720,10 +1107,7 @@ namespace ClassicUO.Assets
 
                         int offsY = GetFontOffsetY(font, index);
 
-                        ref FontCharacterData fcd = ref _fontDataASCII[
-                            font,
-                            GetASCIIIndex(item.Item)
-                        ];
+                        ref FontCharacterData fcd = ref AsciiRow(font)[GetASCIIIndex(item.Item)];
 
                         int dw = fcd.Width;
                         int dh = fcd.Height;
@@ -877,7 +1261,7 @@ namespace ClassicUO.Assets
                     charCount = 0;
                 }
 
-                ref FontCharacterData fcd = ref _fontDataASCII[font, GetASCIIIndex(si)];
+                ref FontCharacterData fcd = ref AsciiRow(font)[GetASCIIIndex(si)];
                 int eval = ptr.CharStart;
 
                 if (si == '\n' || ptr.Width + readWidth + fcd.Width > width)
@@ -1177,7 +1561,7 @@ namespace ClassicUO.Assets
             ushort flags
         )
         {
-            if (font >= 20 || _unicodeFontAddress[font] == null || str.IsEmpty)
+            if (font >= 20 || !_uniExists[font] || str.IsEmpty)
             {
                 return string.Empty;
             }
@@ -1263,7 +1647,7 @@ namespace ClassicUO.Assets
 
         public int GetWidthUnicode(byte font, string str)
         {
-            if (font >= 20 || _unicodeFontAddress[font] == null || string.IsNullOrEmpty(str))
+            if (font >= 20 || !_uniExists[font] || string.IsNullOrEmpty(str))
             {
                 return 0;
             }
@@ -1273,7 +1657,7 @@ namespace ClassicUO.Assets
 
         private int GetWidthUnicode(byte font, ReadOnlySpan<char> str)
         {
-            if (font >= 20 || _unicodeFontAddress[font] == null || str.IsEmpty)
+            if (font >= 20 || !_uniExists[font] || str.IsEmpty)
             {
                 return 0;
             }
@@ -1305,7 +1689,7 @@ namespace ClassicUO.Assets
 
         public int GetCharWidthUnicode(byte font, char c)
         {
-            if (font >= 20 || _unicodeFontAddress[font] == null || c == 0 || c == '\r')
+            if (font >= 20 || !_uniExists[font] || c == 0 || c == '\r')
             {
                 return 0;
             }
@@ -1334,7 +1718,7 @@ namespace ClassicUO.Assets
         )
         {
             if (
-                font >= 20 || _unicodeFontAddress[font] == null || string.IsNullOrEmpty(text)
+                font >= 20 || !_uniExists[font] || string.IsNullOrEmpty(text)
             )
             {
                 return 0;
@@ -1383,7 +1767,7 @@ namespace ClassicUO.Assets
             _htmlStatus.BackgroundColor = 0;
             _htmlStatus.Margins = Margin.Empty;
 
-            if (font >= 20 || _unicodeFontAddress[font] == null)
+            if (font >= 20 || !_uniExists[font])
             {
                 return null;
             }
@@ -1673,7 +2057,7 @@ namespace ClassicUO.Assets
             bool saveHitmap
         )
         {
-            if (font >= 20 || _unicodeFontAddress[font] == null)
+            if (font >= 20 || !_uniExists[font])
             {
                 return FontInfo.Empty;
             }
@@ -2753,7 +3137,7 @@ namespace ClassicUO.Assets
                     case HTML_TAG_TYPE.HTT_SMALL:
 
                         if (
-                            current.Font != 0xFF && _unicodeFontAddress[current.Font] != null
+                            current.Font != 0xFF && _uniExists[current.Font]
                         )
                         {
                             info.Font = current.Font;
@@ -2764,7 +3148,7 @@ namespace ClassicUO.Assets
                     case HTML_TAG_TYPE.HTT_BASEFONT:
 
                         if (
-                            current.Font != 0xFF && _unicodeFontAddress[current.Font] != null
+                            current.Font != 0xFF && _uniExists[current.Font]
                         )
                         {
                             info.Font = current.Font;
@@ -2788,7 +3172,7 @@ namespace ClassicUO.Assets
                     case HTML_TAG_TYPE.HTT_H6:
 
                         if (
-                            current.Font != 0xFF && _unicodeFontAddress[current.Font] != null
+                            current.Font != 0xFF && _uniExists[current.Font]
                         )
                         {
                             info.Font = current.Font;
@@ -3518,7 +3902,7 @@ namespace ClassicUO.Assets
             ushort flags
         )
         {
-            if (font >= 20 || _unicodeFontAddress[font] == null || string.IsNullOrEmpty(str))
+            if (font >= 20 || !_uniExists[font] || string.IsNullOrEmpty(str))
             {
                 return 0;
             }
@@ -3577,7 +3961,7 @@ namespace ClassicUO.Assets
                     break;
             }
 
-            if (font >= 20 || _unicodeFontAddress[font] == null || string.IsNullOrEmpty(str))
+            if (font >= 20 || !_uniExists[font] || string.IsNullOrEmpty(str))
             {
                 return (x, y);
             }
@@ -3744,7 +4128,7 @@ namespace ClassicUO.Assets
                 {
                     for (int i = 0; i < len; i++)
                     {
-                        x += _fontDataASCII[font, GetASCIIIndex(info.Data[i].Item)].Width;
+                        x += AsciiRow(font)[GetASCIIIndex(info.Data[i].Item)].Width;
 
                         if (info.CharStart + i + 1 == pos)
                         {
@@ -3795,7 +4179,7 @@ namespace ClassicUO.Assets
                 return SingleGlyphInfo.Empty;
 
             int index = GetASCIIIndex(c);
-            ref FontCharacterData fcd = ref _fontDataASCII[font, index];
+            ref FontCharacterData fcd = ref AsciiRow(font)[index];
 
             int dw = fcd.Width;
             int dh = fcd.Height;
@@ -3852,7 +4236,7 @@ namespace ClassicUO.Assets
         /// </summary>
         public SingleGlyphInfo RenderSingleGlyphUnicode(byte font, char c, bool hasBorder, bool isSolid, bool isItalic = false, uint charcolor = 0)
         {
-            if (font >= 20 || _unicodeFontAddress[font] == null)
+            if (font >= 20 || !_uniExists[font])
                 return SingleGlyphInfo.Empty;
 
             if (c == ' ')

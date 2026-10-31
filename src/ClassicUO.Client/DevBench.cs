@@ -161,6 +161,36 @@ namespace ClassicUO
         private static bool _walkBack;
         private static int _planFrames;
         private static bool _gumpsOpened;
+        private static bool _textsOpened, _textHover;
+
+        // the nearest mobile (other than the player) or item the server sent properties for, closest first
+        private static Game.GameObjects.GameObject NearestWithProperties(World world, int skip = 0)
+        {
+            var list = new System.Collections.Generic.List<Game.GameObjects.Entity>();
+
+            foreach (var m in world.Mobiles.Values)
+            {
+                if (m != world.Player && world.OPL.Contains(m.Serial))
+                {
+                    list.Add(m);
+                }
+            }
+
+            if (list.Count <= skip)
+            {
+                foreach (var it in world.Items.Values)
+                {
+                    if (it.OnGround && world.OPL.Contains(it.Serial))
+                    {
+                        list.Add(it);
+                    }
+                }
+            }
+
+            list.Sort((a, b) => a.Distance.CompareTo(b.Distance));
+
+            return list.Count > skip ? list[skip] : null;
+        }
         private static long _appliesAtStart;
         private static string _planMode;
         private static long _planStart;
@@ -674,7 +704,7 @@ namespace ClassicUO
                 {
                     Log.Info($"[bench-gumpopen] {_gumpOpenName}: worst frame {_gumpOpenWorst * 1000.0 / sec:0.00} ms in 1.5 s, " +
                              $"main-thread gump decodes {Renderer.Gumps.Gump.TotalSyncLoads - _gumpOpenLoads0} " +
-                             $"({(Renderer.Gumps.Gump.TotalSyncTicks - _gumpOpenTicks0) * 1000.0 / sec:0.000} ms), prefetched {Renderer.Gumps.Gump.TotalPrefetched - _gumpOpenPf0} ({(Renderer.Gumps.Gump.TotalPrefetchTicks - _gumpOpenPfTicks0) * 1000.0 / sec:0.000} ms), open call {_gumpOpenCall * 1000.0 / sec:0.000} ms, pack {game.UO.FileManager.Gumps.FromPack}, gumps open: {string.Join(",", System.Linq.Enumerable.Select(Game.Managers.UIManager.Gumps, g => g.GetType().Name))}");
+                             $"({(Renderer.Gumps.Gump.TotalSyncTicks - _gumpOpenTicks0) * 1000.0 / sec:0.000} ms), prefetched {Renderer.Gumps.Gump.TotalPrefetched - _gumpOpenPf0} ({(Renderer.Gumps.Gump.TotalPrefetchTicks - _gumpOpenPfTicks0) * 1000.0 / sec:0.000} ms), open call {_gumpOpenCall * 1000.0 / sec:0.000} ms, pack {game.UO.FileManager.Gumps.FromPack}, {TextStats()}, gumps open: {string.Join(",", System.Linq.Enumerable.Select(Game.Managers.UIManager.Gumps, g => g.GetType().Name))}");
                     _gumpOpenName = null;
                 }
             }
@@ -699,6 +729,7 @@ namespace ClassicUO
             _gumpOpenTicks0 = Renderer.Gumps.Gump.TotalSyncTicks;
             _gumpOpenPf0 = Renderer.Gumps.Gump.TotalPrefetched;
             _gumpOpenPfTicks0 = Renderer.Gumps.Gump.TotalPrefetchTicks;
+            TextStart();
             long callStart = Stopwatch.GetTimestamp();
 
             switch (_gumpOpenName)
@@ -731,6 +762,11 @@ namespace ClassicUO
                 case "worldmap": GameActions.OpenWorldMap(world); break;
                 case "combatbook": GameActions.OpenAbilitiesBook(world); break;
                 case "spellbook": OpenPics(world, "08AC,08BA,08BB"); break;
+                // text first use (pack-format.md "Text"): every name overhead, the server's help gump (cliloc html),
+                // and the tooltips of the 40 nearest objects with properties, rendered as Tooltip.Draw renders them
+                case "allnames": GameActions.AllNames(world); break;
+                case "help": GameActions.RequestHelp(); break;
+                case "tooltips": RenderTooltips(world, 40); break;
                 default:
                     if (_gumpOpenName.StartsWith("pics:"))
                     {
@@ -745,6 +781,61 @@ namespace ClassicUO
         }
 
         private static bool _gumpPickDone;
+
+        // text first-use counters at the start of a gumpopen step: unicode pages read, their ticks, ASCII fonts read,
+        // cliloc strings created
+        private static long _textPages0, _textTicks0, _textAscii0, _textStrings0;
+
+        private static long ClilocStrings()
+        {
+            var c = Client.Game.UO.FileManager.Clilocs;
+
+            return (c.LanguageTable?.Materialized ?? 0) + (c.EnglishTable?.Materialized ?? 0);
+        }
+
+        private static void TextStart()
+        {
+            _textPages0 = Assets.FontsLoader.StatPageLoads;
+            _textTicks0 = Assets.FontsLoader.StatPageTicks;
+            _textAscii0 = Assets.FontsLoader.StatAsciiLoads;
+            _textStrings0 = ClilocStrings();
+        }
+
+        private static string TextStats() =>
+            $"text: unicode pages read {Assets.FontsLoader.StatPageLoads - _textPages0} ({(Assets.FontsLoader.StatPageTicks - _textTicks0) * 1000.0 / Stopwatch.Frequency:0.000} ms), " +
+            $"ASCII fonts read {Assets.FontsLoader.StatAsciiLoads - _textAscii0}, cliloc strings created {ClilocStrings() - _textStrings0} " +
+            $"(fonts {(Client.Game.UO.FileManager.Fonts.UnicodeFromPack ? "pack" : "MUL")}, cliloc {(Client.Game.UO.FileManager.Clilocs.FromPack ? "pack" : "MUL")})";
+
+        private static void RenderTooltips(World world, int count)
+        {
+            var profile = Configuration.ProfileManager.CurrentProfile;
+            byte font = profile?.TooltipFont ?? 1;
+            ushort hue = profile?.TooltipTextHue ?? 0xFFFF;
+            var fonts = Client.Game.UO.FileManager.Fonts;
+            int shown = 0;
+
+            for (int i = 0; i < count; i++)
+            {
+                if (NearestWithProperties(world, i) is not Game.GameObjects.Entity e || !world.OPL.TryGetNameAndData(e.Serial, out string name, out string data))
+                {
+                    break;
+                }
+
+                // Tooltip.ReadProperties' html and Tooltip.Draw's layout
+                string html = $"<basefont color=\"yellow\">{name}<basefont color=\"#FFFFFFFF\">" + (string.IsNullOrEmpty(data) ? "" : "\n" + data);
+                fonts.SetUseHTML(true);
+                fonts.RecalculateWidthByInfo = true;
+                int width = Math.Min(600, fonts.GetWidthUnicode(font, html));
+                width = Math.Min(600, fonts.GetWidthExUnicode(font, html, width, Assets.TEXT_ALIGN_TYPE.TS_CENTER, (ushort)FontStyle.BlackBorder));
+                var rt = RenderedText.Create(html, hue, font, true, FontStyle.BlackBorder, Assets.TEXT_ALIGN_TYPE.TS_CENTER, width, 5, true, true);
+                fonts.RecalculateWidthByInfo = false;
+                fonts.SetUseHTML(false);
+                rt.Destroy();
+                shown++;
+            }
+
+            Log.Info($"[bench-gumpopen] tooltips: {shown} rendered");
+        }
 
         // gump picking: each gump's picker answers on a 2-px grid (one bit per point, FNV-1a hashed; compare a pack run
         // with a CUO_PACK_GUMPS=0 run), then a click-through check: hit-testing a plain gump showing the paperdoll at a
@@ -1325,6 +1416,12 @@ namespace ClassicUO
             var gs = game.Scene as Game.Scenes.GameScene;
             Game.BenchEffects.Tick(world);
 
+            if (_textHover)
+            {
+                // the "texts" entry keeps the mouse on an NPC so its tooltip stays up for the screenshot
+                HoldMouse(game);
+            }
+
             if (_flipLeft > 0)
             {
                 if (_flipWalk && !world.Player.Pathfinder.AutoWalking && now >= _travelAt)
@@ -1870,6 +1967,46 @@ namespace ClassicUO
                         }
 
                         Log.Info("[bench] gumps: paperdoll, backpack, journal, status");
+                        _planIndex++;
+                        _stepAt = now + sec * 2;
+
+                        break;
+                    }
+
+                    if (_plan[_planIndex] == "texts")
+                    {
+                        if (!_textsOpened)
+                        {
+                            // text-heavy UI for pack/MUL screenshots: the journal, every name overhead (the server's
+                            // replies to single clicks), the help gump (server html with cliloc text), then a tooltip
+                            GameActions.OpenJournal(world);
+                            GameActions.AllNames(world);
+                            GameActions.RequestHelp();
+                            _textsOpened = true;
+                            _stepAt = now + sec * 3;
+
+                            break;
+                        }
+
+                        foreach (var g in Game.Managers.UIManager.Gumps)
+                        {
+                            switch (g)
+                            {
+                                case Game.UI.Gumps.JournalGump: g.X = 20; g.Y = 560; break;
+                                case Game.UI.Gumps.Gump sg when sg.GetType() == typeof(Game.UI.Gumps.Gump) && sg.ServerSerial != 0: sg.X = 1300; sg.Y = 60; break;
+                            }
+                        }
+
+                        if (Configuration.ProfileManager.CurrentProfile is { } tipProfile)
+                        {
+                            tipProfile.UseTooltip = true;
+                            tipProfile.TooltipDelayBeforeDisplay = 0;
+                        }
+
+                        var tipTarget = NearestWithProperties(world);
+                        PickAt(gs, tipTarget, "tooltip");
+                        _textHover = tipTarget != null;
+                        Log.Info($"[bench] texts: journal, names, help gump, tooltip of {(tipTarget != null ? $"0x{((Game.GameObjects.Entity)tipTarget).Serial:X8}" : "nothing")}; gumps open: {string.Join(",", System.Linq.Enumerable.Select(Game.Managers.UIManager.Gumps, gg => gg.GetType().Name))}");
                         _planIndex++;
                         _stepAt = now + sec * 2;
 

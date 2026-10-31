@@ -46,6 +46,11 @@ For every content type described here, the client reads only the pack. MUL/UOP s
     r_<rx>_<ry>.bin        map region (UORG)
   gumps/
     gumps.bin              gump images, sizes and gump.def aliases: a record store (GUMP)
+  text/
+    fonts.bin              ASCII fonts: a record store, a record per font (FNTA)
+    unifont.bin            unicode fonts: a record store, a record per 256-character page (FNTU)
+    cliloc.bin             cliloc, every language: a record store, a record per language (CLIL)
+    speech.bin             speech.mul keywords (SPCH)
 ```
 
 `NNNN` is the zero-padded decimal page index (`page_0000.bin`). Page indices are contiguous from 0.
@@ -79,6 +84,10 @@ Every binary file starts with a 16-byte `FileHeader`:
 | `APAL` 0x4C415041 | anim/palettes.bin |
 | `ANDT` 0x54444E41 | anim/animdata.bin |
 | `GUMP` 0x504D5547 | gumps/gumps.bin (a record store) |
+| `FNTA` 0x41544E46 | text/fonts.bin (a record store) |
+| `FNTU` 0x55544E46 | text/unifont.bin (a record store) |
+| `CLIL` 0x4C494C43 | text/cliloc.bin (a record store) |
+| `SPCH` 0x48435053 | text/speech.bin |
 
 **Reader rule.** A reader accepts `version` 0 and 1 and rejects anything higher. Version 0 files come from pre-1.0 packs. Every version-0 file has the same layout as its version-1 counterpart, so no reader branches on the version. What version-0 packs lack:
 
@@ -108,7 +117,7 @@ In every kind, the *logical payload* is the bytes a raw file has after its `File
 
   Decode each chunk straight into the destination buffer at its logical offset. Chunk 0 always contains the `PageHeader` (and for regions the `RegionHeader` and offset table). `Uo.Pack` provides `ChunkedBrotli.Decode` (single thread, in memory), `ChunkedBrotliStream` (sequential) and `ChunkedBrotliDecoder` (persistent worker pool, used by `AtlasPage.Read(path, span, decoder)`).
 
-Which files use which kind is a profile choice (see "Ship profile"). Only pages and regions are compressed as whole files; all other files are Kind 0. Record stores (gumps) are Kind 0 files whose records are compressed one by one (see "Record stores").
+Which files use which kind is a profile choice (see "Ship profile"). Only pages and regions are compressed as whole files; all other files are Kind 0. Record stores (gumps, fonts, cliloc) are Kind 0 files whose records are compressed one by one (see "Record stores").
 
 ## Atlas pages (`page_NNNN.bin`)
 
@@ -361,7 +370,7 @@ At runtime, an equipped item on body `body` with animId `graphic` is drawn as `n
 
 ## Record stores
 
-Content that the client reads one item at a time and that is not sampled by the GPU from pack pages goes into a record store: one Kind 0 file per content type, read by offset through one file handle kept open. Gumps are the first; sounds, fonts and the other "Not in the pack" types are meant to use the same layout with their own magic, slot argument and record meta. Reader and writer: `Uo.Pack.RecordStore`, `RecordStoreWriter`.
+Content that the client reads one item at a time and that is not sampled by the GPU from pack pages goes into a record store: one Kind 0 file per content type, read by offset through one file handle kept open. Gumps were the first; ASCII fonts (a record per font), unicode fonts (a record per 256-character page) and cliloc (a record per language) use it too, with their own magic, slot argument and record meta (see "Text"). Sounds and the other "Not in the pack" types are meant to follow. Reader and writer: `Uo.Pack.RecordStore`, `RecordStoreWriter`.
 
 | Part | Layout |
 |---|---|
@@ -431,6 +440,56 @@ A record store with magic `GUMP` holding every gump id the client's `GumpsLoader
   The 64 KiB threshold stores 3,915 of the 4,290 records this way (37.9 → 58.2 MiB) and makes them decode in under 35 µs; 16 KiB would give 3,459 records and 47.5 MiB, but in the client the journal, status and spellbook opens were then 0.1–0.7 ms slower than the MUL path, and with 64 KiB they match it (poc-log "Gumps in the pack"). The 375 larger ones keep Brotli:
 - Sizes for the 4,438 gumps: 4,290 records after sharing (16 gump.def/index aliases, 132 identical images), 58.2 MiB file in the ship profile, of which the tables are 0.6 MiB.
 
+## Text: fonts, cliloc, speech (`text/`)
+
+ASCII fonts (fonts.mul), unicode fonts (unifont*.mul), cliloc in every language the client folder has (Cliloc.*), and speech.mul's keyword table. The client reads each from here when its file exists (`FontsLoader.AsciiFromPack` / `UnicodeFromPack`, `ClilocLoader.FromPack`, `SpeechesLoader.FromPack`); without it, or when the file is invalid as a whole, it reads the MUL files as before and says so in the log. `CUO_PACK_TEXT=0` reads the MUL files even when the pack has text.
+
+Every file is converted through a frozen copy of the client's loader (tools/ClassicUO.Assets.Mul: `FontsLoader`, `ClilocLoader`, `SpeechesLoader`), so the pack holds what the client resolved, quirks included: a unicode glyph whose width or height isn't positive is no glyph, an ASCII glyph past the end of fonts.mul has no texel array, unifont1 is unifont when unifont1.mul is missing, a cliloc text stops at its first NUL.
+
+### `text/fonts.bin`: ASCII fonts
+
+A record store with magic `FNTA` (0x41544E46).
+- **Slots:** one per font; `slotCount` = the client's `FontCount` (10 for 7.0.103).
+- **Records** (`Uo.Pack.AsciiFontCodec`): `meta0` = 224. Raw payload: `AsciiGlyphHeader[224]` (4 bytes: width u8, height u8, flags u8, pad u8; flag bit 0 = the glyph has a texel array), then for each glyph with bit 0, `width·height` u16 texels (fonts.mul's colours as stored), glyph after glyph. The header table is the size table. Glyph `i` is character `i + 32`; the client maps 0..31 to glyph 0.
+- **Client:** a font's 224 glyphs are read and decoded on the font's first use (one positional read; `FontsLoader.AsciiRow`), instead of all fonts at startup.
+
+### `text/unifont.bin`: unicode fonts
+
+A record store with magic `FNTU` (0x55544E46).
+- **`StoreHeader.flags`:** bit `i` = unicode font `i` exists (`UnicodeFontExists`), after the client's own rule that font 1 is font 0 when unifont1.mul is missing.
+- **Slots:** `20 × 256`: slot `font·256 + page` holds characters `page·256 .. page·256 + 255` of the font. A page without glyphs has no record. Identical pages share one record (font 1's pages are font 0's when it is an alias).
+- **Records** (`Uo.Pack.UnicodePageCodec`): `meta0` = font, `meta1` = page, `meta2` = glyphs in the page. Raw payload: `UnicodeGlyphHeader[256]` (8 bytes: offsetX, offsetY, width, height as i8, then dataOffset u32), then the glyphs' rows back to back. A glyph's rows are `height` rows of `(width − 1) / 8 + 1` bytes, 1 bit per pixel, most significant bit first: unifont's own layout, which the client draws from directly. `dataOffset` is from the end of the header table; `0xFFFFFFFF` = no glyph, with every other field 0. A present glyph has width and height > 0.
+- **Sizes without decoding the glyphs:** the header table is the first 2 KiB of the raw payload and gives every glyph's offsets and size; with codec 0 it is the record's first 2 KiB on disk.
+- **Client** (`FontsLoader.GetCharUni`): glyphs are held per font and per page (`font → 256 pages → 256 glyphs`), and a page is read on first use of any of its characters: one positional read, plus a Brotli decode for large pages. The `[20, 0x10000]` glyph table the client allocated at startup (21 MB) is gone. With MUL files, a page's 256 glyphs are read from the unifont file on first use the same way, and a missing glyph is no longer re-read on every lookup.
+
+### `text/cliloc.bin`: cliloc
+
+A record store with magic `CLIL` (0x4C494C43), one record per language.
+- **Slots:** one per language, in the order converted (enu first). The language code is in the record's `meta0`/`meta1`: up to 4 lowercase ASCII letters or digits, one per byte, NUL-padded (`ClilocTable.PackLanguage`), from the file extension (`Cliloc.deu` → `deu`). 7.0.103 has `enu`, `chs`, `cht`, `deu`, `esp`, `fra`, `jpn`, `kor`.
+- **Records** (`Uo.Pack.ClilocTable`), one language file alone, with later duplicates resolved as the client resolves them (the last wins). Raw payload:
+
+  | Part | Layout |
+  |---|---|
+  | header | count u32, blobBytes u32 |
+  | ids | i32[count], strictly ascending (binary search) |
+  | ends | u32[count]; string `i` is `blob[ends[i−1] .. ends[i])` (from 0 for `i` = 0) |
+  | blob | UTF-8, the strings back to back in id order |
+
+  A string is the UTF-8 encoding of the client's decoded text (`ReadUTF8(length)`: cut at the first NUL, invalid bytes as U+FFFD), so decoding it gives the same string. Ship profile: codec 0 (`--cliloc-brotli` stores Brotli).
+- **Lookups:** the client reads the language's record and, for any other language, enu's (it reads Cliloc.enu under every language). A lookup tries Clilocs.txt (the shard's own strings, still a plain text file in the client folder, read at load), then the language, then enu: the same result as the client's merged dictionary. A language the pack lacks rolls back to enu, as a missing Cliloc file did.
+- **Lazy strings:** the payload stays as one byte array; a string is created on its first lookup and cached in a per-table array (`Interlocked.CompareExchange`, so threads agree on one instance per id and plugins or workers may read cliloc). Nothing relied on interned strings: no caller compares cliloc strings by reference. The formatting (`Translate`: argument substitution, `~1_NAME~`, `#` cliloc references, capitalisation) is client code and is unchanged; it now looks numbers up through the same chain. With Cliloc.* files the client builds the same table from the file (one read, an index of slices, no strings) instead of a dictionary of 117,725 interned strings.
+
+### `text/speech.bin`: speech keywords
+
+Not a record store (the client uses the whole table): `FileHeader` with magic `SPCH` (0x48435053), count u32, blobBytes u32, `SpeechRecord[count]` (8 bytes: id u16, pad u16, end u32), then the UTF-8 blob; entry `i`'s text is `blob[end[i−1] .. end[i])`. The entries are speech.mul's with a non-empty text, in file order. The client builds `SpeechEntry(id, text)` from each, as before, so keyword splitting and matching (`GetKeywords`, `IsMatch`) are unchanged.
+
+### Untrusted input
+
+- A store's extents and codecs are checked by `RecordStore.Open` (see "Record stores"); a store that fails is not used and the MUL files serve instead.
+- **Fonts:** a record must have a raw size between its header table and its largest possible size (all glyphs 255×255 for ASCII, 256 glyphs of 127×127 for a page) and a Brotli payload within Brotli's bound. At decode, an ASCII record must add up exactly (header table plus the texels it declares, no unknown flags) and a page must have every glyph's rows inside the payload and absent glyphs all zero. A record that fails, or whose read or Brotli decode fails, is absent for the session (logged once): its font has no glyphs, or its page has none.
+- **Cliloc:** a language record must have a size up to 256 MiB that adds up exactly (`8 + 8·count + blobBytes`), strictly ascending ids and string ends that never decrease or pass the blob. A record that fails makes the pack's cliloc unusable and the Cliloc.* files serve. Strings never throw on decode (invalid UTF-8 becomes U+FFFD, as with the files).
+- **Speech:** at most 2²⁰ entries and 64 MiB of text; the sizes must add up and the ends must not decrease or pass the blob, else the file is not used and speech.mul serves.
+
 ## Manifest (`manifest.json`)
 
 camelCase JSON, read case-insensitively:
@@ -492,14 +551,12 @@ Decode cost on one worker (i9-12900K): an anim page ≈2.6 ms, an art page ≈23
 
 | Content | ClassicUO loader | Notes |
 |---|---|---|
-| Fonts | `FontsLoader` | next; a record store like gumps |
-| Cliloc, speech | `ClilocLoader`, `SpeechesLoader` | |
-| Sounds and music | `SoundsLoader` | |
+| Sounds and music | `SoundsLoader` | next; a record store like gumps |
 | Skills, professions | `SkillsLoader`, `ProfessionLoader` | |
 | World map images | `MultiMapLoader` (Multimap.rle, facet*.mul) | |
 | Anim1.def / Anim2.def group replaces, animinfo.mul, sitting tables | `AnimationsLoader` and client tables | runtime fallbacks for mounts and missing groups |
 
-Gumps moved into the pack on 2026-10-30 ("Gumps"); a pack without `gumps/gumps.bin` still works, and the client then reads gumpart MUL/UOP.
+Gumps moved into the pack on 2026-10-30 ("Gumps"); a pack without `gumps/gumps.bin` still works, and the client then reads gumpart MUL/UOP. Fonts, cliloc and speech followed the same day ("Text"); a pack without a `text/` file reads the MUL files for that content. Clilocs.txt (a shard's own cliloc strings) stays a plain text file in the client folder, read at load on top of the pack's tables.
 
 Picking needs CPU-side alpha. The client decodes pack pages on the CPU (B5G5R5A1 bit 15; Indexed8 index ≠ 0), and gump records likewise (the picker mask is built from the decoded image at upload). Mask sidecars are not part of 1.0.
 
