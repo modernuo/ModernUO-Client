@@ -19,6 +19,29 @@
     <MibcFile Include="$(CuoMibcPath)" />
   </ItemGroup>
 
+  <!-- dr_mp3 (src/native/cuo_mp3): NativeAOT links the static library into cuo.exe (DirectPInvoke), so the publish
+       ships no cuo_mp3 shared library. JIT builds load the shared library from external/<platform>. -->
+  <PropertyGroup Condition="'$(PublishAot)' == 'true'">
+    <CuoMp3StaticLib Condition="'$(RuntimeIdentifier)' == 'win-x64'">$(ProjectDir)..\..\external\x64-static\cuo_mp3.lib</CuoMp3StaticLib>
+    <CuoMp3StaticLib Condition="'$(RuntimeIdentifier)' == 'linux-x64'">$(ProjectDir)..\..\external\lib64-static\libcuo_mp3.a</CuoMp3StaticLib>
+    <CuoMp3StaticLib Condition="$(RuntimeIdentifier.StartsWith('osx-'))">$(ProjectDir)..\..\external\osx-static\libcuo_mp3.a</CuoMp3StaticLib>
+    <CuoMp3Static Condition="'$(CuoMp3StaticLib)' != '' and Exists('$(CuoMp3StaticLib)')">true</CuoMp3Static>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(CuoMp3Static)' == 'true'">
+    <DirectPInvoke Include="cuo_mp3" />
+    <NativeLibrary Include="$(CuoMp3StaticLib)" />
+  </ItemGroup>
+  <!-- A NativeAOT publish without the static library would ship a client with no music: fail instead
+       (-p:CuoMp3Optional=true makes it a warning). Linux/macOS: run `bash src/native/cuo_mp3/build-linux.sh` or `build-macos.sh` first. -->
+  <Target Name="CuoMp3CheckStaticLibrary" BeforeTargets="PrepareForPublish" Condition="'$(PublishAot)' == 'true' and '$(RuntimeIdentifier)' != ''">
+    <PropertyGroup>
+      <_CuoMp3Missing Condition="'$(CuoMp3StaticLib)' == ''">no static cuo_mp3 MP3 decoder library is defined for '$(RuntimeIdentifier)' (supported: win-x64, linux-x64, osx-*)</_CuoMp3Missing>
+      <_CuoMp3Missing Condition="'$(CuoMp3StaticLib)' != '' and '$(CuoMp3Static)' != 'true'">the static cuo_mp3 MP3 decoder library is missing: $(CuoMp3StaticLib). Build it with `bash src/native/cuo_mp3/build-linux.sh`, `build-macos.sh` or `build-windows.sh` before publishing</_CuoMp3Missing>
+    </PropertyGroup>
+    <Error Condition="'$(_CuoMp3Missing)' != '' and '$(CuoMp3Optional)' != 'true'" Code="CUOMP3" Text="$(_CuoMp3Missing). Without it the client has no music; pass -p:CuoMp3Optional=true to publish anyway." />
+    <Warning Condition="'$(_CuoMp3Missing)' != '' and '$(CuoMp3Optional)' == 'true'" Code="CUOMP3" Text="$(_CuoMp3Missing). Publishing without it (CuoMp3Optional): music is disabled at run time." />
+  </Target>
+
   <PropertyGroup Condition="'$(Configuration)'=='Release'">
     <OutputPath>$(ProjectDir)..\..\bin\Release\</OutputPath>
     <PublishDir>$(ProjectDir)..\..\bin\dist\</PublishDir>
@@ -122,11 +145,15 @@
   <Target Name="CopyExternalDeps_publish" AfterTargets="Publish">
     <ItemGroup>
       <MonockickstartPath Include="$(ProjectDir)..\..\tools\monokickstart\*.*" />
+      <!-- Without the cuo_mp3 shared library when NativeAOT linked it statically. -->
+      <DataFiles_x64_publish Include="@(DataFiles_x64)" Condition="'$(CuoMp3Static)' != 'true' or '%(Filename)' != 'cuo_mp3'" />
+      <DataFiles_lib64_publish Include="@(DataFiles_lib64)" Condition="'$(CuoMp3Static)' != 'true' or '%(Filename)' != 'libcuo_mp3'" />
+      <DataFiles_osx_publish Include="@(DataFiles_osx)" Condition="'$(CuoMp3Static)' != 'true' or '%(Filename)' != 'libcuo_mp3'" />
     </ItemGroup>
 
-    <Copy SourceFiles="@(DataFiles_x64)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" Condition="'$(_IsWindows)' == 'true'" />
-    <Copy SourceFiles="@(DataFiles_lib64)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" Condition="'$(_IsLinux)' == 'true'" />
-    <Copy SourceFiles="@(DataFiles_osx)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" Condition="'$(_IsMacOS)' == 'true'" />
+    <Copy SourceFiles="@(DataFiles_x64_publish)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" Condition="'$(_IsWindows)' == 'true'" />
+    <Copy SourceFiles="@(DataFiles_lib64_publish)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" Condition="'$(_IsLinux)' == 'true'" />
+    <Copy SourceFiles="@(DataFiles_osx_publish)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" Condition="'$(_IsMacOS)' == 'true'" />
     <Copy SourceFiles="@(DataFiles_vulkan)" DestinationFolder="$(PublishDir)\vulkan\icd.d\" SkipUnchangedFiles="true" Condition="'$(_IsMacOS)' == 'true'" />
 
     <Copy SourceFiles="@(MonockickstartPath)" DestinationFolder="$(PublishDir)\" SkipUnchangedFiles="true" Condition="'$(_IsLinux)' == 'true' Or '$(_IsMacOS)' == 'true'" />
