@@ -120,7 +120,7 @@ namespace ClassicUO.Assets
 
         public bool HasMap(int map) => (uint)map < (uint)_facets.Length && _facets[map] != null;
 
-        public void LoadMap(int map, bool useXFiles = false)
+        public void LoadMap(int map)
         {
             if (!HasMap(map))
             {

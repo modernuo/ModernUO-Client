@@ -543,7 +543,7 @@ namespace ClassicUO.Game.UI.Gumps
 
         public void ChangeMap(int index)
         {
-            Client.Game.UO.FileManager.Maps.LoadMap(index, World.ClientFeatures.Flags.HasFlag(CharacterListFlags.CLF_UNLOCK_FELUCCA_AREAS));
+            Client.Game.UO.FileManager.Maps.LoadMap(index);
             _map = new Map.FacetView(index); // no Map (its slot array is not needed here)
 
 

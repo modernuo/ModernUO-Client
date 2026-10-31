@@ -15,9 +15,9 @@ public static class LegacyClientVersion
 {
     public const string FlagHelp = "pass --client-version <x.y.z.w> (or x.y.za, e.g. 4.0.11c) or --cuo-settings <ClassicUO settings.json with \"clientversion\">";
 
-    /// <summary>The oldest supported client, as ClassicUO's parser reads "4.0.11c" (4.0.11.2: it counts letters from
-    /// 'a' = 0, so the CV_4011C enum, whose low byte is the letter's ASCII code, is not comparable).</summary>
-    public static ClientVersion MinSupported { get; } = ClientVersionHelper.IsClientVersionValid("4.0.11c", out var v) ? v : 0;
+    /// <summary>The oldest supported client, "4.0.11c" = 4.0.11.3 = <see cref="ClientVersion.CV_4011C"/> (letters count
+    /// from 'a' = 1, as ModernUO; fixed 2026-10-31).</summary>
+    public static ClientVersion MinSupported => ClientVersion.CV_4011C;
 
     /// <summary>Resolves the version text and value. <paramref name="source"/> says where it came from (empty when
     /// nothing was found).</summary>
