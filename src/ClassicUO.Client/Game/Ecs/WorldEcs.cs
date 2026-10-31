@@ -313,7 +313,28 @@ namespace ClassicUO.Game
             }
         }
 
+        /// <summary>
+        /// T1 (funnel part 6), the derived-state step of an animation operation: writes the mobile's <see cref="MobileClock"/>
+        /// from its due times after the operation's writes. Unlike <see cref="PushClock"/> it is not folded (it is the
+        /// operation's own push). Ignores mobiles World does not hold.
+        /// </summary>
+        internal void CommitMobileClock(Mobile mobile)
+        {
+            if (!ClockEnabled || mobile == null || mobile.IsDestroyed || !ReferenceEquals(_world.Mobiles.Get(mobile.Serial), mobile))
+            {
+                return;
+            }
+
+            if (Mirror.TryGetEntity(mobile.Serial, out EcsEntity e))
+            {
+                WriteClock(mobile, e);
+            }
+        }
+
         public static long ClockPushes;
+
+        /// <summary>Tests: this World's clock writes (<see cref="ClockPushes"/> counts every World's, also other tests').</summary>
+        internal long ClockWrites;
 
         /// <summary>
         /// E4: the clock is kept only while the mobile system runs (World.Update sets this each frame from
@@ -336,6 +357,7 @@ namespace ClassicUO.Game
             }
 
             ClockPushes++;
+            ClockWrites++;
             ref MobileClock c = ref e.GetComponent<MobileClock>();
             c.AnimDue = mobile.LastAnimationChangeTime;
             c.IdleDue = mobile.IdleDue;

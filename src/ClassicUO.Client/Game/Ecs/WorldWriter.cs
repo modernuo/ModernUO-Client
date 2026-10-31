@@ -46,7 +46,7 @@ namespace ClassicUO.Game
     /// <see cref="MoveMobile"/>; 0x1D for a mobile, <see cref="RemoveMobile"/>), EnterWorld (funnel part 5: 0x1B,
     /// <see cref="SetMobileGraphic"/>, <see cref="MoveMobile"/>, <see cref="SetMobileDirection"/>) and the walker (0x21 and
     /// 0x20's deny, <see cref="StopMobile"/> and <see cref="MoveMobile"/>; 0x22's notoriety; <c>Mobile.ProcessSteps</c>' step
-    /// completion, <see cref="CompleteStep"/>) and the range sweep's removals (<see cref="SweepMobile"/>, <see cref="SweepItem"/>). Every other writer still relies on <see cref="WorldEcs.Sync"/> and <see cref="WorldEcs.PushInputs"/>, which
+    /// completion, <see cref="CompleteStep"/>) and the range sweep's removals (<see cref="SweepMobile"/>, <see cref="SweepItem"/>), status and hits (funnel part 6: 0xA1, 0xA2, 0xA3, 0x2D, 0x11, 0x16/0x17) and the server's animations (0x6E, 0xE2, 0xAF, 0xBF.19, 0xBF.2B: <see cref="AnimateMobile"/>), the boat (<see cref="CompleteBoatStep"/>, <see cref="MoveBoatPassenger"/>, <see cref="SetBoatStepTime"/>, <see cref="ResetBoatOffset"/>) and the spellbook (0xBF.1B, <see cref="FillSpellbook"/>). Every other writer still relies on <see cref="WorldEcs.Sync"/> and <see cref="WorldEcs.PushInputs"/>, which
     /// stay as the fallback until the last packet group is converted.
     /// </para>
     /// <para>
@@ -118,6 +118,11 @@ namespace ClassicUO.Game
 
         private int _loggedViolations;
 
+        // the boats whose steps a multi reload cleared inside an operation (Item.LoadMulti during an upsert or placement):
+        // their resets are operations of their own, so they run when that scope closes (see ClearBoatSteps)
+        private readonly List<uint> _deferredBoatClears = new List<uint>(1);
+        private bool _runningDeferred;
+
         public WorldWriter(World world)
         {
             _world = world;
@@ -179,6 +184,53 @@ namespace ClassicUO.Game
                 w._open = false;
                 w._subject = null;
                 w._subtree?.Clear();
+                w.RunDeferredBoatClears();
+            }
+        }
+
+        /// <summary>
+        /// <c>Item.LoadMulti</c>'s <c>BoatMovingManager.ClearSteps</c> (a multi's (re)load ends its boat movement: the boat's
+        /// and its passengers' offsets back to zero, the passengers and the queued steps dropped). With no operation open it
+        /// runs now, as before T1. Inside one (<see cref="UpsertWorldItem"/>, <see cref="PlaceInContainer"/>,
+        /// <see cref="ReturnHeldItem"/> and <see cref="WearItem"/> refresh a multi's load in their derived-state step) it runs
+        /// as soon as that operation's scope closes, before the operation returns: the resets are <see cref="ResetBoatOffset"/>
+        /// operations, which do not nest (T1 part 6, Codex audit). Nothing an operation does after its multi load reads an
+        /// offset, a passenger or a boat step, so every effect the handler and the next frame see is in the pre-T1 order.
+        /// </summary>
+        internal void ClearBoatSteps(uint serial)
+        {
+            if (_open)
+            {
+                _deferredBoatClears.Add(serial);
+
+                return;
+            }
+
+            _world.BoatMovingManager.ClearSteps(serial);
+        }
+
+        // after an operation's scope closed (its fold ended): the boat clears its multi load asked for, oldest first. The
+        // resets open scopes of their own, whose closes must not start the next clear in the middle of this one
+        private void RunDeferredBoatClears()
+        {
+            if (_runningDeferred || _deferredBoatClears.Count == 0)
+            {
+                return;
+            }
+
+            _runningDeferred = true;
+
+            try
+            {
+                for (int i = 0; i < _deferredBoatClears.Count; i++)
+                {
+                    _world.BoatMovingManager.ClearSteps(_deferredBoatClears[i]);
+                }
+            }
+            finally
+            {
+                _deferredBoatClears.Clear();
+                _runningDeferred = false;
             }
         }
 
@@ -1284,8 +1336,9 @@ namespace ClassicUO.Game
         /// <summary>
         /// The mobile branch of <c>UpdateGameObject</c>, second half: puts the mobile of <paramref name="placement"/> (what
         /// <see cref="UpsertMobile"/> issued) on its tile at its position, after the handler's callbacks, as before T1. The ECS
-        /// already holds its values; the placement is not folded (the player's position callbacks may change the mobile, and what
-        /// they change publishes as before T1). Consumes the placement.
+        /// already holds its values; the player's placement is not folded (its position callbacks may change it, and what they
+        /// change publishes as before T1); any other mobile's is (no callback runs, the tile's Sync would rewrite the same
+        /// record and inputs). Consumes the placement.
         /// A placement that is not outstanding is a violation: in a release build the mobile is placed as before T1.
         /// </summary>
         public void PlaceMobile(in Placement placement)
@@ -1315,10 +1368,15 @@ namespace ClassicUO.Game
                 return;
             }
 
-            // not folded (Codex audit of part 4, #1): SetInWorldTile runs the player's position callbacks, where a plugin's
-            // RequestMove walks the player (Player.Walk: the queue, the timers, a turn). Their input and clock pushes and
-            // Syncs, and the tile's own Sync, publish as before T1.
-            using (Open(mobile, null))
+            // the player is not folded (Codex audit of part 4, #1): SetInWorldTile runs its position callbacks
+            // (PlayerMobile.OnPositionChanged), where a plugin's RequestMove walks the player (Player.Walk: the queue, the
+            // timers, a turn). Their input and clock pushes and Syncs, and the tile's own Sync, publish as before T1.
+            // Any other mobile is folded (funnel part 6): GameObject.OnPositionChanged is empty for it, so nothing between
+            // UpsertMobile's commit and here changes its record or inputs, and the tile's Sync and input push only rewrote
+            // the values UpsertMobile committed (+0.1 us per 0x77/0x78 in the E2 bench).
+            bool player = mobile is PlayerMobile || ReferenceEquals(mobile, _world.Player);
+
+            using (Open(mobile, player ? null : mobile))
             {
                 mobile.SetInWorldTile(mobile.X, mobile.Y, mobile.Z);
             }
@@ -1808,6 +1866,388 @@ namespace ClassicUO.Game
 
                 _world.RemoveItem(item.Serial);
             }
+        }
+
+        // ---- funnel part 6, group 4: status and hits. Hits, HitsMax, the mana, the stamina, the name, IsRenamable and the race
+        // are cache-only (no mirror record field and no MobileInputs reads them; HitsPercentage and its text are the setters'
+        // own derived state), so these operations are admission, the held check, the scope and the writes in the handler's
+        // order. IsFemale and the SA poison are inputs, the flags a record field: those operations commit.
+
+        /// <summary>
+        /// 0xA1 (UpdateHitpoints) and 0x2D (MobileAttributes): the hits of an item or a mobile (<c>World.Get</c>'s), HitsMax then
+        /// Hits as the handlers wrote them (each setter refreshes HitsPercentage, so the order is kept), then a pending hits
+        /// request is marked received. Nothing reaches the ECS. An entity this World does not hold is a violation, rejected
+        /// (no pre-T1 path), except the detached <c>World.Player</c>, written as before T1.
+        /// </summary>
+        public void SetHits(Entity entity, ushort hitsMax, ushort hits)
+        {
+            if (entity == null || !Admitted(nameof(SetHits), entity.Serial) || !Accepted(entity, nameof(SetHits)))
+            {
+                return;
+            }
+
+            using (Open(entity, null))
+            {
+                entity.HitsMax = hitsMax;
+                entity.Hits = hits;
+
+                if (entity.HitsRequest == HitsRequestStatus.Pending)
+                {
+                    entity.HitsRequest = HitsRequestStatus.Received;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 0x11 (CharacterStatus): the name, then Hits then HitsMax (0x11's order), then a pending hits request is marked
+        /// received. Nothing reaches the ECS. The handler reads the old name before this (the window title) and runs the
+        /// rest of the packet after it. Rejections as <see cref="SetHits"/>.
+        /// </summary>
+        public void SetStatus(Entity entity, string name, ushort hits, ushort hitsMax)
+        {
+            if (entity == null || !Admitted(nameof(SetStatus), entity.Serial) || !Accepted(entity, nameof(SetStatus)))
+            {
+                return;
+            }
+
+            using (Open(entity, null))
+            {
+                entity.Name = name;
+                entity.Hits = hits;
+                entity.HitsMax = hitsMax;
+
+                if (entity.HitsRequest == HitsRequestStatus.Pending)
+                {
+                    entity.HitsRequest = HitsRequestStatus.Received;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 0x11 (CharacterStatus) for a mobile: IsRenamable, then (<paramref name="setFemale"/>: the packet has the extended
+        /// part) IsFemale, an input: the mobile is folded and its inputs are committed once (the setter's push before T1). A
+        /// mobile this World does not hold is a violation, rejected (no pre-T1 path), except the detached <c>World.Player</c>.
+        /// </summary>
+        public void SetMobileStatus(Mobile mobile, bool renamable, bool setFemale, bool female)
+        {
+            if (mobile == null || !Admitted(nameof(SetMobileStatus), mobile.Serial) || !Accepted(mobile, nameof(SetMobileStatus)))
+            {
+                return;
+            }
+
+            bool detached = !Holds(mobile);
+
+            using (Open(mobile, detached ? null : mobile))
+            {
+                mobile.IsRenamable = renamable;
+
+                if (setFemale)
+                {
+                    mobile.IsFemale = female;
+                    _world.Ecs.CommitMobileInputs(mobile);
+                }
+            }
+        }
+
+        /// <summary>
+        /// 0xA2 (UpdateMana), 0x2D (MobileAttributes) and the player's 0x11: ManaMax and Mana. Nothing reaches the ECS.
+        /// Rejections as <see cref="SetMobileStatus"/>.
+        /// </summary>
+        public void SetMana(Mobile mobile, ushort manaMax, ushort mana)
+        {
+            if (mobile == null || !Admitted(nameof(SetMana), mobile.Serial) || !Accepted(mobile, nameof(SetMana)))
+            {
+                return;
+            }
+
+            using (Open(mobile, null))
+            {
+                mobile.ManaMax = manaMax;
+                mobile.Mana = mana;
+            }
+        }
+
+        /// <summary>
+        /// 0xA3 (UpdateStamina), 0x2D (MobileAttributes) and the player's 0x11: StaminaMax and Stamina. Nothing reaches the
+        /// ECS. Rejections as <see cref="SetMobileStatus"/>.
+        /// </summary>
+        public void SetStamina(Mobile mobile, ushort staminaMax, ushort stamina)
+        {
+            if (mobile == null || !Admitted(nameof(SetStamina), mobile.Serial) || !Accepted(mobile, nameof(SetStamina)))
+            {
+                return;
+            }
+
+            using (Open(mobile, null))
+            {
+                mobile.StaminaMax = staminaMax;
+                mobile.Stamina = stamina;
+            }
+        }
+
+        /// <summary>
+        /// 0x11 (CharacterStatus, ML and later) for the player: the race. Nothing reaches the ECS (the race is not an input).
+        /// Rejections as <see cref="SetMobileStatus"/>.
+        /// </summary>
+        public void SetRace(Mobile mobile, RaceType race)
+        {
+            if (mobile == null || !Admitted(nameof(SetRace), mobile.Serial) || !Accepted(mobile, nameof(SetRace)))
+            {
+                return;
+            }
+
+            using (Open(mobile, null))
+            {
+                mobile.Race = race;
+            }
+        }
+
+        /// <summary>
+        /// 0x16/0x17 (NewHealthbarUpdate): the bar states. The handler folds the packet's list into the final values (the
+        /// poisoned and yellow-bar flags, and from 7.0 on the SA poison instead of the poisoned flag); before T1 each entry
+        /// was a write (SetSAPoison pushed the inputs) and the handler ended with a Sync. Now: one record commit with the
+        /// final flags, then the cache, then one inputs commit (the mobile is folded). A mobile this World does not hold is a
+        /// violation, rejected (no pre-T1 path).
+        /// </summary>
+        public void SetHealthbar(Mobile mobile, Flags flags, bool setSAPoison, bool saPoison)
+        {
+            if (mobile == null || !Admitted(nameof(SetHealthbar), mobile.Serial) || !Accepted(mobile, nameof(SetHealthbar)))
+            {
+                return;
+            }
+
+            bool detached = !Holds(mobile);
+
+            MobileState v;
+            v.Serial = mobile.Serial;
+            v.Graphic = mobile.Graphic;
+            v.Hue = mobile.Hue;
+            v.X = mobile.X;
+            v.Y = mobile.Y;
+            v.Z = mobile.Z;
+            v.Direction = mobile.Direction;
+            v.Flags = flags;
+            v.IsPlayer = ReferenceEquals(mobile, _world.Player);
+
+            using (Open(mobile, detached ? null : mobile))
+            {
+                EcsEntity e = _world.Ecs.CommitMobile(mobile, in v);
+
+                if (setSAPoison)
+                {
+                    mobile.SetSAPoison(saPoison);
+                }
+
+                mobile.Flags = v.Flags;
+                _world.Ecs.CommitMobileInputs(mobile, e);
+            }
+        }
+
+        /// <summary>
+        /// The server's animations (funnel part 6, group 4.2): 0x6E (CharacterAnimation), 0xE2 (NewCharacterAnimation), the
+        /// death animation of 0xAF (DisplayDeath, after its re-key) and the held frames of 0xBF.19 and 0xBF.2B:
+        /// <c>Mobile.SetAnimation</c> (the animation state, the frame due time and the random idle timer), then
+        /// (<paramref name="frame"/> &gt;= 0) the frame index and (<paramref name="hold"/>) <c>ExecuteAnimation</c> off. None of
+        /// these is a record field or an input; the clock (the due times) is. The mobile is folded (SetAnimation's clock push
+        /// is skipped) and the clock is committed once after the writes. A mobile this World does not hold is a violation,
+        /// rejected (no pre-T1 path), except the detached <c>World.Player</c>, written as before T1.
+        /// <para>Not converted: the per-frame animation (<c>Mobile.Update</c>: <c>SetIdleAnimation</c>, <c>ProcessAnimation</c>),
+        /// which runs <c>ProcessSteps</c> (its step completion is an operation) and removes finished corpse mobiles inside
+        /// it: see the poc-log, "T1 funnel, part 6".</para>
+        /// </summary>
+        public void AnimateMobile(Mobile mobile, byte id, byte interval = 0, byte frameCount = 0, ushort repeatCount = 0, bool repeat = false, bool forward = false, bool fromServer = false, int frame = -1, bool hold = false)
+        {
+            if (mobile == null || !Admitted(nameof(AnimateMobile), mobile.Serial) || !Accepted(mobile, nameof(AnimateMobile)))
+            {
+                return;
+            }
+
+            bool detached = !Holds(mobile);
+
+            using (Open(mobile, detached ? null : mobile))
+            {
+                mobile.SetAnimation(id, interval, frameCount, repeatCount, repeat, forward, fromServer);
+
+                if (frame >= 0)
+                {
+                    mobile.AnimIndex = (byte)frame;
+                }
+
+                if (hold)
+                {
+                    mobile.ExecuteAnimation = false;
+                }
+
+                _world.Ecs.CommitMobileClock(mobile);
+            }
+        }
+
+        // ---- funnel part 6, group 4.3 (misc): the boat (BoatMovingManager, 0xF6's steps). These run the pre-T1 writes in their
+        // old order inside a scope that owns the object, unfolded: UpdateScreenPosition and AddToTile Sync the record as
+        // before, and a passenger may be the player, whose position callbacks (plugins, the door and corpse checks) must
+        // publish as before T1. The per-frame offset interpolation between steps stays direct (like ProcessSteps').
+
+        /// <summary>
+        /// A boat's step is done (<c>BoatMovingManager.Update</c>): the boat takes the step's position, refreshes its screen
+        /// position, its offset is zeroed and it is re-added to its tile. Not folded (see above). A boat this World does not
+        /// hold is a violation, rejected (no pre-T1 path: the manager passes <c>World.Items.Get</c>'s).
+        /// </summary>
+        public void CompleteBoatStep(Item boat, ushort x, ushort y, sbyte z)
+        {
+            if (boat == null || !Admitted(nameof(CompleteBoatStep), boat.Serial) || !Accepted(boat, nameof(CompleteBoatStep)))
+            {
+                return;
+            }
+
+            using (Open(boat, null))
+            {
+                boat.X = x;
+                boat.Y = y;
+                boat.Z = z;
+                boat.UpdateScreenPosition();
+
+                boat.OffsetX = 0;
+                boat.OffsetY = 0;
+                boat.OffsetZ = 0;
+
+                if (boat.IsPlaced)
+                {
+                    boat.AddToTile();
+                }
+            }
+        }
+
+        /// <summary>
+        /// An object on a boat whose step is done (<c>BoatMovingManager.UpdateEntitiesInside</c>): the item or mobile takes
+        /// its new position (the boat's minus its offset on deck), refreshes its screen position (the player's position
+        /// callbacks run, unfolded), its offset is zeroed and it is re-added to its tile. Rejections as
+        /// <see cref="SetHits"/>.
+        /// </summary>
+        public void MoveBoatPassenger(Entity entity, ushort x, ushort y, sbyte z)
+        {
+            if (entity == null || !Admitted(nameof(MoveBoatPassenger), entity.Serial) || !Accepted(entity, nameof(MoveBoatPassenger)))
+            {
+                return;
+            }
+
+            using (Open(entity, null))
+            {
+                entity.X = x;
+                entity.Y = y;
+                entity.Z = z;
+                entity.UpdateScreenPosition();
+
+                entity.OffsetX = 0;
+                entity.OffsetY = 0;
+                entity.OffsetZ = 0;
+
+                if (entity.IsPlaced)
+                {
+                    entity.AddToTile();
+                }
+            }
+        }
+
+        /// <summary>
+        /// The boat's step clock (<c>BoatMovingManager</c>: a first step queued, a step done): <c>LastStepTime</c>. Nothing
+        /// reaches the ECS (an item's LastStepTime is not a record field). Rejections as <see cref="CompleteBoatStep"/>.
+        /// </summary>
+        public void SetBoatStepTime(Item boat, uint time)
+        {
+            if (boat == null || !Admitted(nameof(SetBoatStepTime), boat.Serial) || !Accepted(boat, nameof(SetBoatStepTime)))
+            {
+                return;
+            }
+
+            using (Open(boat, null))
+            {
+                boat.LastStepTime = time;
+            }
+        }
+
+        /// <summary>
+        /// <c>BoatMovingManager.ClearSteps</c> (0xD8's and 0xBF.1D's custom-house regeneration, a multi's (re)load through
+        /// <see cref="ClearBoatSteps"/>): the offset of the boat or of one object on it
+        /// back to zero. Nothing reaches the ECS (the offset is not a record field, and an item has no inputs).
+        /// Rejections as <see cref="SetHits"/>.
+        /// </summary>
+        public void ResetBoatOffset(Entity entity)
+        {
+            if (entity == null || !Admitted(nameof(ResetBoatOffset), entity.Serial) || !Accepted(entity, nameof(ResetBoatOffset)))
+            {
+                return;
+            }
+
+            using (Open(entity, null))
+            {
+                entity.OffsetX = 0;
+                entity.OffsetY = 0;
+                entity.OffsetZ = 0;
+            }
+        }
+
+        /// <summary>
+        /// 0xBF.1B (new spellbook content): finds or creates the spellbook, writes its graphic, empties its child list and
+        /// syncs it (as before T1: unfolded, the old Sync), then links one detached entry per known spell (bit i of
+        /// <paramref name="spells0"/>/<paramref name="spells1"/>: spell 1 + i / 33 + i; the entries are not world objects, so
+        /// they never reach the ECS). Returns the spellbook (null when none could be had, or a nested call: rejected).
+        /// </summary>
+        public Item FillSpellbook(uint serial, ushort graphic, uint spells0, uint spells1)
+        {
+            if (!Admitted(nameof(FillSpellbook), serial))
+            {
+                return null;
+            }
+
+            Item spellbook = _world.GetOrCreateItem(serial);
+
+            if (spellbook == null)
+            {
+                return null;
+            }
+
+            using (Open(spellbook, null))
+            {
+                spellbook.Graphic = graphic;
+                spellbook.Clear();
+                _world.Ecs.Sync(spellbook);
+
+                for (int j = 0; j < 2; j++)
+                {
+                    uint spells = j == 0 ? spells0 : spells1;
+
+                    for (int i = 0; i < 32; i++)
+                    {
+                        if ((spells & (1u << i)) != 0)
+                        {
+                            ushort cc = (ushort)(j * 32 + i + 1);
+                            Item spellItem = Item.Create(_world, cc);
+                            spellItem.Serial = cc;
+                            spellItem.Graphic = 0x1F2E;
+                            spellItem.Amount = cc;
+                            spellItem.Container = spellbook;
+                            spellbook.PushToBack(spellItem);
+                        }
+                    }
+                }
+            }
+
+            return spellbook;
+        }
+
+        // the held check of the status operations: the instance this World holds for the entity's serial, or the detached
+        // World.Player (removed under its serial while World.Player stays; written as before T1: nothing of it reaches the
+        // ECS). Anything else is a violation, rejected (no pre-T1 path: the handlers pass what they just looked up).
+        private bool Accepted(Entity entity, string operation)
+        {
+            if (Holds(entity) || entity is Mobile m && IsDetachedPlayer(m))
+            {
+                return true;
+            }
+
+            Reject(Violation.NotHeld, $"WorldWriter.{operation}: 0x{entity.Serial:X8} is not the entity this World holds for its serial", rejected: true);
+
+            return false;
         }
 
         // Codex audit of part 4, #3: a 0x25 under the player's serial removes the player's mobile while World.Player stays,
