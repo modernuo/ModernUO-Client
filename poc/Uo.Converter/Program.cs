@@ -21,7 +21,7 @@ catch (ArgumentException e)
 bool maps = true, convert = true, anims = true, gumps = true, fonts = true, cliloc = true, speech = true, sounds = true, music = true, formatGiven = false, gumpReport = false;
 string? gumpDef = null;
 string? audioReport = null;
-string? clientVersionArg = null, cuoSettingsArg = null;
+string? clientVersionArg = null, cuoSettingsArg = null, bodyChoicesArg = null;
 HashSet<string>? only = null; // --only: convert just these stages into an existing pack, keeping everything else
 for (int i = 0; i < args.Length; i++)
 {
@@ -54,6 +54,8 @@ for (int i = 0; i < args.Length; i++)
         case "--audio-report": audioReport = args[++i]; convert = false; break; // writes nothing: --out is not cleared
         case "--raw-gumps": GumpConvert.Raw = true; break;
         case "--gump-small": GumpConvert.SmallRle = int.Parse(args[++i]); break;
+        case "--body-choices": bodyChoicesArg = args[++i]; break;
+        case "--no-target-sequence": AnimConvert.TargetSequence = false; break;
         case "--bodies":
             AnimConvert.Bodies = args[++i].Split(',').Select(s => s.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? Convert.ToInt32(s[2..], 16) : int.Parse(s)).ToHashSet();
             break;
@@ -82,6 +84,7 @@ for (int i = 0; i < args.Length; i++)
         case "--indexed-mips": ConvertOptions.IndexedMips = args[++i].ToLowerInvariant() != "none"; break;
         case "--bench-chunked": return Guarded(() => AnimExperiments.BenchChunked(args[++i], args.Length > i + 1 && !args[i + 1].StartsWith("--") ? args[++i] : null));
         case "--anim-report": return AnimExperiments.Report(args[++i]);
+        case "--compare-bodies": return AnimExperiments.CompareBodies(args[++i], args[++i]);
         case "--compare-indexed": return AnimExperiments.CompareIndexed(args[++i], args[++i]);
         case "--filter-ref": return AnimExperiments.FilterRef(args[++i], args[++i], args[++i]);
         case "--bc7-refine-db": ConvertOptions.Bc7RefineDb = double.Parse(args[++i], System.Globalization.CultureInfo.InvariantCulture); break;
@@ -96,7 +99,7 @@ for (int i = 0; i < args.Length; i++)
         case "--regions": ConvertOptions.MaxRegions = int.Parse(args[++i]); break;
         case "--bench-bc7": Bench.Bc7(args[++i]); return 0;
         default:
-            Console.WriteLine("usage: Uo.Converter [--uo <client dir>] --out <pack dir> [--client-version x.y.z.w | --cuo-settings <settings.json>] [--debug <png dir>] [--packs-root <published packs root>] [--format b5g5r5a1|rgba8|bc7] [--bc7-quality fast|balanced|bestquality] [--bc7-refine-db 28] [--raw-regions] [--raw-pages|--compress-pages[=chunked]] [--chunk-bytes n] [--page-size 2048] [--anim-page-size 1024] [--anim-format indexed8|page] [--indexed-mips none|b16] [--threads n] [--pages a-b] [--facets 0,1] [--regions n] [--no-maps] [--no-map-diffs] [--no-anims] [--no-gumps] [--no-fonts] [--no-cliloc] [--no-speech] [--no-sounds] [--no-music] [--raw-gumps] [--raw-text] [--text-small n] [--cliloc-brotli] [--cliloc-skip ext,ext] [--no-cliloc-overrides] [--gump-small n] [--gump-def <file>] [--gump-report] [--audio-report <pack>] [--only art,tex,hues,tiledata,data,gumps,fonts,cliloc,speech,sounds,music,maps,anims] [--anims-only] [--bodies 400,0xC8] [--verify-only]");
+            Console.WriteLine("usage: Uo.Converter [--uo <client dir>] --out <pack dir> [--client-version x.y.z.w | --cuo-settings <settings.json>] [--debug <png dir>] [--packs-root <published packs root>] [--format b5g5r5a1|rgba8|bc7] [--bc7-quality fast|balanced|bestquality] [--bc7-refine-db 28] [--raw-regions] [--raw-pages|--compress-pages[=chunked]] [--chunk-bytes n] [--page-size 2048] [--anim-page-size 1024] [--anim-format indexed8|page] [--indexed-mips none|b16] [--threads n] [--pages a-b] [--facets 0,1] [--regions n] [--no-maps] [--no-map-diffs] [--no-anims] [--no-gumps] [--no-fonts] [--no-cliloc] [--no-speech] [--no-sounds] [--no-music] [--raw-gumps] [--raw-text] [--text-small n] [--cliloc-brotli] [--cliloc-skip ext,ext] [--no-cliloc-overrides] [--gump-small n] [--gump-def <file>] [--gump-report] [--audio-report <pack>] [--only art,tex,hues,tiledata,data,gumps,fonts,cliloc,speech,sounds,music,maps,anims] [--anims-only] [--body-choices bodies.json] [--bodies 400,0xC8] [--verify-only]");
             return 1;
     }
 }
@@ -207,7 +210,24 @@ if (convert)
 
     if (Want("art")) stats["art"] = Stage("art", () => ArtConvert.Art(fm, outDir));
     if (Want("tex")) stats["tex"] = Stage("tex", () => ArtConvert.Tex(fm, outDir));
-    if (Want("anims")) stats["anims"] = Stage("anims", () => AnimConvert.Run(fm, outDir));
+    BodyChoices? bodyChoices = null;
+    if (Want("anims"))
+    {
+        // bodies.json: the shard's body set, chosen once at import (docs/modern-client/bodies.md). Bad choices stop here.
+        BodyPlan plan;
+        try
+        {
+            bodyChoices = bodyChoicesArg != null ? BodyChoices.Load(bodyChoicesArg) : BodyChoices.Default;
+            plan = BodyPlan.Build(fm, bodyChoices);
+        }
+        catch (BodyChoicesException e)
+        {
+            Console.Error.WriteLine($"body choices: {e.Message}");
+            return 1;
+        }
+        stats["anims"] = Stage("anims", () => AnimConvert.Run(fm, outDir, plan));
+    }
+    else if (bodyChoicesArg != null) Console.WriteLine("  warning: --body-choices is ignored: anims are not converted in this run");
     if (ConvertOptions.Format == Uo.Pack.PixelFormat.Bc7)
         Console.WriteLine($"  bc7: {PageCodec.RefineStats.Encoded} non-trivial blocks encoded, {PageCodec.RefineStats.Refined} re-encoded at Balanced (refine below {ConvertOptions.Bc7RefineDb} dB)");
     if (Want("tiledata"))
@@ -261,6 +281,8 @@ if (convert)
         var m = new Manifest
         {
             SourcePath = uoPath, SourceClientVersion = versionText, Created = DateTime.UtcNow, Facets = facets, Files = entries.ToList(),
+            // anim/ keeps the choices it was built with when this run did not rebuild it
+            Bodies = bodyChoices?.ToRecord() ?? (File.Exists(oldManifest) ? ManifestFileIo.Read(oldManifest).Bodies : null),
         };
         ManifestFileIo.Write(Path.Combine(outDir, "manifest.json"), m);
         return $"{entries.Length} files, {entries.Sum(e => e.Size) / 1048576.0:F1} MiB";

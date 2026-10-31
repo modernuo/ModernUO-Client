@@ -606,6 +606,50 @@ namespace ClassicUO.Assets
             }
         }
 
+        // PoC converter hooks (body import choices): the converter resolves Bodyconv.def itself (see
+        // Uo.Converter.BodyPlan) and installs the result here instead of calling ProcessBodyConvDef.
+
+        /// <summary>Replaces every Bodyconv.def conversion with <paramref name="conv"/> (body -> file index, graphic, mount height).</summary>
+        public void SetBodyConv(IEnumerable<KeyValuePair<int, (int FileIndex, ushort Graphic, sbyte MountHeight)>> conv)
+        {
+            _bodyConvInfos.Clear();
+
+            foreach (var (body, c) in conv)
+            {
+                if (c.FileIndex < 0 || c.FileIndex >= _files.Length || _files[c.FileIndex] == null)
+                {
+                    continue;
+                }
+
+                _bodyConvInfos[body] = new BodyConvInfo()
+                {
+                    FileIndex = c.FileIndex,
+                    Graphic = c.Graphic,
+                    AnimType = CalculateTypeByGraphic(c.Graphic, c.FileIndex),
+                    MountHeight = c.MountHeight
+                };
+            }
+        }
+
+        /// <summary>Gives <paramref name="body"/> the mobtypes.txt entry of <paramref name="from"/> (none when that body has none).</summary>
+        public void CopyMobType(int body, int from)
+        {
+            if (_mobTypes.TryGetValue(from, out var info))
+            {
+                _mobTypes[body] = info;
+            }
+            else
+            {
+                _mobTypes.Remove(body);
+            }
+        }
+
+        /// <summary>True when mobtypes.txt lists <paramref name="body"/>.</summary>
+        public bool HasMobType(int body) => _mobTypes.ContainsKey(body);
+
+        /// <summary>True when AnimationSequence.uop has an entry for <paramref name="body"/>.</summary>
+        public bool HasUopGroups(ushort body) => _uopInfos.ContainsKey(body);
+
         public void ProcessBodyConvDef(BodyConvFlags flags)
         {
             if (FileManager.Version < ClientVersion.CV_300)

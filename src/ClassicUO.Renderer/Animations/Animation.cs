@@ -495,11 +495,6 @@ namespace ClassicUO.Renderer.Animations
             }
         }
 
-        public void UpdateAnimationTable(BodyConvFlags flags)
-        {
-            // Bodyconv.def is resolved by the pack converter with every expansion enabled.
-        }
-
         public void ConvertBodyIfNeeded(
             ref ushort graphic,
             bool isParent = false,
