@@ -205,6 +205,8 @@ Sizes: T0a 1–1.5, T0b 0.5, T0c 1.5–2.
 - Keep that behaviour exactly: `WornLayers` is built only from attaches the legacy code performs.
 - A fix (attach it when the parent arrives, or drop it) is a separate switch (Q6).
 
+**Equipment order stamp (coordinator, 2026-10-31).** T1's `WorldWriter.ReturnHeldItem` commits twice on its paperdoll branch (the detached state, then the wearer) only to reproduce the old path's two Syncs, which move the item to the end of the mirror's equipment index. T3 replaces this double commit with an explicit equipment-order stamp (the child-list position written as a value in the one commit), and the index orders by the stamp. Until then the double commit stays.
+
 **Checker `CUO_EQUIP_READ_CHECK=1`:** every `FindItemByLayer` call returns the same serial from both sources. Plus `-ecscheck`'s existing equipment order, mount and hands compare.
 
 **Gate:** the standard gate, `w5push` (mount, dismount, equip changes), and paperdoll screenshots.
