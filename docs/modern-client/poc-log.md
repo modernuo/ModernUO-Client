@@ -3120,3 +3120,34 @@ Codex reviewed the converter safety work (`PublishedPacks`, `ReplacingFile`) and
 **Left on disk (for the owner).** While testing the UNC case from Git Bash, a mangled argument (`\localhost\C$\...`, one leading backslash) was a rooted path on the current drive. The converter wrote a 3-file `--only hues` pack under `C:\localhost\C$\Users\kamron\AppData\Local\Temp\claude\...\scratchpad\hues-r2\fake-packs\v1\x`. The guard was right to allow it, because that is an ordinary folder. A safety check blocked my `rm -rf` of `C:\localhost`, so the owner should delete that folder. The forward-slash form `//localhost/C$/...` was then used and refused as expected.
 
 **Verification.** Client builds Release and `-p:CuoDevTools=false`: 0 errors. Uo.Converter and Uo.Render.App: 0 errors. `dotnet test tests/ClassicUO.UnitTests -c Release`: 808 passed, 1 skipped (the symlink test), 0 failed, 809 total (9 new).
+
+## Memory footprint per client: first pass (2026-10-31)
+
+Branch `poc/mem-footprint`, base poc/modern-client 88da64e3e. Measurement only, no defaults changed. Full write-up: `memory-footprint.md`.
+
+- **Tooling** (fd5450021): `CUO_MEM_LOG=<sec>` (dev builds only; logs the GC heap, committed bytes and per-generation sizes from a background thread). Plus a scratch external sampler: private working set and commit at 1 Hz, and an address-space walk by protection and reservation.
+- **Matrix** (bench-000014/15/17): AOT and JIT, Gpu and Legacy, hard limit on and off, with and without the warm-up. Britain, a walk, then the ocean, at 1920×1080. The "MUL" arm is invalid: the client needs a pack. Its replacement is upstream itself, in bench-000031.
+- **Per client, Task Manager "Memory":** Gpu 800–855 MB, Legacy 650–720 MB. Commit is 1.25–2.0 GB. AOT and JIT are within about 20 MB. The hard limit has no effect. `CUO_WARMUP=0` saves nothing in pws.
+- **Where the pws goes (AOT Gpu):**
+  - GC heap 351 MB (about 45%);
+  - write-combine GPU-mapped memory 153 MB, the same in both renderers;
+  - native heaps 229 MB;
+  - image 8 MB;
+  - mapped files 0 MB (shared).
+- **The ~1.1 GB of commit that isn't resident is GPU-mapped** (write-combine regions). The Gpu world's 516 MB of it is untouched: art pages 256, anim 128, instances 64, palettes, staging. It counts against commit and VRAM, not in Task Manager.
+- **Occupancy in a normal session:** art pages 10/24, anim pages 10/128, about 4.3k instances of 2M. Grow-on-demand recommendation: start 12 art layers, 32 anim layers and 256k instances, grow at 75% and during holds, ceilings at today's sizes. Saves about 320 MiB of commit and VRAM per client. The large scene still reaches 82 anim pages.
+- **LOH lead:** gen3 is 303–425 MB right after login. Only 3–4 gen2s run per session, all at login, so later LOH garbage is never collected. Working hypothesis: much of it is dead buffers (region decompression, pack pages).
+  - Waste found: the 18.5 MiB anim palette CPU copy, kept after the GPU upload.
+  - Waste found: the Gpu world is built twice at login (facet 0, then facet 1), leaving about 34 MiB of dead LOH.
+  - The unicode font table is 20 MiB up front.
+  - Pending: heap dumps (bench-000030), `CUO_WARMUP_GC=2` / `GCConserveMemory` (bench-000032), and the upstream baseline (bench-000031, net10 retarget in scratch only).
+- **Memory trade-offs logged:** none added on this branch. The `MemLog` thread is dev-only and starts only with `CUO_MEM_LOG` set.
+
+**Follow-up: dumps, upstream, GC arms (2026-10-31, bench-000030/31/32).** `memory-footprint.md` has no pending sections left.
+- **Upstream 9a23aa253** (net10 retarget, scratch only, worktree removed): 572–576 MB pws at Britain, the land spot and the ocean, 1060 MB commit. Ours: JIT Legacy +76–94, AOT Legacy +139–148, AOT Gpu +224–243, JIT Gpu +244–267 MB pws. The difference is the managed heap (+116–126), plus 90 MB of native memory in the Gpu world only. GPU-mapped resident memory (153 MB) and Legacy's native heaps match upstream's.
+- **The LOH is mostly live; the dead-LOH hypothesis is wrong.** A full compacting gen2 at login keeps 309 MB of it. Dead LOH builds up after login: the JIT Gpu dump at 50 s has 478 MB of large objects, 311 live and 167 dead (35%); Legacy has 117 of 313 dead (37%); upstream 19 of 189. Dead: 85 MB of 1 MiB decode buffers, 34 MB of smaller transient buffers, 21 MB of the first Gpu world's instance arrays (confirms the double build), and 17 MB of bench screenshot buffers.
+- **Live LOH measured:** PackPages 59 MiB (Gpu) and 55 MiB (Legacy) of the 88 MiB cap; page-job and Brotli decoder working buffers ~61 MB (a pool; the estimate was 12). Upstream's 170 MB of live LOH is mostly MUL/UOP and map indexes (114 MB).
+- **GC arms (AOT Gpu):** `CUO_WARMUP_GC=2` gives pws 787/803/816 vs the default's 800/808/815, with a 32.6 ms pause in the login hold (default 10.8 ms). `GCConserveMemory=5` gives 794/801/803, with 7 collections in play vs 2 (max pause 4 ms, no hitch). Both are within noise. A background gen2 left 64 MB free, and pws didn't drop: the GC keeps the freed LOH resident. No GC setting is recommended.
+- **The land spot is confirmed** by the screenshots: the Britain moongate in forest, the same in both renderers. Our AOT client: 882 MB pws there in a 90 s run.
+- **New recommendation (measurement first):** an allocation trace of the LOH in the first 60 s after login, on the `poc/mem-reduce` build, to find the ~35–60 MB of transient decode buffers still unattributed. Pool them where they recur, and log the pool's size.
+- **Memory trade-offs logged:** none added; the decode pools (~61 MB per client) are recorded as an existing trade-off.
