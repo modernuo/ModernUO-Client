@@ -1,7 +1,10 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Buffers.Binary;
 using System.IO;
 using ClassicUO.Assets;
+using ClassicUO.Game.Managers;
 using ClassicUO.Utility;
 using FluentAssertions;
 using Uo.Pack;
@@ -38,6 +41,25 @@ namespace ClassicUO.UnitTests.Assets
             fm.TileData.StaticData.Length.Should().Be(PackConst.StaticTileCount); // the source's 0x4000 plus empty padding
             fm.TileData.StaticData[0x4000].Name.Should().BeEmpty();
             fm.TileData.StaticData[0xFFFF].Flags.Should().Be(TileFlag.None);
+            // Animated statics registration (AnimatedStaticsManager.Initialize) over the padded table: every registered id
+            // is a source entry, and the set is exactly what the unpadded 0x4000 entries register.
+            var statics = new AnimatedStaticsManager();
+            statics.Initialize(fm.TileData.StaticData, fm.AnimData);
+            var registered = statics.RegisteredIds.ToList();
+            var expected = new List<ushort>();
+
+            for (int i = 0; i < 0x4000; i++)
+            {
+                if (fm.TileData.StaticData[i].IsAnimated && fm.AnimData.TryGetAnimData((ushort)i, out _))
+                {
+                    expected.Add((ushort)i);
+                }
+            }
+
+            registered.Should().NotBeEmpty();
+            registered.Should().OnlyContain(id => id < 0x4000, "padded entries carry no Animation flag");
+            registered.Should().Equal(expected);
+
             fm.Multis.Count.Should().BeGreaterThan(0);
             fm.Multis.GetMultis(0).Should().NotBeEmpty();
 

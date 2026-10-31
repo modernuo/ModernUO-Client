@@ -2,6 +2,15 @@
 
 Visual or behavioural defects found in the PoC client that aren't fixed yet. Add new ones here; move them to the poc-log when fixed.
 
+## Empty tiledata entries still occlude roofs and lights (recorded 2026-10-31, deferred)
+
+Found by the Codex audit of `poc/tiledata-pad` (finding 2). A component whose tiledata entry is empty (no art, zero flags) still counts in two decisions:
+
+- **Roof cut-off** (`MaxDrawZState.cs:120`): zero flags satisfy the predicate, so such a component above the player (e.g. a server-sent house component with padded graphic 0x5000 at Z 20) lowers `MaxZ` to its Z and hides everything above it.
+- **Light occlusion** (`GameScene.cs:456`): zero flags mean `IsTransparent == false` and zero `PackFlags` allow drawing, so such a component south-east of a light suppresses that light. `AddLight` never checks that the component has art.
+
+This is not a regression of the standardized tiledata counts: modern packs' empty entries behave the same way, and on a legacy pack those ids used to throw instead. Padding only makes the case reachable on legacy packs. **Proposed fix:** skip components without drawable art in both decisions. Needs a parity check (Legacy and Gpu, modern and padded legacy pack) before changing, since it changes what the roof and light decisions see.
+
 ## Paperdoll layer bleed: a robe removes the black halo around armour arm pieces (known before the PoC; recorded 2026-10-31)
 
 Reported by the owner. ClassicUO does not draw paperdoll graphic "bleed" the way the original client does. With a robe on, the black halo around armour arm pieces disappears. The halo was probably made to hide another layering oddity, so removing it may expose that. Needs its own investigation (layer order, which gumps carry the halo, how the original client composites them). Not started.
