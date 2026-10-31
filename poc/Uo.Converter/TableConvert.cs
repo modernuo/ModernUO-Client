@@ -55,6 +55,10 @@ public static class TableConvert
             }
         var path = Path.Combine(outDir, TableConst.HueRawFile);
         HueRawFile.Write(path, e);
+        // hues.bin is retired (the LUT is built from hues_raw.bin at load). Drop a stale copy, e.g. one hard-linked from an
+        // older pack into an --only output, so the manifest does not list it. Deleting a hard link leaves the source intact.
+        var legacy = Path.Combine(outDir, HueFile.LegacyFileName);
+        if (File.Exists(legacy)) File.Delete(legacy);
         return $"{e.Length} hues; {new FileInfo(path).Length} B";
     }
 

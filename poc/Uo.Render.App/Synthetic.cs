@@ -105,17 +105,17 @@ public static class Synthetic
         stat[0x201] = new StaticTileData { Height = 0, Flags = 0x20000 };
         TileDataFile.Write(Path.Combine(root, "tiledata.bin"), land, stat);
 
-        // --- hues: 3000 rows of a ramp toward a per-row color
+        // --- hues: 3000 entries of a 15-bit ramp toward a per-entry color (hues_raw.bin; the renderer builds the LUT)
         const int hueCount = 3000;
-        var hues = new uint[hueCount * HueFile.Shades];
+        var hues = new HueEntry[hueCount];
         for (int h = 0; h < hueCount; h++)
         {
             var rnd = new Random(h);
-            int r = rnd.Next(256), g = rnd.Next(256), b = rnd.Next(256);
-            for (int s = 0; s < HueFile.Shades; s++)
-                hues[h * HueFile.Shades + s] = Rgba(r * s / 31, g * s / 31, b * s / 31);
+            int r = rnd.Next(32), g = rnd.Next(32), b = rnd.Next(32);
+            for (int s = 0; s < HueLut.Shades; s++)
+                hues[h].Colors[s] = (ushort)((r * s / 31) << 10 | (g * s / 31) << 5 | (b * s / 31));
         }
-        HueFile.Write(Path.Combine(root, "hues.bin"), hueCount, hues);
+        HueRawFile.Write(Path.Combine(root, TableConst.HueRawFile), hues);
 
         // --- facet 0, regions (2..3, 2..3) = tiles 1024..2047
         var facetDir = Path.Combine(root, "map", "0");

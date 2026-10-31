@@ -170,11 +170,58 @@ public static class TableFile
     }
 }
 
-/// <summary>hues_raw.bin: count i32, HueEntry[count].</summary>
+/// <summary>hues_raw.bin: count i32, HueEntry[count]. The pack's only hue file: the RGBA8 LUT is built from it at load
+/// (<see cref="HueLut"/>).</summary>
 public static class HueRawFile
 {
+    /// <summary>Hue ids are u16, so no valid file has more entries than this.</summary>
+    public const int MaxEntries = 0x10000;
+
     public static void Write(string path, ReadOnlySpan<HueEntry> entries) => TableFile.Write(path, TableConst.MagicHueRaw, entries);
-    public static HueEntry[] Read(string path) => TableFile.Read<HueEntry>(path, TableConst.MagicHueRaw);
+
+    /// <summary>Reads the file as untrusted input: the count must be 0..<see cref="MaxEntries"/> and fit in the file.</summary>
+    public static HueEntry[] Read(string path)
+    {
+        using var fs = File.OpenRead(path);
+        StructIo.ReadHeader(fs, TableConst.MagicHueRaw);
+        int count = StructIo.Read<int>(fs);
+        if (count < 0 || count > MaxEntries || (long)count * Unsafe.SizeOf<HueEntry>() > fs.Length - fs.Position)
+            throw new InvalidDataException($"{TableConst.HueRawFile}: bad entry count {count} for a {fs.Length}-byte file");
+        var entries = new HueEntry[count];
+        StructIo.ReadSpan<HueEntry>(fs, entries);
+        return entries;
+    }
+}
+
+/// <summary>The RGBA8 hue LUT the renderers upload (one row per hue, 32 shades), built from <see cref="HueRawFile"/>
+/// entries at load. Canonical format-1.0 expansion: row i = hue i + 1, column = shade, each 15-bit colour bit-replicated
+/// to 8 bits per channel (<see cref="PackColor.ToRgb8"/>: x &lt;&lt; 3 | x &gt;&gt; 2, bit 15 ignored), R in the low byte,
+/// alpha 0xFF. Packs before the one-source-of-truth change also shipped this table as hues.bin; it is no longer read or
+/// written.</summary>
+public static class HueLut
+{
+    public const int Shades = 32;
+
+    public static uint[] Build(ReadOnlySpan<HueEntry> entries)
+    {
+        if (entries.Length > HueRawFile.MaxEntries)
+            throw new InvalidDataException($"hue LUT: {entries.Length} entries, at most {HueRawFile.MaxEntries}");
+        var lut = new uint[entries.Length * Shades];
+        Build(entries, lut);
+        return lut;
+    }
+
+    /// <summary>Fills the first entries.Length * 32 values of <paramref name="dest"/>.</summary>
+    public static void Build(ReadOnlySpan<HueEntry> entries, Span<uint> dest)
+    {
+        if (dest.Length < entries.Length * Shades) throw new ArgumentException("destination too small", nameof(dest));
+        for (int i = 0; i < entries.Length; i++)
+        {
+            ReadOnlySpan<ushort> colors = entries[i].Colors;
+            var row = dest.Slice(i * Shades, Shades);
+            for (int s = 0; s < Shades; s++) row[s] = PackColor.ToRgb8(colors[s]) | 0xFF000000u;
+        }
+    }
 }
 
 /// <summary>radarcol.bin: count i32, u16[count] 15-bit colours. Index = land id (0..0x3FFF) or 0x4000 + static graphic.</summary>

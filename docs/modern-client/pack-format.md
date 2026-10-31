@@ -23,8 +23,7 @@ For every content type described here, the client reads only the pack. MUL/UOP s
   manifest.json            pack version, source client, facets, files[{path, size, sha256}]
   tiledata.bin             compact tile data for the renderer (TLTD)
   tiledata_ext.bin         full tile data with names (TLDX)
-  hues.bin                 hue LUT, RGBA8 (HUES)
-  hues_raw.bin             hues.mul entries: 16-bit colours, TableStart/End, names (HERW)
+  hues_raw.bin             hues.mul entries: 16-bit colours, TableStart/End, names (HERW); the RGBA8 hue LUT is built from it
   radarcol.bin             radar colours (RADC)
   multis.bin               multi component lists (MLTI)
   lights.bin               light textures (LGHT)
@@ -73,7 +72,6 @@ Every binary file starts with a 16-byte `FileHeader`:
 | `UORG` 0x47524F55 | map region |
 | `TLTD` 0x44544C54 | tiledata.bin |
 | `TLDX` 0x58444C54 | tiledata_ext.bin |
-| `HUES` 0x53455548 | hues.bin |
 | `HERW` 0x57524548 | hues_raw.bin |
 | `RADC` 0x43444152 | radarcol.bin |
 | `MLTI` 0x49544C4D | multis.bin |
@@ -89,11 +87,13 @@ Every binary file starts with a 16-byte `FileHeader`:
 | `CLIL` 0x4C494C43 | text/cliloc.bin (a record store) |
 | `SPCH` 0x48435053 | text/speech.bin |
 
+Retired magic: `HUES` 0x53455548 (`hues.bin`, see "Hues"). Packs that still carry the file load as before; readers ignore it.
+
 **Reader rule.** A reader accepts `version` 0 and 1 and rejects anything higher. Version 0 files come from pre-1.0 packs. Every version-0 file has the same layout as its version-1 counterpart, so no reader branches on the version. What version-0 packs lack:
 
 - the game data tables (`tiledata_ext.bin`, `hues_raw.bin`, `radarcol.bin`, `multis.bin`, `lights.bin`, `tileart.bin`, `equipconv.bin`): a 1.0 client treats a pack without them as incomplete;
 - converter-derived `packFlags` in tiledata, which may be 0 (see "NoDraw flags");
-- the canonical hue LUT: version-0 `hues.bin` used ClassicUO's `floor` expansion, up to 1/255 darker per channel.
+- the canonical hue LUT: version-0 `hues.bin` used ClassicUO's `floor` expansion, up to 1/255 darker per channel. `hues.bin` is retired and ignored (the LUT is built from `hues_raw.bin`), so this no longer matters to a reader.
 
 `manifest.json`'s `version` is the pack's format version (1).
 
@@ -255,17 +255,21 @@ ClassicUO hides some tiles in code rather than with tiledata flags. The converte
 
 ## Hues
 
-### `hues.bin`: RGBA8 LUT for the renderer
-
-`FileHeader`, `count i32`, then `count × 32` RGBA8 `u32`. Row `i` is hue `i + 1` (UO hue 0 = unhued), column `s` is shade 0..31, alpha 0xFF. Each texel is the canonical expansion of `hues_raw.bin`'s colour.
-
-**Change in 1.0:** the LUT is regenerated with the canonical bit-replication expansion (ClassicUO uses `floor`); version-0 packs have the floor values. The 5-bit colours are in `hues_raw.bin` for exact CPU work.
-
-Shader hueing follows ClassicUO: the shade index is the texel's 5-bit red channel. A partial-hue sprite hues only exactly gray texels (`r5 == g5 == b5`, compared as 5-bit integers, no tolerance).
+`hues_raw.bin` is the pack's only hue file. The renderer's RGBA8 LUT is built from it at load.
 
 ### `hues_raw.bin`: hues.mul, exactly
 
-`FileHeader`, `count i32`, `HueEntry[count]`. `HueEntry` (88 bytes) is byte-identical to ClassicUO's `HuesBlock`: colours u16[32], tableStart u16, tableEnd u16, name u8[20] (raw bytes, NUL-padded). Entry `i` is hue `i + 1`. This serves CPU font and gump hueing (`GetColor16`, `GetUnicodeFontColor`, and similar). The 4-byte group headers of hues.mul are unused by ClassicUO and dropped.
+`FileHeader`, `count i32`, `HueEntry[count]`. `HueEntry` (88 bytes) is byte-identical to ClassicUO's `HuesBlock`: colours u16[32], tableStart u16, tableEnd u16, name u8[20] (raw bytes, NUL-padded). Entry `i` is hue `i + 1`. This serves CPU font and gump hueing (`GetColor16`, `GetUnicodeFontColor`, and similar) and is the source of the renderer's LUT. The 4-byte group headers of hues.mul are unused by ClassicUO and dropped.
+
+Readers treat the file as untrusted: `count` must be 0..65536 (hue ids are u16) and the entries must fit in the file.
+
+### The RGBA8 LUT (built at load, not stored)
+
+`count × 32` RGBA8 `u32`. Row `i` is hue `i + 1` (UO hue 0 = unhued), column `s` is shade 0..31. Texel `(i, s)` is the canonical expansion of entry `i`'s colour `s`: `e(r) | e(g) << 8 | e(b) << 16 | 0xFF << 24`, bit 15 ignored. `Uo.Pack.HueLut.Build` is the one implementation; the client (`HuesLoader`) and the poc renderer (`PackSet`) both call it. Building 3,000 hues takes about 0.15–0.2 ms (median; 0.3 ms with reading the file).
+
+Shader hueing follows ClassicUO: the shade index is the texel's 5-bit red channel. A partial-hue sprite hues only exactly gray texels (`r5 == g5 == b5`, compared as 5-bit integers, no tolerance).
+
+**Retired: `hues.bin`** (magic `HUES` 0x53455548; `count i32`, then the LUT above). Earlier packs stored the LUT as a file. It duplicated `hues_raw.bin`, and the owner decided (2026-10-31) on one source of truth per pack file: tools will be built around the pack files, and keeping two files in sync is error-prone. Space was not the reason. Packs made before the change (`classic-1.0`) still carry `hues.bin`; readers ignore it and the converter no longer writes it (an `--only hues` run deletes a stale copy from its output). The built LUT equals `classic-1.0`'s `hues.bin` byte for byte (test `HueLutTests`), so the change is pixel-neutral. Version-0 `hues.bin` files used ClassicUO's `floor` expansion; that difference is gone too, because the LUT is always built with the canonical expansion.
 
 ### `radarcol.bin`
 
@@ -534,11 +538,11 @@ camelCase JSON, read case-insensitively:
   - page sizes: `--page-size n`, `--anim-page-size n`;
   - compression: `--raw-pages`, `--compress-pages` (Kind 1), `--chunk-bytes n`, `--raw-regions`, `--raw-gumps` (gump records uncompressed, run-length layout), `--raw-text` (font records uncompressed), `--text-small n` (font records up to n raw bytes stay uncompressed; 16384), `--cliloc-brotli` (cliloc records Brotli);
   - testing: `--gump-def <file>` (read this gump.def instead of the client's), `--gump-report` (the gump storage measurements above; writes nothing).
-- Stages: `--only art,tex,hues,tiledata,data,gumps,fonts,cliloc,speech,maps,anims` (into an existing pack), `--no-maps`, `--no-anims`, `--no-gumps`, `--no-fonts`, `--no-cliloc`, `--no-speech`, `--verify-only`. `fonts` writes `text/fonts.bin` and `text/unifont.bin`. `hues` also writes `hues_raw.bin` and `radarcol.bin`, `tiledata` writes both tiledata files, and `data` writes multis, lights, tileart and equipconv. `animdata.bin` belongs to `anims`.
+- Stages: `--only art,tex,hues,tiledata,data,gumps,fonts,cliloc,speech,maps,anims` (into an existing pack), `--no-maps`, `--no-anims`, `--no-gumps`, `--no-fonts`, `--no-cliloc`, `--no-speech`, `--verify-only`. `fonts` writes `text/fonts.bin` and `text/unifont.bin`. `hues` writes `hues_raw.bin` and `radarcol.bin` (and deletes a stale `hues.bin` from the output), `tiledata` writes both tiledata files, and `data` writes multis, lights, tileart and equipconv. `animdata.bin` belongs to `anims`.
 
 **Verification.** Every conversion ends with a verify step that reads the pack back with the `Uo.Pack` readers. It compares against ClassicUO's own loaders:
 - **Sampled.** Sprites are bit-exact including gutters. Indexed8 frames are bit-exact after the palette lookup.
-- **Every record and field, exact:** tiledata (all fields and names), hues (raw entries and the LUT), radarcol, animdata, multis, lights, tileart appearances and equipconv.
+- **Every record and field, exact:** tiledata (all fields and names), hues (raw entries, and the LUT built from them against an independent expansion of ClassicUO's entries), radarcol, animdata, multis, lights, tileart appearances and equipconv.
 - **Every gump slot of the client's index (81,919 for 7.0.103), exact:** present or not, width and height, and the RGBA8 image with the alias hue, against the converter's copy of `GumpsLoader.GetGump`. The client test `GumpPackTests` repeats it against the client's own MUL/UOP loader.
 - **Text, exact, against the converter's copies of the client loaders:** every ASCII glyph of every font and every unicode glyph of the 20 font slots × 65,536 characters (offsets, size, rows, existence); every (language, id) cliloc string, resolved as `ClilocLoader.Load(language)` resolves it (enu under the language); every speech entry (id, text, keywords, start and end flags). The client test `TextPackTests` repeats them against the client's own MUL path, plus rendered text.
 
@@ -551,7 +555,7 @@ camelCase JSON, read case-insensitively:
 | Animations | 2,652 pages + anim.bin, palettes.bin, animdata.bin | 675.3 MiB (628.0 MiB pages; 2,652 MiB raw) |
 | Maps | 6 facets, 297 regions | 57.3 MiB (349.7 MiB raw) |
 | Tile data | tiledata.bin, tiledata_ext.bin | 0.9 + 2.1 MiB |
-| Hues, radarcol | hues.bin, hues_raw.bin, radarcol.bin | 0.4 + 0.3 + 0.2 MiB |
+| Hues, radarcol | hues_raw.bin, radarcol.bin | 0.3 + 0.2 MiB (packs before 2026-10-31 also carry the retired 0.4 MiB hues.bin) |
 | Multis, lights, tileart, equipconv | | 1.8 MiB, 2.8 MiB, 692 B, 1,060 B |
 | Text | text/fonts.bin, unifont.bin, cliloc.bin, speech.bin | 23.4 MiB: 35 KiB + 7.5 MiB (763,025 glyphs in 866 page records, 2,171 pages shared) + 15.6 MiB (8 languages, 941,936 strings) + 141 KiB; 11.8 MiB with `--cliloc-brotli`; 62.5 MB of MUL files |
 | Gumps | gumps/gumps.bin | 58.2 MiB (123.5 MiB of payloads; 37.9 MiB with every record Brotli, `--gump-small 0`; 133.7 MiB with `--raw-gumps`); 4,438 gumps, 4,290 records |
