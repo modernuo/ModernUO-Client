@@ -1,6 +1,6 @@
 # Architecture Recommendations
 
-These are proposals, not decisions. The owner's decisions are in [README.md](README.md#decisions-so-far-from-the-project-owner).
+> **History.** Proposals of 2026-10-23, not decisions. The owner's decisions are in [README.md](README.md#decisions-so-far-from-the-project-owner); the asset pipeline (section 3's converter) is now specified in [data-formats.md](data-formats.md) and [pack-format.md](pack-format.md).
 
 ## 1. World storage: split static from dynamic
 
