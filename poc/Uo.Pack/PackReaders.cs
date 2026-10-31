@@ -418,24 +418,21 @@ public static class TileDataFile
     }
 }
 
-/// <summary>Hue LUT: count, then count rows of 32 RGBA8 shades.</summary>
+/// <summary>Retired hues.bin: count, then count rows of 32 RGBA8 shades. Packs made before the one-source-of-truth change
+/// (e.g. classic-1.0) still carry it, but nothing loads it: the LUT is built from hues_raw.bin by <see cref="HueLut"/>.
+/// Only kept so tests and tools can compare an old pack's file with the built LUT.</summary>
 public static class HueFile
 {
-    public const int Shades = 32;
-
-    public static void Write(string path, int count, ReadOnlySpan<uint> rgba)
-    {
-        using var fs = File.Create(path);
-        StructIo.WriteHeader(fs, PackConst.MagicHues);
-        StructIo.Write(fs, count);
-        StructIo.WriteSpan(fs, rgba);
-    }
+    public const int Shades = HueLut.Shades;
+    public const string LegacyFileName = "hues.bin";
 
     public static (int Count, uint[] Rgba) Read(string path)
     {
         using var fs = File.OpenRead(path);
         StructIo.ReadHeader(fs, PackConst.MagicHues);
         var count = StructIo.Read<int>(fs);
+        if (count < 0 || (long)count * Shades * 4 > fs.Length - fs.Position)
+            throw new InvalidDataException($"{LegacyFileName}: bad count {count}");
         var data = new uint[count * Shades];
         StructIo.ReadSpan<uint>(fs, data);
         return (count, data);

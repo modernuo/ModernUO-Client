@@ -144,7 +144,6 @@ if (convert)
     if (Want("anims")) stats["anims"] = Stage("anims", () => AnimConvert.Run(fm, outDir));
     if (ConvertOptions.Format == Uo.Pack.PixelFormat.Bc7)
         Console.WriteLine($"  bc7: {PageCodec.RefineStats.Encoded} non-trivial blocks encoded, {PageCodec.RefineStats.Refined} re-encoded at Balanced (refine below {ConvertOptions.Bc7RefineDb} dB)");
-    if (Want("hues")) stats["hues"] = Stage("hues", () => ArtConvert.Hues(fm, outDir));
     if (Want("tiledata"))
     {
         stats["tiledata"] = Stage("tiledata", () => ArtConvert.TileData(fm, outDir));
@@ -152,7 +151,7 @@ if (convert)
     }
     if (Want("hues"))
     {
-        Stage("hues (raw)", () => TableConvert.HuesRaw(fm, outDir));
+        stats["hues"] = Stage("hues (raw)", () => TableConvert.HuesRaw(fm, outDir));
         Stage("radarcol", () => TableConvert.RadarCol(fm, outDir));
     }
     if (Want("data"))

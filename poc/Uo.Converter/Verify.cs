@@ -94,13 +94,25 @@ public static class Verify
             ref readonly var t = ref fm.TileData.StaticData[i];
             if (statics[i].Flags != (ulong)t.Flags || statics[i].Height != t.Height || statics[i].Layer != t.Layer) { Fail($"tiledata static {i}"); break; }
         }
-        var (hueCount, hues) = HueFile.Read(Path.Combine(outDir, "hues.bin"));
-        if (hueCount != fm.Hues.HuesCount) Fail("hues count");
-        int lutBad = 0;
-        for (int i = 0; i < Math.Min(hueCount, fm.Hues.HuesCount); i++)
-            for (int k = 0; k < HueFile.Shades; k++)
-                if (hues[i * HueFile.Shades + k] != (PackColor.ToRgb8(fm.Hues.HuesRange[i >> 3].Entries[i & 7].ColorTable[k]) | 0xFF000000) && lutBad++ == 0) Fail($"hue LUT {i}:{k}");
-        Console.WriteLine($"  tiledata: {land.Length} land, {statics.Length} statics (flags, texId, height, layer exact); hues: {hueCount}, LUT = bit-replicated (c<<3|c>>2) hues.mul {(lutBad == 0 ? "EXACT" : "MISMATCH")}");
+        string hueNote = "hues: not checked";
+        if (Want("hues") && File.Exists(Path.Combine(outDir, TableConst.HueRawFile)))
+        {
+            // The LUT the client builds from hues_raw.bin (HueLut) against the expansion done here by hand from HuesLoader.
+            var hues = HueLut.Build(HueRawFile.Read(Path.Combine(outDir, TableConst.HueRawFile)));
+            int hueCount = hues.Length / HueLut.Shades;
+            if (hueCount != fm.Hues.HuesCount) Fail("hues count");
+            int lutBad = 0;
+            for (int i = 0; i < Math.Min(hueCount, fm.Hues.HuesCount); i++)
+                for (int k = 0; k < HueLut.Shades; k++)
+                {
+                    int c = fm.Hues.HuesRange[i >> 3].Entries[i & 7].ColorTable[k];
+                    int r = (c >> 10) & 0x1F, g = (c >> 5) & 0x1F, b = c & 0x1F;
+                    uint want = 0xFF000000u | (uint)((b << 3 | b >> 2) << 16) | (uint)((g << 3 | g >> 2) << 8) | (uint)(r << 3 | r >> 2);
+                    if (hues[i * HueLut.Shades + k] != want && lutBad++ == 0) Fail($"hue LUT {i}:{k}");
+                }
+            hueNote = $"hues: {hueCount}, LUT built from hues_raw.bin = bit-replicated (c<<3|c>>2) hues.mul {(lutBad == 0 ? "EXACT" : "MISMATCH")}";
+        }
+        Console.WriteLine($"  tiledata: {land.Length} land, {statics.Length} statics (flags, texId, height, layer exact); {hueNote}");
         CheckNoDraw(fm, land, statics);
         CheckTables(fm, outDir);
 
