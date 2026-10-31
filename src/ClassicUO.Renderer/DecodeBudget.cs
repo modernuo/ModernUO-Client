@@ -18,7 +18,8 @@ namespace ClassicUO.Renderer
     /// </summary>
     public sealed class DecodeBudget
     {
-        public const long DefaultCapBytes = 24L << 20;
+        // Safety net, not a throttle: the measured all-time peak in flight is ~7.3 MiB, so 16 MiB never delays art in the measured plans.
+        public const long DefaultCapBytes = 16L << 20;
 
         private static long CapFromEnv()
         {
