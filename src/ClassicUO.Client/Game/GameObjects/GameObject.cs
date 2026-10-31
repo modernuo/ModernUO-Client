@@ -74,17 +74,23 @@ namespace ClassicUO.Game.GameObjects
 
         // FIXME: remove it
         public sbyte FoliageIndex = -1;
-        public ushort Graphic;
-        public ushort Hue;
-        public Vector3 Offset;
+        public ushort Graphic { get; set; }
+        public ushort Hue { get; set; }
+        // A struct property: `obj.Offset.Z = v` does not compile (CS1612, it would write a copy).
+        // Write members through OffsetX/OffsetY/OffsetZ, or assign a whole Vector3.
+        private Vector3 _offset;
+        public Vector3 Offset { get => _offset; set => _offset = value; }
+        public float OffsetX { get => _offset.X; set => _offset.X = value; }
+        public float OffsetY { get => _offset.Y; set => _offset.Y = value; }
+        public float OffsetZ { get => _offset.Z; set => _offset.Z = value; }
         public short PriorityZ;
         public GameObject TNext;
         public GameObject TPrevious;
         /// <summary>The chunk whose tile list holds this object (Chunk.AddGameObject); null once removed (RemoveFromTile).</summary>
         public Chunk TileChunk;
-        public ushort X,
-            Y;
-        public sbyte Z;
+        public ushort X { get; set; }
+        public ushort Y { get; set; }
+        public sbyte Z { get; set; }
 
         public void AddDamage(int damage)
         {
