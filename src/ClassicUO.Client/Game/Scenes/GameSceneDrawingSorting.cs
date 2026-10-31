@@ -9,6 +9,7 @@ using ClassicUO.Game.Managers;
 using ClassicUO.Game.Map;
 using ClassicUO.Renderer;
 using ClassicUO.Utility;
+using ClassicUO.Utility.Logging;
 using Microsoft.Xna.Framework;
 using System;
 using System.Runtime.CompilerServices;
@@ -41,9 +42,7 @@ namespace ClassicUO.Game.Scenes
             _maxTile,
             _minTile,
             _last_scaled_offset;
-        private int _oldPlayerX,
-            _oldPlayerY,
-            _oldPlayerZ;
+        private MaxDrawZLatch _maxZLatch;
         private int _foliageCount;
         private float _cotRadiusSq;
         private Vector2 _cotPlayerScreenPos;
@@ -63,16 +62,17 @@ namespace ClassicUO.Game.Scenes
             int playerY = _world.Player.Y;
             int playerZ = _world.Player.Z;
 
-            if (
-                playerX == _oldPlayerX && playerY == _oldPlayerY && playerZ == _oldPlayerZ && !force
-            )
+            // the position, and whether the chunks read last time were loaded (MaxDrawZLatch): a teleport's first frame can
+            // come before the player's chunk loads, and that answer must not be kept
+            if (!_maxZLatch.NeedsUpdate(playerX, playerY, playerZ, force))
             {
                 return;
             }
 
-            _oldPlayerX = playerX;
-            _oldPlayerY = playerY;
-            _oldPlayerZ = playerZ;
+            bool wasIncomplete = _maxZLatch.IsIncomplete;
+            int incompleteFrames = _maxZLatch.IncompleteFrames;
+            int oldMaxZ = _maxZ;
+            bool complete = false;
 
             sbyte maxGroundZ = 127;
             _maxGroundZ = 127;
@@ -146,6 +146,7 @@ namespace ClassicUO.Game.Scenes
                 bx = playerX;
                 by = playerY;
                 chunk = _world.Map.GetChunk(bx, by, false);
+                complete = chunk != null;
 
                 if (chunk != null)
                 {
@@ -212,6 +213,13 @@ namespace ClassicUO.Game.Scenes
                 }
 
                 _maxGroundZ = maxGroundZ;
+            }
+
+            _maxZLatch.Record(_world.Player.X, _world.Player.Y, _world.Player.Z, complete);
+
+            if (wasIncomplete && complete)
+            {
+                Log.Trace($"[maxz] the player's chunks loaded {incompleteFrames} frame(s) after the position changed: max Z {oldMaxZ} -> {_maxZ}, roofs {(_noDrawRoofs ? "hidden" : "drawn")}");
             }
         }
 
