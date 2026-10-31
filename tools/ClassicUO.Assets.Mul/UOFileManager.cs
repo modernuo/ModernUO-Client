@@ -16,6 +16,9 @@ namespace ClassicUO.Assets
     {
         private readonly UOFilesOverrideMap _overrideMap;
 
+        /// <summary>The file overrides this manager reads through (shared with the converter's per-thread copies).</summary>
+        public UOFilesOverrideMap OverrideMap => _overrideMap;
+
         public UOFileManager(ClientVersion clientVersion, string uoPath) : this(clientVersion, uoPath, new UOFilesOverrideMap())
         {
         }

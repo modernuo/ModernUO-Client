@@ -74,40 +74,6 @@ public static class Layers
     public static ReadOnlySpan<byte> InWorldOrder(int dir) => (dir & 7) switch { 0 => Order0, 3 => Order3, _ => Order1 };
 }
 
-/// <summary>Mount item graphic → (body, rider y offset). ClassicUO <c>Mounts</c>.</summary>
-public static class Mounts
-{
-    static readonly Dictionary<ushort, (ushort Body, sbyte OffsetY)> Table = new();
-
-    static Mounts()
-    {
-        ReadOnlySpan<(int Item, int Body, int Off)> t =
-        [
-            (0x3E90, 0x0114, 0), (0x3E91, 0x0115, 0), (0x3E92, 0x011C, 0), (0x3E94, 0x00F3, 0), (0x3E95, 0x00A9, 0), (0x3E97, 0x00C3, 0),
-            (0x3E98, 0x00C2, 0), (0x3E9A, 0x00C1, 0), (0x3E9B, 0x00C0, -9), (0x3E9D, 0x00C0, -9), (0x3E9C, 0x00BF, 0), (0x3E9E, 0x00BE, 0),
-            (0x3EA0, 0x00E2, 0), (0x3EA1, 0x00E4, 0), (0x3EA2, 0x00CC, 0), (0x3EA3, 0x00D2, 0), (0x3EA4, 0x00DA, 0), (0x3EA5, 0x00DB, 0),
-            (0x3EA6, 0x00DC, 0), (0x3EA7, 0x0074, 0), (0x3EA8, 0x0075, 0), (0x3EA9, 0x0072, 0), (0x3EAA, 0x0073, 0), (0x3EAB, 0x00AA, 0),
-            (0x3EAC, 0x00AB, 0), (0x3EAD, 0x0084, 0), (0x3EAF, 0x0078, 0), (0x3EB0, 0x0079, 0), (0x3EB1, 0x0077, 0), (0x3EB2, 0x0076, 0),
-            (0x3EB3, 0x0090, 0), (0x3EB4, 0x007A, -9), (0x3EB5, 0x00B1, 0), (0x3EB6, 0x00B2, 0), (0x3EB7, 0x00B3, 0), (0x3EB8, 0x00BC, 0),
-            (0x3EBA, 0x00BB, 0), (0x3EBB, 0x0319, -9), (0x3EBC, 0x0317, 0), (0x3EBD, 0x031A, 0), (0x3EBE, 0x031F, 0), (0x3EC3, 0x02D4, 0),
-            (0x3ECE, 0x059A, 0), (0x3EC5, 0x00D5, 0), (0x3F3A, 0x00D5, 0), (0x3EC6, 0x01B0, 9), (0x3EC7, 0x04E6, 18), (0x3EC8, 0x04E7, 18),
-            (0x3EC9, 0x042D, 3), (0x3ECA, 0x0579, 9), (0x3ECC, 0x0582, 0), (0x3ED1, 0x05E6, 0), (0x3ECB, 0x057F, 0), (0x3ED0, 0x05A1, 18),
-            (0x3ED2, 0x05F6, 9), (0x3ECD, 0x0580, 0), (0x3ECF, 0x05A0, 9), (0x3ED3, 0x05F7, 18), (0x3ED4, 0x060A, 0), (0x3ED5, 0x060B, 0),
-            (0x3ED6, 0x060C, 0), (0x3ED7, 0x060D, 0), (0x3ED8, 0x060F, 0), (0x3ED9, 0x0610, 0), (0x3EDA, 0x0590, 9), (0x3EDB, 0x0611, 12),
-            (0x3EDC, 0x0666, 12), (0x3EDD, 0x0581, 0), (0x3EDE, 0x0673, -10), (0x3EDF, 0x0674, -10), (0x3EE0, 0x0675, -10), (0x3EE1, 0x0678,
-            -10), (0x3EE2, 0x0679, -10), (0x3EE4, 0x06C1, -4),
-        ];
-        foreach (var (item, body, off) in t) Table[(ushort)item] = ((ushort)body, (sbyte)off);
-    }
-
-    public static bool TryGet(ushort item, out ushort body, out sbyte offsetY)
-    {
-        if (Table.TryGetValue(item, out var v)) { body = v.Body; offsetY = v.OffsetY; return true; }
-        body = 0; offsetY = 0;
-        return false;
-    }
-}
-
 /// <summary>A mobile's state as the animation lookup needs it.</summary>
 public struct MobileAnimInput
 {
@@ -173,6 +139,14 @@ public sealed class AnimMobileSprites : IMobileSprites
         g is >= 0x0190 and <= 0x0193 or >= 0x00B7 and <= 0x00BA or >= 0x025D and <= 0x0260
         or 0x029A or 0x029B or 0x02B6 or 0x02B7 or 0x03DB or 0x03DF or 0x03E2 or 0x02E8 or 0x02E9 or 0x04E5;
 
+    /// <summary>
+    /// The rider's y offset on mount item <paramref name="item"/> with mount body <paramref name="mountBody"/> (before its
+    /// Body.def alias is followed): the pack's seat of that body applied to the item (table offset + shift, or the
+    /// stand-in's absolute offset), as the main client (AnimationRules.MountOffsetY). An int: table + shift can leave the sbyte range.
+    /// </summary>
+    public static int RiderOffset(AnimBodyEntry[] bodies, ushort item, int mountBody) =>
+        ((uint)mountBody < (uint)bodies.Length ? bodies[mountBody].MountSeat : default).RiderOffset(item);
+
     public int GetFrames(in MobileAnimInput m, in Equipment eq, long now, Span<MobileFrame> outFrames)
     {
         int body = m.Body;
@@ -185,15 +159,14 @@ public sealed class AnimMobileSprites : IMobileSprites
         int dir = m.Direction & 7;
         bool hand2 = eq.Slots[Layers.TwoHanded] != 0;
         int mountBody = -1;
-        sbyte mountOffset = 0;
+        int mountOffset = 0;
         ushort mountHue = 0;
         uint mountSlot = eq.Slots[Layers.Mount];
         if (human && mountSlot != 0)
         {
             ushort item = (ushort)mountSlot;
-            if (Mounts.TryGet(item, out var mb, out mountOffset)) mountBody = mb;
-            ushort aid = _animIds?.Get(item) ?? 0;
-            if (aid != 0) mountBody = aid;
+            mountBody = MountTable.MountBody(item, _animIds?.Get(item) ?? 0);
+            mountOffset = RiderOffset(_bodies, item, mountBody);
             if ((uint)mountBody < (uint)_bodies.Length && _bodies[mountBody].AliasBody != AnimConst.NoBody)
             {
                 mountHue = _bodies[mountBody].AliasHue;

@@ -233,6 +233,27 @@ namespace ClassicUO.Assets
             return false;
         }
 
+        /// <summary>
+        /// The Corpse.def line of <paramref name="body"/>, if it has one: its target and hue, read as <see cref="ReplaceCorpse"/>
+        /// would apply them. Presence is explicit, so a self-target (<c>191 {191} 65535</c>) is not mistaken for an absent
+        /// line whatever its hue (ReplaceCorpse returns false for both).
+        /// </summary>
+        public bool TryGetCorpseDef(ushort body, out ushort target, out ushort hue)
+        {
+            if (_corpseInfos.TryGetValue(body, out var bodyInfo))
+            {
+                target = bodyInfo.Graphic;
+                hue = bodyInfo.Hue;
+
+                return true;
+            }
+
+            target = body;
+            hue = 0;
+
+            return false;
+        }
+
         public bool ReplaceCorpse(ref ushort body, ref ushort hue)
         {
             if (_corpseInfos.TryGetValue(body, out var bodyInfo))
@@ -605,6 +626,69 @@ namespace ClassicUO.Assets
                 }
             }
         }
+
+        // PoC converter hooks (body import choices): the converter resolves Bodyconv.def itself (see
+        // Uo.Converter.BodyPlan) and installs the result here instead of calling ProcessBodyConvDef.
+
+        /// <summary>Replaces every Bodyconv.def conversion with <paramref name="conv"/> (body -> file index, graphic, mount height).</summary>
+        public void SetBodyConv(IEnumerable<KeyValuePair<int, (int FileIndex, ushort Graphic, sbyte MountHeight)>> conv)
+        {
+            _bodyConvInfos.Clear();
+
+            foreach (var (body, c) in conv)
+            {
+                if (c.FileIndex < 0 || c.FileIndex >= _files.Length || _files[c.FileIndex] == null)
+                {
+                    continue;
+                }
+
+                _bodyConvInfos[body] = new BodyConvInfo()
+                {
+                    FileIndex = c.FileIndex,
+                    Graphic = c.Graphic,
+                    AnimType = CalculateTypeByGraphic(c.Graphic, c.FileIndex),
+                    MountHeight = c.MountHeight
+                };
+            }
+        }
+
+        /// <summary>Gives <paramref name="body"/> the mobtypes.txt entry of <paramref name="from"/> (none when that body has none).</summary>
+        public void CopyMobType(int body, int from)
+        {
+            if (_mobTypes.TryGetValue(from, out var info))
+            {
+                _mobTypes[body] = info;
+            }
+            else
+            {
+                _mobTypes.Remove(body);
+            }
+        }
+
+        /// <summary>True when mobtypes.txt lists <paramref name="body"/>.</summary>
+        public bool HasMobType(int body) => _mobTypes.ContainsKey(body);
+
+        /// <summary>The mobtypes.txt entry of <paramref name="body"/> (as installed now), if any.</summary>
+        public bool TryGetMobType(int body, out AnimationGroupsType type, out AnimationFlags flags)
+        {
+            bool found = _mobTypes.TryGetValue(body, out var info);
+            type = found ? info.Type : AnimationGroupsType.Unknown;
+            flags = found ? info.Flags : AnimationFlags.None;
+            return found;
+        }
+
+        /// <summary>Installs a mobtypes entry for <paramref name="body"/> (kind and flags, which also pick the MUL layout).</summary>
+        public void SetMobType(int body, AnimationGroupsType type, AnimationFlags flags) =>
+            _mobTypes[body] = new MobTypeInfo { Type = type, Flags = flags };
+
+        /// <summary>Removes the mobtypes entry of <paramref name="body"/>.</summary>
+        public void RemoveMobType(int body) => _mobTypes.Remove(body);
+
+        /// <summary>The kind (and so the layout) a body id has in an anim file without mobtypes.txt, as pre-5.0 clients read it.</summary>
+        public AnimationGroupsType TypeByGraphic(ushort graphic, int fileIndex) => CalculateTypeByGraphic(graphic, fileIndex);
+
+        /// <summary>True when AnimationSequence.uop has an entry for <paramref name="body"/>.</summary>
+        public bool HasUopGroups(ushort body) => _uopInfos.ContainsKey(body);
 
         public void ProcessBodyConvDef(BodyConvFlags flags)
         {

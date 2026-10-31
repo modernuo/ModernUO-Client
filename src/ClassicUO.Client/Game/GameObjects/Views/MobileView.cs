@@ -150,7 +150,7 @@ namespace ClassicUO.Game.GameObjects
             byte animIndex = AnimIndex;
 
             Item mount = FindItemByLayer(Layer.Mount);
-            sbyte mountOffsetY = 0;
+            int mountOffsetY = 0;
 
             if (isHuman && mount != null && mount.Graphic != 0x3E96)
             {
@@ -162,10 +162,7 @@ namespace ClassicUO.Game.GameObjects
                     && mountGraphic < Client.Game.UO.Animations.MaxAnimationCount
                 )
                 {
-                    if (Mounts.TryGet(mount.Graphic, out var mountInfo))
-                    {
-                        mountOffsetY = mountInfo.OffsetY;
-                    }
+                    mountOffsetY = AnimationRules.MountOffsetY(mount.Graphic, Client.Game.UO.Animations.GetMountSeat(mountGraphic));
 
                     if (hasShadow)
                     {
@@ -672,7 +669,7 @@ namespace ClassicUO.Game.GameObjects
             bool isMount,
             bool forceUOP,
             float depth,
-            sbyte mountOffset,
+            int mountOffset,
             ushort overridedHue,
             bool charIsSitting
         )
@@ -1073,10 +1070,7 @@ namespace ClassicUO.Game.GameObjects
                                 return true;
                             }
 
-                            if (Mounts.TryGet(mount.Graphic, out var moutInfo))
-                            {
-                                position.Y += moutInfo.OffsetY;
-                            }
+                            position.Y += AnimationRules.MountOffsetY(mount.Graphic, Client.Game.UO.Animations.GetMountSeat(mountGraphic));
                         }
                     }
                 }

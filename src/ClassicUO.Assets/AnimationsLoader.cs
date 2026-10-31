@@ -435,13 +435,96 @@ namespace ClassicUO.Assets
             return AnimationGroups.High;
         }
 
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        /// <summary>
+        /// The death action a corpse of <paramref name="animID"/> (the drawn body, after its Corpse.def alias) plays.
+        /// <paramref name="second"/> (the corpse item's UsedLayer bit) selects the second death action; when the body has
+        /// no frames for it in any direction, the first one is used instead (turkey 95 has death 8 but no 12, and so
+        /// does its Corpse.def alias 156). ClassicUO main has no such fallback: it draws nothing. Every corpse path
+        /// (Gpu extract, Legacy draw and pick, the corpse animation tick, 0xAF) goes through here.
+        /// </summary>
         public byte GetDeathAction(
             ushort animID,
             AnimationFlags animFlags,
             AnimationGroupsType animType,
             bool second,
             bool isRunning = false
+        )
+        {
+            byte group = DeathGroup(animID, animFlags, animType, second, isRunning);
+
+            if (second && !HasAction(animID, group))
+            {
+                byte first = DeathGroup(animID, animFlags, animType, false, isRunning);
+
+                if (HasAction(animID, first))
+                {
+                    return first;
+                }
+            }
+
+            return group;
+        }
+
+        /// <summary>
+        /// One step of the corpse animation tick (Item.ProcessAnimation): the corpse of <paramref name="graphic"/> is drawn
+        /// as its Corpse.def target (<see cref="ResolveBody"/> with isCorpse, as the Gpu extract and ItemView draw and
+        /// pick), so its death action (<see cref="GetDeathAction"/>, <paramref name="second"/> = the UsedLayer bit) and
+        /// frame count come from that target, not from the live body. The frames are the ones
+        /// Animations.GetAnimationFrames(target, action, dir, isCorpse: true) returns (stored direction
+        /// <paramref name="storedDir"/> 0..4 = record dir + 3). <paramref name="frame"/> = <paramref name="next"/>, held at
+        /// the last frame once the animation is done. False when that direction has no frames (the index is left alone).
+        /// </summary>
+        public bool TryCorpseFrame(ushort graphic, bool second, byte storedDir, byte next, out byte frame)
+        {
+            frame = 0;
+
+            if (graphic >= _bodies.Length || storedDir >= 5)
+            {
+                return false;
+            }
+
+            ushort id = ResolveBody(graphic, true, out _);
+            ref readonly var e = ref _bodies[id];
+            byte action = GetDeathAction(id, (AnimationFlags)(e.Flags & ~AnimBodyEntry.MountAbsoluteFlag), (AnimationGroupsType)e.Type, second);
+
+            if (action >= MAX_ACTIONS || !TryGetDirection(ResolveBody(id, true, out _), action, storedDir + 3, out var dir))
+            {
+                return false;
+            }
+
+            frame = next >= dir.FrameCount ? (byte)(dir.FrameCount - 1) : next;
+
+            return true;
+        }
+
+        /// <summary>Whether <paramref name="body"/> stores frames for <paramref name="action"/> in any direction.</summary>
+        public bool HasAction(ushort body, int action)
+        {
+            if (body >= _bodies.Length || action < 0 || action >= _bodies[body].ActionCount)
+            {
+                return false;
+            }
+
+            long first = _bodies[body].FirstDir + (long)action * AnimConst.Directions;
+
+            for (int d = 0; d < AnimConst.Directions; d++)
+            {
+                if (_dirs[first + d].FrameCount != 0)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static byte DeathGroup(
+            ushort animID,
+            AnimationFlags animFlags,
+            AnimationGroupsType animType,
+            bool second,
+            bool isRunning
         )
         {
             //ConvertBodyIfNeeded(ref animID);
@@ -702,15 +785,5 @@ namespace ClassicUO.Assets
         {
             return (Graphic, Gump, Color) == (other.Graphic, other.Gump, other.Color);
         }
-    }
-
-    [Flags]
-    public enum BodyConvFlags
-    {
-        Anim1 = 0x1,
-        Anim2 = 0x2,
-        Anim3 = 0x4,
-        Anim4 = 0x8,
-        Anim5 = 0x10,
     }
 }
