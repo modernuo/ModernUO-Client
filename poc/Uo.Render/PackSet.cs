@@ -199,6 +199,6 @@ public sealed class PackSet
         const string real = @"C:\Repositories\uo-packs\classic";
         if (File.Exists(Path.Combine(real, "manifest.json")) && File.Exists(Path.Combine(real, "art", "sprites.bin")))
             return real;
-        return @"C:\Repositories\uo-packs\synthetic";
+        return Path.Combine(Path.GetTempPath(), "uo-synthetic-pack"); // Uo.Render --make-synthetic's default
     }
 }

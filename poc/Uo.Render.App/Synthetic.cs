@@ -8,8 +8,12 @@ public static class Synthetic
 {
     const int S = PackConst.PageSize;
 
+    /// <summary>Default output: under the temp folder, never under a published packs root.</summary>
+    public static string DefaultRoot => Path.Combine(Path.GetTempPath(), "uo-synthetic-pack");
+
     public static void Make(string root)
     {
+        PublishedPacks.EnsureOutputDir(root); // every write below goes through ReplacingFile, which checks its folder again
         Directory.CreateDirectory(Path.Combine(root, "art"));
         Directory.CreateDirectory(Path.Combine(root, "tex"));
         var sprites = new SpriteEntry[PackConst.StaticSpriteBase + 0x10000];
@@ -120,7 +124,7 @@ public static class Synthetic
         // --- facet 0, regions (2..3, 2..3) = tiles 1024..2047
         var facetDir = Path.Combine(root, "map", "0");
         Directory.CreateDirectory(facetDir);
-        File.WriteAllText(Path.Combine(facetDir, "facet.json"), "{ \"width\": 7168, \"height\": 4096, \"blocksX\": 896, \"blocksY\": 512, \"regionBlocks\": 64 }");
+        ReplacingFile.WriteAllText(Path.Combine(facetDir, FacetFileIo.FileName), "{ \"width\": 7168, \"height\": 4096, \"blocksX\": 896, \"blocksY\": 512, \"regionBlocks\": 64 }");
         for (int ry = 2; ry <= 3; ry++)
             for (int rx = 2; rx <= 3; rx++)
                 WriteRegion(facetDir, rx, ry);

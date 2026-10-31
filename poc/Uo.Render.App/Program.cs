@@ -43,13 +43,14 @@ public static unsafe class Program
     public static int Main(string[] args)
     {
         var o = new Options();
+        // One root configuration for every command: all --packs-root arguments are taken first, wherever they appear.
+        args = Uo.Pack.PublishedPacks.ConfigureFromArgs(args);
         for (int i = 0; i < args.Length; i++)
         {
             switch (args[i])
             {
-                case "--make-synthetic":
-                    Synthetic.Make(i + 1 < args.Length ? args[i + 1] : @"C:\Repositories\uo-packs\synthetic");
-                    return 0;
+                case "--make-synthetic": // [dir], default under the temp folder (never under a published packs root)
+                    return Guarded(() => Synthetic.Make(i + 1 < args.Length ? args[i + 1] : Synthetic.DefaultRoot));
                 case "--probe":
                     Probe(o.Pack ?? PackSet.FindDefault(), int.Parse(args[i + 1]), int.Parse(args[i + 2]), i + 3 < args.Length ? int.Parse(args[i + 3]) : 2);
                     return 0;
@@ -60,8 +61,7 @@ public static unsafe class Program
                     Collisions(o.Pack ?? PackSet.FindDefault(), int.Parse(args[i + 1]), int.Parse(args[i + 2]), i + 3 < args.Length ? int.Parse(args[i + 3]) : 6);
                     return 0;
                 case "--debug-compress-pages": // <srcPackDir> <dstPackDir>: Brotli (Kind=1) every other page, for reader tests
-                    DebugCompressPages(args[i + 1], args[i + 2]);
-                    return 0;
+                    return Guarded(() => DebugCompressPages(args[i + 1], args[i + 2]));
                 case "--page-decode-bench": // <page dir> [pages] [--expand] [--parallel N]: PageJob per page into native memory, ms + bytes allocated
                 {
                     int pi = Array.IndexOf(args, "--parallel");
@@ -370,13 +370,28 @@ public static unsafe class Program
         return n;
     }
 
+    /// <summary>Runs a command that writes pack files; a published-pack refusal is reported, not thrown.</summary>
+    static int Guarded(Action command)
+    {
+        try
+        {
+            command();
+            return 0;
+        }
+        catch (InvalidOperationException e) when (e.Message.StartsWith("refusing", StringComparison.Ordinal))
+        {
+            Console.Error.WriteLine(e.Message);
+            return 1;
+        }
+    }
+
     static void DebugCompressPages(string src, string dst)
     {
+        Uo.Pack.PublishedPacks.EnsureOutputDir(dst); // every file write below is checked again by ReplacingFile
         foreach (var f in Directory.GetFiles(src, "*", SearchOption.AllDirectories))
         {
             var rel = Path.GetRelativePath(src, f);
             var outPath = Path.Combine(dst, rel);
-            Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
             var name = Path.GetFileName(f);
             bool page = name.StartsWith("page_") && int.Parse(name[5..9]) % 2 == 1;
             if (!page) { Uo.Pack.ReplacingFile.Copy(f, outPath); continue; }
