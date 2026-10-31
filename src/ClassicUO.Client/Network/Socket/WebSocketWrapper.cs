@@ -214,26 +214,53 @@ sealed class WebSocketWrapper : SocketWrapper
         memory = buffer.AsMemory();
     }
 
+    private const int DRAIN_TIMEOUT_MS = 2000; // queued writes get this long to finish before the socket is closed
+    private const int CLOSE_TIMEOUT_MS = 2000;
+
+    private int _retired;
+
     public override void Disconnect()
     {
-        if (!IsConnected)
+        // Always cleans up, connected or not: stop accepting writes, give the queue a bounded time to drain, close the
+        // socket (bounded too), then cancel whatever is left (a stalled send or the receive loop) and dispose the transport.
+        if (Interlocked.Exchange(ref _retired, 1) != 0)
             return;
 
-        _writer?.Complete(); // what is queued is still written, in order; nothing new is accepted
+        _writer?.Complete();
+        _ = RetireAsync(_writer, _webSocket, _tokenSource);
+    }
 
+    private static async Task RetireAsync(OrderedAsyncWriter writer, ClientWebSocket ws, CancellationTokenSource cts)
+    {
         try
         {
-            _webSocket?.CloseAsync(WebSocketCloseStatus.NormalClosure, "Disconnect", CancellationToken.None)
-                .ContinueWith(_ => _tokenSource?.Cancel());
+            if (writer != null)
+                await Task.WhenAny(writer.Completion, Task.Delay(DRAIN_TIMEOUT_MS)).ConfigureAwait(false);
+
+            if (ws?.State is WebSocketState.Open or WebSocketState.CloseReceived)
+            {
+                using var closeTimeout = new CancellationTokenSource(CLOSE_TIMEOUT_MS);
+                await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "Disconnect", closeTimeout.Token).ConfigureAwait(false);
+            }
         }
         catch
         {
-            _tokenSource?.Cancel();
+            // closing a socket that is already gone, or timing out, is the same outcome
+        }
+        finally
+        {
+            try { cts?.Cancel(); } catch { }
+            try { ws?.Dispose(); } catch { }
         }
     }
 
     public override void Dispose()
     {
+        // Immediate: abort a stalled send and the receive loop, release the transport (Disconnect is the graceful path).
+        Interlocked.Exchange(ref _retired, 1);
         _writer?.Complete();
+
+        try { _tokenSource?.Cancel(); } catch { }
+        try { _webSocket?.Dispose(); } catch { }
     }
 }
