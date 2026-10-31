@@ -30,6 +30,7 @@ namespace ClassicUO.UnitTests.IO
         [Theory]
         [InlineData("dll")]
         [InlineData("entry")]
+        [InlineData("image")]
         [InlineData("zero")]
         public void FailedNativeOpen_FreesTheInputCopy(string kind)
         {
@@ -39,6 +40,7 @@ namespace ClassicUO.UnitTests.IO
             {
                 "dll" => throw new DllNotFoundException("forced: cuo_mp3 missing"),
                 "entry" => throw new EntryPointNotFoundException("forced"),
+                "image" => throw new BadImageFormatException("forced: wrong architecture"),
                 _ => 0
             };
 
@@ -109,6 +111,132 @@ namespace ClassicUO.UnitTests.IO
             seek.Should().Throw<ObjectDisposedException>();
             Func<long> total = () => d.TotalFrames;
             total.Should().Throw<ObjectDisposedException>();
+        }
+
+        // Codex round 2: a frame count read (and cached) before Dispose must not be readable after it.
+        [Fact]
+        public void TotalFrames_Cached_ThrowsAfterDispose()
+        {
+            Mp3Decoder.TryOpen(SilentStream(10), out Mp3Decoder d, out string error).Should().BeTrue(error);
+            d.TotalFrames.Should().BeGreaterThan(0);
+            d.Dispose();
+
+            Func<long> total = () => d.TotalFrames;
+            total.Should().Throw<ObjectDisposedException>();
+        }
+
+        // Codex round 2: a library that exports open but not close. The release entry point is resolved before any
+        // native allocation, so every open path fails with an error, without reaching open and without an input copy.
+        [Theory]
+        [InlineData("entry")]
+        [InlineData("dll")]
+        [InlineData("image")]
+        public void MissingCloseExport_FailsTheOpenBeforeAllocating(string kind)
+        {
+            byte[] mp3 = SilentStream(20);
+            long before = SettledLiveInputs();
+            int opens = 0;
+            Mp3Decoder.OpenMemoryOverride = (p, n) =>
+            {
+                Interlocked.Increment(ref opens);
+
+                return 0;
+            };
+            Mp3Decoder.CloseOverride = h => throw (kind switch
+            {
+                "dll" => new DllNotFoundException("forced: no close"),
+                "image" => new BadImageFormatException("forced: no close"),
+                _ => (Exception)new EntryPointNotFoundException("forced: no close")
+            });
+
+            try
+            {
+                Mp3Decoder.TryOpen(mp3, out Mp3Decoder a, out string e1).Should().BeFalse();
+                a.Should().BeNull();
+                e1.Should().Contain("release entry point");
+
+                Mp3Decoder.TryOpen(new MemoryStream(mp3), out Mp3Decoder b, out string e2).Should().BeFalse();
+                b.Should().BeNull();
+                e2.Should().Contain("release entry point");
+
+                Mp3Decoder.TryOpen(new NonSeekableStream(mp3), out Mp3Decoder c, out string e3).Should().BeFalse();
+                c.Should().BeNull();
+                e3.Should().Contain("release entry point");
+
+                Mp3Decoder.LiveInputAllocations.Should().Be(before, "nothing is allocated before close is resolved");
+            }
+            finally
+            {
+                Mp3Decoder.OpenMemoryOverride = null;
+                Mp3Decoder.CloseOverride = null;
+            }
+
+            opens.Should().Be(0, "the native open is never reached");
+        }
+
+        // Codex round 2: release never throws. A close that fails at Dispose or in the finaliser is counted, the input
+        // copy is still freed, and nothing escapes (an exception escaping a finaliser would kill the test host).
+        [Fact]
+        public void FailingCloseAtRelease_NeverThrowsAndFreesTheInput()
+        {
+            long before = SettledLiveInputs();
+            long failures = Mp3Decoder.CloseFailures;
+
+            // Closes the real decoder (no native leak), then fails as a broken export would.
+            Action<nint> failingClose = h =>
+            {
+                if (h != 0)
+                {
+                    Mp3Native.Close(h);
+                }
+
+                throw new EntryPointNotFoundException("forced: close failed");
+            };
+
+            Mp3Decoder.TryOpen(SilentStream(10), out Mp3Decoder d, out string error).Should().BeTrue(error);
+            Mp3Decoder.CloseOverride = failingClose;
+
+            try
+            {
+                d.Invoking(x => x.Dispose()).Should().NotThrow();
+                d.IsDisposed.Should().BeTrue();
+                Mp3Decoder.LiveInputAllocations.Should().Be(before);
+                Mp3Decoder.CloseFailures.Should().Be(failures + 1);
+            }
+            finally
+            {
+                Mp3Decoder.CloseOverride = null;
+            }
+
+            // Finaliser path: open with a working close, then drop the decoder with a failing one installed.
+            OpenAndDrop();
+            Mp3Decoder.LiveInputAllocations.Should().Be(before + 1);
+            Mp3Decoder.CloseOverride = failingClose;
+
+            try
+            {
+                SettledLiveInputs().Should().Be(before, "the finaliser frees the input even when close fails");
+                Mp3Decoder.CloseFailures.Should().BeGreaterThanOrEqualTo(failures + 2);
+            }
+            finally
+            {
+                Mp3Decoder.CloseOverride = null;
+            }
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static void OpenAndDrop()
+        {
+            Mp3Decoder.TryOpen(SilentStream(10), out Mp3Decoder d, out string error).Should().BeTrue(error);
+        }
+
+        private sealed class NonSeekableStream : MemoryStream
+        {
+            public NonSeekableStream(byte[] data) : base(data)
+            {
+            }
+
+            public override bool CanSeek => false;
         }
 
         // Dispose (from two threads at once) racing a reader that reads and seeks in a loop: the reader must only ever
