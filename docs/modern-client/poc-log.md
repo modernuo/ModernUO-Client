@@ -3810,3 +3810,91 @@ Codex (gpt-6-astra) audited e58afd14b: seven findings (six P2, one P3) plus a se
 4. **P3, a configured fixture that is missing was reported as skipped.** Fixed: `LegacyPackFact` skips only while `CUO_LEGACY_PACK` or `CUO_LEGACY_UO` is unset; once set, the test asserts `manifest.json` in the pack and `map0.mul`, `mapdifl1.mul`, `mapdif1.mul` in the install, so a conversion that did not produce its fixture fails (checked: an empty `CUO_LEGACY_PACK` folder fails with "is set, so it must hold a converted pack"; unset skips). The converter tests' `LegacyUoFact` follows the same rule (skips only when `CUO_LEGACY_UO` is unset; the test asserts `map0.mul`).
 
 Verification: client builds (Release, and `-p:CuoDevTools=false`): 0 errors. `dotnet test tests/ClassicUO.UnitTests -c Release` with `CUO_LEGACY_PACK` and `CUO_LEGACY_UO`: 996 passed, 4 skipped (none of them the legacy test), 0 failed. `dotnet test tests/Uo.Converter.Tests`: 34 passed with `CUO_LEGACY_UO`; 33 passed, 1 skipped without it. `--verify-only` on the UOML pack: all checks passed, facets 0-4 expected from the source and every block EXACT against the oracle; on the classic spot pack (`--only tiledata,data,maps`): all checks passed, facets 0-5 expected from the LegacyMUL.uop maps.
+
+## Memory per client, round 3: page staging slots stop cycling (2026-10-31)
+
+Branch `poc/mem-reduce-3` from poc/modern-client 75747c25b. Owner-approved follow-up to round 2's diagnosis (bench-000044: the art staging containers hold 6–8 buffers of 10.67 MiB where 4 slots need 42.7 MiB).
+
+**Change (cc3f904ee).** Before, `PageResidency.StartLoads` mapped a free staging slot with `cycle=true`. When the slot's previous copy was still in flight, SDL_GPU added a buffer to that slot's container, and containers never shrink. Now:
+- `CopyRetirement` (owned by `Renderer`) numbers each frame command buffer. A frame that carries page staging copies is submitted with `SDL_SubmitGPUCommandBufferAndAcquireFence`, and the renderer polls that fence without blocking (`SDL_QueryGPUFence`, in submit order) at the start of `StartLoads` and before `Upload`. A signalled fence retires its serial and every earlier one, and the fence is released. Frames without staging copies take no fence. The offscreen throttle, GPU-sample, screenshot and drain paths wait for their own fences, so they mark the serial retired themselves. A failed submit counted as retired (wrong; replaced after the Codex audit, below).
+- `StagingSlots` (one per `PageResidency`, so art and anim alike) records the serial of each slot's last copy. A slot is mapped only once that serial has retired, and with `cycle=false`. A queued page that finds only slots still being copied from stays queued for a later frame; the game loop never waits. Without a tracker (a host that does not render through `Renderer`), slots map with cycling as before.
+- Slot waits are counted as episodes (runs of frames in which a queued page waited only for a copy to retire), frames, and ms (from an episode's first frame to the frame it ends, plus the longest episode). They are logged on the new `GPU world settled` line and on the DevBench 5 s stats line (`staging art ..., anim ...; copy fences N taken, M pending`).
+- Instrumentation (756365911, also in the base arm): `[load] GPU world settled (<facet>) after X ms, N frames; last page upload at Y ms; art r/l resident, u uploads; anim ...`. It is logged once per world build or facet change (the login is one), timed from the first world frame until `WorldRenderer.Settled` (no chunk pending, no page queued, loading or missing).
+- Tests: `StagingSlotsTests` (10 cases, fake fences, no GPU): a slot is reused only after its fence; retirement is in order (a later fence signalling first retires nothing); a frame without copies takes no fence; a failed submit or an outside wait retires the serial; without a tracker everything is reusable and cycles; dispose releases pending fences; wait statistics. A burst model (4 slots; 40, 13 and 4 pages; copies retiring 1–3 frames after submit) checks that no slot is rewritten while its copy is in flight, that every page loads, that each frame with copies takes one fence, and that only bursts larger than the slots wait.
+- Verified: unit tests 1078 pass, 1 skipped; client Release build and the `-p:CuoDevTools=false` build have 0 errors; Uo.Render.App and Uo.Client build.
+
+**Memory trade-off log (per client), computed, then measured by bench-000048 (results below):**
+
+| item | before | after (measured) | saving | what it costs |
+|---|---|---|---|---|
+| art page staging (4 slots × 10.67 MiB chain, B5G5R5A1 2048², 6 mips; private read-write, host-cached, fully resident) | 6–8 buffers, 64–85 MiB, created in the login burst and never freed; varies by run in 10.7 MiB steps (bench-000048 base: 7 and 8 buffers, 74.9 and 85.6 MiB) | exactly 4 buffers, 42.8 MiB, in both new runs at 60 and 120 s | 32 and 43 MiB of staging in this job's runs (21–43 MiB per client over the 6–8 range), and no run-to-run steps. Window medians: **26–37 MiB less private WS and 29–39 MiB less commit** from the login to the large scene (beyond noise); 42–47 MiB after the round trip and idle (below the 2× rule only because base's own spread there is one extra buffer) | during a burst, a slot waits until its last copy retires (about 1–3 frames) before it loads its next page. Counted as slot waits. Measured (bench-000048): **0 slot waits** in both new runs (login, facet switch, return, every 5 s stats line); login settled in 177 / 172 ms vs base 167 / 167 ms, within noise. One fence per frame that carries page copies (acquire, query, release; 7–9 at login, 23–29 by 132 s) |
+| anim page staging (8 slots × 1 MiB, Indexed8 1024²) | 8+ buffers, cycled the same way (below the walk's 1 MiB floor) | exactly 8 MiB (computed; below the walk's floor, not measured) | 0–a few MiB | same wait rule; 0 slot waits measured |
+
+**Measurement: job bench-000048** (`mem-reduce-3-ab`, finished ok in 1,685 s). It runs base 756365911 (75747c25b plus the settle log line only) against new cc3f904ee, interleaved base1 new1 base2 new2. The plan, windows, sampling and region walks are the same as bench-000044's (JIT Release dev builds, through benchpin, `CUO_MEM_REGIONS=5,15,30,60,120` in both arms). It also reports the time until the login scene settles, the last page upload, slot waits during the login burst, and the number of 10.4–10.9 MiB read-write allocations in the walks at 60 and 120 s. A smoke run of the new binary is bench-000047. Results below.
+- **Smoke run bench-000047 (new binary only, one run, 90 s):** ok. The login (facet 1) settled 176 ms after the first world frame (12 frames; last page upload at 171 ms; 8 art and 8 anim pages), with 0 slot waits in art and anim and 8 copy fences taken, none pending. The external walk at 60 s lists exactly **4** art staging chains (10.4–10.9 MiB read-write): 42.8 MiB committed and resident. bench-000044's runs had 6–8. This is a single run and not the A/B; the A/B is bench-000048.
+
+### Measured: bench-000048
+
+Status ok (1,685 s). All four runs (base1 new1 base2 new2, interleaved, through benchpin) completed the plan (`q` done in each); every large-scene window had 1,985 mobiles and 25,161 items. Same windows and rule as bench-000044: medians in MiB, each arm as run 1 / run 2; spread = (max-min)/min within an arm; a difference counts only if it is more than twice the larger within-arm spread. Base is 756365911 (75747c25b plus the `[load]` log line), new is cc3f904ee. **The binaries predate the Codex fixes** (c4316f088, c747433ab, head c747433ab): those change only the failed-submit and teardown paths. On the normal path measured here the same fences are taken, polled and released, so the numbers stand for the head.
+
+| window | metric | base 756365911 | new cc3f904ee | new - base | spread base / new | counts? |
+|---|---|---|---|---|---|---|
+| login transient (max, 2–10 s) | commit | 1905 / 1913 | 1873 / 1886 | **-29.5** | 0.4 % / 0.7 % | **yes** |
+| login transient (max, 2–10 s) | private WS | 770 / 779 | 742 / 754 | **-26.5** | 1.2 % / 1.6 % | **yes** |
+| login (3 s before b1) | commit | 1754 / 1757 | 1723 / 1736 | -26.0 | 0.2 % / 0.8 % | no (just under the 2× limit) |
+| login | private WS | 767 / 773 | 738 / 750 | **-26.0** | 0.8 % / 1.6 % | **yes** |
+| login | GC committed | 368 / 362 | 368 / 371 | +4.5 | 1.7 % / 0.8 % | no |
+| Britain b3 | commit | 1749 / 1750 | 1715 / 1726 | **-29.0** | 0.1 % / 0.6 % | **yes** |
+| Britain b3 | private WS | 767 / 769 | 733 / 744 | **-29.5** | 0.3 % / 1.5 % | **yes** |
+| Britain b3 | GC committed | 368 / 362 | 368 / 371 | +4.5 | 1.7 % / 0.8 % | no |
+| large scene ls_z1 | commit | 2028 / 2046 | 1996 / 2001 | **-38.5** | 0.9 % / 0.3 % | **yes** |
+| large scene ls_z1 | private WS | 916 / 932 | 885 / 890 | **-36.5** | 1.7 % / 0.6 % | **yes** |
+| large scene ls_z1 | GC committed | 511 / 518 | 516 / 516 | +1.5 | 1.4 % / 0.0 % | no |
+| large scene ls_zo | commit | 2030 / 2047 | 2000 / 2005 | **-36.0** | 0.8 % / 0.2 % | **yes** |
+| large scene ls_zo | private WS | 919 / 936 | 889 / 895 | **-35.5** | 1.8 % / 0.7 % | **yes** |
+| large scene ls_zo | GC committed | 515 / 522 | 521 / 521 | +2.5 | 1.4 % / 0.0 % | no |
+| after round trip q | commit | 2069 / 2100 | 2032 / 2044 | -46.5 | 1.5 % / 0.6 % | no |
+| after round trip q | private WS | 952 / 978 | 918 / 928 | -42.0 | 2.7 % / 1.1 % | no |
+| after round trip q | GC committed | 545 / 572 | 552 / 550 | -7.5 | 5.0 % / 0.4 % | no |
+| idle (last 60 s) | commit | 2071 / 2102 | 2034 / 2044 | -47.5 | 1.5 % / 0.5 % | no |
+| idle (last 60 s) | private WS | 954 / 980 | 920 / 929 | -42.5 | 2.7 % / 1.0 % | no |
+| peak | commit | 2155 / 2142 | 2057 / 2128 | -56.0 | 0.6 % / 3.5 % | no |
+| peak | private WS | 954 / 980 | 920 / 931 | -41.5 | 2.7 % / 1.2 % | no |
+
+**Art staging buffers** (10.4–10.9 MiB read-write allocations in the external walks; commit = resident):
+
+| run | at 60 s | at 120 s |
+|---|---|---|
+| base1 | 7 buffers, 74.9 MiB | 7, 74.9 MiB |
+| new1 | **4**, 42.8 MiB | **4**, 42.8 MiB |
+| base2 | 8 buffers, 85.6 MiB | 8, 85.6 MiB |
+| new2 | **4**, 42.8 MiB | **4**, 42.8 MiB |
+
+The region walks agree: private commit at 60 s 1682 / 1683 MiB (base) vs 1648 / 1659 (new); private WS at 120 s 908 / 925 vs 878 / 884.
+
+**Scene load and slot waits** (`[load] GPU world settled` lines; ms from the first world frame):
+
+| run | login (facet 1): settled, frames, last page upload | facet switch to 0 (`[TestScene go`) | return to facet 1 | slot waits art / anim (episodes, frames, ms, longest) | copy fences taken (login / switch / return, cumulative) |
+|---|---|---|---|---|---|
+| base1 | 167 ms, 17, 165 ms | 133 ms, 18, 127 ms | 52 ms, 9, 46 ms | (not tracked) | – |
+| new1 | 177 ms, 17, 175 ms | 138 ms, 18, 130 ms | 48 ms, 9, 44 ms | 0, 0, 0.0, 0.0 / 0, 0, 0.0, 0.0 | 9 / 19 / 29 |
+| base2 | 167 ms, 17, 165 ms | 134 ms, 18, 128 ms | 57 ms, 10, 53 ms | (not tracked) | – |
+| new2 | 172 ms, 17, 170 ms | 133 ms, 18, 127 ms | 50 ms, 9, 44 ms | 0, 0, 0.0, 0.0 / 0, 0, 0.0, 0.0 | 7 / 15 / 23 |
+
+Every slot-wait counter was 0 on every settled line and on every DevBench 5 s stats line of both new runs, with 0 fences pending. Pages resident and uploaded were the same in both arms (art 9 at login, 11 after the return; anim 3, then 67–68, then 81–82).
+
+**Verdict.**
+- **New held exactly 4 art staging buffers (42.8 MiB) in every run, at 60 and at 120 s.** Base held 7 and 8 (bench-000044's runs had 6, 7, 8, 8). The run-to-run 10.7 MiB steps are gone: new's within-arm spread is 0.2–1.6 % in every steady window, base's up to 2.7 %.
+- **Saving beyond noise:** 26–37 MiB private WS and 29–39 MiB commit per client in the login transient, the login (WS; commit is just under the limit), Britain and both large-scene windows. That matches the staging alone: 3 and 4 fewer buffers are 32 and 43 MiB, mean 37. After the round trip, idle and at peak the difference is larger (42–47 MiB WS and commit, 56 commit at peak) but does not pass the 2× rule, because base's own spread there is about one staging buffer (base2 had one more). Every new run is still below every base run in those windows (WS by at least 24 MiB). GC committed is unchanged everywhere, as expected: the change is native staging memory.
+- **Login delay:** login settled in 177 / 172 ms in new vs 167 / 167 ms in base (median +7.5 ms, +4.5 %; 17 frames in all four runs). With 0 slot waits, none of it comes from slots waiting for copies, and it is within noise (one sample per run; new's spread is 2.9 %, so the 2× limit is about 10 ms). The facet switch (138 / 133 vs 133 / 134 ms) and the return (48 / 50 vs 52 / 57 ms) show no direction. **No load delay from slot waits is measurable: there were none.**
+- Compared with bench-000044 (same plan and windows, but a separate job, so context only): this job's base matches 000044's new arm (round 2) in the steady windows within about 25 MiB (Britain WS 767 / 769 vs 766 / 791), and new here is below 000044's new arm by 40 MiB WS in Britain and 64 MiB after the round trip (medians). This job's base login transient commit (1905 / 1913) is about 55 MiB above 000044's new arm (1847 / 1859); that comes from code merged between the two jobs, not this change, and new still lowers it by 29.5 MiB.
+
+### Codex audit (coordinator scratchpad `astra-memreduce3/out.md`) and dispositions (2026-10-31)
+
+Codex found one P1 and one P2; both are fixed. Successful-submit coverage, the outside waits, fence ordering, normal fence lifetime, liveness, facet changes and reinit, idle-frame cost and multi-instance safety were checked and found fine.
+- **P1, a failed submit retired copies the GPU might still run (fixed).** `CopyRetirement.Track` with a zero fence, and the throttle path's zero fence, called `MarkRetired(serial)`. That was wrong twice over: a null fence does not prove the buffer never ran (D3D12 executes the list before it acquires the fence; Vulkan can queue it and then fail at present), and since retirement is a watermark, a failed frame 2 also retired a still-running frame 1. Now a failed submit (zero fence from `SubmitFrame`, the throttle path or a frame screenshot) calls `CopyRetirement.Failed(serial)`, which retires nothing: the slots it copied from stay unavailable until a later fence signals (polled in submit order, so earlier unsignalled fences still come first) or a successful wait covers a later serial (throttle, GPU sample, screenshot) or the whole GPU (`DrainInFlight`). The queue runs in submit order, so that proof also covers the failed frame if it ran. For liveness, `NeedsFence` stays true while a failure is unresolved, so the next frame is submitted with a fence even without copies; once that fence signals, the slots free up without a blocking wait. The simpler choice over forcing an idle wait after a failure: nothing blocks in the frame loop, and on a lost device every later submit fails too, so the slots just stay blocked (safe) instead of a wait that also fails. State is one serial, so repeated failures use no memory. `Poll` now also releases, unqueried, the fences a successful wait elsewhere already covered (serial at or below the watermark). Callers that continue after `RenderFrame` returns false: the client reports `SubmitFailures` as device lost and exits; Uo.Render.App, Uo.Client and AnimSheet keep rendering, and with the fix they keep the failed frame's slots blocked until a later fence or drain proves completion.
+- **P2, a failed world disposal skipped the fence cleanup (fixed).** `WorldRenderer.Dispose` called `DrainInFlight` first, so when it threw (device lost), the workers, page residencies and owned renderer were never disposed, and `_copies` never released its fences. Now the steps run through `Teardown.Run`: every step runs in order, the first exception is rethrown with its stack after they all ran, and later ones go to stderr. The owned renderer's `Dispose` catches its own failed drain and releases the tracker's fences.
+- Tests: `StagingSlotsTests` now has 16 cases (was 10; the "failed submit retires" case is replaced): a failed submit retires nothing and a later fenced frame resolves it; a failed submit behind an unsignalled earlier fence keeps slot A unavailable (also when the later fence signals first); a failure after execution started keeps the slot through repeated failures until a fenced frame signals; a GPU-idle wait resolves a failure and releases the pending fences; throttle, screenshot, ordinary and drain retirement on one serial line, never going back; art and anim slot sets sharing the one tracker (modelled with their `StagingSlots`, since `PageResidency` needs a GPU device); a failed world disposal through `Teardown.Run` (drain and a pages step throw; every step runs, the drain's exception is reported, and the fences are released). The burst model now picks fences by `NeedsFence` and drains its final submissions: no fence pending, every fence released once, every slot reusable, and the watermark at the last serial.
+- The normal path bench-000048 measures is unchanged: on success the same fences are taken, polled and released.
+- Verified: client Release build and `-p:CuoDevTools=false` build, 0 errors; unit tests 1084 pass, 1 skipped (was 1078: +6). No client runs.
+- **Codex round 2 (`astra-memreduce3r2/out.md`), P2, a retried world disposal released freed handles (fixed).** After the `Teardown.Run` change, a failed drain still released the pages and the owned renderer, and `GpuWorldRenderer`'s facet-rebuild catch then disposed the same world again (stale transfer buffers and fences; SDL's Vulkan backend frees transfer-buffer containers at once). Now `WorldRenderer.Dispose` is one-shot (`Teardown.Once` sets the disposed state before any step), `PageResidency.Dispose` and `Renderer.Dispose` are one-shot too, and `GpuWorldRenderer.DisposeWorld` clears `_world` before disposing it (all three call sites). Test `A_retried_world_disposal_after_a_failed_drain_releases_nothing_twice` runs a fake world through `Teardown.Once` (WorldRenderer needs a device): drain throws, cleanup completes, two retries are no-ops, every step and fence ran once. Unit tests 1085 pass, 1 skipped; both client builds 0 errors.
