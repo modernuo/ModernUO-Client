@@ -14,6 +14,7 @@ namespace ClassicUO.UnitTests.Game.Map
     /// <summary>
     /// T6a: Chunk.AddGameObject's insertion rules, and that TileOrder.Key reproduces the resulting tile-list order.
     /// </summary>
+    [Collection("ChunkStaticTileDataCollection")] // Chunk.StaticTileData is process-wide (MaxDrawZDecisionTests sets it too)
     public sealed class TileOrderTests : IDisposable
     {
         // tiledata for the default branch: plain, tall (+1), background (-1), multi-movable (+1), tall background (0)

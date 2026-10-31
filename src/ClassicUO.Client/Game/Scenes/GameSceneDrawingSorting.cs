@@ -9,6 +9,7 @@ using ClassicUO.Game.Managers;
 using ClassicUO.Game.Map;
 using ClassicUO.Renderer;
 using ClassicUO.Utility;
+using ClassicUO.Utility.Logging;
 using Microsoft.Xna.Framework;
 using System;
 using System.Runtime.CompilerServices;
@@ -41,9 +42,8 @@ namespace ClassicUO.Game.Scenes
             _maxTile,
             _minTile,
             _last_scaled_offset;
-        private int _oldPlayerX,
-            _oldPlayerY,
-            _oldPlayerZ;
+        private readonly MaxDrawZState _maxDrawZ = new MaxDrawZState();
+        private uint _maxDrawZIncompleteSince;
         private int _foliageCount;
         private float _cotRadiusSq;
         private Vector2 _cotPlayerScreenPos;
@@ -59,159 +59,39 @@ namespace ClassicUO.Game.Scenes
 
         public void UpdateMaxDrawZ(bool force = false)
         {
-            int playerX = _world.Player.X;
-            int playerY = _world.Player.Y;
-            int playerZ = _world.Player.Z;
+            Map.Map map = _world.Map;
 
-            if (
-                playerX == _oldPlayerX && playerY == _oldPlayerY && playerZ == _oldPlayerZ && !force
-            )
+            if (map == null)
             {
                 return;
             }
 
-            _oldPlayerX = playerX;
-            _oldPlayerY = playerY;
-            _oldPlayerZ = playerZ;
+            // kept while the player's x/y/z, DrawRoofs, the map and the chunks the decision read are unchanged
+            // (MaxDrawZState): a teleport's first frame can come before the player's chunk loads, and that answer must not
+            // be kept; a change in the decision's reach is recomputed once, here, before the draw
+            bool wasIncomplete = _maxDrawZ.Missing > 0;
+            int oldMaxZ = _maxDrawZ.MaxZ;
 
-            sbyte maxGroundZ = 127;
-            _maxGroundZ = 127;
-            _maxZ = 127;
-            _noDrawRoofs = !ProfileManager.CurrentProfile.DrawRoofs;
-            int bx = playerX;
-            int by = playerY;
-            Chunk chunk = _world.Map.GetChunk(bx, by, false);
-
-            if (chunk != null)
+            if (!_maxDrawZ.Update(map, Client.Game.UO.FileManager.TileData.StaticData, _world.Player.X, _world.Player.Y,
+                    _world.Player.Z, ProfileManager.CurrentProfile.DrawRoofs, force))
             {
-                int x = playerX % 8;
-                int y = playerY % 8;
+                return;
+            }
 
-                int pz14 = playerZ + 14;
-                int pz16 = playerZ + 16;
+            _maxZ = _maxDrawZ.MaxZ;
+            _maxGroundZ = _maxDrawZ.MaxGroundZ;
+            _noDrawRoofs = _maxDrawZ.NoDrawRoofs;
 
-                for (GameObject obj = chunk.GetHeadObject(x, y); obj != null; obj = obj.TNext)
+            if (wasIncomplete)
+            {
+                if (_maxDrawZ.Missing == 0)
                 {
-                    sbyte tileZ = obj.Z;
-
-                    if (obj is Land l)
-                    {
-                        if (l.IsStretched)
-                        {
-                            tileZ = l.AverageZ;
-                        }
-
-                        if (pz16 <= tileZ)
-                        {
-                            maxGroundZ = (sbyte)pz16;
-                            _maxGroundZ = (sbyte)pz16;
-                            _maxZ = _maxGroundZ;
-
-                            break;
-                        }
-
-                        continue;
-                    }
-
-                    if (obj is Mobile)
-                    {
-                        continue;
-                    }
-
-                    //if (obj is Item it && !it.ItemData.IsRoof || !(obj is Static) && !(obj is Multi))
-                    //    continue;
-
-                    if (tileZ > pz14 && _maxZ > tileZ)
-                    {
-                        ref StaticTiles itemdata = ref Client.Game.UO.FileManager.TileData.StaticData[
-                            obj.Graphic
-                        ];
-
-                        //if (GameObjectHelper.TryGetStaticData(obj, out var itemdata) && ((ulong) itemdata.Flags & 0x20004) == 0 && (!itemdata.IsRoof || itemdata.IsSurface))
-                        if (
-                            ((ulong)itemdata.Flags & 0x20004) == 0
-                            && (!itemdata.IsRoof || itemdata.IsSurface)
-                        )
-                        {
-                            _maxZ = tileZ;
-                            _noDrawRoofs = true;
-                        }
-                    }
+                    Log.Trace($"[maxz] the chunks the decision reads loaded {Time.Ticks - _maxDrawZIncompleteSince} ms after it first ran without them: max Z {oldMaxZ} -> {_maxZ}, roofs {(_noDrawRoofs ? "hidden" : "drawn")}");
                 }
-
-                int tempZ = _maxZ;
-                _maxGroundZ = (sbyte)_maxZ;
-                playerX++;
-                playerY++;
-                bx = playerX;
-                by = playerY;
-                chunk = _world.Map.GetChunk(bx, by, false);
-
-                if (chunk != null)
-                {
-                    x = playerX % 8;
-                    y = playerY % 8;
-
-                    for (
-                        GameObject obj2 = chunk.GetHeadObject(x, y);
-                        obj2 != null;
-                        obj2 = obj2.TNext
-                    )
-                    {
-                        //if (obj is Item it && !it.ItemData.IsRoof || !(obj is Static) && !(obj is Multi))
-                        //    continue;
-
-                        if (obj2 is Mobile)
-                        {
-                            continue;
-                        }
-
-                        sbyte tileZ = obj2.Z;
-
-                        if (tileZ > pz14 && _maxZ > tileZ)
-                        {
-                            if (!(obj2 is Land))
-                            {
-                                ref StaticTiles itemdata = ref Client.Game.UO.FileManager.TileData.StaticData[
-                                    obj2.Graphic
-                                ];
-
-                                if (((ulong)itemdata.Flags & 0x204) == 0 && itemdata.IsRoof)
-                                {
-                                    _maxZ = tileZ;
-                                    _world.Map.ClearBockAccess();
-                                    _maxGroundZ = _world.Map.CalculateNearZ(
-                                        tileZ,
-                                        playerX,
-                                        playerY,
-                                        tileZ
-                                    );
-                                    _noDrawRoofs = true;
-                                }
-                            }
-
-                            //if (GameObjectHelper.TryGetStaticData(obj2, out var itemdata) && ((ulong) itemdata.Flags & 0x204) == 0 && itemdata.IsRoof)
-                            //{
-                            //    _maxZ = tileZ;
-                            //    World.Map.ClearBockAccess();
-                            //    _maxGroundZ = World.Map.CalculateNearZ(tileZ, playerX, playerY, tileZ);
-                            //    _noDrawRoofs = true;
-                            //}
-                        }
-                    }
-
-                    tempZ = _maxGroundZ;
-                }
-
-                _maxZ = _maxGroundZ;
-
-                if (tempZ < pz16)
-                {
-                    _maxZ = pz16;
-                    _maxGroundZ = (sbyte)pz16;
-                }
-
-                _maxGroundZ = maxGroundZ;
+            }
+            else if (_maxDrawZ.Missing > 0)
+            {
+                _maxDrawZIncompleteSince = Time.Ticks;
             }
         }
 
