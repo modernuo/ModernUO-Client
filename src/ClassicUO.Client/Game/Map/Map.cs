@@ -623,13 +623,25 @@ namespace ClassicUO.Game.Map
             ScanMapZ(chunk, x % 8, y % 8, out groundZ, out staticZ);
         }
 
-        /// <summary>GetMapZ's scan: the land's Z and the highest other Z on tile (cellX, cellY), from the list's head (it used to
-        /// start at Tiles[x, y], an interior node on a landless tile; T6a re-audit).</summary>
+        /// <summary>
+        /// Where GetMapZ's and CalculateNearZ's forward scans start. On a tile with land: Tiles[x, y], the land, as they always
+        /// did, so objects sorted before the land stay out of them (legacy behaviour, kept on purpose; see the poc-log T6a
+        /// entry for the proposed separate switch). On a landless tile Tiles[x, y] is the first object placed there and can be
+        /// an interior node, which hid everything before it: there the scan starts at the head (T6a re-audit).
+        /// </summary>
+        internal static GameObject ScanStart(Chunk chunk, int cellX, int cellY)
+        {
+            GameObject anchor = chunk.Tiles[cellX, cellY];
+
+            return anchor is Land ? anchor : chunk.GetHeadObject(cellX, cellY);
+        }
+
+        /// <summary>GetMapZ's scan: the land's Z and the highest other Z on tile (cellX, cellY), from <see cref="ScanStart"/>.</summary>
         internal static void ScanMapZ(Chunk chunk, int cellX, int cellY, out sbyte groundZ, out sbyte staticZ)
         {
             groundZ = staticZ = 0;
 
-            for (GameObject obj = chunk.GetHeadObject(cellX, cellY); obj != null; obj = obj.TNext)
+            for (GameObject obj = ScanStart(chunk, cellX, cellY); obj != null; obj = obj.TNext)
             {
                 if (obj is Land)
                 {
@@ -686,13 +698,12 @@ namespace ClassicUO.Game.Map
 
 
         /// <summary>
-        /// CalculateNearZ's scan: the first static or multi of tile (cellX, cellY) that is a roof within 6 of <paramref name="z"/>.
-        /// It scans from the list's head; it used to start at Tiles[x, y], which on a landless tile can be an interior node, so
-        /// a roof before it was missed (T6a re-audit).
+        /// CalculateNearZ's scan: the first static or multi of tile (cellX, cellY) that is a roof within 6 of <paramref name="z"/>,
+        /// from <see cref="ScanStart"/> (the land on a tile with land, as before; the head on a landless tile).
         /// </summary>
         internal static GameObject FindNearRoof(Chunk chunk, int cellX, int cellY, int z, StaticTiles[] tiles)
         {
-            for (GameObject obj = chunk.GetHeadObject(cellX, cellY); obj != null; obj = obj.TNext)
+            for (GameObject obj = ScanStart(chunk, cellX, cellY); obj != null; obj = obj.TNext)
             {
                 if (!(obj is Static) && !(obj is Multi))
                 {

@@ -497,6 +497,30 @@ namespace ClassicUO.UnitTests.Game.Map
             Assert.Equal(50, staticZ);
         }
 
+        [Fact]
+        public void On_A_Tile_With_Land_The_Scans_Still_Start_At_The_Land()
+        {
+            // legacy behaviour, kept: objects sorted before the land are invisible to GetMapZ and the roof cut-off
+            Land land = NewLand(_world, 10); // PriorityZ 8, the anchor
+            Add(land, 7, 7);
+            Static roofBelow = NewStatic(Roof, 5); // PriorityZ 5: sorted before the land
+            Add(roofBelow, 7, 7);
+            Assert.Same(land, _chunk.Tiles[7, 7]);
+            Assert.Equal(new GameObject[] { roofBelow, land }, List(7, 7));
+
+            Assert.Same(land, ClassicUO.Game.Map.Map.ScanStart(_chunk, 7, 7));
+            Assert.Null(ClassicUO.Game.Map.Map.FindNearRoof(_chunk, 7, 7, 6, Chunk.StaticTileData)); // a head start would find it
+
+            ClassicUO.Game.Map.Map.ScanMapZ(_chunk, 7, 7, out sbyte groundZ, out sbyte staticZ);
+            Assert.Equal(10, groundZ);
+            Assert.Equal(0, staticZ); // the Z 5 static before the land is not counted
+
+            // a roof after the land is found as before
+            Static roofAbove = NewStatic(Roof, 12);
+            Add(roofAbove, 7, 7);
+            Assert.Same(roofAbove, ClassicUO.Game.Map.Map.FindNearRoof(_chunk, 7, 7, 14, Chunk.StaticTileData));
+        }
+
         // ---- membership on a landless tile (Chunk.Load leaves a tile empty when the block has no map data) ----
 
         [Fact]
