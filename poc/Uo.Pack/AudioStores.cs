@@ -29,6 +29,9 @@ public static class AudioConst
     public const int SoundRate = 22050;
     public const int SoundChannels = 1;
 
+    /// <summary>Bytes per sample frame of that format (FNA's nBlockAlign: channels x 2).</summary>
+    public const int SoundBlockAlign = SoundChannels * 2;
+
     /// <summary>Largest PCM payload of one sound: 64 MiB (25 min). The largest stock sound (beatSlow) is 21.2 MB.</summary>
     public const int MaxSoundBytes = 64 << 20;
 
@@ -71,7 +74,50 @@ public static class AudioConst
         if (r.Meta2 > MaxSoundName) return $"name of {r.Meta2} bytes (at most {MaxSoundName})";
         if (r.RawBytes < r.Meta2) return "shorter than its name";
         if (r.RawBytes - r.Meta2 > MaxSoundBytes) return $"{r.RawBytes - r.Meta2} bytes of PCM (at most {MaxSoundBytes})";
+        return CheckPcmLength((long)r.RawBytes - r.Meta2);
+    }
+
+    /// <summary>
+    /// A PCM length the client can play: 1 .. <see cref="MaxSoundBytes"/> bytes, whole sample frames
+    /// (<see cref="SoundBlockAlign"/>). Null when it is playable.
+    /// </summary>
+    public static string? CheckPcmLength(long bytes)
+    {
+        if (bytes <= 0) return "no PCM";
+        if (bytes > MaxSoundBytes) return $"{bytes} bytes of PCM (at most {MaxSoundBytes})";
+        if (bytes % SoundBlockAlign != 0) return $"{bytes} bytes of PCM is not a whole number of {SoundBlockAlign}-byte samples";
         return null;
+    }
+
+    /// <summary>
+    /// FNA's DynamicSoundEffectInstance.SubmitBuffer(array, offset, count) argument rules, which it enforces by
+    /// throwing ArgumentException: the WHOLE array's length (not just count) must be a non-zero multiple of the
+    /// block alignment, and so must offset and count, with offset + count inside the array. Null when FNA accepts it.
+    /// </summary>
+    public static string? SubmitError(byte[]? array, int offset, int count, int blockAlign = SoundBlockAlign)
+    {
+        if (array == null || array.Length == 0 || array.Length % blockAlign != 0)
+            return $"array of {array?.Length ?? 0} bytes is not a non-zero multiple of {blockAlign}";
+        if ((uint)offset >= (uint)array.Length || offset % blockAlign != 0) return $"offset {offset}";
+        if (count <= 0 || (uint)(offset + count) > (uint)array.Length || count % blockAlign != 0) return $"count {count}";
+        return null;
+    }
+
+    /// <summary>
+    /// The client's decode of a sound record (a record that passed <see cref="CheckSoundRecord"/>): the PCM in an array
+    /// of exactly its length (FNA checks the whole array, so the trailing name must not share it) and the name.
+    /// Two positional reads. Throws IOException / EndOfStreamException on a short file.
+    /// </summary>
+    public static byte[] ReadSound(RecordStore store, in StoreRecord rec, out string name)
+    {
+        int pcmBytes = AudioBytes(rec);
+        var pcm = new byte[pcmBytes];
+        store.ReadRaw(rec, 0, pcm);
+        Span<byte> nameBytes = stackalloc byte[MaxSoundName];
+        nameBytes = nameBytes.Slice(0, rec.Meta2);
+        store.ReadRaw(rec, pcmBytes, nameBytes);
+        name = Encoding.UTF8.GetString(nameBytes);
+        return pcm;
     }
 
     /// <summary>

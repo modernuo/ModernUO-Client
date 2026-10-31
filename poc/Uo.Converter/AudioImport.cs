@@ -21,10 +21,10 @@ public static class AudioImport
 {
     public const int MaxIds = AudioConst.MaxIds;
 
-    public sealed record SoundStats(bool Uop, int Slots, int Present, int Records, int Aliases, int Ours, int Empty, long PcmBytes, long FileBytes)
+    public sealed record SoundStats(bool Uop, int Slots, int Present, int Records, int Aliases, int Ours, int Empty, long PcmBytes, long FileBytes, int Unplayable = 0)
     {
         public override string ToString() =>
-            $"{(Uop ? "soundLegacyMUL.uop" : "sound.mul")}: {Slots} slots, {Present} sounds, {Records} records ({Aliases} Sound.def/index aliases, {Ours} loose Sounds/*.wav, {Empty} empty entries left out), " +
+            $"{(Uop ? "soundLegacyMUL.uop" : "sound.mul")}: {Slots} slots, {Present} sounds, {Records} records ({Aliases} Sound.def/index aliases, {Ours} loose Sounds/*.wav, {Empty} empty entries left out{(Unplayable > 0 ? $", {Unplayable} unplayable left out" : "")}), " +
             $"PCM {PcmBytes / 1048576.0:F1} MiB, file {FileBytes / 1048576.0:F1} MiB";
     }
 
@@ -213,15 +213,24 @@ public static class AudioImport
     }
 
     /// <summary>Writes audio/sounds.bin from <paramref name="src"/>: one record per archive entry (aliases share it) or loose file.</summary>
-    public static SoundStats WriteSounds(SoundSource src, string outDir)
+    public static SoundStats WriteSounds(SoundSource src, string outDir, Action<string>? warn = null)
     {
         int max = src.MaxId;
         // first pass: what each id resolves to (slots sized to the highest present id, not to the archive's index)
         var ids = new List<(int Id, byte[] Pcm, byte[] Name, (long, int)? Alias)>();
-        int empty = 0;
+        int empty = 0, unplayable = 0;
         for (int id = 0; id <= max; id++)
         {
-            if (src.TryGet(id, out var pcm, out var name, out var alias)) ids.Add((id, pcm, name, alias));
+            if (src.TryGet(id, out var pcm, out var name, out var alias))
+            {
+                // the client refuses PCM that is empty, too long or not whole 16-bit samples (FNA would throw): left out
+                if (AudioConst.CheckPcmLength(pcm.Length) is { } bad)
+                {
+                    unplayable++;
+                    warn?.Invoke($"sound {id}: {bad}; left out");
+                }
+                else ids.Add((id, pcm, name, alias));
+            }
             else if (src.File.GetValidRefEntry(id).Length > 0 || src.Ours.ContainsKey(id)) empty++;
         }
         var w = new RecordStoreWriter(ids.Count == 0 ? 1 : ids[^1].Id + 1);
@@ -247,7 +256,7 @@ public static class AudioImport
         }
         string path = Path.Combine(outDir, AudioConst.SoundsFile);
         w.Write(path, AudioConst.MagicSounds, src.Uop ? AudioConst.SoundFlagUop : 0);
-        return new SoundStats(src.Uop, w.Slots.Length, ids.Count, w.RecordCount, aliases, ours, empty, pcmBytes, new FileInfo(path).Length);
+        return new SoundStats(src.Uop, w.Slots.Length, ids.Count, w.RecordCount, aliases, ours, empty, pcmBytes, new FileInfo(path).Length, unplayable);
     }
 
     // ------------------------------------------------------------------------------------------------- music

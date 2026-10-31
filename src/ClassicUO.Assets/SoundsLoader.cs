@@ -241,11 +241,13 @@ namespace ClassicUO.Assets
 
         /// <summary>
         /// The PCM of a sound (22,050 Hz mono 16-bit) and its name: a loose Sounds/&lt;id&gt;.wav first, else the pack's
-        /// record, read whole with one positional read (the name trails the PCM in the same array).
+        /// record. <paramref name="data"/> is an array of exactly the PCM, in whole samples: FNA's SubmitBuffer checks the
+        /// whole array's length, so a record's trailing name must not share it (bench-000049 crashed on that). A sound
+        /// that fails the check is logged once and left out; it never reaches FNA.
         /// </summary>
-        public bool TryGetSound(int sound, out ArraySegment<byte> data, out string name)
+        public bool TryGetSound(int sound, out byte[] data, out string name)
         {
-            data = default;
+            data = null;
             name = null;
 
             if (sound < 0)
@@ -258,6 +260,12 @@ namespace ClassicUO.Assets
             {
                 byte[] wave = ReadWave(mine);
 
+                if (wave != null && AudioConst.CheckPcmLength(wave.Length) is { } bad)
+                {
+                    Log.Warn($"{Path.GetFileName(mine)}: {bad}; it is being ignored");
+                    wave = null;
+                }
+
                 if (wave != null)
                 {
                     data = wave;
@@ -265,6 +273,9 @@ namespace ClassicUO.Assets
 
                     return true;
                 }
+
+                // unreadable or unplayable: once is enough, the pack's sound (if any) plays from now on
+                _ours.Remove(sound);
             }
 
             RecordStore store = _sounds;
@@ -274,22 +285,32 @@ namespace ClassicUO.Assets
                 return false;
             }
 
-            byte[] payload = new byte[rec.RawBytes];
+            byte[] pcm;
 
             try
             {
-                store.Read(rec, payload);
+                pcm = AudioConst.ReadSound(store, rec, out name);
             }
             catch (Exception e) when (e is IOException || e is InvalidDataException || e is ObjectDisposedException)
             {
                 _soundOk[slot.Record - 1] = false;
+                name = null;
                 Log.Error($"Audio: sound {sound}: {e.Message}; left out for this session");
 
                 return false;
             }
 
-            name = AudioConst.Name(rec, payload);
-            data = new ArraySegment<byte>(payload, 0, AudioConst.AudioBytes(rec));
+            // the record passed CheckSoundRecord at load; this is the last gate before FNA sees the bytes
+            if (AudioConst.SubmitError(pcm, 0, pcm.Length) is { } err)
+            {
+                _soundOk[slot.Record - 1] = false;
+                name = null;
+                Log.Error($"Audio: sound {sound}: {err}; left out for this session");
+
+                return false;
+            }
+
+            data = pcm;
 
             return true;
         }

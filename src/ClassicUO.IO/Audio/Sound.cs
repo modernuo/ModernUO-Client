@@ -145,7 +145,7 @@ namespace ClassicUO.IO.Audio
 
             var buffer = GetBuffer();
 
-            if (buffer.Count > 0)
+            if (buffer.Count > 0 && CanSubmit(buffer.Array, buffer.Offset, buffer.Count, Channels))
             {
                 _lastPlayedTime = curTime + Delay;
 
@@ -162,6 +162,20 @@ namespace ClassicUO.IO.Audio
             }
 
             return false;
+        }
+
+        /// <summary>
+        /// DynamicSoundEffectInstance.SubmitBuffer's argument rules (it throws ArgumentException otherwise): the whole
+        /// array's length, the offset and the count are multiples of the block alignment (channels x 2 bytes for 16-bit),
+        /// the array and count are non-empty, and offset + count lies inside the array. A buffer that fails is not played.
+        /// </summary>
+        public static bool CanSubmit(byte[] array, int offset, int count, AudioChannels channels)
+        {
+            int align = 2 * (int) channels;
+
+            return array != null && array.Length > 0 && array.Length % align == 0
+                && (uint) offset < (uint) array.Length && offset % align == 0
+                && count > 0 && (uint) (offset + count) <= (uint) array.Length && count % align == 0;
         }
 
         public void Stop()

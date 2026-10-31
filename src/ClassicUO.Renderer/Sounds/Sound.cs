@@ -39,11 +39,11 @@ namespace ClassicUO.Renderer.Sounds
                     // first play of this id: one positional read of the pack record (or a loose WAV); cached after
                     long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
 
-                    if (_soundsLoader.TryGetSound(index, out ArraySegment<byte> data, out string name))
+                    if (_soundsLoader.TryGetSound(index, out byte[] data, out string name))
                     {
                         sound = new UOSound(name, index, data);
                         ClassicUO.Utility.Logging.Log.Trace(
-                            $"sound {index} ({name}): first read {System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds:0.000} ms, {data.Count} bytes");
+                            $"sound {index} ({name}): first read {System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds:0.000} ms, {data.Length} bytes");
                     }
                 }
 

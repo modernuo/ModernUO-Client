@@ -3663,7 +3663,7 @@ Owner decision Q10 (data-formats.md): sound effects as raw PCM, music as the ori
   - `--client-version x.y.z.w` is an interim flag for exes without version info. poc/legacy-import replaces it with its full resolution under the same name; expect a small conflict in Program.cs at merge, and keep legacy-import's version.
 - **Client:** `SoundsLoader` reads only the pack. The client no longer opens sound.mul, soundLegacyMUL.uop, Sound.def, Config.txt or the MP3s; there is no MUL fallback.
   - **Loose `Sounds/<id>.wav` files still win at runtime.** The client already supported them, and the converter also folds them into the pack.
-  - `UOSound` takes an `ArraySegment` (the PCM part of the record array).
+  - `UOSound` takes the PCM as its own array (it took an `ArraySegment` of the record array until the bench-000049 fix below).
   - `UOMusic` and `MusicStream` take an opener. The worker reads the record into native memory, and `Mp3Validator` checks it before dr_mp3, as it did for files.
   - Every record and music slot is checked at load. Overlapping payloads reject the whole store.
   - A first read per sound id is logged at Trace (`sound <id> (<name>): first read … ms`).
@@ -3715,9 +3715,37 @@ Noise: two runs, under other agents' build load; the old/new ratios hold in both
 
 Unit tests: 1,079 passed, 1 skipped (pre-existing). Client Release and `-p:CuoDevTools=false` builds: 0 errors.
 
-**Client check:** bench-000049 (Release JIT build, kbatman4, a scratch test pack that is a plain copy of CURRENT plus the two stores). It dwells in Britain, Minoc and Cove, then walks in Britain for footsteps, and logs first-buffer and first-read times. Results: see the handoff (`handoffs/audio-pack.md`). Not done: a NativeAOT test build. Its link failed in this session because `vswhere.exe` was not on PATH (environment, not code).
+**Client check:** bench-000049 (Release JIT build, kbatman4, a scratch test pack that is a plain copy of CURRENT plus the two stores). It dwells in Britain, Minoc and Cove, then walks in Britain for footsteps, and logs first-buffer and first-read times. Music played (LoginLoop first buffer after 120.6 ms, Britainpos 77.9 ms; JIT with TieredCompilation=0). The first sound effect crashed the client: see the fix below. Re-run: see the handoff (`handoffs/audio-pack.md`). Not done: a NativeAOT test build. Its link failed in this session because `vswhere.exe` was not on PATH (environment, not code).
 
 **Open:**
 - The coordinator publishes the next pack with `--only sounds,music`. Until then, a client built from this branch on `classic-1.0` plays only loose WAVs and no music; it logs this once.
 - Music meta0 = 1 (MP3) leaves room for an author-supplied lossless format later (the survey's FLAC/Vorbis codes); 1.0 readers reject anything else.
 - The source tree (`sounds/*.wav` + `sounds.csv`, `music/` + `music.csv`) is still the converter's job to write once the import/build split lands.
+
+### Audio pack: the first sound effect crashed the client (bench-000049), fixed
+
+**Failure.** In bench-000049, music played, but the first footstep (`sound 299 (feet12a.wav)`, 17,980 bytes of PCM) threw an unhandled `ArgumentException` in `DynamicSoundEffectInstance.SubmitBuffer` ("Buffer is invalid ... block alignment"), and the client exited after 11 s. Minoc, Cove and the walk never ran.
+
+**Root cause.** `SoundsLoader.TryGetSound` read the whole record (PCM, then the name) into one array and handed `UOSound` an `ArraySegment` over the PCM part. `Sound.Play` passed `(segment.Array, offset 0, count = PCM)`. FNA's `SubmitBuffer` checks `buffer.Length % nBlockAlign` on the *whole array*, not on `count`. With mono 16-bit, `nBlockAlign` is 2, so any sound whose name has an odd byte count (`feet12a.wav` is 11) failed, although its PCM was even and correct. The stored format, the slicing and the converter's 40-byte header strip were all right. The old loader handed FNA an array of exactly the PCM (`new byte[entry.Length - 40]`), so it never hit this. The verify said EXACT because it compared the PCM slice with the frozen loader's bytes. It never looked at the array the client submits, and the unit tests compared `data.AsSpan()`, which hid the array length too.
+
+**Fix.**
+- `AudioConst.ReadSound` (Uo.Pack) is the client's decode. It makes two positional reads (`RecordStore.ReadRaw`, new): the PCM into an array of exactly its length, then the name. `TryGetSound` returns that `byte[]`, and `UOSound` takes a `byte[]` again, so a record can't share its array with anything.
+- Bad records are refused before FNA sees them:
+  - `CheckSoundRecord` now also rejects empty PCM and an odd PCM length (`CheckPcmLength`), at load, with one log line per record. The other records still play.
+  - `TryGetSound` checks the result against FNA's argument rules (`AudioConst.SubmitError`, a mirror of `SubmitBuffer`'s checks) before it returns.
+  - A loose `Sounds/<id>.wav` with an odd or empty data chunk is ignored with one warning, and the pack's sound plays.
+  - As a backstop, `Sound.Play` skips any buffer that fails `Sound.CanSubmit` (the same rules) instead of letting FNA throw.
+- Converter: the importer leaves out PCM the client would refuse (counted as "unplayable" and listed as a warning). Stock 7.0.103 has none, and the rebuilt `audio/sounds.bin` and `music.bin` are byte-identical to the previous ones (sha256).
+- Verify: each sound is now decoded with the client's own `ReadSound`, the array is checked against `SubmitError`, and then it is compared byte for byte with the frozen loader's array. Result on 7.0.103: EXACT, 1,656 ids, 1,655 records. The limit: verify and client share `ReadSound`, so a client that bypassed it would not be caught. The unit test below covers `UOSound` itself.
+
+**Tests** (`AudioPackTests`, +4):
+- `A_Real_Shaped_Record_Reaches_FNA_As_Exactly_Its_Pcm`: a sound.mul entry shaped like bench-000049's (a 40-byte name field holding `feet12a.wav` + 17,980 bytes of PCM) goes through the converter, `SoundsLoader` and `UOSound.GetBuffer`. The submitted span is offset 0, count 17,980, an array of 17,980 bytes equal to the PCM, and it passes both FNA mirrors. The old shape (a 17,991-byte payload array) fails both.
+- `The_Two_Mirrors_Of_FNAs_Submit_Rules_Agree`: `Sound.CanSubmit` against `AudioConst.SubmitError` on 9 cases (odd array, odd count, odd offset, empty, null, offset at the end, stereo).
+- `Bad_Sound_Records_Are_Refused_Before_FNA_And_The_Rest_Play`: a patched record with odd PCM and one with no PCM. `TryGetSound` returns false without throwing, and the other record plays. The converter leaves out an odd entry with one warning.
+- `An_Odd_Length_Loose_Wave_Is_Ignored_And_The_Pack_Sound_Plays`.
+- The existing `Expect` helper now also checks that the array length equals the PCM length.
+- A real `DynamicSoundEffectInstance` needs an audio device, so the tests stop at the exact `(array, offset, count)` that `Sound.Play` passes and at the mirror of FNA's checks.
+
+**Verification.** Client builds Release and `-p:CuoDevTools=false`: 0 errors. Uo.Converter: 0 errors. `dotnet test tests/ClassicUO.UnitTests -c Release`: 1,083 passed, 1 skipped, 0 failed. Converter `--verify-only --only sounds,music` on the test pack: all checks passed. Memory: a sound's cached array no longer holds its name (at most 40 bytes less per played sound). A first play makes two positional reads instead of one (the name read is at most 40 bytes).
+
+**Client re-check:** the same listen job, with a Release JIT build of this fix. Job id and results: see the handoff.
