@@ -10,6 +10,7 @@ using ClassicUO.Game.GameObjects;
 using ClassicUO.Game.Managers;
 using ClassicUO.Game.Map;
 using ClassicUO.Renderer;
+using ClassicUO.Utility;
 using ClassicUO.Utility.Logging;
 using Microsoft.Xna.Framework;
 using Uo.Render;
@@ -1089,7 +1090,7 @@ namespace ClassicUO.Game.Scenes
                              $"{_gpuProbeStale} fully compared with differences, {_gpuProbeStalePartial} partially compared with differences, {_gpuProbeStaleFellBack} with fallen-back tiles with differences: " +
                              $"{_gpuProbeInstDiff} in item/mobile instances, {_gpuProbeFxDiff} in effect instances, {_gpuProbeListDiff} in render lists, {_gpuProbeLightDiff} in lights, " +
                              $"{_gpuProbeSelDiff} in the selection, {_gpuProbeCountDiff} in collected lists, {_gpuProbeOverrideDiff} in world overrides, {_gpuProbeFallbackDiff} in unmapped sprites, " +
-                             $"{_gpuProbeRollDiff} in animation rolls; {_gpuProbeInstCompared} instances compared ({_gpuProbeFxCompared} effect), {_gpuProbeOverridesCompared} overrides, " +
+                             $"{_gpuProbeRollDiff} in animation rolls; {_gpuProbeInstCompared} instances compared ({_gpuProbeFxCompared} effect), {_gpuProbeOverridesCompared} overrides ({_gpuProbeOverflow} checks with the override queue full), " +
                              $"{_gpuProbeFallbacks} unmapped sprites compared, {_gpuProbeRefBuilds} caches rebuilt in the reference pass; " +
                              $"isolation: {_gpuProbeLeaks} probe passes left sprites in the batcher; " +
                              $"item check on the reference pass: {_gpuItemChecks} frames, {_gpuItemCheckStale} with differences, {items}" +
@@ -1109,7 +1110,7 @@ namespace ClassicUO.Game.Scenes
                 _gpuProbeFellBack = _gpuProbeSkipAlpha = _gpuProbeSkipNoCache = _gpuProbeStale = _gpuProbeStalePartial = _gpuProbeStaleFellBack = 0;
                 _gpuProbeInstDiff = _gpuProbeFxDiff = _gpuProbeListDiff = _gpuProbeLightDiff = _gpuProbeSelDiff = _gpuProbeCountDiff = 0;
                 _gpuProbeOverrideDiff = _gpuProbeFallbackDiff = _gpuProbeRollDiff = 0;
-                _gpuProbeInstCompared = _gpuProbeFxCompared = _gpuProbeOverridesCompared = _gpuProbeFallbacks = _gpuProbeRefBuilds = _gpuProbeLeaks = 0;
+                _gpuProbeInstCompared = _gpuProbeFxCompared = _gpuProbeOverridesCompared = _gpuProbeFallbacks = _gpuProbeRefBuilds = _gpuProbeLeaks = _gpuProbeOverflow = 0;
                 _gpuItemCheckSample = null;
             }
         }
@@ -1143,7 +1144,7 @@ namespace ClassicUO.Game.Scenes
             public readonly System.Collections.Generic.List<PendingOverrideQueue.Entry> Overrides = new();
             public readonly System.Collections.Generic.List<(GameObject Obj, Rectangle FrameInfo, bool Flipped)> Views = new();
             public readonly System.Collections.Generic.List<(GameObject Obj, sbyte Index)> Foliage = new();
-            public readonly System.Collections.Generic.List<int> Rolls = new();
+            public readonly System.Collections.Generic.List<AnimationGroupRules.RollRecord> Rolls = new(), RefRolls = new();
         }
 
         private GpuProbeState _gpuProbe;
@@ -1155,11 +1156,12 @@ namespace ClassicUO.Game.Scenes
         private int _gpuProbeStatics, _gpuProbeMultis, _gpuProbeFoliage;
         private int _gpuProbeUploads, _gpuProbeSuppressedNow, _gpuProbeBuilds;
         private PendingOverrideQueue.Mark _gpuProbeOverrideMark;
+        private int _gpuProbeOverrideDropped;
         private int _gpuProbeAttempts, _gpuProbeChecks, _gpuProbeFull, _gpuProbePartial, _gpuProbePartialUploads, _gpuProbePartialFna, _gpuProbeSuppressed,
             _gpuProbeFellBack, _gpuProbeSkipAlpha, _gpuProbeSkipNoCache, _gpuProbeStale, _gpuProbeStalePartial, _gpuProbeStaleFellBack,
             _gpuProbeInstDiff, _gpuProbeFxDiff, _gpuProbeListDiff, _gpuProbeLightDiff, _gpuProbeSelDiff, _gpuProbeCountDiff, _gpuProbeOverrideDiff,
             _gpuProbeFallbackDiff, _gpuProbeRollDiff, _gpuProbeInstCompared, _gpuProbeFxCompared, _gpuProbeOverridesCompared, _gpuProbeFallbacks,
-            _gpuProbeRefBuilds, _gpuProbeLeaks;
+            _gpuProbeRefBuilds, _gpuProbeLeaks, _gpuProbeOverflow;
 
         // The probe pass served tile b of the chunk (the reference pass's list hash leaves out its cached items).
         private void GpuProbeServed(GpuItemCache cache, int b)
@@ -1205,51 +1207,57 @@ namespace ClassicUO.Game.Scenes
             int fallbacks = _gpuItemFallbackTotal;
             int uploads = ClassicUO.Renderer.TextureUploads.Epoch;
             PendingOverrideQueue.Mark overrides = world.MarkPendingOverrides();
+            // the probe's random rolls (animation selection, anything else) come from this state and it is put back after, so
+            // the reference pass (drawn) rolls exactly what a frame without the probe would
+            RandomHelper.State rng = RandomHelper.Save();
+            int pending = batcher.PendingSprites, flushes = batcher.FlushesDone;
+            bool restore = true, suppressing = false;
             st.Foliage.Clear();
+            st.Views.Clear();
             st.Rolls.Clear();
             AnimationGroupRules.RollTape = st.Rolls;
             AnimationGroupRules.RollMode = 1;
-            _gpuProbeServeStamp++;
-            _gpuItemPass = 1;
-            FillGameObjectList();
 
-            // a fade step (an alpha moved, a fade-step count went down) can't be taken twice: the probe's fill is the frame's
-            if (!_gpuItemCacheOn || _gpuAlphaSteps != alphaSteps)
-            {
-                if (_gpuItemCacheOn)
-                {
-                    _gpuProbeSkipAlpha++;
-                }
-                else
-                {
-                    _gpuProbeSkipNoCache++;
-                }
-
-                _gpuItemPass = 0;
-                AnimationGroupRules.RollMode = 0;
-                AnimationGroupRules.RollTape = null;
-                st.Foliage.Clear();
-
-                return 2;
-            }
-
-            _gpuProbeFellBackNow = fallbacks != _gpuItemFallbackTotal;
-            _gpuProbeHash = _renderLists.DebugHash(static _ => false);
-            _renderLists.DebugCollect(static _ => false, st.List);
-            FinishGpuCollect();
-            gpu.SetOffset(_offset.X, _offset.Y);
-            st.Views.Clear();
-            st.Fallbacks.Clear();
-            gpu.ProbeViews = st.Views;
-            gpu.Fallbacks = st.Fallbacks;
-            gpu.Probe = true;
-            gpu.RecordFallbacks = true;
-            gpu.ProbeFallbacks = 0;
-            int pending = batcher.PendingSprites, flushes = batcher.FlushesDone;
-            batcher.BeginSuppress();
-
+            // everything the probe changes is put back in the finally below (with the suppression), so an exception can't
+            // leave it half-restored
             try
             {
+                _gpuProbeServeStamp++;
+                _gpuItemPass = 1;
+                FillGameObjectList();
+
+                // a fade step (an alpha moved, a fade-step count went down) can't be taken twice: the probe's fill is the frame's
+                if (!_gpuItemCacheOn || _gpuAlphaSteps != alphaSteps)
+                {
+                    if (_gpuItemCacheOn)
+                    {
+                        _gpuProbeSkipAlpha++;
+                    }
+                    else
+                    {
+                        _gpuProbeSkipNoCache++;
+                    }
+
+                    _gpuItemPass = 0;
+                    restore = false;
+
+                    return 2;
+                }
+
+                _gpuProbeFellBackNow = fallbacks != _gpuItemFallbackTotal;
+                _gpuProbeHash = _renderLists.DebugHash(static _ => false);
+                _renderLists.DebugCollect(static _ => false, st.List);
+                FinishGpuCollect();
+                gpu.SetOffset(_offset.X, _offset.Y);
+                st.Fallbacks.Clear();
+                gpu.ProbeViews = st.Views;
+                gpu.Fallbacks = st.Fallbacks;
+                gpu.Probe = true;
+                gpu.RecordFallbacks = true;
+                gpu.ProbeFallbacks = 0;
+                batcher.BeginSuppress();
+                suppressing = true;
+
                 foreach (var multi in _gpuMeshMultis)
                 {
                     if (multi.Z <= _maxGroundZ)
@@ -1278,12 +1286,80 @@ namespace ClassicUO.Game.Scenes
                 _gpuProbeSelected = SelectedObject.Object;
                 _gpuProbeEffectsAt = gpu.DynamicInstances.Length;
                 _renderLists.CaptureEffectsOnly(batcher, _maxGroundZ, gpu);
+
+                ReadOnlySpan<SpriteInstance> got = gpu.DynamicInstances;
+
+                if (st.Inst.Length < got.Length)
+                {
+                    st.Inst = new SpriteInstance[Math.Max(got.Length, st.Inst.Length * 2)];
+                }
+
+                got.CopyTo(st.Inst);
+                _gpuProbeInstCount = got.Length;
+                _gpuProbeLightCount = _lightCount - lightBase;
+                _gpuProbeLightBase = lightBase;
+
+                if (st.Lights.Length < _gpuProbeLightCount)
+                {
+                    st.Lights = new (byte, ushort, bool, int, int)[Math.Max(_gpuProbeLightCount, st.Lights.Length * 2)];
+                }
+
+                for (int i = 0; i < _gpuProbeLightCount; i++)
+                {
+                    st.Lights[i] = LightAt(lightBase + i);
+                }
+
+                _gpuProbeStatics = _gpuStatics.Count;
+                _gpuProbeMultis = _gpuMeshMultis.Count;
+                _gpuProbeFoliage = _gpuFoliage.Count;
             }
             finally
             {
                 gpu.Probe = false;
                 gpu.RecordFallbacks = false;
-                _gpuProbeSuppressedNow = batcher.EndSuppress();
+                gpu.ProbeViews = null;
+                AnimationGroupRules.RollMode = 0;
+                AnimationGroupRules.RollTape = null;
+
+                if (suppressing)
+                {
+                    _gpuProbeSuppressedNow = batcher.EndSuppress();
+                }
+
+                if (restore)
+                {
+                    // back to where the frame began: the overrides the probe queued come off the queue (kept, with its drops,
+                    // for the comparison), the journals are undone in reverse order, the random state is put back
+                    gpu.ResetDynamic();
+                    _gpuProbeOverrideDropped = world.TakePendingOverrides(overrides, st.Overrides);
+                    TruncateLights(lightBase);
+                    SelectedObject.Object = null;
+                    _gpuMeshMultis.Clear();
+                    _gpuStatics.Clear();
+                    _gpuStaticsShadowOnly.Clear();
+                    _gpuFoliage.Clear();
+                    UpdateDrawPosition = updatePosition;
+                    FoliageIndex = foliage;
+                    // no alpha moved (checked above): the reference pass's fill sees the alpha timer as the probe's did
+                    _alphaTimer = alphaTimer;
+
+                    for (int i = st.Foliage.Count - 1; i >= 0; i--)
+                    {
+                        st.Foliage[i].Obj.FoliageIndex = st.Foliage[i].Index;
+                    }
+
+                    for (int i = st.Views.Count - 1; i >= 0; i--)
+                    {
+                        (GameObject obj, Rectangle frameInfo, bool flipped) = st.Views[i];
+                        obj.FrameInfo = frameInfo;
+                        obj.ViewFlipped = flipped;
+                    }
+
+                    RandomHelper.Restore(in rng);
+                }
+
+                st.Foliage.Clear();
+                st.Views.Clear();
             }
 
             // isolation self-check: the probe left nothing to draw and drew nothing
@@ -1294,73 +1370,10 @@ namespace ClassicUO.Game.Scenes
             }
 
             _gpuProbeFallbacks += gpu.ProbeFallbacks;
-
-            ReadOnlySpan<SpriteInstance> got = gpu.DynamicInstances;
-
-            if (st.Inst.Length < got.Length)
-            {
-                st.Inst = new SpriteInstance[Math.Max(got.Length, st.Inst.Length * 2)];
-            }
-
-            got.CopyTo(st.Inst);
-            _gpuProbeInstCount = got.Length;
-            _gpuProbeLightCount = _lightCount - lightBase;
-            _gpuProbeLightBase = lightBase;
-
-            if (st.Lights.Length < _gpuProbeLightCount)
-            {
-                st.Lights = new (byte, ushort, bool, int, int)[Math.Max(_gpuProbeLightCount, st.Lights.Length * 2)];
-            }
-
-            for (int i = 0; i < _gpuProbeLightCount; i++)
-            {
-                st.Lights[i] = LightAt(lightBase + i);
-            }
-
-            _gpuProbeStatics = _gpuStatics.Count;
-            _gpuProbeMultis = _gpuMeshMultis.Count;
-            _gpuProbeFoliage = _gpuFoliage.Count;
-            st.Overrides.Clear();
-            ref readonly PendingOverrideQueue queue = ref world.PendingOverrides;
-
-            for (int i = overrides.Count; i < queue.Count; i++)
-            {
-                st.Overrides.Add(queue[i]);
-            }
-
-            // back to where the frame began
-            gpu.ResetDynamic();
-            world.RestorePendingOverrides(overrides);
-            TruncateLights(lightBase);
-            SelectedObject.Object = null;
-            _gpuMeshMultis.Clear();
-            _gpuStatics.Clear();
-            _gpuStaticsShadowOnly.Clear();
-            _gpuFoliage.Clear();
-            UpdateDrawPosition = updatePosition;
-            FoliageIndex = foliage;
-            // no alpha moved (checked above): the reference pass's fill sees the alpha timer as the probe's did
-            _alphaTimer = alphaTimer;
-
-            for (int i = st.Foliage.Count - 1; i >= 0; i--)
-            {
-                st.Foliage[i].Obj.FoliageIndex = st.Foliage[i].Index;
-            }
-
-            for (int i = st.Views.Count - 1; i >= 0; i--)
-            {
-                (GameObject obj, Rectangle frameInfo, bool flipped) = st.Views[i];
-                obj.FrameInfo = frameInfo;
-                obj.ViewFlipped = flipped;
-            }
-
-            st.Foliage.Clear();
-            st.Views.Clear();
-            gpu.ProbeViews = null;
             _gpuProbeFrames++;
-            AnimationGroupRules.RollMode = 2;
-            AnimationGroupRules.RollTapeAt = 0;
-            AnimationGroupRules.RollTapeShort = 0;
+            st.RefRolls.Clear();
+            AnimationGroupRules.RollTape = st.RefRolls;
+            AnimationGroupRules.RollMode = 1;
             st.RefFallbacks.Clear();
             gpu.Fallbacks = st.RefFallbacks;
             gpu.RecordFallbacks = true;
@@ -1480,28 +1493,24 @@ namespace ClassicUO.Game.Scenes
                 _gpuItemCheckSample ??= $"lights: {_gpuProbeLightCount} served, {refLights} in the full pass";
             }
 
-            // the world pass's overrides: the probe's (taken off the queue) against what the reference pass queued since the mark
+            // the world pass's overrides: the probe's (taken off the queue, with its drops) against what the reference pass queued
+            // since the mark (with its drops); an overflow in either pass is counted on its own (only what fitted is compared)
             if (gpu.World is { } wr)
             {
                 ref readonly PendingOverrideQueue queue = ref wr.PendingOverrides;
-                int from = _gpuProbeOverrideMark.Count;
-                int refCount = queue.Count - from;
-                bool overridesDiffer = refCount != st.Overrides.Count || queue.Dropped != _gpuProbeOverrideMark.Dropped;
-
-                for (int i = 0; !overridesDiffer && i < refCount; i++)
-                {
-                    PendingOverrideQueue.Entry a = st.Overrides[i];
-                    ref readonly PendingOverrideQueue.Entry b = ref queue[from + i];
-                    overridesDiffer = a.X != b.X || a.Y != b.Y || a.Z != b.Z || a.Graphic != b.Graphic || a.IsStatic != b.IsStatic || a.Value != b.Value;
-                }
-
+                bool overridesDiffer = PendingOverrideQueue.Differ(st.Overrides, _gpuProbeOverrideDropped, in queue, _gpuProbeOverrideMark, out int refCount, out int refDropped);
                 _gpuProbeOverridesCompared += refCount;
+
+                if (_gpuProbeOverrideDropped > 0 || refDropped > 0)
+                {
+                    _gpuProbeOverflow++;
+                }
 
                 if (overridesDiffer)
                 {
                     _gpuProbeOverrideDiff++;
                     bad = true;
-                    _gpuItemCheckSample ??= $"overrides: {st.Overrides.Count} served, {refCount} in the full pass ({queue.Dropped - _gpuProbeOverrideMark.Dropped} dropped)";
+                    _gpuItemCheckSample ??= $"overrides: {st.Overrides.Count} served ({_gpuProbeOverrideDropped} dropped), {refCount} in the full pass ({refDropped} dropped)";
                 }
             }
 
@@ -1523,13 +1532,16 @@ namespace ClassicUO.Game.Scenes
             st.Fallbacks.Clear();
             st.RefFallbacks.Clear();
 
-            // the reference pass replays the probe's animation rolls: it must use exactly as many
-            if (AnimationGroupRules.RollTapeShort != 0 || AnimationGroupRules.RollTapeAt != st.Rolls.Count)
+            // both passes rolled from the same random state: the same requests in the same order get the same values
+            if (AnimationGroupRules.RollsDiffer(st.Rolls, st.RefRolls, out int firstRoll))
             {
                 _gpuProbeRollDiff++;
                 bad = true;
-                _gpuItemCheckSample ??= $"animation rolls: {st.Rolls.Count} served, {AnimationGroupRules.RollTapeAt + AnimationGroupRules.RollTapeShort} in the full pass";
+                _gpuItemCheckSample ??= $"animation rolls: {st.Rolls.Count} served, {st.RefRolls.Count} in the full pass, first difference at {firstRoll}";
             }
+
+            st.Rolls.Clear();
+            st.RefRolls.Clear();
 
             if (bad)
             {

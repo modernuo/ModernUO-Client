@@ -354,6 +354,14 @@ namespace ClassicUO.Game
 
                     return false;
 
+                // season <spring|summer|fall|winter|desolation>: as the server's season packet (World.ChangeSeason). E12: map
+                // statics drawn in another season's graphic replace their baked sprite, so the world pass queues overrides
+                case "season" when args.Length > 0:
+                    world.ChangeSeason(Enum.Parse<Season>(args[0], true), 0);
+                    Log.Info($"[ECS] driver: season {args[0]}");
+
+                    return false;
+
                 // aura <0-3>: the profile's aura under feet (3 = always; E12 checks that the probe pass doesn't draw them)
                 case "aura" when args.Length > 0 && ProfileManager.CurrentProfile is { } auraProfile:
                     auraProfile.AuraUnderFeetType = Convert.ToInt32(args[0]);

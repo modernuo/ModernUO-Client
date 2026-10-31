@@ -68,9 +68,22 @@ namespace ClassicUO.Game.Scenes
         internal int ProbeFallbacks;
         internal System.Collections.Generic.List<(GameObject Obj, Rectangle FrameInfo, bool Flipped)> ProbeViews;
 
-        /// <summary>E12: a sprite the capture couldn't map (FNA draws it, or the probe drops it), as the view asked for it.</summary>
+        /// <summary>E12: a sprite the capture couldn't map (FNA draws it, or the probe drops it), as the view asked for it:
+        /// the whole request, including which draw asked (<see cref="FallbackKind"/>) and a seated draw's deformation.</summary>
         internal readonly record struct FallbackDraw(GameObject Obj, Texture2D Texture, Vector2 Position, Rectangle Source, Vector3 Hue, bool Flip,
-                                                     float Depth, SpriteCaptureMode Mode, float Rotation, InstanceBlend Blend);
+                                                     float Depth, SpriteCaptureMode Mode, float Rotation, InstanceBlend Blend, FallbackKind Kind, Vector3 Mod);
+
+        /// <summary>E12: the draw call behind a <see cref="FallbackDraw"/>.</summary>
+        internal enum FallbackKind : byte
+        {
+            Normal,
+            Scaled,
+            Seated
+        }
+
+        // E12: set around Emit by the scaled and seated draws, so a fallback records which draw asked
+        private FallbackKind _emitKind;
+        private Vector3 _emitMod;
 
         /// <summary>E12: while set (both passes of a check frame), unmapped sprites are recorded in <see cref="Fallbacks"/>.</summary>
         internal bool RecordFallbacks;
@@ -624,8 +637,11 @@ namespace ClassicUO.Game.Scenes
                 }
 
                 int before = _dynamicCount;
+                _emitKind = FallbackKind.Scaled;
+                bool emitted = Emit(texture, position, source, hue, flip, depth, mode, 0f);
+                _emitKind = FallbackKind.Normal;
 
-                if (!Emit(texture, position, source, hue, flip, depth, mode, 0f))
+                if (!emitted)
                 {
                     return false;
                 }
@@ -651,8 +667,13 @@ namespace ClassicUO.Game.Scenes
             }
 
             int before = _dynamicCount;
+            _emitKind = FallbackKind.Seated;
+            _emitMod = mod;
+            bool emitted = Emit(texture, position, source, hue, flip, depth, SpriteCaptureMode.Normal, 0f);
+            _emitKind = FallbackKind.Normal;
+            _emitMod = default;
 
-            if (!Emit(texture, position, source, hue, flip, depth, SpriteCaptureMode.Normal, 0f))
+            if (!emitted)
             {
                 return false;
             }
@@ -682,7 +703,7 @@ namespace ClassicUO.Game.Scenes
 
             if (RecordFallbacks)
             {
-                Fallbacks.Add(new FallbackDraw(_object, texture, position, source, hue, flip, depth, mode, rotation, _blend));
+                Fallbacks.Add(new FallbackDraw(_object, texture, position, source, hue, flip, depth, mode, rotation, _blend, _emitKind, _emitMod));
             }
 
             if (Probe)
