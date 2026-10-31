@@ -110,7 +110,8 @@ namespace ClassicUO.Game.Managers
 
         public void DenyWalk(byte sequence, int x, int y, sbyte z)
         {
-            _player.ClearSteps();
+            // T1 (funnel part 5): the step clear and the move through the funnel
+            _player.World.Writer.StopMobile(_player);
 
             Reset();
 
@@ -120,7 +121,7 @@ namespace ClassicUO.Game.Managers
                 _player.World.RangeSize.X = x;
                 _player.World.RangeSize.Y = y;
 
-                _player.SetInWorldTile((ushort) x, (ushort) y, z);
+                _player.World.Writer.MoveMobile(_player, (ushort) x, (ushort) y, z);
             }
 
             _player.SyncServerDirection();
