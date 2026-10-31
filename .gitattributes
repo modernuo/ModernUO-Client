@@ -64,3 +64,7 @@
 
 # Patch files must keep LF so git apply works on every platform.
 *.patch text eol=lf
+
+# Vendored sources stay byte-identical to upstream (checked by sha256); shell scripts keep LF for Linux/macOS.
+external/dr_libs/** -text
+*.sh text eol=lf
