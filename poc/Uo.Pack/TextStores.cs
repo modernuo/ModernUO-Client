@@ -250,7 +250,7 @@ public static class SpeechFile
     public static void Write(string path, IReadOnlyList<(ushort Id, byte[] Utf8)> entries)
     {
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
-        using var fs = File.Create(path);
+        using var fs = ReplacingFile.Create(path);
         StructIo.WriteHeader(fs, TextConst.MagicSpeech);
         long blob = entries.Sum(e => (long)e.Utf8.Length);
         StructIo.Write(fs, (uint)entries.Count);
@@ -263,6 +263,7 @@ public static class SpeechFile
             StructIo.Write(fs, in r);
         }
         foreach (var e in entries) fs.Write(e.Utf8);
+        fs.Commit();
     }
 
     /// <summary>

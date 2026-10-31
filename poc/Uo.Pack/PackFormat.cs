@@ -19,7 +19,7 @@ public static class PackConst
     public const uint MagicSprites = 0x53525053; // "SPRS"
     public const uint MagicRegion = 0x47524F55;  // "UORG"
     public const uint MagicTileData = 0x44544C54; // "TLTD"
-    public const uint MagicHues = 0x53455548;    // "HUES"
+    public const uint MagicHues = 0x53455548;    // "HUES": retired hues.bin, read only by the legacy HueFile reader
 
     public const int StaticSpriteBase = 0x4000;
     public const int LandTileCount = 0x4000;
