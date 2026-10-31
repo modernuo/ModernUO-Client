@@ -426,7 +426,30 @@ namespace ClassicUO.UnitTests.Ecs
 
         // ---- group 3: the per-frame frame advance and the end of a corpse animation (ProcessAnimation split). The animation
         // data is not loaded in the tests: the caller's frame count is a parameter of both paths (the old body from the data
-        // lookup on, with AnimationTimerState/ApplyAnimationTimer, which hold the old reads and writes of the timer fields)
+        // lookup on). The oracle reads and writes the timer's private fields itself, as the base revision (0b388a043) did,
+        // not through AnimationTimerState/ApplyAnimationTimer, which the operation uses (Codex audit of part 7, P3 #1)
+
+        private static readonly System.Reflection.FieldInfo FInterval = TimerField("_animationInterval"),
+            FRepeatMode = TimerField("_animationRepeateMode"), FRepeatModeCount = TimerField("_animationRepeatModeCount"),
+            FRepeat = TimerField("_animationRepeat"), FForward = TimerField("_isAnimationForwardDirection");
+
+        private static System.Reflection.FieldInfo TimerField(string name) =>
+            typeof(Mobile).GetField(name, System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)
+            ?? throw new InvalidOperationException($"Mobile.{name} not found");
+
+        // the private timer fields: interval, repeat mode, repeat mode count, repeat, forward
+        internal static (byte Interval, ushort Mode, ushort ModeCount, bool Repeat, bool Forward) TimerFieldsOf(Mobile m) =>
+            ((byte)FInterval.GetValue(m), (ushort)FRepeatMode.GetValue(m), (ushort)FRepeatModeCount.GetValue(m),
+                (bool)FRepeat.GetValue(m), (bool)FForward.GetValue(m));
+
+        internal static void SetTimerFields(Mobile m, byte interval, ushort mode, ushort modeCount, bool repeat, bool forward)
+        {
+            FInterval.SetValue(m, interval);
+            FRepeatMode.SetValue(m, mode);
+            FRepeatModeCount.SetValue(m, modeCount);
+            FRepeat.SetValue(m, repeat);
+            FForward.SetValue(m, forward);
+        }
 
         internal static void OldAdvance(Mobile m, int frames)
         {
@@ -434,9 +457,26 @@ namespace ClassicUO.UnitTests.Ecs
 
             if (frames > 0)
             {
-                AnimationTimer timer = m.AnimationTimerState;
+                // the base revision's reads and writes of the timer fields (Mobile.ProcessAnimation at 0b388a043)
+                (byte interval, ushort mode, ushort modeCount, bool repeat, bool forward) = TimerFieldsOf(m);
+                var timer = new AnimationTimer
+                {
+                    Frame = m.AnimIndex,
+                    FrameCount = m.AnimationFrameCount,
+                    Interval = interval,
+                    RepeatMode = mode,
+                    RepeatModeCount = modeCount,
+                    Repeat = repeat,
+                    Forward = forward,
+                    FromServer = m.AnimationFromServer
+                };
+
                 currentDelay = AnimationTiming.Advance(ref timer, frames, out AnimationAdvance advance);
-                m.ApplyAnimationTimer(in timer);
+
+                m.AnimationFrameCount = timer.FrameCount;
+                FRepeatMode.SetValue(m, timer.RepeatMode);
+                FRepeatModeCount.SetValue(m, timer.RepeatModeCount);
+                FRepeat.SetValue(m, timer.Repeat);
 
                 if (advance == AnimationAdvance.Finished)
                 {
@@ -531,6 +571,119 @@ namespace ClassicUO.UnitTests.Ecs
             newWorld.Writer.Violations.Should().Be(0);
             newWorld.Writer.InScope.Should().BeFalse();
             newWorld.Ecs.IsFolding.Should().BeFalse();
+        }
+
+        // ---- the timer helpers against explicit expected states (Codex audit of part 7, P3 #1: the two-world test above no
+        // longer shares them, and these pin what they read and write)
+
+        [Fact]
+        public void AnimationTimerState_Reads_Every_Timer_Field()
+        {
+            World world = Build(Start.Standing);
+            Mobile m = world.Mobiles.Get(MOB);
+
+            foreach (bool flip in new[] { false, true })
+            {
+                m.AnimIndex = (byte)(flip ? 6 : 3);
+                m.AnimationFrameCount = (byte)(flip ? 2 : 7);
+                m.AnimationFromServer = !flip;
+                SetTimerFields(m, (byte)(flip ? 0 : 2), (ushort)(flip ? 9 : 4), (ushort)(flip ? 1 : 5), repeat: !flip, forward: flip);
+
+                AnimationTimer t = m.AnimationTimerState;
+
+                (t.Frame, t.FrameCount, t.Interval, t.RepeatMode, t.RepeatModeCount, t.Repeat, t.Forward, t.FromServer).Should().Be(
+                    flip
+                        ? ((byte)6, (byte)2, (byte)0, (ushort)9, (ushort)1, false, true, false)
+                        : ((byte)3, (byte)7, (byte)2, (ushort)4, (ushort)5, true, false, true));
+            }
+        }
+
+        [Fact]
+        public void ApplyAnimationTimer_Writes_The_Frame_Count_And_Repeat_State_Only()
+        {
+            World world = Build(Start.Standing);
+            Mobile m = world.Mobiles.Get(MOB);
+
+            foreach (bool flip in new[] { false, true })
+            {
+                m.AnimIndex = 3;
+                m.AnimationFrameCount = 7;
+                m.AnimationFromServer = true;
+                SetTimerFields(m, 2, 4, 5, repeat: flip, forward: false);
+                var timer = new AnimationTimer
+                {
+                    Frame = 1, FrameCount = 9, Interval = 6, RepeatMode = 11, RepeatModeCount = 12, Repeat = !flip, Forward = true,
+                    FromServer = false
+                };
+
+                m.ApplyAnimationTimer(in timer);
+
+                (m.AnimIndex, m.AnimationFrameCount, m.AnimationFromServer).Should().Be(((byte)3, (byte)9, true), "the frame index is the caller's write");
+                TimerFieldsOf(m).Should().Be(((byte)2, (ushort)11, (ushort)12, !flip, false), "interval and direction are SetAnimation's");
+            }
+        }
+
+        // the operation (and its helpers) frame by frame against hand-computed states: (AnimIndex, AnimationFrameCount,
+        // repeat mode, repeat mode count, repeat, from server, due - now)
+        private static void ExpectAdvances(World world, Mobile m, int frames, params (byte Frame, byte Count, ushort Mode, ushort ModeCount, bool Repeat, bool Server, int Delay)[] expected)
+        {
+            for (int i = 0; i < expected.Length; i++)
+            {
+                Time.Ticks = NOW + (uint)((i + 1) * 1000);
+                world.Writer.AdvanceAnimation(m, frames, out _, out _).Should().BeFalse();
+                (byte interval, ushort mode, ushort modeCount, bool repeat, bool forward) = TimerFieldsOf(m);
+
+                (m.AnimIndex, m.AnimationFrameCount, mode, modeCount, repeat, m.AnimationFromServer, (int)(m.LastAnimationChangeTime - Time.Ticks))
+                    .Should().Be(expected[i], $"advance {i + 1}");
+            }
+
+            Time.Ticks = NOW;
+            world.Writer.Violations.Should().Be(0);
+        }
+
+        [Fact]
+        public void A_Reverse_Server_Animation_Counts_Down_Then_Finishes_Into_The_Default_Action()
+        {
+            World world = Build(Start.Standing);
+            Mobile m = world.Mobiles.Get(MOB);
+            Time.Ticks = NOW;
+            m.SetAnimation(7, interval: 1, frameCount: 3, repeatCount: 1, repeat: false, forward: false, fromServer: true);
+            (m.AnimIndex, m.AnimationFrameCount).Should().Be(((byte)3, (byte)3));
+
+            // 80 + 80 * (interval + 1) ms per server frame; the fourth step runs below zero: the last data frame (frames - 1),
+            // the repeat count ends, SetAnimation(0xFF) resets the timer, then the frame index is written; after it a client
+            // animation (80 ms) that wraps
+            ExpectAdvances(world, m, 5,
+                (2, 3, 1, 1, false, true, 240),
+                (1, 3, 1, 1, false, true, 240),
+                (0, 3, 1, 1, false, true, 240),
+                (4, 0, 0, 0, false, false, 240),
+                (0, 0, 0, 0, false, false, 80));
+            TimerFieldsOf(m).Should().Be(((byte)0, (ushort)0, (ushort)0, false, false));
+        }
+
+        [Fact]
+        public void A_Repeated_Server_Animation_Runs_Its_Count_Then_Its_Repeat_Then_Loops()
+        {
+            World world = Build(Start.Standing);
+            Mobile m = world.Mobiles.Get(MOB);
+            Time.Ticks = NOW;
+            m.SetAnimation(9, interval: 0, frameCount: 2, repeatCount: 2, repeat: true, forward: true, fromServer: true);
+            (m.AnimIndex, m.AnimationFrameCount).Should().Be(((byte)0, (byte)0));
+
+            // the first step takes the data's frame count (3); each wrap takes one from the repeat mode; at zero the repeat
+            // flag is used up (the count follows the mode, 0) and the animation goes on wrapping without finishing
+            ExpectAdvances(world, m, 3,
+                (1, 3, 2, 2, true, true, 160),
+                (2, 3, 2, 2, true, true, 160),
+                (0, 3, 1, 2, true, true, 160),
+                (1, 3, 1, 2, true, true, 160),
+                (2, 3, 1, 2, true, true, 160),
+                (0, 3, 0, 0, false, true, 160),
+                (1, 3, 0, 0, false, true, 160),
+                (2, 3, 0, 0, false, true, 160),
+                (0, 3, 0, 0, false, true, 160));
+            TimerFieldsOf(m).Forward.Should().BeTrue();
         }
 
         [Fact]
