@@ -118,15 +118,68 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void Only_The_Funnel_Operations_Are_Exempt()
         {
-            // the exemption names the funnel's operations alone (another exempt method would be an unbudgeted writer)
+            // the exemption names the funnel's operations and their release fallbacks alone (another exempt method would be an
+            // unbudgeted writer)
             string root = WriteSiteScanner.FindRepoRoot();
             WriteSiteScanner.FunnelFile.Should().Be("src/ClassicUO.Client/Game/Ecs/WorldWriter.cs");
             WriteSiteScanner.FunnelClass.Should().Be("WorldWriter");
             WriteSiteScanner.FunnelOperations.Should().BeEquivalentTo("UpsertWorldItem", "PlaceWorldItem", "RemoveWorldItem", "PlaceInContainer");
+            WriteSiteScanner.FunnelFallbacks.Should().BeEquivalentTo("UpsertPreT1", "PlacePreT1", "RemovePreT1", "PlaceInContainerPreT1");
 
-            // each listed operation is a method body of the real class
+            // each listed method is a method body of the real class
             string code = WriteSiteScanner.StripCommentsAndStrings(File.ReadAllText(Path.Combine(root, "src", "ClassicUO.Client", "Game", "Ecs", "WorldWriter.cs")));
             WriteSiteScanner.MethodBodyLines(code, "WorldWriter", WriteSiteScanner.FunnelOperations).Should().HaveCount(WriteSiteScanner.FunnelOperations.Length);
+            WriteSiteScanner.MethodBodyLines(code, "WorldWriter", WriteSiteScanner.FunnelFallbacks).Should().HaveCount(WriteSiteScanner.FunnelFallbacks.Length);
+        }
+
+        [Fact]
+        public void The_Fallbacks_Are_Called_Only_From_The_Violation_Paths()
+        {
+            // coordinator, T1 round 3: the pre-T1 fallbacks are exempt like the operations, so they must not become a general
+            // bypass. Each use is a call inside an operation's body, in a block entered on a rejection (`!Admitted(...)`, a
+            // block that called Reject before it) or for a pre-T1 upsert's token (`placement.Id == 0`).
+            string root = WriteSiteScanner.FindRepoRoot();
+            string code = WriteSiteScanner.StripCommentsAndStrings(File.ReadAllText(Path.Combine(root, "src", "ClassicUO.Client", "Game", "Ecs", "WorldWriter.cs")));
+
+            WriteSiteScanner.UnguardedFallbackUses(code, out Dictionary<string, int> calls).Should().BeEmpty();
+            calls.Keys.Should().BeEquivalentTo(WriteSiteScanner.FunnelFallbacks, "each fallback has a violation path that calls it");
+
+            // nothing else in the client names them (they are private; this also catches a copy in another class)
+            foreach (string file in WriteSiteScanner.EnumerateClientFiles(root))
+            {
+                string rel = Path.GetRelativePath(root, file).Replace(Path.DirectorySeparatorChar, '/');
+
+                if (rel != WriteSiteScanner.FunnelFile)
+                {
+                    string other = WriteSiteScanner.StripCommentsAndStrings(File.ReadAllText(file));
+                    WriteSiteScanner.FunnelFallbacks.Should().NotContain(f => Regex.IsMatch(other, @"\b" + f + @"\b"), rel);
+                }
+            }
+        }
+
+        [Fact]
+        public void An_Unguarded_Fallback_Use_Is_Found()
+        {
+            const string Src =
+                "internal sealed class WorldWriter {\n" +
+                "    public Item UpsertWorldItem(uint s) {\n" +
+                "        if (!Admitted(nameof(UpsertWorldItem), s)) { return UpsertPreT1(s); }\n" +   // guarded
+                "        if (bad) { Reject(Violation.NotHeld, m); if (x) { RemovePreT1(s); } }\n" +   // guarded (Reject first)
+                "        if (x) { Reject(Violation.NotHeld, m); }\n" +
+                "        RemovePreT1(s);\n" +                                                         // line 6: after a closed block: unguarded
+                "        if (placement.Id == 0) { PlacePreT1(item); }\n" +                            // guarded (a pre-T1 token)
+                "        if (item != null) { PlacePreT1(item); }\n" +                                 // line 8: unguarded
+                "        Action a = () => PlaceInContainerPreT1(s);\n" +                              // line 9: unguarded
+                "        return null;\n" +
+                "    }\n" +
+                "    private void Helper() { if (!Admitted(\"x\", 0)) { UpsertPreT1(0); } }\n" +   // line 12: not an operation
+                "    private Item UpsertPreT1(uint s) { return null; }\n" +                           // the declaration
+                "    private void Bypass() { Func<uint, Item> f = UpsertPreT1; }\n" +                 // line 14: a method group
+                "}\n" +
+                "internal static class Other { static void PlaceWorldItem() { RemovePreT1(1); } }\n"; // line 16: another class
+
+            WriteSiteScanner.UnguardedFallbackUses(WriteSiteScanner.StripCommentsAndStrings(Src), out _)
+                .Select(u => u.Line).Should().BeEquivalentTo(new[] { 6, 8, 9, 12, 14, 16 });
         }
 
         [Fact]
@@ -145,15 +198,16 @@ namespace ClassicUO.UnitTests.Ecs
                 "        UpsertWorldItem(1);\n" +
                 "    }\n" +
                 "    private sealed class Nested { void RemoveWorldItem(Item item) { item.X = 3; } }\n" + // line 12: a nested type: counted
+                "    private void RemovePreT1(Item item) { item.Z = 5; }\n" + // line 13: a release fallback: exempt
                 "}\n" +
-                "internal static class Other { static void PlaceWorldItem(Item item) { item.Y = 4; } }\n" + // line 14: another class: counted
+                "internal static class Other { static void PlaceWorldItem(Item item) { item.Y = 4; } }\n" + // line 15: another class: counted
                 "}\n";
 
             WriteSiteScanner.ScanSource(Src, WriteSiteScanner.FunnelFile, new HashSet<string> { "Player" }, false)
-                .Select(s => (s.Field, s.Line)).Should().BeEquivalentTo(new[] { ("Hue", 9), ("X", 12), ("Y", 14) });
+                .Select(s => (s.Field, s.Line)).Should().BeEquivalentTo(new[] { ("Hue", 9), ("X", 12), ("Y", 15) });
 
             // the same source in any other file: every write counts
-            WriteSiteScanner.ScanSource(Src, "src/ClassicUO.Client/Game/Other.cs", new HashSet<string> { "Player" }, false).Should().HaveCount(4);
+            WriteSiteScanner.ScanSource(Src, "src/ClassicUO.Client/Game/Other.cs", new HashSet<string> { "Player" }, false).Should().HaveCount(5);
         }
 
         [Fact]
@@ -194,11 +248,18 @@ namespace ClassicUO.UnitTests.Ecs
                 "    internal void AddStep(in Step step) { FunnelCheck.Write(this, FunnelField.Steps); _walkSteps.AddToBack(step); }\n" +
                 "    internal void ReplaceStep(int i, in Step step) { FunnelCheck.Write(this, FunnelField.Steps); _walkSteps[i] = step; }\n" +
                 "    void F() { AddStep(s); ClearStepQueue(); _walkSteps.Clear(); _walkSteps[1] = s; }\n" +
-                "    void G() { ref readonly Step a = ref Steps.Front(); Step b = Steps[0]; bool c = _walkSteps[0] == b; }\n" +
+                "    void G() { ref readonly Step a = ref Steps.Front(); Step b = Steps[0]; }\n" +
+                // Codex audit round 3, #2: a writable reference or an alias of the private queue is a write too: any other access counts
+                "    void H() { _walkSteps.Front().Run = true; ref Step r = ref _walkSteps.Back(); var q = _walkSteps; bool c = _walkSteps[0] == b; }\n" +
+                "    private readonly Deque<Step> _walkSteps = new Deque<Step>(8);\n" +
+                "    public StepQueue Steps => new StepQueue(_walkSteps);\n" +
                 "}\n";
 
             WriteSiteScanner.ScanSource(Src, "src/ClassicUO.Client/Game/GameObjects/MobileAnimation.cs", new HashSet<string> { "Player" }, true)
-                .Select(s => (s.Field, s.Line)).Should().BeEquivalentTo(new[] { ("Steps", 4), ("Steps", 4), ("Steps", 4), ("Steps", 4) });
+                .Select(s => (s.Field, s.Line)).Should().BeEquivalentTo(new[]
+                {
+                    ("Steps", 4), ("Steps", 4), ("Steps", 4), ("Steps", 4), ("Steps", 6), ("Steps", 6), ("Steps", 6), ("Steps", 6)
+                });
         }
 
         [Theory]
@@ -221,6 +282,26 @@ namespace ClassicUO.UnitTests.Ecs
 
             WriteSiteScanner.ScanSource(src, "src/ClassicUO.Client/Game/GameObjects/" + file, new HashSet<string> { "Player" }, true)
                 .Select(s => (s.Field, s.Line)).Should().BeEquivalentTo(new[] { (f1, 3), (f2, 4) });
+        }
+
+        [Fact]
+        public void A_Partial_World_Class_Outside_The_GameObjects_Folder_Is_GameObject_Code()
+        {
+            // Codex audit round 3, #2: bare writes are GameObject writes by the enclosing type, not by the folder
+            const string Src =
+                "namespace ClassicUO.Game.GameObjects {\n" +
+                "    internal partial class Mobile {\n" +
+                "        void F() { _mana = 1; Hits = 2; }\n" +                // line 3: both count
+                "    }\n" +
+                "    internal class Other { int Hits; void G() { Hits = 3; } }\n" + // line 5: another class: a bare write is its own field
+                "}\n";
+
+            WriteSiteScanner.ScanFile(Src, "src/ClassicUO.Client/Game/Managers/MobileExtras.cs", new HashSet<string> { "Player" })
+                .Select(s => (s.Field, s.Line)).Should().BeEquivalentTo(new[] { ("_mana", 3), ("Hits", 3) });
+
+            // the folder rule still holds: a GameObjects file is GameObject code throughout
+            WriteSiteScanner.ScanFile(Src, "src/ClassicUO.Client/Game/GameObjects/MobileExtras.cs", new HashSet<string> { "Player" })
+                .Select(s => (s.Field, s.Line)).Should().BeEquivalentTo(new[] { ("_mana", 3), ("Hits", 3), ("Hits", 5) });
         }
 
         // ---- the scanner's own behaviour on small sources ----
@@ -392,6 +473,11 @@ namespace ClassicUO.UnitTests.Ecs
 
         internal static readonly string[] FunnelOperations = { "UpsertWorldItem", "PlaceWorldItem", "RemoveWorldItem", "PlaceInContainer" };
 
+        // T1 (coordinator, round 3): the release build's pre-T1 fallbacks of the operations, exempt like them (funnel code).
+        // They are reached only after a rejection; The_Fallbacks_Are_Called_Only_From_The_Violation_Paths pins that, so they
+        // cannot become a general bypass.
+        internal static readonly string[] FunnelFallbacks = { "UpsertPreT1", "PlacePreT1", "RemovePreT1", "PlaceInContainerPreT1" };
+
         private static readonly string FieldAlt = string.Join("|", AFields);
         private const string WorldTypes = "Item|Mobile|Entity|PlayerMobile|GameObject";
         private const string Op = @"(?:=(?![=>])|\+=|-=|\*=|/=|%=|&=|\|=|\^=|<<=|>>=|\?\?=|\+\+|--)";
@@ -412,7 +498,10 @@ namespace ClassicUO.UnitTests.Ecs
         private const string StepsMethods = @"(?:AddStep|RemoveFirstStep|ReplaceStep|ClearStepQueue)\s*\(";
         private static readonly Regex StepsCall = new Regex(@"\.\s*(?:Steps\s*\.\s*" + StepsMutators + "|" + StepsMethods + ")", RegexOptions.Compiled);
         private static readonly Regex BareStepsCall = new Regex(@"(?<![\w\.])(?<!\bvoid\s+)(?:Steps\s*\.\s*" + StepsMutators + "|" + StepsMethods + ")", RegexOptions.Compiled);
-        private static readonly Regex StepsBackingCall = new Regex(@"(?<!\w)_walkSteps\s*(?:\.\s*" + StepsMutators + @"|\[[^\]]*\]\s*=(?!=))", RegexOptions.Compiled);
+        // any access of the private queue (Codex audit round 3, #2: `_walkSteps.Front().Run = true`, `ref _walkSteps.Back()`, an
+        // alias), except its declaration, the read-only view and the checked methods
+        private static readonly Regex StepsBackingCall = new Regex(@"(?<!\w)_walkSteps\b", RegexOptions.Compiled);
+        private static readonly Regex AllowedStepsLine = new Regex(@"\bDeque\s*<\s*Step\s*>\s+_walkSteps\s*=|\bnew\s+StepQueue\s*\(\s*_walkSteps\s*\)", RegexOptions.Compiled);
         private static readonly Regex CheckedStepsLine = new Regex(@"\{\s*FunnelCheck\.Write\s*\(\s*this\s*,\s*FunnelField\.Steps\s*\)\s*;\s*_walkSteps\b[^;]*;\s*\}", RegexOptions.Compiled);
         // `++Field`, `Interlocked.Exchange(ref Field, 0)`, `Reset(out Field)` with no receiver (inside a GameObject class)
         private static readonly Regex BarePrefix = new Regex(
@@ -505,20 +594,45 @@ namespace ClassicUO.UnitTests.Ecs
             foreach ((string path, string text) in files)
             {
                 string rel = Path.GetRelativePath(root, path).Replace('\\', '/');
-
-                string name = Path.GetFileName(path);
-                bool gameObjectFile = rel.StartsWith("src/ClassicUO.Client/Game/GameObjects/", StringComparison.Ordinal) && !NotGameObjectFiles.Contains(name);
-                List<WriteSite> sites = ScanSource(text, rel, globalMembers, gameObjectFile);
-
-                if (EffectFiles.Contains(name))
-                {
-                    sites = sites.Where(s => s.Kind != "bare" || EffectFields.Contains(s.Field)).ToList();
-                }
-
-                result.AddRange(sites);
+                result.AddRange(ScanFile(text, rel, globalMembers));
             }
 
             return result;
+        }
+
+        // a declaration of a world-object type (a partial one too)
+        private static readonly Regex WorldTypeDecl = new Regex(@"\bclass\s+(?:" + WorldTypes + @")\b", RegexOptions.Compiled);
+        private static readonly HashSet<string> WorldTypeNames = new HashSet<string>(WorldTypes.Split('|'), StringComparer.Ordinal);
+
+        /// <summary>
+        /// One client file. A file in Game/GameObjects (except <see cref="NotGameObjectFiles"/>) is GameObject code throughout:
+        /// a bare `X = 1` there is this.X. Elsewhere, the bodies of the world-object types declared in the file (a partial
+        /// declaration of Mobile in another folder, Codex audit round 3, #2) are GameObject code, the rest is not.
+        /// </summary>
+        internal static List<WriteSite> ScanFile(string text, string rel, HashSet<string> globalMembers)
+        {
+            string name = Path.GetFileName(rel);
+            bool gameObjectFile = rel.StartsWith("src/ClassicUO.Client/Game/GameObjects/", StringComparison.Ordinal) && !NotGameObjectFiles.Contains(name);
+            List<WriteSite> sites = ScanSource(text, rel, globalMembers, gameObjectFile);
+
+            if (!gameObjectFile)
+            {
+                string code = StripCommentsAndStrings(text);
+
+                if (WorldTypeDecl.IsMatch(code))
+                {
+                    List<(string Name, int From, int To)> world = TypeBodies(code).Where(t => WorldTypeNames.Contains(t.Name)).ToList();
+                    bool Inside(WriteSite s) => world.Exists(t => s.Line >= t.From && s.Line <= t.To);
+                    sites = sites.Where(s => !Inside(s)).Concat(ScanSource(text, rel, globalMembers, true).Where(Inside)).ToList();
+                }
+            }
+
+            if (EffectFiles.Contains(name))
+            {
+                sites = sites.Where(s => s.Kind != "bare" || EffectFields.Contains(s.Field)).ToList();
+            }
+
+            return sites;
         }
 
         internal static List<WriteSite> ScanSource(string source, string path, HashSet<string> globalMembers, bool insideGameObjectClass)
@@ -544,7 +658,7 @@ namespace ClassicUO.UnitTests.Ecs
             // T1: the funnel's operations
             if (path == FunnelFile)
             {
-                List<(int From, int To)> bodies = MethodBodyLines(StripCommentsAndStrings(source), FunnelClass, FunnelOperations);
+                List<(int From, int To)> bodies = MethodBodyLines(StripCommentsAndStrings(source), FunnelClass, FunnelOperations.Concat(FunnelFallbacks).ToArray());
                 sites.RemoveAll(s => bodies.Exists(b => s.Line >= b.From && s.Line <= b.To));
             }
 
@@ -585,6 +699,121 @@ namespace ClassicUO.UnitTests.Ecs
                 if (m.Groups["f"].Value == field && field == "_" + char.ToLowerInvariant(prop[0]) + prop.Substring(1))
                 {
                     return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// The uses of the <see cref="FunnelFallbacks"/> in <paramref name="code"/> (without comments and strings) that are not
+        /// a call inside an operation's body (<see cref="FunnelOperations"/> of <see cref="FunnelClass"/>) in a block entered on
+        /// a violation: its header tests `!Admitted(` or `.Id == 0` (a pre-T1 upsert's token), or it called `Reject(` before.
+        /// The declarations are not uses. <paramref name="calls"/>: the guarded calls per fallback.
+        /// </summary>
+        internal static List<(int Line, string Use)> UnguardedFallbackUses(string code, out Dictionary<string, int> calls)
+        {
+            var bad = new List<(int, string)>();
+            calls = new Dictionary<string, int>(StringComparer.Ordinal);
+            Match cls = new Regex(@"\bclass\s+" + FunnelClass + @"\b[^{]*\{").Match(code);
+            int clsOpen = cls.Success ? cls.Index + cls.Length - 1 : -1;
+            int clsClose = cls.Success ? MatchBrace(code, clsOpen, '{', '}') : -1;
+            var ops = new List<(int Open, int Close)>();
+
+            if (cls.Success)
+            {
+                foreach (Match m in new Regex(@"\b(?:" + string.Join("|", FunnelOperations) + @")\s*\(").Matches(code, clsOpen))
+                {
+                    if (m.Index > clsClose || Depth(code, clsOpen, m.Index) != 1)
+                    {
+                        continue;
+                    }
+
+                    int k = MatchBrace(code, m.Index + m.Length - 1, '(', ')') + 1;
+
+                    while (k < code.Length && char.IsWhiteSpace(code[k]))
+                    {
+                        k++;
+                    }
+
+                    if (k < code.Length && code[k] == '{')
+                    {
+                        ops.Add((k, MatchBrace(code, k, '{', '}')));
+                    }
+                }
+            }
+
+            foreach (Match m in new Regex(@"\b(?:" + string.Join("|", FunnelFallbacks) + @")\b").Matches(code))
+            {
+                bool inClass = cls.Success && m.Index > clsOpen && m.Index < clsClose;
+
+                // the declaration: a class member of the funnel class
+                if (inClass && Depth(code, clsOpen, m.Index) == 1)
+                {
+                    continue;
+                }
+
+                bool call = Regex.IsMatch(code.Substring(m.Index + m.Length, Math.Min(64, code.Length - m.Index - m.Length)), @"^\s*\(");
+                int op = ops.FindIndex(o => m.Index > o.Open && m.Index < o.Close);
+
+                if (!inClass || !call || op < 0 || !GuardedByViolation(code, ops[op].Open, m.Index))
+                {
+                    bad.Add((LineOf(code, m.Index), m.Value));
+
+                    continue;
+                }
+
+                calls[m.Value] = calls.TryGetValue(m.Value, out int n) ? n + 1 : 1;
+            }
+
+            return bad;
+        }
+
+        // one of the blocks enclosing `at` (inside the body opened at `bodyOpen`) is a violation path. A lambda's body is not a
+        // block of the operation: an expression lambda has no brace, so a call in one is found unguarded unless the lambda sits
+        // in a guarded block, which no operation does.
+        private static bool GuardedByViolation(string code, int bodyOpen, int at)
+        {
+            int depth = 0;
+
+            for (int i = at - 1; i > bodyOpen; i--)
+            {
+                if (code[i] == '}')
+                {
+                    depth++;
+                }
+                else if (code[i] == '{')
+                {
+                    if (depth > 0)
+                    {
+                        depth--;
+
+                        continue;
+                    }
+
+                    int h = code.LastIndexOfAny(new[] { ';', '{', '}' }, i - 1);
+                    string header = code.Substring(h + 1, i - h - 1);
+
+                    if (header.Contains("!Admitted(") || Regex.IsMatch(header, @"\.Id\s*==\s*0\b"))
+                    {
+                        return true;
+                    }
+
+                    // a Reject( among this block's own statements before `at` (not in a nested block that closed before it)
+                    var own = new StringBuilder();
+                    int d = 0;
+
+                    for (int j = i + 1; j < at; j++)
+                    {
+                        if (code[j] == '{') d++;
+                        else if (code[j] == '}') d--;
+                        else if (d == 0) own.Append(code[j]);
+                    }
+
+                    if (Regex.IsMatch(own.ToString(), @"\bReject\s*\("))
+                    {
+                        return true;
+                    }
                 }
             }
 
@@ -754,7 +983,7 @@ namespace ClassicUO.UnitTests.Ecs
                 codeLines ??= code.Split('\n');
                 int line = LineOf(code, m.Index);
 
-                if (!CheckedStepsLine.IsMatch(codeLines[line - 1]) && seen.Add(m.Index))
+                if (!CheckedStepsLine.IsMatch(codeLines[line - 1]) && !AllowedStepsLine.IsMatch(codeLines[line - 1]) && seen.Add(m.Index))
                 {
                     result.Add(new WriteSite(path, line, "Steps", "_walkSteps", "call"));
                 }
