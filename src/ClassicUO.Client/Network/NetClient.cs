@@ -4,6 +4,7 @@ using ClassicUO.Network.Encryption;
 using ClassicUO.Utility;
 using ClassicUO.Utility.Logging;
 using System;
+using System.Collections.Generic;
 using System.Net;
 using System.Net.Sockets;
 using System.Net.WebSockets;
@@ -24,6 +25,33 @@ namespace ClassicUO.Network
         private bool _isCompressionEnabled;
         private uint? _localIP;
         private readonly CircularBuffer _sendStream;
+
+        // The send lock. It guards _sendStream, _isCompressionEnabled as the send side reads it, the send-side cipher
+        // (Encryption.Encrypt and Initialize), the send admission state below, and the send statistics: a packet is
+        // encrypted and queued in one critical section, so the order the stream cipher consumed keystream is the order
+        // bytes reach the socket. ProcessSend holds it while it drains the queue to the socket, and every clear or mode
+        // switch of the queue takes it. Nothing that calls out (plugin hooks, events, the Disconnected handlers) ever runs
+        // while it is held.
+        //
+        // Send admission (all under _sendLock): a send is queued only if it started in the current send epoch (the epoch
+        // is bumped by every ResetProtocolState, i.e. when a connection starts, ends or is replaced, so a send a plugin
+        // began on the old connection cannot land in the new one's queue) and sends are open. They are closed from a reset
+        // until the connection's handshake (cipher initialisation, seed, first login packet) has been queued in order by
+        // the thread running it (BeginLoginHandshake / BeginGameHandshake ... EndHandshake); only that thread may send in
+        // the meantime. The three cipher objects in Encryption.cs are static, so this protocol assumes the one NetClient
+        // the client has (NetClient.Socket).
+        private readonly object _sendLock = new object();
+        private bool _sendOpen = true;  // a NetClient that never connected has no connection to protect
+        private int _sendEpoch;
+        private int _handshakeThread;   // managed thread id of the thread running the handshake, 0 = none
+
+        /// <summary>Test seam, null in production: called by <see cref="Send"/> after the outgoing hooks, before the send lock.</summary>
+        internal Action BeforeSendLock;
+
+        internal delegate bool OutgoingHook(ref Span<byte> message);
+
+        /// <summary>Test seam, null in production: stands in for the plugins' outgoing hooks (<see cref="Plugin.ProcessSendPacket"/>).</summary>
+        internal OutgoingHook TestOutgoingHook;
         private SocketWrapper _socket = null;
         private SocketWrapperType? _socketType;
 
@@ -115,7 +143,7 @@ namespace ClassicUO.Network
 
             _socket.OnConnected += (o, e) =>
             {
-                Statistics.Reset();
+                ResetStatistics();
                 Connected?.Invoke(this, EventArgs.Empty);
             };
 
@@ -172,9 +200,17 @@ namespace ClassicUO.Network
         /// </summary>
         private void ResetProtocolState()
         {
-            _isCompressionEnabled = false;
+            lock (_sendLock)
+            {
+                _isCompressionEnabled = false;
+                _sendStream.Clear();
+                _sendOpen = false;
+                _handshakeThread = 0;
+                _deferred.Clear();
+                _sendEpoch++;
+            }
+
             _huffman.Reset();
-            _sendStream.Clear();
             Interlocked.Increment(ref _generation);
         }
 
@@ -196,7 +232,7 @@ namespace ClassicUO.Network
 
             current?.Retire(); // late callbacks of this connection, and its unread data, are void from here on
             ResetProtocolState();
-            Statistics.Reset();
+            ResetStatistics();
             _socket?.Disconnect();
             Disconnected?.Invoke(this, error);
         }
@@ -210,7 +246,7 @@ namespace ClassicUO.Network
         public void Connect(string ip, ushort port)
         {
             ResetProtocolState();
-            Statistics.Reset();
+            ResetStatistics();
 
             if (string.IsNullOrEmpty(ip))
                 throw new ArgumentNullException(nameof(ip));
@@ -233,15 +269,143 @@ namespace ClassicUO.Network
         {
             _connection?.Retire();
             ResetProtocolState();
-            Statistics.Reset();
+            ResetStatistics();
             _socket?.Disconnect();
+        }
+
+        private void ResetStatistics()
+        {
+            lock (_sendLock)
+            {
+                Statistics.Reset();
+            }
+        }
+
+        /// <summary>
+        /// Starts the login-server handshake for the current connection: initialises the login cipher (under the send lock)
+        /// and makes the calling thread the only one allowed to send until <see cref="EndHandshake"/>. Returns the token for it.
+        /// </summary>
+        public int BeginLoginHandshake(uint address)
+        {
+            lock (_sendLock)
+            {
+                Encryption?.Initialize(true, address);
+                _handshakeThread = Environment.CurrentManagedThreadId;
+
+                return _sendEpoch;
+            }
+        }
+
+        /// <summary>
+        /// Starts the game-server handshake: initialises the game cipher, switches to game mode (what
+        /// <see cref="EnableCompression"/> does) and makes the calling thread the only one allowed to send until
+        /// <see cref="EndHandshake"/>, so nothing can be queued ahead of the seed.
+        /// </summary>
+        public int BeginGameHandshake(uint seed)
+        {
+            int token;
+
+            lock (_sendLock)
+            {
+                Encryption?.Initialize(false, seed);
+                _isCompressionEnabled = true;
+                _sendStream.Clear();
+                _handshakeThread = Environment.CurrentManagedThreadId;
+                token = _sendEpoch;
+            }
+
+            _huffman.Reset();
+
+            return token;
+        }
+
+        /// <summary>
+        /// The handshake packets are queued in order: ordinary sends (other threads, plugins) are admitted again. Does nothing
+        /// if the connection was reset or replaced since <see cref="BeginLoginHandshake"/> / <see cref="BeginGameHandshake"/>.
+        /// </summary>
+        public void EndHandshake(int token)
+        {
+            lock (_sendLock)
+            {
+                if (token != _sendEpoch)
+                {
+                    return;
+                }
+
+                _sendOpen = true;
+
+                if (_handshakeThread == Environment.CurrentManagedThreadId)
+                {
+                    _handshakeThread = 0;
+                }
+
+                // sends other threads (or a plugin's outgoing hook, re-entrantly) made during the handshake follow it, in order
+                foreach (var (data, skipEncryption) in _deferred)
+                {
+                    EnqueueLocked(data, skipEncryption);
+                }
+
+                _deferred.Clear();
+            }
+        }
+
+        private const int MaxDeferredSends = 256;
+        private readonly List<(byte[] Data, bool SkipEncryption)> _deferred = new List<(byte[], bool)>();
+
+        // True while this thread is inside the outgoing plugin hooks of a Send: a Send made then is a re-entrant injection.
+        [ThreadStatic] private static int t_inSendHook;
+
+        /// <summary>Sends dropped because their connection had ended or been replaced (a stale epoch).</summary>
+        public int DroppedStaleSends => Volatile.Read(ref _droppedStale);
+
+        /// <summary>Sends made during a handshake that were held back and queued after it.</summary>
+        public int DeferredSends => Volatile.Read(ref _deferredTotal);
+
+        /// <summary>Sends dropped because too many were held back during one handshake.</summary>
+        public int DroppedDeferredOverflow => Volatile.Read(ref _droppedOverflow);
+
+        private int _droppedStale, _deferredTotal, _droppedOverflow;
+        private long _lastDropLog;
+
+        private void NoteDrop(string kind, byte id)
+        {
+            // outside _sendLock; at most one line per second
+            var now = Stopwatch.GetTimestamp();
+            var last = Interlocked.Read(ref _lastDropLog);
+
+            if (now - last < Stopwatch.Frequency || Interlocked.CompareExchange(ref _lastDropLog, now, last) != last)
+            {
+                return;
+            }
+
+            Log.Warn($"Send dropped ({kind}), packet 0x{id:X2}; stale={DroppedStaleSends} deferred={DeferredSends} overflow={DroppedDeferredOverflow}");
+        }
+
+        // Under _sendLock: log (when the packet log is on), encrypt, queue and count one admitted packet.
+        private void EnqueueLocked(Span<byte> message, bool skipEncryption)
+        {
+            PacketLogger.Default?.Log(message, true);
+
+            if (!skipEncryption)
+            {
+                Encryption?.Encrypt(!_isCompressionEnabled, message, message, message.Length);
+            }
+
+            _sendStream.Enqueue(message);
+
+            Statistics.TotalBytesSent += (uint)message.Length;
+            Statistics.TotalPacketsSent++;
         }
 
         public void EnableCompression()
         {
-            _isCompressionEnabled = true;
+            lock (_sendLock)
+            {
+                _isCompressionEnabled = true;
+                _sendStream.Clear();
+            }
+
             _huffman.Reset();
-            _sendStream.Clear();
         }
 
 
@@ -425,39 +589,84 @@ namespace ClassicUO.Network
         public void Flush()
         {
             ProcessSend();
-            Statistics.Update();
+
+            lock (_sendLock)
+            {
+                Statistics.Update(); // one consistent snapshot of the send counters
+            }
         }
 
         public void Send(Span<byte> message, bool ignorePlugin = false, bool skipEncryption = false)
         {
+            // The connection this send belongs to, taken first: before the connection check and before any plugin callback
+            // runs (see _sendLock), so a sender paused anywhere up to the lock cannot adopt a replacement connection.
+            var epoch = Volatile.Read(ref _sendEpoch);
+
             if (!IsConnected || message.IsEmpty)
             {
                 return;
             }
 
-            if (!ignorePlugin && !Plugin.ProcessSendPacket(ref message))
+            if (!ignorePlugin)
             {
-                return;
+                bool allowed;
+                t_inSendHook++;
+
+                try
+                {
+                    allowed = TestOutgoingHook != null ? TestOutgoingHook(ref message) : Plugin.ProcessSendPacket(ref message);
+                }
+                finally
+                {
+                    t_inSendHook--;
+                }
+
+                if (!allowed)
+                {
+                    return;
+                }
             }
 
             if (message.IsEmpty)
                 return;
 
-            PacketLogger.Default?.Log(message, true);
+            BeforeSendLock?.Invoke(); // test seam: where a plugin thread can be paused between its hooks and the lock
 
-            if (!skipEncryption)
+            var id = message[0];
+            var reentrant = t_inSendHook > 0; // made from inside an outgoing hook of another Send on this thread
+            var dropped = false;
+
+            // Encrypt and enqueue as one step (see _sendLock): with two senders (main thread and a plugin thread) the cipher
+            // would otherwise advance in one order and the bytes be queued in another, and the server could not decrypt.
+            lock (_sendLock)
             {
-                Encryption?.Encrypt(!_isCompressionEnabled, message, message, message.Length);
+                if (epoch != _sendEpoch)
+                {
+                    _droppedStale++; // its connection ended or was replaced
+                    dropped = true;
+                }
+                else if (_sendOpen || (_handshakeThread == Environment.CurrentManagedThreadId && !reentrant))
+                {
+                    EnqueueLocked(message, skipEncryption);
+                }
+                else if (_deferred.Count < MaxDeferredSends)
+                {
+                    // Ahead of the handshake's own packets (another thread, or a plugin hook injecting while the handshake
+                    // thread sends the login packet): held back and queued in order when the handshake ends.
+                    _deferred.Add((message.ToArray(), skipEncryption));
+                    _deferredTotal++;
+                }
+                else
+                {
+                    _droppedOverflow++;
+                    dropped = true;
+                }
             }
 
-            lock (_sendStream)
+            if (dropped)
             {
-                //_socket.Send(data, 0, length);
-                _sendStream.Enqueue(message);
+                NoteDrop(epoch != Volatile.Read(ref _sendEpoch) ? "stale connection" : "handshake queue full", id);
             }
-
-            Statistics.TotalBytesSent += (uint)message.Length;
-            Statistics.TotalPacketsSent++;
         }
 
         private void ProcessEncryption(Span<byte> buffer)
@@ -475,7 +684,7 @@ namespace ClassicUO.Network
 
             try
             {
-                lock (_sendStream)
+                lock (_sendLock)
                 {
                     while (_sendStream.Length > 0)
                     {
