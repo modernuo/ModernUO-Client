@@ -1736,51 +1736,44 @@ namespace ClassicUO.Network
                         }
                         else
                         {
-                            Item item = world.GetOrCreateItem(
-                                Client.Game.UO.GameCursor.ItemHold.Serial
+                            // T1: the held item's values and its container's branch are one WorldWriter operation
+                            ItemHold hold = Client.Game.UO.GameCursor.ItemHold;
+
+                            Item item = world.Writer.ReturnHeldItem(
+                                hold.Serial,
+                                hold.Graphic,
+                                hold.Hue,
+                                hold.TotalAmount,
+                                hold.Flags,
+                                hold.Layer,
+                                hold.X,
+                                hold.Y,
+                                hold.Z,
+                                hold.Container,
+                                out Entity container,
+                                out WorldWriter.HeldItemReturn returned
                             );
 
-                            item.Graphic = Client.Game.UO.GameCursor.ItemHold.Graphic;
-                            item.Hue = Client.Game.UO.GameCursor.ItemHold.Hue;
-                            item.Amount = Client.Game.UO.GameCursor.ItemHold.TotalAmount;
-                            item.Flags = Client.Game.UO.GameCursor.ItemHold.Flags;
-                            item.Layer = Client.Game.UO.GameCursor.ItemHold.Layer;
-                            item.X = Client.Game.UO.GameCursor.ItemHold.X;
-                            item.Y = Client.Game.UO.GameCursor.ItemHold.Y;
-                            item.Z = Client.Game.UO.GameCursor.ItemHold.Z;
-                            item.CheckGraphicChange();
-
-                            Entity container = world.Get(Client.Game.UO.GameCursor.ItemHold.Container);
-
-                            if (container != null)
+                            switch (returned)
                             {
-                                if (SerialHelper.IsMobile(container.Serial))
-                                {
+                                case WorldWriter.HeldItemReturn.Paperdoll:
                                     Console.WriteLine("=== DENY === ADD TO PAPERDOLL");
-
-                                    world.RemoveItemFromContainer(item);
-                                    container.PushToBack(item);
-                                    item.Container = container.Serial;
-                                    world.Ecs.Sync(item);
 
                                     UIManager
                                         .GetGump<PaperDollGump>(item.Container)
                                         ?.RequestUpdateContents();
-                                }
-                                else
-                                {
+
+                                    break;
+
+                                case WorldWriter.HeldItemReturn.Removed:
                                     Console.WriteLine("=== DENY === SOMETHING WRONG");
 
-                                    world.RemoveItem(item, true);
-                                }
-                            }
-                            else
-                            {
-                                Console.WriteLine("=== DENY === ADD TO TERRAIN");
+                                    break;
 
-                                world.RemoveItemFromContainer(item);
+                                case WorldWriter.HeldItemReturn.Terrain:
+                                    Console.WriteLine("=== DENY === ADD TO TERRAIN");
 
-                                item.SetInWorldTile(item.X, item.Y, item.Z);
+                                    break;
                             }
                         }
                     }
