@@ -1693,6 +1693,394 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.Violations.Should().Be(1);
             world.Items.Get(ITEM).Container.Should().Be(MOB, "the rejected return changed nothing");
         }
+
+        // ---- T1 funnel-3: equipment (0x2E EquipItem; 0x78/0xD3 UpdateObject's equipment list)
+
+        internal struct EquipPacket
+        {
+            public uint Serial;
+            public ushort Graphic, Hue;
+            public Layer Layer;
+            public uint Container;
+        }
+
+        // EquipItem before T1 (the gump refreshes and the abilities left out; the gumps' container is returned)
+        internal static Item OldEquip(World world, in EquipPacket e, out Entity entity, out uint shown)
+        {
+            Item item = world.GetOrCreateItem(e.Serial);
+
+            if (item.Graphic != 0 && item.Layer != Layer.Backpack)
+            {
+                world.RemoveItemFromContainer(item);
+            }
+
+            shown = item.Container;
+
+            item.Graphic = e.Graphic;
+            item.Layer = e.Layer;
+            item.Container = e.Container;
+            item.FixHue(e.Hue);
+            item.Amount = 1;
+
+            entity = world.Get(item.Container);
+            entity?.PushToBack(item);
+            world.Ecs.Sync(item);
+
+            return item;
+        }
+
+        private const uint PACK = 0x4000_7040, NEWITEM = 0x4000_7041, NOBODY = 0x0000_3FFF;
+
+        private static readonly EquipPacket[] EquipPackets =
+        {
+            // onto the wearer: FixHue (0x0BB9 becomes 1, the top bit stays)
+            new EquipPacket { Serial = ITEM, Graphic = 0x1516, Hue = 0x8BB9, Layer = Layer.Shirt, Container = MOB },
+            // onto the wearer as a backpack (its next equip keeps its old container link)
+            new EquipPacket { Serial = ITEM, Graphic = 0x0E75, Hue = 0, Layer = Layer.Backpack, Container = MOB },
+            // into an item (a vendor's restock box layer)
+            new EquipPacket { Serial = ITEM, Graphic = 0x1517, Hue = 0x21, Layer = Layer.ShopBuyRestock, Container = BAG },
+            // onto a wearer nobody knows: the Container and Layer without a link
+            new EquipPacket { Serial = ITEM, Graphic = 0x1518, Hue = 0x35, Layer = Layer.Pants, Container = NOBODY },
+            // a corpse graphic: no CheckGraphicChange in 0x2E
+            new EquipPacket { Serial = ITEM, Graphic = 0x2006, Hue = 0, Layer = Layer.Cloak, Container = MOB },
+            // a new item
+            new EquipPacket { Serial = NEWITEM, Graphic = 0x1F03, Hue = 0x455, Layer = Layer.Robe, Container = MOB },
+            // a mobile's serial: found among the items (created there), as the old GetOrCreateItem did
+            new EquipPacket { Serial = MOB, Graphic = 0x1515, Hue = 0, Layer = Layer.Shirt, Container = MOB },
+        };
+
+        public static IEnumerable<object[]> EquipCases()
+        {
+            foreach (Start s in Enum.GetValues(typeof(Start)))
+            {
+                for (int i = 0; i < EquipPackets.Length; i++)
+                {
+                    foreach (bool crowded in new[] { false, true })
+                    {
+                        foreach (bool packLayer in new[] { false, true })
+                        {
+                            yield return new object[] { s, i, crowded, packLayer };
+                        }
+                    }
+                }
+            }
+        }
+
+        // the starting state of the equipment tests: Build, the crowded wearer, ITEM facing west with the running bit (a
+        // corpse graphic takes its state from it), optionally ITEM's layer set to the backpack's
+        private static World BuildEquip(Start start, bool crowded, bool packLayer)
+        {
+            World world = Build(start);
+
+            if (crowded)
+            {
+                Crowd(world);
+            }
+
+            Item it = world.Items.Get(ITEM);
+
+            if (it != null)
+            {
+                it.Direction = Direction.Running | Direction.West;
+
+                if (packLayer)
+                {
+                    it.Layer = Layer.Backpack;
+                    world.Ecs.Sync(it);
+                }
+            }
+
+            return world;
+        }
+
+        [Theory]
+        [MemberData(nameof(EquipCases))]
+        public void Equip_Equals_The_Old_Path(Start start, int packet, bool crowded, bool packLayer)
+        {
+            World oldWorld = BuildEquip(start, crowded, packLayer), newWorld = BuildEquip(start, crowded, packLayer);
+            EquipPacket e = EquipPackets[packet];
+
+            Item a = OldEquip(oldWorld, e, out Entity oldEntity, out uint oldShown);
+            Item b = newWorld.Writer.Equip(e.Serial, e.Graphic, e.Layer, e.Container, e.Hue, out Entity entity, out uint shown);
+
+            b.Should().BeSameAs(newWorld.Items.Get(e.Serial));
+            shown.Should().Be(oldShown, "the gumps the handler refreshes");
+            (entity == null).Should().Be(oldEntity == null);
+
+            if (entity != null)
+            {
+                entity.Serial.Should().Be(oldEntity.Serial);
+                entity.GetType().Should().Be(oldEntity.GetType());
+            }
+
+            newWorld.Writer.InScope.Should().BeFalse();
+            newWorld.Ecs.IsFolding.Should().BeFalse();
+            AssertSameWorld(oldWorld, newWorld);
+            AssertSameItem(a, b);
+
+            // the same packet again, then another one on top
+            OldEquip(oldWorld, e, out _, out oldShown);
+            newWorld.Writer.Equip(e.Serial, e.Graphic, e.Layer, e.Container, e.Hue, out _, out shown);
+            shown.Should().Be(oldShown);
+            AssertSameWorld(oldWorld, newWorld);
+
+            EquipPacket next = EquipPackets[(packet + 1) % EquipPackets.Length];
+            OldEquip(oldWorld, next, out _, out oldShown);
+            newWorld.Writer.Equip(next.Serial, next.Graphic, next.Layer, next.Container, next.Hue, out _, out shown);
+            shown.Should().Be(oldShown);
+            AssertSameWorld(oldWorld, newWorld);
+        }
+
+        [Fact]
+        public void Equip_Re_Equips_At_The_End_Of_The_Equipment_Index()
+        {
+            // the old path published the detached state before the wearer's: a re-equip on the same wearer and layer moves the
+            // item to the end of the mirror's equipment index (one commit of the final state would leave it in place)
+            World world = BuildEquip(Start.Worn, crowded: true, packLayer: false);
+            Serials(world.Ecs.Mirror.GetEquipment(MOB)).Should().Equal(ITEM, WORN_BEFORE, WORN_AFTER);
+
+            world.Writer.Equip(ITEM, 0x1515, Layer.Shirt, MOB, 0, out _, out _);
+
+            Serials(world.Ecs.Mirror.GetEquipment(MOB)).Should().Equal(WORN_BEFORE, WORN_AFTER, ITEM);
+            ChildSerials(world.Mobiles.Get(MOB)).Should().Equal(WORN_BEFORE, WORN_AFTER, ITEM);
+        }
+
+        [Fact]
+        public void Equip_Computes_Its_Values_Before_The_Writes()
+        {
+            // each commit sees the cache still on the previous values (as T4's ECS-backed getters would)
+            World world = Build(Start.InBag);
+            var seen = new List<(uint Container, ushort Graphic, ushort Amount, uint CacheContainer, ushort CacheGraphic)>();
+            world.Ecs.CommitObserver = (item, v) => seen.Add((v.Container, v.Graphic, v.Amount, item.Container, item.Graphic));
+
+            world.Writer.Equip(ITEM, 0x1517, Layer.Shirt, MOB, 0x22, out Entity wearer, out uint shown);
+            world.Ecs.CommitObserver = null;
+
+            seen.Should().Equal((0xFFFF_FFFFu, (ushort)0x1515, (ushort)3, BAG, (ushort)0x1515), (MOB, (ushort)0x1517, (ushort)1, BAG, (ushort)0x1515));
+            wearer.Should().BeSameAs(world.Mobiles.Get(MOB));
+            shown.Should().Be(0xFFFF_FFFFu);
+            world.Items.Get(ITEM).Container.Should().Be(MOB);
+            ChildSerials(world.Items.Get(BAG)).Should().Equal(0x4000_7009u);
+        }
+
+        // UpdateObject's equipment part before T1: the clear of the unopened non-backpack children, then each entry
+        internal static void OldWear(World world, uint serial, (uint Serial, ushort Graphic, Layer Layer, ushort Hue)[] entries)
+        {
+            Entity obj = world.Get(serial);
+
+            if (obj == null)
+            {
+                return;
+            }
+
+            if (!obj.IsEmpty)
+            {
+                LinkedObject o = obj.Items;
+
+                while (o != null)
+                {
+                    LinkedObject next = o.Next;
+                    Item it = (Item)o;
+
+                    if (!it.Opened && it.Layer != Layer.Backpack)
+                    {
+                        world.RemoveItem(it.Serial, true);
+                    }
+
+                    o = next;
+                }
+            }
+
+            foreach (var e in entries)
+            {
+                Item item = world.GetOrCreateItem(e.Serial);
+                item.Graphic = e.Graphic;
+                item.FixHue(e.Hue);
+                item.Amount = 1;
+                world.RemoveItemFromContainer(item);
+                item.Container = serial;
+                item.Layer = e.Layer;
+
+                item.CheckGraphicChange();
+
+                obj.PushToBack(item);
+                world.Ecs.Sync(item);
+            }
+        }
+
+        private static void NewWear(World world, uint serial, (uint Serial, ushort Graphic, Layer Layer, ushort Hue)[] entries)
+        {
+            // as the handler: it returns when World.Get finds nothing
+            if (world.Get(serial) == null)
+            {
+                return;
+            }
+
+            world.Writer.ClearWornItems(serial);
+
+            foreach (var e in entries)
+            {
+                world.Writer.WearItem(serial, e.Serial, e.Graphic, e.Layer, e.Hue).Should().BeSameAs(world.Items.Get(e.Serial));
+            }
+        }
+
+        private static readonly (uint Serial, ushort Graphic, Layer Layer, ushort Hue)[][] WearLists =
+        {
+            new[] { (ITEM, (ushort)0x1515, Layer.Shirt, (ushort)0x21) },
+            // an equipped item again, a corpse graphic (its state from the old direction: running, west), a new item
+            new[] { (WORN_BEFORE, (ushort)0x1F7B, Layer.Pants, (ushort)0), (ITEM, (ushort)0x2006, Layer.Cloak, (ushort)0x455), (NEWITEM, (ushort)0x1F03, Layer.Robe, (ushort)0x8BB9) },
+            // the same item twice
+            new[] { (ITEM, (ushort)0x1515, Layer.Shirt, (ushort)0), (ITEM, (ushort)0x1516, Layer.Pants, (ushort)1) },
+            // the clear alone
+            Array.Empty<(uint, ushort, Layer, ushort)>(),
+            // a mobile's serial as an entry: found among the items (created there)
+            new[] { (MOB, (ushort)0x1515, Layer.Shirt, (ushort)0) },
+        };
+
+        public static IEnumerable<object[]> WearCases()
+        {
+            foreach (Start s in Enum.GetValues(typeof(Start)))
+            {
+                foreach (uint owner in new[] { MOB, BAG, NOBODY })
+                {
+                    for (int i = 0; i < WearLists.Length; i++)
+                    {
+                        foreach (bool crowded in new[] { false, true })
+                        {
+                            yield return new object[] { s, owner, i, crowded };
+                        }
+                    }
+                }
+            }
+        }
+
+        // the crowded wearer also has a backpack (kept) and an opened container (kept)
+        private static World BuildWear(Start start, bool crowded)
+        {
+            World world = BuildEquip(start, crowded, packLayer: false);
+
+            if (crowded)
+            {
+                Mobile m = world.Mobiles.Get(MOB);
+                Item pack = world.GetOrCreateItem(PACK);
+                pack.Graphic = 0x0E75;
+                pack.Layer = Layer.Backpack;
+                pack.Container = MOB;
+                m.PushToBack(pack);
+                world.Ecs.Sync(pack);
+                world.Items.Get(WORN_AFTER).Opened = true;
+            }
+
+            return world;
+        }
+
+        [Theory]
+        [MemberData(nameof(WearCases))]
+        public void WearItem_Equals_The_Old_Path(Start start, uint owner, int list, bool crowded)
+        {
+            World oldWorld = BuildWear(start, crowded), newWorld = BuildWear(start, crowded);
+            var entries = WearLists[list];
+
+            OldWear(oldWorld, owner, entries);
+            NewWear(newWorld, owner, entries);
+
+            newWorld.Writer.InScope.Should().BeFalse();
+            newWorld.Ecs.IsFolding.Should().BeFalse();
+            AssertSameWorld(oldWorld, newWorld);
+
+            // the same packet again
+            OldWear(oldWorld, owner, entries);
+            NewWear(newWorld, owner, entries);
+            AssertSameWorld(oldWorld, newWorld);
+        }
+
+        [Fact]
+        public void WearItem_Computes_Its_Values_Before_The_Writes()
+        {
+            // the detached commit carries the entry's graphic with the old layer; the final one the owner and the corpse's
+            // layer from the old direction; the cache still holds the previous container, layer and direction at both
+            World world = BuildEquip(Start.Worn, crowded: false, packLayer: false);
+            var seen = new List<(uint Container, ushort Graphic, Layer Layer, Direction Direction, uint CacheContainer, ushort CacheGraphic, Layer CacheLayer)>();
+            world.Ecs.CommitObserver = (item, v) => seen.Add((v.Container, v.Graphic, v.Layer, v.Direction, item.Container, item.Graphic, item.Layer));
+
+            world.Writer.WearItem(MOB, ITEM, 0x2006, Layer.Cloak, 0);
+            world.Ecs.CommitObserver = null;
+
+            seen.Should().Equal(
+                (0xFFFF_FFFFu, (ushort)0x2006, Layer.Shirt, Direction.Running | Direction.West, MOB, (ushort)0x1515, Layer.Shirt),
+                (MOB, (ushort)0x2006, (Layer)Direction.West, Direction.West, MOB, (ushort)0x2006, Layer.Shirt)); // the graphic is written before the unlink, as before T1
+            Item it = world.Items.Get(ITEM);
+            (it.Layer, it.Direction, it.UsedLayer, it.AnimIndex).Should().Be(((Layer)Direction.West, Direction.West, true, (byte)99));
+        }
+
+        [Fact]
+        public void ClearWornItems_Cancels_The_Removed_Items_Placements()
+        {
+            // the removed equipment's contents lose their placements at any depth; the backpack's and the opened container's
+            // contents keep theirs
+            World world = BuildWear(Start.Worn, crowded: true); // MOB > ITEM > CHILD > GRANDCHILD; PACK; WORN_AFTER opened
+            world.Writer.ThrowOnViolation = true;
+            WorldWriter.Placement deep = PendingIn(world, 0x4000_7042, GRANDCHILD);
+            WorldWriter.Placement inPack = PendingIn(world, 0x4000_7043, PACK);
+            WorldWriter.Placement inOpened = PendingIn(world, 0x4000_7044, WORN_AFTER);
+
+            world.Writer.ClearWornItems(MOB);
+
+            ChildSerials(world.Mobiles.Get(MOB)).Should().Equal(WORN_AFTER, PACK);
+            world.Writer.OutstandingPlacements.Should().Be(2);
+            Action stale = () => world.Writer.PlaceWorldItem(deep);
+            stale.Should().Throw<ArgumentException>();
+            world.Writer.PlaceWorldItem(inPack);
+            world.Writer.PlaceWorldItem(inOpened);
+            world.Writer.OutstandingPlacements.Should().Be(0);
+        }
+
+        [Fact]
+        public void The_Equipment_Operations_Inside_An_Operation_Are_Rejected()
+        {
+            foreach (bool throws in new[] { true, false })
+            {
+                foreach (int op in new[] { 0, 1, 2 })
+                {
+                    World world = BuildEquip(Start.Worn, crowded: true, packLayer: false);
+                    world.Writer.ThrowOnViolation = throws;
+                    bool ran = false;
+                    world.Ecs.CommitObserver = (item, v) =>
+                    {
+                        if (!ran)
+                        {
+                            ran = true;
+                            Action nested = op switch
+                            {
+                                0 => () => world.Writer.Equip(ITEM, 0x1517, Layer.Pants, BAG, 0, out _, out _).Should().BeNull(),
+                                1 => () => world.Writer.ClearWornItems(MOB),
+                                _ => () => world.Writer.WearItem(MOB, ITEM, 0x1517, Layer.Pants, 0).Should().BeNull()
+                            };
+
+                            // asserted inside the operation: rejected before any change
+                            if (throws)
+                            {
+                                nested.Should().Throw<InvalidOperationException>();
+                            }
+                            else
+                            {
+                                nested();
+                            }
+
+                            Item it = world.Items.Get(ITEM);
+                            (it.Container, it.Layer, it.Graphic).Should().Be((MOB, Layer.Shirt, (ushort)0x1515), "a rejected operation changes nothing");
+                            ChildSerials(world.Mobiles.Get(MOB)).Should().Equal(WORN_BEFORE, ITEM, WORN_AFTER);
+                        }
+                    };
+
+                    world.Writer.UpsertWorldItem(0x4000_7050, 0xEED, 0, 1, 1010, 1010, 0, Direction.North, 0, Flags.None, 0, out _, out _);
+                    world.Ecs.CommitObserver = null;
+
+                    ran.Should().BeTrue();
+                    world.Writer.Violations.Should().Be(1);
+                }
+            }
+        }
     }
 
     // T1: CUO_FUNNEL_CHECK. FunnelCheck's counters are process-wide, so these tests run alone.
@@ -1908,6 +2296,47 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.ReturnHeldItem(held.Serial, 0x1517, 0, 1, Flags.None, Layer.Shirt, 1, 1, 0, box.Serial, out _, out _);
             FunnelCheck.Total.Should().Be(0);
             world.Items.Get(inner.Serial).Should().BeNull();
+        }
+
+        [Fact]
+        public void The_Equipment_Operations_Make_No_Direct_Writes()
+        {
+            if (!FunnelCheck.Available)
+            {
+                return;
+            }
+
+            var world = new World();
+            Mobile m = world.GetOrCreateMobile(0x0000_3100);
+            Item bag = world.GetOrCreateItem(0x4000_7101);
+            Item worn = world.GetOrCreateItem(0x4000_7104);
+            worn.Graphic = 0x1515;
+            worn.Container = m.Serial;
+            worn.Layer = Layer.Shirt;
+            m.PushToBack(worn);
+            world.Ecs.Sync(worn);
+            Item child = world.GetOrCreateItem(0x4000_7103);
+            child.Container = worn.Serial;
+            worn.PushToBack(child);
+            world.Ecs.Sync(child);
+            FunnelCheck.Reset();
+
+            // 0x2E: a re-equip (the unlink), into an item, a new item
+            world.Writer.Equip(worn.Serial, 0x1516, Layer.Shirt, m.Serial, 0x21, out _, out _).Should().BeSameAs(worn);
+            world.Writer.Equip(worn.Serial, 0x1516, Layer.ShopBuy, bag.Serial, 0, out _, out _);
+            world.Writer.Equip(0x4000_7108, 0x1517, Layer.Pants, m.Serial, 0, out _, out _).Should().NotBeNull();
+            FunnelCheck.Total.Should().Be(0, "0x2E");
+
+            // 0x78: the clear (owns the removed subtrees: worn's contents moved with it into the bag, the new pants go), then
+            // the entries, one a corpse graphic with the running bit
+            world.Writer.ClearWornItems(m.Serial);
+            world.Items.Get(0x4000_7108).Should().BeNull();
+            world.Writer.WearItem(m.Serial, worn.Serial, 0x1515, Layer.Shirt, 0).Should().BeSameAs(worn);
+            world.Writer.WearItem(m.Serial, 0x4000_7109, 0x2006, Layer.Cloak, 0).Should().NotBeNull();
+            FunnelCheck.Total.Should().Be(0, "0x78");
+            world.Writer.ClearWornItems(m.Serial);
+            FunnelCheck.Total.Should().Be(0, "the clear of worn items with contents");
+            world.Items.Get(child.Serial).Should().BeNull();
         }
 
         [Fact]
