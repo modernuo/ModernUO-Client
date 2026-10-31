@@ -21,8 +21,12 @@ public static class Verify
     /// <summary>The first failure messages (up to 100), for tests.</summary>
     public static readonly System.Collections.Concurrent.ConcurrentQueue<string> Failures = new();
 
+    /// <summary>The anim checks of the last <see cref="Run"/> failed (Program skips the anim debug PNGs).</summary>
+    public static bool AnimFailed;
+
     public static void Reset()
     {
+        AnimFailed = false;
         _errors = 0;
         Failures.Clear();
     }
@@ -89,7 +93,12 @@ public static class Verify
         });
         Console.WriteLine($"  manifest: {manifest.Files.Count} files, {manifest.Facets.Count} facets, hashes checked");
 
-        if (Want("anims") && File.Exists(Path.Combine(outDir, "anim", AnimTableFile.FileName))) CheckAnim(fm, Path.Combine(outDir, "anim"));
+        if (Want("anims") && File.Exists(Path.Combine(outDir, "anim", AnimTableFile.FileName)))
+        {
+            int before = _errors;
+            CheckAnim(fm, Path.Combine(outDir, "anim"));
+            AnimFailed = _errors != before;
+        }
         if (Want("gumps") && File.Exists(Path.Combine(outDir, StoreConst.GumpsFile))) CheckGumps(fm, outDir);
         if (Want("fonts") && File.Exists(Path.Combine(outDir, TextConst.AsciiFontsFile))) TextConvert.VerifyFonts(fm, outDir);
         if (Want("cliloc") && File.Exists(Path.Combine(outDir, TextConst.ClilocFile))) TextConvert.VerifyCliloc(fm, outDir);
@@ -715,12 +724,27 @@ public static class Verify
             return -1;
         }).ToArray();
 
-        var conv = AnimConvert.ReadBodyConv(fm);
+        // The body set the pack was built with (manifest; no bodies record = the legacy rules of packs up to classic-1.2).
+        var manifestPath = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(dir))!, "manifest.json");
+        BodyPlan plan;
+        try
+        {
+            plan = BodyPlan.Build(fm, BodyChoices.FromRecord(File.Exists(manifestPath) ? ManifestFileIo.Read(manifestPath).Bodies : null));
+        }
+        catch (BodyChoicesException e)
+        {
+            Fail($"anim: the pack's body choices cannot be rebuilt: {e.Message}");
+            return;
+        }
+        Console.WriteLine($"  anim: body choices {plan.Choices}");
+        if (plan.BodyCount != bodies.Length) Fail($"anim body table has {bodies.Length} bodies, the body choices give {plan.BodyCount}");
+        CheckBodyEntries(fm, plan, bodies);
+        var conv = plan.Conv;
         long checkedFrames = 0, exact = 0, crossPage = 0, absent = 0;
         double se = 0; long nRgb = 0, flips = 0, nPx = 0;
         PixelFormat fmt = PixelFormat.Rgba8;
         var gate = new object();
-        using var workers = new ThreadLocal<(AnimWorker W, Dictionary<int, AnimConvert.BodyMeta> M)>(() => (new AnimWorker(fm), new()), trackAllValues: true);
+        using var workers = new ThreadLocal<(AnimWorker W, Dictionary<int, AnimConvert.BodyMeta> M)>(() => (new AnimWorker(fm, plan), new()), trackAllValues: true);
         // Serial: ClassicUO's ReadMULAnimationFrames is not GC-safe under concurrent allocation (see AnimConvert.ReadMul).
         Parallel.ForEach(groups, new ParallelOptions { MaxDegreeOfParallelism = 1 }, g =>
         {
@@ -730,7 +754,7 @@ public static class Verify
             long ck = 0, ex = 0, cp = 0, ab = 0, fl = 0, np = 0, nr = 0; double sse = 0;
             foreach (var (b, a, sd, de) in g)
             {
-                if (!metas.TryGetValue(b, out var m)) metas[b] = m = AnimConvert.Meta(w.Loader, fm.Version, b, conv);
+                if (!metas.TryGetValue(b, out var m)) metas[b] = m = AnimConvert.Meta(w.Loader, fm.Version, b, plan);
                 var job = AnimConvert.Job(w.Loader, m, a, sd);
                 var src = job == null ? default : AnimConvert.Read(w.Loader, job);
                 if (src.Length != de.FrameCount) { Fail($"anim body {b} action {a} dir {sd}: {de.FrameCount} frames, source {src.Length}"); continue; }
@@ -783,6 +807,57 @@ public static class Verify
     }
 
     /// <summary>Side of the pack's pages in <paramref name="dir"/> (from page 0's header), else the default.</summary>
+    /// <summary>
+    /// The body table against the choices it was built with: every rider seat, alias and effective corpse target is
+    /// recomputed, and each Body.def stand-in follows the frame rule <see cref="AnimConvert.Targets"/> gives it: a stand-in
+    /// that drops its frames stores none and has an alias and a corpse target; one that keeps them (an explicit Corpse.def
+    /// self-target, round-4 finding 2) may store frames, and with a zero hue its corpse target is legitimately none (its
+    /// own frames). Failures go to <see cref="Fail"/>.
+    /// </summary>
+    public static void CheckBodyEntries(UOFileManager fm, BodyPlan plan, AnimBodyEntry[] bodies)
+    {
+        // rider seats: recomputed from the plan and the default plan (relative 0 for legacy packs)
+        using var sw = new AnimWorker(fm, plan);
+        var baseline = plan.MountBaseline();
+        var metaCache = new Dictionary<int, AnimConvert.BodyMeta>();
+        AnimConvert.BodyMeta MetaOf(int id) => metaCache.TryGetValue(id, out var mm) ? mm : metaCache[id] = AnimConvert.Meta(sw.Loader, fm.Version, id, plan);
+        var standIns = plan.StandInIds.ToHashSet();
+        int keptFrames = 0;
+        foreach (var b in plan.StandInIds)
+        {
+            if (b >= bodies.Length) continue;
+            var t = AnimConvert.Targets(sw.Loader, b, standIns.Contains, MetaOf);
+            var e = bodies[b];
+            if (!t.DropFrames) { keptFrames++; if (e.AliasBody == AnimConst.NoBody) Fail($"anim body {b}: the choices draw its Body.def stand-in, the pack has no alias"); continue; }
+            if (e.HasFrames || e.AliasBody == AnimConst.NoBody || e.CorpseBody == AnimConst.NoBody)
+                Fail($"anim body {b}: the choices draw its Body.def stand-in and drop its frames, the pack has {(e.HasFrames ? "frames" : e.AliasBody == AnimConst.NoBody ? "no alias" : "no corpse target")}");
+        }
+        if (keptFrames > 0) Console.WriteLine($"  anim: {keptFrames} stand-ins keep their frames for a Corpse.def self-target");
+        var mountOffsets = BodyPlan.MountOffsets.FromTileData(fm);
+        int shifted = 0, absolute = 0, badShift = 0;
+        for (int b = 0; b < bodies.Length; b++)
+        {
+            var want = plan.RiderSeat(b, baseline, id => MetaOf(id).Uop, id => AnimConvert.BodyDefNext(sw.Loader, id), mountOffsets);
+            if (want.Absolute) absolute++;
+            else if (want.Value != 0) shifted++;
+            if (bodies[b].MountSeat != want && badShift++ < 5) Fail($"anim body {b}: rider seat {bodies[b].MountSeat}, the choices give {want}");
+        }
+        Console.WriteLine($"  anim: rider seats {(badShift == 0 ? "match" : "MISMATCH")} ({shifted} bodies shifted against the default art, {absolute} seated as their stand-in)");
+
+        // aliases and effective corpse targets, recomputed; a corpse target must store frames (the client looks it up
+        // once and draws its death action)
+        int badTarget = 0, corpseNoFrames = 0;
+        var noFrames = new List<int>();
+        for (int b = 0; b < bodies.Length; b++)
+        {
+            var (ab, ah, cb, ch, _) = AnimConvert.Targets(sw.Loader, b, standIns.Contains, MetaOf);
+            if ((bodies[b].AliasBody, bodies[b].AliasHue, bodies[b].CorpseBody, bodies[b].CorpseHue) != (ab, ah, cb, ch) && badTarget++ < 5)
+                Fail($"anim body {b}: alias/corpse {bodies[b].AliasBody}/{bodies[b].AliasHue} {bodies[b].CorpseBody}/{bodies[b].CorpseHue}, the choices give {ab}/{ah} {cb}/{ch}");
+            if (cb != AnimConst.NoBody && cb < bodies.Length && !bodies[cb].HasFrames) { corpseNoFrames++; if (noFrames.Count < 10) noFrames.Add(b); }
+        }
+        Console.WriteLine($"  anim: aliases and corpse targets {(badTarget == 0 ? "match" : "MISMATCH")}; corpse targets without frames: {corpseNoFrames}{(noFrames.Count > 0 ? " (" + string.Join(" ", noFrames) + ")" : "")}");
+    }
+
     public static int PageSide(string dir)
     {
         var p0 = PackConst.PagePath(dir, 0);

@@ -213,6 +213,59 @@ public static class AnimExperiments
     }
 
     /// <summary>--compare-indexed &lt;indexed pack&gt; &lt;b16 pack&gt;: palette[index] vs the B5G5R5A1 pack's mip0 (every texel), and the mips sidecar vs its mips 1+.</summary>
+    /// <summary>
+    /// --compare-bodies: which body ids draw differently in two packs' anim.bin (entry fields, and each direction's frame
+    /// count, centers and sprite geometry; page placement is ignored). Bodies whose Body.def / Corpse.def alias points at
+    /// a changed body are listed separately: their own entry is the same, but they draw the changed art.
+    /// </summary>
+    public static int CompareBodies(string packA, string packB)
+    {
+        var (ba, da, fa) = AnimTableFile.Read(Path.Combine(packA, "anim", AnimTableFile.FileName));
+        var (bb, db, fb) = AnimTableFile.Read(Path.Combine(packB, "anim", AnimTableFile.FileName));
+        static string Sig(AnimBodyEntry[] bodies, AnimDirEntry[] dirs, AnimFrameEntry[] frames, int b)
+        {
+            if (b >= bodies.Length) return "absent";
+            var e = bodies[b];
+            var sb = new System.Text.StringBuilder($"{e.Type} {e.Flags:X} {e.Source} {e.SourceBody} {e.MountHeight} {e.MountShift} {e.AliasBody}/{e.AliasHue} {e.CorpseBody}/{e.CorpseHue} {e.ActionCount};");
+            for (int i = 0; i < e.ActionCount * AnimConst.Directions; i++)
+            {
+                var d = dirs[e.FirstDir + i];
+                sb.Append($"|{d.FrameCount},{d.StoredDir},{d.Flags}");
+                for (int k = 0; k < d.FrameCount; k++)
+                {
+                    var f = frames[d.FirstFrame + k];
+                    var sp = f.Sprite;
+                    sb.Append($":{f.CenterX},{f.CenterY},{sp.Present},{sp.OrigW},{sp.OrigH},{sp.W},{sp.H},{sp.TrimX},{sp.TrimY}");
+                }
+            }
+            return sb.ToString();
+        }
+        int n = Math.Max(ba.Length, bb.Length);
+        var changed = new List<int>();
+        for (int b = 0; b < n; b++)
+            if (Sig(ba, da, fa, b) != Sig(bb, db, fb, b)) changed.Add(b);
+        var set = changed.ToHashSet();
+        var viaAlias = new List<string>();
+        for (int b = 0; b < Math.Min(ba.Length, bb.Length); b++)
+        {
+            if (set.Contains(b)) continue;
+            var e = bb[b];
+            if (e.AliasBody != AnimConst.NoBody && set.Contains(e.AliasBody)) viaAlias.Add($"{b}->{e.AliasBody} (Body.def)");
+            if (e.CorpseBody != AnimConst.NoBody && set.Contains(e.CorpseBody)) viaAlias.Add($"{b}->{e.CorpseBody} (Corpse.def)");
+        }
+        Console.WriteLine($"bodies {ba.Length} vs {bb.Length}; entries that differ: {changed.Count}");
+        foreach (var b in changed)
+        {
+            static string Seat(in AnimBodyEntry e) => e.MountSeat.Absolute ? $" seat{e.MountShift}" : e.MountShift != 0 ? $" shift{e.MountShift}" : "";
+            string Desc(AnimBodyEntry[] t, int id) => id >= t.Length ? "absent" : t[id].HasFrames
+                ? $"{((t[id].Source & AnimSource.Uop) != 0 ? "uop" : "anim" + ((t[id].Source & 0x7F) == 0 ? "" : ((t[id].Source & 0x7F) + 1).ToString()))}:{t[id].SourceBody} x{t[id].ActionCount} mh{t[id].MountHeight}{Seat(t[id])}"
+                : t[id].AliasBody != AnimConst.NoBody ? $"alias {t[id].AliasBody} hue {t[id].AliasHue}, corpse {(t[id].CorpseBody == AnimConst.NoBody ? "none" : t[id].CorpseBody.ToString())}{Seat(t[id])}" : "nothing";
+            Console.WriteLine($"  {b}: {Desc(ba, b)}  ->  {Desc(bb, b)}");
+        }
+        Console.WriteLine($"draw changed art through an alias: {viaAlias.Count}: {string.Join(", ", viaAlias)}");
+        return 0;
+    }
+
     public static int CompareIndexed(string idxPack, string b16Pack)
     {
         string id = Path.Combine(idxPack, "anim"), bd = Path.Combine(b16Pack, "anim");
@@ -269,6 +322,7 @@ public static class AnimExperiments
     /// </summary>
     public static int FilterRef(string idxPack, string b16Pack, string outDir)
     {
+        PublishedPacks.EnsureOutputDir(outDir); // writes PNGs only; never into a published pack
         Directory.CreateDirectory(outDir);
         string id = Path.Combine(idxPack, "anim"), bd = Path.Combine(b16Pack, "anim");
         var (bodies, dirs, frames) = AnimTableFile.Read(Path.Combine(id, AnimTableFile.FileName));

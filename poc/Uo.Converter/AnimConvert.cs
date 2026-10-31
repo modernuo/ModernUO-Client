@@ -10,19 +10,21 @@ namespace Uo.Converter;
 
 /// <summary>
 /// A private UOFileManager with a loaded AnimationsLoader, for index lookups and the serial verification decode
-/// (frame decoding during conversion uses the managed port, AnimConvert.ReadFrames). Bodyconv.def is applied with every
-/// column enabled (the expansion flags a server sends at login); see AnimConvert.BodyConvAll.
+/// (frame decoding during conversion uses the managed port, AnimConvert.ReadFrames). Bodyconv.def is applied as the body
+/// import choices resolve it (BodyPlan); a null plan installs no conversion at all (each body's own art).
 /// </summary>
 public sealed class AnimWorker : IDisposable
 {
     public readonly UOFileManager Fm;
     public AnimationsLoader Loader => Fm.Animations;
 
-    public AnimWorker(UOFileManager main)
+    public AnimWorker(UOFileManager main, BodyPlan? plan)
     {
-        Fm = new UOFileManager(main.Version, main.BasePath);
+        Fm = new UOFileManager(main.Version, main.BasePath, main.OverrideMap);
         Fm.Animations.Load();
-        Fm.Animations.ProcessBodyConvDef(AnimConvert.BodyConvAll);
+        if (plan == null) return;
+        Fm.Animations.SetBodyConv(plan.Conv);
+        foreach (var (id, mt) in plan.MobTypes) Fm.Animations.SetMobType(id, mt.Type, mt.Flags);
     }
 
     public void Dispose() => Fm.Dispose();
@@ -33,7 +35,6 @@ public static class AnimConvert
     public sealed record Stats(int Bodies, int WithFrames, int Aliased, int UopBodies, int DirRecords, int UniqueDirs, int Frames, int Packed, int ContentDupes,
         int Pages, double Occupancy, long Bytes, long BytesBrotli, double DecodeSeconds, long InvalidMulBlocks, string Extra);
 
-    public const BodyConvFlags BodyConvAll = BodyConvFlags.Anim1 | BodyConvFlags.Anim2 | BodyConvFlags.Anim3 | BodyConvFlags.Anim4 | BodyConvFlags.Anim5;
     /// <summary>Bodies scanned: ClassicUO's initial index size; raised to cover every id named in the def files.</summary>
     public const int MinBodyCount = 2048;
 
@@ -51,6 +52,11 @@ public static class AnimConvert
         public LoaderDir[] Idx = [];
         public ushort SourceBody;
         public sbyte MountHeight;
+        /// <summary>
+        /// Converted MUL bodies: the body whose AnimationSequence.uop group replacements apply, which is the converted
+        /// target (owner, 2026-10-31: daemon 9 drawn as anim2 body 7 follows 7's action list); -1 = none.
+        /// </summary>
+        public int SeqBody = -1;
     }
 
     /// <summary>A distinct block of client data: one stored direction of one action in one file.</summary>
@@ -75,32 +81,6 @@ public static class AnimConvert
         public bool PaletteOverflow;
     }
 
-    // Port of AnimationsLoader.ProcessBodyConvDef (all flags on): body -> (file index, graphic in that file, mount height).
-    public static Dictionary<int, (int FileIndex, ushort Graphic, sbyte MountHeight)> ReadBodyConv(UOFileManager fm)
-    {
-        var res = new Dictionary<int, (int, ushort, sbyte)>();
-        var file = fm.GetUOFilePath("Bodyconv.def");
-        if (fm.Version < ClientVersion.CV_300 || !File.Exists(file)) return res;
-        using var r = new DefReader(file);
-        while (r.Next())
-        {
-            ushort index = (ushort)r.ReadInt();
-            for (int i = 1; i < r.PartsCount; i++)
-            {
-                int body = r.ReadInt();
-                if (body < 0) continue;
-                sbyte mh = 0;
-                if (i == 1) { if (index == 0x00C0 || index == 793) mh = -9; }
-                else if (i == 2) { if (index == 0x0579) mh = 9; }
-                else if (i == 4) mh = index == 0x0115 || index == 0x00C0 ? (sbyte)0 : index == 0x042D ? (sbyte)3 : (sbyte)-9;
-                string n = (i + 1).ToString();
-                if (i >= 10 || !File.Exists(fm.GetUOFilePath($"anim{n}.mul")) || !File.Exists(fm.GetUOFilePath($"anim{n}.idx"))) continue;
-                res[index] = (i, (ushort)body, mh);
-            }
-        }
-        return res;
-    }
-
     private static IEnumerable<int> DefIds(UOFileManager fm, string name)
     {
         var p = fm.GetUOFilePath(name);
@@ -122,7 +102,11 @@ public static class AnimConvert
         return max + 1;
     }
 
-    public static BodyMeta Meta(AnimationsLoader l, ClientVersion version, int body, Dictionary<int, (int FileIndex, ushort Graphic, sbyte MountHeight)> conv)
+    public static BodyMeta Meta(AnimationsLoader l, ClientVersion version, int body, BodyPlan plan) =>
+        Meta(l, version, body, plan.Conv, plan.Choices.TargetSequences);
+
+    /// <param name="targetSequence">bodies.json "sequences": "target": a converted MUL body follows its target's AnimationSequence.</param>
+    public static BodyMeta Meta(AnimationsLoader l, ClientVersion version, int body, Dictionary<int, (int FileIndex, ushort Graphic, sbyte MountHeight)> conv, bool targetSequence)
     {
         ushort hue = 0;
         AnimationFlags flags = 0;
@@ -137,6 +121,7 @@ public static class AnimConvert
             if (c.FileIndex != fileIndex) throw new InvalidOperationException($"body {body}: Bodyconv port says anim{c.FileIndex + 1}, loader says {fileIndex + 1}");
             m.SourceBody = c.Graphic;
             m.MountHeight = c.MountHeight;
+            if (targetSequence && c.FileIndex > 0 && l.HasUopGroups(c.Graphic)) m.SeqBody = c.Graphic;
         }
         return m;
     }
@@ -154,11 +139,53 @@ public static class AnimConvert
             if (e.Position == 0 && e.Size == 0) return null;
             return new DirJob { Key = new DirKey(true, m.FileIndex, e.Position, e.Size, dir, m.Type == AnimType.Equipment), Meta = m, Action = g, Dir = dir };
         }
-        int i = action * AnimationsLoader.MAX_DIRECTIONS + dir;
+        int group = SequenceGroup(l, m, action, dir);
+        int i = group * AnimationsLoader.MAX_DIRECTIONS + dir;
         if (i >= m.Idx.Length) return null;
         var d = m.Idx[i];
         if (d.Position == uint.MaxValue || d.Size == uint.MaxValue || d.Size == 0 || (d.Position == 0 && d.Size == 0)) return null;
-        return new DirJob { Key = new DirKey(false, m.FileIndex, d.Position, d.Size, 0, false), Meta = m, Action = action, Dir = dir };
+        return new DirJob { Key = new DirKey(false, m.FileIndex, d.Position, d.Size, 0, false), Meta = m, Action = group, Dir = dir };
+    }
+
+    /// <summary>
+    /// The stored MUL group drawn for <paramref name="action"/> in stored direction <paramref name="dir"/>: the converted
+    /// target's AnimationSequence replacement, else the action. Checked per direction: a replacement is applied to a
+    /// direction only when that direction of the replacement group decodes to visible frames in the drawn file, else that
+    /// direction keeps the action's own group. The sequence entries describe the target's UOP group layout; some point
+    /// past the MUL groups (giant spider 28 as anim2 5 would walk with group 22 of 22 and draw nothing), and a custom
+    /// replacement may be populated in only some directions.
+    /// </summary>
+    public static int SequenceGroup(AnimationsLoader l, BodyMeta m, int action, int dir)
+    {
+        if (m.SeqBody < 0 || action >= AnimationsLoader.MAX_ACTIONS) return action;
+        byte g = (byte)action;
+        l.ReplaceUopGroup((ushort)m.SeqBody, ref g);
+        return g == action || MulDirVisible(l.FileManager, m, g, dir) ? g : action;
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<(int, uint, uint), bool> _dirVisible = new();
+
+    /// <summary>Whether stored direction <paramref name="dir"/> of MUL group <paramref name="group"/> has an index entry and decodes to a visible pixel.</summary>
+    public static bool MulDirVisible(UOFileManager fm, BodyMeta m, int group, int dir)
+    {
+        int i = group * AnimationsLoader.MAX_DIRECTIONS + dir;
+        if (i >= m.Idx.Length) return false;
+        var e = m.Idx[i];
+        if (e.Position == uint.MaxValue || e.Size == uint.MaxValue || e.Size == 0 || (e.Position == 0 && e.Size == 0)) return false;
+        return _dirVisible.GetOrAdd((m.FileIndex, e.Position, e.Size), _ =>
+            BodyPlan.Visible(ReadFrames(fm, new DirJob { Key = new DirKey(false, m.FileIndex, e.Position, e.Size, 0, false), Meta = m, Action = group, Dir = dir })));
+    }
+
+    public static bool MulGroupHasFrames(BodyMeta m, int group)
+    {
+        for (int d = 0; d < AnimationsLoader.MAX_DIRECTIONS; d++)
+        {
+            int i = group * AnimationsLoader.MAX_DIRECTIONS + d;
+            if (i >= m.Idx.Length) return false;
+            var e = m.Idx[i];
+            if (!(e.Position == uint.MaxValue || e.Size == uint.MaxValue || e.Size == 0 || (e.Position == 0 && e.Size == 0))) return true;
+        }
+        return false;
     }
 
     /// <summary>
@@ -318,21 +345,102 @@ public static class AnimConvert
         public uint U32() { if (Pos < 0 || Pos + 4 > b.Length) return 0; Pos += 4; return System.Buffers.Binary.BinaryPrimitives.ReadUInt32LittleEndian(b.AsSpan(Pos - 4)); }
     }
 
-    // Body.def / Corpse.def chain, as Animations.GetAnimationFrames walks it (only while the body is a plain anim.mul body).
-    private static (ushort Body, ushort Hue) Chain(AnimationsLoader l, int body, bool corpse, Func<int, BodyMeta> meta)
+    // Body.def chain, as Animations.GetAnimationFrames walks it (only while the body is a plain anim.mul body).
+    private static (ushort Body, ushort Hue) LiveChain(AnimationsLoader l, int body, Func<int, bool> plain)
     {
         ushort id = (ushort)body, hue = 0;
-        var m = meta(id);
-        for (int guard = 0; !m.Uop && m.FileIndex == 0 && guard < 16; guard++)
-        {
-            bool replaced = corpse ? l.ReplaceCorpse(ref id, ref hue) : l.ReplaceBody(ref id, ref hue);
-            if (!replaced) break;
-            m = meta(id);
-        }
+        for (int guard = 0; plain(id) && guard < 16; guard++)
+            if (!l.ReplaceBody(ref id, ref hue)) break;
         return id == body && hue == 0 ? (AnimConst.NoBody, (ushort)0) : (id, hue);
     }
 
-    public static Stats Run(UOFileManager fm, string outDir)
+    /// <summary>
+    /// One Corpse.def hop as the loader reads it: the target and hue, (<paramref name="id"/>, hue) for an explicit
+    /// self-target (a line mapping the body to itself, usually to hue it), null when the body has no line. Presence comes
+    /// from the loader's table (<see cref="AnimationsLoader.TryGetCorpseDef"/>), not from a hue sentinel, so a
+    /// self-target with hue 0xFFFF is still a self-target.
+    /// </summary>
+    public static (ushort Body, ushort Hue)? CorpseHop(AnimationsLoader l, ushort id) =>
+        l.TryGetCorpseDef(id, out var b, out var hue) ? (b, hue) : null;
+
+    /// <summary>
+    /// Whether body <paramref name="x"/> stores no frames: an addition the plan draws as its Body.def stand-in (the
+    /// client draws the alias only), unless its corpse explicitly needs its own frames (a Corpse.def self-target).
+    /// </summary>
+    public static bool DropsFrames(int x, Func<int, bool> standIn, Func<int, bool> plain, Func<ushort, (ushort Body, ushort Hue)?> corpseHop, Func<int, (ushort Body, ushort Hue)> live)
+    {
+        if (!standIn(x)) return false;
+        var a = live(x).Body;
+        if (a == AnimConst.NoBody || a == x) return false;
+        return !(plain(x) && corpseHop((ushort)x) is { } h && h.Body == x);
+    }
+
+    /// <summary>
+    /// The effective corpse target of <paramref name="body"/>, as the pack stores it for the client's single-hop lookup
+    /// (AnimationsLoader.ResolveBody): Corpse.def hops are followed while the body is a plain anim.mul body (as the
+    /// loader does), and a body that stores no frames (<paramref name="drop"/>) continues to its live stand-in, so a
+    /// chain such as Corpse.def <c>43 {191}</c> with t2a's frame-less 191 ends at 191's stand-in 228. An explicit
+    /// self-target ends the walk at that body with its hue. Absent mapping and no hops: (NoBody, 0) = the body's own
+    /// frames. A cycle throws.
+    /// </summary>
+    public static (ushort Body, ushort Hue) CorpseTarget(int body, Func<int, bool> plain, Func<ushort, (ushort Body, ushort Hue)?> corpseHop,
+        Func<int, bool> drop, Func<int, (ushort Body, ushort Hue)> live)
+    {
+        ushort cur = (ushort)body, hue = 0;
+        var path = new List<int> { body };
+        while (true)
+        {
+            if (plain(cur) && corpseHop(cur) is { } h)
+            {
+                if (h.Body == cur) { hue = h.Hue; break; } // explicit self-target: its own frames, with its hue
+                (cur, hue) = h;
+            }
+            else if (drop(cur))
+            {
+                (cur, hue) = live(cur);
+            }
+            else break;
+            if (path.Contains(cur))
+                throw new BodyChoicesException($"body {body}: its corpse target never ends: {string.Join(" -> ", path)} -> {cur} (Corpse.def lines and Body.def stand-ins form a cycle)");
+            path.Add(cur);
+        }
+        return cur == body && hue == 0 ? (AnimConst.NoBody, (ushort)0) : (cur, hue);
+    }
+
+    /// <summary>
+    /// The live (Body.def) and corpse targets of a body, and whether its frames are dropped (<see cref="DropsFrames"/>).
+    /// The corpse target is the effective one (<see cref="CorpseTarget"/>): it follows Corpse.def, and through bodies
+    /// that store no frames to their live stand-in (t2a 191-195: the corpse of 192 is drawn as 228's death frames).
+    /// </summary>
+    public static (ushort Alias, ushort AliasHue, ushort Corpse, ushort CorpseHue, bool DropFrames) Targets(AnimationsLoader l, int body, Func<int, bool> standIn, Func<int, BodyMeta> meta)
+    {
+        bool Plain(int id) { var m = meta(id); return !m.Uop && m.FileIndex == 0; }
+        (ushort, ushort) Live(int id) => LiveChain(l, id, Plain);
+        (ushort, ushort)? Hop(ushort id) => CorpseHop(l, id);
+        bool Drop(int id) => DropsFrames(id, standIn, Plain, Hop, Live);
+        var (ab, ah) = Live(body);
+        var (cb, ch) = CorpseTarget(body, Plain, Hop, Drop, Live);
+        return (ab, ah, cb, ch, Drop(body));
+    }
+
+    /// <summary>
+    /// Stores <paramref name="seat"/> in the entry: the value in MountShift and the absolute bit in Flags, over the mobtypes
+    /// flags with that pack-only bit cleared.
+    /// </summary>
+    public static void SetMountSeat(ref AnimBodyEntry e, uint mobFlags, MountSeat seat)
+    {
+        e.Flags = (mobFlags & ~AnimBodyEntry.MountAbsoluteFlag) | (seat.Absolute ? AnimBodyEntry.MountAbsoluteFlag : 0);
+        e.MountShift = seat.Value;
+    }
+
+    /// <summary>One Body.def hop (null = none), as the loader reads it.</summary>
+    public static ushort? BodyDefNext(AnimationsLoader l, ushort id)
+    {
+        ushort b = id, hue = 0;
+        return l.ReplaceBody(ref b, ref hue) ? b : null;
+    }
+
+    public static Stats Run(UOFileManager fm, string outDir, BodyPlan plan)
     {
         var dir = Path.Combine(outDir, "anim");
         // Stale pages from a previous run: delete the files written here (all *.bin, plus crashed-writer temps), never
@@ -340,12 +448,15 @@ public static class AnimConvert
         PackOutputFiles.DeleteFiles(dir, "*.bin");
         PackOutputFiles.DeleteFiles(dir, ReplacingFile.TempPattern);
         Directory.CreateDirectory(dir);
-        int bodyCount = BodyCount(fm);
-        var conv = ReadBodyConv(fm);
-        using var main = new AnimWorker(fm);
+        int bodyCount = plan.BodyCount;
+        var conv = plan.Conv;
+        Console.WriteLine($"  bodies: {plan}");
+        foreach (var line in plan.Describe()) Console.WriteLine($"  bodies: {line}");
+        using var main = new AnimWorker(fm, plan);
         var l = main.Loader;
         var metas = new Dictionary<int, BodyMeta>();
-        BodyMeta MetaOf(int b) => metas.TryGetValue(b, out var m) ? m : metas[b] = Meta(l, fm.Version, b, conv);
+        var standIns = plan.StandInIds.ToHashSet();
+        BodyMeta MetaOf(int b) => metas.TryGetValue(b, out var m) ? m : metas[b] = Meta(l, fm.Version, b, plan);
 
         // Phase A (serial, cheap): body metadata and the distinct client blocks, in body/action/dir order.
         var bodies = new AnimBodyEntry[bodyCount];
@@ -353,18 +464,22 @@ public static class AnimConvert
         var jobs = new List<DirJob>();
         var jobOf = new Dictionary<DirKey, int>();
         int dirRecords = 0, withFrames = 0, aliased = 0, uopBodies = 0;
+        var baseline = plan.MountBaseline();
+        var mountOffsets = BodyPlan.MountOffsets.FromTileData(fm);
+        if (mountOffsets.Conflicts.Count > 0) Console.WriteLine($"  warning: Mounts table items disagree on the rider offset of bodies {string.Join(" ", mountOffsets.Conflicts)}; their stand-in shifts use the mount-height rule");
         for (int b = 0; b < bodyCount; b++)
         {
             var m = MetaOf(b);
-            var (ab, ah) = Chain(l, b, false, MetaOf);
-            var (cb, ch) = Chain(l, b, true, MetaOf);
+            var (ab, ah, cb, ch, dropFrames) = Targets(l, b, standIns.Contains, MetaOf);
             bodies[b] = new AnimBodyEntry
             {
-                Type = m.Type, Source = AnimSource.None, Flags = m.Flags, SourceBody = m.SourceBody, MountHeight = m.MountHeight,
+                Type = m.Type, Source = AnimSource.None, SourceBody = m.SourceBody, MountHeight = m.MountHeight,
                 AliasBody = ab, AliasHue = ah, CorpseBody = cb, CorpseHue = ch,
             };
+            SetMountSeat(ref bodies[b], m.Flags, plan.RiderSeat(b, baseline, id => MetaOf(id).Uop, id => BodyDefNext(l, id), mountOffsets));
             if (ab != AnimConst.NoBody) aliased++;
             if (Bodies != null && !Bodies.Contains(b)) continue;
+            if (dropFrames) continue;
             int actions = m.Uop ? AnimConst.MaxActions : m.Idx.Length / AnimationsLoader.MAX_DIRECTIONS;
             var map = new int[actions * AnimConst.StoredDirections];
             int last = -1;
@@ -386,6 +501,7 @@ public static class AnimConvert
             if (m.Uop) uopBodies++;
         }
 
+        ReportBodies(l, plan, metas, bodies);
         _usage = ConvertOptions.AnimIndexed ? PaletteUsage(fm, jobs) : null;
 
         // Phase B: decode distinct blocks in parallel batches; pack serially in job order (streaming atlas).
@@ -484,6 +600,47 @@ public static class AnimConvert
         }
         return new Stats(bodyCount, withFrames, aliased, uopBodies, dirRecords, jobs.Count, frameArr.Length, packed, dupes,
             atlas.PageCount, atlas.Occupancy, atlas.PageBytes, atlas.PageBytesBrotli, decodeSw.Elapsed.TotalSeconds, InvalidBlocks, extra);
+    }
+
+    /// <summary>Console notes: converted bodies whose drawn groups follow their target's AnimationSequence, and a ModernUO bodyTable.cfg line per extra.</summary>
+    private static void ReportBodies(AnimationsLoader l, BodyPlan plan, Dictionary<int, BodyMeta> metas, AnimBodyEntry[] bodies)
+    {
+        var seq = new List<string>();
+        int replaced = 0, hidden = 0, skipped = 0, partial = 0;
+        foreach (var (b, m) in metas.OrderBy(kv => kv.Key))
+        {
+            if (m.SeqBody < 0 || m.Uop || !plan.Choices.TargetSequences) continue;
+            int actions = m.Idx.Length / AnimationsLoader.MAX_DIRECTIONS;
+            var diffs = new List<string>();
+            for (int a = 0; a < actions; a++)
+            {
+                byte raw = (byte)a;
+                l.ReplaceUopGroup((ushort)m.SeqBody, ref raw);
+                if (raw == a) continue;
+                int applied = 0;
+                for (int d = 0; d < AnimationsLoader.MAX_DIRECTIONS; d++)
+                    if (SequenceGroup(l, m, a, d) != a) applied++;
+                if (applied == 0) { skipped++; diffs.Add($"{a}->{raw}(empty, kept {a})"); continue; }
+                // '*': the stored group a has frames of its own, which the replacement hides; '/n': applied in n of 5 directions
+                bool own = MulGroupHasFrames(m, a);
+                replaced++;
+                if (own) hidden++;
+                if (applied < AnimationsLoader.MAX_DIRECTIONS) partial++;
+                diffs.Add($"{a}->{raw}{(own ? "*" : "")}{(applied < AnimationsLoader.MAX_DIRECTIONS ? $"/{applied}" : "")}");
+            }
+            if (diffs.Count > 0) seq.Add($"{b} (anim{m.FileIndex + 1}:{m.SourceBody}: {string.Join(" ", diffs)})");
+        }
+        if (plan.Choices.TargetSequences)
+            Console.WriteLine($"  bodies: {seq.Count} converted bodies draw groups per their target's AnimationSequence ({replaced} replaced groups, {hidden} of them (*) had frames of their own, {partial} applied in only some directions (/n, the others keep their own group); {skipped} replacements to an empty group not applied): {string.Join(", ", seq)}");
+        foreach (var x in plan.Choices.Extras)
+        {
+            var kind = bodies[x.Id].Type switch
+            {
+                AnimType.Monster => "Monster", AnimType.SeaMonster => "Sea", AnimType.Animal => "Animal", AnimType.Human => "Human",
+                AnimType.Equipment => "Equipment", _ => "Empty",
+            };
+            Console.WriteLine($"  extra {x.Id} = {x.From} (type {bodies[x.Id].Type}, flags 0x{bodies[x.Id].Flags:X8}, mount height {bodies[x.Id].MountHeight}); ModernUO Data/bodyTable.cfg line: {x.Id}	{kind}");
+        }
     }
 
     private static DecodedFrame[] Decode(UOFileManager fm, DirJob j)

@@ -788,7 +788,7 @@ namespace ClassicUO.Game
                 {
                     f |= AnimStateFlags.MountDrawn;
                     s.MountBody = mountBody;
-                    s.MountOffsetY = AnimationRules.MountOffsetY(eq.MountGraphic);
+                    s.MountOffsetY = (short)AnimationRules.MountOffsetY(eq.MountGraphic, animations.GetMountSeat(mountBody));
                     s.MountGroup = AnimationGroupRules.Select(in input, mountBody, false, animations);
                 }
             }

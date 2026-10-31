@@ -546,36 +546,15 @@ namespace ClassicUO.Game.GameObjects
                 var animations = Client.Game.UO.Animations;
                 animations.GetAnimDirection(ref dir, ref mirror);
 
-                if (id < animations.MaxAnimationCount && dir < 5)
+                // the corpse is drawn as its Corpse.def target: the death action and frame count come from that body
+                // (AnimationsLoader.TryCorpseFrame); when the animation is done, stop at the last frame
+                if (
+                    id < animations.MaxAnimationCount
+                    && dir < 5
+                    && Client.Game.UO.FileManager.Animations.TryCorpseFrame(id, UsedLayer, dir, frameIndex, out byte frame)
+                )
                 {
-                    animations.ConvertBodyIfNeeded(ref id);
-                    var animGroup = animations.GetAnimType(id);
-                    var animFlags = animations.GetAnimFlags(id);
-                    byte action = Client.Game.UO.FileManager.Animations.GetDeathAction(
-                        id,
-                        animFlags,
-                        animGroup,
-                        UsedLayer
-                    );
-                    var frames = animations.GetAnimationFrames(
-                        id,
-                        action,
-                        dir,
-                        out _,
-                        out _,
-                        isCorpse: true
-                    );
-
-                    if (frames.Length > 0)
-                    {
-                        // when the animation is done, stop to animate the corpse
-                        if (frameIndex >= frames.Length)
-                        {
-                            frameIndex = (byte)(frames.Length - 1);
-                        }
-
-                        AnimIndex = (byte)(frameIndex % frames.Length);
-                    }
+                    AnimIndex = frame;
                 }
 
                 LastAnimationChangeTime = Time.Ticks + Constants.CHARACTER_ANIMATION_DELAY;
