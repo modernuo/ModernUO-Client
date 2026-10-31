@@ -123,7 +123,7 @@ namespace ClassicUO.Game.Scenes
                     else if (st.InChunkMesh)
                     {
                         // meshed statics are never trees, foliage or animated (ChunkMesh) and draw without shadows
-                        if (st.Graphic != GpuBakedGraphic(st))
+                        if (st.Graphic != GpuBakedGraphic(st) || GpuBakeOmits(st))
                         {
                             GpuReplaceStatic(st);
                         }
@@ -196,6 +196,8 @@ namespace ClassicUO.Game.Scenes
             // The baked sprite is the pack's original graphic: seasons, animated statics and stumps draw another one.
             if (
                 graphic != st.OriginalGraphic
+                // drawn but not baked (gargoyle-only statics such as 0x5683): every frame, including offset 0
+                || GpuBakeOmits(st)
                 || st.ItemData.IsAnimated && Client.Game.UO.FileManager.Arts.GetEntry(graphic + 0x4000).AnimOffset != 0
                 || _gpuStumps && (kind & GPU_KIND_TREE) != 0
                 // animated water: Legacy keeps animated statics out of its chunk mesh, so their view draws the scaled

@@ -27,13 +27,14 @@ namespace ClassicUO.Assets
         internal static void Read(string path, out LandTiles[] landTiles, out StaticTiles[] staticTiles)
         {
             var (land, statics, names) = TileDataFile.Read(path);
+            var (landNames, staticNames) = TileDataFile.DecodeNames(land, statics, names); // shared strings per reference
 
             landTiles = new LandTiles[land.Length];
 
             for (int i = 0; i < land.Length; i++)
             {
                 ref readonly var t = ref land[i];
-                landTiles[i] = new LandTiles(t.Flags, t.TexId, TileDataFile.Name(names, t.NameOffset, t.NameLength)) { PackFlags = t.PackFlags };
+                landTiles[i] = new LandTiles(t.Flags, t.TexId, landNames[i]) { PackFlags = t.PackFlags };
             }
 
             staticTiles = new StaticTiles[statics.Length];
@@ -51,7 +52,7 @@ namespace ClassicUO.Assets
                     t.Hue,
                     t.LightIndex,
                     t.Height,
-                    TileDataFile.Name(names, t.NameOffset, t.NameLength)
+                    staticNames[i]
                 ) { PackFlags = t.PackFlags };
             }
         }

@@ -81,6 +81,11 @@ public static class TileDataFile
     public const int LandEntryBytes = 20, StaticEntryBytes = 32;
     /// <summary>Upper bound on statics (UO graphics are u16).</summary>
     public const int MaxStatics = 0x10000;
+    /// <summary>Longest name reference accepted, in UTF-8 bytes. Source tiledata names are 20 single-byte characters (at most
+    /// 40 bytes as UTF-8); the cap keeps an untrusted file from making the reader decode huge strings.</summary>
+    public const int MaxNameBytes = 64;
+    /// <summary>Largest name table accepted: every entry with its own longest name (5 MiB).</summary>
+    public const int MaxNameTableBytes = (PackConst.LandTileCount + MaxStatics) * MaxNameBytes;
 
     public static void Write(string path, ReadOnlySpan<LandTileInfo> land, ReadOnlySpan<StaticTileInfo> statics, ReadOnlySpan<byte> names)
     {
@@ -96,7 +101,8 @@ public static class TileDataFile
     }
 
     /// <summary>Reads and validates the file (untrusted input): magic and version, land count = 0x4000, static count in
-    /// 1..0x10000, the exact file size, and every name reference inside the name table.</summary>
+    /// 1..0x10000, the name table at most <see cref="MaxNameTableBytes"/>, the exact file size, and every name reference
+    /// inside the name table and at most <see cref="MaxNameBytes"/> long (checked before the name table is allocated).</summary>
     public static (LandTileInfo[] Land, StaticTileInfo[] Statics, byte[] Names) Read(string path)
     {
         using var fs = File.OpenRead(path);
@@ -111,20 +117,45 @@ public static class TileDataFile
         int landCount = StructIo.Read<int>(fs), staticCount = StructIo.Read<int>(fs), nameBytes = StructIo.Read<int>(fs);
         if (landCount != PackConst.LandTileCount) throw new InvalidDataException($"{path}: {landCount} land entries, expected {PackConst.LandTileCount}");
         if (staticCount < 1 || staticCount > MaxStatics) throw new InvalidDataException($"{path}: {staticCount} static entries (1..{MaxStatics})");
-        if (nameBytes < 0) throw new InvalidDataException($"{path}: name table size {nameBytes}");
+        if (nameBytes < 0 || nameBytes > MaxNameTableBytes) throw new InvalidDataException($"{path}: name table size {nameBytes} (0..{MaxNameTableBytes})");
         long expected = StructIo.SizeOf<FileHeader>() + 12L + (long)landCount * LandEntryBytes + (long)staticCount * StaticEntryBytes + nameBytes;
         if (fs.Length != expected) throw new InvalidDataException($"{path}: {fs.Length} bytes, expected {expected} from its counts");
         var land = new LandTileInfo[landCount];
         var statics = new StaticTileInfo[staticCount];
-        var names = new byte[nameBytes];
         StructIo.ReadSpan<LandTileInfo>(fs, land);
         StructIo.ReadSpan<StaticTileInfo>(fs, statics);
-        fs.ReadExactly(names);
         for (int i = 0; i < land.Length; i++)
-            if ((ulong)land[i].NameOffset + land[i].NameLength > (ulong)nameBytes) throw new InvalidDataException($"{path}: land {i} name outside the name table");
+            CheckName(path, "land", i, land[i].NameOffset, land[i].NameLength, nameBytes);
         for (int i = 0; i < statics.Length; i++)
-            if ((ulong)statics[i].NameOffset + statics[i].NameLength > (ulong)nameBytes) throw new InvalidDataException($"{path}: static {i} name outside the name table");
+            CheckName(path, "static", i, statics[i].NameOffset, statics[i].NameLength, nameBytes);
+        var names = new byte[nameBytes];
+        fs.ReadExactly(names);
         return (land, statics, names);
+    }
+
+    static void CheckName(string path, string kind, int i, uint offset, ushort length, int nameBytes)
+    {
+        if (length > MaxNameBytes) throw new InvalidDataException($"{path}: {kind} {i} name is {length} bytes (at most {MaxNameBytes})");
+        if ((ulong)offset + length > (ulong)nameBytes) throw new InvalidDataException($"{path}: {kind} {i} name outside the name table");
+    }
+
+    /// <summary>Decodes every entry's name, once per distinct (offset, length) reference: entries that share a reference share
+    /// the string. With the reader's caps, at most 81,920 distinct names of at most 64 bytes.</summary>
+    public static (string[] Land, string[] Statics) DecodeNames(ReadOnlySpan<LandTileInfo> land, ReadOnlySpan<StaticTileInfo> statics, byte[] names)
+    {
+        var cache = new Dictionary<ulong, string>();
+        string Get(uint offset, ushort length)
+        {
+            if (length == 0) return "";
+            ulong key = (ulong)offset << 16 | length;
+            if (!cache.TryGetValue(key, out var s)) cache[key] = s = Name(names, offset, length);
+            return s;
+        }
+        var l = new string[land.Length];
+        for (int i = 0; i < l.Length; i++) l[i] = Get(land[i].NameOffset, land[i].NameLength);
+        var st = new string[statics.Length];
+        for (int i = 0; i < st.Length; i++) st[i] = Get(statics[i].NameOffset, statics[i].NameLength);
+        return (l, st);
     }
 
     /// <summary>The renderer's compact arrays (12 bytes per entry), built from the full entries.</summary>
@@ -167,7 +198,7 @@ public static class TileDataFile
             if (!seen.TryGetValue(n, out var r))
             {
                 var b = Encoding.UTF8.GetBytes(n);
-                if (b.Length > ushort.MaxValue) throw new InvalidDataException("name too long");
+                if (b.Length > MaxNameBytes) throw new InvalidDataException($"tile name \"{n}\" is {b.Length} bytes (at most {MaxNameBytes})");
                 seen[n] = r = ((uint)ms.Length, (ushort)b.Length);
                 ms.Write(b);
             }

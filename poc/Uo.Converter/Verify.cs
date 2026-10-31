@@ -84,6 +84,8 @@ public static class Verify
         if (Want("hues") && !File.Exists(Path.Combine(outDir, TableConst.HueRawFile))) Fail($"missing {TableConst.HueRawFile} (the pack's only hue source)");
         // tiledata.bin is the only tile data file since pack 1.1; the converter deletes the retired tiledata_ext.bin.
         if (Want("tiledata") && File.Exists(Path.Combine(outDir, TableConst.TileDataExtFileRetired))) Fail($"retired {TableConst.TileDataExtFileRetired} still in the pack");
+        // ...and a pack without it cannot load, even when the manifest does not list it
+        if (Want("tiledata") && !File.Exists(Path.Combine(outDir, TableConst.TileDataFile))) Fail($"missing {TableConst.TileDataFile} (the pack's only tile data)");
         if (!File.Exists(Path.Combine(outDir, TableConst.TileDataFile)))
         {
             Console.WriteLine(_errors == 0 ? "  all checks passed" : $"  {_errors} errors");
