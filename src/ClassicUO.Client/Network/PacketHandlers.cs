@@ -1909,45 +1909,39 @@ namespace ClassicUO.Network
             }
 
             uint serial = p.ReadUInt32BE();
+            ushort graphic = (ushort)(p.ReadUInt16BE() + p.ReadInt8());
+            Layer layer = (Layer)p.ReadUInt8();
+            uint container = p.ReadUInt32BE();
+            ushort hue = p.ReadUInt16BE();
 
-            Item item = world.GetOrCreateItem(serial);
+            // T1: the item (found or created), out of its old container unless it is new or a backpack, the packet's values,
+            // then at the end of the wearer's child list
+            Item item = world.Writer.Equip(serial, graphic, layer, container, hue, out Entity entity, out uint shown);
 
-            if (item.Graphic != 0 && item.Layer != Layer.Backpack)
+            if (item == null)
             {
-                //ClearContainerAndRemoveItems(item);
-                world.RemoveItemFromContainer(item);
+                return;
             }
 
-            if (SerialHelper.IsValid(item.Container))
+            if (SerialHelper.IsValid(shown))
             {
-                UIManager.GetGump<ContainerGump>(item.Container)?.RequestUpdateContents();
+                UIManager.GetGump<ContainerGump>(shown)?.RequestUpdateContents();
 
-                UIManager.GetGump<PaperDollGump>(item.Container)?.RequestUpdateContents();
+                UIManager.GetGump<PaperDollGump>(shown)?.RequestUpdateContents();
             }
 
-            item.Graphic = (ushort)(p.ReadUInt16BE() + p.ReadInt8());
-            item.Layer = (Layer)p.ReadUInt8();
-            item.Container = p.ReadUInt32BE();
-            item.FixHue(p.ReadUInt16BE());
-            item.Amount = 1;
-
-            Entity entity = world.Get(item.Container);
-
-            entity?.PushToBack(item);
-            world.Ecs.Sync(item);
-
-            if (item.Layer >= Layer.ShopBuyRestock && item.Layer <= Layer.ShopSell)
+            if (layer >= Layer.ShopBuyRestock && layer <= Layer.ShopSell)
             {
                 //item.Clear();
             }
-            else if (SerialHelper.IsValid(item.Container) && item.Layer < Layer.Mount)
+            else if (SerialHelper.IsValid(container) && layer < Layer.Mount)
             {
-                UIManager.GetGump<PaperDollGump>(item.Container)?.RequestUpdateContents();
+                UIManager.GetGump<PaperDollGump>(container)?.RequestUpdateContents();
             }
 
             if (
                 entity == world.Player
-                && (item.Layer == Layer.OneHanded || item.Layer == Layer.TwoHanded)
+                && (layer == Layer.OneHanded || layer == Layer.TwoHanded)
             )
             {
                 world.Player?.UpdateAbilities();
@@ -2963,23 +2957,8 @@ namespace ClassicUO.Network
                 return;
             }
 
-            if (!obj.IsEmpty)
-            {
-                LinkedObject o = obj.Items;
-
-                while (o != null)
-                {
-                    LinkedObject next = o.Next;
-                    Item it = (Item)o;
-
-                    if (!it.Opened && it.Layer != Layer.Backpack)
-                    {
-                        world.RemoveItem(it.Serial, true);
-                    }
-
-                    o = next;
-                }
-            }
+            // T1: the children that are neither opened nor the backpack go, with their contents
+            world.Writer.ClearWornItems(serial);
 
             if (SerialHelper.IsMobile(serial) && obj is Mobile mob)
             {
@@ -3014,18 +2993,9 @@ namespace ClassicUO.Network
                     item_hue = p.ReadUInt16BE();
                 }
 
-                Item item = world.GetOrCreateItem(itemSerial);
-                item.Graphic = itemGraphic;
-                item.FixHue(item_hue);
-                item.Amount = 1;
-                world.RemoveItemFromContainer(item);
-                item.Container = serial;
-                item.Layer = (Layer)layer;
-
-                item.CheckGraphicChange();
-
-                obj.PushToBack(item);
-                world.Ecs.Sync(item);
+                // T1: the entry's values, out of its old container, onto obj (captured once, before the list) at the end of
+                // its child list
+                world.Writer.WearItem(obj, itemSerial, itemGraphic, (Layer)layer, item_hue);
 
                 itemSerial = p.ReadUInt32BE();
             }

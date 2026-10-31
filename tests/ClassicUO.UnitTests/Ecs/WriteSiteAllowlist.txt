@@ -100,13 +100,13 @@ src/ClassicUO.Client/Game/UI/Gumps/RaceChangeGump.cs|IsFemale|1
 src/ClassicUO.Client/Game/UI/Gumps/RaceChangeGump.cs|Layer|1
 src/ClassicUO.Client/Game/UI/Gumps/RaceChangeGump.cs|Race|1
 src/ClassicUO.Client/Game/World.cs|Container|1
-src/ClassicUO.Client/Network/PacketHandlers.cs|Amount|3
+src/ClassicUO.Client/Network/PacketHandlers.cs|Amount|1
 src/ClassicUO.Client/Network/PacketHandlers.cs|AnimIndex|3
-src/ClassicUO.Client/Network/PacketHandlers.cs|Container|5
+src/ClassicUO.Client/Network/PacketHandlers.cs|Container|3
 src/ClassicUO.Client/Network/PacketHandlers.cs|Direction|6
 src/ClassicUO.Client/Network/PacketHandlers.cs|ExecuteAnimation|2
 src/ClassicUO.Client/Network/PacketHandlers.cs|Flags|9
-src/ClassicUO.Client/Network/PacketHandlers.cs|Graphic|10
+src/ClassicUO.Client/Network/PacketHandlers.cs|Graphic|8
 src/ClassicUO.Client/Network/PacketHandlers.cs|Hits|3
 src/ClassicUO.Client/Network/PacketHandlers.cs|HitsMax|3
 src/ClassicUO.Client/Network/PacketHandlers.cs|InWarMode|1
@@ -114,7 +114,7 @@ src/ClassicUO.Client/Network/PacketHandlers.cs|IsDead|1
 src/ClassicUO.Client/Network/PacketHandlers.cs|IsFemale|1
 src/ClassicUO.Client/Network/PacketHandlers.cs|IsRenamable|1
 src/ClassicUO.Client/Network/PacketHandlers.cs|IsRunning|2
-src/ClassicUO.Client/Network/PacketHandlers.cs|Layer|3
+src/ClassicUO.Client/Network/PacketHandlers.cs|Layer|1
 src/ClassicUO.Client/Network/PacketHandlers.cs|Mana|3
 src/ClassicUO.Client/Network/PacketHandlers.cs|ManaMax|3
 src/ClassicUO.Client/Network/PacketHandlers.cs|Name|11
