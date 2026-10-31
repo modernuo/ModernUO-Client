@@ -26,7 +26,8 @@ namespace ClassicUO.Renderer.Arts
             _atlas = new TextureAtlas(device, 4096, 4096, SurfaceFormat.Color);
             _spriteInfos = new SpriteInfo[_artLoader.Count];
             _realArtBounds = new Rectangle[_spriteInfos.Length];
-            _decoder = new FirstSightDecoder("art", _spriteInfos.Length, DecodeOnWorker, UploadDecoded);
+            _decoder = new FirstSightDecoder("art", _spriteInfos.Length, DecodeOnWorker, UploadDecoded,
+                idx => _artLoader.PixelCount(idx) * 4L);
         }
 
         /// <summary>

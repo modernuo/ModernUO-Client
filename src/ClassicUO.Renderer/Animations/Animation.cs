@@ -224,21 +224,24 @@ namespace ClassicUO.Renderer.Animations
             // directions of the action and of the first actions (walk, stand, run) so those loads rarely decompress.
             if (AsyncFirstSight && !_bodyDrawn[body] && !IsResident(entry))
             {
+                long heldBytes = 0;
+
                 for (int i = 0; i < sprites.Length; i++)
                 {
                     ref readonly var frame = ref _animationLoader.GetFrame(entry.FirstFrame + (uint)i);
 
                     if (frame.Sprite.OrigW != 0 && frame.Sprite.OrigH != 0)
                     {
+                        heldBytes += frame.Sprite.OrigW * frame.Sprite.OrigH * 4L;
                         sprites[i].Center.X = frame.CenterX;
                         sprites[i].Center.Y = frame.CenterY;
                         sprites[i].UV = new Rectangle(0, 0, frame.Sprite.OrigW, frame.Sprite.OrigH);
                     }
                 }
 
-                var job = new DirectionJob(this, body, action, dir, entry, sprites);
+                var job = new DirectionJob(this, body, action, dir, entry, sprites) { Bytes = heldBytes };
                 Interlocked.Increment(ref _pendingJobs);
-                ThreadPool.UnsafeQueueUserWorkItem(job, preferLocal: false);
+                DecodeBudget.Shared.Submit(job, heldBytes);
 
                 return sprites;
             }
@@ -343,6 +346,19 @@ namespace ClassicUO.Renderer.Animations
             Interlocked.Decrement(ref _pendingJobs);
             _bodyDrawn[job.Body] = true;
 
+            try
+            {
+                CompleteFrames(job);
+            }
+            finally
+            {
+                DecodeBudget.Shared.Release(job.Bytes);
+                job.Bytes = 0;
+            }
+        }
+
+        private void CompleteFrames(DirectionJob job)
+        {
             for (int i = 0; i < job.Sprites.Length; i++)
             {
                 uint index = job.Entry.FirstFrame + (uint)i;
@@ -381,6 +397,7 @@ namespace ClassicUO.Renderer.Animations
             public readonly AnimDirEntry Entry;
             public readonly SpriteInfo[] Sprites;
             public uint[][] Pixels;
+            public long Bytes; // held in the decode budget until Complete has uploaded (or dropped) the frames
 
             public DirectionJob(Animations owner, ushort body, byte action, byte dir, AnimDirEntry entry, SpriteInfo[] sprites)
             {
