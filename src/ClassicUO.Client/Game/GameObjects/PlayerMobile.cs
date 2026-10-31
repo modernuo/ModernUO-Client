@@ -287,23 +287,37 @@ namespace ClassicUO.Game.GameObjects
             _buffIcons.Remove(graphic);
         }
 
+        /// <summary>
+        /// The neighbouring graphic (previous first, then next) that shares <paramref name="animId"/>, or 0 when
+        /// neither does. Both lookups are bounds-checked: graphic 0xFFFF has no next entry in a 0x10000-entry table,
+        /// and a graphic of 0 has no previous one.
+        /// </summary>
+        internal static ushort FindAnimNeighbour(StaticTiles[] statics, ushort graphic, ushort animId)
+        {
+            if (graphic > 0 && graphic - 1 < statics.Length && statics[graphic - 1].AnimID == animId)
+            {
+                return (ushort)(graphic - 1);
+            }
+
+            if (graphic + 1 < statics.Length && statics[graphic + 1].AnimID == animId)
+            {
+                return (ushort)(graphic + 1);
+            }
+
+            return 0;
+        }
+
         public void UpdateAbilities()
         {
             AbilityData.DefaultItemAbilities.Set(Abilities);
             
             if ((FindItemByLayer(Layer.OneHanded) ?? FindItemByLayer(Layer.TwoHanded)) is { Graphic: > 0 } weapon)
             {
-                ushort animId = weapon.ItemData.AnimID;
-                ushort animGraphic = 0;
-
-                if (Client.Game.UO.FileManager.TileData.StaticData[weapon.Graphic - 1].AnimID == animId)
-                {
-                    animGraphic = (ushort)(weapon.Graphic - 1);
-                }
-                else if (Client.Game.UO.FileManager.TileData.StaticData[weapon.Graphic + 1].AnimID == animId)
-                {
-                    animGraphic = (ushort)(weapon.Graphic + 1);
-                }
+                ushort animGraphic = FindAnimNeighbour(
+                    Client.Game.UO.FileManager.TileData.StaticData,
+                    weapon.Graphic,
+                    weapon.ItemData.AnimID
+                );
 
                 if (AbilityData.GraphicToAbilitiesMap.TryGetValue(weapon.Graphic, out var abilities) || AbilityData.GraphicToAbilitiesMap.TryGetValue(animGraphic, out abilities))
                 {
