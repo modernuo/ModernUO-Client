@@ -73,14 +73,18 @@ namespace ClassicUO.Game
         /// </summary>
         internal readonly struct Placement
         {
-            internal readonly Item Item;
+            /// <summary>The placed object: an item (<see cref="PlaceWorldItem"/>) or, since funnel part 4, a mobile.</summary>
+            internal readonly Entity Subject;
             internal readonly int Id;
 
-            internal Placement(Item item, int id)
+            internal Placement(Entity subject, int id)
             {
-                Item = item;
+                Subject = subject;
                 Id = id;
             }
+
+            /// <summary>The item of an item placement (null for a mobile's).</summary>
+            internal Item Item => Subject as Item;
         }
 
         /// <summary>A handler places within the same packet; more outstanding placements than this means the oldest were abandoned.</summary>
@@ -140,9 +144,9 @@ namespace ClassicUO.Game
         {
             private WorldWriter _writer;
             private readonly int _id;
-            private readonly Item _fold;
+            private readonly Entity _fold;
 
-            internal Scope(WorldWriter writer, int id, Item fold)
+            internal Scope(WorldWriter writer, int id, Entity fold)
             {
                 _writer = writer;
                 _id = id;
@@ -172,7 +176,7 @@ namespace ClassicUO.Game
         }
 
         // only after Admitted (nothing is open, so BeginFold cannot throw)
-        private Scope Open(Entity subject, Item fold)
+        private Scope Open(Entity subject, Entity fold)
         {
             if (fold != null)
             {
@@ -403,9 +407,10 @@ namespace ClassicUO.Game
                 return;
             }
 
-            if (!Consume(placement))
+            // a mobile's placement is not an item placement (it stays outstanding for its PlaceMobile)
+            if (item == null || !Consume(placement))
             {
-                Reject(Violation.Placement, $"WorldWriter.PlaceWorldItem: 0x{item?.Serial ?? 0:X8} is not an outstanding placement (used twice, superseded, abandoned or never issued)");
+                Reject(Violation.Placement, $"WorldWriter.PlaceWorldItem: 0x{item?.Serial ?? 0:X8} is not an outstanding item placement (used twice, superseded, abandoned, a mobile's or never issued)");
 
                 if (item != null)
                 {
@@ -1129,7 +1134,7 @@ namespace ClassicUO.Game
             }
         }
 
-        private Placement Issue(Item item)
+        private Placement Issue(Entity item)
         {
             if (_placements.Count == MaxOutstanding)
             {
@@ -1151,7 +1156,7 @@ namespace ClassicUO.Game
         {
             for (int i = _placements.Count - 1; i >= 0; i--)
             {
-                if (_placements[i].Id == placement.Id && ReferenceEquals(_placements[i].Item, placement.Item))
+                if (_placements[i].Id == placement.Id && ReferenceEquals(_placements[i].Subject, placement.Subject))
                 {
                     _placements.RemoveAt(i);
 
@@ -1162,11 +1167,11 @@ namespace ClassicUO.Game
             return false;
         }
 
-        private void CancelPlacements(Item item)
+        private void CancelPlacements(Entity item)
         {
             for (int i = _placements.Count - 1; i >= 0; i--)
             {
-                if (ReferenceEquals(_placements[i].Item, item))
+                if (ReferenceEquals(_placements[i].Subject, item))
                 {
                     _placements.RemoveAt(i);
                 }
@@ -1176,7 +1181,7 @@ namespace ClassicUO.Game
         // a removal's: the placements of the removed item and of everything it contains, at any depth (Codex audit of
         // funnel-2, #3: a removed descendant's late placement is rejected as cancelled, not consumed and dropped). Runs before
         // the removal, while the child lists are intact; nothing to walk when no placement is outstanding (the usual case)
-        private void CancelSubtreePlacements(Item root)
+        private void CancelSubtreePlacements(Entity root)
         {
             if (_placements.Count == 0)
             {
@@ -1199,11 +1204,14 @@ namespace ClassicUO.Game
         // budget exempts them by name like the operations (coordinator, T1 round 3); its tests pin that each call follows an
         // unconditional Reject in the violation branch of an operation, so they cannot become a general bypass.
 
-        // the placement of UpdateGameObject's item branch before T1
-        private void PlacePreT1(Item item)
+        // the placement of UpdateGameObject's item branch before T1, and of its mobile branch (funnel part 4)
+        private void PlacePreT1(Entity entity)
         {
-
-            if (item.OnGround)
+            if (entity is Mobile mobile)
+            {
+                mobile.SetInWorldTile(mobile.X, mobile.Y, mobile.Z);
+            }
+            else if (entity is Item item && item.OnGround)
             {
                 item.SetInWorldTile(item.X, item.Y, item.Z);
             }

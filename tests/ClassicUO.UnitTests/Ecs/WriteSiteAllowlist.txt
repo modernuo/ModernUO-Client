@@ -40,13 +40,13 @@ src/ClassicUO.Client/Game/GameObjects/Mobile.cs|AnimIndex|3
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|AnimationFrameCount|3
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|AnimationFromServer|2
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|Direction|1
-src/ClassicUO.Client/Game/GameObjects/Mobile.cs|IsFemale|6
+src/ClassicUO.Client/Game/GameObjects/Mobile.cs|IsFemale|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|IsRunning|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|LastAnimationChangeTime|3
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|LastStepSoundTime|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|LastStepTime|2
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|Offset|7
-src/ClassicUO.Client/Game/GameObjects/Mobile.cs|Race|6
+src/ClassicUO.Client/Game/GameObjects/Mobile.cs|Race|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|Serial|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|StepSoundOffset|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|Steps|5
