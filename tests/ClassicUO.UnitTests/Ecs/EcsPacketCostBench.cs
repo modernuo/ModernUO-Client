@@ -425,6 +425,40 @@ namespace ClassicUO.UnitTests.Ecs
                 s.World.Writer.CompleteStep(m, in st, m.X == st.X && m.Y == st.Y);
             })));
 
+            // T1 funnel part 6, after every older row: status and hits (group 4), old copy vs funnel, and the per-call cost of a
+            // funnel operation that writes only the cache (admission, the held check, the scope): the animation group's probe
+            // (ProcessAnimation runs per due mobile per frame; this is the overhead its conversion would add per call)
+            WorldWriterMobileTests.PrefillHitsTexts();
+
+            rows.Add(("T1 old path: 0xA1 hits (HitsMax, Hits, request)", Measure(packets, i =>
+                WorldWriterMobileTests.OldUpdateHitpoints(s.World, s.Mobiles[i % n].Serial, 100, (ushort)(i & 63)))));
+
+            rows.Add(("T1 funnel: 0xA1 hits (SetHits)", Measure(packets, i =>
+            {
+                Mobile m = s.Mobiles[i % n];
+                s.World.Writer.SetHits(s.World.Get(m.Serial), 100, (ushort)(i & 63));
+            })));
+
+            rows.Add(("T1 old path: 0x17 healthbar (yellow bar + SA poison + Sync)", Measure(packets, i =>
+            {
+                Mobile m = s.Mobiles[i % n];
+                m.SetSAPoison((i & 2) != 0);
+                m.Flags = (i & 1) != 0 ? m.Flags | ClassicUO.Game.Data.Flags.YellowBar : m.Flags & ~ClassicUO.Game.Data.Flags.YellowBar;
+                ecs.Sync(m);
+            })));
+
+            rows.Add(("T1 funnel: 0x17 healthbar (SetHealthbar)", Measure(packets, i =>
+            {
+                Mobile m = s.Mobiles[i % n];
+                s.World.Writer.SetHealthbar(m, (i & 1) != 0 ? m.Flags | ClassicUO.Game.Data.Flags.YellowBar : m.Flags & ~ClassicUO.Game.Data.Flags.YellowBar, true, (i & 2) != 0);
+            })));
+
+            rows.Add(("T1 animation probe: bare cache write (Race)", Measure(packets, i =>
+                s.Mobiles[i % n].Race = (RaceType)(1 + (i & 1)))));
+
+            rows.Add(("T1 animation probe: the same through the funnel (SetRace)", Measure(packets, i =>
+                s.World.Writer.SetRace(s.Mobiles[i % n], (RaceType)(1 + (i & 1))))));
+
             sb.AppendLine($"mobiles={n} (each wearing {WORN}), items={itemCount}, packets per scenario={packets}");
             sb.AppendLine($"{"packet",-72} {"us/packet",10} {"bytes/packet",13}");
 
