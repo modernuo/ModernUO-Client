@@ -38,6 +38,7 @@ Newest at the bottom. Each item says what I did meanwhile.
 10. **Text pack: cliloc uncompressed?** (text-in-pack agent) Uncompressed cliloc costs 11.5 MiB more on disk but loads 7 ms faster at startup (1.6 vs 8.6 ms). *Recommended:* uncompressed in the ship profile (startup matters more than 11 MiB); `--cliloc-brotli` stays available. *Meanwhile:* uncompressed.
 11. **Fold `Clilocs.txt` (a shard's own cliloc strings) into the pack?** Today it stays a loose text file read on top of the pack. *Recommended:* yes, like loose gump files: the converter folds it in, and the loose file still overrides when present, so shards can ship it without rebuilding the pack. *Meanwhile:* loose file, unchanged.
 12. **U+FFE0 ("￠") in unifont3–12 crashed the old client** (its glyph points past the end of the file). It is now drawn as no glyph, the only behaviour change from text-in-pack. *Recommended:* accept; it's a crash fix, and the legacy-exact policy covers behaviour, not crashes. *Meanwhile:* no glyph.
+13. **Warm-up collection on relog?** (chunk-pool agent) The login warm-up's two deliberate collections run once per process. After a relog the pools are still full, so there is little to promote. *Recommended:* keep once per process; the pools are topped up on relog (a no-op when full). *Meanwhile:* once per process.
 
 ## Decisions you made tonight (recorded in README "Decisions so far" and in memory)
 
