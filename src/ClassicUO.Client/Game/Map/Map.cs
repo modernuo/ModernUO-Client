@@ -156,6 +156,21 @@ namespace ClassicUO.Game.Map
             }
         }
 
+        /// <summary>
+        /// The largest decision reach, in chunks per axis, whose chunks <see cref="ClearUnusedBlocks"/> keeps (a house's
+        /// roof spans two or three; 8 is 64 tiles). A larger box is not pinned: its chunks age out as before.
+        /// </summary>
+        internal const int MaxPinnedReach = 8;
+
+        /// <summary>
+        /// Chunk (chunkX, chunkY) is in the current decision's reach (see <see cref="SetDecisionReach"/>): it is kept loaded
+        /// while that decision stands (ClearUnusedBlocks), and its load request survives parked-object cleanup
+        /// (TryLoadQueued). A new decision replaces the box, which releases the chunks the old one needed.
+        /// </summary>
+        internal bool InDecisionReach(int chunkX, int chunkY) =>
+            chunkX >= _reachMinX && chunkX <= _reachMaxX && chunkY >= _reachMinY && chunkY <= _reachMaxY
+            && _reachMaxX - _reachMinX < MaxPinnedReach && _reachMaxY - _reachMinY < MaxPinnedReach;
+
         /// <summary>An input of the max-Z decision changed in place (the season's graphics): recompute it before the next draw.</summary>
         public void InvalidateDecision() => DecisionDirty = true;
 
@@ -179,7 +194,8 @@ namespace ClassicUO.Game.Map
             }
 
             reach.Add(chunkX, chunkY);
-            Chunk chunk = GetChunk2(chunkX, chunkY, false);
+            // CUO_CHUNK_SYNC=1: no queue drains, so a dependency loads now (as every chunk did before incremental loading)
+            Chunk chunk = GetChunk2(chunkX, chunkY, !Incremental);
 
             if (chunk == null)
             {
@@ -656,14 +672,8 @@ namespace ClassicUO.Game.Map
                 return ChunkLoadResult.Loaded;
             }
 
-            // queued for parked objects that have all moved on or gone: nothing to load (if the chunk is on screen, the
-            // draw walk asks for it again)
-            if (_parked.TryGetValue(block, out var list) && !HasLiveParked(list, block))
+            if (DropStaleParked(block, chunkX, chunkY))
             {
-                _parked.Remove(block);
-                list.Clear();
-                _parkedPool.Push(list);
-
                 return ChunkLoadResult.Done;
             }
 
@@ -708,6 +718,25 @@ namespace ClassicUO.Game.Map
                 FrameMeshTicks += Stopwatch.GetTimestamp() - t0;
                 FrameMeshBytes += GC.GetAllocatedBytesForCurrentThread() - bytes0;
             }
+        }
+
+        /// <summary>
+        /// Queued for parked objects that have all moved on or gone: forgets them, and returns true (nothing to load; if the
+        /// chunk is on screen, the draw walk asks for it again) unless the max-Z decision also needs the chunk (its request
+        /// shares the queue entry, and nothing else would ask for an off-screen dependency again).
+        /// </summary>
+        internal bool DropStaleParked(int block, int chunkX, int chunkY)
+        {
+            if (!_parked.TryGetValue(block, out var list) || HasLiveParked(list, block))
+            {
+                return false;
+            }
+
+            _parked.Remove(block);
+            list.Clear();
+            _parkedPool.Push(list);
+
+            return !InDecisionReach(chunkX, chunkY);
         }
 
         private static bool HasLiveParked(List<Parked> list, int block)
@@ -889,7 +918,9 @@ namespace ClassicUO.Game.Map
 
                 ref Chunk block = ref _terrainChunks[first.Value];
 
-                if (block != null && block.LastAccessTime < ticks && block.HasNoExternalData())
+                // the current max-Z decision's chunks stay while it stands: evicting one would dirty it, and its recompute
+                // would request the chunk again (a load, a mesh build and a cutoff change every few seconds off screen)
+                if (block != null && block.LastAccessTime < ticks && block.HasNoExternalData() && !InDecisionReach(block.X, block.Y))
                 {
                     block.Destroy();
                     block = null;
