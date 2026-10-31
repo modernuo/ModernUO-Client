@@ -305,6 +305,124 @@ namespace ClassicUO.UnitTests.Renderer
             FluentActions.Invoking(() => RandomHelper.GetValue(5, 3)).Should().Throw<System.ArgumentOutOfRangeException>();
         }
 
+        // runs body on a new thread (its own random state) and waits for it
+        private static void OnThread(System.Action body)
+        {
+            System.Exception error = null;
+            var t = new System.Threading.Thread(() =>
+            {
+                try
+                {
+                    body();
+                }
+                catch (System.Exception e)
+                {
+                    error = e;
+                }
+            });
+            t.Start();
+            t.Join();
+
+            if (error != null)
+            {
+                throw new System.Exception("on the other thread", error);
+            }
+        }
+
+        [Fact]
+        public void A_roll_on_another_thread_during_the_probes_save_and_restore_survives()
+        {
+            // Codex round 3: SDL's raw-input thread (or a plugin) rolls while the render thread's probe runs between Save and
+            // Restore; the restore must not undo that roll
+            RandomHelper.State before = default, afterRoll = default, afterRestore = default;
+            int rolled = 0, next = 0, expectedNext = 0;
+            using var rolledEvt = new System.Threading.ManualResetEventSlim();
+            using var restoredEvt = new System.Threading.ManualResetEventSlim();
+
+            var other = new System.Threading.Thread(() =>
+            {
+                before = RandomHelper.Save();
+                rolled = RandomHelper.GetValue(); // the war-music choice, say
+                afterRoll = RandomHelper.Save();
+                rolledEvt.Set();
+                restoredEvt.Wait();
+                afterRestore = RandomHelper.Save();
+                next = RandomHelper.GetValue();
+                // the same thread's stream continued from afterRoll, as if no probe had run
+                RandomHelper.Restore(in afterRoll);
+                expectedNext = RandomHelper.GetValue();
+            });
+
+            RandomHelper.State rng = RandomHelper.Save();
+            int probeRoll = RandomHelper.GetValue();
+            other.Start();
+            rolledEvt.Wait();
+            RandomHelper.GetValue();
+            RandomHelper.Restore(in rng);
+            restoredEvt.Set();
+            other.Join();
+
+            afterRoll.Should().NotBe(before, "the other thread's roll advanced its state");
+            afterRestore.Should().Be(afterRoll, "the render thread's restore leaves the other thread's state alone");
+            next.Should().Be(expectedNext);
+            RandomHelper.Save().Should().Be(rng, "the render thread is back where its probe started");
+            RandomHelper.GetValue().Should().Be(probeRoll, "and rolls what the probe rolled first");
+        }
+
+        [Fact]
+        public void Two_threads_get_independent_streams()
+        {
+            RandomHelper.State mine = RandomHelper.Save();
+            RandomHelper.State a = default, b = default, bAfterA = default;
+            int[] fromA = new int[8], fromB = new int[8];
+
+            OnThread(() => a = RandomHelper.Save());
+
+            OnThread(() =>
+            {
+                b = RandomHelper.Save();
+
+                // another thread rolling meanwhile doesn't move this thread's state
+                OnThread(() =>
+                {
+                    for (int i = 0; i < 100; i++)
+                    {
+                        RandomHelper.GetValue();
+                    }
+                });
+
+                bAfterA = RandomHelper.Save();
+            });
+
+            a.Should().NotBe(b, "each thread is seeded on its own");
+            bAfterA.Should().Be(b);
+            RandomHelper.Save().Should().Be(mine, "rolls on other threads never touch this thread's state");
+
+            // each thread's stream depends only on its own state: two threads put in the same state roll the same values
+            OnThread(() =>
+            {
+                RandomHelper.Restore(in a);
+
+                for (int i = 0; i < fromA.Length; i++)
+                {
+                    fromA[i] = RandomHelper.GetValue();
+                }
+            });
+
+            OnThread(() =>
+            {
+                RandomHelper.Restore(in a);
+                OnThread(() => RandomHelper.GetValue());
+
+                for (int i = 0; i < fromB.Length; i++)
+                {
+                    fromB[i] = RandomHelper.GetValue();
+                }
+            });
+
+            fromB.Should().Equal(fromA);
+        }
+
         // ---- unmapped sprites: the full request, through the capture (GpuWorldRenderer.Draw/DrawSitted with an unmapped texture)
 
         private static GpuWorldRenderer Capture(out List<GpuWorldRenderer.FallbackDraw> fallbacks)

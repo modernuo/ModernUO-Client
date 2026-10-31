@@ -5,10 +5,14 @@ using System;
 namespace ClassicUO.Utility
 {
     /// <summary>
-    ///     The client's shared random numbers (main thread only, like the System.Random it replaces). The generator is
-    ///     xoshiro256**, the algorithm an unseeded System.Random uses on 64-bit .NET, with the same reductions, kept here so its
-    ///     state can be saved and put back: E12 (CUO_GPU_ITEM_CHECK) runs a check frame's probe pass between
-    ///     <see cref="Save"/> and <see cref="Restore"/>, so the rolls the probe takes never change the frame that is drawn.
+    ///     The client's random numbers. The generator is xoshiro256**, the algorithm an unseeded System.Random uses on 64-bit
+    ///     .NET, with the same reductions, kept here so its state can be saved and put back: E12 (CUO_GPU_ITEM_CHECK) runs a
+    ///     check frame's probe pass between <see cref="Save"/> and <see cref="Restore"/>, so the rolls the probe takes never
+    ///     change the frame that is drawn.
+    ///     <para>The state is per thread ([ThreadStatic], each thread seeded from Random.Shared on its first use). Save and
+    ///     Restore touch only the calling thread's state, so a roll another thread takes during the probe (SDL's raw-input
+    ///     thread dispatching a key handler, a plugin calling in) is never undone, and threads never race on shared state
+    ///     words. No caller depends on one sequence shared between threads.</para>
     /// </summary>
     public static class RandomHelper
     {
@@ -22,7 +26,25 @@ namespace ClassicUO.Utility
             public override readonly int GetHashCode() => HashCode.Combine(S0, S1, S2, S3);
         }
 
-        private static State _state = Seed();
+        // all zero = not seeded yet on this thread (xoshiro's state is never all zero once seeded)
+        [ThreadStatic]
+        private static State _state;
+
+        /// <summary>The calling thread's state, seeded on first use.</summary>
+        private static ref State Current
+        {
+            get
+            {
+                ref State s = ref _state;
+
+                if ((s.S0 | s.S1 | s.S2 | s.S3) == 0)
+                {
+                    s = Seed();
+                }
+
+                return ref s;
+            }
+        }
 
         private static State Seed()
         {
@@ -40,15 +62,17 @@ namespace ClassicUO.Utility
             return s;
         }
 
-        /// <summary>The generator's state now.</summary>
-        public static State Save() => _state;
+        /// <summary>The calling thread's generator state now.</summary>
+        public static State Save() => Current;
 
-        /// <summary>Puts the generator back to <paramref name="state"/> (from <see cref="Save"/>).</summary>
-        public static void Restore(in State state) => _state = state;
+        /// <summary>Puts the calling thread's generator back to <paramref name="state"/> (from <see cref="Save"/> on this
+        /// thread).</summary>
+        public static void Restore(in State state) => Current = state;
 
         private static ulong NextUInt64()
         {
-            ulong s0 = _state.S0, s1 = _state.S1, s2 = _state.S2, s3 = _state.S3;
+            ref State st = ref Current;
+            ulong s0 = st.S0, s1 = st.S1, s2 = st.S2, s3 = st.S3;
             ulong result = RotateLeft(s1 * 5, 7) * 9;
             ulong t = s1 << 17;
             s2 ^= s0;
@@ -57,10 +81,10 @@ namespace ClassicUO.Utility
             s0 ^= s3;
             s2 ^= t;
             s3 = RotateLeft(s3, 45);
-            _state.S0 = s0;
-            _state.S1 = s1;
-            _state.S2 = s2;
-            _state.S3 = s3;
+            st.S0 = s0;
+            st.S1 = s1;
+            st.S2 = s2;
+            st.S3 = s3;
 
             return result;
         }

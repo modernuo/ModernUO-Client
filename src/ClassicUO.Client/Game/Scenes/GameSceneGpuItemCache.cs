@@ -1090,7 +1090,7 @@ namespace ClassicUO.Game.Scenes
                              $"{_gpuProbeStale} fully compared with differences, {_gpuProbeStalePartial} partially compared with differences, {_gpuProbeStaleFellBack} with fallen-back tiles with differences: " +
                              $"{_gpuProbeInstDiff} in item/mobile instances, {_gpuProbeFxDiff} in effect instances, {_gpuProbeListDiff} in render lists, {_gpuProbeLightDiff} in lights, " +
                              $"{_gpuProbeSelDiff} in the selection, {_gpuProbeCountDiff} in collected lists, {_gpuProbeOverrideDiff} in world overrides, {_gpuProbeFallbackDiff} in unmapped sprites, " +
-                             $"{_gpuProbeRollDiff} in animation rolls; {_gpuProbeInstCompared} instances compared ({_gpuProbeFxCompared} effect), {_gpuProbeOverridesCompared} overrides ({_gpuProbeOverflow} checks with the override queue full), " +
+                             $"{_gpuProbeRollDiff} in animation rolls; {_gpuProbeInstCompared} instances compared ({_gpuProbeFxCompared} effect), {_gpuProbeOverridesCompared} overrides ({_gpuProbeOverflow} checks with the override queue full), {_gpuProbeRollsCompared} animation rolls, " +
                              $"{_gpuProbeFallbacks} unmapped sprites compared, {_gpuProbeRefBuilds} caches rebuilt in the reference pass; " +
                              $"isolation: {_gpuProbeLeaks} probe passes left sprites in the batcher; " +
                              $"item check on the reference pass: {_gpuItemChecks} frames, {_gpuItemCheckStale} with differences, {items}" +
@@ -1110,7 +1110,7 @@ namespace ClassicUO.Game.Scenes
                 _gpuProbeFellBack = _gpuProbeSkipAlpha = _gpuProbeSkipNoCache = _gpuProbeStale = _gpuProbeStalePartial = _gpuProbeStaleFellBack = 0;
                 _gpuProbeInstDiff = _gpuProbeFxDiff = _gpuProbeListDiff = _gpuProbeLightDiff = _gpuProbeSelDiff = _gpuProbeCountDiff = 0;
                 _gpuProbeOverrideDiff = _gpuProbeFallbackDiff = _gpuProbeRollDiff = 0;
-                _gpuProbeInstCompared = _gpuProbeFxCompared = _gpuProbeOverridesCompared = _gpuProbeFallbacks = _gpuProbeRefBuilds = _gpuProbeLeaks = _gpuProbeOverflow = 0;
+                _gpuProbeInstCompared = _gpuProbeFxCompared = _gpuProbeOverridesCompared = _gpuProbeFallbacks = _gpuProbeRefBuilds = _gpuProbeLeaks = _gpuProbeOverflow = _gpuProbeRollsCompared = 0;
                 _gpuItemCheckSample = null;
             }
         }
@@ -1161,7 +1161,7 @@ namespace ClassicUO.Game.Scenes
             _gpuProbeFellBack, _gpuProbeSkipAlpha, _gpuProbeSkipNoCache, _gpuProbeStale, _gpuProbeStalePartial, _gpuProbeStaleFellBack,
             _gpuProbeInstDiff, _gpuProbeFxDiff, _gpuProbeListDiff, _gpuProbeLightDiff, _gpuProbeSelDiff, _gpuProbeCountDiff, _gpuProbeOverrideDiff,
             _gpuProbeFallbackDiff, _gpuProbeRollDiff, _gpuProbeInstCompared, _gpuProbeFxCompared, _gpuProbeOverridesCompared, _gpuProbeFallbacks,
-            _gpuProbeRefBuilds, _gpuProbeLeaks, _gpuProbeOverflow;
+            _gpuProbeRefBuilds, _gpuProbeLeaks, _gpuProbeOverflow, _gpuProbeRollsCompared;
 
         // The probe pass served tile b of the chunk (the reference pass's list hash leaves out its cached items).
         private void GpuProbeServed(GpuItemCache cache, int b)
@@ -1533,6 +1533,7 @@ namespace ClassicUO.Game.Scenes
             st.RefFallbacks.Clear();
 
             // both passes rolled from the same random state: the same requests in the same order get the same values
+            _gpuProbeRollsCompared += st.RefRolls.Count;
             if (AnimationGroupRules.RollsDiffer(st.Rolls, st.RefRolls, out int firstRoll))
             {
                 _gpuProbeRollDiff++;
