@@ -32,23 +32,13 @@ sealed class WebSocketWrapper : SocketWrapper
 
     public override void Connect(Uri uri) => ConnectAsync(uri, _tokenSource).Wait();
 
+    private OrderedAsyncWriter _writer;
+
     public override void Send(byte[] buffer, int offset, int count)
     {
-        var copy = Shared.Rent(count);
-        Buffer.BlockCopy(buffer, offset, copy, 0, count);
-        SendCopyAsync(copy, count);
-    }
-
-    private async void SendCopyAsync(byte[] copy, int count)
-    {
-        try
-        {
-            await _webSocket.SendAsync(copy.AsMemory().Slice(0, count), WebSocketMessageType.Binary, true, _tokenSource.Token);
-        }
-        finally
-        {
-            Shared.Return(copy);
-        }
+        // Never two SendAsync calls at once on the ClientWebSocket, and nothing thrown into NetClient.ProcessSend: the
+        // ordered writer awaits each write and reports a failure through InvokeOnError (the connection's close path).
+        _writer?.TryWrite(buffer, offset, count);
     }
 
     public override int Read(byte[] buffer)
@@ -72,7 +62,22 @@ sealed class WebSocketWrapper : SocketWrapper
             await ConnectWebSocketAsyncCore(uri);
 
             if (IsConnected)
+            {
+                var ws = _webSocket;
+                _writer = new OrderedAsyncWriter(
+                    (data, ct) => ws.SendAsync(data, WebSocketMessageType.Binary, true, ct),
+                    e =>
+                    {
+                        Log.Trace($"WebSocket send failed {e}");
+
+                        if (!IsCanceled)
+                        {
+                            InvokeOnError(SocketError.SocketError);
+                        }
+                    },
+                    _tokenSource.Token);
                 InvokeOnConnected();
+            }
             else
                 InvokeOnError(SocketError.NotConnected);
         }
@@ -214,6 +219,8 @@ sealed class WebSocketWrapper : SocketWrapper
         if (!IsConnected)
             return;
 
+        _writer?.Complete(); // what is queued is still written, in order; nothing new is accepted
+
         try
         {
             _webSocket?.CloseAsync(WebSocketCloseStatus.NormalClosure, "Disconnect", CancellationToken.None)
@@ -227,5 +234,6 @@ sealed class WebSocketWrapper : SocketWrapper
 
     public override void Dispose()
     {
+        _writer?.Complete();
     }
 }
