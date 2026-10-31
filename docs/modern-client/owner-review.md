@@ -77,9 +77,9 @@ All merged and pushed, and each audited by Codex until clean or down to document
 | b0370e370 | **Roof over the player fixed** (both renderers): the max-Z/roof decision latched an answer made before its chunks loaded. It happened at every login, not rarely: base drew the roof at the login spot in 5 of 5 sessions | bench-000056 (fix: 15/15 hidden); Codex 2 rounds |
 
 - **Packs:** classic-1.1 = tiledata merge plus the 6 regions; classic-1.2 = 1.1 plus `audio/sounds.bin` and `audio/music.bin`. Both were staged from hard links in `C:\Repositories\cuo-poc-state\pack-staging` (now empty), with `--verify-only` passed and the previous pack shown byte-identical afterwards.
-- **ModernUO PR #2735** (open, yours to merge): detects pre-resource clients (4.0.11c), parses letter versions correctly, and classic version strings get `ClientType.Classic`.
+- **ModernUO PR #2735** (merged 2026-10-31): detects pre-resource clients (4.0.11c), parses letter versions correctly, and classic version strings get `ClientType.Classic`.
 - **Smoke run on classic-1.2** (bench-000054, NativeAOT): no errors and no loose-file reads; the large scene loaded on both renderers; the login music started in 26–28 ms in 2 of 3 runs (one 379 ms stall during login, not the pack path).
-- **Waiting on you:** body overrides (4 questions above), and tiledata bounds on legacy packs (pad or guard).
+- **Waiting on you:** the body-override nuances below, and tiledata bounds on legacy packs (pad or guard).
 
 ## Merged into `poc/modern-client` tonight
 
@@ -205,11 +205,18 @@ All merged and pushed, and each audited by Codex until clean or down to document
     - The pack holds exactly one resolved set: no format change, no runtime flags.
     - The client loses about 20 lines of dead body-flag plumbing; the converter gains about 100–150 lines.
     - Alternative (B): both sets in one pack, picked at runtime by an era setting. About +6 MiB plus a runtime path, and only worth it if one pack must serve shards of different eras.
-  - **Questions for you:**
-    1. One pack per shard, or one shared across shards? This decides A vs B.
-    2. Does "older" mean only the 12 remodels, or the full T2A look with stand-ins?
-    3. Should equipment always use the newest art?
-    4. Should ModernUO document `forceOldAnimations` as OSI-only?
+  - **Your answers (2026-10-31):**
+    - One pack per shard, so design (A): the set is chosen at import. This covers equipment too.
+    - `forceOldAnimations` is not OSI-only: shard admins use it for the old (T2A) feel.
+    - The tooling lets the admin pick which overrides they want, with era conveniences: AOS and later = all overrides on, before AOS = none.
+  - **Nuances I raised (data from 7.0.103 Classic; waiting on you):**
+    1. **Remodels vs additions.** Most Bodyconv entries are additions: new creatures and new equipment with no anim.mul art. Only some replace existing art (remodels). With "none", every addition turns into a hued T2A stand-in or draws nothing. That includes 83 equipment animations (anything worn that has no anim.mul art is invisible). Proposal: the override choice applies to remodels; additions always use their newest art unless the admin also picks "stand-ins" (the strict T2A-client look).
+    2. **SE/ML columns hold remodels too.** Upstream "old" mode never turned off Bodyconv columns 3 and 4: 1 creature remodel in column 3 (253) and 37 in column 4 (325–340, 689–722, 831, 1069, 1244–1248, mostly equipment/human). A literal "pre-AOS = none" would revert them as well, which upstream never did. Default proposal: "none" turns off all columns (it is what admins mean), shown as a per-group list.
+    3. **LBR is before AOS.** Column 1 is the LBR remodel set. Proposed presets: None/T2A/UOR = none; LBR = LBR remodels only; AOS and later = all. `forceOldAnimations` = the same preset minus the LBR remodels (what ModernUO's flag says it does).
+    4. **OSI already reverted some LBR remodels** (daemon 9, 26, giant spider 28) in the 7.x data, so on a modern install "all" already shows those in the classic look. Restoring the LBR look needs an older install (UOAOS/UOSE), so the importer may need two sources; or we accept the modern data's choice.
+    5. **UOP bodies (mobtypes 0x10000)** are not era-gated: 300 on 7.0.103, post-ML content. Proposed: always on, never an override.
+    6. **Mount heights** come from the Bodyconv column, so they follow the choice automatically. **Corpse.def** stand-ins follow the same rule as Body.def.
+    7. **The server picks ids independently** (e.g. ModernUO's SummonedDaemon uses `Core.AOS ? 10 : 9`). The pack choice changes only the art. The tooling can read the shard's `expansion.json` (expansion and `forceOldAnimations`) to suggest the preset.
   - Nothing is built yet.
 
 - **GitHub Actions for Linux/macOS (queued 2026-10-31, not urgent):** the project is open source, so CI builds and tests on Linux and macOS runners, builds the native libraries (dr_mp3's `cuo_mp3`, the SDL3/FNA forks) per platform, and publishes artifacts for releases. Brief: `C:\Repositories\cuo-poc-state\handoffs\ci-release-artifacts.md`.
