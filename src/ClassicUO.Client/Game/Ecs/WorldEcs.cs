@@ -184,16 +184,30 @@ namespace ClassicUO.Game
         /// from the mobile's getters, so the operation pushes them after its cache writes with <see cref="CommitMobileInputs"/>.
         /// Ignores a mobile World does not hold under <see cref="MobileState.Serial"/>, as Sync does.
         /// </summary>
-        internal void CommitMobile(Mobile mobile, in MobileState v)
+        /// <returns>The mobile's entity, for <see cref="CommitMobileInputs(Mobile, EcsEntity)"/> (a null entity when ignored).</returns>
+        internal EcsEntity CommitMobile(Mobile mobile, in MobileState v)
         {
             if (mobile == null || mobile.IsDestroyed || !ReferenceEquals(_world.Mobiles.Get(v.Serial), mobile))
             {
-                return;
+                return default;
             }
 
             MobileCommitObserver?.Invoke(mobile, v);
             MobileMirrorWrites++;
-            Mirror.UpsertMobile(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.IsPlayer);
+
+            return Mirror.UpsertMobile(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.IsPlayer);
+        }
+
+        /// <summary>
+        /// <see cref="CommitMobileInputs(Mobile)"/> with the entity <see cref="CommitMobile"/> returned in the same operation
+        /// (no lookup; a null entity, from an ignored commit, pushes nothing).
+        /// </summary>
+        internal void CommitMobileInputs(Mobile mobile, EcsEntity e)
+        {
+            if (!e.IsNull)
+            {
+                WriteInputs(mobile, e);
+            }
         }
 
         /// <summary>
