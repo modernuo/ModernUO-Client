@@ -55,20 +55,17 @@ namespace ClassicUO.Assets
 
         public AnimFrameEntry[] PackFrames => _frames;
 
+        /// <summary>anim/palettes.bin's frame → palette table, shared with the GPU world renderer (PackTables).</summary>
+        public uint[] PackFramePalette => _framePalette;
+
         public override void Load()
         {
             (_bodies, _dirs, _frames) = AnimTableFile.Read(FileManager.Pack.PathOf("anim/anim.bin"));
 
             var palettePath = FileManager.Pack.PathOf("anim/palettes.bin");
 
-            using (var fs = File.OpenRead(palettePath))
-            {
-                StructIo.ReadHeader(fs, AnimConst.MagicPalettes);
-                _paletteCount = StructIo.Read<int>(fs);
-                _framePalette = new uint[StructIo.Read<int>(fs)];
-                StructIo.ReadSpan<uint>(fs, _framePalette);
-                _paletteDataOffset = fs.Position;
-            }
+            // validated: counts, payload extent against the file length, palette ids (shared with the GPU world renderer)
+            _framePalette = AnimPaletteFile.ReadFramePalette(palettePath, out _paletteCount, out _paletteDataOffset);
 
             if (_framePalette.Length != _frames.Length)
             {

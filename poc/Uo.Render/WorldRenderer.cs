@@ -16,6 +16,10 @@ public sealed class WorldOptions
     public int Layers = 24, PageBudget = 2, ChunkBudget = 64;
     /// <summary>Indexed8 anim array layers; 0 = no anim residency (anim pages then can't be drawn).</summary>
     public int AnimLayers = 64;
+    /// <summary>Grow-on-demand ceilings (<see cref="GrowthPolicy"/>): above the starting size, the art page array, the anim
+    /// page array and the instance buffer start at <see cref="Layers"/>, <see cref="AnimLayers"/> and
+    /// <see cref="InstanceCapacity"/> and double up to these. 0 = fixed at the starting size.</summary>
+    public int LayersMax, AnimLayersMax, InstanceCapacityMax;
     public int Workers = Math.Clamp(Environment.ProcessorCount / 2 - 1, 2, 8);
     public bool ForceExpand;
     /// <summary>false: no map streaming (debug scenes injected with <see cref="ChunkStore.InjectDebugChunk"/>).</summary>
@@ -64,7 +68,8 @@ public struct SpriteDebugInfo
 /// Overrides, dynamic sprites, z hiding and the circle of transparency are cleared after each Render.</summary>
 public sealed unsafe class WorldRenderer : IDisposable
 {
-    public readonly PackSet Pack;
+    /// <summary>The pack and facet being streamed; replaced by <see cref="ChangeFacet"/>.</summary>
+    public PackSet Pack { get; private set; }
     public readonly Renderer Renderer;
     public readonly WorkerPool Workers;
     public readonly PageResidency Pages, AnimPages;
@@ -151,10 +156,11 @@ public sealed unsafe class WorldRenderer : IDisposable
         _ownsRenderer = ownsRenderer;
         _ownsWorkers = ownsWorkers;
         pack.BakeTranslucentAlpha = true; // BuildFrame lists the chunks' translucent sub-lists
-        Pages = new PageResidency(renderer.Device, pack, workers, o.Layers, o.PageBudget, Math.Max(2, o.PageBudget * 2), o.ForceExpand);
+        Pages = new PageResidency(renderer.Device, pack, workers, o.Layers, o.PageBudget, Math.Max(2, o.PageBudget * 2), o.ForceExpand, o.LayersMax);
         if (pack.AnimIndexed && o.AnimLayers > 0)
             AnimPages = new PageResidency(renderer.Device, pack.AnimPagePaths, pack.AnimFormat, pack.AnimPageSize, pack.AnimPageMips, workers, o.AnimLayers,
-                Math.Max(4, o.PageBudget * 4), Math.Max(4, o.PageBudget * 4));
+                Math.Max(4, o.PageBudget * 4), Math.Max(4, o.PageBudget * 4), false, o.AnimLayersMax);
+        _instanceMax = Math.Max(renderer.InstanceCapacity, o.InstanceCapacityMax);
         Chunks = new ChunkStore(pack, workers, o.InstanceCapacity);
         _table = new ChunkDraw[renderer.ChunkTableCapacity];
         _dynamic = new SpriteInstance[o.MaxDynamic];
@@ -168,6 +174,27 @@ public sealed unsafe class WorldRenderer : IDisposable
         _lastTicks = Stopwatch.GetTimestamp();
     }
 
+    /// <summary>Streams another facet of the same pack (<paramref name="pack"/> from <see cref="PackSet.WithFacet"/>):
+    /// the chunks and regions are dropped and re-stream from the next <see cref="Prepare"/>, while the device resources
+    /// (instance buffer, page arrays and their resident pages, palettes, pipelines), the workers and every CPU-side
+    /// array are kept. Call between frames. The new pack's bake switches (<see cref="PackSet.WaterWobble"/>, remaps) are
+    /// its own, as with a newly created world.</summary>
+    public void ChangeFacet(PackSet pack)
+    {
+        if (ReferenceEquals(pack, Pack)) return;
+        if (!ReferenceEquals(pack.PagePaths, Pack.PagePaths) || !ReferenceEquals(pack.AnimPagePaths, Pack.AnimPagePaths) || pack.AnimPageBase != Pack.AnimPageBase)
+            throw new ArgumentException("ChangeFacet needs the same pack on another facet (PackSet.WithFacet)", nameof(pack));
+        pack.BakeTranslucentAlpha = true;
+        Pack = pack;
+        Chunks.ChangeFacet(pack);
+        _waterX = _waterY = 1f;
+        _velX = _velY = 0;
+        FacetChanges++;
+    }
+
+    /// <summary>Times <see cref="ChangeFacet"/> switched the facet.</summary>
+    public int FacetChanges;
+
     /// <summary>Streaming and the visible chunk list for this camera. Call once per frame before <see cref="Render()"/>.</summary>
     public void Prepare(in WorldCamera cam)
     {
@@ -176,6 +203,7 @@ public sealed unsafe class WorldRenderer : IDisposable
         _lastTicks = now;
         Frame++;
         _cam = cam;
+        _jumped = false;
         float scale = _scale = cam.Zoom;
         int pw = Math.Max(1, cam.ViewportWidth), ph = Math.Max(1, cam.ViewportHeight);
         double cx = Math.Round(cam.CenterX * scale) / scale, cy = Math.Round(cam.CenterY * scale) / scale;
@@ -189,7 +217,7 @@ public sealed unsafe class WorldRenderer : IDisposable
         if (Frame > 1)
         {
             double ddx = cx - _prevCx, ddy = cy - _prevCy;
-            if (Math.Abs(ddx) > halfW || Math.Abs(ddy) > halfH) { ddx = 0; ddy = 0; _velX = _velY = 0; }
+            if (Math.Abs(ddx) > halfW || Math.Abs(ddy) > halfH) { ddx = 0; ddy = 0; _velX = _velY = 0; _jumped = true; }
             double inv = 1.0 / Math.Max(dt, 1e-4);
             _velX = _velX * 0.8 + ddx * inv * 0.2; // world px / s
             _velY = _velY * 0.8 + ddy * inv * 0.2;
@@ -675,6 +703,8 @@ public sealed unsafe class WorldRenderer : IDisposable
 
     bool Submit(ref Renderer.FrameInput fi)
     {
+        fi.Hold = _jumped;
+        GrowInstancesIfNeeded(fi.StreamOnly || _jumped);
         bool ok = Renderer.RenderFrame(ref fi);
         for (int i = 0; i < _ovUsedCount; i++) _ovTable[_ovUsed[i]] = default;
         _ovUsedCount = 0;
@@ -688,6 +718,40 @@ public sealed unsafe class WorldRenderer : IDisposable
         GpuSample = false;
         _prepared = false;
         return ok;
+    }
+
+    // ---- grow on demand
+
+    readonly int _instanceMax;
+    GrowthPolicy _instanceGrowth;
+    bool _jumped, _instanceGrowFailed;
+
+    /// <summary>Instance buffer growth (<see cref="GrowthPolicy"/>): occupancy is the allocator's (the reserved dynamic
+    /// range counts as used); starved = an upload found no free range last frame. Runs before the frame stages its
+    /// uploads, so they can use the new range.</summary>
+    void GrowInstancesIfNeeded(bool hold)
+    {
+        var alloc = Chunks.Alloc;
+        if (_instanceGrowFailed || alloc.Capacity >= _instanceMax || Renderer.InstanceCapacity != alloc.Capacity) return;
+        if (!_instanceGrowth.Check(alloc.Used, alloc.Capacity, _instanceMax, hold, Chunks.OutOfGpuSpace, Frame)) return;
+        _instanceGrowth.Grew();
+        int next = GrowthPolicy.Next(alloc.Capacity, _instanceMax);
+        if (!Renderer.GrowInstances(next)) { _instanceGrowFailed = true; return; }
+        alloc.Grow(next);
+        Chunks.OutOfGpuSpace = false;
+    }
+
+    /// <summary>Growth steps so far, all arrays (a host logs when it changes).</summary>
+    public int GrowthEvents => Pages.Growth.Count + (AnimPages?.Growth.Count ?? 0) + Renderer.InstanceGrowth.Count;
+
+    /// <summary>One line: the arrays' sizes and growth steps (count, last/max/total main-thread ms).</summary>
+    public string GrowthSummary()
+    {
+        static string One(string name, int size, int max, in GrowthStats g)
+            => $"{name} {size}/{max} ({g.Count} steps" + (g.Count > 0 ? $", last {g.LastFrom}->{g.LastTo} {g.LastMs:F2} ms, max {g.MaxMs:F2} ms, total {g.TotalMs:F2} ms)" : ")");
+        return One("art layers", Pages.Layers, Pages.MaxLayers, Pages.Growth) +
+            (AnimPages != null ? "; " + One("anim layers", AnimPages.Layers, AnimPages.MaxLayers, AnimPages.Growth) : "") +
+            "; " + One("instances", Renderer.InstanceCapacity, _instanceMax, Renderer.InstanceGrowth);
     }
 
     // ---- debug
