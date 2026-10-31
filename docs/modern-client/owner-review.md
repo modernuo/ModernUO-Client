@@ -156,6 +156,12 @@ Newest at the bottom. Each item says what I did meanwhile.
   5. Prove nothing broke: the new branch's final tree must equal the old tip's tree (`git diff` empty). At each major step: both builds, the unit tests, and a converter verify.
 
   It starts once the milestone (legacy-import + classic-1.1, mem-reduce-3, the audio stores, body overrides) is merged.
+  - **Plan ready (read-only analysis, 2026-10-31):** `C:\Repositories\cuo-poc-state\handoffs\history-cleanup.md`. The scripts are in `C:\Repositories\cuo-poc-state\tools\history-cleanup\`.
+    - **Today:** 590 commits (468 + 122 merges). 240 are docs-only and 91 mix docs and code.
+    - **Target:** 96 commits: 89 code commits, one per feature in the original order, plus 7 docs commits, one per milestone.
+    - **Fix-ups:** of 57, 52 disappear inside their feature. About 17 fix an earlier feature and stay as their own commits, labelled "Fixes: #n".
+    - **Method:** `git commit-tree` from the main line's saved trees, on a new branch `poc/modern-client-clean`. No rebase, so none of the 53 hand-resolved merge conflicts come back. The tree outside docs/ is checked against the original at every step, and the final tree must equal the old tip's. About 31 build-and-test checkpoints. The old tip is tagged `archive/poc-modern-client-<date>` first.
+    - **Risks checked:** the old SDL commit (b2a3160) used by steps #90–#99 is still fetchable through the `archive/modernuo-3.4.19` tag. `.gitattributes` and line-ending changes, and binary fixtures, are carried as exact trees (no checkout).
 - **Map x files are not supported (your decision, 2026-10-31):** a shard that wants the `mapNx`/`staticsNx` set renames it to the regular names before import. On OSI the server chose them per account with character-list flag 0x8000; ModernUO never sends it. On the classic install the x files differ only in statics (Felucca 1,344 blocks, Trammel 439); the terrain is identical.
 - **Your call: unchecked tiledata lookups on old (4.0.11c) packs (legacy-import, 2026-10-31).** Old installs have 0x4000 static tiledata entries; 7.x has 0x10000.
   - **Risk:** about 35 client sites index `StaticData` with a graphic the server sends, without a bounds check: item data, drawing and sorting, pathfinding, targeting, house customisation, shop and other gumps. Only first-sight art is guarded. A server sending a graphic of 0x4000 or above to a client on a legacy pack would make the client throw.
