@@ -35,7 +35,7 @@ namespace ClassicUO.Game.GameObjects
             IntervalInMs = (uint)(d + (speed * d));
 
             // moving effects want a +22 to the X
-            Offset.X += 22;
+            OffsetX += 22;
 
             Entity source = World.Get(src);
 
@@ -150,12 +150,12 @@ namespace ClassicUO.Game.GameObjects
 
                 Vector2 nextSource = new Vector2((newCoordX - newCoordY) * 22, (newCoordX + newCoordY) * 22 - offsetSourceZ * 4);
 
-                Offset.X = source.X - nextSource.X;
-                Offset.Y = source.Y - nextSource.Y;
+                OffsetX = source.X - nextSource.X;
+                OffsetY = source.Y - nextSource.Y;
             }
 
-            Offset.X += s0.X;
-            Offset.Y += s0.Y;
+            OffsetX += s0.X;
+            OffsetY += s0.Y;
         }
 
 

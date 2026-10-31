@@ -2406,3 +2406,356 @@ Branch `poc/pack-text`, from poc/modern-client 0acd0ef85. The next "Not in the p
 - **Unit tests** (`TextPackTests`, 12 tests; the data tests use `CUO_TEST_TEXT_PACK`): every glyph of every font; text rendered by `GenerateUnicode` and `GenerateASCII` (all fonts, style flags and hues, 7 sample strings) and its widths; glyph pages loaded from 8 threads (both paths); every cliloc id of every language; `Translate` with 5 kinds of argument on every enu string that has an argument; strings created once from 8 threads; every speech entry, and `GetKeywords` on every keyword; plus the untrusted-input tests (malformed tables, pages and fonts; corrupt, truncated, oversized and bad-Brotli records absent without throwing; a truncated store rejected; the MUL slice rule against `ReadUTF8`). Run against the ship pack and the `--raw-text` pack.
 - **Full suite:** 650 tests pass in the default build and in `-p:CuoDevTools=false` (`CUO_TEST_TEXT_PACK` = the ship pack; the gump tests ran against the main pack, which has gumps now). The write-site budget is unchanged.
 - **Not done:** the main pack was not regenerated (read-only for agents): `Uo.Converter --only fonts,cliloc,speech --out <pack>` adds the section in about 2.5 s. Legacy world renderer runs (text is UI and overhead only; the screenshots used Gpu). Codex audit pending.
+## L1: TCP receive drain loop and server-close detection (2026-10-30)
+
+Branch `poc/net-drain` (base poc/modern-client fdfcc9813, merged up to 3681f25b3).
+
+**Problem.** `TcpSocketWrapper.Read` returned 0 whenever `Available` was 0, so a server FIN while the client was idle was never noticed (stuck "Verifying Account"), and `GameController.Update` read at most one 4 KB slice per frame.
+
+**Change.**
+- `TcpSocketWrapper.Read`: `Socket.Poll(0, SelectRead)` then a non-blocking-style `Receive(..., out error)`. Readable with 0 bytes is a close (`OnDisconnected`), an error is `OnError`; data that arrived before the close is delivered first.
+- `NetClient.Drain(sink, maxBytes, maxPackets, maxMs)`: reads 4 KB slices (Huffman output stays under the 64 KB buffer) and hands each decoded slice to the parser in order, until the socket is empty, a close was raised, or a cap is hit: 128 KB raw, 1500 packets, 4 ms per frame (checked between slices, always at least one slice). `CollectAvailableData` is kept as a single-slice read. Packet order and plugin handling are unchanged (same `ParsePackets` call, once per slice).
+- `Huffman.Decompress` no longer clears the whole 64 KB output buffer per call (it would now run per slice).
+- `LoginScene.OnNetClientDisconnected`: a clean server close (`Success`) during Connecting, VerifyingAccount, ServerSelection, LoginInToServer, CharacterSelection or EnteringBritania is now a lost connection (popup, reconnect if enabled). It was ignored before, so the FIN fix alone would still have left the screen stuck. After a login denial the step is already PopUpMessage, so the denial text is kept. `GameScene` shows `ConnectionReset` instead of "Success" and logs `Disconnected from the game server: <error>`.
+- Diagnostics: FrameStats counters `net_avail`, `net_bytes`, `net_slices`, `net_packets`; `CUO_NET_TRACE=1` logs `[net]` lines per frame with data; `CUO_NET_CAP_BYTES/PACKETS/MS` override the caps (`CUO_NET_CAP_BYTES=1` = one slice per frame, the old behaviour, used as the base).
+
+**Measured** (kbatman2, JIT, TieredCompilation=0, VSync on, 1920x1080, the same binary with `CUO_NET_CAP_BYTES=1` as base; 3 rounds interleaved; plan: Britain, `[TestScene go`, scene, `[TestScene return`; machine shared, other agents idle on the GPU, so only the ratios matter). Bursts are frames with more than 4 KB available.
+
+| Burst | duration | frames | KB | packets | bytes per frame (avg / max) | drain ms sum / max | frames >8 ms / >16 ms |
+|---|---|---|---|---|---|---|---|
+| Teleport into the scene, base (one slice per frame) | 3734-3750 ms | 226-227 | 904-908 | 55k | 4096 / 4096 | 255-278 / 16-27 | 2-3 / 1 |
+| same, drain with packet cap only (1500) | 578-610 ms | 30 | 811 | 51k | 27.7k / 53k | 236-258 / 40-48 | 5 / 2-3 |
+| same, drain + 4 ms budget (the default) | 797-1000 ms | 49-58 | 822-827 | 52k | 14.6-17.2k / 28.7k | 235-316 / 15-20 | 2-5 / 0-1 |
+| Return to Britain, base | 500 ms | 31 | 124 | 21.5k | 4096 / 4096 | 14-19 / 2-3 | 0 / 0 |
+| same, new | 141-172 ms | 11-12 | 124-126 | 21.7k | 11.7k / 12.3k | 13-18 / 3-6 | 0 / 0 |
+
+- `Available` after the teleport reaches 65,536 (the socket's receive window) from the first frame, so the base kept the window full for 3.7 s. The packet work is the same either way (about 250 ms of parsing in total, 5 us per packet); the drain just spends it in fewer frames. Without a time budget the first frames cost 40-48 ms; the 4 ms budget keeps the worst frame near the base's (15-20 ms, the first frame, which also pays one-off setup).
+- Login: only 6 KB / 239 packets arrive (largest `Available` 2.4 KB), so login-to-world-ready is unchanged: `[settle] Entry: ready` 746-828 ms in every variant. L1 changes nothing at login except the close detection.
+- Cross-facet `[settle] Facet: ready` times (134-682 ms) are unchanged by the drain (the hold ends when the GPU world is ready, not when the scene's objects have arrived).
+
+**Tests.** `NetDrainTests` (15): partial reads in order, slice size, 200 KB in slices, byte cap and resume, packet cap, time budget, nothing ready, data then close, close mid-packet, close while idle, a Huffman stream over 64 KB decompressed cut at arbitrary slice boundaries, and four real loopback `TcpSocketWrapper` tests (idle close, data then close, reset, partial reads). Against the old `TcpSocketWrapper` the idle-close, reset and data-then-close loopback tests fail. Full `dotnet test`: 604 passed. Both builds (default and `-p:CuoDevTools=false`) build with 0 errors (the DevTools=false one was built, not run).
+
+**Normal session** (`b1;travel;ltravel;scene;return;b2`, new default build): `[settle]` 0 unsettled frames in every Teleport/Facet episode, 0 timeouts; 12 unsettled frames "while walking", the known single-page misses of walking (world-settle.md), same as before.
+
+**Server close, live** (kbatman2, through a TCP relay `127.0.0.1:2594 -> 2593` that rewrites the 0x8C redirect; the real ModernUO was not stopped, because `stop-modernuo.ps1` needs PowerShell, which this task bars, and force-killing a shared server is not allowed; the relay closes the client-side connections, which is what the client sees when the server closes):
+- In game, relay FIN: `Disconnected from the game server: ConnectionReset` in the same second (log has 1 s resolution), message box path as for any disconnect.
+- In game, relay RST: same line, same second.
+- Login connection idle, relay FIN: `Disconnected` warning at once (LoginScene popup path). Whether the screen was server select or character select was not captured (no screenshot); the character-select-specific popup is covered by the same code path (`CharacterSelection` is in the list) but not seen.
+- Not done: a real server stop/restart, NativeAOT, a screenshot of the popups.
+
+**Process note.** One batch (10:17) built and ran a 19 s client without holding bench.lock because its lock helper file was missing and the script carried on; found and stopped within a minute. All later steps took the lock first and held it for one step each.
+
+**L1 audit fixes (Codex, 2026-10-30).**
+- **Idle pump (P1):** `Drain` now calls the sink once with an empty slice when no slice produced bytes, so `ParsePackets` (which also drains the plugin queue) runs every frame; it counts toward the frame's time budget. Test: a plugin-injected packet on an idle socket is handled once.
+- **One termination path (P1):** `NetClient.Terminate(error)` is the only way a connection ends from the receive or send side (peer close, reset, socket error, bad Huffman stream, malformed header). It resets protocol state (compression off, Huffman, send queue, a new `ConnectionGeneration`) before closing the socket and raising `Disconnected`. `Connect` and `Disconnect` reset the same state, and events from a replaced socket are ignored. Tests (real loopback, FIN and RST): close with compression on, then a login retry reads plain bytes and parses cleanly; `Connect` starts in login mode even if compression was left on.
+- **Parser queues (P1):** `PacketHandlers.ParsePackets` clears both queues when the connection generation changed (also mid-loop, for the 0x8C relay). Test through the real parser: `A9 01 2C`, FIN, reconnect, `73 04` is delivered as a ping, not swallowed as the old packet's body.
+- **Malformed headers (P2):** a length smaller than its own header (`03 00 00`, `03 00 01`, `03 00 02`) logs, clears the queue and ends the connection (`ProtocolNotSupported`) instead of looping; a header-sized packet is accepted. Tests on the real parser.
+- **Non-blocking read (P2):** `TcpSocketWrapper.Read` reads at most `Available` bytes (cannot block); when nothing is queued but the socket is readable, a one-byte probe runs with the socket switched to non-blocking for that call only (sends stay on the blocking `NetworkStream`). Partial writes and `WouldBlock` on send are untouched (not in scope; the socket stays blocking).
+- **LoginScene (P2):** `CharacterCreationDone` added; the mapping is the testable `LoginScene.IsLostOnCleanClose`, tested over every `LoginSteps` value.
+- **CircularBuffer:** growth is geometric (twice the capacity at least).
+- `Plugin.ProcessRecvPacket` tolerates `Client.Game == null` (needed to run the real parser in tests).
+- Verification: 616 tests pass (12 new in `NetLifecycleTests`); both builds 0 errors; the nodev build logged in.
+- Normal session (`b1;travel;ltravel;scene;return;b2`, vsync off): 0 timeouts, 0 unsettled frames after a timeout or without hold, 8 while walking (known). A first try with VSync on ran at 3 fps (Present blocked about 1 s per frame, 4 settle timeouts, `packets` 0.08 ms): the machine's display, not the drain; not used.
+- Relay close test with `reconnect` on: in game FIN and RST: `Disconnected from the game server: ConnectionReset`, then a retry that logs in again through the relay (new `Connecting to`, `Player created`) within the same second. Login connection idle, FIN: `Disconnected` warning, then the retry logs in. Reconnect after a close at character select is thus clean (compression and parser state reset).
+
+**L1 second audit (Codex, 2026-10-30; mostly the WebSocket path, kept for a future browser build).**
+- **Terminal events on the update thread:** socket callbacks (a WebSocket's receive task can raise them from any thread) now only record "closed with error X" against their own `Connection` (first report wins, so an exception followed by the end of the receive loop is one close). `Drain` first reads and parses everything that connection had queued, and only then runs `Terminate` (reset, close, `Disconnected`). A connection that was ended, replaced or explicitly disconnected is retired: its late callbacks are ignored and its reads return nothing, so old compressed bytes can't reach the plain parser and a late callback can't terminate the new socket. Huffman is only reset on the update thread. TCP behaves as before (its events come from `Read` on the update thread; a `Connect` failure now reaches `Disconnected` on the next `Drain` instead of inside `Connect`).
+- **Plugin injections are tagged by generation:** `Append(data, true)` drops older injections and stamps the queue with the current generation; `ParsePackets` clears the plugin queue only when its stamp is older. A packet injected after `Connect` but before the next `ParsePackets` (e.g. from an outgoing hook during the 0x8C relay's login sends) is kept. Test calls the real `Connect` first.
+- **Plugin queue is not budgeted:** the empty-slice pump parses the whole plugin queue in one go; the time budget covers network slices only. Fine for now (plugin traffic is small); revisit if a plugin injects bulk data.
+- Tests: wrap-around growth of `CircularBuffer`; the header-only variable packet is now `03 00 03` (length 3), not 5; cross-thread close with compressed data queued; double report; late callback of a replaced connection; explicit `Disconnect` then a late close.
+
+**L1 third audit (Codex, 2026-10-30).**
+- **No lock held while dispatching:** `PacketHandlers` has one `_queueLock` guarding both queues and their generations; packets are dequeued into a local buffer under it and handlers/plugins run after it is released. Plugin injection (`Append`) is thread-safe by itself, so `Plugin.OnPluginRecv*` no longer take `lock(PacketHandlers.Handler)`; the only lock order is "caller's own lock, then the queue lock". This removes the deadlock between a background injector and a handler whose response runs an injecting outgoing hook.
+- **Atomic generation handling:** comparing the injection's generation, dropping older plugin packets, stamping and enqueuing are one step (`AppendPlugin`); an injection from an older connection is discarded, and never clears newer packets. `ConnectionGeneration` is read/incremented with Volatile/Interlocked.
+- **Final frame vs close:** `Drain` ends a connection only after an empty read made after it had seen the close (one extra read round after seeing it; the caps still apply, a capped frame carries on next frame).
+- **Idempotent termination:** `Terminate(error, connection)` ignores a connection that was already ended or replaced, so a `ProtocolError` inside the parser pump followed by the Drain that saw the close fires `Disconnected` once.
+- Tests (626 pass): background injector plus a hook-injecting handler (2000 parses, 20 s timeout), final frame after an empty read, stale-generation injection, malformed plugin bytes at close.
+
+**L1 final audit (Codex, 2026-10-30).** `Drain` remembers the specific `Connection` whose close it saw (`closeSeen`), and an empty read ends a connection only when it comes from that same one; a connection replaced inside the sink (the 0x8C relay) starts over. Test: two `RacingSocket`s chained, replacement inside the first sink.
+
+**Follow-ups (not fixed on this branch).**
+- Pre-existing send-side race in `NetClient.Send`: encryption happens before the send lock, so concurrent plugin-thread and main-thread sends can encrypt in one order and be queued in another (a stream cipher then desyncs), and `ResetProtocolState` / `EnableCompression` clear `_sendStream` without taking its lock. The fix is to encrypt and enqueue under one lock, and to take that lock when clearing.
+- Continuous background plugin injection can keep the (unbudgeted) plugin-queue pump running for a whole frame; if a plugin ever injects bulk data, give the plugin pass a packet or time cap too.
+
+## Login warm-up collections: pools filled and one collection inside the login hold (2026-10-30)
+
+Branch `poc/login-warmup-gc` (warmgc agent, kbatman3), from poc/modern-client 3685c30f0; final numbers on 80ccb1a24 (base: branch `poc/login-warmup-gc-base`, the same tip plus the measurement commits only). Follows "Chunk loads without allocation", whose remaining collections were all login warm-up. Scripts, logs and traces: session scratchpad `warmgc\`.
+
+**New measurement: the session GC timeline.** The `[gc]` lines only cover plan windows, which start about 10 s after login. With `CUO_FRAMESTATS=1`, FrameStats now also logs from the first in-game frame:
+- `[gcs] +12.34s #n genN ...`: every collection, with seconds since login, pause, promoted MB and the frame's time, marked `login` (before the first presented world frame), `held` (WorldSettleGate held the world that frame) or `play`;
+- `[gcs] slow frame`: every frame over 8 ms, marked the same way. The frame after a window report is logged as such and not counted: the report itself takes 20–30 ms;
+- `[gcs] summary +40s/+60s`: counts and pauses, play against held;
+- `[gcs] pools`: chunks, lands and statics allocated and pooled, and the statics mesh capacities.
+
+**What allocates after login** (base; dotnet-trace allocation ticks on a JIT build plus the pool lines):
+- In the first 40 s, the client allocated about 155 MB. 125 MB of it is large-object-heap `byte[]`: region decompression in `MapLoader.LoadRegion` and Uo.Render `Region.Parse`, and pack page buffers. Large objects don't fill gen0.
+- About 30 MB of small objects fill gen0 twice:
+  - the Legacy `MeshLayer` arrays of new chunks (5.8 MB) and their growth (5.2 MB);
+  - new `Land` and `Static` objects (4.7 MB);
+  - chunks, tile arrays, list nodes and the recycler queues growing (the queues reach the large object heap);
+  - Uo.Render bake arrays, misses in the art and texmap decode buffer pools, strings, and the server's items.
+- Over the session: 225 chunks by the end of the login, 289 in all (none after 40 s), 19,584 lands and 16,387 statics. Statics mesh capacity after 2 minutes: 64 sprites: 15 chunks; 128: 128; 256: 143; 512: 3.
+- Collections: in base, every one of the first 40 s is a gen1 that promotes 21–28 MB: one at login, two at about +19 s and a compacting one at +33–38 s (4–12 ms each). The warm-up is promoted again by the next gen1, which can fall anywhere: at +79 s in `glide`, compacting, 8.3 ms, a 10.0 ms frame (Pb0). That is the glide hitch the chunk-alloc agent saw.
+
+**Fix: `MapWarmup`** (Game/Map/MapWarmup.cs).
+- When World creates its first map (login, before the first world frame), it fills:
+  - the chunk pool to 300 chunks, with the statics mesh layer pre-sized to 256 sprites (48 KB, below the large object heap);
+  - the recycler to 19,200 lands and 16,800 statics (56 per chunk, the measured average), with both queues sized for a full pool.
+- The sizes follow the chunk cache limit, not one viewport. The pool and the recycler already stop at `PREDICTABLE_CHUNKS` (300) and 64 lands per chunk, and the prefill fills them to those caps.
+  - A 4K or far-zoomed-out view needs more chunks than the caps, before and after this change: the first 300 come from the prefill and the rest allocate as before. Raising the caps is a separate decision.
+  - A small view (800×600) uses perhaps a quarter of them, and the rest stays in the pools.
+- **The 32 MB up front is a deliberate trade:** prefill takes 22–31 ms and 32 MB at login, in exchange for a first minute that doesn't allocate while playing.
+- Prefilled objects are new objects in the retired state (destroyed, `InRecycler`), stamped one quarantine ago so they can be handed out at once. They were never in a tile list, so nothing can hold them, and `Create` resets them as it resets any retired object.
+- Then one deliberate collection, in a frame where the world isn't visible: two induced gen1s, so everything login allocated that's still alive lands in gen2 without marking all of gen2.
+  - Gpu world: the last held frame of the login's settle hold, or a held frame 1.2 s in, before the hold's 1.5 s timeout.
+  - Legacy: the first world frame, which is the login transition.
+  - Cost: 4–12 ms (`[warmup] collected ...`).
+- **Switches:** `CUO_WARMUP=0` restores the old behaviour; `CUO_WARMUP_GC=0` keeps the prefill and skips the collection; `CUO_WARMUP_GC=2` makes it a full compacting gen2; `CUO_WARMUP_CHUNKS=n` sets the chunk count.
+- **Not done:** a collection in later teleport holds. .NET has no API for how full gen0 is, so there is no honest trigger. `DOTNET_GCgen0size` is ignored by NativeAOT: the gen0 budget stayed 15 MB (one run).
+
+**Measurements.** NativeAOT, `DOTNET_TieredCompilation=0`, Gpu world, 1920×1080, plan `travel;ltravel;glide`, 4 windows each.
+- Three alternated pairs (Pb0/Pn0, Pn1/Pb1, Pb2/Pn2), times from the first in-game frame.
+- The machine was noisy: other agents' work caused 0.5 s stalls about every 2 s in the first four runs, and those runs' logins were slower. Frame counts over 8 ms are dominated by those stalls, so the collections are the measure.
+
+| | Base Pb0 / Pb1 / Pb2 | New Pn0 / Pn1 / Pn2 |
+|---|---|---|
+| natural collections, 0–60 s after login | 7, 4, 4 | 4, 1, 0 (plus the 2 induced: 7.3, 11.6, 7.9 ms) |
+| of these in play frames (after the 1st s) | 1 (gen0 8.5 ms, +5.6 s), 0, 0 | 1 (gen0 5.3 ms, +5.4 s), 0, 0 |
+| promoted per collection after login | 21–28 MB (gen1) | 2–11 MB (gen0) |
+| 60–100 s | gen1 in `glide` 8.3 ms (frame 10.0), gen1 3.1 ms, none | none, none, gen0 3.9 ms (6 MB) |
+| chunks / lands allocated after login | 289 / 19,584 | 0 / 384 |
+
+- **Pb0 and Pn0 ran in the noisiest period.** Each has 2–3 collections in login frames before the hold ended, and one gen0 at about +5.5 s while idle after login. On the quiet runs, new has 0–1 natural collections in the first minute instead of 4.
+- **The one collection new still has** comes at about +31–36 s in `travel` (Pn1, and two earlier single runs). It is a gen0 of 3.5–5 ms that promotes about 10 MB: buffers rented from the art and texmap decode pools on first sight, Uo.Render bake arrays and the server's objects. Whether it lands in a held or a play frame is chance; it stays under 8 ms.
+- **Long session** (13 minutes, 7× `travel`, `glide`, `ltravel`, `bwalk`; new only):
+  - 4 natural collections after login (3 held, 1 play at 2.6 ms; max pause 4.6 ms; 13.6 ms of pauses in all), plus the 2 induced at login (7.6 ms). The chunk-alloc agent's re-run on its tip had 7 collections, 4 of them login warm-up.
+  - Chunks allocated after login: 0. Statics mesh capacities at the end: 256: 278 chunks, 512: 22.
+  - Private bytes: 2,147 MB at 1 min, 2,180 MB at 3 min, 2,186–2,192 MB from 5 min to the end (flat). That is about 35–40 MB above the chunk-alloc agent's 2,150 MB, on a different tip; the prefill is 32 MB of it.
+  - 23 `bwalk` legs with 0 denies, 178 settle episodes with 0 timeouts, 0 exceptions. The machine was noisy: 49 play frames over 100 ms, none of them with a collection.
+
+**Verification** (new binary on 80ccb1a24):
+
+| Check | Result |
+|---|---|
+| `CUO_RECYCLE_CHECK=reuse` with `CUO_GPU_SKIP_CHECK=1`, `CUO_PREP_CHECK=1`, `CUO_GPU_ITEM_CHECK=1` (`travel`, `ltravel`, `glide`, Britain, the bank, zoom 2.5) | 271k retired, 300k reused (the prefilled ones included), 0 uses after retire, 4,216 sweeps (77M objects), 0 bad. Prep check 0 wrong; item check 237 checks, 0 with differences; skip check reasons only (light 6) |
+| Legacy (`-worldrenderer legacy`, `travel`, `glide`) with `CUO_RECYCLE_CHECK=reuse` | 102k reused, 0 uses after retire, 0 bad sweeps; the collection ran in the first Legacy world frame (7.3 ms) |
+| Settle | 0 timeouts in every run |
+| Unit tests | 594 pass, default and `-p:CuoDevTools=false`. New tests: prefilled objects are retired and handed out at once, before later retirees; the prefill is capped and only tops up; a disabled recycler isn't prefilled; a prefilled object reset for reuse equals a new one (field check); prefilled chunks come from the pool with a pre-sized statics mesh |
+
+**Not done:** no 4K run; no Legacy timing pair (the Legacy run is the reuse check only); not the owner's FPS test.
+
+**Codex audit (602b071b7): no recycler-state or use-after-reuse issue; fixed:**
+- **The login collection could stay armed into gameplay.** A login hold that timed out left it for the next teleport or facet hold, a switch to Legacy ran it during play, a disconnect left it pending, and with `CUO_WORLD_HOLD=0` it never ran.
+  - It now belongs to the login's first world frames only. In the Gpu world it runs in a held frame of the login episode (`Entry`): the last one, or one at 1.2 s (at most 80% of the configured hold timeout).
+  - A presented frame, a hold of another episode or `GameScene.Unload` cancels it (`[warmup] collection cancelled: ...`).
+  - In Legacy it runs only in the first world frame.
+  - With `CUO_WORLD_HOLD=0` nothing is held, so the first world frame cancels it.
+- **`[gcs]` totals counted wrong when several collections fell in one frame.** The two induced gen1s counted as 2 collections but as one gen1 and one pause. Totals now come from deltas of `CollectionCount(0/1/2)` and `GetTotalPauseDuration()`; the per-collection detail is labelled "latest sampled".
+- **The session baseline** is now taken at the end of the last frame before login, so collections in the first in-game frame count (Legacy's warm-up collection runs there).
+- **`WorldShown` and the timeline reset when the session ends.** After a logout, login-screen frames no longer count as `play`, and a relogin starts a new timeline.
+- **Pre-existing, follow-up for when several Worlds matter (not changed):**
+  - The `Chunk` pool is static, while each chunk keeps its `World` (readonly), and `World.Clear` calls neither `Chunk.ClearPool` nor `MapRecycler.Clear`. A second World could get the first one's chunks.
+  - The prefill makes that retention immediate: 300 chunks from login on.
+  - Today there is one World per process.
+- **Check after the fixes** (010a09866): 643 unit tests pass in both variants. One NativeAOT login run (`travel`, `glide`) logged the induced collection in the last held frame of the login hold (12.4 ms), shown as `2 collections (gen1+ 2), pause 12.32 ms, login`. The 4 collections of the first in-game frame are now counted. The +40 s summary (6 collections, 22.0 ms) equals the sum of the per-frame lines; 0 collections in play frames, 0 exceptions.
+
+
+
+## T6a: one sort key reproduces every tile list (2026-10-30)
+
+Base: poc/modern-client 3681f25b3. Branch `poc/ecs-t6a-tile-order`. No behaviour change. Logs and tools: session scratchpad `t6a\`.
+
+**Result: proved for everything the runs reached, 0 out of order.** The key is (stored `PriorityZ`, rank, rank 2 ? +seq : −seq), with rank 0 land, rank 1 a `Multi` that `AddGameObject` inserts with `state` 1, rank 2 everything else. The real rules, read from `Chunk.AddGameObject` rather than the plan's summary:
+- **Priority** is computed once, at insertion, and stored in `PriorityZ`. Nothing changes it while the object is in a list (only `Destroy` and `ResetForReuse` zero it, both after unlinking).
+  - Land: Z−2, or AverageZ−2 when stretched. Mobile: Z+1. Corpse item: Z+1. GameEffect: Z+2. Multi with `CHMOF_GENERIC_INTERNAL`: Z−1, no tiledata terms.
+  - Everything else (statics, other items, multi items with `MultiGraphic`'s tiledata, other multis, preview multis after a +1): Z, −1 if Background, +1 if Height ≠ 0, +1 if MultiMovable.
+- **Tie placement:** the scan from the head stops at the first object with a higher priority, or at an equal one when the new object is land (`state` 0: before every equal), or at a non-land equal when it is a `state` 1 multi. Generic-internal is tested first, so generic-internal plus preview is still state 1; any other non-preview multi is state 1. Everything else, preview multis included (`state` 2), goes after all equals.
+- **Every placement** goes through `AddGameObject` (`AddToTile`, `SetInWorldTile`, `Map.Park`'s deferred add, chunk loads), which first unlinks the object (`RemoveFromTile`), so a move or any re-add restamps it. `RemoveGameObject` is never called; removal is `RemoveFromTile`/`Destroy`, which only unlink.
+- **Graphic changes** re-insert only where the code calls `SetInWorldTile`/`AddToTile` (0x1A world items do; season changes and `Graphic =` sites without a re-add do not). The stored priority then stays, and the key uses it, never the current graphic.
+- So by induction each list is sorted by the key. The new `TileOrderTests` check the priorities, each rule, re-inserts, removal, a graphic change without a re-insert, and 3,000 random operations over land, statics, plain, preview and generic-internal multis, comparing the list with its stable sort after every step.
+
+**What changed.**
+- `GameObject.TileSeq` (uint; a ulong since the audit fixes below), stamped in `Chunk.AddGameObject` from the global `TileOrder.NextSeq` (pre-increment, so 0 is never a stamp). Reset in `GameObject.ResetForReuse`; the recycler's reflection test enforces it. `MapObjectRecycler.cs` itself is untouched.
+- `Game/Map/TileOrder.cs`: `Rank`, `Key`, `CountOutOfOrder` and the checker.
+  - `CUO_TILE_ORDER_CHECK=1` (every 30 frames), `every`, or `N`. From `GameScene.Update` (since the audit fixes: the start of the world prepare), every tile of every loaded chunk (a superset of the tiles either walk visits) must be non-decreasing in key, which is exactly "equals its stable sort".
+  - Logs `[tile-order] tiles N, objects M, out of order K (tiles T), checks C; land, multi, other (preview multis)` every 5 s, and the first 25 offending tiles with each object's kind, rank, priority, Z, sequence and graphic.
+- Test seam: `Chunk.StaticDataForTests` (null in the client), read instead of the loaded tiledata by `AddGameObject`'s default branch. Replaced in the audit fixes by `Chunk.StaticTileData`, with no per-insert branch.
+
+**Runs** (JIT Release, kbatman3, `CUO_TILE_ORDER_CHECK=1 CUO_RECYCLE_CHECK=1`; drivers with `-ecscheck 120`, Gpu drivers with `CUO_ECS_PARITY=1`):
+
+| Run | Renderer | Tiles checked | Objects checked | Out of order | Recycle check |
+|---|---|---|---|---|---|
+| Plan: Britain, `pickscan:8x6`, bank, `pickscan:8x6`, house spot at zoom 1 and 2.5, `travel` (real teleports), `ltravel`, `glide`, `lswalk` | Gpu | 72.7M | 136.0M | 0 | 195,752 retired, all 0 |
+| Same plan without pickscan | Legacy | 48.6M | 90.6M | 0 | 198,824 retired, all 0 |
+| `ls_parity` (large scene) | Gpu / Legacy | 1.07M / 1.09M | 12.8M / 13.5M | 0 / 0 | 0 / 0 |
+| `w5push` | Gpu / Legacy | 10.7M / 11.4M | 11.5M / 11.4M | 0 / 0 | 0 / 0 |
+| `w5items` | Gpu / Legacy | 4.30M / 4.27M | 4.32M / 4.28M | 0 / 0 | 0 / 0 |
+| `corpses` (corpses, HealerCamp multi) | Gpu / Legacy | 4.57M / 4.20M | 4.90M / 5.18M | 0 / 0 | 0 / 0 |
+| Rank counts, `=every`: house spot, Britain, bank, glide | Gpu | 931M | 1.72G (land 931M, other 794M, multi 0) | 0 | 0 |
+| Rank counts, `=every`: `corpses` with the camp | Legacy | 200M | 309M (land 200M, multi 64.5M, other 44.3M) | 0 | 0 |
+
+- `pickscan:8x6` at Britain and the bank: 48 same, 0 different each. `-ecscheck`: 0 mismatches in every run.
+- **Gpu parity** showed 29–75 mobile mismatches per driver run, all at the login frame or a spawn (the capture has fewer layers than the ECS, e.g. 3 vs 5, plus FrameInfo). **Pre-existing:** base 3681f25b3 in the same `w5items` run had 7 of the same kind (the player at login, a spawned NPC). Not tile order. The 40 and 54 came from two runs that logged in inside the large scene (the previous run had left the character there).
+- **Not exercised live:** custom-house components (generic-internal multis), house-customization preview multis (`GameCursor`) and boats. The "house" spot (1427 1691) had no multi in range (multi count 0), so the multi rank was exercised only by the HealerCamp (64.5M multi-object checks). The other kinds are covered by the unit tests only.
+
+**Exceptions: none observed. Hazards for T6b, from the code:**
+1. **Compute the key at insertion, not from current fields.**
+   - `PriorityZ` comes from the graphic, Z and flags at that moment. The graphic (seasons, some `Graphic =` sites) and multi state can change later without a re-insert.
+   - The checker recomputes the rank from the current `Multi.State`. That is only safe because no code sets or clears `CHMOF_PREVIEW`/`CHMOF_GENERIC_INTERNAL` on a placed multi between placements: `House.Generate(removePreview)` clears preview only after `SetInWorldTile`, and only on house components, which never carry it; the floor-plane multis get `GENERIC_INTERNAL` after `Add`, which is rank 1 either way.
+   - T6b should store (priority, rank, seq) per entry.
+2. **A stale head pointer** (fixed in the audit fixes below).
+   - `RemoveFromTile` does not update `Chunk.Tiles[x, y]`, which stays the first object ever placed on the empty tile. The walk finds the head by following `TPrevious` from it.
+   - Harmless while that object is the land, which never leaves. On a tile with no land (a block without map data), the first dynamic object leaving would orphan the rest of the list, and re-adding it takes the `o == obj` branch, which follows the `LinkedObject` container links (`Previous`/`Next`), not the tile links.
+   - Not reached in any run. T6b's own storage should not reproduce it.
+3. **Seq was a 32-bit counter.** About 250k stamps in a 4-minute travel session, so a wrap would take weeks, but a wrap reverses two equal-priority inserts (audit). Now 64-bit, with a struct comparator.
+4. **Insertion order is the only tie-break between equal non-land, non-multi objects** (items, mobiles, effects, statics). T6b must take its stamp at the same point in update order as `AddGameObject` (E4's observation).
+
+**Cost when unset.** NativeAOT, paired, checker unset, `world_prepare` in ms, 2 windows per spot. Series 1 (base/new/new/base) on 19d295c5a; series 2 (new/base/base/new) on 1b3518b55, which adds only checker code. The machine was noisy: base alone spread up to 25% between sessions.
+
+| Spot | base (4 sessions) | new (4 sessions) |
+|---|---|---|
+| Gpu Britain | 0.071 0.064 0.069 0.066 | 0.063 0.068 0.068 0.073 |
+| Gpu bank | 0.073 0.069 0.089 0.071 | 0.067 0.073 0.072 0.079 |
+| Gpu zoom 2.5 | 0.252 0.249 0.321 0.254 | 0.235 0.241 0.231 0.288 |
+| Gpu large scene | 0.934 1.052 0.967 1.146 | 1.120 1.001 0.989 1.147 |
+| Legacy Britain | 0.189 0.207 0.218 0.309 | 0.207 0.209 0.208 0.292 |
+| Legacy bank | 0.155 0.143 0.164 0.200 | 0.143 0.146 0.141 0.153 |
+| Legacy zoom 2.5 | 1.365 1.300 1.447 1.603 | 1.392 1.423 1.306 1.344 |
+| Legacy large scene | 1.283 1.230 1.362 1.398 | 1.224 1.219 1.200 1.197 |
+
+No measured regression. With the variable unset, the change still costs one static `bool` test per frame and, per placement, a counter increment and a field store (the audit fixes add a cell store and remove the test-seam branch).
+
+**Tests:** 599 pass in both `CuoDevTools` variants (10 new in `TileOrderTests`), and `-p:CuoDevTools=false` builds. `ChunkLoadingTests.Prefetched_Regions_...` failed once on the first run under load and passed on the rerun, as in E4 and E10.
+
+### T6a audit fixes (Codex audit of 634cd24b9)
+
+The audit confirmed the key matches normal insertion (priorities, equal-priority placement, no insertion bypass, no stamping off the main thread) but found the proof incomplete. Fixed in two commits:
+
+**0259870f9, tile membership (pre-existing bug, behaviour change on landless tiles only).**
+- The bug: `RemoveFromTile` never updated `Chunk.Tiles[x, y]`, the anchor the walk starts from. On a landless tile (`Chunk.Load` places nothing when `TryGetBlock` fails), removing the anchor A left `Tiles[x, y] == A` with its links cleared, so the rest of the list was unreachable. Re-adding A then took `AddGameObject`'s `o == obj` branch, which followed the `LinkedObject` container links (`Previous`/`Next`: for an effect, its EffectManager sibling) into another tile's list.
+- The fix: `GameObject.TileCell` stores the cell, set with `TileChunk` in `AddGameObject` (X/Y can change before removal: `SetInWorldTile`). `RemoveFromTile` calls `Chunk.ReleaseAnchor`, which hands a departing anchor to `TPrevious ?? TNext`, or null. The `o == obj` branch and the unused `RemoveGameObject` are gone. Tiles with land are unchanged: the land is the anchor and never leaves.
+- Tests: anchor removal on a landless tile, re-insertion with a stale container link (the old code put the object into the other tile's list), moving the anchor away and back, the stored cell surviving an X/Y change, and the random test now also uses a landless cell and checks membership both ways after every step.
+
+**55b15f1ee, the checker and the key.**
+- **64-bit sequence and a struct key.** `TileSeq`/`NextSeq` are `ulong`; `TileOrder.Key` returns `TileOrderKey` (priority, rank, seq) with a comparator (rank 2 oldest first, ranks 0 and 1 newest first). A 32-bit stamp wrapping between two equal-priority inserts reversed them. Tests cross the 2^32 boundary and check the comparator at the extremes.
+- **Full traversal.** No 10,000-object cap: each list is walked once from its head, with Floyd cycle detection on `TPrevious` (head search) and `TNext`. A cycle, a broken back link (`TNext.TPrevious != o`) or an object whose stored chunk/cell is another tile fails the tile; nothing unchecked is reported as clean. The other direction: every item, mobile, house component and (dev builds, where `World.Effects` exists) effect whose `TileChunk` is set must be reachable from its stored tile's anchor. Not covered: land and statics that fell out of a list (they are only reachable through lists), the multi-placement preview item and the cursor's preview multis (not in any world collection).
+- **Reports** are counted independently of the descent, capped at 25, and print a 16-object window around the first descent.
+- **Where it runs.** It ran in `GameScene.Update` before `World.Update`, the boat updates and the rest of Update, so it did not see the state walked that frame. It now runs at the start of `FillGameObjectList` (both renderers), on the lists the walk then reads. Exception: a chunk loaded synchronously during the prepare itself (`CUO_CHUNK_SYNC=1`, or a `GetTile`/`GetChunk` with load during the walk) is not in that frame's sweep; it is checked from the next sampled frame on.
+- **No test-seam branch.** `AddGameObject` reads `Chunk.StaticTileData`, assigned once in `Client.cs` right after `FileManager.Load` (`TileDataLoader.Load` is the only place that array is replaced); unit tests assign their own. The per-insert null test is gone. What placement still costs: the counter increment and the 8-byte stamp store, plus the cell store.
+
+**Runs on 55b15f1ee** (JIT, kbatman3, `CUO_TILE_ORDER_CHECK=1 CUO_RECYCLE_CHECK=1`; the four drivers `ls_parity`, `w5push`, `w5items`, `corpses` in one session per renderer to save bench-queue turns, `-ecscheck 120`, Gpu with `CUO_ECS_PARITY=1`):
+
+| Run | Tiles | Objects | Out of order / cycles / broken / foreign | Owned checked, unreachable | Recycle |
+|---|---|---|---|---|---|
+| Plan Gpu (Britain + pickscan, bank + pickscan, house spot, travel, ltravel, glide, lswalk) | 69.9M | 130.2M | 0 / 0 / 0 / 0 | 2.93M, 0 | all 0 |
+| Plan Legacy (same, no pickscan) | 36.5M | 67.9M | 0 / 0 / 0 / 0 | 2.08M, 0 | all 0 |
+| `ls_parity` Gpu | 0.97M | 8.03M | 0 / 0 / 0 / 0 | 7.05M, 0 | all 0 |
+| Four drivers, Legacy | 30.4M | 39.6M (multi 453k) | 0 / 0 / 0 / 0 | 9.21M, 0 | all 0 |
+| Four drivers, Gpu | 30.2M | 42.7M (multi 4.85M) | 0 / 0 / 0 / 0 | 12.5M, 0 | all 0 |
+
+- `pickscan:8x6`: Britain and the bank 48 same, 0 different. `-ecscheck`: 0 mismatches. Parity items 4.34M, 0 mismatches.
+- Gpu mobile parity: 190 (drivers) and 340 (`ls_parity`) mismatched mobile-frames, all in the first 6 s after login and at the arrival in the large scene (capture 3 layers vs ECS 10–11, FrameInfo). Base 3681f25b3 with the same `ls_parity` run: 64, at the same two moments, same mobiles' kind. The count depends on arrival timing. Cause (coordinator, later): these runs lacked `CUO_ANIM_SYNC=1`; not tile order. `CUO_ECS_PARITY` now forces synchronous loading itself (492e73c14).
+
+**Chunk-load cost** (NativeAOT, checker unset, paired base 3681f25b3 / new 55b15f1ee, base-new-new-base, 3 windows of `travel` (real teleports), `ltravel` and `glide`; totals over the windows; noisy, other agents' clients running):
+
+| Mode | base 1 | new 1 | new 2 | base 2 |
+|---|---|---|---|---|
+| travel, µs per chunk load (loads) | 41.7 (595) | 27.2 (595) | 27.3 (595) | 35.8 (595) |
+| ltravel | 19.5 (605) | 19.3 (604) | 18.9 (604) | 19.7 (605) |
+| glide | 23.8 (280) | 23.4 (328) | 23.0 (328) | 23.2 (329) |
+
+No measured regression (travel's base rounds include GC-heavy frames: max 5.4 and 6.4 ms per frame vs 1.1–1.2 ms). The world prepare series above stands as "no measured regression", not "no cost".
+
+**Tests:** 607 pass in both `CuoDevTools` variants (18 in `TileOrderTests`); both client flavours build. After merging poc/modern-client 80ccb1a24 (T0 census and write-site budget test): 643 pass in both variants, both flavours build.
+
+### T6a re-audit fixes (Codex re-audit of ec4c1f8c1), commit c24d6cf71
+
+The re-audit confirmed the five earlier points fixed and no regression from `ReleaseAnchor`. Four more:
+1. **Movers kept lone objects on their old cell (pre-existing).** `Mobile.ProcessSteps` (step completion) and `BoatMovingManager` (the boat item and carried entities) updated X/Y and re-added only when the object had a tile-list neighbour (`TNext`/`TPrevious`). A lone object on a landless tile has none, so it stayed on the old cell with stale `TileChunk`/`TileCell`; a parked mover kept its old parked destination. They now test `GameObject.IsPlaced` (`TileChunk != null` or an active `PendingBlock`). On tiles with land this is the same test as before (the land is always a neighbour).
+2. **The checker could miss its own anchor.** With `L.TPrevious = S` and `S.TNext = null`, head discovery returned S and only S was checked. Head discovery now counts `TPrevious` links whose target doesn't point back (broken links), and the forward walk must meet the anchor (`anchor missed`); both fail the tile. New: an object other than an effect whose X/Y is not its tile counts as `misplaced` and fails the tile, which catches point 1.
+3. **Forward-only scans from `Tiles[x, y]` (pre-existing).** `Map.GetMapZ` and `Map.CalculateNearZ` walked forward from the anchor, which on a landless tile can be an interior node: a roof before it was missed. Both now go through `Map.ScanStart` (`Map.ScanMapZ`, `Map.FindNearRoof`, testable statics): on a tile with land they start at `Tiles[x, y]`, the land, exactly as before (owner policy: reproduce legacy behaviour, fix quirks behind their own switch); only when the anchor is not land (the landless case) they start at the head. A test pins the legacy behaviour: a roof static sorted before the land stays invisible to the roof scan and to `GetMapZ`'s static Z. Grep found no other forward-only scan from `Tiles[x, y]`: `MiniMapGump` walks to the tail and back (sees everything), and `GameScene`'s multi-placement reads only the anchor's coordinates.
+   - **Proposed separate switch (not done): `tile_scan_from_head`.** On tiles with land, both scans skip everything sorted before the land: objects whose priority is below the land's (Z − 2, or AverageZ − 2 when stretched), i.e. statics, items and multis lower than the ground, which happens on slopes and stretched land. For `CalculateNearZ` (the walk's roof cut-off, within 6 of the player's tile Z) that means a roof piece just below a sloped land's priority is ignored when deciding whether the player is under a roof, so roofs could stay drawn at such tiles. For `GetMapZ`, the only caller uses the ground Z, so the skipped static Z has no effect today. Low priority: it needs a case found in the world (roof under a slope) before it's worth a switch; it would be checked with `CUO_BENCH_SHOTS` and pickscan with the switch off and on at houses on hills.
+4. **Synchronously loaded chunks** during the prepare are not in that frame's sweep: qualified above rather than changed.
+
+Tests: a lone mobile stepping on a landless tile (the checker flags the old behaviour as misplaced; source empty and destination holding it after the re-add), parked and unplaced `IsPlaced`, a boat's cargo item and rider alone on landless tiles following the boat, the missed-anchor corruption, and the roof scan (roof Z20, roof multi Z40, anchor Z50: at z 24 the scan finds the Z20 roof). Unit tests reach the chunk half of the movers only: `AddToTile(x, y)` needs a `Map`, which needs the UO file manager (E11).
+
+**Runs on c24d6cf71** (JIT, kbatman3, `CUO_TILE_ORDER_CHECK=1 CUO_RECYCLE_CHECK=1`; drivers `ls_parity` + `w5push` + `w5items` + `corpses` in one session per renderer with `-ecscheck 120`, Gpu with `CUO_ECS_PARITY=1`):
+
+| Run | Tiles | Objects | Out of order, cycles, broken, foreign, anchor missed, misplaced | Owned, unreachable | Recycle |
+|---|---|---|---|---|---|
+| Plan Gpu (with `pickscan:8x6` at Britain and the bank) | 80.2M | 147.4M | all 0 | 4.93M, 0 | all 0 |
+| Plan Legacy | 54.8M | 99.3M | all 0 | 2.20M, 0 | all 0 |
+| Drivers Legacy | 22.0M | 37.2M (multi 318k) | all 0 | 14.7M, 0 | all 0 |
+| Drivers Gpu | 22.7M | 43.5M (multi 3.38M) | all 0 | 20.1M, 0 | all 0 |
+
+Pickscan 48 same, 0 different at both spots. `-ecscheck` 0. Parity items 4.87M, 0 mismatches; mobiles 167 mismatched mobile-frames at login and scene arrival (no `CUO_ANIM_SYNC=1`, as above).
+
+**Tests:** 648 in both `CuoDevTools` variants (23 in `TileOrderTests`; `ChunkLoadingTests.Prefetched_Regions_...` failed once on the first run under load and passed in the other variant); both client flavours build. After merging poc/modern-client (gumps in the pack, E4 gate, art workers): 661 tests, 660 pass in both variants; the one failure is `ChunkLoadingTests.Prefetched_Regions_...` under the full run's load, which passes alone (the known flaky test); both flavours build.
+
+**Scan start kept at the land (commit 7d3a52afc, owner policy).** After the re-audit round, `Map.ScanStart` makes `GetMapZ` and `CalculateNearZ` start at `Tiles[x, y]` when it is the land, as legacy did, and at the head only when the anchor is not land (point 3 above, rewritten). Tests: 662 pass in both `CuoDevTools` variants; both flavours build. Runs on 7d3a52afc (JIT, kbatman3, `CUO_TILE_ORDER_CHECK=1 CUO_RECYCLE_CHECK=1`):
+- Gpu, Britain and the bank with `pickscan:8x6`: 48 same, 0 different at each; tile order all 0 over 36.5M objects; recycle all 0.
+- Legacy, Britain, the bank and the bank at zoom 2.5 (no pickscan): tile order all 0 over 31.0M objects; recycle all 0.
+- **Mistake, 17:41:** a first Legacy run had `pickscan:8x6`. Pickscan waits for the Gpu prepare's skipping, which never activates in Legacy, so it hung and DevBench kept moving the OS cursor into the window until the owner closed the client. Pickscan is Gpu-only; the coordinator's fix (skip when the Gpu world isn't active, a capped wait, no OS cursor warps) is pending on poc/modern-client. A planned Legacy `CUO_BENCH_PICK` run was cancelled before it started.
+
+
+## DevBench: the scripted mouse stops moving the OS cursor; pickscan can't hang on Legacy (2026-10-30)
+
+Coordinator fix, d0865ba49. The owner's mouse was stuck in a client for minutes: T6a's `r4_pick_legacy` run put `pickscan:8x6` after `world:legacy`. Phase 1 of a pickscan point waits for `GameScene.IsGpuPrepareSkipping`, which never becomes true without the Gpu prepare, so the scan sat on point 0 and the plan never advanced. Meanwhile `HoldMouse` (and the same block in `UpdateUi`) called `SDL_WarpMouseInWindow` every frame.
+- `HoldMouse` sets `Input.Mouse.Override` (cleared when `_mouse` is null) instead of warping; `UpdateUi` calls `HoldMouse`. `Mouse.Update` is the only reader of the OS cursor and returns `Override` when set, so selection, camera and tooltips see the scripted point. The B8 `ui` scene already used `Override`; `HoldMouse` never runs in the same frames.
+- `pickscan:` is skipped with `[bench-scan] ... skipped: the Gpu world renderer isn't active` unless the Gpu world is active.
+- A point that waits more than 600 frames for skipping abandons the scan (`[bench-scan] abandoned at point ...`) and releases the mouse (`EndPickScan`).
+- Agent rule: never move or capture the OS cursor; a test that needs the real cursor is announced to the owner first; every client run has a hard timeout and every waiting plan step a cap.
+
+Verified: both variants build; 681 tests (one earlier run hit the known flaky `ChunkLoadingTests.Prefetched_Regions...`; the rerun passed). Not run in a client yet: the next agent run with pick or pickscan confirms it.
+## Send-side lock: encrypt and enqueue as one step (2026-10-30)
+
+Branch `poc/net-send-lock` (send-race agent), from poc/modern-client 8f1c81a17. Fixes the "Pre-existing send-side race" follow-up of the L1 network drain entry.
+
+**Bug.** `NetClient.Send` encrypted the packet (advancing the stream cipher) before taking the lock that guards the send queue, so two senders (main thread and a plugin thread) could encrypt in one order and queue in the other, and the server then decrypted garbage. `ResetProtocolState` and `EnableCompression` also cleared `_sendStream` (and flipped `_isCompressionEnabled`) without the lock, so a reset could tear the queue under a concurrent `Enqueue` or in the middle of `ProcessSend`'s drain loop.
+
+**Fix (`NetClient.cs`).** One `_sendLock` guards `_sendStream`, the send-side read of `_isCompressionEnabled`, the send-side cipher state (`Encryption.Encrypt`) and the send statistics. `Send` encrypts, enqueues and counts inside it; `ProcessSend` drains inside it (as before); `ResetProtocolState` and `EnableCompression` take it to flip the mode and clear the queue. No allocation, and still one lock acquire per send (the encryption moved inside the lock that was already taken).
+
+**Audit.**
+- Send entry points: main-thread `OutgoingPackets.Send_*` -> `NetClient.Send`; plugin threads via `Plugin.OnPluginSend` / `OnPluginSend_new` (ignorePlugin = true) -> `NetClient.Send`; the only flush is `GameController` -> `NetClient.Flush` -> `ProcessSend` (update thread). The TCP path is synchronous; the WebSocket path used to be asynchronous (see the audit follow-up below). Plugin hooks (`Plugin.ProcessSendPacket`, `PluginHost.PacketOut`) run before the lock, so no callback runs under it.
+- Send-side resets: `ResetProtocolState` (called from `Connect`, `Disconnect`, `Terminate`) and `EnableCompression`: both take `_sendLock`. `Terminate` is called from the `catch` blocks of `ProcessSend`, outside the lock; `Disconnected` handlers run with no lock held. The lock order is "caller's own lock, then `_sendLock`", and `_sendLock` is never held while taking another lock or calling out, so no deadlock with the update thread, the parser queue lock or the plugin queue.
+- Not under it: `_huffman` and the Huffman/Decrypt receive side (update thread only); `Connection` reports are interlocked.
+- Remaining cost: `ProcessSend` holds the lock while `socket.Send` blocks (unchanged), so a plugin send waits for a slow socket write.
+
+**Tests** (`NetSendLockTests`, 3; 684 in the full run pass): 6 threads x 3000 framed packets through the real Twofish/MD5 game cipher, a receiver with its own cipher instance decrypts the socket bytes and checks every frame, its fill bytes and per-thread order; a reset requested from another thread while a flush is between 4096-byte chunks must wait (10000 of 10000 bytes arrive); resets, sends and flushes in parallel leave only whole, ordered, non-duplicated frames and nothing stale after a final reset. Against the old `NetClient.cs` all 3 fail in 3 of 3 runs (cipher desync, torn frames, 4096 of 10000 bytes, `IndexOutOfRange` inside the circular buffer); with the fix 3/3 pass in 5 of 5 runs (about 0.9 s). Both builds (default and `-p:CuoDevTools=false`): 0 errors. No client login smoke run (optional, skipped; the per-frame path is unchanged).
+
+**Audit follow-up (Codex, 2026-10-30): connection transitions, handshake, WebSocket writer.** Commit after 156d7a183.
+- **Send admission is per connection (P1).** `NetClient` has a send epoch (bumped under `_sendLock` by every `ResetProtocolState`, so by `Connect`, `Disconnect` and `Terminate`). `Send` reads the epoch before the plugin hooks and drops the packet under the lock if it changed, so a plugin send that began on the old connection can't land, encrypted with the old login-cipher state, in the next connection's queue ahead of its seed.
+- **Handshake ordering (P1).** A reset also closes sends. `BeginLoginHandshake(address)` / `BeginGameHandshake(seed)` initialise the cipher (and for the game server switch to game mode and clear the queue) under `_sendLock` and make the calling thread the only sender; `EndHandshake(token)` reopens sends (a stale token, from a connection replaced since, does nothing). `LoginScene.OnNetClientConnected` and `HandleRelayServerPacket` use them around the seed and the first / second login packet, with try/finally. Other threads' sends in between are dropped, not queued; plugin callbacks still never run under the lock. A `NetClient` that never connected starts open. The three cipher objects in `Encryption.cs` are static, so the protocol assumes one `NetClient` (`NetClient.Socket`); noted in the code.
+- **WebSocket writer (P2).** `WebSocketWrapper.Send` no longer fires `async void SendCopyAsync`. `OrderedAsyncWriter` (new) is one ordered writer per connection: `Send` copies into a pooled buffer and enqueues; a single loop awaits each `SendAsync` in turn (no overlap), and the first failure goes through `InvokeOnError`, i.e. the connection's close path (`Terminate` on the next drain), with the rest of the queue dropped. `Disconnect` / `Dispose` stop accepting writes and let the queue finish.
+- **Statistics (P3).** `Statistics.Reset()` (all sites, via `ResetStatistics`) and `Statistics.Update()` (in `Flush`) run under `_sendLock`, so the send counters are one consistent snapshot and a reset can't race an increment.
+- **Tests** (`NetSendLockTests`, 12; forced interleavings, no sleeps hoping to overlap; every wait bounded, workers joined in finally; test seam `NetClient.BeforeSendLock`, null in production): reset during a flush blocks on the lock (the test waits for the reset thread to be blocked, then asserts all 10000 bytes arrived); the reset storm now also asserts resets ran and that a quiet tail of 50 frames arrives (the stream can't be vacuously empty); a plugin send paused after its hooks while `Disconnect` + new socket + login handshake + seed run is dropped; nothing is queued ahead of the game seed and plugin sends during the handshake are dropped, the post-handshake one is not; sends stay closed after a reset until `EndHandshake`, and a stale token doesn't reopen; send statistics; ordered writer (no overlap, order kept, failure reported once and the rest dropped). Against the previous commit's `NetClient` (with the new API shimmed as no-ops so the tests compile) the three admission / handshake tests fail; the two reset tests already pass there (they test the earlier fix) and fail on the original code as before.
+- **Verification.** Both builds 0 errors; `dotnet test`: 691 tests, all pass in the last full run except the known flaky `ChunkLoadingTests.Prefetched_Regions…` in an earlier run (timing, unrelated). Login smoke (default build, JIT, kbatman3, `tools/ecs-parity/run_parity.py` with a throwaway encrypted settings file, `--timeout 120`, no cursor use): two consecutive client runs each logged in through the login server and the game-server relay, entered the world and walked (`go`, `walk` x4 incl. run), 270 ECS checks, 0 mismatches, 0 disconnects, clean exit 0. The WebSocket path was not run against a server (no WS shard here); only the writer is unit tested.
+
+**Second audit follow-up (Codex, 2026-10-30).** Targeted fixes on top of ee2fcd212.
+- **Epoch first (P1).** `Send` now reads the send epoch before the `IsConnected` check, so a sender paused there can't adopt the replacement connection (Codex saw `01-02-03-04-EE`). Validation under `_sendLock` is unchanged.
+- **Handshake: defer, don't drop (P2).** A send made while sends are closed (another thread, or a plugin's outgoing hook injecting from inside the hook of the login packet: detected with a per-thread "inside the outgoing hooks" depth) is held in a small list (cap 256) and queued, in order and encrypted in the then-current mode, by `EndHandshake`; a reset discards it. So seed, 0x91, then the injected packet. A plugin that suppresses 0x91 and forwards a replacement from inside the hook gets the replacement queued right after the seed; one that rewrites the packet in place is accepted as the handshake packet (same call). Only a stale epoch (and the 256 overflow) drops now.
+- **Counters and logging (P3).** `DroppedStaleSends`, `DeferredSends`, `DroppedDeferredOverflow`; a drop logs a rate-limited warning (one per second) outside the lock. The packet log line is written when a packet is admitted (under the lock, only if the log is on), no longer before admission.
+- **Writer (P2).** `OrderedAsyncWriter`: the first failure closes admission and the loop discards the queue and finishes on its own (`Completion` completes without `Complete()`); a queued-byte cap (4 MB) fails the connection through the same path instead of dropping encrypted bytes. `WebSocketWrapper.Disconnect` always cleans up (once): stops writes, waits at most 2 s for the queue, closes the socket (2 s bound), then cancels and disposes; `Dispose` cancels a stalled send and disposes the transport at once.
+- **Tests** (`NetSendLockTests`, 14): every worker runs in a `Scope` (exceptions come back through `Join`, all workers released and joined in a finally); the reset storm forces resets while senders are live, checks the whole captured stream before the tail, and requires frames to have arrived; stale-send tests pause the sender both inside `IsConnected` and before the lock; handshake tests go through the outgoing-hook seam (`NetClient.TestOutgoingHook`, null in production): injected packet, suppress and forward, rewrite in place; writer: failure without `Complete()`, byte cap, stalled shutdown by cancellation. Against ee2fcd212 (new surface shimmed) 8 tests fail (handshake / injection / held sends, the writer failure and cap, and the two stale-send tests, those two only through the new drop counter; Codex reproduced the IsConnected case directly). The WebSocket retirement itself (`RetireAsync`) is not unit tested (needs a server).
+- **Verification.** Both builds 0 errors; 695 unit tests pass; the two-run login smoke (default build, kbatman3, `--timeout 120`) again: login, game-server relay, walk, 270 ECS checks, 0 mismatches, no disconnects, no "Send dropped" lines, exit 0.
+
+
+## Flaky prefetch test (2026-10-30)
+
+Base: poc/modern-client 4f84e8a71. Branch `poc/fix-flaky-prefetch-test`. Test only; no product code changed.
+
+**Cause.** `Prefetched_Regions_Give_The_Same_Blocks_And_Never_Block_IsBlockReady` bounded every `IsBlockReady` call at 2.0 ms. In a loop of full-suite runs under bench.lock (one run per acquisition, old build) run 5 of 5 failed with `Expected value to be less than 2.0, but found 2.8137`, 0.44 s into the run: the first call in the process pays JIT and thread-pool start-up while other test classes start in parallel. It was not the `ready.Should().BeFalse()` assertion, and `PrefetchEnabled` is only written by this test (default true), so shared static state was not involved. No product race found in `MapLoader` prefetch.
+
+**Fix.** The no-decode-on-the-caller guarantee is now asserted by counters after every call (`SyncLoads == 0`, `PrefetchWaits == 0`; `ready == false` whenever the call started a prefetch), and the wall time is bounded on the median of the five calls (10 ms) instead of each call. `PrefetchEnabled` is restored in `finally`.
+
+
+## T0c: class-A fields become properties (2026-10-30)
+
+Branch `bg/ecs-t0c-properties`, base `0acd0ef85`.
+
+- **What changed** (commit 2edbcceb4). The class-A members of `GameObject`, `Entity`, `Item` and `Mobile` (the public fields listed in the census) are now auto-properties, so T1 can later move the setters behind the funnel without touching call sites. `Offset` is a `Vector3` property with `OffsetX`/`OffsetY`/`OffsetZ` accessors that write `_offset.X/Y/Z` directly; the 28 member-wise writes (`m.Offset.Z = 4`) in `BoatMovingManager`, `MovingEffect`, `DragEffect` and `Mobile` use them. The dead `DisplayedGraphic` setter and its storage are gone. `WriteSiteBudgetTests` counts `OffsetX/Y/Z` as `Offset`.
+- **Write-site budget:** unchanged, 326 sites in 130 file/member pairs (the Codex replay; confirmed by the test, see below).
+- **Codex audit:** no runtime regression found (references, struct mutation, reflection, codegen and the allowlist all checked). One P2: `tools/ecs-census/instrument.py` still matched field declarations, so 31 of its 43 patterns printed `NO MATCH` and the regenerated census silently dropped those members; `names.py` lacked `OffsetX/Y/Z`.
+- **Fix.** `instrument.py` now builds its declaration patterns from member names and matches fields and properties alike, adds the three Offset accessors (46 declarations) and exits with an error, writing nothing, if any is unmatched or ambiguous. `names.py` has `OffsetX/Y/Z`; `analyze.py` folds them into `Offset` and `classify.py` classifies their writes as `struct-member`; `gen.py` and `audit.py` account for the folding. The transition plan (T1) now says the funnel must cover `Offset.set` and the three accessors.
+- **Census regeneration check.** Ran the documented workflow on the T0c head with the new tools (46 of 46 declarations matched) and on its parent with the old tools (43 of 43), same method. Compiler-derived data is identical: pass 1 2595 member references (read 2296, assign 262, struct-member 28, compound 9), pass 2 409 references; per (member, kind) counts identical for all 86 pairs; the writes table (266 world writes), readers, summary, handler and method sections are identical except for line numbers that T0c shifted. Only the textual non-world section (section 7) differs: 933 hits in both, but 114 files instead of 115, and the `.X`/`.Y`/`.Z` hits that were really `Offset.X =` in `DragEffect`, `MovingEffect`, `Mobile` etc. now appear as `.OffsetX/Y/Z`. The committed census document was not regenerated (it has drifted from the tree for unrelated reasons, e.g. `DevBench.cs` and `Multi.cs` hits).
+- **Timing.** NativeAOT, base and new interleaved, 3 runs each, 2 windows per run (tags `leg_brit`, `leg_ls`, `gpu_brit`, `gpu_ls`; `scratchpad/t0c/res.jsonl`). Mean update and world_prepare are within noise either way (about 8%): world_prepare base/new in ms: leg_brit 0.137/0.139, leg_ls 1.030/1.031, gpu_brit 0.054/0.052, gpu_ls 0.722/0.737. The only extra hitches in new come from one window with a 1.5 s pump stall, i.e. machine noise. No new client runs.
