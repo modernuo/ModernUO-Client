@@ -260,6 +260,51 @@ namespace ClassicUO.UnitTests.Ecs
             rows.Add(("T1 funnel: 0x25 update of an item in the backpack", Measure(packets, i =>
                 s.World.Writer.PlaceInContainer(inPack.Serial, 0xF7A, (ushort)(1 + (i & 63)), 40, 50, 0, pack, out _))));
 
+            // T1 equipment: EquipItem (0x2E) and UpdateObject's equipment list (0x78) as before the funnel (copies in
+            // WorldWriterTests) and through WorldWriter, paired. 0x2E: a worn item re-equipped on its wearer (a hue change).
+            // 0x78: a mobile's whole list resent (the clear removes its WORN worn items, the entries recreate them), per packet
+            rows.Add(("T1 old path: 0x2E re-equip of a worn item", Measure(packets, i =>
+            {
+                Item it = s.Worn[i % itemCount];
+                var e = new WorldWriterTests.EquipPacket { Serial = it.Serial, Graphic = it.Graphic, Hue = (ushort)(i & 63), Layer = it.Layer, Container = it.Container };
+                WorldWriterTests.OldEquip(s.World, e, out _, out _);
+            })));
+
+            rows.Add(("T1 funnel: 0x2E re-equip of a worn item (Equip)", Measure(packets, i =>
+            {
+                Item it = s.Worn[i % itemCount];
+                s.World.Writer.Equip(it.Serial, it.Graphic, it.Layer, it.Container, (ushort)(i & 63), out _, out _);
+            })));
+
+            Layer[] wornLayers = { Layer.Shirt, Layer.Pants, Layer.Shoes, Layer.Cloak, Layer.OneHanded };
+            var lists = new (uint Serial, ushort Graphic, Layer Layer, ushort Hue)[n][];
+
+            for (int m = 0; m < n; m++)
+            {
+                lists[m] = new (uint, ushort, Layer, ushort)[WORN];
+
+                for (int k = 0; k < WORN; k++)
+                {
+                    lists[m][k] = (ITEM0 + (uint)(m * WORN + k), (ushort)(0x1515 + k), wornLayers[k], 0);
+                }
+            }
+
+            int lists78 = Math.Max(packets / WORN, 1);
+            rows.Add(("T1 old path: 0x78 equipment list (clear + 5 entries), per packet", Measure(lists78, i =>
+                WorldWriterTests.OldWear(s.World, s.Mobiles[i % n].Serial, lists[i % n]))));
+
+            rows.Add(("T1 funnel: 0x78 equipment list (ClearWornItems + 5 WearItem)", Measure(lists78, i =>
+            {
+                uint owner = s.Mobiles[i % n].Serial;
+                var list = lists[i % n];
+                s.World.Writer.ClearWornItems(owner);
+
+                for (int k = 0; k < list.Length; k++)
+                {
+                    s.World.Writer.WearItem(owner, list[k].Serial, list[k].Graphic, list[k].Layer, list[k].Hue);
+                }
+            })));
+
             // 0x25 item into a container, then out
             rows.Add(("item into backpack (0x25) + out, per packet", Measure(packets, i =>
             {
