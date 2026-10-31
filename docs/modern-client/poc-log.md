@@ -2717,3 +2717,26 @@ Branch `bg/ecs-t0c-properties`, base `0acd0ef85`.
 - **Fix.** `instrument.py` now builds its declaration patterns from member names and matches fields and properties alike, adds the three Offset accessors (46 declarations) and exits with an error, writing nothing, if any is unmatched or ambiguous. `names.py` has `OffsetX/Y/Z`; `analyze.py` folds them into `Offset` and `classify.py` classifies their writes as `struct-member`; `gen.py` and `audit.py` account for the folding. The transition plan (T1) now says the funnel must cover `Offset.set` and the three accessors.
 - **Census regeneration check.** Ran the documented workflow on the T0c head with the new tools (46 of 46 declarations matched) and on its parent with the old tools (43 of 43), same method. Compiler-derived data is identical: pass 1 2595 member references (read 2296, assign 262, struct-member 28, compound 9), pass 2 409 references; per (member, kind) counts identical for all 86 pairs; the writes table (266 world writes), readers, summary, handler and method sections are identical except for line numbers that T0c shifted. Only the textual non-world section (section 7) differs: 933 hits in both, but 114 files instead of 115, and the `.X`/`.Y`/`.Z` hits that were really `Offset.X =` in `DragEffect`, `MovingEffect`, `Mobile` etc. now appear as `.OffsetX/Y/Z`. The committed census document was not regenerated (it has drifted from the tree for unrelated reasons, e.g. `DevBench.cs` and `Multi.cs` hits).
 - **Timing.** NativeAOT, base and new interleaved, 3 runs each, 2 windows per run (tags `leg_brit`, `leg_ls`, `gpu_brit`, `gpu_ls`; `scratchpad/t0c/res.jsonl`). Mean update and world_prepare are within noise either way (about 8%): world_prepare base/new in ms: leg_brit 0.137/0.139, leg_ls 1.030/1.031, gpu_brit 0.054/0.052, gpu_ls 0.722/0.737. The only extra hitches in new come from one window with a 1.5 s pump stall, i.e. machine noise. No new client runs.
+
+
+## Memory footprint per client: first pass (2026-10-31)
+
+Branch `poc/mem-footprint`, base poc/modern-client 88da64e3e. Measurement only, no defaults changed. Full write-up: `memory-footprint.md`.
+
+- **Tooling** (fd5450021): `CUO_MEM_LOG=<sec>` (dev builds only; logs the GC heap, committed bytes and per-generation sizes from a background thread). Plus a scratch external sampler: private working set and commit at 1 Hz, and an address-space walk by protection and reservation.
+- **Matrix** (bench-000014/15/17): AOT and JIT, Gpu and Legacy, hard limit on and off, with and without the warm-up. Britain, a walk, then the ocean, at 1920×1080. The "MUL" arm is invalid: the client needs a pack. Its replacement is upstream itself, in bench-000031.
+- **Per client, Task Manager "Memory":** Gpu 800–855 MB, Legacy 650–720 MB. Commit is 1.25–2.0 GB. AOT and JIT are within about 20 MB. The hard limit has no effect. `CUO_WARMUP=0` saves nothing in pws.
+- **Where the pws goes (AOT Gpu):**
+  - GC heap 351 MB (about 45%);
+  - write-combine GPU-mapped memory 153 MB, the same in both renderers;
+  - native heaps 229 MB;
+  - image 8 MB;
+  - mapped files 0 MB (shared).
+- **The ~1.1 GB of commit that isn't resident is GPU-mapped** (write-combine regions). The Gpu world's 516 MB of it is untouched: art pages 256, anim 128, instances 64, palettes, staging. It counts against commit and VRAM, not in Task Manager.
+- **Occupancy in a normal session:** art pages 10/24, anim pages 10/128, about 4.3k instances of 2M. Grow-on-demand recommendation: start 12 art layers, 32 anim layers and 256k instances, grow at 75% and during holds, ceilings at today's sizes. Saves about 320 MiB of commit and VRAM per client. The large scene still reaches 82 anim pages.
+- **LOH lead:** gen3 is 303–425 MB right after login. Only 3–4 gen2s run per session, all at login, so later LOH garbage is never collected. Working hypothesis: much of it is dead buffers (region decompression, pack pages).
+  - Waste found: the 18.5 MiB anim palette CPU copy, kept after the GPU upload.
+  - Waste found: the Gpu world is built twice at login (facet 0, then facet 1), leaving about 34 MiB of dead LOH.
+  - The unicode font table is 20 MiB up front.
+  - Pending: heap dumps (bench-000030), `CUO_WARMUP_GC=2` / `GCConserveMemory` (bench-000032), and the upstream baseline (bench-000031, net10 retarget in scratch only).
+- **Memory trade-offs logged:** none added on this branch. The `MemLog` thread is dev-only and starts only with `CUO_MEM_LOG` set.
