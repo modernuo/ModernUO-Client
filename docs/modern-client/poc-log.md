@@ -2364,3 +2364,73 @@ Branch `poc/pack-gumps`, from poc/modern-client fdfcc9813, merged up to 80ccb1a2
   Counts without the variable are 11 to 39 on every build, including the pre-recycler and pre-E11 ones, so no merge changed them beyond the race. The E11 and E10 rows and the older builds with the variable were dropped for time: the bench.lock queue made each run take 20 to 40 minutes and the answer did not depend on them. Earlier agents' 0 (E6 and before) is consistent: they set the variable.
 - **Fix.** `EcsParity` now sets `Animations.AsyncFirstSight = false` when `CUO_ECS_PARITY` is on, so parity no longer depends on remembering the variable (harness-only; the normal render path is untouched). Verified by two runs without the variable: 0 mismatches.
 - **Open point (not changed).** With `gpu_ecs_sprites` on, the extract draws a first-sight body at once while the legacy view skips it for a few frames. Not a Gpu bug (the body appears sooner), but Gpu and Legacy differ for those frames.
+## L1: TCP receive drain loop and server-close detection (2026-10-30)
+
+Branch `poc/net-drain` (base poc/modern-client fdfcc9813, merged up to 3681f25b3).
+
+**Problem.** `TcpSocketWrapper.Read` returned 0 whenever `Available` was 0, so a server FIN while the client was idle was never noticed (stuck "Verifying Account"), and `GameController.Update` read at most one 4 KB slice per frame.
+
+**Change.**
+- `TcpSocketWrapper.Read`: `Socket.Poll(0, SelectRead)` then a non-blocking-style `Receive(..., out error)`. Readable with 0 bytes is a close (`OnDisconnected`), an error is `OnError`; data that arrived before the close is delivered first.
+- `NetClient.Drain(sink, maxBytes, maxPackets, maxMs)`: reads 4 KB slices (Huffman output stays under the 64 KB buffer) and hands each decoded slice to the parser in order, until the socket is empty, a close was raised, or a cap is hit: 128 KB raw, 1500 packets, 4 ms per frame (checked between slices, always at least one slice). `CollectAvailableData` is kept as a single-slice read. Packet order and plugin handling are unchanged (same `ParsePackets` call, once per slice).
+- `Huffman.Decompress` no longer clears the whole 64 KB output buffer per call (it would now run per slice).
+- `LoginScene.OnNetClientDisconnected`: a clean server close (`Success`) during Connecting, VerifyingAccount, ServerSelection, LoginInToServer, CharacterSelection or EnteringBritania is now a lost connection (popup, reconnect if enabled). It was ignored before, so the FIN fix alone would still have left the screen stuck. After a login denial the step is already PopUpMessage, so the denial text is kept. `GameScene` shows `ConnectionReset` instead of "Success" and logs `Disconnected from the game server: <error>`.
+- Diagnostics: FrameStats counters `net_avail`, `net_bytes`, `net_slices`, `net_packets`; `CUO_NET_TRACE=1` logs `[net]` lines per frame with data; `CUO_NET_CAP_BYTES/PACKETS/MS` override the caps (`CUO_NET_CAP_BYTES=1` = one slice per frame, the old behaviour, used as the base).
+
+**Measured** (kbatman2, JIT, TieredCompilation=0, VSync on, 1920x1080, the same binary with `CUO_NET_CAP_BYTES=1` as base; 3 rounds interleaved; plan: Britain, `[TestScene go`, scene, `[TestScene return`; machine shared, other agents idle on the GPU, so only the ratios matter). Bursts are frames with more than 4 KB available.
+
+| Burst | duration | frames | KB | packets | bytes per frame (avg / max) | drain ms sum / max | frames >8 ms / >16 ms |
+|---|---|---|---|---|---|---|---|
+| Teleport into the scene, base (one slice per frame) | 3734-3750 ms | 226-227 | 904-908 | 55k | 4096 / 4096 | 255-278 / 16-27 | 2-3 / 1 |
+| same, drain with packet cap only (1500) | 578-610 ms | 30 | 811 | 51k | 27.7k / 53k | 236-258 / 40-48 | 5 / 2-3 |
+| same, drain + 4 ms budget (the default) | 797-1000 ms | 49-58 | 822-827 | 52k | 14.6-17.2k / 28.7k | 235-316 / 15-20 | 2-5 / 0-1 |
+| Return to Britain, base | 500 ms | 31 | 124 | 21.5k | 4096 / 4096 | 14-19 / 2-3 | 0 / 0 |
+| same, new | 141-172 ms | 11-12 | 124-126 | 21.7k | 11.7k / 12.3k | 13-18 / 3-6 | 0 / 0 |
+
+- `Available` after the teleport reaches 65,536 (the socket's receive window) from the first frame, so the base kept the window full for 3.7 s. The packet work is the same either way (about 250 ms of parsing in total, 5 us per packet); the drain just spends it in fewer frames. Without a time budget the first frames cost 40-48 ms; the 4 ms budget keeps the worst frame near the base's (15-20 ms, the first frame, which also pays one-off setup).
+- Login: only 6 KB / 239 packets arrive (largest `Available` 2.4 KB), so login-to-world-ready is unchanged: `[settle] Entry: ready` 746-828 ms in every variant. L1 changes nothing at login except the close detection.
+- Cross-facet `[settle] Facet: ready` times (134-682 ms) are unchanged by the drain (the hold ends when the GPU world is ready, not when the scene's objects have arrived).
+
+**Tests.** `NetDrainTests` (15): partial reads in order, slice size, 200 KB in slices, byte cap and resume, packet cap, time budget, nothing ready, data then close, close mid-packet, close while idle, a Huffman stream over 64 KB decompressed cut at arbitrary slice boundaries, and four real loopback `TcpSocketWrapper` tests (idle close, data then close, reset, partial reads). Against the old `TcpSocketWrapper` the idle-close, reset and data-then-close loopback tests fail. Full `dotnet test`: 604 passed. Both builds (default and `-p:CuoDevTools=false`) build with 0 errors (the DevTools=false one was built, not run).
+
+**Normal session** (`b1;travel;ltravel;scene;return;b2`, new default build): `[settle]` 0 unsettled frames in every Teleport/Facet episode, 0 timeouts; 12 unsettled frames "while walking", the known single-page misses of walking (world-settle.md), same as before.
+
+**Server close, live** (kbatman2, through a TCP relay `127.0.0.1:2594 -> 2593` that rewrites the 0x8C redirect; the real ModernUO was not stopped, because `stop-modernuo.ps1` needs PowerShell, which this task bars, and force-killing a shared server is not allowed; the relay closes the client-side connections, which is what the client sees when the server closes):
+- In game, relay FIN: `Disconnected from the game server: ConnectionReset` in the same second (log has 1 s resolution), message box path as for any disconnect.
+- In game, relay RST: same line, same second.
+- Login connection idle, relay FIN: `Disconnected` warning at once (LoginScene popup path). Whether the screen was server select or character select was not captured (no screenshot); the character-select-specific popup is covered by the same code path (`CharacterSelection` is in the list) but not seen.
+- Not done: a real server stop/restart, NativeAOT, a screenshot of the popups.
+
+**Process note.** One batch (10:17) built and ran a 19 s client without holding bench.lock because its lock helper file was missing and the script carried on; found and stopped within a minute. All later steps took the lock first and held it for one step each.
+
+**L1 audit fixes (Codex, 2026-10-30).**
+- **Idle pump (P1):** `Drain` now calls the sink once with an empty slice when no slice produced bytes, so `ParsePackets` (which also drains the plugin queue) runs every frame; it counts toward the frame's time budget. Test: a plugin-injected packet on an idle socket is handled once.
+- **One termination path (P1):** `NetClient.Terminate(error)` is the only way a connection ends from the receive or send side (peer close, reset, socket error, bad Huffman stream, malformed header). It resets protocol state (compression off, Huffman, send queue, a new `ConnectionGeneration`) before closing the socket and raising `Disconnected`. `Connect` and `Disconnect` reset the same state, and events from a replaced socket are ignored. Tests (real loopback, FIN and RST): close with compression on, then a login retry reads plain bytes and parses cleanly; `Connect` starts in login mode even if compression was left on.
+- **Parser queues (P1):** `PacketHandlers.ParsePackets` clears both queues when the connection generation changed (also mid-loop, for the 0x8C relay). Test through the real parser: `A9 01 2C`, FIN, reconnect, `73 04` is delivered as a ping, not swallowed as the old packet's body.
+- **Malformed headers (P2):** a length smaller than its own header (`03 00 00`, `03 00 01`, `03 00 02`) logs, clears the queue and ends the connection (`ProtocolNotSupported`) instead of looping; a header-sized packet is accepted. Tests on the real parser.
+- **Non-blocking read (P2):** `TcpSocketWrapper.Read` reads at most `Available` bytes (cannot block); when nothing is queued but the socket is readable, a one-byte probe runs with the socket switched to non-blocking for that call only (sends stay on the blocking `NetworkStream`). Partial writes and `WouldBlock` on send are untouched (not in scope; the socket stays blocking).
+- **LoginScene (P2):** `CharacterCreationDone` added; the mapping is the testable `LoginScene.IsLostOnCleanClose`, tested over every `LoginSteps` value.
+- **CircularBuffer:** growth is geometric (twice the capacity at least).
+- `Plugin.ProcessRecvPacket` tolerates `Client.Game == null` (needed to run the real parser in tests).
+- Verification: 616 tests pass (12 new in `NetLifecycleTests`); both builds 0 errors; the nodev build logged in.
+- Normal session (`b1;travel;ltravel;scene;return;b2`, vsync off): 0 timeouts, 0 unsettled frames after a timeout or without hold, 8 while walking (known). A first try with VSync on ran at 3 fps (Present blocked about 1 s per frame, 4 settle timeouts, `packets` 0.08 ms): the machine's display, not the drain; not used.
+- Relay close test with `reconnect` on: in game FIN and RST: `Disconnected from the game server: ConnectionReset`, then a retry that logs in again through the relay (new `Connecting to`, `Player created`) within the same second. Login connection idle, FIN: `Disconnected` warning, then the retry logs in. Reconnect after a close at character select is thus clean (compression and parser state reset).
+
+**L1 second audit (Codex, 2026-10-30; mostly the WebSocket path, kept for a future browser build).**
+- **Terminal events on the update thread:** socket callbacks (a WebSocket's receive task can raise them from any thread) now only record "closed with error X" against their own `Connection` (first report wins, so an exception followed by the end of the receive loop is one close). `Drain` first reads and parses everything that connection had queued, and only then runs `Terminate` (reset, close, `Disconnected`). A connection that was ended, replaced or explicitly disconnected is retired: its late callbacks are ignored and its reads return nothing, so old compressed bytes can't reach the plain parser and a late callback can't terminate the new socket. Huffman is only reset on the update thread. TCP behaves as before (its events come from `Read` on the update thread; a `Connect` failure now reaches `Disconnected` on the next `Drain` instead of inside `Connect`).
+- **Plugin injections are tagged by generation:** `Append(data, true)` drops older injections and stamps the queue with the current generation; `ParsePackets` clears the plugin queue only when its stamp is older. A packet injected after `Connect` but before the next `ParsePackets` (e.g. from an outgoing hook during the 0x8C relay's login sends) is kept. Test calls the real `Connect` first.
+- **Plugin queue is not budgeted:** the empty-slice pump parses the whole plugin queue in one go; the time budget covers network slices only. Fine for now (plugin traffic is small); revisit if a plugin injects bulk data.
+- Tests: wrap-around growth of `CircularBuffer`; the header-only variable packet is now `03 00 03` (length 3), not 5; cross-thread close with compressed data queued; double report; late callback of a replaced connection; explicit `Disconnect` then a late close.
+
+**L1 third audit (Codex, 2026-10-30).**
+- **No lock held while dispatching:** `PacketHandlers` has one `_queueLock` guarding both queues and their generations; packets are dequeued into a local buffer under it and handlers/plugins run after it is released. Plugin injection (`Append`) is thread-safe by itself, so `Plugin.OnPluginRecv*` no longer take `lock(PacketHandlers.Handler)`; the only lock order is "caller's own lock, then the queue lock". This removes the deadlock between a background injector and a handler whose response runs an injecting outgoing hook.
+- **Atomic generation handling:** comparing the injection's generation, dropping older plugin packets, stamping and enqueuing are one step (`AppendPlugin`); an injection from an older connection is discarded, and never clears newer packets. `ConnectionGeneration` is read/incremented with Volatile/Interlocked.
+- **Final frame vs close:** `Drain` ends a connection only after an empty read made after it had seen the close (one extra read round after seeing it; the caps still apply, a capped frame carries on next frame).
+- **Idempotent termination:** `Terminate(error, connection)` ignores a connection that was already ended or replaced, so a `ProtocolError` inside the parser pump followed by the Drain that saw the close fires `Disconnected` once.
+- Tests (626 pass): background injector plus a hook-injecting handler (2000 parses, 20 s timeout), final frame after an empty read, stale-generation injection, malformed plugin bytes at close.
+
+**L1 final audit (Codex, 2026-10-30).** `Drain` remembers the specific `Connection` whose close it saw (`closeSeen`), and an empty read ends a connection only when it comes from that same one; a connection replaced inside the sink (the 0x8C relay) starts over. Test: two `RacingSocket`s chained, replacement inside the first sink.
+
+**Follow-ups (not fixed on this branch).**
+- Pre-existing send-side race in `NetClient.Send`: encryption happens before the send lock, so concurrent plugin-thread and main-thread sends can encrypt in one order and be queued in another (a stream cipher then desyncs), and `ResetProtocolState` / `EnableCompression` clear `_sendStream` without taking its lock. The fix is to encrypt and enqueue under one lock, and to take that lock when clearing.
+- Continuous background plugin injection can keep the (unbudgeted) plugin-queue pump running for a whole frame; if a plugin ever injects bulk data, give the plugin pass a packet or time cap too.
