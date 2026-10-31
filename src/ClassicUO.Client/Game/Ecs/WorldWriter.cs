@@ -1284,8 +1284,9 @@ namespace ClassicUO.Game
         /// <summary>
         /// The mobile branch of <c>UpdateGameObject</c>, second half: puts the mobile of <paramref name="placement"/> (what
         /// <see cref="UpsertMobile"/> issued) on its tile at its position, after the handler's callbacks, as before T1. The ECS
-        /// already holds its values; the placement is not folded (the player's position callbacks may change the mobile, and what
-        /// they change publishes as before T1). Consumes the placement.
+        /// already holds its values; the player's placement is not folded (its position callbacks may change it, and what they
+        /// change publishes as before T1); any other mobile's is (no callback runs, the tile's Sync would rewrite the same
+        /// record and inputs). Consumes the placement.
         /// A placement that is not outstanding is a violation: in a release build the mobile is placed as before T1.
         /// </summary>
         public void PlaceMobile(in Placement placement)
@@ -1315,10 +1316,15 @@ namespace ClassicUO.Game
                 return;
             }
 
-            // not folded (Codex audit of part 4, #1): SetInWorldTile runs the player's position callbacks, where a plugin's
-            // RequestMove walks the player (Player.Walk: the queue, the timers, a turn). Their input and clock pushes and
-            // Syncs, and the tile's own Sync, publish as before T1.
-            using (Open(mobile, null))
+            // the player is not folded (Codex audit of part 4, #1): SetInWorldTile runs its position callbacks
+            // (PlayerMobile.OnPositionChanged), where a plugin's RequestMove walks the player (Player.Walk: the queue, the
+            // timers, a turn). Their input and clock pushes and Syncs, and the tile's own Sync, publish as before T1.
+            // Any other mobile is folded (funnel part 6): GameObject.OnPositionChanged is empty for it, so nothing between
+            // UpsertMobile's commit and here changes its record or inputs, and the tile's Sync and input push only rewrote
+            // the values UpsertMobile committed (+0.1 us per 0x77/0x78 in the E2 bench).
+            bool player = mobile is PlayerMobile || ReferenceEquals(mobile, _world.Player);
+
+            using (Open(mobile, player ? null : mobile))
             {
                 mobile.SetInWorldTile(mobile.X, mobile.Y, mobile.Z);
             }
