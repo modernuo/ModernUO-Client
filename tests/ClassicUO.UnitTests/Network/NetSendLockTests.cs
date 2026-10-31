@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Net;
+using System.Runtime.ExceptionServices;
 using System.Threading;
 using System.Threading.Tasks;
 using ClassicUO.IO;
@@ -17,26 +18,102 @@ namespace ClassicUO.UnitTests.Network
     // belongs to the connection it started on, and nothing is queued ahead of a connection's handshake. The game-server
     // stream cipher (Twofish/MD5 keystream) is a process-wide static, so these tests must not run in parallel with each other.
     // Interleavings are forced with events (and by waiting for a thread to be blocked on the lock), never with sleeps that
-    // hope to overlap; every wait is bounded and every worker is joined in a finally.
+    // hope to overlap. Every worker runs inside a Scope: its exceptions come back to the test thread through Join(), and the
+    // scope releases and joins all of them (bounded) when the test ends, however it ends.
     [Collection("NetSendLock")]
     public class NetSendLockTests
     {
         private const uint Seed = 0x7F000001;
         private static readonly TimeSpan Bounded = TimeSpan.FromSeconds(30);
 
+        private sealed class Worker
+        {
+            private readonly Thread _thread;
+            private Exception _error;
+
+            public Worker(Action body)
+            {
+                _thread = new Thread(() =>
+                {
+                    try
+                    {
+                        body();
+                    }
+                    catch (Exception e)
+                    {
+                        _error = e;
+                    }
+                })
+                { IsBackground = true };
+                _thread.Start();
+            }
+
+            public Thread Thread => _thread;
+
+            public bool TryJoin() => _thread.Join(Bounded);
+
+            public void Join()
+            {
+                _thread.Join(Bounded).Should().BeTrue("worker thread must finish");
+
+                if (_error != null)
+                {
+                    ExceptionDispatchInfo.Capture(_error).Throw();
+                }
+            }
+        }
+
+        private sealed class Scope : IDisposable
+        {
+            private readonly List<Worker> _workers = new List<Worker>();
+            public readonly CancellationTokenSource Stop = new CancellationTokenSource();
+
+            public Worker Run(Action body)
+            {
+                var w = new Worker(body);
+                _workers.Add(w);
+
+                return w;
+            }
+
+            public void Dispose()
+            {
+                Stop.Cancel();
+
+                foreach (var w in _workers)
+                {
+                    w.TryJoin();
+                }
+            }
+        }
+
         private sealed class CaptureSocket : SocketWrapper
         {
             public readonly List<byte> Bytes = new List<byte>();
             public Action OnFirstSend;
+            public Action OnIsConnected;
             private int _sends;
+            private int _delivered;
 
-            public override bool IsConnected => true;
+            public int Delivered => Volatile.Read(ref _delivered);
+
+            public override bool IsConnected
+            {
+                get
+                {
+                    OnIsConnected?.Invoke();
+
+                    return true;
+                }
+            }
+
             public override EndPoint LocalEndPoint => null;
             public override void Connect(Uri uri) { }
 
             public override void Send(byte[] buffer, int offset, int count)
             {
                 Bytes.AddRange(new ArraySegment<byte>(buffer, offset, count));
+                Interlocked.Increment(ref _delivered);
 
                 if (_sends++ == 0)
                 {
@@ -91,7 +168,7 @@ namespace ClassicUO.UnitTests.Network
 
         // Walks the stream frame by frame; returns the number of frames. Frames may be missing (dropped by a reset) when
         // allowDropped, never torn, duplicated or reordered.
-        private static int AssertFramesIntact(byte[] stream, int threads, int perThread, bool allowDropped)
+        private static int AssertFramesIntact(ReadOnlySpan<byte> stream, int threads, int perThread, bool allowDropped)
         {
             var next = new int[threads];
             var pos = 0;
@@ -161,7 +238,7 @@ namespace ClassicUO.UnitTests.Network
             return false;
         }
 
-        private static void Join(Thread t) => t.Join(Bounded).Should().BeTrue("worker thread must finish");
+        private static byte[] Send3(byte marker) => new byte[] { marker, marker, marker };
 
         [Fact]
         public void Concurrent_Sends_Reach_The_Receiver_Intact_And_In_Cipher_Order()
@@ -173,48 +250,46 @@ namespace ClassicUO.UnitTests.Network
             var rx = new TwofishEncryption();
             rx.Initialize(Seed, true);
 
-            using var start = new ManualResetEventSlim();
+            using var scope = new Scope();
             using var ready = new CountdownEvent(threads);
-            var flushing = true;
-            var flusher = Task.Run(() =>
+            using var start = new ManualResetEventSlim();
+
+            var flusher = scope.Run(() =>
             {
-                while (Volatile.Read(ref flushing))
+                while (!scope.Stop.IsCancellationRequested)
                 {
                     client.Flush();
                     Thread.Yield();
                 }
             });
 
-            var senders = new Task[threads];
+            var senders = new Worker[threads];
 
-            try
+            for (var t = 0; t < threads; t++)
             {
-                for (var t = 0; t < threads; t++)
+                var thread = t;
+                senders[t] = scope.Run(() =>
                 {
-                    var thread = t;
-                    senders[t] = Task.Factory.StartNew(() =>
+                    ready.Signal();
+                    start.Wait(scope.Stop.Token);
+
+                    for (var s = 0; s < perThread; s++)
                     {
-                        ready.Signal();
-                        start.Wait(Bounded);
-
-                        for (var s = 0; s < perThread; s++)
-                        {
-                            client.Send(OwnFrame(thread, s), true);
-                        }
-                    }, TaskCreationOptions.LongRunning);
-                }
-
-                ready.Wait(Bounded).Should().BeTrue();
-                start.Set();
-                Task.WaitAll(senders, Bounded).Should().BeTrue();
+                        client.Send(OwnFrame(thread, s), true);
+                    }
+                });
             }
-            finally
+
+            ready.Wait(Bounded).Should().BeTrue();
+            start.Set();
+
+            foreach (var w in senders)
             {
-                start.Set();
-                Volatile.Write(ref flushing, false);
-                flusher.Wait(Bounded).Should().BeTrue();
+                w.Join();
             }
 
+            scope.Stop.Cancel();
+            flusher.Join();
             client.Flush();
 
             var cipher = socket.Bytes.ToArray();
@@ -231,6 +306,7 @@ namespace ClassicUO.UnitTests.Network
             // 100 frames of 100 bytes: more than one 4096-byte send chunk. A reset requested while the flush is between
             // chunks must block on the send lock until the flush is done, not clear the rest of the queue under it.
             var (client, socket) = Make(EncryptionType.NONE);
+            using var scope = new Scope();
             var total = 0;
 
             for (var s = 0; s < 100; s++)
@@ -240,256 +316,200 @@ namespace ClassicUO.UnitTests.Network
                 client.Send(f, true);
             }
 
-            Thread reset = null;
+            Worker reset = null;
             var wasBlocked = false;
             socket.OnFirstSend = () =>
             {
-                reset = new Thread(() => client.EnableCompression()) { IsBackground = true };
-                reset.Start();
-                wasBlocked = WaitUntilBlocked(reset); // the reset has started and is waiting for the lock we hold
+                reset = scope.Run(() => client.EnableCompression());
+                wasBlocked = WaitUntilBlocked(reset.Thread); // the reset has started and is waiting for the lock we hold
             };
 
-            try
-            {
-                client.Flush();
-            }
-            finally
-            {
-                if (reset != null)
-                {
-                    Join(reset);
-                }
-            }
+            client.Flush();
+            reset.Join();
 
             wasBlocked.Should().BeTrue("the reset must be waiting on the send lock while the flush runs");
             socket.Bytes.Count.Should().Be(total, "the flush that was running finished before the reset cleared anything");
         }
 
         [Fact]
-        public void Resets_During_Concurrent_Sends_Leave_Only_Whole_Frames()
+        public void Resets_Overlapping_Sends_Leave_Only_Whole_Frames_And_Something_Arrives()
         {
-            const int threads = 4, perThread = 4000, tail = 50;
+            const int threads = 4, resetsWanted = 20, tail = 50;
             var (client, socket) = Make(EncryptionType.NONE);
+            using var scope = new Scope();
+            using var ready = new CountdownEvent(threads);
             using var start = new ManualResetEventSlim();
-            using var ready = new CountdownEvent(threads + 2);
-            var running = true;
+            var stopSenders = false;
+            var sent = 0;
             var resets = 0;
 
-            var flusher = Task.Run(() =>
+            var flusher = scope.Run(() =>
             {
-                ready.Signal();
-                start.Wait(Bounded);
-
-                while (Volatile.Read(ref running))
+                while (!scope.Stop.IsCancellationRequested)
                 {
                     client.Flush();
                     Thread.Yield();
                 }
             });
 
-            var resetter = Task.Run(() =>
-            {
-                ready.Signal();
-                start.Wait(Bounded);
+            var senders = new Worker[threads];
 
-                while (Volatile.Read(ref running))
+            for (var t = 0; t < threads; t++)
+            {
+                var thread = t;
+                senders[t] = scope.Run(() =>
                 {
-                    client.EnableCompression(); // clears the queue
+                    ready.Signal();
+                    start.Wait(scope.Stop.Token);
+
+                    // keeps sending until the resetter is done, so every reset overlaps live senders
+                    for (var s = 0; s < 50000 && !Volatile.Read(ref stopSenders); s++)
+                    {
+                        client.Send(OwnFrame(thread, s), true);
+                        Interlocked.Increment(ref sent);
+                    }
+                });
+            }
+
+            var resetter = scope.Run(() =>
+            {
+                SpinWait.SpinUntil(() => Volatile.Read(ref sent) >= 200 || scope.Stop.IsCancellationRequested, Bounded).Should().BeTrue();
+
+                for (var i = 0; i < resetsWanted && !scope.Stop.IsCancellationRequested; i++)
+                {
+                    var before = socket.Delivered;
+                    client.EnableCompression(); // clears the queue under live senders
                     resets++;
-                    Thread.Yield();
+                    SpinWait.SpinUntil(() => socket.Delivered != before, TimeSpan.FromMilliseconds(200)); // let something through between resets
                 }
+
+                Volatile.Write(ref stopSenders, true);
             });
 
-            var senders = new Task[threads];
+            ready.Wait(Bounded).Should().BeTrue();
+            start.Set();
+            resetter.Join();
 
-            try
+            foreach (var w in senders)
             {
-                for (var t = 0; t < threads; t++)
-                {
-                    var thread = t;
-                    senders[t] = Task.Factory.StartNew(() =>
-                    {
-                        ready.Signal();
-                        start.Wait(Bounded);
-
-                        for (var s = 0; s < perThread; s++)
-                        {
-                            client.Send(OwnFrame(thread, s), true);
-                        }
-                    }, TaskCreationOptions.LongRunning);
-                }
-
-                ready.Wait(Bounded).Should().BeTrue();
-                start.Set();
-                Task.WaitAll(senders, Bounded).Should().BeTrue();
-            }
-            finally
-            {
-                start.Set();
-                Volatile.Write(ref running, false);
-                Task.WaitAll(new[] { flusher, resetter }, Bounded).Should().BeTrue();
+                w.Join();
             }
 
-            resets.Should().BeGreaterThan(0);
-
-            // a quiet tail after the storm: these frames must all arrive, so the stream can't be vacuously empty
+            scope.Stop.Cancel();
+            flusher.Join();
             client.Flush();
-            socket.Bytes.Clear();
 
-            for (var s = perThread; s < perThread + tail; s++)
+            resets.Should().Be(resetsWanted);
+            var stormBytes = socket.Bytes.ToArray();
+            AssertFramesIntact(stormBytes, threads, 0, allowDropped: true).Should().BeGreaterThan(0, "frames delivered between resets must be there, and whole");
+
+            // a quiet tail after the storm must arrive completely (appended after what the storm delivered)
+            var mark = socket.Bytes.Count;
+
+            for (var s = 0; s < tail; s++)
             {
-                client.Send(OwnFrame(0, s), true);
+                client.Send(OwnFrame(0, 60000 + s), true);
             }
 
             client.Flush();
-            AssertFramesIntact(socket.Bytes.ToArray(), threads, perThread, allowDropped: true).Should().Be(tail);
+            AssertFramesIntact(socket.Bytes.ToArray().AsSpan(mark), threads, 0, allowDropped: true).Should().Be(tail);
 
-            // and the frames delivered during the storm were whole too (checked as they were captured)
             // nothing stale: after a final reset, a flush sends nothing
             client.EnableCompression();
-            var before = socket.Bytes.Count;
+            var before2 = socket.Bytes.Count;
             client.Flush();
-            socket.Bytes.Count.Should().Be(before);
+            socket.Bytes.Count.Should().Be(before2);
         }
 
-        [Fact]
-        public void Resets_During_Concurrent_Sends_Never_Tear_A_Frame()
-        {
-            // same storm, but checks the whole captured stream (frames delivered while the resets ran), not only the tail
-            const int threads = 4, perThread = 3000;
-            var (client, socket) = Make(EncryptionType.NONE);
-            using var start = new ManualResetEventSlim();
-            using var ready = new CountdownEvent(threads + 2);
-            var running = true;
+        // ---- connection identity ----
 
-            var flusher = Task.Run(() =>
-            {
-                ready.Signal();
-                start.Wait(Bounded);
-
-                while (Volatile.Read(ref running))
-                {
-                    client.Flush();
-                    Thread.Yield();
-                }
-            });
-
-            var resetter = Task.Run(() =>
-            {
-                ready.Signal();
-                start.Wait(Bounded);
-
-                while (Volatile.Read(ref running))
-                {
-                    client.EnableCompression();
-                    Thread.Sleep(0);
-                }
-            });
-
-            var senders = new Task[threads];
-
-            try
-            {
-                for (var t = 0; t < threads; t++)
-                {
-                    var thread = t;
-                    senders[t] = Task.Factory.StartNew(() =>
-                    {
-                        ready.Signal();
-                        start.Wait(Bounded);
-
-                        for (var s = 0; s < perThread; s++)
-                        {
-                            client.Send(OwnFrame(thread, s), true);
-                        }
-                    }, TaskCreationOptions.LongRunning);
-                }
-
-                ready.Wait(Bounded).Should().BeTrue();
-                start.Set();
-                Task.WaitAll(senders, Bounded).Should().BeTrue();
-            }
-            finally
-            {
-                start.Set();
-                Volatile.Write(ref running, false);
-                Task.WaitAll(new[] { flusher, resetter }, Bounded).Should().BeTrue();
-            }
-
-            client.Flush();
-            AssertFramesIntact(socket.Bytes.ToArray(), threads, perThread, allowDropped: true);
-        }
-
-        // ---- connection identity and handshake ordering ----
-
-        [Fact]
-        public void A_Send_Started_On_The_Old_Connection_Is_Dropped_After_Disconnect_And_Reconnect()
+        // A plugin thread's Send is paused at the given point while the connection ends and the next one starts (reset, new
+        // socket, login handshake, seed, EndHandshake); the paused send then resumes and must not reach the new connection.
+        private static void StaleSendAcrossReconnect(Action<NetClient, CaptureSocket, Action> pauseAt)
         {
             var client = MakeClient(EncryptionType.NONE);
             var oldSocket = new CaptureSocket();
             client.AttachSocket(oldSocket);
             client.EndHandshake(client.BeginLoginHandshake(1));
 
+            using var scope = new Scope();
             using var arrived = new SemaphoreSlim(0);
             using var proceed = new SemaphoreSlim(0);
             Thread pluginThread = null;
+            var pausedOnce = false;
 
-            client.BeforeSendLock = () =>
+            void Pause()
             {
-                if (Thread.CurrentThread == pluginThread)
+                if (Thread.CurrentThread == Volatile.Read(ref pluginThread) && !pausedOnce)
                 {
+                    pausedOnce = true;
                     arrived.Release();
                     proceed.Wait(Bounded).Should().BeTrue();
                 }
-            };
+            }
 
-            pluginThread = new Thread(() => client.Send(new byte[] { 0xEE, 0xEE, 0xEE }, true)) { IsBackground = true };
-            pluginThread.Start();
+            pauseAt(client, oldSocket, Pause);
+
+            var plugin = scope.Run(() =>
+            {
+                Volatile.Write(ref pluginThread, Thread.CurrentThread);
+                client.Send(new byte[] { 0xEE, 0xEE, 0xEE }, true);
+            });
+
+            var newSocket = new CaptureSocket();
 
             try
             {
-                arrived.Wait(Bounded).Should().BeTrue("the plugin send must be paused between its hooks and the lock");
+                arrived.Wait(Bounded).Should().BeTrue("the plugin send must be paused");
 
                 // the connection ends and the next one starts: reset, a new socket, its handshake and seed
                 client.Disconnect();
-                var newSocket = new CaptureSocket();
                 client.AttachSocket(newSocket);
                 var handshake = client.BeginLoginHandshake(2);
-                client.Send(new byte[] { 1, 2, 3, 4 }, true, true); // the seed
+                client.Send(new byte[] { 1, 2, 3, 4 }, true, true);
                 client.EndHandshake(handshake);
-
-                proceed.Release();
-                Join(pluginThread);
-                client.Flush();
-
-                newSocket.Bytes.Should().Equal(new byte[] { 1, 2, 3, 4 }, "the stale send must not reach the new connection, before or after the seed");
-                oldSocket.Bytes.Should().BeEmpty();
             }
             finally
             {
                 proceed.Release();
-                Join(pluginThread);
             }
+
+            plugin.Join();
+            client.Flush();
+
+            newSocket.Bytes.Should().Equal(new byte[] { 1, 2, 3, 4 }, "only the new connection's seed: no stale packet, before or after it");
+            oldSocket.Bytes.Should().BeEmpty();
+            client.DroppedStaleSends.Should().Be(1);
         }
 
         [Fact]
-        public void Nothing_Is_Queued_Ahead_Of_The_Seed_During_The_Game_Handshake()
+        public void A_Send_Paused_Before_The_Lock_Is_Dropped_After_Disconnect_And_Reconnect()
+        {
+            StaleSendAcrossReconnect((client, _, pause) => client.BeforeSendLock = pause);
+        }
+
+        [Fact]
+        public void A_Send_Paused_In_The_Connection_Check_Is_Dropped_After_Disconnect_And_Reconnect()
+        {
+            // the sender saw the old socket as connected, paused there, and resumes with the new connection fully set up
+            StaleSendAcrossReconnect((_, oldSocket, pause) => oldSocket.OnIsConnected = pause);
+        }
+
+        // ---- handshake ordering ----
+
+        [Fact]
+        public void Other_Threads_Sends_During_The_Game_Handshake_Follow_It_In_Order()
         {
             var client = MakeClient(EncryptionType.TWOFISH_MD5);
             client.AttachSocket(new CaptureSocket());
             client.Disconnect(); // sends are closed from a reset until a handshake ends
             var socket = new CaptureSocket();
             client.AttachSocket(socket);
+            using var scope = new Scope();
 
-            // a plugin thread sends before the handshake starts, and again between EnableCompression-equivalent and the seed
-            void PluginSend(byte marker)
-            {
-                var t = new Thread(() => client.Send(new byte[] { marker, marker, marker }, true)) { IsBackground = true };
-                t.Start();
-                Join(t);
-            }
+            void PluginSend(byte marker) => scope.Run(() => client.Send(Send3(marker), true)).Join();
 
-            PluginSend(0xA1);
+            PluginSend(0xA1); // before the handshake starts
             var handshake = client.BeginGameHandshake(Seed);
             PluginSend(0xA2); // game cipher initialised, seed not queued yet
 
@@ -499,11 +519,7 @@ namespace ClassicUO.UnitTests.Network
             PluginSend(0xA3); // still inside the handshake
 
             client.EndHandshake(handshake);
-            var after = OwnFrame(1, 0);
-            var t2 = new Thread(() => client.Send(after, true)) { IsBackground = true };
-            t2.Start();
-            Join(t2);
-
+            PluginSend(0xA4); // after it
             client.Flush();
 
             var bytes = socket.Bytes.ToArray();
@@ -514,14 +530,97 @@ namespace ClassicUO.UnitTests.Network
             var plain = new byte[bytes.Length - 4];
             rx.Encrypt(bytes.AsSpan(4), plain, plain.Length);
 
-            // exactly the handshake thread's frame, then the post-handshake frame
-            var first = OwnFrame(0, 0);
-            plain.AsSpan(0, first.Length).ToArray().Should().Equal(first);
-            plain.AsSpan(first.Length).ToArray().Should().Equal(OwnFrame(1, 0)); // (Send encrypts its buffer in place)
+            var expected = new List<byte>(OwnFrame(0, 0));
+
+            foreach (var m in new byte[] { 0xA1, 0xA2, 0xA3, 0xA4 })
+            {
+                expected.AddRange(Send3(m));
+            }
+
+            plain.Should().Equal(expected, "the handshake frame first, then the held-back sends in the order they were made, then the later one");
+            client.DeferredSends.Should().Be(3);
         }
 
         [Fact]
-        public void A_Reset_Closes_Sends_Until_The_Next_Handshake_Ends()
+        public void A_Packet_Injected_By_The_Login_Hook_Follows_The_Login_Packet()
+        {
+            var client = MakeClient(EncryptionType.NONE);
+            var socket = new CaptureSocket();
+            client.AttachSocket(socket);
+            client.Disconnect();
+            client.AttachSocket(socket = new CaptureSocket());
+
+            var login = new byte[] { 0x91, 1, 2, 3 };
+            var ping = new byte[] { 0x73, 9 };
+            client.TestOutgoingHook = (ref Span<byte> m) =>
+            {
+                if (m[0] == 0x91)
+                {
+                    client.Send(ping, true); // a plugin sends from inside the outgoing hook of the login packet
+                }
+
+                return true;
+            };
+
+            var handshake = client.BeginLoginHandshake(5);
+            client.Send(new byte[] { 0, 0, 0, 5 }, true, true); // seed
+            client.Send(login); // runs the hook
+            client.EndHandshake(handshake);
+            client.Flush();
+
+            socket.Bytes.Should().Equal(new byte[] { 0, 0, 0, 5, 0x91, 1, 2, 3, 0x73, 9 }, "seed, login packet, then the injected packet");
+        }
+
+        [Fact]
+        public void A_Plugin_That_Replaces_The_Login_Packet_Still_Gets_Its_Replacement_Queued()
+        {
+            var client = MakeClient(EncryptionType.NONE);
+            client.AttachSocket(new CaptureSocket());
+            client.Disconnect();
+            var socket = new CaptureSocket();
+            client.AttachSocket(socket);
+
+            // suppress 0x91 and forward a replacement from inside the hook (re-entrantly)
+            client.TestOutgoingHook = (ref Span<byte> m) =>
+            {
+                if (m[0] == 0x91)
+                {
+                    client.Send(new byte[] { 0x91, 7, 7, 7 }, true);
+
+                    return false;
+                }
+
+                return true;
+            };
+
+            var handshake = client.BeginLoginHandshake(5);
+            client.Send(new byte[] { 0, 0, 0, 5 }, true, true);
+            client.Send(new byte[] { 0x91, 1, 2, 3 });
+            client.EndHandshake(handshake);
+            client.Flush();
+
+            socket.Bytes.Should().Equal(new byte[] { 0, 0, 0, 5, 0x91, 7, 7, 7 });
+
+            // and one that rewrites the packet in place (same call): accepted as the handshake packet
+            client.Disconnect();
+            client.AttachSocket(socket = new CaptureSocket());
+            client.TestOutgoingHook = (ref Span<byte> m) =>
+            {
+                m = new byte[] { 0x91, 8, 8, 8 };
+
+                return true;
+            };
+            handshake = client.BeginLoginHandshake(6);
+            client.Send(new byte[] { 0, 0, 0, 6 }, true, true);
+            client.Send(new byte[] { 0x91, 1, 2, 3 });
+            client.EndHandshake(handshake);
+            client.Flush();
+
+            socket.Bytes.Should().Equal(new byte[] { 0, 0, 0, 6, 0x91, 8, 8, 8 });
+        }
+
+        [Fact]
+        public void A_Reset_Closes_Sends_Until_The_Next_Handshake_Ends_And_Drops_What_Was_Held()
         {
             var (client, socket) = Make(EncryptionType.NONE);
             client.Disconnect();
@@ -530,22 +629,32 @@ namespace ClassicUO.UnitTests.Network
             client.AttachSocket(socket2);
             client.Send(new byte[] { 9, 9, 9 }, true);
             client.Flush();
-            socket2.Bytes.Should().BeEmpty("a connection's sends are closed until its handshake has been queued");
+            socket2.Bytes.Should().BeEmpty("a connection's sends wait for its handshake");
 
             client.EndHandshake(client.BeginLoginHandshake(3));
+            client.Flush();
+            socket2.Bytes.Should().Equal(9, 9, 9);
+
             client.Send(new byte[] { 7, 7, 7 }, true);
             client.Flush();
-            socket2.Bytes.Should().Equal(7, 7, 7);
+            socket2.Bytes.Should().Equal(9, 9, 9, 7, 7, 7);
 
-            // a handshake token from a connection that has been replaced does not reopen the new one
+            // a send held during a handshake is discarded with its connection, and a stale token doesn't reopen the next one
             var stale = client.BeginLoginHandshake(4);
             client.Disconnect();
-            client.EndHandshake(stale);
             var socket3 = new CaptureSocket();
             client.AttachSocket(socket3);
-            client.Send(new byte[] { 8, 8, 8 }, true);
+            client.Send(new byte[] { 6, 6, 6 }, true); // held for the new connection
+            client.EndHandshake(stale);
             client.Flush();
-            socket3.Bytes.Should().BeEmpty();
+            socket3.Bytes.Should().BeEmpty("the stale token must not reopen the new connection");
+
+            client.Disconnect();
+            var socket4 = new CaptureSocket();
+            client.AttachSocket(socket4);
+            client.EndHandshake(client.BeginLoginHandshake(5));
+            client.Flush();
+            socket4.Bytes.Should().BeEmpty("what was held for a connection that ended is gone");
             socket.Bytes.Should().BeEmpty();
         }
 
@@ -554,11 +663,12 @@ namespace ClassicUO.UnitTests.Network
         {
             var (client, _) = Make(EncryptionType.NONE);
             const int threads = 4, per = 2000;
-            var tasks = new Task[threads];
+            using var scope = new Scope();
+            var workers = new Worker[threads];
 
             for (var t = 0; t < threads; t++)
             {
-                tasks[t] = Task.Run(() =>
+                workers[t] = scope.Run(() =>
                 {
                     for (var i = 0; i < per; i++)
                     {
@@ -567,7 +677,11 @@ namespace ClassicUO.UnitTests.Network
                 });
             }
 
-            Task.WaitAll(tasks, Bounded).Should().BeTrue();
+            foreach (var w in workers)
+            {
+                w.Join();
+            }
+
             client.Statistics.TotalPacketsSent.Should().Be(threads * per);
             client.Statistics.TotalBytesSent.Should().Be(threads * per * 2);
 
@@ -576,6 +690,12 @@ namespace ClassicUO.UnitTests.Network
         }
 
         // ---- ordered async writer (the WebSocket send path) ----
+
+        private static async Task Finished(Task t)
+        {
+            (await Task.WhenAny(t, Task.Delay(Bounded))).Should().BeSameAs(t, "the writer must finish by itself");
+            await t;
+        }
 
         [Fact]
         public async Task Ordered_Writer_Writes_One_At_A_Time_In_Order()
@@ -593,12 +713,13 @@ namespace ClassicUO.UnitTests.Network
             }, _ => { }, CancellationToken.None);
 
             const int threads = 4, per = 200;
-            var tasks = new Task[threads];
+            using var scope = new Scope();
+            var workers = new Worker[threads];
 
             for (var t = 0; t < threads; t++)
             {
                 var thread = t;
-                tasks[t] = Task.Run(() =>
+                workers[t] = scope.Run(() =>
                 {
                     for (var i = 0; i < per; i++)
                     {
@@ -607,12 +728,17 @@ namespace ClassicUO.UnitTests.Network
                 });
             }
 
-            Task.WaitAll(tasks, Bounded).Should().BeTrue();
+            foreach (var w in workers)
+            {
+                w.Join();
+            }
+
             writer.Complete();
-            (await Task.WhenAny(writer.Completion, Task.Delay(Bounded))).Should().BeSameAs(writer.Completion);
+            await Finished(writer.Completion);
 
             maxInFlight.Should().Be(1, "SendAsync calls on one ClientWebSocket must never overlap");
             written.Count.Should().Be(threads * per * 3);
+            writer.QueuedBytes.Should().Be(0);
 
             var next = new int[threads];
 
@@ -625,7 +751,7 @@ namespace ClassicUO.UnitTests.Network
         }
 
         [Fact]
-        public async Task Ordered_Writer_Reports_A_Failure_Once_And_Drops_The_Rest()
+        public async Task Ordered_Writer_Finishes_By_Itself_After_A_Failure()
         {
             var failures = new List<Exception>();
             var written = new List<byte>();
@@ -647,13 +773,63 @@ namespace ClassicUO.UnitTests.Network
                 writer.TryWrite(new[] { i }, 0, 1);
             }
 
-            writer.Complete();
-            (await Task.WhenAny(writer.Completion, Task.Delay(Bounded))).Should().BeSameAs(writer.Completion);
+            // no Complete(): the failure alone must close admission and end the loop
+            await Finished(writer.Completion);
 
             failures.Should().ContainSingle().Which.Message.Should().Be("socket closed");
             written.Should().Equal(new byte[] { 1, 2 }, "nothing after the failed write is written");
             writer.Failed.Should().BeTrue();
             writer.TryWrite(new byte[] { 99 }, 0, 1).Should().BeFalse();
+            writer.QueuedBytes.Should().Be(0);
+        }
+
+        [Fact]
+        public async Task Ordered_Writer_Over_The_Byte_Cap_Fails_The_Connection_Instead_Of_Dropping_Bytes()
+        {
+            var failures = new List<Exception>();
+            var gate = new TaskCompletionSource();
+            var written = 0;
+            var writer = new OrderedAsyncWriter(async (data, ct) =>
+            {
+                await gate.Task; // a stalled peer
+                written++;
+            }, e => failures.Add(e), CancellationToken.None, maxQueuedBytes: 100);
+
+            writer.TryWrite(new byte[60], 0, 60).Should().BeTrue();
+            writer.TryWrite(new byte[30], 0, 30).Should().BeTrue();
+            writer.TryWrite(new byte[30], 0, 30).Should().BeFalse("over the cap");
+            writer.Failed.Should().BeTrue();
+
+            failures.Should().ContainSingle().Which.Message.Should().Contain("over 100");
+            gate.SetResult();
+            await Finished(writer.Completion);
+            writer.QueuedBytes.Should().Be(0);
+        }
+
+        [Fact]
+        public async Task Ordered_Writer_Shutdown_Aborts_A_Stalled_Write()
+        {
+            using var cts = new CancellationTokenSource();
+            var failures = new List<Exception>();
+            var started = new SemaphoreSlim(0);
+            var writer = new OrderedAsyncWriter(async (data, ct) =>
+            {
+                started.Release();
+                await Task.Delay(Timeout.Infinite, ct); // never completes on its own
+            }, e => failures.Add(e), cts.Token);
+
+            writer.TryWrite(new byte[10], 0, 10).Should().BeTrue();
+            writer.TryWrite(new byte[10], 0, 10).Should().BeTrue();
+            (await started.WaitAsync(Bounded)).Should().BeTrue();
+            writer.Complete();
+
+            // Complete() alone doesn't end a stalled write; cancelling the connection's token (what Dispose / the retirement does) does
+            writer.Completion.IsCompleted.Should().BeFalse();
+            cts.Cancel();
+            await Finished(writer.Completion);
+
+            failures.Should().ContainSingle();
+            writer.QueuedBytes.Should().Be(0);
         }
     }
 }
