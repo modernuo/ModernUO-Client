@@ -2963,7 +2963,14 @@ bench-000018 (the NativeAOT pair, check unset) was built from e4d7f7d3f, so it d
 
 The override comparison is now exercised (round 1 had 0 overrides in every scene): the winter season queues them and `brkOv3` is caught on every compared frame. The reference-pass item check reads 0 differences in all five runs.
 
-**`brkRng` was not caught because the scene never rolled.** `[set Body 25` worked (the parity counters show non-human mobile frames from then on), but `AnimationGroupRules.Select` first resolves the body through Body.def (`ConvertBodyIfNeeded`), and Body.def aliases 25 to 225 (`25 {225} 946`; so do 23, 27, 34, 37, 97 to 100). The flags are then read for 225, which mobtypes.txt lists as `ANIMAL 0`: no `CalculateOffsetLowGroupExtended`, so actions 5/6 go through `LABEL_222` without a roll. Of the animals with flag `20`, only 52 (snake) and 81 have no Body.def or Bodyconv.def alias. The scene now uses body 52 (`<scratchpad f33fe584>/e12-fix/e12ov52.txt`), and the same-frame report counts the rolls it compared (`N animation rolls`), so a scene without rolls shows 0 there instead of passing silently. Re-run: bench-000033 (new and `brkRng`, both built from the round-3 merge ceaa5df02). Results: pending.
+**`brkRng` was not caught because the scene never rolled.** `[set Body 25` worked (the parity counters show non-human mobile frames from then on), but `AnimationGroupRules.Select` first resolves the body through Body.def (`ConvertBodyIfNeeded`), and Body.def aliases 25 to 225 (`25 {225} 946`; so do 23, 27, 34, 37, 97 to 100). The flags are then read for 225, which mobtypes.txt lists as `ANIMAL 0`: no `CalculateOffsetLowGroupExtended`, so actions 5/6 go through `LABEL_222` without a roll. Of the animals with flag `20`, only 52 (snake) and 81 have no Body.def or Bodyconv.def alias. The scene now uses body 52 (`<scratchpad f33fe584>/e12-fix/e12ov52.txt`), and the same-frame report counts the rolls it compared (`N animation rolls`), so a scene without rolls shows 0 there instead of passing silently. Re-run: bench-000033 (new and `brkRng`, both built from the round-3 merge ceaa5df02), 8 same-frame reports per run:
+
+| run | frames checked | instances compared | overrides compared | animation rolls compared | roll differences | other differences |
+|---|---|---|---|---|---|---|
+| ov52_new | 108610 | 3436499 | 591279 | 41394 | 0 | 0 (isolation 0) |
+| ov52_brkRng | 105109 | 3552913 | 690921 | 38742 | **19371** | 9697 instance differences (the broken roll changes the frame drawn), isolation 0 |
+
+**`brkRng` is now caught:** the first difference is `animation rolls: 2 served, 2 in the full pass, first difference at 0`. The fixed build compares 41394 rolls with no difference.
 
 **Timing (check unset):** bench-000018 (e4d7f7d3f) was cancelled by the coordinator; the round-3 unset path is timed by bench-000034 (round 3 below).
 
@@ -2981,7 +2988,16 @@ Also in this round: the same-frame report counts the animation rolls compared, a
 
 **Verification:** both builds (`-c Release` and `-p:CuoDevTools=false`) 0 errors, before and after merging poc/modern-client 2ced75119 (merge ceaa5df02, no conflicts). Unit tests: 755 pass before the merge (753 + the 2 thread tests), 806 after it. The write-site budget test passes unchanged.
 
-**Timing (check unset):** bench-000034, NativeAOT, base = poc/modern-client 2ced75119, new = ceaa5df02 (this branch merged with it), plans ls1/ls25/lswalk + Britain, 4 rounds interleaved (base/new, new/base, ...), 2 windows each. Results: pending.
+**Timing (check unset):** bench-000034, NativeAOT, base = poc/modern-client 2ced75119, new = ceaa5df02 (this branch merged with it), plans ls1/ls25/lswalk + Britain, 4 rounds interleaved (base/new, new/base, ...), 2 windows each. Not pinned (the job predates benchpin). Mean over the 4 runs of frame avg / frame p50 / world prepare p50, in ms, with the within-arm spread (max-min)/min of the per-run p50 values:
+
+| plan | base frame avg | new frame avg | base f.p50 (spread) | new f.p50 (spread) | base wp p50 (spread) | new wp p50 (spread) |
+|---|---|---|---|---|---|---|
+| ls1 | 1.872 | 2.274 | 1.759 (9 %) | 2.091 (32 %) | 0.870 (11 %) | 1.033 (30 %) |
+| ls25 | 2.622 | 2.513 | 2.512 (67 %) | 2.407 (23 %) | 1.300 (72 %) | 1.245 (23 %) |
+| lswalk | 3.062 | 2.427 | 2.524 (81 %) | 2.262 (42 %) | 1.133 (94 %) | 0.989 (46 %) |
+| Britain | 0.695 | 0.581 | 0.526 (53 %) | 0.485 (13 %) | 0.070 (94 %) | 0.059 (12 %) |
+
+p95 spreads were 23-273 %. Hitch windows (frame p95 over 16 ms): base lswalk 1 of 8, all others 0. **Too noisy to conclude.** Every arm but base ls1 is over the 10 % p50 threshold (base round 3 was slow on every plan; new ls1 rounds 1-2 were slow), and no base-vs-new difference is larger than twice the larger within-arm spread: the biggest, ls1 frame p50 +19 % for new, is below 2 x 32 %. The numbers show no sign that the unset check costs anything, but they do not prove it. A pinned re-run (benchpin) would be needed for a verdict; not resubmitted (coordinator's call).
 
 ## Chunk pool per World (2026-10-30)
 
