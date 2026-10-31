@@ -74,10 +74,11 @@ All merged and pushed, and each audited by Codex until clean or down to document
 | f7008051e | **Legacy import:** 4.0.11c/MUL installs convert. Version detection (ModernUO PR #2735), map patches merged at import, Trammel from map0 below 6.0, width from the file, no x files, 6 regions fixed (offset-0 statics) | UOML verifies block-exact; Codex 2 rounds |
 | 7d372e72f | **Memory round 3:** staging slots stop cycling: exactly 4 art staging buffers, −26–37 MiB resident and −29–39 MiB commit per client | bench-000048; Codex 2 rounds |
 | 32ce99b5e | **Sounds and music in the pack:** raw PCM and original MP3; bounded sound cache; untrusted-pack checks | bench-000050–53; Codex 3 rounds |
+| b0370e370 | **Roof over the player fixed** (both renderers): the max-Z/roof decision latched an answer made before its chunks loaded. It happened at every login, not rarely: base drew the roof at the login spot in 5 of 5 sessions | bench-000056 (fix: 15/15 hidden); Codex 2 rounds |
 
 - **Packs:** classic-1.1 = tiledata merge plus the 6 regions; classic-1.2 = 1.1 plus `audio/sounds.bin` and `audio/music.bin`. Both were staged from hard links in `C:\Repositories\cuo-poc-state\pack-staging` (now empty), with `--verify-only` passed and the previous pack shown byte-identical afterwards.
 - **ModernUO PR #2735** (open, yours to merge): detects pre-resource clients (4.0.11c), parses letter versions correctly, and classic version strings get `ClientType.Classic`.
-- **Follow-up:** the login music's first buffer took 121–415 ms on JIT builds reading the pack, against 34.5 ms on NativeAOT with loose files; every other track starts in about 1 ms. An AOT smoke run on classic-1.2 is queued to settle it.
+- **Smoke run on classic-1.2** (bench-000054, NativeAOT): no errors and no loose-file reads; the large scene loaded on both renderers; the login music started in 26–28 ms in 2 of 3 runs (one 379 ms stall during login, not the pack path).
 - **Waiting on you:** body overrides (4 questions above), and tiledata bounds on legacy packs (pad or guard).
 
 ## Merged into `poc/modern-client` tonight
