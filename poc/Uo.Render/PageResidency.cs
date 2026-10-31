@@ -278,6 +278,7 @@ public sealed unsafe class PageResidency
     readonly IntPtr[] _staging;
     readonly PageJob[] _jobs;
     readonly byte[] _slotState; // 0 free, 1 loading, 2 loaded
+    readonly StagingSlots _slots;
     readonly int _chainBytes;
 
     public readonly uint[] Table;   // GPU page table contents
@@ -345,6 +346,7 @@ public sealed unsafe class PageResidency
         _staging = new IntPtr[stagingSlots];
         _jobs = new PageJob[stagingSlots];
         _slotState = new byte[stagingSlots];
+        _slots = new StagingSlots(stagingSlots);
         for (int i = 0; i < stagingSlots; i++)
         {
             var tci = new SDL_GPUTransferBufferCreateInfo { usage = SDL_GPUTransferBufferUsage.SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD, size = (uint)_chainBytes };
@@ -382,25 +384,29 @@ public sealed unsafe class PageResidency
         MissingVisible = 0;
     }
 
-    /// <summary>Starts worker loads for queued pages into free staging buffers.</summary>
+    /// <summary>The renderer's copy tracker (set by <see cref="Renderer.RenderFrame"/>): staging slots are reused only
+    /// after their last copy retired, and mapped without cycling (<see cref="StagingSlots"/>).</summary>
+    public CopyRetirement Retire { get => _slots.Retire; set => _slots.Retire = value; }
+    /// <summary>Staging slot reuse and its waits (memory round 3).</summary>
+    public StagingSlots Slots => _slots;
+
+    /// <summary>Starts worker loads for queued pages into free staging buffers whose last copy has retired. A page that
+    /// finds only slots still being copied from stays queued for a later frame (counted in <see cref="Slots"/>).</summary>
     public void StartLoads(long frame)
     {
+        _slots.Retire?.Poll();
+        bool blocked = false;
         for (int s = 0; s < _staging.Length && _qCount > 0; s++)
         {
             if (_slotState[s] != 0) continue;
-            int page = -1;
-            while (_qCount > 0)
-            {
-                int p = _queue[_qHead];
-                _qHead = (_qHead + 1) % LogicalCount; _qCount--;
-                if (_state[p] != PState.Queued) continue;
-                if (_requested[p] < frame - 10) { _state[p] = PState.None; continue; } // no longer wanted
-                page = p;
-                break;
-            }
+            if (!_slots.Reusable(s)) { blocked = true; continue; }
+            int page = NextQueued(frame);
             if (page < 0) break;
+            _qHead = (_qHead + 1) % LogicalCount; _qCount--;
             long tm = System.Diagnostics.Stopwatch.GetTimestamp();
-            var ptr = SDL_MapGPUTransferBuffer(_device, _staging[s], true); // cycle: never stomp a buffer still being copied from
+            // no cycling: the slot's last copy has retired, so rewriting it in place is safe and its container stays at
+            // one buffer (cycling only without a tracker, as before)
+            var ptr = SDL_MapGPUTransferBuffer(_device, _staging[s], _slots.CycleOnMap);
             MainUploadTicks += System.Diagnostics.Stopwatch.GetTimestamp() - tm;
             if (ptr == IntPtr.Zero) { _state[page] = PState.None; break; }
             var job = _jobs[s];
@@ -411,6 +417,23 @@ public sealed unsafe class PageResidency
             _state[page] = PState.Loading;
             _workers.Enqueue(job, high: true);
         }
+        _slots.Track(blocked && NextQueued(frame) >= 0, System.Diagnostics.Stopwatch.GetTimestamp());
+    }
+
+    /// <summary>The page at the head of the queue that is still wanted, without taking it; drops stale entries.</summary>
+    int NextQueued(long frame)
+    {
+        while (_qCount > 0)
+        {
+            int p = _queue[_qHead];
+            if (_state[p] == PState.Queued)
+            {
+                if (_requested[p] >= frame - 10) return p;
+                _state[p] = PState.None; // no longer wanted
+            }
+            _qHead = (_qHead + 1) % LogicalCount; _qCount--;
+        }
+        return -1;
     }
 
     public bool Pending => _qCount > 0 || HasLoading();
@@ -487,6 +510,7 @@ public sealed unsafe class PageResidency
                 SDL_UploadToGPUTexture(copyPass, in src, in dst, false);
                 offset += (uint)PageFormats.MipBytes(job.Size, m, UploadFormat);
             }
+            _slots.Copied(s);
             MainUploadTicks += System.Diagnostics.Stopwatch.GetTimestamp() - tu;
             MainUploadCount++;
             _layerOf[page] = layer;

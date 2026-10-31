@@ -1001,7 +1001,7 @@ namespace ClassicUO.Game.Scenes
                     $"pages {w.Pages.ResidentCount}/{w.Pages.Layers} resident, {w.Pages.MissingVisible} missing, {w.Pages.TotalUploads} uploads, {w.Pages.Evictions} evictions" +
                     (w.AnimPages != null ? $"; anim pages {w.AnimPages.ResidentCount}/{w.AnimPages.Layers}, {w.AnimPages.MissingVisible} missing, {w.AnimPages.TotalUploads} uploads, {w.AnimPages.Evictions} evictions" : "") +
                     $"; chunks ready {w.Chunks.ReadyChunks} pending {w.Chunks.PendingChunks} missing near view {w.Chunks.MissingNear}; settled {w.Settled}, visible ready {w.VisibleReady}" +
-                    $"; instances used {w.Chunks.Alloc.Used}/{w.Chunks.Alloc.Capacity}");
+                    $"; instances used {w.Chunks.Alloc.Used}/{w.Chunks.Alloc.Capacity}" + StagingDetail(w));
             }
 
             return ok;
@@ -1060,7 +1060,12 @@ namespace ClassicUO.Game.Scenes
             _loadWhat = null;
         }
 
-        private string LoadDetail() => "";
+        // Staging slot waits (memory round 3: a slot is reused only after its last copy retired): cumulative per world.
+        private string LoadDetail() => StagingDetail(_world);
+
+        private static string StagingDetail(Uo.Render.WorldRenderer w) =>
+            $"; staging art {w.Pages.Slots.Summary()}" + (w.AnimPages != null ? $", anim {w.AnimPages.Slots.Summary()}" : "") +
+            $"; copy fences {w.Renderer.Copies.FencesTaken} taken, {w.Renderer.Copies.PendingFences} pending";
 
         private uint _nextStatsLog, _nextDropLog;
         private int _loggedGrowths, _loggedTileMismatches, _loggedArrayGrowths;
