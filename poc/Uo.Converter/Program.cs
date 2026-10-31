@@ -6,8 +6,9 @@ using Uo.Converter;
 using Uo.Pack;
 
 string uoPath = @"C:\Ultima Online Classic";
-string outDir = @"C:\Repositories\uo-packs\classic";
-string debugDir = @"C:\Repositories\uo-packs\debug";
+string outDir = ""; // required: published packs (C:\Repositories\uo-packs\*) are immutable, so there is no default under them
+string? debugDir = null;
+var packsRoots = PublishedPacks.ConfiguredRoots().ToList();
 bool useX = false, maps = true, convert = true, anims = true, gumps = true, fonts = true, cliloc = true, speech = true, formatGiven = false, gumpReport = false;
 string? gumpDef = null;
 HashSet<string>? only = null; // --only: convert just these stages into an existing pack, keeping everything else
@@ -18,6 +19,7 @@ for (int i = 0; i < args.Length; i++)
         case "--uo": uoPath = args[++i]; break;
         case "--out": outDir = args[++i]; break;
         case "--debug": debugDir = args[++i]; break;
+        case "--packs-root": packsRoots.Add(args[++i]); break;
         case "--xfiles": useX = true; break;
         case "--no-maps": maps = false; break;
         case "--verify-only": convert = false; break;
@@ -79,9 +81,28 @@ for (int i = 0; i < args.Length; i++)
         case "--regions": ConvertOptions.MaxRegions = int.Parse(args[++i]); break;
         case "--bench-bc7": Bench.Bc7(args[++i]); return 0;
         default:
-            Console.WriteLine("usage: Uo.Converter [--uo <client dir>] [--out <pack dir>] [--debug <png dir>] [--format b5g5r5a1|rgba8|bc7] [--bc7-quality fast|balanced|bestquality] [--bc7-refine-db 28] [--raw-regions] [--raw-pages|--compress-pages[=chunked]] [--chunk-bytes n] [--page-size 2048] [--anim-page-size 1024] [--anim-format indexed8|page] [--indexed-mips none|b16] [--threads n] [--pages a-b] [--facets 0,1] [--regions n] [--xfiles] [--no-maps] [--no-anims] [--no-gumps] [--no-fonts] [--no-cliloc] [--no-speech] [--raw-gumps] [--raw-text] [--text-small n] [--cliloc-brotli] [--cliloc-skip ext,ext] [--no-cliloc-overrides] [--gump-small n] [--gump-def <file>] [--gump-report] [--only art,tex,hues,tiledata,data,gumps,fonts,cliloc,speech,maps,anims] [--anims-only] [--bodies 400,0xC8] [--verify-only]");
+            Console.WriteLine("usage: Uo.Converter [--uo <client dir>] --out <pack dir> [--debug <png dir>] [--packs-root <published packs root>] [--format b5g5r5a1|rgba8|bc7] [--bc7-quality fast|balanced|bestquality] [--bc7-refine-db 28] [--raw-regions] [--raw-pages|--compress-pages[=chunked]] [--chunk-bytes n] [--page-size 2048] [--anim-page-size 1024] [--anim-format indexed8|page] [--indexed-mips none|b16] [--threads n] [--pages a-b] [--facets 0,1] [--regions n] [--xfiles] [--no-maps] [--no-anims] [--no-gumps] [--no-fonts] [--no-cliloc] [--no-speech] [--raw-gumps] [--raw-text] [--text-small n] [--cliloc-brotli] [--cliloc-skip ext,ext] [--no-cliloc-overrides] [--gump-small n] [--gump-def <file>] [--gump-report] [--only art,tex,hues,tiledata,data,gumps,fonts,cliloc,speech,maps,anims] [--anims-only] [--bodies 400,0xC8] [--verify-only]");
             return 1;
     }
+}
+
+if (outDir.Length == 0)
+{
+    Console.Error.WriteLine("--out <pack dir> is required");
+    return 1;
+}
+debugDir ??= Path.Combine(Path.GetTempPath(), "uo-converter-debug", Path.GetFileName(Path.TrimEndingDirectorySeparator(Path.GetFullPath(outDir))));
+try
+{
+    // Published packs are immutable: never convert into one (a folder under a packs root, also through a junction or
+    // symlink). --verify-only only reads the pack, so it may verify a published one; debug PNGs still go elsewhere.
+    if (convert) PublishedPacks.EnsureWritable(outDir, packsRoots);
+    PublishedPacks.EnsureWritable(debugDir, packsRoots);
+}
+catch (InvalidOperationException e)
+{
+    Console.Error.WriteLine(e.Message);
+    return 1;
 }
 
 bool Want(string stage) => only != null ? only.Contains(stage) : stage switch { "maps" => maps, "anims" => anims, "gumps" => gumps, "fonts" => fonts, "cliloc" => cliloc, "speech" => speech, _ => true };
@@ -179,7 +200,7 @@ if (convert)
     Stage("manifest", () =>
     {
         var files = Directory.EnumerateFiles(outDir, "*", SearchOption.AllDirectories)
-            .Where(p => !p.EndsWith("manifest.json", StringComparison.OrdinalIgnoreCase)).OrderBy(p => p, StringComparer.Ordinal).ToArray();
+            .Where(p => !p.EndsWith("manifest.json", StringComparison.OrdinalIgnoreCase) && !ReplacingFile.IsTempFile(p)).OrderBy(p => p, StringComparer.Ordinal).ToArray();
         var entries = new ManifestFile[files.Length];
         Parallel.For(0, files.Length, ConvertOptions.Par, i =>
         {

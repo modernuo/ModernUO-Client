@@ -30,9 +30,10 @@ public static class AnimExperiments
     {
         var files = Directory.GetFiles(dir, "page_*.bin").OrderBy(f => f, StringComparer.Ordinal).ToArray();
         outDir ??= Path.Combine(Path.GetTempPath(), "uo-chunked-bench");
+        PublishedPacks.EnsureWritable(outDir);
         Directory.CreateDirectory(outDir);
         foreach (var f in new[] { AnimTableFile.FileName, AnimDataFile.FileName, AnimPaletteFile.FileName })
-            if (File.Exists(Path.Combine(dir, f))) File.Copy(Path.Combine(dir, f), Path.Combine(outDir, f), true);
+            if (File.Exists(Path.Combine(dir, f))) ReplacingFile.Copy(Path.Combine(dir, f), Path.Combine(outDir, f));
         long raw = 0, onDisk = 0, k1 = 0;
         var k2 = new long[ChunkSizes.Length];
         var sw = Stopwatch.StartNew();
@@ -51,7 +52,7 @@ public static class AnimExperiments
                 ChunkedBrotli.Write(ms, logical, ChunkSizes[c]);
                 Interlocked.Add(ref k2[c], ms.Length);
                 if (ChunkSizes[c] == ChunkedBrotli.DefaultChunkBytes)
-                    File.WriteAllBytes(Path.Combine(outDir, Path.GetFileName(f)), ms.ToArray());
+                    ReplacingFile.WriteAllBytes(Path.Combine(outDir, Path.GetFileName(f)), ms.ToArray());
             }
         });
         Console.WriteLine($"{files.Length} pages from {dir} ({sw.Elapsed.TotalSeconds:F0}s): raw {raw / 1048576.0:F1} MiB, on disk {onDisk / 1048576.0:F1} MiB");

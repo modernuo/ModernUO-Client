@@ -7,10 +7,11 @@ public static class SpriteTable
 {
     public static void Write(string path, ReadOnlySpan<SpriteEntry> entries)
     {
-        using var fs = File.Create(path);
+        using var fs = ReplacingFile.Create(path);
         StructIo.WriteHeader(fs, PackConst.MagicSprites);
         StructIo.Write(fs, entries.Length);
         StructIo.WriteSpan(fs, entries);
+        fs.Commit();
     }
 
     public static SpriteEntry[] Read(string path)
@@ -79,7 +80,7 @@ public static class AtlasPage
     /// <summary>Writes a page as Kind 0 (raw), 1 (one Brotli stream) or 2 (chunked Brotli, <paramref name="chunkBytes"/> per chunk).</summary>
     public static void Write(string path, int size, int mips, PixelFormat format, ReadOnlySpan<byte> chain, ushort kind, int chunkBytes = ChunkedBrotli.DefaultChunkBytes)
     {
-        using var fs = File.Create(path);
+        using var fs = ReplacingFile.Create(path);
         StructIo.WriteHeader(fs, PackConst.MagicPage, kind);
         var h = new PageHeader { Width = (ushort)size, Height = (ushort)size, MipCount = (ushort)mips, Format = format, DataBytes = (uint)chain.Length };
         switch (kind)
@@ -87,13 +88,15 @@ public static class AtlasPage
             case FileKind.Raw:
                 StructIo.Write(fs, in h);
                 fs.Write(chain);
-                return;
+                break;
             case FileKind.Brotli:
             {
-                using var br = new System.IO.Compression.BrotliStream(fs, new System.IO.Compression.BrotliCompressionOptions { Quality = BrotliQuality });
-                StructIo.Write(br, in h);
-                br.Write(chain);
-                return;
+                using (var br = new System.IO.Compression.BrotliStream(fs, new System.IO.Compression.BrotliCompressionOptions { Quality = BrotliQuality }, leaveOpen: true))
+                {
+                    StructIo.Write(br, in h);
+                    br.Write(chain);
+                }
+                break;
             }
             case FileKind.ChunkedBrotli:
             {
@@ -106,10 +109,11 @@ public static class AtlasPage
                     ChunkedBrotli.Write(fs, logical.AsSpan(0, hs + chain.Length), chunkBytes);
                 }
                 finally { System.Buffers.ArrayPool<byte>.Shared.Return(logical); }
-                return;
+                break;
             }
             default: throw new ArgumentOutOfRangeException(nameof(kind));
         }
+        fs.Commit();
     }
 
     /// <summary>
@@ -254,17 +258,19 @@ public static class RegionFile
     {
         if (!compress)
         {
-            using var f = File.Create(path);
+            using var f = ReplacingFile.Create(path);
             WriteRaw(f, in header, blocks);
+            f.Commit();
             return;
         }
         using var ms = new MemoryStream();
         WriteRaw(ms, in header, blocks);
         int hs = StructIo.SizeOf<FileHeader>();
-        using var fs = File.Create(path);
+        using var fs = ReplacingFile.Create(path);
         StructIo.WriteHeader(fs, PackConst.MagicRegion, FileKind.Brotli);
         using (var br = new System.IO.Compression.BrotliStream(fs, new System.IO.Compression.BrotliCompressionOptions { Quality = BrotliQuality }, leaveOpen: true))
             br.Write(ms.GetBuffer().AsSpan(hs, (int)ms.Length - hs));
+        fs.Commit();
     }
 
     private static void WriteRaw(Stream fs, in RegionHeader header, ReadOnlySpan<BlockData> blocks)
@@ -398,12 +404,13 @@ public static class TileDataFile
 {
     public static void Write(string path, ReadOnlySpan<LandTileData> land, ReadOnlySpan<StaticTileData> statics)
     {
-        using var fs = File.Create(path);
+        using var fs = ReplacingFile.Create(path);
         StructIo.WriteHeader(fs, PackConst.MagicTileData);
         StructIo.Write(fs, land.Length);
         StructIo.Write(fs, statics.Length);
         StructIo.WriteSpan(fs, land);
         StructIo.WriteSpan(fs, statics);
+        fs.Commit();
     }
 
     public static (LandTileData[] Land, StaticTileData[] Statics) Read(string path)
@@ -446,7 +453,7 @@ public static class AnimTableFile
 
     public static void Write(string path, ReadOnlySpan<AnimBodyEntry> bodies, ReadOnlySpan<AnimDirEntry> dirs, ReadOnlySpan<AnimFrameEntry> frames)
     {
-        using var fs = File.Create(path);
+        using var fs = ReplacingFile.Create(path);
         StructIo.WriteHeader(fs, AnimConst.MagicAnim);
         StructIo.Write(fs, bodies.Length);
         StructIo.Write(fs, dirs.Length);
@@ -454,6 +461,7 @@ public static class AnimTableFile
         StructIo.WriteSpan(fs, bodies);
         StructIo.WriteSpan(fs, dirs);
         StructIo.WriteSpan(fs, frames);
+        fs.Commit();
     }
 
     public static (AnimBodyEntry[] Bodies, AnimDirEntry[] Dirs, AnimFrameEntry[] Frames) Read(string path)
@@ -486,10 +494,11 @@ public static class AnimDataFile
 
     public static void Write(string path, ReadOnlySpan<AnimDataEntry> entries)
     {
-        using var fs = File.Create(path);
+        using var fs = ReplacingFile.Create(path);
         StructIo.WriteHeader(fs, AnimConst.MagicAnimData);
         StructIo.Write(fs, entries.Length);
         StructIo.WriteSpan(fs, entries);
+        fs.Commit();
     }
 
     public static AnimDataEntry[] Read(string path)
@@ -514,12 +523,13 @@ public static class AnimPaletteFile
 
     public static void Write(string path, ReadOnlySpan<uint> framePalette, ReadOnlySpan<ushort> palettes)
     {
-        using var fs = File.Create(path);
+        using var fs = ReplacingFile.Create(path);
         StructIo.WriteHeader(fs, AnimConst.MagicPalettes);
         StructIo.Write(fs, palettes.Length / Entries);
         StructIo.Write(fs, framePalette.Length);
         StructIo.WriteSpan(fs, framePalette);
         StructIo.WriteSpan(fs, palettes);
+        fs.Commit();
     }
 
     public static (uint[] FramePalette, ushort[] Palettes) Read(string path)
@@ -538,7 +548,7 @@ public static class AnimPaletteFile
 public static class ManifestFileIo
 {
 
-    public static void Write(string path, Manifest m) => File.WriteAllText(path, JsonSerializer.Serialize(m, PackJsonContext.Default.Manifest));
+    public static void Write(string path, Manifest m) => ReplacingFile.WriteAllText(path, JsonSerializer.Serialize(m, PackJsonContext.Default.Manifest));
     public static Manifest Read(string path) => JsonSerializer.Deserialize(File.ReadAllText(path), PackJsonContext.Default.Manifest)!;
 }
 
@@ -547,7 +557,7 @@ public static class FacetFileIo
 {
     public const string FileName = "facet.json";
 
-    public static void Write(string facetDir, FacetInfo f) => File.WriteAllText(Path.Combine(facetDir, FileName), JsonSerializer.Serialize(f, PackJsonContext.Default.FacetInfo));
+    public static void Write(string facetDir, FacetInfo f) => ReplacingFile.WriteAllText(Path.Combine(facetDir, FileName), JsonSerializer.Serialize(f, PackJsonContext.Default.FacetInfo));
     public static FacetInfo Read(string facetDir) => JsonSerializer.Deserialize(File.ReadAllText(Path.Combine(facetDir, FileName)), PackJsonContext.Default.FacetInfo)!;
 }
 

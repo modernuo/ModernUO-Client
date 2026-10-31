@@ -379,15 +379,16 @@ public static unsafe class Program
             Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
             var name = Path.GetFileName(f);
             bool page = name.StartsWith("page_") && int.Parse(name[5..9]) % 2 == 1;
-            if (!page) { File.Copy(f, outPath, true); continue; }
+            if (!page) { Uo.Pack.ReplacingFile.Copy(f, outPath); continue; }
             var bytes = File.ReadAllBytes(f);
-            using var fs = File.Create(outPath);
+            using var fs = Uo.Pack.ReplacingFile.Create(outPath);
             fs.Write(bytes, 0, 6);
             fs.Write(BitConverter.GetBytes(Uo.Pack.FileKind.Brotli));
             fs.Write(bytes, 8, 8);
             using (var br = new System.IO.Compression.BrotliStream(fs, new System.IO.Compression.BrotliCompressionOptions { Quality = 1 }, leaveOpen: true))
                 br.Write(bytes, 16, bytes.Length - 16);
             Console.WriteLine($"{rel}: {bytes.Length >> 10} KiB -> {fs.Length >> 10} KiB");
+            fs.Commit();
         }
     }
 
