@@ -38,7 +38,8 @@ namespace ClassicUO.Game
     /// writes to its own object (and, for a removal, to the removed subtree) are funnel writes for <see cref="FunnelCheck"/>;
     /// writes to any other object are still direct writes. Converted so far: world items (0x1A, 0xF3 and the item branch of
     /// 0x1D) and items into containers (0x25, 0x3C's items, 0x27's deny path: <see cref="PlaceInContainer"/>), the bulk clear
-    /// of 0x3C and 0x24 (<see cref="ClearContainer"/>) and 0x27's other deny branches (<see cref="ReturnHeldItem"/>). Every other writer still relies on <see cref="WorldEcs.Sync"/> and <see cref="WorldEcs.PushInputs"/>, which
+    /// of 0x3C and 0x24 (<see cref="ClearContainer"/>) 0x27's other deny branches (<see cref="ReturnHeldItem"/>) and equipment (0x2E: <see cref="Equip"/>; 0x78/0xD3's
+    /// equipment list: <see cref="ClearWornItems"/>, <see cref="WearItem"/>). Every other writer still relies on <see cref="WorldEcs.Sync"/> and <see cref="WorldEcs.PushInputs"/>, which
     /// stay as the fallback until the last packet group is converted.
     /// </para>
     /// <para>
@@ -186,7 +187,7 @@ namespace ClassicUO.Game
 
         // the admission check every operation makes before its first side effect: no operation and no fold open. Re-entry is
         // forbidden, not recovered from (T1 round 4, after the Codex round-4 audit): the operations are called only by the 0x1A/
-        // 0xF3, 0x1D, 0x25/0x3C and 0x27 handlers, which run only from ParsePackets in GameController's update; inside an
+        // 0xF3, 0x1D, 0x25/0x3C, 0x27, 0x2E and 0x78/0xD3 handlers, which run only from ParsePackets in GameController's update; inside an
         // operation nothing parses packets (a plugin's injected packet, also from a send hook, is only queued by Append), so
         // a nested operation is a bug: it throws in CUO_DEVTOOLS builds; in a release build it logs once and is rejected (the
         // caller gets null / nothing), so no stale outer continuation can publish over a nested change.
@@ -203,8 +204,8 @@ namespace ClassicUO.Game
         }
 
         // a caller bug: throws in a CUO_DEVTOOLS build; otherwise logs once per kind (the caller rejects a nesting, and takes
-        // the pre-T1 path for the others)
-        private void Reject(Violation kind, string message)
+        // the pre-T1 path for the others, except where it passes rejected: true: WearItem's owner not held, which has none)
+        private void Reject(Violation kind, string message, bool rejected = false)
         {
             Violations++;
 
@@ -218,7 +219,7 @@ namespace ClassicUO.Game
             if ((_loggedViolations & bit) == 0)
             {
                 _loggedViolations |= bit;
-                Log.Error(message + (kind == Violation.Nesting ? " (logged once per kind; rejected)" : " (logged once per kind; the packet takes the pre-T1 path)"));
+                Log.Error(message + (kind == Violation.Nesting || rejected ? " (logged once per kind; rejected)" : " (logged once per kind; the packet takes the pre-T1 path)"));
             }
         }
 
@@ -846,6 +847,268 @@ namespace ClassicUO.Game
             }
 
             return item;
+        }
+
+        /// <summary>
+        /// 0x2E (EquipItem): puts an item on a wearer. The item is found or created among the items
+        /// (<c>World.GetOrCreateItem</c>); the wearer is <c>World.Get(containerSerial)</c> (a mobile first), which may be null
+        /// (the item then gets the Container and Layer but no parent link, as before T1). An item that already had a graphic
+        /// and is not a backpack leaves its old container first (the old path published that detached state, so this commits
+        /// it too); then the packet's graphic, layer, container, hue (FixHue) and amount 1 are written, and the item goes to
+        /// the end of the wearer's child list. No <c>CheckGraphicChange</c> ran here before T1, so none runs now.
+        /// </summary>
+        /// <param name="wearer">What the handler's <c>World.Get(item.Container)</c> returned.</param>
+        /// <param name="shownContainer">The container whose gumps the handler refreshes before the writes: the old Container when
+        /// the item did not leave it, otherwise 0xFFFFFFFF (none).</param>
+        public Item Equip(uint serial, ushort graphic, Layer layer, uint containerSerial, ushort hue, out Entity wearer, out uint shownContainer)
+        {
+            wearer = null;
+            shownContainer = 0xFFFF_FFFF;
+
+            if (!Admitted(nameof(Equip), serial))
+            {
+                return null;
+            }
+
+            // 1. resolve, as the old handler: the item among the items (found or created), the wearer by World.Get (the writes
+            // below change neither dictionary, so resolving it first finds what the old lookup after the writes found)
+            Item item = _world.GetOrCreateItem(serial, out _);
+            wearer = _world.Get(containerSerial);
+
+            // 2. compute: every read of the previous state is here
+            uint oldContainer = item.Container;
+            bool unlink = item.Graphic != 0 && item.Layer != Layer.Backpack;
+            shownContainer = unlink ? 0xFFFF_FFFF : oldContainer;
+
+            ItemState detached;
+            detached.Serial = serial;
+            detached.IsMulti = item.IsMulti;
+            detached.Graphic = item.Graphic;
+            detached.X = item.X;
+            detached.Y = item.Y;
+            detached.Z = item.Z;
+            detached.Hue = item.Hue;
+            detached.Amount = item.Amount;
+            detached.Flags = item.Flags;
+            detached.Container = 0xFFFF_FFFF;
+            detached.Direction = item.Direction;
+            detached.Layer = item.Layer;
+
+            ItemState v = detached;
+            v.Graphic = graphic;
+            v.Layer = layer;
+            v.Container = containerSerial;
+            v.Hue = Entity.FixedHue(hue);
+            v.Amount = 1;
+
+            CancelPlacements(item);
+
+            using (Open(item, item))
+            {
+                if (unlink)
+                {
+                    // the old RemoveItemFromContainer: the links, then its Sync of the detached state
+                    _world.UnlinkFromContainer(item, oldContainer);
+                    _world.Ecs.CommitItem(item, in detached);
+                }
+
+                // 3. write: the ECS, then the cache from v in the old order, then the link
+                _world.Ecs.CommitItem(item, in v);
+
+                item.Graphic = v.Graphic;
+                item.Layer = v.Layer;
+                item.Container = v.Container;
+                item.Hue = v.Hue;
+                item.Amount = v.Amount;
+
+                wearer?.PushToBack(item);
+            }
+
+            return item;
+        }
+
+        /// <summary>
+        /// 0x78 / 0xD3 (UpdateObject), before its equipment list: removes every child of the object
+        /// (<c>World.Get(ownerSerial)</c>) that is not an opened container and not the backpack, with its contents, each by
+        /// serial as before T1. A removal: it owns the removed subtrees, writes no value of its own (each removal's Sync and
+        /// Destroy run unfolded, as in <see cref="ClearContainer"/>), and cancels the removed items' placements at any depth.
+        /// </summary>
+        public void ClearWornItems(uint ownerSerial)
+        {
+            if (!Admitted(nameof(ClearWornItems), ownerSerial))
+            {
+                return;
+            }
+
+            Entity owner = _world.Get(ownerSerial);
+
+            if (owner == null || owner.IsEmpty)
+            {
+                return;
+            }
+
+            // 1. resolve: the removed children, before anything changes
+            for (LinkedObject i = owner.Items; i != null; i = i.Next)
+            {
+                if (i is Item it && !it.Opened && it.Layer != Layer.Backpack)
+                {
+                    CancelSubtreePlacements(it);
+                }
+            }
+
+            using (Open(owner, null))
+            {
+#if CUO_DEVTOOLS
+                if (FunnelCheck.Enabled)
+                {
+                    for (LinkedObject i = owner.Items; i != null; i = i.Next)
+                    {
+                        if (i is Item it && !it.Opened && it.Layer != Layer.Backpack)
+                        {
+                            CollectSubtree(it);
+                        }
+                    }
+                }
+#endif
+
+                // the old loop
+                LinkedObject o = owner.Items;
+
+                while (o != null)
+                {
+                    LinkedObject next = o.Next;
+                    Item it = (Item)o;
+
+                    if (!it.Opened && it.Layer != Layer.Backpack)
+                    {
+                        _world.RemoveItem(it.Serial, true);
+                    }
+
+                    o = next;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 0x78 / 0xD3 (UpdateObject), one entry of its equipment list: the item (found or created among the items) gets the
+        /// entry's graphic, hue (FixHue) and amount 1, leaves its old container (the old path published that state: the new
+        /// graphic, hue and amount with the old layer), then gets the owner as its Container and the entry's layer;
+        /// <c>CheckGraphicChange</c> ran next (a corpse graphic: the corpse's state from the old direction), then the item goes to the end of the owner's child list.
+        /// </summary>
+        /// <param name="owner">The handler's <c>obj</c>: what <c>World.Get(serial)</c> returned once, before the list. The
+        /// handler passes that instance to every entry, as the old loop used it, and the operation does not look the owner up
+        /// again: an entry can create an item under the owner's serial (a death-rekeyed mobile's 0x8000_0000 serial), and
+        /// <c>World.Get</c> would then return that item for the following entries. Null: nothing happens and null is returned.
+        /// An instance this World does not hold in its table (the mobiles for a mobile, the items for an item) is a caller bug:
+        /// a violation, rejected (null) before any side effect.</param>
+        public Item WearItem(Entity owner, uint serial, ushort graphic, Layer layer, ushort hue)
+        {
+            if (!Admitted(nameof(WearItem), serial))
+            {
+                return null;
+            }
+
+            // 1. resolve: the owner as captured by the handler, validated against its own table; the item among the items
+            // (found or created)
+            if (owner == null)
+            {
+                return null;
+            }
+
+            if (!Holds(owner))
+            {
+                Reject(Violation.NotHeld, $"WorldWriter.WearItem: owner 0x{owner.Serial:X8} is not the instance this World holds for its serial", rejected: true);
+
+                return null;
+            }
+
+            uint ownerSerial = owner.Serial;
+            Item item = _world.GetOrCreateItem(serial, out _);
+
+            // 2. compute: every read of the previous state is here
+            uint oldContainer = item.Container;
+            bool multi = item.IsMulti;
+
+            ItemState detached;
+            detached.Serial = serial;
+            detached.IsMulti = multi;
+            detached.Graphic = graphic;
+            detached.X = item.X;
+            detached.Y = item.Y;
+            detached.Z = item.Z;
+            detached.Hue = Entity.FixedHue(hue);
+            detached.Amount = 1;
+            detached.Flags = item.Flags;
+            detached.Container = 0xFFFF_FFFF;
+            detached.Direction = item.Direction;
+            detached.Layer = item.Layer;
+
+            ItemState v = detached;
+            v.Container = ownerSerial;
+            v.Layer = layer;
+
+            // CheckGraphicChange's corpse branch. Its running-bit Direction write also synced (with the entry's layer, before
+            // the corpse layer): the item was already re-equipped at the end of the owner's equipment by then and the final
+            // state overwrites every value of that one, so the operation commits the final state only
+            bool corpse = !multi && graphic == 0x2006;
+            bool usedLayer = false;
+
+            if (corpse)
+            {
+                Item.CorpseState(ref v.Direction, out usedLayer, out Layer corpseLayer);
+                v.Layer = corpseLayer;
+            }
+
+            CancelPlacements(item);
+
+            using (Open(item, item))
+            {
+                // 3. write: the old order (the graphic before the unlink: a placed item's tile notes the change)
+                _world.Ecs.CommitItem(item, in detached);
+
+                item.Graphic = v.Graphic;
+                item.Hue = v.Hue;
+                item.Amount = v.Amount;
+
+                _world.UnlinkFromContainer(item, oldContainer);
+                _world.Ecs.CommitItem(item, in v);
+
+                item.Container = v.Container;
+                item.Layer = layer;
+
+                if (corpse)
+                {
+                    item.AnimIndex = 99;
+                    item.UsedLayer = usedLayer;
+
+                    if (usedLayer)
+                    {
+                        item.Direction = v.Direction;
+                    }
+
+                    item.Layer = v.Layer;
+                }
+
+                // 4. derived state where CheckGraphicChange ran it, then the link
+                item.RefreshGraphicState();
+                owner.PushToBack(item);
+            }
+
+            return item;
+        }
+
+        // the instance this World holds for the entity's serial in the entity's own table (a mobile among the mobiles, an
+        // item among the items), so a mobile and an item sharing a serial are each recognised
+        private bool Holds(Entity entity)
+        {
+            if (entity.World != _world)
+            {
+                return false;
+            }
+
+            return entity is Mobile mobile
+                ? ReferenceEquals(_world.Mobiles.Get(mobile.Serial), mobile)
+                : entity is Item item && ReferenceEquals(_world.Items.Get(item.Serial), item);
         }
 
         // the destroy half of PlaceInContainer's destroy-vs-reuse, its own scope (owning the removed subtree)
