@@ -19,30 +19,29 @@ namespace ClassicUO.Renderer
     /// <item>A decode that failed (or had nothing to upload) is <see cref="IsFailed"/> for good: requests are speculative,
     /// so nothing is retried here; the owner's synchronous lookup handles the sprite as before when something really
     /// needs it.</item>
-    /// <item><see cref="Cancel"/> (scene teardown) returns the finished buffers and makes running workers return theirs.</item>
+    /// <item><see cref="Cancel"/> (scene teardown) returns the finished buffers, takes the waiting requests out of the decode
+    /// budget, and makes running workers return their buffers and bytes when they finish (<see cref="DecodeQueue{T}"/>).</item>
     /// </list>
     /// The owner's synchronous lookup still decodes on the spot when it needs a sprite whose decode is in flight; the
     /// worker's result is then dropped by the upload callback.
     /// </summary>
     public sealed class FirstSightDecoder
     {
-        public sealed class Job : IThreadPoolWorkItem
+        public sealed class Job : DecodeBudget.Item
         {
             public FirstSightDecoder Owner;
             public uint Index;
-            internal int Epoch;
-            internal long Bytes; // held in the decode budget from the request until Drain/Cancel releases it
 
             // filled by the worker; Pixels is rented from ArrayPool<uint>.Shared (returned by Drain), null if it failed
             public uint[] Pixels;
             public int Width, Height, TrimX, TrimY, TrimW, TrimH;
             public Rectangle Bounds;
 
-            public void Execute()
+            public override void Execute()
             {
                 try
                 {
-                    if (Epoch != Owner._epoch)
+                    if (!Owner._queue.IsCurrent(this))
                     {
                         // cancelled while it waited in the budget or the pool queue: nothing to decode
                     }
@@ -57,19 +56,7 @@ namespace ClassicUO.Renderer
                     ClassicUO.Utility.Logging.Log.Warn($"{Owner._name} {Index}: worker decode failed ({ex.Message})");
                 }
 
-                // the epoch check and the publish are one step against Cancel: otherwise a Cancel between them (it bumps
-                // the epoch and drains an empty queue) leaves this buffer in the queue until the next session's Drain
-                lock (Owner._publishLock)
-                {
-                    Owner.BeforePublishForTests?.Invoke();
-
-                    if (Epoch != Owner._epoch)
-                    {
-                        ReturnPixels(); // cancelled while decoding: nobody may drain this for a long time
-                    }
-
-                    Owner._ready.Enqueue(this);
-                }
+                Owner._queue.Publish(this); // cancelled meanwhile: returns the buffer and the bytes here
             }
 
             public void ReturnPixels()
@@ -87,23 +74,24 @@ namespace ClassicUO.Renderer
         private readonly string _name;
         private readonly Func<Job, bool> _decode;
         private readonly Action<Job> _upload;
-        private readonly ConcurrentQueue<Job> _ready = new ConcurrentQueue<Job>();
+        private readonly DecodeQueue<Job> _queue;
         private readonly Stack<Job> _free = new Stack<Job>();
         private readonly byte[] _state;
-        private int _epoch;
         private readonly Func<uint, long> _bytesOf;
-        private readonly DecodeBudget _budget;
+        private readonly Action<Job> _retire;
 
         /// <param name="decode">Worker: decodes job.Index into job.Pixels (rented) and the size fields; false = nothing to upload.</param>
         /// <param name="upload">Main thread: uploads a finished job (always with pixels).</param>
-        /// <param name="bytesOf">Main thread: the untrimmed pixel bytes a decode of a sprite holds (null = not counted).</param>
+        /// <param name="bytesOf">Main thread: the pooled bytes a decode of a sprite holds (<see cref="DecodeBudget.PooledBytes"/> of
+        /// its untrimmed pixel count); null = not counted: the requests bypass the budget entirely (gumps).</param>
         /// <param name="budget">The in-flight byte budget (default: <see cref="DecodeBudget.Shared"/>).</param>
         public FirstSightDecoder(string name, int count, Func<Job, bool> decode, Action<Job> upload, Func<uint, long> bytesOf = null,
             DecodeBudget budget = null)
         {
             _name = name;
             _bytesOf = bytesOf;
-            _budget = budget ?? DecodeBudget.Shared;
+            _queue = new DecodeQueue<Job>(budget, job => job.ReturnPixels());
+            _retire = Retire;
             _decode = decode;
             _upload = upload;
             _state = new byte[Math.Max(0, count)];
@@ -134,9 +122,7 @@ namespace ClassicUO.Renderer
             var job = _free.Count > 0 ? _free.Pop() : new Job { Owner = this };
             job.Index = idx;
             job.Pixels = null;
-            job.Epoch = _epoch;
-            job.Bytes = _bytesOf?.Invoke(idx) ?? 0;
-            _budget.Submit(job, job.Bytes);
+            _queue.Submit(job, _bytesOf?.Invoke(idx) ?? 0, counted: _bytesOf != null);
         }
 
         /// <summary>Uploads finished decodes until <paramref name="deadline"/> (Stopwatch ticks), at least one (main thread).</summary>
@@ -144,13 +130,13 @@ namespace ClassicUO.Renderer
         {
             bool first = true;
 
-            while ((first || Stopwatch.GetTimestamp() < deadline) && _ready.TryDequeue(out var job))
+            while ((first || Stopwatch.GetTimestamp() < deadline) && _queue.TryDequeue(out var job))
             {
                 first = false;
 
                 try
                 {
-                    if (job.Epoch != _epoch)
+                    if (!_queue.IsCurrent(job))
                     {
                         _state[job.Index] = StateNone; // requested before a Cancel: may be requested again
                     }
@@ -168,8 +154,7 @@ namespace ClassicUO.Renderer
                 {
                     Pending--;
                     job.ReturnPixels();
-                    _budget.Release(job.Bytes);
-                    job.Bytes = 0;
+                    _queue.Release(job); // exactly once: nothing if the cancelled worker already released it
                     Completed++;
                     _free.Push(job);
                 }
@@ -177,37 +162,29 @@ namespace ClassicUO.Renderer
         }
 
         /// <summary>
-        /// Scene teardown (main thread): drops every finished decode and returns its buffer; workers still running return
-        /// theirs when they finish. Their sprites may be requested again afterwards.
+        /// Scene teardown (main thread): drops every finished decode and returns its buffer, takes the requests still waiting
+        /// for budget room out of it; workers still running return their buffers and bytes when they finish (their empty jobs
+        /// are dropped by a later Drain). The sprites may be requested again afterwards.
         /// </summary>
-        public void Cancel()
-        {
-            // under the publish lock: a worker publishes either before (drained here) or after the bump (it returns its
-            // buffer itself, and its empty job is dropped by a later Drain)
-            lock (_publishLock)
-            {
-                _epoch++;
+        public void Cancel() => _queue.Cancel(_retire);
 
-                while (_ready.TryDequeue(out var job))
-                {
-                    _state[job.Index] = StateNone;
-                    Pending--;
-                    job.ReturnPixels();
-                    _budget.Release(job.Bytes);
-                    job.Bytes = 0;
-                    _free.Push(job);
-                }
-            }
+        private void Retire(Job job)
+        {
+            _state[job.Index] = StateNone;
+            Pending--;
+            _free.Push(job);
         }
 
-        private readonly object _publishLock = new object();
-
         /// <summary>Tests only: runs on the worker inside the publish step, before its epoch check.</summary>
-        public Action BeforePublishForTests;
+        public Action BeforePublishForTests
+        {
+            get => _queue.BeforePublishForTests;
+            set => _queue.BeforePublishForTests = value;
+        }
 
-        public bool HasReady => !_ready.IsEmpty;
+        public bool HasReady => _queue.HasReady;
 
         /// <summary>Finished decodes waiting for <see cref="Drain"/>.</summary>
-        public int ReadyCount => _ready.Count;
+        public int ReadyCount => _queue.ReadyCount;
     }
 }

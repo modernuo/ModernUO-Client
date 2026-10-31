@@ -27,7 +27,7 @@ namespace ClassicUO.Renderer.Arts
             _spriteInfos = new SpriteInfo[_artLoader.Count];
             _realArtBounds = new Rectangle[_spriteInfos.Length];
             _decoder = new FirstSightDecoder("art", _spriteInfos.Length, DecodeOnWorker, UploadDecoded,
-                idx => _artLoader.PixelCount(idx) * 4L);
+                idx => DecodeBudget.PooledBytes(_artLoader.PixelCount(idx)));
         }
 
         /// <summary>

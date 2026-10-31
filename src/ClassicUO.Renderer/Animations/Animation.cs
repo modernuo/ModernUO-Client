@@ -24,6 +24,8 @@ namespace ClassicUO.Renderer.Animations
             _animationLoader = animationLoader;
             _atlas = new TextureAtlas(device, 4096, 4096, SurfaceFormat.Color);
             _cache = new SpriteInfo[animationLoader.BodyCount][][][];
+            _queue = new DecodeQueue<DirectionJob>(DecodeBudget.Shared, job => job.ReturnPixels());
+            _retire = Retire;
         }
 
         public int MaxAnimationCount => _animationLoader.BodyCount;
@@ -156,7 +158,7 @@ namespace ClassicUO.Renderer.Animations
             hue = 0;
             useUOP = false;
 
-            if (!_ready.IsEmpty)
+            if (_queue.HasReady)
             {
                 DrainReady();
             }
@@ -198,7 +200,8 @@ namespace ClassicUO.Renderer.Animations
         /// </summary>
         public static bool AsyncFirstSight = Environment.GetEnvironmentVariable("CUO_ANIM_SYNC") != "1";
 
-        private readonly ConcurrentQueue<DirectionJob> _ready = new ConcurrentQueue<DirectionJob>();
+        private readonly DecodeQueue<DirectionJob> _queue;
+        private readonly Action<DirectionJob> _retire;
         private bool[] _bodyDrawn; // the body has at least one direction uploaded (it may be on screen)
         private int _pendingJobs;
 
@@ -232,16 +235,16 @@ namespace ClassicUO.Renderer.Animations
 
                     if (frame.Sprite.OrigW != 0 && frame.Sprite.OrigH != 0)
                     {
-                        heldBytes += frame.Sprite.OrigW * frame.Sprite.OrigH * 4L;
+                        heldBytes += DecodeBudget.PooledBytes(frame.Sprite.OrigW * frame.Sprite.OrigH);
                         sprites[i].Center.X = frame.CenterX;
                         sprites[i].Center.Y = frame.CenterY;
                         sprites[i].UV = new Rectangle(0, 0, frame.Sprite.OrigW, frame.Sprite.OrigH);
                     }
                 }
 
-                var job = new DirectionJob(this, body, action, dir, entry, sprites) { Bytes = heldBytes };
+                var job = new DirectionJob(this, body, action, dir, entry, sprites);
                 Interlocked.Increment(ref _pendingJobs);
-                DecodeBudget.Shared.Submit(job, heldBytes);
+                _queue.Submit(job, heldBytes, counted: true);
 
                 return sprites;
             }
@@ -333,7 +336,7 @@ namespace ClassicUO.Renderer.Animations
 
             long budget = (long)(DrainBudgetMs * Stopwatch.Frequency / 1000);
 
-            while (_drainSpent < budget && _ready.TryDequeue(out var job))
+            while (_drainSpent < budget && _queue.TryDequeue(out var job))
             {
                 long start = Stopwatch.GetTimestamp();
                 Complete(job);
@@ -343,6 +346,14 @@ namespace ClassicUO.Renderer.Animations
 
         private void Complete(DirectionJob job)
         {
+            if (!_queue.IsCurrent(job))
+            {
+                // published after a CancelPending: the worker already returned its buffers and bytes
+                Retire(job);
+
+                return;
+            }
+
             Interlocked.Decrement(ref _pendingJobs);
             _bodyDrawn[job.Body] = true;
 
@@ -352,8 +363,28 @@ namespace ClassicUO.Renderer.Animations
             }
             finally
             {
-                DecodeBudget.Shared.Release(job.Bytes);
-                job.Bytes = 0;
+                _queue.Release(job);
+            }
+        }
+
+        /// <summary>
+        /// Scene teardown (main thread): drops the finished directions (buffers returned, bytes released) and takes the
+        /// waiting ones out of the decode budget; directions still decoding return their buffers and bytes when they finish.
+        /// The dropped directions load again on their next use.
+        /// </summary>
+        public void CancelPending() => _queue.Cancel(_retire);
+
+        // main thread: a direction whose job was cancelled has frames without textures; forget it so it loads again
+        private void Retire(DirectionJob job)
+        {
+            Interlocked.Decrement(ref _pendingJobs);
+            job.ReturnPixels();
+
+            var dirs = _cache[job.Body]?[job.Action];
+
+            if (dirs != null && ReferenceEquals(dirs[job.Dir], job.Sprites))
+            {
+                dirs[job.Dir] = null;
             }
         }
 
@@ -389,15 +420,14 @@ namespace ClassicUO.Renderer.Animations
         // actions 0..4 cover walk/stand/run for monsters, animals and people
         private const int PrefetchActions = 5;
 
-        private sealed class DirectionJob : IThreadPoolWorkItem
+        private sealed class DirectionJob : DecodeBudget.Item
         {
             private readonly Animations _owner;
             public readonly ushort Body;
             public readonly byte Action, Dir;
             public readonly AnimDirEntry Entry;
             public readonly SpriteInfo[] Sprites;
-            public uint[][] Pixels;
-            public long Bytes; // held in the decode budget until Complete has uploaded (or dropped) the frames
+            public uint[][] Pixels; // rented from ArrayPool<uint>.Shared; returned by CompleteFrames or ReturnPixels
 
             public DirectionJob(Animations owner, ushort body, byte action, byte dir, AnimDirEntry entry, SpriteInfo[] sprites)
             {
@@ -409,12 +439,39 @@ namespace ClassicUO.Renderer.Animations
                 Sprites = sprites;
             }
 
-            public void Execute()
+            public void ReturnPixels()
+            {
+                var pixels = Pixels;
+                Pixels = null;
+
+                if (pixels == null)
+                {
+                    return;
+                }
+
+                for (int i = 0; i < pixels.Length; i++)
+                {
+                    if (pixels[i] != null)
+                    {
+                        ArrayPool<uint>.Shared.Return(pixels[i]);
+                    }
+                }
+            }
+
+            public override void Execute()
             {
                 var loader = _owner._animationLoader;
 
                 try
                 {
+                    if (!_owner._queue.IsCurrent(this))
+                    {
+                        // cancelled while it waited in the pool queue: nothing to decode
+                        _owner._queue.Publish(this);
+
+                        return;
+                    }
+
                     var pixels = new uint[Sprites.Length][];
 
                     for (int i = 0; i < Sprites.Length; i++)
@@ -462,7 +519,7 @@ namespace ClassicUO.Renderer.Animations
                     ClassicUO.Utility.Logging.Log.Warn($"anim body {Body} action {Action} dir {Dir}: worker decode failed ({ex.Message})");
                 }
 
-                _owner._ready.Enqueue(this);
+                _owner._queue.Publish(this); // cancelled meanwhile: returns the buffers and the bytes here
             }
         }
 
