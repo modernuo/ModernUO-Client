@@ -3449,3 +3449,129 @@ The go switch's commit rise in new includes the two anim steps (old and new arra
 ## 2026-10-31: records-eval verdict (coordinator)
 
 Per-graphic records for art and animations were measured on `poc/records-eval` (350c6d78c); details are in [records-eval.md](records-eval.md). Screenshots: no sprite, texmap or mip pixel differed. Pinned timing (bench-000039): equal frame times, within-arm spread at most 4.4 %. Records cost about +0.5 s per launch, +50 to 80 MiB of commit per client, and art pages take 31 to 33 ms to build against 11 to 12 ms to read. Owner decision: keep pre-packed pages, with stable packing (data-formats.md 7.3). The branch is kept as a reference and not merged. Note: the large-scene rows of bench-000037/38/39 measured an empty Trammel spot, because the plan did not use `[TestScene go`. Agent rule added.
+
+## Music decoded by dr_mp3 (dr-mp3, branch poc/dr-mp3, 2026-10-31)
+
+Base `f0d09f8ed` (poc/modern-client). Owner decision Q10 ([data-formats.md](data-formats.md) §10): music stays MP3 and is decoded by dr_mp3 instead of MP3Sharp. Phase 1 only covers the loose `Music/Digital/*.mp3` files. The music record store in the pack waits for the converter work on another branch.
+
+**dr_mp3.** `external/dr_libs/dr_mp3.h` is v0.7.4 from mackron/dr_libs, tag `mp3-0.7.4`, commit `aec2dd20667f54acfdb66031217df6d240f56c52`, sha256 `f5c8020eeebb79877184432efdd2651f24869f5bb8f379d45450fd0aed1ee915` (public domain / MIT-0). The coordinator fetched and reviewed it; it is copied unchanged, with `SOURCE.txt` beside it. `.gitattributes` marks `external/dr_libs/**` `-text`, so the hash holds on Windows checkouts, and `*.sh` `eol=lf`. It is pinned for 0.7.4's bounds checks in the Xing/Info/LAME parser. 0.7.4 parses the LAME tag and **trims by itself**: reads skip the Info frame and the delay (`encoder delay + 529`) and stop before the padding (`padding - 529`), and `seek(0)` skips the delay again. So nothing trims twice; the C# side only reports the values.
+
+**Native build** (`src/native/cuo_mp3`). `cuo_mp3.c` includes dr_mp3 with `DR_MP3_NO_STDIO` (no fopen paths) and SIMD on. It exposes a flat C API with an opaque handle: `open_memory`, `get_info`, `read_s16`, `seek`, `get_frame_count` and `version`. It also refuses streams outside 1-2 channels and 8-48 kHz.
+- **win-x64, built here.** `build-win-x64.sh` runs MSVC 14.51 / SDK 10.0.26100 straight from Git Bash, with paths from vswhere and no vcvars. Its outputs are committed, like SDL3.dll:
+  - `external/x64/cuo_mp3.dll` (141 KB, static CRT, so no VC++ redistributable is needed);
+  - `external/x64-static/cuo_mp3.lib` (115 KB, built with `/Zl` so ILC's link picks the CRT).
+- **linux-x64 and macOS** (arm64, x86_64 or universal): `CMakeLists.txt` and `build-unix.sh` write `external/lib64[-static]` and `external/osx[-static]`. **Not run:** there is no Linux or Mac here.
+- **NativeAOT.** When the static archive exists for the RID, `ClassicUO.Client.csproj` adds `DirectPInvoke cuo_mp3` and the archive as `NativeLibrary`, and drops the shared library from the publish. The win-x64 publish shows all four signs: `--directpinvoke:cuo_mp3` in `cuo.ilc.rsp`, the `.lib` in `link.rsp`, no `cuo_mp3.dll` in the output and no `cuo_mp3.dll` string in `cuo.exe`. JIT builds and the tests load the DLL, which `ClassicUO.IO.csproj` copies to every output (`CopyToPublishDirectory=Never`).
+
+**Client** (`ClassicUO.IO/Audio`):
+- **`Mp3Validator`** runs before any native call. It requires:
+  - at most 32 MB (the largest stock track is 12.9 MB);
+  - an ID3v2 size that fits the data;
+  - within 64 KB, a Layer III header (no reserved version or rate, no free-format or bad bitrate) whose next header is valid and consistent, or which ends the data.
+- **`Mp3Decoder`** (LibraryImport) opens from a span, a stream or a file into native memory with one copy. It reads s16 frames, seeks, and reports the rate, channels, delay, padding and total frames (the Xing count minus delay and padding, else a header scan). Bad data returns `false` and a reason, never an exception.
+- **`MusicStream` + `MusicDecodeWorker`.** One background thread ("Music decode") opens the file and decodes 8192-frame buffers (32 KB stereo, the old chunk size), keeping 4 ready ahead.
+  - `UOMusic.Update` (game thread, every frame) only submits ready buffers, keeps 3 queued in FAudio and returns each buffer to the pool (FNA copies on submit). No MP3 work runs on the game thread now.
+  - `Play` returns at once, and the sound starts when the first buffer is ready (`Trace`: `music <name>: first buffer after N ms`; loop wraps log `music <name>: looped (n)`).
+  - A failure logs `music <name>: skipped (<reason>)` once, and the track is skipped.
+- **The loop-remainder bug is fixed.** The old `GetBuffer` rewound and read the rest into the same buffer, but returned the pre-rewind byte count, so the wrapped samples were dropped: a short buffer at every loop. The fill now seeks to 0 and keeps filling. An empty read right after a seek ends the track instead of spinning.
+- **Gapless loops.** For the 55 LAME-tagged tracks the seam is sample-exact: a unit test on Boattravel.mp3 checks that the PCM after the wrap equals the first 40,000 samples. The 36 tracks without a LAME tag keep the decoder's 529-sample start and the encoder padding, as every decoder does without the tag.
+- `Sound.Play` is now virtual and `DurationTime` settable, so music can start asynchronously. `IsPlaying` keeps its old meaning: the first buffer's duration.
+- **Memory (a deliberate trade-off).** Per playing track:
+  - the MP3 bytes in native memory: 1.2 MB on average, 12.9 MB at most;
+  - up to 6 × 32 KB PCM buffers (192 KB).
+
+  There are at most two music slots (normal and war). The decoder and its file copy are freed on stop and at the end of a non-looping track. MP3Sharp streamed from the file through a 32 KB buffer, so this costs about 1-13 MB per playing track. In return there is no file I/O after open and no decode on the game thread.
+
+**Parity, all 91 tracks.** Three decoders: MP3Sharp (before removal), dr_mp3, and mpg123 inside libsndfile 1.2.2 (the survey's venv) as a third reference. Each pair was aligned by searching ±6000 frames, then compared over the whole overlap.
+
+| | max abs diff (LSB) | mean abs diff | SNR vs mpg123 | length vs mpg123 |
+|---|---|---|---|---|
+| dr_mp3 | 2 (3 tracks), else 1 | 0.001 | 80.8 dB min, 102.6 dB median | identical for all 91, offset 0 |
+| MP3Sharp | 69 | 6.6 | 45.5 dB min, 53.3 dB median | 64 tracks differ (below) |
+
+Where MP3Sharp is wrong:
+- **Precision.** It differs from both other decoders by 6.6 LSB on average (about -53 dB). That is inaudible, but the error is MP3Sharp's, since dr_mp3 and mpg123 agree to 1-2 LSB.
+- **No gapless handling** on the 55 LAME tracks. It plays the Info frame as silence plus the encoder and decoder delay at the start (1,681 frames at 22.05 kHz, 2,257 at 44.1 kHz), and the padding at the end (352-1,125 frames). That is the 0.1 s gap at each loop that the survey saw.
+- **It drops the last MP3 frame** of 9 of the 36 untagged tracks (1,152 frames; 576 for TheWanderer.mp3): BattleOnStones, Castle, dread_horn_area, elf_city_1, Festival, grizzle_dungeon, melisandes_lair, paroxysmus_lair and TheWanderer.
+
+**Fuzzing** (`src/native/cuo_mp3/fuzz`). This box has no clang, so the build uses MSVC's libFuzzer and ASan (`-fsanitize=fuzzer -fsanitize=address`). For each input the target:
+- copies it to an exact-size heap block;
+- opens it and reads up to 2^20 frames;
+- seeks to 0, to the middle and past the end, and reads again;
+- counts the frames.
+
+The 273 seeds are the first 16 KB, a middle 16 KB and the last 8 KB of each of the 91 tracks (`make-seeds.sh`; kept out of the repo because they are UO data).
+
+Two runs of 15 minutes each (`-max_len=65536 -timeout=20 -rss_limit_mb=2048`, at BelowNormal priority through agentnice, side by side):
+
+| Build | Executions | Average exec/s | New units | Final corpus | Coverage features | Crashes, leaks, timeouts, OOMs |
+|---|---|---|---|---|---|---|
+| SIMD (SSE2) | 105,365 | 116 | 1,313 | 499 | 2,836 | **none** |
+| `DR_MP3_NO_SIMD` | 70,891 | 78 | 1,006 | 439 | 2,516 | **none** |
+
+The slowest unit took under 1 s, and peak RSS was 487 MB. The exec rate is low because each input decodes up to 16-64 KB of real audio under ASan, and the runs had a low priority. So this is a smoke-level campaign (176k executions), not an exhaustive one. A longer run is worth doing on an idle machine: `fuzz_cuo_mp3.exe -max_total_time=3600 <corpus> <seeds>`.
+
+**Regression corpus as a unit test** (`Mp3DecoderTests`, 18 tests). The test builds its own synthetic MP3s (silent Layer III frames, optionally led by an Info + LAME frame), so no UO data is committed. It covers:
+- validator rejections;
+- the LAME trim (delay 576 + 529, padding 1000 - 529, also after `Seek(0)`) and mono;
+- 360 deterministic mutations of 6 synthetic seeds, plus the first 48 KB of 12 real tracks when the UO folder exists. The mutations are bit flips, truncation, 0xFF and zero runs, chunk copies, corrupt Xing/LAME fields, random header fields and spliced junk;
+- `MusicStream`: loop fills (every buffer full across the seam), a non-looping end, a bad or missing file, and the sample-exact seam on a real track.
+
+**MP3Sharp removed:** the `external/MP3Sharp` submodule, its solution entry, the project reference and the commented-out duplicate `MP3Sharp 1.0.5` NuGet reference.
+
+**CPU per audio-second and first-play latency (bench-000042, ok, 121.6 s).** An offline decode of all 91 tracks (7439 s of audio), MP3Sharp vs dr_mp3, 6 interleaved rounds, then open + first 32 KB buffer × 3 rounds per track (n = 273 each), JIT with `TieredCompilation=0`, pinned to the P-cores. CPU per audio-second, min/median/max over the 6 rounds: **MP3Sharp 2.277 / 2.290 / 2.311 ms, dr_mp3 0.374 / 0.376 / 0.378 ms**. The spread is 1.5 % for MP3Sharp and 1.1 % for dr_mp3, so dr_mp3 uses about 6.1× less CPU (median ratio), far outside the noise. MP3Sharp's figure is higher than the survey's earlier 1.6-1.9 ms; that number came from a different method. MP3Sharp decodes 7444 s of audio and dr_mp3 7439 s; the 5 s gap is the decoders' different handling of frame padding (see the parity section). Open + first 32 KB buffer, ms: **MP3Sharp p50 0.68, p95 1.09, max 80.17; dr_mp3 p50 0.25, p95 1.41, max 6.12**. dr_mp3's open reads the whole file into memory (MP3Sharp streams), so its latency grows with file size. That is why its p95 is above MP3Sharp's; the largest file is elf_city_1.mp3 at 12.9 MB. The client pays this on the music worker thread, not the game thread. MP3Sharp's 80 ms max is a single outlier.
+
+**Listening check (bench-000043, ok, 245.8 s): pass.** The AOT build logs in as kbatman4 and walks a plan that dwells about 50 s per stop: Britain, Minoc, Cove, then Britain again. The check reads the `music … first buffer` / `looped` / `skipped` Trace lines in the client log. The server played Britainpos and Minocpos for those regions, not Britain1 as planned; Britainpos still looped within the dwell. (1) No native DLL beside the AOT exe: pass, `OK: no cuo_mp3.dll next to the AOT cuo.exe`, and the folder listing has no cuo_mp3 file. (2) Plan teleports: pass, all four `[bench] … done` lines (brit, minoc, cove, brit2) and `[bench] plan done`. (3) First track: pass, `music LoginLoop: first buffer after 34.5 ms (open 0.5 ms)` and `music Britainpos: first buffer after 3.3 ms (open 0.3 ms)`. (4) Loop: pass, `music Britainpos: looped (1)` at 07:16:01, 51 s after it started; also `music Cove: looped (1)` and a second `music Britainpos: looped (1)` on the return. (5) Area changes: pass, `music Minocpos: first buffer after 1.0 ms (open 0.3 ms)`, `music Cove: first buffer after 0.7 ms (open 0.2 ms)` and `music Britainpos: first buffer after 1.3 ms (open 0.3 ms)` on the return to Britain. Minocpos did not loop within its dwell; the log has no failure line for it. (6) No failures: pass, there are 0 matches for `skipped`, `DllNotFound`, `EntryPointNotFound` or `exception` (case-insensitive) in the 5737-line client log, and the client exited 0 after 244 s.
+
+**Verification.**
+- Client builds, Release and `-p:CuoDevTools=false`: 0 errors.
+- NativeAOT publish win-x64: 0 errors, no new trim/AOT warnings.
+- `dotnet test tests/ClassicUO.UnitTests -c Release`: 996 passed, 1 skipped, 0 failed, 997 total (18 new).
+- The write-site budget is unchanged (no ECS writes).
+
+### Codex audit (gpt-6-astra, 2026-10-31) and dispositions
+
+Codex audited `f0d09f8ed..e5421ab27` (the vendored dr_mp3 excluded). It found one P1 and three P2 issues, plus test gaps. All are fixed on poc/dr-mp3; each fix has a unit test except the CI part, which the owner moved to separate work.
+
+- **P1, Linux/macOS builds had no decoder library: fixed (build guard, scripts, runtime).** CI wiring is deferred by the owner to the queued CI work (`cuo-poc-state/handoffs/ci-release-artifacts.md`, section "dr_mp3 native build"); no workflow files were changed.
+  - **Build-time error `CUOMP3`.** `ClassicUO.IO.csproj` resolves the platform from the RuntimeIdentifier, or else from the build machine. A build fails when that platform's shared library is missing or not defined (only win-x64, linux-x64 and osx-* are). `ClassicUO.Client.csproj` fails a NativeAOT publish (`PublishAot` with a RID) when the static archive is missing. The message names the file and the script to run. `-p:CuoMp3Optional=true` turns either error into a warning. Checked here: `dotnet build ClassicUO.IO -r linux-x64` fails with CUOMP3, and passes with a warning under `CuoMp3Optional`. The publish guard (`-t:CuoMp3CheckStaticLibrary`) errors for linux-x64, osx-arm64 and linux-arm64, and passes for win-x64. win-x64 builds as before.
+  - **One build script per OS** in `src/native/cuo_mp3`, each one command with its prerequisites documented. Each checks its toolchain and names what's missing, writes exactly the files the csproj files look for, and checks the seven exports.
+    - `build-linux.sh`: cmake and cc/gcc/clang, writes `external/lib64/libcuo_mp3.so` and `external/lib64-static/libcuo_mp3.a`.
+    - `build-macos.sh [universal|arm64|x86_64]`: Apple clang and cmake, universal by default, macOS 11.0 minimum. Writes `external/osx/libcuo_mp3.dylib` and `external/osx-static/libcuo_mp3.a`, and checks each architecture with `lipo -verify_arch`.
+    - `build-windows.sh`: the former `build-win-x64.sh`, MSVC from Git Bash through vswhere, plus toolchain checks and a `dumpbin -exports` check.
+
+    `build-unix.sh` is gone. The Windows script ran end to end here. Its outputs differ from the committed binaries only in timestamps and temp object paths, so the committed DLL and lib were kept, and jobs 42 and 43 use identical binaries. **Unverified until CI:** the Linux and macOS scripts passed only `bash -n`. This box has no cmake, gcc or clang, so no CMake configure was possible.
+  - **Runtime.** `Mp3Decoder.IsAvailable` probes `cuo_mp3_version` once. On `DllNotFoundException`, `EntryPointNotFoundException` or `BadImageFormatException` it logs one error (`music disabled: the native MP3 decoder (cuo_mp3) could not be loaded: …`). After that, `UOMusic.Play` returns false without starting a stream, and `MusicStream.Pump` fails cleanly. No exception reaches the game loop, and nothing is allocated, so nothing leaks.
+- **P2, raw-handle ownership: fixed.** A private `Mp3Handle : SafeHandle` now owns both the dr_mp3 decoder and the input copy, and releases both exactly once, on Dispose or in its critical finaliser. `Read`, `Seek`, `TotalFrames` and `Dispose` take one lock. Each native call holds `DangerousAddRef`/`DangerousRelease` around it, so neither a Dispose from another thread nor finalisation can free memory under dr_mp3. `Dispose` is idempotent and thread-safe, and later calls throw `ObjectDisposedException`. The decoder class has no finaliser any more.
+  - Tests: `Dispose_IsIdempotentAndFreesOnce`, and `Dispose_RacingRead_IsSafe`. The race test runs 200 rounds: a reader loops Read/Seek while two threads call Dispose at staggered spin delays. The reader only ever sees frames or `ObjectDisposedException`, and the live input count returns to its baseline.
+- **P2, input leak when the native open throws: fixed.** `TryOpenOwned` keeps the native handle and the input copy in a `finally` until the `Mp3Handle` owns them. Every exit before that point (a validator rejection, a null handle, a `GetInfo` failure, any exception) closes the handle and frees the input.
+  - A test hook, `Mp3Decoder.OpenMemoryOverride`, can replace `cuo_mp3_open_memory`. A global count, `LiveInputAllocations`, tracks every input copy.
+  - Tests: `FailedNativeOpen_FreesTheInputCopy` (forced `DllNotFoundException`, `EntryPointNotFoundException` and a 0 handle, 50 opens each, count back to baseline) and `FailedNativeOpen_FailsTheMusicStreamCleanly`.
+- **P2, EOF published before the final buffer: fixed.** `Fill` now returns the end through an out parameter. `Pump` sets the volatile `_ended` only after the last buffer is in the ready queue, so the game thread's stop condition (`IsEnded`, nothing ready, nothing pending in FAudio) can't be true while the tail is still unqueued.
+  - Test: `MusicStream_EndIsPublishedAfterTheLastBuffer`, with 10 frames and 3 frames (the whole track in one buffer). A worker hook, `TestAfterFill`, runs between the fill and the enqueue. In it, the "game thread" drains every ready buffer and evaluates the stop condition; it must never hold. All PCM bytes must arrive.
+  - Playback effect: none in the normal path. The flag only becomes visible later within the same `Pump` call, and looping tracks never set it. So **bench-000042 and bench-000043 (queued on e5421ab27) were kept**.
+- **Tests (audit's test notes): done.**
+  - `RealTrack_LoopSeamIsSampleExact` now uses `[FilesFact]`, so without UO data it is reported as skipped instead of passing with no assertions.
+  - New committed fixture `tests/ClassicUO.UnitTests/IO/Fixtures/seam-noise.mp3`: 10 KB, our own and redistributable. It is generated by `make_mp3_fixture.py` there, without an encoder or recorded audio: an Info + LAME frame (delay 576, padding 700) and 24 self-contained Layer III frames with fixed-seed noise main data. It is non-silent (peak above 1000) and differs from frame to frame. Its loop seam falls inside a buffer. `Fixture_LoopSeamIsSampleExact` runs the same sample-exact seam check as the real-track test, on every machine.
+  - **Synthetic fuzz regressions.** The earlier campaign found no crashes, and its corpus is UO-derived, so none of it is committed. A new 5-minute run used only synthetic seeds: the fixture, the fixture without its Info frame, its first 6 frames and the Info frame alone. It ran on the MSVC ASan + libFuzzer build at 178,447 executions (592/s), added 2,149 new units, and found no crashes, leaks, timeouts or OOMs. `-merge=1` reduced the corpus to 311 files. The smallest 167 of them (at least 64 bytes each, 163 KB in total) are committed in `IO/Fixtures/mp3-regressions`. `FuzzRegressions_DecodeOrRejectCleanly` opens each one and runs read, seek to 0, seek to the middle, seek past the end, and the frame count.
+- **Prefilter (optional): tightened.** `Mp3Validator` now needs 3 back-to-back frame headers (`ChainLength`) with the same MPEG version and sample rate, all Layer III. A chain that ends exactly at the end of the data is still accepted, so complete 1-2 frame streams pass. With 3 headers, the second frame must be complete.
+  - Replay: `Validator_AcceptsEveryStockTrack` (FilesFact) accepts **all 91** stock tracks.
+  - `Validator_NeedsThreeConsistentHeaders` covers: 2 frames then junk (accepted before, rejected now), a third header at 48 kHz, and a third header of MPEG-2.
+  - It remains a plausibility check, not a validation of the whole file.
+- **Not changed (audit notes, by design):** short reads still conflate EOF and undecodable data, as before. Memory per track is the whole compressed file (at most 32 MiB; stock average 1.21 MB, maximum 12.86 MB) plus at most 192 KiB of PCM buffers. There is still no worker shutdown/join, because it is a background thread.
+
+**Verification (audit fixes).**
+- Client builds, Release and `-p:CuoDevTools=false`: 0 errors.
+- NativeAOT publish win-x64: 0 errors, no IL or CUOMP3 warnings. `cuo_mp3` appears in `cuo.ilc.rsp` and `link.rsp`, and there is no `cuo_mp3.dll` in the output. (The ILC link step needs vswhere on PATH: `C:\Program Files (x86)\Microsoft Visual Studio\Installer`.)
+- `dotnet test tests/ClassicUO.UnitTests -c Release`: 1,008 passed, 1 skipped (as before), 0 failed, 1,009 total, of which 12 are new. The 30 Mp3DecoderTests ran with UO data present.
+
+### Codex round 2 (gpt-6-astra, audit of 591b27218) and dispositions
+
+Codex found no new playback, deadlock or EOF-race issue, and three smaller ones. All three are fixed; the two in managed code have tests. Playback paths are unchanged, so no client run was needed.
+- **P2, a library without `cuo_mp3_close` could leak, or throw from the finaliser: fixed.** Every `TryOpen` path (span, seekable stream, non-seekable stream) now resolves the release entry point before it allocates anything, by calling `cuo_mp3_close(NULL)` (a no-op in `cuo_mp3.c`). On `DllNotFoundException`, `EntryPointNotFoundException` or `BadImageFormatException` the open returns false with "no usable release entry point", logged once. `IsAvailable` binds close as well as version. `ReleaseHandle` never throws now: a failing close is counted in `CloseFailures`, and the input is freed in its own `finally`. The pre-ownership cleanup in `TryOpenOwned` also frees the input in its own `finally`. New test hook: `CloseOverride`. Tests:
+  - `MissingCloseExport_FailsTheOpenBeforeAllocating`: three exception kinds, all three open paths, no input allocated, the native open never reached.
+  - `FailingCloseAtRelease_NeverThrowsAndFreesTheInput`: covers both Dispose and the finaliser. The finaliser half passes only if no exception escapes, because one that did would end the test host.
+- **P3, a cached `TotalFrames` was readable after Dispose: fixed.** Disposal is now checked before the cache. Test: `TotalFrames_Cached_ThrowsAfterDispose`.
+- **P3, `build-linux.sh` could install a non-x86-64 build as linux-x64: fixed.** On a host other than x86_64 the script refuses to run unless `CUO_MP3_CROSS=1` is set together with `CC` or `CMAKE_TOOLCHAIN_FILE`. Before anything is installed, `readelf -h` must report ELF64 / X86-64 for the `.so` and for every member of the `.a`, and the export check now runs on the build output. The script also checks for readelf and nm. **Unverified:** it passed `bash -n` only, plus a check of the header parsing against sample `readelf` text, because this box has no Linux toolchain. Its first real run will be in CI.
+- **Test note: done.** `FailedNativeOpen_FreesTheInputCopy` now also covers `BadImageFormatException`.
+- **Verification:** client builds (Release and `-p:CuoDevTools=false`): 0 errors. `dotnet test tests/ClassicUO.UnitTests -c Release`: 1,014 passed, 1 skipped, 0 failed, 1,015 total (6 new).

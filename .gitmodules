@@ -2,9 +2,6 @@
 	path = external/FNA
 	url = https://github.com/modernuo/FNA.git
 	branch = modernuo/26.10-patched
-[submodule "external/MP3Sharp"]
-	path = external/MP3Sharp
-	url = https://github.com/andreakarasho/MP3Sharp.git
 [submodule "external/FileEmbed"]
 	path = external/FileEmbed
 	url = https://github.com/SirCxyrtyx/FileEmbed.git

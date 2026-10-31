@@ -17,6 +17,7 @@ How to compare the JIT and NativeAOT builds fairly, how to collect and apply a s
   - ILC's incremental check covers the `.ilc.rsp`, so a changed property recompiles. A changed .mibc *at the same path* does not: delete `src/ClassicUO.Client/obj/Release/net10.0/win-x64/native` first.
   - `tools/fps-test/publish-aot.ps1 -OutDir <scratch>` does the same through vcvars, if you can run PowerShell.
   - **What a publish is:** a standalone win-x64 `cuo.exe` (no shared-library or Bootstrap host, no plugins) plus the natives from `external/x64` (SDL3, FNA3D, FAudio, libtheorafile, zlib). No code changes were needed to publish it (2026-10-24).
+  - **dr_mp3 is linked into `cuo.exe`** (2026-10-31): `ClassicUO.Client.csproj` passes `external/x64-static/cuo_mp3.lib` as a `NativeLibrary` with `DirectPInvoke` for `cuo_mp3`, and leaves `cuo_mp3.dll` out of the publish. Check: `obj/Release/net10.0/win-x64/native/cuo.ilc.rsp` has `--directpinvoke:cuo_mp3` and `link.rsp` lists the `.lib`. linux-x64 and osx use `external/lib64-static` and `external/osx-static` when those archives exist (built by `src/native/cuo_mp3/build-linux.sh` / `build-macos.sh`); since the dr-mp3 audit fixes a publish without them fails with error CUOMP3 (`-p:CuoMp3Optional=true` makes it a warning).
   - **Instruction set:** win-x64 publishes set `<IlcInstructionSet>x86-64-v3</IlcInstructionSet>` (AVX2, FMA, BMI1/2, LZCNT, MOVBE), as do `poc/Uo.Client` and `poc/Uo.Render.App`. The exe needs a Haswell (2013) or newer Intel or an Excavator or newer AMD CPU; older CPUs fail at startup. ILC rejects the misspelling `x86-x64-v3`. `-p:IlcInstructionSet=` builds for the default baseline ISA. The first JIT-vs-AOT comparison (2026-10-24, before this setting) had AOT about 10–15% slower on CPU; numbers since then are in [../perf-opportunities.md](../perf-opportunities.md) and the poc-log.
 
 ## Bench harness (`tools/aot-bench/`)
@@ -69,7 +70,7 @@ ETW kernel sampling (wpr/xperf/PerfView) needs elevation; don't trigger UAC whil
   - FNA IL2046: `MathTypeConverter.GetProperties` overrides `TypeConverter.GetProperties` without the `RequiresUnreferencedCode` annotation. XNA design-time converters, unused at runtime.
   - cuo IL3050 (×2, one site): `Enum.GetValues(typeof(MessageType))` in `Game/UI/Gumps/ResizableJournal.cs`. Works under AOT; the fix is `Enum.GetValues<MessageType>()`.
   - The Friflo set (31): Friflo.Json.Fliox IL3050/IL2026/IL2055/IL2067/IL2070/IL2075/IL3000 and Friflo.Engine.ECS IL2066/IL2071/IL2090, from `MakeGenericType` and reflection. Friflo needs explicit type registration under AOT, and its JSON mapper must stay unused.
-  - Nothing from ClassicUO.Assets, ClassicUO.Renderer, ClassicUO.Utility, ClassicUO.IO or MP3Sharp. Warnings are only printed when ILC actually runs, so an incremental publish shows none.
+  - Nothing from ClassicUO.Assets, ClassicUO.Renderer, ClassicUO.Utility, ClassicUO.IO or the cuo_mp3 P/Invokes (MP3Sharp was removed on 2026-10-31). Warnings are only printed when ILC actually runs, so an incremental publish shows none.
 
 ## Cleanup
 
