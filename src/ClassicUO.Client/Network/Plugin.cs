@@ -511,7 +511,7 @@ namespace ClassicUO.Network
 
         internal static bool ProcessRecvPacket(byte[] data, ref int length)
         {
-            bool result = Client.Game.PluginHost?.PacketIn(new ArraySegment<byte>(data, 0, length)) ?? true;
+            bool result = Client.Game?.PluginHost?.PacketIn(new ArraySegment<byte>(data, 0, length)) ?? true;
 
             foreach (Plugin plugin in Plugins)
             {
@@ -758,10 +758,7 @@ namespace ClassicUO.Network
 
         internal static bool OnPluginRecv(ref byte[] data, ref int length)
         {
-            lock (PacketHandlers.Handler)
-            {
-                PacketHandlers.Handler.Append(data.AsSpan(0, length), true);
-            }
+            PacketHandlers.Handler.Append(data.AsSpan(0, length), true); // thread-safe by itself
 
             return true;
         }
@@ -780,10 +777,7 @@ namespace ClassicUO.Network
         {
             if (buffer != IntPtr.Zero && length > 0)
             {
-                lock (PacketHandlers.Handler)
-                {
-                    PacketHandlers.Handler.Append(new Span<byte>(buffer.ToPointer(), length), true);
-                }
+                PacketHandlers.Handler.Append(new Span<byte>(buffer.ToPointer(), length), true); // thread-safe by itself
             }
 
             return true;
