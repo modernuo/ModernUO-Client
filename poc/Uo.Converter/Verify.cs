@@ -13,10 +13,23 @@ public static class Verify
     /// <summary>--only: check just these stages (plus the manifest); null = everything.</summary>
     public static HashSet<string>? Only;
     private static bool Want(string stage) => Only == null || Only.Contains(stage);
+    /// <summary>False under --no-maps: the pack is not expected to hold the source's facets.</summary>
+    public static bool Maps = true;
+
+    /// <summary>The first failure messages (up to 100), for tests.</summary>
+    public static readonly System.Collections.Concurrent.ConcurrentQueue<string> Failures = new();
+
+    public static void Reset()
+    {
+        _errors = 0;
+        Failures.Clear();
+    }
 
     public static void Fail(string msg)
     {
-        if (Interlocked.Increment(ref _errors) <= 30) Console.WriteLine("  FAIL " + msg);
+        int n = Interlocked.Increment(ref _errors);
+        if (n <= 100) Failures.Enqueue(msg);
+        if (n <= 30) Console.WriteLine("  FAIL " + msg);
     }
 
     /// <summary>
@@ -62,7 +75,7 @@ public static class Verify
 
     public static bool Run(UOFileManager fm, string outDir, Dictionary<string, object> stats)
     {
-        _errors = 0;
+        Reset();
         var manifest = ManifestFileIo.Read(Path.Combine(outDir, "manifest.json"));
         Parallel.ForEach(manifest.Files, ConvertOptions.Par, f =>
         {
@@ -86,12 +99,21 @@ public static class Verify
         if (Want("tiledata") && File.Exists(Path.Combine(outDir, TableConst.TileDataExtFileRetired))) Fail($"retired {TableConst.TileDataExtFileRetired} still in the pack");
         // ...and a pack without it cannot load, even when the manifest does not list it
         if (Want("tiledata") && !File.Exists(Path.Combine(outDir, TableConst.TileDataFile))) Fail($"missing {TableConst.TileDataFile} (the pack's only tile data)");
-        if (!File.Exists(Path.Combine(outDir, TableConst.TileDataFile)))
-        {
-            Console.WriteLine(_errors == 0 ? "  all checks passed" : $"  {_errors} errors");
-            return _errors == 0;
-        }
+        // Maps are checked whether or not the pack has tile data: --only maps permits a pack without it, and returning
+        // early would let a narrow or facet-missing pack pass on manifest hashes alone.
+        if (File.Exists(Path.Combine(outDir, TableConst.TileDataFile))) CheckTileDataAndAtlases(fm, outDir);
+        CheckMaps(fm, outDir, manifest, stats);
 
+        if (Want("art") && Directory.Exists(Path.Combine(outDir, "art"))) PageTimings(Path.Combine(outDir, "art"));
+        if (Want("anims") && Directory.Exists(Path.Combine(outDir, "anim"))) PageTimings(Path.Combine(outDir, "anim"));
+        if (Want("maps") && manifest.Facets.Count > 0) RegionTimings(outDir, manifest);
+        Console.WriteLine(_errors == 0 ? "  all checks passed" : $"  {_errors} errors");
+        return _errors == 0;
+    }
+
+    /// <summary>Tile data and hues against the source, then the tables and the art/texmap atlases (which need the pack's tile data).</summary>
+    private static void CheckTileDataAndAtlases(UOFileManager fm, string outDir)
+    {
         // Tile data and hues.
         var (land, statics) = TileDataFile.ReadCompact(Path.Combine(outDir, TableConst.TileDataFile));
         if (land.Length != fm.TileData.LandData.Length || statics.Length != fm.TileData.StaticData.Length) Fail("tiledata counts");
@@ -126,48 +148,99 @@ public static class Verify
 
         if (Want("art")) CheckAtlas(fm, Path.Combine(outDir, "art"), "sprites.bin", tex: false, statics);
         if (Want("tex")) CheckAtlas(fm, Path.Combine(outDir, "tex"), "texmaps.bin", tex: true, statics);
+    }
 
-        // Map regions.
+    /// <summary>Map facets of the pack against the source files: the expected facets and sizes first (from the source
+    /// alone), then every block of a MUL facet against <see cref="MulMapOracle"/>. Returns the number of failures.</summary>
+    public static int CheckMaps(UOFileManager fm, string outDir, Manifest manifest, Dictionary<string, object> stats)
+    {
+        int before = _errors;
+        // equal to the pack's (checked in Run); unloaded tile data (map-only checks in tests) skips the id range check
+        int landCount = fm.TileData.LandData?.Length ?? int.MaxValue, staticCount = fm.TileData.StaticData?.Length ?? int.MaxValue;
+        // Map regions. First the facets and sizes the source files call for (worked out without the pack), against the
+        // manifest and each facet.json; blocks are compared only for a facet whose size matches.
+        var expected = new Dictionary<int, SourceFacets.Expected>();
+        if (Want("maps") && Maps)
+        {
+            foreach (var e in SourceFacets.For(fm, ConvertOptions.Facets))
+            {
+                expected[e.Facet] = e;
+                if (e.Problem != null) Fail($"facet {e.Facet}: {e.Problem}");
+                if (e.Note != null) Console.WriteLine($"  note: facet {e.Facet}: {e.Note}");
+            }
+
+            var inPack = manifest.Facets.Select(f => f.Index).ToHashSet();
+            foreach (var e in expected.Values)
+                if (!inPack.Contains(e.Facet)) Fail($"facet {e.Facet}: the source has {Path.GetFileName(e.MapPath)} but the pack has no facet {e.Facet}");
+            foreach (var f in manifest.Facets)
+                if (!expected.ContainsKey(f.Index) && (ConvertOptions.Facets == null || ConvertOptions.Facets.Contains(f.Index))) Fail($"facet {f.Index}: in the pack, but the source has no map for it");
+            Console.WriteLine($"  facets expected from the source files: {string.Join(", ", expected.Values.Select(e => $"{e.Facet} {e.Width}x{e.Height} ({Path.GetFileName(e.MapPath)})"))}");
+        }
+
         foreach (var facet in Want("maps") ? manifest.Facets : [])
         {
-            var dir = Path.Combine(outDir, "map", facet.Index.ToString());
+            // The manifest's index names the facet (and its directory): the expected size and the source the blocks are
+            // compared with are chosen by it, never by facet.json, so a facet directory copied under another index (with its
+            // own facet.json and region headers) cannot be checked against its original source and pass.
+            int index = facet.Index;
+            var dir = Path.Combine(outDir, "map", index.ToString());
             var fi = FacetFileIo.Read(dir);
-            if (fi.BlocksX * 8 != fi.Width || fi.BlocksY * 8 != fi.Height) Fail($"facet {fi.Index} dims");
+            if (fi.Index != index) { Fail($"facet {index}: facet.json says facet {fi.Index}, the manifest and directory say {index}"); continue; }
+            if (fi.BlocksX * 8 != fi.Width || fi.BlocksY * 8 != fi.Height) Fail($"facet {index} dims");
+            if (fi.Width != facet.Width || fi.Height != facet.Height) Fail($"facet {index}: facet.json {fi.Width}x{fi.Height}, manifest {facet.Width}x{facet.Height}");
+            bool sizeOk = true;
+            if (expected.TryGetValue(index, out var want) && (want.Width != fi.Width || want.Height != fi.Height))
+            {
+                Fail($"facet {index}: pack {fi.Width}x{fi.Height}, the source {Path.GetFileName(want.MapPath)} holds {want.Width}x{want.Height}");
+                sizeOk = false;
+            }
+
             int rxc = (fi.BlocksX + fi.RegionBlocks - 1) / fi.RegionBlocks, ryc = (fi.BlocksY + fi.RegionBlocks - 1) / fi.RegionBlocks;
-            long blocks = 0, st = 0;
+            long blocks = 0, st = 0, oracleChecked = 0, oracleBad = 0;
+            var oracle = sizeOk && want != null && want.Problem == null ? MulMapOracle.TryOpen(fm, index, want.Width / 8, want.Height / 8) : null;
             int nreg = Math.Min(rxc * ryc, ConvertOptions.MaxRegions);
             bool partial = nreg != rxc * ryc;
             Parallel.For(0, nreg, ConvertOptions.Par, r =>
             {
                 int rx = r % rxc, ry = r / rxc;
                 var (h, b) = RegionFile.Read(PackConst.RegionPath(dir, rx, ry));
-                if (h.Facet != fi.Index || h.Rx != rx || h.Ry != ry) Fail($"region header {fi.Index} {rx},{ry}");
+                if (h.Facet != index || h.Rx != rx || h.Ry != ry) Fail($"region header {index} {rx},{ry}");
                 if (h.BlocksW != Math.Min(fi.RegionBlocks, fi.BlocksX - rx * fi.RegionBlocks) || h.BlocksH != Math.Min(fi.RegionBlocks, fi.BlocksY - ry * fi.RegionBlocks))
-                    Fail($"region size {fi.Index} {rx},{ry}");
+                    Fail($"region size {index} {rx},{ry}");
                 long nb = 0, ns = 0;
+                if (oracle != null)
+                {
+                    long bad = 0;
+                    for (int by = 0; by < h.BlocksH; by++)
+                        for (int bx = 0; bx < h.BlocksW; bx++)
+                            if (!oracle.Matches((rx * fi.RegionBlocks + bx) * fi.BlocksY + ry * fi.RegionBlocks + by, in b[by * h.BlocksW + bx])) bad++;
+                    Interlocked.Add(ref oracleChecked, h.BlocksW * h.BlocksH);
+                    Interlocked.Add(ref oracleBad, bad);
+                }
                 foreach (var blk in b)
                 {
                     if (blk.IsEmpty) continue;
                     nb++;
                     ns += blk.Statics.Length;
                     foreach (var s in blk.Statics)
-                        if (s.X > 7 || s.Y > 7 || s.Graphic >= statics.Length) { Fail($"static cell {fi.Index}"); break; }
+                        if (s.X > 7 || s.Y > 7 || s.Graphic >= staticCount) { Fail($"static cell {index}"); break; }
                     foreach (var c in blk.Land)
-                        if (c.TileId >= land.Length) { Fail($"land cell {fi.Index}"); break; }
+                        if (c.TileId >= landCount) { Fail($"land cell {index}"); break; }
                 }
                 Interlocked.Add(ref blocks, nb);
                 Interlocked.Add(ref st, ns);
             });
-            if (!partial && blocks != (long)fi.BlocksX * fi.BlocksY) Fail($"facet {fi.Index}: {blocks} blocks, expected {fi.BlocksX * fi.BlocksY}");
-            if (stats.TryGetValue($"map{fi.Index}", out var o) && o is MapConvert.Stats ms && ms.Statics != st) Fail($"facet {fi.Index} statics {st} != {ms.Statics}");
-            Console.WriteLine($"  facet {fi.Index}: {fi.Width}x{fi.Height}, {nreg}/{rxc * ryc} regions, {blocks} blocks, {st} statics");
+            if (!partial && blocks != (long)fi.BlocksX * fi.BlocksY) Fail($"facet {index}: {blocks} blocks, expected {fi.BlocksX * fi.BlocksY}");
+            if (stats.TryGetValue($"map{index}", out var o) && o is MapConvert.Stats ms && ms.Statics != st) Fail($"facet {index} statics {st} != {ms.Statics}");
+            Console.WriteLine($"  facet {index}: {fi.Width}x{fi.Height}, {nreg}/{rxc * ryc} regions, {blocks} blocks, {st} statics");
+            if (oracle != null)
+            {
+                if (oracleBad != 0) Fail($"facet {index}: {oracleBad} of {oracleChecked} blocks differ from the MUL files + diffs");
+                Console.WriteLine($"    vs independent read of {oracle.MapFile} (+ {oracle.LandPatches} land / {oracle.StaticPatches} static diff blocks as ModernUO applies them): {oracleChecked - oracleBad}/{oracleChecked} blocks EXACT");
+            }
         }
 
-        if (Want("art")) PageTimings(Path.Combine(outDir, "art"));
-        if (Want("anims")) PageTimings(Path.Combine(outDir, "anim"));
-        if (Want("maps") && manifest.Facets.Count > 0) RegionTimings(outDir, manifest);
-        Console.WriteLine(_errors == 0 ? "  all checks passed" : $"  {_errors} errors");
-        return _errors == 0;
+        return _errors - before;
     }
 
     private static void CheckAtlas(UOFileManager fm, string dir, string table, bool tex, StaticTileData[] statics)

@@ -7,25 +7,31 @@ using System.IO;
 
 namespace ClassicUO.Utility
 {
+    /// <summary>
+    /// A client version packed as (major &lt;&lt; 24) | (minor &lt;&lt; 16) | (build &lt;&lt; 8) | patch. Clients before 5.0.7 write the
+    /// patch as a letter: 'a' = 1, so "4.0.11c" is 4.0.11.3 and "4.0.11" is 4.0.11.0, as ModernUO's ClientVersion reads
+    /// it (PR #2735, 61d0651af). Before 2026-10-31 the parser counted from 'a' = 0 while these constants used the letter's
+    /// ASCII code, so no parsed lettered version compared the way the constants intended (CV_306E was also 3.0.0e).
+    /// </summary>
     public enum ClientVersion
     {
         CV_OLD = (1 << 24) | (0 << 16) | (0 << 8) | 0,             // Original game
         CV_200 = (2 << 24) | (0 << 16) | (0 << 8) | 0,             // T2A Introduction. Adds screen dimensions packet
-        CV_200X = (2 << 24) | (0 << 16) | (0 << 8) | ('x' & 0xFF), // T2A Introduction. Adds screen dimensions packet
-        CV_204C = (2 << 24) | (0 << 16) | (4 << 8) | ('c' & 0xFF), // Adds *.def files
+        CV_200X = (2 << 24) | (0 << 16) | (0 << 8) | ('x' - 'a' + 1), // T2A Introduction. Adds screen dimensions packet
+        CV_204C = (2 << 24) | (0 << 16) | (4 << 8) | ('c' - 'a' + 1), // Adds *.def files
         CV_207 = (2 << 24) | (0 << 16) | (7 << 8) | 0,             // Adds *.def files
         CV_300 = (3 << 24) | (0 << 16) | (0 << 8) | 0,
-        CV_305D = (3 << 24) | (0 << 16) | (5 << 8) | ('d' & 0xFF), // Renaissance. Expanded character slots.
-        CV_306E = (3 << 24) | (0 << 16) | (0 << 8) | ('e' & 0xFF), // Adds a packet with the client type, switches to mp3 from midi for sound files
+        CV_305D = (3 << 24) | (0 << 16) | (5 << 8) | ('d' - 'a' + 1), // Renaissance. Expanded character slots.
+        CV_306E = (3 << 24) | (0 << 16) | (6 << 8) | ('e' - 'a' + 1), // Adds a packet with the client type, switches to mp3 from midi for sound files
         CV_308 = (3 << 24) | (0 << 16) | (8 << 8) | 0,
-        CV_308D = (3 << 24) | (0 << 16) | (8 << 8) | ('d' & 0xFF),   // Adds maximum stats to the status bar
-        CV_308J = (3 << 24) | (0 << 16) | (8 << 8) | ('j' & 0xFF),   // Adds followers to the status bar
-        CV_308Z = (3 << 24) | (0 << 16) | (8 << 8) | ('z' & 0xFF),   // Age of Shadows. Adds paladin, necromancer, custom housing, resists, profession selection window, removes save password checkbox
-        CV_400B = (4 << 24) | (0 << 16) | (0 << 8) | ('b' & 0xFF),   // Deletes tooltips
-        CV_405A = (4 << 24) | (0 << 16) | (5 << 8) | ('a' & 0xFF),   // Adds ninja, samurai
-        CV_4011C = (4 << 24) | (0 << 16) | (11 << 8) | ('c' & 0xFF), // Music/* vs Music/Digital/* switchover
-        CV_4011D = (4 << 24) | (0 << 16) | (11 << 8) | ('d' & 0xFF), // Adds elven race
-        CV_500A = (5 << 24) | (0 << 16) | (0 << 8) | ('a' & 0xFF),   // Paperdoll buttons journal becomes quests, chat becomes guild. Use mega FileManager.Cliloc. Removes verdata.mul.
+        CV_308D = (3 << 24) | (0 << 16) | (8 << 8) | ('d' - 'a' + 1),   // Adds maximum stats to the status bar
+        CV_308J = (3 << 24) | (0 << 16) | (8 << 8) | ('j' - 'a' + 1),   // Adds followers to the status bar
+        CV_308Z = (3 << 24) | (0 << 16) | (8 << 8) | ('z' - 'a' + 1),   // Age of Shadows. Adds paladin, necromancer, custom housing, resists, profession selection window, removes save password checkbox
+        CV_400B = (4 << 24) | (0 << 16) | (0 << 8) | ('b' - 'a' + 1),   // Deletes tooltips
+        CV_405A = (4 << 24) | (0 << 16) | (5 << 8) | ('a' - 'a' + 1),   // Adds ninja, samurai
+        CV_4011C = (4 << 24) | (0 << 16) | (11 << 8) | ('c' - 'a' + 1), // Music/* vs Music/Digital/* switchover
+        CV_4011D = (4 << 24) | (0 << 16) | (11 << 8) | ('d' - 'a' + 1), // Adds elven race
+        CV_500A = (5 << 24) | (0 << 16) | (0 << 8) | ('a' - 'a' + 1),   // Paperdoll buttons journal becomes quests, chat becomes guild. Use mega FileManager.Cliloc. Removes verdata.mul.
         CV_5020 = (5 << 24) | (0 << 16) | (2 << 8) | 0,              // Adds buff bar
         CV_5090 = (5 << 24) | (0 << 16) | (9 << 8) | 0,              //
         CV_6000 = (6 << 24) | (0 << 16) | (0 << 8) | 0,              // Adds colored guild/all chat and ignore system. New targeting systems, object properties and handles.
@@ -161,22 +167,19 @@ namespace ClassicUO.Utility
 
                         if (extra != 0)
                         {
-                            char start = 'a';
-                            int index = 0;
-
-                            while (start != extra && start <= 'z')
+                            if (extra < 'a' || extra > 'z')
                             {
-                                start++;
-                                index++;
+                                return false;
                             }
 
-                            extra = index;
+                            extra = extra - 'a' + 1; // 'a' = 1, as ModernUO
                         }
 
                         if (extra_index == 2)
                         {
                             build = num_extra;
-                            num_extra = extra;
+                            // ModernUO reads a letter only for clients before 5.0.7 (IsLetterVersion) and ignores it after
+                            num_extra = IsLetterVersion(major, minor, build) ? extra : 0;
                         }
 
                         version = (ClientVersion) (((major & 0xFF) << 24) | ((minor & 0xFF) << 16) | ((build & 0xFF) << 8) | (num_extra & 0xFF));
@@ -187,6 +190,28 @@ namespace ClassicUO.Utility
             }
 
             return false;
+        }
+
+        private static readonly ClientVersion FirstNumericPatch = (ClientVersion)((5 << 24) | (0 << 16) | (7 << 8));
+
+        /// <summary>True for clients before 5.0.7, which write the patch as a letter ("4.0.11c"); a version comparison
+        /// on major.minor.build, as ModernUO's <c>IsLetterVersion</c>.</summary>
+        public static bool IsLetterVersion(int major, int minor, int build) =>
+            (ClientVersion)(((major & 0xFF) << 24) | ((minor & 0xFF) << 16) | ((build & 0xFF) << 8)) < FirstNumericPatch;
+
+        /// <summary>The version as text that <see cref="IsClientVersionValid"/> reads back to the same value: "4.0.11c",
+        /// "4.0.11" (no letter), "5.0.7.0", "7.0.103.0". A letter-era patch above 26 has no letter and is written as a
+        /// fourth number.</summary>
+        public static string ToVersionString(ClientVersion version)
+        {
+            int major = ((int)version >> 24) & 0xFF, minor = ((int)version >> 16) & 0xFF, build = ((int)version >> 8) & 0xFF, patch = (int)version & 0xFF;
+
+            if (!IsLetterVersion(major, minor, build) || patch > 26)
+            {
+                return $"{major}.{minor}.{build}.{patch}";
+            }
+
+            return patch == 0 ? $"{major}.{minor}.{build}" : $"{major}.{minor}.{build}{(char)('a' + patch - 1)}";
         }
     }
 }
