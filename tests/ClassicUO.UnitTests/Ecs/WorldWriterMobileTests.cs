@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using ClassicUO.Ecs;
 using ClassicUO.Game;
 using ClassicUO.Game.Data;
@@ -927,6 +928,188 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.Violations.Should().Be(3);
             world.Writer.OutstandingPlacements.Should().Be(1, "a rejected removal cancels nothing");
             AssertSameWorld(reference, world);
+        }
+
+        // ---- Codex audit of part 4: the player's position callbacks, a mobile placed as an item, the detached player
+
+        // A PlayerMobile without its constructor (which reads the UO files): GetUninitializedObject, then Mobile's constructor
+        // on it, so the PlayerMobile-only fields stay unset (Skills, Walker, Pathfinder, buffs; nothing here touches them).
+        // World.Player is set to it. Its position and direction callbacks are the test's: the real ones call the plugins and
+        // read the profile. OnMoved stands in for PlayerMobile.OnPositionChanged, where a plugin's RequestMove runs
+        // Player.Walk synchronously.
+        internal sealed class TestPlayer : PlayerMobile
+        {
+            public Action<TestPlayer> OnMoved;
+            public int PositionCallbacks;
+
+            public TestPlayer(World world, uint serial) : base(world, serial) { } // never runs
+
+            internal static TestPlayer Create(World world, uint serial)
+            {
+                var p = (TestPlayer)RuntimeHelpers.GetUninitializedObject(typeof(TestPlayer));
+                typeof(Mobile).GetConstructor(new[] { typeof(World), typeof(uint) })!.Invoke(p, new object[] { world, serial });
+
+                return p;
+            }
+
+            protected override void OnPositionChanged()
+            {
+                PositionCallbacks++;
+                Action<TestPlayer> walk = OnMoved;
+                OnMoved = null; // once
+                walk?.Invoke(this);
+            }
+
+            protected override void OnDirectionChanged() { }
+        }
+
+        private static World BuildPlayer(out TestPlayer player)
+        {
+            World world = Build(Start.None);
+            player = TestPlayer.Create(world, MOB);
+            typeof(World).GetProperty(nameof(World.Player))!.SetValue(world, player);
+            world.Mobiles.Add(player);
+            world.Ecs.Sync(player);
+            player.Graphic = 0x190;
+            player.Hue = 0x83EA;
+            player.Direction = Direction.North;
+            player.NotorietyFlag = NotorietyFlag.Innocent;
+            player.SetInWorldTile(1000, 1000, 0);
+            player.UpdateRealScreenPositionOnly(0, 0);
+
+            return world;
+        }
+
+        // Player.Walk's writes, as RequestMove makes them from the position callback: a turn (Walk writes Direction), then a
+        // step queued with its timers and pushes
+        private static Action<TestPlayer> StandInWalk(Direction to) => p =>
+        {
+            p.Direction = to;
+            int x = p.X, y = p.Y;
+            Pathfinder.GetNewXY((byte)to, ref x, ref y);
+            OldEnqueueStep(p, x, y, p.Z, to, true);
+        };
+
+        public enum PlayerPlacement { UpdateObject, UpdatePlayer }
+
+        [Theory]
+        [InlineData(PlayerPlacement.UpdateObject)]
+        [InlineData(PlayerPlacement.UpdatePlayer)]
+        public void A_Walk_From_The_Players_Position_Callback_Is_Published_As_Before_T1(PlayerPlacement kind)
+        {
+            World oldWorld = BuildPlayer(out TestPlayer a), newWorld = BuildPlayer(out TestPlayer b);
+            newWorld.Writer.ThrowOnViolation = true;
+            Time.Ticks = NOW + 2000;
+            a.OnMoved = StandInWalk(Direction.West);
+            b.OnMoved = StandInWalk(Direction.West);
+
+            if (kind == PlayerPlacement.UpdateObject)
+            {
+                // UpdateGameObject's player branch (no step), then the placement with the callback
+                MobPacket p = Packets[1];
+                Pair(() => OldUpsertMobile(oldWorld, p), () => NewUpsertMobile(newWorld, p));
+            }
+            else
+            {
+                Pair
+                (
+                    () => OldBody(oldWorld, a, BodyPacket.UpdatePlayer, 0x191, 0x21, Flags.WarMode, Direction.South, 1005, 1006, 3),
+                    () => NewBody(newWorld, b, BodyPacket.UpdatePlayer, 0x191, 0x21, Flags.WarMode, Direction.South, 1005, 1006, 3)
+                );
+            }
+
+            Time.Ticks = NOW;
+            b.PositionCallbacks.Should().Be(a.PositionCallbacks).And.BeGreaterThan(1);
+            b.Steps.Count.Should().BeGreaterThan(0, "the callback walked");
+            b.Direction.Should().Be(Direction.West);
+            AssertSameWorld(oldWorld, newWorld);
+            newWorld.Writer.InScope.Should().BeFalse();
+            newWorld.Ecs.IsFolding.Should().BeFalse();
+            newWorld.Writer.Violations.Should().Be(0);
+        }
+
+        [Fact]
+        public void PlaceInContainer_Of_A_Mobile_Serial_Cancels_The_Placements_Of_The_Mobile_And_Its_Subtree()
+        {
+            World world = BuildRemove(Start.Standing, out WorldWriter.Placement loot);
+            Mobile m = world.Mobiles.Get(MOB);
+            world.Writer.ThrowOnViolation = true;
+            world.Writer.UpsertMobile(m, MOB, 0x190, 0, 1001, 1000, 0, Direction.East, 0, 0, out _, out WorldWriter.Placement mobile);
+            world.Writer.OutstandingPlacements.Should().Be(2);
+
+            world.Writer.PlaceInContainer(MOB, 0xE76, 1, 10, 10, 0, BAG, out Entity container).Should().NotBeNull();
+
+            container.Serial.Should().Be(BAG);
+            world.Mobiles.Get(MOB).Should().BeNull();
+            world.Items.Get(GEM).Should().BeNull("the mobile's subtree went with it");
+            m.IsDestroyed.Should().BeTrue();
+            world.Writer.OutstandingPlacements.Should().Be(0);
+            Action placeLoot = () => world.Writer.PlaceWorldItem(loot);
+            placeLoot.Should().Throw<ArgumentException>("the removed descendant's placement was cancelled");
+            Action placeMobile = () => world.Writer.PlaceMobile(mobile);
+            placeMobile.Should().Throw<ArgumentException>("the removed mobile's placement was cancelled");
+            world.Writer.InScope.Should().BeFalse();
+        }
+
+        private static string PlayerSnapshot(TestPlayer m) => Snapshot(m) + $" destroyed {m.IsDestroyed} callbacks {m.PositionCallbacks}";
+
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public void The_Detached_World_Player_Is_Written_As_Before_T1(bool throws)
+        {
+            World oldWorld = BuildPlayer(out TestPlayer a), newWorld = BuildPlayer(out TestPlayer b);
+            newWorld.Writer.ThrowOnViolation = throws;
+
+            // 0x25 under the player's serial: the mobile goes, World.Player stays
+            foreach (World w in new[] { oldWorld, newWorld })
+            {
+                w.Writer.PlaceInContainer(MOB, 0xE76, 1, 10, 10, 0, BAG, out _).Should().NotBeNull();
+            }
+
+            newWorld.Player.Should().BeSameAs(b);
+            newWorld.Mobiles.Get(MOB).Should().BeNull();
+            b.IsDestroyed.Should().BeTrue();
+            AssertSameWorld(oldWorld, newWorld);
+
+            // 0x78 (the player's body), then 0x20 (body, direction, move with the position callback)
+            Pair
+            (
+                () => OldBody(oldWorld, a, BodyPacket.UpdateObject, 0x25E, 0x8BB9, Flags.Hidden, Direction.East, 0, 0, 0),
+                () => NewBody(newWorld, b, BodyPacket.UpdateObject, 0x25E, 0x8BB9, Flags.Hidden, Direction.East, 0, 0, 0)
+            );
+            PlayerSnapshot(b).Should().Be(PlayerSnapshot(a));
+            Pair
+            (
+                () => OldBody(oldWorld, a, BodyPacket.UpdatePlayer, 0x191, 0x21, Flags.WarMode, Direction.South, 1005, 1006, 3),
+                () => NewBody(newWorld, b, BodyPacket.UpdatePlayer, 0x191, 0x21, Flags.WarMode, Direction.South, 1005, 1006, 3)
+            );
+
+            PlayerSnapshot(b).Should().Be(PlayerSnapshot(a));
+            (b.Graphic, b.X, b.Y, b.Z, b.Direction).Should().Be(((ushort)0x191, (ushort)1005, (ushort)1006, (sbyte)3, Direction.South));
+            AssertSameWorld(oldWorld, newWorld);
+            newWorld.Writer.Violations.Should().Be(0);
+            newWorld.Writer.InScope.Should().BeFalse();
+            newWorld.Ecs.IsFolding.Should().BeFalse();
+
+            // any other instance World does not hold is still rejected
+            Mobile stranger = Mobile.Create(newWorld, MOB);
+            Action move = () => newWorld.Writer.MoveMobile(stranger, 1200, 1200, 0);
+            Action body = () => newWorld.Writer.SetMobileBody(stranger, 0x190, 0, 0, true, false, 0);
+
+            if (throws)
+            {
+                move.Should().Throw<ArgumentException>();
+                body.Should().Throw<ArgumentException>();
+            }
+            else
+            {
+                move();
+                body();
+            }
+
+            newWorld.Writer.Violations.Should().Be(2);
+            stranger.X.Should().NotBe(1200);
         }
 
         // ---- groundwork: the pure helpers equal the code they were split from
