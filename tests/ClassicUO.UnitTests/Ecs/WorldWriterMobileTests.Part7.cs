@@ -423,6 +423,193 @@ namespace ClassicUO.UnitTests.Ecs
             w.Items.Get(ITEM).Container.Should().Be(MOB);
             w.Writer.Violations.Should().Be(1);
         }
+
+        // ---- group 3: the per-frame frame advance and the end of a corpse animation (ProcessAnimation split). The animation
+        // data is not loaded in the tests: the caller's frame count is a parameter of both paths (the old body from the data
+        // lookup on, with AnimationTimerState/ApplyAnimationTimer, which hold the old reads and writes of the timer fields)
+
+        internal static void OldAdvance(Mobile m, int frames)
+        {
+            int currentDelay = Constants.CHARACTER_ANIMATION_DELAY;
+
+            if (frames > 0)
+            {
+                AnimationTimer timer = m.AnimationTimerState;
+                currentDelay = AnimationTiming.Advance(ref timer, frames, out AnimationAdvance advance);
+                m.ApplyAnimationTimer(in timer);
+
+                if (advance == AnimationAdvance.Finished)
+                {
+                    m.SetAnimation(0xFF);
+                }
+                else if (advance == AnimationAdvance.Wrapped && (m.Serial & 0x80000000) != 0)
+                {
+                    m.World.CorpseManager.Remove(0, m.Serial);
+                    m.World.RemoveMobile(m.Serial);
+                }
+
+                m.AnimIndex = timer.Frame;
+            }
+            else if ((m.Serial & 0x80000000) != 0)
+            {
+                m.World.CorpseManager.Remove(0, m.Serial);
+                m.World.RemoveMobile(m.Serial);
+            }
+
+            m.LastAnimationChangeTime = Time.Ticks + currentDelay;
+        }
+
+        internal static void NewAdvance(World world, Mobile m, int frames)
+        {
+            if (world.Writer.AdvanceAnimation(m, frames, out int frame, out long due))
+            {
+                world.Writer.RemoveDeadMobile(m, frame, due);
+            }
+        }
+
+        public enum AdvanceStart { Repeating, Once, Idle, Dead }
+
+        private static World BuildAdvance(AdvanceStart start)
+        {
+            World world = Build(Start.Standing);
+            Mobile m = world.Mobiles.Get(MOB);
+
+            switch (start)
+            {
+                case AdvanceStart.Repeating: OldAnimate(m, AnimPacket.CharacterAnimation); break;
+                case AdvanceStart.Once: OldAnimate(m, AnimPacket.NewCharacterAnimation); break;
+                case AdvanceStart.Dead:
+                    OldRekey(world, m);
+                    world.CorpseManager.Add(0x4000_7900, DEAD, m.Direction, false);
+                    OldAnimate(m, AnimPacket.Death);
+
+                    break;
+            }
+
+            return world;
+        }
+
+        public static IEnumerable<object[]> AdvanceCases()
+        {
+            foreach (AdvanceStart s in Enum.GetValues(typeof(AdvanceStart)))
+            {
+                foreach (int frames in new[] { 5, 1, 0 })
+                {
+                    yield return new object[] { s, frames };
+                }
+            }
+        }
+
+        [Theory]
+        [MemberData(nameof(AdvanceCases))]
+        public void The_Frame_Advance_Equals_The_Old_Path(AdvanceStart start, int frames)
+        {
+            World oldWorld = BuildAdvance(start), newWorld = BuildAdvance(start);
+            newWorld.Writer.ThrowOnViolation = true;
+            uint serial = start == AdvanceStart.Dead ? DEAD : MOB;
+            Mobile a = oldWorld.Mobiles.Get(serial), b = newWorld.Mobiles.Get(serial);
+
+            // frame by frame, as Update runs it (it stops once the mobile is destroyed); the bystander too
+            for (int i = 1; i <= 24 && !a.IsDestroyed; i++)
+            {
+                Time.Ticks = NOW + (uint)(i * 150);
+                Pair(() => OldAdvance(a, frames), () => NewAdvance(newWorld, b, frames));
+                Pair(() => OldAdvance(oldWorld.Mobiles.Get(OTHER), 3), () => NewAdvance(newWorld, newWorld.Mobiles.Get(OTHER), 3));
+                AssertSameWorld(oldWorld, newWorld, serial);
+                (b.AnimIndex, b.LastAnimationChangeTime, b.IsDestroyed).Should().Be((a.AnimIndex, a.LastAnimationChangeTime, a.IsDestroyed), $"frame {i}");
+                newWorld.CorpseManager.Exists(0, DEAD).Should().Be(oldWorld.CorpseManager.Exists(0, DEAD));
+            }
+
+            Time.Ticks = NOW;
+
+            if (start == AdvanceStart.Dead)
+            {
+                b.IsDestroyed.Should().BeTrue("the corpse animation ended and the mobile was removed");
+                newWorld.CorpseManager.Exists(0, DEAD).Should().BeFalse();
+            }
+
+            newWorld.Writer.Violations.Should().Be(0);
+            newWorld.Writer.InScope.Should().BeFalse();
+            newWorld.Ecs.IsFolding.Should().BeFalse();
+        }
+
+        [Fact]
+        public void AdvanceAnimation_Pushes_No_Clock_Of_Its_Own()
+        {
+            World world = BuildAdvance(AdvanceStart.Once);
+            Mobile m = world.Mobiles.Get(MOB);
+            Time.Ticks = NOW + 500;
+            long writes = world.Ecs.ClockWrites;
+
+            world.Writer.AdvanceAnimation(m, 4, out _, out _).Should().BeFalse();
+            Time.Ticks = NOW;
+
+            (world.Ecs.ClockWrites - writes).Should().Be(0, "the update loops push the clock after Update, as before T1");
+            m.LastAnimationChangeTime.Should().BeGreaterThan(NOW + 500);
+        }
+
+        [Fact]
+        public void The_Frame_Advance_Operations_Reject_What_This_World_Does_Not_Hold()
+        {
+            foreach (bool throws in new[] { true, false })
+            {
+                World world = BuildAdvance(AdvanceStart.Dead), other = BuildAdvance(AdvanceStart.Dead);
+                world.Writer.ThrowOnViolation = throws;
+                Mobile foreign = other.Mobiles.Get(DEAD);
+                Mobile stranger = Mobile.Create(world, DEAD);
+                int before = foreign.UpdateStateHash();
+                var acts = new Action[] { () => world.Writer.AdvanceAnimation(foreign, 5, out _, out _), () => world.Writer.RemoveDeadMobile(stranger, 1, NOW), () => world.Writer.RemoveDeadMobile(foreign, 1, NOW) };
+
+                foreach (Action act in acts)
+                {
+                    if (throws)
+                    {
+                        act.Should().Throw<ArgumentException>();
+                    }
+                    else
+                    {
+                        act();
+                    }
+                }
+
+                foreign.UpdateStateHash().Should().Be(before);
+                foreign.IsDestroyed.Should().BeFalse();
+                stranger.IsDestroyed.Should().BeFalse();
+                world.Mobiles.Get(DEAD).IsDestroyed.Should().BeFalse();
+                other.CorpseManager.Exists(0, DEAD).Should().BeTrue();
+                world.CorpseManager.Exists(0, DEAD).Should().BeTrue();
+                world.Writer.Violations.Should().Be(3);
+            }
+
+            // a stale instance of this World (not held): written as before T1, unfolded, no violation
+            World w = BuildAdvance(AdvanceStart.Repeating);
+            w.Writer.ThrowOnViolation = true;
+            Mobile stale = Mobile.Create(w, MOB);
+            Time.Ticks = NOW + 300;
+            w.Writer.AdvanceAnimation(stale, 3, out _, out _).Should().BeFalse();
+            Time.Ticks = NOW;
+            stale.LastAnimationChangeTime.Should().BeGreaterThan(NOW);
+            w.Writer.Violations.Should().Be(0);
+        }
+
+        [Fact]
+        public void The_Frame_Advance_Does_Not_Nest()
+        {
+            World world = BuildAdvance(AdvanceStart.Dead);
+            world.Writer.ThrowOnViolation = false;
+            Mobile m = world.Mobiles.Get(DEAD);
+            int before = m.UpdateStateHash();
+            world.Ecs.BeginFold(world.Mobiles.Get(OTHER));
+            Time.Ticks = NOW + 300;
+            world.Writer.AdvanceAnimation(m, 5, out _, out _).Should().BeFalse();
+            world.Writer.RemoveDeadMobile(m, 1, NOW);
+            Time.Ticks = NOW;
+            world.Ecs.EndFold(world.Mobiles.Get(OTHER));
+
+            world.Writer.Violations.Should().Be(2);
+            m.UpdateStateHash().Should().Be(before);
+            m.IsDestroyed.Should().BeFalse();
+        }
     }
 
     [Collection(nameof(FunnelCheckCollection))]
@@ -471,9 +658,14 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.PlaceCorpseEquipment(m, 0x4000_7304, Layer.Shirt).Should().NotBeNull(); // a worn child, re-keyed below
             world.Writer.PlaceCorpseEquipment(corpse, 0x4000_7303, Layer.Shirt).Should().NotBeNull();
             world.Writer.RekeyDeadMobile(m).Should().Be(0x8000_3300u);
+            Time.Ticks = 100_500;
+            world.Writer.AdvanceAnimation(m, 4, out _, out _);
+            world.Writer.AdvanceAnimation(m, 0, out int f0, out long d0).Should().BeTrue();
+            world.Writer.RemoveDeadMobile(m, f0, d0);
+            m.IsDestroyed.Should().BeTrue();
 
             (m.Name, bag.Name, bag.Price, m.SpeedMode, m.IsDead, bag.Container).Should().Be(("m", "bag", 5u, CharacterSpeedType.CantRun, true, 0x4000_7302u));
-            FunnelCheck.Total.Should().Be(0, "0x98 and the other name writers, 0x74's price, 0xBF.26, 0x72, 0xBF.19's dead flag, 0x89, 0xAF's re-key");
+            FunnelCheck.Total.Should().Be(0, "0x98 and the other name writers, 0x74's price, 0xBF.26, 0x72, 0xBF.19's dead flag, 0x89, 0xAF's re-key, the frame advance and the corpse animation's end");
         }
     }
 }
