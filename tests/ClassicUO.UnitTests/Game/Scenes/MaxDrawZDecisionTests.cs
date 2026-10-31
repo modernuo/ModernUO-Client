@@ -130,6 +130,8 @@ namespace ClassicUO.UnitTests.Game.Scenes
             var felucca = new MapT(_world, 0, 4, 4);
             felucca.LoadEmptyChunkForTest(0, 0);
             Put(felucca, Roof, 7, 7, 20);
+            felucca.SetDecisionReach(new ChunkReach()); // a clean map: only the Map.Id check can tell
+            felucca.DecisionDirty.Should().BeFalse();
 
             Update(felucca, 6, 6, 0).Should().BeTrue();
             AssertHidden(20);
@@ -172,22 +174,137 @@ namespace ClassicUO.UnitTests.Game.Scenes
         }
 
         [Fact]
-        public void An_In_Place_Graphic_Change_Recomputes_After_InvalidateDecision()
+        public void An_In_Place_Graphic_Change_Of_A_Placed_Object_Recomputes()
         {
-            // World.ChangeSeason swaps graphics in place (no tile-list change) and then calls Map.InvalidateDecision
+            // the 0xBF/0x1B spellbook content packet sets a ground item's graphic in place (no tile-list change); so do the
+            // season (Static.UpdateGraphicBySeason) and Static.SetGraphic: the Graphic setter notes the chunk
             var map = new MapT(_world, 0, 4, 4);
             map.LoadEmptyChunkForTest(0, 0);
-            Static s = Put(map, Plain, 7, 7, 20);
+            var book = new Item(_world) { Graphic = Plain, X = 7, Y = 7, Z = 20 };
+            map.GetChunk(7, 7, false).AddGameObject(book, 7, 7);
 
             Update(map, 6, 6, 0).Should().BeTrue();
             AssertOutside();
 
-            s.Graphic = Roof; // the season's graphic
-            Update(map, 6, 6, 0).Should().BeFalse("nothing tells the decision without the invalidation");
+            book.Graphic = Plain; // unchanged: no recompute
+            Update(map, 6, 6, 0).Should().BeFalse();
+
+            book.Graphic = Roof;
+            map.DecisionDirty.Should().BeTrue();
+            Update(map, 6, 6, 0).Should().BeTrue();
+            AssertHidden(20);
+
+            // a mobile's body change is not an input
+            var mobile = new Mobile(_world) { Graphic = 0x190, X = 7, Y = 7, Z = 0 };
+            map.GetChunk(7, 7, false).AddGameObject(mobile, 7, 7);
+            Update(map, 6, 6, 0);
+            mobile.Graphic = 0x191;
+            map.DecisionDirty.Should().BeFalse();
+        }
+
+        [Fact]
+        public void InvalidateDecision_Recomputes()
+        {
+            // World.ChangeSeason calls it after swapping the graphics
+            var map = new MapT(_world, 0, 4, 4);
+            map.LoadEmptyChunkForTest(0, 0);
+            Update(map, 6, 6, 0).Should().BeTrue();
+            Update(map, 6, 6, 0).Should().BeFalse();
 
             map.InvalidateDecision();
             Update(map, 6, 6, 0).Should().BeTrue();
-            AssertHidden(20);
+        }
+
+        [Fact]
+        public void An_Off_Screen_Dependency_Stays_Loaded_While_The_Decision_Stands_And_Ages_Out_After_The_Player_Leaves()
+        {
+            // Codex round 2: the roof search's chunk (1, 0) is outside the draw walk, so nothing refreshes its access time;
+            // evicting it dirtied the decision, whose recompute requested it again (every ~3.5 s while standing still)
+            uint savedTicks = Time.Ticks;
+
+            try
+            {
+                Time.Ticks = 1_000_000;
+                var map = new MapT(_world, 0, 8, 8);
+                map.LoadEmptyChunkForTest(0, 0);
+                map.LoadEmptyChunkForTest(0, 1);
+                map.LoadEmptyChunkForTest(1, 1);
+                Chunk dependency = map.LoadEmptyChunkForTest(1, 0);
+                Put(map, Roof, 7, 7, 30);
+                Put(map, Roof, 8, 7, 24);
+
+                Update(map, 6, 6, 0).Should().BeTrue();
+                AssertHidden(24);
+                map.InDecisionReach(1, 0).Should().BeTrue();
+
+                dependency.LastAccessTime = 0; // not drawn for longer than CLEAR_TEXTURES_DELAY
+                map.ClearUnusedBlocks();
+
+                dependency.IsDestroyed.Should().BeFalse(); // (no GetChunk2 here: it refreshes the access time)
+                Update(map, 6, 6, 0).Should().BeFalse("nothing was evicted, so nothing to recompute");
+
+                // the player walks away: the new decision's reach no longer covers (1, 0), and the sweep evicts it
+                map.LoadEmptyChunkForTest(5, 5);
+                map.LoadEmptyChunkForTest(6, 6);
+                Update(map, 46, 46, 0).Should().BeTrue();
+                map.InDecisionReach(1, 0).Should().BeFalse();
+                dependency.LastAccessTime = 0;
+                map.ClearUnusedBlocks();
+
+                map.GetChunk2(1, 0, false).Should().BeNull();
+                dependency.IsDestroyed.Should().BeTrue();
+                map.DecisionDirty.Should().BeFalse("outside the new decision's reach");
+            }
+            finally
+            {
+                Time.Ticks = savedTicks;
+            }
+        }
+
+        [Fact]
+        public void A_Large_Reach_Is_Not_Pinned()
+        {
+            var map = new MapT(_world, 0, 16, 16);
+            var reach = new ChunkReach();
+            reach.Add(0, 0);
+            reach.Add(MapT.MaxPinnedReach, 0); // MaxPinnedReach + 1 chunks wide
+            map.SetDecisionReach(reach);
+
+            map.InDecisionReach(0, 0).Should().BeFalse();
+            map.NoteContentChanged(0, 0);
+            map.DecisionDirty.Should().BeTrue("a large reach still invalidates; it just does not keep its chunks");
+        }
+
+        [Fact]
+        public void A_Decision_Request_Survives_When_The_Parked_Mobile_Of_Its_Chunk_Leaves_Before_The_Load()
+        {
+            // player (7, 7): the diagonal tile (8, 8) is in chunk (1, 1), not loaded; a mobile is parked there too
+            var map = new MapT(_world, 0, 4, 4);
+            map.LoadEmptyChunkForTest(0, 0);
+            map.LoadEmptyChunkForTest(0, 1);
+            map.LoadEmptyChunkForTest(1, 0);
+
+            var mobile = new Mobile(_world) { X = 9, Y = 9 };
+            map.Park(mobile, 9, 9).Should().Be(MapT.Incremental);
+
+            if (!MapT.Incremental)
+            {
+                return; // CUO_CHUNK_SYNC=1: nothing is parked or queued
+            }
+
+            Update(map, 7, 7, 0).Should().BeTrue();
+            _state.Missing.Should().Be(1);
+
+            // the mobile walks off (or is deleted) before chunk (1, 1) loads: the parked entry is stale
+            mobile.PendingBlock = -1;
+            map.DropStaleParked(1 * map.BlocksY + 1, 1, 1).Should().BeFalse("the decision still needs the chunk: the load goes ahead");
+            map.IsQueuedForTest(1, 1).Should().BeTrue();
+
+            // a chunk only parked objects wanted, outside the decision's reach, is dropped as before
+            var other = new Mobile(_world) { X = 25, Y = 25 };
+            map.Park(other, 25, 25).Should().BeTrue();
+            other.PendingBlock = -1;
+            map.DropStaleParked(3 * map.BlocksY + 3, 3, 3).Should().BeTrue();
         }
 
         [Fact]
