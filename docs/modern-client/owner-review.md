@@ -219,6 +219,10 @@ All merged and pushed, and each audited by Codex until clean or down to document
 - **`pickscan` causes about 250 "chunks missing near view" unsettled frames per entry** (base too; seen by the teleport agent).
 - **Skip checker: land at the top edge "drawn differently" during zoom-2.5 walks** (199 on base, 632 on E7's build in one run; predates E7). Look at W1's edge band.
 - **E4 order uses `Dictionary`'s private version counter** (guarded by a unit test). Replace with an owned ordered list if `world_update_mobile_system` ever becomes the default.
+- **Flaky test, cause found (2026-10-31, roof-race agent):** `TileDataAuditTests.A_Multi_Component_Takes_The_Draw_Flags_Of_Its_Season_Graphic` depends on test order on a fresh test output folder.
+  - **Cause:** `SeasonManager`'s static constructor writes `Data/Client/seasons.txt` without creating the folder, so it throws `DirectoryNotFoundException` unless another test created `Data/Client` first.
+  - **Reproduce:** delete the test bin's `Data` folder and run the test alone.
+  - **Fix:** a one-line `Directory.CreateDirectory` in `CreateDefaultSeasonsFile`. Not done yet (upstream code).
 - **Flaky test:** `ChunkLoadingTests.Prefetched_Regions_Give_The_Same_Blocks_And_Never_Block_IsBlockReady` failed 2 of 5 runs (seen by the B8 agent; unrelated to B8), and once more on the chunk-load merge (passed 10 re-runs). Only fails under the full suite; likely its 2 ms first-call timing assertion. Not investigated.
 - **Minimap gump crash in stock ClassicUO:** opening it after `UIManager.Update` (it draws before its first Update) throws in `CreateMiniMapTexture`. Players open it through the normal path, so it's probably unreachable, but cheap to harden.
 - **The ECS test driver (`-ecsdriver`) is reachable without devtools** (E6 audit): its older commands aren't behind `CUO_DEVTOOLS`. E6's new ones are. Guard the whole driver and its startup switch.
