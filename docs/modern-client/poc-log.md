@@ -3649,3 +3649,75 @@ Codex found one P2 and two P3s; all three are fixed. Chunk boundaries, empty inp
 - **P3, unset diagnostics allocated a closure (fixed).** `MemLog.Start` and `StartRegions` captured locals in lambdas, so their display classes were allocated on entry, before the environment checks. The threads now start in `StartLog(seconds)` and `StartRegions(value)`, called only after the checks; unset, `Start` allocates nothing.
 - Not part of this round: the art staging slot fix (cycle=false after the slot's fence), which waits for owner approval.
 - Verified: client Release build and `-p:CuoDevTools=false` build, 0 errors; unit tests 1032 pass, 1 skipped (was 1028: +4 `UploadChunked` cases). No client runs.
+
+## Sounds and music in the pack (2026-10-31, `poc/audio-pack`)
+
+Owner decision Q10 (data-formats.md): sound effects as raw PCM, music as the original MP3 bytes with the loop flag, decoded by dr_mp3 on the music worker. Base `poc/modern-client` f69641b97. Formats: pack-format.md, "Audio".
+
+**What changed**
+- **Pack:** two record stores. `audio/sounds.bin` (`SNDS`) has a record per distinct sound: raw 22,050 Hz mono 16-bit PCM, then the 40-byte entry name up to its NUL. `Sound.def` aliases share a record. `audio/music.bin` (`MUSC`) has a record per distinct MP3 file: the file's bytes, then the file name. The loop flag sits on each id's slot, since ids naming one file can differ in it. Both stores are codec 0 only. `Uo.Pack/AudioStores.cs` holds the format constants and the record checks. `RecordStore.OpenRawStream` gives a positional stream over a raw record.
+- **Converter:** new stages `sounds` and `music` (`--only sounds,music`, `--no-sounds`, `--no-music`).
+  - `AudioImport.cs` reads what the client read: `soundLegacyMUL.uop` on UOP installs, else `sound.mul` + `soundidx.mul`, with `Sound.def` and loose `Sounds/*.wav`; for music, `Music/Digital/Config.txt` (or `Music/Config.txt`, or the built-in table) and `GetTrueFileName`'s lookup. It depends only on ClassicUO.IO and Uo.Pack, so the unit tests compile it in.
+  - Verification compares against a new frozen copy of the client's `SoundsLoader` (tools/ClassicUO.Assets.Mul): every id 0..0xFFFE, sound PCM and name byte-exact, and every music id's loop flag and MP3 bytes byte-exact against the file.
+  - `--audio-report <pack>` gives the offline measurements below.
+  - `--client-version x.y.z.w` is an interim flag for exes without version info. poc/legacy-import replaces it with its full resolution under the same name; expect a small conflict in Program.cs at merge, and keep legacy-import's version.
+- **Client:** `SoundsLoader` reads only the pack. The client no longer opens sound.mul, soundLegacyMUL.uop, Sound.def, Config.txt or the MP3s; there is no MUL fallback.
+  - **Loose `Sounds/<id>.wav` files still win at runtime.** The client already supported them, and the converter also folds them into the pack.
+  - `UOSound` takes an `ArraySegment` (the PCM part of the record array).
+  - `UOMusic` and `MusicStream` take an opener. The worker reads the record into native memory, and `Mp3Validator` checks it before dr_mp3, as it did for files.
+  - Every record and music slot is checked at load. Overlapping payloads reject the whole store.
+  - A first read per sound id is logged at Trace (`sound <id> (<name>): first read … ms`).
+- **Fix, on purpose: 4.0.11c music.** ClassicUO parses "4.0.11c" as 0x04000B02, but `CV_4011C` is 0x04000B63 (the letter as ASCII). So no parsed 4.0.11x reached it, and UOML read the built-in table: 57 of its 67 ids had no file. The converter compares with the parsed value, and the frozen loader carries the same one-line change, marked. UOML now gets its own `Music/Digital/Config.txt`: 57 ids, all with a file.
+
+**Conversions (into the session scratch, `--only sounds,music`, then `--verify-only --only sounds,music`):**
+
+| install | sounds | music | verify |
+|---|---|---|---|
+| `C:/Ultima Online Classic` 7.0.103 (UOP) | 1,667 slots, 1,656 ids, 1,655 records (1 alias), 160.4 MiB PCM, file 160.5 MiB; 0.6 s | 103 slots, 102 ids (41 loop), 90 MP3 files, 103.5 MiB; 0.3 s | all EXACT (sounds 0.3 s, music 0.1 s) |
+| `D:/…/UOML` 4.0.11c (MUL, interim `--client-version 4.0.11c`) | 1,488 slots, 1,488 ids, 1,487 records (1 alias), 107.8 MiB; 0.5 s | 57 ids (39 loop), 45 files, 53.2 MiB; 0.2 s | all EXACT |
+
+The UOML exe has no version info, so it needed the interim flag. poc/legacy-import detects 4.0.11c by itself; with it merged, UOML converts without the flag.
+
+**Measured offline** (`--audio-report`, classic, `DOTNET_TieredCompilation=0`, 2 runs, warm file cache; old = the frozen pre-pack loader on the same install):
+
+| | old (UOP + Config.txt + loose MP3) | pack | notes |
+|---|---|---|---|
+| `SoundsLoader.Load` | 39.1 / 45.9 ms median (min 35.8–38.5), 15.0 MiB allocated | 0.25 / 0.28 ms (min 0.23–0.25), 62 KB allocated | the old load indexed the UOP and scanned `Music/` once per Config.txt line (102 scans) |
+| held after load (GC heap) | 3,330 KB (65,535 `UOFileIndex` entries) plus a 160.6 MiB read-only mapping of soundLegacyMUL.uop | 56 KB (tables 54.7 KB), no mapping | |
+| sound first read (all 1,656 sounds) | p50 0.036–0.040, p99 0.38–0.44, max 14–19 ms | p50 0.023–0.026, p99 0.22–0.24, max 7.5–13.7 ms | max = beatSlow (21 MB); one read either way |
+| music: MP3 bytes into memory (102 ids) | p50 0.32–0.39 ms, max 5.5–11.8 | p50 0.26–0.31 ms, max 4.6–7.0 | the decode is unchanged (dr_mp3 on the worker) |
+
+Noise: two runs, under other agents' build load; the old/new ratios hold in both runs. The read times are page-cache bound; a cold read is disk-bound either way.
+
+**Memory and the trade-off** (the owner's rule: every held cost logged):
+
+| item | cost per client | benefit |
+|---|---|---|
+| store tables (slots + records of both stores) | +0.05 MiB held | replaces ~3.3 MiB of UOP index entries and the 160.6 MiB file mapping; load 39 ms → 0.25 ms |
+| sound cache (unchanged policy: a sound's PCM is kept from its first play for the session) | 0 new; grows with the sounds played, as before (each record array also holds its ≤ 40-byte name) | no read on replays; first plays are one positional read, p50 0.02 ms |
+| music | 0 new: per play, the MP3 is read into native memory (as from the file before) | — |
+| pack size | +264.0 MiB on disk (160.5 + 103.5) | the same bytes the install had (168.4 MB UOP + 103.5 MiB MP3s); no derived copies. FLAC would save ~52 MB (survey) and was declined (Q10) |
+
+**Sounds load on demand**, not at startup: 160 MiB of PCM resident in every client (several run at once) would buy nothing, since a first read costs about 0.02 ms.
+
+**Tests:** `AudioPackTests` (11, synthetic, no UO data):
+- the importer on a synthetic sound.mul/soundidx.mul with Sound.def aliases, -1, a skipped line, a short entry and loose WAVs (wrong rate ignored, new id added), read back through the client's `SoundsLoader`;
+- the loose-WAV runtime override;
+- a music round trip (shared file, the loop flag per id, a missing file and a bad MP3 left out) and the built-in table;
+- a looping track from a pack record through `MusicStream`, sample-exact across the seam (the seam-noise fixture);
+- hostile stores:
+  - truncated tables or payloads;
+  - a slot count above 0xFFFF or 2²⁴, refused before allocation;
+  - overlapping payloads, a payload inside the tables, an oversized record;
+  - a 44.1 kHz record left out while the others play, plus every record and slot check;
+  - junk MP3 bytes that fail the stream cleanly;
+  - no audio in the pack (silence, no crash).
+
+Unit tests: 1,079 passed, 1 skipped (pre-existing). Client Release and `-p:CuoDevTools=false` builds: 0 errors.
+
+**Client check:** bench-000049 (Release JIT build, kbatman4, a scratch test pack that is a plain copy of CURRENT plus the two stores). It dwells in Britain, Minoc and Cove, then walks in Britain for footsteps, and logs first-buffer and first-read times. Results: see the handoff (`handoffs/audio-pack.md`). Not done: a NativeAOT test build. Its link failed in this session because `vswhere.exe` was not on PATH (environment, not code).
+
+**Open:**
+- The coordinator publishes the next pack with `--only sounds,music`. Until then, a client built from this branch on `classic-1.0` plays only loose WAVs and no music; it logs this once.
+- Music meta0 = 1 (MP3) leaves room for an author-supplied lossless format later (the survey's FLAC/Vorbis codes); 1.0 readers reject anything else.
+- The source tree (`sounds/*.wav` + `sounds.csv`, `music/` + `music.csv`) is still the converter's job to write once the import/build split lands.
