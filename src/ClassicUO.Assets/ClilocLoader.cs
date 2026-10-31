@@ -108,8 +108,13 @@ namespace ClassicUO.Assets
         // A complete new state, or null. The pack serves when it is usable; a pack that can't serve the languages (no
         // section, a store that fails to open or resolve, a corrupt language record) makes the loose Cliloc.* files serve,
         // with the language resolved again for them (Cliloc.<lang>, else Cliloc.enu).
+        //
+        // Complete means: a language other than English has the English base under it, and a Clilocs.txt that exists
+        // was read. When strings are already loaded (a reload), a state missing either is not published: the old one
+        // stays. On the first load there is nothing to keep, so the partial state serves, with the error logged.
         private State Build(string requested)
         {
+            bool keepOld = _state.Lang != null;
             string path = PackPath;
             RecordStore store = null;
             ClilocDirectory dir = null;
@@ -135,7 +140,7 @@ namespace ClassicUO.Assets
 
             try
             {
-                var state = (store != null ? LanguagesFromPack(store, dir, requested) : null) ?? LanguagesFromFiles(requested);
+                var state = (store != null ? LanguagesFromPack(store, dir, requested) : null) ?? LanguagesFromFiles(requested, keepOld);
 
                 if (state == null)
                 {
@@ -153,7 +158,12 @@ namespace ClassicUO.Assets
                     }
                 }
 
-                state.Ours = ReadOurs();
+                state.Ours = ReadOurs(out bool oursFailed);
+
+                if (oursFailed && keepOld)
+                {
+                    return null;
+                }
 
                 return state;
             }
@@ -215,8 +225,9 @@ namespace ClassicUO.Assets
         }
 
         // The loose files: Cliloc.<lang>, rolled back to Cliloc.enu when it is missing (as before), and Cliloc.enu under
-        // any other language. Null when not even Cliloc.enu exists.
-        private State LanguagesFromFiles(string requested)
+        // any other language. Null when not even Cliloc.enu exists, or on a reload (keepOld) when the English base under
+        // another language is missing.
+        private State LanguagesFromFiles(string requested, bool keepOld)
         {
             string lang = requested;
             string path = FileManager.GetUOFilePath($"Cliloc.{lang}");
@@ -244,6 +255,16 @@ namespace ClassicUO.Assets
                 if (File.Exists(enupath))
                 {
                     state.Enu = ReadCliloc(enupath);
+                }
+                else
+                {
+                    // the client reads Cliloc.enu under every language: without it, English-only numbers would vanish
+                    Log.Error($"Cliloc: '{enupath}' is missing; 'Cliloc.{lang}' needs it under it{(keepOld ? "" : " (serving the language alone)")}");
+
+                    if (keepOld)
+                    {
+                        return null;
+                    }
                 }
             }
 
@@ -274,8 +295,11 @@ namespace ClassicUO.Assets
         ///     3100001    Breed
         ///     3100002    Send to kennel
         /// </summary>
-        private Dictionary<int, string> ReadOurs()
+        // Null with failed false when there is no Clilocs.txt (it is optional); null with failed true when one exists but
+        // can't be read.
+        private Dictionary<int, string> ReadOurs(out bool failed)
         {
+            failed = false;
             string path = FileManager.GetUOFilePath(ClilocOverrides.FileName);
 
             if (!File.Exists(path))
@@ -291,7 +315,8 @@ namespace ClassicUO.Assets
             }
             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
             {
-                Log.Warn($"could not read {path}: {e.Message}");
+                Log.Error($"Cliloc: could not read {path} ({e.Message})");
+                failed = true;
 
                 return null;
             }
