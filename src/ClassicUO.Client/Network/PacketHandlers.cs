@@ -1113,7 +1113,7 @@ namespace ClassicUO.Network
 
                 if (string.IsNullOrEmpty(entity.Name))
                 {
-                    entity.Name = string.IsNullOrEmpty(name) ? text : name;
+                    world.Writer.SetName(entity, string.IsNullOrEmpty(name) ? text : name);
                 }
             }
 
@@ -2762,7 +2762,7 @@ namespace ClassicUO.Network
                 return;
             }
 
-            world.Player.InWarMode = p.ReadBool();
+            world.Writer.SetWarMode(world.Player, p.ReadBool());
         }
 
         private static void Ping(World world, ref StackDataReader p)
@@ -2843,17 +2843,18 @@ namespace ClassicUO.Network
 
                     Item it = (Item)first;
 
-                    it.Price = p.ReadUInt32BE();
+                    world.Writer.SetPrice(it, p.ReadUInt32BE());
                     byte nameLen = p.ReadUInt8();
                     string name = p.ReadASCII(nameLen);
+                    string itName;
 
                     if (world.OPL.TryGetNameAndData(it.Serial, out string s, out _))
                     {
-                        it.Name = s;
+                        itName = s;
                     }
                     else if (int.TryParse(name, out int cliloc))
                     {
-                        it.Name = Client.Game.UO.FileManager.Clilocs.Translate(
+                        itName = Client.Game.UO.FileManager.Clilocs.Translate(
                             cliloc,
                             $"\t{it.ItemData.Name}: \t{it.Amount}",
                             true
@@ -2861,12 +2862,14 @@ namespace ClassicUO.Network
                     }
                     else if (string.IsNullOrEmpty(name))
                     {
-                        it.Name = it.ItemData.Name;
+                        itName = it.ItemData.Name;
                     }
                     else
                     {
-                        it.Name = name;
+                        itName = name;
                     }
+
+                    world.Writer.SetName(it, itName);
 
                     if (reverse)
                     {
@@ -3200,13 +3203,7 @@ namespace ClassicUO.Network
 
                 if (layer - 1 != Layer.Backpack)
                 {
-                    Item item = world.GetOrCreateItem(item_serial);
-
-                    world.RemoveItemFromContainer(item);
-                    item.Container = serial;
-                    item.Layer = layer - 1;
-                    corpse.PushToBack(item);
-                    world.Ecs.Sync(item);
+                    world.Writer.PlaceCorpseEquipment(corpse, item_serial, layer - 1);
                 }
 
                 layer = (Layer)p.ReadUInt8();
@@ -3366,7 +3363,7 @@ namespace ClassicUO.Network
 
             if (entity != null)
             {
-                entity.Name = name;
+                world.Writer.SetName(entity, name);
 
                 if (
                     serial == world.Player.Serial
@@ -3742,7 +3739,7 @@ namespace ClassicUO.Network
 
                 if (string.IsNullOrEmpty(entity.Name))
                 {
-                    entity.Name = string.IsNullOrEmpty(name) ? text : name;
+                    world.Writer.SetName(entity, string.IsNullOrEmpty(name) ? text : name);
                 }
             }
 
@@ -4286,7 +4283,7 @@ namespace ClassicUO.Network
 
                         if (!string.IsNullOrEmpty(str))
                         {
-                            item.Name = str;
+                            world.Writer.SetName(item, str);
                         }
 
                         world.MessageManager.HandleMessage(
@@ -4504,7 +4501,7 @@ namespace ClassicUO.Network
                             }
 
                             bool dead = p.ReadBool();
-                            bonded.IsDead = dead;
+                            world.Writer.SetDead(bonded, dead);
 
                             break;
 
@@ -4744,7 +4741,7 @@ namespace ClassicUO.Network
                         val = 0;
                     }
 
-                    world.Player.SpeedMode = (CharacterSpeedType)val;
+                    world.Writer.SetSpeedMode(world.Player, (CharacterSpeedType)val);
 
                     break;
 
@@ -4879,7 +4876,7 @@ namespace ClassicUO.Network
 
                 if (string.IsNullOrEmpty(entity.Name))
                 {
-                    entity.Name = name;
+                    world.Writer.SetName(entity, name);
                 }
             }
             else
@@ -5095,7 +5092,7 @@ namespace ClassicUO.Network
 
                         if (entity != null && !SerialHelper.IsMobile(serial))
                         {
-                            entity.Name = str;
+                            world.Writer.SetName(entity, str);
                             namecliloc = s.Item3 > 0 ? s.Item3 : s.Item1;
                         }
 

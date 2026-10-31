@@ -1248,6 +1248,7 @@ namespace ClassicUO.UnitTests.Ecs
                 {
                     (y.Graphic, y.Hue, y.X, y.Y, y.Z, y.Container, y.Layer, y.Amount, y.Direction).Should().Be((x.Graphic, x.Hue, x.X, x.Y, x.Z, x.Container, x.Layer, x.Amount, x.Direction));
                     StatusOf(y).Should().Be(StatusOf(x), $"0x{serial:X8} status");
+                    MiscOf(y).Should().Be(MiscOf(x), $"0x{serial:X8} price (funnel part 7)");
                 }
 
                 AssertSameRecord(a, b, serial);
@@ -1282,6 +1283,7 @@ namespace ClassicUO.UnitTests.Ecs
                 y.IsDestroyed.Should().Be(x.IsDestroyed);
                 y.UpdateStateHash().Should().Be(x.UpdateStateHash(), "the animation state, the queue and the timers");
                 StatusOf(y).Should().Be(StatusOf(x), $"0x{serial:X8} status (funnel part 6)");
+                MiscOf(y).Should().Be(MiscOf(x), $"0x{serial:X8} speed, dead and war mode (funnel part 7)");
                 y.ExecuteAnimation.Should().Be(x.ExecuteAnimation);
                 Enumerable.Range(0, y.Steps.Count).Select(i => y.Steps[i]).Should().Equal(Enumerable.Range(0, x.Steps.Count).Select(i => x.Steps[i]), "the walk queue");
                 ChildSerials(y).Should().Equal(ChildSerials(x));
