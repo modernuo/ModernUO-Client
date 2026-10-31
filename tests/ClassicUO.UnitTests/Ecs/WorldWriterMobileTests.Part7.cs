@@ -71,6 +71,8 @@ namespace ClassicUO.UnitTests.Ecs
 
             Item oldBag = oldWorld.Items.Get(BAG), newBag = newWorld.Items.Get(BAG);
             Pair(() => OldShopEntry(oldBag, 120, "a bag: 1"), () => NewShopEntry(newWorld, newBag, 120, "a bag: 1"));
+            AssertSameWorld(oldWorld, newWorld);
+            newBag.Price.Should().Be(120u);
             Pair(() => OldShopEntry(oldBag, 0, ""), () => NewShopEntry(newWorld, newBag, 0, ""));
             AssertSameWorld(oldWorld, newWorld);
 
@@ -288,6 +290,139 @@ namespace ClassicUO.UnitTests.Ecs
             m.IsDead.Should().BeFalse();
             world.Items.Get(NEWCLOOT).Should().BeNull("a rejected entry creates no item");
         }
+
+        // ---- group 2: the death re-key (0xAF DisplayDeath): the mobile moves to serial | 0x80000000 with its children
+
+        // the old handler block, from the owner lookup to OnSerialChanged
+        internal static void OldRekey(World world, Mobile owner)
+        {
+            uint serial = owner.Serial | 0x80000000;
+
+            if (world.Mobiles.Remove(owner.Serial))
+            {
+                for (LinkedObject i = owner.Items; i != null; i = i.Next)
+                {
+                    Item it = (Item)i;
+                    it.Container = serial;
+                }
+
+                uint oldSerial = owner.Serial;
+                world.Mobiles[serial] = owner;
+                owner.Serial = serial;
+                world.Ecs.OnSerialChanged(oldSerial, owner);
+            }
+        }
+
+        public enum RekeyStart { Plain, Flipped, DeadSlotTaken, AlreadyDead }
+
+        private static World BuildRekey(Start start, RekeyStart rk)
+        {
+            World world = Build(start);
+            Mobile m = world.Mobiles.Get(MOB);
+
+            if (rk == RekeyStart.Flipped && world.Ecs.Mirror.TryGetEntity(MOB, out EcsEntity e) && e.HasComponent<AnimationState>())
+            {
+                e.GetComponent<AnimationState>().Flags |= AnimStateFlags.Mirror;
+            }
+            else if (rk == RekeyStart.DeadSlotTaken)
+            {
+                // an earlier death of the same serial still in the table (its re-keyed mobile not yet removed)
+                Mobile earlier = world.GetOrCreateMobile(OTHER);
+                world.Mobiles.Remove(OTHER);
+                world.Mobiles[DEAD] = earlier;
+                earlier.Serial = DEAD;
+                world.Ecs.OnSerialChanged(OTHER, earlier);
+            }
+            else if (rk == RekeyStart.AlreadyDead)
+            {
+                OldRekey(world, m);
+            }
+
+            return world;
+        }
+
+        public static IEnumerable<object[]> RekeyCases()
+        {
+            foreach (Start s in new[] { Start.Standing, Start.Walking, Start.DestroyedHeld })
+            {
+                foreach (RekeyStart r in Enum.GetValues(typeof(RekeyStart)))
+                {
+                    yield return new object[] { s, r };
+                }
+            }
+        }
+
+        [Theory]
+        [MemberData(nameof(RekeyCases))]
+        public void RekeyDeadMobile_Equals_The_Old_Path(Start start, RekeyStart rk)
+        {
+            World oldWorld = BuildRekey(start, rk), newWorld = BuildRekey(start, rk);
+            newWorld.Writer.ThrowOnViolation = true;
+            uint from = rk == RekeyStart.AlreadyDead ? DEAD : MOB;
+            Mobile a = oldWorld.Mobiles.Get(from), b = newWorld.Mobiles.Get(from);
+
+            Pair(() => OldRekey(oldWorld, a), () => newWorld.Writer.RekeyDeadMobile(b).Should().Be(DEAD));
+            AssertSameWorld(oldWorld, newWorld, DEAD);
+            AssertSameWorld(oldWorld, newWorld, MOB);
+            newWorld.Mobiles.Get(DEAD).Should().BeSameAs(b);
+            ChildSerials(b).Should().Equal(ChildSerials(a));
+            MirrorChildren(newWorld, DEAD).Should().Equal(MirrorChildren(oldWorld, DEAD));
+            MirrorChildren(newWorld, MOB).Should().Equal(MirrorChildren(oldWorld, MOB));
+
+            if (newWorld.Ecs.Mirror.TryGetEntity(DEAD, out EcsEntity eb) && eb.HasComponent<AnimationState>())
+            {
+                oldWorld.Ecs.Mirror.TryGetEntity(DEAD, out EcsEntity ea);
+                eb.GetComponent<AnimationState>().Flags.Should().Be(ea.GetComponent<AnimationState>().Flags, "the mirror bit carried over");
+            }
+
+            // then the handler's death animation on the re-keyed mobile
+            Time.Ticks = NOW + 333;
+            Pair(() => OldAnimate(a, AnimPacket.Death), () => NewAnimate(newWorld, b, AnimPacket.Death));
+            Time.Ticks = NOW;
+            AssertSameWorld(oldWorld, newWorld, DEAD);
+            newWorld.Writer.Violations.Should().Be(0);
+            newWorld.Writer.InScope.Should().BeFalse();
+        }
+
+        [Fact]
+        public void RekeyDeadMobile_Rejects_What_This_World_Does_Not_Hold_And_Does_Not_Nest()
+        {
+            foreach (bool throws in new[] { true, false })
+            {
+                World world = Build(Start.Standing), other = Build(Start.Standing);
+                world.Writer.ThrowOnViolation = throws;
+                Mobile foreign = other.Mobiles.Get(MOB);
+                Mobile stranger = Mobile.Create(world, MOB);
+                var acts = new Action[] { () => world.Writer.RekeyDeadMobile(foreign), () => world.Writer.RekeyDeadMobile(stranger) };
+
+                foreach (Action act in acts)
+                {
+                    if (throws)
+                    {
+                        act.Should().Throw<ArgumentException>();
+                    }
+                    else
+                    {
+                        act();
+                    }
+                }
+
+                (foreign.Serial, stranger.Serial).Should().Be((MOB, MOB));
+                other.Mobiles.Get(MOB).Should().BeSameAs(foreign);
+                world.Mobiles.Get(MOB).Should().NotBeSameAs(stranger);
+                world.Mobiles.Get(DEAD).Should().BeNull();
+                world.Writer.Violations.Should().Be(2);
+            }
+
+            World w = Build(Start.Standing);
+            w.Writer.ThrowOnViolation = false;
+            w.Ecs.BeginFold(w.Mobiles.Get(OTHER));
+            w.Writer.RekeyDeadMobile(w.Mobiles.Get(MOB)).Should().Be(0u);
+            w.Ecs.EndFold(w.Mobiles.Get(OTHER));
+            w.Mobiles.Get(MOB).Serial.Should().Be(MOB);
+            w.Items.Get(ITEM).Container.Should().Be(MOB);
+            w.Writer.Violations.Should().Be(1);
+        }
     }
 
     [Collection(nameof(FunnelCheckCollection))]
@@ -333,10 +468,12 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.SetWarMode(m, true);
             world.Writer.SetDead(m, true);
             world.Writer.PlaceCorpseEquipment(corpse, 0x4000_7300, Layer.Pants).Should().BeSameAs(bag);
+            world.Writer.PlaceCorpseEquipment(m, 0x4000_7304, Layer.Shirt).Should().NotBeNull(); // a worn child, re-keyed below
             world.Writer.PlaceCorpseEquipment(corpse, 0x4000_7303, Layer.Shirt).Should().NotBeNull();
+            world.Writer.RekeyDeadMobile(m).Should().Be(0x8000_3300u);
 
             (m.Name, bag.Name, bag.Price, m.SpeedMode, m.IsDead, bag.Container).Should().Be(("m", "bag", 5u, CharacterSpeedType.CantRun, true, 0x4000_7302u));
-            FunnelCheck.Total.Should().Be(0, "0x98 and the other name writers, 0x74's price, 0xBF.26, 0x72, 0xBF.19's dead flag, 0x89");
+            FunnelCheck.Total.Should().Be(0, "0x98 and the other name writers, 0x74's price, 0xBF.26, 0x72, 0xBF.19's dead flag, 0x89, 0xAF's re-key");
         }
     }
 }

@@ -2383,7 +2383,9 @@ namespace ClassicUO.Game
 
             CancelPlacements(item);
 
-            using (Open(item, item))
+            // not folded: no write here has a hook Sync (the Container and Layer setters publish nothing, nor does the unlink),
+            // so the two commits are the only ECS writes, as the old two Syncs were
+            using (Open(item, null))
             {
                 // the old order: the unlink (gump refresh, list links, tile), the detached state's Sync, then the final one
                 _world.UnlinkFromContainer(item, oldContainer);
@@ -2396,6 +2398,65 @@ namespace ClassicUO.Game
             }
 
             return item;
+        }
+
+        // ---- funnel part 7, group 2: the death re-key (the plan's Rekey)
+
+        /// <summary>
+        /// 0xAF (DisplayDeath): the dying mobile moves to <c>serial | 0x80000000</c> (its corpse animation runs under that key
+        /// while the server's corpse item takes the old serial's place). Before T1: out of the mobiles table under its serial,
+        /// each child's Container to the new serial, into the table under the new serial (replacing whatever was there, as
+        /// before: an earlier death's re-keyed mobile is not removed), the new Serial, then
+        /// <see cref="WorldEcs.OnSerialChanged"/> (the old entity removed, the new one synced with the mirror bit carried over,
+        /// then each child synced). The same here, in that order, in a scope that owns the mobile and its subtree, not folded:
+        /// the re-key's commit is <c>OnSerialChanged</c>, which reads the entity under its new serial, so it runs after the
+        /// cache writes as before T1 (a T4 move of the serial to the ECS needs a re-key commit that takes the values; see the
+        /// poc-log, "T1 funnel, part 7").
+        /// </summary>
+        /// <param name="mobile">The handler's <c>World.Mobiles.Get(serial)</c> (never the player: the handler returns first).
+        /// One this World does not hold for its serial is a violation, rejected (0, nothing changes; no pre-T1 path: the
+        /// handler passes what it just looked up, so the old <c>Mobiles.Remove</c> always succeeded).</param>
+        /// <returns>The new serial, or 0 when rejected.</returns>
+        public uint RekeyDeadMobile(Mobile mobile)
+        {
+            if (mobile == null || !Admitted(nameof(RekeyDeadMobile), mobile.Serial))
+            {
+                return 0;
+            }
+
+            if (!Holds(mobile))
+            {
+                Reject(Violation.NotHeld, $"WorldWriter.RekeyDeadMobile: 0x{mobile.Serial:X8} is not the mobile this World holds for its serial", rejected: true);
+
+                return 0;
+            }
+
+            // compute
+            uint oldSerial = mobile.Serial;
+            uint serial = oldSerial | 0x8000_0000;
+
+            using (Open(mobile, null))
+            {
+#if CUO_DEVTOOLS
+                if (FunnelCheck.Enabled)
+                {
+                    CollectSubtree(mobile);
+                }
+#endif
+
+                _world.Mobiles.Remove(oldSerial);
+
+                for (LinkedObject i = mobile.Items; i != null; i = i.Next)
+                {
+                    ((Item)i).Container = serial;
+                }
+
+                _world.Mobiles[serial] = mobile;
+                mobile.Serial = serial;
+                _world.Ecs.OnSerialChanged(oldSerial, mobile);
+            }
+
+            return serial;
         }
 
         // the held check of the status operations: the instance this World holds for the entity's serial, or the detached
