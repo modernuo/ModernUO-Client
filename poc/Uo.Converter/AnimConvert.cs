@@ -335,7 +335,10 @@ public static class AnimConvert
     public static Stats Run(UOFileManager fm, string outDir)
     {
         var dir = Path.Combine(outDir, "anim");
-        if (Directory.Exists(dir)) Directory.Delete(dir, true);
+        // Stale pages from a previous run: delete the files written here (all *.bin, plus crashed-writer temps), never
+        // the folder, which in a test pack may hold hard links from a published pack (deleting a link keeps the source).
+        PackOutputFiles.DeleteFiles(dir, "*.bin");
+        PackOutputFiles.DeleteFiles(dir, ReplacingFile.TempPattern);
         Directory.CreateDirectory(dir);
         int bodyCount = BodyCount(fm);
         var conv = ReadBodyConv(fm);
