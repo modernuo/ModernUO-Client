@@ -995,8 +995,8 @@ namespace ClassicUO.Network
             world.CreatePlayer(serial);
 
             p.Skip(4);
-            world.Player.Graphic = p.ReadUInt16BE();
-            world.Player.CheckGraphicChange();
+            // T1 (funnel part 5): the body graphic and CheckGraphicChange's sex and race (ECS and GameObject)
+            world.Writer.SetMobileGraphic(world.Player, p.ReadUInt16BE(), checkBody: true);
             ushort x = p.ReadUInt16BE();
             ushort y = p.ReadUInt16BE();
             sbyte z = (sbyte)p.ReadUInt16BE();
@@ -1007,8 +1007,9 @@ namespace ClassicUO.Network
             }
 
             world.Map?.Prefetch(x, y);
-            world.Player.SetInWorldTile(x, y, z);
-            world.Player.Direction = (Direction)(p.ReadUInt8() & 0x7);
+            // T1: the position and the tile, with the player's position callbacks; then the direction (its door check)
+            world.Writer.MoveMobile(world.Player, x, y, z);
+            world.Writer.SetMobileDirection(world.Player, (Direction)(p.ReadUInt8() & 0x7));
             world.RangeSize.X = x;
             world.RangeSize.Y = y;
 
@@ -1294,7 +1295,8 @@ namespace ClassicUO.Network
             sbyte z = p.ReadInt8();
 
             world.Player.Walker.DenyWalk(seq, x, y, z);
-            world.Player.Direction = direction;
+            // T1 (funnel part 5): the direction (ECS and GameObject; its door check)
+            world.Writer.SetMobileDirection(world.Player, direction);
 
             world.Weather.Reset();
         }
@@ -1314,7 +1316,8 @@ namespace ClassicUO.Network
                 noto = 0x01;
             }
 
-            world.Player.NotorietyFlag = (NotorietyFlag)noto;
+            // T1 (funnel part 5): the notoriety (ECS inputs and GameObject)
+            world.Writer.SetNotoriety(world.Player, (NotorietyFlag)noto);
             world.Player.Walker.ConfirmWalk(seq);
 
             world.Player.AddToTile();

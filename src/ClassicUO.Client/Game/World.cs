@@ -410,7 +410,7 @@ namespace ClassicUO.Game
 
                         if (do_delete && mob.Distance > ClientViewRange /*CheckToRemove(mob, ClientViewRange)*/)
                         {
-                            RemoveMobile(mob);
+                            Writer.SweepMobile(mob); // T1 (funnel part 5): the sweep's removal
                         }
 
                         if (mob.IsDestroyed)
@@ -601,7 +601,7 @@ namespace ClassicUO.Game
                 {
                     if (mob.Distance > ClientViewRange)
                     {
-                        RemoveMobile(mob);
+                        Writer.SweepMobile(mob); // T1 (funnel part 5): the sweep's removal
                     }
                 }
             }
@@ -702,12 +702,12 @@ namespace ClassicUO.Game
                     {
                         if (HouseManager.TryToRemove(item, ClientViewRange))
                         {
-                            RemoveItem(item);
+                            Writer.SweepItem(item); // T1 (funnel part 5): the sweep's removal
                         }
                     }
                     else
                     {
-                        RemoveItem(item);
+                        Writer.SweepItem(item); // T1 (funnel part 5): the sweep's removal
                     }
                 }
 
@@ -777,12 +777,12 @@ namespace ClassicUO.Game
                         {
                             if (HouseManager.TryToRemove(item, ClientViewRange))
                             {
-                                RemoveItem(item);
+                                Writer.SweepItem(item); // T1 (funnel part 5): the sweep's removal
                             }
                         }
                         else
                         {
-                            RemoveItem(item);
+                            Writer.SweepItem(item); // T1 (funnel part 5): the sweep's removal
                         }
                     }
 

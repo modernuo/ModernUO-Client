@@ -407,6 +407,24 @@ namespace ClassicUO.UnitTests.Ecs
             rows.Add(("T1 funnel: 0x78 player body (SetMobileBody)", Measure(packets, i =>
                 s.World.Writer.SetMobileBody(s.Mobiles[i % n], (ushort)((i & 1) == 0 ? 0x191 : 0x190), (ushort)(i & 63), (ClassicUO.Game.Data.Flags)(i & 0x40), checkBody: true, setDirection: false, 0))));
 
+            // T1 funnel part 5, after every older row: Mobile.ProcessSteps' step completion (per step, not per frame), a step
+            // east queued and the front step completed per visit (the queue cost is the same in both rows), old copy vs funnel
+            rows.Add(("T1 old path: step completion (queue a step east + complete the front one)", Measure(packets, i =>
+            {
+                Mobile m = s.Mobiles[i % n];
+                WorldWriterMobileTests.OldEnqueueStep(m, m.X + 1 + m.Steps.Count, m.Y, 0, Direction.East, false);
+                Mobile.Step st = m.Steps.Front();
+                WorldWriterMobileTests.OldCompleteStep(m, m.X == st.X && m.Y == st.Y);
+            })));
+
+            rows.Add(("T1 funnel: step completion (queue a step east + CompleteStep)", Measure(packets, i =>
+            {
+                Mobile m = s.Mobiles[i % n];
+                WorldWriterMobileTests.OldEnqueueStep(m, m.X + 1 + m.Steps.Count, m.Y, 0, Direction.East, false);
+                Mobile.Step st = m.Steps.Front();
+                s.World.Writer.CompleteStep(m, in st, m.X == st.X && m.Y == st.Y);
+            })));
+
             sb.AppendLine($"mobiles={n} (each wearing {WORN}), items={itemCount}, packets per scenario={packets}");
             sb.AppendLine($"{"packet",-72} {"us/packet",10} {"bytes/packet",13}");
 
