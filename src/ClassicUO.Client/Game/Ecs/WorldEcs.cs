@@ -313,6 +313,24 @@ namespace ClassicUO.Game
             }
         }
 
+        /// <summary>
+        /// T1 (funnel part 6), the derived-state step of an animation operation: writes the mobile's <see cref="MobileClock"/>
+        /// from its due times after the operation's writes. Unlike <see cref="PushClock"/> it is not folded (it is the
+        /// operation's own push). Ignores mobiles World does not hold.
+        /// </summary>
+        internal void CommitMobileClock(Mobile mobile)
+        {
+            if (!ClockEnabled || mobile == null || mobile.IsDestroyed || !ReferenceEquals(_world.Mobiles.Get(mobile.Serial), mobile))
+            {
+                return;
+            }
+
+            if (Mirror.TryGetEntity(mobile.Serial, out EcsEntity e))
+            {
+                WriteClock(mobile, e);
+            }
+        }
+
         public static long ClockPushes;
 
         /// <summary>

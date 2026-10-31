@@ -46,7 +46,7 @@ namespace ClassicUO.Game
     /// <see cref="MoveMobile"/>; 0x1D for a mobile, <see cref="RemoveMobile"/>), EnterWorld (funnel part 5: 0x1B,
     /// <see cref="SetMobileGraphic"/>, <see cref="MoveMobile"/>, <see cref="SetMobileDirection"/>) and the walker (0x21 and
     /// 0x20's deny, <see cref="StopMobile"/> and <see cref="MoveMobile"/>; 0x22's notoriety; <c>Mobile.ProcessSteps</c>' step
-    /// completion, <see cref="CompleteStep"/>) and the range sweep's removals (<see cref="SweepMobile"/>, <see cref="SweepItem"/>). Every other writer still relies on <see cref="WorldEcs.Sync"/> and <see cref="WorldEcs.PushInputs"/>, which
+    /// completion, <see cref="CompleteStep"/>) and the range sweep's removals (<see cref="SweepMobile"/>, <see cref="SweepItem"/>), status and hits (funnel part 6: 0xA1, 0xA2, 0xA3, 0x2D, 0x11, 0x16/0x17) and the server's animations (0x6E, 0xE2, 0xAF, 0xBF.19, 0xBF.2B: <see cref="AnimateMobile"/>). Every other writer still relies on <see cref="WorldEcs.Sync"/> and <see cref="WorldEcs.PushInputs"/>, which
     /// stay as the fallback until the last packet group is converted.
     /// </para>
     /// <para>
@@ -1988,6 +1988,45 @@ namespace ClassicUO.Game
 
                 mobile.Flags = v.Flags;
                 _world.Ecs.CommitMobileInputs(mobile, e);
+            }
+        }
+
+        /// <summary>
+        /// The server's animations (funnel part 6, group 4.2): 0x6E (CharacterAnimation), 0xE2 (NewCharacterAnimation), the
+        /// death animation of 0xAF (DisplayDeath, after its re-key) and the held frames of 0xBF.19 and 0xBF.2B:
+        /// <c>Mobile.SetAnimation</c> (the animation state, the frame due time and the random idle timer), then
+        /// (<paramref name="frame"/> &gt;= 0) the frame index and (<paramref name="hold"/>) <c>ExecuteAnimation</c> off. None of
+        /// these is a record field or an input; the clock (the due times) is. The mobile is folded (SetAnimation's clock push
+        /// is skipped) and the clock is committed once after the writes. A mobile this World does not hold is a violation,
+        /// rejected (no pre-T1 path), except the detached <c>World.Player</c>, written as before T1.
+        /// <para>Not converted: the per-frame animation (<c>Mobile.Update</c>: <c>SetIdleAnimation</c>, <c>ProcessAnimation</c>),
+        /// which runs <c>ProcessSteps</c> (its step completion is an operation) and removes finished corpse mobiles inside
+        /// it: see the poc-log, "T1 funnel, part 6".</para>
+        /// </summary>
+        public void AnimateMobile(Mobile mobile, byte id, byte interval = 0, byte frameCount = 0, ushort repeatCount = 0, bool repeat = false, bool forward = false, bool fromServer = false, int frame = -1, bool hold = false)
+        {
+            if (mobile == null || !Admitted(nameof(AnimateMobile), mobile.Serial) || !Accepted(mobile, nameof(AnimateMobile)))
+            {
+                return;
+            }
+
+            bool detached = !Holds(mobile);
+
+            using (Open(mobile, detached ? null : mobile))
+            {
+                mobile.SetAnimation(id, interval, frameCount, repeatCount, repeat, forward, fromServer);
+
+                if (frame >= 0)
+                {
+                    mobile.AnimIndex = (byte)frame;
+                }
+
+                if (hold)
+                {
+                    mobile.ExecuteAnimation = false;
+                }
+
+                _world.Ecs.CommitMobileClock(mobile);
             }
         }
 

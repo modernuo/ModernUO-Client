@@ -679,7 +679,7 @@ namespace ClassicUO.UnitTests.Ecs
             n.Should().BeSameAs(m);
         }
 
-        public enum MobileOp { Upsert, Place, Notoriety, Body, Move, Graphic, Turn, Stop, Hits, Status, MobileStatus, Mana, Stamina, Race, Healthbar }
+        public enum MobileOp { Upsert, Place, Notoriety, Body, Move, Graphic, Turn, Stop, Hits, Status, MobileStatus, Mana, Stamina, Race, Healthbar, Animate }
 
         private static void Run(World world, MobileOp op, Mobile m, WorldWriter.Placement placement = default)
         {
@@ -699,6 +699,7 @@ namespace ClassicUO.UnitTests.Ecs
                 case MobileOp.Stamina: world.Writer.SetStamina(m, 70, 35); break;
                 case MobileOp.Race: world.Writer.SetRace(m, RaceType.GARGOYLE); break;
                 case MobileOp.Healthbar: world.Writer.SetHealthbar(m, Flags.YellowBar | Flags.Poisoned, true, true); break;
+                case MobileOp.Animate: world.Writer.AnimateMobile(m, 12, 2, 5, 1, frame: 3, hold: true); break;
                 default: world.Writer.MoveMobile(m, 1200, 1200, 0); break;
             }
         }
@@ -734,6 +735,8 @@ namespace ClassicUO.UnitTests.Ecs
         [InlineData(MobileOp.Race, false)]
         [InlineData(MobileOp.Healthbar, true)]
         [InlineData(MobileOp.Healthbar, false)]
+        [InlineData(MobileOp.Animate, true)]
+        [InlineData(MobileOp.Animate, false)]
         public void A_Mobile_Operation_Inside_An_Operation_Is_Rejected_Before_Any_Change(MobileOp op, bool throws)
         {
             World world = Build(Start.Standing), reference = Build(Start.Standing);
@@ -795,6 +798,8 @@ namespace ClassicUO.UnitTests.Ecs
         [InlineData(MobileOp.Race, false)]
         [InlineData(MobileOp.Healthbar, true)]
         [InlineData(MobileOp.Healthbar, false)]
+        [InlineData(MobileOp.Animate, true)]
+        [InlineData(MobileOp.Animate, false)]
         public void A_Mobile_This_World_Does_Not_Hold_Is_Rejected_Before_Any_Change(MobileOp op, bool throws)
         {
             foreach (bool foreign in new[] { true, false })
@@ -1277,6 +1282,7 @@ namespace ClassicUO.UnitTests.Ecs
                 y.IsDestroyed.Should().Be(x.IsDestroyed);
                 y.UpdateStateHash().Should().Be(x.UpdateStateHash(), "the animation state, the queue and the timers");
                 StatusOf(y).Should().Be(StatusOf(x), $"0x{serial:X8} status (funnel part 6)");
+                y.ExecuteAnimation.Should().Be(x.ExecuteAnimation);
                 Enumerable.Range(0, y.Steps.Count).Select(i => y.Steps[i]).Should().Equal(Enumerable.Range(0, x.Steps.Count).Select(i => x.Steps[i]), "the walk queue");
                 ChildSerials(y).Should().Equal(ChildSerials(x));
             }
