@@ -795,7 +795,7 @@ namespace ClassicUO
         private static string TextStats() =>
             $"text: unicode pages read {Assets.FontsLoader.StatPageLoads - _textPages0} ({(Assets.FontsLoader.StatPageTicks - _textTicks0) * 1000.0 / Stopwatch.Frequency:0.000} ms), " +
             $"ASCII fonts read {Assets.FontsLoader.StatAsciiLoads - _textAscii0}, cliloc strings created {ClilocStrings() - _textStrings0}; " +
-            $"since startup: unicode pages {Assets.FontsLoader.StatPageLoads} ({Assets.FontsLoader.StatPageTicks * 1000.0 / Stopwatch.Frequency:0.000} ms), ASCII fonts {Assets.FontsLoader.StatAsciiLoads}, cliloc strings {ClilocStrings()}, cliloc blocks decoded {Uo.Pack.ClilocTable.StatBlockLoads} ({Uo.Pack.ClilocTable.StatBlockTicks * 1000.0 / Stopwatch.Frequency:0.000} ms; enu {Client.Game.UO.FileManager.Clilocs.EnglishTable?.BlocksLoaded ?? Client.Game.UO.FileManager.Clilocs.LanguageTable?.BlocksLoaded ?? 0} of {Client.Game.UO.FileManager.Clilocs.EnglishTable?.BlockCount ?? Client.Game.UO.FileManager.Clilocs.LanguageTable?.BlockCount ?? 0}) " +
+            $"since startup: unicode pages {Assets.FontsLoader.StatPageLoads} ({Assets.FontsLoader.StatPageTicks * 1000.0 / Stopwatch.Frequency:0.000} ms), ASCII fonts {Assets.FontsLoader.StatAsciiLoads}, cliloc strings {ClilocStrings()} " +
             $"(fonts {(Client.Game.UO.FileManager.Fonts.UnicodeFromPack ? "pack" : "MUL")}, cliloc {(Client.Game.UO.FileManager.Clilocs.FromPack ? "pack" : "MUL")})";
 
         private static void RenderTooltips(World world, int count)
@@ -1421,8 +1421,16 @@ namespace ClassicUO
         private static void UpdatePlan(GameController game, long now)
         {
             var world = game.UO.World;
+            bool inGame = world?.InGame ?? false;
 
-            if (!(world?.InGame ?? false))
+            // the "texts" hover ends at its deadline or when the game is left (a disconnect): checked before the
+            // out-of-game return, so the scripted mouse never stays on the login screen
+            if (_textHover && (!inGame || now >= _textHoverUntil))
+            {
+                EndTextHover();
+            }
+
+            if (!inGame)
             {
                 return;
             }
@@ -1433,15 +1441,8 @@ namespace ClassicUO
 
             if (_textHover)
             {
-                if (now >= _textHoverUntil)
-                {
-                    EndTextHover();
-                }
-                else
-                {
-                    // the "texts" entry keeps the (scripted) mouse on an NPC so its tooltip stays up for the screenshot
-                    HoldMouse(game);
-                }
+                // the "texts" entry keeps the (scripted) mouse on an NPC so its tooltip stays up for the screenshot
+                HoldMouse(game);
             }
 
             if (_flipLeft > 0)

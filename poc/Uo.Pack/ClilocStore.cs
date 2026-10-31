@@ -1,5 +1,4 @@
 using System.Buffers.Binary;
-using System.Diagnostics;
 using System.IO.Compression;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -8,8 +7,9 @@ namespace Uo.Pack;
 
 // text/cliloc.bin (docs/modern-client/pack-format.md, "text/cliloc.bin"): a record store with one record per language
 // and at most one record of the shard's own strings (Clilocs.txt folded in by the converter). Every record holds a
-// ClilocTable payload: sorted ids, string ends, and the UTF-8 strings either as one blob (flat) or in Brotli blocks of
-// about 64 KiB (blocked, --cliloc-blocks), decoded on the first lookup inside them.
+// ClilocTable payload: sorted ids, string ends, and the UTF-8 strings as one blob (the record itself may be Brotli
+// compressed whole, --cliloc-brotli). A block-compressed layout (meta2 bit 8) was tried and dropped (owner, 2026-10-31);
+// a store using it is rejected.
 
 /// <summary>
 /// One cliloc table, the raw payload of a cliloc record. Flat layout:
@@ -19,99 +19,36 @@ namespace Uo.Pack;
 ///   ends u32[count]    string i is blob[ends[i−1] (0 for i = 0) .. ends[i])
 ///   blob               UTF-8, strings back to back in id order
 /// </code>
-/// Blocked layout (record meta2 bit <see cref="ClilocStore.LayoutBlocked"/>): the same ids and ends, but the blob is cut
-/// at string boundaries into blocks, each a Brotli stream decoded on its first lookup:
-/// <code>
-///   count u32, blobBytes u32, blockCount u32, reserved u32 (0)
-///   ids          i32[count]
-///   ends         u32[count]
-///   blockStarts  u32[blockCount + 1]   blob offset of each block, [0] = 0, strictly ascending, last = blobBytes
-///   blockOffsets u32[blockCount + 1]   offset of each compressed block after the tables, [0] = 0, last = their size
-///   blocks       Brotli streams, back to back
-/// </code>
 /// Strings are created on first use and cached; <see cref="TryGetString"/> is thread-safe, never throws, and returns the
 /// same instance for an id every time.
 /// </summary>
 public sealed class ClilocTable
 {
     public const int HeaderBytes = 8;
-    public const int BlockedHeaderBytes = 16;
     /// <summary>Largest raw payload a reader accepts (the largest client file, Cliloc.jpn, is about 9 MiB raw).</summary>
     public const int MaxRawBytes = 256 << 20;
-    /// <summary>Target block size of the blocked layout (a block ends at the first string end at or after it).</summary>
-    public const int DefaultBlockBytes = 64 << 10;
-    /// <summary>Largest decoded block a reader accepts (a cliloc string is at most 32,767 UTF-16 units, 96 KiB of UTF-8).</summary>
-    public const int MaxBlockBytes = 1 << 20;
-
     private readonly byte[] _data;
     private readonly int _count;
     private readonly int _idsAt, _endsAt;
-    private readonly int _blobAt; // flat: the blob; blocked: the first compressed block
+    private readonly int _blobAt;
     private readonly string?[] _cache;
-    // blocked layout only
-    private readonly int _blockCount, _blockStartsAt, _blockOffsetsAt;
-    private readonly byte[]?[]? _blocks;
-    private readonly object? _blockLock;
-    private int _broken;
 
-    private ClilocTable(byte[] data, int count, bool blocked, int blockCount)
+    private ClilocTable(byte[] data, int count)
     {
         _data = data;
         _count = count;
-        int at = blocked ? BlockedHeaderBytes : HeaderBytes;
-        _idsAt = at;
-        _endsAt = at + count * 4;
+        _idsAt = HeaderBytes;
+        _endsAt = HeaderBytes + count * 4;
+        _blobAt = HeaderBytes + count * 8;
         _cache = new string?[count];
-        if (!blocked)
-        {
-            _blobAt = at + count * 8;
-            return;
-        }
-        _blockCount = blockCount;
-        _blockStartsAt = at + count * 8;
-        _blockOffsetsAt = _blockStartsAt + (blockCount + 1) * 4;
-        _blobAt = _blockOffsetsAt + (blockCount + 1) * 4;
-        _blocks = new byte[]?[blockCount];
-        _blockLock = new object();
     }
-
     public int Count => _count;
 
-    public bool Blocked => _blocks != null;
-
-    /// <summary>Bytes held: the payload (index and UTF-8 text, compressed for the blocked layout) plus the blocks decoded so far; strings made so far are extra.</summary>
-    public long PayloadBytes
-    {
-        get
-        {
-            long n = _data.Length;
-            if (_blocks != null)
-                for (int i = 0; i < _blocks.Length; i++) n += Volatile.Read(ref _blocks[i])?.Length ?? 0;
-            return n;
-        }
-    }
-
-    /// <summary>Blocks of the blocked layout, and how many have been decoded (tests and measurements).</summary>
-    public int BlockCount => _blockCount;
-    public int BlocksLoaded
-    {
-        get
-        {
-            int n = 0;
-            if (_blocks != null)
-                for (int i = 0; i < _blocks.Length; i++) if (Volatile.Read(ref _blocks[i]) != null) n++;
-            return n;
-        }
-    }
-
-    /// <summary>Measurements: blocks decoded by every table, and the Stopwatch ticks spent decoding them.</summary>
-    public static long StatBlockLoads, StatBlockTicks;
+    /// <summary>Bytes held: the payload (index and UTF-8 text); strings made so far are extra.</summary>
+    public long PayloadBytes => _data.Length;
 
     private ReadOnlySpan<int> Ids => MemoryMarshal.Cast<byte, int>(_data.AsSpan(_idsAt, _count * 4));
     private ReadOnlySpan<uint> Ends => MemoryMarshal.Cast<byte, uint>(_data.AsSpan(_endsAt, _count * 4));
-    private ReadOnlySpan<uint> BlockStarts => MemoryMarshal.Cast<byte, uint>(_data.AsSpan(_blockStartsAt, (_blockCount + 1) * 4));
-    private ReadOnlySpan<uint> BlockOffsets => MemoryMarshal.Cast<byte, uint>(_data.AsSpan(_blockOffsetsAt, (_blockCount + 1) * 4));
-
     public int IdAt(int index) => Ids[index];
 
     /// <summary>Index of <paramref name="id"/>, or −1.</summary>
@@ -121,85 +58,28 @@ public sealed class ClilocTable
         return i >= 0 ? i : -1;
     }
 
-    /// <summary>The UTF-8 bytes of string <paramref name="index"/>; false when its block can't be decoded (blocked layout).</summary>
-    public bool TryUtf8At(int index, out ReadOnlySpan<byte> utf8)
+    /// <summary>The UTF-8 bytes of string <paramref name="index"/>.</summary>
+    public ReadOnlySpan<byte> Utf8At(int index)
     {
         var ends = Ends;
         uint start = index == 0 ? 0 : ends[index - 1];
-        int length = (int)(ends[index] - start);
-        if (_blocks == null)
-        {
-            utf8 = _data.AsSpan(_blobAt + (int)start, length);
-            return true;
-        }
-        if (length == 0)
-        {
-            utf8 = default;
-            return true;
-        }
-        // the block holding the string: the last block that starts at or before it (validated: it ends inside it)
-        var starts = BlockStarts.Slice(0, _blockCount);
-        int k = starts.BinarySearch(start);
-        if (k < 0) k = ~k - 1;
-        var block = Block(k);
-        if (block == null)
-        {
-            utf8 = default;
-            return false;
-        }
-        utf8 = block.AsSpan((int)(start - starts[k]), length);
-        return true;
+        return _data.AsSpan(_blobAt + (int)start, (int)(ends[index] - start));
     }
 
-    public ReadOnlySpan<byte> Utf8At(int index) => TryUtf8At(index, out var s) ? s : throw new InvalidDataException("cliloc block could not be decoded");
-
-    private byte[]? Block(int k)
-    {
-        var b = Volatile.Read(ref _blocks![k]);
-        if (b != null) return b;
-        if (Volatile.Read(ref _broken) != 0) return null;
-        lock (_blockLock!)
-        {
-            // a thread that waited here finds the block the first one decoded
-            b = Volatile.Read(ref _blocks[k]);
-            if (b != null) return b;
-            long t0 = Stopwatch.GetTimestamp();
-            var starts = BlockStarts;
-            var offsets = BlockOffsets;
-            var raw = new byte[starts[k + 1] - starts[k]];
-            var src = _data.AsSpan(_blobAt + (int)offsets[k], (int)(offsets[k + 1] - offsets[k]));
-            if (!BrotliDecoder.TryDecompress(src, raw, out int written) || written != raw.Length)
-            {
-                // a corrupt block: its strings are absent (lookups fall through to the next table), never an exception
-                Volatile.Write(ref _broken, 1);
-                return null;
-            }
-            Interlocked.Increment(ref StatBlockLoads);
-            Interlocked.Add(ref StatBlockTicks, Stopwatch.GetTimestamp() - t0);
-            Volatile.Write(ref _blocks[k], raw);
-            return raw;
-        }
-    }
-
-    /// <summary>True once a block failed to decode (its strings are absent).</summary>
-    public bool Broken => Volatile.Read(ref _broken) != 0;
-
-    /// <summary>The string at <paramref name="index"/>, created on first use (null when its block can't be decoded). Thread-safe.</summary>
-    public string? StringAt(int index)
+    /// <summary>The string at <paramref name="index"/>, created on first use. Thread-safe.</summary>
+    public string StringAt(int index)
     {
         var s = Volatile.Read(ref _cache[index]);
         if (s != null) return s;
-        if (!TryUtf8At(index, out var utf8)) return null;
-        s = Encoding.UTF8.GetString(utf8);
+        s = Encoding.UTF8.GetString(Utf8At(index));
         return Interlocked.CompareExchange(ref _cache[index], s, null) ?? s;
     }
 
     public bool TryGetString(int id, out string text)
     {
         int i = IndexOf(id);
-        string? s = i < 0 ? null : StringAt(i);
-        text = s!;
-        return s != null;
+        text = i < 0 ? null! : StringAt(i);
+        return i >= 0;
     }
 
     /// <summary>Strings created so far (tests and measurements).</summary>
@@ -223,7 +103,7 @@ public sealed class ClilocTable
         uint count = BinaryPrimitives.ReadUInt32LittleEndian(data);
         uint blob = BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(4));
         if (count > (uint)(data.Length - HeaderBytes) / 8 || (ulong)HeaderBytes + count * 8UL + blob != (ulong)data.Length) return null;
-        var t = new ClilocTable(data, (int)count, false, 0);
+        var t = new ClilocTable(data, (int)count);
         return CheckIndex(t.Ids, t.Ends, blob) ? t : null;
     }
 
@@ -237,51 +117,6 @@ public sealed class ClilocTable
             prevEnd = ends[i];
         }
         return ids.Length > 0 ? prevEnd == blob : blob == 0;
-    }
-
-    /// <summary>
-    /// Parses a blocked payload (taking ownership of <paramref name="data"/>). Null when malformed: besides the flat
-    /// checks, block starts that aren't strictly ascending from 0 to blobBytes, a block larger than
-    /// <see cref="MaxBlockBytes"/>, compressed offsets that decrease, pass the payload or exceed Brotli's bound, or a
-    /// string that crosses a block boundary. Blocks are decoded later, on first use.
-    /// </summary>
-    public static ClilocTable? TryParseBlocked(byte[] data)
-    {
-        if (data.Length < BlockedHeaderBytes || data.Length > MaxRawBytes) return null;
-        uint count = BinaryPrimitives.ReadUInt32LittleEndian(data);
-        uint blob = BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(4));
-        uint blocks = BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(8));
-        if (BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(12)) != 0) return null;
-        ulong tables = (ulong)BlockedHeaderBytes + count * 8UL + (blocks + 1UL) * 8UL;
-        if (tables > (ulong)data.Length) return null;
-        if ((blob == 0) != (blocks == 0)) return null;
-        var t = new ClilocTable(data, (int)count, true, (int)blocks);
-        var ends = t.Ends;
-        if (!CheckIndex(t.Ids, ends, blob)) return null;
-        var starts = t.BlockStarts;
-        var offsets = t.BlockOffsets;
-        ulong compressed = (ulong)data.Length - tables;
-        if (starts[0] != 0 || starts[(int)blocks] != blob || offsets[0] != 0 || offsets[(int)blocks] != compressed) return null;
-        for (int k = 0; k < blocks; k++)
-        {
-            uint size = starts[k + 1] - starts[k];
-            if (starts[k + 1] <= starts[k] || size > MaxBlockBytes) return null;
-            if (offsets[k + 1] < offsets[k] || offsets[k + 1] - offsets[k] > (uint)BrotliEncoder.GetMaxCompressedLength((int)size)) return null;
-        }
-        // every non-empty string lies inside one block
-        int b = 0;
-        uint startOf = 0;
-        for (int i = 0; i < ends.Length; i++)
-        {
-            uint end = ends[i];
-            if (end > startOf)
-            {
-                while (starts[b + 1] <= startOf) b++;
-                if (end > starts[b + 1]) return null;
-            }
-            startOf = end;
-        }
-        return t;
     }
 
     /// <summary>
@@ -311,7 +146,7 @@ public sealed class ClilocTable
             end += (uint)entries[i].Length;
             ends[i] = end;
         }
-        return new ClilocTable(data, entries.Length, false, 0);
+        return new ClilocTable(data, entries.Length);
     }
 
     /// <summary>Builds a flat payload from (id, UTF-8) entries with unique ids, in any order.</summary>
@@ -337,52 +172,6 @@ public sealed class ClilocTable
             sorted[i].Utf8.CopyTo(data.AsSpan(at + (int)end));
             end += (uint)sorted[i].Utf8.Length;
             ends[i] = end;
-        }
-        return data;
-    }
-
-    /// <summary>
-    /// Re-encodes a flat payload in the blocked layout: blocks of about <paramref name="blockBytes"/> that end at a
-    /// string end, each compressed with Brotli at <paramref name="quality"/> (window 22).
-    /// </summary>
-    public static byte[] ToBlocked(byte[] flat, int blockBytes = DefaultBlockBytes, int quality = 9)
-    {
-        var t = TryParse((byte[])flat.Clone()) ?? throw new ArgumentException("not a valid flat cliloc payload");
-        uint count = (uint)t._count;
-        uint blob = BinaryPrimitives.ReadUInt32LittleEndian(flat.AsSpan(4));
-        var ends = t.Ends;
-        var starts = new List<uint> { 0 };
-        uint blockStart = 0;
-        for (int i = 0; i < ends.Length; i++)
-            if (ends[i] - blockStart >= blockBytes && ends[i] < blob)
-            {
-                starts.Add(ends[i]);
-                blockStart = ends[i];
-            }
-        if (blob > 0) starts.Add(blob);
-        else starts.Clear();
-        int blocks = Math.Max(0, starts.Count - 1);
-        if (blocks == 0) starts = [0];
-        int srcAt = HeaderBytes + (int)count * 8;
-        var compressed = new byte[blocks][];
-        Parallel.For(0, blocks, k => compressed[k] = RecordStoreWriter.Encode(flat.AsSpan(srcAt + (int)starts[k], (int)(starts[k + 1] - starts[k])), StoreConst.CodecBrotli, quality));
-        long total = compressed.Sum(c => (long)c.Length);
-        var data = new byte[checked(BlockedHeaderBytes + (int)count * 8 + (blocks + 1) * 8 + (int)total)];
-        BinaryPrimitives.WriteUInt32LittleEndian(data, count);
-        BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(4), blob);
-        BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(8), (uint)blocks);
-        flat.AsSpan(HeaderBytes, (int)count * 8).CopyTo(data.AsSpan(BlockedHeaderBytes));
-        int at = BlockedHeaderBytes + (int)count * 8;
-        for (int k = 0; k <= blocks; k++) BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(at + k * 4), starts[k]);
-        at += (blocks + 1) * 4;
-        uint off = 0;
-        int blocksAt = at + (blocks + 1) * 4;
-        for (int k = 0; k <= blocks; k++)
-        {
-            BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(at + k * 4), off);
-            if (k == blocks) break;
-            compressed[k].CopyTo(data.AsSpan(blocksAt + (int)off));
-            off += (uint)compressed[k].Length;
         }
         return data;
     }
@@ -434,15 +223,16 @@ public static class ClilocStore
 {
     /// <summary>meta2 low byte: what the record holds.</summary>
     public const ushort KindLanguage = 0, KindOverrides = 1;
-    /// <summary>meta2 bit 8: the payload has the blocked layout (<see cref="ClilocTable.TryParseBlocked"/>).</summary>
-    public const ushort LayoutBlocked = 0x100;
-
-    public static ushort Meta2(ushort kind, bool blocked) => (ushort)(kind | (blocked ? LayoutBlocked : 0));
+    /// <summary>
+    /// meta2 bit 8: the retired block-compressed layout (dropped 2026-10-31, never shipped). A store with a record using
+    /// it is rejected as unsupported, never read as flat.
+    /// </summary>
+    public const ushort RetiredLayoutBlocked = 0x100;
 
     /// <summary>
     /// Walks the slots in order and resolves every record they reach. Throws <see cref="InvalidDataException"/> (the
-    /// whole store is unusable) for an unknown meta2 kind or bit, a language record without a valid code, a language
-    /// code reached twice, an overrides record with a code, or more than one overrides record. Records no slot reaches
+    /// whole store is unusable) for an unknown meta2 kind or bit (the retired block-compressed bit 8 included), a
+    /// language record without a valid code, a language code reached twice, an overrides record with a code, or more than one overrides record. Records no slot reaches
     /// are ignored, as the client ignores them.
     /// </summary>
     public static ClilocDirectory Resolve(RecordStore store)
@@ -457,7 +247,9 @@ public static class ClilocStore
             if (!seen.Add(slot.Record)) throw new InvalidDataException($"cliloc: record {slot.Record - 1} is reached by two slots");
             int rec = (int)slot.Record - 1;
             ref readonly var r = ref store.Records[rec];
-            if ((r.Meta2 & ~(0xFF | LayoutBlocked)) != 0) throw new InvalidDataException($"cliloc: record {rec} has unknown meta2 0x{r.Meta2:X4}");
+            if ((r.Meta2 & RetiredLayoutBlocked) != 0)
+                throw new InvalidDataException($"cliloc: record {rec} uses the block-compressed layout (meta2 bit 8), which is no longer supported; rebuild the pack's text with a current converter");
+            if ((r.Meta2 & ~0xFF) != 0) throw new InvalidDataException($"cliloc: record {rec} has unknown meta2 0x{r.Meta2:X4}");
             switch (r.Meta2 & 0xFF)
             {
                 case KindLanguage:
@@ -484,8 +276,12 @@ public static class ClilocStore
     public static ClilocTable? ReadTable(RecordStore store, int record, out string? error)
     {
         ref readonly var r = ref store.Records[record];
-        bool blocked = (r.Meta2 & LayoutBlocked) != 0;
-        if (r.RawBytes < (blocked ? ClilocTable.BlockedHeaderBytes : ClilocTable.HeaderBytes) || r.RawBytes > ClilocTable.MaxRawBytes ||
+        if ((r.Meta2 & RetiredLayoutBlocked) != 0)
+        {
+            error = "the block-compressed layout (meta2 bit 8), which is no longer supported";
+            return null;
+        }
+        if (r.RawBytes < ClilocTable.HeaderBytes || r.RawBytes > ClilocTable.MaxRawBytes ||
             (r.Codec == StoreConst.CodecBrotli && r.StoredBytes > BrotliEncoder.GetMaxCompressedLength((int)r.RawBytes)))
         {
             error = $"an impossible size ({r.RawBytes} bytes)";
@@ -495,7 +291,7 @@ public static class ClilocStore
         {
             var data = new byte[r.RawBytes];
             store.Read(r, data);
-            var table = blocked ? ClilocTable.TryParseBlocked(data) : ClilocTable.TryParse(data);
+            var table = ClilocTable.TryParse(data);
             error = table == null ? "a malformed payload" : null;
             return table;
         }

@@ -15,8 +15,8 @@ namespace ClassicUO.UnitTests.Assets
 {
     // The text-in-pack audit (poc-log "Text in the pack: audit fixes, overrides, block-compressed cliloc"): records the
     // pack accepts must render, invalid store topology and oversized files are refused before allocation, a corrupt pack
-    // language never blocks the loose files, reloads publish once, and the cliloc overrides and blocked layout. All
-    // synthetic: no client data needed.
+    // language never blocks the loose files, reloads publish only complete states, the cliloc overrides, and the retired
+    // block-compressed layout is rejected. All synthetic: no client data needed.
     public class TextPackAuditTests : IDisposable
     {
         private readonly string _tmp = Path.Combine(Path.GetTempPath(), "cuo-textaudit-" + Guid.NewGuid().ToString("N"));
@@ -302,7 +302,7 @@ namespace ClassicUO.UnitTests.Assets
         private static byte[] Table(params (int Id, string Text)[] entries) =>
             ClilocTable.Build(entries.Select(e => (e.Id, Encoding.UTF8.GetBytes(e.Text))).ToList());
 
-        // (payload, kind, language code or null, blocked) records, one slot each in order
+        // (payload, kind, language code or null, retired blocked-layout bit set, codec) records, one slot each in order
         private string WriteClilocStore(string name, params (byte[] Payload, ushort Kind, string Lang, bool Blocked, ushort Codec)[] records)
         {
             var w = new RecordStoreWriter(records.Length);
@@ -312,7 +312,7 @@ namespace ClassicUO.UnitTests.Assets
                 var r = records[i];
                 var (m0, m1) = r.Lang != null ? ClilocTable.PackLanguage(r.Lang) : ((ushort)0, (ushort)0);
                 var stored = RecordStoreWriter.Encode(r.Payload, r.Codec);
-                w.Slots[i] = new StoreSlot { Record = (uint)w.Add(stored, (uint)r.Payload.Length, r.Codec, m0, m1, ClilocStore.Meta2(r.Kind, r.Blocked)) + 1 };
+                w.Slots[i] = new StoreSlot { Record = (uint)w.Add(stored, (uint)r.Payload.Length, r.Codec, m0, m1, (ushort)(r.Kind | (r.Blocked ? ClilocStore.RetiredLayoutBlocked : 0))) + 1 };
             }
 
             var path = P(name);
@@ -455,6 +455,65 @@ namespace ClassicUO.UnitTests.Assets
         }
 
         [Fact]
+        public void Reload_Without_The_English_Base_Keeps_The_Old_Strings()
+        {
+            WriteClilocFile(P("Cliloc.enu"), (1, "one"), (2, "two"));
+            WriteClilocFile(P("Cliloc.deu"), (2, "zwei"));
+            var c = Cliloc(null);
+            c.Load("deu");
+            c.Language.Should().Be("deu");
+            c.GetString(1).Should().Be("one", "an English-only number");
+            c.GetString(2).Should().Be("zwei");
+
+            // Cliloc.enu removed while Cliloc.deu stays: the new state would lose every English-only number
+            File.Delete(P("Cliloc.enu"));
+            c.Reload();
+            c.GetString(1).Should().Be("one");
+            c.GetString(2).Should().Be("zwei");
+            c.EnglishTable.Should().NotBeNull();
+
+            // the first load has nothing to keep: the language serves alone (logged as an error)
+            var fresh = Cliloc(null);
+            fresh.Load("deu");
+            fresh.Language.Should().Be("deu");
+            fresh.GetString(2).Should().Be("zwei");
+            fresh.EnglishTable.Should().BeNull();
+        }
+
+        [Fact]
+        public void Reload_With_An_Unreadable_Clilocs_Txt_Keeps_The_Old_Overrides()
+        {
+            if (!OperatingSystem.IsWindows())
+            {
+                return; // an exclusive open makes the file unreadable only where sharing is enforced
+            }
+
+            WriteClilocFile(P("Cliloc.enu"), (1, "one"), (2, "two"));
+            File.WriteAllText(P(ClilocOverrides.FileName), "2 ours" + Environment.NewLine);
+            var c = Cliloc(null);
+            c.Load("enu");
+            c.GetString(2).Should().Be("ours");
+
+            // Clilocs.txt exists but can't be read (held exclusively): the reload is not published
+            WriteClilocFile(P("Cliloc.enu"), (1, "uno"), (2, "dos"));
+
+            using (new FileStream(P(ClilocOverrides.FileName), FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+            {
+                c.Reload();
+            }
+
+            c.GetString(2).Should().Be("ours");
+            c.GetString(1).Should().Be("one", "the whole old state stays, not just the overrides");
+
+            // a Clilocs.txt that is absent is optional: the reload publishes without it
+            File.Delete(P(ClilocOverrides.FileName));
+            c.Reload();
+            c.LooseOverrides.Should().BeNull();
+            c.GetString(2).Should().Be("dos");
+            c.GetString(1).Should().Be("uno");
+        }
+
+        [Fact]
         public void Overrides_Precedence_Is_Loose_Then_Packed_Then_Language_Then_English()
         {
             var pack = WriteClilocStore("cliloc.bin",
@@ -532,78 +591,44 @@ namespace ClassicUO.UnitTests.Assets
         }
 
         [Fact]
-        public void Blocked_Layout_Round_Trips_Decodes_Lazily_And_Rejects_Malformed()
+        public void Invariant_Culture_Language_Is_No_Language()
         {
-            var rnd = new Random(7);
-            var entries = Enumerable.Range(0, 2000).Select(i => (Id: 500000 + i * 3, Text: i % 50 == 0 ? "" : new string((char)('a' + i % 26), rnd.Next(1, 200)) + " ü " + i)).ToArray();
-            var flat = Table(entries);
+            // under invariant globalization the OS language reads as IVL; startup normalises it (and ZZZ) to ENU
+            ClassicUO.Bootstrap.IsNoLanguage("IVL").Should().BeTrue();
+            ClassicUO.Bootstrap.IsNoLanguage("ivl").Should().BeTrue();
+            ClassicUO.Bootstrap.IsNoLanguage("ZZZ").Should().BeTrue();
+            ClassicUO.Bootstrap.IsNoLanguage("ENU").Should().BeFalse();
+            ClassicUO.Bootstrap.IsNoLanguage("DEU").Should().BeFalse();
+            System.Globalization.CultureInfo.InvariantCulture.ThreeLetterWindowsLanguageName.Should().Be("IVL");
+        }
 
-            foreach (int block in new[] { 1, 100, 4096, 1 << 20 })
+        [Fact]
+        public void Retired_Blocked_Layout_Is_Rejected_Never_Read_As_Flat()
+        {
+            WriteClilocFile(P("Cliloc.enu"), (1, "loose one"));
+            // a flat payload behind the retired bit: a reader that ignored the bit would serve it
+            var flat = Table((1, "pack one"));
+
+            using (var s = RecordStore.Open(WriteClilocStore("blk1.bin", Lang("enu", flat, blocked: true)), TextConst.MagicCliloc))
             {
-                var blocked = ClilocTable.ToBlocked(flat, block);
-                var t = ClilocTable.TryParseBlocked((byte[])blocked.Clone());
-                t.Should().NotBeNull($"block {block}");
-                t.Blocked.Should().BeTrue();
-                t.BlocksLoaded.Should().Be(0, "nothing decoded at load");
-
-                foreach (var (id, text) in entries)
-                {
-                    t.TryGetString(id, out var s).Should().BeTrue();
-                    s.Should().Be(text);
-                }
-
-                t.BlocksLoaded.Should().Be(t.BlockCount);
+                Action resolve = () => ClilocStore.Resolve(s);
+                resolve.Should().Throw<InvalidDataException>().WithMessage("*block-compressed layout*no longer supported*");
+                ClilocStore.ReadTable(s, 0, out string why).Should().BeNull();
+                why.Should().Contain("no longer supported");
             }
 
-            // one block decoded per first lookup, once across threads
-            var many = ClilocTable.TryParseBlocked(ClilocTable.ToBlocked(flat, 4096));
-            many.BlockCount.Should().BeGreaterThan(10);
-            Parallel.For(0, 64, _ => many.TryGetString(entries[1].Id, out var _).Should().BeTrue());
-            many.BlocksLoaded.Should().Be(1);
-
-            var good = ClilocTable.ToBlocked(flat, 4096);
-            ClilocTable.TryParseBlocked(good.AsSpan(0, good.Length - 1).ToArray()).Should().BeNull("truncated");
-            var reserved = (byte[])good.Clone();
-            reserved[12] = 1;
-            ClilocTable.TryParseBlocked(reserved).Should().BeNull("reserved set");
-
-            // a block start moved into the middle of a string
-            int count = entries.Length;
-            int startsAt = ClilocTable.BlockedHeaderBytes + count * 8;
-            var cross = (byte[])good.Clone();
-            BitConverter.GetBytes(BitConverter.ToUInt32(cross, startsAt + 4) + 1).CopyTo(cross, startsAt + 4);
-            ClilocTable.TryParseBlocked(cross).Should().BeNull("a string crosses a block");
-
-            // a corrupt block: its strings are absent, never an exception
-            var corrupt = (byte[])good.Clone();
-            int blocks = BitConverter.ToInt32(good, 8);
-            int dataAt = startsAt + (blocks + 1) * 8;
-
-            for (int i = dataAt; i < dataAt + 16; i++)
+            // the client rejects the whole store (an Error naming the layout) and reads the loose files
+            foreach (var pack in new[]
             {
-                corrupt[i] ^= 0x5A;
+                WriteClilocStore("blk2.bin", Lang("enu", flat, blocked: true)),
+                WriteClilocStore("blk3.bin", Lang("enu", flat), Lang("deu", Table((1, "eins")), blocked: true)),
+            })
+            {
+                var c = Cliloc(pack);
+                c.Load("enu");
+                c.FromPack.Should().BeFalse();
+                c.GetString(1).Should().Be("loose one");
             }
-
-            var ct = ClilocTable.TryParseBlocked(corrupt);
-            ct.Should().NotBeNull("blocks are checked on first use");
-            Action look = () => ct.TryGetString(entries[1].Id, out _);
-            look.Should().NotThrow();
-            ct.TryGetString(entries[1].Id, out _).Should().BeFalse();
-
-            // the loader: a blocked language with a corrupt block falls through to English for those ids
-            var pack = WriteClilocStore("blk.bin",
-                Lang("enu", Table((entries[1].Id, "english"))),
-                Lang("deu", corrupt, blocked: true));
-            var c = Cliloc(pack);
-            c.Load("deu");
-            c.FromPack.Should().BeTrue();
-            c.GetString(entries[1].Id).Should().Be("english");
-
-            var okPack = WriteClilocStore("blk2.bin", Lang("enu", ClilocTable.ToBlocked(flat, 4096), blocked: true));
-            var ok = Cliloc(okPack);
-            ok.Load("enu");
-            ok.GetString(entries[7].Id).Should().Be(entries[7].Text);
-            ok.LanguageTable.BlocksLoaded.Should().Be(1);
         }
 
         [Fact]

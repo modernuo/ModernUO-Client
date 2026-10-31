@@ -31,8 +31,6 @@ for (int i = 0; i < args.Length; i++)
         case "--raw-text": TextConvert.Raw = true; break;
         case "--text-small": TextConvert.SmallRaw = int.Parse(args[++i]); break;
         case "--cliloc-brotli": TextConvert.ClilocBrotli = true; break;
-        case "--cliloc-blocks": TextConvert.ClilocBlocks = true; break;
-        case "--cliloc-block-bytes": TextConvert.ClilocBlockBytes = int.Parse(args[++i]); break;
         case "--cliloc-skip": foreach (var s in args[++i].Split(',')) TextConvert.ClilocSkip.Add(s.Trim()); break;
         case "--no-cliloc-overrides": TextConvert.ClilocOverridesOff = true; break;
         case "--gump-def": gumpDef = args[++i]; break;
@@ -81,7 +79,7 @@ for (int i = 0; i < args.Length; i++)
         case "--regions": ConvertOptions.MaxRegions = int.Parse(args[++i]); break;
         case "--bench-bc7": Bench.Bc7(args[++i]); return 0;
         default:
-            Console.WriteLine("usage: Uo.Converter [--uo <client dir>] [--out <pack dir>] [--debug <png dir>] [--format b5g5r5a1|rgba8|bc7] [--bc7-quality fast|balanced|bestquality] [--bc7-refine-db 28] [--raw-regions] [--raw-pages|--compress-pages[=chunked]] [--chunk-bytes n] [--page-size 2048] [--anim-page-size 1024] [--anim-format indexed8|page] [--indexed-mips none|b16] [--threads n] [--pages a-b] [--facets 0,1] [--regions n] [--xfiles] [--no-maps] [--no-anims] [--no-gumps] [--no-fonts] [--no-cliloc] [--no-speech] [--raw-gumps] [--raw-text] [--text-small n] [--cliloc-brotli] [--cliloc-blocks] [--cliloc-block-bytes n] [--cliloc-skip ext,ext] [--no-cliloc-overrides] [--gump-small n] [--gump-def <file>] [--gump-report] [--only art,tex,hues,tiledata,data,gumps,fonts,cliloc,speech,maps,anims] [--anims-only] [--bodies 400,0xC8] [--verify-only]");
+            Console.WriteLine("usage: Uo.Converter [--uo <client dir>] [--out <pack dir>] [--debug <png dir>] [--format b5g5r5a1|rgba8|bc7] [--bc7-quality fast|balanced|bestquality] [--bc7-refine-db 28] [--raw-regions] [--raw-pages|--compress-pages[=chunked]] [--chunk-bytes n] [--page-size 2048] [--anim-page-size 1024] [--anim-format indexed8|page] [--indexed-mips none|b16] [--threads n] [--pages a-b] [--facets 0,1] [--regions n] [--xfiles] [--no-maps] [--no-anims] [--no-gumps] [--no-fonts] [--no-cliloc] [--no-speech] [--raw-gumps] [--raw-text] [--text-small n] [--cliloc-brotli] [--cliloc-skip ext,ext] [--no-cliloc-overrides] [--gump-small n] [--gump-def <file>] [--gump-report] [--only art,tex,hues,tiledata,data,gumps,fonts,cliloc,speech,maps,anims] [--anims-only] [--bodies 400,0xC8] [--verify-only]");
             return 1;
     }
 }

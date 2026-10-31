@@ -155,10 +155,6 @@ public static class TextConvert
 
     /// <summary>--cliloc-skip a,b: extensions of Cliloc.* files that are not languages, in addition to those found by content.</summary>
     public static HashSet<string> ClilocSkip = new(StringComparer.OrdinalIgnoreCase);
-    /// <summary>--cliloc-blocks: language records in the blocked layout (Brotli blocks of about 64 KiB, decoded on first lookup).</summary>
-    public static bool ClilocBlocks;
-    /// <summary>--cliloc-block-bytes n: the blocked layout's target block size.</summary>
-    public static int ClilocBlockBytes = ClilocTable.DefaultBlockBytes;
     /// <summary>--no-cliloc-overrides: don't fold the client folder's Clilocs.txt into text/cliloc.bin.</summary>
     public static bool ClilocOverridesOff;
 
@@ -175,19 +171,18 @@ public static class TextConvert
         {
             var entries = ClilocLoader.ReadFile(files[i].Path);
             counts[i] = entries.Count;
-            var flat = ClilocTable.Build(entries.Select(e => (e.Key, Encoding.UTF8.GetBytes(e.Value))).ToList());
-            raws[i] = ClilocBlocks ? ClilocTable.ToBlocked(flat, ClilocBlockBytes, Quality) : flat;
+            raws[i] = ClilocTable.Build(entries.Select(e => (e.Key, Encoding.UTF8.GetBytes(e.Value))).ToList());
         });
         var ours = OverridesFile(fm.BasePath);
         var w = new RecordStoreWriter(files.Count + (ours != null ? 1 : 0));
         long raw = 0, stored = 0;
         var parts = new List<string>();
-        // blocked records are compressed inside (codec 0); flat ones raw unless --cliloc-brotli
-        ushort codec = ClilocBrotli && !Raw && !ClilocBlocks ? StoreConst.CodecBrotli : StoreConst.CodecRaw;
+        // flat records, stored raw unless --cliloc-brotli (whole-record Brotli, opt-in)
+        ushort codec = ClilocBrotli && !Raw ? StoreConst.CodecBrotli : StoreConst.CodecRaw;
         for (int i = 0; i < files.Count; i++)
         {
             var (m0, m1) = ClilocTable.PackLanguage(files[i].Lang);
-            int rec = AddRecord(w, raws[i], codec, m0, m1, ClilocStore.Meta2(ClilocStore.KindLanguage, ClilocBlocks), ref stored);
+            int rec = AddRecord(w, raws[i], codec, m0, m1, ClilocStore.KindLanguage, ref stored);
             w.Slots[i] = new StoreSlot { Record = (uint)rec + 1 };
             raw += raws[i].Length;
             parts.Add($"{files[i].Lang} {counts[i]}");
@@ -196,14 +191,14 @@ public static class TextConvert
         {
             // the shard's own strings: a flat record of their own, after the languages
             var payload = ClilocTable.Build(ours.Select(e => (e.Key, Encoding.UTF8.GetBytes(e.Value))).ToList());
-            int rec = AddRecord(w, payload, codec, 0, 0, ClilocStore.Meta2(ClilocStore.KindOverrides, false), ref stored);
+            int rec = AddRecord(w, payload, codec, 0, 0, ClilocStore.KindOverrides, ref stored);
             w.Slots[files.Count] = new StoreSlot { Record = (uint)rec + 1 };
             raw += payload.Length;
             parts.Add($"overrides {ours.Count}");
         }
         var path = Path.Combine(outDir, TextConst.ClilocFile);
         w.Write(path, TextConst.MagicCliloc, 0);
-        return $"{files.Count} languages ({string.Join(", ", parts)}){(ClilocBlocks ? $", blocked ({ClilocBlockBytes / 1024} KiB Brotli blocks)" : "")}, {raw / 1048576.0:F2} MiB -> {new FileInfo(path).Length / 1048576.0:F2} MiB";
+        return $"{files.Count} languages ({string.Join(", ", parts)}), {raw / 1048576.0:F2} MiB -> {new FileInfo(path).Length / 1048576.0:F2} MiB";
     }
 
     /// <summary>The client folder's Clilocs.txt (the shard's own strings), or null when there is none or it is switched off.</summary>
@@ -381,7 +376,7 @@ public static class TextConvert
             }
         }
         if (bad > 5) Fail($"cliloc: {bad} mismatches in total");
-        Console.WriteLine($"  cliloc: {expected.Count} languages ({string.Join(",", dir.Order)}), {ids} (language, id) strings{(ours != null ? $" and {oursChecked} overrides" : "")} {(bad == 0 ? "EXACT" : "MISMATCH")} vs ClilocLoader.Load{(tables.Values.Any(t => t.Blocked) ? $" (blocked layout, {tables.Values.Sum(t => t.BlockCount)} blocks)" : "")} ({sw.ElapsedMilliseconds} ms)");
+        Console.WriteLine($"  cliloc: {expected.Count} languages ({string.Join(",", dir.Order)}), {ids} (language, id) strings{(ours != null ? $" and {oursChecked} overrides" : "")} {(bad == 0 ? "EXACT" : "MISMATCH")} vs ClilocLoader.Load ({sw.ElapsedMilliseconds} ms)");
     }
 
     // The discovery rule walked independently of IsClilocFile: BWT-compressed, or a raw table read record by record
