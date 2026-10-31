@@ -139,9 +139,17 @@ namespace ClassicUO.Assets
                 }
 
                 // the path the loader opens for it: an override wins over the folder's file
-                if (File.Exists(FileManager.GetUOFilePath($"Cliloc.{ext}")))
+                try
                 {
-                    found.Add(ext);
+                    if (File.Exists(FileManager.GetUOFilePath($"Cliloc.{ext}")))
+                    {
+                        found.Add(ext);
+                    }
+                }
+                catch (Exception e) when (e is ArgumentException || e is NotSupportedException || e is IOException || e is UnauthorizedAccessException || e is System.Security.SecurityException)
+                {
+                    // one bad candidate (an empty or invalid files_override target, an unreadable folder) must not stop the others
+                    Log.Warn($"Cliloc: '{ext}' is skipped, its file cannot be checked ({e.Message})");
                 }
             }
 

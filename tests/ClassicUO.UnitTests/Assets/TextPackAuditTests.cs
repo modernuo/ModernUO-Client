@@ -763,5 +763,54 @@ namespace ClassicUO.UnitTests.Assets
             c.FromPack.Should().BeFalse();
             c.Language.Should().Be("deu");
         }
+
+        // round 2, finding 1: a malformed files_override target for a language nobody asked for must not abort discovery
+        [Theory]
+        [InlineData("")]
+        [InlineData("bad name.bin")]
+        public void AvailableLanguages_Skips_A_Malformed_Override_Target_And_Continues(string target)
+        {
+            WriteClilocFile(P("Cliloc.enu"), (1, "one"));
+            WriteClilocFile(P("Cliloc.deu"), (1, "eins"));
+
+            var map = new UOFilesOverrideMap();
+            map.Add("cliloc.rus", target);
+
+            var fm = new UOFileManager(ClientVersion.CV_7090, _tmp, map, null);
+            fm.CaseInsensitiveFallback = true; // the lookup that threw on Linux/macOS, run here on any OS
+            var c = fm.Clilocs;
+            c.UsePack = true;
+            c.PackFile = null;
+
+            c.AvailableLanguages().Should().BeEquivalentTo("enu", "deu");
+            fm.GetUOFilePath("Cliloc.rus").Should().Be(target); // unresolved, not thrown
+        }
+
+        // round 2, finding 2: a relative base directory finds a differently-cased file (the lookup compared absolute entries to the relative probe)
+        [Fact]
+        public void GetUOFilePath_Resolves_Alternative_Casing_Under_A_Relative_Base()
+        {
+            string dir = Path.Combine(_tmp, "UO");
+            Directory.CreateDirectory(dir);
+            WriteClilocFile(Path.Combine(dir, "CLILOC.ENU"), (1, "one"));
+            WriteClilocFile(Path.Combine(dir, "Cliloc.DEU"), (1, "eins"));
+
+            string relative = Path.GetRelativePath(Directory.GetCurrentDirectory(), dir);
+            relative.Should().NotBe(Path.GetFullPath(dir));
+
+            var fm = new UOFileManager(ClientVersion.CV_7090, relative, new UOFilesOverrideMap(), null);
+            fm.CaseInsensitiveFallback = true;
+
+            string deu = fm.GetUOFilePath("Cliloc.deu");
+            File.Exists(deu).Should().BeTrue();
+            Path.GetFileName(deu).Should().BeOneOf("Cliloc.deu", "Cliloc.DEU");
+
+            var c = fm.Clilocs;
+            c.UsePack = false;
+            c.AvailableLanguages().Should().BeEquivalentTo("enu", "deu");
+            c.Load("deu");
+            c.Language.Should().Be("deu");
+            c.GetString(1).Should().Be("eins");
+        }
     }
 }
