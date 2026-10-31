@@ -215,6 +215,7 @@ namespace ClassicUO.Game.Scenes
                     _landSeason = (Season)0xFF;
                     _world.ChangeFacet(_pack);
                     Log.Trace($"GPU world renderer: facet {facet} (switched, world pass kept)");
+                    ArmLoadLog($"facet {facet}");
 
                     return true;
                 }
@@ -256,6 +257,7 @@ namespace ClassicUO.Game.Scenes
                 _world = WorldRenderer.CreateExternal(_device, GpuTextureFormat.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, _pack, options);
                 _world.ClearColor = new sdl3core::SDL3.SDL.SDL_FColor { r = 0, g = 0, b = 0, a = 1 };
                 Log.Trace($"GPU world renderer: facet {facet}, shaders {_world.Renderer.ShaderFormat}");
+                ArmLoadLog($"facet {facet}, new world");
 
                 return true;
             }
@@ -960,6 +962,8 @@ namespace ClassicUO.Game.Scenes
                 GpuDeviceLost.Report("GPU world submit", _world.Renderer.LastSubmitError);
             }
 
+            LogLoad();
+
             if (_world.Renderer.TranslucentGrowths != _loggedGrowths)
             {
                 _loggedGrowths = _world.Renderer.TranslucentGrowths;
@@ -1002,6 +1006,61 @@ namespace ClassicUO.Game.Scenes
 
             return ok;
         }
+
+        // Scene load time (memory round 3): from the first world frame after a world is built or its facet changes (the
+        // login is a facet change) until the world first settles (no chunk pending, no page queued, loading or missing).
+        private string _loadWhat;
+        private long _loadStartTicks, _loadLastUploadTicks;
+        private int _loadFrames, _loadUploads;
+
+        private void ArmLoadLog(string what)
+        {
+            _loadWhat = what;
+            _loadStartTicks = 0;
+            _loadFrames = 0;
+        }
+
+        private void LogLoad()
+        {
+            if (_loadWhat == null)
+            {
+                return;
+            }
+
+            var w = _world;
+            long now = System.Diagnostics.Stopwatch.GetTimestamp();
+            int uploads = w.Pages.TotalUploads + (w.AnimPages?.TotalUploads ?? 0);
+
+            if (_loadFrames++ == 0)
+            {
+                _loadStartTicks = now;
+                _loadLastUploadTicks = now;
+                _loadUploads = uploads;
+
+                return;
+            }
+
+            if (uploads != _loadUploads)
+            {
+                _loadUploads = uploads;
+                _loadLastUploadTicks = now;
+            }
+
+            if (!w.Settled)
+            {
+                return;
+            }
+
+            double f = 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            Log.Info(
+                $"[load] GPU world settled ({_loadWhat}) after {(now - _loadStartTicks) * f:F0} ms, {_loadFrames} frames; last page upload at {(_loadLastUploadTicks - _loadStartTicks) * f:F0} ms; " +
+                $"art {w.Pages.ResidentCount}/{w.Pages.Layers} resident, {w.Pages.TotalUploads} uploads" +
+                (w.AnimPages != null ? $"; anim {w.AnimPages.ResidentCount}/{w.AnimPages.Layers} resident, {w.AnimPages.TotalUploads} uploads" : "") +
+                LoadDetail());
+            _loadWhat = null;
+        }
+
+        private string LoadDetail() => "";
 
         private uint _nextStatsLog, _nextDropLog;
         private int _loggedGrowths, _loggedTileMismatches, _loggedArrayGrowths;
