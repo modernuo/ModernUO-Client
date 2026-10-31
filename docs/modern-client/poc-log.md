@@ -2224,7 +2224,7 @@ Branch `poc/item-art-worker` (item art agent, kbatman4), from poc/modern-client 
 **Not done or noted:**
 - **No boats and few houses on the local server.** Multis were checked with KamDos (`house:1427 1691`) only.
 - **Correction (Codex audit):** an earlier version of this entry said house components had no atlas art in the Gpu world. That was wrong: they reach `Multi.Draw` through `GpuWorldRenderer.DrawObject`, which decodes their art and stores the pick anchor on the art entry. The real change was a regression, fixed below: the prefetch could fill a component's pixel mask before its first draw had stored the anchor.
-- **Placement requests sit outside the chunk budget, and nothing caps the bytes of decodes in flight.** Requests are O(1) and the uploads are budgeted, but a teleport into a town queues every new item's and component's decode at once, each holding its untrimmed buffer until its upload. All animated bases together come to about 76 MiB untrimmed. A cap on in-flight decode bytes is a follow-up.
+- **Placement requests sit outside the chunk budget, and the bytes of decodes in flight are capped by a safety net (DecodeBudget, 16 MiB; see the decode in-flight cap entry).** Requests are O(1) and the uploads are budgeted; a teleport into a town queues every new item's and component's decode at once, each holding its buffer until its upload. The feared ~76 MiB untrimmed worst case did not show up: the measured all-time peak in flight is about 7.3 MiB.
 - **After `Art.Reload`**, multi components aren't re-requested. A Legacy draw then decodes their art on the spot, as before.
 - **UI art** (gumps, the paperdoll's item icons) still decodes on the main thread.
 - No 4K run, no 13-minute session, and not the owner's FPS test.
@@ -2705,3 +2705,27 @@ Base: poc/modern-client 4f84e8a71. Branch `poc/fix-flaky-prefetch-test`. Test on
 **Cause.** `Prefetched_Regions_Give_The_Same_Blocks_And_Never_Block_IsBlockReady` bounded every `IsBlockReady` call at 2.0 ms. In a loop of full-suite runs under bench.lock (one run per acquisition, old build) run 5 of 5 failed with `Expected value to be less than 2.0, but found 2.8137`, 0.44 s into the run: the first call in the process pays JIT and thread-pool start-up while other test classes start in parallel. It was not the `ready.Should().BeFalse()` assertion, and `PrefetchEnabled` is only written by this test (default true), so shared static state was not involved. No product race found in `MapLoader` prefetch.
 
 **Fix.** The no-decode-on-the-caller guarantee is now asserted by counters after every call (`SyncLoads == 0`, `PrefetchWaits == 0`; `ready == false` whenever the call started a prefetch), and the wall time is bounded on the median of the five calls (10 ms) instead of each call. `PrefetchEnabled` is restored in `finally`.
+
+
+## Decode in-flight byte cap (2026-10-30)
+
+Branch `poc/decode-inflight-cap`, base poc/modern-client c6bd97205. `DecodeBudget` (src/ClassicUO.Renderer): a FIFO byte budget for art/texmap decodes (FirstSightDecoder, bytes = pixels*4 at request time) and animation direction jobs (sum of frame W*H*4); gumps are not capped. Submit/Release on the main thread, never blocks, nothing is dropped (waiting items start as bytes are released); a single item above the cap is admitted alone. `CUO_DECODE_CAP_MB` overrides (0 = unlimited, counts only). FrameStats `decode_inflight_kb`, `decode_waiting`; DevBench prints `[decode-budget]` peaks per plan entry (holds included). 10 unit tests (DecodeBudgetTests).
+
+**Measured peaks** (AOT, plan world:gpu, house, bank, travel, ltravel, ls, brit, far, ls2; peak in flight per entry, KiB): cap 0 runs: house 5825 and 7508, travel 3782 and 3872, bank 766/883, far 0/571, others 0. 8 MiB run: house 7445 (cap not reached, 0 waiting). 4 MiB run: house 4095 (held at the cap), travel 2663. All-time peak uncapped about 7.3 MiB (7.4-7.5 MiB at worst), not the ~76 MiB feared.
+
+**Choice: 16 MiB, as a safety net, not a throttle.** The measurements show the cap is not needed for performance: at 8 MiB (above every peak) nothing waited and hold ms equal cap 0; at 4 MiB the house peak was cut to 4 MiB and the settle hold was not longer (hold ms total 188 vs 255 / 212 for cap 0 / 8 MiB, within the run-to-run spread; unsettled frames came from animation pages, not from waiting art). 16 MiB is about 2x the largest observed peak, so it never delays art in the measured plans, and it still bounds a pathological case (a very large teleport or a mod with huge art) at a fixed ceiling instead of an unbounded one. Kept for that bound only.
+
+**Paired run** (AOT, same binary for both arms; base = `CUO_DECODE_CAP_MB=0`, new = the 16 MiB default; 3 runs each, interleaved base,new,new,base,base,new; plan world:gpu, house, bank, travel, ltravel, ls, brit, far, ls2; job 20261030-192626292040, status ok, 990 s). The machine was noisy, so read the spread, not the means.
+
+| metric (per full plan) | base (cap 0), 3 runs | new (16 MiB), 3 runs |
+|---|---|---|
+| waiting (any entry) | 0, 0, 0 | 0, 0, 0 |
+| all-time peak in flight, KiB | 7432, 7488, 7390 | 7451, 7321, 7413 |
+| travel entry peak in flight / art_pending | 3872 / 272 in all 3 | 3872 / 272 in all 3 |
+| hold ms total | 371, 403, 378 (mean 384, spread 32) | 365, 384, 372 (mean 374, spread 19) |
+| held frames | 166, 179, 152 | 146, 158, 165 |
+| unsettled frames | 44, 46, 30 (mean 40) | 27, 52, 20 (mean 33) |
+| travel upload us | 1814, 1134, 2017 (mean 1655) | 2040, 3411, 5476 (mean 3642) |
+
+Result: the cap never engaged. Waiting stayed 0 on every entry of every run, and the in-flight peaks match between arms (the all-time peak, about 7.3-7.5 MiB, is under half the cap). Hold ms total and held frames are inside the run-to-run spread (base 371-403 against new 365-384), and unsettled frames vary more between repeats of one arm (base 30-46, new 20-52) than between arms. The one number that looks different is the travel entry's upload time (new mean 3.6 ms against 1.7 ms), but it is a single entry, the new repeats alone span 2.0-5.5 ms against 1.1-2.0 ms for base, and with waiting 0 the new path does no extra work there beyond a counter update, so I read it as noise (the U+D frame-time column has similar outliers in both arms, e.g. far 41.07 in q1b, travel 19.47 in q2b). Three repeats cannot rule out a small upload-time effect; a longer series would be needed if it matters. Conclusion: no measurable difference at 16 MiB, as expected for a safety net.
+**Verification.** Release build and `-p:CuoDevTools=false` build 0 errors; 728 unit tests pass at the final head.
