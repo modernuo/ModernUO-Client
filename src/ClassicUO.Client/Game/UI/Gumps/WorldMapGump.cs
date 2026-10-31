@@ -56,7 +56,7 @@ namespace ClassicUO.Game.UI.Gumps
         private static readonly Color _semiTransparentWhiteForGrid = new Color(255, 255, 255, 56);
         private static Point _last_position = new Point(100, 100);
         private static Texture2D _mapTexture;
-        private Map.Map _map = null;
+        private Map.FacetView _map;
 
         private Point _center, _lastScroll, _mouseCenter, _scroll;
         private Point? _lastMousePosition = null;
@@ -111,7 +111,7 @@ namespace ClassicUO.Game.UI.Gumps
             X = _last_position.X;
             Y = _last_position.Y;
 
-            _map = World.Map;
+            _map = new Map.FacetView(World.Map.Index);
             LoadSettings();
 
             GameActions.Print(World, ResGumps.WorldMapLoading, 0x35);
@@ -544,7 +544,7 @@ namespace ClassicUO.Game.UI.Gumps
         public void ChangeMap(int index)
         {
             Client.Game.UO.FileManager.Maps.LoadMap(index, World.ClientFeatures.Flags.HasFlag(CharacterListFlags.CLF_UNLOCK_FELUCCA_AREAS));
-            _map = new Map.Map(World, index);
+            _map = new Map.FacetView(index); // no Map (its slot array is not needed here)
 
 
             if (_loadingTask is { Status: TaskStatus.Running })
@@ -1129,7 +1129,6 @@ namespace ClassicUO.Game.UI.Gumps
                 {
                     try
                     {
-                        var map = _map;
                         Interlocked.Increment(ref _mapLoading);
 
                         var size = (realWidth + OFFSET_PIX) * (realHeight + OFFSET_PIX);
@@ -2237,7 +2236,7 @@ namespace ClassicUO.Game.UI.Gumps
             {
                 string text = $"{World.Player.X}, {World.Player.Y} ({World.Player.Z}) [{_zoomIndex}]";
 
-                if (_showSextantCoordinates && Sextant.FormatString(new Point(World.Player.X, World.Player.Y), _map, out var sextantCoords))
+                if (_showSextantCoordinates && Sextant.FormatString(new Point(World.Player.X, World.Player.Y), _map.Index, out var sextantCoords))
                     text += "\n" + sextantCoords;
 
                 Vector3 hueVector = new(0f, 1f, 1f);
@@ -2253,7 +2252,7 @@ namespace ClassicUO.Game.UI.Gumps
 
                 string mouseCoordinateString = $"{mouseWorldX} {mouseWorldY}";
 
-                if (_showSextantCoordinates && Sextant.FormatString(new Point(mouseWorldX, mouseWorldY), _map, out var sextantCoords))
+                if (_showSextantCoordinates && Sextant.FormatString(new Point(mouseWorldX, mouseWorldY), _map.Index, out var sextantCoords))
                     mouseCoordinateString += "\n" + sextantCoords;
 
                 Vector2 size = Fonts.Regular.MeasureString(mouseCoordinateString);
