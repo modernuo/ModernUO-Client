@@ -400,6 +400,28 @@ namespace ClassicUO.Game.Scenes
             return h;
         }
 
+        /// <summary>CUO_GPU_ITEM_CHECK (E12): what <see cref="DebugHash"/> hashes, listed.</summary>
+        internal void DebugCollect(Func<GameObject, bool> skip, List<(int List, GameObject Obj, byte Alpha, bool Allowed)> into)
+        {
+            into.Clear();
+
+            void Add(List<GameObject> list, int tag)
+            {
+                foreach (var obj in list)
+                {
+                    if (!skip(obj))
+                    {
+                        into.Add((tag, obj, obj.AlphaHue, obj.AllowedToDraw));
+                    }
+                }
+            }
+
+            Add(_statics, 1);
+            Add(_animations, 2);
+            Add(_effects, 3);
+            Add(_transparentObjects, 4);
+        }
+
         /// <summary>The statics-list index being captured (-1 outside that list): CUO_GPU_ITEM_CHECK's insertion check.</summary>
         internal static int CaptureStaticsIndex = -1;
 
@@ -423,6 +445,22 @@ namespace ClassicUO.Game.Scenes
 
             return done + CaptureRenderList(batcher, _animations, maxGroundZ, gpu, null, false) +
                    CaptureRenderList(batcher, _transparentObjects, maxGroundZ, gpu, null, false);
+        }
+
+        /// <summary>CUO_GPU_ITEM_CHECK (E12): <see cref="DrawDeferredRenderLists"/>' effects, captured only.</summary>
+        internal int CaptureEffectsOnly(UltimaBatcher2D batcher, sbyte maxGroundZ, GpuWorldRenderer gpu)
+        {
+            int result = 0;
+
+            foreach (var obj in _effects)
+            {
+                if (obj.Z <= maxGroundZ && obj is GameEffect effect && GpuWorldRenderer.CanCapture(effect) && gpu.DrawObject(batcher, obj, obj.CalculateDepthZ()))
+                {
+                    result++;
+                }
+            }
+
+            return result;
         }
 
         /// <summary>GPU world: effects (into the world pass when it can reproduce their blend, else FNA over it) and what FNA

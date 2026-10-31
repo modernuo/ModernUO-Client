@@ -1,6 +1,6 @@
 # ECS Decision
 
-**Status:** recommended, pending the final Flecs.NET timing rounds (single-run numbers so far).
+**Status:** adopted. Friflo.Engine.ECS is in use (`src/ClassicUO.Ecs`); where the ECS goes next is [ecs-transition-plan.md](ecs-transition-plan.md). The final Flecs.NET timing rounds were never run; the comparison below is from single runs.
 **Recommendation: Friflo.Engine.ECS**, used only for dynamic objects (items, mobiles, effects, lights, emitters), single-threaded by default with explicit parallel jobs. The static world stays out of the ECS (chunk arrays plus GPU buffers), as described in [architecture-recommendations.md](architecture-recommendations.md#1-world-storage-split-static-from-dynamic).
 
 ## Candidates

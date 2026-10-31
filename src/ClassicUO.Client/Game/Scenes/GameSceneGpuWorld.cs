@@ -369,7 +369,12 @@ namespace ClassicUO.Game.Scenes
             GpuUpdateStaticSeason(gpu);
             FrameStats.AddSince(FramePhase.PrepSetup, stamp);
 
-            FillGameObjectList();
+            // E12: a check frame's probe pass (the frame served from the cache) comes before the frame's own fill
+            if (!_gpuItemCheckSame || GpuItemProbeRun(batcher, gpu) != 2)
+            {
+                FillGameObjectList();
+            }
+
             GpuItemCheckLists();
             stamp = FrameStats.Stamp();
             FinishGpuCollect();
@@ -451,7 +456,22 @@ namespace ClassicUO.Game.Scenes
 
             // Effects go to the world pass (depth-tested like Legacy) when it can reproduce their blend; FNA draws the rest,
             // the object handles, weather and the selection over the world.
+            if (_gpuItemCheckSame)
+            {
+                _gpuProbeRefEffectsAt = gpu.DynamicInstances.Length;
+            }
+
             int deferred = _renderLists.DrawDeferredRenderLists(batcher, _maxGroundZ, gpu);
+
+            if (_gpuItemCheckSame)
+            {
+                if (_gpuProbeValid)
+                {
+                    GpuItemProbeCompare(gpu);
+                }
+
+                GpuItemCheckReport();
+            }
 
             _world.Weather.Draw(batcher, 0, 0, MAX_LAYER_DEPTH - 1);
 

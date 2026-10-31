@@ -96,7 +96,12 @@ public sealed class PackSet
         Texmaps = shared?.Texmaps ?? (File.Exists(texPath) ? SpriteTable.Read(texPath) : []);
         (Land, Statics) = TileDataFile.Read(Path.Combine(root, "tiledata.bin"));
         if (shared?.Hues != null) (HueCount, Hues) = (shared.HueCount, shared.Hues);
-        else (HueCount, Hues) = HueFile.Read(Path.Combine(root, "hues.bin"));
+        else
+        {
+            // Built from hues_raw.bin (one source of truth per pack file); an older pack's hues.bin is ignored.
+            var hueEntries = HueRawFile.Read(Path.Combine(root, TableConst.HueRawFile));
+            (HueCount, Hues) = (hueEntries.Length, HueLut.Build(hueEntries));
+        }
         StaticNoCot = shared?.StaticNoCot;
 
         var artPages = CountPages(Path.Combine(root, "art"));
@@ -217,6 +222,6 @@ public sealed class PackSet
         const string real = @"C:\Repositories\uo-packs\classic";
         if (File.Exists(Path.Combine(real, "manifest.json")) && File.Exists(Path.Combine(real, "art", "sprites.bin")))
             return real;
-        return @"C:\Repositories\uo-packs\synthetic";
+        return Path.Combine(Path.GetTempPath(), "uo-synthetic-pack"); // Uo.Render --make-synthetic's default
     }
 }

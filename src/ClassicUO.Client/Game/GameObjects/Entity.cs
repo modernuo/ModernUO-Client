@@ -30,10 +30,14 @@ namespace ClassicUO.Game.GameObjects
             Serial = serial;
         }
 
-        public byte AnimIndex { get; set; }
-        public bool ExecuteAnimation { get; set; } = true;
-        internal long LastAnimationChangeTime { get; set; }
-        public Flags Flags { get; set; }
+        private byte _animIndex;
+        private bool _executeAnimation = true;
+        private long _lastAnimationChangeTime;
+        private Flags _flags;
+        public byte AnimIndex { get => _animIndex; set { FunnelCheck.Write(this, FunnelField.AnimIndex); _animIndex = value; } }
+        public bool ExecuteAnimation { get => _executeAnimation; set { FunnelCheck.Write(this, FunnelField.ExecuteAnimation); _executeAnimation = value; } }
+        internal long LastAnimationChangeTime { get => _lastAnimationChangeTime; set { FunnelCheck.Write(this, FunnelField.LastAnimationChangeTime); _lastAnimationChangeTime = value; } }
+        public Flags Flags { get => _flags; set { FunnelCheck.Write(this, FunnelField.Flags); _flags = value; } }
         private ushort _hits, _hitsMax;
         public byte HitsPercentage;
 
@@ -43,6 +47,7 @@ namespace ClassicUO.Game.GameObjects
             get => _hits;
             set
             {
+                FunnelCheck.Write(this, FunnelField.Hits);
                 _hits = value;
                 RefreshHitsPercentage();
             }
@@ -53,14 +58,17 @@ namespace ClassicUO.Game.GameObjects
             get => _hitsMax;
             set
             {
+                FunnelCheck.Write(this, FunnelField.HitsMax);
                 _hitsMax = value;
                 RefreshHitsPercentage();
             }
         }
         public bool IsClicked;
-        public uint LastStepTime { get; set; }
-        public string Name { get; set; }
-        public uint Serial { get; set; }
+        private uint _lastStepTime, _serial;
+        private string _name;
+        public uint LastStepTime { get => _lastStepTime; set { FunnelCheck.Write(this, FunnelField.LastStepTime); _lastStepTime = value; } }
+        public string Name { get => _name; set { FunnelCheck.Write(this, FunnelField.Name); _name = value; } }
+        public uint Serial { get => _serial; set { FunnelCheck.WriteSerial(this, value); _serial = value; } }
         public HitsRequestStatus HitsRequest;
 
 
@@ -71,6 +79,8 @@ namespace ClassicUO.Game.GameObjects
             get => _direction;
             set
             {
+                FunnelCheck.Write(this, FunnelField.Direction);
+
                 if (_direction != value)
                 {
                     _direction = value;
@@ -93,6 +103,12 @@ namespace ClassicUO.Game.GameObjects
 
         public void FixHue(ushort hue)
         {
+            Hue = FixedHue(hue);
+        }
+
+        /// <summary>T1: the hue <see cref="FixHue"/> stores for a packet hue (pure; the funnel writes the result itself).</summary>
+        internal static ushort FixedHue(ushort hue)
+        {
             ushort fixedColor = (ushort) (hue & 0x3FFF);
 
             if (fixedColor != 0)
@@ -109,7 +125,7 @@ namespace ClassicUO.Game.GameObjects
                 fixedColor = (ushort) (hue & 0x8000);
             }
 
-            Hue = fixedColor;
+            return fixedColor;
         }
 
         public void UpdateHits(byte perc)

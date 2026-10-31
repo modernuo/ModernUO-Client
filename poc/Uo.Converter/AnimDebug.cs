@@ -13,7 +13,7 @@ public static class AnimDebug
 
     public static string Run(string outDir, string debugDir)
     {
-        if (Directory.Exists(debugDir)) Directory.Delete(debugDir, true);
+        PackOutputFiles.DeleteFiles(debugDir, "*.png"); // never a recursive delete
         Directory.CreateDirectory(debugDir);
         var dir = Path.Combine(outDir, "anim");
         var (bodies, dirs, frames) = AnimTableFile.Read(Path.Combine(dir, AnimTableFile.FileName));

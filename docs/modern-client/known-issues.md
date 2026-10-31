@@ -2,6 +2,10 @@
 
 Visual or behavioural defects found in the PoC client that aren't fixed yet. Add new ones here; move them to the poc-log when fixed.
 
+## Paperdoll layer bleed: a robe removes the black halo around armour arm pieces (known before the PoC; recorded 2026-10-31)
+
+Reported by the owner. ClassicUO does not draw paperdoll graphic "bleed" the way the original client does. With a robe on, the black halo around armour arm pieces disappears. The halo was probably made to hide another layering oddity, so removing it may expose that. Needs its own investigation (layer order, which gumps carry the halo, how the original client composites them). Not started.
+
 ## Ghost mobiles and items at the update-range edge (known before the PoC; recorded 2026-10-25)
 
 Rarely, a mobile or item the server has stopped tracking stays in the client and stands idle forever ("ghosting"), or a mobile at the edge of the update range disappears although it should stay. It is more likely with large viewports, older RunUO-based servers, and houses and boats (they use a larger update range, so a house can arrive without its door). The cause is either the server's create/remove messages around the range edge, or the client's handling of their order and its own out-of-range cleanup. Not reproduced yet. Fixing it is the first part of range-based viewport streaming (perf-opportunities.md, "Server update range vs. large viewports"): repro, audit ModernUO's edge handling, then clean up the client. Deferred. Related: equipment updates for a mobile the client no longer holds, and gump tooltips for items the client never saw (both in that perf-opportunities section).

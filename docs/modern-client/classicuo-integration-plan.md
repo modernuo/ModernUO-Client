@@ -1,5 +1,7 @@
 # ClassicUO Integration Plan (Phase 4)
 
+> **History.** The Phase 4 plan, carried out 2026-10-24/25. The client now loads converted assets from the pack and draws the world with Uo.Render. For the current state see the Docs map in [README.md](README.md) and the newest [poc-log.md](poc-log.md) entries.
+
 From a read-only spike on 2026-10-24. File:line references are against FNA3D 25.09; re-check them after the 26.10 submodule update.
 
 ## Decisions this plan rests on

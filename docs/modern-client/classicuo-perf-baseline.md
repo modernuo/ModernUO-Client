@@ -1,6 +1,6 @@
 # ClassicUO Per-Phase Performance Baseline (Phase 4, step 7b)
 
-Recorded 2026-10-24 on `poc/modern-client` (on top of f89c6107f, pack-only assets), with the per-phase hooks added in step 7b. It replaces the coarse frame/scene/Draw() numbers in classicuo-aot-baseline.md as the reference for step 10.
+Recorded 2026-10-24 on `poc/modern-client` (on top of f89c6107f, pack-only assets), with the per-phase hooks added in step 7b. It replaced the coarse frame/scene/Draw() numbers of the first NativeAOT baseline (step 2, since deleted; its publish facts are in [testing/aot-performance.md](testing/aot-performance.md)) as the reference for step 10.
 
 ## Method
 
