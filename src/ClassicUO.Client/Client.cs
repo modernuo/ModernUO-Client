@@ -102,6 +102,7 @@ namespace ClassicUO
         {
             FileManager.Dispose();
             World?.Map?.Destroy();
+            World?.ReleasePools();
         }
 
 
