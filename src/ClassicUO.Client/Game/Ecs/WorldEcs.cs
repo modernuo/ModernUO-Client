@@ -333,6 +333,9 @@ namespace ClassicUO.Game
 
         public static long ClockPushes;
 
+        /// <summary>Tests: this World's clock writes (<see cref="ClockPushes"/> counts every World's, also other tests').</summary>
+        internal long ClockWrites;
+
         /// <summary>
         /// E4: the clock is kept only while the mobile system runs (World.Update sets this each frame from
         /// <c>world_update_mobile_system</c> and <c>world_update_active_items</c>). With it off there is no component, no write,
@@ -354,6 +357,7 @@ namespace ClassicUO.Game
             }
 
             ClockPushes++;
+            ClockWrites++;
             ref MobileClock c = ref e.GetComponent<MobileClock>();
             c.AnimDue = mobile.LastAnimationChangeTime;
             c.IdleDue = mobile.IdleDue;
