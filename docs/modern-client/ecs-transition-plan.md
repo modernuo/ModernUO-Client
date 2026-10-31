@@ -173,6 +173,8 @@ Sizes: T0a 1–1.5, T0b 0.5, T0c 1.5–2.
 
 **Ordering note.** Handlers must keep calling into the funnel in the same order they mutate today. Tile insertion order is observable (section 1).
 
+**Status (2026-10-30):** first slice on `bg/ecs-t1-funnel` (566eff92a; poc-log "T1 slice 1"). Done: the API (`WorldWriter`, `World.Writer`, `InScope` with a ref-struct `Scope`, the hook fold in `WorldEcs`), `CUO_FUNNEL_CHECK` on all 43 A setters including the four `Offset` setters, and the world-items group (0x1A, 0xF3, the item branch of 0x1D). Write-site budget 326 → 313. Left: containers (0x25, 0x3C, 0x27's `AddItemToContainer`), equipment, mobiles, status and hits, animation, misc (spellbook, house, boat, custom house), `-ecscheck` v2, `uistate.txt`; the handoff `handoffs/t1-funnel.md` lists the steps.
+
 ### T2: container contents owned by the ECS (first state to move)
 
 **Why first:**
