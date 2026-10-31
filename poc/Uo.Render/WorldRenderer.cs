@@ -389,6 +389,10 @@ public sealed unsafe class WorldRenderer : IDisposable
     /// <summary>E12: forgets the overrides queued since <paramref name="mark"/> (and their drops).</summary>
     public void RestorePendingOverrides(PendingOverrideQueue.Mark mark) => _pending.Restore(mark);
 
+    /// <summary>E12: the probe pass's end: copies the overrides queued since <paramref name="mark"/> into
+    /// <paramref name="into"/> and forgets them (<see cref="PendingOverrideQueue.TakeSince"/>); returns the drops since.</summary>
+    public int TakePendingOverrides(PendingOverrideQueue.Mark mark, List<PendingOverrideQueue.Entry> into) => _pending.TakeSince(mark, into);
+
     // ---- render
 
     /// <summary>External mode: renders into the host's target (its SDL_GPUTexture*, re-fetched every frame) with a load op:
