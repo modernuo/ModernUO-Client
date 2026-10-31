@@ -224,6 +224,13 @@ namespace ClassicUO.Game
             {
                 for (int i = 0; i < _deferredBoatClears.Count; i++)
                 {
+#if CUO_DEVTOOLS
+                    // gate evidence (part 7, Codex audit P3 #2): a deferred clear that finds queued steps resets offsets
+                    if (_world.BoatMovingManager.DescribeQueuedSteps(_deferredBoatClears[i]) is { } queued)
+                    {
+                        Log.Info($"[funnel] deferred boat clear 0x{_deferredBoatClears[i]:X8}: {queued}");
+                    }
+#endif
                     _world.BoatMovingManager.ClearSteps(_deferredBoatClears[i]);
                 }
             }

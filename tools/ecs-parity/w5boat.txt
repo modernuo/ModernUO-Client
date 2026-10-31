@@ -1,3 +1,6 @@
+# T1 funnel part 7 gate: the spellbook (0xBF.1B) and a boat's steps (0xF6), turns (multi reload) and a turn while steps
+# are still queued (the deferred ClearBoatSteps reset, Codex audit P3 #2). The boat goes on open water (Felucca 1720 1770;
+# the sea is at least 32 tiles all around) and is deleted at the end (owner: clean up the script's boats).
 wait 6
 say [self addtopack Spellbook
 wait 2
@@ -5,34 +8,69 @@ backpack
 wait 2
 use pack 0EFA
 wait 3
+gumps
 check
 use pack 0EFA
 wait 2
-say [go 1600 1650
+say [go 1720 1770
 wait 6
 say [self add SmallBoat
 wait 4
+boat
 check
 parity
 say forward
 wait 3
+boat
 say stop
 wait 2
+boat
 check
 say turn right
 wait 4
+boat
 check
 parity
-say forward one
-wait 3
-say turn left
-wait 4
+# turns while the boat moves: its steps are queued when the reload arrives
 say forward
-wait 3
+wait 1
+say turn left
+wait 0.5
+say turn right
+wait 1
+say turn left
+wait 1
+boat
 say stop
 wait 2
+boat
 check
 parity
+# cleanup: count, delete, count again (the box holds only this script's boat; a delete of several asks for an OK)
+say [Global Count where SmallBoat X >= 1680 X <= 1760 Y >= 1730 Y <= 1810
+wait 2
+say [Global Count where TillerMan X >= 1680 X <= 1760 Y >= 1730 Y <= 1810
+wait 2
+say [Global Count where Plank X >= 1680 X <= 1760 Y >= 1730 Y <= 1810
+wait 2
+say [Global Count where Hold X >= 1680 X <= 1760 Y >= 1730 Y <= 1810
+wait 2
+journal 12
+say [Global Delete where SmallBoat X >= 1680 X <= 1760 Y >= 1730 Y <= 1810
+wait 2
+gumpok
+wait 2
+say [Global Count where SmallBoat X >= 1680 X <= 1760 Y >= 1730 Y <= 1810
+wait 2
+say [Global Count where TillerMan X >= 1680 X <= 1760 Y >= 1730 Y <= 1810
+wait 2
+say [Global Count where Plank X >= 1680 X <= 1760 Y >= 1730 Y <= 1810
+wait 2
+say [Global Count where Hold X >= 1680 X <= 1760 Y >= 1730 Y <= 1810
+wait 2
+journal 12
+boat
 say [go 5445 1153
 wait 4
 check
+quit
