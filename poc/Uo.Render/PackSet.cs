@@ -138,12 +138,17 @@ public sealed class PackSet
                 AnimPageMips = 1; // mips_NNNN.bin sidecars (variant b) are ignored: mip0 + manual filtering
                 AnimPagePaths = paths;
                 PalettePath = Path.Combine(AnimDir, AnimPaletteFile.FileName);
+                // validated (packs are untrusted): counts, payload extent against the file length, palette ids
                 if (shared?.FramePalette != null)
                 {
+                    var layout = AnimPaletteFile.ReadLayout(PalettePath);
                     FramePalette = shared.FramePalette;
-                    (PaletteCount, PaletteOffset) = AnimPaletteFile.ReadLayout(PalettePath);
+                    AnimPaletteFile.ValidateFramePalette(FramePalette, layout.PaletteCount);
+                    (PaletteCount, PaletteOffset) = (layout.PaletteCount, layout.PaletteOffset);
                 }
                 else FramePalette = AnimPaletteFile.ReadFramePalette(PalettePath, out PaletteCount, out PaletteOffset);
+                if (FramePalette.Length != AnimFrames.Length)
+                    throw new InvalidDataException($"{PalettePath}: {FramePalette.Length} frame palettes for {AnimFrames.Length} anim frames");
             }
             else if (n > 0)
             {

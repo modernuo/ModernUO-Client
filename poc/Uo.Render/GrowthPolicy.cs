@@ -35,6 +35,24 @@ public struct GrowthPolicy
         return frame - _highSince >= DeferFrames;
     }
 
+    /// <summary><see cref="Check"/> for a batch that is about to place <paramref name="incoming"/> items (the loaded pages
+    /// one upload pass will place, within its budget): starved when they don't all fit in the free room, so the array
+    /// grows before the batch evicts or defers instead of after.</summary>
+    public bool CheckBatch(long used, long capacity, long max, long incoming, bool hold, long frame)
+        => Check(used, capacity, max, hold, Starved(used, capacity, incoming), frame);
+
+    /// <summary>True when <paramref name="incoming"/> more items don't fit next to <paramref name="used"/>.</summary>
+    public static bool Starved(long used, long capacity, long incoming) => incoming > 0 && used + incoming > capacity;
+
+    /// <summary>The size to grow to so that <paramref name="needed"/> items fit: doubled until it does, at most the
+    /// ceiling, and at least one doubling (<see cref="Next"/>).</summary>
+    public static int NextFor(int capacity, int max, long needed)
+    {
+        int c = Next(capacity, max);
+        while (c < max && c < needed) c = Next(c, max);
+        return c;
+    }
+
     /// <summary>Call after growing: the deferral restarts for the new size.</summary>
     public void Grew() => _high = false;
 

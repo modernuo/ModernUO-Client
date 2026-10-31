@@ -110,6 +110,48 @@ namespace ClassicUO.UnitTests.Renderer
             }
         }
 
+        // Codex audit P2: a batch that crosses capacity must grow first. Before the fix the check saw 11/12 layers, no
+        // hold and an unexpired deferral, declined, and the batch's second upload evicted a resident page.
+        [Fact]
+        public void A_batch_that_crosses_capacity_grows_before_uploading()
+        {
+            var p = new GrowthPolicy();
+            p.Check(11, 12, 24, hold: false, starved: false, frame: 0).Should().BeFalse("the deferral starts");
+            // the old check (starved only when already full) declines this frame
+            p.Check(11, 12, 24, hold: false, starved: false, frame: 1).Should().BeFalse();
+            // the batch of two loaded pages does not fit in the one free layer: grow now
+            p.CheckBatch(11, 12, 24, incoming: 2, hold: false, frame: 1).Should().BeTrue();
+            GrowthPolicy.NextFor(12, 24, 11 + 2).Should().Be(24);
+        }
+
+        [Fact]
+        public void A_batch_that_fits_keeps_the_deferral()
+        {
+            var p = new GrowthPolicy();
+            p.CheckBatch(11, 12, 24, incoming: 1, hold: false, frame: 0).Should().BeFalse("one upload fits in the free layer");
+            p.CheckBatch(11, 12, 24, incoming: 0, hold: false, frame: 1).Should().BeFalse();
+            p.CheckBatch(5, 12, 24, incoming: 7, hold: false, frame: 2).Should().BeFalse("7 fit exactly next to 5 (and 5/12 is below 75%)");
+            p.CheckBatch(5, 12, 24, incoming: 8, hold: false, frame: 3).Should().BeTrue();
+        }
+
+        [Fact]
+        public void A_batch_never_grows_past_the_ceiling()
+        {
+            var p = new GrowthPolicy();
+            p.CheckBatch(24, 24, 24, incoming: 5, hold: false, frame: 0).Should().BeFalse("at the ceiling the batch evicts as before");
+            GrowthPolicy.Starved(24, 24, 5).Should().BeTrue();
+            GrowthPolicy.Starved(20, 24, 4).Should().BeFalse();
+        }
+
+        [Fact]
+        public void NextFor_doubles_until_the_batch_fits_in_one_step()
+        {
+            GrowthPolicy.NextFor(32, 128, 40).Should().Be(64);
+            GrowthPolicy.NextFor(32, 128, 70).Should().Be(128, "two doublings, recreated once");
+            GrowthPolicy.NextFor(32, 128, 500).Should().Be(128, "at most the ceiling");
+            GrowthPolicy.NextFor(12, 24, 1).Should().Be(24, "at least one doubling");
+        }
+
         [Fact]
         public void RangeAllocator_grow_keeps_allocations_and_merges_the_tail()
         {
