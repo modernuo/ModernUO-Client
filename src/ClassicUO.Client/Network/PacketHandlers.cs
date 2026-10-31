@@ -602,14 +602,12 @@ namespace ClassicUO.Network
             }
 
             string oldName = entity.Name;
-            entity.Name = p.ReadASCII(30);
-            entity.Hits = p.ReadUInt16BE();
-            entity.HitsMax = p.ReadUInt16BE();
+            string name = p.ReadASCII(30);
+            ushort hits = p.ReadUInt16BE();
+            ushort hitsMax = p.ReadUInt16BE();
 
-            if (entity.HitsRequest == HitsRequestStatus.Pending)
-            {
-                entity.HitsRequest = HitsRequestStatus.Received;
-            }
+            // T1 (funnel part 6): the name, the hits and the hits request
+            world.Writer.SetStatus(entity, name, hits, hitsMax);
 
             if (SerialHelper.IsMobile(serial))
             {
@@ -620,13 +618,15 @@ namespace ClassicUO.Network
                     return;
                 }
 
-                mobile.IsRenamable = p.ReadBool();
+                bool renamable = p.ReadBool();
                 byte type = p.ReadUInt8();
+                bool extended = type > 0 && p.Position + 1 <= p.Length;
 
-                if (type > 0 && p.Position + 1 <= p.Length)
+                // IsRenamable, then (the extended part) IsFemale, an input
+                world.Writer.SetMobileStatus(mobile, renamable, extended, extended && p.ReadBool());
+
+                if (extended)
                 {
-                    mobile.IsFemale = p.ReadBool();
-
                     if (mobile == world.Player)
                     {
                         if (
@@ -639,10 +639,12 @@ namespace ClassicUO.Network
                         ushort str = p.ReadUInt16BE();
                         ushort dex = p.ReadUInt16BE();
                         ushort intell = p.ReadUInt16BE();
-                        world.Player.Stamina = p.ReadUInt16BE();
-                        world.Player.StaminaMax = p.ReadUInt16BE();
-                        world.Player.Mana = p.ReadUInt16BE();
-                        world.Player.ManaMax = p.ReadUInt16BE();
+                        ushort stamina = p.ReadUInt16BE();
+                        ushort staminaMax = p.ReadUInt16BE();
+                        ushort mana = p.ReadUInt16BE();
+                        ushort manaMax = p.ReadUInt16BE();
+                        world.Writer.SetStamina(world.Player, staminaMax, stamina);
+                        world.Writer.SetMana(world.Player, manaMax, mana);
                         world.Player.Gold = p.ReadUInt32BE();
                         world.Player.PhysicalResistance = (short)p.ReadUInt16BE();
                         world.Player.Weight = p.ReadUInt16BE();
@@ -727,7 +729,7 @@ namespace ClassicUO.Network
                                 race = 1;
                             }
 
-                            world.Player.Race = (RaceType)race;
+                            world.Writer.SetRace(world.Player, (RaceType)race);
                         }
                         else
                         {
@@ -834,6 +836,11 @@ namespace ClassicUO.Network
 
             ushort count = p.ReadUInt16BE();
 
+            // T1 (funnel part 6): the list folds into the final flags and SA poison (before T1 each entry was a write, then
+            // a Sync), written by one operation
+            Flags flags = mobile.Flags;
+            bool setSAPoison = false, saPoison = false;
+
             for (int i = 0; i < count; i++)
             {
                 ushort type = p.ReadUInt16BE();
@@ -841,38 +848,29 @@ namespace ClassicUO.Network
 
                 if (type == 1)
                 {
-                    if (enabled)
+                    if (Client.Game.UO.Version >= Utility.ClientVersion.CV_7000)
                     {
-                        if (Client.Game.UO.Version >= Utility.ClientVersion.CV_7000)
-                        {
-                            mobile.SetSAPoison(true);
-                        }
-                        else
-                        {
-                            mobile.Flags |= Flags.Poisoned;
-                        }
+                        setSAPoison = true;
+                        saPoison = enabled;
+                    }
+                    else if (enabled)
+                    {
+                        flags |= Flags.Poisoned;
                     }
                     else
                     {
-                        if (Client.Game.UO.Version >= Utility.ClientVersion.CV_7000)
-                        {
-                            mobile.SetSAPoison(false);
-                        }
-                        else
-                        {
-                            mobile.Flags &= ~Flags.Poisoned;
-                        }
+                        flags &= ~Flags.Poisoned;
                     }
                 }
                 else if (type == 2)
                 {
                     if (enabled)
                     {
-                        mobile.Flags |= Flags.YellowBar;
+                        flags |= Flags.YellowBar;
                     }
                     else
                     {
-                        mobile.Flags &= ~Flags.YellowBar;
+                        flags &= ~Flags.YellowBar;
                     }
                 }
                 else if (type == 3)
@@ -881,7 +879,7 @@ namespace ClassicUO.Network
                 }
             }
 
-            world.Ecs.Sync(mobile);
+            world.Writer.SetHealthbar(mobile, flags, setSAPoison, saPoison);
         }
 
         private static void UpdateItem(World world, ref StackDataReader p)
@@ -1874,13 +1872,11 @@ namespace ClassicUO.Network
                 return;
             }
 
-            entity.HitsMax = p.ReadUInt16BE();
-            entity.Hits = p.ReadUInt16BE();
+            ushort hitsMax = p.ReadUInt16BE();
+            ushort hits = p.ReadUInt16BE();
 
-            if (entity.HitsRequest == HitsRequestStatus.Pending)
-            {
-                entity.HitsRequest = HitsRequestStatus.Received;
-            }
+            // T1 (funnel part 6)
+            world.Writer.SetHits(entity, hitsMax, hits);
 
             if (SerialHelper.IsMobile(serial))
             {
@@ -1891,10 +1887,12 @@ namespace ClassicUO.Network
                     return;
                 }
 
-                mobile.ManaMax = p.ReadUInt16BE();
-                mobile.Mana = p.ReadUInt16BE();
-                mobile.StaminaMax = p.ReadUInt16BE();
-                mobile.Stamina = p.ReadUInt16BE();
+                ushort manaMax = p.ReadUInt16BE();
+                ushort mana = p.ReadUInt16BE();
+                ushort staminaMax = p.ReadUInt16BE();
+                ushort stamina = p.ReadUInt16BE();
+                world.Writer.SetMana(mobile, manaMax, mana);
+                world.Writer.SetStamina(mobile, staminaMax, stamina);
 
                 if (mobile == world.Player)
                 {
@@ -2517,7 +2515,9 @@ namespace ClassicUO.Network
             bool repeat = p.ReadBool();
             byte delay = p.ReadUInt8();
 
-            mobile.SetAnimation(
+            // T1 (funnel part 6)
+            world.Writer.AnimateMobile(
+                mobile,
                 Mobile.GetReplacedObjectAnimation(mobile.Graphic, action),
                 delay,
                 (byte)frame_count,
@@ -3479,13 +3479,11 @@ namespace ClassicUO.Network
                 return;
             }
 
-            entity.HitsMax = p.ReadUInt16BE();
-            entity.Hits = p.ReadUInt16BE();
+            ushort hitsMax = p.ReadUInt16BE();
+            ushort hits = p.ReadUInt16BE();
 
-            if (entity.HitsRequest == HitsRequestStatus.Pending)
-            {
-                entity.HitsRequest = HitsRequestStatus.Received;
-            }
+            // T1 (funnel part 6)
+            world.Writer.SetHits(entity, hitsMax, hits);
 
             if (entity == world.Player)
             {
@@ -3502,8 +3500,8 @@ namespace ClassicUO.Network
                 return;
             }
 
-            mobile.ManaMax = p.ReadUInt16BE();
-            mobile.Mana = p.ReadUInt16BE();
+            ushort manaMax = p.ReadUInt16BE();
+            world.Writer.SetMana(mobile, manaMax, p.ReadUInt16BE());
 
             if (mobile == world.Player)
             {
@@ -3520,8 +3518,8 @@ namespace ClassicUO.Network
                 return;
             }
 
-            mobile.StaminaMax = p.ReadUInt16BE();
-            mobile.Stamina = p.ReadUInt16BE();
+            ushort staminaMax = p.ReadUInt16BE();
+            world.Writer.SetStamina(mobile, staminaMax, p.ReadUInt16BE());
 
             if (mobile == world.Player)
             {
@@ -3812,8 +3810,8 @@ namespace ClassicUO.Network
                 running != 0,
                 true
             );
-            owner.SetAnimation(group, 0, 5, 1);
-            owner.AnimIndex = 0;
+            // T1 (funnel part 6): the death animation from its first frame
+            world.Writer.AnimateMobile(owner, group, 0, 5, 1, frame: 0);
 
             if (ProfileManager.CurrentProfile.AutoOpenCorpses)
             {
@@ -4548,11 +4546,13 @@ namespace ClassicUO.Network
 
                                 if (mobile != null)
                                 {
-                                    mobile.SetAnimation(
-                                        Mobile.GetReplacedObjectAnimation(mobile.Graphic, animation)
+                                    // T1 (funnel part 6): the animation held at the frame
+                                    world.Writer.AnimateMobile(
+                                        mobile,
+                                        Mobile.GetReplacedObjectAnimation(mobile.Graphic, animation),
+                                        frame: (byte)frame,
+                                        hold: true
                                     );
-                                    mobile.ExecuteAnimation = false;
-                                    mobile.AnimIndex = (byte)frame;
                                 }
                             }
                             else if (world.Player != null && serial == world.Player)
@@ -4570,35 +4570,27 @@ namespace ClassicUO.Network
                 //===========================================================================================
                 case 0x1B: // new spellbook content
                     p.Skip(2);
-                    Item spellbook = world.GetOrCreateItem(p.ReadUInt32BE());
-                    spellbook.Graphic = p.ReadUInt16BE();
-                    spellbook.Clear();
-                    world.Ecs.Sync(spellbook);
+                    uint spellbookSerial = p.ReadUInt32BE();
+                    ushort spellbookGraphic = p.ReadUInt16BE();
                     ushort type = p.ReadUInt16BE();
+                    uint spells0 = 0, spells1 = 0;
 
-                    for (int j = 0; j < 2; j++)
+                    for (int i = 0; i < 4; i++)
                     {
-                        uint spells = 0;
+                        spells0 |= (uint)(p.ReadUInt8() << (i * 8));
+                    }
 
-                        for (int i = 0; i < 4; i++)
-                        {
-                            spells |= (uint)(p.ReadUInt8() << (i * 8));
-                        }
+                    for (int i = 0; i < 4; i++)
+                    {
+                        spells1 |= (uint)(p.ReadUInt8() << (i * 8));
+                    }
 
-                        for (int i = 0; i < 32; i++)
-                        {
-                            if ((spells & (1 << i)) != 0)
-                            {
-                                ushort cc = (ushort)(j * 32 + i + 1);
-                                // FIXME: should i call Item.Create ?
-                                Item spellItem = Item.Create(world, cc); // new Item()
-                                spellItem.Serial = cc;
-                                spellItem.Graphic = 0x1F2E;
-                                spellItem.Amount = cc;
-                                spellItem.Container = spellbook;
-                                spellbook.PushToBack(spellItem);
-                            }
-                        }
+                    // T1 (funnel part 6): the spellbook's graphic, its emptied child list and Sync, then the (detached) entries
+                    Item spellbook = world.Writer.FillSpellbook(spellbookSerial, spellbookGraphic, spells0, spells1);
+
+                    if (spellbook == null)
+                    {
+                        break;
                     }
 
                     UIManager.GetGump<SpellbookGump>(spellbook)?.RequestUpdateContents();
@@ -4773,9 +4765,8 @@ namespace ClassicUO.Network
                     {
                         if ((m.Serial & 0xFFFF) == serial)
                         {
-                            m.SetAnimation(animID);
-                            m.AnimIndex = frameCount;
-                            m.ExecuteAnimation = false;
+                            // T1 (funnel part 6): the animation held at the frame
+                            world.Writer.AnimateMobile(m, animID, frame: frameCount, hold: true);
 
                             break;
                         }
@@ -5664,7 +5655,9 @@ namespace ClassicUO.Network
             byte mode = p.ReadUInt8();
             byte group = Mobile.GetObjectNewAnimation(mobile, type, action, mode);
 
-            mobile.SetAnimation(
+            // T1 (funnel part 6)
+            world.Writer.AnimateMobile(
+                mobile,
                 group,
                 repeatCount: 1,
                 repeat: (type == 1 || type == 2) && mobile.Graphic == 0x0015,

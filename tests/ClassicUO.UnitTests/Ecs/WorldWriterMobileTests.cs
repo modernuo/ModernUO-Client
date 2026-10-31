@@ -679,7 +679,7 @@ namespace ClassicUO.UnitTests.Ecs
             n.Should().BeSameAs(m);
         }
 
-        public enum MobileOp { Upsert, Place, Notoriety, Body, Move, Graphic, Turn, Stop }
+        public enum MobileOp { Upsert, Place, Notoriety, Body, Move, Graphic, Turn, Stop, Hits, Status, MobileStatus, Mana, Stamina, Race, Healthbar, Animate }
 
         private static void Run(World world, MobileOp op, Mobile m, WorldWriter.Placement placement = default)
         {
@@ -692,6 +692,14 @@ namespace ClassicUO.UnitTests.Ecs
                 case MobileOp.Graphic: world.Writer.SetMobileGraphic(m, 0x25E, checkBody: true); break;
                 case MobileOp.Turn: world.Writer.SetMobileDirection(m, Direction.West); break;
                 case MobileOp.Stop: world.Writer.StopMobile(m); break;
+                case MobileOp.Hits: world.Writer.SetHits(m, 90, 45); break;
+                case MobileOp.Status: world.Writer.SetStatus(m, "renamed", 45, 90); break;
+                case MobileOp.MobileStatus: world.Writer.SetMobileStatus(m, true, true, true); break;
+                case MobileOp.Mana: world.Writer.SetMana(m, 80, 40); break;
+                case MobileOp.Stamina: world.Writer.SetStamina(m, 70, 35); break;
+                case MobileOp.Race: world.Writer.SetRace(m, RaceType.GARGOYLE); break;
+                case MobileOp.Healthbar: world.Writer.SetHealthbar(m, Flags.YellowBar | Flags.Poisoned, true, true); break;
+                case MobileOp.Animate: world.Writer.AnimateMobile(m, 12, 2, 5, 1, frame: 3, hold: true); break;
                 default: world.Writer.MoveMobile(m, 1200, 1200, 0); break;
             }
         }
@@ -713,6 +721,22 @@ namespace ClassicUO.UnitTests.Ecs
         [InlineData(MobileOp.Turn, false)]
         [InlineData(MobileOp.Stop, true)]
         [InlineData(MobileOp.Stop, false)]
+        [InlineData(MobileOp.Hits, true)]
+        [InlineData(MobileOp.Hits, false)]
+        [InlineData(MobileOp.Status, true)]
+        [InlineData(MobileOp.Status, false)]
+        [InlineData(MobileOp.MobileStatus, true)]
+        [InlineData(MobileOp.MobileStatus, false)]
+        [InlineData(MobileOp.Mana, true)]
+        [InlineData(MobileOp.Mana, false)]
+        [InlineData(MobileOp.Stamina, true)]
+        [InlineData(MobileOp.Stamina, false)]
+        [InlineData(MobileOp.Race, true)]
+        [InlineData(MobileOp.Race, false)]
+        [InlineData(MobileOp.Healthbar, true)]
+        [InlineData(MobileOp.Healthbar, false)]
+        [InlineData(MobileOp.Animate, true)]
+        [InlineData(MobileOp.Animate, false)]
         public void A_Mobile_Operation_Inside_An_Operation_Is_Rejected_Before_Any_Change(MobileOp op, bool throws)
         {
             World world = Build(Start.Standing), reference = Build(Start.Standing);
@@ -760,6 +784,22 @@ namespace ClassicUO.UnitTests.Ecs
         [InlineData(MobileOp.Turn, false)]
         [InlineData(MobileOp.Stop, true)]
         [InlineData(MobileOp.Stop, false)]
+        [InlineData(MobileOp.Hits, true)]
+        [InlineData(MobileOp.Hits, false)]
+        [InlineData(MobileOp.Status, true)]
+        [InlineData(MobileOp.Status, false)]
+        [InlineData(MobileOp.MobileStatus, true)]
+        [InlineData(MobileOp.MobileStatus, false)]
+        [InlineData(MobileOp.Mana, true)]
+        [InlineData(MobileOp.Mana, false)]
+        [InlineData(MobileOp.Stamina, true)]
+        [InlineData(MobileOp.Stamina, false)]
+        [InlineData(MobileOp.Race, true)]
+        [InlineData(MobileOp.Race, false)]
+        [InlineData(MobileOp.Healthbar, true)]
+        [InlineData(MobileOp.Healthbar, false)]
+        [InlineData(MobileOp.Animate, true)]
+        [InlineData(MobileOp.Animate, false)]
         public void A_Mobile_This_World_Does_Not_Hold_Is_Rejected_Before_Any_Change(MobileOp op, bool throws)
         {
             foreach (bool foreign in new[] { true, false })
@@ -794,6 +834,7 @@ namespace ClassicUO.UnitTests.Ecs
                 world.Writer.OutstandingPlacements.Should().Be(0);
                 AssertSameWorld(reference, world);
                 (stranger.X, stranger.NotorietyFlag).Should().Be(foreign ? ((ushort)1000, NotorietyFlag.Innocent) : ((ushort)0, (NotorietyFlag)0), "the stranger is untouched");
+                StatusOf(stranger).Should().Be(foreign ? StatusOf(Build(Start.Standing).Mobiles.Get(MOB)) : StatusOf(Mobile.Create(world, MOB)), "the stranger's status is untouched");
             }
         }
 
@@ -1206,6 +1247,7 @@ namespace ClassicUO.UnitTests.Ecs
                 if (x != null)
                 {
                     (y.Graphic, y.Hue, y.X, y.Y, y.Z, y.Container, y.Layer, y.Amount, y.Direction).Should().Be((x.Graphic, x.Hue, x.X, x.Y, x.Z, x.Container, x.Layer, x.Amount, x.Direction));
+                    StatusOf(y).Should().Be(StatusOf(x), $"0x{serial:X8} status");
                 }
 
                 AssertSameRecord(a, b, serial);
@@ -1239,6 +1281,8 @@ namespace ClassicUO.UnitTests.Ecs
                 y.IsPositionChanged.Should().Be(x.IsPositionChanged);
                 y.IsDestroyed.Should().Be(x.IsDestroyed);
                 y.UpdateStateHash().Should().Be(x.UpdateStateHash(), "the animation state, the queue and the timers");
+                StatusOf(y).Should().Be(StatusOf(x), $"0x{serial:X8} status (funnel part 6)");
+                y.ExecuteAnimation.Should().Be(x.ExecuteAnimation);
                 Enumerable.Range(0, y.Steps.Count).Select(i => y.Steps[i]).Should().Equal(Enumerable.Range(0, x.Steps.Count).Select(i => x.Steps[i]), "the walk queue");
                 ChildSerials(y).Should().Equal(ChildSerials(x));
             }
@@ -1281,6 +1325,12 @@ namespace ClassicUO.UnitTests.Ecs
                 eb.GetComponent<MobileClock>().Should().BeEquivalentTo(ea.GetComponent<MobileClock>(), $"0x{serial:X8} clock");
             }
         }
+
+        // funnel part 6: the cache-only status (the hits and their derived percentage, the hits request, the name; for a mobile
+        // the mana, the stamina, IsRenamable, the race and the SA poison)
+        internal static string StatusOf(Entity e) =>
+            $"{e.Name} {e.Hits}/{e.HitsMax} {e.HitsPercentage}% {e.HitsRequest}" +
+            (e is Mobile m ? $" mana {m.Mana}/{m.ManaMax} stamina {m.Stamina}/{m.StaminaMax} renamable {m.IsRenamable} race {m.Race} sa {m.SAPoisoned}" : "");
 
         private static List<uint> ChildSerials(Entity e)
         {

@@ -101,7 +101,8 @@ namespace ClassicUO.Game.Managers
 
             if (empty)
             {
-                item.LastStepTime = Time.Ticks;
+                // T1 (funnel part 6)
+                _world.Writer.SetBoatStepTime(item, Time.Ticks);
             }
 
             //Direction moveDir = DirectionHelper.CalculateDirection(currX, currY, x, y);
@@ -130,9 +131,8 @@ namespace ClassicUO.Game.Managers
 
                 if (multiItem != null)
                 {
-                    multiItem.OffsetX = 0;
-                    multiItem.OffsetY = 0;
-                    multiItem.OffsetZ = 0;
+                    // T1 (funnel part 6)
+                    _world.Writer.ResetBoatOffset(multiItem);
                 }
 
                 if (_items.TryGetValue(serial, out var list))
@@ -149,9 +149,7 @@ namespace ClassicUO.Game.Managers
                             continue;
                         }
 
-                        ent.OffsetX = 0;
-                        ent.OffsetY = 0;
-                        ent.OffsetZ = 0;
+                        _world.Writer.ResetBoatOffset(ent);
                     }
 
                     list.Clear();
@@ -264,22 +262,13 @@ namespace ClassicUO.Game.Managers
 
                     if (removeStep)
                     {
-                        item.X = step.X;
-                        item.Y = step.Y;
-                        item.Z = step.Z;
-                        item.UpdateScreenPosition();
-
-                        item.OffsetX = 0;
-                        item.OffsetY = 0;
-                        item.OffsetZ = 0;
-
+                        // T1 (funnel part 6): the step's position, screen position, offset and tile (the deque is the
+                        // manager's own state: the step is copied before it leaves)
+                        ushort stepX = step.X, stepY = step.Y;
+                        sbyte stepZ = step.Z;
+                        Direction stepDir = step.MovingDir;
+                        _world.Writer.CompleteBoatStep(item, stepX, stepY, stepZ);
                         deques.RemoveFromFront();
-
-
-                        if (item.IsPlaced)
-                        {
-                            item.AddToTile();
-                        }
 
                         house?.Generate(true, true, true);
 
@@ -287,13 +276,13 @@ namespace ClassicUO.Game.Managers
                         (
                             item,
                             removeStep,
-                            step.X,
-                            step.Y,
-                            step.Z,
-                            step.MovingDir
+                            stepX,
+                            stepY,
+                            stepZ,
+                            stepDir
                         );
 
-                        item.LastStepTime = Time.Ticks;
+                        _world.Writer.SetBoatStepTime(item, Time.Ticks);
                     }
                     else
                     {
@@ -369,19 +358,8 @@ namespace ClassicUO.Game.Managers
 
                     if (removeStep)
                     {
-                        entity.X = (ushort) (x - it.X);
-                        entity.Y = (ushort) (y - it.Y);
-                        entity.Z = (sbyte) (z - it.Z);
-                        entity.UpdateScreenPosition();
-
-                        entity.OffsetX = 0;
-                        entity.OffsetY = 0;
-                        entity.OffsetZ = 0;
-
-                        if (entity.IsPlaced)
-                        {
-                            entity.AddToTile();
-                        }
+                        // T1 (funnel part 6)
+                        _world.Writer.MoveBoatPassenger(entity, (ushort) (x - it.X), (ushort) (y - it.Y), (sbyte) (z - it.Z));
                     }
                     else
                     {
