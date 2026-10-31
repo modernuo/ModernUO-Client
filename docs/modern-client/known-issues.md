@@ -92,5 +92,6 @@ Auto's fallback (no usable SDL_GPU/Vulkan) runs Legacy on FNA3D's D3D11 driver, 
 
 - **What:** standing inside the house at 1427,1691 (Z 0), the Gpu renderer usually hides the roof, the chimneys of the building at bottom left, and a tree, as Legacy does. In one run of the f27759989 binary (bench-000045, base arm), it drew all three for the whole 5 s window. That run's counters were also different: foliage 1, cap_statics 2, pick_tests 36, override_calls 28, against 0, 0, 24 and 14.
 - **Not caused by tiledata-single:** the same binary on the same pack hid them in 6 of 6 shots in bench-000046 (3 runs, shots at about 8 s and 14 s after arrival). In those runs, base-vs-base differences were as large as old-vs-new.
-- **Suspected cause:** a race in how the Gpu host decides to hide what is above the player when they arrive at a spot. Not investigated.
+- **Seen again on the milestone tip** (bench-000054, NativeAOT 5c90523ca, classic-1.2): the same three objects were drawn, with identical counters (foliage 1, cap_statics 2, pick_tests 36.7, override_calls 28). That's 2 of 15 Gpu house shots so far; Legacy hid them every time.
+- **Suspected cause:** a race in how the Gpu host decides to hide what is above the player when they arrive at a spot. Investigation started 2026-10-31.
 - **Evidence:** `~/.claude/rf-agent/jobs/bench/done/bench-000045/` (`base-gpu/house_gpu.png`, `diff-gpu/house_gpu.png`) and `bench-000046/`. The poc-log tiledata-single entry has the parity tables.
