@@ -83,7 +83,11 @@ namespace ClassicUO.Assets
         // the pack's text/fonts.bin and text/unifont.bin (null = MUL)
         private RecordStore _asciiStore, _uniStore;
         // records found invalid (ASCII records first, then unicode records): absent for the session
-        private bool[] _badRecords = Array.Empty<bool>();
+        private int[] _badRecords = Array.Empty<int>();
+        // first use of a unicode page or an ASCII font: one thread loads it, the others wait for that load instead of
+        // decoding (or rereading from the MUL file) the same thing again. Striped by page; the loads hold no other lock
+        // while waiting, so there is no lock order to keep.
+        private readonly object[] _loadLocks = CreateLocks(64);
         private readonly VisitedUrlCache _visitedUrls = new VisitedUrlCache(1024);
         private readonly int[] _offsetCharTable = { 2, 0, 2, 2, 0, 0, 2, 2, 0, 0 };
         private readonly int[] _offsetSymbolTable = { 1, 0, 1, 1, -1, 0, 1, 1, 0, 0 };
@@ -172,12 +176,12 @@ namespace ClassicUO.Assets
 
             if (asciiPath != null && File.Exists(asciiPath))
             {
-                _asciiStore = OpenStore(asciiPath, TextConst.MagicFontsAscii);
+                _asciiStore = OpenStore(asciiPath, TextConst.OpenAsciiStore);
             }
 
             if (uniPath != null && File.Exists(uniPath))
             {
-                _uniStore = OpenStore(uniPath, TextConst.MagicFontsUnicode);
+                _uniStore = OpenStore(uniPath, TextConst.OpenUnicodeStore);
             }
 
             if (_asciiStore != null)
@@ -213,11 +217,11 @@ namespace ClassicUO.Assets
         public void LoadStores(string asciiPath, string unicodePath)
         {
             ClearResources();
-            var ascii = RecordStore.Open(asciiPath, TextConst.MagicFontsAscii);
+            var ascii = TextConst.OpenAsciiStore(asciiPath);
 
             try
             {
-                _uniStore = RecordStore.Open(unicodePath, TextConst.MagicFontsUnicode);
+                _uniStore = TextConst.OpenUnicodeStore(unicodePath);
             }
             catch
             {
@@ -241,11 +245,11 @@ namespace ClassicUO.Assets
             }
         }
 
-        private static RecordStore OpenStore(string path, uint magic)
+        private static RecordStore OpenStore(string path, Func<string, RecordStore> open)
         {
             try
             {
-                return RecordStore.Open(path, magic);
+                return open(path);
             }
             catch (Exception e) when (e is IOException || e is InvalidDataException || e is UnauthorizedAccessException)
             {
@@ -261,7 +265,7 @@ namespace ClassicUO.Assets
         private void CheckRecords()
         {
             int asciiRecords = _asciiStore?.Records.Length ?? 0;
-            _badRecords = new bool[asciiRecords + (_uniStore?.Records.Length ?? 0)];
+            _badRecords = new int[asciiRecords + (_uniStore?.Records.Length ?? 0)];
 
             for (int i = 0; i < asciiRecords; i++)
             {
@@ -296,11 +300,27 @@ namespace ClassicUO.Assets
 
         private void MarkBad(int index, string why)
         {
-            if (!Volatile.Read(ref _badRecords[index]))
+            // the thread that flips the flag logs it: once per record, however many threads find it bad
+            if (Interlocked.Exchange(ref _badRecords[index], 1) == 0)
             {
-                Volatile.Write(ref _badRecords[index], true);
+                Interlocked.Increment(ref StatBadLogged);
                 Log.Error($"Fonts: {why}; it is treated as absent");
             }
+        }
+
+        /// <summary>Tests: bad font records logged so far.</summary>
+        public static int StatBadLogged;
+
+        private static object[] CreateLocks(int n)
+        {
+            var locks = new object[n];
+
+            for (int i = 0; i < n; i++)
+            {
+                locks[i] = new object();
+            }
+
+            return locks;
         }
 
         private unsafe void LoadAsciiMul()
@@ -430,7 +450,7 @@ namespace ClassicUO.Assets
 
             Array.Clear(_unicodeFontAddress);
             _asciiRows = Array.Empty<FontCharacterData[]>();
-            _badRecords = Array.Empty<bool>();
+            _badRecords = Array.Empty<int>();
         }
 
         /// <summary>A font's 224 ASCII glyphs; with the pack, read on the font's first use. Thread-safe.</summary>
@@ -443,12 +463,31 @@ namespace ClassicUO.Assets
 
         private FontCharacterData[] LoadAsciiRow(int font)
         {
+            lock (_loadLocks[font & 63])
+            {
+                // a thread that waited here finds the row the first one loaded
+                var loaded = Volatile.Read(ref _asciiRows[font]);
+
+                if (loaded != null)
+                {
+                    return loaded;
+                }
+
+                var row = LoadAsciiRowCore(font);
+                Volatile.Write(ref _asciiRows[font], row);
+
+                return row;
+            }
+        }
+
+        private FontCharacterData[] LoadAsciiRowCore(int font)
+        {
             // a font whose record is missing or invalid has 224 empty glyphs (width and height 0)
             var row = new FontCharacterData[TextConst.AsciiGlyphs];
             var store = _asciiStore;
             Interlocked.Increment(ref StatAsciiLoads);
 
-            if (store != null && store.TryGet(font, out var slot, out var rec) && !Volatile.Read(ref _badRecords[slot.Record - 1]))
+            if (store != null && store.TryGet(font, out var slot, out var rec) && Volatile.Read(ref _badRecords[slot.Record - 1]) == 0)
             {
                 int bad = (int)slot.Record - 1;
                 byte[] buf = System.Buffers.ArrayPool<byte>.Shared.Rent((int)rec.RawBytes);
@@ -480,7 +519,7 @@ namespace ClassicUO.Assets
                 }
             }
 
-            return Interlocked.CompareExchange(ref _asciiRows[font], row, null) ?? row;
+            return row;
         }
 
         private static FontCharacterDataUnicode _nullChar = new FontCharacterDataUnicode();
@@ -516,12 +555,24 @@ namespace ClassicUO.Assets
 
         private FontCharacterDataUnicode[] LoadPage(byte font, int page, FontCharacterDataUnicode[][] pages)
         {
-            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
-            var result = LoadPageCore(font, page);
-            Interlocked.Increment(ref StatPageLoads);
-            Interlocked.Add(ref StatPageTicks, System.Diagnostics.Stopwatch.GetTimestamp() - t0);
+            lock (_loadLocks[(font * TextConst.PagesPerFont + page) & 63])
+            {
+                // a thread that waited here finds the page the first one loaded (no second decode or MUL read)
+                var loaded = Volatile.Read(ref pages[page]);
 
-            return Interlocked.CompareExchange(ref pages[page], result, null) ?? result;
+                if (loaded != null)
+                {
+                    return loaded;
+                }
+
+                long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+                var result = LoadPageCore(font, page);
+                Interlocked.Increment(ref StatPageLoads);
+                Interlocked.Add(ref StatPageTicks, System.Diagnostics.Stopwatch.GetTimestamp() - t0);
+                Volatile.Write(ref pages[page], result);
+
+                return result;
+            }
         }
 
         private FontCharacterDataUnicode[] LoadPageCore(byte font, int page)
@@ -573,7 +624,7 @@ namespace ClassicUO.Assets
 
             int bad = (_asciiStore?.Records.Length ?? 0) + (int)slot.Record - 1;
 
-            if (Volatile.Read(ref _badRecords[bad]))
+            if (Volatile.Read(ref _badRecords[bad]) != 0)
             {
                 return _emptyPage;
             }
@@ -2373,6 +2424,12 @@ namespace ClassicUO.Assets
                                             break;
                                         }
 
+                                        if (nowX < 0)
+                                        {
+                                            // clipped on the left too: a negative OffsetX (a shard's pack) must not index before the buffer
+                                            continue;
+                                        }
+
                                         byte cl = (byte)(@char.Data[scanLineOff + c] & (1 << (7 - j)));
                                         int block = testY * width + nowX;
 
@@ -2425,6 +2482,11 @@ namespace ClassicUO.Assets
                                         if (testX >= width)
                                         {
                                             break;
+                                        }
+
+                                        if (testX < 0)
+                                        {
+                                            continue;
                                         }
 
                                         int block = testY * width + testX;
@@ -2487,6 +2549,11 @@ namespace ClassicUO.Assets
                                             break;
                                         }
 
+                                        if (testX < 0)
+                                        {
+                                            continue;
+                                        }
+
                                         int block = testY * width + testX;
 
                                         if (pData[block] == solidColor)
@@ -2534,6 +2601,11 @@ namespace ClassicUO.Assets
                                         if (testX >= width)
                                         {
                                             break;
+                                        }
+
+                                        if (testX < 0)
+                                        {
+                                            continue;
                                         }
 
                                         int block = testY * width + testX;
@@ -2634,6 +2706,11 @@ namespace ClassicUO.Assets
                                 if (testX >= width)
                                 {
                                     break;
+                                }
+
+                                if (testX < 0)
+                                {
+                                    continue;
                                 }
 
                                 int block = testY * width + testX;

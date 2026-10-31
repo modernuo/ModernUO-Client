@@ -162,6 +162,8 @@ namespace ClassicUO
         private static int _planFrames;
         private static bool _gumpsOpened;
         private static bool _textsOpened, _textHover;
+        // the "texts" tooltip hover ends here (Stopwatch ticks): one second after the next shot, or 10 s after it began
+        private static long _textHoverUntil;
 
         // the nearest mobile (other than the player) or item the server sent properties for, closest first
         private static Game.GameObjects.GameObject NearestWithProperties(World world, int skip = 0)
@@ -793,7 +795,7 @@ namespace ClassicUO
         private static string TextStats() =>
             $"text: unicode pages read {Assets.FontsLoader.StatPageLoads - _textPages0} ({(Assets.FontsLoader.StatPageTicks - _textTicks0) * 1000.0 / Stopwatch.Frequency:0.000} ms), " +
             $"ASCII fonts read {Assets.FontsLoader.StatAsciiLoads - _textAscii0}, cliloc strings created {ClilocStrings() - _textStrings0}; " +
-            $"since startup: unicode pages {Assets.FontsLoader.StatPageLoads} ({Assets.FontsLoader.StatPageTicks * 1000.0 / Stopwatch.Frequency:0.000} ms), ASCII fonts {Assets.FontsLoader.StatAsciiLoads}, cliloc strings {ClilocStrings()} " +
+            $"since startup: unicode pages {Assets.FontsLoader.StatPageLoads} ({Assets.FontsLoader.StatPageTicks * 1000.0 / Stopwatch.Frequency:0.000} ms), ASCII fonts {Assets.FontsLoader.StatAsciiLoads}, cliloc strings {ClilocStrings()}, cliloc blocks decoded {Uo.Pack.ClilocTable.StatBlockLoads} ({Uo.Pack.ClilocTable.StatBlockTicks * 1000.0 / Stopwatch.Frequency:0.000} ms; enu {Client.Game.UO.FileManager.Clilocs.EnglishTable?.BlocksLoaded ?? Client.Game.UO.FileManager.Clilocs.LanguageTable?.BlocksLoaded ?? 0} of {Client.Game.UO.FileManager.Clilocs.EnglishTable?.BlockCount ?? Client.Game.UO.FileManager.Clilocs.LanguageTable?.BlockCount ?? 0}) " +
             $"(fonts {(Client.Game.UO.FileManager.Fonts.UnicodeFromPack ? "pack" : "MUL")}, cliloc {(Client.Game.UO.FileManager.Clilocs.FromPack ? "pack" : "MUL")})";
 
         private static void RenderTooltips(World world, int count)
@@ -1400,6 +1402,14 @@ namespace ClassicUO
             }
         }
 
+        // the "texts" hover is over: the scripted mouse is released (Override cleared), nothing stays held
+        private static void EndTextHover()
+        {
+            _textHover = false;
+            _mouse = null;
+            Input.Mouse.Override = null;
+        }
+
         private static void EndPickScan()
         {
             _scanLeft = 0;
@@ -1423,8 +1433,15 @@ namespace ClassicUO
 
             if (_textHover)
             {
-                // the "texts" entry keeps the mouse on an NPC so its tooltip stays up for the screenshot
-                HoldMouse(game);
+                if (now >= _textHoverUntil)
+                {
+                    EndTextHover();
+                }
+                else
+                {
+                    // the "texts" entry keeps the (scripted) mouse on an NPC so its tooltip stays up for the screenshot
+                    HoldMouse(game);
+                }
             }
 
             if (_flipLeft > 0)
@@ -2021,6 +2038,7 @@ namespace ClassicUO
                         var tipTarget = NearestWithProperties(world);
                         PickAt(gs, tipTarget, "tooltip");
                         _textHover = tipTarget != null;
+                        _textHoverUntil = now + sec * 10;
                         Log.Info($"[bench] texts: journal, names, help gump, tooltip of {(tipTarget != null ? $"0x{((Game.GameObjects.Entity)tipTarget).Serial:X8}" : "nothing")}; gumps open: {string.Join(",", System.Linq.Enumerable.Select(Game.Managers.UIManager.Gumps, gg => gg.GetType().Name))}");
                         _planIndex++;
                         _stepAt = now + sec * 2;
@@ -2160,6 +2178,12 @@ namespace ClassicUO
                         {
                             string renderer = game.GetGpuWorld() != null ? "gpu" : "legacy";
                             game.RequestWorldShot(System.IO.Path.Combine(_shots, $"{_plan[_planIndex].Substring(5)}_{renderer}.png"));
+                        }
+
+                        if (_textHover)
+                        {
+                            // the shot is taken on the next frame; release the scripted mouse a second later
+                            _textHoverUntil = Math.Min(_textHoverUntil, now + sec);
                         }
 
                         _planIndex++;
