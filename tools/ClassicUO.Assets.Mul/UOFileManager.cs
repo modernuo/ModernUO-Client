@@ -40,9 +40,15 @@ namespace ClassicUO.Assets
             Verdata = new VerdataLoader(this);
             TileArt = new TileArtLoader(this);
             Gumps = new GumpsLoader(this);
+            Fonts = new FontsLoader(this);
+            Clilocs = new ClilocLoader(this);
+            Speeches = new SpeechesLoader(this);
         }
 
         public GumpsLoader Gumps { get; }
+        public FontsLoader Fonts { get; }
+        public ClilocLoader Clilocs { get; }
+        public SpeechesLoader Speeches { get; }
 
         public ClientVersion Version { get; }
         public string BasePath { get; }
@@ -76,6 +82,9 @@ namespace ClassicUO.Assets
             Verdata.Dispose();
             TileArt.Dispose();
             Gumps.Dispose();
+            Fonts.Dispose();
+            Clilocs.Dispose();
+            Speeches.Dispose();
         }
 
         public string GetUOFilePath(string file)

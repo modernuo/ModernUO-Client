@@ -8,7 +8,7 @@ using Uo.Pack;
 string uoPath = @"C:\Ultima Online Classic";
 string outDir = @"C:\Repositories\uo-packs\classic";
 string debugDir = @"C:\Repositories\uo-packs\debug";
-bool useX = false, maps = true, convert = true, anims = true, gumps = true, formatGiven = false, gumpReport = false;
+bool useX = false, maps = true, convert = true, anims = true, gumps = true, fonts = true, cliloc = true, speech = true, formatGiven = false, gumpReport = false;
 string? gumpDef = null;
 HashSet<string>? only = null; // --only: convert just these stages into an existing pack, keeping everything else
 for (int i = 0; i < args.Length; i++)
@@ -25,6 +25,14 @@ for (int i = 0; i < args.Length; i++)
         case "--anims-only": only = ["anims"]; break;
         case "--no-anims": anims = false; break;
         case "--no-gumps": gumps = false; break;
+        case "--no-fonts": fonts = false; break;
+        case "--no-cliloc": cliloc = false; break;
+        case "--no-speech": speech = false; break;
+        case "--raw-text": TextConvert.Raw = true; break;
+        case "--text-small": TextConvert.SmallRaw = int.Parse(args[++i]); break;
+        case "--cliloc-brotli": TextConvert.ClilocBrotli = true; break;
+        case "--cliloc-skip": foreach (var s in args[++i].Split(',')) TextConvert.ClilocSkip.Add(s.Trim()); break;
+        case "--no-cliloc-overrides": TextConvert.ClilocOverridesOff = true; break;
         case "--gump-def": gumpDef = args[++i]; break;
         case "--gump-report": gumpReport = true; break;
         case "--raw-gumps": GumpConvert.Raw = true; break;
@@ -71,12 +79,12 @@ for (int i = 0; i < args.Length; i++)
         case "--regions": ConvertOptions.MaxRegions = int.Parse(args[++i]); break;
         case "--bench-bc7": Bench.Bc7(args[++i]); return 0;
         default:
-            Console.WriteLine("usage: Uo.Converter [--uo <client dir>] [--out <pack dir>] [--debug <png dir>] [--format b5g5r5a1|rgba8|bc7] [--bc7-quality fast|balanced|bestquality] [--bc7-refine-db 28] [--raw-regions] [--raw-pages|--compress-pages[=chunked]] [--chunk-bytes n] [--page-size 2048] [--anim-page-size 1024] [--anim-format indexed8|page] [--indexed-mips none|b16] [--threads n] [--pages a-b] [--facets 0,1] [--regions n] [--xfiles] [--no-maps] [--no-anims] [--no-gumps] [--raw-gumps] [--gump-small n] [--gump-def <file>] [--gump-report] [--only art,tex,hues,tiledata,data,gumps,maps,anims] [--anims-only] [--bodies 400,0xC8] [--verify-only]");
+            Console.WriteLine("usage: Uo.Converter [--uo <client dir>] [--out <pack dir>] [--debug <png dir>] [--format b5g5r5a1|rgba8|bc7] [--bc7-quality fast|balanced|bestquality] [--bc7-refine-db 28] [--raw-regions] [--raw-pages|--compress-pages[=chunked]] [--chunk-bytes n] [--page-size 2048] [--anim-page-size 1024] [--anim-format indexed8|page] [--indexed-mips none|b16] [--threads n] [--pages a-b] [--facets 0,1] [--regions n] [--xfiles] [--no-maps] [--no-anims] [--no-gumps] [--no-fonts] [--no-cliloc] [--no-speech] [--raw-gumps] [--raw-text] [--text-small n] [--cliloc-brotli] [--cliloc-skip ext,ext] [--no-cliloc-overrides] [--gump-small n] [--gump-def <file>] [--gump-report] [--only art,tex,hues,tiledata,data,gumps,fonts,cliloc,speech,maps,anims] [--anims-only] [--bodies 400,0xC8] [--verify-only]");
             return 1;
     }
 }
 
-bool Want(string stage) => only != null ? only.Contains(stage) : stage switch { "maps" => maps, "anims" => anims, "gumps" => gumps, _ => true };
+bool Want(string stage) => only != null ? only.Contains(stage) : stage switch { "maps" => maps, "anims" => anims, "gumps" => gumps, "fonts" => fonts, "cliloc" => cliloc, "speech" => speech, _ => true };
 if (only != null && !formatGiven && File.Exists(PackConst.PagePath(Path.Combine(outDir, "art"), 0)))
 {
     // Match the pack being extended: page format and compression come from its first art page.
@@ -155,6 +163,9 @@ if (convert)
         Stage("equipconv", () => TableConvert.EquipConv(fm, outDir));
     }
     if (Want("gumps")) stats["gumps"] = Stage("gumps", () => GumpConvert.Run(fm, outDir));
+    if (Want("fonts")) stats["fonts"] = Stage("fonts", () => TextConvert.Fonts(fm, outDir));
+    if (Want("cliloc")) stats["cliloc"] = Stage("cliloc", () => TextConvert.Cliloc(fm, outDir));
+    if (Want("speech")) stats["speech"] = Stage("speech", () => TextConvert.Speech(fm, outDir));
 
     if (Want("maps"))
     {
