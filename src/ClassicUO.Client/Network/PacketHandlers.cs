@@ -6169,50 +6169,18 @@ namespace ClassicUO.Network
                 //}
             }
         
-            Entity container = world.Get(containerSerial);
-        
+            // T1: the container, a mobile holding the serial, destroy-vs-reuse (an item from another container is destroyed
+            // and recreated, except equipment going into a corpse), the values, the link at the end of the child list
+            Item item = world.Writer.PlaceInContainer(serial, graphic, amount, x, y, hue, containerSerial, out Entity container);
+
             if (container == null)
             {
                 Log.Warn($"No container ({containerSerial}) found");
-        
+
                 //container = world.GetOrCreateItem(containerSerial);
                 return;
             }
-        
-            Item item = world.Items.Get(serial);
-        
-            if (SerialHelper.IsMobile(serial))
-            {
-                world.RemoveMobile(serial, true);
-                Log.Warn("AddItemToContainer function adds mobile as Item");
-            }
-        
-            // Added item.Container != containerSerial to prevent closing containers when changing facets
-            if (item != null && item.Container != containerSerial && (container.Graphic != 0x2006 || item.Layer == Layer.Invalid))
-            {
-                world.RemoveItem(item, true);
-            }
-        
-            item = world.GetOrCreateItem(serial);
-            item.Graphic = graphic;
-            item.CheckGraphicChange();
-            item.Amount = amount;
-            item.FixHue(hue);
-            item.X = x;
-            item.Y = y;
-            item.Z = 0;
-        
-            // Added item.Container != containerSerial to prevent closing containers when changing facets
-            // Should not need to remove it just to add it back in
-            if (item.Container != containerSerial)
-            {
-                world.RemoveItemFromContainer(item);
-                item.Container = containerSerial;
-            }
-        
-            container.PushToBack(item);
-            world.Ecs.Sync(item);
-        
+
             if (SerialHelper.IsMobile(containerSerial))
             {
                 Mobile m = world.Mobiles.Get(containerSerial);

@@ -35,7 +35,7 @@ namespace ClassicUO.Game
     /// writes, no fold, the hook syncs), so a funnel bug never disconnects a player (coordinator, T1 round 2). While one runs,
     /// writes to its own object (and, for a removal, to the removed subtree) are funnel writes for <see cref="FunnelCheck"/>;
     /// writes to any other object are still direct writes. Converted so far: world items (0x1A, 0xF3 and the item branch of
-    /// 0x1D). Every other writer still relies on <see cref="WorldEcs.Sync"/> and <see cref="WorldEcs.PushInputs"/>, which
+    /// 0x1D) and items into containers (0x25, 0x3C's items, 0x27's deny path: <see cref="PlaceInContainer"/>). Every other writer still relies on <see cref="WorldEcs.Sync"/> and <see cref="WorldEcs.PushInputs"/>, which
     /// stay as the fallback until the last packet group is converted.
     /// </para>
     /// <para>
@@ -492,6 +492,135 @@ namespace ClassicUO.Game
             }
         }
 
+        /// <summary>
+        /// 0x25 (UpdateContainedItem), each item of 0x3C (UpdateContainedItems, after its bulk clear, which runs outside this
+        /// operation) and 0x27's deny path (<c>AddItemToContainer</c>): puts an item into a container. Finds the container
+        /// (<c>World.Get(containerSerial)</c>; null: nothing happens, null is returned). A mobile with the item's serial is
+        /// removed (as before T1). An item whose Container differs is destroyed with its contents and recreated, except an
+        /// equipped item (Layer set) going into a corpse, which is moved; then the packet's values are written, and the item is
+        /// linked at the end of the container's child list (a re-push when it already was there).
+        /// </summary>
+        /// <param name="container">The container the item went into, for the handler's gumps.</param>
+        public Item PlaceInContainer(uint serial, ushort graphic, ushort amount, ushort x, ushort y, ushort hue, uint containerSerial, out Entity container)
+        {
+            container = null;
+
+            if (!Admitted(nameof(PlaceInContainer), serial))
+            {
+                return PlaceInContainerPreT1(serial, graphic, amount, x, y, hue, containerSerial, out container);
+            }
+
+            // 1. resolve, in the old order: the container, the item, a mobile holding the serial
+            container = _world.Get(containerSerial);
+
+            if (container == null)
+            {
+                return null;
+            }
+
+            Item item = _world.Items.Get(serial);
+
+            if (SerialHelper.IsMobile(serial))
+            {
+                _world.RemoveMobile(serial, true);
+                Log.Warn("AddItemToContainer function adds mobile as Item");
+            }
+
+            // destroy-vs-reuse: another container's item is destroyed (contents too) and recreated below, unless it is an
+            // equipped item going into a corpse (the corpse's equipment)
+            if (item != null && item.Container != containerSerial && (container.Graphic != 0x2006 || item.Layer == Layer.Invalid))
+            {
+                RemoveForReplacement(item);
+            }
+
+            item = _world.GetOrCreateItem(serial, out _);
+
+            // 2. compute: every read of the previous state is here. CheckGraphicChange ran right after the Graphic write and
+            // read the old Direction (the corpse branch) and the old IsMulti.
+            uint oldContainer = item.Container;
+            bool relink = oldContainer != containerSerial;
+            bool multi = item.IsMulti;
+            bool corpse = !multi && graphic == 0x2006;
+            bool usedLayer = false;
+
+            ItemState v;
+            v.Serial = serial;
+            v.IsMulti = multi;
+            v.Graphic = graphic;
+            v.X = x;
+            v.Y = y;
+            v.Z = 0;
+            v.Hue = Entity.FixedHue(hue);
+            v.Amount = amount;
+            v.Flags = item.Flags;
+            v.Container = containerSerial;
+            v.Direction = item.Direction;
+            v.Layer = item.Layer;
+
+            if (corpse)
+            {
+                Item.CorpseState(ref v.Direction, out usedLayer, out v.Layer);
+            }
+
+            CancelPlacements(item);
+
+            using (Open(item, item))
+            {
+                // 3. write: the ECS, then the cache from v in the old order
+                _world.Ecs.CommitItem(item, in v);
+
+                item.Graphic = v.Graphic;
+
+                if (corpse)
+                {
+                    item.AnimIndex = 99;
+                    item.UsedLayer = usedLayer;
+                    item.Direction = v.Direction;
+                    item.Layer = v.Layer;
+                }
+
+                // 4. derived state where the old CheckGraphicChange ran it: before the amount, hue and position writes (a
+                // multi's load sees the old position, as before T1; for every other item it reads Graphic only)
+                item.RefreshGraphicState();
+
+                item.Amount = v.Amount;
+                item.Hue = v.Hue;
+                item.X = v.X;
+                item.Y = v.Y;
+                item.Z = v.Z;
+
+                if (relink)
+                {
+                    // the links only (the old parent's gump and child list, the tile); the Container is written from v
+                    _world.UnlinkFromContainer(item, oldContainer);
+                    item.Container = v.Container;
+                }
+
+                // at the end of the container's child list, also when it already was there (the re-push)
+                container.PushToBack(item);
+            }
+
+            return item;
+        }
+
+        // the destroy half of PlaceInContainer's destroy-vs-reuse, its own scope (owning the removed subtree)
+        private void RemoveForReplacement(Item item)
+        {
+            CancelPlacements(item);
+
+            using (Open(item, null))
+            {
+#if CUO_DEVTOOLS
+                if (FunnelCheck.Enabled)
+                {
+                    CollectSubtree(item);
+                }
+#endif
+
+                _world.RemoveItem(item.Serial, true);
+            }
+        }
+
         private Placement Issue(Item item)
         {
             if (_placements.Count == MaxOutstanding)
@@ -634,6 +763,51 @@ namespace ClassicUO.Game
             {
                 item.SetInWorldTile(item.X, item.Y, item.Z);
             }
+        }
+
+        // AddItemToContainer before T1, its world-state part
+        private Item PlaceInContainerPreT1(uint serial, ushort graphic, ushort amount, ushort x, ushort y, ushort hue, uint containerSerial, out Entity container)
+        {
+            container = _world.Get(containerSerial);
+
+            if (container == null)
+            {
+                return null;
+            }
+
+            Item item = _world.Items.Get(serial);
+
+            if (SerialHelper.IsMobile(serial))
+            {
+                _world.RemoveMobile(serial, true);
+                Log.Warn("AddItemToContainer function adds mobile as Item");
+            }
+
+            if (item != null && item.Container != containerSerial && (container.Graphic != 0x2006 || item.Layer == Layer.Invalid))
+            {
+                CancelPlacements(item);
+                _world.RemoveItem(item.Serial, true);
+            }
+
+            item = _world.GetOrCreateItem(serial);
+            item.Graphic = graphic;
+            item.CheckGraphicChange();
+            item.Amount = amount;
+            item.FixHue(hue);
+            item.X = x;
+            item.Y = y;
+            item.Z = 0;
+
+            if (item.Container != containerSerial)
+            {
+                _world.RemoveItemFromContainer(item);
+                item.Container = containerSerial;
+            }
+
+            container.PushToBack(item);
+            _world.Ecs.Sync(item);
+
+            return item;
         }
 
         // DeleteObject's item branch before T1, by serial

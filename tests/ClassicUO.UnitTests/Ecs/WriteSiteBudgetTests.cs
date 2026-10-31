@@ -122,7 +122,7 @@ namespace ClassicUO.UnitTests.Ecs
             string root = WriteSiteScanner.FindRepoRoot();
             WriteSiteScanner.FunnelFile.Should().Be("src/ClassicUO.Client/Game/Ecs/WorldWriter.cs");
             WriteSiteScanner.FunnelClass.Should().Be("WorldWriter");
-            WriteSiteScanner.FunnelOperations.Should().BeEquivalentTo("UpsertWorldItem", "PlaceWorldItem", "RemoveWorldItem");
+            WriteSiteScanner.FunnelOperations.Should().BeEquivalentTo("UpsertWorldItem", "PlaceWorldItem", "RemoveWorldItem", "PlaceInContainer");
 
             // each listed operation is a method body of the real class
             string code = WriteSiteScanner.StripCommentsAndStrings(File.ReadAllText(Path.Combine(root, "src", "ClassicUO.Client", "Game", "Ecs", "WorldWriter.cs")));
@@ -390,7 +390,7 @@ namespace ClassicUO.UnitTests.Ecs
         internal const string FunnelFile = "src/ClassicUO.Client/Game/Ecs/WorldWriter.cs";
         internal const string FunnelClass = "WorldWriter";
 
-        internal static readonly string[] FunnelOperations = { "UpsertWorldItem", "PlaceWorldItem", "RemoveWorldItem" };
+        internal static readonly string[] FunnelOperations = { "UpsertWorldItem", "PlaceWorldItem", "RemoveWorldItem", "PlaceInContainer" };
 
         private static readonly string FieldAlt = string.Join("|", AFields);
         private const string WorldTypes = "Item|Mobile|Entity|PlayerMobile|GameObject";

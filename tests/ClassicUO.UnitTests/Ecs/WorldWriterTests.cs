@@ -683,6 +683,222 @@ namespace ClassicUO.UnitTests.Ecs
             world.Ecs.EndFold(replacement);
         }
 
+        // ---- the containers group: AddItemToContainer (0x25, 0x3C's items, 0x27's deny path)
+
+        private const uint CORPSEBOX = 0x4000_7020;
+
+        // AddItemToContainer before T1, its world-state part (the ItemHold clear and the gump refreshes left out)
+        internal static Item OldAddToContainer(World world, uint serial, ushort graphic, ushort amount, ushort x, ushort y, ushort hue, uint containerSerial)
+        {
+            Entity container = world.Get(containerSerial);
+
+            if (container == null)
+            {
+                return null;
+            }
+
+            Item item = world.Items.Get(serial);
+
+            if (item != null && item.Container != containerSerial && (container.Graphic != 0x2006 || item.Layer == Layer.Invalid))
+            {
+                world.RemoveItem(item, true);
+            }
+
+            item = world.GetOrCreateItem(serial);
+            item.Graphic = graphic;
+            item.CheckGraphicChange();
+            item.Amount = amount;
+            item.FixHue(hue);
+            item.X = x;
+            item.Y = y;
+            item.Z = 0;
+
+            if (item.Container != containerSerial)
+            {
+                world.RemoveItemFromContainer(item);
+                item.Container = containerSerial;
+            }
+
+            container.PushToBack(item);
+            world.Ecs.Sync(item);
+
+            return item;
+        }
+
+        // a corpse lying next to the mobile, holding one item, so the corpse equipment exception has a target
+        private static World BuildWithCorpse(Start start)
+        {
+            World world = Build(start);
+            Item box = world.GetOrCreateItem(CORPSEBOX);
+            box.Graphic = 0x2006;
+            box.SetInWorldTile(1003, 1000, 0);
+            Item inside = world.GetOrCreateItem(0x4000_7021);
+            inside.Container = CORPSEBOX;
+            box.PushToBack(inside);
+            world.Ecs.Sync(inside);
+
+            return world;
+        }
+
+        internal struct ContainerPacket
+        {
+            public ushort Graphic, Amount, X, Y, Hue;
+            public uint Container;
+        }
+
+        private static readonly ContainerPacket[] ContainerPackets =
+        {
+            new ContainerPacket { Graphic = 0x0EED, Amount = 1, X = 40, Y = 60, Hue = 0x0035, Container = BAG },
+            new ContainerPacket { Graphic = 0x1515, Amount = 3, X = 0, Y = 0, Hue = 0x8BB9, Container = MOB },
+            new ContainerPacket { Graphic = 0x1515, Amount = 1, X = 10, Y = 20, Hue = 0, Container = CORPSEBOX },
+            // a corpse graphic: CheckGraphicChange's corpse branch on the old direction
+            new ContainerPacket { Graphic = 0x2006, Amount = 0x190, X = 5, Y = 6, Hue = 0x455, Container = BAG },
+            // a container nobody holds: nothing happens
+            new ContainerPacket { Graphic = 0x0EED, Amount = 1, X = 1, Y = 1, Hue = 0, Container = 0x4000_7FFF },
+        };
+
+        public static IEnumerable<object[]> ContainerCases()
+        {
+            foreach (Start s in Enum.GetValues(typeof(Start)))
+            {
+                for (int i = 0; i < ContainerPackets.Length; i++)
+                {
+                    yield return new object[] { s, i };
+                }
+            }
+        }
+
+        private static void AssertSameCorpseBox(World a, World b)
+        {
+            ChildSerials(b.Items.Get(CORPSEBOX)).Should().Equal(ChildSerials(a.Items.Get(CORPSEBOX)), "the corpse's child list, in order");
+            Serials(b.Ecs.Mirror.GetContents(CORPSEBOX)).Should().Equal(Serials(a.Ecs.Mirror.GetContents(CORPSEBOX)), "the corpse's contents index, in order");
+        }
+
+        [Theory]
+        [MemberData(nameof(ContainerCases))]
+        public void PlaceInContainer_Equals_The_Old_Path(Start start, int packet)
+        {
+            World oldWorld = BuildWithCorpse(start), newWorld = BuildWithCorpse(start);
+            ContainerPacket p = ContainerPackets[packet];
+
+            // a worn item's direction with the running bit, so a corpse graphic exercises UsedLayer
+            foreach (World w in new[] { oldWorld, newWorld })
+            {
+                Item it = w.Items.Get(ITEM);
+
+                if (it != null)
+                {
+                    it.Direction = Direction.Running | Direction.West;
+                }
+            }
+
+            Item a = OldAddToContainer(oldWorld, ITEM, p.Graphic, p.Amount, p.X, p.Y, p.Hue, p.Container);
+            Item b = newWorld.Writer.PlaceInContainer(ITEM, p.Graphic, p.Amount, p.X, p.Y, p.Hue, p.Container, out Entity container);
+
+            (b == null).Should().Be(a == null);
+            container.Should().BeSameAs(newWorld.Get(p.Container));
+
+            if (b != null)
+            {
+                b.Should().BeSameAs(newWorld.Items.Get(ITEM));
+            }
+
+            newWorld.Writer.InScope.Should().BeFalse();
+            newWorld.Ecs.IsFolding.Should().BeFalse();
+            AssertSameWorld(oldWorld, newWorld);
+            AssertSameCorpseBox(oldWorld, newWorld);
+
+            // the same packet again (a resend: a re-push into the same container)
+            OldAddToContainer(oldWorld, ITEM, p.Graphic, p.Amount, p.X, p.Y, p.Hue, p.Container);
+            long writes = newWorld.Ecs.ItemMirrorWrites;
+            newWorld.Writer.PlaceInContainer(ITEM, p.Graphic, p.Amount, p.X, p.Y, p.Hue, p.Container, out _);
+
+            if (b != null)
+            {
+                (newWorld.Ecs.ItemMirrorWrites - writes).Should().Be(1, "the operation writes the item's mirror record once");
+            }
+
+            AssertSameWorld(oldWorld, newWorld);
+            AssertSameCorpseBox(oldWorld, newWorld);
+        }
+
+        [Fact]
+        public void PlaceInContainer_Re_Pushes_To_The_End_Of_The_Child_List()
+        {
+            // the bag holds a sibling, then ITEM; a second item after ITEM, then ITEM again: ITEM moves to the end
+            World oldWorld = Build(Start.InBag), newWorld = Build(Start.InBag);
+            const uint OTHER = 0x4000_7030;
+
+            OldAddToContainer(oldWorld, OTHER, 0xEED, 1, 1, 1, 0, BAG);
+            newWorld.Writer.PlaceInContainer(OTHER, 0xEED, 1, 1, 1, 0, BAG, out _);
+            OldAddToContainer(oldWorld, ITEM, 0xEED, 2, 2, 2, 0, BAG);
+            newWorld.Writer.PlaceInContainer(ITEM, 0xEED, 2, 2, 2, 0, BAG, out _);
+
+            ChildSerials(newWorld.Items.Get(BAG)).Should().EndWith(new[] { OTHER, ITEM });
+            AssertSameWorld(oldWorld, newWorld);
+        }
+
+        [Fact]
+        public void PlaceInContainer_A_Sequence_Of_Packets_Stays_Identical()
+        {
+            World oldWorld = BuildWithCorpse(Start.Worn), newWorld = BuildWithCorpse(Start.Worn);
+
+            foreach (ContainerPacket p in ContainerPackets)
+            {
+                OldAddToContainer(oldWorld, ITEM, p.Graphic, p.Amount, p.X, p.Y, p.Hue, p.Container);
+                newWorld.Writer.PlaceInContainer(ITEM, p.Graphic, p.Amount, p.X, p.Y, p.Hue, p.Container, out _);
+                AssertSameWorld(oldWorld, newWorld);
+                AssertSameCorpseBox(oldWorld, newWorld);
+            }
+
+            // and a 0x1A ground packet in between, then back into the bag
+            OldUpsert(oldWorld, Packets[0]);
+            NewUpsert(newWorld, Packets[0], out _);
+            OldAddToContainer(oldWorld, ITEM, 0xEED, 1, 7, 7, 0, BAG);
+            newWorld.Writer.PlaceInContainer(ITEM, 0xEED, 1, 7, 7, 0, BAG, out _);
+            AssertSameWorld(oldWorld, newWorld);
+        }
+
+        [Fact]
+        public void PlaceInContainer_Computes_The_Container_And_Cancels_A_Placement()
+        {
+            World world = Build(Start.None);
+            world.Writer.ThrowOnViolation = true;
+            WorldWriter.Placement pending = Upsert(world, ITEM);
+            ItemState committed = default;
+            uint getterAtCommit = 0;
+            world.Ecs.CommitObserver = (item, v) =>
+            {
+                committed = v;
+                getterAtCommit = item.Container;
+            };
+
+            world.Writer.PlaceInContainer(ITEM, 0xEED, 1, 1, 1, 0, BAG, out _);
+
+            getterAtCommit.Should().Be(0xFFFF_FFFF, "the getter still says the ground at the commit");
+            committed.Container.Should().Be(BAG);
+            world.Items.Get(ITEM).Container.Should().Be(BAG);
+            world.Writer.OutstandingPlacements.Should().Be(0, "the ground placement of the earlier upsert is cancelled");
+            Action late = () => world.Writer.PlaceWorldItem(pending);
+            late.Should().Throw<ArgumentException>();
+        }
+
+        [Fact]
+        public void Release_A_Nested_PlaceInContainer_Takes_The_Pre_T1_Path()
+        {
+            World oldWorld = BuildWithCorpse(Start.Worn), newWorld = BuildWithCorpse(Start.Worn);
+            newWorld.Writer.ThrowOnViolation = false;
+            Item replacement = Item.Create(newWorld, BAG);
+
+            OldAddToContainer(oldWorld, ITEM, 0x1515, 2, 3, 4, 0x21, BAG);
+            newWorld.Ecs.BeginFold(replacement);
+            newWorld.Writer.PlaceInContainer(ITEM, 0x1515, 2, 3, 4, 0x21, BAG, out _);
+            newWorld.Ecs.EndFold(replacement);
+
+            newWorld.Writer.Violations.Should().Be(1);
+            AssertSameWorld(oldWorld, newWorld);
+        }
+
         private static List<uint> ChildSerials(Entity e)
         {
             var list = new List<uint>();
