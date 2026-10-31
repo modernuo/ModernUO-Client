@@ -75,16 +75,24 @@ namespace ClassicUO.Game.Map
 
 
         public Map(World world, int index)
-            : this(world, index, Client.Game.UO.FileManager.Maps.MapBlocksSize[index, 0] * Client.Game.UO.FileManager.Maps.MapBlocksSize[index, 1])
+            : this(world, index, Client.Game.UO.FileManager.Maps.MapBlocksSize[index, 0], Client.Game.UO.FileManager.Maps.MapBlocksSize[index, 1])
         {
         }
 
-        /// <summary>Test seam: a map of <paramref name="blocksCount"/> blocks without the map files.</summary>
+        /// <summary>Test seam: a map of <paramref name="blocksCount"/> blocks (one column of chunks) without the map files.</summary>
         internal Map(World world, int index, int blocksCount)
+            : this(world, index, 1, blocksCount)
+        {
+        }
+
+        /// <summary>Test seam: a map of <paramref name="blocksX"/> x <paramref name="blocksY"/> chunks without the map files.</summary>
+        internal Map(World world, int index, int blocksX, int blocksY)
         {
             _world = world;
             Index = index;
-            BlocksCount = blocksCount;
+            BlocksX = blocksX;
+            BlocksY = blocksY;
+            BlocksCount = blocksX * blocksY;
             _tryLoad = TryLoadQueued;
             _terrainChunks = world.RentChunkSlots(BlocksCount);
 
@@ -93,6 +101,115 @@ namespace ClassicUO.Game.Map
 
         public readonly int BlocksCount;
         public readonly int Index;
+        /// <summary>The map's size in chunks (MapLoader's MapBlocksSize when the map was created; it never changes after load).</summary>
+        public readonly int BlocksX, BlocksY;
+
+        // ---- the max-Z decision's dependencies (GameScene.UpdateMaxDrawZ, MaxDrawZState) ----
+        //
+        // The decision (the max Z drawn and "under a roof") reads the player's tile, the diagonal tile and, through
+        // CalculateNearZ, the tiles of the roof around it. It is kept until one of its inputs changes: the player's x/y/z and
+        // DrawRoofs (MaxDrawZState), the map instance (Id: a facet change replaces the Map), and the contents of the chunks
+        // it read (DecisionDirty). Every object other than a mobile joining or leaving a tile list
+        // (Chunk.OnTileContentChanged: placed, moved, removed, destroyed, or re-placed after a graphic change), and a chunk
+        // loading or being destroyed, notes its chunk here; one inside the decision's reach (the box of the chunks it looked
+        // up) sets DecisionDirty, and the next UpdateMaxDrawZ (once per frame, before the draw) recomputes once however many
+        // changes came in. A change that alters objects in place without touching the tile lists calls InvalidateDecision
+        // (World.ChangeSeason). A chunk the decision needed that was not loaded is requested (sticky) and its load lands in
+        // the reach, so an incomplete answer is recomputed when the chunk arrives, with no per-frame retry.
+
+        private static int s_nextId;
+
+        /// <summary>Unique per Map instance (never reused in the process): part of the decision's validity.</summary>
+        public readonly int Id = System.Threading.Interlocked.Increment(ref s_nextId);
+
+        /// <summary>A chunk the last max-Z decision read changed (or <see cref="InvalidateDecision"/> was called).</summary>
+        public bool DecisionDirty { get; private set; } = true;
+
+        private int _reachMinX = 1, _reachMinY = 1, _reachMaxX, _reachMaxY; // empty
+
+        /// <summary>The decision read the chunks in <paramref name="reach"/>: changes there invalidate it from now on.</summary>
+        internal void SetDecisionReach(in ChunkReach reach)
+        {
+            if (reach.Any)
+            {
+                _reachMinX = reach.MinX;
+                _reachMinY = reach.MinY;
+                _reachMaxX = reach.MaxX;
+                _reachMaxY = reach.MaxY;
+            }
+            else
+            {
+                _reachMinX = _reachMinY = 1;
+                _reachMaxX = _reachMaxY = 0;
+            }
+
+            DecisionDirty = false;
+        }
+
+        /// <summary>Something in chunk (chunkX, chunkY) changed (an object joined or left a tile, the chunk loaded or went away).</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void NoteContentChanged(int chunkX, int chunkY)
+        {
+            if (chunkX >= _reachMinX && chunkX <= _reachMaxX && chunkY >= _reachMinY && chunkY <= _reachMaxY)
+            {
+                DecisionDirty = true;
+            }
+        }
+
+        /// <summary>An input of the max-Z decision changed in place (the season's graphics): recompute it before the next draw.</summary>
+        public void InvalidateDecision() => DecisionDirty = true;
+
+        /// <summary>
+        /// The max-Z decision's chunk lookup for tile (x, y): null outside the map (known empty: not part of the reach, never
+        /// retried); otherwise the chunk is part of the reach, and when it is not loaded the lookup counts it as missing and
+        /// requests it (sticky), so its load invalidates the decision.
+        /// </summary>
+        internal Chunk GetChunkForDecision(int x, int y, ref ChunkReach reach)
+        {
+            if (x < 0 || y < 0)
+            {
+                return null;
+            }
+
+            int chunkX = x >> 3, chunkY = y >> 3;
+
+            if (!IsInMap(chunkX, chunkY))
+            {
+                return null;
+            }
+
+            reach.Add(chunkX, chunkY);
+            Chunk chunk = GetChunk2(chunkX, chunkY, false);
+
+            if (chunk == null)
+            {
+                reach.Missing++;
+
+                if (Incremental)
+                {
+                    _queue.Request(chunkX, chunkY, _frame, sticky: true);
+                }
+            }
+
+            return chunk;
+        }
+
+        /// <summary>Test seam: puts an empty, loaded chunk at (chunkX, chunkY) and notes the load, as LoadChunk does.</summary>
+        internal Chunk LoadEmptyChunkForTest(int chunkX, int chunkY)
+        {
+            int block = GetBlock(chunkX, chunkY);
+            Chunk chunk = Chunk.Create(_world, chunkX, chunkY);
+            chunk.OwnerMap = this;
+            _terrainChunks[block] = chunk;
+            chunk.Node = _usedIndices.AddLast(block);
+            _queue.Remove(chunkX, chunkY);
+            NoteContentChanged(chunkX, chunkY);
+
+            return chunk;
+        }
+
+        /// <summary>Test seam: whether chunk (chunkX, chunkY) is waiting in the load queue.</summary>
+        internal bool IsQueuedForTest(int chunkX, int chunkY) => _queue.Contains(chunkX, chunkY);
 
 
         public Chunk GetChunk(int block)
@@ -120,12 +237,14 @@ namespace ClassicUO.Game.Map
 
         public Chunk GetChunk2(int chunkX, int chunkY, bool load = true)
         {
-            int block = GetBlock(chunkX, chunkY);
-
-            if (block >= BlocksCount)
+            // both coordinates: the flattened index alone let (cx, BlocksY) alias (cx + 1, 0), and a negative one index
+            // outside the array
+            if (!IsInMap(chunkX, chunkY))
             {
                 return null;
             }
+
+            int block = GetBlock(chunkX, chunkY);
 
             ref Chunk chunk = ref _terrainChunks[block];
 
@@ -169,6 +288,7 @@ namespace ClassicUO.Game.Map
             long bytes0 = GC.GetAllocatedBytesForCurrentThread();
             int gcs0 = GC.CollectionCount(0);
             TimeSpan pause0 = GC.GetTotalPauseDuration();
+            chunk.OwnerMap = this;
             chunk.Load(Index);
             _blockArtWait.Forget(ChunkKey(chunk.X, chunk.Y));
             _chunkArtWait.Forget(ChunkKey(chunk.X, chunk.Y));
@@ -195,6 +315,7 @@ namespace ClassicUO.Game.Map
             }
 
             _queue.Remove(chunk.X, chunk.Y);
+            NoteContentChanged(chunk.X, chunk.Y); // also when the block had no data (no object was added)
             FrameChunkLoads++;
             FrameChunkLoadTicks += Stopwatch.GetTimestamp() - t0;
             FrameChunkLoadBytes += GC.GetAllocatedBytesForCurrentThread() - bytes0;
@@ -203,11 +324,9 @@ namespace ClassicUO.Game.Map
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private bool IsInMap(int chunkX, int chunkY)
+        internal bool IsInMap(int chunkX, int chunkY)
         {
-            var size = Client.Game.UO.FileManager.Maps.MapBlocksSize;
-
-            return (uint)chunkX < (uint)size[Index, 0] && (uint)chunkY < (uint)size[Index, 1];
+            return (uint)chunkX < (uint)BlocksX && (uint)chunkY < (uint)BlocksY;
         }
 
         /// <summary>
@@ -665,7 +784,12 @@ namespace ClassicUO.Game.Map
             _blockAccessList.AsSpan().Fill(false);
         }
 
-        public sbyte CalculateNearZ(sbyte defaultZ, int x, int y, int z)
+        /// <summary>
+        /// The lowest z of the roof connected to tile (x, y) (within 6 z per step), at most <paramref name="defaultZ"/>. The
+        /// chunks it looks up go into <paramref name="reach"/>: one that is not loaded stops the search there and counts as
+        /// missing (the decision is recomputed when it loads); outside the map counts as empty.
+        /// </summary>
+        public sbyte CalculateNearZ(sbyte defaultZ, int x, int y, int z, StaticTiles[] tiles, ref ChunkReach reach)
         {
             ref bool access = ref _blockAccessList[(x & 0x3F) + ((y & 0x3F) << 6)];
 
@@ -675,11 +799,11 @@ namespace ClassicUO.Game.Map
             }
 
             access = true;
-            Chunk chunk = GetChunk(x, y, false);
+            Chunk chunk = GetChunkForDecision(x, y, ref reach);
 
             if (chunk != null)
             {
-                GameObject obj = FindNearRoof(chunk, x % 8, y % 8, z, Client.Game.UO.FileManager.TileData.StaticData);
+                GameObject obj = FindNearRoof(chunk, x % 8, y % 8, z, tiles);
 
                 if (obj == null)
                 {
@@ -693,10 +817,10 @@ namespace ClassicUO.Game.Map
                     defaultZ = tileZ;
                 }
 
-                defaultZ = CalculateNearZ(defaultZ, x - 1, y, tileZ);
-                defaultZ = CalculateNearZ(defaultZ, x + 1, y, tileZ);
-                defaultZ = CalculateNearZ(defaultZ, x, y - 1, tileZ);
-                defaultZ = CalculateNearZ(defaultZ, x, y + 1, tileZ);
+                defaultZ = CalculateNearZ(defaultZ, x - 1, y, tileZ, tiles, ref reach);
+                defaultZ = CalculateNearZ(defaultZ, x + 1, y, tileZ, tiles, ref reach);
+                defaultZ = CalculateNearZ(defaultZ, x, y - 1, tileZ, tiles, ref reach);
+                defaultZ = CalculateNearZ(defaultZ, x, y + 1, tileZ, tiles, ref reach);
             }
 
             return defaultZ;
@@ -740,7 +864,7 @@ namespace ClassicUO.Game.Map
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private int GetBlock(int blockX, int blockY)
         {
-            return blockX * Client.Game.UO.FileManager.Maps.MapBlocksSize[Index, 1] + blockY;
+            return blockX * BlocksY + blockY;
         }
 
         public IEnumerable<Chunk> GetUsedChunks()
