@@ -2,24 +2,30 @@
 
 using ClassicUO.Utility.Logging;
 using Microsoft.Xna.Framework.Audio;
-using MP3Sharp;
 using System;
+using System.Diagnostics;
 
 namespace ClassicUO.IO.Audio
 {
+    /// <summary>
+    ///     A music track. Decoding (dr_mp3) runs on <see cref="MusicDecodeWorker" />; <see cref="Update" /> on the game
+    ///     thread only submits buffers the worker already decoded. Play returns at once; the sound starts within a frame
+    ///     or two, once the worker has opened the file and decoded the first buffer.
+    /// </summary>
     public class UOMusic : Sound
     {
-        private const int NUMBER_OF_PCM_BYTES_TO_READ_PER_CHUNK = 0x8000; // 32768 bytes, about 0.9 seconds
-        private bool m_Playing;
-        private readonly bool m_Repeat;
-        private MP3Stream m_Stream;
-        private readonly byte[] m_WaveBuffer = new byte[NUMBER_OF_PCM_BYTES_TO_READ_PER_CHUNK];
+        /// <summary>Buffers kept queued in FAudio (about 0.56 s at 44.1 kHz, 1.1 s at 22.05 kHz).</summary>
+        private const int SubmittedTarget = 3;
 
+        private readonly bool m_Repeat;
+        private MusicStream m_Stream;
+        private bool m_Started;
+        private uint m_PlayTicks;
+        private int m_LoopsLogged;
 
         public UOMusic(int index, string name, bool loop, string fileName) : base(name, index)
         {
             m_Repeat = loop;
-            m_Playing = false;
             Channels = AudioChannels.Stereo;
             Delay = 0;
 
@@ -28,108 +34,133 @@ namespace ClassicUO.IO.Audio
 
         private string Path { get; }
 
-        public void Update()
+        /// <summary>Time from Play to the first submitted buffer, for the latest play of this track (ms).</summary>
+        public double FirstBufferMilliseconds { get; private set; }
+
+        public override bool Play(uint curTime, float volume = 1.0f, float volumeFactor = 0.0f, bool spamCheck = false)
         {
-            // sanity - if the buffer empties, we will lose our sound effect. Thus we must continually check if it is dead.
-            OnBufferNeeded(null, null);
-        }
-
-        protected override ArraySegment<byte> GetBuffer()
-        {
-            try
-            {
-                if (m_Playing && SoundInstance != null)
-                {
-                    int bytesReturned = m_Stream.Read(m_WaveBuffer, 0, m_WaveBuffer.Length);
-
-                    if (bytesReturned != NUMBER_OF_PCM_BYTES_TO_READ_PER_CHUNK)
-                    {
-                        if (m_Repeat)
-                        {
-                            m_Stream.Position = 0;
-                            m_Stream.Read(m_WaveBuffer, bytesReturned, m_WaveBuffer.Length - bytesReturned);
-                        }
-                        else
-                        {
-                            if (bytesReturned == 0)
-                            {
-                                Stop();
-                            }
-                        }
-                    }
-
-                    return new ArraySegment<byte>(m_WaveBuffer, 0, bytesReturned);
-                }
-            }
-            catch (Exception ex)
-            {
-                Log.Error(ex.ToString());
-            }
-
             Stop();
 
-            return ArraySegment<byte>.Empty;
+            if (!Mp3Decoder.IsAvailable)
+            {
+                return false; // logged once by Mp3Decoder.IsAvailable; music stays off
+            }
+
+            m_Stream = new MusicStream(Path, Name, m_Repeat);
+            m_Started = false;
+            m_LoopsLogged = 0;
+            m_PlayTicks = curTime;
+            VolumeFactor = volumeFactor;
+            Volume = volume;
+            MusicDecodeWorker.Add(m_Stream);
+
+            return true;
         }
 
-        protected override void OnBufferNeeded(object sender, EventArgs e)
+        public void Update()
         {
-            if (m_Playing)
+            MusicStream stream = m_Stream;
+
+            if (stream == null)
             {
-                if (SoundInstance == null)
+                return;
+            }
+
+            if (stream.IsFailed)
+            {
+                Log.Warn($"music {Name}: skipped ({stream.Error}) [{Path}]");
+                Stop();
+
+                return;
+            }
+
+            if (!stream.IsOpened)
+            {
+                return;
+            }
+
+            if (SoundInstance == null || SoundInstance.IsDisposed || Frequency != stream.SampleRate || (int)Channels != stream.Channels)
+            {
+                DisposeInstance();
+                Frequency = stream.SampleRate;
+                Channels = (AudioChannels)stream.Channels;
+                SoundInstance = new DynamicSoundEffectInstance(Frequency, Channels);
+                Volume = Volume; // apply the stored volume to the new instance
+            }
+
+            int firstBytes = 0;
+            bool submitted = false;
+
+            while (SoundInstance.PendingBufferCount < SubmittedTarget && stream.TryDequeue(out byte[] buffer, out int bytes))
+            {
+                SoundInstance.SubmitBuffer(buffer, 0, bytes);
+                stream.Recycle(buffer);
+
+                if (!submitted)
                 {
-                    Stop();
-
-                    return;
-                }
-
-                while (SoundInstance.PendingBufferCount < 3)
-                {
-                    var buffer = GetBuffer();
-
-                    if (SoundInstance.IsDisposed || buffer.Count == 0)
-                    {
-                        break;
-                    }
-
-                    SoundInstance.SubmitBuffer(buffer.Array, buffer.Offset, buffer.Count);
+                    firstBytes = bytes;
+                    submitted = true;
                 }
             }
-        }
 
-        protected override void BeforePlay()
-        {
-            if (m_Playing)
+            if (stream.Loops != m_LoopsLogged)
+            {
+                m_LoopsLogged = stream.Loops;
+                Log.Trace($"music {Name}: looped ({m_LoopsLogged})");
+            }
+
+            if (submitted)
+            {
+                MusicDecodeWorker.Signal();
+
+                if (!m_Started)
+                {
+                    m_Started = true;
+                    SoundInstance.Play();
+
+                    // Same as the old code: IsPlaying covers the first buffer's duration.
+                    DurationTime = m_PlayTicks + SoundInstance.GetSampleDuration(firstBytes).TotalMilliseconds;
+                    FirstBufferMilliseconds = Stopwatch.GetElapsedTime(stream.Created).TotalMilliseconds;
+                    Log.Trace($"music {Name}: first buffer after {FirstBufferMilliseconds:F1} ms (open {stream.OpenMilliseconds:F1} ms)");
+                }
+            }
+            else if (stream.IsEnded && stream.ReadyCount == 0 && SoundInstance.PendingBufferCount == 0)
             {
                 Stop();
             }
+        }
 
-            try
-            {
-                if (m_Stream != null)
-                {
-                    m_Stream.Close();
-                    m_Stream = null;
-                }
+        protected override ArraySegment<byte> GetBuffer() => ArraySegment<byte>.Empty;
 
-                m_Stream = new MP3Stream(Path, NUMBER_OF_PCM_BYTES_TO_READ_PER_CHUNK);
-                Frequency = m_Stream.Frequency;
-
-                m_Playing = true;
-            }
-            catch
-            {
-                // file in use or access denied.
-                m_Playing = false;
-            }
+        protected override void OnBufferNeeded(object sender, EventArgs e)
+        {
+            // Not subscribed: Update (every frame) keeps FAudio fed from the worker's ready buffers.
         }
 
         protected override void AfterStop()
         {
-            if (m_Playing)
+            m_Stream?.Cancel();
+            m_Stream = null;
+            m_Started = false;
+        }
+
+        protected override void OnDispose()
+        {
+            m_Stream?.Cancel();
+            m_Stream = null;
+        }
+
+        private void DisposeInstance()
+        {
+            if (SoundInstance != null)
             {
-                m_Playing = false;
-                m_Stream?.Close();
-                m_Stream = null;
+                if (!SoundInstance.IsDisposed)
+                {
+                    SoundInstance.Stop();
+                    SoundInstance.Dispose();
+                }
+
+                SoundInstance = null;
             }
         }
     }

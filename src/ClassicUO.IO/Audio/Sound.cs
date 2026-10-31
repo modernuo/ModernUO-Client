@@ -37,7 +37,7 @@ namespace ClassicUO.IO.Audio
         }
 
         public int Index { get; }
-        public double DurationTime { get; private set; }
+        public double DurationTime { get; protected set; }
 
         public float Volume
         {
@@ -83,6 +83,8 @@ namespace ClassicUO.IO.Audio
 
         public void Dispose()
         {
+            OnDispose();
+
             if (SoundInstance != null)
             {
                 SoundInstance.BufferNeeded -= OnBufferNeeded;
@@ -110,6 +112,10 @@ namespace ClassicUO.IO.Audio
         {
         }
 
+        protected virtual void OnDispose()
+        {
+        }
+
         protected virtual void BeforePlay()
         {
         }
@@ -118,7 +124,7 @@ namespace ClassicUO.IO.Audio
         ///     Plays the effect.
         /// </summary>
         /// <param name="asEffect">Set to false for music, true for sound effects.</param>
-        public bool Play(uint curTime, float volume = 1.0f, float volumeFactor = 0.0f, bool spamCheck = false)
+        public virtual bool Play(uint curTime, float volume = 1.0f, float volumeFactor = 0.0f, bool spamCheck = false)
         {
             if (_lastPlayedTime > curTime)
             {
