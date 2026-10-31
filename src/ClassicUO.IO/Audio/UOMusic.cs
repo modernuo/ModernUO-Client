@@ -21,6 +21,7 @@ namespace ClassicUO.IO.Audio
         private MusicStream m_Stream;
         private bool m_Started;
         private uint m_PlayTicks;
+        private int m_LoopsLogged;
 
         public UOMusic(int index, string name, bool loop, string fileName) : base(name, index)
         {
@@ -42,6 +43,7 @@ namespace ClassicUO.IO.Audio
 
             m_Stream = new MusicStream(Path, Name, m_Repeat);
             m_Started = false;
+            m_LoopsLogged = 0;
             m_PlayTicks = curTime;
             VolumeFactor = volumeFactor;
             Volume = volume;
@@ -94,6 +96,12 @@ namespace ClassicUO.IO.Audio
                     firstBytes = bytes;
                     submitted = true;
                 }
+            }
+
+            if (stream.Loops != m_LoopsLogged)
+            {
+                m_LoopsLogged = stream.Loops;
+                Log.Trace($"music {Name}: looped ({m_LoopsLogged})");
             }
 
             if (submitted)
