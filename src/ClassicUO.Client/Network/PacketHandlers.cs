@@ -1226,7 +1226,8 @@ namespace ClassicUO.Network
                     //    NetClient.Socket.Send(new PCloseStatusBarGump(serial));
                     //}
 
-                    world.RemoveMobile(serial, true);
+                    // T1: the mobile and everything it wears or holds (contents, OPL, Destroy, the ECS entities)
+                    world.Writer.RemoveMobile(m);
                 }
             }
             else
@@ -2900,15 +2901,13 @@ namespace ClassicUO.Network
             Flags flags = (Flags)p.ReadUInt8();
             NotorietyFlag notoriety = (NotorietyFlag)p.ReadUInt8();
 
-            mobile.NotorietyFlag = notoriety;
+            // T1: the notoriety of the mobile found above (an input: written, then pushed)
+            world.Writer.SetNotoriety(mobile, notoriety);
 
             if (serial == world.Player)
             {
-                mobile.Flags = flags;
-                mobile.Graphic = graphic;
-                mobile.CheckGraphicChange();
-                mobile.FixHue(hue);
-                world.Ecs.Sync(mobile);
+                // T1: graphic, CheckGraphicChange's sex and race, hue, flags (ECS and GameObject)
+                world.Writer.SetMobileBody(mobile, graphic, hue, flags, checkBody: true, setDirection: false, 0);
                 // TODO: x,y,z, direction cause elastic effect, ignore 'em for the moment
             }
             else
@@ -2939,11 +2938,8 @@ namespace ClassicUO.Network
             if (serial == world.Player)
             {
                 oldDead = world.Player.IsDead;
-                world.Player.Graphic = graphic;
-                world.Player.CheckGraphicChange();
-                world.Player.FixHue(hue);
-                world.Player.Flags = flags;
-                world.Ecs.Sync(world.Player);
+                // T1: graphic, CheckGraphicChange's sex and race, hue, flags (ECS and GameObject)
+                world.Writer.SetMobileBody(world.Player, graphic, hue, flags, checkBody: true, setDirection: false, 0);
             }
             else
             {
@@ -2962,7 +2958,7 @@ namespace ClassicUO.Network
 
             if (SerialHelper.IsMobile(serial) && obj is Mobile mob)
             {
-                mob.NotorietyFlag = notoriety;
+                world.Writer.SetNotoriety(mob, notoriety);
 
                 UIManager.GetGump<PaperDollGump>(serial)?.RequestUpdateContents();
             }
@@ -6294,65 +6290,16 @@ namespace ClassicUO.Network
                 return;
             }
 
-            if (obj == null || obj.IsDestroyed)
+            // T1 (funnel part 4): a mobile goes through the funnel: create or take obj, the step or the reset to the packet's
+            // position, the body, hue and flags (ECS and GameObject); then the callbacks below; then the tile
+            mobile = world.Writer.UpsertMobile(obj, serial, graphic, graphic_inc, x, y, z, direction, hue, flagss, out created, out WorldWriter.Placement mobilePlacement);
+
+            if (mobile == null)
             {
-                created = true;
-
-                mobile = world.GetOrCreateMobile(serial);
-
-                if (mobile == null)
-                {
-                    return;
-                }
-
-                obj = mobile;
-                mobile.Graphic = (ushort)(graphic + graphic_inc);
-                mobile.CheckGraphicChange();
-                mobile.Direction = direction & Direction.Up;
-                mobile.FixHue(hue);
-                mobile.X = x;
-                mobile.Y = y;
-                mobile.Z = z;
-                mobile.Flags = flagss;
-            }
-            else
-            {
-                mobile = (Mobile)obj;
+                return;
             }
 
-            graphic += graphic_inc;
-
-            if (serial != world.Player)
-            {
-                Direction cleaned_dir = direction & Direction.Up;
-                bool isrun = (direction & Direction.Running) != 0;
-
-                if (world.Get(mobile) == null || mobile.X == 0xFFFF && mobile.Y == 0xFFFF)
-                {
-                    mobile.X = x;
-                    mobile.Y = y;
-                    mobile.Z = z;
-                    mobile.Direction = cleaned_dir;
-                    mobile.IsRunning = isrun;
-                    mobile.ClearSteps();
-                }
-
-                if (!mobile.EnqueueStep(x, y, z, cleaned_dir, isrun))
-                {
-                    mobile.X = x;
-                    mobile.Y = y;
-                    mobile.Z = z;
-                    mobile.Direction = cleaned_dir;
-                    mobile.IsRunning = isrun;
-                    mobile.ClearSteps();
-                }
-            }
-
-            mobile.Graphic = (ushort)(graphic & 0x3FFF);
-            mobile.FixHue(hue);
-            mobile.Flags = flagss;
-
-            if (created && !obj.IsClicked)
+            if (created && !mobile.IsClicked)
             {
                 if (ProfileManager.CurrentProfile.ShowNewMobileNameIncoming)
                 {
@@ -6360,7 +6307,8 @@ namespace ClassicUO.Network
                 }
             }
 
-            mobile.SetInWorldTile(mobile.X, mobile.Y, mobile.Z);
+            // after the SingleClick above (it sends a packet), as before T1
+            world.Writer.PlaceMobile(mobilePlacement);
 
             if (created)
             {
@@ -6400,10 +6348,8 @@ namespace ClassicUO.Network
 
                 world.Player.CloseBank();
                 world.Player.Walker.WalkingFailed = false;
-                world.Player.Graphic = graphic;
-                world.Player.Direction = direction & Direction.Mask;
-                world.Player.FixHue(hue);
-                world.Player.Flags = flags;
+                // T1: graphic, direction (its door check), hue, flags (ECS and GameObject); the position comes last
+                world.Writer.SetMobileBody(world.Player, graphic, hue, flags, checkBody: false, setDirection: true, direction & Direction.Mask);
                 world.Player.Walker.DenyWalk(0xFF, -1, -1, -1);
 
                 GameScene gs = Client.Game.GetScene<GameScene>();
@@ -6439,7 +6385,8 @@ namespace ClassicUO.Network
                 world.Player.CloseRangedGumps();
                 // a teleport: start decoding the destination's regions now, while the rest of the packet burst is handled
                 world.Map?.Prefetch(x, y);
-                world.Player.SetInWorldTile(x, y, z);
+                // T1: the position (ECS and GameObject) and the tile, with the player's position callbacks
+                world.Writer.MoveMobile(world.Player, x, y, z);
                 world.Player.UpdateAbilities();
             }
         }
