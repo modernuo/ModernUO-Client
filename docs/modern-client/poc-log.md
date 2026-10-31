@@ -2655,3 +2655,13 @@ Pickscan 48 same, 0 different at both spots. `-ecscheck` 0. Parity items 4.87M, 
 - Legacy, Britain, the bank and the bank at zoom 2.5 (no pickscan): tile order all 0 over 31.0M objects; recycle all 0.
 - **Mistake, 17:41:** a first Legacy run had `pickscan:8x6`. Pickscan waits for the Gpu prepare's skipping, which never activates in Legacy, so it hung and DevBench kept moving the OS cursor into the window until the owner closed the client. Pickscan is Gpu-only; the coordinator's fix (skip when the Gpu world isn't active, a capped wait, no OS cursor warps) is pending on poc/modern-client. A planned Legacy `CUO_BENCH_PICK` run was cancelled before it started.
 
+
+## DevBench: the scripted mouse stops moving the OS cursor; pickscan can't hang on Legacy (2026-10-30)
+
+Coordinator fix, d0865ba49. The owner's mouse was stuck in a client for minutes: T6a's `r4_pick_legacy` run put `pickscan:8x6` after `world:legacy`. Phase 1 of a pickscan point waits for `GameScene.IsGpuPrepareSkipping`, which never becomes true without the Gpu prepare, so the scan sat on point 0 and the plan never advanced. Meanwhile `HoldMouse` (and the same block in `UpdateUi`) called `SDL_WarpMouseInWindow` every frame.
+- `HoldMouse` sets `Input.Mouse.Override` (cleared when `_mouse` is null) instead of warping; `UpdateUi` calls `HoldMouse`. `Mouse.Update` is the only reader of the OS cursor and returns `Override` when set, so selection, camera and tooltips see the scripted point. The B8 `ui` scene already used `Override`; `HoldMouse` never runs in the same frames.
+- `pickscan:` is skipped with `[bench-scan] ... skipped: the Gpu world renderer isn't active` unless the Gpu world is active.
+- A point that waits more than 600 frames for skipping abandons the scan (`[bench-scan] abandoned at point ...`) and releases the mouse (`EndPickScan`).
+- Agent rule: never move or capture the OS cursor; a test that needs the real cursor is announced to the owner first; every client run has a hard timeout and every waiting plan step a cap.
+
+Verified: both variants build; 681 tests (one earlier run hit the known flaky `ChunkLoadingTests.Prefetched_Regions...`; the rerun passed). Not run in a client yet: the next agent run with pick or pickscan confirms it.
