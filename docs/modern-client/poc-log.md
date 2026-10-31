@@ -2825,3 +2825,52 @@ On the correct builds the isolation self-check reads 0 in all four runs. The cor
 
 Open from the runs: Ov and fallen-back-tile paths are not reachable from the current scenes (see above).
 
+
+## Chunk pool per World (2026-10-30)
+
+Base: poc/modern-client c6bd97205. Branch `poc/chunk-pool-per-world`.
+
+**What changed.** `Game/Map/ChunkPool.cs` (instance, owned by `World.ChunkPool`, capped at `PREDICTABLE_CHUNKS`, refuses a chunk whose `Chunk.Owner` is another World). `Chunk`'s static `_pool`/`PooledCount`/`ClearPool` are gone; `Chunk.Create/Destroy/Prefill` go through `world.ChunkPool`. `MapObjectRecycler` takes an owner World (Retire/Prefill ignore other-World objects). `World.ReleasePools()` (from `Client.Unload`) clears both pools. `World.WarmupDone` replaces the static `MapWarmup._prefilled`: per World and per login (`World.Clear` re-arms it); the deliberate GC collection still arms once per process.
+
+**Findings.**
+- Production has one World (`Client.cs`), and relog is `World.Clear` on the same World, so the static pool already persisted across relogs (bounded at 300 chunks). The stale-`_world` defect only hit several Worlds (tests), and the static pool would also have kept an old World alive.
+- Fail-on-base evidence: two temporary tests on c6bd97205 both FAILED (`Assert.Same(w2, owner)`): a second World's `Chunk.Create` returned a chunk whose `_world` was the first World, and a chunk destroyed by w1 was handed to w2. Both pass on the branch (`WorldPoolOwnershipTests`, 8 tests).
+- Land/static recycler was already per World (`World.MapRecycler`); only the chunk pool was static.
+
+**Measurement: relog series** (NativeAOT, `CUO_BENCH_RELOG=3:60`: 3 logins x 60 s, kbatman2, order b1,n1,n2,b2, one job `chunk-pool-relog`, 734 s, status ok). Relog really happened in all four runs: `[relog] in game` x3, `[relog] end of dwell` x3, `[relog] done`, `[gcs] session ended` x2 (the first logout's session is not logged separately).
+
+| run | private MB at end of dwell (login 1/2/3) | heap MB | collections gen0/1/2 at end of login 1 -> login 3 | chunk pool end of dwell | `[warmup] pools filled` |
+|---|---|---|---|---|---|
+| base b1 | 1904.2 / 1906.1 / 1904.6 | 453.7 | 11/9/3 -> 11/9/3 | 275 | (no log line; prefill once per process) |
+| new n1 | 1926.0 / 1928.4 / 1927.0 | 470.1 | 11/9/3 -> 11/9/3 | 275 | login 1: 300 chunks, 19200 lands, 16800 statics, 15.8 ms; logins 2, 3: 0 chunks (pool still full), 0.0 ms |
+| new n2 | 1911.5 / 1913.0 / 1911.6 | 458.8 | 11/9/3 -> 11/9/3 | 275 | login 1: 20.6 ms; logins 2, 3: 0.0 ms |
+| base b2 | 1883.1 / 1885.5 / 1883.7 | 425.6 | 11/9/3 -> 11/9/3 | 274-275 | (none) |
+
+- Collections: 9/7/3 at "in game" login 1 (startup), +2 gen0 and +2 gen1 inside the first 60 s (includes the deliberate warm-up collection), 0 in logins 2 and 3. Identical in base and new, all four runs.
+- Growth across logins: none. Private MB moves +0.7 to +2.4 MB between login 1 and 2 and returns by login 3; heap and collection counts are exactly flat. Base and new alike.
+- Pool sizes (after Clear, at "in game" login 2/3): chunks 281, lands 17984, statics 15065; at end of dwell 275 / 17600 / 14648. Same in base and new.
+- Noise between repeats: base b1 vs b2 differ by 21 MB private (1.1%) and 28 MB heap; new n1 vs n2 differ by 14.5 MB private and 11 MB heap. Pause totals ranged 47-94 ms across runs with no pattern. New reads about 25 MB higher in private than base on average (both new runs above both base runs), which is about one repeat-noise width; two runs per side cannot separate it. Nothing in the code adds memory (same caps, same pool contents), so I take it as machine noise; a longer interleaved series would be needed to prove it.
+- New's warm-up per login is a top-up: with the pool still full from the previous session it fills 0 chunks, so a relog costs nothing extra. The pool is only re-filled when `ReleasePools` ran (client unload) or a new World is built.
+
+**Verification.** Both builds (`-c Release`, `-p:CuoDevTools=false`) 0 errors; `dotnet test -c Release` 728 tests pass after merging poc/modern-client f912272b8. DevBench got `CUO_BENCH_RELOG=cycles:dwellSec` (Socket.Disconnect + new LoginScene with SkipLoginScreen so autologin logs in again).
+
+### Codex audit round 1 (chunk pool per World, 2026-10-30)
+
+All four findings re-verified against the code; none changed the one-World relog/unload result above.
+- **#1 static `Map._terrainChunks` (pre-existing): fixed.** The array is now an instance `readonly` field, allocated per Map at its `BlocksCount` (the `block >= _terrainChunks.Length` check in `GetChunk2` is gone: the length equals `BlocksCount`). Hot path: static array access became an instance field access, no new indirection. Cost: every `new Map` allocates its own array (up to ~3.6 MB for a 458k-block map) instead of reusing the static one; this happens per login and per map change, and in `WorldMapGump.ChangeMap`, which builds a second Map only for `Index`/`GetTileZ` (the old code shared the main map's chunk slots there by accident). Test seam `internal Map(World, index, blocksCount)`; test `Two_Maps_Keep_Their_Own_Chunks` (a larger second map does not replace or orphan the first). `_blockAccessList` stays static (scratch cleared per call, main thread only).
+- **#2 duplicate returns (pre-existing): fixed.** `Chunk.InPool` (set/cleared by `ChunkPool`); `Chunk.Destroy` returns at once when pooled and `CanAdd` refuses a chunk already in the pool. `MapObjectRecycler.Retire` returns when `InRecycler` is set. Tests: `A_Double_Destroy_Does_Not_Alias_Two_Creates`, `A_Recycler_Retires_An_Object_Only_Once`.
+- **#3 `ReleasePools` not terminal: fixed.** `ChunkPool.Close()` / `MapObjectRecycler.Close()` clear and then refuse returns and prefill; a chunk destroyed after release clears its mesh (`Mesh.Clear`) instead of re-pooling. Test `A_Destroy_After_ReleasePools_Is_Not_Pooled`.
+- **#4 warm-up test with `CUO_WARMUP_CHUNKS=0`: fixed.** The test returns early when `MapWarmup.Chunks <= 0`. The WorldPoolOwnership tests pass with `CUO_WARMUP_CHUNKS=0`.
+
+Verification after the round: both builds 0 errors; `dotnet test -c Release` 732 pass.
+
+### Codex audit round 2 (chunk pool per World, 2026-10-30)
+
+Both findings re-verified against the code (no gump-created chunk leak or height-lookup change was found).
+- **P2, a ~3.5 MiB LOH slot array per `new Map`: fixed.** Round 1's per-instance array made every login, facet change and `WorldMapGump.ChangeMap` allocate `BlocksCount` references (the old static array was reused).
+  - The gump no longer builds a `Map`: it holds a `FacetView` (facet index + `GetTileZ` forwarding to `MapLoader.GetLandZ`, exactly what `Map.GetTileZ` did) and `Sextant.Format/FormatString` gained facet-index overloads (they only read `Index`).
+  - Live maps reuse storage owned by the World: `World.RentChunkSlots` hands out the spare array if it is large enough (taking it out of the World, so ownership is exclusive while a Map is active), else allocates; `Map.Destroy` clears the array and returns it via `ReturnChunkSlots` (once per Map, so a stale second `Destroy` cannot clear a reused array). `ReleasePools` drops the spare. Two simultaneous Maps never share an array.
+  - Tests: successive maps on one World get the same reference (and cleared slots); a still-active map's array is never handed out; a too-small spare is not reused; `WorldMapGump` has no `Map` field; `Two_Maps_Keep_Their_Own_Chunks` still passes.
+- **P3, `InPool` set before `Enqueue` succeeds: fixed.** `ChunkPool.Add` now enqueues first and sets `InPool` after.
+
+Verification: both builds 0 errors; `dotnet test -c Release` 736 pass (732 + 4 new).

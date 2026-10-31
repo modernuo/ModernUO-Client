@@ -360,25 +360,18 @@ namespace ClassicUO.UnitTests.Game.Map
         {
             var world = new World();
 
-            try
-            {
-                Chunk.Prefill(world, 2, 128);
+            Chunk.Prefill(world, 2, 128);
 
-                Assert.True(Chunk.PooledCount >= 2);
+            Assert.Equal(2, world.ChunkPool.Count);
 
-                Chunk c = Chunk.Create(world, 3, 4);
-                Assert.False(c.IsDestroyed);
-                Assert.Equal(3, c.X);
-                Assert.Equal(4, c.Y);
-                Assert.True(c.Mesh.Statics.Vertices.Length >= 128);
-                Assert.Equal(0, c.Mesh.Statics.Count);
-                Assert.Null(c.Node);
-            }
-            finally
-            {
-                // the pool is static: leave no chunk of this test's World in it
-                Chunk.ClearPool();
-            }
+            Chunk c = Chunk.Create(world, 3, 4);
+            Assert.False(c.IsDestroyed);
+            Assert.Equal(3, c.X);
+            Assert.Equal(4, c.Y);
+            Assert.True(c.Mesh.Statics.Vertices.Length >= 128);
+            Assert.Equal(0, c.Mesh.Statics.Count);
+            Assert.Null(c.Node);
+            Assert.Equal(1, world.ChunkPool.Count);
         }
 
         [Fact]
