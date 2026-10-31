@@ -444,8 +444,11 @@ public sealed unsafe class PageResidency
     /// (<paramref name="hold"/> = the host shows its previous frame or the camera jumped, a good moment to grow).</summary>
     public void Upload(IntPtr copyPass, long frame, bool hold = false)
     {
-        if (Layers < MaxLayers && !GrowFailed && _growth.Check(ResidentCount, Layers, MaxLayers, hold, ResidentCount >= Layers && HasLoaded(), frame))
-            Grow(copyPass, GrowthPolicy.Next(Layers, MaxLayers));
+        // the whole batch counts: growing only when the array is already full would let this batch's later uploads
+        // evict (or wait for) layers that a larger array keeps
+        int incoming = BatchUploads();
+        if (Layers < MaxLayers && !GrowFailed && _growth.CheckBatch(ResidentCount, Layers, MaxLayers, incoming, hold, frame))
+            Grow(copyPass, GrowthPolicy.NextFor(Layers, MaxLayers, (long)ResidentCount + incoming));
 
         for (int s = 0; s < _staging.Length; s++)
         {
@@ -499,10 +502,12 @@ public sealed unsafe class PageResidency
         }
     }
 
-    bool HasLoaded()
+    /// <summary>Loaded pages this upload pass will place: the loaded, successful slots, within what is left of the budget.</summary>
+    int BatchUploads()
     {
-        for (int i = 0; i < _slotState.Length; i++) if (_slotState[i] == 2) return true;
-        return false;
+        int n = 0;
+        for (int i = 0; i < _slotState.Length; i++) if (_slotState[i] == 2 && _jobs[i].Ok) n++;
+        return Math.Min(n, Math.Max(0, UploadBudget - UploadsThisFrame));
     }
 
     /// <summary>Replaces the array with a larger one: the resident layers are copied GPU-side (every mip) inside this copy
