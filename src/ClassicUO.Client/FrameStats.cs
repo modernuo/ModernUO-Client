@@ -649,8 +649,8 @@ namespace ClassicUO
                 var world = Client.Game?.UO?.World;
                 var recycler = world?.MapRecycler;
                 Log.Info(string.Format(inv, "[gcs] pools +{0:0}s: chunks created {1}, pooled {2}; lands new {3}, pooled {4}; statics new {5}, pooled {6}; statics mesh capacity (sprites:chunks){7}",
-                    t, Game.Map.Chunk.TotalCreated, Game.Map.Chunk.PooledCount, Game.GameObjects.Land.TotalNew, recycler?.PooledLands ?? 0,
-                    Game.GameObjects.Static.TotalNew, recycler?.PooledStatics ?? 0, Game.Map.Chunk.DescribeMeshCapacities(world?.Map)));
+                    t, Game.Map.Chunk.TotalCreated, world?.ChunkPool.Count ?? 0, Game.GameObjects.Land.TotalNew, recycler?.PooledLands ?? 0,
+                    Game.GameObjects.Static.TotalNew, recycler?.PooledStatics ?? 0, Game.Map.Chunk.DescribeMeshCapacities(world, world?.Map)));
                 _sessionAfterReport = true;
             }
 

@@ -59,6 +59,8 @@ namespace ClassicUO.Game
             Weather = new Weather(this);
             InfoBars = new InfoBarManager(this);
             Ecs = new WorldEcs(this);
+            MapRecycler = new Map.MapObjectRecycler(this);
+            ChunkPool = new Map.ChunkPool(this);
         }
 
         public WorldEcs Ecs { get; }
@@ -120,7 +122,55 @@ namespace ClassicUO.Game
         public Map.Map Map { get; private set; }
 
         /// <summary>Land and statics of evicted chunks, reused by later chunk loads (Chunk.Destroy, Chunk.Load).</summary>
-        public Map.MapObjectRecycler MapRecycler { get; } = new Map.MapObjectRecycler();
+        public Map.MapObjectRecycler MapRecycler { get; }
+
+        /// <summary>Destroyed chunks of this World, reused by Chunk.Create. Owned by the World like <see cref="MapRecycler"/>:
+        /// kept across <see cref="Clear"/> (relog), released by <see cref="ReleasePools"/>.</summary>
+        public Map.ChunkPool ChunkPool { get; }
+
+        // the slot array of the last destroyed Map, handed to the next one (a ~3.5 MiB LOH array otherwise per login/facet
+        // change). Held only while no Map owns it: RentChunkSlots takes it out, ReturnChunkSlots (Map.Destroy) puts it back.
+        private Chunk[] _spareSlots;
+
+        /// <summary>A cleared slot array of at least <paramref name="count"/> entries: the spare one if it is large enough
+        /// (the caller then owns it exclusively), else a new one.</summary>
+        internal Chunk[] RentChunkSlots(int count)
+        {
+            Chunk[] spare = _spareSlots;
+
+            if (spare != null && spare.Length >= count)
+            {
+                _spareSlots = null;
+
+                return spare;
+            }
+
+            return new Chunk[count];
+        }
+
+        /// <summary>The Map that owned <paramref name="slots"/> is destroyed; the array must already be cleared.</summary>
+        internal void ReturnChunkSlots(Chunk[] slots)
+        {
+            if (_spareSlots == null || _spareSlots.Length < slots.Length)
+            {
+                _spareSlots = slots;
+            }
+        }
+
+        internal Chunk[] SpareChunkSlots => _spareSlots;
+
+        /// <summary>MapWarmup filled this World's pools for the current login (World.Clear re-arms it).</summary>
+        internal bool WarmupDone;
+
+        /// <summary>The World is finished (client unload, or a test's end): drops its chunk, land and static pools, so nothing
+        /// keeps its chunks or map objects alive.</summary>
+        public void ReleasePools()
+        {
+            ChunkPool.Close();
+            MapRecycler.Close();
+            _spareSlots = null;
+            WarmupDone = false;
+        }
 
         public byte ClientViewRange { get; set; } = Constants.MAX_VIEW_RANGE;
 
@@ -1380,6 +1430,7 @@ namespace ClassicUO.Game
             ActiveSpellIcons.Clear();
 
             SkillsRequested = false;
+            WarmupDone = false; // the next login tops the pools up (they stay: same World, bounded)
             Ecs.OnWorldCleared();
         }
 
