@@ -198,6 +198,12 @@ namespace ClassicUO.Game.Scenes
                 // alphas may move, and the max Z, ground Z or roofs that decide which items are cacheable may have changed
                 chunk.GpuItemsDirty = true;
 
+                if (_gpuItemCheckSame && _alphaChanged && chunk.GpuFreshSteps > 0)
+                {
+                    // E12: a fade step (the probe pass can't be repeated on the same state)
+                    _gpuAlphaSteps++;
+                }
+
                 if (_alphaChanged && chunk.GpuFreshSteps > 0 && --chunk.GpuFreshSteps == 0 && _gpuSkipActive)
                 {
                     // this frame's walk still runs in full; the alphas it leaves are settled
@@ -233,6 +239,11 @@ namespace ClassicUO.Game.Scenes
             if (!_gpuSkipEnabled)
             {
                 return;
+            }
+
+            if (_gpuItemCheckSame && _alphaChanged && _gpuFullSteps > 0)
+            {
+                _gpuAlphaSteps++;
             }
 
             if (_alphaChanged && _gpuFullSteps > 0 && --_gpuFullSteps == 0)
