@@ -37,7 +37,8 @@ namespace ClassicUO.Game
     /// takes the pre-T1 path (the old writes, the hook syncs). While one runs,
     /// writes to its own object (and, for a removal, to the removed subtree) are funnel writes for <see cref="FunnelCheck"/>;
     /// writes to any other object are still direct writes. Converted so far: world items (0x1A, 0xF3 and the item branch of
-    /// 0x1D) and items into containers (0x25, 0x3C's items, 0x27's deny path: <see cref="PlaceInContainer"/>). Every other writer still relies on <see cref="WorldEcs.Sync"/> and <see cref="WorldEcs.PushInputs"/>, which
+    /// 0x1D) and items into containers (0x25, 0x3C's items, 0x27's deny path: <see cref="PlaceInContainer"/>), the bulk clear
+    /// of 0x3C and 0x24 (<see cref="ClearContainer"/>) and 0x27's other deny branches (<see cref="ReturnHeldItem"/>). Every other writer still relies on <see cref="WorldEcs.Sync"/> and <see cref="WorldEcs.PushInputs"/>, which
     /// stay as the fallback until the last packet group is converted.
     /// </para>
     /// <para>
@@ -463,7 +464,7 @@ namespace ClassicUO.Game
 
             parent = _world.Get(item.Container);
             uint serial = item.Serial;
-            CancelPlacements(item);
+            CancelSubtreePlacements(item);
 
             using (Open(item, null))
             {
@@ -600,10 +601,257 @@ namespace ClassicUO.Game
             return item;
         }
 
+        /// <summary>
+        /// 0x3C's bulk clear before its first item and 0x24 (OpenContainer) of a container that is not a corpse
+        /// (<c>ClearContainerAndRemoveItems</c> before T1): removes every item in the container with its contents, or, with
+        /// <paramref name="keepEquipped"/> (0x3C into a corpse), every item without a Layer, keeping the corpse's equipment in
+        /// its child list in order. A removal: it owns the removed subtrees and writes no value of its own (each removal's Sync
+        /// and Destroy run as in <see cref="RemoveWorldItem"/>, not folded: a corpse's removal queues it in the active-items
+        /// list as before). The container itself is not written (its child list only). Cancels the outstanding placements of
+        /// every removed item and its contents at any depth (the kept equipment and its contents keep theirs).
+        /// </summary>
+        /// <param name="itemOnly">How the container is found, as each handler found it before T1: 0x24 by
+        /// <c>World.Items.Get</c> (true: the item, also when a mobile has the same serial), 0x3C by <c>World.Get</c> (false:
+        /// a mobile first).</param>
+        public void ClearContainer(uint containerSerial, bool keepEquipped, bool itemOnly)
+        {
+            if (!Admitted(nameof(ClearContainer), containerSerial))
+            {
+                return;
+            }
+
+            Entity container = itemOnly ? _world.Items.Get(containerSerial) : _world.Get(containerSerial);
+
+            if (container == null || container.IsEmpty)
+            {
+                return;
+            }
+
+            // 1. resolve: the removed children, in child-list order, before anything changes
+            for (LinkedObject i = container.Items; i != null; i = i.Next)
+            {
+                if (i is Item it && !(keepEquipped && it.Layer != 0))
+                {
+                    CancelSubtreePlacements(it);
+                }
+            }
+
+            using (Open(container, null))
+            {
+#if CUO_DEVTOOLS
+                if (FunnelCheck.Enabled)
+                {
+                    for (LinkedObject i = container.Items; i != null; i = i.Next)
+                    {
+                        if (i is Item it && !(keepEquipped && it.Layer != 0))
+                        {
+                            CollectSubtree(it);
+                        }
+                    }
+                }
+#endif
+
+                // the old loop: each removal by serial (World.RemoveItem: out of the child list, the contents, OPL,
+                // Destroy); the kept equipment's links are untouched and the head is set to the first kept one
+                LinkedObject first = container.Items;
+                LinkedObject newFirst = null;
+
+                while (first != null)
+                {
+                    LinkedObject next = first.Next;
+                    Item it = (Item)first;
+
+                    if (keepEquipped && it.Layer != 0)
+                    {
+                        newFirst ??= first;
+                    }
+                    else
+                    {
+                        _world.RemoveItem(it, true);
+                    }
+
+                    first = next;
+                }
+
+                container.Items = keepEquipped ? newFirst : null;
+            }
+        }
+
+        /// <summary>What <see cref="ReturnHeldItem"/> did with a denied item.</summary>
+        internal enum HeldItemReturn
+        {
+            /// <summary>No operation ran (a nesting was rejected).</summary>
+            None,
+            /// <summary>Re-equipped on the mobile it came from (the handler refreshes its paperdoll).</summary>
+            Paperdoll,
+            /// <summary>Its container is an item: the old code removed it ("something wrong"; the server resends it).</summary>
+            Removed,
+            /// <summary>Its container is gone (or it lay on the ground): put back on its tile.</summary>
+            Terrain
+        }
+
+        /// <summary>
+        /// 0x27 (DenyMoveItem) for a held item that does not go back into a container through <see cref="PlaceInContainer"/>
+        /// (it has a Layer, or no valid container): restores the held item's values (graphic, hue as given, amount, flags,
+        /// layer, position; a corpse's state from its direction as <c>CheckGraphicChange</c> computed it), then, by its
+        /// container (<c>World.Get(containerSerial)</c>): a mobile re-equips it at the end of its child list; another item
+        /// removes it with its contents; none puts it on its tile. The item is found or created (<c>GetOrCreateItem</c>).
+        /// <para>
+        /// The old path published the item out of its container before re-adding it (a Sync after
+        /// <c>RemoveItemFromContainer</c>, then one after the re-equip), which moves it to the end of the mirror's equipment
+        /// index. The operation does the same with the computed values: it commits the detached state, then (paperdoll) the
+        /// final one. Its hook Syncs are folded.
+        /// </para>
+        /// </summary>
+        public Item ReturnHeldItem
+        (
+            uint serial,
+            ushort graphic,
+            ushort hue,
+            ushort amount,
+            Flags flags,
+            Layer layer,
+            ushort x,
+            ushort y,
+            sbyte z,
+            uint containerSerial,
+            out Entity container,
+            out HeldItemReturn result
+        )
+        {
+            container = null;
+            result = HeldItemReturn.None;
+
+            if (!Admitted(nameof(ReturnHeldItem), serial))
+            {
+                return null;
+            }
+
+            // 1. resolve, in the old order: the item (found or created), then its container
+            Item item = _world.GetOrCreateItem(serial, out _);
+            container = _world.Get(containerSerial);
+
+            result = container == null ? HeldItemReturn.Terrain
+                : SerialHelper.IsMobile(container.Serial) ? HeldItemReturn.Paperdoll
+                : HeldItemReturn.Removed;
+
+            // 2. compute: every read of the previous state is here (CheckGraphicChange ran after the writes below and read
+            // the new Graphic with the old Direction and IsMulti)
+            uint oldContainer = item.Container;
+            bool multi = item.IsMulti;
+            bool corpse = !multi && graphic == 0x2006;
+            bool usedLayer = false;
+
+            ItemState v;
+            v.Serial = serial;
+            v.IsMulti = multi;
+            v.Graphic = graphic;
+            v.X = x;
+            v.Y = y;
+            v.Z = z;
+            v.Hue = hue;
+            v.Amount = amount;
+            v.Flags = flags;
+            v.Container = 0xFFFF_FFFF; // detached: RemoveItemFromContainer (or the removal) ran in every branch
+            v.Direction = item.Direction;
+            v.Layer = layer;
+
+            if (corpse)
+            {
+                Item.CorpseState(ref v.Direction, out usedLayer, out v.Layer);
+            }
+
+            // a removal cancels its contents' placements too; a returned item keeps its contents (only its own is superseded)
+            if (result == HeldItemReturn.Removed)
+            {
+                CancelSubtreePlacements(item);
+            }
+            else
+            {
+                CancelPlacements(item);
+            }
+
+            using (Open(item, item))
+            {
+#if CUO_DEVTOOLS
+                if (result == HeldItemReturn.Removed && FunnelCheck.Enabled)
+                {
+                    CollectSubtree(item);
+                }
+#endif
+
+                // 3. write: the ECS (the detached state), then the cache from v in the old order
+                _world.Ecs.CommitItem(item, in v);
+
+                item.Graphic = v.Graphic;
+                item.Hue = v.Hue;
+                item.Amount = v.Amount;
+                item.Flags = v.Flags;
+                item.Layer = layer;
+                item.X = v.X;
+                item.Y = v.Y;
+                item.Z = v.Z;
+
+                if (corpse)
+                {
+                    item.AnimIndex = 99;
+                    item.UsedLayer = usedLayer;
+                    item.Direction = v.Direction;
+                    item.Layer = v.Layer;
+                }
+
+                // 4. derived state where CheckGraphicChange ran it
+                item.RefreshGraphicState();
+
+                // 5. links, by the container
+                switch (result)
+                {
+                    case HeldItemReturn.Paperdoll:
+                        _world.UnlinkFromContainer(item, oldContainer);
+                        container.PushToBack(item);
+                        v.Container = container.Serial;
+                        _world.Ecs.CommitItem(item, in v);
+                        item.Container = v.Container;
+
+                        break;
+
+                    case HeldItemReturn.Removed:
+                        // World.RemoveItem from the computed state, never reading item.Container back (T4's ECS-backed getter
+                        // returns the committed detached value there): the captured parent's unlink, the Container from v, then
+                        // the rest of the removal (the contents, OPL, Destroy). The item is the live one World holds for the
+                        // serial (GetOrCreateItem above), as World.RemoveItem(serial) required
+                        _world.UnlinkFromContainer(item, oldContainer);
+
+                        if (oldContainer != v.Container)
+                        {
+                            item.Container = v.Container;
+                        }
+
+                        _world.RemoveDetachedItem(item, true);
+
+                        break;
+
+                    default:
+                        _world.UnlinkFromContainer(item, oldContainer);
+
+                        if (oldContainer != v.Container)
+                        {
+                            item.Container = v.Container;
+                        }
+
+                        item.SetInWorldTile(v.X, v.Y, v.Z);
+
+                        break;
+                }
+            }
+
+            return item;
+        }
+
         // the destroy half of PlaceInContainer's destroy-vs-reuse, its own scope (owning the removed subtree)
         private void RemoveForReplacement(Item item)
         {
-            CancelPlacements(item);
+            CancelSubtreePlacements(item);
 
             using (Open(item, null))
             {
@@ -662,6 +910,27 @@ namespace ClassicUO.Game
             }
         }
 
+        // a removal's: the placements of the removed item and of everything it contains, at any depth (Codex audit of
+        // funnel-2, #3: a removed descendant's late placement is rejected as cancelled, not consumed and dropped). Runs before
+        // the removal, while the child lists are intact; nothing to walk when no placement is outstanding (the usual case)
+        private void CancelSubtreePlacements(Item root)
+        {
+            if (_placements.Count == 0)
+            {
+                return;
+            }
+
+            CancelPlacements(root);
+
+            for (LinkedObject i = root.Items; i != null; i = i.Next)
+            {
+                if (i is Item child)
+                {
+                    CancelSubtreePlacements(child);
+                }
+            }
+        }
+
         // ---- the pre-T1 paths: a release build's fallback after a placement or removal violation (the old handler code, the
         // hook syncs). Both run with no operation or fold open (a nesting is rejected, not given a fallback). The write-site
         // budget exempts them by name like the operations (coordinator, T1 round 3); its tests pin that each call follows an
@@ -688,7 +957,7 @@ namespace ClassicUO.Game
                 return;
             }
 
-            CancelPlacements(item);
+            CancelSubtreePlacements(item);
 
             if (item.IsMulti)
             {

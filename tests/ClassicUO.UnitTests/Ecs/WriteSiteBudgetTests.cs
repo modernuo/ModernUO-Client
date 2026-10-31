@@ -126,7 +126,7 @@ namespace ClassicUO.UnitTests.Ecs
             string root = WriteSiteScanner.FindRepoRoot();
             WriteSiteScanner.FunnelFile.Should().Be("src/ClassicUO.Client/Game/Ecs/WorldWriter.cs");
             WriteSiteScanner.FunnelClass.Should().Be("WorldWriter");
-            WriteSiteScanner.FunnelOperations.Should().BeEquivalentTo("UpsertWorldItem", "PlaceWorldItem", "RemoveWorldItem", "PlaceInContainer");
+            WriteSiteScanner.FunnelOperations.Should().BeEquivalentTo("UpsertWorldItem", "PlaceWorldItem", "RemoveWorldItem", "PlaceInContainer", "ClearContainer", "ReturnHeldItem");
             WriteSiteScanner.FunnelFallbacks.Should().BeEquivalentTo("PlacePreT1", "RemovePreT1");
 
             // each listed method is a method body of the real class
@@ -198,6 +198,80 @@ namespace ClassicUO.UnitTests.Ecs
             WriteSiteScanner.UnguardedFallbackUses(Src, out Dictionary<string, int> calls)
                 .Select(u => u.Line).Should().BeEquivalentTo(new[] { 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 20, 21, 23, 25, 26, 27, 29 });
             calls.Should().BeEquivalentTo(new Dictionary<string, int> { ["PlacePreT1"] = 2, ["RemovePreT1"] = 1 });
+        }
+
+        [Fact]
+        public void A_Fallback_Use_Under_Conditional_Compilation_Or_A_Jump_Is_Found()
+        {
+            // Codex audit round 5, #1 and #3: code in either build variant counts, text disabled in both is a use, and a goto
+            // can skip the Reject that precedes the call textually
+            const string Src =
+                "internal sealed class WorldWriter {\n" +
+                "    public void PlaceWorldItem(in Placement placement) {\n" +
+                "#if CUO_DEVTOOLS\n" +
+                "        PlacePreT1(item);\n" +                                                                     // line 4: dev build only
+                "#else\n" +
+                "        RemovePreT1(s, out _);\n" +                                                                // line 6: release only
+                "#endif\n" +
+                "#if SOMETHING_ELSE\n" +
+                "        PlacePreT1(item);\n" +                                                                     // line 9: disabled in both
+                "#endif\n" +
+                "        if (bad) { Reject(Violation.Placement, m); PlacePreT1(item); }\n" +                        // line 11: no guard since the funnel-2 audit (#4): the method has #if SOMETHING_ELSE
+                "    }\n" +
+                "    public void RemoveWorldItem(Item item, out Entity parent) {\n" +
+                "        if (bad) {\n" +
+                "            if (fast) goto skip;\n" +
+                "            Reject(Violation.NotHeld, m);\n" +
+                "        skip: ;\n" +
+                "            RemovePreT1(s, out parent);\n" +                                                        // line 18: the jump skips Reject
+                "        }\n" +
+                "    }\n" +
+                "#if CUO_DEVTOOLS\n" +
+                "    public void PlaceInContainer() { if (bad) { Reject(Violation.Placement, m); PlacePreT1(item); } }\n" + // line 22: guarded (dev)
+                "#endif\n" +
+                "}\n";
+
+            WriteSiteScanner.UnguardedFallbackUses(Src, out Dictionary<string, int> calls)
+                .Select(u => u.Line).Should().BeEquivalentTo(new[] { 4, 6, 9, 11, 18 });
+            calls.Should().BeEquivalentTo(new Dictionary<string, int> { ["PlacePreT1"] = 1 });
+        }
+
+        [Fact]
+        public void A_Guard_That_Depends_On_An_Unexamined_Symbol_Is_No_Guard()
+        {
+            // Codex audit of funnel-2, #4: the parses leave DEBUG undefined, so `#if !DEBUG` keeps the Reject in both while a
+            // Debug build drops it and still runs the fallback. Any other symbol in an operation's #if/#elif: no guarded call
+            const string Src =
+                "internal sealed class WorldWriter {\n" +
+                "    public void PlaceWorldItem(in Placement placement) {\n" +
+                "        if (bad)\n" +
+                "        {\n" +
+                "#if !DEBUG\n" +
+                "            Reject(Violation.Placement, m);\n" +
+                "#endif\n" +
+                "            PlacePreT1(item);\n" +                                                                  // line 8: Reject gone in Debug
+                "        }\n" +
+                "    }\n" +
+                "    public void RemoveWorldItem(Item item, out Entity parent) {\n" +
+                "        if (bad) {\n" +
+                "#if CUO_DEVTOOLS\n" +
+                "#elif TRACE\n" +
+                "#endif\n" +
+                "            Reject(Violation.NotHeld, m);\n" +
+                "            RemovePreT1(s, out parent);\n" +                                                        // line 17: another symbol in an #elif
+                "        }\n" +
+                "    }\n" +
+                "    public void PlaceInContainer() {\n" +
+                "#if CUO_DEVTOOLS\n" +
+                "        Log(x);\n" +
+                "#endif\n" +
+                "        if (bad) { Reject(Violation.Placement, m); PlacePreT1(item); }\n" +                        // line 24: guarded (CUO_DEVTOOLS only)
+                "    }\n" +
+                "}\n";
+
+            WriteSiteScanner.UnguardedFallbackUses(Src, out Dictionary<string, int> calls)
+                .Select(u => u.Line).Should().BeEquivalentTo(new[] { 8, 17 });
+            calls.Should().BeEquivalentTo(new Dictionary<string, int> { ["PlacePreT1"] = 1 });
         }
 
         [Fact]
@@ -278,13 +352,20 @@ namespace ClassicUO.UnitTests.Ecs
                 "    void Sneak() { FunnelCheck.Write(this, FunnelField.Steps); _walkSteps.Clear(); }\n" +                                     // line 12: not a checked method
                 "    internal void RemoveFirstStep() { FunnelCheck.Write(this, FunnelField.Steps); Run(() => _walkSteps.Clear()); }\n" +       // line 13: in a lambda
                 "    public StepQueue Steps3 => new StepQueue(_walkSteps, _walkSteps);\n" +                                                    // line 14: not the view's one argument
+                // Codex audit round 5, #2: another mobile's queue, an escaping alias, a callback, a read in the checked statement
+                "    internal void AddStep(Mobile target, in Step step) { FunnelCheck.Write(this, FunnelField.Steps); target._walkSteps.AddToBack(step); }\n" + // line 15
+                "    internal void ClearStepQueue() { FunnelCheck.Write(this, FunnelField.Steps); Keep(_walkSteps); }\n" +                    // line 16: escapes as an argument
+                "    internal void RemoveFirstStep() { FunnelCheck.Write(this, FunnelField.Steps); _walkSteps.ForEach(Keep); }\n" +          // line 17: not a queue mutator
+                "    internal void ReplaceStep(int i, in Step s) { FunnelCheck.Write(this, FunnelField.Steps); _walkSteps[i] = _walkSteps[0]; }\n" + // line 18: two
+                "    internal void AddStep(in Step s) { FunnelCheck.Write(this, FunnelField.Steps); _saved = _walkSteps; }\n" +              // line 19: an alias
                 "}\n";
 
             WriteSiteScanner.ScanSource(Src, "src/ClassicUO.Client/Game/GameObjects/MobileAnimation.cs", new HashSet<string> { "Player" }, true)
                 .Select(s => (s.Field, s.Line)).Should().BeEquivalentTo(new[]
                 {
                     ("Steps", 4), ("Steps", 4), ("Steps", 4), ("Steps", 4), ("Steps", 6), ("Steps", 6), ("Steps", 6), ("Steps", 6),
-                    ("Steps", 9), ("Steps", 10), ("Steps", 11), ("Steps", 11), ("Steps", 12), ("Steps", 13), ("Steps", 14), ("Steps", 14)
+                    ("Steps", 9), ("Steps", 10), ("Steps", 11), ("Steps", 11), ("Steps", 12), ("Steps", 13), ("Steps", 14), ("Steps", 14),
+                    ("Steps", 15), ("Steps", 16), ("Steps", 17), ("Steps", 18), ("Steps", 18), ("Steps", 19)
                 });
         }
 
@@ -497,7 +578,7 @@ namespace ClassicUO.UnitTests.Ecs
         internal const string FunnelFile = "src/ClassicUO.Client/Game/Ecs/WorldWriter.cs";
         internal const string FunnelClass = "WorldWriter";
 
-        internal static readonly string[] FunnelOperations = { "UpsertWorldItem", "PlaceWorldItem", "RemoveWorldItem", "PlaceInContainer" };
+        internal static readonly string[] FunnelOperations = { "UpsertWorldItem", "PlaceWorldItem", "RemoveWorldItem", "PlaceInContainer", "ClearContainer", "ReturnHeldItem" };
 
         // T1 (coordinator, round 3): the release build's pre-T1 fallbacks of the operations, exempt like them (funnel code).
         // They are reached only after a rejection; The_Fallbacks_Are_Called_Only_From_The_Violation_Paths pins that, so they
@@ -746,29 +827,60 @@ namespace ClassicUO.UnitTests.Ecs
             var bad = new List<(int, string)>();
             calls = new Dictionary<string, int>(StringComparer.Ordinal);
             var fallbacks = new HashSet<string>(FunnelFallbacks, StringComparer.Ordinal);
-            SyntaxNode root = CSharpSyntaxTree.ParseText(source).GetRoot();
+            var seenCalls = new HashSet<int>();
+            var seenBad = new HashSet<(int, string)>();
 
-            foreach (IdentifierNameSyntax id in root.DescendantNodes().OfType<IdentifierNameSyntax>())
+            // T1 funnel-2 (Codex audit round 5, #1): conditional compilation. The source is parsed with no symbols and with
+            // CUO_DEVTOOLS (the client's two build variants), so the code under `#if CUO_DEVTOOLS` and under its `#else` is
+            // each analysed in one of the parses; a fallback named in text that both parses disable (another symbol) is a use.
+            SyntaxNode plain = CSharpSyntaxTree.ParseText(source).GetRoot();
+            SyntaxNode dev = CSharpSyntaxTree.ParseText(source, new CSharpParseOptions(preprocessorSymbols: new[] { "CUO_DEVTOOLS" })).GetRoot();
+
+            foreach (SyntaxNode root in new[] { plain, dev })
             {
-                string name = id.Identifier.ValueText;
+                foreach (IdentifierNameSyntax id in root.DescendantNodes().OfType<IdentifierNameSyntax>())
+                {
+                    string name = id.Identifier.ValueText;
 
-                if (!fallbacks.Contains(name))
-                {
-                    continue;
-                }
+                    if (!fallbacks.Contains(name))
+                    {
+                        continue;
+                    }
 
-                if (IsGuardedFallbackCall(id))
-                {
-                    calls[name] = calls.TryGetValue(name, out int n) ? n + 1 : 1;
+                    if (IsGuardedFallbackCall(id))
+                    {
+                        if (seenCalls.Add(id.SpanStart))
+                        {
+                            calls[name] = calls.TryGetValue(name, out int n) ? n + 1 : 1;
+                        }
+                    }
+                    else if (seenBad.Add((LineAt(root, id.SpanStart), name)))
+                    {
+                        bad.Add((LineAt(root, id.SpanStart), name));
+                    }
                 }
-                else
+            }
+
+            foreach (SyntaxTrivia t in plain.DescendantTrivia().Where(t => t.IsKind(SyntaxKind.DisabledTextTrivia)))
+            {
+                foreach (Match m in Regex.Matches(t.ToFullString(), @"\b\w+\b"))
                 {
-                    bad.Add((id.GetLocation().GetLineSpan().StartLinePosition.Line + 1, name));
+                    int pos = t.SpanStart + m.Index;
+
+                    if (fallbacks.Contains(m.Value)
+                        && dev.FindTrivia(pos).IsKind(SyntaxKind.DisabledTextTrivia)
+                        && seenBad.Add((LineAt(plain, pos), m.Value)))
+                    {
+                        bad.Add((LineAt(plain, pos), m.Value));
+                    }
                 }
             }
 
             return bad;
         }
+
+        private static int LineAt(SyntaxNode root, int position) =>
+            root.SyntaxTree.GetLineSpan(new Microsoft.CodeAnalysis.Text.TextSpan(position, 0)).StartLinePosition.Line + 1;
 
         private static bool IsGuardedFallbackCall(IdentifierNameSyntax id)
         {
@@ -786,7 +898,16 @@ namespace ClassicUO.UnitTests.Ecs
                 || method.Parent is not ClassDeclarationSyntax cls
                 || cls.Identifier.ValueText != FunnelClass
                 || cls.Parent is TypeDeclarationSyntax
-                || stmt.Ancestors().TakeWhile(a => a != method).Any(a => a is AnonymousFunctionExpressionSyntax or LocalFunctionStatementSyntax))
+                || stmt.Ancestors().TakeWhile(a => a != method).Any(a => a is AnonymousFunctionExpressionSyntax or LocalFunctionStatementSyntax)
+                // T1 funnel-2 (Codex audit round 5, #3): "a Reject before the call" is textual order, and a jump can skip it
+                // (`if (fast) goto skip; Reject(...); skip: Fallback();`), so an operation with a goto or a label has no
+                // guarded call at all
+                || method.Body.DescendantNodes().Any(d => d is GotoStatementSyntax or LabeledStatementSyntax)
+                // Codex audit of funnel-2, #4: the two parses leave every other symbol undefined, so a Reject under
+                // `#if !DEBUG` (present in both parses, gone in a Debug build) would look like a guard while the fallback
+                // stays enabled. Conservatively: an operation with a conditional directive naming any symbol other than
+                // CUO_DEVTOOLS (the one the parses examine) has no guarded call at all
+                || DependsOnUnexaminedSymbols(method.Body))
             {
                 return false;
             }
@@ -821,6 +942,13 @@ namespace ClassicUO.UnitTests.Ecs
 
             return false;
         }
+
+        // an `#if`/`#elif` in the body whose condition names a symbol the two parses do not vary (anything but CUO_DEVTOOLS)
+        private static bool DependsOnUnexaminedSymbols(SyntaxNode body) =>
+            body.DescendantTrivia(descendIntoTrivia: true)
+                .Select(t => t.GetStructure())
+                .OfType<ConditionalDirectiveTriviaSyntax>()
+                .Any(d => d.Condition.DescendantNodesAndSelf().OfType<IdentifierNameSyntax>().Any(n => n.Identifier.ValueText != "CUO_DEVTOOLS"));
 
         // `Reject(...);` as a statement of its own (not under a condition)
         private static bool IsRejectStatement(StatementSyntax s) =>
@@ -863,9 +991,38 @@ namespace ClassicUO.UnitTests.Ecs
             return method?.Body is { Statements.Count: 2 } body
                    && Array.IndexOf(StepsMethodNames, method.Identifier.ValueText) >= 0
                    && Space.Replace(body.Statements[0].ToString(), "") == "FunnelCheck.Write(this,FunnelField.Steps);"
-                   && body.Statements[1].Span.Contains(id.Span)
-                   && !id.Ancestors().TakeWhile(a => a != method).Any(a => a is AnonymousFunctionExpressionSyntax or LocalFunctionStatementSyntax);
+                   && IsQueueMutationOnThis(body.Statements[1], id);
         }
+
+        // T1 funnel-2 (Codex audit round 5, #2): the checked statement is exactly one queue operation whose receiver is this
+        // mobile's own `_walkSteps` (the bare token: not `target._walkSteps`), and it names `_walkSteps` once, so no alias or
+        // callback argument lets the mutable queue escape: `_walkSteps.AddToBack(x);`, `_walkSteps.RemoveFromFront();`,
+        // `_walkSteps.Clear();` or `_walkSteps[i] = x;`, with no lambda in it.
+        private static bool IsQueueMutationOnThis(StatementSyntax stmt, IdentifierNameSyntax id)
+        {
+            if (stmt is not ExpressionStatementSyntax es
+                || es.DescendantNodes().OfType<IdentifierNameSyntax>().Count(n => n.Identifier.ValueText == "_walkSteps") != 1
+                || es.DescendantNodes().Any(n => n is AnonymousFunctionExpressionSyntax))
+            {
+                return false;
+            }
+
+            switch (es.Expression)
+            {
+                case InvocationExpressionSyntax { Expression: MemberAccessExpressionSyntax ma }:
+                    return ma.Expression == id
+                           && ma.IsKind(SyntaxKind.SimpleMemberAccessExpression)
+                           && Array.IndexOf(StepsQueueMutators, ma.Name.Identifier.ValueText) >= 0;
+
+                case AssignmentExpressionSyntax { Left: ElementAccessExpressionSyntax ea } asg:
+                    return asg.IsKind(SyntaxKind.SimpleAssignmentExpression) && ea.Expression == id;
+
+                default:
+                    return false;
+            }
+        }
+
+        internal static readonly string[] StepsQueueMutators = { "AddToBack", "RemoveFromFront", "Clear" };
 
         internal static readonly string[] StepsMethodNames = { "AddStep", "RemoveFirstStep", "ReplaceStep", "ClearStepQueue" };
 

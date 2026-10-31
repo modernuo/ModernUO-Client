@@ -1129,6 +1129,25 @@ namespace ClassicUO.Game
 
             LinkedObject first = item.Items;
             RemoveItemFromContainer(item);
+            RemoveContentsAndDestroy(item, first, forceRemove);
+
+            return true;
+        }
+
+        /// <summary>
+        /// T1: the rest of <see cref="RemoveItem(uint, bool)"/> for an item the caller has already taken out of its container
+        /// (<see cref="UnlinkFromContainer"/> with the parent it captured, and the detached Container written): its contents,
+        /// OPL, Destroy. It never reads the item's Container (<see cref="WorldWriter"/> computes it; T4's ECS-backed getter
+        /// would return the committed detached value). <paramref name="item"/> is the live item World holds for its serial.
+        /// </summary>
+        internal void RemoveDetachedItem(Item item, bool forceRemove)
+        {
+            RemoveContentsAndDestroy(item, item.Items, forceRemove);
+        }
+
+        private void RemoveContentsAndDestroy(Item item, LinkedObject first, bool forceRemove)
+        {
+            uint serial = item.Serial;
 
             while (first != null)
             {
@@ -1146,8 +1165,6 @@ namespace ClassicUO.Game
             {
                 Items.Remove(serial);
             }
-
-            return true;
         }
 
         public bool RemoveMobile(uint serial, bool forceRemove = false)
