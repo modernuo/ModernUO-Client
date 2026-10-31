@@ -19,13 +19,20 @@ OP = re.compile(r"\s*(=(?![=>])|\+=|-=|\*=|/=|%=|&=|\|=|\^=|<<=|>>=|\?\?=|\+\+|-
 
 
 def kind(r):
+    k = kind0(r)
+    # T0c: OffsetX/Y/Z accessor writes are the old `Offset.X op` member writes
+    return "struct-member" if r.get("sub") and k in ("assign", "compound", "incdec") else k
+
+
+def kind0(r):
+    tok = r.get("tok", r["member"])
     L = src(r["file"])[r["line"] - 1]
     c0 = r["col"] - 1
     m = re.match(r"\w+", L[c0:])
     # r['col'] may point at '.', the analyzer already moved it, but recompute robustly
-    while c0 < len(L) and not (L[c0:].startswith(r["member"])):
+    while c0 < len(L) and not (L[c0:].startswith(tok)):
         c0 += 1
-    end = c0 + len(r["member"])
+    end = c0 + len(tok)
     after = L[end:]
     before = L[:c0]
     if after.strip() == "" and r["line"] < len(src(r["file"])):
