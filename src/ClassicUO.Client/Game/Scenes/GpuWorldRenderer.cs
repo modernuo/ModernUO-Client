@@ -238,16 +238,17 @@ namespace ClassicUO.Game.Scenes
                     // pages zoomed out; at 32768 / 64 the last sprites were dropped and the anim pages thrashed
                     // (4 MiB of instances, 1 MiB per Indexed8 anim layer)
                     MaxDynamic = 131072,
-                    // Grow on demand (memory per client, several clients at once): the art pages, anim pages and instance
-                    // buffer start at 12 layers (128 MiB), 32 layers (32 MiB) and 256k instances (8 MiB) and double at 75%
-                    // occupancy up to the old fixed sizes, 24 / 128 / 2M (256 + 128 + 64 MiB), which the large scene still
-                    // reaches. CUO_GPU_GROW=0 starts at the ceilings (the old fixed sizes, for A/B).
-                    Layers = GrowOnDemand ? 12 : 24,
-                    LayersMax = 24,
-                    AnimLayers = GrowOnDemand ? 32 : 128,
-                    AnimLayersMax = 128,
-                    InstanceCapacity = GrowOnDemand ? 256 << 10 : 2 << 20,
-                    InstanceCapacityMax = 2 << 20
+                    // Grow on demand (memory per client, several clients at once): the anim pages and instance buffer
+                    // start at 32 layers (32 MiB) and 256k instances (8 MiB) and double at 75% occupancy up to the old
+                    // fixed sizes, 128 / 2M (128 + 64 MiB), which the large scene still reaches. The art pages start at
+                    // their ceiling, 24 layers (256 MiB): every login filled 12 by frame 15 (GrowthPolicy.ArtLayersStart).
+                    // CUO_GPU_GROW=0 starts at the ceilings (the old fixed sizes, for A/B).
+                    Layers = GrowOnDemand ? GrowthPolicy.ArtLayersStart : GrowthPolicy.ArtLayersMax,
+                    LayersMax = GrowthPolicy.ArtLayersMax,
+                    AnimLayers = GrowOnDemand ? GrowthPolicy.AnimLayersStart : GrowthPolicy.AnimLayersMax,
+                    AnimLayersMax = GrowthPolicy.AnimLayersMax,
+                    InstanceCapacity = GrowOnDemand ? GrowthPolicy.InstancesStart : GrowthPolicy.InstancesMax,
+                    InstanceCapacityMax = GrowthPolicy.InstancesMax
                 };
 
                 _pack.LandRemap = null;
