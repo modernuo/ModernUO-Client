@@ -46,7 +46,7 @@ namespace ClassicUO.Game
     /// <see cref="MoveMobile"/>; 0x1D for a mobile, <see cref="RemoveMobile"/>), EnterWorld (funnel part 5: 0x1B,
     /// <see cref="SetMobileGraphic"/>, <see cref="MoveMobile"/>, <see cref="SetMobileDirection"/>) and the walker (0x21 and
     /// 0x20's deny, <see cref="StopMobile"/> and <see cref="MoveMobile"/>; 0x22's notoriety; <c>Mobile.ProcessSteps</c>' step
-    /// completion, <see cref="CompleteStep"/>). Every other writer still relies on <see cref="WorldEcs.Sync"/> and <see cref="WorldEcs.PushInputs"/>, which
+    /// completion, <see cref="CompleteStep"/>) and the range sweep's removals (<see cref="SweepMobile"/>, <see cref="SweepItem"/>). Every other writer still relies on <see cref="WorldEcs.Sync"/> and <see cref="WorldEcs.PushInputs"/>, which
     /// stay as the fallback until the last packet group is converted.
     /// </para>
     /// <para>
@@ -1721,6 +1721,92 @@ namespace ClassicUO.Game
 #endif
 
                 _world.RemoveMobile(serial, true);
+            }
+        }
+
+        /// <summary>
+        /// The range sweep (<c>World.Update</c>, every 50 ms: a mobile beyond the view range, in the legacy mobile loop and
+        /// in the E4 clock path): <c>World.RemoveMobile(mobile)</c> before T1, which removes it and everything it wears or
+        /// holds and destroys it, but leaves it in the mobiles table (no force: the sweep iterates the table; the destroyed
+        /// mobile leaves it with the frame's destroyed list). A removal like <see cref="RemoveMobile"/>: it owns the removed
+        /// subtree, writes no value of its own, does not fold, and first cancels the outstanding placements of the mobile and
+        /// of every removed item. A destroyed mobile is a no-op (the old removal returned false), with no violation.
+        /// </summary>
+        /// <param name="mobile">The sweep's instance (from <c>World.Mobiles</c>, so the old lookup by its serial returned it).
+        /// One this World does not hold for its serial is a violation, rejected before any side effect (nothing is removed; no
+        /// pre-T1 path: the sweep passes only what it is iterating).</param>
+        public void SweepMobile(Mobile mobile)
+        {
+            if (mobile == null || !Admitted(nameof(SweepMobile), mobile.Serial))
+            {
+                return;
+            }
+
+            if (!Holds(mobile))
+            {
+                Reject(Violation.NotHeld, $"WorldWriter.SweepMobile: 0x{mobile.Serial:X8} is not the mobile this World holds for its serial", rejected: true);
+
+                return;
+            }
+
+            if (mobile.IsDestroyed)
+            {
+                return;
+            }
+
+            CancelSubtreePlacements(mobile);
+
+            using (Open(mobile, null))
+            {
+#if CUO_DEVTOOLS
+                if (FunnelCheck.Enabled)
+                {
+                    CollectSubtree(mobile);
+                }
+#endif
+
+                _world.RemoveMobile(mobile.Serial);
+            }
+        }
+
+        /// <summary>
+        /// The range sweep for a ground item beyond the view range (<c>World.Update</c>'s item loops, after the house check for
+        /// a multi): <c>World.RemoveItem(item)</c> before T1, which removes it with its contents and destroys it, leaving it in
+        /// the items table (no force). A removal: owns the removed subtree, no fold, cancels the placements of the item and of
+        /// its contents first. A destroyed item is a no-op, with no violation; one this World does not hold for its serial is a
+        /// violation, rejected before any side effect (no pre-T1 path).
+        /// </summary>
+        public void SweepItem(Item item)
+        {
+            if (item == null || !Admitted(nameof(SweepItem), item.Serial))
+            {
+                return;
+            }
+
+            if (!Holds(item))
+            {
+                Reject(Violation.NotHeld, $"WorldWriter.SweepItem: 0x{item.Serial:X8} is not the item this World holds for its serial", rejected: true);
+
+                return;
+            }
+
+            if (item.IsDestroyed)
+            {
+                return;
+            }
+
+            CancelSubtreePlacements(item);
+
+            using (Open(item, null))
+            {
+#if CUO_DEVTOOLS
+                if (FunnelCheck.Enabled)
+                {
+                    CollectSubtree(item);
+                }
+#endif
+
+                _world.RemoveItem(item.Serial);
             }
         }
 
