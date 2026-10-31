@@ -83,14 +83,14 @@ namespace ClassicUO.Assets
 
             foreach (var required in new[]
             {
-                "tiledata_ext.bin", "hues_raw.bin", "radarcol.bin", "multis.bin", "lights.bin",
+                TableConst.TileDataFile, "hues_raw.bin", "radarcol.bin", "multis.bin", "lights.bin",
                 "tileart.bin", "equipconv.bin", "art/sprites.bin", "tex/texmaps.bin", "anim/anim.bin",
                 "anim/palettes.bin", "anim/animdata.bin"
             })
             {
                 if (!File.Exists(Path.Combine(root, required)))
                 {
-                    throw new FileNotFoundException($"Incomplete asset pack: '{required}' is missing (format 1.0 required).", Path.Combine(root, required));
+                    throw new FileNotFoundException($"Incomplete asset pack: '{required}' is missing (format 1.1 required: convert the client again with Uo.Converter).", Path.Combine(root, required));
                 }
             }
 

@@ -19,17 +19,24 @@ namespace ClassicUO.Assets
 
         public override void Load()
         {
-            var (land, statics, names) = TileDataExtFile.Read(FileManager.Pack.PathOf(TableConst.TileDataExtFile));
+            Read(FileManager.Pack.PathOf(TableConst.TileDataFile), out _landData, out _staticData);
+        }
 
-            var landTiles = new LandTiles[land.Length];
+        /// <summary>Reads the pack's tiledata.bin (validated by <see cref="TileDataFile.Read"/>) into ClassicUO's tables,
+        /// including the converter-derived draw flags (<see cref="LandTiles.PackFlags"/>, <see cref="StaticTiles.PackFlags"/>).</summary>
+        internal static void Read(string path, out LandTiles[] landTiles, out StaticTiles[] staticTiles)
+        {
+            var (land, statics, names) = TileDataFile.Read(path);
+
+            landTiles = new LandTiles[land.Length];
 
             for (int i = 0; i < land.Length; i++)
             {
                 ref readonly var t = ref land[i];
-                landTiles[i] = new LandTiles(t.Flags, t.TexId, TileDataExtFile.Name(names, t.NameOffset, t.NameLength));
+                landTiles[i] = new LandTiles(t.Flags, t.TexId, TileDataFile.Name(names, t.NameOffset, t.NameLength)) { PackFlags = t.PackFlags };
             }
 
-            var staticTiles = new StaticTiles[statics.Length];
+            staticTiles = new StaticTiles[statics.Length];
 
             for (int i = 0; i < statics.Length; i++)
             {
@@ -44,12 +51,9 @@ namespace ClassicUO.Assets
                     t.Hue,
                     t.LightIndex,
                     t.Height,
-                    TileDataExtFile.Name(names, t.NameOffset, t.NameLength)
-                );
+                    TileDataFile.Name(names, t.NameOffset, t.NameLength)
+                ) { PackFlags = t.PackFlags };
             }
-
-            _landData = landTiles;
-            _staticData = staticTiles;
         }
     }
 
@@ -65,6 +69,8 @@ namespace ClassicUO.Assets
         public TileFlag Flags;
         public ushort TexID;
         public string Name;
+        /// <summary>Draw rules from the pack (<see cref="TileDraw.Land"/>); the client keeps no copy of them.</summary>
+        public TilePackFlags PackFlags;
 
         public bool IsWet => (Flags & TileFlag.Wet) != 0;
         public bool IsImpassable => (Flags & TileFlag.Impassable) != 0;
@@ -107,6 +113,9 @@ namespace ClassicUO.Assets
         public ushort LightIndex;
         public byte Height;
         public string Name;
+        /// <summary>Draw rules from the pack (<see cref="TileDraw.Static"/>, <see cref="TileDraw.MultiItem"/>); the client
+        /// keeps no copy of them.</summary>
+        public TilePackFlags PackFlags;
 
         public bool IsAnimated => (Flags & TileFlag.Animation) != 0;
         public bool IsBridge => (Flags & TileFlag.Bridge) != 0;

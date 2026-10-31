@@ -65,7 +65,6 @@ namespace ClassicUO.Game.GameObjects
             land.Graphic = graphic;
             land.OriginalGraphic = graphic;
             land.IsStretched = land.TileData.TexID == 0 && land.TileData.IsWet;
-            land.AllowedToDraw = graphic > 2;
             land.UpdateGraphicBySeason();
 
             return land;
@@ -96,8 +95,12 @@ namespace ClassicUO.Game.GameObjects
         public override void UpdateGraphicBySeason()
         {
             Graphic = SeasonManager.GetLandSeasonGraphic(World.Season, OriginalGraphic);
-            AllowedToDraw = Graphic > 2;
+            AllowedToDraw = IsDrawn(Client.Game.UO.FileManager.TileData.LandData, Graphic);
         }
+
+        /// <summary>Whether a land graphic (after the season swap) is drawn: the pack's tiledata draw flag.</summary>
+        internal static bool IsDrawn(LandTiles[] landData, ushort graphic) =>
+            graphic < landData.Length && Uo.Pack.TileDraw.Land(landData[graphic].PackFlags);
 
         public int CalculateCurrentAverageZ(int direction)
         {
