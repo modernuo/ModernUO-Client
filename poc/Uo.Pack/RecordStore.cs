@@ -255,6 +255,78 @@ public sealed class RecordStore : IDisposable
         }
     }
 
+    /// <summary>
+    /// Reads bytes [<paramref name="start"/>, <paramref name="start"/> + dst.Length) of a raw (codec 0) record's payload
+    /// into <paramref name="dst"/> with one positional read. Thread-safe.
+    /// </summary>
+    public void ReadRaw(in StoreRecord record, long start, Span<byte> dst)
+    {
+        if (record.Codec != StoreConst.CodecRaw)
+            throw new InvalidOperationException("only raw records can be read in part");
+        if (start < 0 || start > record.StoredBytes || dst.Length > record.StoredBytes - start)
+            throw new ArgumentOutOfRangeException(nameof(start), "range outside the record");
+        ReadExactly(_file, dst, (long)record.Offset + start);
+    }
+
+    /// <summary>
+    /// A read-only, seekable stream over bytes [<paramref name="start"/>, <paramref name="start"/> + <paramref name="length"/>)
+    /// of a raw (codec 0) record's payload, read positionally through the store's handle (no copy of the whole
+    /// payload in managed memory). Each stream keeps its own position, so streams may be used on any thread. The
+    /// stream must not outlive the store.
+    /// </summary>
+    public Stream OpenRawStream(in StoreRecord record, long start, long length)
+    {
+        if (record.Codec != StoreConst.CodecRaw)
+            throw new InvalidOperationException("only raw records can be streamed");
+        if (start < 0 || length < 0 || start > record.StoredBytes || length > record.StoredBytes - start)
+            throw new ArgumentOutOfRangeException(nameof(length), "range outside the record");
+        return new RangeStream(_file, (long)record.Offset + start, length);
+    }
+
+    private sealed class RangeStream : Stream
+    {
+        private readonly SafeFileHandle _file;
+        private readonly long _start, _length;
+        private long _pos;
+
+        public RangeStream(SafeFileHandle file, long start, long length)
+        {
+            _file = file;
+            _start = start;
+            _length = length;
+        }
+
+        public override bool CanRead => true;
+        public override bool CanSeek => true;
+        public override bool CanWrite => false;
+        public override long Length => _length;
+        public override long Position { get => _pos; set => Seek(value, SeekOrigin.Begin); }
+        public override void Flush() { }
+        public override int Read(byte[] buffer, int offset, int count) => Read(buffer.AsSpan(offset, count));
+
+        public override int Read(Span<byte> buffer)
+        {
+            long left = _length - _pos;
+            if (left <= 0 || buffer.IsEmpty) return 0;
+            if (buffer.Length > left) buffer = buffer.Slice(0, (int)left);
+            int n = RandomAccess.Read(_file, buffer, _start + _pos);
+            if (n <= 0) throw new EndOfStreamException("the record ends early (file truncated?)");
+            _pos += n;
+            return n;
+        }
+
+        public override long Seek(long offset, SeekOrigin origin)
+        {
+            long p = origin switch { SeekOrigin.Begin => offset, SeekOrigin.Current => _pos + offset, _ => _length + offset };
+            if (p < 0) throw new IOException("seek before the start of the record");
+            _pos = p;
+            return p;
+        }
+
+        public override void SetLength(long value) => throw new NotSupportedException();
+        public override void Write(byte[] buffer, int offset, int count) => throw new NotSupportedException();
+    }
+
     private static void ReadExactly(SafeFileHandle fh, Span<byte> dst, long offset)
     {
         while (!dst.IsEmpty)
