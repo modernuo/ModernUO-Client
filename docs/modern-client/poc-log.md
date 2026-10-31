@@ -4084,3 +4084,26 @@ Codex (gpt-6-astra) audited 1cb398ccb read-only and found five issues: three P2 
 **Pack bytes:** unchanged. The converter's output code did not change (only the frozen loader that verify uses), so the test pack was not rebuilt. `audio/sounds.bin` is still f41571ce... and `audio/music.bin` 8085e9e0.... `--verify-only --only sounds,music` on the test pack: sounds 1,656 ids EXACT, music 102 ids EXACT, all checks passed.
 
 **Verification.** Client Release and `-p:CuoDevTools=false` builds: 0 errors. Uo.Converter: 0 errors. `dotnet test tests/ClassicUO.UnitTests -c Release`: 1,105 passed, 1 skipped (pre-existing), 0 failed (5 new). Client check: **bench-000053** (`listen-round3`) runs the bench-000052 plan on a Release JIT build of 7aefe30d2. It was queued when this was written; its result is still to be recorded.
+
+## Milestone smoke on classic-1.2 (bench-000054)
+
+End-to-end smoke check of the milestone tip, no code changes. NativeAOT win-x64 publish of 5c90523ca (code = 32ce99b5e), pack CURRENT = classic-1.2, account kbatman4. Three runs: `listen` (Gpu; brit, minoc, cove, walk) and `shots-gpu` / `shots-legacy` (brit, house, `[TestScene go`, large scene at zoom 1 and 2.5). Job ok in 410 s, all three runs `exit: 0`.
+
+- **Errors:** none in any run (no exception, DllNotFound/EntryPointNotFound, `skipped`, incomplete pack). No loose audio or tiledata file opened (no tiledata.mul, sound.mul, soundLegacyMUL, Music\Digital); every run logs `Audio: pack, 1655 sound records, 90 music records` (0.24-0.30 ms) and `[load]` 39-42 ms.
+- **Music (listen):** LoginLoop, then Britainpos (first buffer 6.7 ms, looped), Minocpos 1.2 ms, Cove 0.7 ms (looped), Britainpos 1.2 ms (looped); every open 0.2 ms.
+- **LoginLoop first buffer:** 28.0 ms (listen), **379.2 ms** (shots-gpu), 25.8 ms (shots-legacy). Two of three are at or below the AOT loose-file figure (34.5 ms, bench-000043). The 379 ms sample is a one-off start-up stall, not the pack path: its open took 0.3 ms like the others, the binary, pack and plan were the same, and the line comes at the same point (right after `Connected!`, before the login burst). It is the only run where the log second ticks between `Connected!` and the first buffer. The figure runs from stream creation to the first buffer the main thread submits in `UOMusic.Update`, so it includes decode-worker scheduling and the main thread's frames during login; the log has no frame times before the world, so the two can't be told apart from this run.
+- **Sounds:** 6 first reads in listen, all from the pack (0.03-0.12 ms): footsteps 299/300, cat 106, dog 134, bird 28, chicken 111. No refusals.
+- **Plan:** listen ran brit/minoc/cove/walk to `plan done`; both shot runs reached `plan done`. Large scene loaded on both renderers: 1,985 mobiles, 25,161 items.
+- **World shots** (world layer, differing-pixel share; compare.py):
+
+  | Shot | vs | Gpu | Legacy |
+  |---|---|---|---|
+  | brit | bench-000046 new-gpu-1 / bench-000045 new-legacy | 0.122 % | 0.128 % |
+  | house | same | **30.192 %** | 0.551 % |
+  | ls (zoom 1) | bench-000045 new-* | 7.915 % | 13.214 % |
+  | lsout (zoom 2.5) | bench-000045 new-* | 3.045 % | 3.282 % |
+
+  Brit and Legacy house: moving NPCs only. Large scene: the differing pixels are all on mobiles (animation frames), no terrain or static differences. `_lights` differs 100 % from bench-000045 (light level between sessions; 0 % vs bench-000046 at brit and house). `_ui` 0-0.09 %.
+- **House on Gpu: the bench-000045 roof race again.** This run drew the house roof, the bottom-left building's chimneys and the tree, which Legacy (this run) and all bench-000046 shots hide. 30.2 % against each of bench-000046's three new runs. The house-window counters match bench-000045's base run exactly: foliage 1, cap_statics 2, pick_tests 36.7, override_calls 28 (bench-000046: 0, 0, 24, 14); hidden_tiles 80 in both. So it is the pre-existing race in the Gpu roof-hiding decision on arrival, now seen on the milestone tip too: 2 of 15 Gpu house shots so far (bench-000045 base, this run). Not a regression of the milestone, but a real Gpu bug that should be investigated (the arrival-time max-Z / under-roof decision on the Gpu host).
+- **Verdict:** pass on errors, pack-only loading, audio, plan and the large scene. The world comparison has one deviation: the known Gpu roof race at the house.
+- run.py again printed "WARNING: password appears in the log" for all three runs (the open coordinator item from bench-000045/46).
