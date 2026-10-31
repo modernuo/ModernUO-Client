@@ -239,7 +239,7 @@ Not converted: gump paperdoll art, Equipconv.def (runtime: equipment graphic swa
 
 **Problem.** The 16-bit anim pages are 628 pages of 2048², 6 mips: 6.7 GiB raw, 1.1 GB Brotli. "Unpack to raw at install" works for art, tex and maps (435 MB), not for this. Three options were measured on the full 7.0.103 client (963 bodies, 993k frames, 951,693 packed rects), i9-12900K, `--threads 12`. Every number below comes from a full anim run per variant (about 1 min each), not from extrapolation, unless it says "est.".
 
-Experimental packs: `uo-packs/anim-exp-b16-1024`, `anim-exp-idx-2048`, `anim-exp-idx-1024` (pages Kind 1), `anim-exp-chunked` and `anim-exp-idx-2048-chunked` (the same pages re-encoded as Kind 2, 1 MiB chunks). Tools: `Uo.Converter --bench-chunked <anim dir> <out dir>`, `--anim-report <pack,pack>`, `--compare-indexed <indexed pack> <b16 pack>`, `--filter-ref <indexed pack> <b16 pack> <png dir>`.
+Experimental packs (deleted 2026-10-31 to free disk space; rebuild them with the converter flags in this section): `uo-packs/anim-exp-b16-1024`, `anim-exp-idx-2048`, `anim-exp-idx-1024` (pages Kind 1), `anim-exp-chunked` and `anim-exp-idx-2048-chunked` (the same pages re-encoded as Kind 2, 1 MiB chunks). Tools: `Uo.Converter --bench-chunked <anim dir> <out dir>`, `--anim-report <pack,pack>`, `--compare-indexed <indexed pack> <b16 pack>`, `--filter-ref <indexed pack> <b16 pack> <png dir>`.
 
 ### Experimental format: `PixelFormat.Indexed8 = 3` (anims only, `--anim-format indexed8`)
 
