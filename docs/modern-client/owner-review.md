@@ -35,6 +35,9 @@ Newest at the bottom. Each item says what I did meanwhile.
 7. **Loose `Gumps/*.gump` override files now need a converter rerun** (`Uo.Converter --only gumps`) to take effect. The in-client asset reload no longer picks them up. This matches how art already works. *Meanwhile:* accepted.
 8. **Pool sizes for 4K or zoomed-out views** (login warm-up agent): the chunk pool is capped at 300 chunks (the chunk cache limit), with matching land and static pools. Bigger views load more chunks than that, before and after the warm-up change. Raise the caps with view size? *Meanwhile:* unchanged, until a 4K measurement says it matters.
 9. **Plugins that send while the client connects** (send-side lock): a plugin sending from its own thread during the login or game-server handshake now has those packets held and sent just after the handshake (before, they could corrupt it). Do you use ClassicAssist or Razor scripts that act at the moment of connecting? If so, a run with them would confirm nothing changed for you. *Meanwhile:* merged; normal plugin traffic after login is unaffected.
+10. **Text pack: cliloc uncompressed?** (text-in-pack agent) Uncompressed cliloc costs 11.5 MiB more on disk but loads 7 ms faster at startup (1.6 vs 8.6 ms). *Recommended:* uncompressed in the ship profile (startup matters more than 11 MiB); `--cliloc-brotli` stays available. *Meanwhile:* uncompressed.
+11. **Fold `Clilocs.txt` (a shard's own cliloc strings) into the pack?** Today it stays a loose text file read on top of the pack. *Recommended:* yes, like loose gump files: the converter folds it in, and the loose file still overrides when present, so shards can ship it without rebuilding the pack. *Meanwhile:* loose file, unchanged.
+12. **U+FFE0 ("￠") in unifont3–12 crashed the old client** (its glyph points past the end of the file). It is now drawn as no glyph, the only behaviour change from text-in-pack. *Recommended:* accept; it's a crash fix, and the legacy-exact policy covers behaviour, not crashes. *Meanwhile:* no glyph.
 
 ## Decisions you made tonight (recorded in README "Decisions so far" and in memory)
 
@@ -116,7 +119,7 @@ Newest at the bottom. Each item says what I did meanwhile.
 ## In progress
 
 - **E12: same-frame item checker** (`bg/ecs-e12-checker`, Sonnet): built and verified; NativeAOT timing, then a Codex audit.
-- **Text into the pack** (`poc/pack-text`, Opus): fonts, cliloc and speech, on the gumps record-store pattern, with lazy glyphs and strings (the `legacy-main` lessons).
+- **Text into the pack** (`poc/pack-text`, Opus): done by the agent (startup text loaders 55 → 3 ms, heap −28 MB, exact parity, screenshots identical); in Codex audit.
 - **In-flight decode cap** (`poc/decode-inflight-cap`, Sonnet): measure the peak bytes held by worker decodes during teleports, then a byte budget that never drops requests.
 - **Chunk pool per World** (`poc/chunk-pool-per-world`, Sonnet): the pools filled at login belong to the World that uses them and are freed with it.
 - All agents share a `bench.lock`, so client runs, builds and timing series never overlap.
