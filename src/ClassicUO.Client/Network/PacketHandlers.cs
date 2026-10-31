@@ -4135,19 +4135,7 @@ namespace ClassicUO.Network
                 ? ChatStatus.Enabled
                 : 0;
 
-            BodyConvFlags bcFlags = 0;
-            if (flags.HasFlag(LockedFeatureFlags.UOR))
-                bcFlags |= BodyConvFlags.Anim1 | BodyConvFlags.Anim2;
-            if (flags.HasFlag(LockedFeatureFlags.LBR))
-                bcFlags |= BodyConvFlags.Anim1;
-            if (flags.HasFlag(LockedFeatureFlags.AOS))
-                bcFlags |= BodyConvFlags.Anim2;
-            if (flags.HasFlag(LockedFeatureFlags.SE))
-                bcFlags |= BodyConvFlags.Anim3;
-            if (flags.HasFlag(LockedFeatureFlags.ML))
-                bcFlags |= BodyConvFlags.Anim4;
-
-            Client.Game.UO.Animations.UpdateAnimationTable(bcFlags);
+            // Body art does not depend on these flags: the pack holds the body set chosen at import (bodies.json).
         }
 
         private static void DisplayQuestArrow(World world, ref StackDataReader p)

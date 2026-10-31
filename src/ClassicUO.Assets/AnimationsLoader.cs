@@ -703,14 +703,4 @@ namespace ClassicUO.Assets
             return (Graphic, Gump, Color) == (other.Graphic, other.Gump, other.Color);
         }
     }
-
-    [Flags]
-    public enum BodyConvFlags
-    {
-        Anim1 = 0x1,
-        Anim2 = 0x2,
-        Anim3 = 0x4,
-        Anim4 = 0x8,
-        Anim5 = 0x10,
-    }
 }

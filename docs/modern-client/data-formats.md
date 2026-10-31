@@ -192,7 +192,7 @@ UO's own data has no alpha bit that the client trusts. Transparency is implied, 
 
 ### 4.4 Animations
 
-UO stores animations by **file** (anim.mul, anim2–5, AnimationFrame1..N.uop) and then remaps bodies through several `.def`/`.txt` files. The source format stores the **result**: one folder per body id as the client sees it, with every remap resolved except the ones that are genuinely runtime choices.
+UO stores animations by **file** (anim.mul, anim2–5, AnimationFrame1..N.uop) and then remaps bodies through several `.def`/`.txt` files. The source format stores the **result**: one folder per body id as the client sees it, with every remap resolved. There are no runtime choices: the shard admin picks the body set once, at import (`bodies.json`, [bodies.md](bodies.md)).
 
 - **Import:** ClassicUO's frame decode of `anim*.idx/mul` and `AnimationFrame*.uop` (MUL frames: 256-entry 16-bit palette, frame header `centreX, centreY, width, height`, then run lines; UOP: per-frame palette and header in the frame blob), `AnimationSequence.uop`, `Body.def`, `Bodyconv.def`, `Corpse.def`, `mobtypes.txt`, `Anim1.def`/`Anim2.def`, `animdata.mul`, and verdata animation patches are not imported (1.1). Offsets: people `(id-400)*175+35000` blocks of 35 groups, monsters `id*110` (22 groups), animals `(id-200)*65+22000` (13), sea monsters the monster offset with 13 groups; MUL run headers are `u32` (`len = h & 0xFFF`, signed 10-bit x and y), ended by `0x7FFF7FFF`; UOP frame ids are 1-based across five directions (T/AnimationsLoader.cs:471-560, 968-1008, 1270-1585).
 - **Source:**
@@ -224,12 +224,12 @@ UO stores animations by **file** (anim.mul, anim2–5, AnimationFrame1..N.uop) a
   - `source` is provenance: which anim file and file-local body the frames came from (`Bodyconv.def` resolution). Read-only for tools; the build ignores it.
   - `mountHeight` is the converter's resolved value (pack-format.md "anim.bin": `mountHeight`).
   - `fallback` is `Body.def` (`orig {new} hue`): draw that body when this one has no frames. `corpse` is `Corpse.def`. Both are **kept as data**, not baked into copies, because they name another editable body (editing the target must change both). The pack keeps them as chained alias fields today (pack-format.md "anim.bin").
-  - `groupReplace` is `Anim1.def`/`Anim2.def` and the AnimationSequence replacement for this body (pack-format.md says AnimationSequence replacement is baked in today; the source keeps it as data so admins can change it).
+  - `groupReplace` is `Anim1.def`/`Anim2.def` and the AnimationSequence replacement for this body (pack-format.md says AnimationSequence replacement is baked in today; the source keeps it as data so admins can change it). For a converted body it is the **converted target's** sequence (owner, 2026-10-31: daemon 9 drawn as anim2 body 7 follows 7's list).
 - **What is baked at import and what stays data:**
 
 | UO file | Meaning | Source format |
 |---|---|---|
-| `Bodyconv.def` | body N of anim.mul is really in animK.mul as body M | **resolved**: frames live under the client-visible body; `source` records where from |
+| `Bodyconv.def` | body N of anim.mul is really in animK.mul as body M | **resolved, applied per the import choices** (`bodies.json`: preset, remodel overrides, additions, extras; no runtime choice): frames live under the client-visible body; `source` records where from |
 | `Body.def` | body with no frames draws another body (+hue) | `fallback` (data) |
 | `Corpse.def` | corpse body remap | `corpse` (data) |
 | `mobtypes.txt` | body type and flags | `type`, `flags` |

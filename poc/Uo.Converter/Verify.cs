@@ -715,12 +715,16 @@ public static class Verify
             return -1;
         }).ToArray();
 
-        var conv = AnimConvert.ReadBodyConv(fm);
+        // The body set the pack was built with (manifest; packs from before bodies.json used the default).
+        var manifestPath = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(dir))!, "manifest.json");
+        var plan = BodyPlan.Build(fm, BodyChoices.FromRecord(File.Exists(manifestPath) ? ManifestFileIo.Read(manifestPath).Bodies : null));
+        if (plan.BodyCount != bodies.Length) Fail($"anim body table has {bodies.Length} bodies, the body choices give {plan.BodyCount}");
+        var conv = plan.Conv;
         long checkedFrames = 0, exact = 0, crossPage = 0, absent = 0;
         double se = 0; long nRgb = 0, flips = 0, nPx = 0;
         PixelFormat fmt = PixelFormat.Rgba8;
         var gate = new object();
-        using var workers = new ThreadLocal<(AnimWorker W, Dictionary<int, AnimConvert.BodyMeta> M)>(() => (new AnimWorker(fm), new()), trackAllValues: true);
+        using var workers = new ThreadLocal<(AnimWorker W, Dictionary<int, AnimConvert.BodyMeta> M)>(() => (new AnimWorker(fm, plan), new()), trackAllValues: true);
         // Serial: ClassicUO's ReadMULAnimationFrames is not GC-safe under concurrent allocation (see AnimConvert.ReadMul).
         Parallel.ForEach(groups, new ParallelOptions { MaxDegreeOfParallelism = 1 }, g =>
         {
