@@ -32,7 +32,7 @@ namespace ClassicUO.Game
     /// Operations do not nest, and only operations open a scope. A violation (nesting, a placement that is not outstanding,
     /// a removal of an item this World does not hold, an item upsert of a live mobile) is a bug in the caller: it throws in
     /// CUO_DEVTOOLS builds; in a release build it logs an error once per kind and the packet takes the pre-T1 path (the old
-    /// writes, no fold, the hook syncs), so a funnel bug never disconnects a player (coordinator, T1 round 2). While one runs,
+    /// writes, no fold of its own, the hook syncs; a fold left open by the operation it nested in syncs its item when it ends), so a funnel bug never disconnects a player (coordinator, T1 round 2). While one runs,
     /// writes to its own object (and, for a removal, to the removed subtree) are funnel writes for <see cref="FunnelCheck"/>;
     /// writes to any other object are still direct writes. Converted so far: world items (0x1A, 0xF3 and the item branch of
     /// 0x1D) and items into containers (0x25, 0x3C's items, 0x27's deny path: <see cref="PlaceInContainer"/>). Every other writer still relies on <see cref="WorldEcs.Sync"/> and <see cref="WorldEcs.PushInputs"/>, which
@@ -666,7 +666,10 @@ namespace ClassicUO.Game
         }
 
         // ---- the pre-T1 paths: a release build's fallback after a violation (the old handler code: no fold, the hook syncs).
-        // Their writes are direct writes and count in the write-site budget.
+        // The write-site budget exempts them by name like the operations (coordinator, T1 round 3); its tests pin that they are
+        // called only after a rejection (or for a pre-T1 upsert's token), so they cannot become a general bypass. A violation
+        // can happen while a fold is open (a nesting): each marks the fold, so its item is synced from its cache when the fold
+        // closes (Codex audit round 3, #1).
 
         // the item branch of UpdateGameObject before T1, up to its callbacks
         private Item UpsertPreT1
@@ -686,6 +689,7 @@ namespace ClassicUO.Game
             out Placement placement
         )
         {
+            _world.Ecs.ReconcileFoldOnEnd();
             placement = default;
             Entity obj = _world.Get(serial);
             Item item;
@@ -757,8 +761,10 @@ namespace ClassicUO.Game
         }
 
         // the placement of UpdateGameObject's item branch before T1
-        private static void PlacePreT1(Item item)
+        private void PlacePreT1(Item item)
         {
+            _world.Ecs.ReconcileFoldOnEnd();
+
             if (item.OnGround)
             {
                 item.SetInWorldTile(item.X, item.Y, item.Z);
@@ -768,6 +774,7 @@ namespace ClassicUO.Game
         // AddItemToContainer before T1, its world-state part
         private Item PlaceInContainerPreT1(uint serial, ushort graphic, ushort amount, ushort x, ushort y, ushort hue, uint containerSerial, out Entity container)
         {
+            _world.Ecs.ReconcileFoldOnEnd();
             container = _world.Get(containerSerial);
 
             if (container == null)
@@ -813,6 +820,7 @@ namespace ClassicUO.Game
         // DeleteObject's item branch before T1, by serial
         private void RemovePreT1(uint serial, out Entity parent)
         {
+            _world.Ecs.ReconcileFoldOnEnd();
             parent = null;
             Item item = _world.Items.Get(serial);
 

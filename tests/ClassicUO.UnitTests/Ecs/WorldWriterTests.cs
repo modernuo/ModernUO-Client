@@ -516,6 +516,62 @@ namespace ClassicUO.UnitTests.Ecs
             newWorld.Writer.InScope.Should().BeFalse();
         }
 
+        // ---- Codex audit round 3, #1: a fallback while the fold of its own item is open (the hook syncs the old writes rely
+        // on are folded): the fold's end syncs the item from its cache
+
+        [Theory]
+        [InlineData(Start.Ground, 0)]
+        [InlineData(Start.InBag, 3)]
+        [InlineData(Start.Worn, 1)]
+        [InlineData(Start.GroundCorpse, 4)]
+        public void Release_A_Fallback_Inside_The_Fold_Of_Its_Own_Item_Reaches_The_Mirror(Start start, int packet)
+        {
+            World oldWorld = Build(start), newWorld = Build(start);
+            newWorld.Writer.ThrowOnViolation = false;
+            Item it = newWorld.Items.Get(ITEM);
+            Packet p = Packets[packet];
+
+            OldUpsert(oldWorld, p);
+            newWorld.Ecs.BeginFold(it); // an operation on this very instance is open
+            NewUpsert(newWorld, p, out bool created).Should().BeSameAs(it);
+            newWorld.Ecs.EndFold(it);
+
+            created.Should().BeFalse();
+            newWorld.Writer.Violations.Should().Be(1);
+            newWorld.Ecs.IsFolding.Should().BeFalse();
+            AssertSameWorld(oldWorld, newWorld);
+        }
+
+        [Fact]
+        public void Release_A_Nested_Upsert_Inside_A_Real_Operation_Leaves_The_Mirror_Equal_To_The_Cache()
+        {
+            // a real nesting: an upsert of the same item started from inside the outer upsert's commit (before its writes). The
+            // nested one takes the pre-T1 path under the outer fold; the outer operation's writes come after it, as a pre-T1
+            // handler's continuation would; when the outer fold ends, the mirror holds what the cache holds.
+            World world = Build(Start.InBag);
+            world.Writer.ThrowOnViolation = false;
+            Packet outer = Packets[1], inner = Packets[2];
+            world.Ecs.CommitObserver = (_, _) =>
+            {
+                world.Ecs.CommitObserver = null;
+                NewUpsert(world, inner, out _);
+            };
+
+            Item it = NewUpsert(world, outer, out _);
+
+            world.Writer.Violations.Should().Be(1);
+            world.Writer.InScope.Should().BeFalse();
+            world.Ecs.IsFolding.Should().BeFalse();
+            world.Writer.OutstandingPlacements.Should().Be(0);
+            it.Should().BeSameAs(world.Items.Get(ITEM));
+            (it.X, it.Y, it.Z, it.Flags, it.Amount).Should().Be((outer.X, outer.Y, outer.Z, outer.Flags, outer.Count), "the outer operation wrote last");
+
+            world.Ecs.Mirror.TryGet(ITEM, out MirrorRecord mirrored).Should().BeTrue();
+            world.Ecs.Sync(it); // the record of what the cache holds
+            world.Ecs.Mirror.TryGet(ITEM, out MirrorRecord fromCache);
+            mirrored.Should().BeEquivalentTo(fromCache, "the mirror holds what the cache holds");
+        }
+
         // ---- Codex audit round 2, #1: results are computed, never read back after the operation's own unlink or write
 
         [Theory]
@@ -698,6 +754,12 @@ namespace ClassicUO.UnitTests.Ecs
             }
 
             Item item = world.Items.Get(serial);
+
+            // a mobile holding the serial goes, with its equipment (Codex audit round 3, #3: the oracle had left this out)
+            if (SerialHelper.IsMobile(serial))
+            {
+                world.RemoveMobile(serial, true);
+            }
 
             if (item != null && item.Container != containerSerial && (container.Graphic != 0x2006 || item.Layer == Layer.Invalid))
             {
@@ -899,6 +961,56 @@ namespace ClassicUO.UnitTests.Ecs
             AssertSameWorld(oldWorld, newWorld);
         }
 
+        [Fact]
+        public void Release_A_PlaceInContainer_Inside_The_Fold_Of_Its_Own_Item_Reaches_The_Mirror()
+        {
+            // Codex audit round 3, #1: the same container, so the fallback reuses the folded instance
+            World oldWorld = Build(Start.InBag), newWorld = Build(Start.InBag);
+            newWorld.Writer.ThrowOnViolation = false;
+            Item it = newWorld.Items.Get(ITEM);
+
+            OldAddToContainer(oldWorld, ITEM, 0x1516, 2, 3, 4, 0x21, BAG);
+            newWorld.Ecs.BeginFold(it);
+            newWorld.Writer.PlaceInContainer(ITEM, 0x1516, 2, 3, 4, 0x21, BAG, out _).Should().BeSameAs(it);
+            newWorld.Ecs.EndFold(it);
+
+            newWorld.Writer.Violations.Should().Be(1);
+            AssertSameWorld(oldWorld, newWorld);
+        }
+
+        [Theory]
+        [InlineData(BAG, false)]
+        [InlineData(CORPSEBOX, false)]
+        [InlineData(BAG, true)]
+        public void PlaceInContainer_Of_A_Live_Mobile_Serial_Equals_The_Old_Path(uint containerSerial, bool fallback)
+        {
+            // Codex audit round 3, #3: a live mobile holding the incoming serial is removed with its equipment and the
+            // equipment's contents, by the operation and by its release fallback alike
+            World oldWorld = BuildWithCorpse(Start.Worn), newWorld = BuildWithCorpse(Start.Worn);
+            Item replacement = Item.Create(newWorld, BAG);
+
+            if (fallback)
+            {
+                newWorld.Writer.ThrowOnViolation = false;
+                newWorld.Ecs.BeginFold(replacement);
+            }
+
+            OldAddToContainer(oldWorld, MOB, 0x1515, 1, 2, 3, 0x21, containerSerial);
+            newWorld.Writer.PlaceInContainer(MOB, 0x1515, 1, 2, 3, 0x21, containerSerial, out _);
+
+            if (fallback)
+            {
+                newWorld.Ecs.EndFold(replacement);
+                newWorld.Writer.Violations.Should().Be(1);
+            }
+
+            oldWorld.Mobiles.Get(MOB).Should().BeNull("the old handler removed the mobile");
+            oldWorld.Items.Get(ITEM).Should().BeNull("with its equipment");
+            AssertSameWorld(oldWorld, newWorld);
+            AssertSameCorpseBox(oldWorld, newWorld);
+            (newWorld.Items.Get(MOB) == null).Should().Be(oldWorld.Items.Get(MOB) == null);
+        }
+
         private static List<uint> ChildSerials(Entity e)
         {
             var list = new List<uint>();
@@ -916,6 +1028,8 @@ namespace ClassicUO.UnitTests.Ecs
         private static void AssertSameWorld(World a, World b)
         {
             a.Items.Count.Should().Be(b.Items.Count);
+            b.Mobiles.Count.Should().Be(a.Mobiles.Count);
+            (b.Mobiles.Get(MOB) == null).Should().Be(a.Mobiles.Get(MOB) == null, "the mobile exists in both or neither");
             b.ActiveItems.Select(i => i.Serial).Should().Equal(a.ActiveItems.Select(i => i.Serial), "the active-items list, in order");
 
             foreach (uint serial in new[] { ITEM, CHILD, GRANDCHILD, BAG })
