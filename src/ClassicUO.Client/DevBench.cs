@@ -85,6 +85,8 @@ namespace ClassicUO
             if (gs != null)
             {
                 Log.Info($"[settle] {where}: hold {(gs.Settle.HoldEnabled ? "on" : "off")}; {gs.Settle.Stats}");
+                var db = Renderer.DecodeBudget.Shared;
+                Log.Info($"[decode-budget] {where}: peak in flight since the last line {db.TakeLogPeak() >> 10} KiB (all-time {db.PeakBytes >> 10}), cap {db.CapBytes >> 10} KiB, waiting {db.Waiting}");
             }
         }
 
