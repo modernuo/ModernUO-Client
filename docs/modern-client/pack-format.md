@@ -370,7 +370,7 @@ At runtime, an equipped item on body `body` with animId `graphic` is drawn as `n
 
 ## Record stores
 
-Content that the client reads one item at a time and that is not sampled by the GPU from pack pages goes into a record store: one Kind 0 file per content type, read by offset through one file handle kept open. Gumps were the first; ASCII fonts (a record per font), unicode fonts (a record per 256-character page) and cliloc (a record per language) use it too, with their own magic, slot argument and record meta (see "Text"). Sounds and the other "Not in the pack" types are meant to follow. Reader and writer: `Uo.Pack.RecordStore`, `RecordStoreWriter`.
+Content that the client reads one item at a time and that is not sampled by the GPU from pack pages goes into a record store: one Kind 0 file per content type, read by offset through one file handle kept open. Gumps were the first; ASCII fonts (a record per font), unicode fonts (a record per 256-character page) and cliloc (a record per language, plus the shard's overrides) use it too, with their own magic, slot argument and record meta (see "Text"). Sounds and the other "Not in the pack" types are meant to follow. Reader and writer: `Uo.Pack.RecordStore`, `RecordStoreWriter`.
 
 | Part | Layout |
 |---|---|
@@ -387,7 +387,7 @@ Content that the client reads one item at a time and that is not sampled by the 
   - every slot points into the record table;
   - every payload lies in the payload area: `payloadStart ≤ offset ≤ fileLength` and `storedBytes ≤ fileLength − offset` (no wrap-around);
   - codec 0 has `storedBytes = rawBytes`; other codecs are rejected.
-  A failure rejects the whole file. The content type then checks its own meta (for gumps, see below). A record is one positional read plus its decode, from any thread, into the caller's buffer.
+  A failure rejects the whole file. A content type whose slot count is fixed (fonts) passes its bounds to `Open`, which checks them before allocating the tables. The content type then checks its own meta (for gumps, see below). A record is one positional read plus its decode, from any thread, into the caller's buffer.
 - No whole-file compression and no per-record files: a store is read by offset (the per-open cost of a file is 20–28 µs, L7), and a record decodes alone.
 
 ## Gumps (`gumps/gumps.bin`)
@@ -444,7 +444,7 @@ A record store with magic `GUMP` holding every gump id the client's `GumpsLoader
 
 ASCII fonts (fonts.mul), unicode fonts (unifont*.mul), cliloc in every language the client folder has (Cliloc.*), and speech.mul's keyword table. The client reads each from here when its file exists (`FontsLoader.AsciiFromPack` / `UnicodeFromPack`, `ClilocLoader.FromPack`, `SpeechesLoader.FromPack`); without it, or when the file is invalid as a whole, it reads the MUL files as before and says so in the log. `CUO_PACK_TEXT=0` reads the MUL files even when the pack has text.
 
-Every file is converted through a frozen copy of the client's loader (tools/ClassicUO.Assets.Mul: `FontsLoader`, `ClilocLoader`, `SpeechesLoader`), so the pack holds what the client resolved, quirks included: a unicode glyph whose width or height isn't positive is no glyph, an ASCII glyph past the end of fonts.mul has no texel array, unifont1 is unifont when unifont1.mul is missing, a cliloc text stops at its first NUL. One exception: a unicode glyph whose data runs past the end of its file (U+FFE0 in unifont3..12 of 7.0.103) made the client throw when drawn; the converter stores no glyph for it and lists it, and the client's MUL path treats it the same way. Cliloc languages are the extensions of the folder's `Cliloc.*` files (1–4 letters or digits), except csv, txt, bak, old, tmp, xml and json.
+Every file is converted through a frozen copy of the client's loader (tools/ClassicUO.Assets.Mul: `FontsLoader`, `ClilocLoader`, `SpeechesLoader`), so the pack holds what the client resolved, quirks included: a unicode glyph whose width or height isn't positive is no glyph, an ASCII glyph past the end of fonts.mul has no texel array, unifont1 is unifont when unifont1.mul is missing, a cliloc text stops at its first NUL. One exception: a unicode glyph whose data runs past the end of its file (U+FFE0 in unifont3..12 of 7.0.103) made the client throw when drawn; the converter stores no glyph for it and lists it, and the client's MUL path treats it the same way. Cliloc languages are the extensions of the folder's `Cliloc.*` files found by content (see "Converter discovery" below); the folder's `Clilocs.txt` becomes the overrides record.
 
 ### `text/fonts.bin`: ASCII fonts
 
@@ -464,9 +464,11 @@ A record store with magic `FNTU` (0x55544E46).
 
 ### `text/cliloc.bin`: cliloc
 
-A record store with magic `CLIL` (0x4C494C43), one record per language.
-- **Slots:** one per language, in the order converted (enu first). The language code is in the record's `meta0`/`meta1`: up to 4 lowercase ASCII letters or digits, one per byte, NUL-padded (`ClilocTable.PackLanguage`), from the file extension (`Cliloc.deu` → `deu`). 7.0.103 has `enu`, `chs`, `cht`, `deu`, `esp`, `fra`, `jpn`, `kor`.
-- **Records** (`Uo.Pack.ClilocTable`), one language file alone, with later duplicates resolved as the client resolves them (the last wins). Raw payload:
+A record store with magic `CLIL` (0x4C494C43): one record per language, and at most one record of the shard's own strings (overrides).
+- **Record meta:** `meta2` low byte = the record's kind: 0 = a language, 1 = overrides (the shard's own strings); bit 8 = the payload has the blocked layout (below). Other `meta2` bits are invalid. A language record holds its code in `meta0`/`meta1`: up to 4 lowercase ASCII letters or digits, one per byte, NUL-padded (`ClilocTable.PackLanguage`), from the file extension (`Cliloc.deu` → `deu`). An overrides record has `meta0 = meta1 = 0`.
+- **Slots:** one per record, in the order converted: the languages (enu first), then the overrides record when there is one. 7.0.103 has `enu`, `chs`, `cht`, `deu`, `esp`, `fra`, `jpn`, `kor`.
+- **Resolution** (`ClilocStore.Resolve`, shared by the client and the converter's verification): the slots are walked in order; a record no slot reaches is ignored. The store is unusable as a whole (the Cliloc.* files serve) when a record is reached by two slots, a `meta2` kind or bit is unknown, a language record has no valid code, a language code appears twice, an overrides record has a code, or there are two overrides records.
+- **Records** (`Uo.Pack.ClilocTable`), one language file alone, with later duplicates resolved as the client resolves them (the last wins). Flat payload (the default):
 
   | Part | Layout |
   |---|---|
@@ -475,9 +477,22 @@ A record store with magic `CLIL` (0x4C494C43), one record per language.
   | ends | u32[count]; string `i` is `blob[ends[i−1] .. ends[i])` (from 0 for `i` = 0) |
   | blob | UTF-8, the strings back to back in id order |
 
-  A string is the UTF-8 encoding of the client's decoded text (`ReadUTF8(length)`: cut at the first NUL, invalid bytes as U+FFFD), so decoding it gives the same string. Ship profile: codec 0 (`--cliloc-brotli` stores Brotli).
-- **Lookups:** the client reads the language's record and, for any other language, enu's (it reads Cliloc.enu under every language). A lookup tries Clilocs.txt (the shard's own strings, still a plain text file in the client folder, read at load), then the language, then enu: the same result as the client's merged dictionary. A language the pack lacks rolls back to enu, as a missing Cliloc file did.
+  A string is the UTF-8 encoding of the client's decoded text (`ReadUTF8(length)`: cut at the first NUL, invalid bytes as U+FFFD), so decoding it gives the same string. Ship profile: codec 0 (`--cliloc-brotli` stores the whole record as one Brotli stream).
+- **Blocked payload** (`meta2` bit 8, `--cliloc-blocks`; an option, not the ship profile, see poc-log "Text in the pack: audit fixes, overrides, block-compressed cliloc"): the ids and ends stay raw and the blob is cut at string ends into blocks of about 64 KiB (`--cliloc-block-bytes`), each one Brotli stream (window 22), decoded on the first lookup of a string inside it (thread-safe, once per block). The record itself is codec 0.
+
+  | Part | Layout |
+  |---|---|
+  | header | count u32, blobBytes u32, blockCount u32, reserved u32 (0) |
+  | ids, ends | as in the flat payload |
+  | blockStarts | u32[blockCount + 1]: blob offset of each block; [0] = 0, strictly ascending, last = blobBytes; every string lies inside one block |
+  | blockOffsets | u32[blockCount + 1]: offset of each compressed block after the tables; [0] = 0, ascending, last = the compressed bytes |
+  | blocks | the Brotli streams, back to back; block `k` decodes to `blockStarts[k+1] − blockStarts[k]` bytes (at most 1 MiB) |
+
+- **Overrides record** (the shard's own strings): the converter folds the client folder's `Clilocs.txt` into a flat record of its own (`--no-cliloc-overrides` leaves it out), parsed by `ClilocOverrides.Parse`, the same rules the client uses for the loose file: one "number text" per line, a tab or the first run of spaces between them, blank lines and `#` lines skipped, a later line wins.
+- **Lookups:** the client reads the language's record and, for any other language, enu's (it reads Cliloc.enu under every language), plus the overrides record. A lookup tries, in order: a loose `Clilocs.txt` in the client folder (still read when present, for customising and quick edits while developing), the pack's overrides record, the language, then enu. Without overrides that is the same result as the client's merged dictionary. A language the pack lacks rolls back to enu, as a missing Cliloc file did. When the pack's languages can't serve (no section, an unusable store, a corrupt language record), the Cliloc.* files serve, with the language resolved again for them (`Cliloc.<lang>`, else `Cliloc.enu`); a usable overrides record still applies over them.
+- **Loading** builds a complete new state (tables, overrides, Clilocs.txt) and publishes it once; readers on other threads see the old set or the new one, and a load that fails (no Cliloc.enu, an unreadable file) keeps the old one.
 - **Lazy strings:** the payload stays as one byte array; a string is created on its first lookup and cached in a per-table array (`Interlocked.CompareExchange`, so threads agree on one instance per id and plugins or workers may read cliloc). Nothing relied on interned strings: no caller compares cliloc strings by reference. The formatting (`Translate`: argument substitution, `~1_NAME~`, `#` cliloc references, capitalisation) is client code and is unchanged; it now looks numbers up through the same chain. With Cliloc.* files the client builds the same table from the file (one read, an index of slices, no strings) instead of a dictionary of 117,725 interned strings.
+- **Converter discovery** (`ClilocDiscovery.Find`): files whose name starts with `Cliloc.` in any case; the extension (1–4 ASCII letters or digits) is the language code. Exports and backups beside them are told apart by content, not by name (`bak` is a language code too): a cliloc file is BWT-compressed (byte 3 = 0x8E) or a raw table whose records add up exactly to the file's end, so the test client's `CliLoc.csv` is skipped. `--cliloc-skip a,b` drops more by extension. No language left, no enu, or two files for one code (names differing only in case) fail the conversion. Verification discovers the set again on its own (a case-insensitive listing, each file walked with a BinaryReader and read by the frozen loader) and compares every string through `ClilocStore.Resolve` and `ReadTable`, as the client reads them.
 
 ### `text/speech.bin`: speech keywords
 
@@ -486,9 +501,11 @@ Not a record store (the client uses the whole table): `FileHeader` with magic `S
 ### Untrusted input
 
 - A store's extents and codecs are checked by `RecordStore.Open` (see "Record stores"); a store that fails is not used and the MUL files serve instead.
-- **Fonts:** a record must have a raw size between its header table and its largest possible size (all glyphs 255×255 for ASCII, 256 glyphs of 127×127 for a page) and a Brotli payload within Brotli's bound. At decode, an ASCII record must add up exactly (header table plus the texels it declares, no unknown flags) and a page must have every glyph's rows inside the payload and absent glyphs all zero. A record that fails, or whose read or Brotli decode fails, is absent for the session (logged once): its font has no glyphs, or its page has none.
-- **Cliloc:** a language record must have a size up to 256 MiB that adds up exactly (`8 + 8·count + blobBytes`), strictly ascending ids and string ends that never decrease or pass the blob. A record that fails makes the pack's cliloc unusable and the Cliloc.* files serve. Strings never throw on decode (invalid UTF-8 becomes U+FFFD, as with the files).
-- **Speech:** at most 2²⁰ entries and 64 MiB of text; the sizes must add up and the ends must not decrease or pass the blob, else the file is not used and speech.mul serves.
+- **Font store topology,** checked from the header before the tables are allocated (`TextConst.OpenAsciiStore`, `OpenUnicodeStore`): unifont.bin has exactly 20 × 256 = 5,120 slots; fonts.bin has 1..256 (the client addresses a font by a byte). Anything else rejects the file as a whole and the MUL fonts serve.
+- **Fonts:** a record must have a raw size between its header table and its largest possible size (all glyphs 255×255 for ASCII, 256 glyphs of 127×127 for a page) and a Brotli payload within Brotli's bound. At decode, an ASCII record must add up exactly (header table plus the texels it declares, no unknown flags) and a glyph without texels must be 0×0 (a size without texels would make the renderer read a null array); a page must have every glyph's rows inside the payload and absent glyphs all zero. A record that fails, or whose read or Brotli decode fails, is absent for the session (logged once, by the thread that marks it): its font has no glyphs, or its page has none. A unicode glyph's offsets may be anything an sbyte holds: the renderer clips every raster write on both sides (a negative `offsetX` at the start of a line used to index before the buffer).
+- **First use:** one thread reads and decodes a page or an ASCII font; others that ask for it at the same time wait for that read instead of repeating it (striped locks; with MUL files the reads also share the file's seek position under one lock).
+- **Cliloc:** a record must have a size up to 256 MiB that adds up exactly (`8 + 8·count + blobBytes` flat), strictly ascending ids and string ends that never decrease or pass the blob; a blocked record must also have valid block tables (see above), and a block that fails to decode makes that table's strings absent (lookups fall through to the next table), never an exception. A language record that fails makes the pack's languages unusable and the Cliloc.* files serve; an overrides record that fails is ignored (logged) and the languages still serve. Strings never throw on decode (invalid UTF-8 becomes U+FFFD, as with the files).
+- **Speech:** the fixed header is read first; at most 2²⁰ entries and 64 MiB of text, and the sizes must add up to the file's exact length (wide arithmetic) before anything is allocated; the ends must not decrease or pass the blob. Else the file is not used and speech.mul serves.
 
 ## Manifest (`manifest.json`)
 

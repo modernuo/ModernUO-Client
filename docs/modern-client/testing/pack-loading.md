@@ -166,6 +166,8 @@ Fonts, cliloc and speech come from `text/` when the pack has it (pack-format.md 
 cp -al /c/Repositories/uo-packs/classic-1.0 pack-text && rm pack-text/manifest.json && cp /c/Repositories/uo-packs/classic-1.0/manifest.json pack-text/
 Uo.Converter.exe --only fonts,cliloc,speech --out pack-text     (verify included)
 Uo.Converter.exe --only fonts,cliloc,speech --raw-text --out pack-rawtext   (every record uncompressed)
+Uo.Converter.exe --only cliloc --cliloc-blocks --out pack-blk   (cliloc in Brotli blocks, decoded on first lookup: the measured option, not the ship profile)
+(--cliloc-skip ext,ext drops Cliloc.* files by extension; --no-cliloc-overrides leaves the folder's Clilocs.txt out of the pack)
 ```
 
 **Switches:**

@@ -153,51 +153,65 @@ public static class TextConvert
 
     // ---------------------------------------------------------------- cliloc
 
-    /// <summary>Extensions of files next to the cliloc files that aren't languages (exports, backups).</summary>
-    private static readonly HashSet<string> NotLanguages = ["csv", "txt", "bak", "old", "tmp", "xml", "json"];
+    /// <summary>--cliloc-skip a,b: extensions of Cliloc.* files that are not languages, in addition to those found by content.</summary>
+    public static HashSet<string> ClilocSkip = new(StringComparer.OrdinalIgnoreCase);
+    /// <summary>--cliloc-blocks: language records in the blocked layout (Brotli blocks of about 64 KiB, decoded on first lookup).</summary>
+    public static bool ClilocBlocks;
+    /// <summary>--cliloc-block-bytes n: the blocked layout's target block size.</summary>
+    public static int ClilocBlockBytes = ClilocTable.DefaultBlockBytes;
+    /// <summary>--no-cliloc-overrides: don't fold the client folder's Clilocs.txt into text/cliloc.bin.</summary>
+    public static bool ClilocOverridesOff;
 
-    /// <summary>The Cliloc.* files of the client folder: (language code, path), enu first.</summary>
-    public static List<(string Lang, string Path)> ClilocFiles(UOFileManager fm)
-    {
-        var list = new List<(string, string)>();
-        foreach (var p in Directory.EnumerateFiles(fm.BasePath, "cliloc.*"))
-        {
-            string ext = Path.GetExtension(p).TrimStart('.').ToLowerInvariant();
-            if (ext.Length is < 1 or > 4 || !ext.All(char.IsAsciiLetterOrDigit) || NotLanguages.Contains(ext))
-            {
-                Console.WriteLine($"  cliloc: skipping '{Path.GetFileName(p)}' (not a 1-4 letter language code)");
-                continue;
-            }
-            list.Add((ext, p));
-        }
-        return list.OrderBy(l => l.Item1 == "enu" ? "" : l.Item1, StringComparer.Ordinal).ToList();
-    }
+    /// <summary>The Cliloc.* language files of the client folder (<see cref="ClilocDiscovery.Find"/>), enu first; throws when none is left.</summary>
+    public static List<(string Lang, string Path)> ClilocFiles(string folder) =>
+        ClilocDiscovery.Find(folder, ClilocSkip, m => Console.WriteLine($"  cliloc: {m}"));
 
     public static string Cliloc(UOFileManager fm, string outDir)
     {
-        var files = ClilocFiles(fm);
+        var files = ClilocFiles(fm.BasePath);
         var raws = new byte[files.Count][];
         var counts = new int[files.Count];
         Parallel.For(0, files.Count, ConvertOptions.Par, i =>
         {
             var entries = ClilocLoader.ReadFile(files[i].Path);
             counts[i] = entries.Count;
-            raws[i] = ClilocTable.Build(entries.Select(e => (e.Key, Encoding.UTF8.GetBytes(e.Value))).ToList());
+            var flat = ClilocTable.Build(entries.Select(e => (e.Key, Encoding.UTF8.GetBytes(e.Value))).ToList());
+            raws[i] = ClilocBlocks ? ClilocTable.ToBlocked(flat, ClilocBlockBytes, Quality) : flat;
         });
-        var w = new RecordStoreWriter(files.Count);
+        var ours = OverridesFile(fm.BasePath);
+        var w = new RecordStoreWriter(files.Count + (ours != null ? 1 : 0));
         long raw = 0, stored = 0;
         var parts = new List<string>();
+        // blocked records are compressed inside (codec 0); flat ones raw unless --cliloc-brotli
+        ushort codec = ClilocBrotli && !Raw && !ClilocBlocks ? StoreConst.CodecBrotli : StoreConst.CodecRaw;
         for (int i = 0; i < files.Count; i++)
         {
             var (m0, m1) = ClilocTable.PackLanguage(files[i].Lang);
-            int rec = AddRecord(w, raws[i], ClilocBrotli && !Raw ? StoreConst.CodecBrotli : StoreConst.CodecRaw, m0, m1, 0, ref stored);
+            int rec = AddRecord(w, raws[i], codec, m0, m1, ClilocStore.Meta2(ClilocStore.KindLanguage, ClilocBlocks), ref stored);
             w.Slots[i] = new StoreSlot { Record = (uint)rec + 1 };
             raw += raws[i].Length;
             parts.Add($"{files[i].Lang} {counts[i]}");
         }
+        if (ours != null)
+        {
+            // the shard's own strings: a flat record of their own, after the languages
+            var payload = ClilocTable.Build(ours.Select(e => (e.Key, Encoding.UTF8.GetBytes(e.Value))).ToList());
+            int rec = AddRecord(w, payload, codec, 0, 0, ClilocStore.Meta2(ClilocStore.KindOverrides, false), ref stored);
+            w.Slots[files.Count] = new StoreSlot { Record = (uint)rec + 1 };
+            raw += payload.Length;
+            parts.Add($"overrides {ours.Count}");
+        }
         var path = Path.Combine(outDir, TextConst.ClilocFile);
         w.Write(path, TextConst.MagicCliloc, 0);
-        return $"{files.Count} languages ({string.Join(", ", parts)}), {raw / 1048576.0:F2} MiB -> {new FileInfo(path).Length / 1048576.0:F2} MiB";
+        return $"{files.Count} languages ({string.Join(", ", parts)}){(ClilocBlocks ? $", blocked ({ClilocBlockBytes / 1024} KiB Brotli blocks)" : "")}, {raw / 1048576.0:F2} MiB -> {new FileInfo(path).Length / 1048576.0:F2} MiB";
+    }
+
+    /// <summary>The client folder's Clilocs.txt (the shard's own strings), or null when there is none or it is switched off.</summary>
+    public static Dictionary<int, string>? OverridesFile(string folder)
+    {
+        if (ClilocOverridesOff) return null;
+        var p = Directory.EnumerateFiles(folder).FirstOrDefault(f => string.Equals(Path.GetFileName(f), ClilocOverrides.FileName, StringComparison.OrdinalIgnoreCase));
+        return p == null ? null : ClilocOverrides.Parse(File.ReadLines(p));
     }
 
     // ---------------------------------------------------------------- speech
@@ -223,7 +237,7 @@ public static class TextConvert
         if (f.FontCount == 0) f.Load();
         var sw = Stopwatch.StartNew();
         int bad = 0;
-        using (var ascii = RecordStore.Open(Path.Combine(outDir, TextConst.AsciiFontsFile), TextConst.MagicFontsAscii))
+        using (var ascii = TextConst.OpenAsciiStore(Path.Combine(outDir, TextConst.AsciiFontsFile)))
         {
             if (ascii.SlotCount != f.FontCount) Fail($"fonts: {ascii.SlotCount} ASCII fonts, the client has {f.FontCount}");
             var dst = new AsciiGlyph[TextConst.AsciiGlyphs];
@@ -245,7 +259,7 @@ public static class TextConvert
             }
         }
         long glyphs = 0;
-        using (var uni = RecordStore.Open(Path.Combine(outDir, TextConst.UnicodeFontsFile), TextConst.MagicFontsUnicode))
+        using (var uni = TextConst.OpenUnicodeStore(Path.Combine(outDir, TextConst.UnicodeFontsFile)))
         {
             for (int font = 0; font < TextConst.UnicodeFonts; font++)
             {
@@ -284,29 +298,51 @@ public static class TextConvert
     }
 
     /// <summary>
-    /// Every cliloc id of every language: the pack's (language, then enu) lookup against the frozen ClilocLoader's
-    /// Load(language) dictionary (enu, then the language file over it), without Clilocs.txt.
+    /// Every cliloc id of every language, resolved through the client's slot rules (<see cref="ClilocStore.Resolve"/>:
+    /// slot order, duplicate codes rejected) and <see cref="ClilocStore.ReadTable"/>: the pack's (language, then enu)
+    /// lookup against the frozen ClilocLoader's Load(language) dictionary (enu, then the language file over it), without
+    /// Clilocs.txt; the overrides record against Clilocs.txt; and the language set against the folder, discovered again
+    /// independently (a case-insensitive listing, each file walked with a BinaryReader and read by the frozen loader).
     /// </summary>
     public static void VerifyCliloc(UOFileManager fm, string outDir)
     {
         var sw = Stopwatch.StartNew();
         using var store = RecordStore.Open(Path.Combine(outDir, TextConst.ClilocFile), TextConst.MagicCliloc);
-        var tables = new Dictionary<string, ClilocTable>();
-        for (int i = 0; i < store.Records.Length; i++)
+        ClilocDirectory dir;
+        try
         {
-            ref readonly var rec = ref store.Records[i];
-            var lang = ClilocTable.UnpackLanguage(rec.Meta0, rec.Meta1);
-            var raw = new byte[rec.RawBytes];
-            store.Read(rec, raw);
-            var t = ClilocTable.TryParse(raw);
-            if (lang == null || t == null) { Fail($"cliloc record {i}: invalid"); continue; }
+            dir = ClilocStore.Resolve(store);
+        }
+        catch (InvalidDataException e)
+        {
+            Fail($"cliloc: the store does not resolve ({e.Message})");
+            return;
+        }
+        var tables = new Dictionary<string, ClilocTable>();
+        foreach (var (lang, rec) in dir.Languages)
+        {
+            var t = ClilocStore.ReadTable(store, rec, out var why);
+            if (t == null) { Fail($"cliloc {lang}: record {rec} has {why}"); continue; }
             tables[lang] = t;
         }
+        if (dir.Order.Count == 0) Fail("cliloc: no languages in the pack");
+        if (!dir.Languages.ContainsKey("enu")) Fail("cliloc: the pack has no enu");
+
+        // the language set, discovered again without ClilocFiles
+        var expected = new SortedSet<string>(StringComparer.Ordinal);
+        foreach (var p in Directory.EnumerateFiles(fm.BasePath, "cliloc.*", new EnumerationOptions { MatchCasing = MatchCasing.CaseInsensitive }))
+        {
+            string ext = Path.GetFileName(p).Substring("cliloc.".Length).ToLowerInvariant();
+            if (ext.Length is < 1 or > 4 || !ext.All(char.IsAsciiLetterOrDigit) || ClilocSkip.Contains(ext)) continue;
+            if (WalkCliloc(p) && ClilocLoader.ReadFile(p).Count > 0) expected.Add(ext);
+        }
+        if (expected.Count == 0) Fail("cliloc: no language files found in the client folder");
+        if (!expected.SetEquals(dir.Languages.Keys))
+            Fail($"cliloc: the pack has [{string.Join(",", dir.Order)}], the client folder [{string.Join(",", expected)}]");
+
         int bad = 0;
         long ids = 0;
-        var files = ClilocFiles(fm);
-        if (files.Count != tables.Count) Fail($"cliloc: {tables.Count} languages in the pack, {files.Count} in the client folder");
-        foreach (var (lang, _) in files)
+        foreach (var lang in expected)
         {
             var loader = new ClilocLoader(fm) { IncludeOurs = false };
             loader.Load(lang);
@@ -325,8 +361,50 @@ public static class TextConvert
                     if (!want.ContainsKey(src.IdAt(i)) && bad++ < 5) Fail($"cliloc {lang}: extra id {src.IdAt(i)}");
             loader.Dispose();
         }
+
+        // the shard's own strings
+        var ours = OverridesFile(fm.BasePath);
+        int oursChecked = 0;
+        if ((ours != null) != (dir.Overrides >= 0)) Fail($"cliloc: overrides record {(dir.Overrides >= 0 ? "present" : "absent")}, Clilocs.txt {(ours != null ? "present" : "absent")}");
+        else if (ours != null)
+        {
+            var o = ClilocStore.ReadTable(store, dir.Overrides, out var why);
+            if (o == null) Fail($"cliloc overrides: {why}");
+            else
+            {
+                if (o.Count != ours.Count) Fail($"cliloc overrides: {o.Count} strings, Clilocs.txt has {ours.Count}");
+                foreach (var (id, text) in ours)
+                {
+                    oursChecked++;
+                    if (!o.TryGetString(id, out var s) || s != text) if (bad++ < 5) Fail($"cliloc overrides {id}: '{s}' vs '{text}'");
+                }
+            }
+        }
         if (bad > 5) Fail($"cliloc: {bad} mismatches in total");
-        Console.WriteLine($"  cliloc: {files.Count} languages, {ids} (language, id) strings {(bad == 0 ? "EXACT" : "MISMATCH")} vs ClilocLoader.Load ({sw.ElapsedMilliseconds} ms)");
+        Console.WriteLine($"  cliloc: {expected.Count} languages ({string.Join(",", dir.Order)}), {ids} (language, id) strings{(ours != null ? $" and {oursChecked} overrides" : "")} {(bad == 0 ? "EXACT" : "MISMATCH")} vs ClilocLoader.Load{(tables.Values.Any(t => t.Blocked) ? $" (blocked layout, {tables.Values.Sum(t => t.BlockCount)} blocks)" : "")} ({sw.ElapsedMilliseconds} ms)");
+    }
+
+    // The discovery rule walked independently of IsClilocFile: BWT-compressed, or a raw table read record by record
+    // that ends exactly at the end of the file.
+    private static bool WalkCliloc(string path)
+    {
+        using var r = new BinaryReader(File.OpenRead(path));
+        long n = r.BaseStream.Length;
+        if (n < 6) return false;
+        var head = r.ReadBytes(6);
+        if (head[3] == 0x8E) return true;
+        int records = 0;
+        while (r.BaseStream.Position < n)
+        {
+            if (n - r.BaseStream.Position < 7) return false;
+            r.ReadInt32();
+            r.ReadByte();
+            ushort len = r.ReadUInt16();
+            if (len > n - r.BaseStream.Position) return false;
+            r.BaseStream.Seek(len, SeekOrigin.Current);
+            records++;
+        }
+        return records > 0;
     }
 
     /// <summary>Every speech entry, in order: id and text, against the frozen SpeechesLoader.</summary>

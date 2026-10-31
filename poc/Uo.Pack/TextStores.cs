@@ -8,7 +8,7 @@ namespace Uo.Pack;
 //
 //   text/fonts.bin     ASCII fonts (fonts.mul): a record store, one record per font
 //   text/unifont.bin   unicode fonts (unifont*.mul): a record store, one record per 256-character page of a font
-//   text/cliloc.bin    cliloc, every language: a record store, one record per language (sorted id index + UTF-8 blob)
+//   text/cliloc.bin    cliloc, every language and the shard's overrides: a record store (ClilocStore.cs)
 //   text/speech.bin    speech.mul keywords: a plain table
 //
 // Every parser here treats its input as untrusted: offsets and lengths are bounds-checked, and a bad record is
@@ -34,6 +34,14 @@ public static class TextConst
     public const int PageChars = 256;
     public const int PagesPerFont = 256;
     public const int UnicodeSlots = UnicodeFonts * PagesPerFont;
+    /// <summary>Most ASCII fonts a store may hold: the client addresses a font by a byte (7.0.103 has 10).</summary>
+    public const int MaxAsciiFonts = 256;
+
+    /// <summary>Opens text/fonts.bin: 1..<see cref="MaxAsciiFonts"/> slots, checked before the tables are allocated.</summary>
+    public static RecordStore OpenAsciiStore(string path) => RecordStore.Open(path, MagicFontsAscii, 1, MaxAsciiFonts);
+
+    /// <summary>Opens text/unifont.bin: exactly <see cref="UnicodeSlots"/> (20 fonts × 256 pages) slots.</summary>
+    public static RecordStore OpenUnicodeStore(string path) => RecordStore.Open(path, MagicFontsUnicode, UnicodeSlots, UnicodeSlots);
 }
 
 // ---------------------------------------------------------------------------------------------------------------
@@ -70,6 +78,7 @@ public static class AsciiFontCodec
         foreach (var g in glyphs)
         {
             if (g.Texels != null && g.Texels.Length != g.Width * g.Height) throw new ArgumentException("texel count");
+            if (g.Texels == null && (g.Width != 0 || g.Height != 0)) throw new ArgumentException("a glyph without texels has no size");
             bytes += (g.Texels?.Length ?? 0) * 2;
         }
         var buf = new byte[bytes];
@@ -87,7 +96,7 @@ public static class AsciiFontCodec
         return buf;
     }
 
-    /// <summary>Raw size implied by the header table, or -1 when the table is malformed (unknown flags, padding set).</summary>
+    /// <summary>Raw size implied by the header table, or -1 when the table is malformed (unknown flags, padding set, a size without texels).</summary>
     public static long RawSize(ReadOnlySpan<byte> payload)
     {
         if (payload.Length < HeaderBytes) return -1;
@@ -97,6 +106,9 @@ public static class AsciiFontCodec
             byte flags = payload[i * 4 + 2];
             if ((flags & ~1) != 0 || payload[i * 4 + 3] != 0) return -1;
             if ((flags & 1) != 0) bytes += payload[i * 4] * payload[i * 4 + 1] * 2;
+            // a glyph without texels has no size (the client only has those for glyphs past the end of fonts.mul, 0×0);
+            // a positive size without texels would make the renderer index a null array
+            else if (payload[i * 4] != 0 || payload[i * 4 + 1] != 0) return -1;
         }
         return bytes;
     }
@@ -213,209 +225,6 @@ public static class UnicodePageCodec
 }
 
 // ---------------------------------------------------------------------------------------------------------------
-// Cliloc
-// ---------------------------------------------------------------------------------------------------------------
-
-/// <summary>
-/// One language's cliloc table, the raw payload of its record:
-/// <code>
-///   count u32, blobBytes u32
-///   ids  i32[count]    strictly ascending (binary search)
-///   ends u32[count]    string i is blob[ends[i−1] (0 for i = 0) .. ends[i])
-///   blob               UTF-8, strings back to back in id order
-/// </code>
-/// Strings are created on first use and cached; <see cref="TryGetString"/> is thread-safe and returns the same
-/// instance for an id every time.
-/// </summary>
-public sealed class ClilocTable
-{
-    public const int HeaderBytes = 8;
-    /// <summary>Largest raw payload a reader accepts (the largest client file, Cliloc.jpn, is about 9 MiB raw).</summary>
-    public const int MaxRawBytes = 256 << 20;
-
-    private readonly byte[] _data;
-    private readonly int _count;
-    private readonly int _blobAt;
-    private readonly string?[] _cache;
-
-    private ClilocTable(byte[] data, int count)
-    {
-        _data = data;
-        _count = count;
-        _blobAt = HeaderBytes + count * 8;
-        _cache = new string?[count];
-    }
-
-    public int Count => _count;
-
-    /// <summary>Bytes held: the payload (the UTF-8 blob and the index); strings made so far are extra.</summary>
-    public long PayloadBytes => _data.Length;
-
-    private ReadOnlySpan<int> Ids => MemoryMarshal.Cast<byte, int>(_data.AsSpan(HeaderBytes, _count * 4));
-    private ReadOnlySpan<uint> Ends => MemoryMarshal.Cast<byte, uint>(_data.AsSpan(HeaderBytes + _count * 4, _count * 4));
-
-    public int IdAt(int index) => Ids[index];
-
-    /// <summary>Index of <paramref name="id"/>, or −1.</summary>
-    public int IndexOf(int id)
-    {
-        int i = Ids.BinarySearch(id);
-        return i >= 0 ? i : -1;
-    }
-
-    public ReadOnlySpan<byte> Utf8At(int index)
-    {
-        var ends = Ends;
-        uint start = index == 0 ? 0 : ends[index - 1];
-        return _data.AsSpan(_blobAt + (int)start, (int)(ends[index] - start));
-    }
-
-    /// <summary>The string at <paramref name="index"/>, created on first use. Thread-safe.</summary>
-    public string StringAt(int index)
-    {
-        var s = Volatile.Read(ref _cache[index]);
-        if (s != null) return s;
-        s = Encoding.UTF8.GetString(Utf8At(index));
-        return Interlocked.CompareExchange(ref _cache[index], s, null) ?? s;
-    }
-
-    public bool TryGetString(int id, out string text)
-    {
-        int i = IndexOf(id);
-        if (i < 0)
-        {
-            text = null!;
-            return false;
-        }
-        text = StringAt(i);
-        return true;
-    }
-
-    /// <summary>Strings created so far (tests and measurements).</summary>
-    public int Materialized
-    {
-        get
-        {
-            int n = 0;
-            foreach (var s in _cache) if (s != null) n++;
-            return n;
-        }
-    }
-
-    /// <summary>
-    /// Parses a payload (taking ownership of <paramref name="data"/>, which must be exactly the payload). Null when it
-    /// is malformed: sizes that don't add up, ids not strictly ascending, string ends decreasing or past the blob.
-    /// </summary>
-    public static ClilocTable? TryParse(byte[] data)
-    {
-        if (data.Length < HeaderBytes || data.Length > MaxRawBytes) return null;
-        uint count = BinaryPrimitives.ReadUInt32LittleEndian(data);
-        uint blob = BinaryPrimitives.ReadUInt32LittleEndian(data.AsSpan(4));
-        if (count > (uint)(data.Length - HeaderBytes) / 8 || (ulong)HeaderBytes + count * 8UL + blob != (ulong)data.Length) return null;
-        var t = new ClilocTable(data, (int)count);
-        var ids = t.Ids;
-        var ends = t.Ends;
-        uint prevEnd = 0;
-        for (int i = 0; i < ids.Length; i++)
-        {
-            if (i > 0 && ids[i] <= ids[i - 1]) return null;
-            if (ends[i] < prevEnd || ends[i] > blob) return null;
-            prevEnd = ends[i];
-        }
-        if (count > 0 && prevEnd != blob) return null;
-        if (count == 0 && blob != 0) return null;
-        return t;
-    }
-
-    /// <summary>
-    /// Builds a table from slices of <paramref name="source"/>: (id, start, length) with unique ids, in any order. The
-    /// client's MUL path uses it to index a cliloc file without creating its strings.
-    /// </summary>
-    public static ClilocTable FromSlices(ReadOnlySpan<byte> source, (int Id, int Start, int Length)[] entries)
-    {
-        Array.Sort(entries, (a, b) => a.Id.CompareTo(b.Id));
-        long blob = 0;
-        for (int i = 0; i < entries.Length; i++)
-        {
-            if (i > 0 && entries[i].Id == entries[i - 1].Id) throw new ArgumentException($"duplicate cliloc id {entries[i].Id}");
-            blob += entries[i].Length;
-        }
-        var data = new byte[checked(HeaderBytes + entries.Length * 8 + (int)blob)];
-        BinaryPrimitives.WriteUInt32LittleEndian(data, (uint)entries.Length);
-        BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(4), (uint)blob);
-        var ids = MemoryMarshal.Cast<byte, int>(data.AsSpan(HeaderBytes, entries.Length * 4));
-        var ends = MemoryMarshal.Cast<byte, uint>(data.AsSpan(HeaderBytes + entries.Length * 4, entries.Length * 4));
-        int at = HeaderBytes + entries.Length * 8;
-        uint end = 0;
-        for (int i = 0; i < entries.Length; i++)
-        {
-            ids[i] = entries[i].Id;
-            source.Slice(entries[i].Start, entries[i].Length).CopyTo(data.AsSpan(at + (int)end));
-            end += (uint)entries[i].Length;
-            ends[i] = end;
-        }
-        return new ClilocTable(data, entries.Length);
-    }
-
-    /// <summary>Builds a payload from (id, UTF-8) entries with unique ids, in any order.</summary>
-    public static byte[] Build(IReadOnlyList<(int Id, byte[] Utf8)> entries)
-    {
-        var sorted = entries.OrderBy(e => e.Id).ToArray();
-        long blob = 0;
-        for (int i = 0; i < sorted.Length; i++)
-        {
-            if (i > 0 && sorted[i].Id == sorted[i - 1].Id) throw new ArgumentException($"duplicate cliloc id {sorted[i].Id}");
-            blob += sorted[i].Utf8.Length;
-        }
-        var data = new byte[checked(HeaderBytes + sorted.Length * 8 + (int)blob)];
-        BinaryPrimitives.WriteUInt32LittleEndian(data, (uint)sorted.Length);
-        BinaryPrimitives.WriteUInt32LittleEndian(data.AsSpan(4), (uint)blob);
-        var ids = MemoryMarshal.Cast<byte, int>(data.AsSpan(HeaderBytes, sorted.Length * 4));
-        var ends = MemoryMarshal.Cast<byte, uint>(data.AsSpan(HeaderBytes + sorted.Length * 4, sorted.Length * 4));
-        int at = HeaderBytes + sorted.Length * 8;
-        uint end = 0;
-        for (int i = 0; i < sorted.Length; i++)
-        {
-            ids[i] = sorted[i].Id;
-            sorted[i].Utf8.CopyTo(data.AsSpan(at + (int)end));
-            end += (uint)sorted[i].Utf8.Length;
-            ends[i] = end;
-        }
-        return data;
-    }
-
-    /// <summary>A language code (1..4 ASCII letters or digits, e.g. "enu") packed into record meta0/meta1.</summary>
-    public static (ushort Meta0, ushort Meta1) PackLanguage(string code)
-    {
-        if (code.Length is < 1 or > 4 || !code.All(char.IsAsciiLetterOrDigit)) throw new ArgumentException($"language code '{code}'");
-        code = code.ToLowerInvariant();
-        Span<byte> b = stackalloc byte[4];
-        for (int i = 0; i < 4; i++) b[i] = i < code.Length ? (byte)code[i] : (byte)0;
-        return ((ushort)(b[0] | b[1] << 8), (ushort)(b[2] | b[3] << 8));
-    }
-
-    /// <summary>The language code of a record's meta, or null when it is not 1..4 lowercase ASCII letters or digits.</summary>
-    public static string? UnpackLanguage(ushort meta0, ushort meta1)
-    {
-        Span<char> c = stackalloc char[4];
-        int n = 0;
-        ReadOnlySpan<int> bytes = [meta0 & 0xFF, meta0 >> 8, meta1 & 0xFF, meta1 >> 8];
-        for (int i = 0; i < 4; i++)
-        {
-            int b = bytes[i];
-            if (b == 0)
-            {
-                for (int j = i + 1; j < 4; j++) if (bytes[j] != 0) return null;
-                break;
-            }
-            if (!(b is >= 'a' and <= 'z' || b is >= '0' and <= '9')) return null;
-            c[n++] = (char)b;
-        }
-        return n == 0 ? null : new string(c.Slice(0, n));
-    }
-}
-
-// ---------------------------------------------------------------------------------------------------------------
 // Speech
 // ---------------------------------------------------------------------------------------------------------------
 
@@ -462,16 +271,25 @@ public static class SpeechFile
     /// </summary>
     public static (ushort Id, string Text)[] Read(string path)
     {
-        var bytes = File.ReadAllBytes(path);
+        // the fixed header first: nothing is allocated for the table until its sizes are known to be bounded and to
+        // match the file's exact length (an oversized or forged file must not be read whole)
+        using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 1, FileOptions.SequentialScan);
         int hdr = StructIo.SizeOf<FileHeader>();
-        if (bytes.Length < hdr + 8) throw new InvalidDataException($"'{path}' is too short");
-        var fh = MemoryMarshal.Read<FileHeader>(bytes);
+        Span<byte> head = stackalloc byte[hdr + 8];
+        long length = fs.Length;
+        if (length < head.Length) throw new InvalidDataException($"'{path}' is too short");
+        fs.ReadExactly(head);
+        var fh = MemoryMarshal.Read<FileHeader>(head);
         if (fh.Magic != TextConst.MagicSpeech || !PackConst.VersionSupported(fh.Version) || fh.Kind != FileKind.Raw)
             throw new InvalidDataException($"'{path}' is not a speech table");
-        uint count = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(hdr));
-        uint blob = BinaryPrimitives.ReadUInt32LittleEndian(bytes.AsSpan(hdr + 4));
-        if (count > MaxEntries || blob > MaxBlobBytes || (ulong)hdr + 8 + count * 8UL + blob != (ulong)bytes.Length)
+        uint count = BinaryPrimitives.ReadUInt32LittleEndian(head.Slice(hdr));
+        uint blob = BinaryPrimitives.ReadUInt32LittleEndian(head.Slice(hdr + 4));
+        if (count > MaxEntries || blob > MaxBlobBytes || (ulong)hdr + 8 + count * 8UL + blob != (ulong)length)
             throw new InvalidDataException($"'{path}': bad sizes");
+        // bounded by the caps above: at most 8 MiB of records plus 64 MiB of text
+        var bytes = new byte[length];
+        head.CopyTo(bytes);
+        fs.ReadExactly(bytes.AsSpan(head.Length));
         var records = MemoryMarshal.Cast<byte, SpeechRecord>(bytes.AsSpan(hdr + 8, (int)count * 8));
         int blobAt = hdr + 8 + (int)count * 8;
         var result = new (ushort, string)[count];
