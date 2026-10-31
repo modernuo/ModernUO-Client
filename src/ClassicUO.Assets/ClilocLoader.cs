@@ -60,8 +60,11 @@ namespace ClassicUO.Assets
         public IReadOnlyDictionary<int, string> LooseOverrides => _state.Ours;
 
         /// <summary>
-        /// The cliloc language codes that exist, lower-case: the pack's language records, or (no usable pack cliloc) the
-        /// Cliloc.* files of the client folder named with a 3-letter code, case-insensitively. Cheap: no table is read.
+        /// The cliloc language codes that exist, lower-case, each exactly three ASCII letters (the language packet's
+        /// wire code; longer pack identifiers are ignored and logged): the pack's language records when the pack can serve
+        /// the text (it has enu: without it the loader reads the files), else the Cliloc.* files the loader would open,
+        /// named in the client folder or in files_override, case-insensitively, whose resolved path exists. Cheap: no
+        /// table is read.
         /// </summary>
         public List<string> AvailableLanguages()
         {
@@ -72,8 +75,32 @@ namespace ClassicUO.Assets
                 try
                 {
                     using var store = RecordStore.Open(path, TextConst.MagicCliloc);
+                    var list = new List<string>();
+                    List<string> ignored = null;
 
-                    return new List<string>(ClilocStore.Resolve(store).Languages.Keys);
+                    foreach (string code in ClilocStore.Resolve(store).Languages.Keys)
+                    {
+                        if (IsLanguageCode(code))
+                        {
+                            list.Add(code.ToLowerInvariant());
+                        }
+                        else
+                        {
+                            (ignored ??= new List<string>()).Add(code);
+                        }
+                    }
+
+                    if (ignored != null)
+                    {
+                        Log.Warn($"Cliloc: the pack's languages {string.Join(", ", ignored)} are ignored: a language code is three letters");
+                    }
+
+                    if (list.Contains("enu"))
+                    {
+                        return list;
+                    }
+
+                    Log.Trace("Cliloc: the pack has no usable enu language; listing Cliloc.* files");
                 }
                 catch (Exception e) when (e is IOException || e is InvalidDataException || e is UnauthorizedAccessException)
                 {
@@ -81,23 +108,13 @@ namespace ClassicUO.Assets
                 }
             }
 
-            var list = new List<string>();
+            var names = new List<string>(FileManager.OverriddenFiles);
 
             try
             {
                 foreach (string p in Directory.EnumerateFiles(FileManager.BasePath))
                 {
-                    string name = Path.GetFileName(p);
-
-                    if (name.Length == "cliloc.".Length + 3 && name.StartsWith("cliloc.", StringComparison.OrdinalIgnoreCase))
-                    {
-                        string ext = name.Substring("cliloc.".Length).ToLowerInvariant();
-
-                        if (ext.AsSpan().IndexOfAnyExceptInRange('a', 'z') < 0 && !list.Contains(ext))
-                        {
-                            list.Add(ext);
-                        }
-                    }
+                    names.Add(Path.GetFileName(p));
                 }
             }
             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
@@ -105,8 +122,35 @@ namespace ClassicUO.Assets
                 Log.Error($"Cliloc: cannot list '{FileManager.BasePath}' ({e.Message})");
             }
 
-            return list;
+            var found = new List<string>();
+
+            foreach (string name in names)
+            {
+                if (name == null || !name.StartsWith("cliloc.", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                string ext = name.Substring("cliloc.".Length).ToLowerInvariant();
+
+                if (!IsLanguageCode(ext) || found.Contains(ext))
+                {
+                    continue;
+                }
+
+                // the path the loader opens for it: an override wins over the folder's file
+                if (File.Exists(FileManager.GetUOFilePath($"Cliloc.{ext}")))
+                {
+                    found.Add(ext);
+                }
+            }
+
+            return found;
         }
+
+        /// <summary>A language the client can select: exactly three ASCII letters (the language packet carries three characters).</summary>
+        public static bool IsLanguageCode(string code) =>
+            code != null && code.Length == 3 && char.IsAsciiLetter(code[0]) && char.IsAsciiLetter(code[1]) && char.IsAsciiLetter(code[2]);
 
         public void Load(string lang)
         {

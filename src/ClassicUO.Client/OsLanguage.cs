@@ -32,6 +32,18 @@ namespace ClassicUO
             string.Equals(code?.Trim(), "IVL", StringComparison.OrdinalIgnoreCase) || string.Equals(code?.Trim(), "ZZZ", StringComparison.OrdinalIgnoreCase);
 
         /// <summary>
+        /// True for the languages whose text needs the Unicode fonts (the ASCII fonts have no CJK glyphs): Chinese
+        /// (Traditional and Simplified), Korean, Japanese. Every control that picks a font by language asks this.
+        /// </summary>
+        public static bool NeedsUnicodeFonts(string code)
+        {
+            string c = code?.Trim();
+
+            return string.Equals(c, "CHT", StringComparison.OrdinalIgnoreCase) || string.Equals(c, "CHS", StringComparison.OrdinalIgnoreCase) ||
+                   string.Equals(c, "KOR", StringComparison.OrdinalIgnoreCase) || string.Equals(c, "JPN", StringComparison.OrdinalIgnoreCase);
+        }
+
+        /// <summary>
         /// The language to use, upper-case, always one of <paramref name="available"/> (or ENU when nothing matches).
         /// A profile language that is available wins. Otherwise each preferred locale in order: its language subtag
         /// (2 letters; "fil" etc. are skipped) against the first two letters of the available codes; one hit is used;
@@ -47,7 +59,8 @@ namespace ClassicUO
             {
                 foreach (string a in available)
                 {
-                    if (!string.IsNullOrWhiteSpace(a) && a.Trim().Length >= 2)
+                    // only three-letter codes: the language packet carries three characters (as discovery does)
+                    if (a != null && ClassicUO.Assets.ClilocLoader.IsLanguageCode(a.Trim()))
                     {
                         codes.Add(a.Trim().ToUpperInvariant());
                     }
@@ -262,12 +275,11 @@ namespace ClassicUO
             return GetLocaleInfoEx(name, LOCALE_SABBREVLANGNAME, sb, sb.Capacity) > 0 ? sb.ToString() : null;
         }
 
-        /// <summary>The whole selection: reads the OS list, chooses, logs one Info line. Returns the code, and sets <paramref name="fromOs"/> when it did not come from the profile.</summary>
-        public static string Select(string profile, IReadOnlyCollection<string> available, out bool fromOs)
+        /// <summary>The whole selection: reads the OS list, chooses, logs one Info line, returns the code.</summary>
+        public static string Select(string profile, IReadOnlyCollection<string> available)
         {
             List<PreferredLocale> preferred = Preferred();
             string code = Choose(profile, available, preferred, WindowsExactCode, out string why);
-            fromOs = !why.StartsWith($"profile language '{code}'", StringComparison.Ordinal) || why.Contains(" is not available", StringComparison.Ordinal);
             Log.Info($"language: {code} - {why} (OS preferred: {(preferred.Count == 0 ? "none" : string.Join(", ", preferred))}; available: {(available == null ? "none" : string.Join(", ", available))})");
 
             return code;

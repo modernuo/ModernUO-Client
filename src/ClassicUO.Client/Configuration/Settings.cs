@@ -1,6 +1,7 @@
 ﻿// SPDX-License-Identifier: BSD-2-Clause
 
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -175,8 +176,23 @@ namespace ClassicUO.Configuration
         }
 
 
-        /// <summary>The language the OS selected this run (null when it came from the profile); <see cref="Save"/> does not persist it.</summary>
-        internal static string AutoLanguage;
+        /// <summary>
+        /// The language preference as configured (settings.json or -language; "" when unset), or null before the language
+        /// is chosen. <see cref="Language"/> then holds the effective language of this run (the preference when it is
+        /// available, else the OS's choice); <see cref="Save"/> writes this preference unchanged, so a language chosen
+        /// from the OS is never saved and a preference that is unavailable this run is kept for the next.
+        /// </summary>
+        internal static string ConfiguredLanguage;
+
+        /// <summary>
+        /// Startup: chooses the effective language from <paramref name="configured"/> and the available cliloc languages
+        /// (<paramref name="choose"/> is <see cref="OsLanguage.Select"/>), keeping the preference for <see cref="Save"/>.
+        /// </summary>
+        internal static void ApplyLanguage(Settings settings, IReadOnlyCollection<string> available, Func<string, IReadOnlyCollection<string>, string> choose)
+        {
+            ConfiguredLanguage = settings.Language ?? string.Empty;
+            settings.Language = choose(ConfiguredLanguage, available);
+        }
 
         public void Save()
         {
@@ -194,10 +210,11 @@ namespace ClassicUO.Configuration
 
             settingsToSave.ProfilesPath = string.Empty;
 
-            // A language chosen from the OS is not a profile choice: leaving it unset lets the next run follow the OS again
-            if (AutoLanguage != null && string.Equals(settingsToSave.Language, AutoLanguage, StringComparison.OrdinalIgnoreCase))
+            // The configured language, not this run's effective one: a language chosen from the OS stays unset (the next
+            // run follows the OS again), and a preference that is unavailable now is kept
+            if (ConfiguredLanguage != null)
             {
-                settingsToSave.Language = string.Empty;
+                settingsToSave.Language = ConfiguredLanguage;
             }
 
             // NOTE: We can do any other settings clean-ups here before we save them

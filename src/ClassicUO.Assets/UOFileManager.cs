@@ -5,6 +5,7 @@ using ClassicUO.Utility;
 using ClassicUO.Utility.Logging;
 using ClassicUO.Utility.Platforms;
 using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 
@@ -98,6 +99,9 @@ namespace ClassicUO.Assets
             TileArt.Dispose();
             StringDictionary.Dispose();
         }
+
+        /// <summary>The file names files_override maps (lower-case), each resolved by <see cref="GetUOFilePath"/>.</summary>
+        public IEnumerable<string> OverriddenFiles => _overrideMap.Keys;
 
         public string GetUOFilePath(string file)
         {

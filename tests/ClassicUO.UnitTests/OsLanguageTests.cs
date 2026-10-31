@@ -1,4 +1,7 @@
 using System;
+using System.IO;
+using System.Text.Json;
+using ClassicUO.Configuration;
 using FluentAssertions;
 using Xunit;
 
@@ -142,6 +145,68 @@ namespace ClassicUO.UnitTests
         {
             OsLanguage.Choose(null, Stock, new[] { L("nl"), L("de", "AT") }, null, out string why);
             why.Should().Contain("de_AT");
+        }
+        // Codex audit finding 1: the configured preference is saved unchanged, the effective language never is.
+        [Theory]
+        [InlineData("RUS", "DEU", "RUS")] // unavailable preference: DEU this run, RUS kept for the next
+        [InlineData("", "DEU", "")]       // unset: the OS's choice is not saved
+        [InlineData("fra", "FRA", "fra")] // available preference: saved as configured
+        public void SaveWritesTheConfiguredLanguageNotTheEffectiveOne(string configured, string effective, string saved)
+        {
+            string file = Path.Combine(Path.GetTempPath(), "cuo-oslang-" + Guid.NewGuid().ToString("N") + ".json");
+            string oldPath = Settings.CustomSettingsFilepath;
+            string oldConfigured = Settings.ConfiguredLanguage;
+
+            try
+            {
+                Settings.CustomSettingsFilepath = file;
+                var settings = new Settings { Language = configured };
+                Settings.ApplyLanguage(settings, Stock, (profile, available) => OsLanguage.Choose(profile, available, new[] { L("de") }, null, out _));
+                settings.Language.Should().Be(effective);
+
+                settings.Save();
+
+                using var doc = JsonDocument.Parse(File.ReadAllText(file));
+                doc.RootElement.GetProperty("lang").GetString().Should().Be(saved);
+            }
+            finally
+            {
+                Settings.CustomSettingsFilepath = oldPath;
+                Settings.ConfiguredLanguage = oldConfigured;
+                File.Delete(file);
+            }
+        }
+
+        // Codex audit finding 2: every language with CJK text uses the Unicode fonts, CHS included.
+        [Theory]
+        [InlineData("CHT", true)]
+        [InlineData("chs", true)]
+        [InlineData(" CHS ", true)]
+        [InlineData("KOR", true)]
+        [InlineData("jpn", true)]
+        [InlineData("ENU", false)]
+        [InlineData("DEU", false)]
+        [InlineData("", false)]
+        [InlineData(null, false)]
+        public void NeedsUnicodeFontsCoversAllCjkLanguages(string code, bool expected)
+        {
+            OsLanguage.NeedsUnicodeFonts(code).Should().Be(expected);
+        }
+
+        // Codex audit finding 2: what zh_CN selects is one of them.
+        [Fact]
+        public void SimplifiedChineseFromTheOsUsesTheUnicodeFonts()
+        {
+            OsLanguage.NeedsUnicodeFonts(Pick(null, Stock, new[] { L("zh", "CN") })).Should().BeTrue();
+        }
+
+        // Codex audit finding 4: only three-letter codes are selectable (the language packet carries three characters).
+        [Fact]
+        public void CodesOtherThanThreeLettersAreNotSelectable()
+        {
+            Pick(null, new[] { "enu", "ptbr" }, new[] { L("pt", "BR") }).Should().Be("ENU");
+            Pick("PTBR", new[] { "enu", "ptbr", "deu" }, new[] { L("de") }).Should().Be("DEU");
+            Pick(null, new[] { "enu", "de", "d1u" }, new[] { L("de") }).Should().Be("ENU");
         }
     }
 }
