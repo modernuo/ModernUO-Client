@@ -301,6 +301,8 @@ public sealed class BodyPlan
         public Dictionary<int, string> OldSource = new();
         /// <summary>Converted bodies with index entries in their mobtypes layout but no usable art in their own layout (not remodels).</summary>
         public SortedSet<int> MisreadSlots = new();
+        /// <summary>Bodies with usable own art that <see cref="Classification"/> makes additions, with the reason.</summary>
+        public SortedDictionary<int, string> NotRemodels = new();
         /// <summary>Body.def stand-ins: body -> (target, hue).</summary>
         public Dictionary<int, (int Body, int Hue)> StandIn = new();
         /// <summary>For each extra id: why it is already in use (absent = free).</summary>
@@ -335,6 +337,8 @@ public sealed class BodyPlan
         {
             if (s.Uop.Contains(id)) throw new BodyChoicesException($"remodels: body {id} draws UOP frames (mobtypes 0x10000), which are never a remodel");
             if (!s.Columns.ContainsKey(id)) throw new BodyChoicesException($"remodels: body {id} has no Bodyconv.def conversion, so it is not a remodel");
+            if (s.NotRemodels.TryGetValue(id, out var nr))
+                throw new BodyChoicesException($"remodels: body {id} is classified as an addition ({nr}), so it is not a remodel");
             if (!s.OwnArt.Contains(id))
                 throw new BodyChoicesException($"remodels: body {id} has no anim.mul art of its own (no walk and stand frames in its own layout){(s.StandIn.TryGetValue(id, out var si) ? $"; its older look is the Body.def stand-in {si.Body} hue {si.Hue}" : "")}, so it is an addition (set those with \"additions\")");
         }
@@ -437,6 +441,42 @@ public sealed class BodyPlan
         _ => 0,
     };
 
+    /// <summary>
+    /// The rider shift stored in the pack (<c>AnimBodyEntry.MountShift</c>): the mount height of the art this plan draws
+    /// for <paramref name="body"/> minus that of the art the default (<c>aos</c>) plan draws. The client adds it to the
+    /// Mounts table's per-item rider offset, which was set against the default art (and holds item-specific values the
+    /// Bodyconv heights don't have, e.g. 18 for the UOP tigers). So every default pack draws riders exactly as before,
+    /// and a pack that draws other art moves the rider by the difference (t2a: 793 as horse 200, 0 - (-9) = +9; an
+    /// extra by its own height). Legacy packs (policy 0, no bodies record) store 0.
+    /// </summary>
+    public sbyte MountShift(int body, BodyPlan? baseline, Func<int, bool> uop, Func<ushort, ushort?> bodyDef)
+    {
+        if (baseline == null || Choices.Policy == BodyChoices.LegacyPolicy) return 0;
+        int d = DrawnMountHeight(body, Conv, uop, bodyDef) - DrawnMountHeight(body, baseline.Conv, uop, bodyDef);
+        return (sbyte)Math.Clamp(d, sbyte.MinValue, sbyte.MaxValue);
+    }
+
+    /// <summary>The default plan the pack's Mounts-table offsets refer to (null for legacy plans).</summary>
+    public BodyPlan? MountBaseline() =>
+        Choices.Policy == BodyChoices.LegacyPolicy ? null : Resolve(Source, BodyChoices.Default);
+
+    /// <summary>
+    /// The mount height of the art drawn for <paramref name="body"/> under <paramref name="conv"/>: the Body.def chain is
+    /// followed while the body is a plain anim.mul body (as AnimConvert.Chain stores the alias), then the drawn body's
+    /// Bodyconv height (UOP bodies and unconverted ones: 0).
+    /// </summary>
+    public static int DrawnMountHeight(int body, Dictionary<int, (int FileIndex, ushort Graphic, sbyte MountHeight)> conv, Func<int, bool> uop, Func<ushort, ushort?> bodyDef)
+    {
+        ushort id = (ushort)body;
+        for (int guard = 0; guard < 16; guard++)
+        {
+            if (uop(id) || (conv.TryGetValue(id, out var c) && c.FileIndex > 0)) break;
+            if (bodyDef(id) is not { } next || next == id) break;
+            id = next;
+        }
+        return !uop(id) && conv.TryGetValue(id, out var cc) ? cc.MountHeight : 0;
+    }
+
     private static bool AnimFileExists(UOFileManager fm, int fileIndex)
     {
         string n = fileIndex == 0 ? "" : (fileIndex + 1).ToString();
@@ -469,11 +509,38 @@ public sealed class BodyPlan
             {
                 var job = AnimConvert.Job(l, m, g, d);
                 if (job == null) return false;
-                var fr = AnimConvert.ReadFrames(fm, job);
-                if (fr is not { Length: > 0 } || fr[0].W <= 0 || fr[0].H <= 0) return false;
+                if (!Visible(AnimConvert.ReadFrames(fm, job))) return false;
             }
         return true;
     }
+
+    /// <summary>
+    /// A decoded direction counts only when it has at least one visible (non-transparent) pixel. Frame dimensions are
+    /// not enough: a positive-size frame holding only the RLE terminator decodes fully transparent.
+    /// </summary>
+    public static bool Visible(AnimConvert.RawFrame[]? frames)
+    {
+        if (frames == null) return false;
+        foreach (var f in frames)
+        {
+            if (f.W <= 0 || f.H <= 0 || f.Pixels == null) continue;
+            foreach (var p in f.Pixels.AsSpan(0, Math.Min(f.Pixels.Length, f.W * f.H)))
+                if ((p >> 24) != 0) return true;
+        }
+        return false;
+    }
+
+    /// <summary>
+    /// Explicit classification of ambiguous own art, applied after the probe. Usable art in a converted body's own
+    /// anim.mul slot does not prove it is an older version of that creature: <c>false</c> = an addition whatever the
+    /// probe says; <c>true</c> = a remodel when the probe finds usable art (checked by eye). One entry per decision.
+    /// </summary>
+    public static readonly IReadOnlyDictionary<int, (bool Remodel, string Why)> Classification = new Dictionary<int, (bool, string)>
+    {
+        // Owner's decision of 2026-10-31 (final): the slot holds an unrelated grey creature (monster layout), not an
+        // older turkey.
+        [95] = (false, "turkey: its anim.mul slot holds an unrelated grey creature, not an older turkey"),
+    };
 
     private static readonly Dictionary<int, (int, ushort, sbyte)> NoConv = new();
 
@@ -525,6 +592,11 @@ public sealed class BodyPlan
             var mob = AnimConvert.Meta(l, fm.Version, body, NoConv, false);
             if (mob.Uop) { s.Uop.Add(body); continue; }
             var (usable, layout) = OwnArt(fm, l, body);
+            if (usable && Classification.TryGetValue(body, out var cls) && !cls.Remodel)
+            {
+                s.NotRemodels[body] = cls.Why;
+                usable = false;
+            }
             if (usable)
             {
                 s.OwnArt.Add(body);
@@ -532,7 +604,7 @@ public sealed class BodyPlan
                 var natural = l.TypeByGraphic((ushort)body, 0);
                 s.OldSource[body] = $"anim.mul:{body} ({natural} layout{(layout != null && l.TryGetMobType(body, out var mt, out _) ? $"; mobtypes.txt says {mt}" : "")})";
             }
-            else if (HasFrames(mob.Idx, false)) s.MisreadSlots.Add(body);
+            else if (!s.NotRemodels.ContainsKey(body) && HasFrames(mob.Idx, false)) s.MisreadSlots.Add(body);
         }
         foreach (var id in c.Remodels.Keys.Where(id => !s.Columns.ContainsKey(id)))
             if (AnimConvert.Meta(l, fm.Version, id, NoConv, false).Uop) s.Uop.Add(id);
@@ -642,6 +714,8 @@ public sealed class BodyPlan
         }));
         if (StandInIds.Count > 0)
             yield return $"additions drawn as their Body.def stand-in ({StandInIds.Count}): " + string.Join(" ", StandInIds.Select(b => $"{b}->{s.StandIn[b].Body}"));
+        if (s.NotRemodels.Count > 0)
+            yield return "not remodels by classification (usable art in their own slot, but not an older version): " + string.Join("; ", s.NotRemodels.Select(kv => $"{kv.Key} ({kv.Value})"));
         if (s.MisreadSlots.Count > 0)
             yield return $"not remodels (their mobtypes.txt layout reads other bodies' anim.mul slots; no walk/stand art in their own layout): " +
                          string.Join(" ", s.MisreadSlots.Select(b => s.StandIn.TryGetValue(b, out var si) ? $"{b} (stand-in {si.Body} hue {si.Hue})" : $"{b} (no stand-in)"));

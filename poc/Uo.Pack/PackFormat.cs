@@ -251,9 +251,14 @@ public struct AnimBodyEntry
     /// <summary>Corpse.def replacement for corpses (0xFFFF = none), with CorpseHue.</summary>
     public ushort CorpseBody;
     public ushort CorpseHue;
-    /// <summary>Bodyconv.def mounted height offset.</summary>
+    /// <summary>Bodyconv.def mounted height offset of this entry's own conversion (informational; the client reads MountShift).</summary>
     public sbyte MountHeight;
-    public byte Pad;
+    /// <summary>
+    /// Rider shift for this body as a mount: the mount height of the art the pack draws for it (after its Body.def
+    /// stand-in, if any) minus that of the default (aos) art. The client adds it to the Mounts table's per-item offset,
+    /// so 0 (every default pack, and packs before this field, where it was padding) draws riders as the table says.
+    /// </summary>
+    public sbyte MountShift;
 
     public readonly bool HasFrames => ActionCount != 0;
 }

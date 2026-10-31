@@ -21,8 +21,12 @@ public static class Verify
     /// <summary>The first failure messages (up to 100), for tests.</summary>
     public static readonly System.Collections.Concurrent.ConcurrentQueue<string> Failures = new();
 
+    /// <summary>The anim checks of the last <see cref="Run"/> failed (Program skips the anim debug PNGs).</summary>
+    public static bool AnimFailed;
+
     public static void Reset()
     {
+        AnimFailed = false;
         _errors = 0;
         Failures.Clear();
     }
@@ -89,7 +93,12 @@ public static class Verify
         });
         Console.WriteLine($"  manifest: {manifest.Files.Count} files, {manifest.Facets.Count} facets, hashes checked");
 
-        if (Want("anims") && File.Exists(Path.Combine(outDir, "anim", AnimTableFile.FileName))) CheckAnim(fm, Path.Combine(outDir, "anim"));
+        if (Want("anims") && File.Exists(Path.Combine(outDir, "anim", AnimTableFile.FileName)))
+        {
+            int before = _errors;
+            CheckAnim(fm, Path.Combine(outDir, "anim"));
+            AnimFailed = _errors != before;
+        }
         if (Want("gumps") && File.Exists(Path.Combine(outDir, StoreConst.GumpsFile))) CheckGumps(fm, outDir);
         if (Want("fonts") && File.Exists(Path.Combine(outDir, TextConst.AsciiFontsFile))) TextConvert.VerifyFonts(fm, outDir);
         if (Want("cliloc") && File.Exists(Path.Combine(outDir, TextConst.ClilocFile))) TextConvert.VerifyCliloc(fm, outDir);
@@ -730,7 +739,23 @@ public static class Verify
         Console.WriteLine($"  anim: body choices {plan.Choices}");
         if (plan.BodyCount != bodies.Length) Fail($"anim body table has {bodies.Length} bodies, the body choices give {plan.BodyCount}");
         foreach (var b in plan.StandInIds)
-            if (b < bodies.Length && (bodies[b].HasFrames || bodies[b].AliasBody == AnimConst.NoBody)) Fail($"anim body {b}: the choices draw its Body.def stand-in, the pack has {(bodies[b].HasFrames ? "frames" : "no alias")}");
+            if (b < bodies.Length && (bodies[b].HasFrames || bodies[b].AliasBody == AnimConst.NoBody || bodies[b].CorpseBody == AnimConst.NoBody))
+                Fail($"anim body {b}: the choices draw its Body.def stand-in, the pack has {(bodies[b].HasFrames ? "frames" : bodies[b].AliasBody == AnimConst.NoBody ? "no alias" : "no corpse target")}");
+        {
+            // rider shifts: recomputed from the plan and the default plan (0 for legacy packs)
+            using var sw = new AnimWorker(fm, plan);
+            var baseline = plan.MountBaseline();
+            var metaCache = new Dictionary<int, AnimConvert.BodyMeta>();
+            bool Uop(int id) => (metaCache.TryGetValue(id, out var mm) ? mm : metaCache[id] = AnimConvert.Meta(sw.Loader, fm.Version, id, plan)).Uop;
+            int shifted = 0, badShift = 0;
+            for (int b = 0; b < bodies.Length; b++)
+            {
+                var want = plan.MountShift(b, baseline, Uop, id => AnimConvert.BodyDefNext(sw.Loader, id));
+                if (want != 0) shifted++;
+                if (bodies[b].MountShift != want && badShift++ < 5) Fail($"anim body {b}: mount shift {bodies[b].MountShift}, the choices give {want}");
+            }
+            Console.WriteLine($"  anim: mount shifts {(badShift == 0 ? "match" : "MISMATCH")} ({shifted} bodies shifted against the default art)");
+        }
         var conv = plan.Conv;
         long checkedFrames = 0, exact = 0, crossPage = 0, absent = 0;
         double se = 0; long nRgb = 0, flips = 0, nPx = 0;

@@ -162,10 +162,7 @@ namespace ClassicUO.Game.GameObjects
                     && mountGraphic < Client.Game.UO.Animations.MaxAnimationCount
                 )
                 {
-                    if (Mounts.TryGet(mount.Graphic, out var mountInfo))
-                    {
-                        mountOffsetY = mountInfo.OffsetY;
-                    }
+                    mountOffsetY = AnimationRules.MountOffsetY(mount.Graphic, Client.Game.UO.Animations.GetMountShift(mountGraphic));
 
                     if (hasShadow)
                     {
@@ -1073,10 +1070,7 @@ namespace ClassicUO.Game.GameObjects
                                 return true;
                             }
 
-                            if (Mounts.TryGet(mount.Graphic, out var moutInfo))
-                            {
-                                position.Y += moutInfo.OffsetY;
-                            }
+                            position.Y += AnimationRules.MountOffsetY(mount.Graphic, Client.Game.UO.Animations.GetMountShift(mountGraphic));
                         }
                     }
                 }
