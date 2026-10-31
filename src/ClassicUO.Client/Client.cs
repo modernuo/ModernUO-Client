@@ -207,6 +207,11 @@ namespace ClassicUO
             }
 
             FileManager = new UOFileManager(clientVersion, clientPath, filesOverride, pack);
+
+            // The language, from the profile if it is available, else the OS's: the pack (or folder) is open, no text is
+            // loaded yet, and SDL is up (SDL_GetPreferredLocales also works before init).
+            Settings.GlobalSettings.Language = OsLanguage.Select(Settings.GlobalSettings.Language, FileManager.Clilocs.AvailableLanguages(), out bool languageFromOs);
+            Settings.AutoLanguage = languageFromOs ? Settings.GlobalSettings.Language : null;
             FileManager.Load(Settings.GlobalSettings.Language);
             ClassicUO.Game.Map.Chunk.StaticTileData = FileManager.TileData.StaticData;
 
