@@ -157,7 +157,7 @@ UO's own data has no alpha bit that the client trusts. Transparency is implied, 
 
 - **Import:** `art.mul`/`artidx.mul` or `artLegacyMUL.uop`, with `art.def` fallbacks applied by the loader (the converter reads through ClassicUO's loader, ArtConvert.cs:47-108). Land: 2,024 bytes, 1,012 texels laid into the 44×44 diamond in rows of 2, 4 … 44 … 4, 2 (T/ArtLoader.cs:197-264). Static: `u32 flags, i16 w, i16 h`, `h` row offsets, then per row runs of `xSkip, runLength, texels` ended by `(0,0)` (:266-351). Loose overrides `Art/Statics/<id>.art` and `Art/Land/<id>.land` win over the archive (:82-190). In the importer, land and static art are one id space (land 0..0x3FFF, static 0x4000 + id), split into two folders here.
 - **Source:** `art/land/<id>.tga` (always 44×44, texels outside the diamond `0x0000`) and `art/static/<id>.tga` (the graphic's own width and height, **untrimmed**: the importer keeps the stored size because the draw position depends on it).
-- **Build:** trim, dedupe by content, pack into 2048² B5G5R5A1 pages with a 2-texel gutter and the full mip chain, sprite table `art/sprites.bin` (index = land id, or 0x4000 + static id). Shipped layout "today's pages, under evaluation" (section 7.3).
+- **Build:** trim, dedupe by content, pack into 2048² B5G5R5A1 pages with a 2-texel gutter and the full mip chain, sprite table `art/sprites.bin` (index = land id, or 0x4000 + static id). Shipped layout: pre-packed pages (section 7.3, decided).
 - **Validation:** land exactly 44×44 with nothing visible outside the diamond; static ≤ the RLE limits ClassicUO and UOFiddler impose (`Art.ValidateStaticSize`, 65,535 ushorts) only if a MUL export is ever wanted (it isn't); width, height ≤ 1024.
 - **`art.def`** (fallback id per missing id) (`index {a,b,…}`: an empty entry takes the first non-empty alternative, and blank tiledata is copied from it; T/UOFileManager.cs:151-221) is resolved at import: the fallback becomes an alias stub (2), and copied tiledata becomes a real row. It is not kept as a separate file.
 
@@ -217,7 +217,7 @@ UO stores animations by **file** (anim.mul, anim2–5, AnimationFrame1..N.uop) a
 | `animdata.mul` | **art** animation frames (not mobiles) | tiledata-adjacent: `tables/animdata.csv` (frame graphics, interval, start delay) |
 | `animinfo.mul`, the sitting tables | runtime fallbacks | `tables/` data (5.6) |
 
-- **Build:** Indexed8 1024² pages (mip 0 only), `anim.bin` (body, action, direction, frame tables), `palettes.bin` (deduplicated), `animdata.bin`. Packing order "body → action → direction → frame" (pack-format.md). Shipped layout "today's pages, under evaluation" (7.3).
+- **Build:** Indexed8 1024² pages (mip 0 only), `anim.bin` (body, action, direction, frame tables), `palettes.bin` (deduplicated), `animdata.bin`. Packing order "body → action → direction → frame" (pack-format.md). Shipped layout: pre-packed pages (7.3, decided).
 - **Validation:** frame index 0 transparent and other entries A = 1; directions 0..4 only; frame count per direction equal across directions of an action (a renderer assumption; warn, don't fail); `fallback`/`corpse` targets exist and contain no cycle; group numbers valid for `type`.
 
 ### 4.5 Gumps
@@ -410,9 +410,9 @@ A new EA client means a new import into a **fresh** tree (or base layer); the ad
 - **Deterministic output:** the same source bytes give the same pack bytes (sorted inputs, no timestamps in files except `manifest.json`'s creation time, parallel work written in id order). Then the manifest's per-file sha256 identifies exactly what a patch must carry.
 - **Target:** a one-item or one-body change rebuilds in seconds and touches the changed pages plus their table files.
 
-### 7.3 Shipped art and animation layout: today's pages, under evaluation
+### 7.3 Shipped art and animation layout: pre-packed pages (decided)
 
-The pack ships art and texmaps as pre-packed 2048² B5G5R5A1 pages and animations as pre-packed 1024² Indexed8 pages. A separate agent (branch `poc/records-eval`) is measuring whether animations and art should instead ship as **per-graphic records** that the client packs into GPU pages at runtime. If that wins, the build writes records (like gumps) instead of pages, incremental builds and patches get simpler (7.2's placement cache disappears), and mip levels move to runtime or per record. The source format is unaffected either way. Until that result, the shipped layout is today's pages.
+**Owner decision (2026-10-31): keep pre-packed pages, with stable packing (7.2).** The per-graphic records alternative (records packed into GPU pages at runtime, like gumps) was built and measured on `poc/records-eval` ([records-eval.md](records-eval.md)). The GPU received identical pages, so the pinned frame times were equal (no difference above the noise). Records cost about +0.5 s per launch, +50 to 80 MiB of commit per client and 2.3 times the art-page load latency, and the only fix for the launch cost is a cached packed table, which is the pre-packed pages again. Small patches come from stable packing plus CDC instead. Records' only remaining gain was 3 to 20 % less disk. Art and texmaps ship as pre-packed 2048² B5G5R5A1 pages, animations as pre-packed 1024² Indexed8 pages. The source format is unaffected.
 
 ## 8. Versioning
 

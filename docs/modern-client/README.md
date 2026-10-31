@@ -20,6 +20,7 @@ Which doc is authoritative for what. When two docs disagree, the one listed here
 | Bugs | [known-issues.md](known-issues.md) |
 | Performance backlog and verdicts | [perf-opportunities.md](perf-opportunities.md) |
 | Memory per client: breakdown vs upstream, memory-for-performance trade-off log | [memory-footprint.md](memory-footprint.md) |
+| Per-graphic records vs pre-packed pages for art and animations (measured; pages kept) | [records-eval.md](records-eval.md) |
 | Graphics: FNA vs owning the device (Tiers 1–4 deferred), batcher/UI work | [graphics-ownership-plan.md](graphics-ownership-plan.md) |
 | SDL3, FNA and FNA3D forks | [sdl-fork.md](sdl-fork.md), [fna-fork.md](fna-fork.md) |
 | Developer tooling that release builds drop (`CUO_DEVTOOLS`) | [release-cleanup.md](release-cleanup.md) |
