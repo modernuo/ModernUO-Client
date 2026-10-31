@@ -470,6 +470,7 @@ namespace ClassicUO
                             case "PTB": Settings.GlobalSettings.Language = "PTB"; break;
                             case "ITA": Settings.GlobalSettings.Language = "ITA"; break;
                             case "CHT": Settings.GlobalSettings.Language = "CHT"; break;
+                            case "CHS": Settings.GlobalSettings.Language = "CHS"; break;
                             default:
 
                                 Settings.GlobalSettings.Language = "ENU";
