@@ -60,6 +60,9 @@ namespace ClassicUO.IO.Audio
         /// <summary>How many times a looping track wrapped to its start.</summary>
         public int Loops => _loops;
 
+        /// <summary>Test hook: runs on the worker after each buffer fill, before the buffer is queued.</summary>
+        internal Action<MusicStream> TestAfterFill;
+
         /// <summary>Game thread: next decoded buffer and its byte length, or false if none is ready.</summary>
         public bool TryDequeue(out byte[] buffer, out int bytes)
         {
@@ -102,6 +105,13 @@ namespace ClassicUO.IO.Audio
             {
                 if (!_opened)
                 {
+                    if (!Mp3Decoder.IsAvailable)
+                    {
+                        Fail("native MP3 decoder unavailable");
+
+                        return false;
+                    }
+
                     long t0 = Stopwatch.GetTimestamp();
 
                     if (!Mp3Decoder.TryOpenFile(Path, out _decoder, out string error))
@@ -117,7 +127,9 @@ namespace ClassicUO.IO.Audio
                     _opened = true;
                 }
 
-                while (!_ended && !_cancelled && _ready.Count < ReadyTarget)
+                bool ended = false;
+
+                while (!ended && !_cancelled && _ready.Count < ReadyTarget)
                 {
                     if (!_free.TryDequeue(out byte[] buffer))
                     {
@@ -130,7 +142,8 @@ namespace ClassicUO.IO.Audio
                         _allocated++;
                     }
 
-                    int frames = Fill(buffer);
+                    int frames = Fill(buffer, out ended);
+                    TestAfterFill?.Invoke(this);
 
                     if (frames > 0)
                     {
@@ -145,6 +158,13 @@ namespace ClassicUO.IO.Audio
                     {
                         _free.Enqueue(buffer);
                     }
+                }
+
+                // Published only after the last buffer is in _ready: the game thread stops the track once it sees
+                // IsEnded with nothing ready and nothing queued in FAudio, so an earlier flag could drop the tail.
+                if (ended)
+                {
+                    _ended = true;
                 }
             }
             catch (Exception ex)
@@ -172,8 +192,9 @@ namespace ClassicUO.IO.Audio
         }
 
         // Fills one buffer; on a looping track wraps to frame 0 mid-buffer (the old code dropped the wrapped part).
-        private int Fill(byte[] buffer)
+        private int Fill(byte[] buffer, out bool ended)
         {
+            ended = false;
             Span<short> pcm = MemoryMarshal.Cast<byte, short>(buffer.AsSpan());
             int want = pcm.Length / Channels;
             int got = 0;
@@ -193,7 +214,7 @@ namespace ClassicUO.IO.Audio
                 // right after a seek to 0 means the track has no decodable audio: stop instead of spinning.
                 if (!Loop || justSeeked && n == 0 || !_decoder.Seek(0))
                 {
-                    _ended = true;
+                    ended = true;
 
                     break;
                 }

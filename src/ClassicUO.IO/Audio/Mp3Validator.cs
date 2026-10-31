@@ -7,8 +7,9 @@ namespace ClassicUO.IO.Audio
     /// <summary>
     ///     Managed pre-check for MP3 data before it reaches the native decoder (packs and loose files are untrusted).
     ///     Accepts only: a size within <see cref="MaxBytes" />, an optional ID3v2 tag that fits the data, then a valid
-    ///     MPEG-1/2/2.5 Layer III frame header within <see cref="MaxSyncSearch" /> bytes whose next frame header is also
-    ///     valid and consistent (or which ends exactly at the end of the data), with a sane rate and channel count.
+    ///     MPEG-1/2/2.5 Layer III frame header within <see cref="MaxSyncSearch" /> bytes followed back to back by
+    ///     <see cref="ChainLength" /> - 1 more valid headers of the same version and rate (or by the exact end of the
+    ///     data), with a sane rate and channel count. A plausibility check, not a validation of the whole file.
     /// </summary>
     public static class Mp3Validator
     {
@@ -92,21 +93,42 @@ namespace ClassicUO.IO.Audio
                     continue;
                 }
 
-                int next = i + h.Length;
-
-                if (next == data.Length)
-                {
-                    return new Result(i, h.SampleRate, h.Channels);
-                }
-
-                if (next + 4 <= data.Length && TryParseHeader(data.Slice(next), out FrameHeader h2) &&
-                    h2.Version == h.Version && h2.SampleRate == h.SampleRate)
+                if (ChainHolds(data, i, h))
                 {
                     return new Result(i, h.SampleRate, h.Channels);
                 }
             }
 
             return new Result("no valid Layer III frame header");
+        }
+
+        /// <summary>Consecutive frame headers that must parse, with the same version and rate, from the first one.</summary>
+        public const int ChainLength = 3;
+
+        // The frame at `at` counts only if the next ChainLength - 1 headers follow it back to back with the same MPEG
+        // version and sample rate (every accepted header is Layer III), or the chain reaches the end of the data
+        // exactly (a complete short stream).
+        private static bool ChainHolds(ReadOnlySpan<byte> data, int at, in FrameHeader first)
+        {
+            int pos = at + first.Length;
+
+            for (int count = 1; count < ChainLength; count++)
+            {
+                if (pos == data.Length)
+                {
+                    return true;
+                }
+
+                if (pos + 4 > data.Length || !TryParseHeader(data.Slice(pos), out FrameHeader h) ||
+                    h.Version != first.Version || h.SampleRate != first.SampleRate)
+                {
+                    return false;
+                }
+
+                pos += h.Length;
+            }
+
+            return true;
         }
 
         private struct FrameHeader

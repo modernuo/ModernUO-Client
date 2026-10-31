@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
+using ClassicUO.Utility.Logging;
 using System;
 using System.IO;
 using System.Runtime.InteropServices;
+using System.Threading;
 
 namespace ClassicUO.IO.Audio
 {
@@ -11,24 +13,70 @@ namespace ClassicUO.IO.Audio
     ///     stream can go away after <see cref="TryOpen(ReadOnlySpan{byte}, out Mp3Decoder, out string)" />. Output is
     ///     interleaved signed 16-bit PCM. Gapless: the LAME delay is skipped and the padding trimmed by dr_mp3, so
     ///     looping with <see cref="Seek" />(0) at the end of the stream is sample-accurate when the track has a LAME tag.
-    ///     Not thread-safe: use one instance from one thread at a time.
+    ///     Meant for one thread at a time, but Read, Seek, TotalFrames and Dispose are serialised, so a Dispose from
+    ///     another thread waits for a native call in progress and later calls throw <see cref="ObjectDisposedException" />.
+    ///     The native decoder and its input bytes are owned by one <see cref="SafeHandle" />, which is held
+    ///     (DangerousAddRef) across every native call, so neither can be freed or finalised under the decoder.
     /// </summary>
     public sealed unsafe class Mp3Decoder : IDisposable
     {
-        private nint _handle;
-        private byte* _data;
+        private readonly Mp3Handle _owner;
+        private readonly object _sync = new object();
         private long _frameCount = -1;
 
-        private Mp3Decoder(nint handle, byte* data, int dataLength, in Mp3Native.Info info)
+        private Mp3Decoder(Mp3Handle owner, int dataLength, in Mp3Native.Info info)
         {
-            _handle = handle;
-            _data = data;
+            _owner = owner;
             DataLength = dataLength;
             SampleRate = (int)info.SampleRate;
             Channels = (int)info.Channels;
             DelayFrames = (int)info.DelayFrames;
             PaddingFrames = (int)info.PaddingFrames;
             HasXingFrameCount = info.RawFrames != ulong.MaxValue;
+        }
+
+        private static int s_Available; // 0 unknown, 1 yes, -1 no
+        private static long s_LiveInputs;
+
+        /// <summary>Test hook: replaces cuo_mp3_open_memory (e.g. to force a load failure). Null in production.</summary>
+        internal static Func<nint, nuint, nint> OpenMemoryOverride;
+
+        /// <summary>Input copies currently allocated (each is freed by a failed open or by the owning handle).</summary>
+        internal static long LiveInputAllocations => Interlocked.Read(ref s_LiveInputs);
+
+        /// <summary>
+        ///     False when the native cuo_mp3 library can't be loaded (e.g. a Linux/macOS build made without running
+        ///     src/native/cuo_mp3/build-linux.sh or build-macos.sh). Probed once; the first failure logs one error and music stays off.
+        /// </summary>
+        public static bool IsAvailable
+        {
+            get
+            {
+                int state = Volatile.Read(ref s_Available);
+
+                if (state == 0)
+                {
+                    try
+                    {
+                        Mp3Native.Version();
+                        state = 1;
+                    }
+                    catch (Exception ex) when (ex is DllNotFoundException || ex is EntryPointNotFoundException || ex is BadImageFormatException)
+                    {
+                        state = -1;
+
+                        if (Interlocked.CompareExchange(ref s_Available, state, 0) == 0)
+                        {
+                            Log.Error($"music disabled: the native MP3 decoder ({Mp3Native.Library}) could not be loaded: {ex.GetType().Name}: {ex.Message}");
+                        }
+                    }
+
+                    Interlocked.CompareExchange(ref s_Available, state, 0);
+                    state = Volatile.Read(ref s_Available);
+                }
+
+                return state == 1;
+            }
         }
 
         public int SampleRate { get; }
@@ -50,13 +98,24 @@ namespace ClassicUO.IO.Audio
         {
             get
             {
-                if (_frameCount < 0)
+                lock (_sync)
                 {
-                    ThrowIfDisposed();
-                    _frameCount = (long)Mp3Native.GetFrameCount(_handle);
-                }
+                    if (_frameCount < 0)
+                    {
+                        nint h = Enter();
 
-                return _frameCount;
+                        try
+                        {
+                            _frameCount = (long)Mp3Native.GetFrameCount(h);
+                        }
+                        finally
+                        {
+                            _owner.DangerousRelease();
+                        }
+                    }
+
+                    return _frameCount;
+                }
             }
         }
 
@@ -82,7 +141,7 @@ namespace ClassicUO.IO.Audio
                 return false;
             }
 
-            byte* copy = (byte*)NativeMemory.Alloc((nuint)mp3.Length);
+            byte* copy = AllocInput(mp3.Length);
             mp3.CopyTo(new Span<byte>(copy, mp3.Length));
 
             return TryOpenOwned(copy, mp3.Length, out decoder, out error);
@@ -125,7 +184,7 @@ namespace ClassicUO.IO.Audio
                     return false;
                 }
 
-                byte* data = (byte*)NativeMemory.Alloc((nuint)length);
+                byte* data = AllocInput((int)length);
 
                 try
                 {
@@ -133,7 +192,7 @@ namespace ClassicUO.IO.Audio
                 }
                 catch
                 {
-                    NativeMemory.Free(data);
+                    FreeInput(data);
 
                     throw;
                 }
@@ -148,45 +207,77 @@ namespace ClassicUO.IO.Audio
             }
         }
 
-        // Takes ownership of data (NativeMemory): freed on failure or by Dispose.
+        private static byte* AllocInput(int length)
+        {
+            byte* p = (byte*)NativeMemory.Alloc((nuint)length);
+            Interlocked.Increment(ref s_LiveInputs);
+
+            return p;
+        }
+
+        private static void FreeInput(byte* p)
+        {
+            NativeMemory.Free(p);
+            Interlocked.Decrement(ref s_LiveInputs);
+        }
+
+        // Takes ownership of data (from AllocInput). Until an Mp3Handle owns it, the finally frees it and closes the
+        // native decoder on every exit, including exceptions from the native load (DllNotFoundException etc.).
         private static bool TryOpenOwned(byte* data, int length, out Mp3Decoder decoder, out string error)
         {
             decoder = null;
-            Mp3Validator.Result check = Mp3Validator.Validate(new ReadOnlySpan<byte>(data, length));
+            nint handle = 0;
+            bool owned = false;
 
-            if (!check.IsValid)
+            try
             {
-                NativeMemory.Free(data);
-                error = check.Error;
+                Mp3Validator.Result check = Mp3Validator.Validate(new ReadOnlySpan<byte>(data, length));
 
-                return false;
+                if (!check.IsValid)
+                {
+                    error = check.Error;
+
+                    return false;
+                }
+
+                Func<nint, nuint, nint> open = OpenMemoryOverride;
+                handle = open != null ? open((nint)data, (nuint)length) : Mp3Native.OpenMemory(data, (nuint)length);
+
+                if (handle == 0)
+                {
+                    error = "dr_mp3 rejected the stream";
+
+                    return false;
+                }
+
+                Mp3Native.Info info;
+
+                if (Mp3Native.GetInfo(handle, &info) == 0)
+                {
+                    error = "no stream info";
+
+                    return false;
+                }
+
+                Mp3Handle owner = new Mp3Handle(handle, data);
+                owned = true;
+                decoder = new Mp3Decoder(owner, length, info);
+                error = null;
+
+                return true;
             }
-
-            nint handle = Mp3Native.OpenMemory(data, (nuint)length);
-
-            if (handle == 0)
+            finally
             {
-                NativeMemory.Free(data);
-                error = "dr_mp3 rejected the stream";
+                if (!owned)
+                {
+                    if (handle != 0)
+                    {
+                        Mp3Native.Close(handle);
+                    }
 
-                return false;
+                    FreeInput(data);
+                }
             }
-
-            Mp3Native.Info info;
-
-            if (Mp3Native.GetInfo(handle, &info) == 0)
-            {
-                Mp3Native.Close(handle);
-                NativeMemory.Free(data);
-                error = "no stream info";
-
-                return false;
-            }
-
-            decoder = new Mp3Decoder(handle, data, length, info);
-            error = null;
-
-            return true;
         }
 
         public static bool TryOpenFile(string path, out Mp3Decoder decoder, out string error)
@@ -210,55 +301,98 @@ namespace ClassicUO.IO.Audio
         /// <summary>Decodes up to output.Length / Channels frames. Returns frames written; 0 at the end of the stream.</summary>
         public int Read(Span<short> output)
         {
-            ThrowIfDisposed();
             int frames = output.Length / Channels;
 
-            if (frames == 0)
+            lock (_sync)
             {
-                return 0;
-            }
+                nint h = Enter();
 
-            fixed (short* p = output)
-            {
-                return (int)Mp3Native.ReadS16(_handle, (ulong)frames, p);
+                try
+                {
+                    if (frames == 0)
+                    {
+                        return 0;
+                    }
+
+                    fixed (short* p = output)
+                    {
+                        return (int)Mp3Native.ReadS16(h, (ulong)frames, p);
+                    }
+                }
+                finally
+                {
+                    _owner.DangerousRelease();
+                }
             }
         }
 
         /// <summary>Seeks to an audible PCM frame (0 = the first frame after the encoder delay).</summary>
         public bool Seek(long frame)
         {
-            ThrowIfDisposed();
+            lock (_sync)
+            {
+                nint h = Enter();
 
-            return frame >= 0 && Mp3Native.Seek(_handle, (ulong)frame) != 0;
+                try
+                {
+                    return frame >= 0 && Mp3Native.Seek(h, (ulong)frame) != 0;
+                }
+                finally
+                {
+                    _owner.DangerousRelease();
+                }
+            }
         }
 
+        public bool IsDisposed => _owner.IsClosed;
+
+        /// <summary>Idempotent and thread-safe; waits for a Read/Seek in progress on another thread.</summary>
         public void Dispose()
         {
-            if (_handle != 0)
+            lock (_sync)
             {
-                Mp3Native.Close(_handle);
-                _handle = 0;
+                _owner.Dispose();
             }
-
-            if (_data != null)
-            {
-                NativeMemory.Free(_data);
-                _data = null;
-            }
-
-            GC.SuppressFinalize(this);
         }
 
-        ~Mp3Decoder()
+        // Under _sync: throws once disposed, else holds a reference on the handle until the caller's DangerousRelease,
+        // so the SafeHandle (and with it the decoder and input bytes) can't be released or finalised mid-call.
+        private nint Enter()
         {
-            Dispose();
-        }
+            bool added = false;
 
-        private void ThrowIfDisposed()
-        {
-            if (_handle == 0)
+            try
+            {
+                _owner.DangerousAddRef(ref added);
+            }
+            catch (ObjectDisposedException)
             {
                 throw new ObjectDisposedException(nameof(Mp3Decoder));
+            }
+
+            return _owner.DangerousGetHandle();
+        }
+
+        /// <summary>Owns the dr_mp3 decoder and its input bytes; releases both exactly once (Dispose or finaliser).</summary>
+        private sealed class Mp3Handle : SafeHandle
+        {
+            private byte* _data;
+
+            public Mp3Handle(nint handle, byte* data) : base(0, true)
+            {
+                SetHandle(handle);
+                _data = data;
+            }
+
+            public override bool IsInvalid => handle == 0;
+
+            protected override bool ReleaseHandle()
+            {
+                Mp3Native.Close(handle);
+                FreeInput(_data);
+                _data = null;
+
+                return true;
             }
         }
     }
