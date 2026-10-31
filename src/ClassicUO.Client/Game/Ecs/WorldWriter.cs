@@ -46,7 +46,7 @@ namespace ClassicUO.Game
     /// <see cref="MoveMobile"/>; 0x1D for a mobile, <see cref="RemoveMobile"/>), EnterWorld (funnel part 5: 0x1B,
     /// <see cref="SetMobileGraphic"/>, <see cref="MoveMobile"/>, <see cref="SetMobileDirection"/>) and the walker (0x21 and
     /// 0x20's deny, <see cref="StopMobile"/> and <see cref="MoveMobile"/>; 0x22's notoriety; <c>Mobile.ProcessSteps</c>' step
-    /// completion, <see cref="CompleteStep"/>) and the range sweep's removals (<see cref="SweepMobile"/>, <see cref="SweepItem"/>), status and hits (funnel part 6: 0xA1, 0xA2, 0xA3, 0x2D, 0x11, 0x16/0x17) and the server's animations (0x6E, 0xE2, 0xAF, 0xBF.19, 0xBF.2B: <see cref="AnimateMobile"/>). Every other writer still relies on <see cref="WorldEcs.Sync"/> and <see cref="WorldEcs.PushInputs"/>, which
+    /// completion, <see cref="CompleteStep"/>) and the range sweep's removals (<see cref="SweepMobile"/>, <see cref="SweepItem"/>), status and hits (funnel part 6: 0xA1, 0xA2, 0xA3, 0x2D, 0x11, 0x16/0x17) and the server's animations (0x6E, 0xE2, 0xAF, 0xBF.19, 0xBF.2B: <see cref="AnimateMobile"/>), the boat (<see cref="CompleteBoatStep"/>, <see cref="MoveBoatPassenger"/>, <see cref="SetBoatStepTime"/>, <see cref="ResetBoatOffset"/>) and the spellbook (0xBF.1B, <see cref="FillSpellbook"/>). Every other writer still relies on <see cref="WorldEcs.Sync"/> and <see cref="WorldEcs.PushInputs"/>, which
     /// stay as the fallback until the last packet group is converted.
     /// </para>
     /// <para>
@@ -2028,6 +2028,158 @@ namespace ClassicUO.Game
 
                 _world.Ecs.CommitMobileClock(mobile);
             }
+        }
+
+        // ---- funnel part 6, group 4.3 (misc): the boat (BoatMovingManager, 0xF6's steps). These run the pre-T1 writes in their
+        // old order inside a scope that owns the object, unfolded: UpdateScreenPosition and AddToTile Sync the record as
+        // before, and a passenger may be the player, whose position callbacks (plugins, the door and corpse checks) must
+        // publish as before T1. The per-frame offset interpolation between steps stays direct (like ProcessSteps').
+
+        /// <summary>
+        /// A boat's step is done (<c>BoatMovingManager.Update</c>): the boat takes the step's position, refreshes its screen
+        /// position, its offset is zeroed and it is re-added to its tile. Not folded (see above). A boat this World does not
+        /// hold is a violation, rejected (no pre-T1 path: the manager passes <c>World.Items.Get</c>'s).
+        /// </summary>
+        public void CompleteBoatStep(Item boat, ushort x, ushort y, sbyte z)
+        {
+            if (boat == null || !Admitted(nameof(CompleteBoatStep), boat.Serial) || !Accepted(boat, nameof(CompleteBoatStep)))
+            {
+                return;
+            }
+
+            using (Open(boat, null))
+            {
+                boat.X = x;
+                boat.Y = y;
+                boat.Z = z;
+                boat.UpdateScreenPosition();
+
+                boat.OffsetX = 0;
+                boat.OffsetY = 0;
+                boat.OffsetZ = 0;
+
+                if (boat.IsPlaced)
+                {
+                    boat.AddToTile();
+                }
+            }
+        }
+
+        /// <summary>
+        /// An object on a boat whose step is done (<c>BoatMovingManager.UpdateEntitiesInside</c>): the item or mobile takes
+        /// its new position (the boat's minus its offset on deck), refreshes its screen position (the player's position
+        /// callbacks run, unfolded), its offset is zeroed and it is re-added to its tile. Rejections as
+        /// <see cref="SetHits"/>.
+        /// </summary>
+        public void MoveBoatPassenger(Entity entity, ushort x, ushort y, sbyte z)
+        {
+            if (entity == null || !Admitted(nameof(MoveBoatPassenger), entity.Serial) || !Accepted(entity, nameof(MoveBoatPassenger)))
+            {
+                return;
+            }
+
+            using (Open(entity, null))
+            {
+                entity.X = x;
+                entity.Y = y;
+                entity.Z = z;
+                entity.UpdateScreenPosition();
+
+                entity.OffsetX = 0;
+                entity.OffsetY = 0;
+                entity.OffsetZ = 0;
+
+                if (entity.IsPlaced)
+                {
+                    entity.AddToTile();
+                }
+            }
+        }
+
+        /// <summary>
+        /// The boat's step clock (<c>BoatMovingManager</c>: a first step queued, a step done): <c>LastStepTime</c>. Nothing
+        /// reaches the ECS (an item's LastStepTime is not a record field). Rejections as <see cref="CompleteBoatStep"/>.
+        /// </summary>
+        public void SetBoatStepTime(Item boat, uint time)
+        {
+            if (boat == null || !Admitted(nameof(SetBoatStepTime), boat.Serial) || !Accepted(boat, nameof(SetBoatStepTime)))
+            {
+                return;
+            }
+
+            using (Open(boat, null))
+            {
+                boat.LastStepTime = time;
+            }
+        }
+
+        /// <summary>
+        /// <c>BoatMovingManager.ClearSteps</c> (0xD8's and 0xBF.1D's custom-house regeneration): the offset of the boat or of one object on it
+        /// back to zero. Nothing reaches the ECS (the offset is not a record field, and an item has no inputs).
+        /// Rejections as <see cref="SetHits"/>.
+        /// </summary>
+        public void ResetBoatOffset(Entity entity)
+        {
+            if (entity == null || !Admitted(nameof(ResetBoatOffset), entity.Serial) || !Accepted(entity, nameof(ResetBoatOffset)))
+            {
+                return;
+            }
+
+            using (Open(entity, null))
+            {
+                entity.OffsetX = 0;
+                entity.OffsetY = 0;
+                entity.OffsetZ = 0;
+            }
+        }
+
+        /// <summary>
+        /// 0xBF.1B (new spellbook content): finds or creates the spellbook, writes its graphic, empties its child list and
+        /// syncs it (as before T1: unfolded, the old Sync), then links one detached entry per known spell (bit i of
+        /// <paramref name="spells0"/>/<paramref name="spells1"/>: spell 1 + i / 33 + i; the entries are not world objects, so
+        /// they never reach the ECS). Returns the spellbook (null when none could be had, or a nested call: rejected).
+        /// </summary>
+        public Item FillSpellbook(uint serial, ushort graphic, uint spells0, uint spells1)
+        {
+            if (!Admitted(nameof(FillSpellbook), serial))
+            {
+                return null;
+            }
+
+            Item spellbook = _world.GetOrCreateItem(serial);
+
+            if (spellbook == null)
+            {
+                return null;
+            }
+
+            using (Open(spellbook, null))
+            {
+                spellbook.Graphic = graphic;
+                spellbook.Clear();
+                _world.Ecs.Sync(spellbook);
+
+                for (int j = 0; j < 2; j++)
+                {
+                    uint spells = j == 0 ? spells0 : spells1;
+
+                    for (int i = 0; i < 32; i++)
+                    {
+                        if ((spells & (1u << i)) != 0)
+                        {
+                            ushort cc = (ushort)(j * 32 + i + 1);
+                            Item spellItem = Item.Create(_world, cc);
+                            spellItem.Serial = cc;
+                            spellItem.Graphic = 0x1F2E;
+                            spellItem.Amount = cc;
+                            spellItem.Container = spellbook;
+                            spellbook.PushToBack(spellItem);
+                        }
+                    }
+                }
+            }
+
+            return spellbook;
         }
 
         // the held check of the status operations: the instance this World holds for the entity's serial, or the detached

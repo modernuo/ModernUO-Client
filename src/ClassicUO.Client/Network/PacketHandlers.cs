@@ -4570,35 +4570,27 @@ namespace ClassicUO.Network
                 //===========================================================================================
                 case 0x1B: // new spellbook content
                     p.Skip(2);
-                    Item spellbook = world.GetOrCreateItem(p.ReadUInt32BE());
-                    spellbook.Graphic = p.ReadUInt16BE();
-                    spellbook.Clear();
-                    world.Ecs.Sync(spellbook);
+                    uint spellbookSerial = p.ReadUInt32BE();
+                    ushort spellbookGraphic = p.ReadUInt16BE();
                     ushort type = p.ReadUInt16BE();
+                    uint spells0 = 0, spells1 = 0;
 
-                    for (int j = 0; j < 2; j++)
+                    for (int i = 0; i < 4; i++)
                     {
-                        uint spells = 0;
+                        spells0 |= (uint)(p.ReadUInt8() << (i * 8));
+                    }
 
-                        for (int i = 0; i < 4; i++)
-                        {
-                            spells |= (uint)(p.ReadUInt8() << (i * 8));
-                        }
+                    for (int i = 0; i < 4; i++)
+                    {
+                        spells1 |= (uint)(p.ReadUInt8() << (i * 8));
+                    }
 
-                        for (int i = 0; i < 32; i++)
-                        {
-                            if ((spells & (1 << i)) != 0)
-                            {
-                                ushort cc = (ushort)(j * 32 + i + 1);
-                                // FIXME: should i call Item.Create ?
-                                Item spellItem = Item.Create(world, cc); // new Item()
-                                spellItem.Serial = cc;
-                                spellItem.Graphic = 0x1F2E;
-                                spellItem.Amount = cc;
-                                spellItem.Container = spellbook;
-                                spellbook.PushToBack(spellItem);
-                            }
-                        }
+                    // T1 (funnel part 6): the spellbook's graphic, its emptied child list and Sync, then the (detached) entries
+                    Item spellbook = world.Writer.FillSpellbook(spellbookSerial, spellbookGraphic, spells0, spells1);
+
+                    if (spellbook == null)
+                    {
+                        break;
                     }
 
                     UIManager.GetGump<SpellbookGump>(spellbook)?.RequestUpdateContents();

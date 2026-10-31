@@ -6,6 +6,7 @@ using ClassicUO.Ecs;
 using ClassicUO.Game;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
+using ClassicUO.Game.Managers;
 using ClassicUO.Utility;
 using FluentAssertions;
 using EcsEntity = Friflo.Engine.ECS.Entity;
@@ -784,6 +785,351 @@ namespace ClassicUO.UnitTests.Ecs
                 world.Writer.Violations.Should().Be(1);
             }
         }
+
+        // ---- group 4.3 (misc), the boat: BoatMovingManager's step completion, passengers, step clock and offset reset. The
+        // real manager runs on the funnel World; OldBoat is its pre-T1 code for one boat on the other World.
+
+        internal sealed class OldBoat
+        {
+            private struct Step
+            {
+                public int TimeDiff;
+                public ushort X, Y;
+                public sbyte Z;
+                public Direction MovingDir;
+            }
+
+            private readonly World _world;
+            private readonly List<Step> _steps = new List<Step>();
+            private readonly List<(uint Serial, int X, int Y, int Z)> _items = new List<(uint, int, int, int)>();
+            private uint _timePacket;
+
+            public OldBoat(World world) => _world = world;
+
+            public void AddStep(uint serial, ushort x, ushort y, sbyte z, Direction dir)
+            {
+                Item item = _world.Items.Get(serial);
+                bool empty = _steps.Count == 0;
+
+                if (empty)
+                {
+                    item.LastStepTime = Time.Ticks;
+                }
+
+                _steps.Add(new Step { TimeDiff = _timePacket == 0 || empty ? 500 : (int)(Time.Ticks - _timePacket), X = x, Y = y, Z = z, MovingDir = dir });
+                _items.Clear(); // ClearEntities
+                _timePacket = Time.Ticks;
+            }
+
+            public void PushItemToList(uint objSerial, int x, int y, int z) => _items.Add((objSerial, x, y, z));
+
+            public void ClearSteps(uint serial)
+            {
+                if (_steps.Count == 0)
+                {
+                    return;
+                }
+
+                Item multiItem = _world.Items.Get(serial);
+                multiItem.OffsetX = 0;
+                multiItem.OffsetY = 0;
+                multiItem.OffsetZ = 0;
+
+                foreach (var it in _items)
+                {
+                    Entity ent = _world.Get(it.Serial);
+
+                    if (ent != null)
+                    {
+                        ent.OffsetX = 0;
+                        ent.OffsetY = 0;
+                        ent.OffsetZ = 0;
+                    }
+                }
+
+                _items.Clear();
+                _steps.Clear();
+            }
+
+            public void Update(uint serial)
+            {
+                while (_steps.Count != 0)
+                {
+                    Step step = _steps[0];
+                    Item item = _world.Items.Get(serial);
+                    int maxDelay = step.TimeDiff;
+                    int delay = (int)Time.Ticks - (int)item.LastStepTime;
+                    bool removeStep = delay >= maxDelay;
+                    bool directionChange = false;
+
+                    if (item.X != step.X || item.Y != step.Y)
+                    {
+                        if (maxDelay != 0)
+                        {
+                            float steps = maxDelay / (float)Constants.CHARACTER_ANIMATION_DELAY;
+                            float x = delay / (float)Constants.CHARACTER_ANIMATION_DELAY;
+                            float y = x;
+                            item.OffsetZ = (sbyte)((step.Z - item.Z) * x * (4.0f / steps));
+                            MovementSpeed.GetPixelOffset((byte)step.MovingDir, ref x, ref y, steps);
+                            item.OffsetX = (sbyte)x;
+                            item.OffsetY = (sbyte)y;
+                        }
+                    }
+                    else
+                    {
+                        directionChange = true;
+                        removeStep = true;
+                    }
+
+                    if (removeStep)
+                    {
+                        item.X = step.X;
+                        item.Y = step.Y;
+                        item.Z = step.Z;
+                        item.UpdateScreenPosition();
+                        item.OffsetX = 0;
+                        item.OffsetY = 0;
+                        item.OffsetZ = 0;
+                        _steps.RemoveAt(0);
+
+                        if (item.IsPlaced)
+                        {
+                            item.AddToTile();
+                        }
+
+                        Inside(true, step.X, step.Y, step.Z, item);
+                        item.LastStepTime = Time.Ticks;
+                    }
+                    else
+                    {
+                        Inside(false, item.X, item.Y, item.Z, item);
+                    }
+
+                    if (!directionChange)
+                    {
+                        break;
+                    }
+                }
+            }
+
+            private void Inside(bool removeStep, int x, int y, int z, Item item)
+            {
+                foreach (var it in _items)
+                {
+                    Entity entity = _world.Get(it.Serial);
+
+                    if (entity == null || entity.IsDestroyed)
+                    {
+                        continue;
+                    }
+
+                    if (removeStep)
+                    {
+                        entity.X = (ushort)(x - it.X);
+                        entity.Y = (ushort)(y - it.Y);
+                        entity.Z = (sbyte)(z - it.Z);
+                        entity.UpdateScreenPosition();
+                        entity.OffsetX = 0;
+                        entity.OffsetY = 0;
+                        entity.OffsetZ = 0;
+
+                        if (entity.IsPlaced)
+                        {
+                            entity.AddToTile();
+                        }
+                    }
+                    else
+                    {
+                        entity.Offset = item.Offset;
+                    }
+                }
+            }
+        }
+
+        private const uint BOAT = 0x4000_7400;
+
+        private static World BuildBoat(Start start)
+        {
+            World world = Build(start);
+            Item boat = world.GetOrCreateItem(BOAT);
+            boat.Graphic = 0x3E4E;
+            boat.SetInWorldTile(1000, 1000, 0);
+            boat.PendingBlock = 7; // parked: shows whether AddToTile ran (these Worlds have no map)
+            world.Ecs.Sync(boat);
+            boat.UpdateRealScreenPositionOnly(0, 0); // as after a frame: a step's screen refresh shows
+
+            foreach (uint serial in new[] { MOB, BAG })
+            {
+                if (world.Get(serial) is Entity e && !e.IsDestroyed)
+                {
+                    e.PendingBlock = 7;
+                    e.UpdateRealScreenPositionOnly(0, 0);
+                }
+            }
+
+            return world;
+        }
+
+        private static string BoatSnapshot(World w, uint serial)
+        {
+            Entity e = w.Get(serial);
+
+            return e == null ? "none" : $"{e.X},{e.Y},{e.Z} {e.Offset} {e.LastStepTime} {e.PendingBlock} {e.IsPositionChanged}";
+        }
+
+        [Theory]
+        [InlineData(Start.Standing)]
+        [InlineData(Start.Walking)]
+        [InlineData(Start.DestroyedHeld)]
+        public void The_Boat_Steps_Equal_The_Old_Path(Start start)
+        {
+            World oldWorld = BuildBoat(start), newWorld = BuildBoat(start);
+            newWorld.Writer.ThrowOnViolation = true;
+            var old = new OldBoat(oldWorld);
+            BoatMovingManager boats = newWorld.BoatMovingManager;
+
+            void Both(Action<OldBoat> o, Action<BoatMovingManager> n, uint ticks)
+            {
+                Time.Ticks = ticks;
+                Pair(() => o(old), () => n(boats));
+                Time.Ticks = NOW;
+                AssertSameWorld(oldWorld, newWorld);
+
+                foreach (uint serial in new[] { BOAT, MOB, BAG })
+                {
+                    BoatSnapshot(newWorld, serial).Should().Be(BoatSnapshot(oldWorld, serial), $"0x{serial:X8} at {ticks}");
+                }
+            }
+
+            // a step east with the mobile and the bag on deck; mid-step (offsets), then done (positions, tiles, the clock)
+            Both(o => o.AddStep(BOAT, 1001, 1000, 0, Direction.East), n => n.AddStep(BOAT, 3, Direction.East, Direction.East, 1001, 1000, 0), NOW + 100);
+            Both(o => { o.PushItemToList(MOB, 1, 0, -2); o.PushItemToList(BAG, -1, 1, 0); }, n => { n.PushItemToList(BOAT, MOB, 1, 0, -2); n.PushItemToList(BOAT, BAG, -1, 1, 0); }, NOW + 100);
+            Both(o => o.Update(BOAT), n => n.Update(), NOW + 300);
+            Both(o => o.Update(BOAT), n => n.Update(), NOW + 700);
+            newWorld.Items.Get(BOAT).X.Should().Be(1001, "the step completed");
+
+            // a second step, mid-way, then the reset (the custom house's ClearSteps)
+            Both(o => o.AddStep(BOAT, 1002, 1001, 1, Direction.Down), n => n.AddStep(BOAT, 3, Direction.Down, Direction.Down, 1002, 1001, 1), NOW + 800);
+            Both(o => { o.PushItemToList(MOB, 1, 0, 0); o.PushItemToList(BAG, -1, 1, 0); }, n => { n.PushItemToList(BOAT, MOB, 1, 0, 0); n.PushItemToList(BOAT, BAG, -1, 1, 0); }, NOW + 800);
+            Both(o => o.Update(BOAT), n => n.Update(), NOW + 1000);
+            newWorld.Items.Get(BOAT).Offset.Should().NotBe(default(Microsoft.Xna.Framework.Vector3), "mid-step");
+            Both(o => o.ClearSteps(BOAT), n => n.ClearSteps(BOAT), NOW + 1000);
+            newWorld.Items.Get(BOAT).Offset.Should().Be(default(Microsoft.Xna.Framework.Vector3), "reset");
+            newWorld.Writer.Violations.Should().Be(0);
+            newWorld.Writer.InScope.Should().BeFalse();
+        }
+
+        [Fact]
+        public void The_Boat_Operations_Reject_What_This_World_Does_Not_Hold()
+        {
+            foreach (bool throws in new[] { true, false })
+            {
+                World world = BuildBoat(Start.Standing), other = BuildBoat(Start.Standing);
+                world.Writer.ThrowOnViolation = throws;
+                Item foreign = other.Items.Get(BOAT);
+                foreign.OffsetX = 3;
+                string before = $"{foreign.X},{foreign.Y} {foreign.Offset} {foreign.LastStepTime}";
+
+                foreach (Action act in new Action[]
+                {
+                    () => world.Writer.CompleteBoatStep(foreign, 5, 5, 0),
+                    () => world.Writer.MoveBoatPassenger(foreign, 5, 5, 0),
+                    () => world.Writer.SetBoatStepTime(foreign, 77),
+                    () => world.Writer.ResetBoatOffset(foreign)
+                })
+                {
+                    if (throws)
+                    {
+                        act.Should().Throw<ArgumentException>();
+                    }
+                    else
+                    {
+                        act();
+                    }
+                }
+
+                $"{foreign.X},{foreign.Y} {foreign.Offset} {foreign.LastStepTime}".Should().Be(before);
+                world.Writer.Violations.Should().Be(4);
+            }
+        }
+
+        // ---- group 4.3 (misc), 0xBF.1B: the spellbook's content
+
+        private const uint BOOK = 0x4000_7500;
+
+        internal static Item OldFillSpellbook(World world, uint serial, ushort graphic, uint spells0, uint spells1)
+        {
+            Item spellbook = world.GetOrCreateItem(serial);
+            spellbook.Graphic = graphic;
+            spellbook.Clear();
+            world.Ecs.Sync(spellbook);
+
+            for (int j = 0; j < 2; j++)
+            {
+                uint spells = j == 0 ? spells0 : spells1;
+
+                for (int i = 0; i < 32; i++)
+                {
+                    if ((spells & (1 << i)) != 0)
+                    {
+                        ushort cc = (ushort)(j * 32 + i + 1);
+                        Item spellItem = Item.Create(world, cc);
+                        spellItem.Serial = cc;
+                        spellItem.Graphic = 0x1F2E;
+                        spellItem.Amount = cc;
+                        spellItem.Container = spellbook;
+                        spellbook.PushToBack(spellItem);
+                    }
+                }
+            }
+
+            return spellbook;
+        }
+
+        private static string SpellbookSnapshot(Item book)
+        {
+            var sb = new System.Text.StringBuilder($"{book.Serial:X8} {book.Graphic:X4}:");
+
+            for (LinkedObject i = book.Items; i != null; i = i.Next)
+            {
+                var it = (Item)i;
+                sb.Append($" {it.Serial}/{it.Graphic:X4}/{it.Amount}/{it.Container:X8}/{it.World == book.World}");
+            }
+
+            return sb.ToString();
+        }
+
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void FillSpellbook_Equals_The_Old_Path(bool existing)
+        {
+            World oldWorld = Build(Start.Standing), newWorld = Build(Start.Standing);
+            newWorld.Writer.ThrowOnViolation = true;
+
+            if (existing)
+            {
+                foreach (World w in new[] { oldWorld, newWorld })
+                {
+                    Item book = w.GetOrCreateItem(BOOK);
+                    book.Graphic = 0x0EFA;
+                    book.SetInWorldTile(1002, 1000, 0);
+                }
+            }
+
+            // spells 1, 2, 32 (the sign bit), 33 and 64, then a second packet with fewer
+            foreach ((ushort graphic, uint s0, uint s1) in new[] { ((ushort)0x2253, 0x8000_0003u, 0x8000_0001u), ((ushort)0x0EFA, 0x10u, 0u) })
+            {
+                Item a = null, b = null;
+                Pair(() => a = OldFillSpellbook(oldWorld, BOOK, graphic, s0, s1), () => b = newWorld.Writer.FillSpellbook(BOOK, graphic, s0, s1));
+                SpellbookSnapshot(b).Should().Be(SpellbookSnapshot(a));
+                AssertSameWorld(oldWorld, newWorld);
+            }
+
+            SpellbookSnapshot(newWorld.Items.Get(BOOK)).Should().EndWith($" 5/1F2E/5/{BOOK:X8}/True");
+            newWorld.Writer.Violations.Should().Be(0);
+            newWorld.Writer.InScope.Should().BeFalse();
+        }
     }
 
     [Collection(nameof(FunnelCheckCollection))]
@@ -829,9 +1175,15 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.SetRace(m, RaceType.GARGOYLE);
             world.Writer.SetHealthbar(m, Flags.YellowBar | Flags.Poisoned, true, true);
             world.Writer.AnimateMobile(m, 14, 3, 7, 2, true, false, true, frame: 1, hold: true);
+            world.Writer.CompleteBoatStep(bag, 1002, 1000, 0);
+            world.Writer.MoveBoatPassenger(m, 1003, 1000, 0);
+            world.Writer.SetBoatStepTime(bag, 5);
+            world.Writer.ResetBoatOffset(m);
+            world.Writer.ResetBoatOffset(bag);
+            world.Writer.FillSpellbook(0x4000_7301, 0x2253, 0x8000_0003, 1).Should().NotBeNull();
 
             (m.Name, m.Hits, m.Mana, m.Stamina, m.Race, m.IsFemale, m.Flags).Should().Be(("m", (ushort)40, (ushort)10, (ushort)15, RaceType.GARGOYLE, true, Flags.YellowBar | Flags.Poisoned));
-            FunnelCheck.Total.Should().Be(0, "0xA1, 0xA2, 0xA3, 0x2D, 0x11, 0x16/0x17, 0x6E/0xE2/0xAF/0xBF.19/0xBF.2B");
+            FunnelCheck.Total.Should().Be(0, "0xA1, 0xA2, 0xA3, 0x2D, 0x11, 0x16/0x17, 0x6E/0xE2/0xAF/0xBF.19/0xBF.2B, the boat, 0xBF.1B");
         }
     }
 }
