@@ -247,7 +247,8 @@ namespace ClassicUO.Game.GameObjects
             }
 
             var movable = false;
-            var multis = Client.Game.UO.FileManager.Multis.GetMultis(Graphic);
+            // unit tests (no running client): an empty multi
+            var multis = Client.Game != null ? Client.Game.UO.FileManager.Multis.GetMultis(Graphic) : NoMultis;
 
             for (var i = 0; i < multis.Count; ++i)
             {
@@ -336,8 +337,12 @@ namespace ClassicUO.Game.GameObjects
                 Client.Game.GetScene<GameScene>()?.UpdateMaxDrawZ(true);
             }
 
-            World.BoatMovingManager.ClearSteps(Serial);
+            // T1: through the writer, which runs it after the enclosing operation's scope closes when a writer operation
+            // reloads the multi (the boat's resets are operations; they do not nest), else now
+            World.Writer.ClearBoatSteps(Serial);
         }
+
+        private static readonly System.Collections.Generic.List<MultiInfo> NoMultis = new System.Collections.Generic.List<MultiInfo>(0);
 
         public override void CheckGraphicChange(byte animIndex = 0)
         {
@@ -396,7 +401,7 @@ namespace ClassicUO.Game.GameObjects
                 )
                 {
                     LoadMulti();
-                    AllowedToDraw = IsMultiItemDrawn(Client.Game.UO.FileManager.TileData.StaticData, MultiGraphic);
+                    AllowedToDraw = IsMultiItemDrawn(Client.Game != null ? Client.Game.UO.FileManager.TileData.StaticData : TestStaticData ?? Array.Empty<StaticTiles>(), MultiGraphic);
                 }
             }
         }
