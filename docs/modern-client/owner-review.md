@@ -157,6 +157,11 @@ Newest at the bottom. Each item says what I did meanwhile.
 
   It starts once the milestone (legacy-import + classic-1.1, mem-reduce-3, the audio stores, body overrides) is merged.
 - **Map x files are not supported (your decision, 2026-10-31):** a shard that wants the `mapNx`/`staticsNx` set renames it to the regular names before import. On OSI the server chose them per account with character-list flag 0x8000; ModernUO never sends it. On the classic install the x files differ only in statics (Felucca 1,344 blocks, Trammel 439); the terrain is identical.
+- **Your call: unchecked tiledata lookups on old (4.0.11c) packs (legacy-import, 2026-10-31).** Old installs have 0x4000 static tiledata entries; 7.x has 0x10000.
+  - **Risk:** about 35 client sites index `StaticData` with a graphic the server sends, without a bounds check: item data, drawing and sorting, pathfinding, targeting, house customisation, shop and other gumps. Only first-sight art is guarded. A server sending a graphic of 0x4000 or above to a client on a legacy pack would make the client throw.
+  - **Option A:** the loader pads `StaticData` to 0x10000 entries on legacy packs. That fixes every site at once, for about 2 MB per client and only on legacy packs. It changes `StaticData.Length`, which a few loops and the legacy test read.
+  - **Option B:** guard each site.
+  - The site list is in the poc-log legacy-import entry. Nothing is changed yet.
 - **Body overrides (your note, 2026-10-31):** some admins want older bodies, others newer. Today the converter applies Bodyconv.def with every expansion column on, so the pack always has the newest. A survey and a simpler design for both are in progress (`C:\Repositories\cuo-poc-state\surveys\bodies.md`). You decide before anything is built.
 
 - **GitHub Actions for Linux/macOS (queued 2026-10-31, not urgent):** the project is open source, so CI builds and tests on Linux and macOS runners, builds the native libraries (dr_mp3's `cuo_mp3`, the SDL3/FNA forks) per platform, and publishes artifacts for releases. Brief: `C:\Repositories\cuo-poc-state\handoffs\ci-release-artifacts.md`.
