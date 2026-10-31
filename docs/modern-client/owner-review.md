@@ -162,7 +162,23 @@ Newest at the bottom. Each item says what I did meanwhile.
   - **Option A:** the loader pads `StaticData` to 0x10000 entries on legacy packs. That fixes every site at once, for about 2 MB per client and only on legacy packs. It changes `StaticData.Length`, which a few loops and the legacy test read.
   - **Option B:** guard each site.
   - The site list is in the poc-log legacy-import entry. Nothing is changed yet.
-- **Body overrides (your note, 2026-10-31):** some admins want older bodies, others newer. Today the converter applies Bodyconv.def with every expansion column on, so the pack always has the newest. A survey and a simpler design for both are in progress (`C:\Repositories\cuo-poc-state\surveys\bodies.md`). You decide before anything is built.
+- **Your call: body overrides (survey done 2026-10-31: `C:\Repositories\cuo-poc-state\surveys\bodies.md`).**
+  - **The one real era switch** is Bodyconv.def columns 1 and 2 (anim2 "LBR" and anim3 "AOS"), turned on by the 0xB9 features packet. With them off, Body.def draws a hued older body instead.
+  - **ModernUO:** the shipped expansions send UOR from Renaissance up, which turns both columns on. So `forceOldAnimations` has no effect in ClassicUO; only None/T2A shards get older bodies.
+  - **Us:** the converter turns every column on, and the client ignores 0xB9 for bodies, so an admin can't get older bodies at all.
+  - **What changes:** 210 body ids. 116 are creatures: 11 have their own older art, 102 become hued T2A stand-ins, 3 draw nothing. 94 are equipment, and 83 of those have no older art.
+  - **Only 12 bodies have genuinely different older art:** the summoned daemon 10/40, Titan 76, Demon Knight 318, Mound of Maggots 319, and 7 mounts. That's about 6 MiB in a pack.
+  - **Recommendation (A): pick the body set once, at import.**
+    - A `source.json` profile, `modern` (default, today's pack) or `classic`, plus an optional per-body override list.
+    - The pack holds exactly one resolved set: no format change, no runtime flags.
+    - The client loses about 20 lines of dead body-flag plumbing; the converter gains about 100–150 lines.
+    - Alternative (B): both sets in one pack, picked at runtime by an era setting. About +6 MiB plus a runtime path, and only worth it if one pack must serve shards of different eras.
+  - **Questions for you:**
+    1. One pack per shard, or one shared across shards? This decides A vs B.
+    2. Does "older" mean only the 12 remodels, or the full T2A look with stand-ins?
+    3. Should equipment always use the newest art?
+    4. Should ModernUO document `forceOldAnimations` as OSI-only?
+  - Nothing is built yet.
 
 - **GitHub Actions for Linux/macOS (queued 2026-10-31, not urgent):** the project is open source, so CI builds and tests on Linux and macOS runners, builds the native libraries (dr_mp3's `cuo_mp3`, the SDL3/FNA forks) per platform, and publishes artifacts for releases. Brief: `C:\Repositories\cuo-poc-state\handoffs\ci-release-artifacts.md`.
 - **Upstream PR #1889, "Gump Rendering Overhaul": PARKED (your decision, 2026-10-31).** The port is on `poc/gump-cache-1889` (8ca1dbb36), with the cache off; results are in `gump-render-cache.md` on that branch.
