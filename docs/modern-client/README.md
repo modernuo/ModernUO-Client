@@ -3,25 +3,45 @@
 Research for rebuilding ClassicUO into the definitive ModernUO client (superseding `ModernUO-Client`).
 Recorded 2026-10-23. Nothing here is a final decision unless it is listed under **Decisions so far**.
 
-| Document | What it covers |
+## Docs map
+
+Which doc is authoritative for what. When two docs disagree, the one listed here wins; history docs are never the source of current facts.
+
+**Current (authoritative):**
+
+| Topic | Doc |
 |---|---|
-| [tinyecs-evaluation.md](tinyecs-evaluation.md) | Code review of Karasho's TinyEcs (core, Bevy layer, UI, WASM modding) |
-| [ecs-benchmarks.md](ecs-benchmarks.md) | UO-shaped benchmark of TinyEcs vs Friflo.Engine.ECS vs Arch; native (C/Rust) ECS question |
-| [classicuo-render-asset-pipeline.md](classicuo-render-asset-pipeline.md) | How ClassicUO draws and loads assets today, and where it is weak |
-| [architecture-recommendations.md](architecture-recommendations.md) | Proposed architecture: world storage, renderer, converter/streaming, protocol, anti-cheat, UI, platforms |
-| [graphics-api.md](graphics-api.md) | FNA vs SDL_GPU vs WebGPU — performance and porting effort |
-| [testing-playbook.md](testing-playbook.md) | How to test the client safely: accounts, locks, DevBench plans, parity/picking/perf checks, GPU crash evidence |
-| [visual-features-roadmap.md](visual-features-roadmap.md) | Particles, dynamic lighting, normal maps, shadows, post-processing; toggles/presets and server-driven effect packets |
-| [world-prepare-ecs-plan.md](world-prepare-ecs-plan.md) | Moving ClassicUO's per-frame world walk onto baked GPU data and the ECS (W0–W6) |
-| [graphics-ownership-plan.md](graphics-ownership-plan.md) | Tiered path off FNA graphics (Tiers 1–4 deferred), batcher/UI improvements, upstream contribution policy |
-| [sdl-fork.md](sdl-fork.md) | Why we build SDL3 from our fork, the patch list, rebuilding and rebasing |
-| [fna-fork.md](fna-fork.md) | Our FNA and FNA3D forks: the patches (interop, index-buffer rebind, freed render target), the branch rule, rebuilding |
-| [owner-review.md](owner-review.md) | Running notes for the owner: decisions, merges with their evidence, open questions, the FPS test steps |
-| [poc-log.md](poc-log.md) | The PoC's chronological log; read its newest entries first when resuming |
-| [known-issues.md](known-issues.md) | Open and recently fixed bugs, with where to look |
-| [perf-opportunities.md](perf-opportunities.md) | Measured performance opportunities and their verdicts |
-| [fps-test-results-2026-10-25.md](fps-test-results-2026-10-25.md) | The owner's latest NativeAOT FPS test, compared with [10-24](fps-test-results-2026-10-24.md) |
-| `testing/` | Per-area test procedures (world prepare, ECS animation, world settle, large scene, GPU faults, UI batcher, pack loading, AOT) |
+| Owner decisions | "Decisions so far" below; the running notes, merges and open questions are in [owner-review.md](owner-review.md) |
+| Data formats: the pipeline (MUL/UOP import → source format → shipped pack), the source format, what tools read and write | [data-formats.md](data-formats.md) (entry point) |
+| The shipped pack's binary layout | [pack-format.md](pack-format.md) |
+| ECS: where world state is going, and the state census / write-site budget | [ecs-transition-plan.md](ecs-transition-plan.md), [ecs-state-census.md](ecs-state-census.md); library choice [ecs-decision.md](ecs-decision.md) |
+| World prepare on baked GPU data and the ECS (W0–W6) | [world-prepare-ecs-plan.md](world-prepare-ecs-plan.md) |
+| Testing: ground rules, accounts, locks, job runner, DevBench | [testing-playbook.md](testing-playbook.md); per-area procedures in `testing/` |
+| Bugs | [known-issues.md](known-issues.md) |
+| Performance backlog and verdicts | [perf-opportunities.md](perf-opportunities.md) |
+| Graphics: FNA vs owning the device (Tiers 1–4 deferred), batcher/UI work | [graphics-ownership-plan.md](graphics-ownership-plan.md) |
+| SDL3, FNA and FNA3D forks | [sdl-fork.md](sdl-fork.md), [fna-fork.md](fna-fork.md) |
+| Developer tooling that release builds drop (`CUO_DEVTOOLS`) | [release-cleanup.md](release-cleanup.md) |
+| Visual features after the ECS steps (lights, normals, shadows, particles) | [visual-features-roadmap.md](visual-features-roadmap.md) |
+| What happened, in order | [poc-log.md](poc-log.md) (append-only; read the newest entries first when resuming) |
+
+**`testing/`** (current): [world-prepare](testing/world-prepare.md), [world-update](testing/world-update.md), [world-settle](testing/world-settle.md), [ecs-animation](testing/ecs-animation.md), [large-scale](testing/large-scale.md), [gpu-faults](testing/gpu-faults.md), [ui-batcher](testing/ui-batcher.md), [pack-loading](testing/pack-loading.md), [renderer-selection](testing/renderer-selection.md), [aot-performance](testing/aot-performance.md) (also the NativeAOT publish facts).
+
+**History** (kept for evidence and reasoning; dated, not current):
+
+| Doc | What it records |
+|---|---|
+| [pack-format-v0.md](pack-format-v0.md) | How the pack format got to 1.0: measurements, dead ends, co-occurrence packing method |
+| [architecture-recommendations.md](architecture-recommendations.md) | The 2026-10-23 architecture proposals |
+| [classicuo-render-asset-pipeline.md](classicuo-render-asset-pipeline.md) | The fork's render and asset pipeline before the PoC |
+| [classicuo-integration-plan.md](classicuo-integration-plan.md) | The Phase 4 integration plan (done) |
+| [classicuo-perf-baseline.md](classicuo-perf-baseline.md) | Per-phase timing baseline of 2026-10-24 and the step 7b hooks |
+| [fps-test-results-2026-10-25.md](fps-test-results-2026-10-25.md), [fps-test-results-2026-10-24.md](fps-test-results-2026-10-24.md) | The owner's FPS tests |
+| [graphics-api.md](graphics-api.md) | FNA vs SDL_GPU vs WebGPU research |
+| [device-lost-leak.md](device-lost-leak.md) | The device-loss leak and the page-fault investigation (fixed through the SDL fork) |
+| [tinyecs-evaluation.md](tinyecs-evaluation.md), [ecs-benchmarks.md](ecs-benchmarks.md) | ECS library research behind ecs-decision.md |
+| [cuo-2.0-perf-comparison.md](cuo-2.0-perf-comparison.md) | ClassicUO 2.0 vs this fork |
+| [legacy-main-review.md](legacy-main-review.md) | What `modernuo/legacy-main` offers (loader work) |
 
 Supporting material in this branch:
 
@@ -78,8 +98,9 @@ Supporting material in this branch:
     - Test hooks and procedure: [testing-playbook.md](testing-playbook.md) "World renderer selection". What Legacy on D3D11/OpenGL looked like: [known-issues.md](known-issues.md).
 - **The pack replaces MUL/UOP (2026-10-24).**
   - For every asset the pack format covers (art, texmaps, maps/statics, tiledata, hues, animations), the client loads only from the pack. There is no side-by-side MUL/UOP path, so we never support two formats. Those ClassicUO loaders get deleted once the pack path works.
-  - MUL/UOP stay only for content the pack doesn't cover yet (gumps, fonts, cliloc, sounds, …; the list is in [pack-format.md](pack-format.md)). Each one moves into the pack over time. Multis, lights, radarcol, full tiledata, raw hues, tileart appearances and Equipconv.def joined the pack in format 1.0.
+  - MUL/UOP stay only for content the pack doesn't cover yet (sounds, music, skills, …; the list is in [pack-format.md](pack-format.md), "Not in the pack"). Each one moves into the pack over time. Multis, lights, radarcol, full tiledata, raw hues, tileart appearances and Equipconv.def joined the pack in format 1.0; gumps, fonts, cliloc and speech on 2026-10-30.
   - The converter is the only code that reads MUL/UOP for converted content.
+- **Data pipeline (2026-10-31):** MUL/UOP are import-only. They are imported once into the **source format** (definitive, what admins and tools edit; UO's own uncompressed image layouts; one file or folder per editable thing), and an incremental, stable **build** writes the shipped pack, which is never hand-edited. Nothing is written back to MUL/UOP. ModernUO, CentrED# and UOFiddler move to the source format later. The pack keeps one source of truth per file (`hues.bin` removed; `tiledata.bin` merged into the full tiledata file; ClassicUO's hard-coded per-tile rules become build-written data); stored mip levels are the accepted exception. Spec: [data-formats.md](data-formats.md).
 - **No patch formats:** verdata.mul and mapdif/stadif are never supported. Shard owners who use them must merge the patches into the base files with their own tooling before running our converter (2026-10-24).
 - **Texture format (2026-10-24, revised the same day):** **16-bit lossless (`B5G5R5A1`) on every platform**, bit-exact to the source art.
   - **Why not lossy:** lossy formats can't hue correctly. BC7 broke 31.8% of the gray pixels that partial hue depends on, and the best shader tolerance still left 3,981 of 27,287 hued pixels wrong. MobileUO shows phones handle 16-bit UO art fine.

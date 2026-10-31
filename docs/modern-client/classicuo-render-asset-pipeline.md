@@ -1,5 +1,7 @@
 # ClassicUO Render and Asset Pipeline (as of this fork)
 
+> **History.** The fork as it was on 2026-10-23, before the pack and the Gpu world renderer: the starting point the PoC set out to fix. The Legacy world renderer still draws roughly this way; asset loading no longer does (see [data-formats.md](data-formats.md) and [pack-format.md](pack-format.md)). Line numbers are of that date.
+
 Paths are relative to `src/`. This fork includes a chunk-mesh path for land and statics that upstream ClassicUO may not have.
 
 ## 1. Frame structure and draw order

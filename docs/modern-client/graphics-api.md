@@ -1,5 +1,7 @@
 # Graphics API: FNA vs SDL_GPU vs WebGPU
 
+> **History.** Research of 2026-10-23/24. What was decided: FNA stays, running on SDL_GPU, and Uo.Render shares its device ([graphics-ownership-plan.md](graphics-ownership-plan.md): Tiers 1–4 deferred; [fna-fork.md](fna-fork.md); [sdl-fork.md](sdl-fork.md)).
+
 ## What ClassicUO runs on today
 
 - **The stack:** FNA (the XNA 4 API) → FNA3D → a driver.
