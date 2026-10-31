@@ -87,3 +87,10 @@ Auto's fallback (no usable SDL_GPU/Vulkan) runs Legacy on FNA3D's D3D11 driver, 
 - **What:** `SetIndexBufferData` with Discard cycles the SDL buffer, but `SDLGPU_INTERNAL_BindDeferredState` skips `SDL_BindGPUIndexBuffer` when the handle is unchanged, so the open render pass keeps the old buffer and later draws read old indices. This was the cause of the B1 Legacy corruption (missing and wrong land and static tiles).
 - **Was worked around** in the batcher (b62406b8e: `Batcher2D.IndexDataChanged` forced an effect re-apply after each mesh-layer index upload).
 - **Fixed** in github.com/modernuo/FNA3D `modernuo/26.10-patched` (e3bd4f2): a cycling upload of the bound index buffer clears the binding, so the next draw rebinds it. The batcher workaround is removed. See [fna-fork.md](fna-fork.md).
+
+## Gpu world renderer: the roof over the player is sometimes drawn (2026-10-31)
+
+- **What:** standing inside the house at 1427,1691 (Z 0), the Gpu renderer usually hides the roof, the chimneys of the building at bottom left, and a tree, as Legacy does. In one run of the f27759989 binary (bench-000045, base arm), it drew all three for the whole 5 s window. That run's counters were also different: foliage 1, cap_statics 2, pick_tests 36, override_calls 28, against 0, 0, 24 and 14.
+- **Not caused by tiledata-single:** the same binary on the same pack hid them in 6 of 6 shots in bench-000046 (3 runs, shots at about 8 s and 14 s after arrival). In those runs, base-vs-base differences were as large as old-vs-new.
+- **Suspected cause:** a race in how the Gpu host decides to hide what is above the player when they arrive at a spot. Not investigated.
+- **Evidence:** `~/.claude/rf-agent/jobs/bench/done/bench-000045/` (`base-gpu/house_gpu.png`, `diff-gpu/house_gpu.png`) and `bench-000046/`. The poc-log tiledata-single entry has the parity tables.
