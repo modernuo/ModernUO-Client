@@ -9,7 +9,7 @@ from areas import area
 ROOT = CENSUS_ROOT
 PFX = "src/ClassicUO.Client/"
 exec(open(_os.path.join(SCRIPTS, "names.py")).read())
-A_NAMES = NAMES - {"Title"}
+A_NAMES = NAMES - {"Title", "OffsetX", "OffsetY", "OffsetZ"}  # the accessors are folded into Offset by analyze.py
 d = [r for r in json.load(open("refs2.json")) if r["member"] != "Title"]
 for r in d:
     r["rel"] = r["file"][len(PFX):]
