@@ -301,10 +301,12 @@ namespace ClassicUO.Game.Scenes
             Client.Game.SetWindowTitle(string.Empty);
             Client.Game.UO.GameCursor.ItemHold.Clear();
 
-            // first-sight art decoded for the chunk loader is drained only by Map.UpdateLoading, which stops with the scene:
-            // return the finished decodes' buffers now (workers still running return theirs)
+            // first-sight art decoded for the chunk loader is drained only by Map.UpdateLoading, which stops with the scene, and
+            // animation directions only by drawing: return the finished decodes' buffers and decode-budget bytes now, take the
+            // waiting ones out of the budget (workers still running return theirs when they finish)
             Client.Game.UO.Arts?.CancelPending();
             Client.Game.UO.Texmaps?.CancelPending();
+            Client.Game.UO.Animations?.CancelPending();
 
             try
             {
