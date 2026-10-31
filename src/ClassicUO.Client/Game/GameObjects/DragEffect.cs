@@ -66,8 +66,8 @@ namespace ClassicUO.Game.GameObjects
                 return;
             }
 
-            Offset.X += 8;
-            Offset.Y += 8;
+            OffsetX += 8;
+            OffsetY += 8;
 
             _lastMoveTime = Time.Ticks + 20;
 

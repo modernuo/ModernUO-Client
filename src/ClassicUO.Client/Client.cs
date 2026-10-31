@@ -207,6 +207,7 @@ namespace ClassicUO
 
             FileManager = new UOFileManager(clientVersion, clientPath, filesOverride, pack);
             FileManager.Load(Settings.GlobalSettings.Language);
+            ClassicUO.Game.Map.Chunk.StaticTileData = FileManager.TileData.StaticData;
 
             StaticFilters.Load(FileManager.TileData);
             BuffTable.Load();

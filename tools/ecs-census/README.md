@@ -15,7 +15,7 @@ Scratch-copy workflow (never commit the renamed sources). Run from the repositor
 4. `audit.py <seed>` (needs `CENSUS_ROOT` and a finished census at `docs/modern-client/ecs-state-census.md`) checks that every textual `.Field op` hit in the client is listed in the census and samples 20 of them.
 
 Notes:
-- `names.py` and `names2.py` hold the renamed member sets; `instrument.py` holds the declaration patterns. When a member is added or moved, update both.
+- `names.py` and `names2.py` hold the renamed member sets; `instrument.py` holds the declaration patterns. When a member is added or moved, update both. Since T0c the A members are auto-properties (`instrument.py` matches field and property declarations, and exits with an error, writing nothing, if any declaration is unmatched or ambiguous). `OffsetX/OffsetY/OffsetZ` are renamed too and `analyze.py` folds their references into `Offset` (kind `struct-member` for writes), like the budget test does.
 - `census_template.md` carries the hand-written prose (classification tables, holders, findings). Its numbers (266 sites, 14 files, ...) are written by hand; recheck them after a regeneration. `assemble.py` fills the counts it can compute.
 - The budget test (`tests/ClassicUO.UnitTests/Ecs/WriteSiteBudgetTests.cs`) is the committed guard; `CUO_WRITE_BUDGET_DUMP=<file>` dumps its sites as `file:line:field:receiver:kind` for comparison with `refs2.json`.
 - The scripts are Python 3 only, standard library.
