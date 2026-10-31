@@ -3715,7 +3715,7 @@ Noise: two runs, under other agents' build load; the old/new ratios hold in both
 
 Unit tests: 1,079 passed, 1 skipped (pre-existing). Client Release and `-p:CuoDevTools=false` builds: 0 errors.
 
-**Client check:** bench-000049 (Release JIT build, kbatman4, a scratch test pack that is a plain copy of CURRENT plus the two stores). It dwells in Britain, Minoc and Cove, then walks in Britain for footsteps, and logs first-buffer and first-read times. Music played (LoginLoop first buffer after 120.6 ms, Britainpos 77.9 ms; JIT with TieredCompilation=0). The first sound effect crashed the client: see the fix below. Re-run: see the handoff (`handoffs/audio-pack.md`). Not done: a NativeAOT test build. Its link failed in this session because `vswhere.exe` was not on PATH (environment, not code).
+**Client check:** bench-000049 (Release JIT build, kbatman4, a scratch test pack that is a plain copy of CURRENT plus the two stores). It dwells in Britain, Minoc and Cove, then walks in Britain for footsteps, and logs first-buffer and first-read times. Music played (LoginLoop first buffer after 120.6 ms, Britainpos 77.9 ms; JIT with TieredCompilation=0). The first sound effect crashed the client: see the fix below. Re-run after the fix: bench-000050, below. Not done: a NativeAOT test build. Its link failed in this session because `vswhere.exe` was not on PATH (environment, not code).
 
 **Open:**
 - The coordinator publishes the next pack with `--only sounds,music`. Until then, a client built from this branch on `classic-1.0` plays only loose WAVs and no music; it logs this once.
@@ -3748,4 +3748,8 @@ Unit tests: 1,079 passed, 1 skipped (pre-existing). Client Release and `-p:CuoDe
 
 **Verification.** Client builds Release and `-p:CuoDevTools=false`: 0 errors. Uo.Converter: 0 errors. `dotnet test tests/ClassicUO.UnitTests -c Release`: 1,083 passed, 1 skipped, 0 failed. Converter `--verify-only --only sounds,music` on the test pack: all checks passed. Memory: a sound's cached array no longer holds its name (at most 40 bytes less per played sound). A first play makes two positional reads instead of one (the name read is at most 40 bytes).
 
-**Client re-check:** the same listen job, with a Release JIT build of this fix. Job id and results: see the handoff.
+**Client re-check: bench-000050** (the same listen job, a Release JIT build of ee1b24f60, the same 1.0-based scratch test pack; the branch predates the classic-1.1 tiledata merge). Status ok, 246 s, and the whole plan ran (Britain, Minoc, Cove, walk).
+- Audio load: "Audio: pack, 1655 sound records, 90 music records in 8.35 ms", with no record refused.
+- Music first buffer: LoginLoop 121.3 ms, Britainpos 79.7 ms (the first plays include JIT time), Minocpos 0.7 ms, Cove 0.7 ms, Britainpos again 1.2 ms. Britainpos and Cove each logged "looped (1)".
+- Sounds: 7 ids played, first reads 0.028–0.070 ms, plus 3.0 ms for the very first (feet12a, the id that crashed bench-000049). The ids: feet12a/b, rat2, bird06, dog2, cat2, chicken2.
+- No soundLegacyMUL.uop or MP3 file was opened, and there were no errors or exceptions.
