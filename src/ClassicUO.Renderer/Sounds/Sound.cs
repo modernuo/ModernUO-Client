@@ -15,7 +15,7 @@ namespace ClassicUO.Renderer.Sounds
         /// <summary>
         /// Most PCM the sound cache holds (distinct arrays: aliases of one record share one). 64 MiB = AudioConst.MaxSoundBytes,
         /// so the largest sound the format allows still fits alone. Stock 7.0.103 has 160.4 MiB of PCM in 1,655 records,
-        /// median 54 KB, p99 437 KB; only three are over 1 MiB (8.2, 9.8 and 20.2 MiB). A long session that plays 300
+        /// median 55 KB, p99 447 KB; only three are over 1 MiB (8.2, 9.8 and 20.2 MiB). A long session that plays 300
         /// distinct typical sounds holds about 16 MiB; bench-000050's whole plan played 7 ids.
         /// </summary>
         public const long SoundCacheBudget = 64L << 20;

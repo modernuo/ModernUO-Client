@@ -516,22 +516,22 @@ Both stores put the audio first in the payload and the item's name after it (`me
 
 A record store with magic `SNDS` (0x53444E53).
 - **`StoreHeader.flags`** bit 0: converted from `soundLegacyMUL.uop` (else `sound.mul` + `soundidx.mul`). Informational.
-- **Slots:** `slotCount` = highest present id + 1 (1,667 for 7.0.103, 1,488 for UOML). `arg` = 0. Ids that share an archive entry (`Sound.def` aliases) share one record.
+- **Slots:** `slotCount` = highest present id + 1 (1,667 for 7.0.103, 1,488 for UOML). `arg` = 0 and `reserved` = 0; readers leave out a slot with either set. Ids that share an archive entry (`Sound.def` aliases) share one record.
 - **Records:** codec 0 only, so playing needs no decode: the raw PCM goes straight to `DynamicSoundEffectInstance.SubmitBuffer`. `meta0` = sample rate, must be 22,050; `meta1` = channels, must be 1; `meta2` = name length, 0..40. Payload: `rawBytes − meta2` bytes of 16-bit signed little-endian PCM, a non-zero even length (whole samples: FNA refuses anything else), then the name. The name is the archive entry's 40-byte name field up to its first NUL (e.g. `sword1.wav`), or a loose file's name without the extension.
 - **Converter resolution** (`Uo.Converter/AudioImport.cs`):
   - the archive the client picked: the UOP on UOP installations when it exists, else the MUL pair;
   - `Sound.def` applied as the client applied it: an id that already has data is skipped, each group entry with data replaces it (the last one wins), and `-1` clears it;
-  - then the client folder's loose `Sounds/<id>.wav` files over it. They are accepted only as 22,050 Hz mono 16-bit, as in `ReadWave`; anything else falls back to the archive entry.
+  - then the client folder's loose `Sounds/<id>.wav` files over it, through the client's own reader (`AudioConst.ReadWaveFile`): at most `MaxWaveFileBytes` (64 MiB + 1 MiB) checked before the read, chunk sizes compared by subtraction (a size past the end is clamped to the end, as ClassicUO did), 22,050 Hz mono 16-bit, and a non-empty even data chunk. A loose file that fails any of these falls back to the archive entry, in the converter as in the client, and is listed as a warning.
   - An archive entry of 40 bytes or less has no PCM and is absent (ClassicUO threw on one shorter than 40).
   - An entry whose PCM is not a whole number of 16-bit samples (odd length) is absent and listed as a warning: FNA would throw on it. Stock 7.0.103 has none.
-- **Client** (`SoundsLoader.TryGetSound` via `AudioConst.ReadSound`): on the first play of an id, two positional reads: the PCM into an array of exactly its length, and the name. `DynamicSoundEffectInstance.SubmitBuffer(array, offset, count)` checks the whole array's length against the block alignment, not just `count`, so the name must not share the PCM's array (bench-000049 crashed on an 11-byte name after even PCM). `UOSound` plays that array, and the renderer caches it for the session as before, so memory grows only with the sounds actually played.
+- **Client** (`SoundsLoader.TryGetSound` via `AudioConst.ReadSound`): on the first play of an id, two positional reads: the PCM into an array of exactly its length, and the name. `DynamicSoundEffectInstance.SubmitBuffer(array, offset, count)` checks the whole array's length against the block alignment, not just `count`, so the name must not share the PCM's array (bench-000049 crashed on an 11-byte name after even PCM). `UOSound` plays that array. The renderer's `SoundCache` keeps played sounds within a budget: ids that share a record share one array, the distinct arrays stay within 64 MiB and at most 1,024 ids are cached, and the least recently played id that is not playing is evicted. `AudioManager` plays at most 32 sound effects and 64 MiB of PCM at once (FNA copies each playing buffer into native memory) and stops the oldest to make room.
 - **Loose `Sounds/<id>.wav` files still win at runtime** (the folder is listed once at load), so a shard can try a sound without rebuilding the pack. The converter folds the same files into the pack, so a shipped pack needs none.
 
 ### `audio/music.bin`: music
 
 A record store with magic `MUSC` (0x4353554D).
 - **`StoreHeader.flags`** bit 0: the client folder had no `Config.txt`, so ClassicUO's built-in 67-entry table was used. Informational.
-- **Slots:** one per music id of the table (`slotCount` = highest id + 1: 103 for 7.0.103). `arg` bit 0 = the id loops (`Config.txt`'s `loop`); other bits must be 0. The loop flag belongs to the id, not the file: ids naming one file share its record (7.0.103: 102 ids, 90 files; UOML: 57 ids, 45 files).
+- **Slots:** one per music id of the table (`slotCount` = highest id + 1: 103 for 7.0.103). `arg` bit 0 = the id loops (`Config.txt`'s `loop`); other bits must be 0, and `reserved` must be 0 (readers leave out the slot otherwise). The loop flag belongs to the id, not the file: ids naming one file share its record (7.0.103: 102 ids, 90 files; UOML: 57 ids, 45 files).
 - **Records:** codec 0 only. `meta0` = audio format, 1 = MP3 (the only one 1.0 knows); `meta1` = 0; `meta2` = name length, 0..255. Payload: the MP3 file's bytes exactly, ID3, Xing/Info and LAME frames included, then the file name (e.g. `Britain1.mp3`). dr_mp3 skips the encoder delay and trims the padding from those frames, so loops are gapless and the record needs no extra metadata beyond the loop flag.
 - **Converter resolution:**
   - the table the client read: `Music/Digital/Config.txt` for 4.0.11c and later, `Music/Config.txt` before, else the built-in table;
@@ -547,13 +547,29 @@ A record store with magic `MUSC` (0x4353554D).
 ### Untrusted input
 
 - `RecordStore.Open` checks the extents and codecs (see "Record stores"), and `AudioConst.OpenSoundStore` / `OpenMusicStore` limit the slot count to 1..0xFFFF before anything is allocated.
-- **Overlap:** the client and the verify step reject a store whose payloads overlap (`AudioConst.CheckNoOverlap`). Ids share content through slots, never through records pointing into each other's bytes.
+- **Overlap:** the client and the verify step reject a store whose payloads overlap (`AudioConst.CheckNoOverlap`). Ids share content through slots, never through records pointing into each other's bytes. The check sorts the records by offset and keeps the furthest end of all earlier non-empty payloads, so neither an empty record between two overlapping ones nor a short record inside a long one hides an overlap.
 - A store that fails is not used. The failure is logged as an error, and there is no MUL fallback.
 - **Records, checked at load** (`AudioConst.CheckSoundRecord`, `CheckMusicRecord`, `CheckMusicSlot`):
   - sounds: codec 0, 22,050 Hz, 1 channel, a name of at most 40 bytes, 2 bytes to 64 MiB of PCM in whole 16-bit samples (the largest stock sound is 21.2 MB). Before FNA sees a buffer, the loader checks it against FNA's `SubmitBuffer` rules (`AudioConst.SubmitError`) and `Sound.Play` checks again (`Sound.CanSubmit`); a buffer that fails is not played, never thrown. Loose WAVs with an odd or empty data chunk are ignored the same way;
   - music: codec 0, format 1, `meta1` 0, a name of at most 255 bytes, 1 byte to 32 MiB of MP3 (`Mp3Validator.MaxBytes`);
-  - a music slot with unknown `arg` bits.
-  A record or slot that fails is absent for the session (logged once), and the others still play. A read that fails later (I/O, a truncated file) makes that record absent and is logged once.
+  - slots (`CheckSoundSlot`, `CheckMusicSlot`): see the table below.
+  A record or slot that fails is absent for the session (logged once), and the others still play.
+- **Which fields readers check.** Audio stores use the record-store layout; this is the full list for 1.0 readers:
+
+  | field | sounds | music |
+  |---|---|---|
+  | `StoreHeader.slotCount` | rejected outside 1..0xFFFF (whole store) | same |
+  | `StoreHeader.recordCount`, record extents, codec, `storedBytes = rawBytes` | rejected (whole store), as for every record store | same |
+  | `StoreHeader.flags` | ignored (bit 0 is informational; unknown bits too) | ignored (same) |
+  | `StoreHeader.reserved` | ignored | ignored |
+  | `StoreSlot.record` | must point into the record table (whole store) | same |
+  | `StoreSlot.arg` | must be 0, else the slot is absent | only bit 0 (loop) may be set, else the slot is absent |
+  | `StoreSlot.reserved` | must be 0, else the slot is absent | must be 0, else the slot is absent |
+  | `StoreRecord.meta0/1/2` and sizes | rate 22,050, 1 channel, name ≤ 40, PCM 2 B..64 MiB and even, else the record is absent | format 1, `meta1` 0, name ≤ 255, MP3 1 B..32 MiB, else the record is absent |
+  | payload overlap | rejected (whole store) | rejected (whole store) |
+
+  The ignored header fields are left for informational flags a later converter may add; anything that changes how a payload is read goes in a checked field (a new codec, `meta0` format or slot bit), which a 1.0 reader then refuses.
+- **Loose WAVs** are untrusted too (`AudioConst.ReadWaveFile`, shared by the client and the converter): the file size is checked before the read, every chunk size is compared by subtraction (a 44-byte file declaring 0x7FFFFFF0 data bytes yields an empty, refused data chunk), and a bad file is logged and skipped, never thrown. A read that fails later (I/O, a truncated file) makes that record absent and is logged once.
 - **MP3 bytes** are untrusted too. `Mp3Validator` (size, ID3v2 tag, a chain of valid Layer III frame headers) runs on every play before dr_mp3. A refused or undecodable track fails its `MusicStream` cleanly on the worker and is logged as skipped.
 
 ## Manifest (`manifest.json`)
