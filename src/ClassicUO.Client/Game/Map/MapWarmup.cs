@@ -18,7 +18,8 @@ namespace ClassicUO.Game.Map
     /// (<see cref="Chunk.Prefill"/>, statics mesh layers pre-sized) and the recycler (<see cref="MapObjectRecycler.Prefill"/>).</item>
     /// <item>Then one deliberate collection, while the world isn't visible: the last held frame of the login's settle hold (Gpu
     /// world), or the first world frame (Legacy, the login transition). It promotes everything login allocated into gen2 at
-    /// once, so later gen0/gen1 collections copy only what is new.</item>
+    /// once, so later gen0/gen1 collections copy only what is new. It belongs to those first frames only: a presented frame,
+    /// another episode's hold or the scene unloading (disconnect) cancels it (<see cref="OnWorldFrame"/>).</item>
     /// </list>
     /// CUO_WARMUP=0 restores the old behaviour (no prefill, no collection); CUO_WARMUP_GC=0 keeps the prefill but skips the
     /// collection; CUO_WARMUP_GC=2 makes it a full compacting gen2 instead of two gen1s. CUO_WARMUP_CHUNKS sets the chunk count.
@@ -51,6 +52,7 @@ namespace ClassicUO.Game.Map
 
         private static bool _prefilled;
         private static long _collectDeadline;
+        private static int _worldFrames;
 
         /// <summary>A deliberate collection is waiting for a frame where the world isn't visible.</summary>
         public static bool CollectPending { get; private set; }
@@ -76,25 +78,35 @@ namespace ClassicUO.Game.Map
 
             CollectPending = CollectEnabled;
             _collectDeadline = 0;
+            _worldFrames = 0;
         }
 
         /// <summary>
-        /// GameScene, in a frame whose world isn't shown: <paramref name="held"/> = the settle gate holds this frame,
-        /// <paramref name="ready"/> = the view became ready in it (the hold ends next frame). Collects in the last held frame of
-        /// the login hold, or in a held frame 1.2 s in (before the hold's 1.5 s timeout), or at once when nothing holds (Legacy).
+        /// GameScene, after each world frame's draw. The collection belongs to the login's first world frames only:
+        /// <list type="bullet">
+        /// <item>Gpu world: it runs in a held frame of the login's settle episode (<paramref name="loginEpisode"/>): the last
+        /// one (<paramref name="ready"/>, the hold ends next frame), or one 1.2 s in (at most 80% of the hold's
+        /// <paramref name="timeoutMs"/>), so it never waits past the hold. A presented frame, or a hold of another episode
+        /// (teleport, facet change), cancels it: a later hold never runs it. With CUO_WORLD_HOLD=0 nothing is held, so the first
+        /// world frame cancels it.</item>
+        /// <item>Legacy (no settle hold): it runs in the first world frame (the login transition); any later frame cancels it.</item>
+        /// </list>
         /// </summary>
-        public static void OnWorldFrame(bool gpu, bool held, bool ready)
+        public static void OnWorldFrame(bool gpu, bool held, bool ready, bool loginEpisode, double timeoutMs)
         {
             if (!CollectPending)
             {
                 return;
             }
 
+            _worldFrames++;
+
             if (gpu)
             {
-                if (!held)
+                if (!held || !loginEpisode)
                 {
-                    // a presented Gpu frame without a pending hold: the login hold is over (or never held); wait for the next hold
+                    Cancel(!held ? "a world frame was presented before the login hold reached a collection point" : "held frame of another episode");
+
                     return;
                 }
 
@@ -102,7 +114,8 @@ namespace ClassicUO.Game.Map
 
                 if (_collectDeadline == 0)
                 {
-                    _collectDeadline = now + Stopwatch.Frequency * 12 / 10;
+                    double seconds = Math.Min(1.2, 0.8 * timeoutMs / 1000.0);
+                    _collectDeadline = now + (long)(Stopwatch.Frequency * Math.Max(0, seconds));
                 }
 
                 if (!ready && now < _collectDeadline)
@@ -110,8 +123,26 @@ namespace ClassicUO.Game.Map
                     return;
                 }
             }
+            else if (_worldFrames > 1)
+            {
+                Cancel("not the first world frame");
 
-            Collect(gpu ? (ready ? "login hold, last held frame" : "login hold, 1.2 s in") : "first Legacy world frame");
+                return;
+            }
+
+            Collect(gpu ? (ready ? "login hold, last held frame" : "login hold, before its timeout") : "first Legacy world frame");
+        }
+
+        /// <summary>Drops a pending collection (GameScene unload, or the login's first frames are over): it never runs later.</summary>
+        public static void Cancel(string why)
+        {
+            if (!CollectPending)
+            {
+                return;
+            }
+
+            CollectPending = false;
+            Log.Info($"[warmup] collection cancelled: {why}");
         }
 
         private static void Collect(string where)
