@@ -249,6 +249,16 @@ So the data file is keyed by body group (human male/female, elf male/female, gar
 
 **Gate:** the standard gate; `CUO_FUNNEL_CHECK` 0; the UI-heavy scripts; a paired AOT `world_prepare` and `update` within noise in both renderers.
 
+**Checkpoint after T4 (owner, 2026-10-31): measure before going further.**
+- **What to measure** (paired NativeAOT, base = the last tip before T1 vs T4 on), in both renderers, at Britain, the bank and the large scene (zoom 1, 2.5, walking):
+  - frame time and world prepare;
+  - the update phase;
+  - per-client memory (resident and managed heap, per memory-footprint.md);
+  - the E2 packet bench.
+- **Expectation:** neutral to a small gain. The measured wins so far came from drawing from the ECS (W3/W5/E5–E7). Ownership phases mainly buy one source of truth and simpler code, and the dual-write period costs a little (e.g. 0x77 +0.05 µs per packet).
+- **If T4 is neutral or better:** continue to T9.
+- **If it regresses frame time or memory beyond noise:** stop, and bring the numbers to the owner before T5.
+
 ### T5: `World.Update` as systems
 
 **T5a: E4 default on.** Audit and merge E10 (the owned `MobileTable`), then switch `world_update_mobile_system` on. It saves 0.02–0.03 ms in the large scene, and it is the base for T5b.
@@ -394,6 +404,13 @@ So the data file is keyed by body group (human male/female, elf male/female, gar
 - Size: 4–6. Tier: S+C draft, O review.
 
 ### T9: deletion (after each switch has been on by default for one phase)
+
+**Delete early, path by path (owner, 2026-10-31).** Don't wait for the end. When a path's ECS version has held its gate, been on by default for one phase, and had its Codex audit, delete that path's non-ECS version in the next phase. That keeps the period with two models as short as possible.
+
+One limit: a write path can only go once nothing reads the old field. The T1 dual writes keep the legacy cache current because T1–T3 still read it. Those writes go when T4 moves the reads, for cold fields, and after T7b for hot ones.
+
+Candidates as of 2026-10-31: E4's legacy mobile loop and its shadow dictionary (on by default since 6b26dd773, eligible after one more phase), and the `*PreT1` release fallbacks once T1 is complete.
+
 
 - `WorldEcs.Sync`, `PushInputs` and `PushClock` as separate entry points (they become funnel internals), and the mirror-direction `-ecscheck` (replaced by the cache check, then removed with the caches).
 - The cold A fields' caches on `Entity`/`Item`/`Mobile`/`PlayerMobile` (T4). The hot caches only after T7b.
