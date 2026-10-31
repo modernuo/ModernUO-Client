@@ -6,13 +6,16 @@ namespace ClassicUO.IO.Audio
 {
     public class UOSound : Sound
     {
-        private readonly ArraySegment<byte> _waveBuffer;
+        private readonly byte[] _waveBuffer;
 
-        /// <param name="buffer">22,050 Hz mono 16-bit PCM (a pack record's PCM is the start of the record's array).</param>
-        public UOSound(string name, int index, ArraySegment<byte> buffer) : base(name, index)
+        /// <param name="buffer">
+        /// 22,050 Hz mono 16-bit PCM, the whole array: FNA's SubmitBuffer checks the array's length, so it must not carry
+        /// anything after the samples (SoundsLoader.TryGetSound hands out exactly the PCM).
+        /// </param>
+        public UOSound(string name, int index, byte[] buffer) : base(name, index)
         {
             _waveBuffer = buffer;
-            Delay = (uint) ((buffer.Count - 32) / 88.2f);
+            Delay = (uint) ((buffer.Length - 32) / 88.2f);
         }
 
         public bool CalculateByDistance { get; set; }
@@ -61,7 +64,7 @@ namespace ClassicUO.IO.Audio
 
         protected override ArraySegment<byte> GetBuffer()
         {
-            return _waveBuffer;
+            return _waveBuffer ?? ArraySegment<byte>.Empty;
         }
     }
 }

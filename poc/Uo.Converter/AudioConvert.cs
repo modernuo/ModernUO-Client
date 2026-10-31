@@ -17,7 +17,7 @@ public static class AudioConvert
     public static AudioImport.SoundStats Sounds(UOFileManager fm, string outDir)
     {
         using var src = AudioImport.SoundSource.Open(fm.GetUOFilePath, fm.BasePath, fm.IsUOPInstallation);
-        return AudioImport.WriteSounds(src, outDir);
+        return AudioImport.WriteSounds(src, outDir, m => Console.WriteLine($"  warning: {m}"));
     }
 
     public static AudioImport.MusicStats Music(UOFileManager fm, string outDir)
@@ -55,7 +55,6 @@ public static class AudioConvert
         bool uop = (store.Header.Flags & AudioConst.SoundFlagUop) != 0;
         int present = 0, bad = 0;
         long bytes = 0;
-        var buf = Array.Empty<byte>();
         var seenRec = new HashSet<ulong>();
         for (int id = 0; id < AudioConst.MaxIds; id++)
         {
@@ -69,7 +68,8 @@ public static class AudioConvert
             {
                 data = null; // an entry shorter than its 40-byte name: the client threw (new byte[negative]); the pack leaves it out
             }
-            bool expect = data != null && data.Length > 0;
+            // the client plays what the old loader read only when FNA can take it (whole 16-bit samples, not empty)
+            bool expect = data != null && AudioConst.CheckPcmLength(data.Length) == null;
             bool has = store.TryGet(id, out _, out var rec);
             if (expect != has)
             {
@@ -82,22 +82,26 @@ public static class AudioConvert
                 if (bad++ < 10) Verify.Fail($"sound {id}: {err}");
                 continue;
             }
-            if (buf.Length < rec.RawBytes) buf = new byte[rec.RawBytes];
-            var payload = buf.AsSpan(0, (int)rec.RawBytes);
-            store.Read(rec, payload);
-            var pcm = payload.Slice(0, AudioConst.AudioBytes(rec));
+            // exactly what the client hands to FNA: SoundsLoader.TryGetSound's decode (AudioConst.ReadSound), whose whole
+            // array UOSound submits (FNA's SubmitBuffer checks the array's length, not just the count: bench-000049)
+            byte[] pcm = AudioConst.ReadSound(store, rec, out string packName);
+            if (AudioConst.SubmitError(pcm, 0, pcm.Length) is { } submit)
+            {
+                if (bad++ < 10) Verify.Fail($"sound {id}: FNA would refuse it ({submit})");
+                continue;
+            }
             // the client's name is the 40-byte field decoded whole (NULs included) or the loose file's name
             string expectName = name!.Split('\0')[0];
-            if (!pcm.SequenceEqual(data!) || AudioConst.Name(rec, payload) != expectName)
+            if (!pcm.AsSpan().SequenceEqual(data!) || packName != expectName)
             {
-                if (bad++ < 10) Verify.Fail($"sound {id}: PCM or name differs ({pcm.Length} vs {data!.Length} bytes, '{AudioConst.Name(rec, payload)}' vs '{expectName}')");
+                if (bad++ < 10) Verify.Fail($"sound {id}: PCM or name differs ({pcm.Length} vs {data!.Length} bytes, '{packName}' vs '{expectName}')");
                 continue;
             }
             present++;
             if (seenRec.Add(rec.Offset)) bytes += pcm.Length;
         }
         if (uop != (fm.IsUOPInstallation && File.Exists(fm.GetUOFilePath("soundLegacyMUL.uop")))) Verify.Fail("sounds: UOP flag");
-        Console.WriteLine($"  sounds: {AudioConst.MaxIds} ids, {present} present, {store.Records.Length} records, {bytes / 1048576.0:F1} MiB PCM, every sound and name {(bad == 0 ? "EXACT" : $"{bad} MISMATCHES")} vs SoundsLoader ({sw.Elapsed.TotalSeconds:F1} s)");
+        Console.WriteLine($"  sounds: {AudioConst.MaxIds} ids, {present} present, {store.Records.Length} records, {bytes / 1048576.0:F1} MiB PCM, every sound and name {(bad == 0 ? "EXACT" : $"{bad} MISMATCHES")} vs SoundsLoader, as the arrays handed to FNA ({sw.Elapsed.TotalSeconds:F1} s)");
     }
 
     public static void VerifyMusic(UOFileManager fm, string outDir)

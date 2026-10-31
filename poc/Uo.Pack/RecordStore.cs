@@ -256,6 +256,19 @@ public sealed class RecordStore : IDisposable
     }
 
     /// <summary>
+    /// Reads bytes [<paramref name="start"/>, <paramref name="start"/> + dst.Length) of a raw (codec 0) record's payload
+    /// into <paramref name="dst"/> with one positional read. Thread-safe.
+    /// </summary>
+    public void ReadRaw(in StoreRecord record, long start, Span<byte> dst)
+    {
+        if (record.Codec != StoreConst.CodecRaw)
+            throw new InvalidOperationException("only raw records can be read in part");
+        if (start < 0 || start > record.StoredBytes || dst.Length > record.StoredBytes - start)
+            throw new ArgumentOutOfRangeException(nameof(start), "range outside the record");
+        ReadExactly(_file, dst, (long)record.Offset + start);
+    }
+
+    /// <summary>
     /// A read-only, seekable stream over bytes [<paramref name="start"/>, <paramref name="start"/> + <paramref name="length"/>)
     /// of a raw (codec 0) record's payload, read positionally through the store's handle (no copy of the whole
     /// payload in managed memory). Each stream keeps its own position, so streams may be used on any thread. The

@@ -10,6 +10,7 @@ using System.Text;
 using ClassicUO.Assets;
 using ClassicUO.IO.Audio;
 using FluentAssertions;
+using Microsoft.Xna.Framework.Audio;
 using Uo.Converter;
 using Uo.Pack;
 using Xunit;
@@ -143,13 +144,13 @@ namespace ClassicUO.UnitTests.Assets
         public void Converter_Imports_A_Synthetic_Mul_With_SoundDef_Aliases_And_Loose_Waves()
         {
             string uo = Dir("uo");
-            byte[] a = Pcm(100, 1), b = Pcm(51, 2), c = Pcm(2000, 3), d = Pcm(64, 4);
+            byte[] a = Pcm(100, 1), b = Pcm(52, 2), c = Pcm(2000, 3), d = Pcm(64, 4);
             WriteMul(
                 uo,
                 Entry("zero.wav", a), // 0
                 null,                 // 1: no data; Sound.def aliases it to 3
                 new byte[30],         // 2: shorter than the 40-byte name: no PCM, absent
-                Entry("three.wav", b), // 3 (odd PCM length is kept)
+                Entry("three.wav", b), // 3
                 null,                 // 4: Sound.def -1 keeps it empty
                 Entry("five.wav", c)  // 5: has data, so its Sound.def line is skipped
             );
@@ -201,7 +202,8 @@ namespace ClassicUO.UnitTests.Assets
 
         private static void Expect(SoundsLoader loader, int id, byte[] pcm, string name)
         {
-            loader.TryGetSound(id, out ArraySegment<byte> data, out string n).Should().BeTrue($"id {id} is present");
+            loader.TryGetSound(id, out byte[] data, out string n).Should().BeTrue($"id {id} is present");
+            data.Length.Should().Be(pcm.Length, $"id {id}: the array is exactly the PCM (FNA checks the whole array)");
             data.AsSpan().SequenceEqual(pcm).Should().BeTrue($"id {id}'s PCM is byte-exact");
             n.Should().Be(name);
         }
@@ -439,6 +441,8 @@ namespace ClassicUO.UnitTests.Assets
             AudioConst.CheckSoundRecord(ok with { Meta2 = 41 }).Should().NotBeNull("name longer than 40");
             AudioConst.CheckSoundRecord(ok with { RawBytes = 5, StoredBytes = 5 }).Should().NotBeNull("shorter than its name");
             AudioConst.CheckSoundRecord(ok with { RawBytes = AudioConst.MaxSoundBytes + 11u }).Should().NotBeNull("too large");
+            AudioConst.CheckSoundRecord(ok with { RawBytes = 111, StoredBytes = 111 }).Should().NotBeNull("odd PCM length");
+            AudioConst.CheckSoundRecord(ok with { RawBytes = 10, StoredBytes = 10 }).Should().NotBeNull("no PCM");
 
             var m = new StoreRecord { RawBytes = 1000, StoredBytes = 1000, Meta0 = AudioConst.MusicFormatMp3, Meta2 = 8 };
             AudioConst.CheckMusicRecord(m).Should().BeNull();
@@ -480,6 +484,140 @@ namespace ClassicUO.UnitTests.Assets
             loader.TryGetSound(0, out _, out _).Should().BeFalse();
             loader.TryGetMusic(0, out _, out _, out _).Should().BeFalse();
             Client(Dir("empty2"), null).HasPackSounds.Should().BeFalse();
+        }
+
+        // ------------------------------------------------------------------ what reaches FNA (bench-000049)
+
+        // UOSound's buffer as Sound.Play hands it to DynamicSoundEffectInstance.SubmitBuffer(array, offset, count).
+        private sealed class Probe : UOSound
+        {
+            public Probe(string name, int index, byte[] pcm) : base(name, index, pcm)
+            {
+            }
+
+            public ArraySegment<byte> Submitted => GetBuffer();
+        }
+
+        [Fact]
+        public void A_Real_Shaped_Record_Reaches_FNA_As_Exactly_Its_Pcm()
+        {
+            // bench-000049's crash: sound 299 "feet12a.wav" (an 11-byte name, so PCM + name is odd), 17,980 bytes of PCM.
+            // The client handed FNA the record's whole array (PCM then name) with count = PCM; FNA checks the array's
+            // length against the block alignment and threw.
+            string uo = Dir("uo");
+            byte[] pcm = Pcm(17980, 299);
+            WriteMul(uo, Entry("feet12a.wav", pcm));
+            string pack = Dir("pack");
+
+            using (var src = AudioImport.SoundSource.Open(f => Path.Combine(uo, f), uo, false))
+            {
+                AudioImport.WriteSounds(src, pack).Unplayable.Should().Be(0);
+            }
+
+            var loader = Client(Dir("empty"), pack);
+            loader.TryGetSound(0, out byte[] data, out string name).Should().BeTrue();
+            name.Should().Be("feet12a.wav");
+
+            var probe = new Probe(name, 0, data);
+            ArraySegment<byte> sent = probe.Submitted;
+            sent.Offset.Should().Be(0);
+            sent.Count.Should().Be(17980);
+            sent.Array!.Length.Should().Be(17980, "nothing after the samples shares the array FNA checks");
+            sent.AsSpan().SequenceEqual(pcm).Should().BeTrue();
+            ClassicUO.IO.Audio.Sound.CanSubmit(sent.Array, sent.Offset, sent.Count, AudioChannels.Mono).Should().BeTrue();
+            AudioConst.SubmitError(sent.Array, sent.Offset, sent.Count).Should().BeNull();
+
+            // the old shape (the record's payload array: PCM + 11 name bytes) is what FNA refused; both mirrors refuse it
+            byte[] old = AudioConst.Payload(pcm, Encoding.UTF8.GetBytes("feet12a.wav"));
+            ClassicUO.IO.Audio.Sound.CanSubmit(old, 0, 17980, AudioChannels.Mono).Should().BeFalse();
+            AudioConst.SubmitError(old, 0, 17980).Should().NotBeNull();
+            loader.Dispose();
+        }
+
+        [Fact]
+        public void The_Two_Mirrors_Of_FNAs_Submit_Rules_Agree()
+        {
+            var cases = new (byte[] a, int off, int count)[]
+            {
+                (new byte[100], 0, 100), (new byte[101], 0, 100), (new byte[100], 0, 99), (new byte[100], 1, 98),
+                (new byte[100], 2, 98), (new byte[100], 2, 100), (new byte[0], 0, 0), (null, 0, 0), (new byte[100], 100, 0),
+            };
+
+            foreach (var (a, off, count) in cases)
+            {
+                ClassicUO.IO.Audio.Sound.CanSubmit(a, off, count, AudioChannels.Mono).Should().Be(
+                    AudioConst.SubmitError(a, off, count) == null, $"array {a?.Length}, offset {off}, count {count}");
+            }
+
+            ClassicUO.IO.Audio.Sound.CanSubmit(new byte[100], 0, 100, AudioChannels.Mono).Should().BeTrue();
+            ClassicUO.IO.Audio.Sound.CanSubmit(new byte[101], 0, 100, AudioChannels.Mono).Should().BeFalse("FNA checks the array's length");
+            ClassicUO.IO.Audio.Sound.CanSubmit(new byte[102], 0, 102, AudioChannels.Stereo).Should().BeFalse("stereo frames are 4 bytes");
+        }
+
+        [Fact]
+        public void Bad_Sound_Records_Are_Refused_Before_FNA_And_The_Rest_Play()
+        {
+            string pack = GoodSoundStore(out _);
+            // record 0 one byte shorter (stored and raw): its PCM is now odd
+            Patch(pack, AudioConst.SoundsFile, (f, rec) =>
+            {
+                BinaryPrimitives.WriteUInt32LittleEndian(f.AsSpan(rec + 8), BinaryPrimitives.ReadUInt32LittleEndian(f.AsSpan(rec + 8)) - 1);
+                BinaryPrimitives.WriteUInt32LittleEndian(f.AsSpan(rec + 12), BinaryPrimitives.ReadUInt32LittleEndian(f.AsSpan(rec + 12)) - 1);
+            });
+            var loader = Client(Dir("e"), pack);
+            loader.HasPackSounds.Should().BeTrue("a bad record leaves the store open");
+            Action get0 = () => loader.TryGetSound(0, out _, out _).Should().BeFalse("odd PCM");
+            get0.Should().NotThrow();
+            loader.TryGetSound(1, out byte[] one, out _).Should().BeTrue("the other record still plays");
+            one.Length.Should().Be(300);
+            loader.Dispose();
+
+            // record 1: no PCM at all (raw = the name's length)
+            pack = GoodSoundStore(out byte[] pcm0);
+            Patch(pack, AudioConst.SoundsFile, (f, rec) =>
+            {
+                ushort nameLen = BinaryPrimitives.ReadUInt16LittleEndian(f.AsSpan(rec + 24 + 22));
+                BinaryPrimitives.WriteUInt32LittleEndian(f.AsSpan(rec + 24 + 8), nameLen);
+                BinaryPrimitives.WriteUInt32LittleEndian(f.AsSpan(rec + 24 + 12), nameLen);
+            });
+            loader = Client(Dir("e1"), pack);
+            Action get1 = () => loader.TryGetSound(1, out _, out _).Should().BeFalse("no PCM");
+            get1.Should().NotThrow();
+            Expect(loader, 0, pcm0, "a");
+            loader.Dispose();
+
+            // the converter leaves out what the client would refuse, and the rest still play
+            string uo = Dir("uo-odd");
+            byte[] good = Pcm(64, 1);
+            WriteMul(uo, Entry("odd", Pcm(201, 2)), Entry("good", good));
+            string pack2 = Dir("pack-odd");
+
+            using (var src = AudioImport.SoundSource.Open(f => Path.Combine(uo, f), uo, false))
+            {
+                var warnings = new List<string>();
+                var stats = AudioImport.WriteSounds(src, pack2, warnings.Add);
+                stats.Unplayable.Should().Be(1);
+                stats.Present.Should().Be(1);
+                warnings.Should().ContainSingle().Which.Should().Contain("sound 0");
+            }
+
+            loader = Client(Dir("e2"), pack2);
+            loader.TryGetSound(0, out _, out _).Should().BeFalse();
+            Expect(loader, 1, good, "good");
+            loader.Dispose();
+        }
+
+        [Fact]
+        public void An_Odd_Length_Loose_Wave_Is_Ignored_And_The_Pack_Sound_Plays()
+        {
+            string pack = GoodSoundStore(out byte[] pcm0);
+            string client = Dir("client");
+            Directory.CreateDirectory(Path.Combine(client, "Sounds"));
+            File.WriteAllBytes(Path.Combine(client, "Sounds", "0.wav"), Wav(22050, 1, 16, Pcm(81, 5)));
+            var loader = Client(client, pack);
+            Expect(loader, 0, pcm0, "a");
+            Expect(loader, 0, pcm0, "a");
+            loader.Dispose();
         }
     }
 }
