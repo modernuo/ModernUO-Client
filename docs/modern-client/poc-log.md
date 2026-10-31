@@ -4334,3 +4334,38 @@ The policy test's pack now lists a file in its manifest, so a clear would show; 
 **Memory:** none per client (`AnimationState.MountOffsetY` sbyte → short: at most a few bytes per mobile; the Mounts table moved, not duplicated).
 
 **Open:** none new. The unicorn question from round 2 is answered by the owner's rule above.
+
+
+### Body import choices: round-4 audit fixes (2026-10-31, `poc/body-profile`)
+
+Codex round-4 audit of e1d15b1da (two P2, two P3). Base e1d15b1da.
+
+| # | Finding | Disposition |
+|---|---|---|
+| 1 (P2) | The corpse animation tick (`Item.ProcessAnimation`) resolved the live body: t2a with `Corpse.def 43 {191} 0` stores corpse target 228 (six death frames), the tick clamped against live 9's four and stopped at frame 3. | Fixed: the tick calls `AnimationsLoader.TryCorpseFrame`, which resolves the Corpse.def target (`ResolveBody(…, isCorpse: true)`) before it picks the death action (`GetDeathAction`, with the second-death fallback) and the frame count, as the Gpu extract and ItemView draw and pick do. Test `Corpse_Tick_Advances_To_The_Last_Frame_Of_The_Corpse_Target` (t2a pack): the audit's case set in the loaded table (43 → 228, live 9) plus every stock corpse whose target differs from its live body (14 on t2a, none with different frame counts); both death variants in all 5 stored directions advance to frame 5 (6 frames), not 3. |
+| 2 (P2) | Verify rejected every stand-in with frames and every stand-in without a corpse target, so explicit corpse self-targets (frames kept; hue 0 stores no target) failed conversion and `--verify-only`. | Fixed: `Verify.CheckBodyEntries` (the body-table part of the anim check, now callable on its own) follows the recomputed `AnimConvert.Targets(…).DropFrames`: a stand-in that drops its frames must store none and have an alias and a corpse target; one that keeps them only needs its alias (aliases and corpse targets are compared separately, as before). Verification-level test `Verification_Accepts_Stand_Ins_That_Keep_Their_Frames_For_A_Corpse_Self_Target`: a t2a conversion with `318 {318} 65535` and `319 {319} 0` in Corpse.def (318 and 319 have art in their own slots) keeps both bodies' frames, passes `CheckBodyEntries`, and two broken copies (192 without a corpse target, 192 with frames) fail it. |
+| 3 (P3) | Stand-in seating was a delta from the listed items' offset: unlisted 0x007A (AnimID 0, falls back to body 122) sat at +9 instead of horse 228's 0. Seven item offsets changed on t2a, only four of them listed. | Fixed with an **absolute seat**: a body drawn as a Body.def stand-in it doesn't draw by default stores the stand-in's own table offset in `MountShift` and sets a pack-only bit in `Flags` (`AnimBodyEntry.MountAbsoluteFlag` = 0x40000000; mobtypes flags never use it, the converter clears it from them and `Animation.GetAnimFlags` masks it). `Uo.Pack.MountSeat(Value, Absolute).RiderOffset(item)` = absolute ? value : table + value, used by every renderer (Gpu `MobileAnimationSystem`, Legacy `MobileView` draw and pick, Uo.Client `RiderOffset`, the driver's `mount` line). Other art changes keep the relative mount-height shift. Same format (no new field), so no memory change. |
+| 4 (P3) | `CorpseHop` read hue 0xFFFF as "no line", so `191 {191} 65535` lost its self-target. | Fixed: the tools loader exposes `TryGetCorpseDef` (presence from its table); `CorpseHop` uses it. The converter's anim workers now share the main file manager's override map (`UOFileManager.OverrideMap`), which the tests use to substitute Corpse.def. Test `Corpse_Def_Presence_Is_Explicit_Whatever_The_Hue` goes through `CorpseHop` and `Targets` on the real loader: 191 `{191} 65535` → (191, 0xFFFF), frames kept; 193 `{193} 0` → own frames, no target; 194 `{9} 65535` → (9, 0xFFFF); 192 (no line) → the stand-in. |
+
+**Second-death fallback, accepted timing change (from round 3).** The fallback (`GetDeathAction` plays the first death action when the drawn body has no frames for the second) also applies to the 0xAF temporary corpses. Across the aos, t2a, lbr, force and classic-1.2 fixtures, resolved corpses **95/156, 704 and UOP 1308** are affected: their 0xAF mobiles now play the first death animation before removal instead of vanishing on the next animation tick. That follows from the rule and is accepted (coordinator, 2026-10-31).
+
+**Item offsets over all 65,536 items** (`MountHeightTests` on the reconverted packs, `Stand_In_Mounts_Seat_The_Rider_As_On_The_Stand_In` from the plan, both taking every tiledata item as a mount item): **aos: 0 changed** (every seat relative 0). **t2a: exactly 4 changed, all listed: 0x3E9B and 0x3E9D (body 192 → 228), 0x3EB4 (122 → 228), 0x3EBB (793 → 200), each −9 → 0.** Unlisted items: none change (0x007A → 122, 0x00C0 → 192, 0x0319 → 793 stay at 0; round 3 had moved them to +9). lbr: 0 changed.
+
+**Results (7.0.103, `--only anims` into the hard-linked test packs; converter `body-profile/fix4/bin`).**
+- `--compare-bodies` classic-1.2 vs default (aos): **exactly 9, 26, 28**, alias 153 → 26 (Body.def, Corpse.def). Unchanged; the comparison keys include `Flags` and `MountShift`, so the aos entries carry no seat bit.
+- vs aos: t2a 127, lbr 37, force 5 entries: the same lists as rounds 2 and 3. The listing now prints absolute seats as `seatN` (t2a: 122 stand-ins, among them 122/192/793 `seat0`, which were `shift9`; lbr: 32).
+- `--verify-only`: aos OK (110,475 of 114,539 sampled frames BIT-EXACT; rider seats match: 0 shifted, 0 absolute; 0 corpse targets without frames), t2a OK (105,505 of 109,128; 0 shifted, 122 absolute), **classic-1.2 OK with the legacy policy** (109,615 of 113,683; read only, recursive listing with mtimes identical before/after).
+
+**Tests.** Converter tests from a clean build (bin/obj of the converter and its tests deleted, `--no-incremental`): **100 pass, 1 skipped** (101; BodyChoicesTests 65; new: `Corpse_Def_Presence_Is_Explicit_Whatever_The_Hue`, `Verification_Accepts_Stand_Ins_That_Keep_Their_Frames_For_A_Corpse_Self_Target`; `Stand_In_Mounts_Seat_The_Rider_As_On_The_Stand_In` now scans all 65,536 items under aos, t2a and lbr and pins the t2a list). Unit tests, both flavours (default and `-p:CuoDevTools=false`) with `CUO_MOUNT_AOS_PACK`/`CUO_MOUNT_T2A_PACK` on the reconverted packs: **1175 pass, 2 skipped** each (new: the corpse tick test; the seat theory adds absolute cases incl. 0x007A). No write-site change.
+
+**Revert checks** (each fix reverted alone, built, its tests run, restored; script `fix4/revert.py`):
+- fix 1, `TryCorpseFrame` resolving the live body → corpse tick test fails: "corpse 43 (drawn as 228, live 9), first death, stored direction 0: … expected 5, found 3" (the audit's frame). Item.cs passing the live body → `Renderers_Use_The_Shared_Rules` fails (source check of the tick call).
+- fix 2, the old "no stand-in with frames" rule → verification test fails on 318 and 319.
+- fix 3, the round-3 delta → `Stand_In_Mounts_…` fails: "t2a: 0x007A (body 122) sits as on 228, but found 9"; `MountSeat.RiderOffset` ignoring the bit → the seat theory fails (0x3EB4 −9, 0x3EC7 13).
+- fix 4, the hue sentinel → both round-4 converter tests fail (191 read as no line; 318 loses its frames).
+
+**Client job:** none. The seat change is data through the code path bench-000064 checked (the three t2a stand-in mounts keep the same rider offsets as in round 3; only unlisted items differ, and they now match the listed horses). The corpse tick uses the same resolution as the draw paths, checked by the loader-level test.
+
+**Memory:** none per client (the seat bit lives in the existing `Flags` word; `MountSeat` is a 2-byte value passed by value).
+
+**Open:** none new.
