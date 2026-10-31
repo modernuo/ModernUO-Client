@@ -2939,6 +2939,17 @@ Owner decision (owner-review question 14): the client picks its language from th
 - **Where it runs:** not in `Main`. The available languages are only known once the pack is open, which happens in `UltimaOnline.LoadUOFiles` (`Client.cs`), so the selection moved there: right after `PackAssets.Open` / `UOFileManager` is created and before `FileManager.Load(lang)` (before any text loads) and long before the language packet (sent at world entry, `PacketHandlers`). `SDL_GetPreferredLocales` needs no `SDL_Init` (and the code runs after FNA's init anyway); `SDL_PREFERRED_LOCALES` (the env name of `SDL_HINT_PREFERRED_LOCALES`) overrides it. `Main` now only clears a saved `IVL`/`ZZZ`. `ClilocLoader.AvailableLanguages()` lists the pack's cliloc language records, else the `Cliloc.*` files with a 3-letter extension (case-insensitive, names only: no file is read, so startup does not pay for it).
 - **Not persisted:** a language chosen from the OS is not written to settings.json (`Settings.AutoLanguage`; `Save` blanks it), otherwise the first run would freeze the choice as a "profile language" and later OS changes would be ignored. An explicit `lang` in settings.json, or `-language`, still wins.
 - **Tests:** `tests/ClassicUO.UnitTests/OsLanguageTests.cs`, 25 cases of the pure matcher (every case in the spec plus the Windows-exact tie-break, English variants, 3-letter languages, case and `-`/`_` splitting, no-enu sets). Suite 812 (787 at the base).
-- **Windows client job (bench-000025):** see the "Status" in the job result; each locale is run with `SDL_PREFERRED_LOCALES`.
+- **Windows client job (bench-000025):** each locale run with `SDL_PREFERRED_LOCALES`, JIT build, logged in to the local shard. All six pass: the language chosen, the cliloc loaded from the pack, and the language packet sent all match.
+
+  | OS locale | Chosen | Rule | Cliloc (pack) | Packet |
+  |---|---|---|---|---|
+  | unset (en_US) | ENU | only match | enu, 117,725 strings, 8.8 ms | ENU |
+  | de_DE | DEU | only match | deu, 18,622 over English, 10.6 ms | DEU |
+  | ja_JP | JPN | only match (jp prefix) | jpn, 59,707 over English, 10.7 ms | JPN |
+  | zh_TW | CHT | exact OS code | cht, 42,162 over English, 9.7 ms | CHT |
+  | es_ES | ESP | only match (not Windows' ESN) | esp, 18,241 over English, 8.5 ms | ESP |
+  | zh_CN | CHS | exact OS code | chs, 453 over English, 8.4 ms | CHS |
+
+  Available languages were discovered from the pack: enu, chs, cht, deu, esp, fra, jpn, kor. Cliloc load times here are JIT, first call.
 - **macOS and Linux were not run here** (no machine). They use the same SDL3 call and the Chinese rule; only the Windows-exact tie-break is skipped. A desktop whose language is Swedish with no `sve` cliloc, for example, falls back to the next preferred language, then ENU.
 - **Memory cost:** none (a list of a few strings, one record directory read).
