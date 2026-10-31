@@ -24,7 +24,7 @@ public sealed class AnimWorker : IDisposable
         Fm.Animations.Load();
         if (plan == null) return;
         Fm.Animations.SetBodyConv(plan.Conv);
-        foreach (var (id, from) in plan.ExtraMobTypeFrom) Fm.Animations.CopyMobType(id, from);
+        foreach (var (id, mt) in plan.MobTypes) Fm.Animations.SetMobType(id, mt.Type, mt.Flags);
     }
 
     public void Dispose() => Fm.Dispose();
@@ -37,12 +37,6 @@ public static class AnimConvert
 
     /// <summary>Bodies scanned: ClassicUO's initial index size; raised to cover every id named in the def files.</summary>
     public const int MinBodyCount = 2048;
-
-    /// <summary>
-    /// --no-target-sequence (diagnostic, for A/B comparisons only): converted MUL bodies use no AnimationSequence, as
-    /// before 2026-10-31. A pack built with it fails --verify-only without the same flag.
-    /// </summary>
-    public static bool TargetSequence = true;
 
     /// <summary>--bodies: only these bodies get frames (the body table still covers every body).</summary>
     public static HashSet<int>? Bodies;
@@ -108,7 +102,11 @@ public static class AnimConvert
         return max + 1;
     }
 
-    public static BodyMeta Meta(AnimationsLoader l, ClientVersion version, int body, Dictionary<int, (int FileIndex, ushort Graphic, sbyte MountHeight)> conv)
+    public static BodyMeta Meta(AnimationsLoader l, ClientVersion version, int body, BodyPlan plan) =>
+        Meta(l, version, body, plan.Conv, plan.Choices.TargetSequences);
+
+    /// <param name="targetSequence">bodies.json "sequences": "target": a converted MUL body follows its target's AnimationSequence.</param>
+    public static BodyMeta Meta(AnimationsLoader l, ClientVersion version, int body, Dictionary<int, (int FileIndex, ushort Graphic, sbyte MountHeight)> conv, bool targetSequence)
     {
         ushort hue = 0;
         AnimationFlags flags = 0;
@@ -123,7 +121,7 @@ public static class AnimConvert
             if (c.FileIndex != fileIndex) throw new InvalidOperationException($"body {body}: Bodyconv port says anim{c.FileIndex + 1}, loader says {fileIndex + 1}");
             m.SourceBody = c.Graphic;
             m.MountHeight = c.MountHeight;
-            if (TargetSequence && c.FileIndex > 0 && l.HasUopGroups(c.Graphic)) m.SeqBody = c.Graphic;
+            if (targetSequence && c.FileIndex > 0 && l.HasUopGroups(c.Graphic)) m.SeqBody = c.Graphic;
         }
         return m;
     }
@@ -357,10 +355,12 @@ public static class AnimConvert
         int bodyCount = plan.BodyCount;
         var conv = plan.Conv;
         Console.WriteLine($"  bodies: {plan}");
+        foreach (var line in plan.Describe()) Console.WriteLine($"  bodies: {line}");
         using var main = new AnimWorker(fm, plan);
         var l = main.Loader;
         var metas = new Dictionary<int, BodyMeta>();
-        BodyMeta MetaOf(int b) => metas.TryGetValue(b, out var m) ? m : metas[b] = Meta(l, fm.Version, b, conv);
+        var standIns = plan.StandInIds.ToHashSet();
+        BodyMeta MetaOf(int b) => metas.TryGetValue(b, out var m) ? m : metas[b] = Meta(l, fm.Version, b, plan);
 
         // Phase A (serial, cheap): body metadata and the distinct client blocks, in body/action/dir order.
         var bodies = new AnimBodyEntry[bodyCount];
@@ -380,6 +380,9 @@ public static class AnimConvert
             };
             if (ab != AnimConst.NoBody) aliased++;
             if (Bodies != null && !Bodies.Contains(b)) continue;
+            // An addition drawn as its Body.def stand-in: the client draws the alias only. Its anim.mul index, read in
+            // the mobtypes layout, may point into other bodies' slots (318, 319, the mount ids), so store no frames.
+            if (standIns.Contains(b)) continue;
             int actions = m.Uop ? AnimConst.MaxActions : m.Idx.Length / AnimationsLoader.MAX_DIRECTIONS;
             var map = new int[actions * AnimConst.StoredDirections];
             int last = -1;
@@ -530,7 +533,8 @@ public static class AnimConvert
             }
             if (diffs.Count > 0) seq.Add($"{b} (anim{m.FileIndex + 1}:{m.SourceBody}: {string.Join(" ", diffs)})");
         }
-        Console.WriteLine($"  bodies: {seq.Count} converted bodies draw groups per their target's AnimationSequence ({replaced} replaced groups, {hidden} of them (*) had frames of their own; {skipped} replacements to an empty group not applied): {string.Join(", ", seq)}");
+        if (plan.Choices.TargetSequences)
+            Console.WriteLine($"  bodies: {seq.Count} converted bodies draw groups per their target's AnimationSequence ({replaced} replaced groups, {hidden} of them (*) had frames of their own; {skipped} replacements to an empty group not applied): {string.Join(", ", seq)}");
         foreach (var x in plan.Choices.Extras)
         {
             var kind = bodies[x.Id].Type switch

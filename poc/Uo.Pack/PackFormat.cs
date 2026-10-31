@@ -330,16 +330,20 @@ public sealed class Manifest
     public DateTime Created { get; set; }
     public List<FacetInfo> Facets { get; set; } = new();
     public List<ManifestFile> Files { get; set; } = new();
-    /// <summary>The body import choices anim/ was built with (bodies.json, resolved); null in packs from before them (= the default).</summary>
+    /// <summary>The body import choices anim/ was built with (bodies.json, resolved); null in packs from before them (= the legacy rules, policy 0).</summary>
     public BodyChoicesRecord? Bodies { get; set; }
 }
 
 /// <summary>Manifest record of the body import choices (docs/modern-client/bodies.md), for diagnostics and --verify-only.</summary>
 public sealed class BodyChoicesRecord
 {
+    /// <summary>The converter's body resolver policy (Uo.Converter.BodyChoices.CurrentPolicy); 0 never appears in a record.</summary>
+    public int Policy { get; set; }
     public string Preset { get; set; } = "aos";
     public bool ForceOldAnimations { get; set; }
-    public string Additions { get; set; } = "newest";
+    public string Additions { get; set; } = "standins";
+    /// <summary>"none" or "target": whether converted MUL bodies follow their target's AnimationSequence.</summary>
+    public string Sequences { get; set; } = "none";
     public List<BodyRemodelRecord> Remodels { get; set; } = new();
     public List<BodyExtraRecord> Extras { get; set; } = new();
     /// <summary>"default" or the bodies.json path, and that file's SHA-256.</summary>
@@ -357,6 +361,8 @@ public sealed class BodyExtraRecord
 {
     public int Id { get; set; }
     public string From { get; set; } = "";
+    /// <summary>Set only when bodies.json gave it.</summary>
+    public int? MountHeight { get; set; }
 }
 
 public static class StructIo

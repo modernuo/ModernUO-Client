@@ -55,7 +55,6 @@ for (int i = 0; i < args.Length; i++)
         case "--raw-gumps": GumpConvert.Raw = true; break;
         case "--gump-small": GumpConvert.SmallRle = int.Parse(args[++i]); break;
         case "--body-choices": bodyChoicesArg = args[++i]; break;
-        case "--no-target-sequence": AnimConvert.TargetSequence = false; break;
         case "--bodies":
             AnimConvert.Bodies = args[++i].Split(',').Select(s => s.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? Convert.ToInt32(s[2..], 16) : int.Parse(s)).ToHashSet();
             break;
@@ -116,19 +115,20 @@ try
     // symlink). --verify-only only reads the pack, so it may verify a published one; debug PNGs still go elsewhere.
     if (convert) PublishedPacks.EnsureOutputDir(outDir);
     PublishedPacks.EnsureOutputDir(debugDir);
-    if (convert && only == null)
-    {
-        // No recursive deletes. A full conversion removes only the files the previous output's manifest lists (and
-        // refuses a non-empty folder that is not a converter output); --only keeps everything it does not rewrite.
-        // Stale debug PNGs (the only files written there) are removed one by one. Each delete checks its folder.
-        PackOutputFiles.ClearPreviousOutput(outDir);
-        PackOutputFiles.DeleteFiles(debugDir, "*.png");
-    }
 }
 catch (InvalidOperationException e)
 {
     Console.Error.WriteLine(e.Message);
     return 1;
+}
+
+// bodies.json: the shard's body set, chosen once at import (docs/modern-client/bodies.md). It is read and resolved
+// before any output is cleared or written, so a missing file or a bad choice leaves the previous pack untouched.
+BodyChoices? bodyChoices = null;
+if (convert && bodyChoicesArg != null && (only == null ? anims : only.Contains("anims")))
+{
+    try { bodyChoices = BodyChoices.Load(bodyChoicesArg); }
+    catch (BodyChoicesException e) { Console.Error.WriteLine($"body choices: {e.Message}"); return 1; }
 }
 
 bool Want(string stage) => only != null ? only.Contains(stage) : stage switch { "maps" => maps, "anims" => anims, "gumps" => gumps, "fonts" => fonts, "cliloc" => cliloc, "speech" => speech, "sounds" => sounds, "music" => music, _ => true };
@@ -197,6 +197,29 @@ var fm = Stage("load UOFileManager", () =>
 Console.WriteLine($"  uop={fm.IsUOPInstallation} artEntries={fm.Arts.File.Entries.Length} texEntries={fm.Texmaps.File.Entries.Length} " +
                   $"land={fm.TileData.LandData.Length} statics={fm.TileData.StaticData.Length} hues={fm.Hues.HuesCount}");
 
+BodyPlan? bodyPlan = null;
+if (convert && Want("anims") && !gumpReport && audioReport == null)
+{
+    try { bodyPlan = BodyPlan.Build(fm, bodyChoices ??= BodyChoices.Default); }
+    catch (BodyChoicesException e) { Console.Error.WriteLine($"body choices: {e.Message}"); return 1; }
+}
+if (convert && only == null)
+{
+    // No recursive deletes. A full conversion removes only the files the previous output's manifest lists (and
+    // refuses a non-empty folder that is not a converter output); --only keeps everything it does not rewrite.
+    // Stale debug PNGs (the only files written there) are removed one by one. Each delete checks its folder.
+    try
+    {
+        PackOutputFiles.ClearPreviousOutput(outDir);
+        PackOutputFiles.DeleteFiles(debugDir, "*.png");
+    }
+    catch (InvalidOperationException e)
+    {
+        Console.Error.WriteLine(e.Message);
+        return 1;
+    }
+}
+
 fm.Gumps.DefPath = gumpDef;
 if (gumpReport) return GumpExperiments.Report(fm);
 if (audioReport != null) return AudioReport.Run(fm, audioReport);
@@ -210,23 +233,7 @@ if (convert)
 
     if (Want("art")) stats["art"] = Stage("art", () => ArtConvert.Art(fm, outDir));
     if (Want("tex")) stats["tex"] = Stage("tex", () => ArtConvert.Tex(fm, outDir));
-    BodyChoices? bodyChoices = null;
-    if (Want("anims"))
-    {
-        // bodies.json: the shard's body set, chosen once at import (docs/modern-client/bodies.md). Bad choices stop here.
-        BodyPlan plan;
-        try
-        {
-            bodyChoices = bodyChoicesArg != null ? BodyChoices.Load(bodyChoicesArg) : BodyChoices.Default;
-            plan = BodyPlan.Build(fm, bodyChoices);
-        }
-        catch (BodyChoicesException e)
-        {
-            Console.Error.WriteLine($"body choices: {e.Message}");
-            return 1;
-        }
-        stats["anims"] = Stage("anims", () => AnimConvert.Run(fm, outDir, plan));
-    }
+    if (bodyPlan != null) stats["anims"] = Stage("anims", () => AnimConvert.Run(fm, outDir, bodyPlan));
     else if (bodyChoicesArg != null) Console.WriteLine("  warning: --body-choices is ignored: anims are not converted in this run");
     if (ConvertOptions.Format == Uo.Pack.PixelFormat.Bc7)
         Console.WriteLine($"  bc7: {PageCodec.RefineStats.Encoded} non-trivial blocks encoded, {PageCodec.RefineStats.Refined} re-encoded at Balanced (refine below {ConvertOptions.Bc7RefineDb} dB)");
