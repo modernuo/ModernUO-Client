@@ -156,7 +156,7 @@ namespace ClassicUO.Game
 
                     return true;
 
-                // use self|held|mobile <dx> <dy>: double-clicks (mounting an ethereal from the pack, dismounting on self)
+                // use self|held|mobile <dx> <dy>|pack <graphic>: double-clicks (mounting an ethereal from the pack, dismounting on self)
                 case "use" when args.Length > 0:
                     uint useSerial = args[0] switch
                     {
@@ -164,6 +164,22 @@ namespace ClassicUO.Game
                         "held" => _held,
                         _ => 0
                     };
+
+                    // use pack <graphic hex>: the first item of that graphic in the backpack (T1 funnel part 7: the spellbook)
+                    if (args[0] == "pack" && args.Length > 1 && backpack != null)
+                    {
+                        ushort useGraphic = Convert.ToUInt16(args[1], 16);
+
+                        for (LinkedObject ui = backpack.Items; ui != null; ui = ui.Next)
+                        {
+                            if (ui is Item packItem && packItem.Graphic == useGraphic)
+                            {
+                                useSerial = packItem.Serial;
+
+                                break;
+                            }
+                        }
+                    }
 
                     if (args[0] == "mobile" && args.Length > 2)
                     {

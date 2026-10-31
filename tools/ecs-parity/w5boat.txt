@@ -1,0 +1,38 @@
+wait 6
+say [self addtopack Spellbook
+wait 2
+backpack
+wait 2
+use pack 0EFA
+wait 3
+check
+use pack 0EFA
+wait 2
+say [go 1600 1650
+wait 6
+say [self add SmallBoat
+wait 4
+check
+parity
+say forward
+wait 3
+say stop
+wait 2
+check
+say turn right
+wait 4
+check
+parity
+say forward one
+wait 3
+say turn left
+wait 4
+say forward
+wait 3
+say stop
+wait 2
+check
+parity
+say [go 5445 1153
+wait 4
+check
