@@ -1184,6 +1184,19 @@ namespace ClassicUO
                 ui.SaveAsPng(fileStream, ui.Width, ui.Height);
             }
 
+            // the composited frame (world, overhead text, UI, cursor tooltip), before Present
+            int bw = GraphicManager.PreferredBackBufferWidth, bh = GraphicManager.PreferredBackBufferHeight;
+            var colors = new Color[bw * bh];
+            GraphicsDevice.GetBackBufferData(colors);
+
+            using (var screen = new Texture2D(GraphicsDevice, bw, bh, false, SurfaceFormat.Color))
+            using (FileStream fileStream = File.Create(Path.ChangeExtension(path, null) + "_screen.png"))
+            {
+                screen.SetData(colors);
+                ClassicUO.Renderer.TextureUploads.Changed();
+                screen.SaveAsPng(fileStream, bw, bh);
+            }
+
             Log.Info($"World render target saved: {path}");
         }
 

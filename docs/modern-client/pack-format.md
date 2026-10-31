@@ -444,7 +444,7 @@ A record store with magic `GUMP` holding every gump id the client's `GumpsLoader
 
 ASCII fonts (fonts.mul), unicode fonts (unifont*.mul), cliloc in every language the client folder has (Cliloc.*), and speech.mul's keyword table. The client reads each from here when its file exists (`FontsLoader.AsciiFromPack` / `UnicodeFromPack`, `ClilocLoader.FromPack`, `SpeechesLoader.FromPack`); without it, or when the file is invalid as a whole, it reads the MUL files as before and says so in the log. `CUO_PACK_TEXT=0` reads the MUL files even when the pack has text.
 
-Every file is converted through a frozen copy of the client's loader (tools/ClassicUO.Assets.Mul: `FontsLoader`, `ClilocLoader`, `SpeechesLoader`), so the pack holds what the client resolved, quirks included: a unicode glyph whose width or height isn't positive is no glyph, an ASCII glyph past the end of fonts.mul has no texel array, unifont1 is unifont when unifont1.mul is missing, a cliloc text stops at its first NUL.
+Every file is converted through a frozen copy of the client's loader (tools/ClassicUO.Assets.Mul: `FontsLoader`, `ClilocLoader`, `SpeechesLoader`), so the pack holds what the client resolved, quirks included: a unicode glyph whose width or height isn't positive is no glyph, an ASCII glyph past the end of fonts.mul has no texel array, unifont1 is unifont when unifont1.mul is missing, a cliloc text stops at its first NUL. One exception: a unicode glyph whose data runs past the end of its file (U+FFE0 in unifont3..12 of 7.0.103) made the client throw when drawn; the converter stores no glyph for it and lists it, and the client's MUL path treats it the same way. Cliloc languages are the extensions of the folder's `Cliloc.*` files (1–4 letters or digits), except csv, txt, bak, old, tmp, xml and json.
 
 ### `text/fonts.bin`: ASCII fonts
 
@@ -517,20 +517,23 @@ camelCase JSON, read case-insensitively:
 | Animations | Indexed8, 1024², mip0 only, plus `palettes.bin` | Kind 2, 1 MiB chunks; the 16-byte PageHeader puts the last 16 bytes of a full page in a second, tiny chunk |
 | Map regions | — | Kind 1 |
 | Gumps | record store | Kind 0 file; images up to 64 KiB of run-length payload uncompressed, larger ones as texels with Brotli (quality 9) |
+| Fonts | record stores | Kind 0 files; ASCII fonts and unicode pages up to 16 KiB raw uncompressed, larger ones Brotli (quality 9) |
+| Cliloc | record store | Kind 0 file; language records uncompressed (one read at startup, no decode) |
 | Everything else | — | Kind 0 |
 
 - No install-time unpacking is required. A patcher may still rewrite any file to Kind 0, since raw is always valid.
 - Variant flags (experimental or for measurement):
   - formats: `--format rgba8|bc7`, `--anim-format page` (anims use `--format`), `--indexed-mips b16`;
   - page sizes: `--page-size n`, `--anim-page-size n`;
-  - compression: `--raw-pages`, `--compress-pages` (Kind 1), `--chunk-bytes n`, `--raw-regions`, `--raw-gumps` (gump records uncompressed, run-length layout);
+  - compression: `--raw-pages`, `--compress-pages` (Kind 1), `--chunk-bytes n`, `--raw-regions`, `--raw-gumps` (gump records uncompressed, run-length layout), `--raw-text` (font records uncompressed), `--text-small n` (font records up to n raw bytes stay uncompressed; 16384), `--cliloc-brotli` (cliloc records Brotli);
   - testing: `--gump-def <file>` (read this gump.def instead of the client's), `--gump-report` (the gump storage measurements above; writes nothing).
-- Stages: `--only art,tex,hues,tiledata,data,gumps,maps,anims` (into an existing pack), `--no-maps`, `--no-anims`, `--no-gumps`, `--verify-only`. `hues` also writes `hues_raw.bin` and `radarcol.bin`, `tiledata` writes both tiledata files, and `data` writes multis, lights, tileart and equipconv. `animdata.bin` belongs to `anims`.
+- Stages: `--only art,tex,hues,tiledata,data,gumps,fonts,cliloc,speech,maps,anims` (into an existing pack), `--no-maps`, `--no-anims`, `--no-gumps`, `--no-fonts`, `--no-cliloc`, `--no-speech`, `--verify-only`. `fonts` writes `text/fonts.bin` and `text/unifont.bin`. `hues` also writes `hues_raw.bin` and `radarcol.bin`, `tiledata` writes both tiledata files, and `data` writes multis, lights, tileart and equipconv. `animdata.bin` belongs to `anims`.
 
 **Verification.** Every conversion ends with a verify step that reads the pack back with the `Uo.Pack` readers. It compares against ClassicUO's own loaders:
 - **Sampled.** Sprites are bit-exact including gutters. Indexed8 frames are bit-exact after the palette lookup.
 - **Every record and field, exact:** tiledata (all fields and names), hues (raw entries and the LUT), radarcol, animdata, multis, lights, tileart appearances and equipconv.
 - **Every gump slot of the client's index (81,919 for 7.0.103), exact:** present or not, width and height, and the RGBA8 image with the alias hue, against the converter's copy of `GumpsLoader.GetGump`. The client test `GumpPackTests` repeats it against the client's own MUL/UOP loader.
+- **Text, exact, against the converter's copies of the client loaders:** every ASCII glyph of every font and every unicode glyph of the 20 font slots × 65,536 characters (offsets, size, rows, existence); every (language, id) cliloc string, resolved as `ClilocLoader.Load(language)` resolves it (enu under the language); every speech entry (id, text, keywords, start and end flags). The client test `TextPackTests` repeats them against the client's own MUL path, plus rendered text.
 
 ## Reference sizes (7.0.103, ship profile)
 
@@ -543,6 +546,7 @@ camelCase JSON, read case-insensitively:
 | Tile data | tiledata.bin, tiledata_ext.bin | 0.9 + 2.1 MiB |
 | Hues, radarcol | hues.bin, hues_raw.bin, radarcol.bin | 0.4 + 0.3 + 0.2 MiB |
 | Multis, lights, tileart, equipconv | | 1.8 MiB, 2.8 MiB, 692 B, 1,060 B |
+| Text | text/fonts.bin, unifont.bin, cliloc.bin, speech.bin | 23.4 MiB: 35 KiB + 7.5 MiB (763,025 glyphs in 866 page records, 2,171 pages shared) + 15.6 MiB (8 languages, 941,936 strings) + 141 KiB; 11.8 MiB with `--cliloc-brotli`; 62.5 MB of MUL files |
 | Gumps | gumps/gumps.bin | 58.2 MiB (123.5 MiB of payloads; 37.9 MiB with every record Brotli, `--gump-small 0`; 133.7 MiB with `--raw-gumps`); 4,438 gumps, 4,290 records |
 
 Decode cost on one worker (i9-12900K): an anim page ≈2.6 ms, an art page ≈23 ms (≈4 ms with 8 workers on Kind 2), a region ≈2.4 ms.
