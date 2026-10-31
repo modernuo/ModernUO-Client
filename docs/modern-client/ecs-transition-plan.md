@@ -153,6 +153,7 @@ Sizes: T0a 1–1.5, T0b 0.5, T0c 1.5–2.
 **What each operation does:**
 1. writes the ECS components (and their tags or indexes);
 2. writes the GameObject properties through internal setters (the cache);
+   `Offset` has four setters since T0c: `Offset.set` and the member-wise `OffsetX`/`OffsetY`/`OffsetZ` (they write `_offset.X/Y/Z` directly). The funnel and the `CUO_FUNNEL_CHECK` scope check must cover all four, or member-wise writes (`m.OffsetZ = 4`, `m.OffsetX += 1`) bypass it.
 3. performs the side effects that `Sync`/`AddToTile` used to trigger (`EquipmentDirty`, `QueueItemUpdate` for corpses, tile placement).
 
 **Rollout.**
