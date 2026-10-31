@@ -2496,3 +2496,9 @@ Tests: a lone mobile stepping on a landless tile (the checker flags the old beha
 Pickscan 48 same, 0 different at both spots. `-ecscheck` 0. Parity items 4.87M, 0 mismatches; mobiles 167 mismatched mobile-frames at login and scene arrival (no `CUO_ANIM_SYNC=1`, as above).
 
 **Tests:** 648 in both `CuoDevTools` variants (23 in `TileOrderTests`; `ChunkLoadingTests.Prefetched_Regions_...` failed once on the first run under load and passed in the other variant); both client flavours build. After merging poc/modern-client (gumps in the pack, E4 gate, art workers): 661 tests, 660 pass in both variants; the one failure is `ChunkLoadingTests.Prefetched_Regions_...` under the full run's load, which passes alone (the known flaky test); both flavours build.
+
+**Scan start kept at the land (commit 7d3a52afc, owner policy).** After the re-audit round, `Map.ScanStart` makes `GetMapZ` and `CalculateNearZ` start at `Tiles[x, y]` when it is the land, as legacy did, and at the head only when the anchor is not land (point 3 above, rewritten). Tests: 662 pass in both `CuoDevTools` variants; both flavours build. Runs on 7d3a52afc (JIT, kbatman3, `CUO_TILE_ORDER_CHECK=1 CUO_RECYCLE_CHECK=1`):
+- Gpu, Britain and the bank with `pickscan:8x6`: 48 same, 0 different at each; tile order all 0 over 36.5M objects; recycle all 0.
+- Legacy, Britain, the bank and the bank at zoom 2.5 (no pickscan): tile order all 0 over 31.0M objects; recycle all 0.
+- **Mistake, 17:41:** a first Legacy run had `pickscan:8x6`. Pickscan waits for the Gpu prepare's skipping, which never activates in Legacy, so it hung and DevBench kept moving the OS cursor into the window until the owner closed the client. Pickscan is Gpu-only; the coordinator's fix (skip when the Gpu world isn't active, a capped wait, no OS cursor warps) is pending on poc/modern-client. A planned Legacy `CUO_BENCH_PICK` run was cancelled before it started.
+
