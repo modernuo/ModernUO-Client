@@ -132,6 +132,19 @@ if (convert && bodyChoicesArg != null && (only == null ? anims : only.Contains("
 }
 
 bool Want(string stage) => only != null ? only.Contains(stage) : stage switch { "maps" => maps, "anims" => anims, "gumps" => gumps, "fonts" => fonts, "cliloc" => cliloc, "speech" => speech, "sounds" => sounds, "music" => music, _ => true };
+
+// The bodies record a pack keeps: a run that does not rebuild the anims carries the previous manifest's record forward
+// (--only without anims, --no-anims) and --verify-only checks the pack against it. Validate it before anything is
+// written (output, manifest or debug files); only a run that rebuilds the anims may replace an unsupported record.
+if (!gumpReport && audioReport == null && !(convert && Want("anims")) && File.Exists(Path.Combine(outDir, "manifest.json")))
+{
+    try { BodyChoices.FromRecord(ManifestFileIo.Read(Path.Combine(outDir, "manifest.json")).Bodies); }
+    catch (BodyChoicesException e)
+    {
+        Console.Error.WriteLine($"body choices: {e.Message}. Nothing was written; a run that rebuilds the anims (--only anims, with or without --body-choices) replaces the record.");
+        return 1;
+    }
+}
 if (only != null && !formatGiven && File.Exists(PackConst.PagePath(Path.Combine(outDir, "art"), 0)))
 {
     // Match the pack being extended: page format and compression come from its first art page.
@@ -303,7 +316,10 @@ if (only == null && !music) Verify.Off.Add("music");
 bool ok = Stage("verify (round-trip)", () => Verify.Run(fm, outDir, stats));
 if (only == null || only.Contains("art")) Stage("debug PNGs", () => DebugOut.Run(fm, outDir, debugDir));
 if (Directory.Exists(Path.Combine(outDir, "anim")) && (only == null || only.Contains("anims")))
-    Stage("anim debug PNGs", () => AnimDebug.Run(outDir, Path.Combine(debugDir, "anim")));
+{
+    if (Verify.AnimFailed) Console.WriteLine("  anim debug PNGs skipped: the anim checks failed");
+    else Stage("anim debug PNGs", () => AnimDebug.Run(outDir, Path.Combine(debugDir, "anim")));
+}
 
 Console.WriteLine($"[{total.Elapsed.TotalSeconds,7:F2}s] total — {(ok ? "OK" : "VERIFY FAILED")}");
 return ok ? 0 : 2;

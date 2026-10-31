@@ -94,8 +94,17 @@ namespace ClassicUO.Game
         public static bool IsMountedBy(uint mountItem, ushort mountGraphic, ushort mountAnimId) =>
             mountItem != 0 && mountGraphic != 0x3E96 && MountBody(mountGraphic, mountAnimId) != 0xFFFF;
 
-        // MobileView: the rider is drawn this many pixels lower on the mount (Mounts table, keyed by the mount item graphic)
+        // The Mounts table's per-item rider offset (keyed by the mount item graphic), set for the default (aos) art
         public static sbyte MountOffsetY(ushort itemGraphic) => Mounts.TryGet(itemGraphic, out MountInfo info) ? info.OffsetY : (sbyte)0;
+
+        /// <summary>
+        /// The rider offset both renderers use: the Mounts table's per-item offset plus the pack's shift for the mount body
+        /// (<see cref="Renderer.Animations.Animation.GetMountShift"/>), which is the drawn art's mount height minus the
+        /// default art's. Default packs: the table value exactly. A t2a pack drawing skeletal mount 793 as horse 200
+        /// moves the rider by +9 (the horse's 0 instead of 793's -9).
+        /// </summary>
+        public static sbyte MountOffsetY(ushort itemGraphic, sbyte mountShift) =>
+            (sbyte)Math.Clamp(MountOffsetY(itemGraphic) + mountShift, sbyte.MinValue, sbyte.MaxValue);
 
         /// <summary>
         /// Animations.GetAnimDirection: UO direction 0..7 to the stored direction 0..4 plus mirroring. Directions 3 and 7

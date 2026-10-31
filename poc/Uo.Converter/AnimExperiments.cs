@@ -226,7 +226,7 @@ public static class AnimExperiments
         {
             if (b >= bodies.Length) return "absent";
             var e = bodies[b];
-            var sb = new System.Text.StringBuilder($"{e.Type} {e.Flags:X} {e.Source} {e.SourceBody} {e.MountHeight} {e.AliasBody}/{e.AliasHue} {e.CorpseBody}/{e.CorpseHue} {e.ActionCount};");
+            var sb = new System.Text.StringBuilder($"{e.Type} {e.Flags:X} {e.Source} {e.SourceBody} {e.MountHeight} {e.MountShift} {e.AliasBody}/{e.AliasHue} {e.CorpseBody}/{e.CorpseHue} {e.ActionCount};");
             for (int i = 0; i < e.ActionCount * AnimConst.Directions; i++)
             {
                 var d = dirs[e.FirstDir + i];
@@ -257,8 +257,8 @@ public static class AnimExperiments
         foreach (var b in changed)
         {
             string Desc(AnimBodyEntry[] t, int id) => id >= t.Length ? "absent" : t[id].HasFrames
-                ? $"{((t[id].Source & AnimSource.Uop) != 0 ? "uop" : "anim" + ((t[id].Source & 0x7F) == 0 ? "" : ((t[id].Source & 0x7F) + 1).ToString()))}:{t[id].SourceBody} x{t[id].ActionCount} mh{t[id].MountHeight}"
-                : t[id].AliasBody != AnimConst.NoBody ? $"alias {t[id].AliasBody} hue {t[id].AliasHue}" : "nothing";
+                ? $"{((t[id].Source & AnimSource.Uop) != 0 ? "uop" : "anim" + ((t[id].Source & 0x7F) == 0 ? "" : ((t[id].Source & 0x7F) + 1).ToString()))}:{t[id].SourceBody} x{t[id].ActionCount} mh{t[id].MountHeight}{(t[id].MountShift != 0 ? $" shift{t[id].MountShift}" : "")}"
+                : t[id].AliasBody != AnimConst.NoBody ? $"alias {t[id].AliasBody} hue {t[id].AliasHue}, corpse {(t[id].CorpseBody == AnimConst.NoBody ? "none" : t[id].CorpseBody.ToString())}{(t[id].MountShift != 0 ? $" shift{t[id].MountShift}" : "")}" : "nothing";
             Console.WriteLine($"  {b}: {Desc(ba, b)}  ->  {Desc(bb, b)}");
         }
         Console.WriteLine($"draw changed art through an alias: {viaAlias.Count}: {string.Join(", ", viaAlias)}");

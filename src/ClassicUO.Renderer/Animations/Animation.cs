@@ -38,6 +38,15 @@ namespace ClassicUO.Renderer.Animations
         public AnimationFlags GetAnimFlags(ushort graphic) =>
             graphic < _animationLoader.BodyCount ? (AnimationFlags)_animationLoader.GetBody(graphic).Flags : 0;
 
+        /// <summary>
+        /// The pack's rider shift for <paramref name="graphic"/> as a mount (AnimBodyEntry.MountShift): the mount height of
+        /// the art the pack draws for it minus that of the default art the Mounts table offsets were set for. 0 on
+        /// default packs and packs from before the field.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public sbyte GetMountShift(ushort graphic) =>
+            graphic < _animationLoader.BodyCount ? _animationLoader.GetBody(graphic).MountShift : (sbyte)0;
+
         public bool PixelCheck(
             ushort animID,
             byte group,

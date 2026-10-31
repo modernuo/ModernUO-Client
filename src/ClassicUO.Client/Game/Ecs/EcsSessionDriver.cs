@@ -198,7 +198,17 @@ namespace ClassicUO.Game
                         if (Math.Abs(mm.X - player.X) <= 8 && Math.Abs(mm.Y - player.Y) <= 8 &&
                             world.Ecs.Mirror.TryGetEntity(mm.Serial, out Friflo.Engine.ECS.Entity me) && me.HasComponent<ClassicUO.Ecs.EquipmentSlots>())
                         {
-                            Log.Info($"[ECS] mount 0x{mm.Serial:X8} body 0x{mm.Graphic:X4}: mobile {mm.IsMounted}, ecs {me.GetComponent<ClassicUO.Ecs.EquipmentSlots>().Mounted} (rebuilt lazily), war {mm.InWarMode}, noto {mm.NotorietyFlag}, flags {mm.Flags}");
+                            // rider offset: what MobileView computes (Mounts table + pack MountShift) and the ECS AnimationState
+                            Item mi = mm.FindItemByLayer(Layer.Mount);
+                            string rider = "";
+                            if (mi != null)
+                            {
+                                ushort mb = mi.GetGraphicForAnimation();
+                                sbyte shift = Client.Game.UO.Animations.GetMountShift(mb);
+                                string ecsOff = me.HasComponent<ClassicUO.Ecs.AnimationState>() ? me.GetComponent<ClassicUO.Ecs.AnimationState>().MountOffsetY.ToString() : "-";
+                                rider = $", mount item 0x{mi.Graphic:X4} body {mb} table {AnimationRules.MountOffsetY(mi.Graphic)} shift {shift} rider offset {AnimationRules.MountOffsetY(mi.Graphic, shift)} (ecs {ecsOff})";
+                            }
+                            Log.Info($"[ECS] mount 0x{mm.Serial:X8} body 0x{mm.Graphic:X4}: mobile {mm.IsMounted}, ecs {me.GetComponent<ClassicUO.Ecs.EquipmentSlots>().Mounted} (rebuilt lazily), war {mm.InWarMode}, noto {mm.NotorietyFlag}, flags {mm.Flags}{rider}");
                         }
                     }
 

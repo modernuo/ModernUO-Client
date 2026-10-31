@@ -187,6 +187,46 @@ public sealed class BodyChoicesParseTests
         rec.Policy = BodyChoices.CurrentPolicy + 1;
         FluentActions.Invoking(() => BodyChoices.FromRecord(rec)).Should().Throw<BodyChoicesException>().WithMessage("*knows up to*");
     }
+
+    // ---- round 2 ----
+
+    [Fact]
+    public void Mount_Shift_Is_The_Drawn_Height_Minus_The_Default_Art_Height()
+    {
+        // Finding 1. 200 (addition, col1 height -9) has Body.def stand-in 210; 100 (remodel) converts with height -9;
+        // 300 is UOP. Extras carry their own height.
+        var d = Data();
+        d.Columns[200] = [C(1, 11, -9)];
+        d.Columns[100] = [C(1, 7, -9)];
+        bool Uop(int id) => id == 300;
+        ushort? BodyDef(ushort id) => id == 200 ? (ushort)210 : null;
+        sbyte Shift(BodyPlan p, int b) => p.MountShift(b, p.MountBaseline(), Uop, BodyDef);
+
+        var aos = BodyPlan.Resolve(d, BodyChoices.Parse("{}"));
+        foreach (var b in new[] { 100, 101, 200, 201, 210, 300, 999 }) Shift(aos, b).Should().Be(0, $"the default pack draws the art the Mounts table was set for (body {b})");
+
+        var t2a = BodyPlan.Resolve(d, BodyChoices.Parse("{\"preset\":\"t2a\",\"extras\":[{\"id\":1500,\"from\":\"anim2.mul:7\",\"mountHeight\":5}]}"));
+        Shift(t2a, 200).Should().Be(9, "200 draws its stand-in 210 (height 0) instead of the col1 art (-9)");
+        Shift(t2a, 100).Should().Be(9, "old remodel: own anim.mul art, height 0");
+        Shift(t2a, 201).Should().Be(0);
+        Shift(t2a, 1500).Should().Be(5, "an extra has no default art: its own height");
+
+        var legacy = BodyPlan.Resolve(d, BodyChoices.Legacy);
+        Shift(legacy, 200).Should().Be(0, "legacy packs store no shift");
+    }
+
+    [Fact]
+    public void Probe_Requires_Visible_Pixels()
+    {
+        // Finding 3: a positive-size frame holding only the RLE terminator decodes fully transparent.
+        BodyPlan.Visible(null).Should().BeFalse();
+        BodyPlan.Visible([]).Should().BeFalse();
+        BodyPlan.Visible([new AnimConvert.RawFrame(0, 0, 10, 10, new uint[100])]).Should().BeFalse("dimensions alone are not art");
+        var px = new uint[100];
+        px[57] = 0xFF00_7C00;
+        BodyPlan.Visible([new AnimConvert.RawFrame(0, 0, 10, 10, new uint[100]), new AnimConvert.RawFrame(0, 0, 10, 10, px)]).Should().BeTrue();
+        BodyPlan.Classification[95].Remodel.Should().BeFalse("95 is classified as not a remodel (owner, 2026-10-31)");
+    }
 }
 
 /// <summary>The listed bodies on the real 7.0.103 install (read only), under each preset.</summary>
@@ -204,7 +244,8 @@ public sealed class BodyChoicesInstallTests
     private static (int File, int Graphic, int Mh)? T(BodyPlan p, int body) => p.Conv.TryGetValue(body, out var c) ? (c.FileIndex, c.Graphic, c.MountHeight) : null;
 
     // The bodies with own walk/stand art in their own anim.mul layout and a conversion (finding 1 of the Codex audit).
-    private static readonly int[] Remodels = [9, 10, 26, 28, 76, 95];
+    // 95 is not one: its slot's usable art is an unrelated grey creature (BodyPlan.Classification, round-2 finding 3).
+    private static readonly int[] Remodels = [9, 10, 26, 28, 76];
     // Bodies the mobtypes.txt layout found index entries for, in other bodies' slots: not remodels.
     private static readonly int[] Misread = [253, 318, 319, 689, 704, 791, 793, 794, 796, 797, 798, 799];
 
@@ -214,8 +255,9 @@ public sealed class BodyChoicesInstallTests
         var p = Plan("{}");
         p.RemodelIds.Should().Equal(Remodels);
         p.Source.MisreadSlots.Should().Contain(Misread);
-        p.Source.OwnLayout.Keys.Should().Equal([95], "95's mobtypes layout (animal) differs from its anim.mul layout (monster)");
-        p.Source.OwnLayout[95].Type.Should().Be(AnimationGroupsType.Monster);
+        p.Source.OwnLayout.Should().BeEmpty("95, the only remodel candidate read in another layout, is classified as an addition");
+        p.Source.NotRemodels.Keys.Should().Equal([95]);
+        p.Source.MisreadSlots.Should().NotContain(95);
         p.Source.StandIn[318].Should().Be((9, 0), "318's older look is the Body.def stand-in 9, not own art");
         p.Source.StandIn[791].Should().Be((220, 11));
     }
@@ -260,7 +302,7 @@ public sealed class BodyChoicesInstallTests
             var p = Plan($"{{\"preset\":\"{preset}\"}}");
             foreach (var b in Remodels) T(p, b).Should().BeNull($"{preset}: remodel {b} draws its anim.mul art");
             p.OldRemodelIds.Should().Equal(Remodels);
-            p.MobTypes.Should().ContainKey(95, $"{preset}: old 95 is read in its own (monster) layout");
+            p.MobTypes.Should().NotContainKey(95, $"{preset}: 95 is an addition, never read in its slot's monster layout");
             T(p, 318).Should().BeNull($"{preset}: 318 (column 2, AOS) draws its Body.def stand-in 9");
             T(p, 319).Should().BeNull($"{preset}: 319 draws its stand-in 51");
             T(p, 253).Should().Be((3, 11, 0), $"{preset}: 253 has no stand-in, so it keeps its art");
@@ -293,14 +335,19 @@ public sealed class BodyChoicesInstallTests
     }
 
     [ClassicUoFact]
-    public void Old_95_Draws_Its_Own_Monster_Layout_Art()
+    public void Turkey_95_Is_Classified_As_An_Addition()
     {
+        // Round-2 finding 3: its own anim.mul slot passes the probe (usable monster-layout art), but the art is an
+        // unrelated grey creature, not an older turkey. The classification table makes it an addition.
         var fm = Fm();
-        var p = BodyPlan.Build(fm, BodyChoices.Parse("{\"remodels\":{\"95\":\"old\"}}"));
-        using var w = new AnimWorker(fm, p);
-        var m = AnimConvert.Meta(w.Loader, fm.Version, 95, p);
-        (m.FileIndex, m.SourceBody, m.Type, m.Idx.Length).Should().Be((0, (ushort)95, AnimType.Monster, 22 * 5));
-        BodyPlan.Usable(fm, w.Loader, m).Should().BeTrue();
+        var p = BodyPlan.Build(fm, BodyChoices.Default);
+        p.RemodelIds.Should().NotContain(95);
+        T(p, 95).Should().Be((2, 95, 0));
+        var t2a = BodyPlan.Build(fm, BodyChoices.Parse("{\"preset\":\"t2a\"}"));
+        t2a.OldRemodelIds.Should().NotContain(95, "t2a never draws the grey shape for 95");
+        t2a.MobTypes.Should().NotContainKey(95);
+        var a = () => BodyPlan.Build(fm, BodyChoices.Parse("{\"remodels\":{\"95\":\"old\"}}"));
+        a.Should().Throw<BodyChoicesException>().Which.Message.Should().Contain("classified as an addition");
     }
 
     [ClassicUoFact]
@@ -379,7 +426,7 @@ public sealed class BodyChoicesInstallTests
         {
             var m0 = AnimConvert.Meta(w0.Loader, fm.Version, 9, plan);
             (m0.FileIndex, m0.SourceBody, m0.SeqBody).Should().Be((1, (ushort)7, -1), "default: no AnimationSequence for MUL bodies");
-            AnimConvert.SequenceGroup(w0.Loader, m0, 13).Should().Be(13);
+            AnimConvert.SequenceGroup(w0.Loader, m0, 13, 2).Should().Be(13);
         }
 
         // "sequences": "target". AnimationSequence.uop: 9 replaces 13->12 and 20->19; anim2 body 7 replaces 12->4, 13->4 and 20->1.
@@ -387,10 +434,10 @@ public sealed class BodyChoicesInstallTests
         using var w = new AnimWorker(fm, plan);
         var m = AnimConvert.Meta(w.Loader, fm.Version, 9, plan);
         (m.FileIndex, m.SourceBody, m.SeqBody).Should().Be((1, (ushort)7, 7));
-        AnimConvert.SequenceGroup(w.Loader, m, 12).Should().Be(4);
-        AnimConvert.SequenceGroup(w.Loader, m, 13).Should().Be(4);
-        AnimConvert.SequenceGroup(w.Loader, m, 20).Should().Be(1);
-        AnimConvert.SequenceGroup(w.Loader, m, 0).Should().Be(0);
+        AnimConvert.SequenceGroup(w.Loader, m, 12, 2).Should().Be(4);
+        AnimConvert.SequenceGroup(w.Loader, m, 13, 2).Should().Be(4);
+        AnimConvert.SequenceGroup(w.Loader, m, 20, 2).Should().Be(1);
+        AnimConvert.SequenceGroup(w.Loader, m, 0, 2).Should().Be(0);
         AnimConvert.Job(w.Loader, m, 13, 2)!.Key.Should().Be(AnimConvert.Job(w.Loader, m, 4, 2)!.Key, "action 13 draws stored group 4 of anim2 body 7");
         AnimConvert.Job(w.Loader, m, 13, 2)!.Action.Should().Be(4);
 
@@ -398,9 +445,9 @@ public sealed class BodyChoicesInstallTests
         // past anim2 body 5's 22 monster groups, which would leave giant spider 28 invisible while walking.
         var spider = AnimConvert.Meta(w.Loader, fm.Version, 28, plan);
         (spider.FileIndex, spider.SourceBody, spider.SeqBody).Should().Be((1, (ushort)5, 5));
-        AnimConvert.SequenceGroup(w.Loader, spider, 0).Should().Be(0);
+        AnimConvert.SequenceGroup(w.Loader, spider, 0, 0).Should().Be(0);
         AnimConvert.Job(w.Loader, spider, 0, 0).Should().NotBeNull();
-        AnimConvert.SequenceGroup(w.Loader, spider, 12).Should().Be(4);
+        AnimConvert.SequenceGroup(w.Loader, spider, 12, 0).Should().Be(4);
 
         // Old (own anim.mul art): no conversion, so no sequence.
         var old = BodyPlan.Build(fm, BodyChoices.Parse("{\"sequences\":\"target\",\"remodels\":{\"9\":\"old\"}}"));
@@ -464,12 +511,134 @@ public sealed class BodyChoicesInstallTests
             t2a[11].HasFrames.Should().BeFalse("a body drawn as its stand-in stores no frames of its own");
             t2a[43].HasFrames.Should().BeFalse();
             (t2a[28].Source, t2a[28].SourceBody).Should().Be(((byte)0, (ushort)28));
-            (t2a[95].Source, t2a[95].Type, t2a[95].HasFrames).Should().Be(((byte)0, AnimType.Monster, true), "old 95 in its monster layout");
+            (t2a[95].Source == 0 && t2a[95].HasFrames).Should().BeFalse("95 is an addition: never its slot's grey creature");
         }
         finally
         {
             AnimConvert.Bodies = null;
             try { Directory.Delete(dir, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    // ---- round 2 ----
+
+    [ClassicUoFact]
+    public void Mount_Shifts_On_Real_Data()
+    {
+        // Finding 1: aos stores no shift anywhere; t2a moves the rider of every mount drawn with other art.
+        var fm = Fm();
+        var aos = BodyPlan.Build(fm, BodyChoices.Default);
+        var t2a = BodyPlan.Build(fm, BodyChoices.Parse("{\"preset\":\"t2a\"}"));
+        using var w = new AnimWorker(fm, aos);
+        var uop = new Dictionary<int, bool>();
+        bool Uop(int id) => uop.TryGetValue(id, out var u) ? u : uop[id] = AnimConvert.Meta(w.Loader, fm.Version, id, aos).Uop;
+        ushort? Def(ushort id) => AnimConvert.BodyDefNext(w.Loader, id);
+        var aosBase = aos.MountBaseline();
+        for (int b = 0; b < aos.BodyCount; b++) aos.MountShift(b, aosBase, Uop, Def).Should().Be(0);
+        var tb = t2a.MountBaseline();
+        t2a.MountShift(793, tb, Uop, Def).Should().Be(9, "skeletal mount 793 draws horse 200 (0) instead of its anim2 art (-9)");
+        t2a.MountShift(192, tb, Uop, Def).Should().Be(9, "ethereal unicorn 192 draws its stand-in 228");
+        t2a.MountShift(200, tb, Uop, Def).Should().Be(0);
+        var legacy = BodyPlan.Build(fm, BodyChoices.Legacy);
+        legacy.MountShift(793, legacy.MountBaseline(), Uop, Def).Should().Be(0);
+    }
+
+    [ClassicUoFact]
+    public void Frame_Less_Stand_Ins_Keep_A_Corpse()
+    {
+        // Finding 2: t2a 191-195 draw Body.def stand-ins and have no Corpse.def line. Their corpses fall back to the live
+        // stand-in; 192's corpse draws 228's death frames (aos: 192's own six).
+        var dir = Path.Combine(Path.GetTempPath(), $"uo_body_corpse_{Guid.NewGuid():N}");
+        try
+        {
+            var fm = Fm();
+            AnimConvert.Bodies = [191, 192, 193, 194, 195, 228, 210, 219, 220];
+            var plan = BodyPlan.Build(fm, BodyChoices.Parse("{\"preset\":\"t2a\"}"));
+            AnimConvert.Run(fm, dir, plan);
+            var (bodies, dirs, _) = AnimTableFile.Read(Path.Combine(dir, "anim", AnimTableFile.FileName));
+            foreach (var b in new[] { 191, 192, 193, 194, 195 })
+            {
+                bodies[b].HasFrames.Should().BeFalse($"{b} draws its stand-in");
+                bodies[b].AliasBody.Should().NotBe(AnimConst.NoBody);
+                (bodies[b].CorpseBody, bodies[b].CorpseHue).Should().Be((bodies[b].AliasBody, bodies[b].AliasHue), $"{b} has no Corpse.def line: its corpse is its stand-in");
+            }
+            foreach (var b in plan.StandInIds) bodies[b].CorpseBody.Should().NotBe(AnimConst.NoBody, $"stand-in {b} needs a corpse target");
+            var c = bodies[bodies[192].CorpseBody];
+            c.HasFrames.Should().BeTrue();
+            int deathFrames = 0;
+            foreach (var a in new[] { 8, 12 })
+                if (a < c.ActionCount) deathFrames += dirs[c.FirstDir + a * AnimConst.Directions].FrameCount;
+            deathFrames.Should().BeGreaterThan(0, "the corpse target has death frames");
+
+            // Corpse.def is honoured: a stand-in with a Corpse.def line keeps a target on its Corpse.def chain.
+            using var w = new AnimWorker(fm, plan);
+            int withLine = 0;
+            foreach (var b in plan.StandInIds)
+            {
+                ushort id = (ushort)b, hue = 0;
+                var chain = new List<ushort>();
+                for (int guard = 0; guard < 16 && w.Loader.ReplaceCorpse(ref id, ref hue); guard++) chain.Add(id);
+                if (chain.Count == 0) continue;
+                withLine++;
+                chain.Should().Contain(bodies[b].CorpseBody, $"stand-in {b}'s corpse follows Corpse.def");
+            }
+            withLine.Should().BeGreaterThan(0);
+        }
+        finally
+        {
+            AnimConvert.Bodies = null;
+            try { Directory.Delete(dir, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    [ClassicUoFact]
+    public void Target_Sequences_Fall_Back_Per_Direction()
+    {
+        // Finding 5: a replacement populated in only some directions is applied there only; the other directions keep
+        // the action's own group. Simulated by emptying directions 1-4 of group 4 (7's replacement for 12) in 9's index.
+        var fm = Fm();
+        var plan = BodyPlan.Build(fm, BodyChoices.Parse("{\"sequences\":\"target\"}"));
+        using var w = new AnimWorker(fm, plan);
+        var m = AnimConvert.Meta(w.Loader, fm.Version, 9, plan);
+        m.SeqBody.Should().Be(7);
+        for (int d = 1; d < 5; d++) m.Idx[4 * 5 + d] = default;
+        AnimConvert.SequenceGroup(w.Loader, m, 12, 0).Should().Be(4);
+        for (int d = 1; d < 5; d++)
+        {
+            AnimConvert.SequenceGroup(w.Loader, m, 12, d).Should().Be(12, $"direction {d} of group 4 is empty");
+            AnimConvert.Job(w.Loader, m, 12, d).Should().NotBeNull($"direction {d} keeps group 12's own frames");
+        }
+    }
+
+    [ClassicUoFact]
+    public void Unsupported_Manifest_Policy_Stops_Every_Path_Before_Writing()
+    {
+        // Finding 4: a retained bodies record is validated before any output, manifest or debug write.
+        var root = Path.Combine(Path.GetTempPath(), $"uo_body_policy_{Guid.NewGuid():N}");
+        var dir = Path.Combine(root, "pack");
+        var debug = Path.Combine(root, "debug");
+        try
+        {
+            Directory.CreateDirectory(dir);
+            var manifest = new Manifest { Bodies = new BodyChoicesRecord { Policy = BodyChoices.CurrentPolicy + 1 } };
+            ManifestFileIo.Write(Path.Combine(dir, "manifest.json"), manifest);
+            var before = File.ReadAllText(Path.Combine(dir, "manifest.json"));
+            var entry = typeof(BodyPlan).Assembly.EntryPoint!;
+            foreach (var args in new[]
+            {
+                new[] { "--only", "hues" }, new[] { "--only", "tiledata,hues" }, new[] { "--verify-only" }, new[] { "--no-anims", "--no-maps" },
+            })
+            {
+                var rc = entry.Invoke(null, [new[] { "--uo", ClassicUoFactAttribute.Dir, "--out", dir, "--debug", debug }.Concat(args).ToArray()]);
+                rc.Should().Be(1, string.Join(" ", args));
+                Directory.GetFiles(dir, "*", SearchOption.AllDirectories).Should().Equal([Path.Combine(dir, "manifest.json")], $"{string.Join(" ", args)} writes nothing");
+                File.ReadAllText(Path.Combine(dir, "manifest.json")).Should().Be(before);
+                Directory.Exists(debug).Should().BeFalse($"{string.Join(" ", args)} writes no debug output");
+            }
+        }
+        finally
+        {
+            try { Directory.Delete(root, recursive: true); } catch (IOException) { }
         }
     }
 }
