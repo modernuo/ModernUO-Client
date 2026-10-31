@@ -2756,3 +2756,14 @@ All four findings re-verified against the code; none changed the one-World relog
 - **#4 warm-up test with `CUO_WARMUP_CHUNKS=0`: fixed.** The test returns early when `MapWarmup.Chunks <= 0`. The WorldPoolOwnership tests pass with `CUO_WARMUP_CHUNKS=0`.
 
 Verification after the round: both builds 0 errors; `dotnet test -c Release` 732 pass.
+
+### Codex audit round 2 (chunk pool per World, 2026-10-30)
+
+Both findings re-verified against the code (no gump-created chunk leak or height-lookup change was found).
+- **P2, a ~3.5 MiB LOH slot array per `new Map`: fixed.** Round 1's per-instance array made every login, facet change and `WorldMapGump.ChangeMap` allocate `BlocksCount` references (the old static array was reused).
+  - The gump no longer builds a `Map`: it holds a `FacetView` (facet index + `GetTileZ` forwarding to `MapLoader.GetLandZ`, exactly what `Map.GetTileZ` did) and `Sextant.Format/FormatString` gained facet-index overloads (they only read `Index`).
+  - Live maps reuse storage owned by the World: `World.RentChunkSlots` hands out the spare array if it is large enough (taking it out of the World, so ownership is exclusive while a Map is active), else allocates; `Map.Destroy` clears the array and returns it via `ReturnChunkSlots` (once per Map, so a stale second `Destroy` cannot clear a reused array). `ReleasePools` drops the spare. Two simultaneous Maps never share an array.
+  - Tests: successive maps on one World get the same reference (and cleared slots); a still-active map's array is never handed out; a too-small spare is not reused; `WorldMapGump` has no `Map` field; `Two_Maps_Keep_Their_Own_Chunks` still passes.
+- **P3, `InPool` set before `Enqueue` succeeds: fixed.** `ChunkPool.Add` now enqueues first and sets `InPool` after.
+
+Verification: both builds 0 errors; `dotnet test -c Release` 736 pass (732 + 4 new).
