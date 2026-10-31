@@ -1,4 +1,4 @@
-﻿// SPDX-License-Identifier: BSD-2-Clause
+// SPDX-License-Identifier: BSD-2-Clause
 
 using ClassicUO.Utility.Logging;
 using Microsoft.Xna.Framework.Audio;
@@ -23,14 +23,19 @@ namespace ClassicUO.IO.Audio
         private uint m_PlayTicks;
         private int m_LoopsLogged;
 
-        public UOMusic(int index, string name, bool loop, string fileName) : base(name, index)
+        /// <param name="open">Opens the MP3 bytes (a pack record stream); called on the music worker for each play.</param>
+        /// <param name="source">Where the bytes come from, for the log.</param>
+        public UOMusic(int index, string name, bool loop, Func<System.IO.Stream> open, string source) : base(name, index)
         {
             m_Repeat = loop;
             Channels = AudioChannels.Stereo;
             Delay = 0;
 
-            Path = fileName;
+            m_Open = open;
+            Path = source;
         }
+
+        private readonly Func<System.IO.Stream> m_Open;
 
         private string Path { get; }
 
@@ -39,6 +44,14 @@ namespace ClassicUO.IO.Audio
 
         public override bool Play(uint curTime, float volume = 1.0f, float volumeFactor = 0.0f, bool spamCheck = false)
         {
+            // as Sound.Play: a NaN volume would reach FNA's volume setter, which throws (Codex round 3, P3)
+            if (!float.IsFinite(volume) || !float.IsFinite(volumeFactor))
+            {
+                Log.Warn($"music {Name}: volume {volume} or factor {volumeFactor} is not a number; not played");
+
+                return false;
+            }
+
             Stop();
 
             if (!Mp3Decoder.IsAvailable)
@@ -46,7 +59,7 @@ namespace ClassicUO.IO.Audio
                 return false; // logged once by Mp3Decoder.IsAvailable; music stays off
             }
 
-            m_Stream = new MusicStream(Path, Name, m_Repeat);
+            m_Stream = new MusicStream(m_Open, Path, Name, m_Repeat);
             m_Started = false;
             m_LoopsLogged = 0;
             m_PlayTicks = curTime;
