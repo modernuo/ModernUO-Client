@@ -256,9 +256,10 @@ public static class AnimExperiments
         Console.WriteLine($"bodies {ba.Length} vs {bb.Length}; entries that differ: {changed.Count}");
         foreach (var b in changed)
         {
+            static string Seat(in AnimBodyEntry e) => e.MountSeat.Absolute ? $" seat{e.MountShift}" : e.MountShift != 0 ? $" shift{e.MountShift}" : "";
             string Desc(AnimBodyEntry[] t, int id) => id >= t.Length ? "absent" : t[id].HasFrames
-                ? $"{((t[id].Source & AnimSource.Uop) != 0 ? "uop" : "anim" + ((t[id].Source & 0x7F) == 0 ? "" : ((t[id].Source & 0x7F) + 1).ToString()))}:{t[id].SourceBody} x{t[id].ActionCount} mh{t[id].MountHeight}{(t[id].MountShift != 0 ? $" shift{t[id].MountShift}" : "")}"
-                : t[id].AliasBody != AnimConst.NoBody ? $"alias {t[id].AliasBody} hue {t[id].AliasHue}, corpse {(t[id].CorpseBody == AnimConst.NoBody ? "none" : t[id].CorpseBody.ToString())}{(t[id].MountShift != 0 ? $" shift{t[id].MountShift}" : "")}" : "nothing";
+                ? $"{((t[id].Source & AnimSource.Uop) != 0 ? "uop" : "anim" + ((t[id].Source & 0x7F) == 0 ? "" : ((t[id].Source & 0x7F) + 1).ToString()))}:{t[id].SourceBody} x{t[id].ActionCount} mh{t[id].MountHeight}{Seat(t[id])}"
+                : t[id].AliasBody != AnimConst.NoBody ? $"alias {t[id].AliasBody} hue {t[id].AliasHue}, corpse {(t[id].CorpseBody == AnimConst.NoBody ? "none" : t[id].CorpseBody.ToString())}{Seat(t[id])}" : "nothing";
             Console.WriteLine($"  {b}: {Desc(ba, b)}  ->  {Desc(bb, b)}");
         }
         Console.WriteLine($"draw changed art through an alias: {viaAlias.Count}: {string.Join(", ", viaAlias)}");

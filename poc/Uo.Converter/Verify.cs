@@ -738,40 +738,7 @@ public static class Verify
         }
         Console.WriteLine($"  anim: body choices {plan.Choices}");
         if (plan.BodyCount != bodies.Length) Fail($"anim body table has {bodies.Length} bodies, the body choices give {plan.BodyCount}");
-        foreach (var b in plan.StandInIds)
-            if (b < bodies.Length && (bodies[b].HasFrames || bodies[b].AliasBody == AnimConst.NoBody || bodies[b].CorpseBody == AnimConst.NoBody))
-                Fail($"anim body {b}: the choices draw its Body.def stand-in, the pack has {(bodies[b].HasFrames ? "frames" : bodies[b].AliasBody == AnimConst.NoBody ? "no alias" : "no corpse target")}");
-        {
-            // rider shifts: recomputed from the plan and the default plan (0 for legacy packs)
-            using var sw = new AnimWorker(fm, plan);
-            var baseline = plan.MountBaseline();
-            var metaCache = new Dictionary<int, AnimConvert.BodyMeta>();
-            bool Uop(int id) => (metaCache.TryGetValue(id, out var mm) ? mm : metaCache[id] = AnimConvert.Meta(sw.Loader, fm.Version, id, plan)).Uop;
-            var mountOffsets = BodyPlan.MountOffsets.FromTileData(fm);
-            int shifted = 0, badShift = 0;
-            for (int b = 0; b < bodies.Length; b++)
-            {
-                var want = plan.MountShift(b, baseline, Uop, id => AnimConvert.BodyDefNext(sw.Loader, id), mountOffsets);
-                if (want != 0) shifted++;
-                if (bodies[b].MountShift != want && badShift++ < 5) Fail($"anim body {b}: mount shift {bodies[b].MountShift}, the choices give {want}");
-            }
-            Console.WriteLine($"  anim: mount shifts {(badShift == 0 ? "match" : "MISMATCH")} ({shifted} bodies shifted against the default art)");
-
-            // aliases and effective corpse targets, recomputed; a corpse target must store frames (the client looks it up
-            // once and draws its death action)
-            var standIns = plan.StandInIds.ToHashSet();
-            AnimConvert.BodyMeta MetaOf(int id) => metaCache.TryGetValue(id, out var mm) ? mm : metaCache[id] = AnimConvert.Meta(sw.Loader, fm.Version, id, plan);
-            int badTarget = 0, corpseNoFrames = 0;
-            var noFrames = new List<int>();
-            for (int b = 0; b < bodies.Length; b++)
-            {
-                var (ab, ah, cb, ch, _) = AnimConvert.Targets(sw.Loader, b, standIns.Contains, MetaOf);
-                if ((bodies[b].AliasBody, bodies[b].AliasHue, bodies[b].CorpseBody, bodies[b].CorpseHue) != (ab, ah, cb, ch) && badTarget++ < 5)
-                    Fail($"anim body {b}: alias/corpse {bodies[b].AliasBody}/{bodies[b].AliasHue} {bodies[b].CorpseBody}/{bodies[b].CorpseHue}, the choices give {ab}/{ah} {cb}/{ch}");
-                if (cb != AnimConst.NoBody && cb < bodies.Length && !bodies[cb].HasFrames) { corpseNoFrames++; if (noFrames.Count < 10) noFrames.Add(b); }
-            }
-            Console.WriteLine($"  anim: aliases and corpse targets {(badTarget == 0 ? "match" : "MISMATCH")}; corpse targets without frames: {corpseNoFrames}{(noFrames.Count > 0 ? " (" + string.Join(" ", noFrames) + ")" : "")}");
-        }
+        CheckBodyEntries(fm, plan, bodies);
         var conv = plan.Conv;
         long checkedFrames = 0, exact = 0, crossPage = 0, absent = 0;
         double se = 0; long nRgb = 0, flips = 0, nPx = 0;
@@ -840,6 +807,57 @@ public static class Verify
     }
 
     /// <summary>Side of the pack's pages in <paramref name="dir"/> (from page 0's header), else the default.</summary>
+    /// <summary>
+    /// The body table against the choices it was built with: every rider seat, alias and effective corpse target is
+    /// recomputed, and each Body.def stand-in follows the frame rule <see cref="AnimConvert.Targets"/> gives it: a stand-in
+    /// that drops its frames stores none and has an alias and a corpse target; one that keeps them (an explicit Corpse.def
+    /// self-target, round-4 finding 2) may store frames, and with a zero hue its corpse target is legitimately none (its
+    /// own frames). Failures go to <see cref="Fail"/>.
+    /// </summary>
+    public static void CheckBodyEntries(UOFileManager fm, BodyPlan plan, AnimBodyEntry[] bodies)
+    {
+        // rider seats: recomputed from the plan and the default plan (relative 0 for legacy packs)
+        using var sw = new AnimWorker(fm, plan);
+        var baseline = plan.MountBaseline();
+        var metaCache = new Dictionary<int, AnimConvert.BodyMeta>();
+        AnimConvert.BodyMeta MetaOf(int id) => metaCache.TryGetValue(id, out var mm) ? mm : metaCache[id] = AnimConvert.Meta(sw.Loader, fm.Version, id, plan);
+        var standIns = plan.StandInIds.ToHashSet();
+        int keptFrames = 0;
+        foreach (var b in plan.StandInIds)
+        {
+            if (b >= bodies.Length) continue;
+            var t = AnimConvert.Targets(sw.Loader, b, standIns.Contains, MetaOf);
+            var e = bodies[b];
+            if (!t.DropFrames) { keptFrames++; if (e.AliasBody == AnimConst.NoBody) Fail($"anim body {b}: the choices draw its Body.def stand-in, the pack has no alias"); continue; }
+            if (e.HasFrames || e.AliasBody == AnimConst.NoBody || e.CorpseBody == AnimConst.NoBody)
+                Fail($"anim body {b}: the choices draw its Body.def stand-in and drop its frames, the pack has {(e.HasFrames ? "frames" : e.AliasBody == AnimConst.NoBody ? "no alias" : "no corpse target")}");
+        }
+        if (keptFrames > 0) Console.WriteLine($"  anim: {keptFrames} stand-ins keep their frames for a Corpse.def self-target");
+        var mountOffsets = BodyPlan.MountOffsets.FromTileData(fm);
+        int shifted = 0, absolute = 0, badShift = 0;
+        for (int b = 0; b < bodies.Length; b++)
+        {
+            var want = plan.RiderSeat(b, baseline, id => MetaOf(id).Uop, id => AnimConvert.BodyDefNext(sw.Loader, id), mountOffsets);
+            if (want.Absolute) absolute++;
+            else if (want.Value != 0) shifted++;
+            if (bodies[b].MountSeat != want && badShift++ < 5) Fail($"anim body {b}: rider seat {bodies[b].MountSeat}, the choices give {want}");
+        }
+        Console.WriteLine($"  anim: rider seats {(badShift == 0 ? "match" : "MISMATCH")} ({shifted} bodies shifted against the default art, {absolute} seated as their stand-in)");
+
+        // aliases and effective corpse targets, recomputed; a corpse target must store frames (the client looks it up
+        // once and draws its death action)
+        int badTarget = 0, corpseNoFrames = 0;
+        var noFrames = new List<int>();
+        for (int b = 0; b < bodies.Length; b++)
+        {
+            var (ab, ah, cb, ch, _) = AnimConvert.Targets(sw.Loader, b, standIns.Contains, MetaOf);
+            if ((bodies[b].AliasBody, bodies[b].AliasHue, bodies[b].CorpseBody, bodies[b].CorpseHue) != (ab, ah, cb, ch) && badTarget++ < 5)
+                Fail($"anim body {b}: alias/corpse {bodies[b].AliasBody}/{bodies[b].AliasHue} {bodies[b].CorpseBody}/{bodies[b].CorpseHue}, the choices give {ab}/{ah} {cb}/{ch}");
+            if (cb != AnimConst.NoBody && cb < bodies.Length && !bodies[cb].HasFrames) { corpseNoFrames++; if (noFrames.Count < 10) noFrames.Add(b); }
+        }
+        Console.WriteLine($"  anim: aliases and corpse targets {(badTarget == 0 ? "match" : "MISMATCH")}; corpse targets without frames: {corpseNoFrames}{(noFrames.Count > 0 ? " (" + string.Join(" ", noFrames) + ")" : "")}");
+    }
+
     public static int PageSide(string dir)
     {
         var p0 = PackConst.PagePath(dir, 0);

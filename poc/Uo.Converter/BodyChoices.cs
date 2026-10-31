@@ -442,27 +442,28 @@ public sealed class BodyPlan
     };
 
     /// <summary>
-    /// The rider shift stored in the pack (<c>AnimBodyEntry.MountShift</c>). The client draws the rider at the Mounts
-    /// table's per-item offset plus this shift of the mount body. The table was set for the default (<c>aos</c>) art and
-    /// holds item-specific values the Bodyconv heights don't have (18 for the UOP tigers, -9 for unicorn 0x3EB4), so:
+    /// The rider seat stored in the pack (<c>AnimBodyEntry.MountSeat</c>: MountShift plus the absolute bit in Flags). The
+    /// Mounts table's per-item offsets were set for the default (<c>aos</c>) art and hold item-specific values the Bodyconv
+    /// heights don't have (18 for the UOP tigers, -9 for unicorn 0x3EB4), so:
     /// <list type="bullet">
-    /// <item>a body this plan draws as a Body.def stand-in it does not draw by default takes the stand-in's own offset
-    /// (owner, 2026-10-31): the table offset of the mount items whose mount body is the stand-in (0 when none is listed)
-    /// minus the table offset of the body's own items (t2a: unicorn 122 drawn as horse 228, 0 - (-9) = +9; skeletal
-    /// mount 793 drawn as horse 200, +9). Needs <paramref name="mounts"/>; when either side's items disagree it falls
-    /// back to the next rule;</item>
-    /// <item>any other change of drawn art moves the rider by the Bodyconv mount-height difference (drawn minus default);</item>
-    /// <item>an extra: its own height. Default packs store 0 everywhere; legacy packs (policy 0) store 0.</item>
+    /// <item>a body this plan draws as a Body.def stand-in it does not draw by default sits as on the stand-in (owner,
+    /// 2026-10-31): an <b>absolute</b> seat, the table offset of the mount items whose mount body is the stand-in (0 when
+    /// none is listed), for every item, listed or not (t2a: unicorn 122 drawn as horse 228 seats 0x3EB4 and unlisted
+    /// 0x007A at 0; skeletal mount 793 drawn as horse 200, 0). Needs <paramref name="mounts"/>; when the stand-in's items
+    /// disagree it falls back to the next rule;</item>
+    /// <item>any other change of drawn art: a <b>relative</b> shift, the Bodyconv mount-height difference (drawn minus
+    /// default), added to the item's table offset;</item>
+    /// <item>an extra: its own height, relative. Default packs store relative 0 everywhere; legacy packs (policy 0) too.</item>
     /// </list>
     /// </summary>
-    public sbyte MountShift(int body, BodyPlan? baseline, Func<int, bool> uop, Func<ushort, ushort?> bodyDef, MountOffsets? mounts = null)
+    public MountSeat RiderSeat(int body, BodyPlan? baseline, Func<int, bool> uop, Func<ushort, ushort?> bodyDef, MountOffsets? mounts = null)
     {
-        if (baseline == null || Choices.Policy == BodyChoices.LegacyPolicy) return 0;
+        if (baseline == null || Choices.Policy == BodyChoices.LegacyPolicy) return default;
         int drawn = DrawnBody(body, Conv, uop, bodyDef), drawn0 = DrawnBody(body, baseline.Conv, uop, bodyDef);
-        int d = drawn != body && drawn != drawn0 && mounts != null && mounts.StandInShift(body, drawn) is { } s
-            ? s
-            : HeightOf(drawn, Conv, uop) - HeightOf(drawn0, baseline.Conv, uop);
-        return (sbyte)Math.Clamp(d, sbyte.MinValue, sbyte.MaxValue);
+        if (drawn != body && drawn != drawn0 && mounts?.Offset(drawn) is { } seat)
+            return new MountSeat(Sb(seat), true);
+        return new MountSeat(Sb(HeightOf(drawn, Conv, uop) - HeightOf(drawn0, baseline.Conv, uop)), false);
+        static sbyte Sb(int v) => (sbyte)Math.Clamp(v, sbyte.MinValue, sbyte.MaxValue);
     }
 
     /// <summary>
@@ -472,7 +473,7 @@ public sealed class BodyPlan
     public sealed class MountOffsets
     {
         private readonly Dictionary<int, SortedSet<int>> _byBody = new();
-        /// <summary>Bodies whose table items disagree on the offset (the stand-in rule is not applied to them).</summary>
+        /// <summary>Bodies whose table items disagree on the offset (no absolute seat is taken from them).</summary>
         public readonly SortedSet<int> Conflicts = new();
 
         public MountOffsets(Func<ushort, ushort> animId)
@@ -496,8 +497,6 @@ public sealed class BodyPlan
         /// <summary>The table offset of mount body <paramref name="body"/>'s items: 0 when none is listed, null when they disagree.</summary>
         public int? Offset(int body) => _byBody.TryGetValue(body, out var set) ? set.Count == 1 ? set.Min : null : 0;
 
-        /// <summary>The shift that draws <paramref name="body"/>'s riders as on <paramref name="standIn"/>'s own mounts.</summary>
-        public int? StandInShift(int body, int standIn) => Offset(standIn) is { } n && Offset(body) is { } o ? n - o : null;
     }
 
     /// <summary>The default plan the pack's Mounts-table offsets refer to (null for legacy plans).</summary>

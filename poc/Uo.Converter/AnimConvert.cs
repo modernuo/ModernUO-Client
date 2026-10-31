@@ -20,7 +20,7 @@ public sealed class AnimWorker : IDisposable
 
     public AnimWorker(UOFileManager main, BodyPlan? plan)
     {
-        Fm = new UOFileManager(main.Version, main.BasePath);
+        Fm = new UOFileManager(main.Version, main.BasePath, main.OverrideMap);
         Fm.Animations.Load();
         if (plan == null) return;
         Fm.Animations.SetBodyConv(plan.Conv);
@@ -356,15 +356,12 @@ public static class AnimConvert
 
     /// <summary>
     /// One Corpse.def hop as the loader reads it: the target and hue, (<paramref name="id"/>, hue) for an explicit
-    /// self-target (a line mapping the body to itself, usually to hue it), null when the body has no line. The loader
-    /// returns false for both of the last two; a self-target is told apart by the hue it writes.
+    /// self-target (a line mapping the body to itself, usually to hue it), null when the body has no line. Presence comes
+    /// from the loader's table (<see cref="AnimationsLoader.TryGetCorpseDef"/>), not from a hue sentinel, so a
+    /// self-target with hue 0xFFFF is still a self-target.
     /// </summary>
-    public static (ushort Body, ushort Hue)? CorpseHop(AnimationsLoader l, ushort id)
-    {
-        ushort b = id, hue = 0xFFFF;
-        if (l.ReplaceCorpse(ref b, ref hue)) return (b, hue);
-        return hue != 0xFFFF ? (id, hue) : null;
-    }
+    public static (ushort Body, ushort Hue)? CorpseHop(AnimationsLoader l, ushort id) =>
+        l.TryGetCorpseDef(id, out var b, out var hue) ? (b, hue) : null;
 
     /// <summary>
     /// Whether body <paramref name="x"/> stores no frames: an addition the plan draws as its Body.def stand-in (the
@@ -426,6 +423,16 @@ public static class AnimConvert
         return (ab, ah, cb, ch, Drop(body));
     }
 
+    /// <summary>
+    /// Stores <paramref name="seat"/> in the entry: the value in MountShift and the absolute bit in Flags, over the mobtypes
+    /// flags with that pack-only bit cleared.
+    /// </summary>
+    public static void SetMountSeat(ref AnimBodyEntry e, uint mobFlags, MountSeat seat)
+    {
+        e.Flags = (mobFlags & ~AnimBodyEntry.MountAbsoluteFlag) | (seat.Absolute ? AnimBodyEntry.MountAbsoluteFlag : 0);
+        e.MountShift = seat.Value;
+    }
+
     /// <summary>One Body.def hop (null = none), as the loader reads it.</summary>
     public static ushort? BodyDefNext(AnimationsLoader l, ushort id)
     {
@@ -466,10 +473,10 @@ public static class AnimConvert
             var (ab, ah, cb, ch, dropFrames) = Targets(l, b, standIns.Contains, MetaOf);
             bodies[b] = new AnimBodyEntry
             {
-                Type = m.Type, Source = AnimSource.None, Flags = m.Flags, SourceBody = m.SourceBody, MountHeight = m.MountHeight,
+                Type = m.Type, Source = AnimSource.None, SourceBody = m.SourceBody, MountHeight = m.MountHeight,
                 AliasBody = ab, AliasHue = ah, CorpseBody = cb, CorpseHue = ch,
-                MountShift = plan.MountShift(b, baseline, id => MetaOf(id).Uop, id => BodyDefNext(l, id), mountOffsets),
             };
+            SetMountSeat(ref bodies[b], m.Flags, plan.RiderSeat(b, baseline, id => MetaOf(id).Uop, id => BodyDefNext(l, id), mountOffsets));
             if (ab != AnimConst.NoBody) aliased++;
             if (Bodies != null && !Bodies.Contains(b)) continue;
             if (dropFrames) continue;

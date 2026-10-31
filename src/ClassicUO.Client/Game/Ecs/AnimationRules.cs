@@ -71,14 +71,15 @@ namespace ClassicUO.Game
         public static sbyte MountOffsetY(ushort itemGraphic) => Uo.Pack.MountTable.OffsetY(itemGraphic);
 
         /// <summary>
-        /// The rider offset every renderer uses (Gpu, Legacy draw and pick, Uo.Client): the Mounts table's per-item offset
-        /// plus the pack's shift for the mount body (<see cref="Renderer.Animations.Animation.GetMountShift"/>). Default
-        /// packs: the table value exactly. A mount body drawn as a Body.def stand-in gets the stand-in's own offset (t2a:
-        /// skeletal mount 793 as horse 200 and unicorn 122 as horse 228 sit at 0, not -9); other art changes move the
-        /// rider by the mount-height difference (docs/modern-client/bodies.md). The packed shift is an sbyte; the sum is
-        /// carried as an int (-256..254), never clamped.
+        /// The rider offset every renderer uses (Gpu, Legacy draw and pick, Uo.Client): the pack's seat for the mount body
+        /// (<see cref="Renderer.Animations.Animation.GetMountSeat"/>) applied to the item. Relative seats add their shift
+        /// to the Mounts table's per-item offset (default packs: the table value exactly; other art changes move the rider
+        /// by the mount-height difference). A mount body drawn as a Body.def stand-in it doesn't draw by default has an
+        /// absolute seat, the stand-in's own offset, for listed and unlisted items alike (t2a: skeletal mount 793 as horse
+        /// 200 and unicorn 122 as horse 228 sit at 0, also on unlisted item 0x007A). See docs/modern-client/bodies.md.
+        /// The result is an int (-256..254), never clamped.
         /// </summary>
-        public static int MountOffsetY(ushort itemGraphic, sbyte mountShift) => MountOffsetY(itemGraphic) + mountShift;
+        public static int MountOffsetY(ushort itemGraphic, Uo.Pack.MountSeat seat) => seat.RiderOffset(itemGraphic);
 
         /// <summary>
         /// Animations.GetAnimDirection: UO direction 0..7 to the stored direction 0..4 plus mirroring. Directions 3 and 7

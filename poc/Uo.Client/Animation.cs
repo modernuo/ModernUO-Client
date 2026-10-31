@@ -141,11 +141,11 @@ public sealed class AnimMobileSprites : IMobileSprites
 
     /// <summary>
     /// The rider's y offset on mount item <paramref name="item"/> with mount body <paramref name="mountBody"/> (before its
-    /// Body.def alias is followed): the Mounts table offset plus the pack's MountShift of that body, as the main client
-    /// (AnimationRules.MountOffsetY). An int: table + shift can leave the sbyte range.
+    /// Body.def alias is followed): the pack's seat of that body applied to the item (table offset + shift, or the
+    /// stand-in's absolute offset), as the main client (AnimationRules.MountOffsetY). An int: table + shift can leave the sbyte range.
     /// </summary>
     public static int RiderOffset(AnimBodyEntry[] bodies, ushort item, int mountBody) =>
-        MountTable.OffsetY(item) + ((uint)mountBody < (uint)bodies.Length ? bodies[mountBody].MountShift : 0);
+        ((uint)mountBody < (uint)bodies.Length ? bodies[mountBody].MountSeat : default).RiderOffset(item);
 
     public int GetFrames(in MobileAnimInput m, in Equipment eq, long now, Span<MobileFrame> outFrames)
     {

@@ -117,3 +117,15 @@ public static class MountTable
         return animId != 0 ? animId : graphic;
     }
 }
+
+/// <summary>
+/// Where a pack seats the rider on a mount body (<see cref="AnimBodyEntry.MountSeat"/>). Relative (the default): the
+/// Mounts table's offset of the mount item plus <see cref="Value"/>, the mount-height difference of the art the pack
+/// draws (0 on default packs). Absolute: <see cref="Value"/> alone, whatever the item: a body drawn as a Body.def
+/// stand-in it doesn't draw by default sits as on the stand-in, for listed and unlisted items alike (owner, 2026-10-31).
+/// </summary>
+public readonly record struct MountSeat(sbyte Value, bool Absolute)
+{
+    /// <summary>The rider's y offset on mount item <paramref name="item"/>. An int: table + value can leave the sbyte range.</summary>
+    public int RiderOffset(ushort item) => Absolute ? Value : MountTable.OffsetY(item) + Value;
+}

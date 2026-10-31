@@ -233,6 +233,27 @@ namespace ClassicUO.Assets
             return false;
         }
 
+        /// <summary>
+        /// The Corpse.def line of <paramref name="body"/>, if it has one: its target and hue, read as <see cref="ReplaceCorpse"/>
+        /// would apply them. Presence is explicit, so a self-target (<c>191 {191} 65535</c>) is not mistaken for an absent
+        /// line whatever its hue (ReplaceCorpse returns false for both).
+        /// </summary>
+        public bool TryGetCorpseDef(ushort body, out ushort target, out ushort hue)
+        {
+            if (_corpseInfos.TryGetValue(body, out var bodyInfo))
+            {
+                target = bodyInfo.Graphic;
+                hue = bodyInfo.Hue;
+
+                return true;
+            }
+
+            target = body;
+            hue = 0;
+
+            return false;
+        }
+
         public bool ReplaceCorpse(ref ushort body, ref ushort hue)
         {
             if (_corpseInfos.TryGetValue(body, out var bodyInfo))
