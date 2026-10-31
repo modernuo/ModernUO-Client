@@ -2993,8 +2993,9 @@ namespace ClassicUO.Network
                     item_hue = p.ReadUInt16BE();
                 }
 
-                // T1: the entry's values, out of its old container, onto obj at the end of its child list
-                world.Writer.WearItem(serial, itemSerial, itemGraphic, (Layer)layer, item_hue);
+                // T1: the entry's values, out of its old container, onto obj (captured once, before the list) at the end of
+                // its child list
+                world.Writer.WearItem(obj, itemSerial, itemGraphic, (Layer)layer, item_hue);
 
                 itemSerial = p.ReadUInt32BE();
             }

@@ -1729,7 +1729,7 @@ namespace ClassicUO.UnitTests.Ecs
             return item;
         }
 
-        private const uint PACK = 0x4000_7040, NEWITEM = 0x4000_7041, NOBODY = 0x0000_3FFF;
+        private const uint PACK = 0x4000_7040, NEWITEM = 0x4000_7041, NOBODY = 0x0000_3FFF, DEAD = MOB | 0x8000_0000;
 
         private static readonly EquipPacket[] EquipPackets =
         {
@@ -1910,8 +1910,10 @@ namespace ClassicUO.UnitTests.Ecs
 
         private static void NewWear(World world, uint serial, (uint Serial, ushort Graphic, Layer Layer, ushort Hue)[] entries)
         {
-            // as the handler: it returns when World.Get finds nothing
-            if (world.Get(serial) == null)
+            // as the handler: it returns when World.Get finds nothing, and passes the owner it found to every entry
+            Entity obj = world.Get(serial);
+
+            if (obj == null)
             {
                 return;
             }
@@ -1920,7 +1922,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             foreach (var e in entries)
             {
-                world.Writer.WearItem(serial, e.Serial, e.Graphic, e.Layer, e.Hue).Should().BeSameAs(world.Items.Get(e.Serial));
+                world.Writer.WearItem(obj, e.Serial, e.Graphic, e.Layer, e.Hue).Should().BeSameAs(world.Items.Get(e.Serial));
             }
         }
 
@@ -1944,7 +1946,9 @@ namespace ClassicUO.UnitTests.Ecs
         {
             foreach (Start s in Enum.GetValues(typeof(Start)))
             {
-                foreach (uint owner in new[] { MOB, BAG, NOBODY })
+                // NOBODY: the handler returns before the list, so those 60 cases only check that nothing changes; DEAD (MOB
+                // rekeyed as a dying mobile) is a second owner-present mobile, its serial not a mobile's
+                foreach (uint owner in new[] { MOB, BAG, NOBODY, DEAD })
                 {
                     for (int i = 0; i < WearLists.Length; i++)
                     {
@@ -1984,6 +1988,12 @@ namespace ClassicUO.UnitTests.Ecs
             World oldWorld = BuildWear(start, crowded), newWorld = BuildWear(start, crowded);
             var entries = WearLists[list];
 
+            if (owner == DEAD)
+            {
+                Rekey(oldWorld);
+                Rekey(newWorld);
+            }
+
             OldWear(oldWorld, owner, entries);
             NewWear(newWorld, owner, entries);
 
@@ -1997,6 +2007,98 @@ namespace ClassicUO.UnitTests.Ecs
             AssertSameWorld(oldWorld, newWorld);
         }
 
+        // MOB rekeyed as DisplayDeath (0xAF) does for a dying mobile: its serial gets the high bit, its children follow
+        private static void Rekey(World world)
+        {
+            Mobile owner = world.Mobiles.Get(MOB);
+            world.Mobiles.Remove(owner.Serial).Should().BeTrue();
+
+            for (LinkedObject i = owner.Items; i != null; i = i.Next)
+            {
+                ((Item)i).Container = DEAD;
+            }
+
+            world.Mobiles[DEAD] = owner;
+            owner.Serial = DEAD;
+            world.Ecs.OnSerialChanged(MOB, owner);
+        }
+
+        private static World BuildDeadOwner(out uint dead)
+        {
+            World world = BuildWear(Start.Worn, crowded: true);
+            Rekey(world);
+            dead = DEAD;
+
+            return world;
+        }
+
+        [Fact]
+        public void WearItem_Keeps_The_Captured_Owner_When_An_Entry_Shares_Its_Serial()
+        {
+            // Codex audit of part 3 (P2): a death-rekeyed owner (0x8000_3000) whose list names its own serial first. That entry
+            // creates an item under the mobile's serial, and World.Get prefers the items for a serial that is not a mobile's,
+            // so a lookup per entry would put the following entry inside that item; the old loop used the obj it captured
+            // before the list, and the handler now passes that instance to every entry
+            World oldWorld = BuildDeadOwner(out uint dead), newWorld = BuildDeadOwner(out _);
+            var entries = new[] { (dead, (ushort)0x1515, Layer.Shirt, (ushort)0), (NEWITEM, (ushort)0x1F03, Layer.Robe, (ushort)0) };
+
+            OldWear(oldWorld, dead, entries);
+            NewWear(newWorld, dead, entries);
+
+            foreach (World w in new[] { oldWorld, newWorld })
+            {
+                w.Get(dead).Should().BeOfType<Item>("the entry's item now shadows the mobile for World.Get");
+                ChildSerials(w.Mobiles.Get(dead)).Should().EndWith(new[] { dead, NEWITEM });
+                w.Items.Get(NEWITEM).Container.Should().Be(dead);
+                ChildSerials(w.Items.Get(dead)).Should().BeEmpty("the following entry is the mobile's, not the new item's");
+            }
+
+            newWorld.Writer.InScope.Should().BeFalse();
+            AssertSameWorld(oldWorld, newWorld);
+
+            // the same packet again: now the handler's own World.Get finds the item, so that item is the captured owner for
+            // the whole list (as before T1; the entry naming it is pushed into itself, as the old loop did)
+            OldWear(oldWorld, dead, entries);
+            NewWear(newWorld, dead, entries);
+            AssertSameWorld(oldWorld, newWorld);
+        }
+
+        [Fact]
+        public void WearItem_Rejects_An_Owner_This_World_Does_Not_Hold()
+        {
+            foreach (bool throws in new[] { true, false })
+            {
+                World world = BuildEquip(Start.Worn, crowded: false, packLayer: false);
+                World other = BuildEquip(Start.Worn, crowded: false, packLayer: false);
+                world.Writer.ThrowOnViolation = throws;
+                Item before = world.Items.Get(ITEM);
+                (uint Container, Layer Layer, ushort Graphic) was = (before.Container, before.Layer, before.Graphic);
+
+                // another World's mobile, and a stale instance (not the one the table holds) under the right serial
+                Entity stale = new World().GetOrCreateMobile(MOB);
+
+                foreach (Entity owner in new[] { other.Mobiles.Get(MOB), stale })
+                {
+                    Func<Item> wear = () => world.Writer.WearItem(owner, ITEM, 0x1516, Layer.Pants, 0);
+
+                    if (throws)
+                    {
+                        wear.Should().Throw<ArgumentException>();
+                    }
+                    else
+                    {
+                        wear().Should().BeNull();
+                    }
+
+                    Item it = world.Items.Get(ITEM);
+                    (it.Container, it.Layer, it.Graphic).Should().Be(was, "rejected before any change");
+                    world.Writer.InScope.Should().BeFalse();
+                }
+
+                world.Writer.Violations.Should().Be(2);
+            }
+        }
+
         [Fact]
         public void WearItem_Computes_Its_Values_Before_The_Writes()
         {
@@ -2006,7 +2108,7 @@ namespace ClassicUO.UnitTests.Ecs
             var seen = new List<(uint Container, ushort Graphic, Layer Layer, Direction Direction, uint CacheContainer, ushort CacheGraphic, Layer CacheLayer)>();
             world.Ecs.CommitObserver = (item, v) => seen.Add((v.Container, v.Graphic, v.Layer, v.Direction, item.Container, item.Graphic, item.Layer));
 
-            world.Writer.WearItem(MOB, ITEM, 0x2006, Layer.Cloak, 0);
+            world.Writer.WearItem(world.Get(MOB), ITEM, 0x2006, Layer.Cloak, 0);
             world.Ecs.CommitObserver = null;
 
             seen.Should().Equal(
@@ -2051,7 +2153,7 @@ namespace ClassicUO.UnitTests.Ecs
 
                 if (wear)
                 {
-                    world.Writer.WearItem(MOB, ITEM, 0x1515, Layer.Shirt, 0);
+                    world.Writer.WearItem(world.Get(MOB), ITEM, 0x1515, Layer.Shirt, 0);
                 }
                 else
                 {
@@ -2084,7 +2186,7 @@ namespace ClassicUO.UnitTests.Ecs
                             {
                                 0 => () => world.Writer.Equip(ITEM, 0x1517, Layer.Pants, BAG, 0, out _, out _).Should().BeNull(),
                                 1 => () => world.Writer.ClearWornItems(MOB),
-                                _ => () => world.Writer.WearItem(MOB, ITEM, 0x1517, Layer.Pants, 0).Should().BeNull()
+                                _ => () => world.Writer.WearItem(world.Get(MOB), ITEM, 0x1517, Layer.Pants, 0).Should().BeNull()
                             };
 
                             // asserted inside the operation: rejected before any change
@@ -2361,8 +2463,8 @@ namespace ClassicUO.UnitTests.Ecs
             // the entries, one a corpse graphic with the running bit
             world.Writer.ClearWornItems(m.Serial);
             world.Items.Get(0x4000_7108).Should().BeNull();
-            world.Writer.WearItem(m.Serial, worn.Serial, 0x1515, Layer.Shirt, 0).Should().BeSameAs(worn);
-            world.Writer.WearItem(m.Serial, 0x4000_7109, 0x2006, Layer.Cloak, 0).Should().NotBeNull();
+            world.Writer.WearItem(m, worn.Serial, 0x1515, Layer.Shirt, 0).Should().BeSameAs(worn);
+            world.Writer.WearItem(m, 0x4000_7109, 0x2006, Layer.Cloak, 0).Should().NotBeNull();
             FunnelCheck.Total.Should().Be(0, "0x78");
             world.Writer.ClearWornItems(m.Serial);
             FunnelCheck.Total.Should().Be(0, "the clear of worn items with contents");

@@ -204,8 +204,8 @@ namespace ClassicUO.Game
         }
 
         // a caller bug: throws in a CUO_DEVTOOLS build; otherwise logs once per kind (the caller rejects a nesting, and takes
-        // the pre-T1 path for the others)
-        private void Reject(Violation kind, string message)
+        // the pre-T1 path for the others, except where it passes rejected: true: WearItem's owner not held, which has none)
+        private void Reject(Violation kind, string message, bool rejected = false)
         {
             Violations++;
 
@@ -219,7 +219,7 @@ namespace ClassicUO.Game
             if ((_loggedViolations & bit) == 0)
             {
                 _loggedViolations |= bit;
-                Log.Error(message + (kind == Violation.Nesting ? " (logged once per kind; rejected)" : " (logged once per kind; the packet takes the pre-T1 path)"));
+                Log.Error(message + (kind == Violation.Nesting || rejected ? " (logged once per kind; rejected)" : " (logged once per kind; the packet takes the pre-T1 path)"));
             }
         }
 
@@ -993,24 +993,36 @@ namespace ClassicUO.Game
         /// 0x78 / 0xD3 (UpdateObject), one entry of its equipment list: the item (found or created among the items) gets the
         /// entry's graphic, hue (FixHue) and amount 1, leaves its old container (the old path published that state: the new
         /// graphic, hue and amount with the old layer), then gets the owner as its Container and the entry's layer;
-        /// <c>CheckGraphicChange</c> ran next (a corpse graphic: the corpse's state from the old direction), then the item goes to the end of the owner's child list
-        /// (<c>World.Get(ownerSerial)</c>; null: nothing happens and null is returned).
+        /// <c>CheckGraphicChange</c> ran next (a corpse graphic: the corpse's state from the old direction), then the item goes to the end of the owner's child list.
         /// </summary>
-        public Item WearItem(uint ownerSerial, uint serial, ushort graphic, Layer layer, ushort hue)
+        /// <param name="owner">The handler's <c>obj</c>: what <c>World.Get(serial)</c> returned once, before the list. The
+        /// handler passes that instance to every entry, as the old loop used it, and the operation does not look the owner up
+        /// again: an entry can create an item under the owner's serial (a death-rekeyed mobile's 0x8000_0000 serial), and
+        /// <c>World.Get</c> would then return that item for the following entries. Null: nothing happens and null is returned.
+        /// An instance this World does not hold in its table (the mobiles for a mobile, the items for an item) is a caller bug:
+        /// a violation, rejected (null) before any side effect.</param>
+        public Item WearItem(Entity owner, uint serial, ushort graphic, Layer layer, ushort hue)
         {
             if (!Admitted(nameof(WearItem), serial))
             {
                 return null;
             }
 
-            // 1. resolve: the owner (the handler's obj, found before its loop), the item among the items (found or created)
-            Entity owner = _world.Get(ownerSerial);
-
+            // 1. resolve: the owner as captured by the handler, validated against its own table; the item among the items
+            // (found or created)
             if (owner == null)
             {
                 return null;
             }
 
+            if (!Holds(owner))
+            {
+                Reject(Violation.NotHeld, $"WorldWriter.WearItem: owner 0x{owner.Serial:X8} is not the instance this World holds for its serial", rejected: true);
+
+                return null;
+            }
+
+            uint ownerSerial = owner.Serial;
             Item item = _world.GetOrCreateItem(serial, out _);
 
             // 2. compute: every read of the previous state is here
@@ -1083,6 +1095,20 @@ namespace ClassicUO.Game
             }
 
             return item;
+        }
+
+        // the instance this World holds for the entity's serial in the entity's own table (a mobile among the mobiles, an
+        // item among the items), so a mobile and an item sharing a serial are each recognised
+        private bool Holds(Entity entity)
+        {
+            if (entity.World != _world)
+            {
+                return false;
+            }
+
+            return entity is Mobile mobile
+                ? ReferenceEquals(_world.Mobiles.Get(mobile.Serial), mobile)
+                : entity is Item item && ReferenceEquals(_world.Items.Get(item.Serial), item);
         }
 
         // the destroy half of PlaceInContainer's destroy-vs-reuse, its own scope (owning the removed subtree)
