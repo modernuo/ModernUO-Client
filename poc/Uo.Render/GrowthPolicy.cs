@@ -58,6 +58,13 @@ public struct GrowthPolicy
 
     /// <summary>The next size: double, at most the ceiling.</summary>
     public static int Next(int capacity, int max) => (int)Math.Min(max, Math.Max(1L, (long)capacity * 2));
+
+    /// <summary>The client's start sizes and ceilings (layers, layers, instances). The art page array starts at its
+    /// ceiling: every login has 13+ pages resident by frame 15 (bench-000035), so a 12-layer start only added a growth
+    /// step and a 384 MiB transient (both arrays alive for that frame). Anim layers and instances still grow on demand.</summary>
+    public const int ArtLayersStart = 24, ArtLayersMax = 24;
+    public const int AnimLayersStart = 32, AnimLayersMax = 128;
+    public const int InstancesStart = 256 << 10, InstancesMax = 2 << 20;
 }
 
 /// <summary>Growth counters of one array: how often it grew and the main-thread time each step took (creating the larger

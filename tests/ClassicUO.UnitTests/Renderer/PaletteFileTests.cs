@@ -102,5 +102,76 @@ namespace ClassicUO.UnitTests.Renderer
             FluentActions.Invoking(() => AnimPaletteFile.ValidateFramePalette([0, uint.MaxValue, 1], 2)).Should().NotThrow();
             FluentActions.Invoking(() => AnimPaletteFile.ValidateFramePalette([5], 2)).Should().Throw<InvalidDataException>();
         }
+
+        // mem-reduce-2: the upload stages through one transfer buffer of at most PaletteChunkBytes (SDL_GPU's Vulkan
+        // backend gives each transfer buffer a dedicated host allocation), so the chunks must tile the payload exactly.
+        [Theory]
+        [InlineData(4u)]
+        [InlineData(Uo.Render.Renderer.PaletteChunkBytes - 4)]
+        [InlineData(Uo.Render.Renderer.PaletteChunkBytes)]
+        [InlineData(Uo.Render.Renderer.PaletteChunkBytes + 4)]
+        [InlineData(37_888u * 256 * 2)] // the shipped pack's 18.5 MiB: 5 chunks
+        public void Palette_upload_chunks_tile_the_payload_within_the_staging_size(uint bytes)
+        {
+            uint next = 0;
+            int count = 0;
+
+            foreach (var (offset, size) in Uo.Render.Renderer.PaletteChunks(bytes))
+            {
+                offset.Should().Be(next);
+                size.Should().BeGreaterThan(0).And.BeLessOrEqualTo(Uo.Render.Renderer.PaletteChunkBytes);
+                next += size;
+                count++;
+            }
+
+            next.Should().Be(bytes);
+            count.Should().Be((int)((bytes + Uo.Render.Renderer.PaletteChunkBytes - 1) / Uo.Render.Renderer.PaletteChunkBytes));
+        }
+
+        // Codex audit P2 on poc/mem-reduce-2: a failed fence wait must stop the upload before the transfer buffer is
+        // staged again (the copy might still read it), release that fence, and surface as GpuFenceException rather than
+        // as a partially uploaded palette buffer. Renderer.UploadChunked is the chunk loop behind a seam, so this needs no
+        // GPU device.
+        [Theory]
+        [InlineData(0)]
+        [InlineData(2)]
+        [InlineData(4)] // the last of the shipped pack's 5 chunks
+        public void Palette_upload_stops_at_a_failed_fence_wait_without_restaging(int failAt)
+        {
+            const uint bytes = 37_888u * 256 * 2;
+            var log = new System.Collections.Generic.List<string>();
+            int submitted = 0;
+
+            var act = () => Uo.Render.Renderer.UploadChunked(bytes, "palette upload",
+                stage: (off, n) => log.Add("stage " + off),
+                submit: (off, n) => { log.Add("submit " + off); return (IntPtr)(++submitted); },
+                wait: f => { log.Add("wait " + f); return (int)f - 1 != failAt; },
+                release: f => log.Add("release " + f),
+                lastError: () => "device lost");
+
+            act.Should().Throw<Uo.Render.GpuFenceException>().WithMessage("palette upload: fence wait failed*device lost");
+            submitted.Should().Be(failAt + 1);
+            log.Should().HaveCount(4 * (failAt + 1), "nothing is staged or submitted after the failed wait");
+            log[^2].Should().Be("wait " + (failAt + 1));
+            log[^1].Should().Be("release " + (failAt + 1), "the failed fence is still released");
+        }
+
+        [Fact]
+        public void Palette_upload_waits_and_releases_each_fence_before_staging_the_next_chunk()
+        {
+            const uint bytes = 37_888u * 256 * 2;
+            var log = new System.Collections.Generic.List<string>();
+            int submitted = 0;
+
+            Uo.Render.Renderer.UploadChunked(bytes, "palette upload",
+                stage: (off, n) => log.Add("stage"),
+                submit: (off, n) => { log.Add("submit"); return (IntPtr)(++submitted); },
+                wait: f => { log.Add("wait"); return true; },
+                release: f => log.Add("release"),
+                lastError: () => "");
+
+            submitted.Should().Be(5);
+            log.Should().Equal(System.Linq.Enumerable.SelectMany(System.Linq.Enumerable.Range(0, 5), _ => new[] { "stage", "submit", "wait", "release" }));
+        }
     }
 }
