@@ -14,14 +14,18 @@ namespace ClassicUO.Assets
 {
     /// <summary>
     /// Frozen copy of ClassicUO's SoundsLoader (src/ClassicUO.Assets/SoundsLoader.cs at f69641b97, before sounds and music
-    /// moved into the pack), verbatim apart from <see cref="MusicPath"/> (Renderer.Sounds.Sound.GetMusic's path rule) and
-    /// the 4.0.11c Config.txt threshold (see Load).
+    /// moved into the pack), verbatim apart from <see cref="MusicPath"/> (Renderer.Sounds.Sound.GetMusic's path rule),
+    /// the 4.0.11c Config.txt threshold (see Load), and the changes after the Codex audit of the audio pack, each marked
+    /// "Not verbatim": the music table is per instance, ClearResources disposes the archive, ReadWave's chunk-size check
+    /// cannot overflow, and <see cref="LoosePath"/> / <see cref="TryGetArchiveSound"/> let verify model the client's
+    /// fallback past a loose WAV it refuses.
     /// The converter verifies audio/sounds.bin and audio/music.bin against it.
     /// </summary>
     public sealed class SoundsLoader : UOFileLoader
     {
         private static readonly char[] _configFileDelimiters = { ' ', ',', '\t' };
-        private static readonly Dictionary<int, (string, bool)> _musicData = new Dictionary<int, (string, bool)>();
+        // Not verbatim: per instance (was static, so a second loader's built-in table Add() threw and every loader shared one table)
+        private readonly Dictionary<int, (string, bool)> _musicData = new Dictionary<int, (string, bool)>();
 
         /// <summary>
         /// Sounds of the shard's own, as loose files, looked at before the archive.
@@ -289,7 +293,9 @@ namespace ClassicUO.Assets
                 string kind = Encoding.ASCII.GetString(raw, at, 4);
                 int size = BitConverter.ToInt32(raw, at + 4);
 
-                if (size < 0 || at + 8 + size > raw.Length)
+                // Not verbatim: compared by subtraction (at + 8 + size overflowed for a size near int.MaxValue and the
+                // clamp was skipped: Codex audit, a 44-byte WAV declaring 0x7FFFFFF0 data bytes)
+                if (size < 0 || size > raw.Length - at - 8)
                 {
                     size = raw.Length - at - 8;
                 }
@@ -346,6 +352,26 @@ namespace ClassicUO.Assets
 
                     return true;
                 }
+            }
+
+            return TryGetArchiveSound(sound, out data, out name);
+        }
+
+        /// <summary>Not verbatim: the path of id's loose Sounds/&lt;id&gt;.wav, or null (for verify).</summary>
+        public string LoosePath(int sound) => _ours.TryGetValue(sound, out string p) ? p : null;
+
+        /// <summary>
+        /// Not verbatim: the archive half of TryGetSound, split out unchanged so verify can model the client falling back
+        /// to the archive past a loose WAV it refuses.
+        /// </summary>
+        public unsafe bool TryGetArchiveSound(int sound, out byte[] data, out string name)
+        {
+            data = null;
+            name = null;
+
+            if (sound < 0)
+            {
+                return false;
             }
 
             ref var entry = ref _file.GetValidRefEntry(sound);
@@ -460,6 +486,9 @@ namespace ClassicUO.Assets
         public override void ClearResources()
         {
             _musicData.Clear();
+            // Not verbatim: the archive's handle and mapping are released (Codex audit: --audio-report leaked one per load)
+            _file?.Dispose();
+            _file = null;
         }
     }
 }

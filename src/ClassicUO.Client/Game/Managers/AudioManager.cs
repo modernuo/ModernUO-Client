@@ -16,6 +16,8 @@ namespace ClassicUO.Game.Managers
         const float SOUND_DELTA = 250;
 
         private bool _canReproduceAudio = true;
+        // sound effects FNA is playing, oldest first: at most Renderer.Sounds.Sound.MaxPlayingSounds, and their PCM within
+        // MaxPlayingBytes (LimitPlaying stops the oldest), so native copies stay bounded however many ids a shard plays
         private readonly LinkedList<UOSound> _currentSounds = new LinkedList<UOSound>();
         private readonly UOMusic[] _currentMusic = { null, null };
         private readonly int[] _currentMusicIndices = { 0, 0 };
@@ -101,6 +103,11 @@ namespace ClassicUO.Game.Managers
 
             UOSound sound = (UOSound) Client.Game.UO.Sounds.GetSound(index);
 
+            if (sound != null && sound.CanPlayAt(Time.Ticks))
+            {
+                ClassicUO.Renderer.Sounds.Sound.LimitPlaying(_currentSounds, sound);
+            }
+
             if (sound != null && sound.Play(Time.Ticks, volume))
             {
                 sound.X = -1;
@@ -148,6 +155,11 @@ namespace ClassicUO.Game.Managers
             }
 
             UOSound sound = (UOSound)Client.Game.UO.Sounds.GetSound(index);
+
+            if (sound != null && sound.CanPlayAt(Time.Ticks))
+            {
+                ClassicUO.Renderer.Sounds.Sound.LimitPlaying(_currentSounds, sound);
+            }
 
             if (sound != null && sound.Play(Time.Ticks, volume, distanceFactor))
             {

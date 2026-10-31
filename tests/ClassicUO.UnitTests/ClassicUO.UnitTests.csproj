@@ -36,6 +36,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\ClassicUO.Client\ClassicUO.Client.csproj" />
+    <!-- The converter's frozen pre-pack loaders, under an extern alias (their types share the client's names): the audio
+         tests run verify's model of the client's sound resolution on the real frozen SoundsLoader. -->
+    <ProjectReference Include="..\..\tools\ClassicUO.Assets.Mul\ClassicUO.Assets.Mul.csproj" Aliases="frozen" />
   </ItemGroup>
 
 </Project>

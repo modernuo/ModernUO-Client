@@ -21,10 +21,10 @@ public static class AudioImport
 {
     public const int MaxIds = AudioConst.MaxIds;
 
-    public sealed record SoundStats(bool Uop, int Slots, int Present, int Records, int Aliases, int Ours, int Empty, long PcmBytes, long FileBytes, int Unplayable = 0)
+    public sealed record SoundStats(bool Uop, int Slots, int Present, int Records, int Aliases, int Ours, int Empty, long PcmBytes, long FileBytes, int Unplayable = 0, int LooseRefused = 0)
     {
         public override string ToString() =>
-            $"{(Uop ? "soundLegacyMUL.uop" : "sound.mul")}: {Slots} slots, {Present} sounds, {Records} records ({Aliases} Sound.def/index aliases, {Ours} loose Sounds/*.wav, {Empty} empty entries left out{(Unplayable > 0 ? $", {Unplayable} unplayable left out" : "")}), " +
+            $"{(Uop ? "soundLegacyMUL.uop" : "sound.mul")}: {Slots} slots, {Present} sounds, {Records} records ({Aliases} Sound.def/index aliases, {Ours} loose Sounds/*.wav, {Empty} empty entries left out{(Unplayable > 0 ? $", {Unplayable} unplayable left out" : "")}{(LooseRefused > 0 ? $", {LooseRefused} loose files refused" : "")}), " +
             $"PCM {PcmBytes / 1048576.0:F1} MiB, file {FileBytes / 1048576.0:F1} MiB";
     }
 
@@ -117,10 +117,15 @@ public static class AudioImport
             }
         }
 
+        /// <summary>Loose Sounds/&lt;id&gt;.wav files the client would refuse (and play the archive's sound instead), with the reason.</summary>
+        public List<(int Id, string Error)> RefusedLoose { get; } = new();
+
         /// <summary>
-        /// One sound as the client resolved it: a loose WAV first (if it is one the client plays), else the archive entry
-        /// (40-byte name, then PCM). An entry of 40 bytes or less has no PCM and is absent. <paramref name="alias"/> is the
-        /// archive entry's (offset, length), which aliases share; null for a loose file.
+        /// One sound as the client resolves it: a loose WAV first, if the client plays it (AudioConst.ReadWaveFile: at most
+        /// MaxWaveFileBytes, 22,050 Hz mono 16-bit, a non-empty even data chunk), else the archive entry (40-byte name, then
+        /// PCM). A refused loose file falls back to the archive, as the client does at runtime (Codex audit P2: an invalid
+        /// override used to hide a valid archive sound). An entry of 40 bytes or less has no PCM and is absent.
+        /// <paramref name="alias"/> is the archive entry's (offset, length), which aliases share; null for a loose file.
         /// </summary>
         public bool TryGet(int id, out byte[] pcm, out byte[] name, out (long, int)? alias)
         {
@@ -130,13 +135,14 @@ public static class AudioImport
             if (id < 0 || id >= MaxIds) return false;
             if (Ours.TryGetValue(id, out string? mine))
             {
-                byte[]? data = ReadWave(mine, out _);
+                byte[]? data = AudioConst.ReadWaveFile(mine, out string? error);
                 if (data != null)
                 {
                     pcm = data;
                     name = Truncate(Encoding.UTF8.GetBytes(Path.GetFileNameWithoutExtension(mine)), AudioConst.MaxSoundName);
-                    return data.Length > 0;
+                    return true;
                 }
+                RefusedLoose.Add((id, error ?? "refused"));
             }
             ref var e = ref File.GetValidRefEntry(id);
             if (e.Length <= AudioConst.MaxSoundName) return false;
@@ -155,62 +161,35 @@ public static class AudioImport
         public void Dispose() => File.Dispose();
     }
 
-    private static byte[] Truncate(byte[] b, int max) => b.Length <= max ? b : b.AsSpan(0, max).ToArray();
-
     /// <summary>
-    /// ClassicUO SoundsLoader.ReadWave, in effect: the data chunk of a RIFF/WAVE file whose fmt chunk says 22,050 Hz
-    /// mono 16-bit, chunks walked in order (padded to even sizes; a size running past the end is clamped). Null, with
-    /// <paramref name="error"/>, for anything else.
+    /// Verify's model of the client's sound resolution, built from the frozen pre-pack loader's answers (it is not the
+    /// importer's code path): <paramref name="loader"/> is the old TryGetSound (loose file first), <paramref name="archive"/>
+    /// the old loader's archive read alone. A loose file the client refuses (over <see cref="AudioConst.MaxWaveFileBytes"/>,
+    /// or data FNA cannot take) falls back to the archive, as SoundsLoader.TryGetSound does at runtime; an id plays only
+    /// when its PCM passes <see cref="AudioConst.CheckPcmLength"/>. An OverflowException from the old loader (an archive
+    /// entry shorter than its 40-byte name: it threw on new byte[negative]) means no sound. Null data: the id is absent.
     /// </summary>
-    public static byte[]? ReadWave(string path, out string? error)
+    public static (byte[]? Data, string? Name) ExpectedClientSound(string? loosePath, Func<(byte[]? Data, string? Name)> loader, Func<(byte[]? Data, string? Name)> archive)
     {
-        byte[] raw;
-        try
+        var r = Call(loader);
+        if (loosePath != null && (new FileInfo(loosePath).Length > AudioConst.MaxWaveFileBytes || r.Data == null || AudioConst.CheckPcmLength(r.Data.Length) != null))
+            r = Call(archive);
+        return r.Data != null && AudioConst.CheckPcmLength(r.Data.Length) == null ? r : (null, null);
+
+        static (byte[]? Data, string? Name) Call(Func<(byte[]? Data, string? Name)> f)
         {
-            raw = System.IO.File.ReadAllBytes(path);
+            try
+            {
+                return f();
+            }
+            catch (OverflowException)
+            {
+                return (null, null);
+            }
         }
-        catch (IOException e)
-        {
-            error = e.Message;
-            return null;
-        }
-        return ReadWave(raw, out error);
     }
 
-    public static byte[]? ReadWave(byte[] raw, out string? error)
-    {
-        error = null;
-        if (raw.Length < 44 || raw[0] != 'R' || raw[1] != 'I' || raw[2] != 'F' || raw[3] != 'F' || raw[8] != 'W' || raw[9] != 'A' || raw[10] != 'V' || raw[11] != 'E')
-        {
-            error = "not a WAV";
-            return null;
-        }
-        int at = 12, channels = 0, rate = 0, bits = 0;
-        while (at + 8 <= raw.Length)
-        {
-            string kind = Encoding.ASCII.GetString(raw, at, 4);
-            int size = BitConverter.ToInt32(raw, at + 4);
-            if (size < 0 || at + 8 + size > raw.Length) size = raw.Length - at - 8;
-            if (kind == "fmt " && size >= 16)
-            {
-                channels = BitConverter.ToInt16(raw, at + 10);
-                rate = BitConverter.ToInt32(raw, at + 12);
-                bits = BitConverter.ToInt16(raw, at + 22);
-            }
-            else if (kind == "data")
-            {
-                if (channels != 1 || rate != 22050 || bits != 16)
-                {
-                    error = $"{rate} Hz {channels} ch {bits}-bit (the client plays 22050 mono 16-bit)";
-                    return null;
-                }
-                return raw.AsSpan(at + 8, size).ToArray();
-            }
-            at += 8 + size + (size & 1);
-        }
-        error = "no data chunk";
-        return null;
-    }
+    private static byte[] Truncate(byte[] b, int max) => b.Length <= max ? b : b.AsSpan(0, max).ToArray();
 
     /// <summary>Writes audio/sounds.bin from <paramref name="src"/>: one record per archive entry (aliases share it) or loose file.</summary>
     public static SoundStats WriteSounds(SoundSource src, string outDir, Action<string>? warn = null)
@@ -233,6 +212,7 @@ public static class AudioImport
             }
             else if (src.File.GetValidRefEntry(id).Length > 0 || src.Ours.ContainsKey(id)) empty++;
         }
+        foreach (var (id, error) in src.RefusedLoose) warn?.Invoke($"sound {id}: loose Sounds/{id}.wav refused ({error}); the archive's sound, if any, is used");
         var w = new RecordStoreWriter(ids.Count == 0 ? 1 : ids[^1].Id + 1);
         var byEntry = new Dictionary<(long, int), int>();
         int aliases = 0, ours = 0;
@@ -256,7 +236,7 @@ public static class AudioImport
         }
         string path = Path.Combine(outDir, AudioConst.SoundsFile);
         w.Write(path, AudioConst.MagicSounds, src.Uop ? AudioConst.SoundFlagUop : 0);
-        return new SoundStats(src.Uop, w.Slots.Length, ids.Count, w.RecordCount, aliases, ours, empty, pcmBytes, new FileInfo(path).Length, unplayable);
+        return new SoundStats(src.Uop, w.Slots.Length, ids.Count, w.RecordCount, aliases, ours, empty, pcmBytes, new FileInfo(path).Length, unplayable, src.RefusedLoose.Count);
     }
 
     // ------------------------------------------------------------------------------------------------- music

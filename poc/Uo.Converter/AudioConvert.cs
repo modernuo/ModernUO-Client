@@ -38,7 +38,7 @@ public static class AudioConvert
 
     private static UOFileManager? s_loaded;
 
-    // The frozen loader keeps its music table in a static dictionary that its built-in table Add()s to: load it once.
+    // Load the frozen loader once per file manager (its Load indexes the archive and scans Music/ per Config.txt line).
     private static void EnsureLoaded(UOFileManager fm)
     {
         if (s_loaded == fm) return;
@@ -58,26 +58,21 @@ public static class AudioConvert
         var seenRec = new HashSet<ulong>();
         for (int id = 0; id < AudioConst.MaxIds; id++)
         {
-            byte[]? data = null;
-            string? name = null;
-            try
-            {
-                if (!fm.Sounds.TryGetSound(id, out data, out name)) data = null;
-            }
-            catch (OverflowException)
-            {
-                data = null; // an entry shorter than its 40-byte name: the client threw (new byte[negative]); the pack leaves it out
-            }
-            // the client plays what the old loader read only when FNA can take it (whole 16-bit samples, not empty)
-            bool expect = data != null && AudioConst.CheckPcmLength(data.Length) == null;
-            bool has = store.TryGet(id, out _, out var rec);
+            // the client's resolution (a refused loose WAV falls back to the archive), modelled on the frozen loader
+            int sid = id;
+            var (data, name) = AudioImport.ExpectedClientSound(
+                fm.Sounds.LoosePath(sid),
+                () => fm.Sounds.TryGetSound(sid, out var d, out var n) ? (d, n) : (null, null),
+                () => fm.Sounds.TryGetArchiveSound(sid, out var d, out var n) ? (d, n) : (null, null));
+            bool expect = data != null;
+            bool has = store.TryGet(id, out var slot, out var rec);
             if (expect != has)
             {
                 if (bad++ < 10) Verify.Fail($"sound {id}: client {(expect ? "has it" : "has none")}, pack {(has ? "has it" : "has none")}");
                 continue;
             }
             if (!has) continue;
-            if (AudioConst.CheckSoundRecord(rec) is { } err)
+            if ((AudioConst.CheckSoundSlot(slot) ?? AudioConst.CheckSoundRecord(rec)) is { } err)
             {
                 if (bad++ < 10) Verify.Fail($"sound {id}: {err}");
                 continue;
@@ -174,7 +169,7 @@ public static class AudioReport
         long oldAlloc = 0, newAlloc = 0;
         for (int r = 0; r < reps; r++)
         {
-            var f = new UOFileManager(fm.Version, fm.BasePath);
+            var f = new UOFileManager(fm.Version, fm.BasePath); // its Sounds.ClearResources below releases the archive
             f.Sounds.ClearResources();
             long a = GC.GetAllocatedBytesForCurrentThread();
             var t = Stopwatch.GetTimestamp();
@@ -201,7 +196,7 @@ public static class AudioReport
         held.Sounds.Load();
         long oldHeld = GC.GetTotalMemory(true) - h0;
         GC.KeepAlive(held);
-        held.Sounds.ClearResources();
+        held.Sounds.ClearResources(); // now also releases the archive's mapping (it leaked one per load before the audit fix)
         held = null;
         h0 = GC.GetTotalMemory(true);
         var hs = AudioConst.OpenSoundStore(sp);
@@ -259,6 +254,7 @@ public static class AudioReport
             }
             newMp3.Add(Stopwatch.GetElapsedTime(t).TotalMilliseconds);
         }
+        f2.Sounds.ClearResources();
         Console.WriteLine($"  music bytes read ({newMp3.Count} ids): loose file p50 {Pct(oldMp3, 50):F2} / max {oldMp3.Max():F2} ms; pack record p50 {Pct(newMp3, 50):F2} / max {newMp3.Max():F2} ms");
         return 0;
     }

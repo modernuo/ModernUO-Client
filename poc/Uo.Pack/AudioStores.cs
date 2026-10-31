@@ -1,3 +1,4 @@
+using System.Buffers.Binary;
 using System.Text;
 
 namespace Uo.Pack;
@@ -138,25 +139,118 @@ public static class AudioConst
     /// <summary>
     /// The payloads of an audio store must not overlap: ids share content through their slots, never through records
     /// pointing into each other's bytes, so an overlap means a forged or corrupt table. The whole store is rejected.
-    /// (RecordStore.Open has already checked that every payload lies after the tables and inside the file.)
+    /// (RecordStore.Open has already checked that every payload lies after the tables and inside the file.) The sweep
+    /// keeps the furthest end of all earlier non-empty payloads, so an empty record between two overlapping ones (or a
+    /// short one inside a long one) cannot hide the overlap; empty records occupy no bytes and never reset it.
     /// </summary>
     public static string? CheckNoOverlap(StoreRecord[] records)
     {
         var order = new int[records.Length];
         for (int i = 0; i < order.Length; i++) order[i] = i;
         Array.Sort(order, (a, b) => records[a].Offset.CompareTo(records[b].Offset));
-        for (int k = 1; k < order.Length; k++)
+        ulong end = 0;
+        int endRecord = -1;
+        foreach (int k in order)
         {
-            ref readonly var prev = ref records[order[k - 1]];
-            ref readonly var cur = ref records[order[k]];
-            if (prev.Offset + prev.StoredBytes > cur.Offset && cur.StoredBytes > 0 && prev.StoredBytes > 0)
-                return $"records {order[k - 1]} and {order[k]} overlap";
+            ref readonly var cur = ref records[k];
+            if (cur.StoredBytes == 0) continue;
+            if (endRecord >= 0 && cur.Offset < end) return $"records {endRecord} and {k} overlap";
+            // Open checked StoredBytes <= fileLength - Offset, so this cannot wrap
+            ulong curEnd = cur.Offset + cur.StoredBytes;
+            if (endRecord < 0 || curEnd > end)
+            {
+                end = curEnd;
+                endRecord = k;
+            }
         }
         return null;
     }
 
-    /// <summary>Checks a music slot's arg: only <see cref="MusicArgLoop"/> may be set.</summary>
-    public static string? CheckMusicSlot(in StoreSlot s) => (s.Arg & ~MusicArgLoop) != 0 ? $"unknown slot flags 0x{s.Arg:X4}" : null;
+    /// <summary>
+    /// Sound StoreSlot checks: <c>arg</c> and <c>reserved</c> must be 0 (pack-format.md, "Audio"). A slot that fails is
+    /// absent; the record and its other ids are unaffected.
+    /// </summary>
+    public static string? CheckSoundSlot(in StoreSlot s) =>
+        s.Arg != 0 ? $"slot arg 0x{s.Arg:X4} (sounds have none)" : s.Reserved != 0 ? $"slot reserved 0x{s.Reserved:X4}" : null;
+
+    /// <summary>Music StoreSlot checks: only <see cref="MusicArgLoop"/> may be set in <c>arg</c>, and <c>reserved</c> must be 0.</summary>
+    public static string? CheckMusicSlot(in StoreSlot s) =>
+        (s.Arg & ~MusicArgLoop) != 0 ? $"unknown slot flags 0x{s.Arg:X4}" : s.Reserved != 0 ? $"slot reserved 0x{s.Reserved:X4}" : null;
+
+    /// <summary>Largest loose WAV file read at all: <see cref="MaxSoundBytes"/> of PCM plus 1 MiB of headers and other chunks. Checked before the read.</summary>
+    public const long MaxWaveFileBytes = MaxSoundBytes + (1L << 20);
+
+    /// <summary>
+    /// The data chunk of a RIFF/WAVE file whose fmt chunk says 22,050 Hz mono 16-bit, as ClassicUO's SoundsLoader.ReadWave
+    /// walked it (chunks in order, padded to even sizes, a size running past the end clamped to the end), with every size
+    /// compared by subtraction so no chunk size can overflow the walk (Codex audit: a 44-byte file declaring 0x7FFFFFF0
+    /// data bytes). Returns the PCM's range in <paramref name="raw"/>, or an error. The length is not checked here: see
+    /// <see cref="CheckPcmLength"/>.
+    /// </summary>
+    public static string? ParseWave(ReadOnlySpan<byte> raw, out int dataOffset, out int dataLength)
+    {
+        dataOffset = dataLength = 0;
+        if (raw.Length < 44 || !raw.Slice(0, 4).SequenceEqual("RIFF"u8) || !raw.Slice(8, 4).SequenceEqual("WAVE"u8)) return "not a WAV";
+        int at = 12, channels = 0, rate = 0, bits = 0;
+        while (raw.Length - at >= 8)
+        {
+            ReadOnlySpan<byte> kind = raw.Slice(at, 4);
+            int size = BinaryPrimitives.ReadInt32LittleEndian(raw.Slice(at + 4));
+            int avail = raw.Length - at - 8;
+            if (size < 0 || size > avail) size = avail;
+            if (kind.SequenceEqual("fmt "u8) && size >= 16)
+            {
+                channels = BinaryPrimitives.ReadInt16LittleEndian(raw.Slice(at + 10));
+                rate = BinaryPrimitives.ReadInt32LittleEndian(raw.Slice(at + 12));
+                bits = BinaryPrimitives.ReadInt16LittleEndian(raw.Slice(at + 22));
+            }
+            else if (kind.SequenceEqual("data"u8))
+            {
+                if (channels != 1 || rate != SoundRate || bits != 16) return $"{rate} Hz {channels} ch {bits}-bit (the client plays 22050 mono 16-bit)";
+                dataOffset = at + 8;
+                dataLength = size;
+                return null;
+            }
+            // at + 8 + size <= raw.Length here, so this stays at most raw.Length + 1
+            at += 8 + size + (size & 1);
+        }
+        return "no data chunk";
+    }
+
+    /// <summary>
+    /// A loose Sounds/&lt;id&gt;.wav as the client plays it: the file's size is checked against
+    /// <see cref="MaxWaveFileBytes"/> before it is read, the chunks are walked by <see cref="ParseWave"/>, and the PCM
+    /// must pass <see cref="CheckPcmLength"/>. Returns an array of exactly the PCM, or null with <paramref name="error"/>;
+    /// never throws for a bad or unreadable file. The client and the converter both use it, so a WAV that one refuses
+    /// the other refuses too, and the archive's sound is used instead.
+    /// </summary>
+    public static byte[]? ReadWaveFile(string path, out string? error)
+    {
+        byte[] raw;
+        try
+        {
+            long length = new FileInfo(path).Length;
+            if (length > MaxWaveFileBytes)
+            {
+                error = $"{length} bytes (a loose WAV is at most {MaxWaveFileBytes})";
+                return null;
+            }
+            raw = File.ReadAllBytes(path);
+        }
+        catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+        {
+            error = e.Message;
+            return null;
+        }
+        return ReadWave(raw, out error);
+    }
+
+    /// <summary><see cref="ReadWaveFile"/> on bytes already in memory.</summary>
+    public static byte[]? ReadWave(ReadOnlySpan<byte> raw, out string? error)
+    {
+        error = ParseWave(raw, out int offset, out int length) ?? CheckPcmLength(length);
+        return error == null ? raw.Slice(offset, length).ToArray() : null;
+    }
 
     /// <summary>Audio bytes of a record whose payload is audio then a name of meta2 bytes.</summary>
     public static int AudioBytes(in StoreRecord r) => (int)(r.RawBytes - r.Meta2);
