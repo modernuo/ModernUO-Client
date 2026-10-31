@@ -37,7 +37,8 @@ namespace ClassicUO.Game
     /// takes the pre-T1 path (the old writes, the hook syncs). While one runs,
     /// writes to its own object (and, for a removal, to the removed subtree) are funnel writes for <see cref="FunnelCheck"/>;
     /// writes to any other object are still direct writes. Converted so far: world items (0x1A, 0xF3 and the item branch of
-    /// 0x1D) and items into containers (0x25, 0x3C's items, 0x27's deny path: <see cref="PlaceInContainer"/>). Every other writer still relies on <see cref="WorldEcs.Sync"/> and <see cref="WorldEcs.PushInputs"/>, which
+    /// 0x1D) and items into containers (0x25, 0x3C's items, 0x27's deny path: <see cref="PlaceInContainer"/>), the bulk clear
+    /// of 0x3C and 0x24 (<see cref="ClearContainer"/>). Every other writer still relies on <see cref="WorldEcs.Sync"/> and <see cref="WorldEcs.PushInputs"/>, which
     /// stay as the fallback until the last packet group is converted.
     /// </para>
     /// <para>
@@ -598,6 +599,79 @@ namespace ClassicUO.Game
             }
 
             return item;
+        }
+
+        /// <summary>
+        /// 0x3C's bulk clear before its first item and 0x24 (OpenContainer) of a container that is not a corpse
+        /// (<c>ClearContainerAndRemoveItems</c> before T1): removes every item in the container
+        /// (<c>World.Get(containerSerial)</c>) with its contents, or, with <paramref name="keepEquipped"/> (0x3C into a
+        /// corpse), every item without a Layer, keeping the corpse's equipment in its child list in order. A removal: it owns
+        /// the removed subtrees and writes no value of its own (each removal's Sync and Destroy run as in
+        /// <see cref="RemoveWorldItem"/>, not folded: a corpse's removal queues it in the active-items list as before). The
+        /// container itself is not written (its child list only). Cancels the removed items' outstanding placements.
+        /// </summary>
+        public void ClearContainer(uint containerSerial, bool keepEquipped)
+        {
+            if (!Admitted(nameof(ClearContainer), containerSerial))
+            {
+                return;
+            }
+
+            Entity container = _world.Get(containerSerial);
+
+            if (container == null || container.IsEmpty)
+            {
+                return;
+            }
+
+            // 1. resolve: the removed children, in child-list order, before anything changes
+            for (LinkedObject i = container.Items; i != null; i = i.Next)
+            {
+                if (i is Item it && !(keepEquipped && it.Layer != 0))
+                {
+                    CancelPlacements(it);
+                }
+            }
+
+            using (Open(container, null))
+            {
+#if CUO_DEVTOOLS
+                if (FunnelCheck.Enabled)
+                {
+                    for (LinkedObject i = container.Items; i != null; i = i.Next)
+                    {
+                        if (i is Item it && !(keepEquipped && it.Layer != 0))
+                        {
+                            CollectSubtree(it);
+                        }
+                    }
+                }
+#endif
+
+                // the old loop: each removal by serial (World.RemoveItem: out of the child list, the contents, OPL,
+                // Destroy); the kept equipment's links are untouched and the head is set to the first kept one
+                LinkedObject first = container.Items;
+                LinkedObject newFirst = null;
+
+                while (first != null)
+                {
+                    LinkedObject next = first.Next;
+                    Item it = (Item)first;
+
+                    if (keepEquipped && it.Layer != 0)
+                    {
+                        newFirst ??= first;
+                    }
+                    else
+                    {
+                        _world.RemoveItem(it, true);
+                    }
+
+                    first = next;
+                }
+
+                container.Items = keepEquipped ? newFirst : null;
+            }
         }
 
         // the destroy half of PlaceInContainer's destroy-vs-reuse, its own scope (owning the removed subtree)

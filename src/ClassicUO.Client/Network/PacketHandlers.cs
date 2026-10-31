@@ -1654,7 +1654,7 @@ namespace ClassicUO.Network
 
                     if (!it.IsCorpse && graphic != 0xFFFF)
                     {
-                        ClearContainerAndRemoveItems(world, it);
+                        world.Writer.ClearContainer(it.Serial, false);
                     }
                 }
             }
@@ -2222,7 +2222,7 @@ namespace ClassicUO.Network
 
                     if (container != null)
                     {
-                        ClearContainerAndRemoveItems(world, container, container.Graphic == 0x2006);
+                        world.Writer.ClearContainer(containerSerial, container.Graphic == 0x2006);
                     }
                 }
 
@@ -6491,43 +6491,6 @@ namespace ClassicUO.Network
                 world.Player.SetInWorldTile(x, y, z);
                 world.Player.UpdateAbilities();
             }
-        }
-
-        private static void ClearContainerAndRemoveItems(
-            World world,
-            Entity container,
-            bool remove_unequipped = false
-        )
-        {
-            if (container == null || container.IsEmpty)
-            {
-                return;
-            }
-
-            LinkedObject first = container.Items;
-            LinkedObject new_first = null;
-
-            while (first != null)
-            {
-                LinkedObject next = first.Next;
-                Item it = (Item)first;
-
-                if (remove_unequipped && it.Layer != 0)
-                {
-                    if (new_first == null)
-                    {
-                        new_first = first;
-                    }
-                }
-                else
-                {
-                    world.RemoveItem(it, true);
-                }
-
-                first = next;
-            }
-
-            container.Items = remove_unequipped ? new_first : null;
         }
 
         private static readonly List<uint> _layoutGumps = new List<uint>();
