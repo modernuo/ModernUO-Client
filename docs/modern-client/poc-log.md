@@ -3649,3 +3649,94 @@ Codex found one P2 and two P3s; all three are fixed. Chunk boundaries, empty inp
 - **P3, unset diagnostics allocated a closure (fixed).** `MemLog.Start` and `StartRegions` captured locals in lambdas, so their display classes were allocated on entry, before the environment checks. The threads now start in `StartLog(seconds)` and `StartRegions(value)`, called only after the checks; unset, `Start` allocates nothing.
 - Not part of this round: the art staging slot fix (cycle=false after the slot's fence), which waits for owner approval.
 - Verified: client Release build and `-p:CuoDevTools=false` build, 0 errors; unit tests 1032 pass, 1 skipped (was 1028: +4 `UploadChunked` cases). No client runs.
+
+## Tile data single source: one tiledata.bin, draw rules as data (2026-10-31)
+
+Branch `poc/tiledata-single`, from poc/modern-client f27759989. Owner decisions: one source of truth per pack file, and ClassicUO's hard-coded per-tile rules become data. The coordinator publishes classic-1.1 when it merges.
+
+**Format.** `tiledata.bin` (new magic `TILE`) is the pack's only tile data file: the full entries of the old `tiledata_ext.bin` (flags, names, texId, count, animId, hue, light, weight, layer, height) plus `packFlags` (land entry 16 → 20 B, static 28 → 32 B). The compact renderer copy (`TLTD`, 12 B per entry) and `tiledata_ext.bin` (`TLDX`) are retired: 2.50 MB instead of 0.98 + 2.18 MB.
+- I kept the name `tiledata.bin`: it is the natural name, and an old client fails loudly on a new pack (`tiledata_ext.bin` is missing, and its `tiledata.bin` reader meets the wrong magic).
+- `TileDataFile.Read` validates the magic, version, Kind 0, land count = 0x4000, static count 1..0x10000, the exact file size (before allocating) and every name reference. A 1.0 layout gets a "convert again (--only tiledata)" message.
+- The renderer's 12-byte `LandTileData`/`StaticTileData` arrays are built at load (`TileDataFile.Compact`, in `PackSet`, which the client's `GpuWorldRenderer` uses). **Read and validate: 0.93 ms median. Building the compact arrays: 0.25 ms median** (2.50 MB file, 100 runs in `TileDrawOracleTests.Compact_Arrays_Load_Time`, JIT, noisy machine; minimums 0.54 and 0.13 ms).
+- Memory: unchanged. The compact arrays are the same 0.98 MB as before, and the full arrays are transient.
+
+**Rules moved into data.** The converter's `Uo.Converter/TileRules.cs` is the only code that knows them; readers use `Uo.Pack.TileDraw`.
+
+| Rule | Lived in | Now |
+|---|---|---|
+| Land 0, 1, 2 not drawn | `Land.Create` and `Land.UpdateGraphicBySeason` (`graphic > 2`), `Map.RequestBlockArt` (`graphic <= 2`), poc `ChunkBaker` (`tile <= 2`) | land `NoDraw`; `Land.IsDrawn` |
+| Statics 0x1, 0x21BC, 0xA1FE–0xA201; 0x9E4C/64/65/7D with Background or Surface; 0x63D3; 0x2198–0x21A4 | `GameObject.CanBeDrawn`, poc `ChunkBaker.CanBeDrawn` | static `NoDraw` |
+| Easel 0x0F65 drawn before 6.0.14.4 | `GameObject.CanBeDrawn` (client version) | evaluated with the source client's version |
+| Name starts with `nodraw` | `GameObject.CanBeDrawn`, `ChunkBaker` (via `NameNoDraw`) | static `NoDraw` (`NameNoDraw` stays, informational only) |
+| `NoDiagonal` hides; animated ones are shown to gargoyles | `GameObject.CanBeDrawn`, `ChunkBaker` | `NoDraw` / `NoDrawUnlessGargoyle`; the race check stays runtime |
+| A multi item is drawn only when its display graphic > 2 | `Item.RefreshGraphicState` (`MultiGraphic > 2`) | new bit 3 `NoDrawAsMulti`; `Item.IsMultiItemDrawn` |
+
+- `GameObject.CanBeDrawn(world, g)` covers statics, items, multi components, effects, the minimap, the world map and overhead names. It is now `TileDraw.Static(StaticData[g].PackFlags, player is gargoyle)`.
+- The season swap stays runtime, and the flag is read on the swapped graphic.
+- The poc renderer bakes as for a non-gargoyle player, as before.
+- One change in the standalone poc renderer only: it used to bake 0x63D3 when the tile lacked `NoDiagonal` (its copy of the rules skipped the id rules for 0x63D3, unlike the client). It now hides 0x63D3 as the client did. The client already hid it with an override, so the client's picture does not change.
+
+**Pixel-neutral oracle.** The old client code is kept verbatim, only as an oracle, in two places:
+- the client test `TileDrawOracleTests`, through the client's own loader (`TileDataLoader.Read`) and draw functions, on the pack alone;
+- the converter's `Verify.CheckNoDraw`, on the source client's tiledata.
+
+On the 7.0.103 test pack, both report **212,992 decisions, 0 mismatches**: 16,384 land ids, 65,536 static ids × 2 player races, and 65,536 multi display graphics. Hidden: 3 land ids, 32 statics (31 for a gargoyle) and 3 multi items; 20 statics are named `nodraw`.
+
+Two portable tests go with it. One edits flags to show that no rule is left in code (0x0001 is drawn without its flag and hidden with it). The other tests the reader's validation: bad counts, sizes and name references, and the two pack 1.0 magics.
+
+**Version 0 / 1.0 packs.** There is no fallback. `ChunkBaker`'s own id rules (its version-0 fallback) are gone, and a pack without a `TILE` `tiledata.bin` fails at tiledata load with the "convert again" message. `PackAssets.Open` already required `tiledata_ext.bin`, so version-0 packs never loaded; it now requires `tiledata.bin`. Nothing still loads v0. `FileHeader.version` and the manifest version stay 1, because the magic identifies the layout.
+
+**`art/sprites.bin` partial-hue bit.** Bit 2 copied tiledata's `PartialHue`.
+- It is no longer written (`SpriteFlags.RetiredPartialHue`).
+- Nothing at runtime read it. The converter's verify and debug PNGs did, and they now take the flag from tiledata.
+- Packs before 1.1 still set it. Verify reports them (12,732 entries in the test pack, whose `sprites.bin` is hard-linked from classic-1.0) and fails on any other unknown bit.
+- A full conversion drops it.
+
+**Test pack.** A `cp -al` copy of classic-1.0, then `Uo.Converter --only tiledata --out <scratch>/tiledata-single/pack`. The converter deleted the stale `tiledata_ext.bin` from the copy, and the published files keep their bytes. `--verify-only` on everything: all checks passed.
+
+**Client parity: pixel-neutral** (bench-000045 and bench-000046; bench-000041 was cancelled before it started). f27759989 runs on CURRENT (classic-1.0), 41b109e7f on the test pack. Binaries: NativeAOT, in the scratch folder with build-info.txt. Neither job logged an exception.
+
+- **bench-000045** (one run per arm, Gpu and Legacy; Britain 1495 1629, house 1427 1691, then `[TestScene go` and the large scene at zoom 1 and 2.5). Each spot had the same position in both arms: Britain 1495,1629,Z 10 (2 mobiles, 70 items), house 1427,1691,Z 0 (4 mobiles, 59 items), large scene 5156,2150,Z 0 (1,985 mobiles, 25,161 items). Pixel diffs, new vs base, on the world layer:
+
+  | Spot | Gpu | Legacy |
+  |---|---|---|
+  | Britain | 0.000 % | 0.002 % |
+  | house | **30.180 %** | 0.331 % |
+  | large scene, zoom 1 | 7.197 % | 5.893 % |
+  | large scene, zoom 2.5 | 1.980 % | 1.719 % |
+
+  The large-scene differences are its moving mobiles, and they are about the same size on both renderers. The `_lights` layer differed by 90–98 % at Britain and the house on both renderers, because the day/night light level changed between sessions. That layer is 0 % within bench-000046.
+
+  The one real difference was the house on Gpu. Base drew the house roof, the chimneys of the bottom-left building and a tree; new hid them, as both Legacy runs did. The house-window counters were steady for the whole window: base had foliage 1, cap_statics 2, pick_tests 36 and override_calls 28; new had 0, 0, 24 and 14.
+- **bench-000046** (coordinator re-run of the house only: Gpu, base, new, base, new, base, new; same binaries and packs; a `house` shot 8 s after arrival and a `house_late` shot about 6 s later). **All three base runs hide the roof, chimneys and tree in both shots, as all three new runs do.** All six runs stood at 1427,1691,Z 0 with 4 mobiles and 59 items. The house-window counters (mean) are the same in every run: foliage 0, cap_statics 0, pick_tests 24, hidden_tiles 80, objects 218, override_calls 14, gpu_overrides 21, gpu_instances 3,069–3,070. These are new's bench-000045 values. Pairwise diffs of the world layer (min–max over the pairs):
+
+  | Pairs | house | house_late |
+  |---|---|---|
+  | base vs base (3) | 0.446–0.492 % | 0.467–0.517 % |
+  | new vs new (3) | 0.335–0.520 % | 0.427–0.472 % |
+  | new vs base (9) | 0.210–0.490 % | 0.240–0.507 % |
+
+  New vs base is no larger than base vs base. What remains is moving NPCs inside the house; the roof alone was 30 %.
+- **Verdict (A): a pre-existing race on the base side, not a branch change.** The same base binary on the same pack drew the roof once (bench-000045) and hid it in 6 of 6 later shots. Its counters moved with it (foliage 1 → 0, cap_statics 2 → 0). Gpu with the roof hidden matches Legacy. The race is probably in the roof-hiding decision for a player standing under a roof, made when the Gpu host arrives at a spot. It was not investigated; it can be reproduced with the same binary, and it does not involve this branch. Every other shot was pixel-neutral apart from motion and the light level.
+
+**Load time of the compact arrays** (from the client log, `tiledata` in the `[load]` line, bench-000046): base 2.1–2.7 ms with 6,399 KB allocated; new 2.3–2.6 ms with 6,719 KB (+320 KB for the per-tile draw flags and the compact copies). The difference is within run-to-run noise.
+
+**Open for the coordinator:** run.py printed "WARNING: password appears in the log" for every run of bench-000045 and bench-000046, on base and on new. The check is a plain substring test of `$CUO_TEST_PASSWORD` against the client log, and the client logs no password argument (`-autologin` and the encrypted settings.json only). It may be a false positive from a short password, but it was not confirmed. Please check the run logs in the two job folders.
+
+**Verification.**
+- Client builds, Release and `-p:CuoDevTools=false`: 0 errors. Uo.Converter, Uo.Render.App and Uo.Client: 0 errors.
+- `dotnet test tests/ClassicUO.UnitTests -c Release` with `CUO_TEST_PACK` set to the test pack: 982 passed, 1 skipped (the symlink test), 0 failed (4 new).
+- Without `CUO_TEST_PACK`, the two pack tests skip until CURRENT names a 1.1 pack.
+
+### Codex audit (coordinator scratchpad `astra-tiledata/out.md`) and fixes (2026-10-31)
+
+Codex (gpt-6-astra) audited 41b109e7f: one introduced finding and five inherited ones (also in f27759989). All six are fixed or decided, each with a test in `TileDataAuditTests` unless noted.
+
+1. **P1, untrusted names could exhaust memory.** A valid-sized 2,490,395-byte file could point all 81,920 entries at one 65,535-byte name, which decoded to about 10 GiB of strings. Fixed: a name reference may be at most 64 bytes (`TileDataFile.MaxNameBytes`; source names are 20 bytes) and the name table at most 5 MiB (`MaxNameTableBytes`). The references are checked before the name table is allocated. `TileDataFile.DecodeNames` decodes each distinct (offset, length) once, so shared references share the string. The converter refuses longer names. Test: the audit's file is rejected with under 4 MB allocated (the entry arrays), plus the 64/65-byte boundary, the table cap, and string sharing. No format change, so the test pack was not re-converted (its longest name is 20 bytes).
+2. **P2, the easel's visibility follows the source version, not the runtime one (introduced).** Coordinator decision, under the owner's rule that the pack's data decides: this is intended, and no runtime version rule comes back. It is documented as a deliberate behaviour change in pack-format.md ("NoDraw flags", "The easel") and data-formats.md 5.6, with how an admin changes it (edit the 0x0F65 flag in the source tiledata and rebuild). Test: the easel follows only its flag, `CanBeDrawn` takes no version, and no client or renderer source mentions 0x0F65.
+3. **P2, gargoyle-only animated statics lost their zero-offset frame on the Gpu path.** ChunkBaker leaves out statics hidden from a non-gargoyle player (e.g. 0x5683, offsets 0,1,2,3). The Gpu host replaced an animated static only when its `AnimOffset` was not 0, so a gargoyle saw nothing on the offset-0 frames. Legacy keeps animated statics out of its chunk mesh and draws them with `StaticView` on every frame. Fixed: a static the client draws but the bake omitted (`GameScene.BakeOmits`, the bake's own predicate) goes to `GpuReplaceStatic` in `CollectGpuStatic` and in the meshed branch, and counts as a walk reason (4, now "season or unbaked graphic"), so the skip mask never hides it. It is drawn through the same `StaticView` as Legacy, so its pixels are Legacy's. Only gargoyle players see a difference (for anyone else these statics are not `AllowedToDraw`). Tests: `BakeOmits` equals ChunkBaker's predicate for all 16 flag combinations, 0x5683 is omitted but drawn for a gargoyle, and on the pack 0x5683 is `NoDrawUnlessGargoyle`. Not checked in the client: the parity jobs' character is not a gargoyle, so this fix does not change their pictures (see "Client parity" above).
+4. **P2, multi components kept stale visibility across season changes.** `Multi.UpdateGraphicBySeason` now recomputes `AllowedToDraw` for the swapped graphic, like `Static`'s. `Create` relies on it. Test: a component (0x0CA7, swapped in spring) whose spring graphic is `NoDraw` is hidden in spring and shown again in summer. To make that testable, `GameObject.CanBeDrawn(world, g)` reads a `[ThreadStatic]` `TestStaticData` when no client runs.
+5. **P2, the poc client's ground items ignored draw flags.** `RenderExtract` now applies `Uo.Render.GroundItemDraw.Drawn`: `TileDraw.Static` with the player's race (gargoyle bodies 0x029A/0x029B and their ghosts 0x02B6/0x02B7) and the corpse exception (0x2006 is always drawn, as ClassicUO's `Item.AllowedToDraw = IsCorpse || CanBeDrawn`). The helper lives in Uo.Render so the unit tests can reach it. Test: flags, race, corpse, out of range, and that `RenderExtract` calls it.
+6. **P2, verify approved a pack missing `tiledata.bin`.** Fixed: when tiledata is selected, a missing `tiledata.bin` fails ("missing tiledata.bin (the pack's only tile data)"), checked before the early return. Checked by hand, not a unit test (the unit tests do not reference the converter): a hard-linked copy of the test pack's root tables without `tiledata.bin` (manifest rewritten to list only those) ends `VERIFY FAILED` with exit 2 under `--verify-only --only tiledata`, and passes under `--only hues`.
+
+**Verification.** Client builds (Release, and `-p:CuoDevTools=false`): 0 errors. Uo.Converter, Uo.Render.App, Uo.Client: 0 errors. `dotnet test tests/ClassicUO.UnitTests -c Release` with `CUO_TEST_PACK` = the test pack: 989 passed, 1 skipped, 0 failed (7 new). `--verify-only` (everything) on the test pack: all checks passed, oracle 212,992 decisions, 0 mismatches.

@@ -396,10 +396,15 @@ namespace ClassicUO.Game.GameObjects
                 )
                 {
                     LoadMulti();
-                    AllowedToDraw = MultiGraphic > 2;
+                    AllowedToDraw = IsMultiItemDrawn(Client.Game.UO.FileManager.TileData.StaticData, MultiGraphic);
                 }
             }
         }
+
+        /// <summary>Whether a multi item with this display graphic (its first component) is drawn: the pack's tiledata
+        /// draw flag. A graphic outside the table is drawn, as before.</summary>
+        internal static bool IsMultiItemDrawn(StaticTiles[] staticData, ushort multiGraphic) =>
+            multiGraphic >= staticData.Length || Uo.Pack.TileDraw.MultiItem(staticData[multiGraphic].PackFlags);
 
         public override void Update()
         {

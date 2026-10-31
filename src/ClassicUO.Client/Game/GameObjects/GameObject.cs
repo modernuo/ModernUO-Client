@@ -563,68 +563,23 @@ namespace ClassicUO.Game.GameObjects
             Incarnation++;
         }
 
+        /// <summary>Whether a static, item, multi component or effect graphic is drawn. The rules are data: the pack's
+        /// tiledata draw flags (<see cref="Uo.Pack.TilePackFlags"/>); only the player's race is decided here.</summary>
         public static bool CanBeDrawn(World world, ushort g)
         {
-            if (Client.Game == null)
+            ClassicUO.Assets.StaticTiles[] data = Client.Game != null ? Client.Game.UO.FileManager.TileData.StaticData : TestStaticData;
+
+            if (data == null)
                 return true;
 
-            switch (g)
-            {
-                case 0x0001:
-                case 0x21BC:
-                case 0xA1FE:
-                case 0xA1FF:
-                case 0xA200:
-                case 0xA201:
-                    //case 0x5690:
-                    return false;
-
-                case 0x9E4C:
-                case 0x9E64:
-                case 0x9E65:
-                case 0x9E7D:
-                    ref var data = ref Client.Game.UO.FileManager.TileData.StaticData[g];
-
-                    return !data.IsBackground && !data.IsSurface;
-            }
-
-            if (g != 0x63D3)
-            {
-                if (g >= 0x2198 && g <= 0x21A4)
-                {
-                    return false;
-                }
-
-                // Easel fix.
-                // In older clients the tiledata flag for this
-                // item contains NoDiagonal for some reason.
-                // So the next check will make the item invisible.
-                if (g == 0x0F65 && Client.Game.UO.Version < ClientVersion.CV_60144)
-                {
-                    return true;
-                }
-
-                if (g < Client.Game.UO.FileManager.TileData.StaticData.Length)
-                {
-                    ref var data = ref Client.Game.UO.FileManager.TileData.StaticData[g];
-
-                    // Hacky way to do not render "nodraw"
-                    if (!string.IsNullOrEmpty(data.Name) && data.Name.StartsWith("nodraw", StringComparison.OrdinalIgnoreCase))
-                        return false;
-
-                    if (
-                        !data.IsNoDiagonal
-                        || data.IsAnimated
-                            && world.Player != null
-                            && world.Player.Race == RaceType.GARGOYLE
-                    )
-                    {
-                        return true;
-                    }
-                }
-            }
-
-            return false;
+            return CanBeDrawn(data, g, world.Player != null && world.Player.Race == RaceType.GARGOYLE);
         }
+
+        /// <summary>Unit tests only: the static tile data <see cref="CanBeDrawn(World, ushort)"/> reads when there is no
+        /// running client (per thread, so parallel tests don't see it).</summary>
+        [ThreadStatic] internal static ClassicUO.Assets.StaticTiles[] TestStaticData;
+
+        internal static bool CanBeDrawn(ClassicUO.Assets.StaticTiles[] staticData, ushort g, bool playerIsGargoyle) =>
+            g < staticData.Length && Uo.Pack.TileDraw.Static(staticData[g].PackFlags, playerIsGargoyle);
     }
 }

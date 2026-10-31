@@ -124,8 +124,8 @@ public static class Program
     public static IMobileSprites CreateMobileSprites(PackSet pack, Options o)
     {
         var ids = o.TileDataMul == null ? PackAnimIds.TryLoad(pack.Root) : null;
-        string src = "pack tiledata_ext.bin";
-        if (ids == null) { ids = TileDataMulAnimIds.TryDefault(o.TileDataMul); src = "FALLBACK tiledata.mul read (pack has no tiledata_ext.bin)"; }
+        string src = "pack tiledata.bin";
+        if (ids == null) { ids = TileDataMulAnimIds.TryDefault(o.TileDataMul); src = "FALLBACK tiledata.mul read (pack has no tiledata.bin)"; }
         var convPath = Path.Combine(pack.Root, Uo.Pack.TableConst.EquipConvFile);
         var conv = File.Exists(convPath) ? Uo.Pack.EquipConvFile.Read(convPath) : null;
         Console.WriteLine(ids != null ? $"  equipment AnimIDs: {src}; equipconv {(conv != null ? conv.Length + " rows" : "none")}" : "  equipment AnimIDs: none: equipment is not drawn");

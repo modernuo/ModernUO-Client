@@ -238,7 +238,7 @@ UO stores animations by **file** (anim.mul, anim2–5, AnimationFrame1..N.uop) a
 
 - **Import:** `tiledata.mul` (old: 0x4000 statics, 32-bit flags; 7.0.0: 0x8000; 7.0.9+: 64-bit flags, 0x10000; detection by file size as ModernUO does).
 - **Source:** `tiledata/land.csv` (`id, name, flags, texId`) and `tiledata/static.csv` (`id, name, flags, weight, layer, count, animId, hue, lightIndex, height, …` — every field ClassicUO, ModernUO and CentrED# read, so import is lossless; the record is `flags, weight, layer, count, animId, hue, lightIndex, height, name`, T/TileDataLoader.cs:25-79). Rule flags the build used to derive at runtime are columns too (5.6).
-- **Build:** one full tiledata file (`tiledata_ext.bin` today, to become the only one); the client derives its compact arrays at load. `NoDraw` flags are written from the data, not from code.
+- **Build:** one full tiledata file, `tiledata.bin` (done in classic-1.1); the client derives its compact arrays at load. The draw flags (`NoDraw`, `NoDrawUnlessGargoyle`, `NoDrawAsMulti`) are written by the converter today (`Uo.Converter/TileRules.cs`, pack-format.md "NoDraw flags"); with a source tree they come from the `noDraw` column instead.
 - **Validation:** id ranges, known flag names, `texId` refers to an existing texmap or 0, `animId` refers to an existing body or 0.
 
 ### 4.8 Multis
@@ -328,7 +328,7 @@ ClassicUO decides many per-tile and per-graphic behaviours in code. Under the ow
 |---|---|
 | Land 0, 1, 2 never drawn; statics 0x1, 0x21BC, 0xA1FE–0xA201, 0x63D3, 0x2198–0x21A4 never drawn; 0x9E4C/0x9E64/0x9E65/0x9E7D not drawn with Background or Surface (converter ArtConvert.cs:223-245) | tiledata column `noDraw` (bool) set by the importer |
 | Names starting `nodraw` | the importer sets `noDraw` from the name once; afterwards the name no longer matters |
-| The easel 0x0F65 drawn only before client 6.0.14.4 | the importer sets `noDraw` by `imported.clientVersion` |
+| The easel 0x0F65 drawn only before client 6.0.14.4 | the importer sets `noDraw` by `imported.clientVersion` (the source's version; the runtime client-version setting no longer changes it, a deliberate change: see below) |
 | `NoDiagonal` → NoDraw, or NoDraw unless gargoyle when animated | tiledata column `noDraw` = `always` / `unlessGargoyle` |
 | Vegetation, tree/stump ("hatched") and cave lists (`StaticFilters.cs:63-111`; already seeded into editable `Data/Client/{vegetation,tree,cave}.txt`) | tiledata columns `vegetation`, `tree` (`none`/`tree`/`stump`), `cave` |
 | Rocks (`IsRock`) and field ranges: fire, paralyze, energy, poison, wall of stone (`StaticFilters.cs:276-329`) | tiledata column `kind` (`rock`, `field:fire`, …) |
@@ -342,6 +342,10 @@ ClassicUO decides many per-tile and per-graphic behaviours in code. Under the ow
 | Chairs and sitting (`ChairTable.cs`, `chair.txt`), containers (`containers.txt`), buffs (`buff.txt`), seasons (`seasons.txt`) | `tables/chairs.csv`, `containers.csv`, `buffs.csv`, `seasons.json` |
 | Default music table (`SoundsLoader.cs:143-209`, used when `Config.txt` is absent) | `music/music.csv` |
 | Custom-house hue 0x2B (`MultiView.cs:52`) | `tables/client.json` |
+
+**Done (classic-1.1):** the four draw rows above (land 0–2, the id lists, `nodraw` names, the easel, `NoDiagonal`) plus the multi item's `MultiGraphic > 2` test are per-tile flags in `tiledata.bin`, written by the converter (`TileRules`, the stand-in for the importer) and read by the client and renderer as data only (pack-format.md "NoDraw flags"). The rest of the table is still code.
+
+**The easel is a deliberate behaviour change.** ClassicUO decided it with the runtime client-version setting; the pack now decides it with the version of the client it was converted from, and the runtime setting has no effect. They differ only when the profile's version and the source's are on opposite sides of 6.0.14.4. That is the owner's rule (the pack's data decides, not code). An admin who wants the easel shown or hidden edits its flag in the source tiledata (`noDraw` for 0x0F65; today `packFlags` bit 0 in `tiledata.bin`) and rebuilds the pack (pack-format.md "NoDraw flags").
 
 The importer is the only code that knows these rules; it writes them as data once. After import, an admin flips `noDraw` per tile. The client's editable `Data/Client/*.txt` files (cave, vegetation, tree, chair, lights, lightshaders, buff, seasons, containers) are already data; they move into the source tree and the pack so a shard ships one set, and the client stops seeding them from code. Movement rules (the pathfinder's id lists) also matter to the server and must match it; Q6 covers how the server reads the same data. This list was sampled by grep and is not complete: `Mobile.cs`, `MobileView.cs`, `GameScene.cs` and `World.cs` were not read in full.
 

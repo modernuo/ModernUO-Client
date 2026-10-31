@@ -117,6 +117,22 @@ namespace ClassicUO.Game.Scenes
             return _gpuStaticRemap != null ? _gpuStaticRemap[st.OriginalGraphic] : st.OriginalGraphic;
         }
 
+        // ChunkBaker leaves out statics whose draw flags hide them from a non-gargoyle player; when the client draws one
+        // anyway (a gargoyle player and NoDrawUnlessGargoyle), there is no baked sprite to show, so the list fill draws it
+        // like Legacy's StaticView does, on every animation frame.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool GpuBakeOmits(Static st)
+        {
+            return BakeOmits(Client.Game.UO.FileManager.TileData.StaticData, GpuBakedGraphic(st));
+        }
+
+        /// <summary>Whether ChunkBaker leaves the baked graphic <paramref name="g"/> out (its predicate: the pack's draw flags
+        /// for a non-gargoyle player).</summary>
+        internal static bool BakeOmits(ClassicUO.Assets.StaticTiles[] staticData, int g)
+        {
+            return (uint)g >= (uint)staticData.Length || !Uo.Pack.TileDraw.Static(staticData[g].PackFlags, playerIsGargoyle: false);
+        }
+
         /// <summary>Recomputes an object's screen position for the current camera (the Gpu prepare skips baked objects).</summary>
         public void RefreshScreenPosition(GameObject obj)
         {
@@ -294,7 +310,7 @@ namespace ClassicUO.Game.Scenes
 
         // CUO_GPU_SKIP_CHECK: how many baked objects needed the walk, by reason (logged with the check)
         private static readonly int[] _gpuWalkReasons = new int[8];
-        private static readonly string[] _gpuWalkReasonNames = { "", "not drawable", "text", "high land", "season graphic", "translucent mismatch", "light", "high static" };
+        private static readonly string[] _gpuWalkReasonNames = { "", "not drawable", "text", "high land", "season or unbaked graphic", "translucent mismatch", "light", "high static" };
 
         private static int GpuWalkReason(GameObject obj)
         {
@@ -316,7 +332,7 @@ namespace ClassicUO.Game.Scenes
             var st = (Static)obj;
             ref var data = ref st.ItemData;
 
-            if (st.Graphic != GpuBakedGraphic(st))
+            if (st.Graphic != GpuBakedGraphic(st) || GpuBakeOmits(st))
             {
                 return 4;
             }

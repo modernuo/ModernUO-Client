@@ -66,6 +66,7 @@ public sealed class RenderExtract
         var sprites = _pack.Sprites;
         var staticData = _pack.Statics;
         var cap = Instances.Length;
+        bool gargoyle = PlayerIsGargoyle();
 
         // ---- ground items (static art + hue)
         foreach (var (pos, gfx, hue, _) in _itemQ.Chunks)
@@ -74,7 +75,7 @@ public sealed class RenderExtract
             for (int i = 0; i < ps.Length && Count < cap; i++)
             {
                 int g = gs[i].Value;
-                if (g >= staticData.Length) continue;
+                if (!GroundItemDraw.Drawn(staticData, g, gargoyle)) continue;
                 ref readonly var sp = ref sprites[PackConst.StaticSpriteBase + g];
                 if (!sp.Present) continue;
                 ref readonly var p = ref ps[i];
@@ -87,7 +88,7 @@ public sealed class RenderExtract
                 if ((flags & TileFlag.Background) != 0) pz--;
                 if (staticData[g].Height != 0) pz++;
                 if ((flags & TileFlag.MultiMovable) != 0) pz++;
-                if (g == 0x2006) pz = p.Z + 1; // corpse
+                if (g == GroundItemDraw.CorpseGraphic) pz = p.Z + 1; // corpse
                 Emit(x, y, sp, hs[i].Value, (flags & TileFlag.PartialHue) != 0, BakeJob.DepthKey(p.X, p.Y, pz, 6), pages, frame);
                 ItemsDrawn++;
             }
@@ -97,6 +98,13 @@ public sealed class RenderExtract
         ExtractMobiles(_playerQ, true, view, pages, frame, now, cap);
         ExtractMobiles(_mobileQ, false, view, pages, frame, now, cap);
         Ticks = Stopwatch.GetTimestamp() - t0;
+    }
+
+    bool PlayerIsGargoyle()
+    {
+        foreach (var (_, _, gfx, _, _, _) in _playerQ.Chunks)
+            if (gfx.Span.Length > 0) return GroundItemDraw.IsGargoyleBody(gfx.Span[0].Value);
+        return false;
     }
 
     void ExtractMobiles(ArchetypeQuery<Position, Motion, Graphic, Hue, Facing> q, bool isPlayer, in RectI view, PageResidency pages, long frame, long now, int cap)

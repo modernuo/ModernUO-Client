@@ -5,20 +5,25 @@ using Uo.Pack;
 
 namespace Uo.Converter;
 
-/// <summary>Format 1.0 game data tables: full tiledata, raw hues, radarcol, multis, lights, tileart appearances, Equipconv.def.</summary>
+/// <summary>Game data tables: tiledata (the single file, with the converter-derived draw flags), raw hues, radarcol, multis,
+/// lights, tileart appearances, Equipconv.def.</summary>
 public static class TableConvert
 {
-    public static string TileDataExt(UOFileManager fm, string outDir)
+    public static string TileData(UOFileManager fm, string outDir)
     {
         var land = fm.TileData.LandData;
         var stat = fm.TileData.StaticData;
         var names = new string?[land.Length + stat.Length];
         for (int i = 0; i < land.Length; i++) names[i] = land[i].Name;
         for (int i = 0; i < stat.Length; i++) names[land.Length + i] = stat[i].Name;
-        var table = TileDataExtFile.BuildNames(names, out var refs);
+        var table = TileDataFile.BuildNames(names, out var refs);
         var l = new LandTileInfo[land.Length];
         for (int i = 0; i < l.Length; i++)
-            l[i] = new LandTileInfo { Flags = (ulong)land[i].Flags, TexId = land[i].TexID, NameOffset = refs[i].Offset, NameLength = refs[i].Length };
+            l[i] = new LandTileInfo
+            {
+                Flags = (ulong)land[i].Flags, TexId = land[i].TexID, NameOffset = refs[i].Offset, NameLength = refs[i].Length,
+                PackFlags = TileRules.Land(i, land[i]),
+            };
         var s = new StaticTileInfo[stat.Length];
         for (int i = 0; i < s.Length; i++)
         {
@@ -28,10 +33,14 @@ public static class TableConvert
             {
                 Flags = (ulong)t.Flags, Weight = t.Weight, Layer = t.Layer, Count = t.Count, AnimId = t.AnimID, Hue = t.Hue,
                 LightIndex = t.LightIndex, Height = t.Height, NameOffset = r.Offset, NameLength = r.Length,
+                PackFlags = TileRules.Static(i, stat, fm.Version),
             };
         }
-        var path = Path.Combine(outDir, TableConst.TileDataExtFile);
-        TileDataExtFile.Write(path, l, s, table);
+        var path = Path.Combine(outDir, TableConst.TileDataFile);
+        TileDataFile.Write(path, l, s, table);
+        // tiledata_ext.bin is retired (tiledata.bin is the only tile data file). Drop a stale copy, e.g. one hard-linked
+        // from an older pack into an --only output, so the manifest does not list it. Deleting a hard link leaves the source intact.
+        PackOutputFiles.Delete(Path.Combine(outDir, TableConst.TileDataExtFileRetired));
         return $"{l.Length} land, {s.Length} statics, names {table.Length} B; {new FileInfo(path).Length} B";
     }
 

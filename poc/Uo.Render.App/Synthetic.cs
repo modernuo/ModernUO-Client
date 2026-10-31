@@ -97,17 +97,18 @@ public static class Synthetic
         SpriteTable.Write(Path.Combine(root, "tex", "texmaps.bin"), texEntries);
 
         // --- tiledata
-        var land = new LandTileData[PackConst.LandTileCount];
+        var land = new LandTileInfo[PackConst.LandTileCount];
+        for (int i = 0; i <= 2; i++) land[i].PackFlags = TilePackFlags.NoDraw; // as the converter writes land 0..2
         land[3].TexId = 1;
         land[5].Flags = 0x80; // wet
-        var stat = new StaticTileData[0x10000];
-        stat[0x100] = new StaticTileData { Height = 20 };
-        stat[0x101] = new StaticTileData { Height = 20, Flags = 0x10 };
-        stat[0x102] = new StaticTileData { Height = 5 };
-        stat[0x103] = new StaticTileData { Height = 5, Flags = 0x00040000 };
-        stat[0x200] = new StaticTileData { Height = 0, Flags = 0x1 };
-        stat[0x201] = new StaticTileData { Height = 0, Flags = 0x20000 };
-        TileDataFile.Write(Path.Combine(root, "tiledata.bin"), land, stat);
+        var stat = new StaticTileInfo[0x10000];
+        stat[0x100] = new StaticTileInfo { Height = 20 };
+        stat[0x101] = new StaticTileInfo { Height = 20, Flags = 0x10 };
+        stat[0x102] = new StaticTileInfo { Height = 5 };
+        stat[0x103] = new StaticTileInfo { Height = 5, Flags = 0x00040000 };
+        stat[0x200] = new StaticTileInfo { Height = 0, Flags = 0x1 };
+        stat[0x201] = new StaticTileInfo { Height = 0, Flags = 0x20000 };
+        TileDataFile.Write(Path.Combine(root, TableConst.TileDataFile), land, stat, []);
 
         // --- hues: 3000 entries of a 15-bit ramp toward a per-entry color (hues_raw.bin; the renderer builds the LUT)
         const int hueCount = 3000;
