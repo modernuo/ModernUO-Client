@@ -803,7 +803,8 @@ namespace ClassicUO
 
         private static string TextStats() =>
             $"text: unicode pages read {Assets.FontsLoader.StatPageLoads - _textPages0} ({(Assets.FontsLoader.StatPageTicks - _textTicks0) * 1000.0 / Stopwatch.Frequency:0.000} ms), " +
-            $"ASCII fonts read {Assets.FontsLoader.StatAsciiLoads - _textAscii0}, cliloc strings created {ClilocStrings() - _textStrings0} " +
+            $"ASCII fonts read {Assets.FontsLoader.StatAsciiLoads - _textAscii0}, cliloc strings created {ClilocStrings() - _textStrings0}; " +
+            $"since startup: unicode pages {Assets.FontsLoader.StatPageLoads} ({Assets.FontsLoader.StatPageTicks * 1000.0 / Stopwatch.Frequency:0.000} ms), ASCII fonts {Assets.FontsLoader.StatAsciiLoads}, cliloc strings {ClilocStrings()} " +
             $"(fonts {(Client.Game.UO.FileManager.Fonts.UnicodeFromPack ? "pack" : "MUL")}, cliloc {(Client.Game.UO.FileManager.Clilocs.FromPack ? "pack" : "MUL")})";
 
         private static void RenderTooltips(World world, int count)
@@ -1557,7 +1558,7 @@ namespace ClassicUO
                     _travelAt = now + sec / 4;
                 }
 
-                else if (mode == "gumpopen")
+                else if (mode == "gumpopen" || mode == "lsgumpopen")
                 {
                     GumpOpenFrame(game, world, now);
                 }
@@ -1993,7 +1994,7 @@ namespace ClassicUO
                             switch (g)
                             {
                                 case Game.UI.Gumps.JournalGump: g.X = 20; g.Y = 560; break;
-                                case Game.UI.Gumps.Gump sg when sg.GetType() == typeof(Game.UI.Gumps.Gump) && sg.ServerSerial != 0: sg.X = 1300; sg.Y = 60; break;
+                                case Game.UI.Gumps.Gump sg when sg.GetType() == typeof(Game.UI.Gumps.Gump) && sg.ServerSerial != 0: sg.X = 700; sg.Y = 60; break;
                             }
                         }
 
@@ -2201,7 +2202,7 @@ namespace ClassicUO
                         gs.Camera.Zoom = zoom;
                     }
 
-                    GameActions.Say(mode == "bwalk" ? "[go 1495 1528" : mode == "lswalk" || mode == "lsreinit" ? "[go 5156 2150" : mode == "travel" || mode == "walk" || mode == "bodies" || mode == "ltravel" || mode == "glide" || mode == "reinit" || mode == "reinitrt" || mode == "ui" || mode == "gumpopen" ? "[go 1495 1629" : $"[go {mode}");
+                    GameActions.Say(mode == "bwalk" ? "[go 1495 1528" : mode == "lswalk" || mode == "lsreinit" || mode == "lsgumpopen" ? "[go 5156 2150" : mode == "travel" || mode == "walk" || mode == "bodies" || mode == "ltravel" || mode == "glide" || mode == "reinit" || mode == "reinitrt" || mode == "ui" || mode == "gumpopen" ? "[go 1495 1629" : $"[go {mode}");
                     _step = 2;
                     _stepAt = now + sec * 8;
 
