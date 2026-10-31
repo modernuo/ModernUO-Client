@@ -39,7 +39,10 @@ namespace ClassicUO.Assets
             Lights = new LightsLoader(this);
             Verdata = new VerdataLoader(this);
             TileArt = new TileArtLoader(this);
+            Gumps = new GumpsLoader(this);
         }
+
+        public GumpsLoader Gumps { get; }
 
         public ClientVersion Version { get; }
         public string BasePath { get; }
@@ -72,6 +75,7 @@ namespace ClassicUO.Assets
             Lights.Dispose();
             Verdata.Dispose();
             TileArt.Dispose();
+            Gumps.Dispose();
         }
 
         public string GetUOFilePath(string file)
