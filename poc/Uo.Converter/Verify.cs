@@ -18,6 +18,47 @@ public static class Verify
         if (Interlocked.Increment(ref _errors) <= 30) Console.WriteLine("  FAIL " + msg);
     }
 
+    /// <summary>
+    /// Every gump slot of the client's index (gump.def and loose files applied) against the pack: present or not, size,
+    /// and the RGBA8 image with the alias hue, exactly as ClassicUO's GumpsLoader.GetGump produces it.
+    /// </summary>
+    public static void CheckGumps(UOFileManager fm, string outDir)
+    {
+        var loader = fm.Gumps;
+        if (loader.File == null) loader.Load();
+        using var store = RecordStore.Open(Path.Combine(outDir, StoreConst.GumpsFile), StoreConst.MagicGumps);
+        if (((store.Header.Flags & StoreConst.GumpFlagUop) != 0) != loader.UseUOPGumps) Fail("gumps: UOP flag");
+        int slots = loader.File!.Entries.Length, present = 0, bad = 0, hued = 0;
+        var raw = new byte[1 << 20];
+        var mine = new uint[1 << 16];
+        for (int id = 0; id < slots; id++)
+        {
+            var g = loader.GetGump((uint)id);
+            bool has = store.TryGet(id, out var slot, out var rec);
+            if (g.Pixels.IsEmpty != !has) { if (bad++ < 5) Fail($"gump {id}: present {!g.Pixels.IsEmpty} vs pack {has}"); continue; }
+            if (!has) continue;
+            present++;
+            if (rec.Meta0 != g.Width || rec.Meta1 != g.Height) { if (bad++ < 5) Fail($"gump {id}: size {rec.Meta0}x{rec.Meta1} vs {g.Width}x{g.Height}"); continue; }
+            if (raw.Length < rec.RawBytes) raw = new byte[rec.RawBytes];
+            if (mine.Length < g.Width * g.Height) mine = new uint[g.Width * g.Height];
+            store.Read(rec, raw);
+            ReadOnlySpan<ushort> shades = default;
+            if (slot.Arg != 0 && slot.Arg < fm.Hues.HuesCount)
+            {
+                int h = slot.Arg - 1;
+                var t = new ushort[32];
+                for (int k = 0; k < 32; k++) t[k] = fm.Hues.HuesRange[h >> 3].Entries[h & 7].ColorTable[k];
+                shades = t;
+                hued++;
+            }
+            var dst = mine.AsSpan(0, g.Width * g.Height);
+            if (!GumpCodec.Decode(rec.Meta2, raw.AsSpan(0, (int)rec.RawBytes), g.Width, g.Height, dst, GumpExperiments.Lut, GumpExperiments.Expand, shades)) { if (bad++ < 5) Fail($"gump {id}: decode"); continue; }
+            if (!dst.SequenceEqual(g.Pixels)) { if (bad++ < 5) Fail($"gump {id}: pixels differ"); }
+        }
+        if (bad > 5) Fail($"gumps: {bad} mismatching ids in total");
+        Console.WriteLine($"  gumps: {slots} slots checked, {present} present ({hued} hued), {store.Records.Length} records: presence, size and RGBA pixels {(bad == 0 ? "EXACT" : "MISMATCH")} vs GumpsLoader.GetGump");
+    }
+
     public static bool Run(UOFileManager fm, string outDir, Dictionary<string, object> stats)
     {
         _errors = 0;
@@ -33,6 +74,7 @@ public static class Verify
         Console.WriteLine($"  manifest: {manifest.Files.Count} files, {manifest.Facets.Count} facets, hashes checked");
 
         if (Want("anims") && File.Exists(Path.Combine(outDir, "anim", AnimTableFile.FileName))) CheckAnim(fm, Path.Combine(outDir, "anim"));
+        if (Want("gumps") && File.Exists(Path.Combine(outDir, StoreConst.GumpsFile))) CheckGumps(fm, outDir);
         if (!File.Exists(Path.Combine(outDir, "tiledata.bin")))
         {
             Console.WriteLine(_errors == 0 ? "  all checks passed" : $"  {_errors} errors");

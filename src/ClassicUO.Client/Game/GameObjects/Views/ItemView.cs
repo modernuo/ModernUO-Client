@@ -446,6 +446,20 @@ namespace ClassicUO.Game.GameObjects
             }
         }
 
+        /// <summary>The draw offset the view (from the atlas UV) and ItemSpriteExtract (from the pack) store for art of this size.</summary>
+        internal static void PickEntryFromSize(int width, int height, out int entryWidth, out int entryHeight)
+        {
+            entryWidth = (short)((width >> 1) - 22);
+            entryHeight = (short)(height - 44);
+        }
+
+        /// <summary>
+        /// The item pick test's reject: the mouse (relative to the art's top left) is outside the art drawn with that
+        /// offset, (Width + 23) * 2 by Height + 44 pixels, including the stack's second sprite 5 px further.
+        /// </summary>
+        internal static bool OutsidePickBounds(int entryWidth, int entryHeight, int mouseX, int mouseY)
+            => mouseX < -5 || mouseY < -5 || mouseX >= (entryWidth + 23) * 2 || mouseY >= entryHeight + 44;
+
         public override bool CheckMouseSelection()
         {
             if (!IsCorpse)
@@ -487,6 +501,20 @@ namespace ClassicUO.Game.GameObjects
 
                 ref ArtEntry index = ref Client.Game.UO.FileManager.Arts.GetEntry(graphic + 0x4000);
 
+                // an item seen for the first time has no stored draw offset yet: store the one the view and ItemSpriteExtract
+                // store when they draw it (from the pack's sprite size), so the reject below works before the first draw
+                // instead of decoding the art of every new item in the walk (its art decodes on a worker, FirstSightArt). A
+                // sprite the pack lacks, and CUO_ART_SYNC=1, keep the old path
+                var packSprites = Client.Game.UO.FileManager.Arts.PackSpriteEntries;
+                uint spriteIdx = graphic + 0x4000u;
+                bool sized = (index.Width | index.Height) != 0;
+
+                if (!sized && global::ClassicUO.Game.Map.Map.ArtWait && spriteIdx < (uint)packSprites.Length && packSprites[spriteIdx].OrigW != 0 && packSprites[spriteIdx].OrigH != 0)
+                {
+                    PickEntryFromSize(packSprites[spriteIdx].OrigW, packSprites[spriteIdx].OrigH, out index.Width, out index.Height);
+                    sized = true;
+                }
+
                 Point position = RealScreenPosition;
                 position.X += (int)Offset.X;
                 position.Y += (int)(Offset.Y + Offset.Z);
@@ -494,13 +522,18 @@ namespace ClassicUO.Game.GameObjects
                 position.Y -= index.Height;
 
                 // the drawn art is at most (Width + 23) * 2 by Height + 44 pixels (the view and ItemSpriteExtract store
-                // those offsets when they draw it; 0, 0 = not drawn yet or 44 x 44), and a stack is tested 5 px further:
+                // those offsets when they draw it; 0, 0 = not drawn yet or 44 x 44, unless sized from the pack above), and
+                // a stack is tested 5 px further:
                 // reject the mouse outside that before the art lookup (most of the per-item picking cost in big scenes)
                 int mouseX = SelectedObject.TranslatedMousePositionByViewport.X - position.X;
                 int mouseY = SelectedObject.TranslatedMousePositionByViewport.Y - position.Y;
 
-                if ((index.Width | index.Height) != 0 && (mouseX < -5 || mouseY < -5 || mouseX >= (index.Width + 23) * 2 || mouseY >= index.Height + 44))
+                if (sized && OutsidePickBounds(index.Width, index.Height, mouseX, mouseY))
                 {
+                    // not under the mouse: its art (the frame drawn now) decodes on a worker if it isn't in the atlas yet
+                    // (an item whose graphic changed in place, an atlas reload); an item under the mouse decodes below
+                    global::ClassicUO.Game.Map.FirstSightArt.RequestStatic(graphic, frames: false);
+
                     if (Scenes.PrepCheck.On)
                     {
                         Scenes.PrepCheck.PicksRejected++;

@@ -34,6 +34,12 @@ namespace ClassicUO.Renderer
             out Rectangle pr
         )
         {
+            // a rect that can't fit an empty page would otherwise make a new page forever
+            if (width <= 0 || height <= 0 || width > _width || height > _height || (long)width * height > pixels.Length)
+            {
+                throw new ArgumentOutOfRangeException(nameof(width), $"sprite {width}x{height} ({pixels.Length} texels) can't go into a {_width}x{_height} atlas");
+            }
+
             var index = _textureList.Count - 1;
 
             if (index < 0)
@@ -42,10 +48,15 @@ namespace ClassicUO.Renderer
                 CreateNewTexture2D();
             }
 
-            while (!_packer.PackRect(width, height, out pr))
+            if (!_packer.PackRect(width, height, out pr))
             {
                 CreateNewTexture2D();
                 index = _textureList.Count - 1;
+
+                if (!_packer.PackRect(width, height, out pr))
+                {
+                    throw new InvalidOperationException($"sprite {width}x{height} doesn't fit an empty {_width}x{_height} atlas page");
+                }
             }
 
             Texture2D texture = _textureList[index];

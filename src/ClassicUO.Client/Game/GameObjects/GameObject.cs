@@ -123,6 +123,11 @@ namespace ClassicUO.Game.GameObjects
 
         public void AddToTile(int x, int y)
         {
+            if (!IsDestroyed)
+            {
+                RequestFirstSightArt();
+            }
+
             // a chunk that is not loaded yet does not load here (a teleport's packet burst used to load dozens in one
             // frame): the map keeps the object and adds it to (x, y) when the chunk loads (Map.Park)
             if (!IsDestroyed && World.Map != null && World.Map.Park(this, x, y))
@@ -137,6 +142,12 @@ namespace ClassicUO.Game.GameObjects
 
             AddToTile(World.Map?.GetChunk(x, y), x % 8, y % 8);
         }
+
+        /// <summary>
+        /// Placed on the map (AddToTile, parked or not): ground items and multi components request their art from the
+        /// first-sight workers here (FirstSightArt), since the chunk loader's block scan never sees them.
+        /// </summary>
+        protected virtual void RequestFirstSightArt() { }
 
         /// <summary>The map block this object is parked on, waiting for the chunk to load (Map.Park); -1 when not parked.</summary>
         public int PendingBlock = -1;

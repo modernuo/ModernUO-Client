@@ -127,7 +127,8 @@ Driven by environment variables. Read the header comment in DevBench.cs for the 
 - `healthbars` (bars for the player and the 3 nearest mobiles), `minimap` (opens the minimap gump), `uicache:on|off` (B8), plan mode `ui` (`name:ui[:zoom]`: a loop of scripted UI changes while measuring, [testing/ui-batcher.md](testing/ui-batcher.md));
 - `effect:x y z:graphic[:blend]`, `moving:`, `shot:name`, `season:`, `itemhue:`, `ghost:on|off`, `chair:hex|off` (a client-side chair under the player), `water:on|off` (animated water), `outrange:on|off` (NoColorObjectsOutOfRange), `range:N` (the client view range, as the server's 0xC8) (local-only render checks);
 - `ecsdump:<hex serial>|player|nearest` (logs `[ecsdump]` lines: that serial's ECS entity, every component, the equipment slots with serials, pushed vs recomputed inputs and animation state, each next to the legacy object's values; [testing/ecs-animation.md](testing/ecs-animation.md));
-- `gumpok` (confirms a server confirmation gump).
+- `gumpok` (confirms a server confirmation gump);
+- plan mode `gumpopen` (`name:gumpopen`: opens large windows one by one in a fresh client and logs their gump decode cost, then a picker check; `CUO_BENCH_GUMPOPEN` sets the list) and `eqhue:hex,…` (hues the player's equipped items locally), [testing/pack-loading.md](testing/pack-loading.md) §6. `CUO_PACK_GUMPS=0` reads gumps from MUL/UOP even when the pack has them; `CUO_GUMP_SYNC=1` turns off worker gump decodes.
 
 ## Standard checks
 

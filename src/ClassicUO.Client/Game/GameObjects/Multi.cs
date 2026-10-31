@@ -74,6 +74,17 @@ namespace ClassicUO.Game.GameObjects
         {
             Graphic = SeasonManager.GetSeasonGraphic(World.Season, _originalGraphic);
             IsVegetation = StaticFilters.IsVegetation(Graphic);
+
+            if (TileChunk != null || PendingBlock >= 0)
+            {
+                RequestFirstSightArt(); // a season change on a placed component: the new graphic
+            }
+        }
+
+        // house and boat components are built from the multi data after their chunk was: request their art when placed
+        protected override void RequestFirstSightArt()
+        {
+            global::ClassicUO.Game.Map.FirstSightArt.RequestPlaced(Graphic);
         }
 
         public override void Destroy()
