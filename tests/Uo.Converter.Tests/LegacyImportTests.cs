@@ -603,6 +603,93 @@ public sealed class LegacyImportTests : IDisposable
         });
     }
 
+    // Codex round 2, finding 1: a maps-only pack (no tiledata.bin, as --only maps permits) still gets every map check,
+    // through Verify.Run itself.
+
+    [Fact]
+    public void Verify_Run_Checks_The_Maps_Of_A_Maps_Only_Pack_Without_Tiledata()
+    {
+        // too narrow: the source holds 1456x1448, the pack 1448x1448
+        WriteBaseFacet(columns: Bw + 1);
+        var fm = new UOFileManager(Cv("4.0.11c"), _uo);
+        RunMapsOnly(fm, [Facet], [Facet]).Should().BeFalse();
+        Verify.Failures.Should().Contain(f => f.Contains("pack 1448x1448") && f.Contains("holds 1456x1448"));
+
+        // missing facet: the source has map2.mul, the pack has only facet 4
+        WriteBaseFacet();
+        Write("map2.mul", new byte[2304 / 8 * 1600 / 8 * 196]);
+        fm = new UOFileManager(Cv("4.0.11c"), _uo);
+        RunMapsOnly(fm, [Facet], [2, Facet]).Should().BeFalse();
+        Verify.Failures.Should().Contain(f => f.Contains("pack has no facet 2"));
+
+        // the right pack passes, also without tiledata.bin
+        RunMapsOnly(fm, [Facet], [Facet]).Should().BeTrue(string.Join("; ", Verify.Failures));
+        File.Exists(Path.Combine(_out, TableConst.TileDataFile)).Should().BeFalse();
+    }
+
+    /// <summary>Converts <paramref name="convert"/> into an empty pack with a manifest, then runs Verify.Run as
+    /// <c>--only maps --facets ...</c> would.</summary>
+    private bool RunMapsOnly(UOFileManager fm, int[] convert, HashSet<int> facets)
+    {
+        Directory.Delete(_out, recursive: true);
+        Directory.CreateDirectory(_out);
+        var manifest = new Manifest();
+        foreach (int f in convert)
+        {
+            MapConvert.Facet(fm, f, _out);
+            manifest.Facets.Add(FacetFileIo.Read(Path.Combine(_out, "map", f.ToString())));
+        }
+
+        ManifestFileIo.Write(Path.Combine(_out, "manifest.json"), manifest);
+        var oldOnly = Verify.Only;
+        Verify.Only = ["maps"];
+        bool ok = false;
+        try { WithFacets(facets, () => ok = Verify.Run(fm, _out, new())); }
+        finally { Verify.Only = oldOnly; }
+        return ok;
+    }
+
+    // Codex round 2, finding 2: the manifest's facet index chooses the source; a facet directory copied under another
+    // index with its own facet.json must fail, even when its blocks would match that other facet's source.
+
+    [Fact]
+    public void Verify_Fails_A_Facet_Directory_Copied_Under_Another_Index()
+    {
+        // below 6.0 Trammel is map0 (no mapdif1 here), so a copied Felucca matches Trammel's source block for block
+        const int columns = 64, w = columns * 8;
+        var map0 = new byte[columns * (4096 / 8) * 196];
+        for (int b = 0; b < columns * (4096 / 8); b++) Block(3, 0).CopyTo(map0, b * 196);
+        Write("map0.mul", map0);
+        var fm = new UOFileManager(Cv("4.0.11c"), _uo);
+        fm.Maps.MapsDefaultSize[0, 0] = fm.Maps.MapsDefaultSize[1, 0] = w; // a 512-wide facet from the file size
+        SourceFacets.For(fm, [0, 1]).Select(e => (e.Facet, e.Width, e.Height, e.Problem)).Should().Equal((0, w, 4096, (string?)null), (1, w, 4096, (string?)null));
+
+        MapConvert.Facet(fm, 0, _out);
+        string d0 = Path.Combine(_out, "map", "0"), d1 = Path.Combine(_out, "map", "1");
+        Directory.CreateDirectory(d1);
+        foreach (var file in Directory.GetFiles(d0)) File.Copy(file, Path.Combine(d1, Path.GetFileName(file)));
+        var f0 = FacetFileIo.Read(d0);
+        FacetFileIo.Read(d1).Index.Should().Be(0, "the copy keeps facet 0's metadata");
+        var claimed = FacetFileIo.Read(d1);
+        claimed.Index = 1; // the manifest says Trammel
+        var manifest = new Manifest { Facets = [f0, claimed] };
+        WithFacets([0, 1], () =>
+        {
+            Verify.Reset();
+            Verify.CheckMaps(fm, _out, manifest, new()).Should().BeGreaterThan(0);
+            Verify.Failures.Should().Contain(f => f.Contains("facet 1: facet.json says facet 0"));
+        });
+
+        // the real Trammel passes
+        MapConvert.Facet(fm, 1, _out);
+        manifest = new Manifest { Facets = [f0, FacetFileIo.Read(d1)] };
+        WithFacets([0, 1], () =>
+        {
+            Verify.Reset();
+            Verify.CheckMaps(fm, _out, manifest, new()).Should().Be(0, string.Join("; ", Verify.Failures));
+        });
+    }
+
     private List<string> ConvertAndCheckMaps()
     {
         var fm = new UOFileManager(Cv("4.0.11c"), _uo);
@@ -630,6 +717,7 @@ public sealed class LegacyImportTests : IDisposable
     public void Verify_Fails_A_6144_Wide_Felucca_Built_From_The_7168_Wide_Uoml_Map0()
     {
         var uo = Environment.GetEnvironmentVariable("CUO_LEGACY_UO")!;
+        File.Exists(Path.Combine(uo, "map0.mul")).Should().BeTrue($"CUO_LEGACY_UO ({uo}) is set, so it must hold a pre-UOP install's map0.mul");
         var fm = new UOFileManager(Cv("4.0.11c"), uo);
         fm.Maps.MapsDefaultSize[0, 0] = 6144; // what ClassicUO's version rule (below CV_4011D) produced before the fix
         int oldMax = ConvertOptions.MaxRegions;
@@ -727,13 +815,14 @@ public sealed class LegacyImportTests : IDisposable
     }
 }
 
-/// <summary>Runs only when CUO_LEGACY_UO names a pre-UOP install (read-only); otherwise reported as skipped.</summary>
+/// <summary>Runs when CUO_LEGACY_UO is set (a pre-UOP install, read-only); skipped only while it is unset. A set path
+/// without map0.mul fails the test rather than skipping it.</summary>
 public sealed class LegacyUoFactAttribute : FactAttribute
 {
     public LegacyUoFactAttribute()
     {
         var uo = Environment.GetEnvironmentVariable("CUO_LEGACY_UO");
-        if (string.IsNullOrEmpty(uo) || !File.Exists(Path.Combine(uo, "map0.mul")))
-            Skip = "CUO_LEGACY_UO does not name a pre-UOP install with map0.mul";
+        if (string.IsNullOrEmpty(uo))
+            Skip = "CUO_LEGACY_UO is not set (a pre-UOP install with map0.mul)";
     }
 }

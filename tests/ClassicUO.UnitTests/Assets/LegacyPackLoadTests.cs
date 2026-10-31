@@ -9,9 +9,10 @@ using Xunit;
 namespace ClassicUO.UnitTests.Assets
 {
     // The client loading a pack converted from a pre-UOP install (UOML, client 4.0.11c): 0x4000 statics, five facets with
-    // Trammel built from map0 + mapdif1, 7168-wide Felucca/Trammel, 12-byte multis. Runs only when CUO_LEGACY_PACK names
-    // such a pack and CUO_LEGACY_UO its install (read-only, for the map diff check); otherwise it is reported as skipped.
-    // UO data is never committed.
+    // Trammel built from map0 + mapdif1, 7168-wide Felucca/Trammel, 12-byte multis. Runs when CUO_LEGACY_PACK names such
+    // a pack and CUO_LEGACY_UO its install (read-only, for the map diff check). Skipped only while either variable is
+    // unset: once they are set, a missing manifest.json or source file is a failure, so a conversion that did not produce
+    // its configured fixture cannot pass as skipped. UO data is never committed.
     public class LegacyPackLoadTests
     {
         private static readonly string Pack = Environment.GetEnvironmentVariable("CUO_LEGACY_PACK");
@@ -20,6 +21,13 @@ namespace ClassicUO.UnitTests.Assets
         [LegacyPackFact]
         public void Client_Loads_A_Pack_Converted_From_A_Pre_Uop_Install()
         {
+            File.Exists(Path.Combine(Pack, "manifest.json")).Should().BeTrue($"CUO_LEGACY_PACK ({Pack}) is set, so it must hold a converted pack");
+
+            foreach (var name in new[] { "map0.mul", "mapdifl1.mul", "mapdif1.mul" })
+            {
+                File.Exists(Path.Combine(Uo, name)).Should().BeTrue($"CUO_LEGACY_UO ({Uo}) is set, so it must hold the pre-UOP install's {name}");
+            }
+
             ClientVersionHelper.IsClientVersionValid("4.0.11c", out var cv).Should().BeTrue();
             using var pack = PackAssets.Open(Pack);
             var fm = new UOFileManager(cv, Uo, pack);
@@ -80,20 +88,21 @@ namespace ClassicUO.UnitTests.Assets
         }
     }
 
-    /// <summary>Skips (rather than passes) when the legacy pack or install is not available.</summary>
+    /// <summary>Skips (rather than passes) while the legacy pack or install is not configured. A configured path that
+    /// lacks its files is not skipped: the test fails on it.</summary>
     public sealed class LegacyPackFactAttribute : FactAttribute
     {
         public LegacyPackFactAttribute()
         {
             string pack = Environment.GetEnvironmentVariable("CUO_LEGACY_PACK"), uo = Environment.GetEnvironmentVariable("CUO_LEGACY_UO");
 
-            if (string.IsNullOrEmpty(pack) || !File.Exists(Path.Combine(pack, "manifest.json")))
+            if (string.IsNullOrEmpty(pack))
             {
-                Skip = "CUO_LEGACY_PACK does not name a pack converted from a pre-UOP install";
+                Skip = "CUO_LEGACY_PACK is not set (a pack converted from a pre-UOP install)";
             }
-            else if (string.IsNullOrEmpty(uo) || !File.Exists(Path.Combine(uo, "mapdifl1.mul")) || !File.Exists(Path.Combine(uo, "map0.mul")))
+            else if (string.IsNullOrEmpty(uo))
             {
-                Skip = "CUO_LEGACY_UO does not name the pre-UOP install (map0.mul, mapdifl1.mul) the pack was converted from";
+                Skip = "CUO_LEGACY_UO is not set (the pre-UOP install the pack was converted from)";
             }
         }
     }
