@@ -29,7 +29,7 @@ namespace ClassicUO.UnitTests.Assets
             try
             {
                 var land = new LandTileInfo[PackConst.LandTileCount];
-                var statics = new StaticTileInfo[TileDataFile.MaxStatics];
+                var statics = new StaticTileInfo[PackConst.StaticTileCount];
 
                 for (int i = 0; i < land.Length; i++)
                 {
@@ -63,14 +63,14 @@ namespace ClassicUO.UnitTests.Assets
                     w.Write((ushort)0);
                     w.Write(0UL);
                     w.Write(PackConst.LandTileCount);
-                    w.Write(16);
+                    w.Write(PackConst.StaticTileCount);
                     w.Write(TileDataFile.MaxNameTableBytes + 1);
                 }
 
                 ((Action)(() => TileDataFile.Read(table))).Should().Throw<InvalidDataException>().WithMessage("*name table size*");
 
                 // the longest accepted name, then one byte more
-                var small = new StaticTileInfo[16];
+                var small = new StaticTileInfo[PackConst.StaticTileCount];
                 small[1].NameLength = TileDataFile.MaxNameBytes;
                 var ok = Path.Combine(dir, "ok.bin");
                 TileDataFile.Write(ok, land.Select(_ => default(LandTileInfo)).ToArray(), small, new byte[TileDataFile.MaxNameBytes + 1]);
