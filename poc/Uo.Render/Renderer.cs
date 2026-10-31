@@ -34,7 +34,15 @@ public sealed unsafe class Renderer : IDisposable
     readonly IntPtr _samplerPoint, _samplerLinear, _samplerHue;
     readonly IntPtr _hueTex;
     readonly IntPtr _paletteBuf, _dummyAnimTex;
-    public readonly IntPtr InstanceBuffer;
+    /// <summary>The instance buffer; replaced by <see cref="GrowInstances"/>.</summary>
+    public IntPtr InstanceBuffer { get; private set; }
+    /// <summary>Instances the buffer holds now.</summary>
+    public int InstanceCapacity { get; private set; }
+    // set by GrowInstances: the old buffer, copied into the new one at the start of the next frame's copy pass
+    IntPtr _growFrom;
+    uint _growBytes;
+    /// <summary>Instance buffer growth steps (main-thread time to create the buffer; the GPU copy runs in the next frame).</summary>
+    public GrowthStats InstanceGrowth;
     IntPtr _frameTableBuf;
     readonly IntPtr _pageTableBuf;
     readonly IntPtr _frameTransfer, _pageTableTransfer;
@@ -144,6 +152,7 @@ public sealed unsafe class Renderer : IDisposable
         _samplerHue = CreateSampler(SDL_GPUFilter.SDL_GPU_FILTER_NEAREST, SDL_GPUSamplerMipmapMode.SDL_GPU_SAMPLERMIPMAPMODE_NEAREST, 0);
 
         InstanceBuffer = CreateBuffer((uint)(instanceCapacity * sizeof(SpriteInstance)), "instances");
+        InstanceCapacity = instanceCapacity;
         ChunkTableCapacity = maxVisibleChunks;
         MaxTranslucent = maxTranslucent;
         OverrideSlots = overrideSlots;
@@ -208,6 +217,48 @@ public sealed unsafe class Renderer : IDisposable
         MaxTranslucent = cap;
         TranslucentGrowths++;
         return count <= cap;
+    }
+
+    /// <summary>Replaces the instance buffer with one of <paramref name="capacity"/> instances; call between frames. The
+    /// old contents are copied GPU-side at the start of the next <see cref="RenderFrame"/>'s copy pass, before that
+    /// frame's uploads, so every baked instance keeps its offset. False (nothing changed) if the buffer can't be created.</summary>
+    public bool GrowInstances(int capacity)
+    {
+        if (capacity <= InstanceCapacity) return true;
+        long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+        var ci = new SDL_GPUBufferCreateInfo { usage = SDL_GPUBufferUsageFlags.SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ, size = (uint)((long)capacity * sizeof(SpriteInstance)) };
+        var b = SDL_CreateGPUBuffer(Device, in ci);
+        if (b == IntPtr.Zero)
+        {
+            Console.Error.WriteLine($"instance buffer growth to {capacity} failed: {SDL_GetError()}");
+            return false;
+        }
+        SDL_SetGPUBufferName(Device, b, "instances");
+        if (_growFrom != IntPtr.Zero)
+        {
+            // grown twice before a frame: the oldest contents are still pending; copy them, then drop the middle buffer
+            SDL_ReleaseGPUBuffer(Device, InstanceBuffer);
+        }
+        else
+        {
+            _growFrom = InstanceBuffer;
+            _growBytes = (uint)(InstanceCapacity * sizeof(SpriteInstance));
+        }
+        int from = InstanceCapacity;
+        InstanceBuffer = b;
+        InstanceCapacity = capacity;
+        InstanceGrowth.Add((System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency, from, capacity);
+        return true;
+    }
+
+    void CopyGrownInstances(IntPtr copy)
+    {
+        if (_growFrom == IntPtr.Zero) return;
+        var src = new SDL_GPUBufferLocation { buffer = _growFrom };
+        var dst = new SDL_GPUBufferLocation { buffer = InstanceBuffer };
+        SDL_CopyGPUBufferToBuffer(copy, in src, in dst, _growBytes, false);
+        SDL_ReleaseGPUBuffer(Device, _growFrom);
+        _growFrom = IntPtr.Zero;
     }
 
     IntPtr CreateBuffer(uint size, string name)
@@ -489,6 +540,8 @@ public sealed unsafe class Renderer : IDisposable
         public bool LoadTarget;
         /// <summary>Run the copy pass (chunk and page uploads, tables) but draw nothing: no target is touched.</summary>
         public bool StreamOnly;
+        /// <summary>The camera jumped this frame (teleport): a good moment for the arrays to grow (<see cref="GrowthPolicy"/>).</summary>
+        public bool Hold;
         /// <summary>Viewport inside the target in pixels; width 0 = the whole target.</summary>
         public int ViewportX, ViewportY, ViewportWidth, ViewportHeight;
     }
@@ -539,6 +592,7 @@ public sealed unsafe class Renderer : IDisposable
         SDL_UnmapGPUTransferBuffer(Device, _frameTransfer);
 
         var copy = SDL_BeginGPUCopyPass(cmd);
+        CopyGrownInstances(copy); // before this frame's instance uploads, which may land inside the old range
         var ch = f.Chunks;
         for (int i = 0; i < ch.UploadCount; i++)
         {
@@ -557,8 +611,8 @@ public sealed unsafe class Renderer : IDisposable
             var dst = new SDL_GPUBufferRegion { buffer = InstanceBuffer, offset = f.DynamicFirst * (uint)sizeof(SpriteInstance), size = dynBytes };
             SDL_UploadToGPUBuffer(copy, in src, in dst, false);
         }
-        f.Pages.Upload(copy, f.Frame);
-        f.AnimPages?.Upload(copy, f.Frame);
+        f.Pages.Upload(copy, f.Frame, f.StreamOnly || f.Hold);
+        f.AnimPages?.Upload(copy, f.Frame, f.StreamOnly || f.Hold);
         if (f.Pages.TableDirty || f.AnimPages is { TableDirty: true })
         {
             var p = (byte*)SDL_MapGPUTransferBuffer(Device, _pageTableTransfer, true);
@@ -830,6 +884,7 @@ public sealed unsafe class Renderer : IDisposable
         SDL_ReleaseGPUTexture(Device, _dummyAnimTex);
         SDL_ReleaseGPUBuffer(Device, _paletteBuf);
         SDL_ReleaseGPUBuffer(Device, InstanceBuffer);
+        if (_growFrom != IntPtr.Zero) SDL_ReleaseGPUBuffer(Device, _growFrom);
         SDL_ReleaseGPUBuffer(Device, _frameTableBuf);
         SDL_ReleaseGPUBuffer(Device, _pageTableBuf);
         SDL_ReleaseGPUTransferBuffer(Device, _frameTransfer);

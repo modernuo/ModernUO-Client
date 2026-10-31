@@ -6,8 +6,25 @@ public sealed class RangeAllocator
 {
     readonly int[] _start, _len;
     int _count;
-    public readonly int Capacity;
+    public int Capacity { get; private set; }
     public int Used { get; private set; }
+
+    /// <summary>Extends the range to <paramref name="capacity"/>: [old capacity, capacity) becomes free (merged with a
+    /// free range that ends at the old capacity). Existing allocations keep their offsets.</summary>
+    public void Grow(int capacity)
+    {
+        if (capacity <= Capacity) return;
+        int add = capacity - Capacity;
+        if (_count > 0 && _start[_count - 1] + _len[_count - 1] == Capacity) _len[_count - 1] += add;
+        else
+        {
+            if (_count == _start.Length) throw new InvalidOperationException("allocator fragment table full");
+            _start[_count] = Capacity;
+            _len[_count] = add;
+            _count++;
+        }
+        Capacity = capacity;
+    }
 
     public RangeAllocator(int capacity, int maxFragments = 1 << 16)
     {

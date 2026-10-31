@@ -47,6 +47,7 @@ namespace ClassicUO.Game.Scenes
         private bool _wobble;
         private int _offsetX, _offsetY;
         private int _failedFacet = -1;
+        private static readonly bool GrowOnDemand = Environment.GetEnvironmentVariable("CUO_GPU_GROW") != "0";
         private Season _landSeason = (Season)0xFF;
         private bool _ecsMobiles;
         private GameScene _scene;
@@ -198,7 +199,16 @@ namespace ClassicUO.Game.Scenes
                     // pages zoomed out; at 32768 / 64 the last sprites were dropped and the anim pages thrashed
                     // (4 MiB of instances, 1 MiB per Indexed8 anim layer)
                     MaxDynamic = 131072,
-                    AnimLayers = 128
+                    // Grow on demand (memory per client, several clients at once): the art pages, anim pages and instance
+                    // buffer start at 12 layers (128 MiB), 32 layers (32 MiB) and 256k instances (8 MiB) and double at 75%
+                    // occupancy up to the old fixed sizes, 24 / 128 / 2M (256 + 128 + 64 MiB), which the large scene still
+                    // reaches. CUO_GPU_GROW=0 starts at the ceilings (the old fixed sizes, for A/B).
+                    Layers = GrowOnDemand ? 12 : 24,
+                    LayersMax = 24,
+                    AnimLayers = GrowOnDemand ? 32 : 128,
+                    AnimLayersMax = 128,
+                    InstanceCapacity = GrowOnDemand ? 256 << 10 : 2 << 20,
+                    InstanceCapacityMax = 2 << 20
                 };
 
                 _pack.LandRemap = null;
@@ -887,6 +897,13 @@ namespace ClassicUO.Game.Scenes
                 Log.Info($"GPU world: translucent list grown to {_world.Renderer.MaxTranslucent} entries");
             }
 
+            if (_world.GrowthEvents != _loggedArrayGrowths)
+            {
+                // grow on demand (CUO_GPU_GROW): one line per step, with the step's main-thread time
+                _loggedArrayGrowths = _world.GrowthEvents;
+                Log.Info($"GPU world: grown at frame {_world.Frame}: {_world.GrowthSummary()}");
+            }
+
             if (BakeJob.TileMismatches != _loggedTileMismatches)
             {
                 // the out-of-range tint's tile reconstruction disagreed with the bake (never expected)
@@ -910,14 +927,15 @@ namespace ClassicUO.Game.Scenes
                     $"{w.OverridesMissed} missed, {w.OverridesDropped} dropped; dynamic dropped {DynamicDropped}; translucent {w.TranslucentCount} (baked {w.BakedTranslucentCount}, cot ring {w.CotRingCount}); capture fallbacks {CaptureFallbacks}; " +
                     $"pages {w.Pages.ResidentCount}/{w.Pages.Layers} resident, {w.Pages.MissingVisible} missing, {w.Pages.TotalUploads} uploads, {w.Pages.Evictions} evictions" +
                     (w.AnimPages != null ? $"; anim pages {w.AnimPages.ResidentCount}/{w.AnimPages.Layers}, {w.AnimPages.MissingVisible} missing, {w.AnimPages.TotalUploads} uploads, {w.AnimPages.Evictions} evictions" : "") +
-                    $"; chunks ready {w.Chunks.ReadyChunks} pending {w.Chunks.PendingChunks} missing near view {w.Chunks.MissingNear}; settled {w.Settled}, visible ready {w.VisibleReady}");
+                    $"; chunks ready {w.Chunks.ReadyChunks} pending {w.Chunks.PendingChunks} missing near view {w.Chunks.MissingNear}; settled {w.Settled}, visible ready {w.VisibleReady}" +
+                    $"; instances used {w.Chunks.Alloc.Used}/{w.Chunks.Alloc.Capacity}");
             }
 
             return ok;
         }
 
         private uint _nextStatsLog, _nextDropLog;
-        private int _loggedGrowths, _loggedTileMismatches;
+        private int _loggedGrowths, _loggedTileMismatches, _loggedArrayGrowths;
 
         public void Dispose()
         {
