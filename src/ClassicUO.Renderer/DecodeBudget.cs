@@ -23,7 +23,7 @@ namespace ClassicUO.Renderer
     /// </summary>
     public sealed class DecodeBudget
     {
-        // Safety net, not a throttle: the measured all-time peak in flight is far below it (see poc-log, "Decode in-flight byte cap").
+        // Safety net, not a throttle: the measured all-time capacity peak in flight is 9.2 MiB (bench-000009, below the 12 MiB rule for a 32 MiB default; see poc-log, "Decode in-flight byte cap").
         public const long DefaultCapBytes = 16L << 20;
 
         private static long CapFromEnv()
