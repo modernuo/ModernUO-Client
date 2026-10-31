@@ -170,6 +170,8 @@ The items above add up to about 230–260 MiB of the 311 MB live (JIT Gpu). The 
 
 **But it doesn't lower Task Manager's "Memory" column.** These arrays were never resident. What it lowers is commit charge and VRAM. Both matter with several clients: on a smaller GPU, VRAM is what runs out first.
 
+**Later: shrink the arrays when the scene stays quiet** (owner, 2026-10-31; not scheduled). The arrays only grow today, so one busy scene keeps the ceilings for the rest of the session: the 7,500-Balron runs peaked at 2.2–3.0 GB commit on Gpu against 1.65–1.75 GB on Legacy (poc-log "Stress scene: 7,500 Balrons, results"). Shrink the anim layers and the instance buffer back a step once occupancy stays well under the smaller size for a sustained period, the way ModernUO shrinks a NetState's send buffer after it has been idle (`NetState.TryShrinkSendBuffer`, ModernUO `Projects/Server/Network/NetState`). Use hysteresis so a scene at the boundary doesn't grow and shrink repeatedly, and do the shrink during a hold or a quiet frame, since a resize costs 0.7–1.2 ms of main-thread time.
+
 **What does lower the "Memory" column is the managed heap.** In order:
 1. Drop the 18.5 MiB palette copy (and the second 4.8 MiB frame table): done on `poc/mem-reduce`.
 2. Build the Gpu world once, not twice, at login: done on `poc/mem-reduce`. It avoids the 21 MB of dead instance arrays the dump found, and very likely the first world's page-job and decoder buffers.
