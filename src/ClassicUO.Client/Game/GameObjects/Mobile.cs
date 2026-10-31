@@ -402,26 +402,60 @@ namespace ClassicUO.Game.GameObjects
 
         public bool EnqueueStep(int x, int y, sbyte z, Direction direction, bool run)
         {
+            GetEndPosition(out int endX, out int endY, out sbyte endZ, out Direction endDir);
+            PlanStep(x, y, z, direction, run, endX, endY, endZ, endDir, out StepPlan plan);
+            ApplyStep(in plan);
+
+            return plan.Accepted;
+        }
+
+        /// <summary>
+        /// T1 (funnel part 4): what <see cref="EnqueueStep"/> does, computed without a write. <see cref="ApplyStep"/> performs it.
+        /// </summary>
+        internal struct StepPlan
+        {
+            /// <summary>False: the queue is full (EnqueueStep returns false and changes nothing).</summary>
+            public bool Accepted;
+            /// <summary>True: steps are added (false: the step ends where the queue already ends; nothing changes).</summary>
+            public bool Changes;
+            /// <summary>The queue was empty: the walk starts (LastStepTime = <see cref="StepTime"/>).</summary>
+            public bool StartsWalk;
+            /// <summary>The walk starts while the mobile was not walking: SetAnimation(0xFF).</summary>
+            public bool SetsAnimation;
+            public uint StepTime;
+            public int Count;
+            public Step S0, S1, S2;
+        }
+
+        /// <summary>
+        /// T1 (funnel part 4): the pure half of <see cref="EnqueueStep"/>. <paramref name="endX"/>..<paramref name="endDir"/>
+        /// are where the queue ends (<see cref="GetEndPosition"/>; an operation that writes the position before the step,
+        /// as UpdateGameObject's creation branch did, passes the position it computed for an empty queue). Reads the queue's
+        /// length, LastStepTime and Time.Ticks; writes nothing.
+        /// </summary>
+        internal void PlanStep(int x, int y, sbyte z, Direction direction, bool run, int endX, int endY, sbyte endZ, Direction endDir, out StepPlan plan)
+        {
+            plan = default;
+
             if (Steps.Count >= Constants.MAX_STEP_COUNT)
             {
-                return false;
+                return;
             }
 
-            GetEndPosition(out int endX, out int endY, out sbyte endZ, out Direction endDir);
+            plan.Accepted = true;
 
             if (endX == x && endY == y && endZ == z && endDir == direction)
             {
-                return true;
+                return;
             }
+
+            plan.Changes = true;
 
             if (Steps.Count == 0)
             {
-                if (!IsWalking)
-                {
-                    SetAnimation(0xFF);
-                }
-
-                LastStepTime = Time.Ticks;
+                plan.StartsWalk = true;
+                plan.SetsAnimation = !IsWalking;
+                plan.StepTime = Time.Ticks;
             }
 
             Direction moveDir = DirectionHelper.CalculateDirection(endX, endY, x, y);
@@ -436,7 +470,7 @@ namespace ClassicUO.Game.GameObjects
                     step.Z = endZ;
                     step.Direction = (byte)moveDir;
                     step.Run = run;
-                    AddStep(step);
+                    AddPlanned(ref plan, step);
                 }
 
                 step.X = x;
@@ -444,7 +478,7 @@ namespace ClassicUO.Game.GameObjects
                 step.Z = z;
                 step.Direction = (byte)moveDir;
                 step.Run = run;
-                AddStep(step);
+                AddPlanned(ref plan, step);
             }
 
             if (moveDir != direction)
@@ -454,12 +488,43 @@ namespace ClassicUO.Game.GameObjects
                 step.Z = z;
                 step.Direction = (byte)direction;
                 step.Run = run;
-                AddStep(step);
+                AddPlanned(ref plan, step);
+            }
+        }
+
+        private static void AddPlanned(ref StepPlan plan, in Step step)
+        {
+            switch (plan.Count++)
+            {
+                case 0: plan.S0 = step; break;
+                case 1: plan.S1 = step; break;
+                default: plan.S2 = step; break;
+            }
+        }
+
+        /// <summary>T1 (funnel part 4): the mutation half of <see cref="EnqueueStep"/>, in its old order.</summary>
+        internal void ApplyStep(in StepPlan plan)
+        {
+            if (!plan.Changes)
+            {
+                return;
             }
 
-            PushInputs();
+            if (plan.StartsWalk)
+            {
+                if (plan.SetsAnimation)
+                {
+                    SetAnimation(0xFF);
+                }
 
-            return true;
+                LastStepTime = plan.StepTime;
+            }
+
+            if (plan.Count > 0) AddStep(plan.S0);
+            if (plan.Count > 1) AddStep(plan.S1);
+            if (plan.Count > 2) AddStep(plan.S2);
+
+            PushInputs();
         }
 
         internal void GetEndPosition(out int x, out int y, out sbyte z, out Direction dir)
@@ -1111,57 +1176,30 @@ namespace ClassicUO.Game.GameObjects
 
         public override void CheckGraphicChange(byte animIndex = 0)
         {
-            switch (Graphic)
+            if (BodyState(Graphic, out bool isFemale, out RaceType race))
+            {
+                IsFemale = isFemale;
+                Race = race;
+            }
+        }
+
+        /// <summary>
+        /// T1 (funnel part 4): the sex and race <see cref="CheckGraphicChange"/> stores for a body graphic (pure; the funnel
+        /// writes the result itself). False: a body that changes neither.
+        /// </summary>
+        internal static bool BodyState(ushort graphic, out bool isFemale, out RaceType race)
+        {
+            switch (graphic)
             {
                 case 0x0190:
-                case 0x0192:
-                {
-                    IsFemale = false;
-                    Race = RaceType.HUMAN;
-
-                    break;
-                }
-
+                case 0x0192: isFemale = false; race = RaceType.HUMAN; return true;
                 case 0x0191:
-                case 0x0193:
-                {
-                    IsFemale = true;
-                    Race = RaceType.HUMAN;
-
-                    break;
-                }
-
-                case 0x025D:
-                {
-                    IsFemale = false;
-                    Race = RaceType.ELF;
-
-                    break;
-                }
-
-                case 0x025E:
-                {
-                    IsFemale = true;
-                    Race = RaceType.ELF;
-
-                    break;
-                }
-
-                case 0x029A:
-                {
-                    IsFemale = false;
-                    Race = RaceType.GARGOYLE;
-
-                    break;
-                }
-
-                case 0x029B:
-                {
-                    IsFemale = true;
-                    Race = RaceType.GARGOYLE;
-
-                    break;
-                }
+                case 0x0193: isFemale = true; race = RaceType.HUMAN; return true;
+                case 0x025D: isFemale = false; race = RaceType.ELF; return true;
+                case 0x025E: isFemale = true; race = RaceType.ELF; return true;
+                case 0x029A: isFemale = false; race = RaceType.GARGOYLE; return true;
+                case 0x029B: isFemale = true; race = RaceType.GARGOYLE; return true;
+                default: isFemale = false; race = 0; return false;
             }
         }
 
