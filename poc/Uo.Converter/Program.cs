@@ -50,7 +50,7 @@ for (int i = 0; i < args.Length; i++)
         case "--no-cliloc-overrides": TextConvert.ClilocOverridesOff = true; break;
         case "--gump-def": gumpDef = args[++i]; break;
         case "--gump-report": gumpReport = true; break;
-        case "--audio-report": audioReport = args[++i]; break;
+        case "--audio-report": audioReport = args[++i]; convert = false; break; // writes nothing: --out is not cleared
         case "--raw-gumps": GumpConvert.Raw = true; break;
         case "--gump-small": GumpConvert.SmallRle = int.Parse(args[++i]); break;
         case "--bodies":

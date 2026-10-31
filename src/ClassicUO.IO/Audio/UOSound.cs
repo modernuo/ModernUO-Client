@@ -18,6 +18,9 @@ namespace ClassicUO.IO.Audio
             Delay = (uint) ((buffer.Length - 32) / 88.2f);
         }
 
+        /// <summary>Bytes of PCM this sound submits per play (FNA copies them into native memory while it plays).</summary>
+        public int PcmBytes => _waveBuffer?.Length ?? 0;
+
         public bool CalculateByDistance { get; set; }
         public int X, Y;
 

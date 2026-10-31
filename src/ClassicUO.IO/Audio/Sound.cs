@@ -76,6 +76,15 @@ namespace ClassicUO.IO.Audio
 
         public bool IsPlaying(uint curTime) => SoundInstance != null && SoundInstance.State == SoundState.Playing && DurationTime > curTime;
 
+        /// <summary>
+        /// True while FNA holds a buffer of this sound (its instance is playing or paused): the renderer's sound cache
+        /// never evicts such a sound, and AudioManager counts it against its limits.
+        /// </summary>
+        public bool IsActive => SoundInstance != null && !SoundInstance.IsDisposed && SoundInstance.State != SoundState.Stopped;
+
+        /// <summary>False while <see cref="Play"/> would refuse because of the per-sound replay delay.</summary>
+        public bool CanPlayAt(uint curTime) => _lastPlayedTime <= curTime;
+
         public int CompareTo(Sound other)
         {
             return other == null ? -1 : Index.CompareTo(other.Index);

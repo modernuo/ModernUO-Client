@@ -56,17 +56,8 @@ namespace ClassicUO.Assets
             _soundOk = CheckRecords(_sounds, "sound", static (in StoreRecord r) => AudioConst.CheckSoundRecord(r));
             _musicOk = CheckRecords(_music, "music", static (in StoreRecord r) => AudioConst.CheckMusicRecord(r));
 
-            if (_music != null)
-            {
-                for (int i = 0; i < _music.Slots.Length; i++)
-                {
-                    if (_music.Slots[i].Present && AudioConst.CheckMusicSlot(_music.Slots[i]) is { } err)
-                    {
-                        Log.Error($"Audio: music {i}: {err}; the track is left out");
-                        _music.Slots[i] = default;
-                    }
-                }
-            }
+            CheckSlots(_sounds, "sound", static (in StoreSlot s) => AudioConst.CheckSoundSlot(s));
+            CheckSlots(_music, "music", static (in StoreSlot s) => AudioConst.CheckMusicSlot(s));
 
             LoadOurs();
 
@@ -108,6 +99,26 @@ namespace ClassicUO.Assets
         }
 
         private delegate string RecordCheck(in StoreRecord r);
+
+        private delegate string SlotCheck(in StoreSlot s);
+
+        // a slot that breaks its type's rules (pack-format.md, "Audio") is made absent; its record still serves other ids
+        private static void CheckSlots(RecordStore store, string what, SlotCheck check)
+        {
+            if (store == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < store.Slots.Length; i++)
+            {
+                if (store.Slots[i].Present && check(store.Slots[i]) is { } err)
+                {
+                    Log.Error($"Audio: {what} {i}: {err}; the id is left out");
+                    store.Slots[i] = default;
+                }
+            }
+        }
 
         private static bool[] CheckRecords(RecordStore store, string what, RecordCheck check)
         {
@@ -164,91 +175,61 @@ namespace ClassicUO.Assets
         }
 
         /// <summary>
-        /// The samples out of a WAV, if it is one this can play.
-        ///
-        /// The stream these end up in is fixed at 22,050 Hz, mono, 16-bit - Sound.cs hard-codes
-        /// all three - so anything else is refused rather than played. Handing it a 44,100 stereo
-        /// file plays it at half speed an octave down, which sounds like a broken file rather
-        /// than like a wrong header, and nobody would know where to look.
-        /// </summary>
-        private static byte[] ReadWave(string path)
-        {
-            byte[] raw;
-
-            try
-            {
-                raw = File.ReadAllBytes(path);
-            }
-            catch (IOException e)
-            {
-                Log.Warn($"could not read {path}: {e.Message}");
-                return null;
-            }
-
-            if (raw.Length < 44
-                || raw[0] != 'R' || raw[1] != 'I' || raw[2] != 'F' || raw[3] != 'F'
-                || raw[8] != 'W' || raw[9] != 'A' || raw[10] != 'V' || raw[11] != 'E')
-            {
-                Log.Warn($"{Path.GetFileName(path)} is not a WAV");
-                return null;
-            }
-
-            // Walk the chunks rather than assuming the layout. A WAV written by anything but the
-            // simplest encoder carries LIST and fact chunks before its data.
-            int at = 12;
-            int channels = 0, rate = 0, bits = 0;
-
-            while (at + 8 <= raw.Length)
-            {
-                string kind = Encoding.ASCII.GetString(raw, at, 4);
-                int size = BitConverter.ToInt32(raw, at + 4);
-
-                if (size < 0 || at + 8 + size > raw.Length)
-                {
-                    size = raw.Length - at - 8;
-                }
-
-                if (kind == "fmt " && size >= 16)
-                {
-                    channels = BitConverter.ToInt16(raw, at + 10);
-                    rate = BitConverter.ToInt32(raw, at + 12);
-                    bits = BitConverter.ToInt16(raw, at + 22);
-                }
-                else if (kind == "data")
-                {
-                    if (channels != 1 || rate != 22050 || bits != 16)
-                    {
-                        Log.Warn(
-                            $"{Path.GetFileName(path)} is {rate}Hz {channels}ch {bits}-bit; " +
-                            "it has to be 22050 mono 16-bit, so it is being ignored");
-
-                        return null;
-                    }
-
-                    byte[] body = new byte[size];
-                    Buffer.BlockCopy(raw, at + 8, body, 0, size);
-
-                    return body;
-                }
-
-                at += 8 + size + (size & 1);         // chunks are padded to an even length
-            }
-
-            Log.Warn($"{Path.GetFileName(path)} has no data chunk");
-
-            return null;
-        }
-
-        /// <summary>
         /// The PCM of a sound (22,050 Hz mono 16-bit) and its name: a loose Sounds/&lt;id&gt;.wav first, else the pack's
         /// record. <paramref name="data"/> is an array of exactly the PCM, in whole samples: FNA's SubmitBuffer checks the
         /// whole array's length, so a record's trailing name must not share it (bench-000049 crashed on that). A sound
         /// that fails the check is logged once and left out; it never reaches FNA.
         /// </summary>
-        public bool TryGetSound(int sound, out byte[] data, out string name)
+        public bool TryGetSound(int sound, out byte[] data, out string name) => TryGetSound(sound, out data, out name, out _);
+
+        /// <summary>
+        /// Where <paramref name="sound"/> would come from, without reading it: <paramref name="key"/> names the source (a
+        /// pack record, shared by its aliases, or the id's loose file) and <paramref name="pcmBytes"/> is its PCM size (-1
+        /// for a loose file, known only once read). The renderer's sound cache uses it to share one array per record and
+        /// to make room before a read. False when the id has no playable source.
+        /// </summary>
+        public bool TryGetSoundSource(int sound, out long key, out long pcmBytes)
+        {
+            key = 0;
+            pcmBytes = -1;
+
+            if (sound < 0)
+            {
+                return false;
+            }
+
+            if (_ours.ContainsKey(sound))
+            {
+                key = LooseKey(sound);
+
+                return true;
+            }
+
+            RecordStore store = _sounds;
+
+            if (store == null || !store.TryGet(sound, out StoreSlot slot, out StoreRecord rec) || !_soundOk[slot.Record - 1])
+            {
+                return false;
+            }
+
+            key = slot.Record;
+            pcmBytes = AudioConst.AudioBytes(rec);
+
+            return true;
+        }
+
+        // pack records are keyed 1..n (slot.Record), loose files below 0
+        private static long LooseKey(int sound) => -1L - sound;
+
+        /// <summary>
+        /// <see cref="TryGetSound(int, out byte[], out string)"/>, also naming the source that served it
+        /// (<see cref="TryGetSoundSource"/>'s key): ids that share a record get the same key.
+        /// </summary>
+        public bool TryGetSound(int sound, out byte[] data, out string name, out long key)
         {
             data = null;
             name = null;
+            key = 0;
 
             if (sound < 0)
             {
@@ -258,18 +239,18 @@ namespace ClassicUO.Assets
             // Ours first, so a replacement replaces and a new id works at all.
             if (_ours.TryGetValue(sound, out string mine))
             {
-                byte[] wave = ReadWave(mine);
+                // size-capped read, overflow-safe chunk walk, playable length (the converter applies the same rules)
+                byte[] wave = AudioConst.ReadWaveFile(mine, out string bad);
 
-                if (wave != null && AudioConst.CheckPcmLength(wave.Length) is { } bad)
+                if (wave == null)
                 {
                     Log.Warn($"{Path.GetFileName(mine)}: {bad}; it is being ignored");
-                    wave = null;
                 }
-
-                if (wave != null)
+                else
                 {
                     data = wave;
                     name = Path.GetFileNameWithoutExtension(mine);
+                    key = LooseKey(sound);
 
                     return true;
                 }
@@ -311,6 +292,7 @@ namespace ClassicUO.Assets
             }
 
             data = pcm;
+            key = slot.Record;
 
             return true;
         }
