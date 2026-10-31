@@ -3343,3 +3343,105 @@ Branch `poc/mem-footprint`, base poc/modern-client 88da64e3e. Measurement only, 
 - **The land spot is confirmed** by the screenshots: the Britain moongate in forest, the same in both renderers. Our AOT client: 882 MB pws there in a 90 s run.
 - **New recommendation (measurement first):** an allocation trace of the LOH in the first 60 s after login, on the `poc/mem-reduce` build, to find the ~35–60 MB of transient decode buffers still unattributed. Pool them where they recur, and log the pool's size.
 - **Memory trade-offs logged:** none added; the decode pools (~61 MB per client) are recorded as an existing trade-off.
+
+## Memory per client: palettes, facet switch, grow on demand (2026-10-31)
+
+Branch `poc/mem-reduce` from poc/modern-client 2ced75119. Follows "Memory footprint per client: first pass" (branch `poc/mem-footprint`, `docs/modern-client/memory-footprint.md` there) and the owner's decisions of 2026-10-31: players run several clients at once, so per-client memory matters. Three commits, one per change. Rendering is unchanged: no shader, bake or sampling change; layer indices and instance offsets survive every growth step.
+
+**1. Anim palettes: no CPU copy (71b1a6f46).**
+- Readers of `PackSet.Palettes` (18.5 MiB `ushort[]`, kept for the pack's lifetime): only `Renderer.CreatePaletteBuffer` (the GPU upload) and a log line in the standalone `Uo.Client` (palette count). Re-upload paths: every renderer re-creation (facet change before change 2, DevBench `reinit`, startup) goes through a new `Renderer`, so the upload must be repeatable, but it needs no long-lived copy.
+- Now `PackSet` keeps only `PalettePath`, `PaletteCount` and `PaletteOffset`; the renderer reads palettes.bin straight into the mapped transfer buffer (no managed array at all, not even a transient one). `PackSet.ReadPalettes()` reads a CPU copy for a future reader that wants one.
+- The frame → palette table (`uint[]`, 4.8 MiB) was read twice: by `AnimationsLoader` and by `PackSet`. The client now passes the loader's table through `PackTables.FramePalette`.
+
+**2. Gpu world: facet switch in place (5e0948ad4).**
+- Before: the startup probe built the world pass for map 0; the login on Trammel disposed it and built map 1 (renderer, page arrays, instance buffer, chunk store, page-job buffers, dynamic array), leaving about 34 MiB of dead LOH and re-allocating every GPU array. Every in-game facet change did the same.
+- Now `WorldRenderer.ChangeFacet(pack)` swaps the `PackSet` (same pack, `WithFacet`), drops the chunks and regions (`ChunkStore.ChangeFacet`), and keeps the device resources, the resident pages, the workers and every CPU array. Bakes and region loads in flight are discarded when they finish; their regions are orphaned, not pooled, so no worker writes into a region the new facet reuses. A failed switch falls back to the old rebuild.
+- The world object now survives a facet change, so the client's two caches keyed on it (GPU item cache, static season remap) also key on `world.Pack`. `WorldSettleGate` already treats a facet change as a discontinuity (hold). The new pack's bake switches (water wobble, remaps) start fresh, exactly as with a rebuilt world.
+
+**3. Grow on demand (3615c22ca).**
+- Art page array 12 → 24 layers, anim layers 32 → 64 → 128, instance buffer 256k → 512k → 1M → 2M instances. The ceilings are the old fixed sizes. `CUO_GPU_GROW=0` starts at the ceilings (A/B).
+- Policy (`Uo.Render/GrowthPolicy.cs`, unit-tested): never at the ceiling; at once when starved (a loaded page with no free layer, or an instance allocation that failed last frame), so growth always beats eviction below the ceiling; at 75% occupancy during a hold (the settle gate's stream-only frames) or a camera jump; otherwise after 120 frames at 75%.
+- A step creates the larger texture or buffer and copies the old contents GPU-side at the start of the frame's copy pass, before that frame's uploads (`SDL_CopyGPUTextureToTexture` per resident layer and mip; `SDL_CopyGPUBufferToBuffer`), then releases the old one (SDL frees it after the frames in flight). Same command buffer, same layer indices and offsets: nothing is dropped or flickers.
+- Each step logs `GPU world: grown at frame N: art layers a/24 (k steps, last x->y t ms, max, total); anim layers ...; instances ...` (main-thread time: create + record; the GPU copy runs inside that frame). The `GPU world:` trace line now ends with `instances used u/c`.
+
+**Memory trade-off log (per client).** "Computed" is from the sizes; "measured" is job bench-000035 (base 2ced75119, new 3615c22ca, and new with `CUO_GPU_GROW=0`; one run per arm, JIT Release, unpinned; see "Measured" below for the method and the noise).
+
+| item | before | after | computed saving | measured (bench-000035) | what it costs |
+|---|---|---|---|---|---|
+| anim palettes CPU copy (managed LOH, resident) | 18.5 MiB | 0 | 18.5 MiB | with the next two rows: GC heap at the last GC before Britain 450 → 400 MB (-50); GC heap commit at 120 s 458 → 401 MiB (-57); its resident part 351 → 319 MiB (-32). Task Manager private WS: -6 to -9 MiB, inside the ±20 MiB run-to-run noise | each new renderer reads 18.5 MiB from palettes.bin (once per session now, see 2) |
+| frame → palette table, second copy (managed LOH, resident) | 4.8 MiB | 0 | 4.8 MiB | (above) | none (shared with AnimationsLoader) |
+| second world pass at login (dead managed LOH until a gen2; nothing collects the LOH after login) | ~34 MiB | 0 | ~34 MiB | (above). After the Trammel → Felucca → Trammel round trip: GC heap 709 → 618 MB (-91), private commit 2480 → 2182 MiB (-298), private WS 1100 → 1066 MiB (-34) | none; facet changes also keep their resident pages (no re-upload) |
+| GPU re-allocation at login and facet change (commit churn) | ~525 MiB freed and re-allocated | 0 | churn only | peak commit 2741 → 2242 MiB (-499: base's rebuild on the facet return, +499 MiB for a moment); commit spike on the return +499 → +37 MiB | none |
+| art page array (GPU commit / VRAM, never resident) | 256 MiB | 128 MiB | 128 MiB | **0**: it grew 12 → 24 at frame 15 of every session (13 pages resident after login), 1.19 ms | one growth step at login; both arrays exist for that frame (384 MiB) |
+| anim page array (GPU) | 128 MiB | 32 MiB | 96 MiB | with the instance buffer, in Britain: private commit -145 MiB (1947 → 1802 at 120 s), of which write-combined (GPU-mapped) -111 MiB. Back to 128 in the large scene (two steps), so 0 after a crowd | two steps in the large scene (0.71 and 0.98 ms) |
+| instance buffer (GPU) | 64 MiB | 8 MiB | 56 MiB | (above). Never grew (peak 40,097 of 262,144); after the large scene new is still 54–66 MiB of commit below new-nogrow | steps only past 192k used instances |
+| CPU instance mirror (managed, partly resident) | 18 MiB | 9 MiB | 9 MiB commit | not separable from the GC noise | resized (existing doubling) past 256k |
+
+- **Totals, measured:** in Britain at 120 s, private commit 2010 → 1802 MiB (-208 per client: -63 from changes 1 and 2, -145 from 3); after a facet round trip -298 MiB; peak -499 MiB. Task Manager "Memory" (private WS) moves by -6 to -34 MiB: the GC heap really shrinks (-50 MB at login, -91 MB after the round trip), but at login the saving is inside the run-to-run noise, and other native read-write memory is 25 MiB higher in both new arms (open question below). Across four clients: about 0.8 GB of commit in Britain, 1.2 GB after a facet change. The computed 280 MiB of GPU commit is 145 MiB in practice, because the art array grows to its old size at login; and 54–66 MiB after a crowded scene (only the instance buffer stays small).
+- **Growth stalls:** none visible. Three steps in the whole run (below), 0.71–1.19 ms of main-thread time each, none of them in a frame over 8 ms.
+
+### Codex audit (coordinator scratchpad `astra-memreduce/out.md`) (2026-10-31)
+
+Three P2s, all fixed (one commit after 5c6d516b4). The rest of the audit was clean: facet isolation (late bakes and region loads can't populate the new facet), picking/selection/caches keyed on `world.Pack`, facet-switch failure handling, GPU copies and handle refresh, allocator growth and the CPU mirror, and the CPU palette paths.
+
+| # | finding | disposition | test |
+|---|---|---|---|
+| 1 | Unchecked palette counts: `paletteCount = 8,388,609` is 4,294,967,808 bytes, which narrowed to `uint`/`int` allocates and reads 512; negative counts got through | Fixed. `AnimPaletteFile.ReadLayout(Stream)` validates before anything is sized: counts non-negative and within `MaxPalettes` (65,536 = `MaxPaletteBytes`, 32 MiB; the shipped pack has 37.9k / 18.5 MiB) and `MaxFrames` (2^24), and the frame table plus the whole payload inside the file (checked arithmetic). `ValidateFramePalette` checks every id is below the count or `uint.MaxValue`; `PackSet` validates a shared (AnimationsLoader) table too and checks it matches `AnimFrames.Length`. `Read`, `ReadFramePalette` and `AnimationsLoader.Load` all go through it. The renderer re-checks with `Renderer.PaletteUploadSize` (checked, explicit byte limit, extent against the open file's length) | `Renderer/PaletteFileTests.cs` (6): the audit's wrapping count, negative counts, an overlong frame table, a truncated payload, out-of-range ids, a valid file |
+| 2 | An upload batch could evict before growing: growth was checked once, starved only when already full, so with 11/12 layers and two loaded pages the second upload evicted a resident page (or waited, if all were visible) | Fixed. `PageResidency.Upload` counts the batch's eligible uploads (loaded, successful, within the remaining budget) and asks `GrowthPolicy.CheckBatch`: starved when they don't all fit in the free layers. It grows once to `GrowthPolicy.NextFor` (doubled until the batch fits, at most the ceiling), so one copy covers a batch larger than one doubling. Growing inside the loop was not chosen: it would copy layers uploaded earlier in the same copy pass | `GrowthPolicyTests`: `A_batch_that_crosses_capacity_grows_before_uploading` (the audit's 11/12 + 2 case), `A_batch_that_fits_keeps_the_deferral`, `A_batch_never_grows_past_the_ceiling`, `NextFor_doubles_until_the_batch_fits_in_one_step` |
+| 3 | A palette read failure leaked the palette buffer and the mapped transfer buffer, and the exception escaped the renderer constructor, leaking everything it had created (`CreateExternal`'s cleanup starts after construction) | Fixed. `CreatePaletteBuffer` validates (`PaletteUploadSize` against the open file) before allocating, and a `finally` unmaps and releases the transfer buffer and releases the palette buffer on every failure path (also a failed map or command-buffer acquire). The private constructor's body is wrapped: on any exception it calls `Dispose`, which now skips null handles and releases the window only if it was claimed; the window constructor disposes (and destroys its own device) when claiming the window fails | The validation half is covered by `PaletteFileTests.A_truncated_payload_is_rejected_before_any_upload` (including a file that shrank after the pack loaded). The release paths need a GPU device and are not unit-tested; both client builds compile them |
+
+- **Cost:** none on the normal path. The checks run once at load (one pass over the 1.2M-entry frame table, sub-millisecond), and the batch count is one loop over the staging slots per frame. Job bench-000035 (measuring 3615c22ca) still stands for the memory numbers; it was not resubmitted.
+- Unit tests 813 pass (803 + 10 new).
+
+### Measured: bench-000035 (2026-10-31)
+
+Job bench-000035 (`mem-reduce-ab`, status ok, 1451 s; results in `~/.claude/rf-agent/jobs/bench/done/bench-000035/`): three runs in a row, `base` (2ced75119), `new` (3615c22ca) and `new_grow0` (3615c22ca with `CUO_GPU_GROW=0`), JIT Release dev builds, unpinned (the job predates benchpin). Plan: Britain b1–b3, walk, `[TestScene go` (Trammel → Felucca, large scene: 1985 mobiles, 25,161 items) at zoom 1 and 2.5, `[TestScene return` (Felucca → Trammel), Britain again (`q`); 6 windows of 5 s per spot, memory sampled at 1 Hz, an address-space walk at 120 s (Britain), world shots per spot. The job's `analyze.py` summary came out empty: these builds predate the `CUO_MEM_LOG` sampler, so the windows were aligned on the log's wall-clock times instead, and the GC heap comes from the `[gcs]` sampled-GC lines.
+
+**Memory (MiB; Task Manager "Memory" = private WS; median over each window):**
+
+| window | base pws / commit | new pws / commit | new_grow0 pws / commit |
+|---|---|---|---|
+| login (3 s before b1) | 801 / 2032 | 792 / 1778 | 812 / 1923 |
+| Britain (60 s before b3 ends) | 826 / 2010 | 818 / 1801 | 837 / 1947 |
+| walk | 842 / 2026 | 832 / 1813 | 852 / 2021 |
+| large scene, zoom 1 | 1021 / 2232 | 1016 / 2129 | 1004 / 2195 |
+| large scene, zoom 2.5 | 1031 / 2242 | 1028 / 2140 | 1014 / 2203 |
+| Britain after the round trip | 1100 / 2480 | 1066 / 2182 | 1044 / 2236 |
+| peak | 1137 / 2741 | 1073 / 2242 | 1048 / 2242 |
+| GC heap at the last sampled GC before Britain / before q (MB) | 450 / 709 | 367–399 / 618 | 400 / 618 |
+
+**Where the commit went (address-space walk at 120 s, MiB commit / resident):**
+
+| region | base | new | new_grow0 |
+|---|---|---|---|
+| all private | 1944 / 815 | 1736 / 809 | 1880 / 826 |
+| write-combined (0x404: GPU-mapped arrays and upload heaps) | 1116 / 153 | 940 / 153 | 1051 / 153 |
+| read-write (0x4) | 823 / 661 | 792 / 655 | 826 / 673 |
+| of which the GC heap (40 GB reservation) | 458 / 351 | 401 / 319 | 434 / 339 |
+| of which other native read-write | 365 / 310 | 391 / 335 | 391 / 334 |
+
+The growth saving is write-combined commit (1051 → 940); changes 1 and 2 show in the GC heap (458 → 401 commit) and in write-combined commit (base 1116 → 1051: base's second world). Mapped files and images are identical in all three (325 and 571 MiB).
+
+**Growth.** All three `GPU world: grown` lines of the run:
+- frame 15 (login, before Britain): art 12 → 24 layers, 1.19 ms. Every session takes this step (13 pages resident at login), so the art array's smaller start saves nothing.
+- frame 239,569 (the facet change into the large scene, during the settle hold): anim 32 → 64, 0.71 ms.
+- frame 239,575: anim 64 → 128, 0.98 ms. Final: art 24/24, anim 128/128 (82 pages used at peak), instances 262,144 (never grew; peak 40,097 used).
+
+Neither growth frame is a hitch: the client logs every frame over 8 ms (`[gcs] slow frame`), and the growth frames are not among them; the slow frames on either side are 9.9 ms (+165.03 s) and 8.9 ms (+165.12 s), part of the facet change's load burst, which new_grow0 has too. The measured windows show no frame over 16 ms in Britain or the large scene in any arm (the walk windows have one each in all three arms, the walk's teleports).
+
+**Facet changes.** All four switches worked in new and new_grow0 (`facet 0 (switched, world pass kept)`, `facet 1 (switched, world pass kept)`; no `switching ... failed`), the world rendered in both scenes, and the login after the map-0 probe also switched in place. Base rebuilt the world each time.
+
+| | base | new | new_grow0 |
+|---|---|---|---|
+| settle gate "ready after" (go / return) | 184 / 115 ms | 124 / 81 ms | 130 / 58 ms |
+| frames over 16 ms in the switch's burst (go / return) | 9, max 35.1 ms / 4, max 47.8 ms | 4, max 23.2 / 1, max 21.9 | 5, max 21.7 / 0, max 15.0 |
+| commit rise (go / return) | +444 / +499 MiB | +430 / +37 | +198 / +34 |
+| private WS rise (go / return) | +256 / +106 MiB | +194 / +34 | +168 / +31 |
+
+The go switch's commit rise in new includes the two anim steps (old and new array both live for a frame) and the large scene's own load; new_grow0 already had the 128-layer array. Single samples, so the times are indicative only.
+
+**Pixels.** Looked at side-by-side diffs, not just counts. Base vs new: Britain and the walk differ by 1.3–1.5k pixels (0.14–0.16%), all on a walking NPC; Britain after the round trip is identical (0 pixels); the large scene differs by 10.5% (zoom 1) and 2.3% (zoom 2.5), all on animating mobiles (fire elementals, dragon wings, other mobs mid-animation), none on ground, statics or still mobiles. New vs new_grow0: Britain, walk and `q` identical (0 pixels); the large scene 5.9% and 1.6%, again only animating mobiles. The light maps differ by the server's ambient light level (base 159–183, new 175–239 then 0, new_grow0 mostly 0 in the 8-bit light map: the day/night cycle over 25 minutes), and the UI shots by the paperdoll's position and the FPS counter, which also differ between new and new_grow0 (same binary): run state, not rendering. No defect.
+
+**Noise.** One run per arm, unpinned, JIT: no within-arm spread exists for this job. new and new_grow0 run identical CPU code, so their difference outside the GPU arrays is the run-to-run noise: 19–20 MiB of private WS and 33 MiB of GC heap commit at 120 s. The private WS saving at login (-6 to -9 MiB) is inside it and is not claimed; the commit differences (145–499 MiB) are 4x or more beyond it. Not a timing job, so no timing claim: frame p50 in Britain was 0.466 / 0.503 / 0.492 ms (base / new / new_grow0) and in the large scene about 2.2 / 2.1 / 1.7 ms, with 1% spread between windows in Britain and up to 25% in the large scene. A pinned, interleaved timing pair (2 runs per arm) would be needed before reading anything into either difference.
+
+**Open.** Other native read-write memory (not the GC heap) is 25 MiB higher, commit and resident, in both new arms at 120 s. The walk keeps only the 40 largest regions, so it can't name the allocation; new's list shows an 18.5 MiB read-write region (16.7 resident), the size of palettes.bin, but base's list is cut off above that size, so it can't be compared. If it is the palette upload's transfer buffer, held after release, it cancels most of change 1's resident saving. A full region list (or the SDL transfer-buffer lifetime) settles it. Also: since art always grows to 24 at login, starting it at 24 would drop one step (and the 384 MiB transient at login) at no memory cost.

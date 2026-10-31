@@ -106,7 +106,7 @@ public static class Program
         Console.WriteLine($"  {pack.PageCount} pages {PageFormats.Name(pack.Format)}, {pack.Sprites.Length} sprites, {pack.HueCount} hues, map {pack.MapWidth}x{pack.MapHeight}");
         Console.WriteLine(pack.HasAnims
             ? $"  anims {pack.AnimDir}: {pack.AnimBodies.Length} bodies, {pack.AnimFrames.Length} frames, {(pack.AnimIndexed ? pack.AnimPagePaths.Length : pack.PageCount - pack.AnimPageBase)} pages {PageFormats.Name(pack.AnimFormat)} {pack.AnimPageSize}px" +
-              (pack.AnimIndexed ? $" (own R8_UINT array, {pack.Palettes.Length / 256} palettes)" : " (in the art array)")
+              (pack.AnimIndexed ? $" (own R8_UINT array, {pack.PaletteCount} palettes)" : " (in the art array)")
             : "  no anims: mobiles are not drawn");
         EcsSchema.Register();
 

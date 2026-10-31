@@ -51,6 +51,7 @@ namespace ClassicUO.Game.Scenes
         // whose season graphic is baked needs no per-frame capture, so the walk can skip it like any other.
         private static ushort[] _gpuStaticRemap;
         private Uo.Render.WorldRenderer _gpuRemapWorld;
+        private Uo.Render.PackSet _gpuRemapPack; // a facet change keeps the world pass but swaps its pack
         private Managers.Season _gpuRemapSeason;
         private bool _gpuRemapOn;
 
@@ -65,12 +66,13 @@ namespace ClassicUO.Game.Scenes
 
             bool want = Settings.GlobalSettings.GpuPrepareSkipBaked;
 
-            if (world == _gpuRemapWorld && want == _gpuRemapOn && (!want || _world.Season == _gpuRemapSeason))
+            if (world == _gpuRemapWorld && world.Pack == _gpuRemapPack && want == _gpuRemapOn && (!want || _world.Season == _gpuRemapSeason))
             {
                 return;
             }
 
             _gpuRemapWorld = world;
+            _gpuRemapPack = world.Pack;
             _gpuRemapOn = want;
             _gpuRemapSeason = _world.Season;
             ushort[] remap = null;

@@ -34,7 +34,15 @@ public sealed unsafe class Renderer : IDisposable
     readonly IntPtr _samplerPoint, _samplerLinear, _samplerHue;
     readonly IntPtr _hueTex;
     readonly IntPtr _paletteBuf, _dummyAnimTex;
-    public readonly IntPtr InstanceBuffer;
+    /// <summary>The instance buffer; replaced by <see cref="GrowInstances"/>.</summary>
+    public IntPtr InstanceBuffer { get; private set; }
+    /// <summary>Instances the buffer holds now.</summary>
+    public int InstanceCapacity { get; private set; }
+    // set by GrowInstances: the old buffer, copied into the new one at the start of the next frame's copy pass
+    IntPtr _growFrom;
+    uint _growBytes;
+    /// <summary>Instance buffer growth steps (main-thread time to create the buffer; the GPU copy runs in the next frame).</summary>
+    public GrowthStats InstanceGrowth;
     IntPtr _frameTableBuf;
     readonly IntPtr _pageTableBuf;
     readonly IntPtr _frameTransfer, _pageTableTransfer;
@@ -86,7 +94,13 @@ public sealed unsafe class Renderer : IDisposable
     {
         if (!offscreen)
         {
-            if (!SDL_ClaimWindowForGPUDevice(Device, window)) throw new Exception("claim window: " + SDL_GetError());
+            if (!SDL_ClaimWindowForGPUDevice(Device, window))
+            {
+                var e = new Exception("claim window: " + SDL_GetError());
+                Dispose(); // the caller never gets this renderer: release what the base constructor created, and the device
+                throw e;
+            }
+            _windowClaimed = true;
             ImmediateSupported = SDL_WindowSupportsGPUPresentMode(Device, window, SDL_GPUPresentMode.SDL_GPU_PRESENTMODE_IMMEDIATE);
             MailboxSupported = SDL_WindowSupportsGPUPresentMode(Device, window, SDL_GPUPresentMode.SDL_GPU_PRESENTMODE_MAILBOX);
             ColorFormat = SDL_GetGPUSwapchainTextureFormat(Device, window);
@@ -129,60 +143,118 @@ public sealed unsafe class Renderer : IDisposable
         Window = window;
         Mode = mode;
         ColorFormat = colorFormat;
-        if (overrideSlots != 0 && (overrideSlots & (overrideSlots - 1)) != 0) throw new ArgumentException("override slots must be a power of two");
-        var have = SDL_GetGPUShaderFormats(Device) & EmbeddedFormats();
-        if ((have & SDL_GPUShaderFormat.SDL_GPU_SHADERFORMAT_DXIL) != 0) ShaderFormat = SDL_GPUShaderFormat.SDL_GPU_SHADERFORMAT_DXIL;
-        else if ((have & SDL_GPUShaderFormat.SDL_GPU_SHADERFORMAT_SPIRV) != 0) ShaderFormat = SDL_GPUShaderFormat.SDL_GPU_SHADERFORMAT_SPIRV;
-        else throw new NotSupportedException($"device {SDL_GetGPUDeviceDriver(Device)} accepts shader formats {SDL_GetGPUShaderFormats(Device)}; embedded: {EmbeddedFormats()}");
-
-        _vs = CreateShader("sprite_vs", "VSMain", SDL_GPUShaderStage.SDL_GPU_SHADERSTAGE_VERTEX, 0, 3, 1);
-        _ps = CreateShader("sprite_ps", "PSMain", SDL_GPUShaderStage.SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1, 0);
-
-        _samplerPoint = CreateSampler(SDL_GPUFilter.SDL_GPU_FILTER_NEAREST, SDL_GPUSamplerMipmapMode.SDL_GPU_SAMPLERMIPMAPMODE_NEAREST, 0);
-        // zoomed out: trilinear, limited to mips the 2-px gutter still protects (sprite.hlsl LINEAR_MAX_LOD must match)
-        _samplerLinear = CreateSampler(SDL_GPUFilter.SDL_GPU_FILTER_LINEAR, SDL_GPUSamplerMipmapMode.SDL_GPU_SAMPLERMIPMAPMODE_LINEAR, 1.5f);
-        _samplerHue = CreateSampler(SDL_GPUFilter.SDL_GPU_FILTER_NEAREST, SDL_GPUSamplerMipmapMode.SDL_GPU_SAMPLERMIPMAPMODE_NEAREST, 0);
-
-        InstanceBuffer = CreateBuffer((uint)(instanceCapacity * sizeof(SpriteInstance)), "instances");
-        ChunkTableCapacity = maxVisibleChunks;
-        MaxTranslucent = maxTranslucent;
-        OverrideSlots = overrideSlots;
-        _frameTableBuf = CreateBuffer((uint)((maxVisibleChunks + maxTranslucent + overrideSlots) * sizeof(ChunkDraw)), "frame table");
-        _pageTableBytes = Math.Max(1, pack.TablePageCount) * 4;
-        _pageTableBuf = CreateBuffer((uint)_pageTableBytes, "page table");
-
-        FrameTransferSize = 8u << 20;
-        _frameTransfer = CreateTransfer(FrameTransferSize, true);
-        _pageTableTransfer = CreateTransfer((uint)_pageTableBytes, true);
-
-        _hueTex = CreateHueTexture(pack);
-        _paletteBuf = CreatePaletteBuffer(pack);
-        _dummyAnimTex = CreateNamedTexture(Device, new SDL_GPUTextureCreateInfo
+        try
         {
-            type = SDL_GPUTextureType.SDL_GPU_TEXTURETYPE_2D_ARRAY, format = SDL_GPUTextureFormat.SDL_GPU_TEXTUREFORMAT_R8_UINT,
-            usage = SDL_GPUTextureUsageFlags.SDL_GPU_TEXTUREUSAGE_SAMPLER, width = 1, height = 1, layer_count_or_depth = 1, num_levels = 1,
-        }, "Uo.Render dummy anim pages");
+            if (overrideSlots != 0 && (overrideSlots & (overrideSlots - 1)) != 0) throw new ArgumentException("override slots must be a power of two");
+            var have = SDL_GetGPUShaderFormats(Device) & EmbeddedFormats();
+            if ((have & SDL_GPUShaderFormat.SDL_GPU_SHADERFORMAT_DXIL) != 0) ShaderFormat = SDL_GPUShaderFormat.SDL_GPU_SHADERFORMAT_DXIL;
+            else if ((have & SDL_GPUShaderFormat.SDL_GPU_SHADERFORMAT_SPIRV) != 0) ShaderFormat = SDL_GPUShaderFormat.SDL_GPU_SHADERFORMAT_SPIRV;
+            else throw new NotSupportedException($"device {SDL_GetGPUDeviceDriver(Device)} accepts shader formats {SDL_GetGPUShaderFormats(Device)}; embedded: {EmbeddedFormats()}");
+
+            _vs = CreateShader("sprite_vs", "VSMain", SDL_GPUShaderStage.SDL_GPU_SHADERSTAGE_VERTEX, 0, 3, 1);
+            _ps = CreateShader("sprite_ps", "PSMain", SDL_GPUShaderStage.SDL_GPU_SHADERSTAGE_FRAGMENT, 3, 1, 0);
+
+            _samplerPoint = CreateSampler(SDL_GPUFilter.SDL_GPU_FILTER_NEAREST, SDL_GPUSamplerMipmapMode.SDL_GPU_SAMPLERMIPMAPMODE_NEAREST, 0);
+            // zoomed out: trilinear, limited to mips the 2-px gutter still protects (sprite.hlsl LINEAR_MAX_LOD must match)
+            _samplerLinear = CreateSampler(SDL_GPUFilter.SDL_GPU_FILTER_LINEAR, SDL_GPUSamplerMipmapMode.SDL_GPU_SAMPLERMIPMAPMODE_LINEAR, 1.5f);
+            _samplerHue = CreateSampler(SDL_GPUFilter.SDL_GPU_FILTER_NEAREST, SDL_GPUSamplerMipmapMode.SDL_GPU_SAMPLERMIPMAPMODE_NEAREST, 0);
+
+            InstanceBuffer = CreateBuffer((uint)(instanceCapacity * sizeof(SpriteInstance)), "instances");
+            InstanceCapacity = instanceCapacity;
+            ChunkTableCapacity = maxVisibleChunks;
+            MaxTranslucent = maxTranslucent;
+            OverrideSlots = overrideSlots;
+            _frameTableBuf = CreateBuffer((uint)((maxVisibleChunks + maxTranslucent + overrideSlots) * sizeof(ChunkDraw)), "frame table");
+            _pageTableBytes = Math.Max(1, pack.TablePageCount) * 4;
+            _pageTableBuf = CreateBuffer((uint)_pageTableBytes, "page table");
+
+            FrameTransferSize = 8u << 20;
+            _frameTransfer = CreateTransfer(FrameTransferSize, true);
+            _pageTableTransfer = CreateTransfer((uint)_pageTableBytes, true);
+
+            _hueTex = CreateHueTexture(pack);
+            _paletteBuf = CreatePaletteBuffer(pack);
+            _dummyAnimTex = CreateNamedTexture(Device, new SDL_GPUTextureCreateInfo
+            {
+                type = SDL_GPUTextureType.SDL_GPU_TEXTURETYPE_2D_ARRAY, format = SDL_GPUTextureFormat.SDL_GPU_TEXTUREFORMAT_R8_UINT,
+                usage = SDL_GPUTextureUsageFlags.SDL_GPU_TEXTUREUSAGE_SAMPLER, width = 1, height = 1, layer_count_or_depth = 1, num_levels = 1,
+            }, "Uo.Render dummy anim pages");
+        }
+        catch
+        {
+            // a constructor that throws hands nothing back: release what was created so far (and an owned device)
+            Dispose();
+            throw;
+        }
     }
 
-    /// <summary>palettes.bin's u16 table as one storage buffer (18.5 MiB for all 37.9k palettes), uploaded once.</summary>
+    /// <summary>palettes.bin's u16 table as one storage buffer (18.5 MiB for all 37.9k palettes), uploaded once. The file is
+    /// read straight into the mapped transfer buffer: no CPU copy of the palettes is allocated or kept (the GPU buffer is
+    /// their only reader; a new renderer reads the file again). The sizes are validated against the file
+    /// (<see cref="PaletteUploadSize"/>) before anything is allocated, and every failure releases what it created.</summary>
     IntPtr CreatePaletteBuffer(PackSet pack)
     {
-        var pal = pack.Palettes ?? new ushort[2];
-        uint bytes = (uint)((pal.Length * 2 + 3) & ~3);
-        var buf = CreateBuffer(bytes, "palettes");
-        var tb = CreateTransfer(bytes, true);
-        var ptr = SDL_MapGPUTransferBuffer(Device, tb, false);
-        fixed (ushort* src = pal) Buffer.MemoryCopy(src, (void*)ptr, bytes, pal.Length * 2);
-        SDL_UnmapGPUTransferBuffer(Device, tb);
-        var cmd = SDL_AcquireGPUCommandBuffer(Device);
-        var copy = SDL_BeginGPUCopyPass(cmd);
-        var src2 = new SDL_GPUTransferBufferLocation { transfer_buffer = tb };
-        var dst = new SDL_GPUBufferRegion { buffer = buf, size = bytes };
-        SDL_UploadToGPUBuffer(copy, in src2, in dst, false);
-        SDL_EndGPUCopyPass(copy);
-        SDL_SubmitGPUCommandBuffer(cmd);
-        SDL_ReleaseGPUTransferBuffer(Device, tb);
-        return buf;
+        FileStream fs = null;
+        IntPtr buf = IntPtr.Zero, tb = IntPtr.Zero;
+        bool mapped = false;
+        try
+        {
+            long dataBytes = 0;
+            uint bytes = 4;
+            if (pack.PalettePath != null)
+            {
+                fs = new FileStream(pack.PalettePath, FileMode.Open, FileAccess.Read, FileShare.Read, 1, FileOptions.SequentialScan);
+                (dataBytes, bytes) = PaletteUploadSize(pack.PaletteCount, pack.PaletteOffset, fs.Length);
+            }
+            buf = CreateBuffer(bytes, "palettes");
+            tb = CreateTransfer(bytes, true);
+            var ptr = SDL_MapGPUTransferBuffer(Device, tb, false);
+            if (ptr == IntPtr.Zero) throw new Exception("palette transfer buffer map: " + SDL_GetError());
+            mapped = true;
+            new Span<byte>((void*)ptr, (int)bytes).Clear();
+            if (dataBytes > 0)
+            {
+                fs.Position = pack.PaletteOffset;
+                fs.ReadExactly(new Span<byte>((void*)ptr, (int)dataBytes));
+            }
+            SDL_UnmapGPUTransferBuffer(Device, tb);
+            mapped = false;
+            var cmd = SDL_AcquireGPUCommandBuffer(Device);
+            if (cmd == IntPtr.Zero) throw new Exception("palette upload command buffer: " + SDL_GetError());
+            var copy = SDL_BeginGPUCopyPass(cmd);
+            var src2 = new SDL_GPUTransferBufferLocation { transfer_buffer = tb };
+            var dst = new SDL_GPUBufferRegion { buffer = buf, size = bytes };
+            SDL_UploadToGPUBuffer(copy, in src2, in dst, false);
+            SDL_EndGPUCopyPass(copy);
+            SDL_SubmitGPUCommandBuffer(cmd);
+            var done = buf;
+            buf = IntPtr.Zero; // handed to the caller
+            return done;
+        }
+        finally
+        {
+            if (mapped) SDL_UnmapGPUTransferBuffer(Device, tb);
+            if (tb != IntPtr.Zero) SDL_ReleaseGPUTransferBuffer(Device, tb); // after a submit SDL frees it once the copy is done
+            if (buf != IntPtr.Zero) SDL_ReleaseGPUBuffer(Device, buf);
+            fs?.Dispose();
+        }
+    }
+
+    /// <summary>The palette upload's sizes, validated before any GPU allocation (packs are untrusted): the count within
+    /// <see cref="Uo.Pack.AnimPaletteFile.MaxPalettes"/>, the payload (checked arithmetic) within
+    /// <see cref="Uo.Pack.AnimPaletteFile.MaxPaletteBytes"/> and inside the file. Returns the payload bytes and the
+    /// buffer bytes (rounded up to 4, at least 4).</summary>
+    public static (long DataBytes, uint BufferBytes) PaletteUploadSize(int paletteCount, long paletteOffset, long fileLength)
+    {
+        if (paletteCount < 0 || paletteCount > Uo.Pack.AnimPaletteFile.MaxPalettes)
+            throw new InvalidDataException($"palette count {paletteCount} outside 0..{Uo.Pack.AnimPaletteFile.MaxPalettes}");
+        long dataBytes = checked((long)paletteCount * Uo.Pack.AnimPaletteFile.Entries * sizeof(ushort));
+        if (dataBytes > Uo.Pack.AnimPaletteFile.MaxPaletteBytes)
+            throw new InvalidDataException($"palette data {dataBytes} bytes over the {Uo.Pack.AnimPaletteFile.MaxPaletteBytes} limit");
+        if (paletteOffset < 0 || checked(paletteOffset + dataBytes) > fileLength)
+            throw new InvalidDataException($"palette data at {paletteOffset} + {dataBytes} bytes runs past the file ({fileLength} bytes)");
+        uint bufferBytes = checked((uint)Math.Max(4L, (dataBytes + 3) & ~3L));
+        return (dataBytes, bufferBytes);
     }
 
     /// <summary>Makes room for <paramref name="count"/> translucent entries (at most <see cref="TranslucentLimit"/>) by
@@ -200,6 +272,48 @@ public sealed unsafe class Renderer : IDisposable
         MaxTranslucent = cap;
         TranslucentGrowths++;
         return count <= cap;
+    }
+
+    /// <summary>Replaces the instance buffer with one of <paramref name="capacity"/> instances; call between frames. The
+    /// old contents are copied GPU-side at the start of the next <see cref="RenderFrame"/>'s copy pass, before that
+    /// frame's uploads, so every baked instance keeps its offset. False (nothing changed) if the buffer can't be created.</summary>
+    public bool GrowInstances(int capacity)
+    {
+        if (capacity <= InstanceCapacity) return true;
+        long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+        var ci = new SDL_GPUBufferCreateInfo { usage = SDL_GPUBufferUsageFlags.SDL_GPU_BUFFERUSAGE_GRAPHICS_STORAGE_READ, size = (uint)((long)capacity * sizeof(SpriteInstance)) };
+        var b = SDL_CreateGPUBuffer(Device, in ci);
+        if (b == IntPtr.Zero)
+        {
+            Console.Error.WriteLine($"instance buffer growth to {capacity} failed: {SDL_GetError()}");
+            return false;
+        }
+        SDL_SetGPUBufferName(Device, b, "instances");
+        if (_growFrom != IntPtr.Zero)
+        {
+            // grown twice before a frame: the oldest contents are still pending; copy them, then drop the middle buffer
+            SDL_ReleaseGPUBuffer(Device, InstanceBuffer);
+        }
+        else
+        {
+            _growFrom = InstanceBuffer;
+            _growBytes = (uint)(InstanceCapacity * sizeof(SpriteInstance));
+        }
+        int from = InstanceCapacity;
+        InstanceBuffer = b;
+        InstanceCapacity = capacity;
+        InstanceGrowth.Add((System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency, from, capacity);
+        return true;
+    }
+
+    void CopyGrownInstances(IntPtr copy)
+    {
+        if (_growFrom == IntPtr.Zero) return;
+        var src = new SDL_GPUBufferLocation { buffer = _growFrom };
+        var dst = new SDL_GPUBufferLocation { buffer = InstanceBuffer };
+        SDL_CopyGPUBufferToBuffer(copy, in src, in dst, _growBytes, false);
+        SDL_ReleaseGPUBuffer(Device, _growFrom);
+        _growFrom = IntPtr.Zero;
     }
 
     IntPtr CreateBuffer(uint size, string name)
@@ -481,6 +595,8 @@ public sealed unsafe class Renderer : IDisposable
         public bool LoadTarget;
         /// <summary>Run the copy pass (chunk and page uploads, tables) but draw nothing: no target is touched.</summary>
         public bool StreamOnly;
+        /// <summary>The camera jumped this frame (teleport): a good moment for the arrays to grow (<see cref="GrowthPolicy"/>).</summary>
+        public bool Hold;
         /// <summary>Viewport inside the target in pixels; width 0 = the whole target.</summary>
         public int ViewportX, ViewportY, ViewportWidth, ViewportHeight;
     }
@@ -531,6 +647,7 @@ public sealed unsafe class Renderer : IDisposable
         SDL_UnmapGPUTransferBuffer(Device, _frameTransfer);
 
         var copy = SDL_BeginGPUCopyPass(cmd);
+        CopyGrownInstances(copy); // before this frame's instance uploads, which may land inside the old range
         var ch = f.Chunks;
         for (int i = 0; i < ch.UploadCount; i++)
         {
@@ -549,8 +666,8 @@ public sealed unsafe class Renderer : IDisposable
             var dst = new SDL_GPUBufferRegion { buffer = InstanceBuffer, offset = f.DynamicFirst * (uint)sizeof(SpriteInstance), size = dynBytes };
             SDL_UploadToGPUBuffer(copy, in src, in dst, false);
         }
-        f.Pages.Upload(copy, f.Frame);
-        f.AnimPages?.Upload(copy, f.Frame);
+        f.Pages.Upload(copy, f.Frame, f.StreamOnly || f.Hold);
+        f.AnimPages?.Upload(copy, f.Frame, f.StreamOnly || f.Hold);
         if (f.Pages.TableDirty || f.AnimPages is { TableDirty: true })
         {
             var p = (byte*)SDL_MapGPUTransferBuffer(Device, _pageTableTransfer, true);
@@ -813,31 +930,43 @@ public sealed unsafe class Renderer : IDisposable
         return true;
     }
 
+    bool _windowClaimed;
+
+    /// <summary>Releases everything this renderer created. Also the cleanup of a constructor that failed part way, so any
+    /// handle may still be null.</summary>
     public void Dispose()
     {
+        if (Device == IntPtr.Zero) return;
         DrainInFlight();
-        if (_depth != IntPtr.Zero) SDL_ReleaseGPUTexture(Device, _depth);
-        if (_offscreen != IntPtr.Zero) SDL_ReleaseGPUTexture(Device, _offscreen);
-        SDL_ReleaseGPUTexture(Device, _hueTex);
-        SDL_ReleaseGPUTexture(Device, _dummyAnimTex);
-        SDL_ReleaseGPUBuffer(Device, _paletteBuf);
-        SDL_ReleaseGPUBuffer(Device, InstanceBuffer);
-        SDL_ReleaseGPUBuffer(Device, _frameTableBuf);
-        SDL_ReleaseGPUBuffer(Device, _pageTableBuf);
-        SDL_ReleaseGPUTransferBuffer(Device, _frameTransfer);
-        SDL_ReleaseGPUTransferBuffer(Device, _pageTableTransfer);
-        SDL_ReleaseGPUSampler(Device, _samplerPoint);
-        SDL_ReleaseGPUSampler(Device, _samplerLinear);
-        SDL_ReleaseGPUSampler(Device, _samplerHue);
+        static void Tex(IntPtr d, IntPtr t) { if (t != IntPtr.Zero) SDL_ReleaseGPUTexture(d, t); }
+        static void Buf(IntPtr d, IntPtr b) { if (b != IntPtr.Zero) SDL_ReleaseGPUBuffer(d, b); }
+        static void Xfer(IntPtr d, IntPtr t) { if (t != IntPtr.Zero) SDL_ReleaseGPUTransferBuffer(d, t); }
+        static void Smp(IntPtr d, IntPtr t) { if (t != IntPtr.Zero) SDL_ReleaseGPUSampler(d, t); }
+        static void Pipe(IntPtr d, IntPtr p) { if (p != IntPtr.Zero) SDL_ReleaseGPUGraphicsPipeline(d, p); }
+        static void Shd(IntPtr d, IntPtr p) { if (p != IntPtr.Zero) SDL_ReleaseGPUShader(d, p); }
+        Tex(Device, _depth);
+        Tex(Device, _offscreen);
+        Tex(Device, _hueTex);
+        Tex(Device, _dummyAnimTex);
+        Buf(Device, _paletteBuf);
+        Buf(Device, InstanceBuffer);
+        Buf(Device, _growFrom);
+        Buf(Device, _frameTableBuf);
+        Buf(Device, _pageTableBuf);
+        Xfer(Device, _frameTransfer);
+        Xfer(Device, _pageTableTransfer);
+        Smp(Device, _samplerPoint);
+        Smp(Device, _samplerLinear);
+        Smp(Device, _samplerHue);
         foreach (var p in _pipelines)
         {
-            SDL_ReleaseGPUGraphicsPipeline(Device, p.Opaque);
-            SDL_ReleaseGPUGraphicsPipeline(Device, p.Translucent);
+            Pipe(Device, p.Opaque);
+            Pipe(Device, p.Translucent);
         }
-        foreach (var p in _blendPipelines) SDL_ReleaseGPUGraphicsPipeline(Device, p.Pipeline);
-        SDL_ReleaseGPUShader(Device, _vs);
-        SDL_ReleaseGPUShader(Device, _ps);
-        if (Mode == RendererMode.Window) SDL_ReleaseWindowFromGPUDevice(Device, Window);
+        foreach (var p in _blendPipelines) Pipe(Device, p.Pipeline);
+        Shd(Device, _vs);
+        Shd(Device, _ps);
+        if (_windowClaimed) SDL_ReleaseWindowFromGPUDevice(Device, Window);
         if (OwnsDevice) SDL_DestroyGPUDevice(Device);
     }
 }
