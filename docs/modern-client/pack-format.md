@@ -50,6 +50,9 @@ For every content type described here, the client reads only the pack. MUL/UOP s
     unifont.bin            unicode fonts: a record store, a record per 256-character page (FNTU)
     cliloc.bin             cliloc, every language: a record store, a record per language (CLIL)
     speech.bin             speech.mul keywords (SPCH)
+  audio/
+    sounds.bin             sound effects, raw 22,050 Hz mono 16-bit PCM: a record store (SNDS)
+    music.bin              music, the original MP3 bytes and loop flags: a record store (MUSC)
 ```
 
 `NNNN` is the zero-padded decimal page index (`page_0000.bin`). Page indices are contiguous from 0.
@@ -86,6 +89,8 @@ Every binary file starts with a 16-byte `FileHeader`:
 | `FNTU` 0x55544E46 | text/unifont.bin (a record store) |
 | `CLIL` 0x4C494C43 | text/cliloc.bin (a record store) |
 | `SPCH` 0x48435053 | text/speech.bin |
+| `SNDS` 0x53444E53 | audio/sounds.bin (a record store) |
+| `MUSC` 0x4353554D | audio/music.bin (a record store) |
 
 Retired magic: `HUES` 0x53455548 (`hues.bin`, see "Hues"). Packs that still carry the file load as before; readers ignore it.
 
@@ -117,7 +122,7 @@ In every kind, the *logical payload* is the bytes a raw file has after its `File
 
   Decode each chunk straight into the destination buffer at its logical offset. Chunk 0 always contains the `PageHeader` (and for regions the `RegionHeader` and offset table). `Uo.Pack` provides `ChunkedBrotli.Decode` (single thread, in memory), `ChunkedBrotliStream` (sequential) and `ChunkedBrotliDecoder` (persistent worker pool, used by `AtlasPage.Read(path, span, decoder)`).
 
-Which files use which kind is a profile choice (see "Ship profile"). Only pages and regions are compressed as whole files; all other files are Kind 0. Record stores (gumps, fonts, cliloc) are Kind 0 files whose records are compressed one by one (see "Record stores").
+Which files use which kind is a profile choice (see "Ship profile"). Only pages and regions are compressed as whole files; all other files are Kind 0. Record stores (gumps, fonts, cliloc, sounds, music) are Kind 0 files whose records are compressed one by one (see "Record stores").
 
 ## Atlas pages (`page_NNNN.bin`)
 
@@ -374,7 +379,7 @@ At runtime, an equipped item on body `body` with animId `graphic` is drawn as `n
 
 ## Record stores
 
-Content that the client reads one item at a time and that is not sampled by the GPU from pack pages goes into a record store: one Kind 0 file per content type, read by offset through one file handle kept open. Gumps were the first; ASCII fonts (a record per font), unicode fonts (a record per 256-character page) and cliloc (a record per language, plus the shard's overrides) use it too, with their own magic, slot argument and record meta (see "Text"). Sounds and the other "Not in the pack" types are meant to follow. Reader and writer: `Uo.Pack.RecordStore`, `RecordStoreWriter`.
+Content that the client reads one item at a time and that is not sampled by the GPU from pack pages goes into a record store: one Kind 0 file per content type, read by offset through one file handle kept open. Gumps were the first; ASCII fonts (a record per font), unicode fonts (a record per 256-character page) and cliloc (a record per language, plus the shard's overrides) use it too, with their own magic, slot argument and record meta (see "Text"), and so do sound effects and music (see "Audio"). The other "Not in the pack" types are meant to follow. Reader and writer: `Uo.Pack.RecordStore`, `RecordStoreWriter`.
 
 | Part | Layout |
 |---|---|
@@ -501,6 +506,55 @@ Not a record store (the client uses the whole table): `FileHeader` with magic `S
 - **Cliloc:** a record must have a size up to 256 MiB that adds up exactly (`8 + 8·count + blobBytes`), strictly ascending ids and string ends that never decrease or pass the blob. A language record that fails makes the pack's languages unusable and the Cliloc.* files serve; an overrides record that fails is ignored (logged) and the languages still serve. Strings never throw on decode (invalid UTF-8 becomes U+FFFD, as with the files).
 - **Speech:** the fixed header is read first; at most 2²⁰ entries and 64 MiB of text, and the sizes must add up to the file's exact length (wide arithmetic) before anything is allocated; the ends must not decrease or pass the blob. Else the file is not used and speech.mul serves.
 
+## Audio (`audio/`)
+
+Sound effects and music, as the client's `SoundsLoader` resolved them before the pack. The client reads audio **only** from here: `sound.mul`/`soundidx.mul`, `soundLegacyMUL.uop`, `Sound.def`, `Music/Digital/Config.txt` (or `Music/Config.txt`) and the Music MP3 files are the converter's input, and the client no longer opens them. A pack without `audio/sounds.bin` plays only loose `Sounds/<id>.wav` files, and one without `audio/music.bin` plays no music (each logged once at load). Owner decision: data-formats.md Q10.
+
+Both stores put the audio first in the payload and the item's name after it (`meta2` bytes, UTF-8), so the audio starts at the payload's first byte and playing needs no copy. Ids are 0..0xFFFE (`AudioConst.MaxIds` = 0xFFFF slots at most; the client's arrays have 0xFFFF entries). Payloads need no alignment: a sound is read into a managed array and an MP3 into native memory, by copy.
+
+### `audio/sounds.bin`: sound effects
+
+A record store with magic `SNDS` (0x53444E53).
+- **`StoreHeader.flags`** bit 0: converted from `soundLegacyMUL.uop` (else `sound.mul` + `soundidx.mul`). Informational.
+- **Slots:** `slotCount` = highest present id + 1 (1,667 for 7.0.103, 1,488 for UOML). `arg` = 0. Ids that share an archive entry (`Sound.def` aliases) share one record.
+- **Records:** codec 0 only, so playing needs no decode: the raw PCM goes straight to `DynamicSoundEffectInstance.SubmitBuffer`. `meta0` = sample rate, must be 22,050; `meta1` = channels, must be 1; `meta2` = name length, 0..40. Payload: `rawBytes − meta2` bytes of 16-bit signed little-endian PCM (an odd length is kept as the source has it), then the name. The name is the archive entry's 40-byte name field up to its first NUL (e.g. `sword1.wav`), or a loose file's name without the extension.
+- **Converter resolution** (`Uo.Converter/AudioImport.cs`):
+  - the archive the client picked: the UOP on UOP installations when it exists, else the MUL pair;
+  - `Sound.def` applied as the client applied it: an id that already has data is skipped, each group entry with data replaces it (the last one wins), and `-1` clears it;
+  - then the client folder's loose `Sounds/<id>.wav` files over it. They are accepted only as 22,050 Hz mono 16-bit, as in `ReadWave`; anything else falls back to the archive entry.
+  - An archive entry of 40 bytes or less has no PCM and is absent (ClassicUO threw on one shorter than 40).
+- **Client** (`SoundsLoader.TryGetSound`): on the first play of an id, one positional read of the whole record into a new array. `UOSound` plays the PCM part of it, and the renderer caches it for the session as before, so memory grows only with the sounds actually played.
+- **Loose `Sounds/<id>.wav` files still win at runtime** (the folder is listed once at load), so a shard can try a sound without rebuilding the pack. The converter folds the same files into the pack, so a shipped pack needs none.
+
+### `audio/music.bin`: music
+
+A record store with magic `MUSC` (0x4353554D).
+- **`StoreHeader.flags`** bit 0: the client folder had no `Config.txt`, so ClassicUO's built-in 67-entry table was used. Informational.
+- **Slots:** one per music id of the table (`slotCount` = highest id + 1: 103 for 7.0.103). `arg` bit 0 = the id loops (`Config.txt`'s `loop`); other bits must be 0. The loop flag belongs to the id, not the file: ids naming one file share its record (7.0.103: 102 ids, 90 files; UOML: 57 ids, 45 files).
+- **Records:** codec 0 only. `meta0` = audio format, 1 = MP3 (the only one 1.0 knows); `meta1` = 0; `meta2` = name length, 0..255. Payload: the MP3 file's bytes exactly, ID3, Xing/Info and LAME frames included, then the file name (e.g. `Britain1.mp3`). dr_mp3 skips the encoder delay and trims the padding from those frames, so loops are gapless and the record needs no extra metadata beyond the loop flag.
+- **Converter resolution:**
+  - the table the client read: `Music/Digital/Config.txt` for 4.0.11c and later, `Music/Config.txt` before, else the built-in table;
+  - each line is `id name[,loop]`: space, comma or tab separated, 2 or 3 fields, and a later line for an id wins;
+  - the name resolves to a file as `GetTrueFileName` did (the first `*.mp3` under `Music/` matching `^name.mp3`, ignoring case), played from `Music/Digital/` when that folder exists, else from `Music/`;
+  - an id whose file is missing, or whose bytes `Mp3Validator` refuses, is absent (and listed as a warning).
+- **Deviation from ClassicUO, on purpose:** the client compared the version with `CV_4011C` (0x04000B63, the letter as ASCII), which no parsed 4.0.11x reaches ("4.0.11c" parses as 0x04000B02). So a 4.0.11c install (UOML) read the built-in table, whose names it lacks, and 57 of its 67 ids were silent. The converter compares with the parsed form (`AudioConvert.ParsedCV4011C`): UOML gets its own `Music/Digital/Config.txt` (57 ids, every one with a file).
+- **Client** (`SoundsLoader.TryGetMusic`, `UOMusic`, `MusicStream`):
+  - the slot gives the loop flag and the record; the name (for the log) is a small read of the record's tail;
+  - on play, the music worker opens a positional stream over the record's MP3 bytes (`RecordStore.OpenRawStream`) and reads them into native memory, and `Mp3Validator` checks them before dr_mp3 opens them, as it did for files;
+  - decoding stays on the worker thread, and looping seeks to frame 0 inside a buffer fill (gapless).
+
+### Untrusted input
+
+- `RecordStore.Open` checks the extents and codecs (see "Record stores"), and `AudioConst.OpenSoundStore` / `OpenMusicStore` limit the slot count to 1..0xFFFF before anything is allocated.
+- **Overlap:** the client and the verify step reject a store whose payloads overlap (`AudioConst.CheckNoOverlap`). Ids share content through slots, never through records pointing into each other's bytes.
+- A store that fails is not used. The failure is logged as an error, and there is no MUL fallback.
+- **Records, checked at load** (`AudioConst.CheckSoundRecord`, `CheckMusicRecord`, `CheckMusicSlot`):
+  - sounds: codec 0, 22,050 Hz, 1 channel, a name of at most 40 bytes, at most 64 MiB of PCM (the largest stock sound is 21.2 MB);
+  - music: codec 0, format 1, `meta1` 0, a name of at most 255 bytes, 1 byte to 32 MiB of MP3 (`Mp3Validator.MaxBytes`);
+  - a music slot with unknown `arg` bits.
+  A record or slot that fails is absent for the session (logged once), and the others still play. A read that fails later (I/O, a truncated file) makes that record absent and is logged once.
+- **MP3 bytes** are untrusted too. `Mp3Validator` (size, ID3v2 tag, a chain of valid Layer III frame headers) runs on every play before dr_mp3. A refused or undecodable track fails its `MusicStream` cleanly on the worker and is logged as skipped.
+
 ## Manifest (`manifest.json`)
 
 camelCase JSON, read case-insensitively:
@@ -530,6 +584,7 @@ camelCase JSON, read case-insensitively:
 | Gumps | record store | Kind 0 file; images up to 64 KiB of run-length payload uncompressed, larger ones as texels with Brotli (quality 9) |
 | Fonts | record stores | Kind 0 files; ASCII fonts and unicode pages up to 16 KiB raw uncompressed, larger ones Brotli (quality 9) |
 | Cliloc | record store | Kind 0 file; language records uncompressed (one read at startup, no decode) |
+| Sounds, music | record stores | Kind 0 files; records uncompressed (raw PCM; the original MP3 bytes) |
 | Everything else | — | Kind 0 |
 
 - No install-time unpacking is required. A patcher may still rewrite any file to Kind 0, since raw is always valid.
@@ -537,17 +592,19 @@ camelCase JSON, read case-insensitively:
   - formats: `--format rgba8|bc7`, `--anim-format page` (anims use `--format`), `--indexed-mips b16`;
   - page sizes: `--page-size n`, `--anim-page-size n`;
   - compression: `--raw-pages`, `--compress-pages` (Kind 1), `--chunk-bytes n`, `--raw-regions`, `--raw-gumps` (gump records uncompressed, run-length layout), `--raw-text` (font records uncompressed), `--text-small n` (font records up to n raw bytes stay uncompressed; 16384), `--cliloc-brotli` (cliloc records Brotli);
-  - testing: `--gump-def <file>` (read this gump.def instead of the client's), `--gump-report` (the gump storage measurements above; writes nothing).
-- Stages: `--only art,tex,hues,tiledata,data,gumps,fonts,cliloc,speech,maps,anims` (into an existing pack), `--no-maps`, `--no-anims`, `--no-gumps`, `--no-fonts`, `--no-cliloc`, `--no-speech`, `--verify-only`. `fonts` writes `text/fonts.bin` and `text/unifont.bin`. `hues` writes `hues_raw.bin` and `radarcol.bin` (and deletes a stale `hues.bin` from the output), `tiledata` writes both tiledata files, and `data` writes multis, lights, tileart and equipconv. `animdata.bin` belongs to `anims`.
+  - testing: `--gump-def <file>` (read this gump.def instead of the client's), `--gump-report` (the gump storage measurements above; writes nothing), `--audio-report <pack>` (load and first-read costs of the audio stores against the old loader; writes nothing; use with `--verify-only`).
+  - `--client-version x.y.z.w` names the version of a client.exe without version info (UOML: `4.0.11c`). Interim form: poc/legacy-import brings the full resolution under the same flag.
+- Stages: `--only art,tex,hues,tiledata,data,gumps,fonts,cliloc,speech,sounds,music,maps,anims` (into an existing pack), `--no-maps`, `--no-anims`, `--no-gumps`, `--no-fonts`, `--no-cliloc`, `--no-speech`, `--no-sounds`, `--no-music`, `--verify-only`. `sounds` writes `audio/sounds.bin`, `music` writes `audio/music.bin`. `fonts` writes `text/fonts.bin` and `text/unifont.bin`. `hues` writes `hues_raw.bin` and `radarcol.bin` (and deletes a stale `hues.bin` from the output), `tiledata` writes both tiledata files, and `data` writes multis, lights, tileart and equipconv. `animdata.bin` belongs to `anims`.
 - **Outputs are replaced, never written in place.** Every pack file the converter writes (tables, pages, regions, record stores, text, anims, `facet.json`, `manifest.json`) goes to a temp file in the same folder (`.<name>.<guid>.replacing.tmp`), which is then moved over the target (`Uo.Pack.ReplacingFile`). Replacing the directory entry breaks a hard link instead of writing through it, so a test pack built by hard-linking a published pack's files (`cp -al`) and then converting `--only <sections>` leaves the published files untouched. A failed write deletes its temp file and leaves the target as it was; the manifest skips leftover temp files.
 - **Published packs are refused as output.** Published versions are immutable. Every write (`Uo.Pack.ReplacingFile`, at create and again before the commit) and every delete (`Uo.Pack.PackOutputFiles`) checks its own folder, so a junction inside an accepted output cannot reach a published pack. The tools also refuse an output folder (`--out`, `--debug`, `--bench-chunked`'s out, `Uo.Render.App --make-synthetic` and `--debug-compress-pages`) that is, lies under, or contains a published packs root. Roots: `C:/Repositories/uo-packs`, `UO_PACKS_ROOTS` (`;`-separated), every `--packs-root <dir>` (read once, before any other argument, by `PublishedPacks.ConfigureFromArgs`), and any ancestor folder holding a `CURRENT` file that names one of its subfolders. Paths are compared in canonical form (Windows: the file system's final path of the nearest existing folder, so junctions, symlinks, subst drives, `\\?\` and `\\.\` prefixes and volume GUID paths collapse to one drive path); network paths are also compared by file identity (volume serial + file id) with every folder of each root. When the relationship cannot be established (a link loop, an unreachable share, a device path without a drive letter) the write is refused. `--verify-only` only reads, so it may verify a published pack. The default `--debug` folder is `%TEMP%/uo-converter-debug/<pack folder name>`; `--make-synthetic` defaults to `%TEMP%/uo-synthetic-pack`.
 - **No recursive deletes.** A full conversion deletes only the files the previous output's `manifest.json` lists (plus crashed-writer temp files beside them and the manifest itself); a non-empty `--out` without a manifest is refused ("not a converter output"). `--only anims` deletes the `*.bin` files directly in `anim/`, and the debug folders lose only their `*.png` files. Each delete checks its folder like a write.
-- **`--verify-only --only hues`** (and a full verify) fails a pack without `hues_raw.bin`, the only hue source.
+- **`--verify-only --only hues`** (and a full verify) fails a pack without `hues_raw.bin`, the only hue source. Likewise `--only sounds` / `--only music` (and a full verify, unless converted with `--no-sounds` / `--no-music`) fail a pack without `audio/sounds.bin` / `audio/music.bin`: the client has no other source.
 
 **Verification.** Every conversion ends with a verify step that reads the pack back with the `Uo.Pack` readers. It compares against ClassicUO's own loaders:
 - **Sampled.** Sprites are bit-exact including gutters. Indexed8 frames are bit-exact after the palette lookup.
 - **Every record and field, exact:** tiledata (all fields and names), hues (raw entries, and the LUT built from them against an independent expansion of ClassicUO's entries), radarcol, animdata, multis, lights, tileart appearances and equipconv.
 - **Every gump slot of the client's index (81,919 for 7.0.103), exact:** present or not, width and height, and the RGBA8 image with the alias hue, against the converter's copy of `GumpsLoader.GetGump`. The client test `GumpPackTests` repeats it against the client's own MUL/UOP loader.
+- **Audio, exact, against the converter's copy of the client's `SoundsLoader`** (tools/ClassicUO.Assets.Mul): every sound id 0..0xFFFE (present or not, PCM and name byte for byte) and every music id 0..0xFFFE (present or not, the loop flag, and the MP3 bytes against the file the client played, byte for byte); payloads must not overlap. The client test `AudioPackTests` runs the importer on synthetic MUL files and reads the result through the client's `SoundsLoader`.
 - **Text, exact, against the converter's copies of the client loaders:** every ASCII glyph of every font and every unicode glyph of the 20 font slots × 65,536 characters (offsets, size, rows, existence); every (language, id) cliloc string, resolved as `ClilocLoader.Load(language)` resolves it (enu under the language); every speech entry (id, text, keywords, start and end flags). The client test `TextPackTests` repeats them against the client's own MUL path, plus rendered text.
 
 ## Reference sizes (7.0.103, ship profile)
@@ -562,6 +619,7 @@ camelCase JSON, read case-insensitively:
 | Hues, radarcol | hues_raw.bin, radarcol.bin | 0.3 + 0.2 MiB (packs before 2026-10-31 also carry the retired 0.4 MiB hues.bin) |
 | Multis, lights, tileart, equipconv | | 1.8 MiB, 2.8 MiB, 692 B, 1,060 B |
 | Text | text/fonts.bin, unifont.bin, cliloc.bin, speech.bin | 23.4 MiB: 35 KiB + 7.5 MiB (763,025 glyphs in 866 page records, 2,171 pages shared) + 15.6 MiB (8 languages, 941,936 strings) + 141 KiB; 11.8 MiB with `--cliloc-brotli`; 62.5 MB of MUL files |
+| Audio | audio/sounds.bin, audio/music.bin | 160.5 MiB (1,656 sound ids in 1,655 records, 160.4 MiB of PCM, tables 54.7 KiB) + 103.5 MiB (102 music ids, 90 MP3 files); the sources are `soundLegacyMUL.uop` (168.4 MB = 160.6 MiB) and 103.5 MiB of MP3s. UOML (MUL): 107.8 + 53.2 MiB |
 | Gumps | gumps/gumps.bin | 58.2 MiB (123.5 MiB of payloads; 37.9 MiB with every record Brotli, `--gump-small 0`; 133.7 MiB with `--raw-gumps`); 4,438 gumps, 4,290 records |
 
 Decode cost on one worker (i9-12900K): an anim page ≈2.6 ms, an art page ≈23 ms (≈4 ms with 8 workers on Kind 2), a region ≈2.4 ms.
@@ -570,12 +628,11 @@ Decode cost on one worker (i9-12900K): an anim page ≈2.6 ms, an art page ≈23
 
 | Content | ClassicUO loader | Notes |
 |---|---|---|
-| Sounds and music | `SoundsLoader` | next; a record store like gumps |
 | Skills, professions | `SkillsLoader`, `ProfessionLoader` | |
 | World map images | `MultiMapLoader` (Multimap.rle, facet*.mul) | |
 | Anim1.def / Anim2.def group replaces, animinfo.mul, sitting tables | `AnimationsLoader` and client tables | runtime fallbacks for mounts and missing groups |
 
-Gumps moved into the pack on 2026-10-30 ("Gumps"); a pack without `gumps/gumps.bin` still works, and the client then reads gumpart MUL/UOP. Fonts, cliloc and speech followed the same day ("Text"); a pack without a `text/` file reads the MUL files for that content. Clilocs.txt (a shard's own cliloc strings) stays a plain text file in the client folder, read at load on top of the pack's tables.
+Gumps moved into the pack on 2026-10-30 ("Gumps"); a pack without `gumps/gumps.bin` still works, and the client then reads gumpart MUL/UOP. Fonts, cliloc and speech followed the same day ("Text"); a pack without a `text/` file reads the MUL files for that content. Sounds and music followed on 2026-10-31 ("Audio"), with no MUL fallback. Clilocs.txt (a shard's own cliloc strings) stays a plain text file in the client folder, read at load on top of the pack's tables.
 
 Picking needs CPU-side alpha. The client decodes pack pages on the CPU (B5G5R5A1 bit 15; Indexed8 index ≠ 0), and gump records likewise (the picker mask is built from the decoded image at upload). Mask sidecars are not part of 1.0.
 
