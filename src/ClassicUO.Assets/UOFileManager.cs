@@ -103,6 +103,9 @@ namespace ClassicUO.Assets
         /// <summary>The file names files_override maps (lower-case), each resolved by <see cref="GetUOFilePath"/>.</summary>
         public IEnumerable<string> OverriddenFiles => _overrideMap.Keys;
 
+        /// <summary>Tests: run the alternative-casing lookup on any OS (default: off on Windows).</summary>
+        internal bool CaseInsensitiveFallback = !PlatformHelper.IsWindows;
+
         public string GetUOFilePath(string file)
         {
             if (!_overrideMap.TryGetValue(file.ToLowerInvariant(), out string uoFilePath))
@@ -111,29 +114,43 @@ namespace ClassicUO.Assets
             }
 
             //If the file with the given name doesn't exist, check for it with alternative casing if not on windows
-            if (!PlatformHelper.IsWindows && !File.Exists(uoFilePath))
+            if (CaseInsensitiveFallback && !File.Exists(uoFilePath))
             {
-                FileInfo finfo = new FileInfo(uoFilePath);
-                var dir = Path.GetFullPath(finfo.DirectoryName ?? BasePath);
-
-                if (Directory.Exists(dir))
+                try
                 {
-                    var files = Directory.GetFiles(dir);
-                    var matches = 0;
+                    // absolute, so the comparison below sees the same form as the directory entries (a relative base such as ./UO never matched)
+                    string full = Path.GetFullPath(uoFilePath);
+                    var dir = Path.GetDirectoryName(full) ?? Path.GetFullPath(BasePath);
 
-                    foreach (var f in files)
+                    if (Directory.Exists(dir))
                     {
-                        if (string.Equals(f, uoFilePath, StringComparison.OrdinalIgnoreCase))
+                        var matches = 0;
+                        string found = null;
+
+                        foreach (var f in Directory.GetFiles(dir))
                         {
-                            matches++;
-                            uoFilePath = f;
+                            if (string.Equals(f, full, StringComparison.OrdinalIgnoreCase))
+                            {
+                                matches++;
+                                found = f;
+                            }
+                        }
+
+                        if (found != null)
+                        {
+                            uoFilePath = found;
+                        }
+
+                        if (matches > 1)
+                        {
+                            Log.Warn($"Multiple files with ambiguous case found for {file}, using {Path.GetFileName(uoFilePath)}. Check your data directory for duplicate files.");
                         }
                     }
-
-                    if (matches > 1)
-                    {
-                        Log.Warn($"Multiple files with ambiguous case found for {file}, using {Path.GetFileName(uoFilePath)}. Check your data directory for duplicate files.");
-                    }
+                }
+                catch (Exception e) when (e is ArgumentException || e is NotSupportedException || e is IOException || e is UnauthorizedAccessException)
+                {
+                    // an empty or invalid path (a bad files_override target): no alternative casing to find; the caller sees a file that does not exist
+                    Log.Trace($"No case-insensitive lookup for '{file}' ({e.Message})");
                 }
             }
 
