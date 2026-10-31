@@ -64,7 +64,8 @@ public struct SpriteDebugInfo
 /// Overrides, dynamic sprites, z hiding and the circle of transparency are cleared after each Render.</summary>
 public sealed unsafe class WorldRenderer : IDisposable
 {
-    public readonly PackSet Pack;
+    /// <summary>The pack and facet being streamed; replaced by <see cref="ChangeFacet"/>.</summary>
+    public PackSet Pack { get; private set; }
     public readonly Renderer Renderer;
     public readonly WorkerPool Workers;
     public readonly PageResidency Pages, AnimPages;
@@ -174,6 +175,27 @@ public sealed unsafe class WorldRenderer : IDisposable
         _pending = new PendingOverride[Math.Max(1, renderer.OverrideSlots / 2)];
         _lastTicks = Stopwatch.GetTimestamp();
     }
+
+    /// <summary>Streams another facet of the same pack (<paramref name="pack"/> from <see cref="PackSet.WithFacet"/>):
+    /// the chunks and regions are dropped and re-stream from the next <see cref="Prepare"/>, while the device resources
+    /// (instance buffer, page arrays and their resident pages, palettes, pipelines), the workers and every CPU-side
+    /// array are kept. Call between frames. The new pack's bake switches (<see cref="PackSet.WaterWobble"/>, remaps) are
+    /// its own, as with a newly created world.</summary>
+    public void ChangeFacet(PackSet pack)
+    {
+        if (ReferenceEquals(pack, Pack)) return;
+        if (!ReferenceEquals(pack.PagePaths, Pack.PagePaths) || !ReferenceEquals(pack.AnimPagePaths, Pack.AnimPagePaths) || pack.AnimPageBase != Pack.AnimPageBase)
+            throw new ArgumentException("ChangeFacet needs the same pack on another facet (PackSet.WithFacet)", nameof(pack));
+        pack.BakeTranslucentAlpha = true;
+        Pack = pack;
+        Chunks.ChangeFacet(pack);
+        _waterX = _waterY = 1f;
+        _velX = _velY = 0;
+        FacetChanges++;
+    }
+
+    /// <summary>Times <see cref="ChangeFacet"/> switched the facet.</summary>
+    public int FacetChanges;
 
     /// <summary>Streaming and the visible chunk list for this camera. Call once per frame before <see cref="Render()"/>.</summary>
     public void Prepare(in WorldCamera cam)

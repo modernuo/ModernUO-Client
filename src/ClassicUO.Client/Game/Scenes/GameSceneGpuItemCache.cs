@@ -169,6 +169,7 @@ namespace ClassicUO.Game.Scenes
         private int _gpuItemGeneration;
         private bool _gpuItemKeyOn, _gpuItemKeyGray, _gpuItemKeyRange, _gpuItemKeyMixed, _gpuItemKeyEffects;
         private Uo.Render.WorldRenderer _gpuItemKeyWorld;
+        private Uo.Render.PackSet _gpuItemKeyPack;
         private Item _gpuSelContainer;
         // this chunk's tiles served from its cache, or (check frames) that would be
         private ulong _gpuServeTiles, _gpuCheckTiles;
@@ -209,7 +210,7 @@ namespace ClassicUO.Game.Scenes
             var world = _gpuWorld.World;
 
             if (want != _gpuItemKeyOn || gray != _gpuItemKeyGray || range != _gpuItemKeyRange || mixed != _gpuItemKeyMixed ||
-                effects != _gpuItemKeyEffects || !ReferenceEquals(world, _gpuItemKeyWorld))
+                effects != _gpuItemKeyEffects || !ReferenceEquals(world, _gpuItemKeyWorld) || !ReferenceEquals(world?.Pack, _gpuItemKeyPack))
             {
                 _gpuItemGeneration++;
                 _gpuItemKeyOn = want;
@@ -219,6 +220,7 @@ namespace ClassicUO.Game.Scenes
                 _gpuItemKeyEffects = effects;
                 Chunk.GpuEffectsIgnored = effects;
                 _gpuItemKeyWorld = world;
+                _gpuItemKeyPack = world?.Pack; // a facet change keeps the world pass but swaps its pack
             }
 
             if (!want || useHandles || !_gpuSkipActive || world == null)

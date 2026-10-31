@@ -163,6 +163,27 @@ namespace ClassicUO.Game.Scenes
                 }
             }
 
+            if (_world != null)
+            {
+                // Facet change (and the login after the startup probe built map 0): keep the device resources, the
+                // resident pages and every CPU array, and re-stream the chunks of the new facet. Building a second world
+                // left about 34 MiB of dead large objects and re-allocated the GPU arrays.
+                try
+                {
+                    _pack = _basePack.WithFacet(facet);
+                    _pack.LandRemap = null;
+                    _landSeason = (Season)0xFF;
+                    _world.ChangeFacet(_pack);
+                    Log.Trace($"GPU world renderer: facet {facet} (switched, world pass kept)");
+
+                    return true;
+                }
+                catch (Exception ex)
+                {
+                    Log.Error($"GPU world renderer: switching to facet {facet} failed, rebuilding: {ex}");
+                }
+            }
+
             try
             {
                 _world?.Dispose();

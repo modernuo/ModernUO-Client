@@ -20,7 +20,7 @@ public sealed unsafe class ChunkStore
 
     enum State : byte { Free, WaitRegions, Baking, Baked, Ready }
 
-    readonly PackSet _pack;
+    PackSet _pack;
     readonly WorkerPool _workers;
     public readonly RangeAllocator Alloc;
 
@@ -127,6 +127,33 @@ public sealed unsafe class ChunkStore
             _job[slot] = null;
             FreeSlot(slot);
         }
+    }
+
+    /// <summary>Streams another facet of the same pack (<see cref="PackSet.WithFacet"/>) from the next
+    /// <see cref="Update"/>: every chunk and region is dropped, while the instance allocator (with ranges reserved before
+    /// any chunk, e.g. the dynamic range), the CPU mirror and the job pools are kept. Bakes and region loads in flight are
+    /// discarded when they finish: their regions are orphaned rather than pooled, so a worker never writes into a region
+    /// the new facet reuses.</summary>
+    public void ChangeFacet(PackSet pack)
+    {
+        EvictAll();
+        for (int i = 0; i < _regionCount; i++)
+        {
+            var r = _regionList[i];
+            _regionList[i] = null;
+            if (r.Loaded && r.Pins == 0)
+            {
+                r.Data = null;
+                _regionPool.Push(r);
+            }
+        }
+        _regionCount = 0;
+        _regions.Clear();
+        _pack = pack;
+        BakeJob.Pack = pack;
+        MissingVisible = 0;
+        MissingNear = 0;
+        OutOfGpuSpace = false;
     }
 
     void MarkRange(long frame, in RectI need)
