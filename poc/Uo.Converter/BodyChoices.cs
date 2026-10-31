@@ -442,18 +442,62 @@ public sealed class BodyPlan
     };
 
     /// <summary>
-    /// The rider shift stored in the pack (<c>AnimBodyEntry.MountShift</c>): the mount height of the art this plan draws
-    /// for <paramref name="body"/> minus that of the art the default (<c>aos</c>) plan draws. The client adds it to the
-    /// Mounts table's per-item rider offset, which was set against the default art (and holds item-specific values the
-    /// Bodyconv heights don't have, e.g. 18 for the UOP tigers). So every default pack draws riders exactly as before,
-    /// and a pack that draws other art moves the rider by the difference (t2a: 793 as horse 200, 0 - (-9) = +9; an
-    /// extra by its own height). Legacy packs (policy 0, no bodies record) store 0.
+    /// The rider shift stored in the pack (<c>AnimBodyEntry.MountShift</c>). The client draws the rider at the Mounts
+    /// table's per-item offset plus this shift of the mount body. The table was set for the default (<c>aos</c>) art and
+    /// holds item-specific values the Bodyconv heights don't have (18 for the UOP tigers, -9 for unicorn 0x3EB4), so:
+    /// <list type="bullet">
+    /// <item>a body this plan draws as a Body.def stand-in it does not draw by default takes the stand-in's own offset
+    /// (owner, 2026-10-31): the table offset of the mount items whose mount body is the stand-in (0 when none is listed)
+    /// minus the table offset of the body's own items (t2a: unicorn 122 drawn as horse 228, 0 - (-9) = +9; skeletal
+    /// mount 793 drawn as horse 200, +9). Needs <paramref name="mounts"/>; when either side's items disagree it falls
+    /// back to the next rule;</item>
+    /// <item>any other change of drawn art moves the rider by the Bodyconv mount-height difference (drawn minus default);</item>
+    /// <item>an extra: its own height. Default packs store 0 everywhere; legacy packs (policy 0) store 0.</item>
+    /// </list>
     /// </summary>
-    public sbyte MountShift(int body, BodyPlan? baseline, Func<int, bool> uop, Func<ushort, ushort?> bodyDef)
+    public sbyte MountShift(int body, BodyPlan? baseline, Func<int, bool> uop, Func<ushort, ushort?> bodyDef, MountOffsets? mounts = null)
     {
         if (baseline == null || Choices.Policy == BodyChoices.LegacyPolicy) return 0;
-        int d = DrawnMountHeight(body, Conv, uop, bodyDef) - DrawnMountHeight(body, baseline.Conv, uop, bodyDef);
+        int drawn = DrawnBody(body, Conv, uop, bodyDef), drawn0 = DrawnBody(body, baseline.Conv, uop, bodyDef);
+        int d = drawn != body && drawn != drawn0 && mounts != null && mounts.StandInShift(body, drawn) is { } s
+            ? s
+            : HeightOf(drawn, Conv, uop) - HeightOf(drawn0, baseline.Conv, uop);
         return (sbyte)Math.Clamp(d, sbyte.MinValue, sbyte.MaxValue);
+    }
+
+    /// <summary>
+    /// The Mounts table's offsets per mount body: each table item's body as the client computes it
+    /// (<see cref="MountTable.MountBody"/>, with the install's tiledata AnimID).
+    /// </summary>
+    public sealed class MountOffsets
+    {
+        private readonly Dictionary<int, SortedSet<int>> _byBody = new();
+        /// <summary>Bodies whose table items disagree on the offset (the stand-in rule is not applied to them).</summary>
+        public readonly SortedSet<int> Conflicts = new();
+
+        public MountOffsets(Func<ushort, ushort> animId)
+        {
+            foreach (var (item, _, off) in MountTable.Entries)
+            {
+                int b = MountTable.MountBody(item, animId(item));
+                if (!_byBody.TryGetValue(b, out var set)) _byBody[b] = set = new SortedSet<int>();
+                set.Add(off);
+            }
+            foreach (var (b, set) in _byBody) if (set.Count > 1) Conflicts.Add(b);
+        }
+
+        public static MountOffsets FromTileData(UOFileManager fm)
+        {
+            if (fm.TileData.StaticData is not { Length: > 0 }) fm.TileData.Load();
+            var statics = fm.TileData.StaticData;
+            return new MountOffsets(i => i < statics.Length ? statics[i].AnimID : (ushort)0);
+        }
+
+        /// <summary>The table offset of mount body <paramref name="body"/>'s items: 0 when none is listed, null when they disagree.</summary>
+        public int? Offset(int body) => _byBody.TryGetValue(body, out var set) ? set.Count == 1 ? set.Min : null : 0;
+
+        /// <summary>The shift that draws <paramref name="body"/>'s riders as on <paramref name="standIn"/>'s own mounts.</summary>
+        public int? StandInShift(int body, int standIn) => Offset(standIn) is { } n && Offset(body) is { } o ? n - o : null;
     }
 
     /// <summary>The default plan the pack's Mounts-table offsets refer to (null for legacy plans).</summary>
@@ -461,11 +505,10 @@ public sealed class BodyPlan
         Choices.Policy == BodyChoices.LegacyPolicy ? null : Resolve(Source, BodyChoices.Default);
 
     /// <summary>
-    /// The mount height of the art drawn for <paramref name="body"/> under <paramref name="conv"/>: the Body.def chain is
-    /// followed while the body is a plain anim.mul body (as AnimConvert.Chain stores the alias), then the drawn body's
-    /// Bodyconv height (UOP bodies and unconverted ones: 0).
+    /// The body drawn for <paramref name="body"/> under <paramref name="conv"/>: the Body.def chain is followed while the
+    /// body is a plain anim.mul body (as AnimConvert.Chain stores the alias).
     /// </summary>
-    public static int DrawnMountHeight(int body, Dictionary<int, (int FileIndex, ushort Graphic, sbyte MountHeight)> conv, Func<int, bool> uop, Func<ushort, ushort?> bodyDef)
+    public static int DrawnBody(int body, Dictionary<int, (int FileIndex, ushort Graphic, sbyte MountHeight)> conv, Func<int, bool> uop, Func<ushort, ushort?> bodyDef)
     {
         ushort id = (ushort)body;
         for (int guard = 0; guard < 16; guard++)
@@ -474,8 +517,16 @@ public sealed class BodyPlan
             if (bodyDef(id) is not { } next || next == id) break;
             id = next;
         }
-        return !uop(id) && conv.TryGetValue(id, out var cc) ? cc.MountHeight : 0;
+        return id;
     }
+
+    /// <summary>The Bodyconv mount height of drawn body <paramref name="id"/> (UOP bodies and unconverted ones: 0).</summary>
+    private static int HeightOf(int id, Dictionary<int, (int FileIndex, ushort Graphic, sbyte MountHeight)> conv, Func<int, bool> uop) =>
+        !uop(id) && conv.TryGetValue(id, out var c) ? c.MountHeight : 0;
+
+    /// <summary>The mount height of the art drawn for <paramref name="body"/> under <paramref name="conv"/>.</summary>
+    public static int DrawnMountHeight(int body, Dictionary<int, (int FileIndex, ushort Graphic, sbyte MountHeight)> conv, Func<int, bool> uop, Func<ushort, ushort?> bodyDef) =>
+        HeightOf(DrawnBody(body, conv, uop, bodyDef), conv, uop);
 
     private static bool AnimFileExists(UOFileManager fm, int fileIndex)
     {
@@ -659,6 +710,14 @@ public sealed class BodyPlan
             if (!Usable(fm, l, m))
                 throw new BodyChoicesException($"extras[{i}] (id {x.Id}): {x.From} has no frames (no walk and stand art in the {plan.MobTypes[x.Id].Type} layout{(plan.ExtraMobTypeFrom[x.Id] >= 0 && x.FileIndex > 0 ? $" of body {plan.ExtraMobTypeFrom[x.Id]}, which converts to it" : "")})");
         }
+
+        // Corpse targets: resolved here as the conversion will (same loader state), so a Corpse.def / stand-in cycle
+        // stops the import before anything is cleared or written.
+        var metas = new Dictionary<int, AnimConvert.BodyMeta>();
+        AnimConvert.BodyMeta MetaOf(int b) => metas.TryGetValue(b, out var mm) ? mm : metas[b] = AnimConvert.Meta(l, fm.Version, b, plan);
+        var standIns = plan.StandInIds.ToHashSet();
+        foreach (var b in corpseDef.Keys.Concat(plan.StandInIds).Where(b => b < plan.BodyCount).Distinct())
+            AnimConvert.Targets(l, b, standIns.Contains, MetaOf);
         return plan;
     }
 

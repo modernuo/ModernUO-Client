@@ -1,7 +1,12 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Text.RegularExpressions;
 using ClassicUO.Assets;
 using ClassicUO.Game;
+using ClassicUO.UnitTests.Ecs;
+using ClassicUO.Utility;
 using FluentAssertions;
 using Uo.Pack;
 using Xunit;
@@ -9,101 +14,222 @@ using Xunit.Abstractions;
 
 namespace ClassicUO.UnitTests.Assets
 {
-    // Rider offsets on mounts (body-choices round-2 audit, finding 1). Both renderers draw the rider at the Mounts
-    // table's per-item offset plus the pack's MountShift for the mount body (the drawn art's mount height minus the
-    // default art's). The table was set for the default (aos) art and holds item-specific values the Bodyconv heights
-    // don't have (UOP tigers 18, unicorn 0x3EB4 -9 with a Bodyconv height of 0, 0x3E90 0 with -9), so a default pack
-    // must draw every rider exactly as the table says.
+    // Rider offsets on mounts (body-choices audits, rounds 2 and 3). Every renderer draws the rider at the Mounts table's
+    // per-item offset plus the pack's MountShift for the mount body. The table was set for the default (aos) art and
+    // holds item-specific values the Bodyconv heights don't have (UOP tigers 18, unicorn 0x3EB4 -9 with a Bodyconv height
+    // of 0, 0x3E90 0 with -9), so a default pack must draw every rider exactly as the table says. A mount body drawn as a
+    // Body.def stand-in takes the stand-in's own offset (owner, 2026-10-31).
     //
-    // Packs: CUO_MOUNT_AOS_PACK (else CUO_TEST_PACK, else uo-packs\<CURRENT>) and, optionally, CUO_MOUNT_T2A_PACK.
+    // Fixture packs (converted with the body choices named; the tests check the manifest's record and skip without them):
+    // CUO_MOUNT_AOS_PACK (preset aos, no overrides) and CUO_MOUNT_T2A_PACK (preset t2a).
     public class MountHeightTests
     {
         private readonly ITestOutputHelper _output;
 
         public MountHeightTests(ITestOutputHelper output) => _output = output;
 
-        internal static string AosPack() =>
-            Environment.GetEnvironmentVariable("CUO_MOUNT_AOS_PACK") is { Length: > 0 } p ? p : TileDrawOracleTests.PackDir();
-
         [Theory]
-        [InlineData(0x3EBB, 0, -9)]  // skeletal mount, default art
-        [InlineData(0x3EBB, 9, 0)]   // skeletal mount drawn as horse 200 (t2a)
-        [InlineData(0x3EC7, 0, 18)]  // tiger: item-specific offset kept
-        [InlineData(0x3EA2, 0, 0)]   // dark brown horse
-        [InlineData(0x1234, 5, 5)]   // no table entry: the shift alone (an extra with its own height)
+        [InlineData(0x3EBB, 0, -9)]    // skeletal mount, default art
+        [InlineData(0x3EBB, 9, 0)]     // skeletal mount drawn as horse 200 (t2a)
+        [InlineData(0x3EB4, 9, 0)]     // unicorn drawn as horse 228 (t2a)
+        [InlineData(0x3EC7, 0, 18)]    // tiger: item-specific offset kept
+        [InlineData(0x3EA2, 0, 0)]     // dark brown horse
+        [InlineData(0x1234, 5, 5)]     // no table entry: the shift alone (an extra with its own height)
+        [InlineData(0x3EC7, 127, 145)] // table + shift is not clamped to sbyte (round-3 finding 5)
+        [InlineData(0x3EDE, -128, -138)]
         public void Offset_Is_The_Item_Offset_Plus_The_Pack_Shift(ushort item, int shift, int expected)
         {
-            AnimationRules.MountOffsetY(item, (sbyte)shift).Should().Be((sbyte)expected);
+            AnimationRules.MountOffsetY(item, (sbyte)shift).Should().Be(expected);
         }
 
-        private static (int Compared, int Changed) CompareEveryItem(string pack, ITestOutputHelper output, Func<ushort, bool> report)
+        [Fact]
+        public void Ecs_State_Holds_Every_Offset_Sum()
+        {
+            // AnimationState.MountOffsetY carries the sum: every table offset plus either extreme shift fits.
+            foreach (var (item, _, off) in MountTable.Entries)
+            {
+                foreach (sbyte shift in new sbyte[] { sbyte.MinValue, sbyte.MaxValue })
+                {
+                    int sum = AnimationRules.MountOffsetY(item, shift);
+                    sum.Should().Be(off + shift);
+                    ((int)(short)sum).Should().Be(sum);
+                }
+            }
+
+            new ClassicUO.Ecs.AnimationState { MountOffsetY = 145 }.MountOffsetY.Should().Be(145);
+        }
+
+        /// <summary>The fixture pack named by <paramref name="variable"/>, after checking its manifest records <paramref name="preset"/> under the current policy.</summary>
+        internal static string Fixture(string variable, string preset)
+        {
+            var pack = Environment.GetEnvironmentVariable(variable);
+            pack.Should().NotBeNullOrEmpty($"{variable} is checked by the skip attribute");
+            File.Exists(Path.Combine(pack, "anim", AnimTableFile.FileName)).Should().BeTrue($"{variable} ({pack}) must hold a converted pack");
+            var bodies = ManifestFileIo.Read(Path.Combine(pack, "manifest.json")).Bodies;
+            bodies.Should().NotBeNull($"{variable} ({pack}) must be built with bodies.json choices (a pack without a record uses the legacy rules and stores no shifts)");
+            bodies.Policy.Should().Be(1, $"{variable}: resolver policy 1 (the current one)");
+            bodies.Preset.Should().Be(preset, $"{variable} must be a {preset} pack");
+            bodies.Remodels.Should().BeEmpty($"{variable}: no per-body overrides");
+            bodies.Extras.Should().BeEmpty($"{variable}: no extras");
+            bodies.ForceOldAnimations.Should().BeFalse($"{variable}: forceOldAnimations off");
+            return pack;
+        }
+
+        private static (int Compared, List<(ushort Item, ushort Body, int Old, int Now)> Changed) CompareEveryItem(string pack)
         {
             TileDataLoader.Read(Path.Combine(pack, TableConst.TileDataFile), out _, out var statics);
             var bodies = AnimTableFile.Read(Path.Combine(pack, "anim", AnimTableFile.FileName)).Bodies;
-            int compared = 0, changed = 0;
+            var changed = new List<(ushort, ushort, int, int)>();
+            int compared = 0;
 
             for (int g = 0; g < statics.Length; g++)
             {
                 ushort body = AnimationRules.MountBody((ushort)g, statics[g].AnimID);
                 sbyte shift = body < bodies.Length ? bodies[body].MountShift : (sbyte)0;
-                sbyte old = AnimationRules.MountOffsetY((ushort)g);
-                sbyte now = AnimationRules.MountOffsetY((ushort)g, shift);
+                int old = AnimationRules.MountOffsetY((ushort)g);
+                int now = AnimationRules.MountOffsetY((ushort)g, shift);
                 compared++;
 
                 if (old != now)
                 {
-                    changed++;
-
-                    if (report((ushort)g))
-                    {
-                        output.WriteLine($"item 0x{g:X4} (body {body}): {old} -> {now}");
-                    }
+                    changed.Add(((ushort)g, body, old, now));
                 }
             }
 
             return (compared, changed);
         }
 
-        [MountPackFact]
+        [MountPackFact("CUO_MOUNT_AOS_PACK")]
         public void Default_Pack_Draws_Every_Rider_As_Before()
         {
-            var pack = AosPack();
-            var (compared, changed) = CompareEveryItem(pack, _output, _ => true);
-            _output.WriteLine($"{pack}: {compared} tiledata items compared (each as a mount item), {changed} offsets changed");
+            var pack = Fixture("CUO_MOUNT_AOS_PACK", "aos");
+            var (compared, changed) = CompareEveryItem(pack);
+            _output.WriteLine($"{pack}: {compared} tiledata items compared (each as a mount item), {changed.Count} offsets changed");
             compared.Should().Be(PackConst.StaticTileCount);
-            changed.Should().Be(0);
+            changed.Should().BeEmpty();
         }
 
-        [Fact]
-        public void T2a_Pack_Moves_Riders_Of_Mounts_Drawn_With_Other_Art()
+        [MountPackFact("CUO_MOUNT_T2A_PACK")]
+        public void T2a_Pack_Seats_Riders_Of_Stand_In_Mounts_As_On_The_Stand_In()
         {
-            var pack = Environment.GetEnvironmentVariable("CUO_MOUNT_T2A_PACK");
+            var pack = Fixture("CUO_MOUNT_T2A_PACK", "t2a");
+            var bodies = AnimTableFile.Read(Path.Combine(pack, "anim", AnimTableFile.FileName)).Bodies;
+            var (compared, changed) = CompareEveryItem(pack);
+            _output.WriteLine($"{pack}: {compared} items, {changed.Count} offsets changed");
 
-            if (string.IsNullOrEmpty(pack) || !File.Exists(Path.Combine(pack, "anim", AnimTableFile.FileName)))
+            foreach (var c in changed.Where(c => MountTable.TryGet(c.Item, out _, out _)))
             {
-                _output.WriteLine("CUO_MOUNT_T2A_PACK not set: skipped");
-
-                return;
+                _output.WriteLine($"  mount item 0x{c.Item:X4} (body {c.Body} drawn as {bodies[c.Body].AliasBody}): {c.Old} -> {c.Now}");
             }
 
-            var bodies = AnimTableFile.Read(Path.Combine(pack, "anim", AnimTableFile.FileName)).Bodies;
-            var (compared, changed) = CompareEveryItem(pack, _output, g => g >= 0x3E90 && g <= 0x3EE4);
-            _output.WriteLine($"{pack}: {compared} items, {changed} offsets changed");
-            sbyte skeletal = AnimationRules.MountOffsetY(0x3EBB, bodies[793].MountShift);
-            sbyte horse = AnimationRules.MountOffsetY(0x3EA2, bodies[AnimationRules.MountBody(0x3EA2, 0)].MountShift);
-            (skeletal, horse).Should().Be(((sbyte)0, (sbyte)0), "skeletal mount 793 is drawn as horse 200, so its rider sits like a horse's");
+            int Rider(ushort item) => AnimationRules.MountOffsetY(item, bodies[AnimationRules.MountBody(item, 0)].MountShift);
+            Rider(0x3EBB).Should().Be(0, "skeletal mount 793 is drawn as horse 200, so its rider sits like a horse's");
+            Rider(0x3EB4).Should().Be(0, "unicorn 122 is drawn as horse 228 (item 0x3EA1, offset 0), so its rider sits like a horse's");
+            Rider(0x3E9D).Should().Be(0, "ethereal unicorn 192 is drawn as horse 228");
+            Rider(0x3EA1).Should().Be(0);
+        }
+
+        // Round-3 finding 3: turkey 95 (and Corpse.def alias 156 -> 95) has death action 8 but no 12; a corpse with the
+        // second-death bit (UsedLayer) selected 12 and drew nothing. GetDeathAction falls back to the first death action.
+        // Draw (ItemView.Draw, ItemSpriteExtract) and pick (ItemView.CheckMouseSelection) both take the group from
+        // GetDeathAction and the frames from the resolved body (see Renderers_Use_The_Shared_Rules for the call sites).
+        [MountPackFact("CUO_MOUNT_AOS_PACK")]
+        public void Corpse_Death_Variants_Have_Frames_For_Turkey_95_And_Alias_156()
+        {
+            var packDir = Fixture("CUO_MOUNT_AOS_PACK", "aos");
+            ClientVersionHelper.IsClientVersionValid("7.0.103.0", out var cv);
+            using var pack = PackAssets.Open(packDir);
+            var anims = new AnimationsLoader(new UOFileManager(cv, Path.GetTempPath(), pack));
+            anims.Load();
+
+            foreach (ushort corpse in new ushort[] { 95, 156 })
+            {
+                ushort body = anims.ResolveBody(corpse, true, out _);
+                body.Should().Be(95, $"corpse {corpse} draws turkey 95");
+                ref readonly var e = ref anims.GetBody(body);
+
+                foreach (bool second in new[] { false, true })
+                {
+                    byte group = anims.GetDeathAction(body, (AnimationFlags)e.Flags, (AnimationGroupsType)e.Type, second);
+
+                    for (int dir = 0; dir < 8; dir++)
+                    {
+                        anims.TryGetDirection(body, group, dir, out _).Should().BeTrue($"corpse {corpse}, {(second ? "second" : "first")} death (group {group}), direction {dir}");
+                    }
+                }
+            }
+
+            // A body that has both death actions keeps its second one (no fallback where none is needed).
+            ref readonly var horse = ref anims.GetBody(204);
+            byte g2 = anims.GetDeathAction(204, (AnimationFlags)horse.Flags, (AnimationGroupsType)horse.Type, true);
+            byte g1 = anims.GetDeathAction(204, (AnimationFlags)horse.Flags, (AnimationGroupsType)horse.Type, false);
+            g2.Should().NotBe(g1);
+            anims.HasAction(204, g2).Should().BeTrue();
+        }
+
+        // Round-3 finding 6: every renderer consumes the rider shift and the shared death action. A source check, so it
+        // fails when a draw or pick path goes back to the table offset alone or picks its own death group.
+        [Fact]
+        public void Renderers_Use_The_Shared_Rules()
+        {
+            string root = WriteSiteScanner.FindRepoRoot();
+            string Read(string rel) => File.ReadAllText(Path.Combine(root, rel));
+
+            // Gpu: MobileAnimationSystem stores table + shift; MobileSpriteExtract draws rider and equipment with it.
+            Read("src/ClassicUO.Client/Game/Ecs/MobileAnimationSystem.cs").Should()
+                .MatchRegex(@"s\.MountOffsetY\s*=\s*\(short\)AnimationRules\.MountOffsetY\(eq\.MountGraphic,\s*animations\.GetMountShift\(mountBody\)\)");
+            Read("src/ClassicUO.Client/Game/Ecs/MobileSpriteExtract.cs").Should().MatchRegex(@"int mountOffset\s*=\s*s\.MountOffsetY;");
+
+            // Legacy draw and pick: both MobileView sites add the shift of the mount body (before its alias).
+            string view = Read("src/ClassicUO.Client/Game/GameObjects/Views/MobileView.cs");
+            Regex.Matches(view, @"AnimationRules\.MountOffsetY\(mount\.Graphic,\s*Client\.Game\.UO\.Animations\.GetMountShift\(mountGraphic\)\)").Count
+                .Should().Be(2, "MobileView draw (mountOffsetY) and pick (position.Y) both use table + shift");
+            view.Should().MatchRegex(@"mountOffsetY\s*=\s*AnimationRules\.MountOffsetY\(mount\.Graphic,");
+            view.Should().MatchRegex(@"position\.Y\s*\+=\s*AnimationRules\.MountOffsetY\(mount\.Graphic,");
+
+            // No renderer reads the table offset on its own.
+            foreach (var f in Directory.EnumerateFiles(Path.Combine(root, "src/ClassicUO.Client"), "*.cs", SearchOption.AllDirectories))
+            {
+                if (f.Contains($"{Path.DirectorySeparatorChar}obj{Path.DirectorySeparatorChar}") || f.EndsWith("AnimationRules.cs") || f.EndsWith("EcsSessionDriver.cs") || f.EndsWith("Mounts.cs"))
+                {
+                    continue;
+                }
+
+                string src = File.ReadAllText(f);
+                src.Should().NotMatchRegex(@"AnimationRules\.MountOffsetY\(\s*[^,()]+\)", $"{f}: the table offset alone ignores the pack's shift");
+                if (!f.EndsWith("Item.cs"))
+                {
+                    src.Should().NotContain("Mounts.TryGet(", $"{f}: the Mounts table offset is read through AnimationRules.MountOffsetY(item, shift)");
+                }
+            }
+
+            // Uo.Client: the rider offset is RiderOffset (table + the original mount body's shift), taken before the alias
+            // is followed, and used for the body and every equipment layer.
+            string poc = Read("poc/Uo.Client/Animation.cs");
+            poc.Should().MatchRegex(@"MountTable\.OffsetY\(item\)\s*\+\s*\(\(uint\)mountBody < \(uint\)bodies\.Length \? bodies\[mountBody\]\.MountShift");
+            int offsetAt = poc.IndexOf("mountOffset = RiderOffset(_bodies, item, mountBody);", StringComparison.Ordinal);
+            int aliasAt = poc.IndexOf("mountBody = _bodies[mountBody].AliasBody;", StringComparison.Ordinal);
+            offsetAt.Should().BeGreaterThan(0);
+            aliasAt.Should().BeGreaterThan(offsetAt, "the shift belongs to the original mount body, before its alias");
+            Regex.Matches(poc, @"Add\(outFrames, ref n, [^;]*mountOffset,").Count.Should().Be(2, "the body and the equipment layers are drawn at the rider offset");
+
+            // Corpses: Gpu extract, Legacy draw and pick and the corpse tick take the group from GetDeathAction (whose
+            // second-death fallback the death test above covers).
+            Read("src/ClassicUO.Client/Game/Ecs/ItemSpriteExtract.cs").Should().Contain("anims.GetDeathAction(converted,");
+            Regex.Matches(Read("src/ClassicUO.Client/Game/GameObjects/Views/ItemView.cs"), @"Animations\.GetDeathAction\(").Count.Should().Be(2, "ItemView draw and pick");
+            Read("src/ClassicUO.Client/Game/GameObjects/Item.cs").Should().Contain("Animations.GetDeathAction(");
         }
     }
 
     public sealed class MountPackFactAttribute : FactAttribute
     {
-        public MountPackFactAttribute()
+        public MountPackFactAttribute(string variable)
         {
-            var dir = MountHeightTests.AosPack();
+            var dir = Environment.GetEnvironmentVariable(variable);
 
-            if (!File.Exists(Path.Combine(dir, "anim", AnimTableFile.FileName)) || !File.Exists(Path.Combine(dir, TableConst.TileDataFile)))
+            if (string.IsNullOrEmpty(dir) || !File.Exists(Path.Combine(dir, "anim", AnimTableFile.FileName)) || !File.Exists(Path.Combine(dir, TableConst.TileDataFile)))
             {
-                Skip = $"integration data not on this machine: {dir}";
+                Skip = $"{variable} is not set to a converted pack ({(string.IsNullOrEmpty(dir) ? "unset" : dir)})";
             }
         }
     }

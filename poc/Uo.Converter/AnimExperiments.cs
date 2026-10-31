@@ -321,6 +321,7 @@ public static class AnimExperiments
     /// </summary>
     public static int FilterRef(string idxPack, string b16Pack, string outDir)
     {
+        PublishedPacks.EnsureOutputDir(outDir); // writes PNGs only; never into a published pack
         Directory.CreateDirectory(outDir);
         string id = Path.Combine(idxPack, "anim"), bd = Path.Combine(b16Pack, "anim");
         var (bodies, dirs, frames) = AnimTableFile.Read(Path.Combine(id, AnimTableFile.FileName));
