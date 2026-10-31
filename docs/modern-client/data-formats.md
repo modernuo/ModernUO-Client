@@ -238,7 +238,7 @@ UO stores animations by **file** (anim.mul, anim2–5, AnimationFrame1..N.uop) a
 
 - **Import:** `tiledata.mul` (old: 0x4000 statics, 32-bit flags; 7.0.0: 0x8000; 7.0.9+: 64-bit flags, 0x10000; detection by file size as ModernUO does).
 - **Source:** `tiledata/land.csv` (`id, name, flags, texId`) and `tiledata/static.csv` (`id, name, flags, weight, layer, count, animId, hue, lightIndex, height, …` — every field ClassicUO, ModernUO and CentrED# read, so import is lossless; the record is `flags, weight, layer, count, animId, hue, lightIndex, height, name`, T/TileDataLoader.cs:25-79). Rule flags the build used to derive at runtime are columns too (5.6).
-- **Build:** one full tiledata file (`tiledata_ext.bin` today, to become the only one); the client derives its compact arrays at load. `NoDraw` flags are written from the data, not from code.
+- **Build:** one full tiledata file, `tiledata.bin` (done in classic-1.1); the client derives its compact arrays at load. The draw flags (`NoDraw`, `NoDrawUnlessGargoyle`, `NoDrawAsMulti`) are written by the converter today (`Uo.Converter/TileRules.cs`, pack-format.md "NoDraw flags"); with a source tree they come from the `noDraw` column instead.
 - **Validation:** id ranges, known flag names, `texId` refers to an existing texmap or 0, `animId` refers to an existing body or 0.
 
 ### 4.8 Multis
@@ -342,6 +342,8 @@ ClassicUO decides many per-tile and per-graphic behaviours in code. Under the ow
 | Chairs and sitting (`ChairTable.cs`, `chair.txt`), containers (`containers.txt`), buffs (`buff.txt`), seasons (`seasons.txt`) | `tables/chairs.csv`, `containers.csv`, `buffs.csv`, `seasons.json` |
 | Default music table (`SoundsLoader.cs:143-209`, used when `Config.txt` is absent) | `music/music.csv` |
 | Custom-house hue 0x2B (`MultiView.cs:52`) | `tables/client.json` |
+
+**Done (classic-1.1):** the four draw rows above (land 0–2, the id lists, `nodraw` names, the easel, `NoDiagonal`) plus the multi item's `MultiGraphic > 2` test are per-tile flags in `tiledata.bin`, written by the converter (`TileRules`, the stand-in for the importer) and read by the client and renderer as data only (pack-format.md "NoDraw flags"). The rest of the table is still code.
 
 The importer is the only code that knows these rules; it writes them as data once. After import, an admin flips `noDraw` per tile. The client's editable `Data/Client/*.txt` files (cave, vegetation, tree, chair, lights, lightshaders, buff, seasons, containers) are already data; they move into the source tree and the pack so a shard ships one set, and the client stops seeding them from code. Movement rules (the pathfinder's id lists) also matter to the server and must match it; Q6 covers how the server reads the same data. This list was sampled by grep and is not complete: `Mobile.cs`, `MobileView.cs`, `GameScene.cs` and `World.cs` were not read in full.
 
