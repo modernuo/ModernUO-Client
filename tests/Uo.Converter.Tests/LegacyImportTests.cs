@@ -228,7 +228,8 @@ public sealed class LegacyImportTests : IDisposable
         var (land, statics, names) = TileDataFile.Read(Path.Combine(_out, TableConst.TileDataFile));
 
         land.Length.Should().Be(PackConst.LandTileCount);
-        statics.Length.Should().Be(512 * 32); // 0x4000 statics in the pre-7.0.9 file, as UOML has
+        // 0x4000 statics in the source (as UOML has), padded to the standardized 0x10000 with empty entries
+        statics.Length.Should().Be(PackConst.StaticTileCount);
         string Name(uint off, ushort len) => Encoding.UTF8.GetString(names, (int)off, len);
 
         land[5].Flags.Should().Be(old ? 0x8000_0040ul : 0x100_8000_0040ul);
@@ -241,6 +242,48 @@ public sealed class LegacyImportTests : IDisposable
         (s.Weight, s.Layer, s.Count, s.AnimId, s.Hue, s.LightIndex, s.Height).Should().Be(((byte)7, (byte)9, 12345, (ushort)0x190, (ushort)0x55, (ushort)3, (byte)15));
         Name(s.NameOffset, s.NameLength).Should().Be(StaticName);
         statics[101].Flags.Should().Be(0);
+        for (int i = 512 * 32; i < statics.Length; i++)
+        {
+            var p = statics[i];
+            p.PackFlags = 0;
+            p.Should().Be(default(StaticTileInfo), $"padded static 0x{i:X} is empty");
+        }
+    }
+
+    [Fact]
+    public void Legacy_Statics_Are_Padded_Exactly_Like_A_Modern_Install_s_Empty_Entries()
+    {
+        // The same entries, once as a pre-7.0.9 file with 0x4000 statics (padded by the converter) and once as a 7.0.9+
+        // file with 0x10000 (the rest genuinely empty): every entry from 0x4000 up, PackFlags included, is identical.
+        var path = Path.Combine(_uo, "tiledata.mul");
+        StaticTileInfo[] Convert(string version, bool old, int groups, string sub)
+        {
+            File.WriteAllBytes(path, TileData(old, groups));
+            var fm = new UOFileManager(Cv(version), _uo);
+            fm.TileData.Load();
+            var dir = Path.Combine(_out, sub);
+            Directory.CreateDirectory(dir);
+            TableConvert.TileData(fm, dir).Should().Contain(old ? "(16384 from the source, 49152 padded empty)" : "65536 statics,");
+            return TileDataFile.Read(Path.Combine(dir, TableConst.TileDataFile)).Statics;
+        }
+
+        var legacy = Convert("4.0.11c", true, 512, "legacy");
+        var modern = Convert("7.0.9.0", false, 2048, "modern");
+        legacy.Length.Should().Be(PackConst.StaticTileCount);
+        legacy.Skip(0x4000).SequenceEqual(modern.Skip(0x4000)).Should().BeTrue();
+        // the draw rules keyed on ids in the padded range still apply (0xA1FE is never drawn)
+        (legacy[0xA1FE].PackFlags & TilePackFlags.NoDraw).Should().Be(TilePackFlags.NoDraw);
+    }
+
+    [Fact]
+    public void Tiledata_With_More_Statics_Than_The_Format_Holds_Is_Refused_Not_Truncated()
+    {
+        File.WriteAllBytes(Path.Combine(_uo, "tiledata.mul"), TileData(old: false, 2049)); // 0x10020 statics
+        var fm = new UOFileManager(Cv("7.0.9.0"), _uo);
+        fm.TileData.Load();
+        fm.TileData.StaticData.Length.Should().Be(2049 * 32);
+        ((Action)(() => TableConvert.TileData(fm, _out))).Should().Throw<InvalidDataException>().WithMessage("*65568 static entries*Refusing to truncate*");
+        File.Exists(Path.Combine(_out, TableConst.TileDataFile)).Should().BeFalse();
     }
 
     [Fact]

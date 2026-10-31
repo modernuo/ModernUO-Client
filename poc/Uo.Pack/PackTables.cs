@@ -79,16 +79,18 @@ public struct StaticTileInfo
 public static class TileDataFile
 {
     public const int LandEntryBytes = 20, StaticEntryBytes = 32;
-    /// <summary>Upper bound on statics (UO graphics are u16).</summary>
-    public const int MaxStatics = 0x10000;
     /// <summary>Longest name reference accepted, in UTF-8 bytes. Source tiledata names are 20 single-byte characters (at most
     /// 40 bytes as UTF-8); the cap keeps an untrusted file from making the reader decode huge strings.</summary>
     public const int MaxNameBytes = 64;
     /// <summary>Largest name table accepted: every entry with its own longest name (5 MiB).</summary>
-    public const int MaxNameTableBytes = (PackConst.LandTileCount + MaxStatics) * MaxNameBytes;
+    public const int MaxNameTableBytes = (PackConst.LandTileCount + PackConst.StaticTileCount) * MaxNameBytes;
 
+    /// <summary>Writes the file. The counts must be exactly <see cref="PackConst.LandTileCount"/> and
+    /// <see cref="PackConst.StaticTileCount"/> (the standardized format); a caller with fewer source entries pads them.</summary>
     public static void Write(string path, ReadOnlySpan<LandTileInfo> land, ReadOnlySpan<StaticTileInfo> statics, ReadOnlySpan<byte> names)
     {
+        if (land.Length != PackConst.LandTileCount) throw new ArgumentException($"{land.Length} land entries, the format has exactly {PackConst.LandTileCount}", nameof(land));
+        if (statics.Length != PackConst.StaticTileCount) throw new ArgumentException($"{statics.Length} static entries, the format has exactly {PackConst.StaticTileCount}", nameof(statics));
         using var fs = ReplacingFile.Create(path);
         StructIo.WriteHeader(fs, TableConst.MagicTileData);
         StructIo.Write(fs, land.Length);
@@ -100,8 +102,8 @@ public static class TileDataFile
         fs.Commit();
     }
 
-    /// <summary>Reads and validates the file (untrusted input): magic and version, land count = 0x4000, static count in
-    /// 1..0x10000, the name table at most <see cref="MaxNameTableBytes"/>, the exact file size, and every name reference
+    /// <summary>Reads and validates the file (untrusted input): magic and version, land count = 0x4000 and static count =
+    /// 0x10000 exactly (<see cref="PackConst.LandTileCount"/>, <see cref="PackConst.StaticTileCount"/>), the name table at most <see cref="MaxNameTableBytes"/>, the exact file size, and every name reference
     /// inside the name table and at most <see cref="MaxNameBytes"/> long (checked before the name table is allocated).</summary>
     public static (LandTileInfo[] Land, StaticTileInfo[] Statics, byte[] Names) Read(string path)
     {
@@ -116,7 +118,7 @@ public static class TileDataFile
         if (h.Kind != 0) throw new InvalidDataException($"{path}: compression kind {h.Kind}, expected 0 (raw)");
         int landCount = StructIo.Read<int>(fs), staticCount = StructIo.Read<int>(fs), nameBytes = StructIo.Read<int>(fs);
         if (landCount != PackConst.LandTileCount) throw new InvalidDataException($"{path}: {landCount} land entries, expected {PackConst.LandTileCount}");
-        if (staticCount < 1 || staticCount > MaxStatics) throw new InvalidDataException($"{path}: {staticCount} static entries (1..{MaxStatics})");
+        if (staticCount != PackConst.StaticTileCount) throw new InvalidDataException($"{path}: {staticCount} static entries, expected {PackConst.StaticTileCount}");
         if (nameBytes < 0 || nameBytes > MaxNameTableBytes) throw new InvalidDataException($"{path}: name table size {nameBytes} (0..{MaxNameTableBytes})");
         long expected = StructIo.SizeOf<FileHeader>() + 12L + (long)landCount * LandEntryBytes + (long)staticCount * StaticEntryBytes + nameBytes;
         if (fs.Length != expected) throw new InvalidDataException($"{path}: {fs.Length} bytes, expected {expected} from its counts");
