@@ -177,6 +177,7 @@ namespace ClassicUO.Game
 
                         Client.Game.UO.FileManager.Maps.LoadMap(value, ClientFeatures.Flags.HasFlag(CharacterListFlags.CLF_UNLOCK_FELUCCA_AREAS));
                         Map = new Map.Map(this, value);
+                        ClassicUO.Game.Map.MapWarmup.OnMapCreated(this);
 
                         Player.SetInWorldTile(x, y, z);
                         Player.ClearSteps();
@@ -185,6 +186,7 @@ namespace ClassicUO.Game
                     {
                         Client.Game.UO.FileManager.Maps.LoadMap(value, ClientFeatures.Flags.HasFlag(CharacterListFlags.CLF_UNLOCK_FELUCCA_AREAS));
                         Map = new Map.Map(this, value);
+                        ClassicUO.Game.Map.MapWarmup.OnMapCreated(this);
                     }
 
                     // force cursor update when switching map
