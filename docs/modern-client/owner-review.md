@@ -147,6 +147,7 @@ Newest at the bottom. Each item says what I did meanwhile.
 
 ## Follow-ups noted (not started)
 
+- **GitHub Actions for Linux/macOS (queued 2026-10-31, not urgent):** the project is open source, so CI builds and tests on Linux and macOS runners, builds the native libraries (dr_mp3's `cuo_mp3`, the SDL3/FNA forks) per platform, and publishes artifacts for releases. Brief: `C:\Repositories\cuo-poc-state\handoffs\ci-release-artifacts.md`.
 - **Upstream PR #1889, "Gump Rendering Overhaul": PARKED (your decision, 2026-10-31).** The port is on `poc/gump-cache-1889` (8ca1dbb36), with the cache off; results are in `gump-render-cache.md` on that branch.
   - **Gain:** about 9 µs of UI traversal per frame, roughly 1–1.5% of a 0.5 ms frame. Frame time and FPS didn't change, and the noise between rounds was 20–60%.
   - **Possible regression:** the worst frame right after opening a gump was worse with the cache on (one sample each).
