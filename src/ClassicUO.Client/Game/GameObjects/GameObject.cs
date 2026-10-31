@@ -56,7 +56,7 @@ namespace ClassicUO.Game.GameObjects
 
                 if (this is Mobile mobile && mobile.Steps.Count != 0)
                 {
-                    ref Mobile.Step step = ref mobile.Steps.Back();
+                    ref readonly Mobile.Step step = ref mobile.Steps.Back();
                     x = step.X;
                     y = step.Y;
                 }

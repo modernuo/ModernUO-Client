@@ -133,6 +133,13 @@ namespace ClassicUO.Game
 
         internal bool IsFolding => _foldItem != null;
 
+        /// <summary>
+        /// T1, tests: sees each funnel commit before it is written, with the item's cache still as it was. The getters
+        /// still return the previous values there, as they will once T4 moves them to the ECS, so a test can check that an
+        /// operation computed every value instead of reading one back after its own unlink or write.
+        /// </summary>
+        internal Action<Item, ItemState> CommitObserver;
+
         /// <summary>T1, tests: every write of an item's mirror record (the hook Syncs and the funnel commits).</summary>
         internal long ItemMirrorWrites;
 
@@ -147,6 +154,7 @@ namespace ClassicUO.Game
                 return;
             }
 
+            CommitObserver?.Invoke(item, v);
             ItemMirrorWrites++;
             Mirror.UpsertItem(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.Amount, v.Container, (byte)v.Layer, v.IsMulti);
 

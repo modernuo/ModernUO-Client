@@ -187,7 +187,8 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 if ((i & 1) == 0)
                 {
-                    s.World.Writer.PlaceWorldItem(s.World.Writer.UpsertWorldItem(spareNew, 0xEED, 0, 5, 1100, 1100, 0, Direction.North, 0, ClassicUO.Game.Data.Flags.None, 0, out _));
+                    s.World.Writer.UpsertWorldItem(spareNew, 0xEED, 0, 5, 1100, 1100, 0, Direction.North, 0, ClassicUO.Game.Data.Flags.None, 0, out _, out WorldWriter.Placement pn);
+                    s.World.Writer.PlaceWorldItem(pn);
                 }
                 else
                 {
@@ -209,7 +210,8 @@ namespace ClassicUO.UnitTests.Ecs
 
             rows.Add(("T1 funnel: 0x1A update of a ground item", Measure(packets, i =>
             {
-                s.World.Writer.PlaceWorldItem(s.World.Writer.UpsertWorldItem(upd.Serial, 0xEED, 0, (ushort)(1 + (i & 63)), 1100, 1100, 0, Direction.North, 0, ClassicUO.Game.Data.Flags.None, 0, out _));
+                s.World.Writer.UpsertWorldItem(upd.Serial, 0xEED, 0, (ushort)(1 + (i & 63)), 1100, 1100, 0, Direction.North, 0, ClassicUO.Game.Data.Flags.None, 0, out _, out WorldWriter.Placement pu);
+                s.World.Writer.PlaceWorldItem(pu);
             })));
 
             // 0x25 item into a container, then out

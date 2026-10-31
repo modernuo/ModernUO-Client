@@ -160,7 +160,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void Backing_Field_Writes_Outside_Their_Checked_Setter_Are_Found()
         {
             const string Src =
-                "class C {\n" +
+                "partial class GameObject {\n" +
                 "    public ushort Graphic { get => _graphic; set { FunnelCheck.Write(this, FunnelField.Graphic); _graphic = value; } }\n" +
                 "    public float OffsetX { get => _offset.X; set { FunnelCheck.Write(this, FunnelField.OffsetX); _offset.X = value; } }\n" +
                 "    public uint Serial { get => _serial; set { FunnelCheck.WriteSerial(this, value); _serial = value; } }\n" +
@@ -168,13 +168,59 @@ namespace ClassicUO.UnitTests.Ecs
                 "    public ushort Hue { get => _hue; set { FunnelCheck.Write(this, FunnelField.Hue); _graphic = value; } }\n" + // another field's setter
                 "}\n";
 
-            // in the declaring file (GameObject.cs declares _graphic, _offset; _amount is Item's)
-            WriteSiteScanner.ScanSource(Src, "src/ClassicUO.Client/Game/GameObjects/GameObject.cs", new HashSet<string> { "Player" }, true)
-                .Select(s => (s.Field, s.Line)).Should().BeEquivalentTo(new[] { ("_graphic", 5), ("_offset", 5), ("_graphic", 6) });
+            // inside the declaring type (GameObject declares _graphic, _offset; _amount is Item's), in any file
+            foreach (string file in new[] { "GameObject.cs", "Views/View.cs" })
+            {
+                WriteSiteScanner.ScanSource(Src, "src/ClassicUO.Client/Game/GameObjects/" + file, new HashSet<string> { "Player" }, true)
+                    .Select(s => (s.Field, s.Line)).Should().BeEquivalentTo(new[] { ("_graphic", 5), ("_offset", 5), ("_graphic", 6) }, file);
+            }
 
-            // a private field of the same name in another class is another field (PlayerMobile's _amount)
-            WriteSiteScanner.ScanSource(Src, "src/ClassicUO.Client/Game/GameObjects/PlayerMobile.cs", new HashSet<string> { "Player" }, true)
+            // a private field of the same name in another class is another field (PlayerMobile's own _amount)
+            const string Player =
+                "internal class PlayerMobile : Mobile {\n" +
+                "    private ushort _amount;\n" +
+                "    void F() { _amount++; _amount = 2; }\n" +
+                "}\n";
+            WriteSiteScanner.ScanSource(Player, "src/ClassicUO.Client/Game/GameObjects/PlayerMobile.cs", new HashSet<string> { "Player" }, true)
                 .Should().BeEmpty();
+        }
+
+        [Fact]
+        public void The_Walk_Queue_Changes_Only_Through_The_Checked_Methods()
+        {
+            // Codex audit round 2, #5: the checked methods' own one-line bodies are their one allowed writer of _walkSteps
+            const string Src =
+                "internal partial class Mobile {\n" +
+                "    internal void AddStep(in Step step) { FunnelCheck.Write(this, FunnelField.Steps); _walkSteps.AddToBack(step); }\n" +
+                "    internal void ReplaceStep(int i, in Step step) { FunnelCheck.Write(this, FunnelField.Steps); _walkSteps[i] = step; }\n" +
+                "    void F() { AddStep(s); ClearStepQueue(); _walkSteps.Clear(); _walkSteps[1] = s; }\n" +
+                "    void G() { ref readonly Step a = ref Steps.Front(); Step b = Steps[0]; bool c = _walkSteps[0] == b; }\n" +
+                "}\n";
+
+            WriteSiteScanner.ScanSource(Src, "src/ClassicUO.Client/Game/GameObjects/MobileAnimation.cs", new HashSet<string> { "Player" }, true)
+                .Select(s => (s.Field, s.Line)).Should().BeEquivalentTo(new[] { ("Steps", 4), ("Steps", 4), ("Steps", 4), ("Steps", 4) });
+        }
+
+        [Theory]
+        [InlineData("MobileAnimation.cs", "Mobile", "_mana", "_stamina")]
+        [InlineData("Views/MobileView.cs", "Mobile", "_mana", "_stamina")]
+        [InlineData("Views/ItemView.cs", "Item", "_amount", "_container")]
+        [InlineData("Views/View.cs", "GameObject", "_graphic", "_hue")]
+        [InlineData("Mobile.cs", "Mobile", "_mana", "_stamina")]
+        public void Backing_Field_Writes_In_Another_Partial_Declaration_Are_Found(string file, string type, string f1, string f2)
+        {
+            // Codex audit round 2, #2: private is per type, not per file. A partial declaration in another file (and a type
+            // nested in it) can write the field past its setter.
+            string src =
+                "namespace ClassicUO.Game.GameObjects {\n" +
+                "    internal partial class " + type + " {\n" +
+                "        void F() { " + f1 + " = 1; }\n" +
+                "        private sealed class Nested { void G(" + type + " o) { o." + f2 + "++; } }\n" +
+                "    }\n" +
+                "}\n";
+
+            WriteSiteScanner.ScanSource(src, "src/ClassicUO.Client/Game/GameObjects/" + file, new HashSet<string> { "Player" }, true)
+                .Select(s => (s.Field, s.Line)).Should().BeEquivalentTo(new[] { (f1, 3), (f2, 4) });
         }
 
         // ---- the scanner's own behaviour on small sources ----
@@ -198,6 +244,8 @@ namespace ClassicUO.UnitTests.Ecs
         [InlineData("void F(PlayerMobile p) { p.Name ??= \"x\"; }", "Name")]
         [InlineData("void F(Item i) { i.X = i.Y = 0; }", "X,Y")]
         [InlineData("void F(Mobile m) { m.Steps.AddToBack(s); m.Steps.RemoveFromFront(); m.Steps.Clear(); }", "Steps,Steps,Steps")]
+        [InlineData("void F(Mobile m) { m.AddStep(s); m.ReplaceStep(0, s); m.RemoveFirstStep(); m.ClearStepQueue(); }", "Steps,Steps,Steps,Steps")]
+        [InlineData("void F(Mobile m) { m._walkSteps.Clear(); m._walkSteps[0] = s; }", "Steps,Steps")]
         [InlineData("void F(Mobile m) { m.Offset.Z = 4; m.Offset.X += 1; }", "Offset,Offset")]
         [InlineData("void F(Mobile m) { m.OffsetZ = 4; m.OffsetX += 1; }", "Offset,Offset")]
         public void Writes_Are_Found(string source, string expectedFields) =>
@@ -300,20 +348,22 @@ namespace ClassicUO.UnitTests.Ecs
             "_animationFrameCount", "_animationFromServer", "_lastStepSoundTime", "_stepSoundOffset"
         };
 
-        // T1: the backing fields of the one-line checked setters (`set { FunnelCheck.Write(this, FunnelField.X); _x = value; }`):
-        // that setter is their one allowed writer. They are private, so only their declaring file can write them: a field of the
-        // same name in another file (PlayerMobile's own _amount) is not one of them.
+        // T1: the backing fields of the one-line checked setters (`set { FunnelCheck.Write(this, FunnelField.X); _x = value; }`)
+        // and their declaring type: that setter is their one allowed writer. They are private, so only code inside their
+        // declaring type can write them, in any of its partial declarations (Mobile's in MobileAnimation.cs and
+        // Views/MobileView.cs, GameObject's in Views/View.cs) and its nested types (Codex audit round 2, #2). A field of the same
+        // name in another type (PlayerMobile's own _amount) is not one of them.
         internal static readonly Dictionary<string, string> CheckedBackingFields = new Dictionary<string, string>(StringComparer.Ordinal)
         {
-            ["_graphic"] = "GameObject.cs", ["_hue"] = "GameObject.cs", ["_x"] = "GameObject.cs", ["_y"] = "GameObject.cs",
-            ["_z"] = "GameObject.cs", ["_offset"] = "GameObject.cs",
-            ["_flags"] = "Entity.cs", ["_serial"] = "Entity.cs", ["_name"] = "Entity.cs", ["_animIndex"] = "Entity.cs",
-            ["_executeAnimation"] = "Entity.cs", ["_lastAnimationChangeTime"] = "Entity.cs", ["_lastStepTime"] = "Entity.cs",
-            ["_amount"] = "Item.cs", ["_container"] = "Item.cs", ["_isDamageable"] = "Item.cs", ["_layer"] = "Item.cs",
-            ["_lightID"] = "Item.cs", ["_price"] = "Item.cs", ["_usedLayer"] = "Item.cs",
-            ["_race"] = "Mobile.cs", ["_speedMode"] = "Mobile.cs", ["_stamina"] = "Mobile.cs", ["_staminaMax"] = "Mobile.cs",
-            ["_mana"] = "Mobile.cs", ["_manaMax"] = "Mobile.cs", ["_isRenamable"] = "Mobile.cs", ["_animationFrameCount"] = "Mobile.cs",
-            ["_animationFromServer"] = "Mobile.cs", ["_lastStepSoundTime"] = "Mobile.cs", ["_stepSoundOffset"] = "Mobile.cs"
+            ["_graphic"] = "GameObject", ["_hue"] = "GameObject", ["_x"] = "GameObject", ["_y"] = "GameObject",
+            ["_z"] = "GameObject", ["_offset"] = "GameObject",
+            ["_flags"] = "Entity", ["_serial"] = "Entity", ["_name"] = "Entity", ["_animIndex"] = "Entity",
+            ["_executeAnimation"] = "Entity", ["_lastAnimationChangeTime"] = "Entity", ["_lastStepTime"] = "Entity",
+            ["_amount"] = "Item", ["_container"] = "Item", ["_isDamageable"] = "Item", ["_layer"] = "Item",
+            ["_lightID"] = "Item", ["_price"] = "Item", ["_usedLayer"] = "Item",
+            ["_race"] = "Mobile", ["_speedMode"] = "Mobile", ["_stamina"] = "Mobile", ["_staminaMax"] = "Mobile",
+            ["_mana"] = "Mobile", ["_manaMax"] = "Mobile", ["_isRenamable"] = "Mobile", ["_animationFrameCount"] = "Mobile",
+            ["_animationFromServer"] = "Mobile", ["_lastStepSoundTime"] = "Mobile", ["_stepSoundOffset"] = "Mobile"
         };
 
         private static readonly Regex CheckedSetterLine = new Regex(
@@ -357,8 +407,13 @@ namespace ClassicUO.UnitTests.Ecs
         private static readonly Regex Bare = new Regex(@"(?<![\w\.])(?<f>" + FieldAlt + @")\b\s*(?<op>" + Op + ")", RegexOptions.Compiled);
         // `recv.Steps.AddToBack(`, `Steps.Clear(` ...: calls that change the walk queue (Back()/Front() return refs and are mostly reads)
         private const string StepsMutators = @"(?:AddToBack|AddToFront|RemoveFromBack|RemoveFromFront|Clear|Insert|RemoveAt)\b";
-        private static readonly Regex StepsCall = new Regex(@"\.\s*Steps\s*\.\s*" + StepsMutators, RegexOptions.Compiled);
-        private static readonly Regex BareStepsCall = new Regex(@"(?<![\w\.])Steps\s*\.\s*" + StepsMutators, RegexOptions.Compiled);
+        // T1 (Codex audit round 2, #5): Steps is a read-only view; the walk queue changes through Mobile's checked methods,
+        // whose calls count like a setter's, and their one-line bodies write the private queue (_walkSteps), which counts anywhere else
+        private const string StepsMethods = @"(?:AddStep|RemoveFirstStep|ReplaceStep|ClearStepQueue)\s*\(";
+        private static readonly Regex StepsCall = new Regex(@"\.\s*(?:Steps\s*\.\s*" + StepsMutators + "|" + StepsMethods + ")", RegexOptions.Compiled);
+        private static readonly Regex BareStepsCall = new Regex(@"(?<![\w\.])(?<!\bvoid\s+)(?:Steps\s*\.\s*" + StepsMutators + "|" + StepsMethods + ")", RegexOptions.Compiled);
+        private static readonly Regex StepsBackingCall = new Regex(@"(?<!\w)_walkSteps\s*(?:\.\s*" + StepsMutators + @"|\[[^\]]*\]\s*=(?!=))", RegexOptions.Compiled);
+        private static readonly Regex CheckedStepsLine = new Regex(@"\{\s*FunnelCheck\.Write\s*\(\s*this\s*,\s*FunnelField\.Steps\s*\)\s*;\s*_walkSteps\b[^;]*;\s*\}", RegexOptions.Compiled);
         // `++Field`, `Interlocked.Exchange(ref Field, 0)`, `Reset(out Field)` with no receiver (inside a GameObject class)
         private static readonly Regex BarePrefix = new Regex(
             @"(?:(?<![\w+])(?:\+\+|--)|\b(?:ref|out))\s*(?<f>" + FieldAlt + @")\b(?!\s+[A-Za-z_])", RegexOptions.Compiled);
@@ -471,10 +526,20 @@ namespace ClassicUO.UnitTests.Ecs
             List<WriteSite> sites = ScanSourceAll(source, path, globalMembers, insideGameObjectClass);
             string[] lines = source.Split('\n');
 
-            // a checked backing field: written by its own one-line setter, or a field of the same name in another file
-            string fileName = Path.GetFileName(path);
-            sites.RemoveAll(s => CheckedBackingFields.TryGetValue(s.Field, out string declaredIn)
-                                 && (declaredIn != fileName || (s.Line - 1 < lines.Length && IsOwnSetter(lines[s.Line - 1], s.Field))));
+            // a checked backing field: written by its own one-line setter, or a field of the same name in another type
+            List<(string Name, int From, int To)> types = null;
+            sites.RemoveAll(s =>
+            {
+                if (!CheckedBackingFields.TryGetValue(s.Field, out string declaringType))
+                {
+                    return false;
+                }
+
+                types ??= TypeBodies(StripCommentsAndStrings(source));
+
+                return !types.Exists(t => t.Name == declaringType && s.Line >= t.From && s.Line <= t.To)
+                       || (s.Line - 1 < lines.Length && IsOwnSetter(lines[s.Line - 1], s.Field));
+            });
 
             // T1: the funnel's operations
             if (path == FunnelFile)
@@ -484,6 +549,25 @@ namespace ClassicUO.UnitTests.Ecs
             }
 
             return sites;
+        }
+
+        private static readonly Regex TypeDecl = new Regex(@"\b(?:class|struct|record|interface)\s+(?<n>[A-Za-z_]\w*)[^{;]*\{", RegexOptions.Compiled);
+
+        /// <summary>
+        /// The types declared in <paramref name="code"/> (without comments and strings), each declaration (a partial one too)
+        /// with the line range of its body; a nested type's range lies inside its container's.
+        /// </summary>
+        internal static List<(string Name, int From, int To)> TypeBodies(string code)
+        {
+            var result = new List<(string, int, int)>();
+
+            foreach (Match m in TypeDecl.Matches(code))
+            {
+                int open = m.Index + m.Length - 1;
+                result.Add((m.Groups["n"].Value, LineOf(code, open), LineOf(code, MatchBrace(code, open, '{', '}'))));
+            }
+
+            return result;
         }
 
         private static bool IsOwnSetter(string line, string field)
@@ -651,7 +735,7 @@ namespace ClassicUO.UnitTests.Ecs
                 }
             }
 
-            // the walk queue is world state too: `recv.Steps.AddToBack(...)` and the other calls that change it
+            // the walk queue is world state too: `recv.AddStep(...)` and the other calls that change it
             foreach (Match m in StepsCall.Matches(code))
             {
                 string recv = ReceiverBefore(code, m.Index);
@@ -659,6 +743,20 @@ namespace ClassicUO.UnitTests.Ecs
                 if (IsWorldReceiver(recv, worldNames, globalMembers, insideGameObjectClass) && seen.Add(m.Index))
                 {
                     result.Add(new WriteSite(path, LineOf(code, m.Index), "Steps", recv, "call"));
+                }
+            }
+
+            // the private queue itself: only the one-line checked methods may change it
+            string[] codeLines = null;
+
+            foreach (Match m in StepsBackingCall.Matches(code))
+            {
+                codeLines ??= code.Split('\n');
+                int line = LineOf(code, m.Index);
+
+                if (!CheckedStepsLine.IsMatch(codeLines[line - 1]) && seen.Add(m.Index))
+                {
+                    result.Add(new WriteSite(path, line, "Steps", "_walkSteps", "call"));
                 }
             }
 

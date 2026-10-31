@@ -137,7 +137,20 @@ namespace ClassicUO.Game.GameObjects
 
         public Mobile(World world) : base(world, 0) { }
 
-        public Deque<Step> Steps { get; } = new Deque<Step>(Constants.MAX_STEP_COUNT);
+        // the walk queue: world state (T1). Read through Steps; changed only through the checked methods below.
+        private readonly Deque<Step> _walkSteps = new Deque<Step>(Constants.MAX_STEP_COUNT);
+
+        /// <summary>The walk queue, read-only (T1, Codex audit round 2, #5): changes go through <see cref="AddStep"/>,
+        /// <see cref="RemoveFirstStep"/>, <see cref="ReplaceStep"/> and <see cref="ClearStepQueue"/>, which the funnel check sees.</summary>
+        public StepQueue Steps => new StepQueue(_walkSteps);
+
+        internal void AddStep(in Step step) { FunnelCheck.Write(this, FunnelField.Steps); _walkSteps.AddToBack(step); }
+
+        internal void RemoveFirstStep() { FunnelCheck.Write(this, FunnelField.Steps); _walkSteps.RemoveFromFront(); }
+
+        internal void ReplaceStep(int index, in Step step) { FunnelCheck.Write(this, FunnelField.Steps); _walkSteps[index] = step; }
+
+        internal void ClearStepQueue() { FunnelCheck.Write(this, FunnelField.Steps); _walkSteps.Clear(); }
         public bool IsParalyzed => (Flags & Flags.Frozen) != 0;
         public bool IsYellowHits => (Flags & Flags.YellowBar) != 0;
         public bool IsPoisoned =>
@@ -382,8 +395,7 @@ namespace ClassicUO.Game.GameObjects
 
         public void ClearSteps()
         {
-            FunnelCheck.Write(this, FunnelField.Steps);
-            Steps.Clear();
+            ClearStepQueue();
             Offset = Vector3.Zero;
             PushInputs();
         }
@@ -424,8 +436,7 @@ namespace ClassicUO.Game.GameObjects
                     step.Z = endZ;
                     step.Direction = (byte)moveDir;
                     step.Run = run;
-                    FunnelCheck.Write(this, FunnelField.Steps);
-                    Steps.AddToBack(step);
+                    AddStep(step);
                 }
 
                 step.X = x;
@@ -433,8 +444,7 @@ namespace ClassicUO.Game.GameObjects
                 step.Z = z;
                 step.Direction = (byte)moveDir;
                 step.Run = run;
-                FunnelCheck.Write(this, FunnelField.Steps);
-                Steps.AddToBack(step);
+                AddStep(step);
             }
 
             if (moveDir != direction)
@@ -444,8 +454,7 @@ namespace ClassicUO.Game.GameObjects
                 step.Z = z;
                 step.Direction = (byte)direction;
                 step.Run = run;
-                FunnelCheck.Write(this, FunnelField.Steps);
-                Steps.AddToBack(step);
+                AddStep(step);
             }
 
             PushInputs();
@@ -464,7 +473,7 @@ namespace ClassicUO.Game.GameObjects
             }
             else
             {
-                ref Step step = ref Steps.Back();
+                ref readonly Step step = ref Steps.Back();
                 x = step.X;
                 y = step.Y;
                 z = step.Z;
@@ -663,7 +672,7 @@ namespace ClassicUO.Game.GameObjects
             {
                 if (Steps.Count != 0 && LastStepSoundTime < Time.Ticks)
                 {
-                    ref Step step = ref Steps.Back();
+                    ref readonly Step step = ref Steps.Back();
 
                     int incID = StepSoundOffset;
                     int soundID = 0x012B;
@@ -781,7 +790,7 @@ namespace ClassicUO.Game.GameObjects
 
             if (Steps.Count != 0 && !IsDestroyed)
             {
-                ref Step step = ref Steps.Front();
+                ref readonly Step step = ref Steps.Front();
                 dir = step.Direction;
 
                 if (step.Run)
@@ -923,8 +932,7 @@ namespace ClassicUO.Game.GameObjects
                         OffsetX = 0;
                         OffsetY = 0;
                         OffsetZ = 0;
-                        FunnelCheck.Write(this, FunnelField.Steps);
-                        Steps.RemoveFromFront();
+                        RemoveFirstStep();
                         CalculateRandomIdleTime();
                         PushInputs();
 
@@ -1180,6 +1188,22 @@ namespace ClassicUO.Game.GameObjects
             public sbyte Z;
             public byte Direction;
             public bool Run;
+        }
+
+        /// <summary>A read-only view of a mobile's walk queue (its steps come back by readonly reference or by value).</summary>
+        internal readonly struct StepQueue
+        {
+            private readonly Deque<Step> _queue;
+
+            internal StepQueue(Deque<Step> steps) => _queue = steps;
+
+            public int Count => _queue.Count;
+
+            public Step this[int index] => _queue[index];
+
+            public ref readonly Step Front() => ref _queue.Front();
+
+            public ref readonly Step Back() => ref _queue.Back();
         }
     }
 }
