@@ -188,14 +188,30 @@ public sealed unsafe class Renderer : IDisposable
         }
     }
 
+    /// <summary>The palette upload's staging size. The payload (18.5 MiB) goes up in chunks of this size through one
+    /// transfer buffer, waiting for each chunk's copy, instead of through one transfer buffer of the payload's size:
+    /// SDL_GPU's Vulkan backend gives every transfer buffer a dedicated host-cached allocation (private read-write memory
+    /// in this process), so the one-shot buffer was an 18.5 MiB native allocation per renderer.</summary>
+    public const uint PaletteChunkBytes = 4u << 20;
+
+    /// <summary>The chunks of a palette upload of <paramref name="bytes"/>: (offset, size) pairs through a staging buffer of
+    /// <see cref="PaletteChunkBytes"/> (or less, for a smaller payload), covering every byte once and in order.</summary>
+    public static IEnumerable<(uint Offset, uint Size)> PaletteChunks(uint bytes)
+    {
+        uint chunk = Math.Min(bytes, PaletteChunkBytes);
+        for (uint off = 0; off < bytes; off += chunk) yield return (off, Math.Min(chunk, bytes - off));
+    }
+
     /// <summary>palettes.bin's u16 table as one storage buffer (18.5 MiB for all 37.9k palettes), uploaded once. The file is
     /// read straight into the mapped transfer buffer: no CPU copy of the palettes is allocated or kept (the GPU buffer is
-    /// their only reader; a new renderer reads the file again). The sizes are validated against the file
-    /// (<see cref="PaletteUploadSize"/>) before anything is allocated, and every failure releases what it created.</summary>
+    /// their only reader; a new renderer reads the file again). The upload is chunked (<see cref="PaletteChunks"/>, one
+    /// fence wait per chunk, five chunks at startup), so its staging memory is 4 MiB instead of the payload's size. The
+    /// sizes are validated against the file (<see cref="PaletteUploadSize"/>) before anything is allocated, and every
+    /// failure releases what it created.</summary>
     IntPtr CreatePaletteBuffer(PackSet pack)
     {
         FileStream fs = null;
-        IntPtr buf = IntPtr.Zero, tb = IntPtr.Zero;
+        IntPtr buf = IntPtr.Zero, tb = IntPtr.Zero, fence = IntPtr.Zero;
         bool mapped = false;
         try
         {
@@ -205,36 +221,44 @@ public sealed unsafe class Renderer : IDisposable
             {
                 fs = new FileStream(pack.PalettePath, FileMode.Open, FileAccess.Read, FileShare.Read, 1, FileOptions.SequentialScan);
                 (dataBytes, bytes) = PaletteUploadSize(pack.PaletteCount, pack.PaletteOffset, fs.Length);
+                fs.Position = pack.PaletteOffset;
             }
             buf = CreateBuffer(bytes, "palettes");
-            tb = CreateTransfer(bytes, true);
-            var ptr = SDL_MapGPUTransferBuffer(Device, tb, false);
-            if (ptr == IntPtr.Zero) throw new Exception("palette transfer buffer map: " + SDL_GetError());
-            mapped = true;
-            new Span<byte>((void*)ptr, (int)bytes).Clear();
-            if (dataBytes > 0)
+            tb = CreateTransfer(Math.Min(bytes, PaletteChunkBytes), true);
+            foreach (var (off, n) in PaletteChunks(bytes))
             {
-                fs.Position = pack.PaletteOffset;
-                fs.ReadExactly(new Span<byte>((void*)ptr, (int)dataBytes));
+                // cycle false: the previous chunk's copy has finished (fence below), so the buffer is free to rewrite
+                var ptr = SDL_MapGPUTransferBuffer(Device, tb, false);
+                if (ptr == IntPtr.Zero) throw new Exception("palette transfer buffer map: " + SDL_GetError());
+                mapped = true;
+                var dst = new Span<byte>((void*)ptr, (int)n);
+                int fromFile = (int)Math.Clamp(dataBytes - off, 0, n);
+                if (fromFile > 0) fs.ReadExactly(dst.Slice(0, fromFile));
+                dst.Slice(fromFile).Clear(); // the rounding to 4 bytes (and an empty pack's 4 bytes)
+                SDL_UnmapGPUTransferBuffer(Device, tb);
+                mapped = false;
+                var cmd = SDL_AcquireGPUCommandBuffer(Device);
+                if (cmd == IntPtr.Zero) throw new Exception("palette upload command buffer: " + SDL_GetError());
+                var copy = SDL_BeginGPUCopyPass(cmd);
+                var src2 = new SDL_GPUTransferBufferLocation { transfer_buffer = tb };
+                var region = new SDL_GPUBufferRegion { buffer = buf, offset = off, size = n };
+                SDL_UploadToGPUBuffer(copy, in src2, in region, false);
+                SDL_EndGPUCopyPass(copy);
+                fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
+                if (fence == IntPtr.Zero) throw new Exception("palette upload submit: " + SDL_GetError());
+                WaitFence(fence);
+                SDL_ReleaseGPUFence(Device, fence);
+                fence = IntPtr.Zero;
             }
-            SDL_UnmapGPUTransferBuffer(Device, tb);
-            mapped = false;
-            var cmd = SDL_AcquireGPUCommandBuffer(Device);
-            if (cmd == IntPtr.Zero) throw new Exception("palette upload command buffer: " + SDL_GetError());
-            var copy = SDL_BeginGPUCopyPass(cmd);
-            var src2 = new SDL_GPUTransferBufferLocation { transfer_buffer = tb };
-            var dst = new SDL_GPUBufferRegion { buffer = buf, size = bytes };
-            SDL_UploadToGPUBuffer(copy, in src2, in dst, false);
-            SDL_EndGPUCopyPass(copy);
-            SDL_SubmitGPUCommandBuffer(cmd);
             var done = buf;
             buf = IntPtr.Zero; // handed to the caller
             return done;
         }
         finally
         {
+            if (fence != IntPtr.Zero) { WaitFence(fence); SDL_ReleaseGPUFence(Device, fence); }
             if (mapped) SDL_UnmapGPUTransferBuffer(Device, tb);
-            if (tb != IntPtr.Zero) SDL_ReleaseGPUTransferBuffer(Device, tb); // after a submit SDL frees it once the copy is done
+            if (tb != IntPtr.Zero) SDL_ReleaseGPUTransferBuffer(Device, tb); // idle: every chunk's fence was waited on
             if (buf != IntPtr.Zero) SDL_ReleaseGPUBuffer(Device, buf);
             fs?.Dispose();
         }

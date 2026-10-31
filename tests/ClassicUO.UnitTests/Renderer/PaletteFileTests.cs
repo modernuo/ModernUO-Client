@@ -102,5 +102,30 @@ namespace ClassicUO.UnitTests.Renderer
             FluentActions.Invoking(() => AnimPaletteFile.ValidateFramePalette([0, uint.MaxValue, 1], 2)).Should().NotThrow();
             FluentActions.Invoking(() => AnimPaletteFile.ValidateFramePalette([5], 2)).Should().Throw<InvalidDataException>();
         }
+
+        // mem-reduce-2: the upload stages through one transfer buffer of at most PaletteChunkBytes (SDL_GPU's Vulkan
+        // backend gives each transfer buffer a dedicated host allocation), so the chunks must tile the payload exactly.
+        [Theory]
+        [InlineData(4u)]
+        [InlineData(Uo.Render.Renderer.PaletteChunkBytes - 4)]
+        [InlineData(Uo.Render.Renderer.PaletteChunkBytes)]
+        [InlineData(Uo.Render.Renderer.PaletteChunkBytes + 4)]
+        [InlineData(37_888u * 256 * 2)] // the shipped pack's 18.5 MiB: 5 chunks
+        public void Palette_upload_chunks_tile_the_payload_within_the_staging_size(uint bytes)
+        {
+            uint next = 0;
+            int count = 0;
+
+            foreach (var (offset, size) in Uo.Render.Renderer.PaletteChunks(bytes))
+            {
+                offset.Should().Be(next);
+                size.Should().BeGreaterThan(0).And.BeLessOrEqualTo(Uo.Render.Renderer.PaletteChunkBytes);
+                next += size;
+                count++;
+            }
+
+            next.Should().Be(bytes);
+            count.Should().Be((int)((bytes + Uo.Render.Renderer.PaletteChunkBytes - 1) / Uo.Render.Renderer.PaletteChunkBytes));
+        }
     }
 }
