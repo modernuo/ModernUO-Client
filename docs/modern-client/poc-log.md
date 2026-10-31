@@ -2364,3 +2364,52 @@ Branch `poc/pack-gumps`, from poc/modern-client fdfcc9813, merged up to 80ccb1a2
   Counts without the variable are 11 to 39 on every build, including the pre-recycler and pre-E11 ones, so no merge changed them beyond the race. The E11 and E10 rows and the older builds with the variable were dropped for time: the bench.lock queue made each run take 20 to 40 minutes and the answer did not depend on them. Earlier agents' 0 (E6 and before) is consistent: they set the variable.
 - **Fix.** `EcsParity` now sets `Animations.AsyncFirstSight = false` when `CUO_ECS_PARITY` is on, so parity no longer depends on remembering the variable (harness-only; the normal render path is untouched). Verified by two runs without the variable: 0 mismatches.
 - **Open point (not changed).** With `gpu_ecs_sprites` on, the extract draws a first-sight body at once while the legacy view skips it for a few frames. Not a Gpu bug (the body appears sooner), but Gpu and Legacy differ for those frames.
+
+
+## E12: same-frame item checker (bg/ecs-e12-checker)
+
+Base: poc/modern-client f2668520f, merged with 0acd0ef85 for the final runs. Setting-free: only `CUO_GPU_ITEM_CHECK` changes.
+
+**Defect (E6 audit):** the check compared a served frame with the check frame after it, so anything that changes between two frames (an effect expiring, a mobile stepping) could hide a real difference or give a legitimate one, and the effects part of the hash covered identity, alpha and order but not emitted geometry, blend, depth or lights.
+
+**Change:**
+- `CUO_GPU_ITEM_CHECK=1|every` (the default mode now) makes a check frame run the prepare and the capture twice on one frame state inside `DrawWorldGpu` (no Update between):
+  - **probe pass** (`GpuItemProbeRun`, before the frame's own fill): `FillGameObjectList` serving from the cache as a normal frame, then FinishGpuCollect, multis, statics, `CaptureRenderLists`, the multi preview and the effects (`RenderLists.CaptureEffectsOnly`), all before the batcher begins. It keeps the dynamic instances, the lights, a hash and a listing of the render lists, the selection and the sizes of the collected lists, then undoes its side effects (dynamic buffer, lights, selection, collected lists, `FoliageIndex`, `UpdateDrawPosition`). Sprites the capture can't map are dropped in the probe (`GpuWorldRenderer.Probe`; the batcher would draw them twice) and counted.
+  - **reference pass**: the frame's own fill and draw, a full walk, with the old per-item comparison unchanged. This is the frame that is drawn.
+  - after the reference pass captures its effects (`GpuItemProbeCompare`): all dynamic instances byte for byte (reported separately for items/mobiles and for effects, so position, depth, blend, hue and alpha), the lights, the render lists (identity, alpha, order), the selection, the collected lists' sizes.
+- **Frames not checked** (counted): alphas stepping that frame (the second fill would see the first one's result), a served tile that fell back to a walk because an item changed (the reference pass re-extracts and serves it), and a chunk cache built only in the reference pass (its retry time, which counts frames, passed between the two passes). Both showed up as false list differences before they were excluded; every remaining difference in the correct build is 0.
+- `CUO_GPU_ITEM_CHECK=legacy|legacy-every`: the old cross-frame check, unchanged (the docs for E7 and E6 referred to it).
+- With the variable unset: a static readonly flag and nothing else on the frame; no change in the walk, the cache serving or the capture. The only code on a hot path is one `Probe` test on the capture's fallback path (taken only for unmapped sprites).
+
+**Results** (JIT, `TieredCompilation=0`, `CUO_ECS_PARITY=1 CUO_ANIM_SYNC=1 CUO_GPU_SKIP_CHECK=1 CUO_PREP_CHECK=1 -ecscheck 120`, `CUO_GPU_ITEM_CHECK=every`, kbatman3):
+
+| Run | Checks | Differences |
+|---|---|---|
+| `e6fx.txt` (mixed tiles, fixed effects in all blends, lightning, moving effects), night | 111k same-frame checks, 6.5M instances compared (3.5M effect) | **0** in instances, effects, lists, lights, selection and collected lists; 4k frames not checked |
+| `e6fx_day.txt` (`light off`) | 148k checks, 35M instances (4.4M effect) | **0**; parity view-effects 319k, 0 mismatched |
+| `e7mixed.txt`, standing | 154k checks, 3.8M instances | **0** |
+| Large scene (`ls`), zoom 1: 100 fixed fires, 60 moving effects, `lswalk` standing and with moving effects | 19k checks (both zooms), 487M instances (850k effect) | **0** |
+| Large scene zoom 2.5: 150 fires, 60 moving, `lswalk` with and without | included above | **0**; skip check 0, prep check 0 wrong (5.3M positions kept) |
+| Old (E7) check on the same scenes | only standing windows could read 0; the walking and moving-effect windows differed legitimately (227/950 and 271/791 frames in E6's log) | |
+
+Sensitivity (two deliberately broken builds, `e6fx.txt` night):
+- Effect walk left out of `GpuServeMixedTile`: 39,835 of 164,201 checks differ, all in effect instances and render lists (`effects: 86 served vs 100 full instances`, with the moving effect's x/y/depth in the sample).
+- Every 256th cached entry dropped from the served runs: 58,904 of 155,709 checks differ, 57,670 of them in item/mobile instances (`37 served vs 39 full`).
+
+**Zero cost with the check off** (NativeAOT, base = poc/modern-client 0acd0ef85, new = this branch merged, `CUO_GPU_ITEM_CHECK` unset, large scene `ls1`/`ls25`/`lsw` and Britain, 7 rounds alternated, 3 windows each, window averages of world prepare ms; the machine was shared and noisy: single runs of the same binary vary 0.78–1.33 at `ls1`):
+
+| Spot | base | new |
+|---|---|---|
+| zoom 1 | 0.984 | 0.954 |
+| zoom 2.5 | 1.281 | 1.253 |
+| `lswalk` | 1.114 | 1.005 |
+| Britain | 0.067 | 0.067 |
+
+New is equal or slightly lower in every row, within the noise; the first 3-round series (pre-merge builds) went the other way by 0.1–0.2 ms, and the order alternation shows that was whichever run came second. No difference can be claimed either way.
+
+**Unit tests:** 638 pass in both build variants (`-p:CuoDevTools=false` too), including the T0 write-site budget test (the checker writes no ECS-owned fields).
+
+**Not covered / notes:**
+- The probe leaves the world-pass overrides it set (hidden/alpha baked-object overrides): they are the same ones the reference pass sets, so they are not compared.
+- Frames with alphas stepping are never checked; a bug that shows only on those frames is still invisible to this check (the skip and prep checks cover them).
+- The reference pass runs the capture of picked items, so a served-only picking difference shows as a selection difference only when the selected object differs.
