@@ -30,7 +30,7 @@ public static class AnimExperiments
     {
         var files = Directory.GetFiles(dir, "page_*.bin").OrderBy(f => f, StringComparer.Ordinal).ToArray();
         outDir ??= Path.Combine(Path.GetTempPath(), "uo-chunked-bench");
-        PublishedPacks.EnsureWritable(outDir);
+        PublishedPacks.EnsureOutputDir(outDir); // the process-wide roots, --packs-root included (ConfigureFromArgs)
         Directory.CreateDirectory(outDir);
         foreach (var f in new[] { AnimTableFile.FileName, AnimDataFile.FileName, AnimPaletteFile.FileName })
             if (File.Exists(Path.Combine(dir, f))) ReplacingFile.Copy(Path.Combine(dir, f), Path.Combine(outDir, f));

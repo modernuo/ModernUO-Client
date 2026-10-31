@@ -8,7 +8,16 @@ using Uo.Pack;
 string uoPath = @"C:\Ultima Online Classic";
 string outDir = ""; // required: published packs (C:\Repositories\uo-packs\*) are immutable, so there is no default under them
 string? debugDir = null;
-var packsRoots = PublishedPacks.ConfiguredRoots().ToList();
+// One root configuration for every command: all --packs-root arguments are taken first, wherever they appear.
+try
+{
+    args = PublishedPacks.ConfigureFromArgs(args);
+}
+catch (ArgumentException e)
+{
+    Console.Error.WriteLine(e.Message);
+    return 1;
+}
 bool useX = false, maps = true, convert = true, anims = true, gumps = true, fonts = true, cliloc = true, speech = true, formatGiven = false, gumpReport = false;
 string? gumpDef = null;
 HashSet<string>? only = null; // --only: convert just these stages into an existing pack, keeping everything else
@@ -19,7 +28,6 @@ for (int i = 0; i < args.Length; i++)
         case "--uo": uoPath = args[++i]; break;
         case "--out": outDir = args[++i]; break;
         case "--debug": debugDir = args[++i]; break;
-        case "--packs-root": packsRoots.Add(args[++i]); break;
         case "--xfiles": useX = true; break;
         case "--no-maps": maps = false; break;
         case "--verify-only": convert = false; break;
@@ -65,7 +73,7 @@ for (int i = 0; i < args.Length; i++)
             ConvertOptions.AnimIndexed = args[++i].ToLowerInvariant() switch { "indexed8" => true, "page" => false, var f => throw new ArgumentException($"unknown anim format {f}") };
             break;
         case "--indexed-mips": ConvertOptions.IndexedMips = args[++i].ToLowerInvariant() != "none"; break;
-        case "--bench-chunked": return AnimExperiments.BenchChunked(args[++i], args.Length > i + 1 && !args[i + 1].StartsWith("--") ? args[++i] : null);
+        case "--bench-chunked": return Guarded(() => AnimExperiments.BenchChunked(args[++i], args.Length > i + 1 && !args[i + 1].StartsWith("--") ? args[++i] : null));
         case "--anim-report": return AnimExperiments.Report(args[++i]);
         case "--compare-indexed": return AnimExperiments.CompareIndexed(args[++i], args[++i]);
         case "--filter-ref": return AnimExperiments.FilterRef(args[++i], args[++i], args[++i]);
@@ -96,8 +104,16 @@ try
 {
     // Published packs are immutable: never convert into one (a folder under a packs root, also through a junction or
     // symlink). --verify-only only reads the pack, so it may verify a published one; debug PNGs still go elsewhere.
-    if (convert) PublishedPacks.EnsureWritable(outDir, packsRoots);
-    PublishedPacks.EnsureWritable(debugDir, packsRoots);
+    if (convert) PublishedPacks.EnsureOutputDir(outDir);
+    PublishedPacks.EnsureOutputDir(debugDir);
+    if (convert && only == null)
+    {
+        // No recursive deletes. A full conversion removes only the files the previous output's manifest lists (and
+        // refuses a non-empty folder that is not a converter output); --only keeps everything it does not rewrite.
+        // Stale debug PNGs (the only files written there) are removed one by one. Each delete checks its folder.
+        PackOutputFiles.ClearPreviousOutput(outDir);
+        PackOutputFiles.DeleteFiles(debugDir, "*.png");
+    }
 }
 catch (InvalidOperationException e)
 {
@@ -118,7 +134,6 @@ if (only != null && !formatGiven && File.Exists(PackConst.PagePath(Path.Combine(
 }
 
 var total = Stopwatch.StartNew();
-if (convert && only == null && Directory.Exists(debugDir)) Directory.Delete(debugDir, true);
 Directory.CreateDirectory(debugDir);
 ConvertOptions.DebugDir = debugDir;
 Console.WriteLine($"format {ConvertOptions.Format} (bc7 quality {ConvertOptions.Bc7Quality}), compress regions {ConvertOptions.CompressRegions}, compress pages {(ConvertOptions.ChunkedPages ? $"chunked ({ConvertOptions.ChunkBytes} B)" : ConvertOptions.CompressPages.ToString())}, page size {ConvertOptions.PageSize} (anims {ConvertOptions.AnimPageSize}{(ConvertOptions.AnimIndexed ? ", indexed8" + (ConvertOptions.IndexedMips ? " + b16 mips" : ", no mips") : "")}), threads {ConvertOptions.Threads}" +
@@ -157,7 +172,6 @@ if (convert)
 {
     var oldManifest = Path.Combine(outDir, "manifest.json");
     var facets = only != null && !Want("maps") && File.Exists(oldManifest) ? ManifestFileIo.Read(oldManifest).Facets : new List<FacetInfo>();
-    if (only == null && Directory.Exists(outDir)) Directory.Delete(outDir, recursive: true);
     Directory.CreateDirectory(outDir);
 
     if (Want("art")) stats["art"] = Stage("art", () => ArtConvert.Art(fm, outDir));
@@ -235,4 +249,17 @@ static int PageSide(string v)
     int s = int.Parse(v);
     if (s < 256 || s > 8192 || (s & (s - 1)) != 0) throw new ArgumentException($"page size {s}: power of two in 256..8192");
     return s;
+}
+
+static int Guarded(Func<int> command)
+{
+    try
+    {
+        return command();
+    }
+    catch (InvalidOperationException e) when (e.Message.StartsWith("refusing", StringComparison.Ordinal))
+    {
+        Console.Error.WriteLine(e.Message);
+        return 1;
+    }
 }
