@@ -41,6 +41,11 @@ namespace ClassicUO.IO.Audio
         {
             Stop();
 
+            if (!Mp3Decoder.IsAvailable)
+            {
+                return false; // logged once by Mp3Decoder.IsAvailable; music stays off
+            }
+
             m_Stream = new MusicStream(Path, Name, m_Repeat);
             m_Started = false;
             m_LoopsLogged = 0;

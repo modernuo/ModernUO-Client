@@ -1,6 +1,6 @@
 # cuo_mp3: dr_mp3 (external/dr_libs/dr_mp3.h, v0.7.4) behind a flat C API for the client.
 # Builds a shared library (JIT builds load it) and a static library (NativeAOT links it into the executable).
-# Linux/macOS: see build-unix.sh. Windows: build-win-x64.sh (MSVC from Git Bash) is what produced the committed files;
+# Entry points: build-linux.sh, build-macos.sh, build-windows.sh (MSVC from Git Bash; produced the committed files);
 # this CMake file also works there with the Visual Studio generator.
 cmake_minimum_required(VERSION 3.16)
 project(cuo_mp3 C)

@@ -5,7 +5,9 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Runtime.InteropServices;
+using System.Threading;
 using ClassicUO.IO.Audio;
+using ClassicUO.UnitTests.Assets;
 using FluentAssertions;
 using Xunit;
 
@@ -14,7 +16,7 @@ namespace ClassicUO.UnitTests.IO
     // dr_mp3 (native cuo_mp3) behind Mp3Decoder, the managed Mp3Validator guard, and MusicStream's loop fill.
     // Inputs are synthetic MP3s built here (silent Layer III frames, optionally led by a Xing/Info + LAME frame), so no
     // UO data is committed. Tests that also use real tracks from C:\Ultima Online Classic\Music\Digital skip without it.
-    public class Mp3DecoderTests
+    public partial class Mp3DecoderTests
     {
         private const string MusicDir = @"C:\Ultima Online Classic\Music\Digital";
         private const int FrameBytes = 417; // MPEG-1 Layer III, 128 kbps, 44.1 kHz, no padding bit
@@ -395,18 +397,39 @@ namespace ClassicUO.UnitTests.IO
             }
         }
 
-        // Real track (skips without UO data): looping must continue with exactly the track's first samples, i.e. a
-        // gapless seam: the PCM after the wrap equals the PCM at the start.
-        [Fact]
+        // Real track (reported as skipped without UO data): looping must continue with exactly the track's first
+        // samples, i.e. a gapless seam: the PCM after the wrap equals the PCM at the start.
+        [FilesFact(MusicDir, "Boattravel.mp3")]
         public void RealTrack_LoopSeamIsSampleExact()
         {
-            string path = Path.Combine(MusicDir, "Boattravel.mp3");
+            AssertLoopSeamIsSampleExact(Path.Combine(MusicDir, "Boattravel.mp3"), "Boattravel");
+        }
 
-            if (!File.Exists(path))
+        // The committed synthetic fixture (IO/Fixtures/seam-noise.mp3, made by make_mp3_fixture.py): non-silent noise
+        // that differs per frame, behind an Info + LAME frame, so a wrap at the wrong sample can't go unnoticed.
+        [Fact]
+        public void Fixture_LoopSeamIsSampleExact()
+        {
+            Mp3Decoder.TryOpenFile(FixturePath, out Mp3Decoder d, out string error).Should().BeTrue(error);
+
+            using (d)
             {
-                return;
+                d.Channels.Should().Be(2);
+                d.DelayFrames.Should().Be(576 + 529);
+                short[] pcm = new short[d.TotalFrames * 2];
+                d.Read(pcm).Should().Be((int)d.TotalFrames);
+                pcm.Max(v => Math.Abs((int)v)).Should().BeGreaterThan(1000, "the fixture is not silent");
+                pcm.AsSpan(0, FrameSamples * 2).SequenceEqual(pcm.AsSpan(FrameSamples * 2, FrameSamples * 2)).Should().BeFalse("frames differ");
+                (d.TotalFrames % MusicStream.FramesPerBuffer).Should().NotBe(0, "the seam must fall inside a buffer");
             }
 
+            AssertLoopSeamIsSampleExact(FixturePath, "fixture");
+        }
+
+        private static string FixturePath => Path.Combine(AppContext.BaseDirectory, "IO", "Fixtures", "seam-noise.mp3");
+
+        private static void AssertLoopSeamIsSampleExact(string path, string name)
+        {
             Mp3Decoder.TryOpenFile(path, out Mp3Decoder d, out string error).Should().BeTrue(error);
             short[] once;
 
@@ -423,7 +446,7 @@ namespace ClassicUO.UnitTests.IO
                 got.Should().Be(once.Length);
             }
 
-            MusicStream s = new MusicStream(path, "Boattravel", loop: true);
+            MusicStream s = new MusicStream(path, name, loop: true);
             List<short> played = new List<short>(once.Length + 100000);
 
             while (played.Count < once.Length + 50000)
