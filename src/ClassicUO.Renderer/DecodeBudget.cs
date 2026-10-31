@@ -47,7 +47,7 @@ namespace ClassicUO.Renderer
         private readonly object _lock = new object();
         private readonly Queue<Waiter> _waiting = new Queue<Waiter>();
         private readonly Action<IThreadPoolWorkItem> _start;
-        private long _inFlight, _framePeak, _peak;
+        private long _inFlight, _framePeak, _logPeak, _peak;
         private int _waitingCount;
 
         /// <param name="capBytes">0 or less = unlimited.</param>
@@ -76,6 +76,19 @@ namespace ClassicUO.Renderer
             {
                 long p = _framePeak;
                 _framePeak = _inFlight;
+
+                return p;
+            }
+        }
+
+        /// <summary>The most in-flight bytes since the last call, then restarts from the current level (scripted runs log it per plan entry,
+        /// holds included; FrameStats only sees the measured windows).</summary>
+        public long TakeLogPeak()
+        {
+            lock (_lock)
+            {
+                long p = _logPeak;
+                _logPeak = _inFlight;
 
                 return p;
             }
@@ -131,6 +144,11 @@ namespace ClassicUO.Renderer
             if (_inFlight > _framePeak)
             {
                 _framePeak = _inFlight;
+            }
+
+            if (_inFlight > _logPeak)
+            {
+                _logPeak = _inFlight;
             }
 
             if (_inFlight > _peak)
