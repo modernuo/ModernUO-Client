@@ -70,7 +70,7 @@ public static class TileDataExtFile
 {
     public static void Write(string path, ReadOnlySpan<LandTileInfo> land, ReadOnlySpan<StaticTileInfo> statics, ReadOnlySpan<byte> names)
     {
-        using var fs = File.Create(path);
+        using var fs = ReplacingFile.Create(path);
         StructIo.WriteHeader(fs, TableConst.MagicTileDataExt);
         StructIo.Write(fs, land.Length);
         StructIo.Write(fs, statics.Length);
@@ -78,6 +78,7 @@ public static class TileDataExtFile
         StructIo.WriteSpan(fs, land);
         StructIo.WriteSpan(fs, statics);
         fs.Write(names);
+        fs.Commit();
     }
 
     public static (LandTileInfo[] Land, StaticTileInfo[] Statics, byte[] Names) Read(string path)
@@ -154,10 +155,11 @@ public static class TableFile
 {
     public static void Write<T>(string path, uint magic, ReadOnlySpan<T> entries) where T : unmanaged
     {
-        using var fs = File.Create(path);
+        using var fs = ReplacingFile.Create(path);
         StructIo.WriteHeader(fs, magic);
         StructIo.Write(fs, entries.Length);
         StructIo.WriteSpan(fs, entries);
+        fs.Commit();
     }
 
     public static T[] Read<T>(string path, uint magic) where T : unmanaged
@@ -260,12 +262,13 @@ public static class MultiFile
 {
     public static void Write(string path, ReadOnlySpan<MultiEntry> multis, ReadOnlySpan<MultiComponent> components)
     {
-        using var fs = File.Create(path);
+        using var fs = ReplacingFile.Create(path);
         StructIo.WriteHeader(fs, TableConst.MagicMultis);
         StructIo.Write(fs, multis.Length);
         StructIo.Write(fs, components.Length);
         StructIo.WriteSpan(fs, multis);
         StructIo.WriteSpan(fs, components);
+        fs.Commit();
     }
 
     public static (MultiEntry[] Multis, MultiComponent[] Components) Read(string path)
@@ -301,12 +304,13 @@ public static class LightFile
 {
     public static void Write(string path, ReadOnlySpan<LightEntry> lights, ReadOnlySpan<byte> data)
     {
-        using var fs = File.Create(path);
+        using var fs = ReplacingFile.Create(path);
         StructIo.WriteHeader(fs, TableConst.MagicLights);
         StructIo.Write(fs, lights.Length);
         StructIo.Write(fs, data.Length);
         StructIo.WriteSpan(fs, lights);
         fs.Write(data);
+        fs.Commit();
     }
 
     public static (LightEntry[] Lights, byte[] Data) Read(string path)

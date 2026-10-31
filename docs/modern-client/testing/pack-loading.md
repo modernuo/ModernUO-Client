@@ -138,7 +138,7 @@ Counters in the `FRAMESTATS {` json now carry a fifth value, the window sum (`[a
 
 Gumps come from `gumps/gumps.bin` when the pack has it (pack-format.md "Gumps"). Scratchpad `pgumps\` (`run.py`, `summ.py`).
 
-**Packs.** `C:\Repositories\uo-packs\classic-1.0` has no gump section until the main session regenerates it. To test without touching it, hard-link a copy and add the gumps (the manifest must be a real copy, since the converter rewrites it):
+**Packs.** `C:\Repositories\uo-packs\classic-1.0` has no gump section until the main session regenerates it. To test without touching it, hard-link a copy and add the gumps (since 2026-10-31 the converter replaces every file it writes instead of writing in place, so a plain `cp -al` is safe; the manifest copy below was the older workaround and is harmless):
 ```
 cp -al /c/Repositories/uo-packs/classic-1.0 pack-gumps && rm pack-gumps/manifest.json && cp /c/Repositories/uo-packs/classic-1.0/manifest.json pack-gumps/
 Uo.Converter.exe --only gumps --out pack-gumps            (about 6 s, verify included)

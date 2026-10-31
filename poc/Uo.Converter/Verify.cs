@@ -78,6 +78,9 @@ public static class Verify
         if (Want("fonts") && File.Exists(Path.Combine(outDir, TextConst.AsciiFontsFile))) TextConvert.VerifyFonts(fm, outDir);
         if (Want("cliloc") && File.Exists(Path.Combine(outDir, TextConst.ClilocFile))) TextConvert.VerifyCliloc(fm, outDir);
         if (Want("speech") && File.Exists(Path.Combine(outDir, TextConst.SpeechFile))) TextConvert.VerifySpeech(fm, outDir);
+        // hues_raw.bin is the only hue source (the client builds the LUT from it; hues.bin is retired), so a pack without
+        // it cannot load. Checked before the tiledata early return so --only hues cannot pass on a pack that lacks it.
+        if (Want("hues") && !File.Exists(Path.Combine(outDir, TableConst.HueRawFile))) Fail($"missing {TableConst.HueRawFile} (the pack's only hue source)");
         if (!File.Exists(Path.Combine(outDir, "tiledata.bin")))
         {
             Console.WriteLine(_errors == 0 ? "  all checks passed" : $"  {_errors} errors");

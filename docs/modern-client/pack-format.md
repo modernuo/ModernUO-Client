@@ -520,7 +520,7 @@ camelCase JSON, read case-insensitively:
 
 ## Ship profile
 
-`dotnet run -c Release --project poc/Uo.Converter` with no format flags writes exactly this:
+`dotnet run -c Release --project poc/Uo.Converter -- --out <pack dir>` with no format flags writes exactly this (`--out` is required; there is no default output folder):
 
 | Content | Pages | Compression |
 |---|---|---|
@@ -539,6 +539,9 @@ camelCase JSON, read case-insensitively:
   - compression: `--raw-pages`, `--compress-pages` (Kind 1), `--chunk-bytes n`, `--raw-regions`, `--raw-gumps` (gump records uncompressed, run-length layout), `--raw-text` (font records uncompressed), `--text-small n` (font records up to n raw bytes stay uncompressed; 16384), `--cliloc-brotli` (cliloc records Brotli);
   - testing: `--gump-def <file>` (read this gump.def instead of the client's), `--gump-report` (the gump storage measurements above; writes nothing).
 - Stages: `--only art,tex,hues,tiledata,data,gumps,fonts,cliloc,speech,maps,anims` (into an existing pack), `--no-maps`, `--no-anims`, `--no-gumps`, `--no-fonts`, `--no-cliloc`, `--no-speech`, `--verify-only`. `fonts` writes `text/fonts.bin` and `text/unifont.bin`. `hues` writes `hues_raw.bin` and `radarcol.bin` (and deletes a stale `hues.bin` from the output), `tiledata` writes both tiledata files, and `data` writes multis, lights, tileart and equipconv. `animdata.bin` belongs to `anims`.
+- **Outputs are replaced, never written in place.** Every pack file the converter writes (tables, pages, regions, record stores, text, anims, `facet.json`, `manifest.json`) goes to a temp file in the same folder (`.<name>.<guid>.replacing.tmp`), which is then moved over the target (`Uo.Pack.ReplacingFile`). Replacing the directory entry breaks a hard link instead of writing through it, so a test pack built by hard-linking a published pack's files (`cp -al`) and then converting `--only <sections>` leaves the published files untouched. A failed write deletes its temp file and leaves the target as it was; the manifest skips leftover temp files.
+- **Published packs are refused as output.** Published versions are immutable. The converter refuses an `--out` (and a `--debug` folder) that is, or resolves to through a junction or symlink, a folder under a published packs root: `C:/Repositories/uo-packs`, any root in `UO_PACKS_ROOTS` (`;`-separated) or `--packs-root <dir>`, and any ancestor folder holding a `CURRENT` file that names one of its subfolders. `--verify-only` only reads, so it may verify a published pack. The default `--debug` folder is `%TEMP%/uo-converter-debug/<pack folder name>`.
+- **`--verify-only --only hues`** (and a full verify) fails a pack without `hues_raw.bin`, the only hue source.
 
 **Verification.** Every conversion ends with a verify step that reads the pack back with the `Uo.Pack` readers. It compares against ClassicUO's own loaders:
 - **Sampled.** Sprites are bit-exact including gutters. Indexed8 frames are bit-exact after the palette lookup.

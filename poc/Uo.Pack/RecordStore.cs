@@ -103,13 +103,14 @@ public sealed class RecordStoreWriter
             records[i].Offset = offset;
             offset += records[i].StoredBytes;
         }
-        using var fs = File.Create(path);
+        using var fs = ReplacingFile.Create(path);
         StructIo.WriteHeader(fs, magic);
         var h = new StoreHeader { SlotCount = (uint)Slots.Length, RecordCount = (uint)records.Length, Flags = flags };
         StructIo.Write(fs, in h);
         StructIo.WriteSpan<StoreSlot>(fs, Slots);
         StructIo.WriteSpan<StoreRecord>(fs, records);
         foreach (var (_, payload) in _records) fs.Write(payload);
+        fs.Commit();
     }
 
     public static byte[] Encode(ReadOnlySpan<byte> raw, ushort codec, int quality = 9)
