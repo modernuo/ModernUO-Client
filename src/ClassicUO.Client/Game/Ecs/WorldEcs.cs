@@ -66,7 +66,7 @@ namespace ClassicUO.Game
             if (entity is Item item)
             {
                 // T1: a WorldWriter operation commits this item itself, once, from its own values
-                if (ReferenceEquals(item, _foldItem))
+                if (ReferenceEquals(item, _fold))
                 {
                     return;
                 }
@@ -75,11 +75,13 @@ namespace ClassicUO.Game
             }
             else if (entity is Mobile mobile)
             {
-                if (!ReferenceEquals(_world.Mobiles.Get(mobile.Serial), mobile))
+                // T1 (funnel part 4): a mobile operation commits its mobile itself, likewise
+                if (ReferenceEquals(mobile, _fold) || !ReferenceEquals(_world.Mobiles.Get(mobile.Serial), mobile))
                 {
                     return;
                 }
 
+                MobileMirrorWrites++;
                 EcsEntity e = Mirror.UpsertMobile
                 (
                     mobile.Serial,
@@ -98,40 +100,42 @@ namespace ClassicUO.Game
             }
         }
 
-        // T1: the item instance whose hook Syncs fold into its WorldWriter operation's commit. One operation at a time: a
-        // second BeginFold before EndFold is a programming error (an operation that calls another), and throws.
-        private Item _foldItem;
+        // T1: the instance (an item, or since funnel part 4 a mobile) whose hook Syncs fold into its WorldWriter operation's
+        // commit. One operation at a time: a second BeginFold before EndFold is a programming error (an operation that calls
+        // another), and throws.
+        private Entity _fold;
 
         /// <summary>
-        /// T1, <see cref="WorldWriter"/>: from here until <see cref="EndFold"/>, the hook Syncs of this item instance (not of
-        /// its serial: a replacement instance with the same serial still syncs) are skipped; the operation writes the ECS
-        /// itself with <see cref="CommitItem"/>. Not reentrant.
+        /// T1, <see cref="WorldWriter"/>: from here until <see cref="EndFold"/>, the hook Syncs of this instance (not of its
+        /// serial: a replacement instance with the same serial still syncs) are skipped, and for a mobile also its
+        /// <see cref="PushInputs"/> and <see cref="PushClock"/>; the operation writes the ECS itself with
+        /// <see cref="CommitItem"/> or <see cref="CommitMobile"/> and <see cref="CommitMobileInputs"/>. Not reentrant.
         /// </summary>
-        internal void BeginFold(Item item)
+        internal void BeginFold(Entity entity)
         {
-            if (item == null)
+            if (entity == null)
             {
-                throw new ArgumentNullException(nameof(item));
+                throw new ArgumentNullException(nameof(entity));
             }
 
-            if (_foldItem != null)
+            if (_fold != null)
             {
-                throw new InvalidOperationException($"WorldEcs fold of 0x{item.Serial:X8} inside the fold of 0x{_foldItem.Serial:X8}: funnel operations do not nest");
+                throw new InvalidOperationException($"WorldEcs fold of 0x{entity.Serial:X8} inside the fold of 0x{_fold.Serial:X8}: funnel operations do not nest");
             }
 
-            _foldItem = item;
+            _fold = entity;
         }
 
-        /// <summary>Ends the fold of <paramref name="item"/>; a call for another instance (a stale scope) does nothing.</summary>
-        internal void EndFold(Item item)
+        /// <summary>Ends the fold of <paramref name="entity"/>; a call for another instance (a stale scope) does nothing.</summary>
+        internal void EndFold(Entity entity)
         {
-            if (ReferenceEquals(_foldItem, item))
+            if (ReferenceEquals(_fold, entity))
             {
-                _foldItem = null;
+                _fold = null;
             }
         }
 
-        internal bool IsFolding => _foldItem != null;
+        internal bool IsFolding => _fold != null;
 
         /// <summary>
         /// T1, tests: sees each funnel commit before it is written, with the item's cache still as it was. The getters
@@ -162,6 +166,65 @@ namespace ClassicUO.Game
             if (v.Graphic == 0x2006)
             {
                 _world.QueueItemUpdate(item);
+            }
+        }
+
+        /// <summary>
+        /// T1, tests: sees each mobile commit before it is written, with the mobile's cache still as it was (see
+        /// <see cref="CommitObserver"/>).
+        /// </summary>
+        internal Action<Mobile, MobileState> MobileCommitObserver;
+
+        /// <summary>T1, tests: every write of a mobile's mirror record (the hook Syncs and the funnel commits).</summary>
+        internal long MobileMirrorWrites;
+
+        /// <summary>
+        /// T1 (funnel part 4): the funnel's ECS write of a mobile's record, from the operation's values (the same record
+        /// <see cref="Sync"/>'s mobile branch writes from the getters). Its <see cref="MobileInputs"/> and clock are derived
+        /// from the mobile's getters, so the operation pushes them after its cache writes with <see cref="CommitMobileInputs"/>.
+        /// Ignores a mobile World does not hold under <see cref="MobileState.Serial"/>, as Sync does.
+        /// </summary>
+        /// <returns>The mobile's entity, for <see cref="CommitMobileInputs(Mobile, EcsEntity)"/> (a null entity when ignored).</returns>
+        internal EcsEntity CommitMobile(Mobile mobile, in MobileState v)
+        {
+            if (mobile == null || mobile.IsDestroyed || !ReferenceEquals(_world.Mobiles.Get(v.Serial), mobile))
+            {
+                return default;
+            }
+
+            MobileCommitObserver?.Invoke(mobile, v);
+            MobileMirrorWrites++;
+
+            return Mirror.UpsertMobile(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.IsPlayer);
+        }
+
+        /// <summary>
+        /// <see cref="CommitMobileInputs(Mobile)"/> with the entity <see cref="CommitMobile"/> returned in the same operation
+        /// (no lookup; a null entity, from an ignored commit, pushes nothing).
+        /// </summary>
+        internal void CommitMobileInputs(Mobile mobile, EcsEntity e)
+        {
+            if (!e.IsNull)
+            {
+                WriteInputs(mobile, e);
+            }
+        }
+
+        /// <summary>
+        /// T1 (funnel part 4), the derived-state step of a mobile operation: recomputes the mobile's <see cref="MobileInputs"/>
+        /// (and its clock) from the getters, after the operation's cache writes. Unlike <see cref="PushInputs"/> it is not
+        /// folded (it is the operation's own push). Ignores mobiles World does not hold.
+        /// </summary>
+        internal void CommitMobileInputs(Mobile mobile)
+        {
+            if (mobile == null || mobile.IsDestroyed || !ReferenceEquals(_world.Mobiles.Get(mobile.Serial), mobile))
+            {
+                return;
+            }
+
+            if (Mirror.TryGetEntity(mobile.Serial, out EcsEntity e))
+            {
+                WriteInputs(mobile, e);
             }
         }
 
@@ -204,7 +267,7 @@ namespace ClassicUO.Game
         /// </summary>
         public void PushInputs(Mobile mobile)
         {
-            if (mobile == null || mobile.IsDestroyed || !ReferenceEquals(_world.Mobiles.Get(mobile.Serial), mobile))
+            if (mobile == null || mobile.IsDestroyed || ReferenceEquals(mobile, _fold) || !ReferenceEquals(_world.Mobiles.Get(mobile.Serial), mobile))
             {
                 return;
             }
@@ -239,7 +302,7 @@ namespace ClassicUO.Game
         /// </summary>
         public void PushClock(Mobile mobile)
         {
-            if (!ClockEnabled || mobile == null || mobile.IsDestroyed || !ReferenceEquals(_world.Mobiles.Get(mobile.Serial), mobile))
+            if (!ClockEnabled || mobile == null || mobile.IsDestroyed || ReferenceEquals(mobile, _fold) || !ReferenceEquals(_world.Mobiles.Get(mobile.Serial), mobile))
             {
                 return;
             }
@@ -838,5 +901,18 @@ namespace ClassicUO.Game
         public uint Container;
         public Layer Layer;
         public bool IsMulti;
+    }
+
+    /// <summary>
+    /// T1 (funnel part 4): the mirror record of a mobile as a funnel operation computed it (<see cref="WorldEcs.CommitMobile"/>).
+    /// </summary>
+    internal struct MobileState
+    {
+        public uint Serial;
+        public ushort Graphic, Hue, X, Y;
+        public sbyte Z;
+        public Direction Direction;
+        public ClassicUO.Game.Data.Flags Flags;
+        public bool IsPlayer;
     }
 }

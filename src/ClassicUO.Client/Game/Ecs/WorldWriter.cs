@@ -5,6 +5,7 @@ using System.Collections.Generic;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
 using ClassicUO.Utility.Logging;
+using EcsEntity = Friflo.Engine.ECS.Entity;
 
 namespace ClassicUO.Game
 {
@@ -39,7 +40,10 @@ namespace ClassicUO.Game
     /// writes to any other object are still direct writes. Converted so far: world items (0x1A, 0xF3 and the item branch of
     /// 0x1D) and items into containers (0x25, 0x3C's items, 0x27's deny path: <see cref="PlaceInContainer"/>), the bulk clear
     /// of 0x3C and 0x24 (<see cref="ClearContainer"/>) 0x27's other deny branches (<see cref="ReturnHeldItem"/>) and equipment (0x2E: <see cref="Equip"/>; 0x78/0xD3's
-    /// equipment list: <see cref="ClearWornItems"/>, <see cref="WearItem"/>). Every other writer still relies on <see cref="WorldEcs.Sync"/> and <see cref="WorldEcs.PushInputs"/>, which
+    /// equipment list: <see cref="ClearWornItems"/>, <see cref="WearItem"/>) and mobiles (funnel part 4: UpdateGameObject's
+    /// mobile branch, <see cref="UpsertMobile"/> and <see cref="PlaceMobile"/>; the notoriety of 0x77/0x78,
+    /// <see cref="SetNotoriety"/>; the player's body of 0x20/0x77/0x78, <see cref="SetMobileBody"/>; 0x20's move,
+    /// <see cref="MoveMobile"/>; 0x1D for a mobile, <see cref="RemoveMobile"/>). Every other writer still relies on <see cref="WorldEcs.Sync"/> and <see cref="WorldEcs.PushInputs"/>, which
     /// stay as the fallback until the last packet group is converted.
     /// </para>
     /// <para>
@@ -73,14 +77,18 @@ namespace ClassicUO.Game
         /// </summary>
         internal readonly struct Placement
         {
-            internal readonly Item Item;
+            /// <summary>The placed object: an item (<see cref="PlaceWorldItem"/>) or, since funnel part 4, a mobile.</summary>
+            internal readonly Entity Subject;
             internal readonly int Id;
 
-            internal Placement(Item item, int id)
+            internal Placement(Entity subject, int id)
             {
-                Item = item;
+                Subject = subject;
                 Id = id;
             }
+
+            /// <summary>The item of an item placement (null for a mobile's).</summary>
+            internal Item Item => Subject as Item;
         }
 
         /// <summary>A handler places within the same packet; more outstanding placements than this means the oldest were abandoned.</summary>
@@ -140,9 +148,9 @@ namespace ClassicUO.Game
         {
             private WorldWriter _writer;
             private readonly int _id;
-            private readonly Item _fold;
+            private readonly Entity _fold;
 
-            internal Scope(WorldWriter writer, int id, Item fold)
+            internal Scope(WorldWriter writer, int id, Entity fold)
             {
                 _writer = writer;
                 _id = id;
@@ -172,7 +180,7 @@ namespace ClassicUO.Game
         }
 
         // only after Admitted (nothing is open, so BeginFold cannot throw)
-        private Scope Open(Entity subject, Item fold)
+        private Scope Open(Entity subject, Entity fold)
         {
             if (fold != null)
             {
@@ -187,7 +195,7 @@ namespace ClassicUO.Game
 
         // the admission check every operation makes before its first side effect: no operation and no fold open. Re-entry is
         // forbidden, not recovered from (T1 round 4, after the Codex round-4 audit): the operations are called only by the 0x1A/
-        // 0xF3, 0x1D, 0x25/0x3C, 0x27, 0x2E and 0x78/0xD3 handlers, which run only from ParsePackets in GameController's update; inside an
+        // 0xF3, 0x1D, 0x20, 0x25/0x3C, 0x27, 0x2E, 0x77 and 0x78/0xD3 handlers (and UpdateGameObject's other callers), which run only from ParsePackets in GameController's update; inside an
         // operation nothing parses packets (a plugin's injected packet, also from a send hook, is only queued by Append), so
         // a nested operation is a bug: it throws in CUO_DEVTOOLS builds; in a release build it logs once and is rejected (the
         // caller gets null / nothing), so no stale outer continuation can publish over a nested change.
@@ -403,9 +411,10 @@ namespace ClassicUO.Game
                 return;
             }
 
-            if (!Consume(placement))
+            // a mobile's placement is not an item placement (it stays outstanding for its PlaceMobile)
+            if (item == null || !Consume(placement))
             {
-                Reject(Violation.Placement, $"WorldWriter.PlaceWorldItem: 0x{item?.Serial ?? 0:X8} is not an outstanding placement (used twice, superseded, abandoned or never issued)");
+                Reject(Violation.Placement, $"WorldWriter.PlaceWorldItem: 0x{item?.Serial ?? 0:X8} is not an outstanding item placement (used twice, superseded, abandoned, a mobile's or never issued)");
 
                 if (item != null)
                 {
@@ -495,7 +504,7 @@ namespace ClassicUO.Game
         /// 0x25 (UpdateContainedItem), each item of 0x3C (UpdateContainedItems, after its bulk clear, which runs outside this
         /// operation) and 0x27's deny path (<c>AddItemToContainer</c>): puts an item into a container. Finds the container
         /// (<c>World.Get(containerSerial)</c>; null: nothing happens, null is returned). A mobile with the item's serial is
-        /// removed (as before T1). An item whose Container differs is destroyed with its contents and recreated, except an
+        /// removed (as before T1), through the removal path (its subtree's placements are cancelled). An item whose Container differs is destroyed with its contents and recreated, except an
         /// equipped item (Layer set) going into a corpse, which is moved; then the packet's values are written, and the item is
         /// linked at the end of the container's child list (a re-push when it already was there).
         /// </summary>
@@ -521,7 +530,16 @@ namespace ClassicUO.Game
 
             if (SerialHelper.IsMobile(serial))
             {
-                _world.RemoveMobile(serial, true);
+                // through the removal path (Codex audit of part 4, #2): the placements of the mobile and of everything it
+                // wears or holds are cancelled first, and the removal owns its subtree. World.RemoveMobile did nothing for a
+                // missing or destroyed mobile, so neither does this.
+                Mobile asItem = _world.Mobiles.Get(serial);
+
+                if (asItem != null && !asItem.IsDestroyed)
+                {
+                    RemoveMobileSubtree(asItem);
+                }
+
                 Log.Warn("AddItemToContainer function adds mobile as Item");
             }
 
@@ -1097,6 +1115,402 @@ namespace ClassicUO.Game
             return item;
         }
 
+        /// <summary>
+        /// The mobile branch of <c>UpdateGameObject</c> (0x77 and 0x78/0xD3 for another mobile, and the item packets for a
+        /// mobile's serial), first half. <paramref name="obj"/> is the handler's <c>World.Get(serial)</c>, captured once: null or
+        /// destroyed creates the mobile (<c>World.GetOrCreateMobile</c>, whose creation Sync runs as before); a live mobile is
+        /// used as it is, validated against the mobiles table. Computes, before any write: the creation's writes (graphic plus
+        /// increment, <c>CheckGraphicChange</c>'s sex and race, direction, position), for a mobile other than the player the
+        /// step (<see cref="Mobile.PlanStep"/>) or the reset to the packet's position (the mobile was unplaced, or its walk
+        /// queue is full), then the masked graphic, the hue and the flags. Writes the ECS record, then the cache in the old
+        /// order, then the derived inputs. It does not place the mobile: the handler runs its callbacks (the new-mobile
+        /// SingleClick), then calls <see cref="PlaceMobile"/> with <paramref name="placement"/>.
+        /// </summary>
+        /// <returns>The mobile; null when none could be had, or (a violation) <paramref name="obj"/> is not a mobile this
+        /// World holds: rejected before any side effect, no pre-T1 path (the handler only passes what it just looked up).</returns>
+        public Mobile UpsertMobile
+        (
+            Entity obj,
+            uint serial,
+            ushort graphic,
+            byte graphicInc,
+            ushort x,
+            ushort y,
+            sbyte z,
+            Direction direction,
+            ushort hue,
+            Flags flags,
+            out bool created,
+            out Placement placement
+        )
+        {
+            created = false;
+            placement = default;
+
+            if (!Admitted(nameof(UpsertMobile), serial))
+            {
+                return null;
+            }
+
+            // 1. resolve: the handler's obj, or the created mobile
+            Mobile mobile;
+
+            if (obj == null || obj.IsDestroyed)
+            {
+                mobile = _world.GetOrCreateMobile(serial);
+
+                if (mobile == null)
+                {
+                    return null;
+                }
+
+                created = true;
+            }
+            else if (obj is Mobile m && obj.Serial == serial && Holds(m))
+            {
+                mobile = m;
+            }
+            else
+            {
+                Reject(Violation.NotHeld, $"WorldWriter.UpsertMobile: 0x{serial:X8} is not a mobile this World holds", rejected: true);
+
+                return null;
+            }
+
+            // 2. compute: every read of the previous state is here
+            ushort bodyGraphic = (ushort)(graphic + graphicInc);
+            bool body = Mobile.BodyState(bodyGraphic, out bool isFemale, out RaceType race) && created;
+
+            // the position and direction after the creation's writes (the old created branch wrote the packet's)
+            ushort x0 = created ? x : mobile.X;
+            ushort y0 = created ? y : mobile.Y;
+            sbyte z0 = created ? z : mobile.Z;
+            Direction dir0 = created ? direction & Direction.Up : mobile.Direction;
+
+            bool player = _world.Player != null && serial == _world.Player.Serial;
+            Direction cleanedDir = direction & Direction.Up;
+            bool isRun = (direction & Direction.Running) != 0;
+            bool reset = false;
+            Mobile.StepPlan step = default;
+
+            if (!player)
+            {
+                // the old handler's World.Get(mobile) == null or the unplaced marker; then EnqueueStep, whose false (a full
+                // queue) took the same reset. After a reset EnqueueStep found the queue ending at the packet's position and
+                // did nothing. World.Get(serial) is never null here: the mobile is held under serial (validated above, or
+                // just created by GetOrCreateMobile), and World.Get looks among the mobiles whenever the items have none.
+                reset = x0 == 0xFFFF && y0 == 0xFFFF;
+
+                if (!reset)
+                {
+                    int endX = x0, endY = y0;
+                    sbyte endZ = z0;
+                    Direction endDir = dir0;
+
+                    if (mobile.Steps.Count != 0)
+                    {
+                        mobile.GetEndPosition(out endX, out endY, out endZ, out endDir);
+                    }
+
+                    mobile.PlanStep(x, y, z, cleanedDir, isRun, endX, endY, endZ, endDir, out step);
+                    reset = !step.Accepted;
+                }
+            }
+
+            MobileState v;
+            v.Serial = serial;
+            v.Graphic = (ushort)(bodyGraphic & 0x3FFF);
+            v.Hue = Entity.FixedHue(hue);
+            v.X = reset ? x : x0;
+            v.Y = reset ? y : y0;
+            v.Z = reset ? z : z0;
+            v.Direction = reset ? cleanedDir : dir0;
+            v.Flags = flags;
+            v.IsPlayer = ReferenceEquals(mobile, _world.Player);
+
+            // an earlier placement of this mobile is superseded: this upsert issues its own
+            CancelPlacements(mobile);
+
+            using (Open(mobile, mobile))
+            {
+                // 3. write: the ECS, then the cache from v in the old order
+                EcsEntity e = _world.Ecs.CommitMobile(mobile, in v);
+
+                if (created)
+                {
+                    mobile.Graphic = bodyGraphic;
+
+                    if (body)
+                    {
+                        mobile.IsFemale = isFemale;
+                        mobile.Race = race;
+                    }
+                }
+
+                if (created || reset)
+                {
+                    mobile.Direction = v.Direction;
+                    mobile.X = v.X;
+                    mobile.Y = v.Y;
+                    mobile.Z = v.Z;
+                }
+
+                if (reset)
+                {
+                    mobile.IsRunning = isRun;
+                    mobile.ClearSteps();
+                }
+                else
+                {
+                    mobile.ApplyStep(in step);
+                }
+
+                mobile.Graphic = v.Graphic;
+                mobile.Hue = v.Hue;
+                mobile.Flags = v.Flags;
+
+                // 4. derived state: the inputs and the clock, from the values written above
+                _world.Ecs.CommitMobileInputs(mobile, e);
+            }
+
+            placement = Issue(mobile);
+
+            return mobile;
+        }
+
+        /// <summary>
+        /// The mobile branch of <c>UpdateGameObject</c>, second half: puts the mobile of <paramref name="placement"/> (what
+        /// <see cref="UpsertMobile"/> issued) on its tile at its position, after the handler's callbacks, as before T1. The ECS
+        /// already holds its values; the placement is not folded (the player's position callbacks may change the mobile, and what
+        /// they change publishes as before T1). Consumes the placement.
+        /// A placement that is not outstanding is a violation: in a release build the mobile is placed as before T1.
+        /// </summary>
+        public void PlaceMobile(in Placement placement)
+        {
+            Mobile mobile = placement.Subject as Mobile;
+
+            // a nested placement is rejected; its token stays outstanding
+            if (!Admitted(nameof(PlaceMobile), placement.Subject?.Serial ?? 0))
+            {
+                return;
+            }
+
+            if (mobile == null || !Consume(placement))
+            {
+                Reject(Violation.Placement, $"WorldWriter.PlaceMobile: 0x{placement.Subject?.Serial ?? 0:X8} is not an outstanding mobile placement (used twice, superseded, abandoned, an item's or never issued)");
+
+                if (mobile != null)
+                {
+                    PlacePreT1(mobile);
+                }
+
+                return;
+            }
+
+            if (mobile.IsDestroyed || !ReferenceEquals(_world.Mobiles.Get(mobile.Serial), mobile))
+            {
+                return;
+            }
+
+            // not folded (Codex audit of part 4, #1): SetInWorldTile runs the player's position callbacks, where a plugin's
+            // RequestMove walks the player (Player.Walk: the queue, the timers, a turn). Their input and clock pushes and
+            // Syncs, and the tile's own Sync, publish as before T1.
+            using (Open(mobile, null))
+            {
+                mobile.SetInWorldTile(mobile.X, mobile.Y, mobile.Z);
+            }
+        }
+
+        /// <summary>
+        /// 0x77 (UpdateCharacter) and 0x78/0xD3 (UpdateObject): the mobile's notoriety. <paramref name="mobile"/> is the
+        /// handler's instance (0x77: <c>World.Mobiles.Get</c>; 0x78: the mobile <c>World.Get</c> returned). Notoriety is an
+        /// input only (no record field): it is written, then the inputs are pushed. A mobile this World does not hold is a
+        /// violation, rejected (nothing changes; no pre-T1 path).
+        /// </summary>
+        public void SetNotoriety(Mobile mobile, NotorietyFlag notoriety)
+        {
+            if (mobile == null || !Admitted(nameof(SetNotoriety), mobile.Serial))
+            {
+                return;
+            }
+
+            if (!Holds(mobile))
+            {
+                Reject(Violation.NotHeld, $"WorldWriter.SetNotoriety: 0x{mobile.Serial:X8} is not the mobile this World holds for its serial", rejected: true);
+
+                return;
+            }
+
+            using (Open(mobile, mobile))
+            {
+                mobile.NotorietyFlag = notoriety;
+                _world.Ecs.CommitMobileInputs(mobile);
+            }
+        }
+
+        /// <summary>
+        /// The player's body from 0x77 and 0x78/0xD3 (<paramref name="checkBody"/>: <c>CheckGraphicChange</c>'s sex and race)
+        /// and from 0x20 (UpdatePlayer, with its direction, <paramref name="setDirection"/>; no CheckGraphicChange): the
+        /// graphic, the direction, the hue (FixHue) and the flags in that order (0x20's; 0x77 wrote the flags first, which
+        /// nothing in between could see), the ECS record first, then the cache, then the derived inputs. The position stays
+        /// (0x77/0x78 ignore the packet's; 0x20 moves the player with <see cref="MoveMobile"/> after its other work). The
+        /// player's direction change runs its door check inside the operation, as the setter did before T1. A mobile this
+        /// World does not hold is a violation, rejected (no pre-T1 path), except the detached <c>World.Player</c> (removed
+        /// under its serial while World.Player stays), which is written as before T1 (nothing of it reaches the ECS).
+        /// </summary>
+        public void SetMobileBody(Mobile mobile, ushort graphic, ushort hue, Flags flags, bool checkBody, bool setDirection, Direction direction)
+        {
+            if (mobile == null || !Admitted(nameof(SetMobileBody), mobile.Serial))
+            {
+                return;
+            }
+
+            bool detached = !Holds(mobile);
+
+            if (detached && !IsDetachedPlayer(mobile))
+            {
+                Reject(Violation.NotHeld, $"WorldWriter.SetMobileBody: 0x{mobile.Serial:X8} is not the mobile this World holds for its serial", rejected: true);
+
+                return;
+            }
+
+            // 2. compute
+            bool body = Mobile.BodyState(graphic, out bool isFemale, out RaceType race) && checkBody;
+
+            MobileState v;
+            v.Serial = mobile.Serial;
+            v.Graphic = graphic;
+            v.Hue = Entity.FixedHue(hue);
+            v.X = mobile.X;
+            v.Y = mobile.Y;
+            v.Z = mobile.Z;
+            v.Direction = setDirection ? direction : mobile.Direction;
+            v.Flags = flags;
+            v.IsPlayer = ReferenceEquals(mobile, _world.Player);
+
+            // the detached player is not folded: nothing of it reaches the ECS (every commit, Sync and push ignores an
+            // instance World does not hold), so its writes are the pre-T1 path's
+            using (Open(mobile, detached ? null : mobile))
+            {
+                EcsEntity e = _world.Ecs.CommitMobile(mobile, in v);
+
+                mobile.Graphic = v.Graphic;
+
+                if (body)
+                {
+                    mobile.IsFemale = isFemale;
+                    mobile.Race = race;
+                }
+
+                if (setDirection)
+                {
+                    mobile.Direction = v.Direction;
+                }
+
+                mobile.Hue = v.Hue;
+                mobile.Flags = v.Flags;
+
+                _world.Ecs.CommitMobileInputs(mobile, e);
+            }
+        }
+
+        /// <summary>
+        /// 0x20 (UpdatePlayer), last: the mobile's tile at the packet's position (<c>SetInWorldTile</c>, with the player's
+        /// position callbacks, as before T1). Commits the record with the new position and the mobile's other values as they
+        /// are when this operation resolves (the handler's work since <see cref="SetMobileBody"/>), then the cache and the
+        /// tile (not folded: the position callbacks' changes and the tile's Sync publish as before T1), then the derived
+        /// inputs. It neither issues nor consumes a placement. A mobile this World does not hold is a violation, rejected (no
+        /// pre-T1 path), except the detached <c>World.Player</c> (removed under its serial), which is written as before T1.
+        /// </summary>
+        public void MoveMobile(Mobile mobile, ushort x, ushort y, sbyte z)
+        {
+            if (mobile == null || !Admitted(nameof(MoveMobile), mobile.Serial))
+            {
+                return;
+            }
+
+            if (!Holds(mobile) && !IsDetachedPlayer(mobile))
+            {
+                Reject(Violation.NotHeld, $"WorldWriter.MoveMobile: 0x{mobile.Serial:X8} is not the mobile this World holds for its serial", rejected: true);
+
+                return;
+            }
+
+            MobileState v;
+            v.Serial = mobile.Serial;
+            v.Graphic = mobile.Graphic;
+            v.Hue = mobile.Hue;
+            v.X = x;
+            v.Y = y;
+            v.Z = z;
+            v.Direction = mobile.Direction;
+            v.Flags = mobile.Flags;
+            v.IsPlayer = ReferenceEquals(mobile, _world.Player);
+
+            // not folded (Codex audit of part 4, #1): the player's position callbacks may walk it (a plugin's RequestMove);
+            // their pushes and Syncs, and the tile's Sync, publish as before T1
+            using (Open(mobile, null))
+            {
+                EcsEntity e = _world.Ecs.CommitMobile(mobile, in v);
+                mobile.SetInWorldTile(v.X, v.Y, v.Z);
+                _world.Ecs.CommitMobileInputs(mobile, e);
+            }
+        }
+
+        /// <summary>
+        /// 0x1D (DeleteObject) for a mobile: removes it and everything it wears or holds, at any depth (<c>World.RemoveMobile</c>
+        /// before T1: each child's removal with its contents, OPL, Destroy, which deletes the ECS entities through
+        /// <see cref="WorldEcs.OnDestroyed"/>, then out of the mobiles table). A removal: it owns the removed subtree, writes no
+        /// value of its own, and does not fold (each removal's Sync runs as before). Cancels the outstanding placements of the
+        /// mobile and of every removed item.
+        /// </summary>
+        /// <param name="mobile">The handler's entity (<c>World.Get(serial)</c> found this mobile, so <c>World.Mobiles.Get</c>,
+        /// the old removal's lookup, returns the same instance). One this World does not hold for its serial is a violation,
+        /// rejected before any side effect (nothing is removed; no pre-T1 path: the handler only passes what it just found).</param>
+        public void RemoveMobile(Mobile mobile)
+        {
+            if (mobile == null || !Admitted(nameof(RemoveMobile), mobile.Serial))
+            {
+                return;
+            }
+
+            if (mobile.IsDestroyed || !Holds(mobile))
+            {
+                Reject(Violation.NotHeld, $"WorldWriter.RemoveMobile: 0x{mobile.Serial:X8} is not the live mobile this World holds for its serial", rejected: true);
+
+                return;
+            }
+
+            RemoveMobileSubtree(mobile);
+        }
+
+        // the removal of RemoveMobile and of PlaceInContainer's mobile under an item serial, its own scope (owning the removed
+        // subtree): first the placements of the mobile and of everything it wears or holds are cancelled
+        private void RemoveMobileSubtree(Mobile mobile)
+        {
+            uint serial = mobile.Serial;
+            CancelSubtreePlacements(mobile);
+
+            using (Open(mobile, null))
+            {
+#if CUO_DEVTOOLS
+                if (FunnelCheck.Enabled)
+                {
+                    CollectSubtree(mobile);
+                }
+#endif
+
+                _world.RemoveMobile(serial, true);
+            }
+        }
+
+        // Codex audit of part 4, #3: a 0x25 under the player's serial removes the player's mobile while World.Player stays,
+        // and 0x78/0x20 in the same burst pass World.Player itself. Before T1 they wrote that instance (and ran its position
+        // callbacks); the player's body and move operations keep doing so for this exact instance, and reject every other
+        // instance World does not hold.
+        private bool IsDetachedPlayer(Mobile mobile) =>
+            mobile.World == _world && ReferenceEquals(mobile, _world.Player) && !Holds(mobile);
+
         // the instance this World holds for the entity's serial in the entity's own table (a mobile among the mobiles, an
         // item among the items), so a mobile and an item sharing a serial are each recognised
         private bool Holds(Entity entity)
@@ -1129,7 +1543,7 @@ namespace ClassicUO.Game
             }
         }
 
-        private Placement Issue(Item item)
+        private Placement Issue(Entity item)
         {
             if (_placements.Count == MaxOutstanding)
             {
@@ -1151,7 +1565,7 @@ namespace ClassicUO.Game
         {
             for (int i = _placements.Count - 1; i >= 0; i--)
             {
-                if (_placements[i].Id == placement.Id && ReferenceEquals(_placements[i].Item, placement.Item))
+                if (_placements[i].Id == placement.Id && ReferenceEquals(_placements[i].Subject, placement.Subject))
                 {
                     _placements.RemoveAt(i);
 
@@ -1162,11 +1576,11 @@ namespace ClassicUO.Game
             return false;
         }
 
-        private void CancelPlacements(Item item)
+        private void CancelPlacements(Entity item)
         {
             for (int i = _placements.Count - 1; i >= 0; i--)
             {
-                if (ReferenceEquals(_placements[i].Item, item))
+                if (ReferenceEquals(_placements[i].Subject, item))
                 {
                     _placements.RemoveAt(i);
                 }
@@ -1176,7 +1590,7 @@ namespace ClassicUO.Game
         // a removal's: the placements of the removed item and of everything it contains, at any depth (Codex audit of
         // funnel-2, #3: a removed descendant's late placement is rejected as cancelled, not consumed and dropped). Runs before
         // the removal, while the child lists are intact; nothing to walk when no placement is outstanding (the usual case)
-        private void CancelSubtreePlacements(Item root)
+        private void CancelSubtreePlacements(Entity root)
         {
             if (_placements.Count == 0)
             {
@@ -1199,11 +1613,14 @@ namespace ClassicUO.Game
         // budget exempts them by name like the operations (coordinator, T1 round 3); its tests pin that each call follows an
         // unconditional Reject in the violation branch of an operation, so they cannot become a general bypass.
 
-        // the placement of UpdateGameObject's item branch before T1
-        private void PlacePreT1(Item item)
+        // the placement of UpdateGameObject's item branch before T1, and of its mobile branch (funnel part 4)
+        private void PlacePreT1(Entity entity)
         {
-
-            if (item.OnGround)
+            if (entity is Mobile mobile)
+            {
+                mobile.SetInWorldTile(mobile.X, mobile.Y, mobile.Z);
+            }
+            else if (entity is Item item && item.OnGround)
             {
                 item.SetInWorldTile(item.X, item.Y, item.Z);
             }
@@ -1233,7 +1650,7 @@ namespace ClassicUO.Game
         }
 
 #if CUO_DEVTOOLS
-        private void CollectSubtree(Item root)
+        private void CollectSubtree(Entity root)
         {
             _subtree ??= new HashSet<Entity>(ReferenceEqualityComparer.Instance);
             _subtree.Add(root);

@@ -126,7 +126,7 @@ namespace ClassicUO.UnitTests.Ecs
             string root = WriteSiteScanner.FindRepoRoot();
             WriteSiteScanner.FunnelFile.Should().Be("src/ClassicUO.Client/Game/Ecs/WorldWriter.cs");
             WriteSiteScanner.FunnelClass.Should().Be("WorldWriter");
-            WriteSiteScanner.FunnelOperations.Should().BeEquivalentTo("UpsertWorldItem", "PlaceWorldItem", "RemoveWorldItem", "PlaceInContainer", "ClearContainer", "ReturnHeldItem", "Equip", "ClearWornItems", "WearItem");
+            WriteSiteScanner.FunnelOperations.Should().BeEquivalentTo("UpsertWorldItem", "PlaceWorldItem", "RemoveWorldItem", "PlaceInContainer", "ClearContainer", "ReturnHeldItem", "Equip", "ClearWornItems", "WearItem", "UpsertMobile", "PlaceMobile", "SetNotoriety", "SetMobileBody", "MoveMobile", "RemoveMobile");
             WriteSiteScanner.FunnelFallbacks.Should().BeEquivalentTo("PlacePreT1", "RemovePreT1");
 
             // each listed method is a method body of the real class
@@ -578,7 +578,7 @@ namespace ClassicUO.UnitTests.Ecs
         internal const string FunnelFile = "src/ClassicUO.Client/Game/Ecs/WorldWriter.cs";
         internal const string FunnelClass = "WorldWriter";
 
-        internal static readonly string[] FunnelOperations = { "UpsertWorldItem", "PlaceWorldItem", "RemoveWorldItem", "PlaceInContainer", "ClearContainer", "ReturnHeldItem", "Equip", "ClearWornItems", "WearItem" };
+        internal static readonly string[] FunnelOperations = { "UpsertWorldItem", "PlaceWorldItem", "RemoveWorldItem", "PlaceInContainer", "ClearContainer", "ReturnHeldItem", "Equip", "ClearWornItems", "WearItem", "UpsertMobile", "PlaceMobile", "SetNotoriety", "SetMobileBody", "MoveMobile", "RemoveMobile" };
 
         // T1 (coordinator, round 3): the release build's pre-T1 fallbacks of the operations, exempt like them (funnel code).
         // They are reached only after a rejection; The_Fallbacks_Are_Called_Only_From_The_Violation_Paths pins that, so they
