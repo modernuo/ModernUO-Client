@@ -2431,3 +2431,18 @@ Branch `poc/login-warmup-gc` (warmgc agent, kbatman3), from poc/modern-client 36
 | Unit tests | 594 pass, default and `-p:CuoDevTools=false`. New tests: prefilled objects are retired and handed out at once, before later retirees; the prefill is capped and only tops up; a disabled recycler isn't prefilled; a prefilled object reset for reuse equals a new one (field check); prefilled chunks come from the pool with a pre-sized statics mesh |
 
 **Not done:** no 4K run; no Legacy timing pair (the Legacy run is the reuse check only); not the owner's FPS test.
+
+**Codex audit (602b071b7): no recycler-state or use-after-reuse issue; fixed:**
+- **The login collection could stay armed into gameplay.** A login hold that timed out left it for the next teleport or facet hold, a switch to Legacy ran it during play, a disconnect left it pending, and with `CUO_WORLD_HOLD=0` it never ran.
+  - It now belongs to the login's first world frames only. In the Gpu world it runs in a held frame of the login episode (`Entry`): the last one, or one at 1.2 s (at most 80% of the configured hold timeout).
+  - A presented frame, a hold of another episode or `GameScene.Unload` cancels it (`[warmup] collection cancelled: ...`).
+  - In Legacy it runs only in the first world frame.
+  - With `CUO_WORLD_HOLD=0` nothing is held, so the first world frame cancels it.
+- **`[gcs]` totals counted wrong when several collections fell in one frame.** The two induced gen1s counted as 2 collections but as one gen1 and one pause. Totals now come from deltas of `CollectionCount(0/1/2)` and `GetTotalPauseDuration()`; the per-collection detail is labelled "latest sampled".
+- **The session baseline** is now taken at the end of the last frame before login, so collections in the first in-game frame count (Legacy's warm-up collection runs there).
+- **`WorldShown` and the timeline reset when the session ends.** After a logout, login-screen frames no longer count as `play`, and a relogin starts a new timeline.
+- **Pre-existing, follow-up for when several Worlds matter (not changed):**
+  - The `Chunk` pool is static, while each chunk keeps its `World` (readonly), and `World.Clear` calls neither `Chunk.ClearPool` nor `MapRecycler.Clear`. A second World could get the first one's chunks.
+  - The prefill makes that retention immediate: 300 chunks from login on.
+  - Today there is one World per process.
+- **Check after the fixes** (010a09866): 643 unit tests pass in both variants. One NativeAOT login run (`travel`, `glide`) logged the induced collection in the last held frame of the login hold (12.4 ms), shown as `2 collections (gen1+ 2), pause 12.32 ms, login`. The 4 collections of the first in-game frame are now counted. The +40 s summary (6 collections, 22.0 ms) equals the sum of the per-frame lines; 0 collections in play frames, 0 exceptions.
