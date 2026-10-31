@@ -164,15 +164,23 @@ public sealed unsafe class Renderer : IDisposable
         }, "Uo.Render dummy anim pages");
     }
 
-    /// <summary>palettes.bin's u16 table as one storage buffer (18.5 MiB for all 37.9k palettes), uploaded once.</summary>
+    /// <summary>palettes.bin's u16 table as one storage buffer (18.5 MiB for all 37.9k palettes), uploaded once. The file is
+    /// read straight into the mapped transfer buffer: no CPU copy of the palettes is allocated or kept (the GPU buffer is
+    /// their only reader; a new renderer reads the file again).</summary>
     IntPtr CreatePaletteBuffer(PackSet pack)
     {
-        var pal = pack.Palettes ?? new ushort[2];
-        uint bytes = (uint)((pal.Length * 2 + 3) & ~3);
+        long dataBytes = pack.PalettePath != null ? (long)pack.PaletteCount * Uo.Pack.AnimPaletteFile.Entries * 2 : 0;
+        uint bytes = (uint)Math.Max(4, (dataBytes + 3) & ~3);
         var buf = CreateBuffer(bytes, "palettes");
         var tb = CreateTransfer(bytes, true);
         var ptr = SDL_MapGPUTransferBuffer(Device, tb, false);
-        fixed (ushort* src = pal) Buffer.MemoryCopy(src, (void*)ptr, bytes, pal.Length * 2);
+        new Span<byte>((void*)ptr, (int)bytes).Clear();
+        if (dataBytes > 0)
+        {
+            using var fs = new FileStream(pack.PalettePath, FileMode.Open, FileAccess.Read, FileShare.Read, 1, FileOptions.SequentialScan);
+            fs.Position = pack.PaletteOffset;
+            fs.ReadExactly(new Span<byte>((void*)ptr, (int)dataBytes));
+        }
         SDL_UnmapGPUTransferBuffer(Device, tb);
         var cmd = SDL_AcquireGPUCommandBuffer(Device);
         var copy = SDL_BeginGPUCopyPass(cmd);
