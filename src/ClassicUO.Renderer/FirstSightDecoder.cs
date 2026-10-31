@@ -31,6 +31,7 @@ namespace ClassicUO.Renderer
             public FirstSightDecoder Owner;
             public uint Index;
             internal int Epoch;
+            internal long Bytes; // held in the decode budget from the request until Drain/Cancel releases it
 
             // filled by the worker; Pixels is rented from ArrayPool<uint>.Shared (returned by Drain), null if it failed
             public uint[] Pixels;
@@ -41,7 +42,11 @@ namespace ClassicUO.Renderer
             {
                 try
                 {
-                    if (!Owner._decode(this))
+                    if (Epoch != Owner._epoch)
+                    {
+                        // cancelled while it waited in the budget or the pool queue: nothing to decode
+                    }
+                    else if (!Owner._decode(this))
                     {
                         ReturnPixels();
                     }
@@ -86,12 +91,19 @@ namespace ClassicUO.Renderer
         private readonly Stack<Job> _free = new Stack<Job>();
         private readonly byte[] _state;
         private int _epoch;
+        private readonly Func<uint, long> _bytesOf;
+        private readonly DecodeBudget _budget;
 
         /// <param name="decode">Worker: decodes job.Index into job.Pixels (rented) and the size fields; false = nothing to upload.</param>
         /// <param name="upload">Main thread: uploads a finished job (always with pixels).</param>
-        public FirstSightDecoder(string name, int count, Func<Job, bool> decode, Action<Job> upload)
+        /// <param name="bytesOf">Main thread: the untrimmed pixel bytes a decode of a sprite holds (null = not counted).</param>
+        /// <param name="budget">The in-flight byte budget (default: <see cref="DecodeBudget.Shared"/>).</param>
+        public FirstSightDecoder(string name, int count, Func<Job, bool> decode, Action<Job> upload, Func<uint, long> bytesOf = null,
+            DecodeBudget budget = null)
         {
             _name = name;
+            _bytesOf = bytesOf;
+            _budget = budget ?? DecodeBudget.Shared;
             _decode = decode;
             _upload = upload;
             _state = new byte[Math.Max(0, count)];
@@ -123,7 +135,8 @@ namespace ClassicUO.Renderer
             job.Index = idx;
             job.Pixels = null;
             job.Epoch = _epoch;
-            ThreadPool.UnsafeQueueUserWorkItem(job, preferLocal: false);
+            job.Bytes = _bytesOf?.Invoke(idx) ?? 0;
+            _budget.Submit(job, job.Bytes);
         }
 
         /// <summary>Uploads finished decodes until <paramref name="deadline"/> (Stopwatch ticks), at least one (main thread).</summary>
@@ -155,6 +168,8 @@ namespace ClassicUO.Renderer
                 {
                     Pending--;
                     job.ReturnPixels();
+                    _budget.Release(job.Bytes);
+                    job.Bytes = 0;
                     Completed++;
                     _free.Push(job);
                 }
@@ -178,6 +193,8 @@ namespace ClassicUO.Renderer
                     _state[job.Index] = StateNone;
                     Pending--;
                     job.ReturnPixels();
+                    _budget.Release(job.Bytes);
+                    job.Bytes = 0;
                     _free.Push(job);
                 }
             }
