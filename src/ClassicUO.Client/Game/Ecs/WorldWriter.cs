@@ -2459,6 +2459,143 @@ namespace ClassicUO.Game
             return serial;
         }
 
+        // ---- funnel part 7, group 3: the per-frame animation (Mobile.Update after the ProcessAnimation split)
+
+        /// <summary>
+        /// The per-frame frame advance of a mobile (<c>Mobile.Update</c> → <c>AdvanceFrame</c>, once its frame is due): with
+        /// <paramref name="frameCount"/> &gt; 0 (the frames of its current animation group and direction, read by the caller
+        /// from the animation data) the timer steps (<c>AnimationTiming.Advance</c>), its frame count and repeat state are
+        /// written, a finished animation is reset (<c>SetAnimation(0xFF)</c>, which also draws the next idle delay) and the
+        /// frame index is written; then, in every case, the next frame's due time (<c>LastAnimationChangeTime</c>). The old
+        /// order. None of it is a record field or an input; the due times are the clock, which only <c>SetAnimation</c> pushes
+        /// here (the other setters push nothing): the update loops publish the rest after <c>Mobile.Update</c>
+        /// (<c>WorldEcs.PushClock</c> on the E4 path), as before T1. So the operation is not folded and commits nothing: a
+        /// fold would drop SetAnimation's push and a commit would add one the old path did not make.
+        /// <para>Returns true when the mobile's corpse animation is over (a death-rekeyed serial whose animation wrapped, or
+        /// that has no frames). Then this operation writes only the timer fields, and the caller passes
+        /// <paramref name="frame"/> and <paramref name="due"/> to <see cref="RemoveDeadMobile"/>, which removes the mobile and
+        /// then writes them, as before T1 (the removal ran between the timer fields and the frame index; <c>Destroy</c> resets
+        /// the due time, and the old code wrote the frame and the due time to the removed mobile after it).</para>
+        /// <para>Called per frame from the update loops (the legacy loop, the E4 clock path, its skipped-mobile check), which
+        /// iterate the mobiles table; an instance this World does not hold for its serial is written as before T1 (every push
+        /// ignores it), like <see cref="CompleteStep"/>. Only an instance of another World is a
+        /// violation, rejected (nothing changes).</para>
+        /// </summary>
+        public bool AdvanceAnimation(Mobile mobile, int frameCount, out int frame, out long due)
+        {
+            frame = -1;
+            due = 0;
+
+            if (mobile == null || !Admitted(nameof(AdvanceAnimation), mobile.Serial))
+            {
+                return false;
+            }
+
+            if (mobile.World != _world)
+            {
+                Reject(Violation.NotHeld, $"WorldWriter.AdvanceAnimation: 0x{mobile.Serial:X8} belongs to another World", rejected: true);
+
+                return false;
+            }
+
+            bool dead = (mobile.Serial & 0x8000_0000) != 0;
+
+            // compute: the timer step from the current state, before any write
+            int delay = Constants.CHARACTER_ANIMATION_DELAY;
+            AnimationTimer timer = default;
+            AnimationAdvance advance = default;
+            bool remove = dead;
+
+            if (frameCount > 0)
+            {
+                timer = mobile.AnimationTimerState;
+                delay = AnimationTiming.Advance(ref timer, frameCount, out advance);
+                remove = dead && advance == AnimationAdvance.Wrapped;
+                frame = timer.Frame;
+            }
+
+            due = Time.Ticks + delay;
+
+            using (Open(mobile, null))
+            {
+                if (frameCount > 0)
+                {
+                    mobile.ApplyAnimationTimer(in timer);
+
+                    if (advance == AnimationAdvance.Finished)
+                    {
+                        mobile.SetAnimation(0xFF);
+                    }
+                }
+
+                if (!remove)
+                {
+                    if (frame >= 0)
+                    {
+                        mobile.AnimIndex = (byte)frame;
+                    }
+
+                    mobile.LastAnimationChangeTime = due;
+                }
+            }
+
+            return remove;
+        }
+
+        /// <summary>
+        /// The end of a corpse animation (<c>Mobile.Update</c>, when <see cref="AdvanceAnimation"/> returned true): the
+        /// re-keyed mobile leaves the corpse manager (<c>CorpseManager.Remove(0, serial)</c>) and is removed with everything it
+        /// wears or holds and destroyed, staying in the mobiles table until the frame's destroyed list (<c>World.RemoveMobile</c>
+        /// without force, as before T1). A removal like <see cref="SweepMobile"/>: it owns the removed subtree, writes no value
+        /// of its own, does not fold, and first cancels the outstanding placements of the mobile and of everything removed. A
+        /// destroyed mobile is a no-op. One this World does not hold for its serial is a violation, rejected (nothing is
+        /// removed; no pre-T1 path: the update loops pass what they iterate). After the removal, the frame index (when
+        /// <paramref name="frame"/> &gt;= 0) and the due time <see cref="AdvanceAnimation"/> computed are written to the removed
+        /// mobile, as the old code did.
+        /// </summary>
+        public void RemoveDeadMobile(Mobile mobile, int frame, long due)
+        {
+            if (mobile == null || !Admitted(nameof(RemoveDeadMobile), mobile.Serial))
+            {
+                return;
+            }
+
+            if (!Holds(mobile))
+            {
+                Reject(Violation.NotHeld, $"WorldWriter.RemoveDeadMobile: 0x{mobile.Serial:X8} is not the mobile this World holds for its serial", rejected: true);
+
+                return;
+            }
+
+            if (mobile.IsDestroyed)
+            {
+                return;
+            }
+
+            uint serial = mobile.Serial;
+            CancelSubtreePlacements(mobile);
+
+            using (Open(mobile, null))
+            {
+#if CUO_DEVTOOLS
+                if (FunnelCheck.Enabled)
+                {
+                    CollectSubtree(mobile);
+                }
+#endif
+
+                _world.CorpseManager.Remove(0, serial);
+                _world.RemoveMobile(serial);
+
+                if (frame >= 0)
+                {
+                    mobile.AnimIndex = (byte)frame;
+                }
+
+                mobile.LastAnimationChangeTime = due;
+            }
+        }
+
         // the held check of the status operations: the instance this World holds for the entity's serial, or the detached
         // World.Player (removed under its serial while World.Player stays; written as before T1: nothing of it reaches the
         // ECS). Anything else is a violation, rejected (no pre-T1 path: the handlers pass what they just looked up).
