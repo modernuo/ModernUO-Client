@@ -8,6 +8,17 @@ src/ClassicUO.Client/DevBench.cs|Hue|1
 src/ClassicUO.Client/DevBench.cs|X|1
 src/ClassicUO.Client/DevBench.cs|Y|1
 src/ClassicUO.Client/DevBench.cs|Z|1
+src/ClassicUO.Client/Game/Ecs/WorldWriter.cs|Amount|1
+src/ClassicUO.Client/Game/Ecs/WorldWriter.cs|Direction|1
+src/ClassicUO.Client/Game/Ecs/WorldWriter.cs|Flags|1
+src/ClassicUO.Client/Game/Ecs/WorldWriter.cs|Graphic|2
+src/ClassicUO.Client/Game/Ecs/WorldWriter.cs|IsDamageable|1
+src/ClassicUO.Client/Game/Ecs/WorldWriter.cs|IsMulti|2
+src/ClassicUO.Client/Game/Ecs/WorldWriter.cs|Layer|1
+src/ClassicUO.Client/Game/Ecs/WorldWriter.cs|LightID|1
+src/ClassicUO.Client/Game/Ecs/WorldWriter.cs|X|1
+src/ClassicUO.Client/Game/Ecs/WorldWriter.cs|Y|1
+src/ClassicUO.Client/Game/Ecs/WorldWriter.cs|Z|1
 src/ClassicUO.Client/Game/GameObjects/DragEffect.cs|Graphic|1
 src/ClassicUO.Client/Game/GameObjects/DragEffect.cs|Hue|1
 src/ClassicUO.Client/Game/GameObjects/DragEffect.cs|Offset|2

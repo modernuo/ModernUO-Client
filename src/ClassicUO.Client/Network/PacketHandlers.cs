@@ -6333,7 +6333,7 @@ namespace ClassicUO.Network
             // values (ECS and GameObject) and CheckGraphicChange's state; then the callbacks below; then the tile
             if (obj == null || obj.IsDestroyed ? !(SerialHelper.IsMobile(serial) && type != 3) : obj is Item)
             {
-                item = world.Writer.UpsertWorldItem(serial, graphic, graphic_inc, count, x, y, z, direction, hue, flagss, type, out created);
+                item = world.Writer.UpsertWorldItem(serial, graphic, graphic_inc, count, x, y, z, direction, hue, flagss, type, out created, out WorldWriter.Placement placement);
 
                 if (item == null)
                 {
@@ -6365,7 +6365,7 @@ namespace ClassicUO.Network
                 }
 
                 // after the SingleClick above (it sends a packet, and plugin send hooks run synchronously), as before T1
-                world.Writer.PlaceWorldItem(item);
+                world.Writer.PlaceWorldItem(placement);
 
                 if (item.OnGround && graphic == 0x2006 && ProfileManager.CurrentProfile.AutoOpenCorpses)
                 {

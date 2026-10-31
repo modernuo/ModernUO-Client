@@ -115,9 +115,9 @@ namespace ClassicUO.UnitTests.Ecs
 
         private static Item NewUpsert(World world, in Packet p, out bool created, Action<Item> beforePlacement = null)
         {
-            Item item = world.Writer.UpsertWorldItem(p.Serial, p.Graphic, p.GraphicInc, p.Count, p.X, p.Y, p.Z, p.Direction, p.Hue, p.Flags, p.Type, out created);
+            Item item = world.Writer.UpsertWorldItem(p.Serial, p.Graphic, p.GraphicInc, p.Count, p.X, p.Y, p.Z, p.Direction, p.Hue, p.Flags, p.Type, out created, out WorldWriter.Placement placement);
             beforePlacement?.Invoke(item);
-            world.Writer.PlaceWorldItem(item);
+            world.Writer.PlaceWorldItem(placement);
 
             return item;
         }
@@ -322,22 +322,254 @@ namespace ClassicUO.UnitTests.Ecs
             r.Facing.Should().Be((byte)Direction.East);
         }
 
+        private static WorldWriter.Placement Upsert(World world, uint serial, ushort x = 1100) =>
+            Upsert(world, serial, out _, x);
+
+        private static WorldWriter.Placement Upsert(World world, uint serial, out Item item, ushort x = 1100)
+        {
+            item = world.Writer.UpsertWorldItem(serial, 0xEED, 0, 1, x, 1100, 0, Direction.North, 0, Flags.None, 0, out _, out WorldWriter.Placement p);
+
+            return p;
+        }
+
         [Fact]
-        public void Placement_Needs_The_Item_The_Upsert_Returned()
+        public void Placement_Needs_An_Outstanding_Token_Of_This_Upsert()
         {
             World world = Build(Start.None);
+            world.Writer.ThrowOnViolation = true;
             Item other = world.Items.Get(BAG);
 
-            Action noUpsert = () => world.Writer.PlaceWorldItem(other);
+            Action noUpsert = () => world.Writer.PlaceWorldItem(new WorldWriter.Placement(other, 1));
             noUpsert.Should().Throw<ArgumentException>();
+            Action none = () => world.Writer.PlaceWorldItem(default);
+            none.Should().Throw<ArgumentException>();
 
-            Item it = world.Writer.UpsertWorldItem(ITEM, 0xEED, 0, 1, 1100, 1100, 0, Direction.North, 0, Flags.None, 0, out _);
-            Action wrong = () => world.Writer.PlaceWorldItem(other);
+            WorldWriter.Placement p = Upsert(world, ITEM);
+            Action wrong = () => world.Writer.PlaceWorldItem(new WorldWriter.Placement(other, p.Id));
             wrong.Should().Throw<ArgumentException>();
-            world.Writer.PlaceWorldItem(it);
+            world.Writer.OutstandingPlacements.Should().Be(1, "a rejected placement changes nothing");
+            world.Writer.PlaceWorldItem(p);
+            world.Writer.OutstandingPlacements.Should().Be(0);
 
-            Action twice = () => world.Writer.PlaceWorldItem(it);
+            Action twice = () => world.Writer.PlaceWorldItem(p);
             twice.Should().Throw<ArgumentException>("one placement per upsert");
+        }
+
+        [Fact]
+        public void A_Placement_Survives_Upserts_And_Placements_Of_Other_Items_In_Between()
+        {
+            // Upsert(A), a callback that upserts and places B, then Place(A) (Codex audit round 2, #4)
+            World world = Build(Start.None);
+            world.Writer.ThrowOnViolation = true;
+            WorldWriter.Placement a = Upsert(world, ITEM, out Item ia);
+            WorldWriter.Placement b = Upsert(world, 0x4000_7200, out Item ib);
+            world.Writer.PlaceWorldItem(b);
+            world.Writer.PlaceWorldItem(a);
+
+            world.Writer.OutstandingPlacements.Should().Be(0);
+            world.Writer.Violations.Should().Be(0);
+            ia.Should().NotBeSameAs(ib);
+        }
+
+        [Fact]
+        public void A_Placement_Is_Cancelled_When_Superseded_Removed_Or_Abandoned()
+        {
+            World world = Build(Start.None);
+            world.Writer.ThrowOnViolation = true;
+
+            // superseded: a later upsert of the same item issues its own
+            WorldWriter.Placement first = Upsert(world, ITEM);
+            WorldWriter.Placement second = Upsert(world, ITEM, 1101);
+            Action stale = () => world.Writer.PlaceWorldItem(first);
+            stale.Should().Throw<ArgumentException>();
+            world.Writer.PlaceWorldItem(second);
+
+            // removed
+            WorldWriter.Placement removed = Upsert(world, ITEM, out Item it);
+            world.Writer.RemoveWorldItem(it, out _);
+            world.Writer.OutstandingPlacements.Should().Be(0);
+            Action afterRemove = () => world.Writer.PlaceWorldItem(removed);
+            afterRemove.Should().Throw<ArgumentException>();
+
+            // abandoned (a callback threw, the handler never placed): dropped once MaxOutstanding newer ones were issued
+            WorldWriter.Placement abandoned = Upsert(world, 0x4000_7300);
+
+            for (uint i = 1; i <= WorldWriter.MaxOutstanding; i++)
+            {
+                Upsert(world, 0x4000_7300 + i);
+            }
+
+            world.Writer.OutstandingPlacements.Should().Be(WorldWriter.MaxOutstanding);
+            Action late = () => world.Writer.PlaceWorldItem(abandoned);
+            late.Should().Throw<ArgumentException>();
+        }
+
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void Admission_Is_Checked_Before_Any_Creation_Or_Placement_Change(bool destroyed)
+        {
+            // Codex audit round 2, #3: an absent or destroyed serial while an operation (here: a fold) is open must not be
+            // created, and the outstanding placement of another item must stay valid
+            const uint SERIAL = 0x4000_7400;
+            World world = Build(Start.None);
+            world.Writer.ThrowOnViolation = true;
+            Item dead = null;
+
+            if (destroyed)
+            {
+                dead = world.GetOrCreateItem(SERIAL);
+                dead.Destroy();
+            }
+
+            WorldWriter.Placement pending = Upsert(world, ITEM);
+            int items = world.Items.Count;
+            long writes = world.Ecs.ItemMirrorWrites;
+            Item replacement = Item.Create(world, BAG);
+
+            world.Ecs.BeginFold(replacement);
+            Action nested = () => Upsert(world, SERIAL);
+            nested.Should().Throw<InvalidOperationException>();
+            world.Ecs.EndFold(replacement);
+
+            world.Items.Count.Should().Be(items);
+            world.Items.Get(SERIAL).Should().BeSameAs(dead, "nothing created or replaced");
+            world.Ecs.ItemMirrorWrites.Should().Be(writes);
+            world.Writer.OutstandingPlacements.Should().Be(1);
+            world.Writer.PlaceWorldItem(pending);
+            world.Writer.OutstandingPlacements.Should().Be(0);
+        }
+
+        [Fact]
+        public void An_Operation_Inside_An_Operation_Is_Rejected_Before_Any_Change()
+        {
+            // a real nesting: an upsert started from inside another upsert's commit
+            World world = Build(Start.None);
+            world.Writer.ThrowOnViolation = true;
+            WorldWriter.Placement pending = Upsert(world, 0x4000_7500);
+            Exception seen = null;
+            world.Ecs.CommitObserver = (_, _) =>
+            {
+                world.Ecs.CommitObserver = null;
+
+                try
+                {
+                    Upsert(world, 0x4000_7501);
+                }
+                catch (InvalidOperationException e)
+                {
+                    seen = e;
+                }
+            };
+
+            Upsert(world, ITEM);
+
+            seen.Should().NotBeNull();
+            world.Items.Get(0x4000_7501).Should().BeNull();
+            world.Writer.OutstandingPlacements.Should().Be(2, "the earlier placement and the outer upsert's");
+            world.Writer.PlaceWorldItem(pending);
+        }
+
+        // ---- the release build's path after a violation (ThrowOnViolation false): an error log, then the pre-T1 code
+
+        [Fact]
+        public void Release_A_Nested_Upsert_Takes_The_Pre_T1_Path()
+        {
+            World oldWorld = Build(Start.InBag), newWorld = Build(Start.InBag);
+            newWorld.Writer.ThrowOnViolation = false;
+            Item replacement = Item.Create(newWorld, BAG);
+            Packet p = Packets[3];
+
+            OldUpsert(oldWorld, p);
+            newWorld.Ecs.BeginFold(replacement); // an operation is open
+            NewUpsert(newWorld, p, out bool created);
+            newWorld.Ecs.EndFold(replacement);
+
+            created.Should().BeFalse();
+            newWorld.Writer.Violations.Should().Be(1);
+            newWorld.Writer.OutstandingPlacements.Should().Be(0, "a pre-T1 upsert issues no outstanding placement");
+            AssertSameWorld(oldWorld, newWorld);
+        }
+
+        [Fact]
+        public void Release_A_Bad_Placement_Or_Removal_Takes_The_Pre_T1_Path()
+        {
+            World oldWorld = Build(Start.InBag), newWorld = Build(Start.InBag), other = Build(Start.InBag);
+            newWorld.Writer.ThrowOnViolation = false;
+            Packet p0 = Packets[0];
+
+            OldUpsert(oldWorld, p0);
+            Item it = newWorld.Writer.UpsertWorldItem(ITEM, p0.Graphic, 0, p0.Count, p0.X, p0.Y, p0.Z, p0.Direction, p0.Hue, p0.Flags, 0, out _, out WorldWriter.Placement p);
+            newWorld.Writer.PlaceWorldItem(new WorldWriter.Placement(it, p.Id + 1)); // not outstanding: the old placement
+            AssertSameWorld(oldWorld, newWorld);
+
+            // a foreign instance: the old handler removed by serial from its own World
+            OldRemove(oldWorld, ITEM);
+            newWorld.Writer.RemoveWorldItem(other.Items.Get(ITEM), out Entity parent);
+            parent.Should().BeNull();
+            newWorld.Items.Get(ITEM).Should().BeNull();
+            AssertSameWorld(oldWorld, newWorld);
+
+            // a live mobile's serial: nothing
+            newWorld.Writer.UpsertWorldItem(MOB, 0xEED, 0, 1, 1, 1, 0, Direction.North, 0, Flags.None, 3, out _, out _).Should().BeNull();
+            newWorld.Writer.Violations.Should().Be(3);
+            newWorld.Writer.InScope.Should().BeFalse();
+        }
+
+        // ---- Codex audit round 2, #1: results are computed, never read back after the operation's own unlink or write
+
+        [Theory]
+        [InlineData(Start.InBag, BAG)]
+        [InlineData(Start.Worn, MOB)]
+        public void The_Container_Is_Computed_Not_Read_Back(Start start, uint oldParent)
+        {
+            // At the commit the getters still return the previous values, as they will when T4 moves them to the ECS (the
+            // unlink no longer writes Container). Reading the Container back there would give the old parent.
+            World world = Build(start);
+            ItemState committed = default;
+            uint getterAtCommit = 0;
+            world.Ecs.CommitObserver = (item, v) =>
+            {
+                committed = v;
+                getterAtCommit = item.Container;
+            };
+
+            NewUpsert(world, Packets[0], out _);
+
+            getterAtCommit.Should().Be(oldParent, "the cache still holds the old parent at the commit");
+            committed.Container.Should().Be(0xFFFF_FFFF);
+            Item it = world.Items.Get(ITEM);
+            it.Container.Should().Be(0xFFFF_FFFF);
+            it.OnGround.Should().BeTrue();
+            world.Ecs.Mirror.TryGet(ITEM, out MirrorRecord r).Should().BeTrue();
+            r.OnGround.Should().BeTrue();
+            ChildSerials(world.Get(oldParent)).Should().NotContain(ITEM);
+        }
+
+        [Fact]
+        public void The_Commit_Takes_No_Value_From_The_Getters()
+        {
+            // every committed field equals what the packet and the pure helpers give, whatever the getters held
+            World world = Build(Start.Worn);
+            ItemState committed = default;
+            world.Ecs.CommitObserver = (_, v) => committed = v;
+            Packet p = Packets[3]; // a corpse: direction stripped, layer from the direction
+
+            NewUpsert(world, p, out _);
+
+            Direction dir = p.Direction;
+            Item.CorpseState(ref dir, out _, out Layer layer);
+            committed.Graphic.Should().Be(0x2006);
+            committed.Hue.Should().Be(Entity.FixedHue(p.Hue));
+            committed.Amount.Should().Be(p.Count);
+            committed.X.Should().Be(p.X);
+            committed.Y.Should().Be(p.Y);
+            committed.Z.Should().Be(p.Z);
+            committed.Direction.Should().Be(dir);
+            committed.Layer.Should().Be(layer);
+            committed.Flags.Should().Be(p.Flags);
+            committed.Container.Should().Be(0xFFFF_FFFF);
+            committed.IsMulti.Should().BeFalse();
         }
 
         [Fact]
@@ -347,7 +579,8 @@ namespace ClassicUO.UnitTests.Ecs
             long writes = world.Ecs.ItemMirrorWrites;
             int items = world.Items.Count;
 
-            Action upsert = () => world.Writer.UpsertWorldItem(MOB, 0xEED, 0, 1, 1, 1, 0, Direction.North, 0, Flags.None, 3, out _);
+            world.Writer.ThrowOnViolation = true;
+            Action upsert = () => world.Writer.UpsertWorldItem(MOB, 0xEED, 0, 1, 1, 1, 0, Direction.North, 0, Flags.None, 3, out _, out _);
             upsert.Should().Throw<ArgumentException>();
 
             world.Items.Count.Should().Be(items);
@@ -401,6 +634,7 @@ namespace ClassicUO.UnitTests.Ecs
         {
             World world = Build(Start.InBag), other = Build(Start.InBag);
             Item live = world.Items.Get(ITEM);
+            world.Writer.ThrowOnViolation = true;
 
             // an instance of another World
             Action foreign = () => world.Writer.RemoveWorldItem(other.Items.Get(ITEM), out _);
@@ -440,8 +674,9 @@ namespace ClassicUO.UnitTests.Ecs
             world.Ecs.IsFolding.Should().BeFalse();
 
             // a fold left open makes the next operation throw before it changes anything
+            world.Writer.ThrowOnViolation = true;
             world.Ecs.BeginFold(replacement);
-            Action op = () => world.Writer.UpsertWorldItem(ITEM, 0xEED, 0, 1, 1, 1, 0, Direction.North, 0, Flags.None, 0, out _);
+            Action op = () => world.Writer.UpsertWorldItem(ITEM, 0xEED, 0, 1, 1, 1, 0, Direction.North, 0, Flags.None, 0, out _, out _);
             op.Should().Throw<InvalidOperationException>();
             world.Writer.InScope.Should().BeFalse();
             it.Container.Should().Be(BAG, "nothing was changed");
@@ -687,10 +922,10 @@ namespace ClassicUO.UnitTests.Ecs
             world.Ecs.Sync(child);
             FunnelCheck.Reset();
 
-            Item a = world.Writer.UpsertWorldItem(ITEM, 0x2006, 0, 0x190, 1000, 1000, 0, Direction.Running | Direction.South, 0x455, Flags.None, 0, out _);
-            world.Writer.PlaceWorldItem(a);
-            Item b = world.Writer.UpsertWorldItem(0x4000_7102, 0xEED, 1, 5, 1001, 1000, 0, Direction.North, 0, Flags.None, 0, out _);
-            world.Writer.PlaceWorldItem(b);
+            Item a = world.Writer.UpsertWorldItem(ITEM, 0x2006, 0, 0x190, 1000, 1000, 0, Direction.Running | Direction.South, 0x455, Flags.None, 0, out _, out WorldWriter.Placement pa);
+            world.Writer.PlaceWorldItem(pa);
+            Item b = world.Writer.UpsertWorldItem(0x4000_7102, 0xEED, 1, 5, 1001, 1000, 0, Direction.North, 0, Flags.None, 0, out _, out WorldWriter.Placement pb);
+            world.Writer.PlaceWorldItem(pb);
             FunnelCheck.Total.Should().Be(0);
 
             // a removal owns its subtree (the contents' Container writes)
