@@ -6,6 +6,7 @@ using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using ClassicUO.Assets;
+using ClassicUO.IO;
 using ClassicUO.Utility;
 using FluentAssertions;
 using Uo.Pack;
@@ -693,6 +694,123 @@ namespace ClassicUO.UnitTests.Assets
             File.Delete(Path.Combine(dir, "CLILOC.ENU"));
             Action noEnu = () => ClilocDiscovery.Find(dir);
             noEnu.Should().Throw<InvalidDataException>("enu is required");
+        }
+        // ------------------------------------------------------------------ available languages (os-language Codex audit 3-5)
+
+        private ClilocLoader ClilocWithOverrides(string packFile, UOFilesOverrideMap map)
+        {
+            var fm = new UOFileManager(ClientVersion.CV_7090, _tmp, map, null);
+            var c = fm.Clilocs;
+            c.UsePack = true;
+            c.PackFile = packFile;
+
+            return c;
+        }
+
+        // finding 3: a cliloc named only in files_override is available, and an overridden name whose target is missing is not
+        [Fact]
+        public void AvailableLanguages_Includes_Files_Override_Targets_That_Exist()
+        {
+            WriteClilocFile(P("Cliloc.enu"), (1, "one"));
+            WriteClilocFile(P("Cliloc.fra"), (1, "un"));
+            string elsewhere = Path.Combine(_tmp, "shard");
+            Directory.CreateDirectory(elsewhere);
+            WriteClilocFile(Path.Combine(elsewhere, "russian.bin"), (1, "odin"));
+
+            var map = new UOFilesOverrideMap();
+            map.Add("cliloc.rus", Path.Combine(elsewhere, "russian.bin"));
+            map.Add("cliloc.fra", Path.Combine(elsewhere, "missing.bin"));
+            map.Add("cliloc.kor", Path.Combine(elsewhere, "missing.bin"));
+
+            var c = ClilocWithOverrides(null, map);
+            c.AvailableLanguages().Should().BeEquivalentTo("enu", "rus");
+
+            // the loader opens the same path
+            c.Load("rus");
+            c.Language.Should().Be("rus");
+            c.GetString(1).Should().Be("odin");
+        }
+
+        // finding 4: pack identifiers longer than three letters are not languages the client can select; files likewise
+        [Fact]
+        public void AvailableLanguages_Lists_Only_Three_Letter_Codes_From_Pack_And_Files()
+        {
+            var pack = WriteClilocStore("long.bin", Lang("enu", Table((1, "one"))), Lang("ptbr", Table((1, "um"))), Lang("deu", Table((1, "eins"))));
+            Cliloc(pack).AvailableLanguages().Should().BeEquivalentTo("enu", "deu");
+
+            WriteClilocFile(P("Cliloc.enu"), (1, "one"));
+            WriteClilocFile(P("Cliloc.ptbr"), (1, "um"));
+            WriteClilocFile(P("Cliloc.de"), (1, "eins"));
+            Cliloc(null).AvailableLanguages().Should().BeEquivalentTo("enu");
+        }
+
+        // finding 5: a pack store without language tables (empty or overrides only) leaves the files to say what exists
+        [Fact]
+        public void AvailableLanguages_Falls_Through_To_Files_When_The_Pack_Has_No_Languages()
+        {
+            WriteClilocFile(P("Cliloc.enu"), (1, "one"));
+            WriteClilocFile(P("Cliloc.deu"), (1, "eins"));
+
+            var overridesOnly = WriteClilocStore("ovronly.bin", Overrides(Table((1, "ovr"))));
+            Cliloc(overridesOnly).AvailableLanguages().Should().BeEquivalentTo("enu", "deu");
+
+            var empty = WriteClilocStore("empty.bin");
+            Cliloc(empty).AvailableLanguages().Should().BeEquivalentTo("enu", "deu");
+
+            // and the loader agrees: the German file serves
+            var c = Cliloc(overridesOnly);
+            c.Load("deu");
+            c.FromPack.Should().BeFalse();
+            c.Language.Should().Be("deu");
+        }
+
+        // round 2, finding 1: a malformed files_override target for a language nobody asked for must not abort discovery
+        [Theory]
+        [InlineData("")]
+        [InlineData("bad name.bin")]
+        public void AvailableLanguages_Skips_A_Malformed_Override_Target_And_Continues(string target)
+        {
+            WriteClilocFile(P("Cliloc.enu"), (1, "one"));
+            WriteClilocFile(P("Cliloc.deu"), (1, "eins"));
+
+            var map = new UOFilesOverrideMap();
+            map.Add("cliloc.rus", target);
+
+            var fm = new UOFileManager(ClientVersion.CV_7090, _tmp, map, null);
+            fm.CaseInsensitiveFallback = true; // the lookup that threw on Linux/macOS, run here on any OS
+            var c = fm.Clilocs;
+            c.UsePack = true;
+            c.PackFile = null;
+
+            c.AvailableLanguages().Should().BeEquivalentTo("enu", "deu");
+            fm.GetUOFilePath("Cliloc.rus").Should().Be(target); // unresolved, not thrown
+        }
+
+        // round 2, finding 2: a relative base directory finds a differently-cased file (the lookup compared absolute entries to the relative probe)
+        [Fact]
+        public void GetUOFilePath_Resolves_Alternative_Casing_Under_A_Relative_Base()
+        {
+            string dir = Path.Combine(_tmp, "UO");
+            Directory.CreateDirectory(dir);
+            WriteClilocFile(Path.Combine(dir, "CLILOC.ENU"), (1, "one"));
+            WriteClilocFile(Path.Combine(dir, "Cliloc.DEU"), (1, "eins"));
+
+            string relative = Path.GetRelativePath(Directory.GetCurrentDirectory(), dir);
+            relative.Should().NotBe(Path.GetFullPath(dir));
+
+            var fm = new UOFileManager(ClientVersion.CV_7090, relative, new UOFilesOverrideMap(), null);
+            fm.CaseInsensitiveFallback = true;
+
+            string deu = fm.GetUOFilePath("Cliloc.deu");
+            File.Exists(deu).Should().BeTrue();
+            Path.GetFileName(deu).Should().BeOneOf("Cliloc.deu", "Cliloc.DEU");
+
+            var c = fm.Clilocs;
+            c.UsePack = false;
+            c.AvailableLanguages().Should().BeEquivalentTo("enu", "deu");
+            c.Load("deu");
+            c.Language.Should().Be("deu");
+            c.GetString(1).Should().Be("eins");
         }
     }
 }

@@ -36,7 +36,9 @@ namespace ClassicUO.Assets
                 HuesRange[i >> 3].Entries[i & 7] = blocks[i];
             }
 
-            (PackHueCount, _lut) = HueFile.Read(FileManager.Pack.PathOf("hues.bin"));
+            // The RGBA8 LUT is built from hues_raw.bin (one source of truth per pack file); an older pack's hues.bin is ignored.
+            _lut = HueLut.Build(entries);
+            PackHueCount = entries.Length;
             RadarCol = RadarColFile.Read(FileManager.Pack.PathOf(TableConst.RadarColFile));
         }
 

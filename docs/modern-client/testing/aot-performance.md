@@ -16,6 +16,8 @@ How to compare the JIT and NativeAOT builds fairly, how to collect and apply a s
   - About 5 minutes per publish. Don't run benches while ILC is running.
   - ILC's incremental check covers the `.ilc.rsp`, so a changed property recompiles. A changed .mibc *at the same path* does not: delete `src/ClassicUO.Client/obj/Release/net10.0/win-x64/native` first.
   - `tools/fps-test/publish-aot.ps1 -OutDir <scratch>` does the same through vcvars, if you can run PowerShell.
+  - **What a publish is:** a standalone win-x64 `cuo.exe` (no shared-library or Bootstrap host, no plugins) plus the natives from `external/x64` (SDL3, FNA3D, FAudio, libtheorafile, zlib). No code changes were needed to publish it (2026-10-24).
+  - **Instruction set:** win-x64 publishes set `<IlcInstructionSet>x86-64-v3</IlcInstructionSet>` (AVX2, FMA, BMI1/2, LZCNT, MOVBE), as do `poc/Uo.Client` and `poc/Uo.Render.App`. The exe needs a Haswell (2013) or newer Intel or an Excavator or newer AMD CPU; older CPUs fail at startup. ILC rejects the misspelling `x86-x64-v3`. `-p:IlcInstructionSet=` builds for the default baseline ISA. The first JIT-vs-AOT comparison (2026-10-24, before this setting) had AOT about 10–15% slower on CPU; numbers since then are in [../perf-opportunities.md](../perf-opportunities.md) and the poc-log.
 
 ## Bench harness (`tools/aot-bench/`)
 
@@ -63,7 +65,11 @@ ETW kernel sampling (wpr/xperf/PerfView) needs elevation; don't trigger UAC whil
 
 - **Size:** `cuo.exe` size per variant (base 18.1 MB on 2026-10-25; PGO +0.7%, Speed +4%).
 - **Startup:** `startup.py 5 …` (to the first window). JIT ≈ 2.0 s, AOT ≈ 1.5–1.6 s.
-- **Trim/AOT warnings:** grep the publish log: `grep -o "warning IL[0-9]*: [^(]*" pub.log | sort -u`. Expected: the known FNA IL2046, the cuo `Enum.GetValues` IL3050 and the Friflo set (classicuo-aot-baseline.md). Warnings are only printed when ILC actually runs, so an incremental publish shows none.
+- **Trim/AOT warnings:** grep the publish log: `grep -o "warning IL[0-9]*: [^(]*" pub.log | sort -u`. Expected (2026-10-24 census):
+  - FNA IL2046: `MathTypeConverter.GetProperties` overrides `TypeConverter.GetProperties` without the `RequiresUnreferencedCode` annotation. XNA design-time converters, unused at runtime.
+  - cuo IL3050 (×2, one site): `Enum.GetValues(typeof(MessageType))` in `Game/UI/Gumps/ResizableJournal.cs`. Works under AOT; the fix is `Enum.GetValues<MessageType>()`.
+  - The Friflo set (31): Friflo.Json.Fliox IL3050/IL2026/IL2055/IL2067/IL2070/IL2075/IL3000 and Friflo.Engine.ECS IL2066/IL2071/IL2090, from `MakeGenericType` and reflection. Friflo needs explicit type registration under AOT, and its JSON mapper must stay unused.
+  - Nothing from ClassicUO.Assets, ClassicUO.Renderer, ClassicUO.Utility, ClassicUO.IO or MP3Sharp. Warnings are only printed when ILC actually runs, so an incremental publish shows none.
 
 ## Cleanup
 

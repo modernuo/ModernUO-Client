@@ -59,6 +59,107 @@ namespace ClassicUO.Assets
         /// <summary>Tests: the strings of a loose Clilocs.txt (null when there is none).</summary>
         public IReadOnlyDictionary<int, string> LooseOverrides => _state.Ours;
 
+        /// <summary>
+        /// The cliloc language codes that exist, lower-case, each exactly three ASCII letters (the language packet's
+        /// wire code; longer pack identifiers are ignored and logged): the pack's language records when the pack can serve
+        /// the text (it has enu: without it the loader reads the files), else the Cliloc.* files the loader would open,
+        /// named in the client folder or in files_override, case-insensitively, whose resolved path exists. Cheap: no
+        /// table is read.
+        /// </summary>
+        public List<string> AvailableLanguages()
+        {
+            string path = PackPath;
+
+            if (path != null && File.Exists(path))
+            {
+                try
+                {
+                    using var store = RecordStore.Open(path, TextConst.MagicCliloc);
+                    var list = new List<string>();
+                    List<string> ignored = null;
+
+                    foreach (string code in ClilocStore.Resolve(store).Languages.Keys)
+                    {
+                        if (IsLanguageCode(code))
+                        {
+                            list.Add(code.ToLowerInvariant());
+                        }
+                        else
+                        {
+                            (ignored ??= new List<string>()).Add(code);
+                        }
+                    }
+
+                    if (ignored != null)
+                    {
+                        Log.Warn($"Cliloc: the pack's languages {string.Join(", ", ignored)} are ignored: a language code is three letters");
+                    }
+
+                    if (list.Contains("enu"))
+                    {
+                        return list;
+                    }
+
+                    Log.Trace("Cliloc: the pack has no usable enu language; listing Cliloc.* files");
+                }
+                catch (Exception e) when (e is IOException || e is InvalidDataException || e is UnauthorizedAccessException)
+                {
+                    Log.Error($"Cliloc: '{path}' is invalid ({e.Message}); listing Cliloc.* files");
+                }
+            }
+
+            var names = new List<string>(FileManager.OverriddenFiles);
+
+            try
+            {
+                foreach (string p in Directory.EnumerateFiles(FileManager.BasePath))
+                {
+                    names.Add(Path.GetFileName(p));
+                }
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+            {
+                Log.Error($"Cliloc: cannot list '{FileManager.BasePath}' ({e.Message})");
+            }
+
+            var found = new List<string>();
+
+            foreach (string name in names)
+            {
+                if (name == null || !name.StartsWith("cliloc.", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
+                string ext = name.Substring("cliloc.".Length).ToLowerInvariant();
+
+                if (!IsLanguageCode(ext) || found.Contains(ext))
+                {
+                    continue;
+                }
+
+                // the path the loader opens for it: an override wins over the folder's file
+                try
+                {
+                    if (File.Exists(FileManager.GetUOFilePath($"Cliloc.{ext}")))
+                    {
+                        found.Add(ext);
+                    }
+                }
+                catch (Exception e) when (e is ArgumentException || e is NotSupportedException || e is IOException || e is UnauthorizedAccessException || e is System.Security.SecurityException)
+                {
+                    // one bad candidate (an empty or invalid files_override target, an unreadable folder) must not stop the others
+                    Log.Warn($"Cliloc: '{ext}' is skipped, its file cannot be checked ({e.Message})");
+                }
+            }
+
+            return found;
+        }
+
+        /// <summary>A language the client can select: exactly three ASCII letters (the language packet carries three characters).</summary>
+        public static bool IsLanguageCode(string code) =>
+            code != null && code.Length == 3 && char.IsAsciiLetter(code[0]) && char.IsAsciiLetter(code[1]) && char.IsAsciiLetter(code[2]);
+
         public void Load(string lang)
         {
             _requested = string.IsNullOrEmpty(lang) ? "enu" : lang;

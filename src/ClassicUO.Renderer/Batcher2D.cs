@@ -86,6 +86,54 @@ namespace ClassicUO.Renderer
         /// <summary>While set, sprite draws go to the capture first; the batcher draws only what it declines.</summary>
         public ISpriteCapture Capture;
 
+        // E12 (CUO_GPU_ITEM_CHECK's probe pass): between BeginSuppress and EndSuppress nothing reaches the device. Sprites
+        // queued in that time (anything a capture declined or that bypasses it, e.g. an aura) are dropped when a flush would
+        // draw them or at EndSuppress, and the blend, stencil and sampler states set in that time are put back.
+        private bool _suppress;
+        private int _suppressMark;
+        private BlendState _suppressBlend;
+        private DepthStencilState _suppressStencil;
+        private SamplerState _suppressSampler;
+        private int _suppressedSprites;
+
+        /// <summary>Sprites queued and not yet drawn.</summary>
+        public int PendingSprites => _numSprites;
+
+        public void BeginSuppress()
+        {
+            _suppress = true;
+            _suppressMark = _numSprites;
+            _suppressedSprites = 0;
+            _suppressBlend = _blendState;
+            _suppressStencil = _stencil;
+            _suppressSampler = _sampler;
+        }
+
+        /// <summary>Ends <see cref="BeginSuppress"/>; returns how many sprites were dropped.</summary>
+        public int EndSuppress()
+        {
+            DropSuppressed();
+            _suppress = false;
+            _blendState = _suppressBlend;
+            _stencil = _suppressStencil;
+            _sampler = _suppressSampler;
+            _suppressBlend = null;
+            _suppressStencil = null;
+            _suppressSampler = null;
+
+            return _suppressedSprites;
+        }
+
+        private void DropSuppressed()
+        {
+            if (_numSprites > _suppressMark)
+            {
+                Array.Clear(_textureInfo, _suppressMark, _numSprites - _suppressMark);
+                _suppressedSprites += _numSprites - _suppressMark;
+                _numSprites = _suppressMark;
+            }
+        }
+
         public int TextureSwitches, FlushesDone;
 
         public static readonly bool CollectFrameStats = Environment.GetEnvironmentVariable("CUO_FRAMESTATS") == "1"
@@ -1394,6 +1442,13 @@ namespace ClassicUO.Renderer
 
         private void Flush()
         {
+            if (_suppress)
+            {
+                DropSuppressed();
+
+                return;
+            }
+
             if (_recordPass != null)
             {
                 RecordSegment();
@@ -1632,7 +1687,7 @@ namespace ClassicUO.Renderer
         [Conditional("DEBUG")]
         private void EnsureStarted()
         {
-            if (!_started)
+            if (!_started && !_suppress)
             {
                 throw new InvalidOperationException();
             }
