@@ -228,6 +228,16 @@ The rules must stay exactly equal to today's, so a checker compares the data-dri
 - a layer under the ringmail arms shows at the shoulder;
 - leggings show through thigh boots (owner, 2026-10-31). Today's rules only hide shoes under pants and legs, never the other way round.
 
+**Rules that depend on race and sex (owner, 2026-10-31: check elves and gargoyles too).** The hard-coded logic already has some:
+- **Gargoyles and women:** a second torso order, the "chest-under" variant (`PaperdollOrder.Build` with `altTorso`, which `PaperDollInteractable` sets for women and gargoyle bodies; `BuildInWorld` does the same in the world).
+- **Hoods:** the hood rule in `MobileView.IsCovered` covers the head on every body except gargoyles (0x029A, 0x029B, 0x02B6, 0x02B7).
+- **Gargoyle equipment remaps** (`FixGargoyleEquipments`, and its ECS copy `AnimationRules.FixGargoyleEquipment`): robe, death shroud and spellbooks draw other art on gargoyles.
+- **Elves:** only their own paperdoll body gumps (0x025D/0x025E in `PaperDollInteractable`); no elf-specific covering rule was found in code.
+
+So the data file is keyed by body group (human male/female, elf male/female, gargoyle male/female, and other bodies), not only by item. Gate for T3's layering work:
+- paperdoll and world screenshots for each body group wearing the same reference outfits, compared with the EA client (the owner can supply EA shots);
+- outfits that include the issue #39 cases (ringmail arms over a shirt, thigh boots over leggings), a robe with a hood, and a gargoyle robe and spellbook.
+
 ### T4: thin handles; the ECS owns scalar state
 
 **What changes:**
