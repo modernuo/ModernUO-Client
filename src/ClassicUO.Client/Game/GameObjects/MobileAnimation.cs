@@ -21,7 +21,7 @@ namespace ClassicUO.Game.GameObjects
         {
             if (Steps.Count != 0)
             {
-                ref Step step = ref Steps.Front();
+                ref readonly Step step = ref Steps.Front();
 
                 return (Direction)step.Direction;
             }
@@ -222,7 +222,7 @@ namespace ClassicUO.Game.GameObjects
 
                     if (mob.Steps.Count != 0)
                     {
-                        ref Step s = ref mob.Steps.Front();
+                        ref readonly Step s = ref mob.Steps.Front();
 
                         if (s.X != mob.X || s.Y != mob.Y)
                         {

@@ -65,33 +65,13 @@ namespace ClassicUO.Game
 
             if (entity is Item item)
             {
-                // Only the instance World currently holds for this serial; stale or detached objects are ignored.
-                if (!ReferenceEquals(_world.Items.Get(item.Serial), item))
+                // T1: a WorldWriter operation commits this item itself, once, from its own values
+                if (ReferenceEquals(item, _foldItem))
                 {
                     return;
                 }
 
-                Mirror.UpsertItem
-                (
-                    item.Serial,
-                    item.Graphic,
-                    item.Hue,
-                    item.X,
-                    item.Y,
-                    item.Z,
-                    (byte)item.Direction,
-                    (byte)item.Flags,
-                    item.Amount,
-                    item.Container,
-                    (byte)item.Layer,
-                    item.IsMulti
-                );
-
-                // W5: corpses animate in World.Update; every item change reaches the mirror here
-                if (item.IsCorpse)
-                {
-                    _world.QueueItemUpdate(item);
-                }
+                SyncItem(item);
             }
             else if (entity is Mobile mobile)
             {
@@ -115,6 +95,105 @@ namespace ClassicUO.Game
 
                 // W5: graphic, flags and direction reach the mirror only here, so the pushed inputs follow them here
                 WriteInputs(mobile, e);
+            }
+        }
+
+        // T1: the item instance whose hook Syncs fold into its WorldWriter operation's commit. One operation at a time: a
+        // second BeginFold before EndFold is a programming error (an operation that calls another), and throws.
+        private Item _foldItem;
+
+        /// <summary>
+        /// T1, <see cref="WorldWriter"/>: from here until <see cref="EndFold"/>, the hook Syncs of this item instance (not of
+        /// its serial: a replacement instance with the same serial still syncs) are skipped; the operation writes the ECS
+        /// itself with <see cref="CommitItem"/>. Not reentrant.
+        /// </summary>
+        internal void BeginFold(Item item)
+        {
+            if (item == null)
+            {
+                throw new ArgumentNullException(nameof(item));
+            }
+
+            if (_foldItem != null)
+            {
+                throw new InvalidOperationException($"WorldEcs fold of 0x{item.Serial:X8} inside the fold of 0x{_foldItem.Serial:X8}: funnel operations do not nest");
+            }
+
+            _foldItem = item;
+        }
+
+        /// <summary>Ends the fold of <paramref name="item"/>; a call for another instance (a stale scope) does nothing.</summary>
+        internal void EndFold(Item item)
+        {
+            if (ReferenceEquals(_foldItem, item))
+            {
+                _foldItem = null;
+            }
+        }
+
+        internal bool IsFolding => _foldItem != null;
+
+        /// <summary>
+        /// T1, tests: sees each funnel commit before it is written, with the item's cache still as it was. The getters
+        /// still return the previous values there, as they will once T4 moves them to the ECS, so a test can check that an
+        /// operation computed every value instead of reading one back after its own unlink or write.
+        /// </summary>
+        internal Action<Item, ItemState> CommitObserver;
+
+        /// <summary>T1, tests: every write of an item's mirror record (the hook Syncs and the funnel commits).</summary>
+        internal long ItemMirrorWrites;
+
+        /// <summary>
+        /// T1: the funnel's ECS write for an item, from the operation's values (never from the GameObject's getters: at T4 those
+        /// read the ECS). Ignores an item World does not hold under <see cref="ItemState.Serial"/>, as Sync does.
+        /// </summary>
+        internal void CommitItem(Item item, in ItemState v)
+        {
+            if (item == null || item.IsDestroyed || !ReferenceEquals(_world.Items.Get(v.Serial), item))
+            {
+                return;
+            }
+
+            CommitObserver?.Invoke(item, v);
+            ItemMirrorWrites++;
+            Mirror.UpsertItem(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.Amount, v.Container, (byte)v.Layer, v.IsMulti);
+
+            // W5: corpses animate in World.Update (SyncItem does the same)
+            if (v.Graphic == 0x2006)
+            {
+                _world.QueueItemUpdate(item);
+            }
+        }
+
+        private void SyncItem(Item item)
+        {
+            // Only the instance World currently holds for this serial; stale or detached objects are ignored.
+            if (!ReferenceEquals(_world.Items.Get(item.Serial), item))
+            {
+                return;
+            }
+
+            ItemMirrorWrites++;
+            Mirror.UpsertItem
+            (
+                item.Serial,
+                item.Graphic,
+                item.Hue,
+                item.X,
+                item.Y,
+                item.Z,
+                (byte)item.Direction,
+                (byte)item.Flags,
+                item.Amount,
+                item.Container,
+                (byte)item.Layer,
+                item.IsMulti
+            );
+
+            // W5: corpses animate in World.Update; every item change reaches the mirror here
+            if (item.IsCorpse)
+            {
+                _world.QueueItemUpdate(item);
             }
         }
 
@@ -392,6 +471,8 @@ namespace ClassicUO.Game
 
         public void Update()
         {
+            FunnelCheck.LogSummary();
+
             if (MobileAnimationSystem.CacheCheck && Time.Ticks >= _cacheLogAt)
             {
                 _cacheLogAt = Time.Ticks + 5000;
@@ -741,5 +822,21 @@ namespace ClassicUO.Game
                 Log.Warn($"[ECS] mismatch: {message}");
             }
         }
+    }
+
+    /// <summary>
+    /// T1: the ECS-owned values of a world item as a funnel operation computed them. The operation writes the ECS
+    /// (<see cref="WorldEcs.CommitItem"/>) and the GameObject cache from this, never by reading one back from the other.
+    /// </summary>
+    internal struct ItemState
+    {
+        public uint Serial;
+        public ushort Graphic, Hue, X, Y, Amount;
+        public sbyte Z;
+        public Direction Direction;
+        public ClassicUO.Game.Data.Flags Flags;
+        public uint Container;
+        public Layer Layer;
+        public bool IsMulti;
     }
 }
