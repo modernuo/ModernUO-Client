@@ -157,6 +157,39 @@ Uo.Converter.exe --only gumps --gump-def gump-hued.def --out pack-hued   (hued g
 
 **In-client first open: plan mode `gumpopen`** (`g:gumpopen` with `CUO_BENCH_WINDOWS=4`; account with `[go`, it starts at Britain). Opens paperdoll, spellbook (gumps 0x08AC/0x08BA/0x08BB), status, backpack, world map, combat book and journal, one every 2.5 s, in a fresh client. `CUO_BENCH_GUMPOPEN="a;b;pics:2C00,067E"` sets the list (`pics:` = a plain gump of those pictures, prefetched like a server gump). Each open logs `[bench-gumpopen] <name>: worst frame … main-thread gump decodes N (ms), prefetched N (ms), open call ms, gumps open: …`. FrameStats counters `gump_sync`, `gump_sync_us`, `gump_async`, `gump_upload_us`, `gump_pending`.
 
+## 7. Text from the pack: fonts, cliloc, speech (added 2026-10-30, pack-text agent)
+
+Fonts, cliloc and speech come from `text/` when the pack has it (pack-format.md "Text"). Scratchpad `ptext\` (`run.py`, `aot.sh`, `pixdiff.py`).
+
+**Packs.** Until the main session regenerates `C:\Repositories\uo-packs\classic-1.0`, hard-link a copy as in §6 and add the text section:
+```
+cp -al /c/Repositories/uo-packs/classic-1.0 pack-text && rm pack-text/manifest.json && cp /c/Repositories/uo-packs/classic-1.0/manifest.json pack-text/
+Uo.Converter.exe --only fonts,cliloc,speech --out pack-text     (verify included)
+Uo.Converter.exe --only fonts,cliloc,speech --raw-text --out pack-rawtext   (every record uncompressed)
+(--cliloc-skip ext,ext drops Cliloc.* files by extension; --no-cliloc-overrides leaves the folder's Clilocs.txt out of the pack)
+```
+
+**Switches:**
+- `CUO_PACK_TEXT=0`: fonts.mul, unifont*.mul, Cliloc.* and speech.mul even when the pack has text (same binary, for paired runs). Either way glyphs load per page on first use and cliloc strings on first lookup; only the source differs.
+- `CUO_LOAD_MEM=1`: a full collection before the `[load]` log line, so its `GC heap` is what the loaders keep (adds a few ms to startup; don't time startup with it).
+
+**Log lines:**
+- `[load] <ms>, <KB> allocated, GC heap <KB> after: anims …ms/…KB … cliloc …ms/…KB fonts …ms/…KB speech …ms/…KB …`: every loader's time and allocation at startup.
+- `Fonts loaded in …`, `Cliloc loaded in … (pack|MUL, 'enu': N strings)`, `Speech: pack, N entries`.
+- In plan mode `gumpopen`, each step's line ends with `text: unicode pages read N (ms), ASCII fonts read N, cliloc strings created N (fonts pack|MUL, cliloc pack|MUL)`.
+
+**Unit tests** (`tests/ClassicUO.UnitTests/Assets/TextPackTests.cs`; the data tests need `CUO_TEST_TEXT_PACK=<pack with text>` or the main pack once it has text, and return early otherwise):
+- every ASCII glyph and every unicode glyph of all 20 font slots × 65,536 characters, pack against the MUL path (offsets, size, rows, existence);
+- text rendered by `GenerateUnicode` (6 style flags, every unicode font) and `GenerateASCII` (3 hues, every ASCII font) on 7 sample strings (Latin, accents, CJK, control characters, wrapping), and their widths;
+- glyph pages loaded from 8 threads in both paths;
+- every cliloc id of every language (the union of both paths' tables, plus absent ids and fallbacks); `Translate` with 5 kinds of argument on every string that has a `~` argument; strings created once from 8 threads;
+- every speech entry (id, keywords, start and end flags) and `GetKeywords` on every keyword alone and in a sentence;
+- untrusted input without data: malformed cliloc tables, pages and ASCII fonts rejected; corrupt font records (truncated, malformed, bad Brotli, a 1 GiB raw size) absent without throwing; a truncated store rejected; malformed speech tables rejected; the MUL cliloc index matches `ReadUTF8` on random records with NULs, short tails and negative lengths.
+
+**In-client first use: plan mode `gumpopen` with text steps** (`CUO_BENCH_GUMPOPEN="journal;allnames;tooltips;help"`, `CUO_BENCH_WINDOWS=4`; account with `[go`). `g:gumpopen` starts at Britain (2 mobiles); for a busy scene use `say:[TestScene go;g:lsgumpopen;say:[TestScene return` (the large-scale scene, Felucca, 1,985 mobiles; testing/large-scale.md). Steps: the journal, every name overhead (`allnames`: the server answers single clicks), the tooltips of the 40 nearest objects with properties rendered as `Tooltip.Draw` renders them, and the help gump (`help`: ModernUO's HelpGump, html with cliloc text). One every 2.5 s, in a fresh client.
+
+**Screenshots:** plan `brit:1495 1629:1;texts;shot:texts` (or the scene: `say:[TestScene go;ls:5156 2150:1;texts;shot:texts;say:[TestScene return`) with `CUO_BENCH_SHOTS=<dir>`, `CUO_BENCH_WINDOWS=1`: the journal, every name, the help gump and the nearest object's tooltip (the mouse is held on it, tooltip delay 0), then the world, UI and `_screen.png` shots (`_screen` is the composited back buffer, the only one with overhead text and the cursor tooltip). At Britain pack and MUL shots are pixel-identical. Compare a pack run with a `CUO_PACK_TEXT=0` run with `pixdiff.py`; live text (journal timestamps, moving NPCs' names) differs between runs, so look at the diff image too.
+
 ## Noise and false positives
 
 - Other agents' clients (AOT, GPU, ECS work) run on the same GPU and CPU; FPS and Present swing a lot between runs. Compare without-Present hitch counts and max across alternating runs, not single windows.

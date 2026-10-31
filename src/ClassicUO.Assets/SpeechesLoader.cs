@@ -2,12 +2,14 @@
 
 using ClassicUO.IO;
 using ClassicUO.Utility;
+using ClassicUO.Utility.Logging;
 using System;
 using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
 using System.Threading.Tasks;
+using Uo.Pack;
 
 namespace ClassicUO.Assets
 {
@@ -19,8 +21,56 @@ namespace ClassicUO.Assets
         {
         }
 
+        /// <summary>
+        /// Read the keyword table from the pack's text/speech.bin when it has one (set before <see cref="Load"/>).
+        /// CUO_PACK_TEXT=0 starts it false: speech.mul even with a text section.
+        /// </summary>
+        public bool UsePack = Environment.GetEnvironmentVariable("CUO_PACK_TEXT") != "0";
 
-        public override unsafe void Load()
+        /// <summary>True when the keyword table came from the pack.</summary>
+        public bool FromPack { get; private set; }
+
+        /// <summary>The keyword entries, in file order (tests).</summary>
+        public SpeechEntry[] Entries => _speech;
+
+        public override void Load()
+        {
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            string packPath = UsePack ? FileManager.Pack?.PathOf(TextConst.SpeechFile) : null;
+            FromPack = false;
+
+            if (packPath != null && File.Exists(packPath))
+            {
+                try
+                {
+                    var texts = SpeechFile.Read(packPath);
+                    var entries = new SpeechEntry[texts.Length];
+
+                    for (int i = 0; i < texts.Length; i++)
+                    {
+                        entries[i] = new SpeechEntry(texts[i].Id, texts[i].Text);
+                    }
+
+                    _speech = entries;
+                    FromPack = true;
+                    Log.Trace($"Speech: pack, {entries.Length} entries in {System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds:0.0} ms");
+
+                    return;
+                }
+                catch (Exception e) when (e is IOException || e is InvalidDataException || e is UnauthorizedAccessException)
+                {
+                    Log.Error($"Speech: '{packPath}' is invalid ({e.Message}); reading speech.mul");
+                }
+            }
+            else if (FileManager.Pack != null)
+            {
+                Log.Trace(UsePack ? "Speech: the pack has no speech table; reading speech.mul" : "Speech: CUO_PACK_TEXT=0; reading speech.mul");
+            }
+
+            LoadMul();
+        }
+
+        private void LoadMul()
         {
             string path = FileManager.GetUOFilePath("speech.mul");
 

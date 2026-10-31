@@ -19,7 +19,8 @@ namespace ClassicUO.Renderer.Texmaps
             _texmapsLoader = texmapsLoader;
             _atlas = new TextureAtlas(device, 2048, 2048, SurfaceFormat.Color);
             _spriteInfos = new SpriteInfo[texmapsLoader.Count];
-            _decoder = new FirstSightDecoder("texmap", _spriteInfos.Length, DecodeOnWorker, UploadDecoded);
+            _decoder = new FirstSightDecoder("texmap", _spriteInfos.Length, DecodeOnWorker, UploadDecoded,
+                idx => _texmapsLoader.Exists((int)idx) ? DecodeBudget.PooledBytes(_texmapsLoader.PackSpriteEntries[idx].OrigW * _texmapsLoader.PackSpriteEntries[idx].OrigH) : 0L);
         }
 
         /// <summary>Worker decodes requested and not uploaded yet.</summary>

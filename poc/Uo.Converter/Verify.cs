@@ -13,7 +13,7 @@ public static class Verify
     public static HashSet<string>? Only;
     private static bool Want(string stage) => Only == null || Only.Contains(stage);
 
-    private static void Fail(string msg)
+    public static void Fail(string msg)
     {
         if (Interlocked.Increment(ref _errors) <= 30) Console.WriteLine("  FAIL " + msg);
     }
@@ -75,6 +75,9 @@ public static class Verify
 
         if (Want("anims") && File.Exists(Path.Combine(outDir, "anim", AnimTableFile.FileName))) CheckAnim(fm, Path.Combine(outDir, "anim"));
         if (Want("gumps") && File.Exists(Path.Combine(outDir, StoreConst.GumpsFile))) CheckGumps(fm, outDir);
+        if (Want("fonts") && File.Exists(Path.Combine(outDir, TextConst.AsciiFontsFile))) TextConvert.VerifyFonts(fm, outDir);
+        if (Want("cliloc") && File.Exists(Path.Combine(outDir, TextConst.ClilocFile))) TextConvert.VerifyCliloc(fm, outDir);
+        if (Want("speech") && File.Exists(Path.Combine(outDir, TextConst.SpeechFile))) TextConvert.VerifySpeech(fm, outDir);
         if (!File.Exists(Path.Combine(outDir, "tiledata.bin")))
         {
             Console.WriteLine(_errors == 0 ? "  all checks passed" : $"  {_errors} errors");
