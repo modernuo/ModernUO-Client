@@ -354,6 +354,12 @@ namespace ClassicUO.Game
 
                     return false;
 
+                // aura <0-3>: the profile's aura under feet (3 = always; E12 checks that the probe pass doesn't draw them)
+                case "aura" when args.Length > 0 && ProfileManager.CurrentProfile is { } auraProfile:
+                    auraProfile.AuraUnderFeetType = Convert.ToInt32(args[0]);
+
+                    return false;
+
                 // equip: logs the player's worn items (to check that a scenario cleaned up after itself)
                 case "equip":
                     for (Layer l = Layer.OneHanded; l <= Layer.Bank; l++)

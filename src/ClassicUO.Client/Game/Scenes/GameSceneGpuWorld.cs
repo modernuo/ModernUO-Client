@@ -463,9 +463,14 @@ namespace ClassicUO.Game.Scenes
 
             int deferred = _renderLists.DrawDeferredRenderLists(batcher, _maxGroundZ, gpu);
 
-            if (_gpuItemCheckSame && _gpuProbeValid)
+            if (_gpuItemCheckSame)
             {
-                GpuItemProbeCompare(gpu);
+                if (_gpuProbeValid)
+                {
+                    GpuItemProbeCompare(gpu);
+                }
+
+                GpuItemCheckReport();
             }
 
             _world.Weather.Draw(batcher, 0, 0, MAX_LAYER_DEPTH - 1);

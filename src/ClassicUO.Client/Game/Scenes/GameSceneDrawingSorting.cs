@@ -252,6 +252,11 @@ namespace ClassicUO.Game.Scenes
 
                     if (testGraphic == graphic && obj.Z == z)
                     {
+                        if (_gpuItemCheckSame && _gpuItemPass == 1)
+                        {
+                            GpuProbeFoliageStamp(obj);
+                        }
+
                         obj.FoliageIndex = FoliageIndex;
                     }
                 }
@@ -330,6 +335,11 @@ namespace ClassicUO.Game.Scenes
                             index = FoliageIndex;
                             IsFoliageUnion(obj.Graphic, obj.X, obj.Y, obj.Z);
                         }
+                    }
+
+                    if (_gpuItemCheckSame && _gpuItemPass == 1)
+                    {
+                        GpuProbeFoliageStamp(obj);
                     }
 
                     obj.FoliageIndex = index;
@@ -424,6 +434,11 @@ namespace ClassicUO.Game.Scenes
                 && !ProfileManager.CurrentProfile.UseObjectsFading
             )
             {
+                if (_gpuItemCheckSame && alphaHue != maxAlpha)
+                {
+                    _gpuAlphaSteps++;
+                }
+
                 alphaHue = (byte)maxAlpha;
 
                 return maxAlpha != 0;
@@ -457,6 +472,11 @@ namespace ClassicUO.Game.Scenes
             }
 
             alphaHue = (byte)alpha;
+
+            if (_gpuItemCheckSame && result)
+            {
+                _gpuAlphaSteps++;
+            }
 
             return result;
         }

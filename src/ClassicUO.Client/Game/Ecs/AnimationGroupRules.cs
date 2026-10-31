@@ -85,6 +85,39 @@ namespace ClassicUO.Game
         /// changes every frame, so MobileFrameCache never reuses it.</summary>
         public static uint RandomRolls;
 
+        /// <summary>E12 (CUO_GPU_ITEM_CHECK): 0 = roll, 1 = roll and record each roll in <see cref="RollTape"/> (the probe
+        /// pass), 2 = replay the tape (the reference pass, which is drawn): the global random state advances once per check
+        /// frame, as on a normal frame, and both passes see the same choices. A replay that runs past the tape rolls and
+        /// counts it in <see cref="RollTapeShort"/>.</summary>
+        internal static int RollMode;
+        internal static System.Collections.Generic.List<int> RollTape;
+        internal static int RollTapeAt, RollTapeShort;
+
+        internal static int Roll()
+        {
+            if (RollMode == 0)
+            {
+                return RandomHelper.GetValue();
+            }
+
+            if (RollMode == 2)
+            {
+                if (RollTapeAt < RollTape.Count)
+                {
+                    return RollTape[RollTapeAt++];
+                }
+
+                RollTapeShort++;
+
+                return RandomHelper.GetValue();
+            }
+
+            int value = RandomHelper.GetValue();
+            RollTape.Add(value);
+
+            return value;
+        }
+
         private static readonly ushort[] HANDS_BASE_ANIMID =
         {
             0x0263,
@@ -252,7 +285,7 @@ namespace ClassicUO.Game
                         }
                         else
                         {
-                            v13 = (ushort)(6 - (RandomHelper.GetValue() % 2 != 0 ? 1 : 0));
+                            v13 = (ushort)(6 - (Roll() % 2 != 0 ? 1 : 0));
                             RandomRolls++;
                         }
 
