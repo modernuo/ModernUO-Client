@@ -42,6 +42,7 @@ Newest at the bottom. Each item says what I did meanwhile.
 
 ## Decisions you made tonight (recorded in README "Decisions so far" and in memory)
 
+- **Several clients at once is a requirement** (2026-10-30): players run 3–4 clients, and problems have appeared with 3 or more. No instance may corrupt or block another (profiles, settings, logs, packs), and per-instance memory must suit 4 instances. The static chunk pool you asked about was upstream (in `Chunk.cs` since 2023) and can't affect separate instances: each client is its own process. Recorded in README "Decisions so far".
 - **Legacy is a developer-only comparison mode** (2026-10-24). There's no automatic fallback to it. It's kept mainly to catch Gpu bugs, and it will be deleted once parity uses saved reference shots. *Implemented in a6110f967.*
 - **SDL fork:** agents may push fixes to github.com/modernuo/SDL without asking first. The client may build SDL3.dll from the fork. Upstream (libsdl-org) contributions stay forbidden. *In progress (page-fault agent).*
 - **Keep Legacy for now** (2026-10-25, after your FPS test): it may be the low-end-hardware path. Delete it only once the supported hardware range is decided. The Legacy regression is therefore being fixed, not just explained.
@@ -119,11 +120,12 @@ Newest at the bottom. Each item says what I did meanwhile.
 
 ## In progress
 
-- **E12: same-frame item checker** (`bg/ecs-e12-checker`, Sonnet): built and verified; NativeAOT timing, then a Codex audit.
-- **Text into the pack** (`poc/pack-text`, Opus): done by the agent (startup text loaders 55 → 3 ms, heap −28 MB, exact parity, screenshots identical); in Codex audit.
-- **In-flight decode cap** (`poc/decode-inflight-cap`, Sonnet): measure the peak bytes held by worker decodes during teleports, then a byte budget that never drops requests.
-- **Chunk pool per World** (`poc/chunk-pool-per-world`, Sonnet): the pools filled at login belong to the World that uses them and are freed with it.
-- All agents share a `bench.lock`, so client runs, builds and timing series never overlap.
+- **E12: same-frame item checker** (`bg/ecs-e12-checker`): the Codex audit found that the probe pass is not side-effect isolated. Two paths can change the drawn frame: auras draw outside the capture, and world-renderer overrides get applied twice. There are also cases where the checker reports a difference that isn't there, or misses one that is. So its "0 differences" isn't proof yet. A fresh agent is fixing the two drawn-frame paths, and either fixing the checker cases or reporting those frames as partially checked.
+- **T1: the mutation funnel** (`bg/ecs-t1-funnel`, new): the `WorldWriter` API, `CUO_FUNNEL_CHECK`, and the world-items packet group first; the other groups follow in later agents.
+- **Text into the pack** (`poc/pack-text`): fixing the Codex findings (P1: a font record the pack accepts can crash rendering); adding cliloc overrides (a packed binary override, with a loose `Clilocs.txt` winning); measuring block-compressed cliloc (measurement only, you decide).
+- **In-flight decode cap** (`poc/decode-inflight-cap`): a 16 MiB cap as a safety net (the measured peak is about 7.3 MiB); paired timing running.
+- **Chunk pool per World** (`poc/chunk-pool-per-world`): fixes a latent upstream bug where a second World reused the first World's chunks; relog series running.
+- **Job runner:** client runs and timing series now go through `rf-agent job` (v0.1.49, resource `bench`), one at a time under `bench.lock`. The old scratch queue finishes its last jobs and is then retired.
 
 ## Things you saw tonight, explained
 
@@ -135,6 +137,7 @@ Newest at the bottom. Each item says what I did meanwhile.
 
 ## Follow-ups noted (not started)
 
+- **Multi-instance audit** (your requirement, 2026-10-30): find and fix everything several clients share on one machine. First: **profiles and settings shared across instances** (read/write races: two clients saving the same profile, one reading while another writes, lost or torn files); then logs, journal logs, screenshot names, any cache files, the pack opened read-only with shared access, a pack regenerated while clients run, and per-instance memory/GPU with 4 clients (prefill pools, GC heaps). Method: run 4 clients through the job runner and check each shared file's open modes and write patterns (atomic write-and-rename, per-instance names or locking).
 - **Static Chunk pool is not per World** (login warm-up audit): the pool filled at login outlives a World. Also, Legacy `MeshLayer` arrays keep growing in reused chunks (0.3–1 MB per 5 s while teleporting).
 - **`Chunk.Destroy` called twice queues the chunk twice** (chunk-load audit; predates it). Harmless for map objects today.
 - **Ground-item and multi art still decodes on the main thread** in the draw walk on first sight (about 2.6–3.0 ms in one teleport window per run).
