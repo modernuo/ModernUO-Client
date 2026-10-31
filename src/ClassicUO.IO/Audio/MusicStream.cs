@@ -29,6 +29,7 @@ namespace ClassicUO.IO.Audio
         private readonly Dictionary<byte[], int> _lengths = new Dictionary<byte[], int>(ReferenceEqualityComparer.Instance);
         private Mp3Decoder _decoder;
         private int _allocated;
+        private volatile int _loops;
         private volatile bool _cancelled, _opened, _failed, _ended;
 
         public MusicStream(string path, string name, bool loop)
@@ -55,6 +56,9 @@ namespace ClassicUO.IO.Audio
         public int Channels { get; private set; }
         public double OpenMilliseconds { get; private set; }
         public int ReadyCount => _ready.Count;
+
+        /// <summary>How many times a looping track wrapped to its start.</summary>
+        public int Loops => _loops;
 
         /// <summary>Game thread: next decoded buffer and its byte length, or false if none is ready.</summary>
         public bool TryDequeue(out byte[] buffer, out int bytes)
@@ -195,6 +199,7 @@ namespace ClassicUO.IO.Audio
                 }
 
                 justSeeked = true;
+                _loops++;
             }
 
             return got;
