@@ -83,15 +83,8 @@ public sealed unsafe class WorldRenderer : IDisposable
     TransRun[] _transRuns;
     int _transCount;
 
-    struct PendingOverride
-    {
-        public int X, Y, Z, Graphic;
-        public bool IsStatic;
-        public uint Value;
-    }
-
-    readonly PendingOverride[] _pending;
-    int _pendingCount;
+    // not readonly: a mutable struct
+    PendingOverrideQueue _pending;
 
     // per-frame uniforms set by the host (cleared after Render)
     int _maxZ, _maxGroundZ;
@@ -171,7 +164,7 @@ public sealed unsafe class WorldRenderer : IDisposable
         _transRuns = new TransRun[_trans.Length];
         _ovTable = new OverrideEntry[Math.Max(1, renderer.OverrideSlots)];
         _ovUsed = new int[_ovTable.Length];
-        _pending = new PendingOverride[Math.Max(1, renderer.OverrideSlots / 2)];
+        _pending = new PendingOverrideQueue(renderer.OverrideSlots / 2);
         _lastTicks = Stopwatch.GetTimestamp();
     }
 
@@ -372,12 +365,11 @@ public sealed unsafe class WorldRenderer : IDisposable
     {
         bool keep = alpha < 0;
         if (keep && !hidden && highlightHue == 0 && !forceShow) return;
-        if (_pendingCount >= _pending.Length) { _droppedPending++; return; }
         uint a = keep ? 255u : (uint)Math.Min(alpha, 255);
         uint flags = (hidden || a == 0 ? OverrideEntry.Hidden : 0) | (highlightHue != 0 ? OverrideEntry.Highlight : 0)
             | (forceShow ? OverrideEntry.ForceShow : 0) | (keep ? OverrideEntry.KeepAlpha : 0);
         uint hueRow = highlightHue != 0 ? (uint)(highlightHue - 1) : 0;
-        _pending[_pendingCount++] = new PendingOverride { X = x, Y = y, Z = z, Graphic = graphic, IsStatic = isStatic, Value = a | flags << 8 | hueRow << 16 };
+        _pending.Add(new PendingOverrideQueue.Entry { X = x, Y = y, Z = z, Graphic = graphic, IsStatic = isStatic, Value = a | flags << 8 | hueRow << 16 });
     }
 
     /// <summary>A baked instance's alpha under an override value (sprite.hlsl: the override's alpha replaces the baked one
@@ -388,7 +380,14 @@ public sealed unsafe class WorldRenderer : IDisposable
         return (f & OverrideEntry.Hidden) != 0 ? 0 : (f & OverrideEntry.KeepAlpha) != 0 ? inst.Alpha : (int)(value & 0xFF);
     }
 
-    int _droppedPending;
+    /// <summary>E12 (CUO_GPU_ITEM_CHECK): the overrides queued for the next Render so far (read only).</summary>
+    public ref readonly PendingOverrideQueue PendingOverrides => ref _pending;
+
+    /// <summary>E12: a checkpoint of the queued overrides, for <see cref="RestorePendingOverrides"/>.</summary>
+    public PendingOverrideQueue.Mark MarkPendingOverrides() => _pending.GetMark();
+
+    /// <summary>E12: forgets the overrides queued since <paramref name="mark"/> (and their drops).</summary>
+    public void RestorePendingOverrides(PendingOverrideQueue.Mark mark) => _pending.Restore(mark);
 
     // ---- render
 
@@ -432,7 +431,7 @@ public sealed unsafe class WorldRenderer : IDisposable
         if (!_prepared) throw new InvalidOperationException("Prepare before Render");
         int chunkCount = _chunkCount, instances = _instances;
         _transCount = 0;
-        OverridesDropped = _droppedPending;
+        OverridesDropped = _pending.Dropped;
         CotRingCount = 0;
         bool cot = _cotR > 0;
         if (cot)
@@ -470,7 +469,7 @@ public sealed unsafe class WorldRenderer : IDisposable
         OverridesApplied = 0; OverridesMissed = 0;
         Span<int> locals = stackalloc int[8];
         uint mask = (uint)(_ovTable.Length - 1);
-        for (int p = 0; p < _pendingCount; p++)
+        for (int p = 0; p < _pending.Count; p++)
         {
             ref readonly var po = ref _pending[p];
             int n = Chunks.FindObject(po.X, po.Y, po.IsStatic, po.Z, po.Graphic, out int slot, locals);
@@ -675,8 +674,7 @@ public sealed unsafe class WorldRenderer : IDisposable
         bool ok = Renderer.RenderFrame(ref fi);
         for (int i = 0; i < _ovUsedCount; i++) _ovTable[_ovUsed[i]] = default;
         _ovUsedCount = 0;
-        _pendingCount = 0;
-        _droppedPending = 0;
+        _pending.Clear();
         _dynCount = 0;
         _zFlags = 0;
         _cotR = 0;
