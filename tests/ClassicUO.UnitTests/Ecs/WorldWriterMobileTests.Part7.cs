@@ -5,6 +5,7 @@ using ClassicUO.Ecs;
 using ClassicUO.Game;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
+using ClassicUO.Game.Managers;
 using FluentAssertions;
 using EcsEntity = Friflo.Engine.ECS.Entity;
 using Xunit;
@@ -573,6 +574,154 @@ namespace ClassicUO.UnitTests.Ecs
             newWorld.Ecs.IsFolding.Should().BeFalse();
         }
 
+        // ---- group 4: the per-frame offset interpolation between steps (Mobile.ProcessSteps' walk offset, BoatMovingManager's
+        // boat offset, its components' and its passengers'). ProcessSteps needs Client.Game (its frame delay): its offset
+        // writes are compared here as the operation it now calls; the boat runs the real manager against OldBoat
+
+        internal static void OldInterpolateStep(Mobile m, sbyte x, sbyte y, sbyte z)
+        {
+            m.OffsetZ = z;
+            m.OffsetX = x;
+            m.OffsetY = y;
+        }
+
+        [Theory]
+        [InlineData(Start.Standing)]
+        [InlineData(Start.Walking)]
+        [InlineData(Start.DestroyedHeld)]
+        public void InterpolateStep_Equals_The_Old_Walk_Offset(Start start)
+        {
+            World oldWorld = Build(start), newWorld = Build(start);
+            newWorld.Writer.ThrowOnViolation = true;
+            Mobile a = oldWorld.Mobiles.Get(MOB), b = newWorld.Mobiles.Get(MOB);
+            long clocks = newWorld.Ecs.ClockWrites;
+
+            foreach ((sbyte x, sbyte y, sbyte z) in new (sbyte, sbyte, sbyte)[] { (4, -2, 1), (-22, 11, -3), (0, 0, 0), (9, 9, 0) })
+            {
+                Pair(() => OldInterpolateStep(a, x, y, z), () => newWorld.Writer.InterpolateStep(b, x, y, z));
+                AssertSameWorld(oldWorld, newWorld);
+                (b.OffsetX, b.OffsetY, b.OffsetZ).Should().Be(((float)x, (float)y, (float)z));
+                b.Offset.Should().Be(a.Offset);
+            }
+
+            (newWorld.Ecs.ClockWrites - clocks).Should().Be(0);
+            newWorld.Writer.Violations.Should().Be(0);
+            newWorld.Writer.InScope.Should().BeFalse();
+            newWorld.Ecs.IsFolding.Should().BeFalse();
+        }
+
+        private static House AddBoatHouse(World world)
+        {
+            var house = new House(world, BOAT, 1, false);
+
+            for (int i = 0; i < 3; i++)
+            {
+                var c = new Multi(world);
+                c.Offset = new Microsoft.Xna.Framework.Vector3(i, -i, 0);
+                house.Components.Add(c);
+            }
+
+            world.HouseManager.Add(BOAT, house);
+
+            return house;
+        }
+
+        [Fact]
+        public void The_Boat_Offsets_With_A_House_Equal_The_Old_Path()
+        {
+            World oldWorld = BuildBoat(Start.Standing), newWorld = BuildBoat(Start.Standing);
+            newWorld.Writer.ThrowOnViolation = true;
+            House oldHouse = AddBoatHouse(oldWorld), newHouse = AddBoatHouse(newWorld);
+            var old = new OldBoat(oldWorld);
+            BoatMovingManager boats = newWorld.BoatMovingManager;
+
+            void Both(Action<OldBoat> o, Action<BoatMovingManager> n, uint ticks)
+            {
+                Time.Ticks = ticks;
+                Pair(() => o(old), () => n(boats));
+                Time.Ticks = NOW;
+                AssertSameWorld(oldWorld, newWorld);
+
+                foreach (uint serial in new[] { BOAT, MOB, BAG })
+                {
+                    BoatSnapshot(newWorld, serial).Should().Be(BoatSnapshot(oldWorld, serial), $"0x{serial:X8} at {ticks}");
+                }
+
+                newHouse.Components.Select(c => c.Offset).Should().Equal(oldHouse.Components.Select(c => c.Offset), $"components at {ticks}");
+            }
+
+            // a step north-east with both passengers; three frames mid-step (no step completes: a completion regenerates the
+            // house, which needs the multi data), then the reset
+            Both(o => o.AddStep(BOAT, 1001, 999, 2, Direction.Right), n => n.AddStep(BOAT, 3, Direction.Right, Direction.Right, 1001, 999, 2), NOW + 100);
+            Both(o => { o.PushItemToList(MOB, 1, 0, -2); o.PushItemToList(BAG, -1, 1, 0); }, n => { n.PushItemToList(BOAT, MOB, 1, 0, -2); n.PushItemToList(BOAT, BAG, -1, 1, 0); }, NOW + 100);
+
+            foreach (uint t in new uint[] { 150, 260, 410 })
+            {
+                Both(o => o.Update(BOAT), n => n.Update(), NOW + t);
+            }
+
+            Microsoft.Xna.Framework.Vector3 mid = newWorld.Items.Get(BOAT).Offset;
+            mid.Should().NotBe(default(Microsoft.Xna.Framework.Vector3), "mid-step");
+            newHouse.Components.Should().OnlyContain(c => c.Offset == mid);
+            newWorld.Mobiles.Get(MOB).Offset.Should().Be(mid);
+            Both(o => o.ClearSteps(BOAT), n => n.ClearSteps(BOAT), NOW + 450);
+            newWorld.Writer.Violations.Should().Be(0);
+            newWorld.Writer.InScope.Should().BeFalse();
+        }
+
+        [Fact]
+        public void The_Offset_Operations_Write_A_Stale_Walker_And_Reject_Another_Worlds()
+        {
+            foreach (bool throws in new[] { true, false })
+            {
+                World world = BuildBoat(Start.Standing), other = BuildBoat(Start.Standing);
+                world.Writer.ThrowOnViolation = throws;
+
+                // ProcessSteps passes what the update loops iterate: a stale instance of this World is written as before T1
+                Mobile stale = Mobile.Create(world, MOB);
+                world.Writer.InterpolateStep(stale, 3, 4, 5);
+                stale.Offset.Should().Be(new Microsoft.Xna.Framework.Vector3(3, 4, 5));
+                world.Writer.Violations.Should().Be(0);
+
+                Mobile foreign = other.Mobiles.Get(MOB);
+                Item foreignBoat = other.Items.Get(BOAT);
+                House foreignHouse = AddBoatHouse(other);
+                Mobile strangerOnDeck = Mobile.Create(world, OTHER);
+
+                foreach (Action act in new Action[]
+                {
+                    () => world.Writer.InterpolateStep(foreign, 1, 2, 3),
+                    () => world.Writer.InterpolateBoat(foreignBoat, 1, 2, 3),
+                    () => world.Writer.FollowBoatComponents(foreignBoat, foreignHouse),
+                    () => world.Writer.FollowBoat(foreign, new Microsoft.Xna.Framework.Vector3(1, 2, 3)),
+                    () => world.Writer.FollowBoat(strangerOnDeck, new Microsoft.Xna.Framework.Vector3(1, 2, 3))
+                })
+                {
+                    if (throws)
+                    {
+                        act.Should().Throw<ArgumentException>();
+                    }
+                    else
+                    {
+                        act();
+                    }
+                }
+
+                (foreign.Offset, foreignBoat.Offset, strangerOnDeck.Offset).Should().Be((default(Microsoft.Xna.Framework.Vector3), default(Microsoft.Xna.Framework.Vector3), default(Microsoft.Xna.Framework.Vector3)));
+                foreignHouse.Components.Select(c => c.Offset.X).Should().Equal(0f, 1f, 2f);
+                world.Writer.Violations.Should().Be(5);
+            }
+
+            World w = BuildBoat(Start.Standing);
+            w.Writer.ThrowOnViolation = false;
+            w.Ecs.BeginFold(w.Mobiles.Get(OTHER));
+            w.Writer.InterpolateStep(w.Mobiles.Get(MOB), 1, 1, 1);
+            w.Writer.InterpolateBoat(w.Items.Get(BOAT), 1, 1, 1);
+            w.Ecs.EndFold(w.Mobiles.Get(OTHER));
+            (w.Mobiles.Get(MOB).Offset, w.Items.Get(BOAT).Offset).Should().Be((default(Microsoft.Xna.Framework.Vector3), default(Microsoft.Xna.Framework.Vector3)), "a nested call is rejected");
+            w.Writer.Violations.Should().Be(2);
+        }
+
         // ---- the timer helpers against explicit expected states (Codex audit of part 7, P3 #1: the two-world test above no
         // longer shares them, and these pin what they read and write)
 
@@ -819,6 +968,35 @@ namespace ClassicUO.UnitTests.Ecs
 
             (m.Name, bag.Name, bag.Price, m.SpeedMode, m.IsDead, bag.Container).Should().Be(("m", "bag", 5u, CharacterSpeedType.CantRun, true, 0x4000_7302u));
             FunnelCheck.Total.Should().Be(0, "0x98 and the other name writers, 0x74's price, 0xBF.26, 0x72, 0xBF.19's dead flag, 0x89, 0xAF's re-key, the frame advance and the corpse animation's end");
+        }
+
+        [Fact]
+        public void The_Offset_Interpolation_Makes_No_Direct_Writes()
+        {
+            if (!FunnelCheck.Available)
+            {
+                return;
+            }
+
+            Time.Ticks = 100_000;
+            var world = new World();
+            Mobile m = world.GetOrCreateMobile(0x0000_3300);
+            m.Graphic = 0x190;
+            m.SetInWorldTile(1000, 1000, 0);
+            Item boat = world.GetOrCreateItem(0x4000_7400);
+            boat.Graphic = 0x3E4E;
+            boat.SetInWorldTile(1001, 1000, 0);
+            var house = new House(world, boat.Serial, 1, false);
+            house.Components.Add(new Multi(world));
+            FunnelCheck.Reset();
+
+            world.Writer.InterpolateStep(m, 5, -5, 1);
+            world.Writer.InterpolateBoat(boat, 2, 3, 0);
+            world.Writer.FollowBoatComponents(boat, house);
+            world.Writer.FollowBoat(m, boat.Offset);
+
+            (m.Offset, house.Components[0].Offset).Should().Be((boat.Offset, boat.Offset));
+            FunnelCheck.Total.Should().Be(0, "ProcessSteps' walk offset, the boat's offset, its components' and its passengers'");
         }
     }
 }

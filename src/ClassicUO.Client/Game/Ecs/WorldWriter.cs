@@ -2193,6 +2193,97 @@ namespace ClassicUO.Game
             }
         }
 
+        // ---- funnel part 7, group 4: the per-frame offset interpolation between steps (Mobile.ProcessSteps,
+        // BoatMovingManager.Update). Each runs the old writes in their old order inside a scope that owns the object,
+        // unfolded and committing nothing: an offset is not a record field and no input (the ECS sprite extract reads the
+        // object's offset each frame), so nothing is pushed, as before T1. The caller computes the values from its step, as
+        // the old code did (the frame delay, the step's timing and MovementSpeed.GetPixelOffset stay with the step's owner).
+
+        /// <summary>
+        /// <c>Mobile.ProcessSteps</c> between two steps: the walk offset toward the front step, <c>OffsetZ</c>, then
+        /// <c>OffsetX</c> and <c>OffsetY</c>, the casts' values. Called per frame from the update loops with the instance they
+        /// iterate: admission as <see cref="CompleteStep"/> (an instance this World does not hold for its serial is written
+        /// as before T1; only an instance of another World is a violation, rejected: nothing changes).
+        /// </summary>
+        public void InterpolateStep(Mobile mobile, sbyte x, sbyte y, sbyte z)
+        {
+            if (mobile == null || !Admitted(nameof(InterpolateStep), mobile.Serial))
+            {
+                return;
+            }
+
+            if (mobile.World != _world)
+            {
+                Reject(Violation.NotHeld, $"WorldWriter.InterpolateStep: 0x{mobile.Serial:X8} belongs to another World", rejected: true);
+
+                return;
+            }
+
+            using (Open(mobile, null))
+            {
+                mobile.OffsetZ = z;
+                mobile.OffsetX = x;
+                mobile.OffsetY = y;
+            }
+        }
+
+        /// <summary>
+        /// <c>BoatMovingManager.Update</c> between two boat steps: the boat's offset toward the front step, <c>OffsetZ</c>,
+        /// then <c>OffsetX</c> and <c>OffsetY</c>. Rejections as <see cref="CompleteBoatStep"/>.
+        /// </summary>
+        public void InterpolateBoat(Item boat, sbyte x, sbyte y, sbyte z)
+        {
+            if (boat == null || !Admitted(nameof(InterpolateBoat), boat.Serial) || !Accepted(boat, nameof(InterpolateBoat)))
+            {
+                return;
+            }
+
+            using (Open(boat, null))
+            {
+                boat.OffsetZ = z;
+                boat.OffsetX = x;
+                boat.OffsetY = y;
+            }
+        }
+
+        /// <summary>
+        /// <c>BoatMovingManager.Update</c> while a boat step is under way: each component of the boat's multi
+        /// (<paramref name="house"/>, the boat's own; its components are not world objects of their own) takes the boat's
+        /// offset, in the components' order. Rejections as <see cref="CompleteBoatStep"/>.
+        /// </summary>
+        public void FollowBoatComponents(Item boat, House house)
+        {
+            if (boat == null || house == null || !Admitted(nameof(FollowBoatComponents), boat.Serial) || !Accepted(boat, nameof(FollowBoatComponents)))
+            {
+                return;
+            }
+
+            using (Open(boat, null))
+            {
+                foreach (Multi c in house.Components)
+                {
+                    c.Offset = boat.Offset;
+                }
+            }
+        }
+
+        /// <summary>
+        /// <c>BoatMovingManager.UpdateEntitiesInside</c> while a boat step is under way: an item or mobile on the boat takes
+        /// the boat's offset <paramref name="offset"/>. Rejections as <see cref="MoveBoatPassenger"/>.
+        /// </summary>
+        public void FollowBoat(Entity passenger, Microsoft.Xna.Framework.Vector3 offset)
+        {
+            if (passenger == null || !Admitted(nameof(FollowBoat), passenger.Serial) || !Accepted(passenger, nameof(FollowBoat)))
+            {
+                return;
+            }
+
+            using (Open(passenger, null))
+            {
+                passenger.Offset = offset;
+            }
+        }
+
         /// <summary>
         /// 0xBF.1B (new spellbook content): finds or creates the spellbook, writes its graphic, empties its child list and
         /// syncs it (as before T1: unfolded, the old Sync), then links one detached entry per known spell (bit i of
