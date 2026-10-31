@@ -793,16 +793,18 @@ public sealed unsafe class WorldRenderer : IDisposable
 
     /// <summary>Drains the GPU, then disposes the workers, page residencies and owned renderer. A failed drain (device
     /// lost) doesn't skip the rest: the renderer's Dispose still releases the copy fences; the first failure is rethrown
-    /// afterwards (<see cref="Teardown"/>).</summary>
+    /// afterwards (<see cref="Teardown"/>). One-shot: a second call, even after the first one threw, does nothing.</summary>
     public void Dispose()
     {
         var renderer = Renderer;
         var anim = AnimPages;
-        Teardown.Run("world renderer dispose",
+        Teardown.Once(ref _disposed, "world renderer dispose",
             renderer.DrainInFlight,
             _ownsWorkers ? Workers.Dispose : null,
             Pages.Dispose,
             anim != null ? anim.Dispose : null,
             _ownsRenderer ? renderer.Dispose : null);
     }
+
+    int _disposed;
 }

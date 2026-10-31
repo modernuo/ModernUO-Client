@@ -339,6 +339,53 @@ namespace ClassicUO.UnitTests.Renderer
             gpu.Released.Should().Equal(f1, f2);
         }
 
+        // Codex round 2: GpuWorldRenderer's facet-rebuild catch disposed the same world again after its drain threw, and
+        // the second pass released the pages' transfer buffers and the renderer's fences a second time. WorldRenderer
+        // needs a device, so this fake runs the same steps through the same seam (Teardown.Once, as WorldRenderer.Dispose
+        // does); the renderer step releases the tracker's fences like Renderer.Dispose.
+        sealed class FakeWorld
+        {
+            int _disposed;
+            public int Drains, Workers, Pages, Renderers;
+            public CopyRetirement Retire;
+
+            public bool Dispose() => Teardown.Once(ref _disposed, "world renderer dispose",
+                () => { Drains++; throw new GpuFenceException("drain in-flight frames: GPU wait failed: device lost"); },
+                () => Workers++,
+                () => Pages++,
+                null,
+                () => { Renderers++; Retire.Dispose(); });
+        }
+
+        [Fact]
+        public void A_retried_world_disposal_after_a_failed_drain_releases_nothing_twice()
+        {
+            var gpu = new FakeGpu();
+            var retire = gpu.Tracker();
+            var slots = new StagingSlots(2) { Retire = retire };
+            slots.Copied(0);
+            SubmitFrame(retire, gpu, fails: false, out var f1);
+            slots.Copied(1);
+            SubmitFrame(retire, gpu, fails: false, out var f2);
+            f1.Should().NotBe(IntPtr.Zero);
+            var world = new FakeWorld { Retire = retire };
+
+            Action first = () => world.Dispose();
+            first.Should().Throw<GpuFenceException>("the drain failure is reported once cleanup ran");
+            world.Workers.Should().Be(1);
+            world.Pages.Should().Be(1);
+            world.Renderers.Should().Be(1);
+
+            // the caller's catch retries (as GpuWorldRenderer's did): a no-op, not a second release of freed handles
+            world.Dispose().Should().BeFalse();
+            world.Dispose().Should().BeFalse();
+            world.Drains.Should().Be(1);
+            world.Workers.Should().Be(1);
+            world.Pages.Should().Be(1);
+            world.Renderers.Should().Be(1);
+            gpu.Released.Should().Equal(f1, f2);
+        }
+
         [Fact]
         public void Without_a_tracker_every_slot_is_reusable_and_maps_with_cycling()
         {
