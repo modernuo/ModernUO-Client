@@ -1334,6 +1334,162 @@ namespace ClassicUO.UnitTests.Ecs
             }
         }
 
+        // ---- T1 funnel-2: 0x27's other deny branches (paperdoll, the "something wrong" removal, terrain)
+
+        internal struct HeldPacket
+        {
+            public ushort Graphic, Hue, Amount;
+            public Flags Flags;
+            public Layer Layer;
+            public ushort X, Y;
+            public sbyte Z;
+            public uint Container;
+        }
+
+        // DenyMoveItem's non-container branch before T1 (the console lines and the paperdoll refresh left out)
+        internal static Item OldDeny(World world, uint serial, in HeldPacket h)
+        {
+            Item item = world.GetOrCreateItem(serial);
+
+            item.Graphic = h.Graphic;
+            item.Hue = h.Hue;
+            item.Amount = h.Amount;
+            item.Flags = h.Flags;
+            item.Layer = h.Layer;
+            item.X = h.X;
+            item.Y = h.Y;
+            item.Z = h.Z;
+            item.CheckGraphicChange();
+
+            Entity container = world.Get(h.Container);
+
+            if (container != null)
+            {
+                if (SerialHelper.IsMobile(container.Serial))
+                {
+                    world.RemoveItemFromContainer(item);
+                    container.PushToBack(item);
+                    item.Container = container.Serial;
+                    world.Ecs.Sync(item);
+                }
+                else
+                {
+                    world.RemoveItem(item, true);
+                }
+            }
+            else
+            {
+                world.RemoveItemFromContainer(item);
+                item.SetInWorldTile(item.X, item.Y, item.Z);
+            }
+
+            return item;
+        }
+
+        private static readonly HeldPacket[] HeldPackets =
+        {
+            // back onto the wearer (an equipped item dragged off the paperdoll): the hue as given, no FixHue
+            new HeldPacket { Graphic = 0x1515, Hue = 0x8BB9, Amount = 1, Flags = Flags.Movable, Layer = Layer.Shirt, X = 1000, Y = 1000, Z = 0, Container = MOB },
+            // its container is an item: the old code removed it
+            new HeldPacket { Graphic = 0x1515, Hue = 0x21, Amount = 2, Flags = Flags.None, Layer = Layer.Shirt, X = 40, Y = 50, Z = 0, Container = BAG },
+            // from the ground: back on its tile
+            new HeldPacket { Graphic = 0x0EED, Hue = 0x35, Amount = 500, Flags = Flags.Hidden, Layer = Layer.Invalid, X = 1004, Y = 1005, Z = 2, Container = 0xFFFF_FFFF },
+            // its container is gone: on the tile at the held position
+            new HeldPacket { Graphic = 0x0EED, Hue = 0, Amount = 3, Flags = Flags.None, Layer = Layer.Invalid, X = 1006, Y = 1007, Z = -3, Container = 0x4000_7FFF },
+            // a corpse graphic: CheckGraphicChange's corpse branch on the old direction (running bit: UsedLayer)
+            new HeldPacket { Graphic = 0x2006, Hue = 0x455, Amount = 0x190, Flags = Flags.None, Layer = Layer.Invalid, X = 1008, Y = 1008, Z = 0, Container = 0xFFFF_FFFF },
+            // a corpse graphic back onto the wearer
+            new HeldPacket { Graphic = 0x2006, Hue = 0, Amount = 1, Flags = Flags.None, Layer = Layer.Cloak, X = 1, Y = 1, Z = 0, Container = MOB },
+        };
+
+        public static IEnumerable<object[]> HeldCases()
+        {
+            foreach (Start s in Enum.GetValues(typeof(Start)))
+            {
+                for (int i = 0; i < HeldPackets.Length; i++)
+                {
+                    yield return new object[] { s, i };
+                }
+            }
+        }
+
+        [Theory]
+        [MemberData(nameof(HeldCases))]
+        public void ReturnHeldItem_Equals_The_Old_Path(Start start, int packet)
+        {
+            World oldWorld = Build(start), newWorld = Build(start);
+            HeldPacket h = HeldPackets[packet];
+
+            foreach (World w in new[] { oldWorld, newWorld })
+            {
+                Item it = w.Items.Get(ITEM);
+
+                if (it != null)
+                {
+                    it.Direction = Direction.Running | Direction.West;
+                }
+            }
+
+            Item a = OldDeny(oldWorld, ITEM, h);
+            Item b = newWorld.Writer.ReturnHeldItem(ITEM, h.Graphic, h.Hue, h.Amount, h.Flags, h.Layer, h.X, h.Y, h.Z, h.Container, out Entity container, out WorldWriter.HeldItemReturn result);
+
+            b.Should().NotBeNull();
+            container.Should().BeSameAs(newWorld.Get(h.Container));
+            result.Should().Be(container == null ? WorldWriter.HeldItemReturn.Terrain
+                : SerialHelper.IsMobile(h.Container) ? WorldWriter.HeldItemReturn.Paperdoll : WorldWriter.HeldItemReturn.Removed);
+            b.IsDestroyed.Should().Be(a.IsDestroyed);
+            newWorld.Writer.InScope.Should().BeFalse();
+            newWorld.Ecs.IsFolding.Should().BeFalse();
+            AssertSameWorld(oldWorld, newWorld);
+
+            // the same packet again
+            OldDeny(oldWorld, ITEM, h);
+            newWorld.Writer.ReturnHeldItem(ITEM, h.Graphic, h.Hue, h.Amount, h.Flags, h.Layer, h.X, h.Y, h.Z, h.Container, out _, out _);
+            AssertSameWorld(oldWorld, newWorld);
+        }
+
+        [Fact]
+        public void ReturnHeldItem_Computes_Its_Values_Before_The_Writes()
+        {
+            // the commits see the getters still on the previous values (as T4's ECS-backed getters would): the first commit
+            // is the detached state, the second (paperdoll) the wearer; every value is the packet's
+            World world = Build(Start.Worn);
+            var seen = new List<(uint Container, ushort Graphic, uint CacheContainer, ushort CacheGraphic)>();
+            world.Ecs.CommitObserver = (item, v) => seen.Add((v.Container, v.Graphic, item.Container, item.Graphic));
+
+            world.Writer.ReturnHeldItem(ITEM, 0x1517, 0x22, 1, Flags.None, Layer.Shirt, 1000, 1000, 0, MOB, out _, out _);
+            world.Ecs.CommitObserver = null;
+
+            seen.Should().Equal((0xFFFF_FFFFu, (ushort)0x1517, MOB, (ushort)0x1515), (MOB, (ushort)0x1517, MOB, (ushort)0x1517));
+            world.Items.Get(ITEM).Container.Should().Be(MOB);
+            ChildSerials(world.Mobiles.Get(MOB)).Should().Equal(ITEM);
+        }
+
+        [Fact]
+        public void ReturnHeldItem_Inside_An_Operation_Is_Rejected()
+        {
+            World world = Build(Start.Worn);
+            world.Writer.ThrowOnViolation = false;
+            Item nestedResult = null;
+            bool ran = false;
+            world.Ecs.CommitObserver = (item, v) =>
+            {
+                if (!ran)
+                {
+                    ran = true;
+                    nestedResult = world.Writer.ReturnHeldItem(ITEM, 0x1517, 0, 1, Flags.None, Layer.Shirt, 1, 1, 0, 0xFFFF_FFFF, out _, out WorldWriter.HeldItemReturn r);
+                    r.Should().Be(WorldWriter.HeldItemReturn.None);
+                }
+            };
+
+            world.Writer.UpsertWorldItem(0x4000_7050, 0xEED, 0, 1, 1010, 1010, 0, Direction.North, 0, Flags.None, 0, out _, out _);
+            world.Ecs.CommitObserver = null;
+
+            ran.Should().BeTrue();
+            nestedResult.Should().BeNull();
+            world.Writer.Violations.Should().Be(1);
+            world.Items.Get(ITEM).Container.Should().Be(MOB, "the rejected return changed nothing");
+        }
     }
 
     // T1: CUO_FUNNEL_CHECK. FunnelCheck's counters are process-wide, so these tests run alone.
@@ -1501,7 +1657,7 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Fact]
-        public void The_Clear_Operation_Makes_No_Direct_Writes()
+        public void The_Clear_And_Deny_Operations_Make_No_Direct_Writes()
         {
             if (!FunnelCheck.Available)
             {
@@ -1530,6 +1686,20 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.ClearContainer(bag.Serial, false);
             FunnelCheck.Total.Should().Be(0);
 
+            // each deny branch: paperdoll, terrain, the removal (of an item holding contents)
+            world.Writer.ReturnHeldItem(worn.Serial, 0x1517, 0x21, 1, Flags.None, Layer.Shirt, 1, 1, 0, m.Serial, out _, out _);
+            world.Writer.ReturnHeldItem(worn.Serial, 0x1517, 0x21, 1, Flags.None, Layer.Invalid, 1000, 1000, 0, 0xFFFF_FFFF, out _, out _);
+            Item box = world.GetOrCreateItem(0x4000_7105);
+            Item held = world.GetOrCreateItem(0x4000_7106);
+            held.Container = box.Serial;
+            box.PushToBack(held);
+            Item inner = world.GetOrCreateItem(0x4000_7107);
+            inner.Container = held.Serial;
+            held.PushToBack(inner);
+            FunnelCheck.Reset();
+            world.Writer.ReturnHeldItem(held.Serial, 0x1517, 0, 1, Flags.None, Layer.Shirt, 1, 1, 0, box.Serial, out _, out _);
+            FunnelCheck.Total.Should().Be(0);
+            world.Items.Get(inner.Serial).Should().BeNull();
         }
 
         [Fact]
