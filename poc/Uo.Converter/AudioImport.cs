@@ -182,8 +182,10 @@ public static class AudioImport
     /// the old loader's archive read alone. A loose file the client refuses (over <see cref="AudioConst.MaxWaveFileBytes"/>,
     /// vanished or unreadable, or data FNA cannot take) falls back to the archive, as SoundsLoader.TryGetSound does at
     /// runtime; an id plays only when its PCM passes <see cref="AudioConst.CheckPcmLength"/>. The loose file's size is
-    /// checked first, through one open handle, and the frozen loader (whose ReadAllBytes is unbounded) is only asked
-    /// about a file within the cap (Codex round 2, P2: it used to read an oversized file whole before the size check). An
+    /// checked first, through one open handle, and the frozen loader is only asked about a file within the cap (Codex
+    /// round 2, P2: it used to read an oversized file whole before the size check). The file can still grow or be replaced
+    /// before the frozen loader opens it again, so that loader also checks the cap on the one handle it reads through
+    /// (Codex round 3, P2; "Not verbatim" there): an enlarged file is refused, never allocated, and the archive answers. An
     /// OverflowException from the old loader (an archive entry shorter than its 40-byte name: it threw on
     /// new byte[negative]) means no sound. Null data: the id is absent.
     /// </summary>

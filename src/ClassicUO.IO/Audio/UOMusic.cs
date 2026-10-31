@@ -44,6 +44,14 @@ namespace ClassicUO.IO.Audio
 
         public override bool Play(uint curTime, float volume = 1.0f, float volumeFactor = 0.0f, bool spamCheck = false)
         {
+            // as Sound.Play: a NaN volume would reach FNA's volume setter, which throws (Codex round 3, P3)
+            if (!float.IsFinite(volume) || !float.IsFinite(volumeFactor))
+            {
+                Log.Warn($"music {Name}: volume {volume} or factor {volumeFactor} is not a number; not played");
+
+                return false;
+            }
+
             Stop();
 
             if (!Mp3Decoder.IsAvailable)

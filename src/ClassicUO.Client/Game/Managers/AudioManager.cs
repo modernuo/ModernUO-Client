@@ -101,7 +101,15 @@ namespace ClassicUO.Game.Managers
                 volume = 0;
             }
 
-            UOSound sound = (UOSound) Client.Game.UO.Sounds.GetSound(index);
+            if (!float.IsFinite(volume))
+            {
+                Log.Warn($"sound {index}: volume {volume} is not a number; not played");
+
+                return;
+            }
+
+            // an audible sound the cache cannot admit stops silent ones first (GetSoundToPlay)
+            UOSound sound = Client.Game.UO.Sounds.GetSoundToPlay(index, _currentSounds, volume > 0);
 
             // a silent sound (sound off, or in the background) still plays, as before, but never stops another one
             if (sound == null || !sound.CanPlayAt(Time.Ticks)
@@ -127,9 +135,7 @@ namespace ClassicUO.Game.Managers
                 return;
             }
 
-            int distX = Math.Abs(x - world.Player.X);
-            int distY = Math.Abs(y - world.Player.Y);
-            int distance = Math.Max(distX, distY);
+            long distance = Distance(x, y, world.Player.X, world.Player.Y);
 
             Profile currentProfile = ProfileManager.CurrentProfile;
             float volume = currentProfile.SoundVolume / SOUND_DELTA;
@@ -160,11 +166,21 @@ namespace ClassicUO.Game.Managers
                 volume = 0;
             }
 
-            UOSound sound = (UOSound)Client.Game.UO.Sounds.GetSound(index);
+            if (!float.IsFinite(volume) || !float.IsFinite(distanceFactor))
+            {
+                Log.Warn($"sound {index}: volume {volume} or distance factor {distanceFactor} is not a number; not played");
+
+                return;
+            }
+
+            bool audible = volume - distanceFactor > 0;
+
+            // an audible sound the cache cannot admit stops silent ones first (GetSoundToPlay)
+            UOSound sound = Client.Game.UO.Sounds.GetSoundToPlay(index, _currentSounds, audible);
 
             // a silent sound (sound off, or in the background) still plays, as before, but never stops another one
             if (sound == null || !sound.CanPlayAt(Time.Ticks)
-                || ClassicUO.Renderer.Sounds.Sound.LimitPlaying(_currentSounds, sound, audible: volume - distanceFactor > 0) < 0)
+                || ClassicUO.Renderer.Sounds.Sound.LimitPlaying(_currentSounds, sound, audible: audible) < 0)
             {
                 return;
             }
@@ -178,6 +194,14 @@ namespace ClassicUO.Game.Managers
                 _currentSounds.AddLast(sound);
             }
         }
+
+        /// <summary>
+        /// The larger of the two coordinate differences, in long: a difference of two ints can be int.MinValue, and
+        /// Math.Abs(int.MinValue) throws (Codex round 3, P3; sound packets carry ushort coordinates, so only direct calls
+        /// reach this).
+        /// </summary>
+        internal static long Distance(int x, int y, int fromX, int fromY) =>
+            Math.Max(Math.Abs((long)x - fromX), Math.Abs((long)y - fromY));
 
         public void PlayMusic(int music, bool iswarmode = false, bool is_login = false)
         {

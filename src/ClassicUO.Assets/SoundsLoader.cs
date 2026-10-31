@@ -29,8 +29,11 @@ namespace ClassicUO.Assets
         private readonly Dictionary<int, string> _ours = new Dictionary<int, string>();
 
         // a loose file's PCM length from its header (TryGetSoundSource), kept so a sound the cache cannot hold yet is not
-        // probed again on every request; updated by the read itself if the file changed
-        private readonly Dictionary<int, int> _oursPcm = new Dictionary<int, int>();
+        // probed again on every request, with the file's length and last-write time when it was probed: a request whose
+        // stat differs probes again (Codex round 3, P3: a file that shrank or vanished kept its old size until a reload)
+        private readonly Dictionary<int, Probed> _oursPcm = new Dictionary<int, Probed>();
+
+        private readonly record struct Probed(int Pcm, long Length, DateTime WriteUtc);
 
         public const int MAX_SOUND_DATA_INDEX_COUNT = 0xFFFF;
 
@@ -191,9 +194,10 @@ namespace ClassicUO.Assets
         /// Where <paramref name="sound"/> would come from, without reading its PCM: <paramref name="key"/> names the source
         /// (a pack record, shared by its aliases, or the id's loose file) and <paramref name="pcmBytes"/> is its PCM size: a
         /// record's from the table, a loose file's from its header (one bounded read of the chunk headers on first use,
-        /// then remembered). A loose file the client would refuse is dropped here, so the pack's record is named instead
-        /// and budgeted before it is read (Codex round 2, P2). The renderer's sound cache uses it to share one array per
-        /// record and to make room before any read. False when the id has no playable source.
+        /// then remembered while the file's length and last-write time stay the same: one stat per request). A loose file
+        /// the client would refuse, or one that is gone, is dropped here, so the pack's record is named instead and
+        /// budgeted before it is read (Codex round 2, P2; round 3, P3). The renderer's sound cache uses it to share one
+        /// array per record and to make room before any read. False when the id has no playable source.
         /// </summary>
         public bool TryGetSoundSource(int sound, out long key, out long pcmBytes)
         {
@@ -207,23 +211,31 @@ namespace ClassicUO.Assets
 
             if (_ours.TryGetValue(sound, out string mine))
             {
-                if (_oursPcm.TryGetValue(sound, out int known))
+                if (!Stat(mine, out long length, out DateTime written))
+                {
+                    // gone: the pack's sound (if any) plays from now on
+                    Log.Warn($"{Path.GetFileName(mine)} is gone; the pack's sound is used");
+                    _ours.Remove(sound);
+                    _oursPcm.Remove(sound);
+                }
+                else if (_oursPcm.TryGetValue(sound, out Probed known) && known.Length == length && known.WriteUtc == written)
                 {
                     key = LooseKey(sound);
-                    pcmBytes = known;
+                    pcmBytes = known.Pcm;
 
                     return true;
                 }
-
-                if (AudioConst.ProbeWaveFile(mine, out int probed) is { } bad)
+                else if (AudioConst.ProbeWaveFile(mine, out int probed) is { } bad)
                 {
                     // unreadable or unplayable: once is enough, the pack's sound (if any) plays from now on
                     Log.Warn($"{Path.GetFileName(mine)}: {bad}; it is being ignored");
                     _ours.Remove(sound);
+                    _oursPcm.Remove(sound);
                 }
                 else
                 {
-                    _oursPcm[sound] = probed;
+                    // stat before the probe: a change after it shows in the next request's stat
+                    _oursPcm[sound] = new Probed(probed, length, written);
                     key = LooseKey(sound);
                     pcmBytes = probed;
 
@@ -244,6 +256,32 @@ namespace ClassicUO.Assets
             return true;
         }
 
+        // one stat: false when the file is gone (or cannot be looked at)
+        private static bool Stat(string path, out long length, out DateTime writeUtc)
+        {
+            length = 0;
+            writeUtc = default;
+
+            try
+            {
+                var fi = new FileInfo(path);
+
+                if (!fi.Exists)
+                {
+                    return false;
+                }
+
+                length = fi.Length;
+                writeUtc = fi.LastWriteTimeUtc;
+
+                return true;
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+            {
+                return false;
+            }
+        }
+
         // pack records are keyed 1..n (slot.Record), loose files below 0
         private static long LooseKey(int sound) => -1L - sound;
 
@@ -251,11 +289,23 @@ namespace ClassicUO.Assets
         /// <see cref="TryGetSound(int, out byte[], out string)"/>, also naming the source that served it
         /// (<see cref="TryGetSoundSource"/>'s key): ids that share a record get the same key.
         /// </summary>
-        public bool TryGetSound(int sound, out byte[] data, out string name, out long key)
+        public bool TryGetSound(int sound, out byte[] data, out string name, out long key) =>
+            TryGetSound(sound, int.MaxValue, out data, out name, out key, out _);
+
+        /// <summary>
+        /// <see cref="TryGetSound(int, out byte[], out string, out long)"/> reading at most <paramref name="maxPcmBytes"/>
+        /// of PCM: the size the sound cache admitted from <see cref="TryGetSoundSource"/>. A source that is now larger (a
+        /// loose file that grew, or the pack record answering for a loose file that became unreadable) is not read: false
+        /// with <paramref name="changed"/> set, nothing allocated beyond the cap, and a grown file's remembered size
+        /// refreshed, so the next request is budgeted at the real size (Codex round 3, P2). <paramref name="changed"/> is
+        /// false for a sound that is absent or invalid.
+        /// </summary>
+        public bool TryGetSound(int sound, int maxPcmBytes, out byte[] data, out string name, out long key, out bool changed)
         {
             data = null;
             name = null;
             key = 0;
+            changed = false;
 
             if (sound < 0)
             {
@@ -265,17 +315,15 @@ namespace ClassicUO.Assets
             // Ours first, so a replacement replaces and a new id works at all.
             if (_ours.TryGetValue(sound, out string mine))
             {
-                // one handle: size cap, overflow-safe chunk walk, playable length, then exactly the PCM (the converter
-                // applies the same rules)
-                byte[] wave = AudioConst.ReadWaveFile(mine, out string bad);
+                bool statted = Stat(mine, out long length, out DateTime written);
 
-                if (wave == null)
+                // one handle: size cap, overflow-safe chunk walk, playable length, the caller's cap, then exactly the PCM
+                // (the converter applies the same rules)
+                byte[] wave = AudioConst.ReadWaveFile(mine, out string bad, out int declared, maxPcmBytes);
+
+                if (wave != null)
                 {
-                    Log.Warn($"{Path.GetFileName(mine)}: {bad}; it is being ignored");
-                }
-                else
-                {
-                    _oursPcm[sound] = wave.Length; // the file may have changed since it was probed
+                    _oursPcm.Remove(sound); // cached from now on; probed again if it is ever evicted
                     data = wave;
                     name = Path.GetFileNameWithoutExtension(mine);
                     key = LooseKey(sound);
@@ -283,7 +331,26 @@ namespace ClassicUO.Assets
                     return true;
                 }
 
+                // a playable file over the cap (ReadWaveFile's checks passed but the last): it grew since it was probed.
+                // Not this play; the next request is budgeted at the new size.
+                if (declared > maxPcmBytes && AudioConst.CheckPcmLength(declared) == null)
+                {
+                    if (statted)
+                    {
+                        _oursPcm[sound] = new Probed(declared, length, written);
+                    }
+                    else
+                    {
+                        _oursPcm.Remove(sound);
+                    }
+
+                    changed = true;
+
+                    return false;
+                }
+
                 // unreadable or unplayable: once is enough, the pack's sound (if any) plays from now on
+                Log.Warn($"{Path.GetFileName(mine)}: {bad}; it is being ignored");
                 _ours.Remove(sound);
                 _oursPcm.Remove(sound);
             }
@@ -292,6 +359,14 @@ namespace ClassicUO.Assets
 
             if (store == null || !store.TryGet(sound, out StoreSlot slot, out StoreRecord rec) || !_soundOk[slot.Record - 1])
             {
+                return false;
+            }
+
+            // the record's size comes from its table: a fallback larger than what was admitted is not read
+            if (AudioConst.AudioBytes(rec) > maxPcmBytes)
+            {
+                changed = true;
+
                 return false;
             }
 

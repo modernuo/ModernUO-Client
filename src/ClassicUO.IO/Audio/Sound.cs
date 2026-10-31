@@ -1,5 +1,6 @@
 ﻿// SPDX-License-Identifier: BSD-2-Clause
 
+using ClassicUO.Utility.Logging;
 using Microsoft.Xna.Framework.Audio;
 using System;
 using static System.String;
@@ -141,6 +142,15 @@ namespace ClassicUO.IO.Audio
         /// <param name="asEffect">Set to false for music, true for sound effects.</param>
         public virtual bool Play(uint curTime, float volume = 1.0f, float volumeFactor = 0.0f, bool spamCheck = false)
         {
+            // FNA's volume setter throws on NaN, after the buffer was submitted (Codex round 3, P3): refused before any
+            // playback state changes
+            if (!float.IsFinite(volume) || !float.IsFinite(volumeFactor))
+            {
+                Log.Warn($"{Name}: volume {volume} or factor {volumeFactor} is not a number; not played");
+
+                return false;
+            }
+
             if (_lastPlayedTime > curTime)
             {
                 return false;

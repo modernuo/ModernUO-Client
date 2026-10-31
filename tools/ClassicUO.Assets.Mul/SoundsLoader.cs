@@ -17,13 +17,17 @@ namespace ClassicUO.Assets
     /// moved into the pack), verbatim apart from <see cref="MusicPath"/> (Renderer.Sounds.Sound.GetMusic's path rule),
     /// the 4.0.11c Config.txt threshold (see Load), and the changes after the Codex audit of the audio pack, each marked
     /// "Not verbatim": the music table is per instance, ClearResources disposes the archive, ReadWave's chunk-size check
-    /// cannot overflow, and <see cref="LoosePath"/> / <see cref="TryGetArchiveSound"/> let verify model the client's
+    /// cannot overflow, ReadWave reads through one handle bounded by <see cref="MaxWaveFileBytes"/>, and <see cref="LoosePath"/> / <see cref="TryGetArchiveSound"/> let verify model the client's
     /// fallback past a loose WAV it refuses.
     /// The converter verifies audio/sounds.bin and audio/music.bin against it.
     /// </summary>
     public sealed class SoundsLoader : UOFileLoader
     {
         private static readonly char[] _configFileDelimiters = { ' ', ',', '\t' };
+
+        // Not verbatim: the client's loose WAV cap (Uo.Pack AudioConst.MaxWaveFileBytes: 64 MiB of PCM + 1 MiB; this
+        // project does not reference Uo.Pack, so the value is repeated; a unit test compares the two)
+        public const long MaxWaveFileBytes = (64L << 20) + (1L << 20);
         // Not verbatim: per instance (was static, so a second loader's built-in table Add() threw and every loader shared one table)
         private readonly Dictionary<int, (string, bool)> _musicData = new Dictionary<int, (string, bool)>();
 
@@ -265,11 +269,36 @@ namespace ClassicUO.Assets
         {
             byte[] raw;
 
+            // Not verbatim: read through ONE handle whose length is checked against the client's cap before anything is
+            // allocated (Codex round 3, P2: File.ReadAllBytes opened the path again after verify's size check, so a file
+            // enlarged or replaced in between was read whole). The parsing below is unchanged.
             try
             {
-                raw = File.ReadAllBytes(path);
+                using var handle = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+                long length = RandomAccess.GetLength(handle);
+
+                if (length > MaxWaveFileBytes)
+                {
+                    Log.Warn($"{Path.GetFileName(path)} is {length} bytes (at most {MaxWaveFileBytes}); it is being ignored");
+                    return null;
+                }
+
+                raw = new byte[length];
+
+                for (int got = 0; got < raw.Length;)
+                {
+                    int n = RandomAccess.Read(handle, raw.AsSpan(got), got);
+
+                    if (n <= 0)
+                    {
+                        Log.Warn($"{Path.GetFileName(path)} shrank while it was read; it is being ignored");
+                        return null;
+                    }
+
+                    got += n;
+                }
             }
-            catch (IOException e)
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
             {
                 Log.Warn($"could not read {path}: {e.Message}");
                 return null;
