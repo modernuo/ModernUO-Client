@@ -215,6 +215,7 @@ namespace ClassicUO.Game.Scenes
                     _landSeason = (Season)0xFF;
                     _world.ChangeFacet(_pack);
                     Log.Trace($"GPU world renderer: facet {facet} (switched, world pass kept)");
+                    ArmLoadLog($"facet {facet}");
 
                     return true;
                 }
@@ -226,8 +227,7 @@ namespace ClassicUO.Game.Scenes
 
             try
             {
-                _world?.Dispose();
-                _world = null;
+                DisposeWorld();
                 _pack = _basePack.WithFacet(facet);
 
                 var options = new WorldOptions
@@ -256,14 +256,14 @@ namespace ClassicUO.Game.Scenes
                 _world = WorldRenderer.CreateExternal(_device, GpuTextureFormat.SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, _pack, options);
                 _world.ClearColor = new sdl3core::SDL3.SDL.SDL_FColor { r = 0, g = 0, b = 0, a = 1 };
                 Log.Trace($"GPU world renderer: facet {facet}, shaders {_world.Renderer.ShaderFormat}");
+                ArmLoadLog($"facet {facet}, new world");
 
                 return true;
             }
             catch (Exception ex)
             {
                 Log.Error($"GPU world renderer: facet {facet} failed: {ex}");
-                _world?.Dispose();
-                _world = null;
+                DisposeWorld();
                 _failedFacet = facet;
                 error = $"the GPU world pass for map {facet} could not be created: {ex.Message}";
 
@@ -960,6 +960,8 @@ namespace ClassicUO.Game.Scenes
                 GpuDeviceLost.Report("GPU world submit", _world.Renderer.LastSubmitError);
             }
 
+            LogLoad();
+
             if (_world.Renderer.TranslucentGrowths != _loggedGrowths)
             {
                 _loggedGrowths = _world.Renderer.TranslucentGrowths;
@@ -997,19 +999,87 @@ namespace ClassicUO.Game.Scenes
                     $"pages {w.Pages.ResidentCount}/{w.Pages.Layers} resident, {w.Pages.MissingVisible} missing, {w.Pages.TotalUploads} uploads, {w.Pages.Evictions} evictions" +
                     (w.AnimPages != null ? $"; anim pages {w.AnimPages.ResidentCount}/{w.AnimPages.Layers}, {w.AnimPages.MissingVisible} missing, {w.AnimPages.TotalUploads} uploads, {w.AnimPages.Evictions} evictions" : "") +
                     $"; chunks ready {w.Chunks.ReadyChunks} pending {w.Chunks.PendingChunks} missing near view {w.Chunks.MissingNear}; settled {w.Settled}, visible ready {w.VisibleReady}" +
-                    $"; instances used {w.Chunks.Alloc.Used}/{w.Chunks.Alloc.Capacity}");
+                    $"; instances used {w.Chunks.Alloc.Used}/{w.Chunks.Alloc.Capacity}" + StagingDetail(w));
             }
 
             return ok;
         }
+
+        // Scene load time (memory round 3): from the first world frame after a world is built or its facet changes (the
+        // login is a facet change) until the world first settles (no chunk pending, no page queued, loading or missing).
+        private string _loadWhat;
+        private long _loadStartTicks, _loadLastUploadTicks;
+        private int _loadFrames, _loadUploads;
+
+        private void ArmLoadLog(string what)
+        {
+            _loadWhat = what;
+            _loadStartTicks = 0;
+            _loadFrames = 0;
+        }
+
+        private void LogLoad()
+        {
+            if (_loadWhat == null)
+            {
+                return;
+            }
+
+            var w = _world;
+            long now = System.Diagnostics.Stopwatch.GetTimestamp();
+            int uploads = w.Pages.TotalUploads + (w.AnimPages?.TotalUploads ?? 0);
+
+            if (_loadFrames++ == 0)
+            {
+                _loadStartTicks = now;
+                _loadLastUploadTicks = now;
+                _loadUploads = uploads;
+
+                return;
+            }
+
+            if (uploads != _loadUploads)
+            {
+                _loadUploads = uploads;
+                _loadLastUploadTicks = now;
+            }
+
+            if (!w.Settled)
+            {
+                return;
+            }
+
+            double f = 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+            Log.Info(
+                $"[load] GPU world settled ({_loadWhat}) after {(now - _loadStartTicks) * f:F0} ms, {_loadFrames} frames; last page upload at {(_loadLastUploadTicks - _loadStartTicks) * f:F0} ms; " +
+                $"art {w.Pages.ResidentCount}/{w.Pages.Layers} resident, {w.Pages.TotalUploads} uploads" +
+                (w.AnimPages != null ? $"; anim {w.AnimPages.ResidentCount}/{w.AnimPages.Layers} resident, {w.AnimPages.TotalUploads} uploads" : "") +
+                LoadDetail());
+            _loadWhat = null;
+        }
+
+        // Staging slot waits (memory round 3: a slot is reused only after its last copy retired): cumulative per world.
+        private string LoadDetail() => StagingDetail(_world);
+
+        private static string StagingDetail(Uo.Render.WorldRenderer w) =>
+            $"; staging art {w.Pages.Slots.Summary()}" + (w.AnimPages != null ? $", anim {w.AnimPages.Slots.Summary()}" : "") +
+            $"; copy fences {w.Renderer.Copies.FencesTaken} taken, {w.Renderer.Copies.PendingFences} pending";
 
         private uint _nextStatsLog, _nextDropLog;
         private int _loggedGrowths, _loggedTileMismatches, _loggedArrayGrowths;
 
         public void Dispose()
         {
-            _world?.Dispose();
+            DisposeWorld();
+        }
+
+        /// <summary>Detaches the world before disposing it: if its teardown throws (a failed drain after device loss), the
+        /// caller's catch must not reach the same world again. WorldRenderer.Dispose is one-shot as well.</summary>
+        private void DisposeWorld()
+        {
+            var world = _world;
             _world = null;
+            world?.Dispose();
         }
     }
 }
