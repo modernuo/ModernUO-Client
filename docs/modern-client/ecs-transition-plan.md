@@ -222,7 +222,9 @@ When T3 moves equipment into the ECS, it replaces these with a pack data file of
 - the importer writes today's rules as the default file;
 - shard admins add entries for custom equipment.
 
-The rules must stay exactly equal to today's, so a checker compares the data-driven result with the hard-coded one over the parity scripts before the hard-coded copy goes. Issue #39's fix comes after that: find the EA rule it shows, and add it as data.
+The rules must stay exactly equal to today's, so a checker compares the data-driven result with the hard-coded one over the parity scripts before the hard-coded copy goes. Issue #39's fix comes after that: find the EA rules it shows, and add them as data. Known cases:
+- a layer under the ringmail arms shows at the shoulder;
+- leggings show through thigh boots (owner, 2026-10-31). Today's rules only hide shoes under pants and legs, never the other way round.
 
 ### T4: thin handles; the ECS owns scalar state
 
