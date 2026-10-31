@@ -465,6 +465,129 @@ namespace ClassicUO.UnitTests.Ecs
             AssertSameWorld(reference, world);
         }
 
+        // ---- the range sweep (World.Update): World.RemoveMobile(mob) / World.RemoveItem(item) without force, as removals
+
+        private const uint CHEST = 0x4000_7020, COIN = 0x4000_7021;
+
+        // a ground chest holding a coin, beside the mobile of BuildRemove
+        private static World BuildSweep(Start start, out WorldWriter.Placement lootPlacement, out WorldWriter.Placement coinPlacement)
+        {
+            World world = BuildRemove(start, out lootPlacement);
+            Item chest = world.GetOrCreateItem(CHEST);
+            chest.Graphic = 0xE40;
+            chest.SetInWorldTile(1003, 1000, 0);
+            Item coin = world.Writer.UpsertWorldItem(COIN, 0xEED, 0, 5, 1003, 1000, 0, 0, 0, 0, 0, out _, out coinPlacement);
+            coin.Container = CHEST;
+            chest.PushToBack(coin);
+            world.Ecs.Sync(coin);
+
+            return world;
+        }
+
+        [Theory]
+        [InlineData(Start.Standing)]
+        [InlineData(Start.Walking)]
+        [InlineData(Start.FullQueue)]
+        [InlineData(Start.Unplaced)]
+        [InlineData(Start.DestroyedHeld)]
+        public void The_Sweep_Removals_Equal_The_Old_Path(Start start)
+        {
+            World oldWorld = BuildSweep(start, out _, out _), newWorld = BuildSweep(start, out _, out _);
+            newWorld.Writer.ThrowOnViolation = true;
+
+            // the sweep's instances: what the loops iterate (the destroyed-but-held mobile too: the old removal returned false)
+            Pair(() => oldWorld.RemoveMobile(oldWorld.Mobiles.Get(MOB)), () => newWorld.Writer.SweepMobile(newWorld.Mobiles.Get(MOB)));
+            AssertSameWorld(oldWorld, newWorld);
+            Pair(() => oldWorld.RemoveItem(oldWorld.Items.Get(CHEST)), () => newWorld.Writer.SweepItem(newWorld.Items.Get(CHEST)));
+            AssertSameWorld(oldWorld, newWorld);
+
+            // no force: the destroyed objects stay in their tables until the frame's destroyed lists drop them
+            newWorld.Mobiles.Get(MOB).Should().NotBeNull();
+            newWorld.Mobiles.Get(MOB).IsDestroyed.Should().BeTrue();
+            newWorld.Items.Get(CHEST).IsDestroyed.Should().BeTrue();
+            newWorld.Items.Get(COIN).IsDestroyed.Should().BeTrue();
+
+            // a second sweep of the destroyed ones changes nothing and is no violation
+            newWorld.Writer.SweepMobile(newWorld.Mobiles.Get(MOB));
+            newWorld.Writer.SweepItem(newWorld.Items.Get(CHEST));
+            AssertSameWorld(oldWorld, newWorld);
+            newWorld.Writer.Violations.Should().Be(0);
+            newWorld.Writer.InScope.Should().BeFalse();
+        }
+
+        [Fact]
+        public void The_Sweep_Cancels_The_Placements_Of_The_Removed_Subtrees()
+        {
+            World world = BuildSweep(Start.Standing, out WorldWriter.Placement loot, out WorldWriter.Placement coin);
+            world.Writer.ThrowOnViolation = true;
+            Mobile m = world.Mobiles.Get(MOB);
+            world.Writer.UpsertMobile(m, MOB, 0x190, 0, 1001, 1000, 0, Direction.East, 0, 0, out _, out WorldWriter.Placement mobile);
+            world.Writer.OutstandingPlacements.Should().Be(3);
+
+            world.Writer.SweepMobile(m);
+            world.Writer.OutstandingPlacements.Should().Be(1, "the mobile's and the worn backpack's loot's");
+            world.Writer.SweepItem(world.Items.Get(CHEST));
+            world.Writer.OutstandingPlacements.Should().Be(0, "the chest's coin's");
+
+            foreach (Action place in new Action[] { () => world.Writer.PlaceWorldItem(loot), () => world.Writer.PlaceMobile(mobile), () => world.Writer.PlaceWorldItem(coin) })
+            {
+                place.Should().Throw<ArgumentException>("a removed object's placement was cancelled");
+            }
+        }
+
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public void The_Sweep_Rejects_Nesting_And_An_Object_This_World_Does_Not_Hold(bool throws)
+        {
+            World world = BuildSweep(Start.Standing, out _, out _), reference = BuildSweep(Start.Standing, out _, out _);
+            world.Writer.ThrowOnViolation = throws;
+            Mobile m = world.Mobiles.Get(MOB);
+            Item chest = world.Items.Get(CHEST);
+            World other = BuildSweep(Start.Standing, out _, out _);
+            var calls = new List<Action>
+            {
+                () => world.Writer.SweepMobile(other.Mobiles.Get(MOB)), // another World's
+                () => world.Writer.SweepMobile(Mobile.Create(world, MOB)), // stale
+                () => world.Writer.SweepItem(other.Items.Get(CHEST)),
+                () => world.Writer.SweepItem(Item.Create(world, CHEST)),
+            };
+
+            foreach (Action act in calls)
+            {
+                if (throws)
+                {
+                    act.Should().Throw<ArgumentException>();
+                }
+                else
+                {
+                    act();
+                }
+            }
+
+            world.Ecs.BeginFold(world.Mobiles.Get(OTHER));
+
+            foreach (Action act in new Action[] { () => world.Writer.SweepMobile(m), () => world.Writer.SweepItem(chest) })
+            {
+                if (throws)
+                {
+                    act.Should().Throw<InvalidOperationException>();
+                }
+                else
+                {
+                    act();
+                }
+            }
+
+            world.Ecs.EndFold(world.Mobiles.Get(OTHER));
+
+            world.Writer.Violations.Should().Be(6);
+            world.Writer.OutstandingPlacements.Should().Be(2, "a rejected removal cancels nothing");
+            other.Mobiles.Get(MOB).IsDestroyed.Should().BeFalse();
+            other.Items.Get(CHEST).IsDestroyed.Should().BeFalse();
+            AssertSameWorld(reference, world);
+        }
+
         // ---- the detached World.Player (0x25 under its serial): 0x1B/0x21/0x22's operations write it as before T1
 
         [Theory]
@@ -578,6 +701,24 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.SetMobileDirection(m, Direction.West);
             world.Writer.SetNotoriety(m, NotorietyFlag.Ally);
             FunnelCheck.Total.Should().Be(0, "0x21, 0x22");
+
+            // the range sweep: a walking mobile wearing an item, a ground bag holding an item
+            Item worn = world.GetOrCreateItem(0x4000_7210);
+            worn.Layer = Layer.Shirt;
+            worn.Container = m.Serial;
+            m.PushToBack(worn);
+            Item bag = world.GetOrCreateItem(0x4000_7211);
+            bag.SetInWorldTile(1005, 1005, 0);
+            Item inside = world.GetOrCreateItem(0x4000_7212);
+            inside.Container = bag.Serial;
+            bag.PushToBack(inside);
+            world.Writer.UpsertMobile(m, m.Serial, 0x190, 0, (ushort)(m.X + 1), m.Y, 0, Direction.East, 0, 0, out _, out WorldWriter.Placement p2);
+            world.Writer.PlaceMobile(p2);
+            FunnelCheck.Reset();
+            world.Writer.SweepMobile(m);
+            world.Writer.SweepItem(bag);
+            (m.IsDestroyed, worn.IsDestroyed, inside.IsDestroyed).Should().Be((true, true, true));
+            FunnelCheck.Total.Should().Be(0, "the range sweep");
             Time.Ticks = 100_000;
         }
     }
