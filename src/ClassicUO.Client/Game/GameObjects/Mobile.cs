@@ -921,7 +921,7 @@ namespace ClassicUO.Game.GameObjects
                             World.Player.CloseRangedGumps();
                         }
 
-                        if (TNext != null || TPrevious != null)
+                        if (IsPlaced)
                         {
                             AddToTile();
                         }
