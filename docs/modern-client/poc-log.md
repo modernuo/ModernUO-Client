@@ -2494,4 +2494,4 @@ Tests: a lone mobile stepping on a landless tile (the checker flags the old beha
 
 Pickscan 48 same, 0 different at both spots. `-ecscheck` 0. Parity items 4.87M, 0 mismatches; mobiles 167 mismatched mobile-frames at login and scene arrival (no `CUO_ANIM_SYNC=1`, as above).
 
-**Tests:** 648 in both `CuoDevTools` variants (23 in `TileOrderTests`; `ChunkLoadingTests.Prefetched_Regions_...` failed once on the first run under load and passed in the other variant); both client flavours build.
+**Tests:** 648 in both `CuoDevTools` variants (23 in `TileOrderTests`; `ChunkLoadingTests.Prefetched_Regions_...` failed once on the first run under load and passed in the other variant); both client flavours build. After merging poc/modern-client (gumps in the pack, E4 gate, art workers): 661 tests, 660 pass in both variants; the one failure is `ChunkLoadingTests.Prefetched_Regions_...` under the full run's load, which passes alone (the known flaky test); both flavours build.
