@@ -171,6 +171,16 @@ public sealed class StagingSlots
 /// whose Dispose releases the fences <see cref="CopyRetirement"/> still holds.</summary>
 public static class Teardown
 {
+    /// <summary>One-shot <see cref="Run"/>: the first call marks <paramref name="disposed"/> before any step runs, so a
+    /// caller that retries after a step threw (the client's facet-rebuild catch disposes the world again) gets a no-op
+    /// instead of releasing handles the first call already freed. Returns false when it was already disposed.</summary>
+    public static bool Once(ref int disposed, string what, params Action[] steps)
+    {
+        if (System.Threading.Interlocked.Exchange(ref disposed, 1) != 0) return false;
+        Run(what, steps);
+        return true;
+    }
+
     public static void Run(string what, params Action[] steps)
     {
         System.Runtime.ExceptionServices.ExceptionDispatchInfo first = null;

@@ -583,8 +583,14 @@ public sealed unsafe class PageResidency
         return best;
     }
 
+    bool _disposed;
+
+    /// <summary>One-shot: a second call (a retried world dispose) must not release the transfer buffers again; SDL's
+    /// Vulkan backend frees their containers immediately.</summary>
     public void Dispose()
     {
+        if (_disposed) return;
+        _disposed = true;
         foreach (var t in _staging) SDL_ReleaseGPUTransferBuffer(_device, t);
         SDL_ReleaseGPUTexture(_device, Texture);
     }

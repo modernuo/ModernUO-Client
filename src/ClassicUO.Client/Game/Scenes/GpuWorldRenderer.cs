@@ -227,8 +227,7 @@ namespace ClassicUO.Game.Scenes
 
             try
             {
-                _world?.Dispose();
-                _world = null;
+                DisposeWorld();
                 _pack = _basePack.WithFacet(facet);
 
                 var options = new WorldOptions
@@ -264,8 +263,7 @@ namespace ClassicUO.Game.Scenes
             catch (Exception ex)
             {
                 Log.Error($"GPU world renderer: facet {facet} failed: {ex}");
-                _world?.Dispose();
-                _world = null;
+                DisposeWorld();
                 _failedFacet = facet;
                 error = $"the GPU world pass for map {facet} could not be created: {ex.Message}";
 
@@ -1072,8 +1070,16 @@ namespace ClassicUO.Game.Scenes
 
         public void Dispose()
         {
-            _world?.Dispose();
+            DisposeWorld();
+        }
+
+        /// <summary>Detaches the world before disposing it: if its teardown throws (a failed drain after device loss), the
+        /// caller's catch must not reach the same world again. WorldRenderer.Dispose is one-shot as well.</summary>
+        private void DisposeWorld()
+        {
+            var world = _world;
             _world = null;
+            world?.Dispose();
         }
     }
 }

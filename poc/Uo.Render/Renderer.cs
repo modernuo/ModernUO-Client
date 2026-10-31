@@ -1053,13 +1053,14 @@ public sealed unsafe class Renderer : IDisposable
         return true;
     }
 
-    bool _windowClaimed;
+    bool _windowClaimed, _disposed;
 
     /// <summary>Releases everything this renderer created. Also the cleanup of a constructor that failed part way, so any
-    /// handle may still be null.</summary>
+    /// handle may still be null. One-shot: a second call (a retried world dispose) releases nothing again.</summary>
     public void Dispose()
     {
-        if (Device == IntPtr.Zero) return;
+        if (Device == IntPtr.Zero || _disposed) return;
+        _disposed = true;
         // a failed wait (device lost) must not stop the releases below
         try { DrainInFlight(); } catch (GpuFenceException e) { Console.Error.WriteLine("renderer dispose: " + e.Message); }
         _copies?.Dispose(); // fences a failed drain left
