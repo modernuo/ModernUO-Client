@@ -276,6 +276,112 @@ namespace ClassicUO.UnitTests.Game.Map
         }
 
         [Fact]
+        public void Prefilled_Objects_Are_Retired_And_Handed_Out_At_Once_Before_Later_Retirees()
+        {
+            var world = new World();
+            var recycler = new MapObjectRecycler(true, 1000);
+
+            recycler.Prefill(world, 3, 2, 5000);
+            Land later = RetiredLand(world);
+            recycler.Retire(later, 5000);
+
+            Assert.Equal(4, recycler.PooledLands);
+            Assert.Equal(2, recycler.PooledStatics);
+
+            for (int i = 0; i < 3; i++)
+            {
+                // no quarantine wait: they were never in a tile list
+                Land land = recycler.TakeLand(5000);
+                Assert.NotNull(land);
+                Assert.NotSame(later, land);
+                Assert.True(land.IsDestroyed);
+                Assert.True(land.InRecycler);
+                Assert.Null(land.TileChunk);
+                Assert.Null(land.TNext);
+                Assert.Null(land.TPrevious);
+            }
+
+            Assert.Null(recycler.TakeLand(5999));
+            Assert.Same(later, recycler.TakeLand(6000));
+
+            Static st = recycler.TakeStatic(5000);
+            Assert.NotNull(st);
+            Assert.True(st.IsDestroyed && st.InRecycler);
+            Assert.NotNull(recycler.TakeStatic(5000));
+            Assert.Null(recycler.TakeStatic(5000));
+        }
+
+        [Fact]
+        public void Prefill_Is_Capped_At_A_Full_Pool_And_Tops_Up_Only()
+        {
+            var world = new World();
+            var recycler = new MapObjectRecycler(true, 0);
+
+            recycler.Prefill(world, 2, 0, 0);
+            recycler.Prefill(world, 5, 0, 0);
+            Assert.Equal(5, recycler.PooledLands);
+
+            recycler.Prefill(world, MapObjectRecycler.MaxLands + 10, 0, 0);
+            Assert.Equal(MapObjectRecycler.MaxLands, recycler.PooledLands);
+        }
+
+        [Fact]
+        public void Disabled_Recycler_Is_Not_Prefilled()
+        {
+            var world = new World();
+            var recycler = new MapObjectRecycler(false, 0);
+
+            recycler.Prefill(world, 10, 10, 0);
+
+            Assert.Equal(0, recycler.PooledLands);
+            Assert.Equal(0, recycler.PooledStatics);
+        }
+
+        [Fact]
+        public void A_Prefilled_Object_Reset_For_Reuse_Is_Like_A_New_One()
+        {
+            var world = new World();
+            var recycler = new MapObjectRecycler(true, 0);
+            recycler.Prefill(world, 1, 1, 0);
+
+            Land land = recycler.TakeLand(0);
+            uint landIncarnation = land.Incarnation;
+            land.ResetForReuse();
+            AssertSameState(NewLand(world), land, landIncarnation + 1);
+
+            Static st = recycler.TakeStatic(0);
+            uint staticIncarnation = st.Incarnation;
+            st.ResetForReuse();
+            AssertSameState(NewStatic(world), st, staticIncarnation + 1);
+        }
+
+        [Fact]
+        public void Prefilled_Chunks_Come_From_The_Pool_With_A_Presized_Statics_Mesh()
+        {
+            var world = new World();
+
+            try
+            {
+                Chunk.Prefill(world, 2, 128);
+
+                Assert.True(Chunk.PooledCount >= 2);
+
+                Chunk c = Chunk.Create(world, 3, 4);
+                Assert.False(c.IsDestroyed);
+                Assert.Equal(3, c.X);
+                Assert.Equal(4, c.Y);
+                Assert.True(c.Mesh.Statics.Vertices.Length >= 128);
+                Assert.Equal(0, c.Mesh.Statics.Count);
+                Assert.Null(c.Node);
+            }
+            finally
+            {
+                // the pool is static: leave no chunk of this test's World in it
+                Chunk.ClearPool();
+            }
+        }
+
+        [Fact]
         public void A_Reused_Land_Is_Not_Destroyed_And_Has_A_New_Incarnation()
         {
             var world = new World();
