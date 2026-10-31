@@ -68,3 +68,5 @@
 # Vendored sources stay byte-identical to upstream (checked by sha256); shell scripts keep LF for Linux/macOS.
 external/dr_libs/** -text
 *.sh text eol=lf
+tests/ClassicUO.UnitTests/IO/Fixtures/*.mp3 binary
+tests/ClassicUO.UnitTests/IO/Fixtures/mp3-regressions/** binary
