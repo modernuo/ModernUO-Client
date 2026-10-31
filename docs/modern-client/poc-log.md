@@ -2928,3 +2928,39 @@ Branch `poc/pack-text` (follows "Text in the pack" above; poc/modern-client merg
 ### Codex audit round 3 (coordinator scratchpad `astra-ptext3/out.md`) (2026-10-31)
 
 One P2, fixed: `ReadOurs` treated `File.Exists == false` as "Clilocs.txt absent", but `File.Exists` is false for access errors too, so an unreadable file was dropped silently (no Error on first load, and a reload published without it). It now reads directly; only `FileNotFoundException` / `DirectoryNotFoundException` mean absent, any other I/O or access failure logs at Error and sets `failed`, so a reload keeps the old state. New test `Clilocs_Txt_Missing_Is_Absent_And_An_Unreadable_Path_Is_A_Failure` (a directory named Clilocs.txt, no ACLs). Unit tests 749 pass; everything else in the round was clean.
+
+## Memory per client: palettes, facet switch, grow on demand (2026-10-31)
+
+Branch `poc/mem-reduce` from poc/modern-client 2ced75119. Follows "Memory footprint per client: first pass" (branch `poc/mem-footprint`, `docs/modern-client/memory-footprint.md` there) and the owner's decisions of 2026-10-31: players run several clients at once, so per-client memory matters. Three commits, one per change. Rendering is unchanged: no shader, bake or sampling change; layer indices and instance offsets survive every growth step.
+
+**1. Anim palettes: no CPU copy (71b1a6f46).**
+- Readers of `PackSet.Palettes` (18.5 MiB `ushort[]`, kept for the pack's lifetime): only `Renderer.CreatePaletteBuffer` (the GPU upload) and a log line in the standalone `Uo.Client` (palette count). Re-upload paths: every renderer re-creation (facet change before change 2, DevBench `reinit`, startup) goes through a new `Renderer`, so the upload must be repeatable, but it needs no long-lived copy.
+- Now `PackSet` keeps only `PalettePath`, `PaletteCount` and `PaletteOffset`; the renderer reads palettes.bin straight into the mapped transfer buffer (no managed array at all, not even a transient one). `PackSet.ReadPalettes()` reads a CPU copy for a future reader that wants one.
+- The frame → palette table (`uint[]`, 4.8 MiB) was read twice: by `AnimationsLoader` and by `PackSet`. The client now passes the loader's table through `PackTables.FramePalette`.
+
+**2. Gpu world: facet switch in place (5e0948ad4).**
+- Before: the startup probe built the world pass for map 0; the login on Trammel disposed it and built map 1 (renderer, page arrays, instance buffer, chunk store, page-job buffers, dynamic array), leaving about 34 MiB of dead LOH and re-allocating every GPU array. Every in-game facet change did the same.
+- Now `WorldRenderer.ChangeFacet(pack)` swaps the `PackSet` (same pack, `WithFacet`), drops the chunks and regions (`ChunkStore.ChangeFacet`), and keeps the device resources, the resident pages, the workers and every CPU array. Bakes and region loads in flight are discarded when they finish; their regions are orphaned, not pooled, so no worker writes into a region the new facet reuses. A failed switch falls back to the old rebuild.
+- The world object now survives a facet change, so the client's two caches keyed on it (GPU item cache, static season remap) also key on `world.Pack`. `WorldSettleGate` already treats a facet change as a discontinuity (hold). The new pack's bake switches (water wobble, remaps) start fresh, exactly as with a rebuilt world.
+
+**3. Grow on demand (3615c22ca).**
+- Art page array 12 → 24 layers, anim layers 32 → 64 → 128, instance buffer 256k → 512k → 1M → 2M instances. The ceilings are the old fixed sizes. `CUO_GPU_GROW=0` starts at the ceilings (A/B).
+- Policy (`Uo.Render/GrowthPolicy.cs`, unit-tested): never at the ceiling; at once when starved (a loaded page with no free layer, or an instance allocation that failed last frame), so growth always beats eviction below the ceiling; at 75% occupancy during a hold (the settle gate's stream-only frames) or a camera jump; otherwise after 120 frames at 75%.
+- A step creates the larger texture or buffer and copies the old contents GPU-side at the start of the frame's copy pass, before that frame's uploads (`SDL_CopyGPUTextureToTexture` per resident layer and mip; `SDL_CopyGPUBufferToBuffer`), then releases the old one (SDL frees it after the frames in flight). Same command buffer, same layer indices and offsets: nothing is dropped or flickers.
+- Each step logs `GPU world: grown at frame N: art layers a/24 (k steps, last x->y t ms, max, total); anim layers ...; instances ...` (main-thread time: create + record; the GPU copy runs inside that frame). The `GPU world:` trace line now ends with `instances used u/c`.
+
+**Memory trade-off log (per client).** Computed from the sizes; the measured numbers come from job bench-000035 (pending).
+
+| item | before | after | saving | what it costs |
+|---|---|---|---|---|
+| anim palettes CPU copy (managed LOH, resident) | 18.5 MiB | 0 | 18.5 MiB | each new renderer reads 18.5 MiB from palettes.bin (once per session now, see 2) |
+| frame → palette table, second copy (managed LOH, resident) | 4.8 MiB | 0 | 4.8 MiB | none (shared with AnimationsLoader) |
+| second world pass at login (dead managed LOH until a gen2; nothing collects the LOH after login) | ~34 MiB | 0 | ~34 MiB | none; facet changes also keep their resident pages (no re-upload) |
+| GPU re-allocation at login and facet change (commit churn) | ~525 MiB freed and re-allocated | 0 | churn only | none |
+| art page array (GPU commit / VRAM, never resident) | 256 MiB | 128 MiB | 128 MiB | one growth step to 24 layers once a session passes 9 resident pages; during that frame both arrays exist (384 MiB transient) |
+| anim page array (GPU) | 128 MiB | 32 MiB | 96 MiB | the large scene (82 pages) takes two steps (64, 128); old + new exist for one frame each |
+| instance buffer (GPU) | 64 MiB | 8 MiB | 56 MiB | steps only past 192k used instances (the dynamic range reserves 128k); normal sessions bake about 4.3k |
+| CPU instance mirror (managed, partly resident) | 18 MiB | 9 MiB | 9 MiB commit | resized (existing doubling) if the allocator grows past 256k |
+
+- **Totals:** about 32 MiB less live managed heap (palettes, frame table, mirror) plus about 34 MiB of dead LOH avoided at login: up to about 66 MiB of Task Manager "Memory" per client. GPU commit and VRAM: 280 MiB less per client at start (448 → 168 MiB), about 1.1 GB across four clients; sessions that need more grow back towards today's sizes.
+- **Growth stalls:** pending (bench-000035, the `GPU world: grown` lines in new.log).
