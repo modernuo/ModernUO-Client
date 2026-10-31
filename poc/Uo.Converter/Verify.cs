@@ -134,7 +134,8 @@ public static class Verify
             var fi = FacetFileIo.Read(dir);
             if (fi.BlocksX * 8 != fi.Width || fi.BlocksY * 8 != fi.Height) Fail($"facet {fi.Index} dims");
             int rxc = (fi.BlocksX + fi.RegionBlocks - 1) / fi.RegionBlocks, ryc = (fi.BlocksY + fi.RegionBlocks - 1) / fi.RegionBlocks;
-            long blocks = 0, st = 0;
+            long blocks = 0, st = 0, oracleChecked = 0, oracleBad = 0;
+            var oracle = MulMapOracle.TryOpen(fm, fi.Index, fi.BlocksX, fi.BlocksY);
             int nreg = Math.Min(rxc * ryc, ConvertOptions.MaxRegions);
             bool partial = nreg != rxc * ryc;
             Parallel.For(0, nreg, ConvertOptions.Par, r =>
@@ -145,6 +146,15 @@ public static class Verify
                 if (h.BlocksW != Math.Min(fi.RegionBlocks, fi.BlocksX - rx * fi.RegionBlocks) || h.BlocksH != Math.Min(fi.RegionBlocks, fi.BlocksY - ry * fi.RegionBlocks))
                     Fail($"region size {fi.Index} {rx},{ry}");
                 long nb = 0, ns = 0;
+                if (oracle != null)
+                {
+                    long bad = 0;
+                    for (int by = 0; by < h.BlocksH; by++)
+                        for (int bx = 0; bx < h.BlocksW; bx++)
+                            if (!oracle.Matches((rx * fi.RegionBlocks + bx) * fi.BlocksY + ry * fi.RegionBlocks + by, in b[by * h.BlocksW + bx])) bad++;
+                    Interlocked.Add(ref oracleChecked, h.BlocksW * h.BlocksH);
+                    Interlocked.Add(ref oracleBad, bad);
+                }
                 foreach (var blk in b)
                 {
                     if (blk.IsEmpty) continue;
@@ -161,6 +171,11 @@ public static class Verify
             if (!partial && blocks != (long)fi.BlocksX * fi.BlocksY) Fail($"facet {fi.Index}: {blocks} blocks, expected {fi.BlocksX * fi.BlocksY}");
             if (stats.TryGetValue($"map{fi.Index}", out var o) && o is MapConvert.Stats ms && ms.Statics != st) Fail($"facet {fi.Index} statics {st} != {ms.Statics}");
             Console.WriteLine($"  facet {fi.Index}: {fi.Width}x{fi.Height}, {nreg}/{rxc * ryc} regions, {blocks} blocks, {st} statics");
+            if (oracle != null)
+            {
+                if (oracleBad != 0) Fail($"facet {fi.Index}: {oracleBad} of {oracleChecked} blocks differ from the MUL files + diffs");
+                Console.WriteLine($"    vs independent MUL read (+ {oracle.LandPatches} land / {oracle.StaticPatches} static diff blocks as ModernUO applies them): {oracleChecked - oracleBad}/{oracleChecked} blocks EXACT");
+            }
         }
 
         if (Want("art")) PageTimings(Path.Combine(outDir, "art"));

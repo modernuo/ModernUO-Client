@@ -97,7 +97,9 @@ namespace ClassicUO.Assets
             }
         }
 
-        /// <summary>Map patch packets (mapdif/stadif) are not supported: shard owners merge patches before converting.</summary>
+        /// <summary>Map patch packets (0xBF/0x18) are not applied at run time. The converter bakes mapdif/stadif into the pack
+        /// for pre-UOP installs the way ModernUO serves them (land below 6.0.0.0, statics below 7.0.9.0; Uo.Converter
+        /// ClientLoad.ApplyLegacyMapRules), so the counts the server sends describe patches the pack already holds.</summary>
         public bool ApplyPatches(ref StackDataReader reader)
         {
             uint maps = reader.ReadUInt32BE();
@@ -109,7 +111,7 @@ namespace ClassicUO.Assets
 
                 if (statics != 0 || land != 0)
                 {
-                    Log.Warn($"Server sent map patches for map {i} ({land} land, {statics} statics); patches are not supported with asset packs and are ignored");
+                    Log.Warn($"Server sent map patches for map {i} ({land} land, {statics} statics); ignored: the converter bakes map diffs into the pack");
                 }
             }
 

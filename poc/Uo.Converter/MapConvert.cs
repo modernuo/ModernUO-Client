@@ -1,5 +1,6 @@
 using System.Runtime.InteropServices;
 using ClassicUO.Assets;
+using ClassicUO.Utility;
 using Uo.Pack;
 
 namespace Uo.Converter;
@@ -11,13 +12,16 @@ public static class MapConvert
     private const int MapBlockBytes = 4 + 64 * 3; // header + MapCells[64]
     private const int StaticRecBytes = 7;          // StaticsBlock
 
-    /// <summary>Facets the client actually has (a map file on disk, not ClassicUO's map1 := map0 fallback).</summary>
+    /// <summary>Facets the client actually has: a map file on disk, or (below 6.0.0.0, as ModernUO's
+    /// <c>maps.enablePre6000Trammel</c>) Trammel read from map0 plus its own diffs (ClientLoad.ApplyLegacyMapRules).
+    /// ClassicUO's unconditional map1 := map0 fallback is not followed for newer clients.</summary>
     public static IEnumerable<int> AvailableFacets(UOFileManager fm)
     {
         for (int i = 0; i < MapLoader.MAPS_COUNT; i++)
         {
             bool uop = File.Exists(fm.GetUOFilePath($"map{i}LegacyMUL.uop"));
             bool mul = File.Exists(fm.GetUOFilePath($"map{i}.mul"));
+            if (i == 1 && !uop && !mul && fm.Version < ClientVersion.CV_6000) mul = File.Exists(fm.GetUOFilePath("map0.mul"));
             if ((uop || mul) && (ConvertOptions.Facets == null || ConvertOptions.Facets.Contains(i))) yield return i;
         }
     }
@@ -77,7 +81,7 @@ public static class MapConvert
                         land[c] = new LandCell { TileId = (ushort)((cells[c * 3] | (cells[c * 3 + 1] << 8)) & 0x3FFF), Z = (sbyte)cells[c * 3 + 2] };
 
                     tmp.Clear();
-                    if (im.StaticFile != null && im.StaticAddress != 0 && im.StaticCount > 0)
+                    if (im.StaticFile != null && im.StaticCount > 0) // address 0 is valid: the first block of statics*.mul or stadif*.mul
                     {
                         var sb = files[im.StaticFile.FilePath];
                         long start = (long)im.StaticAddress, end = start + im.StaticCount * StaticRecBytes;
