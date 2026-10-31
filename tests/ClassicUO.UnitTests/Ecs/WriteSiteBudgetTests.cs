@@ -116,12 +116,65 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Fact]
-        public void Only_The_Funnel_Is_Exempt()
+        public void Only_The_Funnel_Operations_Are_Exempt()
         {
-            // the exemption exists and names the funnel alone (a second exempt file would be an unbudgeted writer)
+            // the exemption names the funnel's operations alone (another exempt method would be an unbudgeted writer)
             string root = WriteSiteScanner.FindRepoRoot();
-            WriteSiteScanner.FunnelFiles.Should().BeEquivalentTo(new[] { "src/ClassicUO.Client/Game/Ecs/WorldWriter.cs" });
-            File.Exists(Path.Combine(root, "src", "ClassicUO.Client", "Game", "Ecs", "WorldWriter.cs")).Should().BeTrue();
+            WriteSiteScanner.FunnelFile.Should().Be("src/ClassicUO.Client/Game/Ecs/WorldWriter.cs");
+            WriteSiteScanner.FunnelClass.Should().Be("WorldWriter");
+            WriteSiteScanner.FunnelOperations.Should().BeEquivalentTo("UpsertWorldItem", "PlaceWorldItem", "RemoveWorldItem");
+
+            // each listed operation is a method body of the real class
+            string code = WriteSiteScanner.StripCommentsAndStrings(File.ReadAllText(Path.Combine(root, "src", "ClassicUO.Client", "Game", "Ecs", "WorldWriter.cs")));
+            WriteSiteScanner.MethodBodyLines(code, "WorldWriter", WriteSiteScanner.FunnelOperations).Should().HaveCount(WriteSiteScanner.FunnelOperations.Length);
+        }
+
+        [Fact]
+        public void The_Exemption_Is_The_Operation_Bodies_Not_The_File()
+        {
+            const string Src =
+                "namespace N {\n" +
+                "internal sealed class WorldWriter {\n" +
+                "    public Item UpsertWorldItem(uint s) {\n" +
+                "        Item item = _world.GetOrCreateItem(s);\n" +
+                "        item.Graphic = 1;\n" +            // line 5: the operation: exempt
+                "        return item;\n" +
+                "    }\n" +
+                "    private void Helper(Item item) {\n" +
+                "        item.Hue = 2;\n" +                // line 9: another method of the funnel: counted
+                "        UpsertWorldItem(1);\n" +
+                "    }\n" +
+                "    private sealed class Nested { void RemoveWorldItem(Item item) { item.X = 3; } }\n" + // line 12: a nested type: counted
+                "}\n" +
+                "internal static class Other { static void PlaceWorldItem(Item item) { item.Y = 4; } }\n" + // line 14: another class: counted
+                "}\n";
+
+            WriteSiteScanner.ScanSource(Src, WriteSiteScanner.FunnelFile, new HashSet<string> { "Player" }, false)
+                .Select(s => (s.Field, s.Line)).Should().BeEquivalentTo(new[] { ("Hue", 9), ("X", 12), ("Y", 14) });
+
+            // the same source in any other file: every write counts
+            WriteSiteScanner.ScanSource(Src, "src/ClassicUO.Client/Game/Other.cs", new HashSet<string> { "Player" }, false).Should().HaveCount(4);
+        }
+
+        [Fact]
+        public void Backing_Field_Writes_Outside_Their_Checked_Setter_Are_Found()
+        {
+            const string Src =
+                "class C {\n" +
+                "    public ushort Graphic { get => _graphic; set { FunnelCheck.Write(this, FunnelField.Graphic); _graphic = value; } }\n" +
+                "    public float OffsetX { get => _offset.X; set { FunnelCheck.Write(this, FunnelField.OffsetX); _offset.X = value; } }\n" +
+                "    public uint Serial { get => _serial; set { FunnelCheck.WriteSerial(this, value); _serial = value; } }\n" +
+                "    void F() { _graphic = 3; _offset.Y = 1; _amount++; }\n" +
+                "    public ushort Hue { get => _hue; set { FunnelCheck.Write(this, FunnelField.Hue); _graphic = value; } }\n" + // another field's setter
+                "}\n";
+
+            // in the declaring file (GameObject.cs declares _graphic, _offset; _amount is Item's)
+            WriteSiteScanner.ScanSource(Src, "src/ClassicUO.Client/Game/GameObjects/GameObject.cs", new HashSet<string> { "Player" }, true)
+                .Select(s => (s.Field, s.Line)).Should().BeEquivalentTo(new[] { ("_graphic", 5), ("_offset", 5), ("_graphic", 6) });
+
+            // a private field of the same name in another class is another field (PlayerMobile's _amount)
+            WriteSiteScanner.ScanSource(Src, "src/ClassicUO.Client/Game/GameObjects/PlayerMobile.cs", new HashSet<string> { "Player" }, true)
+                .Should().BeEmpty();
         }
 
         // ---- the scanner's own behaviour on small sources ----
@@ -238,8 +291,34 @@ namespace ClassicUO.UnitTests.Ecs
             // private A state (written by name only inside the classes): the animation timer, the pushed-input backing fields
             "_animationGroup", "_animationInterval", "_animationRepeat", "_animationRepeateMode", "_animationRepeatModeCount",
             "_isAnimationForwardDirection", "_lastAnimationIdleDelay", "_isSA_Poisoned", "_isDead", "_isFemale", "_isRunning",
-            "_notorietyFlag", "_inWarMode", "_direction", "_hits", "_hitsMax", "_isMulti", "_displayedGraphic"
+            "_notorietyFlag", "_inWarMode", "_direction", "_hits", "_hitsMax", "_isMulti", "_displayedGraphic",
+            // T1: the backing fields the funnel-check setters introduced (Codex audit of slice 1, #3): a write outside the
+            // field's own setter is a direct write that neither the setter's check nor the property names would catch
+            "_graphic", "_hue", "_x", "_y", "_z", "_offset", "_flags", "_serial", "_name", "_animIndex", "_executeAnimation",
+            "_lastAnimationChangeTime", "_lastStepTime", "_amount", "_container", "_isDamageable", "_layer", "_lightID", "_price",
+            "_usedLayer", "_race", "_speedMode", "_stamina", "_staminaMax", "_mana", "_manaMax", "_isRenamable",
+            "_animationFrameCount", "_animationFromServer", "_lastStepSoundTime", "_stepSoundOffset"
         };
+
+        // T1: the backing fields of the one-line checked setters (`set { FunnelCheck.Write(this, FunnelField.X); _x = value; }`):
+        // that setter is their one allowed writer. They are private, so only their declaring file can write them: a field of the
+        // same name in another file (PlayerMobile's own _amount) is not one of them.
+        internal static readonly Dictionary<string, string> CheckedBackingFields = new Dictionary<string, string>(StringComparer.Ordinal)
+        {
+            ["_graphic"] = "GameObject.cs", ["_hue"] = "GameObject.cs", ["_x"] = "GameObject.cs", ["_y"] = "GameObject.cs",
+            ["_z"] = "GameObject.cs", ["_offset"] = "GameObject.cs",
+            ["_flags"] = "Entity.cs", ["_serial"] = "Entity.cs", ["_name"] = "Entity.cs", ["_animIndex"] = "Entity.cs",
+            ["_executeAnimation"] = "Entity.cs", ["_lastAnimationChangeTime"] = "Entity.cs", ["_lastStepTime"] = "Entity.cs",
+            ["_amount"] = "Item.cs", ["_container"] = "Item.cs", ["_isDamageable"] = "Item.cs", ["_layer"] = "Item.cs",
+            ["_lightID"] = "Item.cs", ["_price"] = "Item.cs", ["_usedLayer"] = "Item.cs",
+            ["_race"] = "Mobile.cs", ["_speedMode"] = "Mobile.cs", ["_stamina"] = "Mobile.cs", ["_staminaMax"] = "Mobile.cs",
+            ["_mana"] = "Mobile.cs", ["_manaMax"] = "Mobile.cs", ["_isRenamable"] = "Mobile.cs", ["_animationFrameCount"] = "Mobile.cs",
+            ["_animationFromServer"] = "Mobile.cs", ["_lastStepSoundTime"] = "Mobile.cs", ["_stepSoundOffset"] = "Mobile.cs"
+        };
+
+        private static readonly Regex CheckedSetterLine = new Regex(
+            @"\bset\s*\{\s*FunnelCheck\.(?:WriteSerial\s*\(\s*this\s*,\s*value|Write\s*\(\s*this\s*,\s*FunnelField\.(?<p>\w+))\s*\)\s*;\s*(?<f>_\w+)(?:\s*\.\s*\w+)?\s*=\s*value\s*;\s*\}",
+            RegexOptions.Compiled);
 
         // GameEffect and its subclasses are GameObjects but not Entities: only the GameObject fields count there
         private static readonly HashSet<string> EffectFields = new HashSet<string> { "Graphic", "Hue", "X", "Y", "Z", "Offset" };
@@ -255,12 +334,13 @@ namespace ClassicUO.UnitTests.Ecs
             "EntityTextContainer.cs", "RenderedText.cs", "TextObject.cs", "MobileTable.cs", "IsometricLight.cs", "House.cs", "EntityCollection.cs"
         };
 
-        // T1: the mutation funnel (ecs-transition-plan.md). Its writes are the allowed ones; the budget counts everything else.
-        // Keep this to the funnel alone: a file listed here can write world state without limit.
-        internal static readonly HashSet<string> FunnelFiles = new HashSet<string>(StringComparer.Ordinal)
-        {
-            "src/ClassicUO.Client/Game/Ecs/WorldWriter.cs"
-        };
+        // T1: the mutation funnel (ecs-transition-plan.md). The writes inside the bodies of these methods of this class in this
+        // file are the allowed ones; every other write in the file (another method, a nested type, another class) counts.
+        // Keep this to the funnel's operations: a method listed here can write world state without limit.
+        internal const string FunnelFile = "src/ClassicUO.Client/Game/Ecs/WorldWriter.cs";
+        internal const string FunnelClass = "WorldWriter";
+
+        internal static readonly string[] FunnelOperations = { "UpsertWorldItem", "PlaceWorldItem", "RemoveWorldItem" };
 
         private static readonly string FieldAlt = string.Join("|", AFields);
         private const string WorldTypes = "Item|Mobile|Entity|PlayerMobile|GameObject";
@@ -371,12 +451,6 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 string rel = Path.GetRelativePath(root, path).Replace('\\', '/');
 
-                // T1: the funnel is the one allowed writer, so its writes are not direct writes
-                if (FunnelFiles.Contains(rel))
-                {
-                    continue;
-                }
-
                 string name = Path.GetFileName(path);
                 bool gameObjectFile = rel.StartsWith("src/ClassicUO.Client/Game/GameObjects/", StringComparison.Ordinal) && !NotGameObjectFiles.Contains(name);
                 List<WriteSite> sites = ScanSource(text, rel, globalMembers, gameObjectFile);
@@ -393,6 +467,122 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         internal static List<WriteSite> ScanSource(string source, string path, HashSet<string> globalMembers, bool insideGameObjectClass)
+        {
+            List<WriteSite> sites = ScanSourceAll(source, path, globalMembers, insideGameObjectClass);
+            string[] lines = source.Split('\n');
+
+            // a checked backing field: written by its own one-line setter, or a field of the same name in another file
+            string fileName = Path.GetFileName(path);
+            sites.RemoveAll(s => CheckedBackingFields.TryGetValue(s.Field, out string declaredIn)
+                                 && (declaredIn != fileName || (s.Line - 1 < lines.Length && IsOwnSetter(lines[s.Line - 1], s.Field))));
+
+            // T1: the funnel's operations
+            if (path == FunnelFile)
+            {
+                List<(int From, int To)> bodies = MethodBodyLines(StripCommentsAndStrings(source), FunnelClass, FunnelOperations);
+                sites.RemoveAll(s => bodies.Exists(b => s.Line >= b.From && s.Line <= b.To));
+            }
+
+            return sites;
+        }
+
+        private static bool IsOwnSetter(string line, string field)
+        {
+            foreach (Match m in CheckedSetterLine.Matches(line))
+            {
+                // the setter of the property the field backs: Graphic -> _graphic, OffsetX -> _offset, WriteSerial -> _serial
+                string prop = m.Groups["p"].Success ? m.Groups["p"].Value : "Serial";
+
+                if (prop is "OffsetX" or "OffsetY" or "OffsetZ")
+                {
+                    prop = "Offset";
+                }
+
+                if (m.Groups["f"].Value == field && field == "_" + char.ToLowerInvariant(prop[0]) + prop.Substring(1))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>
+        /// The line ranges of the bodies of the named methods declared directly in class <paramref name="className"/> (brace
+        /// matching on code without comments and strings). A method of another class or of a nested type is not included.
+        /// </summary>
+        internal static List<(int From, int To)> MethodBodyLines(string code, string className, string[] methods)
+        {
+            var result = new List<(int, int)>();
+            Match cls = new Regex(@"\bclass\s+" + className + @"\b[^{]*\{").Match(code);
+
+            if (!cls.Success)
+            {
+                return result;
+            }
+
+            int clsOpen = cls.Index + cls.Length - 1;
+            int clsClose = MatchBrace(code, clsOpen, '{', '}');
+            var decl = new Regex(@"\b(?:" + string.Join("|", methods) + @")\s*\(");
+
+            foreach (Match m in decl.Matches(code, clsOpen))
+            {
+                // outside the class, or inside a member body or a nested type (a call, not a declaration of the class)
+                if (m.Index > clsClose || Depth(code, clsOpen, m.Index) != 1)
+                {
+                    continue;
+                }
+
+                int parenClose = MatchBrace(code, m.Index + m.Length - 1, '(', ')');
+                int k = parenClose + 1;
+
+                while (k < code.Length && char.IsWhiteSpace(code[k]))
+                {
+                    k++;
+                }
+
+                if (k >= code.Length || code[k] != '{')
+                {
+                    continue;
+                }
+
+                result.Add((LineOf(code, k), LineOf(code, MatchBrace(code, k, '{', '}'))));
+            }
+
+            return result;
+        }
+
+        // the brace depth at `at`, counted from the class's opening brace (1: a class member)
+        private static int Depth(string code, int open, int at)
+        {
+            int depth = 0;
+
+            for (int i = open; i < at; i++)
+            {
+                if (code[i] == '{') depth++;
+                else if (code[i] == '}') depth--;
+            }
+
+            return depth;
+        }
+
+        private static int MatchBrace(string code, int open, char o, char c)
+        {
+            int depth = 0;
+
+            for (int i = open; i < code.Length; i++)
+            {
+                if (code[i] == o) depth++;
+                else if (code[i] == c && --depth == 0) return i;
+            }
+
+            return code.Length - 1;
+        }
+
+        // `_offset.X = v`: a member of the Offset backing field
+        private static readonly Regex BareBackingSub = new Regex(@"(?<![\w\.])_offset\s*\.\s*\w+\s*(?<op>" + Op + ")", RegexOptions.Compiled);
+
+        private static List<WriteSite> ScanSourceAll(string source, string path, HashSet<string> globalMembers, bool insideGameObjectClass)
         {
             string code = StripCommentsAndStrings(source);
             var result = new List<WriteSite>();
@@ -507,6 +697,14 @@ namespace ClassicUO.UnitTests.Ecs
                     if (seen.Add(m.Index))
                     {
                         result.Add(new WriteSite(path, LineOf(code, m.Index), "Offset", "this", "bare"));
+                    }
+                }
+
+                foreach (Match m in BareBackingSub.Matches(code))
+                {
+                    if (seen.Add(m.Index))
+                    {
+                        result.Add(new WriteSite(path, LineOf(code, m.Index), "_offset", "this", "bare"));
                     }
                 }
             }

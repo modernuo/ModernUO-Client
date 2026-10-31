@@ -596,6 +596,9 @@ namespace ClassicUO.Game
         /// <summary>Items in the per-frame update list (corpses, items whose handles just opened).</summary>
         public int ActiveItemCount => _activeItems.Count;
 
+        /// <summary>T1 tests: the per-frame update list in order.</summary>
+        internal IReadOnlyList<Item> ActiveItems => _activeItems;
+
         /// <summary>W5: <paramref name="item"/> needs <see cref="Item.Update"/> from now on (a corpse, or handles opened).</summary>
         public void QueueItemUpdate(Item item)
         {
@@ -953,6 +956,19 @@ namespace ClassicUO.Game
 
         public Item GetOrCreateItem(uint serial)
         {
+            Item item = GetOrCreateItem(serial, out bool isNew);
+
+            if (isNew)
+            {
+                Ecs.Sync(item);
+            }
+
+            return item;
+        }
+
+        /// <summary>T1: <see cref="GetOrCreateItem(uint)"/> without the ECS write; the funnel commits the new item itself.</summary>
+        internal Item GetOrCreateItem(uint serial, out bool isNew)
+        {
             Item item = Items.Get(serial);
 
             if (item != null && item.IsDestroyed)
@@ -961,11 +977,12 @@ namespace ClassicUO.Game
                 item = null;
             }
 
-            if (item == null /*|| item.IsDestroyed*/)
+            isNew = item == null;
+
+            if (isNew /*|| item.IsDestroyed*/)
             {
                 item = Item.Create(this, serial);
                 Items.Add(item);
-                Ecs.Sync(item);
             }
 
             return item;

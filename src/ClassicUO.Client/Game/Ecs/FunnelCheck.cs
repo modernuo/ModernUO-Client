@@ -56,18 +56,30 @@ namespace ClassicUO.Game
         AnimationFromServer,
         LastStepSoundTime,
         StepSoundOffset,
+        // mutation paths that are not property setters (Codex audit of slice 1, #2)
+        IsSAPoisoned,
+        Steps,
+        AnimationState,
         Count
     }
 
     /// <summary>
     /// T1 (<c>CUO_FUNNEL_CHECK=1</c>, CUO_DEVTOOLS builds only): every class-A property setter calls <see cref="Write"/>. A
     /// write to an <see cref="Entity"/> that its <see cref="World"/> holds, made outside a <see cref="WorldWriter"/> scope, is a
-    /// direct write: it is counted per field, and the first writes of each (field, caller) pair are logged as
+    /// direct write (a write to the subject of the operation that runs is not; a write to any other object during it is): it
+    /// is counted per field, and the first writes of each (field, caller) pair are logged as
     /// <c>[funnel] direct write &lt;field&gt; at &lt;caller&gt;</c>. Land, statics, multis, effects and detached objects (the
     /// character-creation mobiles, the house placement preview) are not world objects and are not counted.
     /// <para>
     /// The call is <see cref="ConditionalAttribute"/>: a <c>-p:CuoDevTools=false</c> build compiles it out of every setter. In
     /// a dev build with the check off it costs one static load and a branch per write.
+    /// </para>
+    /// <para>
+    /// Besides the 43 setters: <c>Mobile.SetSAPoison</c>, every change of the step queue (<c>EnqueueStep</c>,
+    /// <c>ClearSteps</c>, the step taken in <c>ProcessSteps</c>, <c>PlayerMobile.Walk</c>) and the methods that write the
+    /// private animation timer (<c>SetAnimation</c>, <c>SetIdleAnimation</c>, <c>CalculateRandomIdleTime</c>, the timer reset
+    /// in <c>ProcessAnimation</c>). The counters and the site table are not synchronised: they assume the single
+    /// world-mutation thread (the game loop), like the World they observe.
     /// </para>
     /// </summary>
     internal static class FunnelCheck
@@ -79,7 +91,23 @@ namespace ClassicUO.Game
 #if CUO_DEVTOOLS
             if (Enabled)
             {
-                Observe(obj, field);
+                Observe(obj, field, 0, false);
+            }
+#endif
+        }
+
+        /// <summary>
+        /// The Serial setter: an object World holds under the old serial or (a re-key: the dictionary moved first, as the
+        /// death re-key in 0xAF does) under the new one is world state.
+        /// </summary>
+        [Conditional("CUO_DEVTOOLS")]
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static void WriteSerial(Entity e, uint newSerial)
+        {
+#if CUO_DEVTOOLS
+            if (Enabled)
+            {
+                Observe(e, FunnelField.Serial, newSerial, true);
             }
 #endif
         }
@@ -115,7 +143,7 @@ namespace ClassicUO.Game
         public static IReadOnlyDictionary<(FunnelField, string), long> Sites => _sites;
 
         [MethodImpl(MethodImplOptions.NoInlining)]
-        internal static void Observe(GameObject obj, FunnelField field)
+        internal static void Observe(GameObject obj, FunnelField field, uint otherSerial, bool hasOtherSerial)
         {
             if (obj is not Entity e)
             {
@@ -124,7 +152,12 @@ namespace ClassicUO.Game
 
             World world = e.World;
 
-            if (world == null || world.Writer == null || world.Writer.InScope || !IsHeld(world, e))
+            if (world == null || world.Writer == null || world.Writer.Owns(e))
+            {
+                return;
+            }
+
+            if (!IsHeld(world, e, e.Serial) && !(hasOtherSerial && IsHeld(world, e, otherSerial)))
             {
                 return;
             }
@@ -149,14 +182,14 @@ namespace ClassicUO.Game
         }
 
         // only the instance World holds for its serial is world state (WorldEcs.Sync ignores every other one)
-        private static bool IsHeld(World world, Entity e)
+        private static bool IsHeld(World world, Entity e, uint serial)
         {
             if (e is Item)
             {
-                return ReferenceEquals(world.Items.Get(e.Serial), e);
+                return ReferenceEquals(world.Items.Get(serial), e);
             }
 
-            return ReferenceEquals(world.Mobiles.Get(e.Serial), e);
+            return ReferenceEquals(world.Mobiles.Get(serial), e);
         }
 
         // the first frame that is not a property setter, this class or the funnel itself

@@ -32,7 +32,7 @@ src/ClassicUO.Client/Game/GameObjects/Item.cs|Direction|1
 src/ClassicUO.Client/Game/GameObjects/Item.cs|LastAnimationChangeTime|1
 src/ClassicUO.Client/Game/GameObjects/Item.cs|Layer|1
 src/ClassicUO.Client/Game/GameObjects/Item.cs|Serial|1
-src/ClassicUO.Client/Game/GameObjects/Item.cs|UsedLayer|2
+src/ClassicUO.Client/Game/GameObjects/Item.cs|UsedLayer|1
 src/ClassicUO.Client/Game/GameObjects/Item.cs|_isMulti|1
 src/ClassicUO.Client/Game/GameObjects/Land.cs|Graphic|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|AnimIndex|3

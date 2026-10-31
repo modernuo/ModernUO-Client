@@ -1232,12 +1232,11 @@ namespace ClassicUO.Network
             else
             {
                 Item item = (Item)entity;
-                Entity cont = world.Get(item.Container);
                 bool wasMulti = item.IsMulti;
                 Layer layer = item.Layer;
 
                 // T1: the house, the parent's child list and the removal (contents, OPL, Destroy, the ECS entity)
-                world.Writer.RemoveWorldItem(item, cont);
+                world.Writer.RemoveWorldItem(item, out Entity cont);
 
                 if (cont != null)
                 {
@@ -6331,10 +6330,10 @@ namespace ClassicUO.Network
             bool created = false;
 
             // T1: a serial that is (or becomes) an item goes through the funnel: create or take out of its container, the
-            // fields, CheckGraphicChange, the tile and the ECS entity in one operation
+            // values (ECS and GameObject) and CheckGraphicChange's state; then the callbacks below; then the tile
             if (obj == null || obj.IsDestroyed ? !(SerialHelper.IsMobile(serial) && type != 3) : obj is Item)
             {
-                item = world.Writer.UpsertWorldItem(obj, serial, graphic, graphic_inc, count, x, y, z, direction, hue, flagss, type, out created);
+                item = world.Writer.UpsertWorldItem(serial, graphic, graphic_inc, count, x, y, z, direction, hue, flagss, type, out created);
 
                 if (item == null)
                 {
@@ -6364,6 +6363,9 @@ namespace ClassicUO.Network
                     Client.Game.UO.GameCursor.ItemHold.Enabled = false;
                     Client.Game.UO.GameCursor.ItemHold.Dropped = false;
                 }
+
+                // after the SingleClick above (it sends a packet, and plugin send hooks run synchronously), as before T1
+                world.Writer.PlaceWorldItem(item);
 
                 if (item.OnGround && graphic == 0x2006 && ProfileManager.CurrentProfile.AutoOpenCorpses)
                 {
