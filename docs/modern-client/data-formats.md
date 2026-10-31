@@ -30,7 +30,7 @@ MUL/UOP + .def/.txt ──import (once)──▶ source tree ──build (increm
 - **Accepted exception:** the lower mip levels of art and texmap pages are stored in the pack although they are derived, because rebuilding them at load is expensive. They are never stored in the source tree.
 - **Rules are data.** ClassicUO's hard-coded per-tile and per-graphic rules (NoDraw lists, the `nodraw` name prefix, land 0–2, the easel version rule, `NoDiagonal`, and the others in section 5.6) move into the source tree as data. The build writes them into the pack; the client keeps no copy. Admins change behaviour by editing data, not code.
 - **Lossless.** Source images are UO's own pixel layouts, uncompressed; the pack's mip 0 is bit-exact to the source (pack-format.md, "Pixel formats"). Nothing lossy anywhere in the chain (BC7 breaks hueing; README "Texture format").
-- **No patch formats.** `verdata.mul`, `mapdif*`/`stadif*` are not imported (README, "No patch formats"). Shard owners merge patches into the base files before importing. (The upstream commit 7335535a1 that loads verdata-only animations is a Legacy-path fix and does not change this.)
+- **No patch formats, except map diffs of legacy clients.** `verdata.mul` is not imported (README, "No patch formats"); shard owners merge it into the base files before importing. `mapdif*`/`stadif*` are applied at import for clients below 6.0 (land) and 7.0.9 (statics), exactly as ModernUO applies and announces them, because there the diffs are the world the server walks on (Trammel is map0 + mapdif1); see 4.9 (2026-10-31, poc/legacy-import; pending the owner's decision, since README "No patch formats" (2026-10-24) excludes mapdif/stadif; `--no-map-diffs` restores that rule). (The upstream commit 7335535a1 that loads verdata-only animations is a Legacy-path fix and does not change this.)
 - **Several clients at once.** The client opens the pack read-only with shared access; the build writes a new pack version aside and swaps it atomically (README, "Several instances at once"; the `uo-packs/CURRENT` scheme in the agent rules is the PoC form of this).
 
 ## 2. Source tree layout
@@ -116,6 +116,27 @@ Most graphics need none: their tiledata row carries the gameplay data and the im
 ## 4. Content types
 
 For each type: what the importer reads (and the ClassicUO/converter code whose decode it reuses), the source file, the build output (pack section; layout in pack-format.md), and validation.
+
+### 4.0 Legacy (pre-UOP) installs
+
+The importer reads pre-UOP installs from **4.0.11c** on (owner, 2026-10-31: nothing older is supported; the converter refuses it). Tested end to end on `D:/Ultima Online Installations/UOML` (client.exe July 2005, **4.0.11c**, MUL only, no verdata.mul): full conversion plus `--verify-only` pass, and the client loads the pack offline (`LegacyPackLoadTests`, gated on `CUO_LEGACY_PACK`). Synthetic MUL tests in `tests/Uo.Converter.Tests` cover the version-dependent branches; no UO data is committed.
+
+- **Client version** (`LegacyClientVersion.cs`): `--client-version`, else `--cuo-settings <settings.json>` (`clientversion`), else client.exe: VS_VERSION_INFO, else the `sprintf("%d.%d.%d%s")` push sequence of pre-resource exes (a port of ModernUO PR #2735 at 61d0651af; UOML has no version resource or version text). Nothing found: the error names both options. ClassicUO's parser reads "4.0.11c" as 4.0.11.2 (letters from `a` = 0), so its `CV_4011C`/`CV_4011D` enum values (low byte = ASCII) never compare as intended for 4.0.11x.
+- **A wrong version is caught for tiledata**: the file size must fit the layout the version selects (`ClientLoad.CheckTileDataLayout`).
+
+| Importer | Legacy layouts supported | Tested on |
+|---|---|---|
+| Art, texmaps | `art.mul`/`artidx.mul`, `texmaps.mul`/`texidx.mul` (the same as UOP-era MUL) | UOML: 15,319 art, 1,870 tex, verify BIT-EXACT |
+| Animations | `anim{,2..5}.idx/mul` with `Bodyconv.def`, `Body.def`, `Corpse.def`, `mobtypes.txt`; no AnimationFrame/Sequence UOP | UOML: 477 bodies with frames, 0 UOP bodies, sample BIT-EXACT |
+| Gumps | `gumpart.mul`/`gumpidx.mul`, `gump.def` | UOML: 2,630 gumps EXACT |
+| Hues, radarcol, lights | `hues.mul` (3,000), `radarcol.mul`, `light.mul` | UOML: EXACT |
+| Tile data (4.7) | pre-7.0.9 records (32-bit flags, 0x4000 statics) | UOML (16,384 statics) EXACT; synthetic old and new layout (`Tiledata_Old_And_New_Layouts_Import_Into_TiledataBin`) |
+| Multis (4.8) | 12-byte components below 7.0.9 (16-byte from 7.0.9), visible iff flags != 0 | UOML (233 multis, 49,380 components, flags 0/1) EXACT; synthetic 12- and 16-byte |
+| Maps (4.9) | `map/staidx/statics<N>.mul`; Trammel from map0 below 6.0 when there is no map1; Felucca/Trammel width from the map0 size; **diffs baked in** as ModernUO serves them | UOML: 5 facets, every block EXACT vs an independent MUL + diff read (`MulMapOracle`); synthetic diff tests |
+| Cliloc, speech, fonts | `Cliloc.*`, `speech.mul`, `fonts.mul`, `unifont{,1,2}.mul` | UOML: 8 languages, 5,548 speech entries, EXACT |
+| Tileart | none before UOP: `tileart.bin` is written empty; the client copes | UOML |
+| Equipconv | `Equipconv.def` | UOML: 198 rows EXACT |
+| verdata.mul | **not applied** (ClassicUO opens it but applies nothing); the converter warns when it is present | UOML has none |
 
 ### 4.1 Images in general
 
@@ -236,21 +257,21 @@ UO stores animations by **file** (anim.mul, anim2–5, AnimationFrame1..N.uop) a
 
 ### 4.7 Tile data
 
-- **Import:** `tiledata.mul` (old: 0x4000 statics, 32-bit flags; 7.0.0: 0x8000; 7.0.9+: 64-bit flags, 0x10000; detection by file size as ModernUO does).
+- **Import:** `tiledata.mul` (old: 0x4000 statics, 32-bit flags; 7.0.0: 0x8000; 7.0.9+: 64-bit flags, 0x10000). The loader picks the record layout from the client version (below 7.0.9.0: 32-bit flags); the converter refuses a file whose size does not fit that layout (ModernUO detects by file size). Legacy: tested on UOML (4.0.11c, 0x4000 statics) and synthetic old/new files (4.0).
 - **Source:** `tiledata/land.csv` (`id, name, flags, texId`) and `tiledata/static.csv` (`id, name, flags, weight, layer, count, animId, hue, lightIndex, height, …` — every field ClassicUO, ModernUO and CentrED# read, so import is lossless; the record is `flags, weight, layer, count, animId, hue, lightIndex, height, name`, T/TileDataLoader.cs:25-79). Rule flags the build used to derive at runtime are columns too (5.6).
 - **Build:** one full tiledata file, `tiledata.bin` (done in classic-1.1); the client derives its compact arrays at load. The draw flags (`NoDraw`, `NoDrawUnlessGargoyle`, `NoDrawAsMulti`) are written by the converter today (`Uo.Converter/TileRules.cs`, pack-format.md "NoDraw flags"); with a source tree they come from the `noDraw` column instead.
 - **Validation:** id ranges, known flag names, `texId` refers to an existing texmap or 0, `animId` refers to an existing body or 0.
 
 ### 4.8 Multis
 
-- **Import:** `MultiCollection.uop` (preferred) or `multi.idx`/`multi.mul` (12-byte pre-HS or 16-byte post-HS components, chosen as ModernUO does: client ≥ 7.0.9.0 or the setting), plus `housing.bin` (UOP; read by ModernUO, not by ClassicUO). ClassicUO: a MUL component is visible iff `flags != 0`, a UOP one iff flags is 0 or 0x100; up to 0x2200 multis (T/MultiLoader.cs:61-110). The importer stores the flags as read and the visibility rule as data (a `visible` column), so the build doesn't need to know which file a multi came from.
+- **Import:** `MultiCollection.uop` (preferred) or `multi.idx`/`multi.mul` (12-byte pre-HS or 16-byte post-HS components, chosen as ModernUO does: client ≥ 7.0.9.0 or the setting), plus `housing.bin` (UOP; read by ModernUO, not by ClassicUO). ClassicUO: a MUL component is visible iff `flags != 0`, a UOP one iff flags is 0 or 0x100; up to 0x2200 multis (T/MultiLoader.cs:61-110). Legacy: 12-byte components tested on UOML (flags only 0 and 1) and synthetic 12/16-byte files (4.0). The importer stores the flags as read and the visibility rule as data (a `visible` column), so the build doesn't need to know which file a multi came from.
 - **Source:** `multis/<id>.csv`: `graphic, x, y, z, flags` per component, in stored order (order matters for draw ties). Cliloc blocks of MultiCollection entries are kept in `<id>.json` only if non-empty.
 - **Build:** `multis.bin`.
 - **Validation:** graphic exists in `art/static`; flags known.
 
 ### 4.9 Maps and statics
 
-- **Import:** `map<N>.mul`/`map<N>LegacyMUL.uop`, `staidx<N>.mul` + `statics<N>.mul` (and the `x` variants, `--xfiles`), facet sizes from the client era. Patches are not read (1.1).
+- **Import:** `map<N>.mul`/`map<N>LegacyMUL.uop`, `staidx<N>.mul` + `statics<N>.mul` (and the `x` variants, `--xfiles`), facet sizes from the client era (Felucca/Trammel 7168 or 6144 wide from the map0 size). **Map diffs** (`mapdif/mapdifl`, `stadif/stadifl/stadifi`) are applied the way ModernUO serves them: land below 6.0.0.0, statics below 7.0.9.0, every listed block, later entries win; below 6.0 Trammel is map0 + the facet-1 diffs when there is no map1 (`ClientLoad.ApplyLegacyMapRules`, ModernUO `TileMatrixPatch`/`maps.enablePre6000Trammel`). The pack holds the patched world and the client ignores 0xBF/0x18. Verify compares every block of a MUL facet with an independent read (`MulMapOracle`). A static block stored at offset 0 is valid (it was dropped before 2026-10-31, one block per facet).
 - **Source:** `maps/<facet>/facet.json` (`id, name, width, height, blockSize`) plus the tile data. The storage of the tile data is open (Q3). The recommendation: **block files of the same 8×8 cells, grouped per region**: `maps/<facet>/<rx>_<ry>.bin`, each a 64×64-block (512×512-tile) region holding, per block, the 64 land cells (`tileId u16, z i8`) and the statics list (`graphic u16, x u8, y u8, z i8, hue u16`), uncompressed, little-endian. It is the MUL block model (what CentrED#, ModernUO and the converter all already speak), cut into files small enough to edit, diff, lock and rebuild independently.
 - **Build:** `map/<facet>/facet.json` and Kind 1 region files (pack-format.md "Map"). Region-aligned source files map 1:1 to pack region files, so editing a region rebuilds one pack file.
 - **Validation:** land ids exist; statics graphics exist; z in −128..127; block counts match `facet.json`.

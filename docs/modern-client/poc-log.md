@@ -3184,3 +3184,41 @@ Codex (gpt-6-astra) audited 41b109e7f: one introduced finding and five inherited
 6. **P2, verify approved a pack missing `tiledata.bin`.** Fixed: when tiledata is selected, a missing `tiledata.bin` fails ("missing tiledata.bin (the pack's only tile data)"), checked before the early return. Checked by hand, not a unit test (the unit tests do not reference the converter): a hard-linked copy of the test pack's root tables without `tiledata.bin` (manifest rewritten to list only those) ends `VERIFY FAILED` with exit 2 under `--verify-only --only tiledata`, and passes under `--only hues`.
 
 **Verification.** Client builds (Release, and `-p:CuoDevTools=false`): 0 errors. Uo.Converter, Uo.Render.App, Uo.Client: 0 errors. `dotnet test tests/ClassicUO.UnitTests -c Release` with `CUO_TEST_PACK` = the test pack: 989 passed, 1 skipped, 0 failed (7 new). `--verify-only` (everything) on the test pack: all checks passed, oracle 212,992 decisions, 0 mismatches.
+
+
+## Legacy (pre-UOP) import: UOML 4.0.11c end to end (2026-10-31, `poc/legacy-import`)
+
+Owner requirement: the converter imports pre-UOP installs with pre-7.0.9 data as well as UOP ones. Base `poc/tiledata-single` 1f7b49ae6. Test install `D:/Ultima Online Installations/UOML` (read-only): client.exe of July 2005, MUL only, no verdata.mul, no map1.mul.
+
+**Client version.** The UOML exe has no VS_VERSION_INFO and no version text: it builds "4.0.11c" at run time with `sprintf("%d.%d.%d%s", 4, 0, 11, "c")` (format at file offset 0x1dfc88, code at 0x125979). The converter now resolves the version as ModernUO does: `--client-version`, else `--cuo-settings <settings.json>` (`clientversion`), else client.exe VS_VERSION_INFO, else the push sequence of that sprintf call (`LegacyClientVersion.cs`, a port of ModernUO PR #2735 at 61d0651af, kept identical). Nothing found: the error names both options. Below 4.0.11c: refused as unsupported (owner). Results: UOML 4.0.11c from the format call; `C:/Ultima Online Classic` 7.0.103.0 from VS_VERSION_INFO, as before. **ClassicUO's parser reads "4.0.11c" as 4.0.11.2** (0x04000B02: letters count from `a` = 0; ModernUO says .3), and its `CV_4011C`/`CV_4011D` enum values carry the letter's ASCII code, so no parsed 4.0.11x compares as the enum intends. The converter's thresholds (CV_6000, CV_7090) are unaffected. A tiledata.mul whose size does not fit the layout the version selects is refused (`ClientLoad.CheckTileDataLayout`), so a wrong version cannot silently misparse every record.
+
+**UOML, stage by stage** (full conversion 28 s, then `--verify-only`: all checks passed):
+
+| Stage | Result |
+|---|---|
+| art / tex | 15,319 art (10 pages), 1,870 tex; BIT-EXACT |
+| anims | 2,048 bodies, 477 with frames, 0 UOP bodies, 374,998 frames, 691 pages; sample BIT-EXACT (absent/cross-page frames as usual) |
+| tiledata | old layout: 16,384 land, 16,384 statics; every field and name EXACT |
+| hues / radarcol | 3,000 hues EXACT |
+| multis | multi.mul, 12-byte components: 233 multis, 49,380 components (flags only 0 and 1; 1,092 invisible) EXACT; independent check: every entry length is a multiple of 12, all offsets within ±64 |
+| lights, equipconv | 55 lights, 198 rows EXACT; tileart: no tileart.uop, `tileart.bin` written empty |
+| gumps, fonts | 2,630 gumps, 10 ASCII + 3 unicode fonts EXACT |
+| cliloc, speech | 8 languages (377,912 strings), 5,548 speech entries EXACT |
+| maps | **three fixes, below** |
+
+**Map fixes.**
+1. **Felucca was cut at 6144.** ClassicUO picks 6144 for any client below `CV_4011D`, which every parsed 4.0.11x is, but the UOML map0.mul holds 7168×4096 (the Mondain's Legacy columns), and ModernUO serves a 7168-wide Felucca. The width now comes from the map0 size (7168 or 6144).
+2. **No Trammel, and no diffs.** Below 6.0 ModernUO reads Trammel from map0 (`maps.enablePre6000Trammel`), applies mapdif (below 6.0) and stadif (below 7.0.9) for every facet, and announces the counts in 0xBF/0x18. The converter now does the same through ClassicUO's own `ApplyPatches` (`ClientLoad.ApplyLegacyMapRules`), so the pack holds the world the server walks on; the client already ignores 0xBF/0x18. UOML: facet 0 1,405 land / 1,807 static diff blocks, facet 1 8,034 / 10,931, facet 2 268 / 268. This changes the data-formats rule "no patch formats" for map diffs of legacy clients only; verdata.mul is still not applied (ClassicUO opens it and applies nothing) and the converter warns when one is present.
+3. **Statics stored at offset 0 were dropped** (`MapConvert`: `StaticAddress != 0`). Address 0 is the first block of every statics*.mul and stadif*.mul. Now `StaticCount > 0` decides. This also changes the classic pack: one region per facet (6 region files: 0/r_0_2, 1/r_0_2, 2/r_0_1, 3/r_0_0, 4/r_0_1, 5/r_0_0) gains the statics of that block (UOML: +2 statics each on facets 3 and 4).
+
+Verify now compares every block of a MUL facet with an independent reader of the MUL files and diffs (`MulMapOracle`, no shared code with MapLoader): UOML 5 facets (0 and 1: 7168×4096, 2, 3, 4), 1,089,785 blocks, all EXACT.
+
+**Pack format: unchanged.** Files a legacy install lacks: tileart (empty `tileart.bin`), UOP anims (none), map5 (facet absent; the client reports a missing map). The client copes with 0x4000 statics in `tiledata.bin` at load.
+
+**Can the client load it?** Offline only: `LegacyPackLoadTests` (ClassicUO.UnitTests, gated on `CUO_LEGACY_PACK` and `CUO_LEGACY_UO`) loads the UOML pack through `UOFileManager.Load("ENU")` and checks 0x4000 land/statics, multis, facets 0-4 present (5 absent), 7168-wide facets 0/1, and Trammel's last mapdif1 block against mapdif1.mul. No client job was submitted: a ModernUO login would need a server configured with the UOML data and a 4.0.11c client version, which the bench server is not.
+
+**Tests.** New project `tests/Uo.Converter.Tests` (11 tests; separate because the converter's frozen MUL loaders share namespaces with the client's pack loaders, and not in ClassicUO.sln, like Uo.Converter): synthetic PE for the version format call (UOML layout, no suffix, ambiguous/missing/two-letter/upper-case/imm32 refused), the resolution order, old and new tiledata layouts through `tiledata.bin`, layout mismatch refused, 12- and 16-byte multis with visibility, map diffs baked below 6.0 and not from 7.0.9, statics at address 0 (fails with the old test), Trammel from map0 below 6.0 only.
+
+**Verification.** Client builds (Release, and `-p:CuoDevTools=false`): 0 errors. `dotnet test tests/ClassicUO.UnitTests -c Release` (with the UOML pack): 987 passed, 4 skipped, 0 failed (1 new). `tests/Uo.Converter.Tests`: 11 passed. Classic spot check (`--only tiledata,data,maps` from `C:/Ultima Online Classic` into scratch): all checks passed; multis.bin identical to classic-1.0, tiledata.bin as on the base branch, regions differ only in the 6 files above.
+
+**Open.** (a) ClassicUO's 4.0.11c → 4.0.11.2 parse versus ModernUO's .3: harmless for the converter, but the client would send/compare it; change the client's parser? (b) Felucca width by file size instead of ClassicUO's version rule. (c) **Owner decision needed:** baking map diffs contradicts README "No patch formats" (owner, 2026-10-24: mapdif/stadif never supported, shard owners merge first). It is on by default here because without it a 4.0.11c pack has no real Trammel (it would be Felucca) and differs from what ModernUO serves by default; `--no-map-diffs` restores the old rule. The README line is left unchanged until the owner decides.

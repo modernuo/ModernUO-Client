@@ -20,6 +20,7 @@ catch (ArgumentException e)
 }
 bool useX = false, maps = true, convert = true, anims = true, gumps = true, fonts = true, cliloc = true, speech = true, formatGiven = false, gumpReport = false;
 string? gumpDef = null;
+string? clientVersionArg = null, cuoSettingsArg = null;
 HashSet<string>? only = null; // --only: convert just these stages into an existing pack, keeping everything else
 for (int i = 0; i < args.Length; i++)
 {
@@ -27,9 +28,12 @@ for (int i = 0; i < args.Length; i++)
     {
         case "--uo": uoPath = args[++i]; break;
         case "--out": outDir = args[++i]; break;
+        case "--client-version": clientVersionArg = args[++i]; break;
+        case "--cuo-settings": cuoSettingsArg = args[++i]; break;
         case "--debug": debugDir = args[++i]; break;
         case "--xfiles": useX = true; break;
         case "--no-maps": maps = false; break;
+        case "--no-map-diffs": ClientLoad.MapDiffs = false; break;
         case "--verify-only": convert = false; break;
         case "--only": only = args[++i].Split(',').Select(s => s.Trim().ToLowerInvariant()).ToHashSet(); break;
         case "--anims-only": only = ["anims"]; break;
@@ -89,7 +93,7 @@ for (int i = 0; i < args.Length; i++)
         case "--regions": ConvertOptions.MaxRegions = int.Parse(args[++i]); break;
         case "--bench-bc7": Bench.Bc7(args[++i]); return 0;
         default:
-            Console.WriteLine("usage: Uo.Converter [--uo <client dir>] --out <pack dir> [--debug <png dir>] [--packs-root <published packs root>] [--format b5g5r5a1|rgba8|bc7] [--bc7-quality fast|balanced|bestquality] [--bc7-refine-db 28] [--raw-regions] [--raw-pages|--compress-pages[=chunked]] [--chunk-bytes n] [--page-size 2048] [--anim-page-size 1024] [--anim-format indexed8|page] [--indexed-mips none|b16] [--threads n] [--pages a-b] [--facets 0,1] [--regions n] [--xfiles] [--no-maps] [--no-anims] [--no-gumps] [--no-fonts] [--no-cliloc] [--no-speech] [--raw-gumps] [--raw-text] [--text-small n] [--cliloc-brotli] [--cliloc-skip ext,ext] [--no-cliloc-overrides] [--gump-small n] [--gump-def <file>] [--gump-report] [--only art,tex,hues,tiledata,data,gumps,fonts,cliloc,speech,maps,anims] [--anims-only] [--bodies 400,0xC8] [--verify-only]");
+            Console.WriteLine("usage: Uo.Converter [--uo <client dir>] --out <pack dir> [--client-version x.y.z.w | --cuo-settings <settings.json>] [--debug <png dir>] [--packs-root <published packs root>] [--format b5g5r5a1|rgba8|bc7] [--bc7-quality fast|balanced|bestquality] [--bc7-refine-db 28] [--raw-regions] [--raw-pages|--compress-pages[=chunked]] [--chunk-bytes n] [--page-size 2048] [--anim-page-size 1024] [--anim-format indexed8|page] [--indexed-mips none|b16] [--threads n] [--pages a-b] [--facets 0,1] [--regions n] [--xfiles] [--no-maps] [--no-map-diffs] [--no-anims] [--no-gumps] [--no-fonts] [--no-cliloc] [--no-speech] [--raw-gumps] [--raw-text] [--text-small n] [--cliloc-brotli] [--cliloc-skip ext,ext] [--no-cliloc-overrides] [--gump-small n] [--gump-def <file>] [--gump-report] [--only art,tex,hues,tiledata,data,gumps,fonts,cliloc,speech,maps,anims] [--anims-only] [--bodies 400,0xC8] [--verify-only]");
             return 1;
     }
 }
@@ -150,11 +154,31 @@ T Stage<T>(string name, Func<T> f)
     return r;
 }
 
-// Client version: same order as ClassicUO.Client (settings.json value, else the client.exe VS_VERSION_INFO).
-if (!ClientVersionHelper.TryParseFromFile(Path.Combine(uoPath, "client.exe"), out var versionText)
-    || !ClientVersionHelper.IsClientVersionValid(versionText, out var clientVersion))
-    throw new InvalidOperationException($"cannot determine client version from {uoPath}\\client.exe");
-Console.WriteLine($"client {uoPath}  version {versionText} ({clientVersion})  out {outDir}");
+// Client version: ModernUO's order (setting, ClassicUO settings.json, client.exe VS_VERSION_INFO), then the
+// pre-resource exe format call (LegacyClientVersion, ported from ModernUO PR #2735, 61d0651af). 4.0.11c is the oldest supported. Below 7.0.9 the loaders use the old tiledata and the 12-byte multi layouts.
+if (!LegacyClientVersion.TryResolve(uoPath, clientVersionArg, cuoSettingsArg, out var versionText, out var clientVersion, out var versionSource))
+{
+    Console.Error.WriteLine(versionSource.Length > 0
+        ? $"invalid client version \"{versionText}\" from {versionSource}: {LegacyClientVersion.FlagHelp}"
+        : $"cannot determine the client version of {Path.Combine(uoPath, "client.exe")} (no VS_VERSION_INFO, no version format call): {LegacyClientVersion.FlagHelp}");
+    return 1;
+}
+if (clientVersion < LegacyClientVersion.MinSupported)
+{
+    Console.Error.WriteLine($"client version {versionText} (from {versionSource}) is not supported: the converter imports 4.0.11c and later");
+    return 1;
+}
+Console.WriteLine($"client {uoPath}  version {versionText} ({clientVersion}, 0x{(uint)clientVersion:X8}, from {versionSource})  out {outDir}");
+
+// verdata.mul: ClassicUO's VerdataLoader opens it but nothing applies its patches, and neither does the converter.
+if (File.Exists(Path.Combine(uoPath, "verdata.mul")) && new FileInfo(Path.Combine(uoPath, "verdata.mul")).Length > 4)
+    Console.WriteLine("  warning: verdata.mul is present and is NOT applied (ClassicUO does not apply it either); merge it into the base files first if the shard relies on it");
+
+if (ClientLoad.CheckTileDataLayout(Path.Combine(uoPath, "tiledata.mul"), clientVersion) is { } tileDataError)
+{
+    Console.Error.WriteLine(tileDataError);
+    return 1;
+}
 
 var fm = Stage("load UOFileManager", () =>
 {
