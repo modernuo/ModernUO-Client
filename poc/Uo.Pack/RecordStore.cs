@@ -143,7 +143,13 @@ public sealed class RecordStore : IDisposable
         Records = records;
     }
 
-    public static RecordStore Open(string path, uint magic)
+    public static RecordStore Open(string path, uint magic) => Open(path, magic, 0, MaxSlots);
+
+    /// <summary>
+    /// Opens a store whose content type fixes its slot count: a header with fewer than <paramref name="minSlots"/> or
+    /// more than <paramref name="maxSlots"/> slots is rejected before anything is allocated for the tables.
+    /// </summary>
+    public static RecordStore Open(string path, uint magic, uint minSlots, uint maxSlots)
     {
         var fh = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.Read, FileOptions.RandomAccess);
         try
@@ -161,6 +167,8 @@ public sealed class RecordStore : IDisposable
             pos += StructIo.SizeOf<StoreHeader>();
             if (header.SlotCount > MaxSlots || header.RecordCount > header.SlotCount)
                 throw new InvalidDataException($"'{path}': bad store header");
+            if (header.SlotCount < minSlots || header.SlotCount > maxSlots)
+                throw new InvalidDataException($"'{path}': {header.SlotCount} slots; this content type has {(minSlots == maxSlots ? $"{minSlots}" : $"{minSlots}..{maxSlots}")}");
             // the tables must fit in the file before anything is allocated for them (a truncated or forged header
             // must not ask for a large array)
             long payloadStart = checked(pos + (long)header.SlotCount * StructIo.SizeOf<StoreSlot>() + (long)header.RecordCount * StructIo.SizeOf<StoreRecord>());
