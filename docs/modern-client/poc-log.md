@@ -2801,4 +2801,27 @@ Branch `bg/ecs-e12-checker`, merged with poc/modern-client a9700dab7 (merge 8d90
 
 **Client runs** (rf-agent jobs, JIT `TieredCompilation=0`, kbatman3, `CUO_ECS_PARITY=1 CUO_ANIM_SYNC=1 CUO_GPU_SKIP_CHECK=1 CUO_PREP_CHECK=1 -ecscheck 120 CUO_GPU_ITEM_CHECK=every` unless said): bench-000005 (correct build: `e6fx.txt` night, `e6fx_day.txt`, `e6fx.txt` with `aura 3`, `e6fx.txt` without parity and anim-sync) and bench-000006 (broken builds: A = effect walk left out of `GpuServeMixedTile`, B = every 256th cached entry dropped, Ov = probe overrides not restored, Sup = no batcher suppression, with `aura 3`).
 
-RESULTS-PENDING
+**Results** (bench-000005 correct build, bench-000006 four broken builds; each log has 15 to 83 per-segment `same frame` reports, summed here; scene `e6fx` = moving effects, walking, zoom 1 and 2.5; check frames include both passes):
+
+| Run | Check frames | Compared fully | Compared partially | Not compared | Differences | Isolation |
+|---|---|---|---|---|---|---|
+| new, night (e6fx) | 107489 | 107256 | 53 (textures uploaded) | 168 alphas stepping, 12 no item cache | 0 fully, 0 partially, 0 fallen-back | 0 probe passes left sprites |
+| new, day | 133040 | 132799 | 61 (textures uploaded) | 168 alphas, 12 no cache | 0 | 0 |
+| new, aura | 119047 | 23830 | 95036 (200504 FNA aura sprites dropped in the probe) plus 55 textures uploaded | 168 alphas, 13 no cache | 0 | 0 |
+| new, no parity (check only) | 1106673 | 1106658 | 0 | 2 alphas, 13 no cache | 0 | 0 |
+
+Fallback tiles: 0 frames with served tiles that fell back to the walk in every correct run, so "keep comparing them" was not exercised and no `served tile that fell back` counter/reason was needed. World overrides: 0 queued in every run (all 189 reports), and unmapped sprites compared 0: these scenes never queue an override or a fallback sprite.
+
+**Sensitivity** (same scene, broken builds):
+
+| Build | Check frames | Fully / partially compared with differences | Where | Verdict |
+|---|---|---|---|---|
+| A (effect geometry broken) | 102887 | 31186 / 50 | 31235 effect instances, 31236 render lists, 0 item/mobile | caught |
+| B (item/mobile geometry broken) | 154158 | 70808 / 51 | 70859 item/mobile instances, 0 effect | caught |
+| Ov (override handling broken) | 112271 | 0 / 0 | 0 | NOT caught: `e6fx` queues 0 world overrides, so the override comparison and the checkpoint are not exercised by any client scene. Covered only by the unit tests (override mark/restore, full probe queue). Needs a scene with fading baked sprites. |
+| Sup (batcher suppression removed, aura scene) | 174900 | 0 / 0 | isolation counter: 162756 probe passes left a trace in the batcher (the sample reads "left 0 sprites in the batcher and flushed 1 times": the unwanted flush tripped it) | caught by the isolation self-check, not by instance differences (as designed) |
+
+On the correct builds the isolation self-check reads 0 in all four runs. The correct build shows no differences on any scene including auras, so nothing was classified as an artefact or fixed in this round. Auras and resource changes only produce counted partial frames.
+
+Open from the runs: Ov and fallen-back-tile paths are not reachable from the current scenes (see above).
+
