@@ -1295,7 +1295,8 @@ namespace ClassicUO.Network
             sbyte z = p.ReadInt8();
 
             world.Player.Walker.DenyWalk(seq, x, y, z);
-            world.Player.Direction = direction;
+            // T1 (funnel part 5): the direction (ECS and GameObject; its door check)
+            world.Writer.SetMobileDirection(world.Player, direction);
 
             world.Weather.Reset();
         }
@@ -1315,7 +1316,8 @@ namespace ClassicUO.Network
                 noto = 0x01;
             }
 
-            world.Player.NotorietyFlag = (NotorietyFlag)noto;
+            // T1 (funnel part 5): the notoriety (ECS inputs and GameObject)
+            world.Writer.SetNotoriety(world.Player, (NotorietyFlag)noto);
             world.Player.Walker.ConfirmWalk(seq);
 
             world.Player.AddToTile();
