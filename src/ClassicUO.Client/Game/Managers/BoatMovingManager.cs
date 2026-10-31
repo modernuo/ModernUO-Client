@@ -159,6 +159,39 @@ namespace ClassicUO.Game.Managers
             }
         }
 
+#if CUO_DEVTOOLS
+        /// <summary>
+        /// Dev trace (T1 part 7): null when <paramref name="serial"/> has no queued step (<see cref="ClearSteps"/> then
+        /// resets nothing), else the queue length, the boat's offset and its passengers' offsets that are not zero.
+        /// </summary>
+        internal string DescribeQueuedSteps(uint serial)
+        {
+            if (!_steps.TryGetValue(serial, out Deque<BoatStep> deque) || deque.Count == 0)
+            {
+                return null;
+            }
+
+            Item boat = _world.Items.Get(serial);
+            int passengers = 0, moved = 0;
+
+            if (_items.TryGetValue(serial, out var list))
+            {
+                foreach (ItemInside it in list)
+                {
+                    passengers++;
+
+                    if (_world.Get(it.Serial) is { } ent && (ent.Offset.X != 0 || ent.Offset.Y != 0 || ent.Offset.Z != 0))
+                    {
+                        moved++;
+                    }
+                }
+            }
+
+            return $"steps {deque.Count}, boat offset {(boat == null ? "none" : $"({boat.Offset.X},{boat.Offset.Y},{boat.Offset.Z})")}, " +
+                $"passengers {passengers} ({moved} with a non-zero offset)";
+        }
+#endif
+
         public void ClearEntities(uint serial)
         {
             _items.Remove(serial);
