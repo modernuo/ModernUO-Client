@@ -44,7 +44,9 @@ for raw in open(log, encoding="utf-8", errors="replace"):
         unexplained.append((f[len(root) + 1:], ln, col, code, msg[:100]))
         continue
     rt = re.match(r"'(\w+)' does not contain a definition", msg)
-    refs.append(dict(file=f[len(root) + 1:], line=ln, col=col, code=code, member=tok, rtype=rt.group(1) if rt else None, text=L.strip()))
+    sub = tok in ("OffsetX", "OffsetY", "OffsetZ")  # T0c accessors of the Offset struct, folded into Offset (like the budget test)
+    refs.append(dict(file=f[len(root) + 1:], line=ln, col=col, code=code, member="Offset" if sub else tok, tok=tok, sub=sub,
+                     rtype=rt.group(1) if rt else None, text=L.strip()))
 
 json.dump(dict(refs=refs, unexplained=unexplained), open(out, "w"))
 print(len(refs), "member references;", len(unexplained), "other errors")

@@ -41,7 +41,7 @@ for dp, _, fs in os.walk(ROOT + "src/ClassicUO.Client"):
         p = os.path.join(dp, f).replace("\\", "/")[len(ROOT + "src/ClassicUO.Client/"):]
         for i, l in enumerate(open(ROOT + "src/ClassicUO.Client/" + p, encoding="utf-8-sig", errors="replace").read().split("\n"), 1):
             for m in rx.finditer(l.split("//")[0]):
-                hits.append((p, i, m.group(1)))
+                hits.append((p, i, "Offset" if m.group(1) in ("OffsetX", "OffsetY", "OffsetZ") else m.group(1)))  # T0c accessors are folded into Offset
 missing = [h for h in hits if h not in listed]
 print("textual hits", len(hits), "listed", len(listed), "missing", len(missing))
 for m in missing[:30]:
