@@ -88,6 +88,7 @@ namespace ClassicUO.Game.Scenes
                     AnimBodies = fileManager.Animations.PackBodies,
                     AnimDirs = fileManager.Animations.PackDirs,
                     AnimFrames = fileManager.Animations.PackFrames,
+                    FramePalette = fileManager.Animations.PackFramePalette,
                     StaticNoCot = BuildNoCotTable(fileManager.TileData.StaticData.Length)
                 };
 

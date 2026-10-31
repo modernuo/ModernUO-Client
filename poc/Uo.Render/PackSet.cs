@@ -13,6 +13,8 @@ public sealed class PackTables
     public AnimBodyEntry[] AnimBodies;
     public AnimDirEntry[] AnimDirs;
     public AnimFrameEntry[] AnimFrames;
+    /// <summary>anim/palettes.bin's frame → palette table (Indexed8 anims), or null.</summary>
+    public uint[] FramePalette;
     /// <summary>Per static graphic: the host keeps it opaque inside the circle of transparency (ClassicUO: trees).</summary>
     public bool[] StaticNoCot;
 }
@@ -66,7 +68,16 @@ public sealed class PackSet
     public readonly PixelFormat AnimFormat;
     public readonly int AnimPageSize, AnimPageMips;
     public readonly uint[] FramePalette;
-    public readonly ushort[] Palettes;
+    /// <summary>palettes.bin (Indexed8 anims), its palette count and the byte offset of the u16 palette data. The palettes
+    /// themselves (18.5 MiB) are not held: <see cref="Renderer"/> streams them from the file into its GPU buffer, and
+    /// <see cref="ReadPalettes"/> reads a CPU copy for the rare reader that wants one.</summary>
+    public readonly string PalettePath;
+    public readonly int PaletteCount;
+    public readonly long PaletteOffset;
+
+    /// <summary>A CPU copy of every palette (u16 B5G5R5A1, 256 per palette), read from the pack on each call; empty without
+    /// Indexed8 anims.</summary>
+    public ushort[] ReadPalettes() => PalettePath == null ? [] : AnimPaletteFile.Read(PalettePath).Palettes;
     public bool HasAnims => AnimBodies != null;
 
     public readonly int Facet;
@@ -126,7 +137,13 @@ public sealed class PackSet
                 AnimIndexed = true;
                 AnimPageMips = 1; // mips_NNNN.bin sidecars (variant b) are ignored: mip0 + manual filtering
                 AnimPagePaths = paths;
-                (FramePalette, Palettes) = AnimPaletteFile.Read(Path.Combine(AnimDir, AnimPaletteFile.FileName));
+                PalettePath = Path.Combine(AnimDir, AnimPaletteFile.FileName);
+                if (shared?.FramePalette != null)
+                {
+                    FramePalette = shared.FramePalette;
+                    (PaletteCount, PaletteOffset) = AnimPaletteFile.ReadLayout(PalettePath);
+                }
+                else FramePalette = AnimPaletteFile.ReadFramePalette(PalettePath, out PaletteCount, out PaletteOffset);
             }
             else if (n > 0)
             {
@@ -150,7 +167,8 @@ public sealed class PackSet
         PagePaths = o.PagePaths; TexPageBase = o.TexPageBase; Format = o.Format; PageSize = o.PageSize; PageMips = o.PageMips;
         AnimBodies = o.AnimBodies; AnimDirs = o.AnimDirs; AnimFrames = o.AnimFrames; AnimDir = o.AnimDir; AnimPageBase = o.AnimPageBase;
         AnimIndexed = o.AnimIndexed; AnimPagePaths = o.AnimPagePaths; AnimFormat = o.AnimFormat; AnimPageSize = o.AnimPageSize;
-        AnimPageMips = o.AnimPageMips; FramePalette = o.FramePalette; Palettes = o.Palettes;
+        AnimPageMips = o.AnimPageMips; FramePalette = o.FramePalette;
+        PalettePath = o.PalettePath; PaletteCount = o.PaletteCount; PaletteOffset = o.PaletteOffset;
         (Facet, FacetDir, MapWidth, MapHeight, BlocksX, BlocksY, RegionBlocks) = ReadFacet(Root, facet);
     }
 

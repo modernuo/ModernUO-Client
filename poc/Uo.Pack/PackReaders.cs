@@ -536,6 +536,30 @@ public static class AnimPaletteFile
         StructIo.ReadSpan<ushort>(fs, pal);
         return (fp, pal);
     }
+
+    /// <summary>The frame table only, plus where the palette data starts (<paramref name="paletteOffset"/>, bytes from
+    /// the file start) and how many palettes it holds: for readers that stream the palettes elsewhere (the GPU upload)
+    /// instead of holding a CPU copy.</summary>
+    public static uint[] ReadFramePalette(string path, out int paletteCount, out long paletteOffset)
+    {
+        using var fs = File.OpenRead(path);
+        StructIo.ReadHeader(fs, AnimConst.MagicPalettes);
+        paletteCount = StructIo.Read<int>(fs);
+        var fp = new uint[StructIo.Read<int>(fs)];
+        StructIo.ReadSpan<uint>(fs, fp);
+        paletteOffset = fs.Position;
+        return fp;
+    }
+
+    /// <summary>Where the palette data starts and how many palettes there are, without reading the frame table.</summary>
+    public static (int PaletteCount, long PaletteOffset) ReadLayout(string path)
+    {
+        using var fs = File.OpenRead(path);
+        StructIo.ReadHeader(fs, AnimConst.MagicPalettes);
+        int pc = StructIo.Read<int>(fs);
+        int frames = StructIo.Read<int>(fs);
+        return (pc, fs.Position + (long)frames * sizeof(uint));
+    }
 }
 
 public static class ManifestFileIo

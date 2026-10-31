@@ -55,6 +55,9 @@ namespace ClassicUO.Assets
 
         public AnimFrameEntry[] PackFrames => _frames;
 
+        /// <summary>anim/palettes.bin's frame → palette table, shared with the GPU world renderer (PackTables).</summary>
+        public uint[] PackFramePalette => _framePalette;
+
         public override void Load()
         {
             (_bodies, _dirs, _frames) = AnimTableFile.Read(FileManager.Pack.PathOf("anim/anim.bin"));
