@@ -216,10 +216,10 @@ namespace ClassicUO.Game.GameObjects
 
         protected virtual bool IsWalking => LastStepTime > Time.Ticks - Constants.WALKING_DELAY;
 
-        public byte AnimationFrameCount;
-        public bool AnimationFromServer;
-        public bool IsRenamable;
-        public long LastStepSoundTime;
+        public byte AnimationFrameCount { get; set; }
+        public bool AnimationFromServer { get; set; }
+        public bool IsRenamable { get; set; }
+        public long LastStepSoundTime { get; set; }
 
         // W5: these are inputs of the mobile's animation and override hue; every write is pushed to the ECS (MobileInputs)
         private bool _isFemale, _isRunning;
@@ -263,13 +263,13 @@ namespace ClassicUO.Game.GameObjects
             World?.Ecs.PushInputs(this);
         }
 
-        public RaceType Race;
-        public CharacterSpeedType SpeedMode = CharacterSpeedType.Normal;
-        public ushort Stamina;
-        public ushort StaminaMax;
-        public ushort Mana;
-        public ushort ManaMax;
-        public int StepSoundOffset;
+        public RaceType Race { get; set; }
+        public CharacterSpeedType SpeedMode { get; set; } = CharacterSpeedType.Normal;
+        public ushort Stamina { get; set; }
+        public ushort StaminaMax { get; set; }
+        public ushort Mana { get; set; }
+        public ushort ManaMax { get; set; }
+        public int StepSoundOffset { get; set; }
         public string Title = string.Empty;
 
         public static Mobile Create(World world, uint serial)
@@ -837,10 +837,10 @@ namespace ClassicUO.Game.GameObjects
                             float steps = maxDelay / (float)Constants.CHARACTER_ANIMATION_DELAY;
                             float x = delay / (float)Constants.CHARACTER_ANIMATION_DELAY;
                             float y = x;
-                            Offset.Z = (sbyte)((step.Z - Z) * x * (4.0f / steps));
+                            OffsetZ = (sbyte)((step.Z - Z) * x * (4.0f / steps));
                             MovementSpeed.GetPixelOffset(step.Direction, ref x, ref y, steps);
-                            Offset.X = (sbyte)x;
-                            Offset.Y = (sbyte)y;
+                            OffsetX = (sbyte)x;
+                            OffsetY = (sbyte)y;
                         }
                     }
                     else
@@ -900,9 +900,9 @@ namespace ClassicUO.Game.GameObjects
 
                         Direction = (Direction)step.Direction;
                         IsRunning = step.Run;
-                        Offset.X = 0;
-                        Offset.Y = 0;
-                        Offset.Z = 0;
+                        OffsetX = 0;
+                        OffsetY = 0;
+                        OffsetZ = 0;
                         Steps.RemoveFromFront();
                         CalculateRandomIdleTime();
                         PushInputs();
@@ -921,7 +921,7 @@ namespace ClassicUO.Game.GameObjects
                             World.Player.CloseRangedGumps();
                         }
 
-                        if (TNext != null || TPrevious != null)
+                        if (IsPlaced)
                         {
                             AddToTile();
                         }

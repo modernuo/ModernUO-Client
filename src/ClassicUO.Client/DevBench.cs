@@ -392,18 +392,7 @@ namespace ClassicUO
                 return;
             }
 
-            if (_mouse.HasValue && game.Scene is Game.Scenes.GameScene scene)
-            {
-                Input.Mouse.Position = _mouse.Value;
-                var bounds = game.Window.ClientBounds;
-                SDL3.SDL.SDL_WarpMouseInWindow(
-                    game.Window.Handle,
-                    _mouse.Value.X * game.DpiScale * bounds.Width / game.GraphicManager.PreferredBackBufferWidth,
-                    _mouse.Value.Y * game.DpiScale * bounds.Height / game.GraphicManager.PreferredBackBufferHeight
-                );
-                scene.Camera.Update(true, Time.Delta, _mouse.Value);
-                SelectedObject.TranslatedMousePositionByViewport = scene.Camera.MouseToWorldPosition();
-            }
+            HoldMouse(game);
 
             if (now < _stepAt)
             {
@@ -1116,17 +1105,15 @@ namespace ClassicUO
             return null;
         }
 
+        // The scripted mouse goes through Input.Mouse.Override: the OS cursor isn't moved, so the machine's mouse stays usable
+        // while a bench runs. Override is cleared as soon as nothing is held.
         private static void HoldMouse(GameController game)
         {
+            Input.Mouse.Override = _mouse;
+
             if (_mouse.HasValue && game.Scene is Game.Scenes.GameScene scene)
             {
                 Input.Mouse.Position = _mouse.Value;
-                var bounds = game.Window.ClientBounds;
-                SDL3.SDL.SDL_WarpMouseInWindow(
-                    game.Window.Handle,
-                    _mouse.Value.X * game.DpiScale * bounds.Width / game.GraphicManager.PreferredBackBufferWidth,
-                    _mouse.Value.Y * game.DpiScale * bounds.Height / game.GraphicManager.PreferredBackBufferHeight
-                );
                 scene.Camera.Update(true, Time.Delta, _mouse.Value);
                 SelectedObject.TranslatedMousePositionByViewport = scene.Camera.MouseToWorldPosition();
             }
@@ -1330,8 +1317,11 @@ namespace ClassicUO
             Log.Info($"[bench] {entry}: spawned");
         }
 
-        private static int _scanCols, _scanRows, _scanLeft, _scanPhase, _scanFrames, _scanSame, _scanDiff, _scanEmpty;
+        private static int _scanCols, _scanRows, _scanLeft, _scanPhase, _scanFrames, _scanWait, _scanSame, _scanDiff, _scanEmpty;
         private static string _scanOff;
+
+        // frames a point may wait for the Gpu prepare's skipping to become active before the scan gives up
+        private const int SCAN_WAIT_LIMIT = 600;
 
         private static string Describe(object o)
         {
@@ -1343,7 +1333,7 @@ namespace ClassicUO
         {
             if (gs == null)
             {
-                _scanLeft = 0;
+                EndPickScan();
 
                 return;
             }
@@ -1375,6 +1365,12 @@ namespace ClassicUO
                 if (!gs.IsGpuPrepareSkipping)
                 {
                     _scanFrames = 0;
+
+                    if (++_scanWait > SCAN_WAIT_LIMIT)
+                    {
+                        Log.Warn($"[bench-scan] abandoned at point {index}: the Gpu prepare's skipping wasn't active after {SCAN_WAIT_LIMIT} frames; {_scanSame} same, {_scanDiff} different so far");
+                        EndPickScan();
+                    }
                 }
                 else if (_scanFrames >= 3)
                 {
@@ -1393,14 +1389,22 @@ namespace ClassicUO
 
                     _scanPhase = 0;
                     _scanFrames = 0;
+                    _scanWait = 0;
 
                     if (--_scanLeft == 0)
                     {
-                        _mouse = null;
                         Log.Info($"[bench-scan] done: {_scanSame} same ({_scanEmpty} of them nothing), {_scanDiff} different");
+                        EndPickScan();
                     }
                 }
             }
+        }
+
+        private static void EndPickScan()
+        {
+            _scanLeft = 0;
+            _mouse = null;
+            Input.Mouse.Override = null;
         }
 
         // name:x y:zoom measures a fixed spot; name:travel teleports between towns every 2 s; name:walk paths back and forth near Britain.
@@ -1715,12 +1719,22 @@ namespace ClassicUO
                     {
                         // pickscan:CxR hovers a C x R grid over the game view; at each point the selection with the Gpu
                         // prepare's skipping off and then on must be the same object
+                        if (!Configuration.Settings.GlobalSettings.UseGpuWorldRenderer || game.GetGpuWorld() == null)
+                        {
+                            // Legacy has no Gpu prepare, so its skipping never becomes active and the scan would never end
+                            Log.Info($"[bench-scan] {_plan[_planIndex]} skipped: the Gpu world renderer isn't active");
+                            _planIndex++;
+
+                            break;
+                        }
+
                         string[] g = _plan[_planIndex].Substring(9).Split('x');
                         _scanCols = int.Parse(g[0]);
                         _scanRows = int.Parse(g[1]);
                         _scanLeft = _scanCols * _scanRows;
                         _scanPhase = 0;
                         _scanFrames = 0;
+                        _scanWait = 0;
                         _scanSame = _scanDiff = _scanEmpty = 0;
                         Log.Info($"[bench-scan] {_plan[_planIndex]} at {world.Player.X},{world.Player.Y},{world.Player.Z} zoom {gs.Camera.Zoom:0.0}");
                         _planIndex++;

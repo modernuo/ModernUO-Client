@@ -63,7 +63,6 @@ namespace ClassicUO.Game.GameObjects
         //    }
         //);
 
-        private ushort? _displayedGraphic;
         private bool _isMulti;
 
         /// <summary>W5: listed in World's per-frame item update list (World.QueueItemUpdate).</summary>
@@ -83,11 +82,6 @@ namespace ClassicUO.Game.GameObjects
         {
             get
             {
-                if (_displayedGraphic.HasValue)
-                {
-                    return _displayedGraphic.Value;
-                }
-
                 if (IsCoin)
                 {
                     if (Amount > 5)
@@ -107,7 +101,6 @@ namespace ClassicUO.Game.GameObjects
 
                 return Graphic;
             }
-            set => _displayedGraphic = value;
         }
 
         public bool IsLocked => (Flags & Flags.Movable) == 0 && ItemData.Weight > 90;
@@ -165,18 +158,18 @@ namespace ClassicUO.Game.GameObjects
             && ItemData.Layer != (int)Layer.Face
             && Graphic != 0;
 
-        public ushort Amount;
-        public uint Container = 0xFFFF_FFFF;
+        public ushort Amount { get; set; }
+        public uint Container { get; set; } = 0xFFFF_FFFF;
 
-        public bool IsDamageable;
-        public Layer Layer;
-        public byte LightID;
+        public bool IsDamageable { get; set; }
+        public Layer Layer { get; set; }
+        public byte LightID { get; set; }
 
         public Rectangle? MultiInfo;
         public bool Opened;
 
-        public uint Price;
-        public bool UsedLayer;
+        public uint Price { get; set; }
+        public bool UsedLayer { get; set; }
         public bool WantUpdateMulti = true;
 
         public static Item Create(World world, uint serial)

@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Threading;
 using ClassicUO.Assets;
 using ClassicUO.Game.Map;
@@ -317,25 +318,43 @@ namespace ClassicUO.UnitTests.Game
 
             var sync = OpenMaps(out var p1);
             var pre = OpenMaps(out var p2);
+            bool old = MapLoader.PrefetchEnabled;
 
             try
             {
-                bool old = MapLoader.PrefetchEnabled;
                 MapLoader.PrefetchEnabled = true;
 
                 // Britain, Moonglow and Yew, plus a block at a region corner (its neighbours span four regions)
                 var blocks = new[] { (1495 / 8, 1629 / 8), (4442 / 8, 1172 / 8), (542 / 8, 985 / 8), (64, 64), (192, 192) };
 
+                // What this guards: IsBlockReady must never decode or wait for a decode on the calling thread. That is
+                // asserted with counters (a lookup that decodes bumps SyncLoads, one that waits bumps PrefetchWaits),
+                // which do not depend on the machine. The wall time is a coarse backstop. The old per-call 2 ms bound
+                // failed about one run in five (2.81 ms, 0.44 s into the run): the first call in the process pays JIT and
+                // thread-pool start-up while the other test classes start in parallel. So the median of the calls is
+                // bounded, not each call; a decode on the calling thread would also trip the counters.
+                var times = new List<double>();
+
                 foreach (var (bx, by) in blocks)
                 {
+                    int startedBefore = pre.PrefetchesStarted;
                     long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
                     bool ready = pre.IsBlockReady(0, bx, by);
                     double ms = (System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
+                    times.Add(ms);
 
-                    // first sight: the decode runs on the pool, the call returns at once
-                    ready.Should().BeFalse();
-                    ms.Should().BeLessThan(2.0);
+                    // a call that had to start a decode cannot be ready: the decode runs on the pool and the call returns at once
+                    if (pre.PrefetchesStarted > startedBefore)
+                    {
+                        ready.Should().BeFalse();
+                    }
+
+                    pre.SyncLoads.Should().Be(0);
+                    pre.PrefetchWaits.Should().Be(0);
                 }
+
+                times.Sort();
+                times[times.Count / 2].Should().BeLessThan(10.0, $"calls took {string.Join(", ", times.Select(t => t.ToString("F2")))} ms");
 
                 // wait for the workers, then everything is ready without a single decode on this thread
                 var deadline = DateTime.UtcNow.AddSeconds(30);
@@ -350,6 +369,7 @@ namespace ClassicUO.UnitTests.Game
                 }
 
                 pre.SyncLoads.Should().Be(0);
+                pre.PrefetchWaits.Should().Be(0);
                 pre.PendingCount.Should().Be(0);
 
                 foreach (var (bx, by) in blocks)
@@ -381,11 +401,10 @@ namespace ClassicUO.UnitTests.Game
                 pre.TryGetBlock(0, 5 * 64 + 5, 5 * 64 + 5, out _).Should().Be(sync.TryGetBlock(0, 5 * 64 + 5, 5 * 64 + 5, out _));
                 pre.SyncLoads.Should().Be(0);
                 pre.PrefetchesStarted.Should().BeGreaterOrEqualTo(blocks.Length);
-
-                MapLoader.PrefetchEnabled = old;
             }
             finally
             {
+                MapLoader.PrefetchEnabled = old;
                 p1.Dispose();
                 p2.Dispose();
             }
