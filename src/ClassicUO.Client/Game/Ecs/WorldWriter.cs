@@ -1816,6 +1816,196 @@ namespace ClassicUO.Game
             }
         }
 
+        // ---- funnel part 6, group 4: status and hits. Hits, HitsMax, the mana, the stamina, the name, IsRenamable and the race
+        // are cache-only (no mirror record field and no MobileInputs reads them; HitsPercentage and its text are the setters'
+        // own derived state), so these operations are admission, the held check, the scope and the writes in the handler's
+        // order. IsFemale and the SA poison are inputs, the flags a record field: those operations commit.
+
+        /// <summary>
+        /// 0xA1 (UpdateHitpoints) and 0x2D (MobileAttributes): the hits of an item or a mobile (<c>World.Get</c>'s), HitsMax then
+        /// Hits as the handlers wrote them (each setter refreshes HitsPercentage, so the order is kept), then a pending hits
+        /// request is marked received. Nothing reaches the ECS. An entity this World does not hold is a violation, rejected
+        /// (no pre-T1 path), except the detached <c>World.Player</c>, written as before T1.
+        /// </summary>
+        public void SetHits(Entity entity, ushort hitsMax, ushort hits)
+        {
+            if (entity == null || !Admitted(nameof(SetHits), entity.Serial) || !Accepted(entity, nameof(SetHits)))
+            {
+                return;
+            }
+
+            using (Open(entity, null))
+            {
+                entity.HitsMax = hitsMax;
+                entity.Hits = hits;
+
+                if (entity.HitsRequest == HitsRequestStatus.Pending)
+                {
+                    entity.HitsRequest = HitsRequestStatus.Received;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 0x11 (CharacterStatus): the name, then Hits then HitsMax (0x11's order), then a pending hits request is marked
+        /// received. Nothing reaches the ECS. The handler reads the old name before this (the window title) and runs the
+        /// rest of the packet after it. Rejections as <see cref="SetHits"/>.
+        /// </summary>
+        public void SetStatus(Entity entity, string name, ushort hits, ushort hitsMax)
+        {
+            if (entity == null || !Admitted(nameof(SetStatus), entity.Serial) || !Accepted(entity, nameof(SetStatus)))
+            {
+                return;
+            }
+
+            using (Open(entity, null))
+            {
+                entity.Name = name;
+                entity.Hits = hits;
+                entity.HitsMax = hitsMax;
+
+                if (entity.HitsRequest == HitsRequestStatus.Pending)
+                {
+                    entity.HitsRequest = HitsRequestStatus.Received;
+                }
+            }
+        }
+
+        /// <summary>
+        /// 0x11 (CharacterStatus) for a mobile: IsRenamable, then (<paramref name="setFemale"/>: the packet has the extended
+        /// part) IsFemale, an input: the mobile is folded and its inputs are committed once (the setter's push before T1). A
+        /// mobile this World does not hold is a violation, rejected (no pre-T1 path), except the detached <c>World.Player</c>.
+        /// </summary>
+        public void SetMobileStatus(Mobile mobile, bool renamable, bool setFemale, bool female)
+        {
+            if (mobile == null || !Admitted(nameof(SetMobileStatus), mobile.Serial) || !Accepted(mobile, nameof(SetMobileStatus)))
+            {
+                return;
+            }
+
+            bool detached = !Holds(mobile);
+
+            using (Open(mobile, detached ? null : mobile))
+            {
+                mobile.IsRenamable = renamable;
+
+                if (setFemale)
+                {
+                    mobile.IsFemale = female;
+                    _world.Ecs.CommitMobileInputs(mobile);
+                }
+            }
+        }
+
+        /// <summary>
+        /// 0xA2 (UpdateMana), 0x2D (MobileAttributes) and the player's 0x11: ManaMax and Mana. Nothing reaches the ECS.
+        /// Rejections as <see cref="SetMobileStatus"/>.
+        /// </summary>
+        public void SetMana(Mobile mobile, ushort manaMax, ushort mana)
+        {
+            if (mobile == null || !Admitted(nameof(SetMana), mobile.Serial) || !Accepted(mobile, nameof(SetMana)))
+            {
+                return;
+            }
+
+            using (Open(mobile, null))
+            {
+                mobile.ManaMax = manaMax;
+                mobile.Mana = mana;
+            }
+        }
+
+        /// <summary>
+        /// 0xA3 (UpdateStamina), 0x2D (MobileAttributes) and the player's 0x11: StaminaMax and Stamina. Nothing reaches the
+        /// ECS. Rejections as <see cref="SetMobileStatus"/>.
+        /// </summary>
+        public void SetStamina(Mobile mobile, ushort staminaMax, ushort stamina)
+        {
+            if (mobile == null || !Admitted(nameof(SetStamina), mobile.Serial) || !Accepted(mobile, nameof(SetStamina)))
+            {
+                return;
+            }
+
+            using (Open(mobile, null))
+            {
+                mobile.StaminaMax = staminaMax;
+                mobile.Stamina = stamina;
+            }
+        }
+
+        /// <summary>
+        /// 0x11 (CharacterStatus, ML and later) for the player: the race. Nothing reaches the ECS (the race is not an input).
+        /// Rejections as <see cref="SetMobileStatus"/>.
+        /// </summary>
+        public void SetRace(Mobile mobile, RaceType race)
+        {
+            if (mobile == null || !Admitted(nameof(SetRace), mobile.Serial) || !Accepted(mobile, nameof(SetRace)))
+            {
+                return;
+            }
+
+            using (Open(mobile, null))
+            {
+                mobile.Race = race;
+            }
+        }
+
+        /// <summary>
+        /// 0x16/0x17 (NewHealthbarUpdate): the bar states. The handler folds the packet's list into the final values (the
+        /// poisoned and yellow-bar flags, and from 7.0 on the SA poison instead of the poisoned flag); before T1 each entry
+        /// was a write (SetSAPoison pushed the inputs) and the handler ended with a Sync. Now: one record commit with the
+        /// final flags, then the cache, then one inputs commit (the mobile is folded). A mobile this World does not hold is a
+        /// violation, rejected (no pre-T1 path).
+        /// </summary>
+        public void SetHealthbar(Mobile mobile, Flags flags, bool setSAPoison, bool saPoison)
+        {
+            if (mobile == null || !Admitted(nameof(SetHealthbar), mobile.Serial) || !Accepted(mobile, nameof(SetHealthbar)))
+            {
+                return;
+            }
+
+            bool detached = !Holds(mobile);
+
+            MobileState v;
+            v.Serial = mobile.Serial;
+            v.Graphic = mobile.Graphic;
+            v.Hue = mobile.Hue;
+            v.X = mobile.X;
+            v.Y = mobile.Y;
+            v.Z = mobile.Z;
+            v.Direction = mobile.Direction;
+            v.Flags = flags;
+            v.IsPlayer = ReferenceEquals(mobile, _world.Player);
+
+            using (Open(mobile, detached ? null : mobile))
+            {
+                EcsEntity e = _world.Ecs.CommitMobile(mobile, in v);
+
+                if (setSAPoison)
+                {
+                    mobile.SetSAPoison(saPoison);
+                }
+
+                mobile.Flags = v.Flags;
+                _world.Ecs.CommitMobileInputs(mobile, e);
+            }
+        }
+
+        // the held check of the status operations: the instance this World holds for the entity's serial, or the detached
+        // World.Player (removed under its serial while World.Player stays; written as before T1: nothing of it reaches the
+        // ECS). Anything else is a violation, rejected (no pre-T1 path: the handlers pass what they just looked up).
+        private bool Accepted(Entity entity, string operation)
+        {
+            if (Holds(entity) || entity is Mobile m && IsDetachedPlayer(m))
+            {
+                return true;
+            }
+
+            Reject(Violation.NotHeld, $"WorldWriter.{operation}: 0x{entity.Serial:X8} is not the entity this World holds for its serial", rejected: true);
+
+            return false;
+        }
+
         // Codex audit of part 4, #3: a 0x25 under the player's serial removes the player's mobile while World.Player stays,
         // and 0x78/0x20 in the same burst pass World.Player itself. Before T1 they wrote that instance (and ran its position
         // callbacks); the player's body and move operations keep doing so for this exact instance, and reject every other
