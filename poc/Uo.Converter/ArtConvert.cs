@@ -136,17 +136,9 @@ public static class ArtConvert
         }
     }
 
-    private static SpriteFlags Flags(int id, LandTiles[] land, StaticTiles[] stat)
-    {
-        if (id < PackConst.StaticSpriteBase)
-        {
-            var f = SpriteFlags.Land;
-            if (id < land.Length && (land[id].Flags & TileFlag.PartialHue) != 0) f |= SpriteFlags.PartialHue;
-            return f;
-        }
-        int g = id - PackConst.StaticSpriteBase;
-        return g < stat.Length && stat[g].IsPartialHue ? SpriteFlags.PartialHue : SpriteFlags.None;
-    }
+    // Bit 2 (partial hue) is retired: it copied the tiledata PartialHue flag, which readers take from tiledata.bin.
+    private static SpriteFlags Flags(int id, LandTiles[] land, StaticTiles[] stat) =>
+        id < PackConst.StaticSpriteBase ? SpriteFlags.Land : SpriteFlags.None;
 
     public static Stats Tex(UOFileManager fm, string outDir)
     {
@@ -194,40 +186,5 @@ public static class ArtConvert
         return new Stats(tableSize, res.Packed + res.Aliased, res.Packed, res.Aliased, empty, res.PageCount, res.Occupancy, res.PageBytes, res.PageBytesBrotli);
     }
 
-    public static (int Land, int Statics) TileData(UOFileManager fm, string outDir)
-    {
-        var land = fm.TileData.LandData;
-        var stat = fm.TileData.StaticData;
-        var l = new LandTileData[land.Length];
-        for (int i = 0; i < l.Length; i++) l[i] = new LandTileData { Flags = (ulong)land[i].Flags, TexId = land[i].TexID, PackFlags = LandPackFlags(i, land[i]) };
-        var s = new StaticTileData[stat.Length];
-        for (int i = 0; i < s.Length; i++)
-            s[i] = new StaticTileData { Flags = (ulong)stat[i].Flags, Height = stat[i].Height, Layer = stat[i].Layer, PackFlags = StaticPackFlags(i, stat, fm.Version) };
-        TileDataFile.Write(Path.Combine(outDir, "tiledata.bin"), l, s);
-        return (l.Length, s.Length);
-    }
 
-    public static bool NameNoDraw(string? name) => !string.IsNullOrEmpty(name) && name.StartsWith("nodraw", StringComparison.OrdinalIgnoreCase);
-
-    // Land.AllowedToDraw = graphic > 2. ClassicUO does not look at land names.
-    public static TilePackFlags LandPackFlags(int id, in LandTiles t) =>
-        (id <= 2 ? TilePackFlags.NoDraw : 0) | (NameNoDraw(t.Name) ? TilePackFlags.NameNoDraw : 0);
-
-    /// <summary>Port of the static-data part of GameObject.CanBeDrawn. The gargoyle exception is left to the client.</summary>
-    public static TilePackFlags StaticPackFlags(int g, StaticTiles[] stat, ClientVersion version)
-    {
-        var f = g < stat.Length && NameNoDraw(stat[g].Name) ? TilePackFlags.NameNoDraw : 0;
-        switch (g)
-        {
-            case 0x0001: case 0x21BC: case 0xA1FE: case 0xA1FF: case 0xA200: case 0xA201:
-                return f | TilePackFlags.NoDraw;
-            case 0x9E4C: case 0x9E64: case 0x9E65: case 0x9E7D:
-                return f | (g < stat.Length && (stat[g].IsBackground || stat[g].IsSurface) ? TilePackFlags.NoDraw : 0);
-        }
-        if (g == 0x63D3 || (g >= 0x2198 && g <= 0x21A4)) return f | TilePackFlags.NoDraw;
-        if (g == 0x0F65 && version < ClientVersion.CV_60144) return f;
-        if (g >= stat.Length || (f & TilePackFlags.NameNoDraw) != 0) return f | TilePackFlags.NoDraw;
-        if (!stat[g].IsNoDiagonal) return f;
-        return f | (stat[g].IsAnimated ? TilePackFlags.NoDrawUnlessGargoyle : TilePackFlags.NoDraw);
-    }
 }

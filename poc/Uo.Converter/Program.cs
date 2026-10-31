@@ -181,8 +181,7 @@ if (convert)
         Console.WriteLine($"  bc7: {PageCodec.RefineStats.Encoded} non-trivial blocks encoded, {PageCodec.RefineStats.Refined} re-encoded at Balanced (refine below {ConvertOptions.Bc7RefineDb} dB)");
     if (Want("tiledata"))
     {
-        stats["tiledata"] = Stage("tiledata", () => ArtConvert.TileData(fm, outDir));
-        Stage("tiledata (extended)", () => TableConvert.TileDataExt(fm, outDir));
+        stats["tiledata"] = Stage("tiledata", () => TableConvert.TileData(fm, outDir));
     }
     if (Want("hues"))
     {
