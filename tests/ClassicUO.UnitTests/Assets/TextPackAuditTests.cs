@@ -514,6 +514,45 @@ namespace ClassicUO.UnitTests.Assets
         }
 
         [Fact]
+        public void Clilocs_Txt_Missing_Is_Absent_And_An_Unreadable_Path_Is_A_Failure()
+        {
+            WriteClilocFile(P("Cliloc.enu"), (1, "one"), (2, "two"));
+
+            // missing: optional, the first load publishes without it
+            var c = Cliloc(null);
+            c.Load("enu");
+            c.LooseOverrides.Should().BeNull();
+            c.GetString(2).Should().Be("two");
+
+            File.WriteAllText(P(ClilocOverrides.FileName), "2 ours" + Environment.NewLine);
+            c.Reload();
+            c.GetString(2).Should().Be("ours");
+
+            // a directory where the file should be: it exists but can't be read (deterministic, no ACLs)
+            File.Delete(P(ClilocOverrides.FileName));
+            Directory.CreateDirectory(P(ClilocOverrides.FileName));
+            WriteClilocFile(P("Cliloc.enu"), (1, "uno"), (2, "dos"));
+
+            try
+            {
+                // a reload keeps the whole old state, not an absent-overrides one
+                c.Reload();
+                c.GetString(2).Should().Be("ours");
+                c.GetString(1).Should().Be("one");
+
+                // the first load has nothing to keep: it still serves the languages
+                var fresh = Cliloc(null);
+                fresh.Load("enu");
+                fresh.GetString(1).Should().Be("uno");
+                fresh.LooseOverrides.Should().BeNull();
+            }
+            finally
+            {
+                Directory.Delete(P(ClilocOverrides.FileName));
+            }
+        }
+
+        [Fact]
         public void Overrides_Precedence_Is_Loose_Then_Packed_Then_Language_Then_English()
         {
             var pack = WriteClilocStore("cliloc.bin",
