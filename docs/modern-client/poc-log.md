@@ -2947,13 +2947,41 @@ bench-000018 (the NativeAOT pair, check unset) was built from e4d7f7d3f, so it d
 - `GpuRetryClock`: `_drawFrame` minus the probe passes, so retry times count frames, not passes (round 1).
 - Roll tape key: a roll is identified by its animation flags and the group rolled for, not by its mobile. Two mobiles of the same body that swap their roll order compare equal on the tape (both passes get the same value sequence), but their drawn groups differ, and the instance comparison sees that.
 
-**Driver scene that queues world overrides and rolls** (`<scratchpad aba6de71>/tools/e12ov.txt`; new driver command `season <name>`, which calls `World.ChangeSeason` as the server's season packet does). Britain bank (1430,1690), `season winter` (map trees and plants draw another graphic, so `GpuReplaceStatic` hides their baked sprite through an override), walks into and around the bank, `season summer`. Then the player becomes a grey wolf (body 25: animal, low-group extended in mobtypes.txt), and `[Animate 5 …` and `[Animate 6 …` drive server actions 5/6, which roll in `AnimationGroupRules`. Broken builds: `brkOv3` (the probe's overrides copied but not taken off the queue) and `brkRng` (`RandomHelper.Restore` left out).
+**Driver scene that queues world overrides and rolls** (`<scratchpad aba6de71>/tools/e12ov.txt`; new driver command `season <name>`, which calls `World.ChangeSeason` as the server's season packet does). Britain bank (1430,1690), `season winter` (map trees and plants draw another graphic, so `GpuReplaceStatic` hides their baked sprite through an override), walks into and around the bank, `season summer`. Then the player becomes a grey wolf (body 25: animal, low-group extended in mobtypes.txt; wrong, see the client runs: 25 is a Body.def alias of 225 and never rolls; the scene now uses body 52), and `[Animate 5 …` and `[Animate 6 …` drive server actions 5/6, which roll in `AnimationGroupRules`. Broken builds: `brkOv3` (the probe's overrides copied but not taken off the queue) and `brkRng` (`RandomHelper.Restore` left out).
 
 **Verification:** both builds (`-c Release`, and `-p:CuoDevTools=false`) without errors. Unit tests: 753 pass, 5 runs in a row. That is 740 + 13: the old replay test is replaced by 8 RNG test cases (a 5-case theory, same request and same state, no tape, `RandomHelper` ranges), plus 5 override tests (4 comparator, 1 `TakeSince`) and 1 capture test for the seated and scaled fallbacks. The write-site budget test passes unchanged.
 
-**Client runs:** bench-000021 (JIT, `TieredCompilation=0`, the same environment as round 1): the correct build on `e12ov.txt`, `e6fx.txt` night and `e6fx_aura.txt`; `brkOv3` and `brkRng` on `e12ov.txt`. Results: pending (filled in when the job finishes).
+**Client runs:** bench-000021 (JIT, `TieredCompilation=0`, the same environment as round 1, binaries from 7fafa97e3): the correct build on `e12ov.txt`, `e6fx.txt` night and `e6fx_aura.txt`; `brkOv3` and `brkRng` on `e12ov.txt`. Status ok, 312 s, every client exit 0. Each log's per-segment `same frame` reports (8 for `e12ov`, 15 for `e6fx`; the counters reset after each report) are summed:
 
-**Timing (check unset):** bench-000018: pending.
+| Run | Check frames | Compared (partially) | Differences (fully / partially) | Where | Overrides compared | Isolation | Verdict |
+|---|---|---|---|---|---|---|---|
+| new, `e12ov` | 109820 | 107849 (12, textures uploaded) | 0 / 0 | none | 600474 (0 checks with the queue full) | 0 | clean |
+| `brkOv3`, `e12ov` | 86232 | 84780 (15) | 84364 / 15 | 84379 in world overrides, nothing else (first: "overrides: 13 served, 26 in the full pass") | 1103504 | 0 | caught |
+| `brkRng`, `e12ov` | 104583 | 102575 (13) | 0 / 0 | none | 675154 | 0 | NOT caught: no rolls happened (below) |
+| new, `e6fx` night | 118378 | 118184 (54) | 0 / 0 | none | 59570 | 0 | clean |
+| new, `e6fx_aura` | 134913 | 134733 (119616: FNA aura sprites dropped in the probe) | 0 / 0 | none | 0 | 0 | clean |
+
+The override comparison is now exercised (round 1 had 0 overrides in every scene): the winter season queues them and `brkOv3` is caught on every compared frame. The reference-pass item check reads 0 differences in all five runs.
+
+**`brkRng` was not caught because the scene never rolled.** `[set Body 25` worked (the parity counters show non-human mobile frames from then on), but `AnimationGroupRules.Select` first resolves the body through Body.def (`ConvertBodyIfNeeded`), and Body.def aliases 25 to 225 (`25 {225} 946`; so do 23, 27, 34, 37, 97 to 100). The flags are then read for 225, which mobtypes.txt lists as `ANIMAL 0`: no `CalculateOffsetLowGroupExtended`, so actions 5/6 go through `LABEL_222` without a roll. Of the animals with flag `20`, only 52 (snake) and 81 have no Body.def or Bodyconv.def alias. The scene now uses body 52 (`<scratchpad f33fe584>/e12-fix/e12ov52.txt`), and the same-frame report counts the rolls it compared (`N animation rolls`), so a scene without rolls shows 0 there instead of passing silently. Re-run: bench-000033 (new and `brkRng`, both built from the round-3 merge ceaa5df02). Results: pending.
+
+**Timing (check unset):** bench-000018 (e4d7f7d3f) was cancelled by the coordinator; the round-3 unset path is timed by bench-000034 (round 3 below).
+
+### E12: Codex audit round 3 (e12-fix, 2026-10-31)
+
+Audit `<scratchpad c951be14>/astra-e12r3/out.md` (static only). One finding, the rest clean (RNG transition and reductions match .NET's xoshiro, seeding, callers, restoration order, comparators, `season` inert when unused).
+
+| # | Finding | Disposition |
+|---|---|---|
+| P2 | The probe's Save/Restore of the global random state can erase a legitimate roll another thread made inside the window: SDL's raw-input thread (`SDL_WINDOWS_RAW_KEYBOARD=1`) dispatches `OnKeyUp` -> `ToggleWarMode` -> the war-music choice; a plugin `RequestMove` reaches `CalculateRandomIdleTime`. Overlapping calls also raced the four state words (the old `new Random()` had the same race) | **Fixed.** `RandomHelper`'s xoshiro state is `[ThreadStatic]`, each thread seeded from `Random.Shared` on first use (an all-zero state means not seeded yet; xoshiro never reaches it). `Save`/`Restore` read and write only the calling thread's state, so the probe touches the render thread's state only, and no thread shares or loses state. Callers checked (`AnimationGroupRules`, `GameActions` war music, `Mobile` idle time and animation picks, `OptionsGump` hues, `Weather`): none seeds the generator or relies on one sequence shared between threads. Tests: a roll on another thread inside the Save/Restore window survives (its state after the roll is unchanged by the render thread's restore, and its next value is the one its own stream gives); two threads get independent streams (different seeds, rolls on one thread don't move another's state, two threads put in the same state roll the same values). Both fail against the old shared state |
+
+Cost with the check unset: one thread-local access per roll (the rolls are rare: weather, idle times, animation picks). Measured as part of the AOT pair below.
+
+Also in this round: the same-frame report counts the animation rolls compared, and the override scene's roll part was fixed (round 2 client runs above).
+
+**Verification:** both builds (`-c Release` and `-p:CuoDevTools=false`) 0 errors, before and after merging poc/modern-client 2ced75119 (merge ceaa5df02, no conflicts). Unit tests: 755 pass before the merge (753 + the 2 thread tests), 806 after it. The write-site budget test passes unchanged.
+
+**Timing (check unset):** bench-000034, NativeAOT, base = poc/modern-client 2ced75119, new = ceaa5df02 (this branch merged with it), plans ls1/ls25/lswalk + Britain, 4 rounds interleaved (base/new, new/base, ...), 2 windows each. Results: pending.
 
 ## Chunk pool per World (2026-10-30)
 
