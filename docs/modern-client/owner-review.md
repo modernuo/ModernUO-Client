@@ -62,6 +62,24 @@ Newest at the bottom. Each item says what I did meanwhile.
 - **Fork branch rule** (2026-10-25, after your return): a production branch is `modernuo/<release>-patched`, created from upstream's release tag, with our patches as the only commits on top, so each patch re-applies to later releases until it's fixed upstream. Applied to SDL (`modernuo/3.4.18-patched`) and FNA/FNA3D (`modernuo/26.10-patched`). See sdl-fork.md and fna-fork.md.
 - **FNA and FNA3D forks** (2026-10-25): you created github.com/modernuo/FNA and github.com/modernuo/FNA3D and will talk to the FNA team about upstreaming. *Implemented in 072ae4d88.*
 
+## Milestone of 2026-10-31 (while you were away)
+
+All merged and pushed, and each audited by Codex until clean or down to documented edge cases. Packs **classic-1.1** and **classic-1.2** are published, and CURRENT is classic-1.2.
+
+| Commit | What | Verified |
+|---|---|---|
+| fa5d9e46c | **dr_mp3 music decoding** (MP3Sharp gone): 0.376 vs 2.290 ms CPU per audio-second; gapless loops | bench-000042/43; Codex 2 rounds |
+| 75747c25b | **Memory round 2:** art starts at 24 layers (login peak −128 MiB); palette staging region gone | bench-000044; Codex |
+| d4bc97036 | **One tiledata file**, draw rules as data (needs classic-1.1) | parity bench-000045/46 (pixel-neutral; the roof race is in known-issues); Codex |
+| f7008051e | **Legacy import:** 4.0.11c/MUL installs convert. Version detection (ModernUO PR #2735), map patches merged at import, Trammel from map0 below 6.0, width from the file, no x files, 6 regions fixed (offset-0 statics) | UOML verifies block-exact; Codex 2 rounds |
+| 7d372e72f | **Memory round 3:** staging slots stop cycling: exactly 4 art staging buffers, −26–37 MiB resident and −29–39 MiB commit per client | bench-000048; Codex 2 rounds |
+| 32ce99b5e | **Sounds and music in the pack:** raw PCM and original MP3; bounded sound cache; untrusted-pack checks | bench-000050–53; Codex 3 rounds |
+
+- **Packs:** classic-1.1 = tiledata merge plus the 6 regions; classic-1.2 = 1.1 plus `audio/sounds.bin` and `audio/music.bin`. Both were staged from hard links in `C:\Repositories\cuo-poc-state\pack-staging` (now empty), with `--verify-only` passed and the previous pack shown byte-identical afterwards.
+- **ModernUO PR #2735** (open, yours to merge): detects pre-resource clients (4.0.11c), parses letter versions correctly, and classic version strings get `ClientType.Classic`.
+- **Follow-up:** the login music's first buffer took 121–415 ms on JIT builds reading the pack, against 34.5 ms on NativeAOT with loose files; every other track starts in about 1 ms. An AOT smoke run on classic-1.2 is queued to settle it.
+- **Waiting on you:** body overrides (4 questions above), and tiledata bounds on legacy packs (pad or guard).
+
 ## Merged into `poc/modern-client` tonight
 
 | Commit | What | Verified |
