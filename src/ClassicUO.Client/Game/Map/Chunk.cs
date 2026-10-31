@@ -14,14 +14,15 @@ namespace ClassicUO.Game.Map
 {
     internal sealed class Chunk
     {
-        private static readonly Queue<Chunk> _pool = new Queue<Chunk>();
-
         private readonly World _world;
 
         public Chunk(World world)
         {
             _world = world;
         }
+
+        /// <summary>The World this chunk was built for; only that World's <see cref="ChunkPool"/> keeps or hands it out.</summary>
+        public World Owner => _world;
 
         public GameObject[,] Tiles { get; } = new GameObject[8, 8];
         public bool IsDestroyed;
@@ -86,10 +87,9 @@ namespace ClassicUO.Game.Map
         public static int Created;
         /// <summary>Chunks allocated over the session ([gcs] pool lines).</summary>
         public static long TotalCreated;
-        public static int PooledCount => _pool.Count;
 
         /// <summary>[gcs] pool lines: how many pooled and used chunks have each statics mesh capacity.</summary>
-        public static string DescribeMeshCapacities(Map map)
+        public static string DescribeMeshCapacities(World world, Map map)
         {
             var hist = new System.Collections.Generic.SortedDictionary<int, int>();
 
@@ -99,9 +99,12 @@ namespace ClassicUO.Game.Map
                 hist[cap] = hist.TryGetValue(cap, out int n) ? n + 1 : 1;
             }
 
-            foreach (Chunk c in _pool)
+            if (world != null)
             {
-                Add(c);
+                foreach (Chunk c in world.ChunkPool.Chunks)
+                {
+                    Add(c);
+                }
             }
 
             if (map != null)
@@ -127,10 +130,9 @@ namespace ClassicUO.Game.Map
 
         public static Chunk Create(World world, int x, int y)
         {
-            Chunk c;
-            if (_pool.Count > 0)
+            Chunk c = world.ChunkPool.Take();
+            if (c != null)
             {
-                c = _pool.Dequeue();
                 c.IsDestroyed = false;
             }
             else
@@ -158,29 +160,7 @@ namespace ClassicUO.Game.Map
         /// A new chunk is in the same state as a pooled one (Destroy: no tiles, no node, cleared mesh). Returns the chunks added.
         /// </summary>
         public static int Prefill(World world, int count, int staticsCapacity)
-        {
-            int added = 0;
-            count = Math.Min(count, Constants.PREDICTABLE_CHUNKS);
-
-            while (_pool.Count < count)
-            {
-                var c = new Chunk(world) { IsDestroyed = true };
-                c.Mesh.Statics.EnsureCapacity(staticsCapacity);
-                _pool.Enqueue(c);
-                added++;
-            }
-
-            return added;
-        }
-
-        public static void ClearPool()
-        {
-            while (_pool.Count > 0)
-            {
-                var chunk = _pool.Dequeue();
-                chunk.Mesh.Clear();
-            }
-        }
+            => world.ChunkPool.Prefill(count, staticsCapacity);
 
 
         public void Load(int index)
@@ -519,10 +499,10 @@ namespace ClassicUO.Game.Map
             GpuItems?.Reset();
             Array.Clear(GpuMobiles);
 
-            if (_pool.Count < Constants.PREDICTABLE_CHUNKS)
+            if (_world.ChunkPool.CanAdd(this))
             {
                 Mesh.SoftClear();
-                _pool.Enqueue(this);
+                _world.ChunkPool.Add(this);
             }
             else
             {

@@ -59,6 +59,8 @@ namespace ClassicUO.Game
             Weather = new Weather(this);
             InfoBars = new InfoBarManager(this);
             Ecs = new WorldEcs(this);
+            MapRecycler = new Map.MapObjectRecycler(this);
+            ChunkPool = new Map.ChunkPool(this);
         }
 
         public WorldEcs Ecs { get; }
@@ -120,7 +122,23 @@ namespace ClassicUO.Game
         public Map.Map Map { get; private set; }
 
         /// <summary>Land and statics of evicted chunks, reused by later chunk loads (Chunk.Destroy, Chunk.Load).</summary>
-        public Map.MapObjectRecycler MapRecycler { get; } = new Map.MapObjectRecycler();
+        public Map.MapObjectRecycler MapRecycler { get; }
+
+        /// <summary>Destroyed chunks of this World, reused by Chunk.Create. Owned by the World like <see cref="MapRecycler"/>:
+        /// kept across <see cref="Clear"/> (relog), released by <see cref="ReleasePools"/>.</summary>
+        public Map.ChunkPool ChunkPool { get; }
+
+        /// <summary>MapWarmup filled this World's pools for the current login (World.Clear re-arms it).</summary>
+        internal bool WarmupDone;
+
+        /// <summary>The World is finished (client unload, or a test's end): drops its chunk, land and static pools, so nothing
+        /// keeps its chunks or map objects alive.</summary>
+        public void ReleasePools()
+        {
+            ChunkPool.Clear();
+            MapRecycler.Clear();
+            WarmupDone = false;
+        }
 
         public byte ClientViewRange { get; set; } = Constants.MAX_VIEW_RANGE;
 
@@ -1380,6 +1398,7 @@ namespace ClassicUO.Game
             ActiveSpellIcons.Clear();
 
             SkillsRequested = false;
+            WarmupDone = false; // the next login tops the pools up (they stay: same World, bounded)
             Ecs.OnWorldCleared();
         }
 
