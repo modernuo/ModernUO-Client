@@ -1,14 +1,18 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Buffers.Binary;
 using System.IO;
 using ClassicUO.Assets;
+using ClassicUO.Game.Managers;
 using ClassicUO.Utility;
 using FluentAssertions;
+using Uo.Pack;
 using Xunit;
 
 namespace ClassicUO.UnitTests.Assets
 {
-    // The client loading a pack converted from a pre-UOP install (UOML, client 4.0.11c): 0x4000 statics, five facets with
+    // The client loading a pack converted from a pre-UOP install (UOML, client 4.0.11c): 0x4000 source statics padded to the standardized 0x10000, five facets with
     // Trammel built from map0 + mapdif1, 7168-wide Felucca/Trammel, 12-byte multis. Runs when CUO_LEGACY_PACK names such
     // a pack and CUO_LEGACY_UO its install (read-only, for the map diff check). Skipped only while either variable is
     // unset: once they are set, a missing manifest.json or source file is a failure, so a conversion that did not produce
@@ -33,8 +37,29 @@ namespace ClassicUO.UnitTests.Assets
             var fm = new UOFileManager(cv, Uo, pack);
             fm.Load("ENU");
 
-            fm.TileData.LandData.Length.Should().Be(0x4000);
-            fm.TileData.StaticData.Length.Should().Be(0x4000);
+            fm.TileData.LandData.Length.Should().Be(PackConst.LandTileCount);
+            fm.TileData.StaticData.Length.Should().Be(PackConst.StaticTileCount); // the source's 0x4000 plus empty padding
+            fm.TileData.StaticData[0x4000].Name.Should().BeEmpty();
+            fm.TileData.StaticData[0xFFFF].Flags.Should().Be(TileFlag.None);
+            // Animated statics registration (AnimatedStaticsManager.Initialize) over the padded table: every registered id
+            // is a source entry, and the set is exactly what the unpadded 0x4000 entries register.
+            var statics = new AnimatedStaticsManager();
+            statics.Initialize(fm.TileData.StaticData, fm.AnimData);
+            var registered = statics.RegisteredIds.ToList();
+            var expected = new List<ushort>();
+
+            for (int i = 0; i < 0x4000; i++)
+            {
+                if (fm.TileData.StaticData[i].IsAnimated && fm.AnimData.TryGetAnimData((ushort)i, out _))
+                {
+                    expected.Add((ushort)i);
+                }
+            }
+
+            registered.Should().NotBeEmpty();
+            registered.Should().OnlyContain(id => id < 0x4000, "padded entries carry no Animation flag");
+            registered.Should().Equal(expected);
+
             fm.Multis.Count.Should().BeGreaterThan(0);
             fm.Multis.GetMultis(0).Should().NotBeEmpty();
 

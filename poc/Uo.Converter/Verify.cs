@@ -129,13 +129,16 @@ public static class Verify
     private static void CheckTileDataAndAtlases(UOFileManager fm, string outDir)
     {
         // Tile data and hues.
+        // The reader already requires the standardized counts; the source is compared padded the way the converter pads it,
+        // so every padded entry must be empty.
         var (land, statics) = TileDataFile.ReadCompact(Path.Combine(outDir, TableConst.TileDataFile));
-        if (land.Length != fm.TileData.LandData.Length || statics.Length != fm.TileData.StaticData.Length) Fail("tiledata counts");
-        for (int i = 0; i < Math.Min(land.Length, fm.TileData.LandData.Length); i++)
-            if (land[i].Flags != (ulong)fm.TileData.LandData[i].Flags || land[i].TexId != fm.TileData.LandData[i].TexID) { Fail($"tiledata land {i}"); break; }
-        for (int i = 0; i < Math.Min(statics.Length, fm.TileData.StaticData.Length); i++)
+        var (ld, sd) = PaddedSource(fm);
+        if (land.Length != ld.Length || statics.Length != sd.Length) Fail("tiledata counts");
+        for (int i = 0; i < Math.Min(land.Length, ld.Length); i++)
+            if (land[i].Flags != (ulong)ld[i].Flags || land[i].TexId != ld[i].TexID) { Fail($"tiledata land {i}"); break; }
+        for (int i = 0; i < Math.Min(statics.Length, sd.Length); i++)
         {
-            ref readonly var t = ref fm.TileData.StaticData[i];
+            ref readonly var t = ref sd[i];
             if (statics[i].Flags != (ulong)t.Flags || statics[i].Height != t.Height || statics[i].Layer != t.Layer) { Fail($"tiledata static {i}"); break; }
         }
         string hueNote = "hues: not checked";
@@ -156,7 +159,8 @@ public static class Verify
                 }
             hueNote = $"hues: {hueCount}, LUT built from hues_raw.bin = bit-replicated (c<<3|c>>2) hues.mul {(lutBad == 0 ? "EXACT" : "MISMATCH")}";
         }
-        Console.WriteLine($"  tiledata: {land.Length} land, {statics.Length} statics (flags, texId, height, layer exact); {hueNote}");
+        int padded = statics.Length - fm.TileData.StaticData.Length;
+        Console.WriteLine($"  tiledata: {land.Length} land, {statics.Length} statics{(padded > 0 ? $" ({padded} padded empty)" : "")} (flags, texId, height, layer exact); {hueNote}");
         CheckNoDraw(fm, land, statics);
         CheckTables(fm, outDir);
 
@@ -403,8 +407,7 @@ public static class Verify
         if (Want("tiledata") && File.Exists(P(TableConst.TileDataFile)))
         {
             var (l, st, names) = TileDataFile.Read(P(TableConst.TileDataFile));
-            var ld = fm.TileData.LandData;
-            var sd = fm.TileData.StaticData;
+            var (ld, sd) = PaddedSource(fm); // padded entries must be empty: no flags, no fields, no name
             if (l.Length != ld.Length || st.Length != sd.Length) Fail("tiledata counts (full)");
             int bad = 0;
             for (int i = 0; i < Math.Min(l.Length, ld.Length); i++)
@@ -554,13 +557,18 @@ public static class Verify
     /// replaced (Land.AllowedToDraw, GameObject.CanBeDrawn, Item.RefreshGraphicState's multi test), evaluated on the
     /// source client's tiledata. The client's unit test TileDrawOracleTests repeats (2) against the pack alone.
     /// </summary>
+    /// <summary>The source tile data padded to the pack's standardized counts, as <see cref="TableConvert.TileData"/> writes it.</summary>
+    private static (LandTiles[] Land, StaticTiles[] Statics) PaddedSource(UOFileManager fm) =>
+        (TableConvert.PadSource(fm.TileData.LandData, PackConst.LandTileCount, "land"),
+         TableConvert.PadSource(fm.TileData.StaticData, PackConst.StaticTileCount, "static"));
+
     private static void CheckNoDraw(UOFileManager fm, LandTileData[] land, StaticTileData[] statics)
     {
-        var sd = fm.TileData.StaticData;
+        var (ld, sd) = PaddedSource(fm);
         int landNo = 0, landName = 0, statNo = 0, statGarg = 0, statName = 0, statMulti = 0, compared = 0, mismatches = 0;
         for (int i = 0; i < land.Length; i++)
         {
-            if (land[i].PackFlags != TileRules.Land(i, fm.TileData.LandData[i])) { Fail($"land {i} pack flags"); break; }
+            if (land[i].PackFlags != TileRules.Land(i, ld[i])) { Fail($"land {i} pack flags"); break; }
             if ((land[i].PackFlags & TilePackFlags.NoDraw) != 0) landNo++;
             if ((land[i].PackFlags & TilePackFlags.NameNoDraw) != 0) landName++;
         }

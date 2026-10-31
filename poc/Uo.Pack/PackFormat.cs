@@ -24,7 +24,13 @@ public static class PackConst
     public const uint MagicHues = 0x53455548;    // "HUES": retired hues.bin, read only by the legacy HueFile reader
 
     public const int StaticSpriteBase = 0x4000;
+    /// <summary>tiledata.bin is a standardized format: every pack has exactly <see cref="LandTileCount"/> land entries and
+    /// <see cref="StaticTileCount"/> static entries, whatever the source install. A pre-7.0.9 install has only 0x4000 statics;
+    /// the converter pads the rest with empty entries, so a server-sent u16 graphic always indexes inside the table. The
+    /// writer and the reader both require these counts.</summary>
     public const int LandTileCount = 0x4000;
+    /// <summary>Static tiledata entries in every pack (UO graphics are u16). See <see cref="LandTileCount"/>.</summary>
+    public const int StaticTileCount = 0x10000;
 
     public const int PageSize = 2048;
     public const int PageMipCount = 6;

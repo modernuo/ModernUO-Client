@@ -212,13 +212,13 @@ namespace ClassicUO.UnitTests.Assets
 
                 var names = "abc"u8.ToArray();
                 var land = new LandTileInfo[PackConst.LandTileCount];
-                var statics = new StaticTileInfo[16];
+                var statics = new StaticTileInfo[PackConst.StaticTileCount];
                 statics[3].NameOffset = 0;
                 statics[3].NameLength = 3;
                 var good = Path.Combine(dir, "good.bin");
                 TileDataFile.Write(good, land, statics, names);
                 var (l, s, n) = TileDataFile.Read(good);
-                (l.Length, s.Length, TileDataFile.Name(n, s[3].NameOffset, s[3].NameLength)).Should().Be((PackConst.LandTileCount, 16, "abc"));
+                (l.Length, s.Length, TileDataFile.Name(n, s[3].NameOffset, s[3].NameLength)).Should().Be((PackConst.LandTileCount, PackConst.StaticTileCount, "abc"));
 
                 Action read(string p) => () => TileDataFile.Read(p);
 
@@ -229,13 +229,22 @@ namespace ClassicUO.UnitTests.Assets
                     .Should().Throw<InvalidDataException>().WithMessage("*pack 1.0*");
 
                 // counts the client cannot index, or that would allocate before the size check
-                read(Write("land.bin", w => { Header(w, TableConst.MagicTileData); w.Write(5); w.Write(16); w.Write(0); }))
+                read(Write("land.bin", w => { Header(w, TableConst.MagicTileData); w.Write(5); w.Write(PackConst.StaticTileCount); w.Write(0); }))
                     .Should().Throw<InvalidDataException>().WithMessage("*land entries*");
+                // the standardized format: exactly 0x10000 statics, so a pre-padding legacy file (0x4000) or one entry more is malformed
+                foreach (int count in new[] { 0x4000, PackConst.StaticTileCount - 1, PackConst.StaticTileCount + 1, 16 })
+                    read(Write($"statics{count}.bin", w => { Header(w, TableConst.MagicTileData); w.Write(PackConst.LandTileCount); w.Write(count); w.Write(0); }))
+                        .Should().Throw<InvalidDataException>().WithMessage($"*{count} static entries, expected 65536*");
+                // and the writer refuses to produce one
+                ((Action)(() => TileDataFile.Write(Path.Combine(dir, "w1.bin"), land, new StaticTileInfo[0x4000], names)))
+                    .Should().Throw<ArgumentException>().WithMessage("*16384 static entries*");
+                ((Action)(() => TileDataFile.Write(Path.Combine(dir, "w2.bin"), new LandTileInfo[0x4001], statics, names)))
+                    .Should().Throw<ArgumentException>().WithMessage("*16385 land entries*");
                 read(Write("huge.bin", w => { Header(w, TableConst.MagicTileData); w.Write(PackConst.LandTileCount); w.Write(int.MaxValue); w.Write(0); }))
                     .Should().Throw<InvalidDataException>().WithMessage("*static entries*");
-                read(Write("names.bin", w => { Header(w, TableConst.MagicTileData); w.Write(PackConst.LandTileCount); w.Write(16); w.Write(-1); }))
+                read(Write("names.bin", w => { Header(w, TableConst.MagicTileData); w.Write(PackConst.LandTileCount); w.Write(PackConst.StaticTileCount); w.Write(-1); }))
                     .Should().Throw<InvalidDataException>().WithMessage("*name table*");
-                read(Write("short.bin", w => { Header(w, TableConst.MagicTileData); w.Write(PackConst.LandTileCount); w.Write(16); w.Write(3); }))
+                read(Write("short.bin", w => { Header(w, TableConst.MagicTileData); w.Write(PackConst.LandTileCount); w.Write(PackConst.StaticTileCount); w.Write(3); }))
                     .Should().Throw<InvalidDataException>().WithMessage("*bytes, expected*");
                 read(Write("trunc.bin", w => w.Write(0)))
                     .Should().Throw<InvalidDataException>().WithMessage("*truncated*");

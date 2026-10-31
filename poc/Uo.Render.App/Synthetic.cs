@@ -101,7 +101,7 @@ public static class Synthetic
         for (int i = 0; i <= 2; i++) land[i].PackFlags = TilePackFlags.NoDraw; // as the converter writes land 0..2
         land[3].TexId = 1;
         land[5].Flags = 0x80; // wet
-        var stat = new StaticTileInfo[0x10000];
+        var stat = new StaticTileInfo[PackConst.StaticTileCount];
         stat[0x100] = new StaticTileInfo { Height = 20 };
         stat[0x101] = new StaticTileInfo { Height = 20, Flags = 0x10 };
         stat[0x102] = new StaticTileInfo { Height = 5 };
