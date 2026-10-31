@@ -88,10 +88,11 @@ Auto's fallback (no usable SDL_GPU/Vulkan) runs Legacy on FNA3D's D3D11 driver, 
 - **Was worked around** in the batcher (b62406b8e: `Batcher2D.IndexDataChanged` forced an effect re-apply after each mesh-layer index upload).
 - **Fixed** in github.com/modernuo/FNA3D `modernuo/26.10-patched` (e3bd4f2): a cycling upload of the bound index buffer clears the binding, so the next draw rebinds it. The batcher workaround is removed. See [fna-fork.md](fna-fork.md).
 
-## Gpu world renderer: the roof over the player is sometimes drawn (2026-10-31)
+## Gpu world renderer: the roof over the player is sometimes drawn (2026-10-31, fixed pending bench-000055)
 
 - **What:** standing inside the house at 1427,1691 (Z 0), the Gpu renderer usually hides the roof, the chimneys of the building at bottom left, and a tree, as Legacy does. In one run of the f27759989 binary (bench-000045, base arm), it drew all three for the whole 5 s window. That run's counters were also different: foliage 1, cap_statics 2, pick_tests 36, override_calls 28, against 0, 0, 24 and 14.
 - **Not caused by tiledata-single:** the same binary on the same pack hid them in 6 of 6 shots in bench-000046 (3 runs, shots at about 8 s and 14 s after arrival). In those runs, base-vs-base differences were as large as old-vs-new.
 - **Seen again on the milestone tip** (bench-000054, NativeAOT 5c90523ca, classic-1.2): the same three objects were drawn, with identical counters (foliage 1, cap_statics 2, pick_tests 36.7, override_calls 28). That's 2 of 15 Gpu house shots so far; Legacy hid them every time.
-- **Suspected cause:** a race in how the Gpu host decides to hide what is above the player when they arrive at a spot. Investigation started 2026-10-31.
+- **Cause (found 2026-10-31, `poc/roof-race`):** not Gpu-specific. `GameScene.UpdateMaxDrawZ` (shared by both renderers) recomputed max Z and the roof decision only when the player's position changed. After a teleport, the first frame's decision can run before incremental chunk loading has loaded the player's chunk (it waits for the region decode and the first-sight art workers); it then saw no roof, decided max Z 127, and kept that until the player moved.
+- **Status: fixed on `poc/roof-race` (ff2628c74), pending the client check bench-000055.** A decision made while a chunk it reads was missing is recomputed each frame until the chunk is loaded (`MaxDrawZLatch`, unit-tested). Each recovery logs a `[maxz]` trace line. Details in the poc-log entry "Roof over the player after a teleport".
 - **Evidence:** `~/.claude/rf-agent/jobs/bench/done/bench-000045/` (`base-gpu/house_gpu.png`, `diff-gpu/house_gpu.png`) and `bench-000046/`. The poc-log tiledata-single entry has the parity tables.
