@@ -39,6 +39,7 @@ namespace ClassicUO.Game.GameObjects
             get => _inWarMode;
             set
             {
+                FunnelCheck.Write(this, FunnelField.InWarMode);
                 _inWarMode = value;
                 PushInputs();
             }
@@ -562,7 +563,7 @@ namespace ClassicUO.Game.GameObjects
 
             if (!emptyStack)
             {
-                ref Step walkStep = ref Steps.Back();
+                ref readonly Step walkStep = ref Steps.Back();
                 x = walkStep.X;
                 y = walkStep.Y;
                 z = walkStep.Z;
@@ -662,7 +663,7 @@ namespace ClassicUO.Game.GameObjects
 
             Walker.StepsCount++;
 
-            Steps.AddToBack
+            AddStep
             (
                 new Step
                 {
