@@ -10,8 +10,18 @@
     <ProjectReference Include="..\..\external\MP3Sharp\MP3Sharp\MP3Sharp.csproj" />
   </ItemGroup>
 
-  <!--<ItemGroup>
-    <PackageReference Include="MP3Sharp" Version="1.0.5" />
-  </ItemGroup>-->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>ClassicUO.UnitTests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
+
+  <!-- cuo_mp3 (dr_mp3, src/native/cuo_mp3) for JIT builds and tests. NativeAOT publishes link the static library
+       into the executable instead (ClassicUO.Client.csproj), so the shared library is never published from here. -->
+  <ItemGroup>
+    <None Include="..\..\external\x64\cuo_mp3.dll" Link="cuo_mp3.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Never" Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
+    <None Include="..\..\external\lib64\libcuo_mp3.so" Link="libcuo_mp3.so" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Never" Condition="$([MSBuild]::IsOSPlatform('Linux')) and Exists('..\..\external\lib64\libcuo_mp3.so')" />
+    <None Include="..\..\external\osx\libcuo_mp3.dylib" Link="libcuo_mp3.dylib" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="Never" Condition="$([MSBuild]::IsOSPlatform('OSX')) and Exists('..\..\external\osx\libcuo_mp3.dylib')" />
+  </ItemGroup>
 
 </Project>

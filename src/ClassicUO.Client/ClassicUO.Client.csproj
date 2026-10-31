@@ -19,6 +19,19 @@
     <MibcFile Include="$(CuoMibcPath)" />
   </ItemGroup>
 
+  <!-- dr_mp3 (src/native/cuo_mp3): NativeAOT links the static library into cuo.exe (DirectPInvoke), so the publish
+       ships no cuo_mp3 shared library. JIT builds load the shared library from external/<platform>. -->
+  <PropertyGroup Condition="'$(PublishAot)' == 'true'">
+    <CuoMp3StaticLib Condition="'$(RuntimeIdentifier)' == 'win-x64'">$(ProjectDir)..\..\external\x64-static\cuo_mp3.lib</CuoMp3StaticLib>
+    <CuoMp3StaticLib Condition="'$(RuntimeIdentifier)' == 'linux-x64'">$(ProjectDir)..\..\external\lib64-static\libcuo_mp3.a</CuoMp3StaticLib>
+    <CuoMp3StaticLib Condition="$(RuntimeIdentifier.StartsWith('osx-'))">$(ProjectDir)..\..\external\osx-static\libcuo_mp3.a</CuoMp3StaticLib>
+    <CuoMp3Static Condition="'$(CuoMp3StaticLib)' != '' and Exists('$(CuoMp3StaticLib)')">true</CuoMp3Static>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(CuoMp3Static)' == 'true'">
+    <DirectPInvoke Include="cuo_mp3" />
+    <NativeLibrary Include="$(CuoMp3StaticLib)" />
+  </ItemGroup>
+
   <PropertyGroup Condition="'$(Configuration)'=='Release'">
     <OutputPath>$(ProjectDir)..\..\bin\Release\</OutputPath>
     <PublishDir>$(ProjectDir)..\..\bin\dist\</PublishDir>
@@ -122,11 +135,15 @@
   <Target Name="CopyExternalDeps_publish" AfterTargets="Publish">
     <ItemGroup>
       <MonockickstartPath Include="$(ProjectDir)..\..\tools\monokickstart\*.*" />
+      <!-- Without the cuo_mp3 shared library when NativeAOT linked it statically. -->
+      <DataFiles_x64_publish Include="@(DataFiles_x64)" Condition="'$(CuoMp3Static)' != 'true' or '%(Filename)' != 'cuo_mp3'" />
+      <DataFiles_lib64_publish Include="@(DataFiles_lib64)" Condition="'$(CuoMp3Static)' != 'true' or '%(Filename)' != 'libcuo_mp3'" />
+      <DataFiles_osx_publish Include="@(DataFiles_osx)" Condition="'$(CuoMp3Static)' != 'true' or '%(Filename)' != 'libcuo_mp3'" />
     </ItemGroup>
 
-    <Copy SourceFiles="@(DataFiles_x64)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" Condition="'$(_IsWindows)' == 'true'" />
-    <Copy SourceFiles="@(DataFiles_lib64)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" Condition="'$(_IsLinux)' == 'true'" />
-    <Copy SourceFiles="@(DataFiles_osx)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" Condition="'$(_IsMacOS)' == 'true'" />
+    <Copy SourceFiles="@(DataFiles_x64_publish)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" Condition="'$(_IsWindows)' == 'true'" />
+    <Copy SourceFiles="@(DataFiles_lib64_publish)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" Condition="'$(_IsLinux)' == 'true'" />
+    <Copy SourceFiles="@(DataFiles_osx_publish)" DestinationFolder="$(PublishDir)" SkipUnchangedFiles="true" Condition="'$(_IsMacOS)' == 'true'" />
     <Copy SourceFiles="@(DataFiles_vulkan)" DestinationFolder="$(PublishDir)\vulkan\icd.d\" SkipUnchangedFiles="true" Condition="'$(_IsMacOS)' == 'true'" />
 
     <Copy SourceFiles="@(MonockickstartPath)" DestinationFolder="$(PublishDir)\" SkipUnchangedFiles="true" Condition="'$(_IsLinux)' == 'true' Or '$(_IsMacOS)' == 'true'" />
