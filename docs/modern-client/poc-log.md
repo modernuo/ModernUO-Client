@@ -2516,3 +2516,19 @@ Branch `poc/login-warmup-gc` (warmgc agent, kbatman3), from poc/modern-client 36
   - The prefill makes that retention immediate: 300 chunks from login on.
   - Today there is one World per process.
 - **Check after the fixes** (010a09866): 643 unit tests pass in both variants. One NativeAOT login run (`travel`, `glide`) logged the induced collection in the last held frame of the login hold (12.4 ms), shown as `2 collections (gen1+ 2), pause 12.32 ms, login`. The 4 collections of the first in-game frame are now counted. The +40 s summary (6 collections, 22.0 ms) equals the sum of the per-frame lines; 0 collections in play frames, 0 exceptions.
+
+## Send-side lock: encrypt and enqueue as one step (2026-10-30)
+
+Branch `poc/net-send-lock` (send-race agent), from poc/modern-client 8f1c81a17. Fixes the "Pre-existing send-side race" follow-up of the L1 network drain entry.
+
+**Bug.** `NetClient.Send` encrypted the packet (advancing the stream cipher) before taking the lock that guards the send queue, so two senders (main thread and a plugin thread) could encrypt in one order and queue in the other, and the server then decrypted garbage. `ResetProtocolState` and `EnableCompression` also cleared `_sendStream` (and flipped `_isCompressionEnabled`) without the lock, so a reset could tear the queue under a concurrent `Enqueue` or in the middle of `ProcessSend`'s drain loop.
+
+**Fix (`NetClient.cs`).** One `_sendLock` guards `_sendStream`, the send-side read of `_isCompressionEnabled`, the send-side cipher state (`Encryption.Encrypt`) and the send statistics. `Send` encrypts, enqueues and counts inside it; `ProcessSend` drains inside it (as before); `ResetProtocolState` and `EnableCompression` take it to flip the mode and clear the queue. No allocation, and still one lock acquire per send (the encryption moved inside the lock that was already taken).
+
+**Audit.**
+- Send entry points: main-thread `OutgoingPackets.Send_*` -> `NetClient.Send`; plugin threads via `Plugin.OnPluginSend` / `OnPluginSend_new` (ignorePlugin = true) -> `NetClient.Send`; the only flush is `GameController` -> `NetClient.Flush` -> `ProcessSend` (update thread). There is no async send path. Plugin hooks (`Plugin.ProcessSendPacket`, `PluginHost.PacketOut`) run before the lock, so no callback runs under it.
+- Send-side resets: `ResetProtocolState` (called from `Connect`, `Disconnect`, `Terminate`) and `EnableCompression`: both take `_sendLock`. `Terminate` is called from the `catch` blocks of `ProcessSend`, outside the lock; `Disconnected` handlers run with no lock held. The lock order is "caller's own lock, then `_sendLock`", and `_sendLock` is never held while taking another lock or calling out, so no deadlock with the update thread, the parser queue lock or the plugin queue.
+- Not under it: `_huffman` and the Huffman/Decrypt receive side (update thread only); `Connection` reports are interlocked.
+- Remaining cost: `ProcessSend` holds the lock while `socket.Send` blocks (unchanged), so a plugin send waits for a slow socket write.
+
+**Tests** (`NetSendLockTests`, 3; 684 in the full run pass): 6 threads x 3000 framed packets through the real Twofish/MD5 game cipher, a receiver with its own cipher instance decrypts the socket bytes and checks every frame, its fill bytes and per-thread order; a reset requested from another thread while a flush is between 4096-byte chunks must wait (10000 of 10000 bytes arrive); resets, sends and flushes in parallel leave only whole, ordered, non-duplicated frames and nothing stale after a final reset. Against the old `NetClient.cs` all 3 fail in 3 of 3 runs (cipher desync, torn frames, 4096 of 10000 bytes, `IndexOutOfRange` inside the circular buffer); with the fix 3/3 pass in 5 of 5 runs (about 0.9 s). Both builds (default and `-p:CuoDevTools=false`): 0 errors. No client login smoke run (optional, skipped; the per-frame path is unchanged).

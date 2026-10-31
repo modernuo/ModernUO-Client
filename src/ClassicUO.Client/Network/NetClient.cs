@@ -24,6 +24,13 @@ namespace ClassicUO.Network
         private bool _isCompressionEnabled;
         private uint? _localIP;
         private readonly CircularBuffer _sendStream;
+
+        // The send lock. It guards _sendStream, _isCompressionEnabled as the send side reads it, and the send-side cipher
+        // (Encryption.Encrypt): a packet is encrypted and queued in one critical section, so the order the stream cipher
+        // consumed keystream is the order bytes reach the socket. ProcessSend holds it while it drains the queue to the
+        // socket, and every clear or mode switch of the queue takes it. Nothing that calls out (plugin hooks, events, the
+        // Disconnected handlers) ever runs while it is held.
+        private readonly object _sendLock = new object();
         private SocketWrapper _socket = null;
         private SocketWrapperType? _socketType;
 
@@ -172,9 +179,13 @@ namespace ClassicUO.Network
         /// </summary>
         private void ResetProtocolState()
         {
-            _isCompressionEnabled = false;
+            lock (_sendLock)
+            {
+                _isCompressionEnabled = false;
+                _sendStream.Clear();
+            }
+
             _huffman.Reset();
-            _sendStream.Clear();
             Interlocked.Increment(ref _generation);
         }
 
@@ -239,9 +250,13 @@ namespace ClassicUO.Network
 
         public void EnableCompression()
         {
-            _isCompressionEnabled = true;
+            lock (_sendLock)
+            {
+                _isCompressionEnabled = true;
+                _sendStream.Clear();
+            }
+
             _huffman.Reset();
-            _sendStream.Clear();
         }
 
 
@@ -445,19 +460,20 @@ namespace ClassicUO.Network
 
             PacketLogger.Default?.Log(message, true);
 
-            if (!skipEncryption)
+            // Encrypt and enqueue as one step (see _sendLock): with two senders (main thread and a plugin thread) the cipher
+            // would otherwise advance in one order and the bytes be queued in another, and the server could not decrypt.
+            lock (_sendLock)
             {
-                Encryption?.Encrypt(!_isCompressionEnabled, message, message, message.Length);
-            }
+                if (!skipEncryption)
+                {
+                    Encryption?.Encrypt(!_isCompressionEnabled, message, message, message.Length);
+                }
 
-            lock (_sendStream)
-            {
-                //_socket.Send(data, 0, length);
                 _sendStream.Enqueue(message);
-            }
 
-            Statistics.TotalBytesSent += (uint)message.Length;
-            Statistics.TotalPacketsSent++;
+                Statistics.TotalBytesSent += (uint)message.Length;
+                Statistics.TotalPacketsSent++;
+            }
         }
 
         private void ProcessEncryption(Span<byte> buffer)
@@ -475,7 +491,7 @@ namespace ClassicUO.Network
 
             try
             {
-                lock (_sendStream)
+                lock (_sendLock)
                 {
                     while (_sendStream.Length > 0)
                     {
