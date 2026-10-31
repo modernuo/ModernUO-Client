@@ -178,7 +178,73 @@ namespace ClassicUO
         private static int _step;
         private static long _stepAt;
 
-        public static bool Enabled => FrameStats || _go != null || _spots != null || _ui || _plan != null || _pick;
+        // CUO_BENCH_RELOG=cycles:dwellSeconds  log in, stay dwellSeconds in game, log out to the login scene (autologin logs in
+        // again), cycles times; logs [relog] lines (private bytes, collections, pool sizes) at each in-game moment and quits
+        private static readonly int[] _relog = ParseRelog(Environment.GetEnvironmentVariable("CUO_BENCH_RELOG"));
+        private static int _relogDone;
+        private static long _relogInGameAt;
+
+        private static int[] ParseRelog(string s)
+        {
+            string[] p = s?.Split(':');
+
+            return p != null && p.Length == 2 && int.TryParse(p[0], out int c) && int.TryParse(p[1], out int d) ? new[] { c, d } : null;
+        }
+
+        private static void RelogLine(string what)
+        {
+            var w = Client.Game.UO.World;
+            double pause = GC.GetTotalPauseDuration().TotalMilliseconds;
+            Log.Info(string.Format(System.Globalization.CultureInfo.InvariantCulture,
+                "[relog] {0}: login {1}, private {2:0.0} MB, heap {3:0.0} MB, collections gen0 {4} gen1 {5} gen2 {6}, pause {7:0.0} ms, chunk pool {8}, lands pooled {9}, statics pooled {10}",
+                what, _relogDone + 1, Process.GetCurrentProcess().PrivateMemorySize64 / 1048576.0, GC.GetGCMemoryInfo(GCKind.Any).HeapSizeBytes / 1048576.0,
+                GC.CollectionCount(0), GC.CollectionCount(1), GC.CollectionCount(2), pause,
+                w.ChunkPool.Count, w.MapRecycler.PooledLands, w.MapRecycler.PooledStatics));
+        }
+
+        private static void UpdateRelog(GameController game, long now)
+        {
+            var w = game.UO.World;
+
+            if (!w.InGame || !(game.Scene is Game.Scenes.GameScene))
+            {
+                _relogInGameAt = 0;
+
+                return;
+            }
+
+            if (_relogInGameAt == 0)
+            {
+                _relogInGameAt = now;
+                RelogLine("in game");
+
+                return;
+            }
+
+            if ((now - _relogInGameAt) / (double)Stopwatch.Frequency < _relog[1])
+            {
+                return;
+            }
+
+            RelogLine("end of dwell");
+            _relogDone++;
+
+            if (_relogDone >= _relog[0])
+            {
+                Log.Info("[relog] done");
+                game.Exit();
+
+                return;
+            }
+
+            // what GameScene.RequestQuitGame does without the server's logout packet, then the login scene logs in again
+            _relogInGameAt = 0;
+            Network.NetClient.Socket.Disconnect();
+            CUOEnviroment.SkipLoginScreen = true;
+            game.SetScene(new Game.Scenes.LoginScene(w));
+        }
+
+        public static bool Enabled => FrameStats || _go != null || _spots != null || _ui || _plan != null || _pick || _relog != null;
 
         public static void Update(GameController game)
         {
@@ -200,6 +266,13 @@ namespace ClassicUO
                     profile.LightLevel = 0;
                     profile.LightLevelType = 0;
                 }
+            }
+
+            if (_relog != null)
+            {
+                UpdateRelog(game, now);
+
+                return;
             }
 
             if (_spots != null)
