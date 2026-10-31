@@ -14,6 +14,10 @@ public enum RendererMode
     External,
 }
 
+/// <summary>A wait on a GPU fence failed (e.g. the device was lost). Thrown before any memory the fenced work uses is
+/// reused or read, so a failure surfaces as this error and never as a partially written buffer.</summary>
+public sealed class GpuFenceException(string message) : Exception(message);
+
 /// <summary>SDL_GPU device, pipelines and persistent buffers. The world pass is one draw call for opaque sprites plus
 /// one for the (usually few) translucent ones.</summary>
 public sealed unsafe class Renderer : IDisposable
@@ -211,7 +215,7 @@ public sealed unsafe class Renderer : IDisposable
     IntPtr CreatePaletteBuffer(PackSet pack)
     {
         FileStream fs = null;
-        IntPtr buf = IntPtr.Zero, tb = IntPtr.Zero, fence = IntPtr.Zero;
+        IntPtr buf = IntPtr.Zero, tb = IntPtr.Zero;
         bool mapped = false;
         try
         {
@@ -225,42 +229,70 @@ public sealed unsafe class Renderer : IDisposable
             }
             buf = CreateBuffer(bytes, "palettes");
             tb = CreateTransfer(Math.Min(bytes, PaletteChunkBytes), true);
-            foreach (var (off, n) in PaletteChunks(bytes))
-            {
-                // cycle false: the previous chunk's copy has finished (fence below), so the buffer is free to rewrite
-                var ptr = SDL_MapGPUTransferBuffer(Device, tb, false);
-                if (ptr == IntPtr.Zero) throw new Exception("palette transfer buffer map: " + SDL_GetError());
-                mapped = true;
-                var dst = new Span<byte>((void*)ptr, (int)n);
-                int fromFile = (int)Math.Clamp(dataBytes - off, 0, n);
-                if (fromFile > 0) fs.ReadExactly(dst.Slice(0, fromFile));
-                dst.Slice(fromFile).Clear(); // the rounding to 4 bytes (and an empty pack's 4 bytes)
-                SDL_UnmapGPUTransferBuffer(Device, tb);
-                mapped = false;
-                var cmd = SDL_AcquireGPUCommandBuffer(Device);
-                if (cmd == IntPtr.Zero) throw new Exception("palette upload command buffer: " + SDL_GetError());
-                var copy = SDL_BeginGPUCopyPass(cmd);
-                var src2 = new SDL_GPUTransferBufferLocation { transfer_buffer = tb };
-                var region = new SDL_GPUBufferRegion { buffer = buf, offset = off, size = n };
-                SDL_UploadToGPUBuffer(copy, in src2, in region, false);
-                SDL_EndGPUCopyPass(copy);
-                fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
-                if (fence == IntPtr.Zero) throw new Exception("palette upload submit: " + SDL_GetError());
-                WaitFence(fence);
-                SDL_ReleaseGPUFence(Device, fence);
-                fence = IntPtr.Zero;
-            }
+            UploadChunked(bytes, "palette upload",
+                stage: (off, n) =>
+                {
+                    // cycle false: the previous chunk's copy has finished (UploadChunked waited on its fence, or threw
+                    // before staging again), so the buffer is free to rewrite
+                    var ptr = SDL_MapGPUTransferBuffer(Device, tb, false);
+                    if (ptr == IntPtr.Zero) throw new Exception("palette transfer buffer map: " + SDL_GetError());
+                    mapped = true;
+                    var dst = new Span<byte>((void*)ptr, (int)n);
+                    int fromFile = (int)Math.Clamp(dataBytes - off, 0, n);
+                    if (fromFile > 0) fs.ReadExactly(dst.Slice(0, fromFile));
+                    dst.Slice(fromFile).Clear(); // the rounding to 4 bytes (and an empty pack's 4 bytes)
+                    SDL_UnmapGPUTransferBuffer(Device, tb);
+                    mapped = false;
+                },
+                submit: (off, n) =>
+                {
+                    var cmd = SDL_AcquireGPUCommandBuffer(Device);
+                    if (cmd == IntPtr.Zero) throw new Exception("palette upload command buffer: " + SDL_GetError());
+                    var copy = SDL_BeginGPUCopyPass(cmd);
+                    var src2 = new SDL_GPUTransferBufferLocation { transfer_buffer = tb };
+                    var region = new SDL_GPUBufferRegion { buffer = buf, offset = off, size = n };
+                    SDL_UploadToGPUBuffer(copy, in src2, in region, false);
+                    SDL_EndGPUCopyPass(copy);
+                    var fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
+                    if (fence == IntPtr.Zero) throw new Exception("palette upload submit: " + SDL_GetError());
+                    return fence;
+                },
+                wait: TryWaitFence,
+                release: f => SDL_ReleaseGPUFence(Device, f),
+                lastError: SDL_GetError);
             var done = buf;
             buf = IntPtr.Zero; // handed to the caller
             return done;
         }
         finally
         {
-            if (fence != IntPtr.Zero) { WaitFence(fence); SDL_ReleaseGPUFence(Device, fence); }
+            // No fence is outstanding here: UploadChunked releases each one, also after a failed wait. Releasing the
+            // transfer and palette buffers is safe even if a copy might still be running, because SDL_GPU defers their
+            // destruction until the command buffers using them complete. None of these calls throws.
             if (mapped) SDL_UnmapGPUTransferBuffer(Device, tb);
-            if (tb != IntPtr.Zero) SDL_ReleaseGPUTransferBuffer(Device, tb); // idle: every chunk's fence was waited on
+            if (tb != IntPtr.Zero) SDL_ReleaseGPUTransferBuffer(Device, tb);
             if (buf != IntPtr.Zero) SDL_ReleaseGPUBuffer(Device, buf);
             fs?.Dispose();
+        }
+    }
+
+    /// <summary>The chunk loop of an upload through one reused transfer buffer (a seam, tested without a GPU): for each
+    /// <see cref="PaletteChunks"/> chunk, <paramref name="stage"/> fills the transfer buffer, <paramref name="submit"/>
+    /// records the copy and returns its fence, and the fence is waited on and released before the next chunk is staged.
+    /// A failed wait releases the fence and throws <see cref="GpuFenceException"/> before anything is staged again, so
+    /// the transfer buffer is never rewritten while a copy might still read it, and the caller never gets a partially
+    /// uploaded buffer.</summary>
+    public static void UploadChunked(uint bytes, string what, Action<uint, uint> stage, Func<uint, uint, IntPtr> submit,
+        Func<IntPtr, bool> wait, Action<IntPtr> release, Func<string> lastError)
+    {
+        foreach (var (off, n) in PaletteChunks(bytes))
+        {
+            stage(off, n);
+            var fence = submit(off, n);
+            bool ok;
+            try { ok = wait(fence); }
+            finally { release(fence); }
+            if (!ok) throw new GpuFenceException($"{what}: fence wait failed for the chunk at {off} ({n} of {bytes} bytes): {lastError()}");
         }
     }
 
@@ -823,16 +855,23 @@ public sealed unsafe class Renderer : IDisposable
             // becomes max(CPU, GPU) and a GPU-bound run measures GPU frame time.
             long ts = System.Diagnostics.Stopwatch.GetTimestamp();
             var fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
+            if (fence == IntPtr.Zero)
+            {
+                SubmitFailures++;
+                LastSubmitError = SDL_GetError();
+                return false;
+            }
             if (f.GpuSample)
             {
-                WaitFence(fence);
+                WaitAndReleaseFence(fence, "GPU sample");
                 GpuSampleTicks = System.Diagnostics.Stopwatch.GetTimestamp() - ts;
-                SDL_ReleaseGPUFence(Device, fence);
                 return true;
             }
-            if (_fences[_fenceHead] != IntPtr.Zero) { WaitFence(_fences[_fenceHead]); SDL_ReleaseGPUFence(Device, _fences[_fenceHead]); }
+            // the new fence takes its slot first, so a failed wait on the old one leaves no fence untracked
+            var old = _fences[_fenceHead];
             _fences[_fenceHead] = fence;
             _fenceHead = (_fenceHead + 1) % _fences.Length;
+            if (old != IntPtr.Zero) WaitAndReleaseFence(old, "frame throttle");
             return true;
         }
 
@@ -884,10 +923,22 @@ public sealed unsafe class Renderer : IDisposable
     /// <summary>Submit → fence-signalled time of the last GpuSample frame (taken after the GPU was idle).</summary>
     public long GpuSampleTicks;
 
-    void WaitFence(IntPtr fence)
+    bool TryWaitFence(IntPtr fence)
     {
+        if (fence == IntPtr.Zero) return false;
         Span<IntPtr> one = stackalloc IntPtr[1] { fence };
-        SDL_WaitForGPUFences(Device, true, one, 1);
+        return SDL_WaitForGPUFences(Device, true, one, 1);
+    }
+
+    /// <summary>Waits for <paramref name="fence"/> and releases it, also when the wait fails; a failed wait (e.g. device
+    /// lost) then throws <see cref="GpuFenceException"/>, so no caller goes on to reuse or read memory the GPU might still
+    /// be using.</summary>
+    void WaitAndReleaseFence(IntPtr fence, string what)
+    {
+        bool ok;
+        try { ok = TryWaitFence(fence); }
+        finally { if (fence != IntPtr.Zero) SDL_ReleaseGPUFence(Device, fence); }
+        if (!ok) throw new GpuFenceException($"{what}: fence wait failed: {SDL_GetError()}");
     }
 
     /// <summary>Median submit -> fence-signalled time of an empty command buffer on an idle GPU: the fixed overhead
@@ -901,25 +952,27 @@ public sealed unsafe class Renderer : IDisposable
             var cmd = SDL_AcquireGPUCommandBuffer(Device);
             long ts = System.Diagnostics.Stopwatch.GetTimestamp();
             var fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
-            WaitFence(fence);
+            WaitAndReleaseFence(fence, "submit overhead");
             t[i] = (System.Diagnostics.Stopwatch.GetTimestamp() - ts) * 1000.0 / System.Diagnostics.Stopwatch.Frequency;
-            SDL_ReleaseGPUFence(Device, fence);
         }
         Array.Sort(t);
         return t[n / 2];
     }
 
-    /// <summary>Waits for all in-flight frames; used before a GPU timing sample so the sample measures one frame alone.</summary>
+    /// <summary>Waits for all in-flight frames; used before a GPU timing sample so the sample measures one frame alone.
+    /// Every fence is released even if a wait fails; a failure then throws <see cref="GpuFenceException"/>.</summary>
     public void DrainInFlight()
     {
+        string failed = null;
         for (int i = 0; i < _fences.Length; i++)
         {
             if (_fences[i] == IntPtr.Zero) continue;
-            WaitFence(_fences[i]);
+            if (!TryWaitFence(_fences[i])) failed ??= SDL_GetError();
             SDL_ReleaseGPUFence(Device, _fences[i]);
             _fences[i] = IntPtr.Zero;
         }
-        SDL_WaitForGPUIdle(Device);
+        if (!SDL_WaitForGPUIdle(Device)) failed ??= SDL_GetError();
+        if (failed != null) throw new GpuFenceException("drain in-flight frames: GPU wait failed: " + failed);
     }
 
     /// <summary>RGBA8 pixels of the last screenshot (top row first).</summary>
@@ -940,13 +993,17 @@ public sealed unsafe class Renderer : IDisposable
         SDL_DownloadFromGPUTexture(copy, in src, in dst);
         SDL_EndGPUCopyPass(copy);
         var fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
-        Span<IntPtr> fences = stackalloc IntPtr[1] { fence };
-        SDL_WaitForGPUFences(Device, true, fences, 1);
-        SDL_ReleaseGPUFence(Device, fence);
-        var p = (byte*)SDL_MapGPUTransferBuffer(Device, tb, false);
-        var px = new ReadOnlySpan<byte>(p, (int)bytes).ToArray();
-        SDL_UnmapGPUTransferBuffer(Device, tb);
-        SDL_ReleaseGPUTransferBuffer(Device, tb);
+        byte[] px;
+        try
+        {
+            // a failed wait throws before the download is mapped: never a half-written screenshot
+            WaitAndReleaseFence(fence, "screenshot download");
+            var p = (byte*)SDL_MapGPUTransferBuffer(Device, tb, false);
+            if (p == null) throw new Exception("screenshot transfer buffer map: " + SDL_GetError());
+            px = new ReadOnlySpan<byte>(p, (int)bytes).ToArray();
+            SDL_UnmapGPUTransferBuffer(Device, tb);
+        }
+        finally { SDL_ReleaseGPUTransferBuffer(Device, tb); }
         if (format == SDL_GPUTextureFormat.SDL_GPU_TEXTUREFORMAT_B8G8R8A8_UNORM)
             for (int i = 0; i < px.Length; i += 4) (px[i], px[i + 2]) = (px[i + 2], px[i]);
         LastScreenshot = px;
@@ -961,7 +1018,8 @@ public sealed unsafe class Renderer : IDisposable
     public void Dispose()
     {
         if (Device == IntPtr.Zero) return;
-        DrainInFlight();
+        // a failed wait (device lost) must not stop the releases below
+        try { DrainInFlight(); } catch (GpuFenceException e) { Console.Error.WriteLine("renderer dispose: " + e.Message); }
         static void Tex(IntPtr d, IntPtr t) { if (t != IntPtr.Zero) SDL_ReleaseGPUTexture(d, t); }
         static void Buf(IntPtr d, IntPtr b) { if (b != IntPtr.Zero) SDL_ReleaseGPUBuffer(d, b); }
         static void Xfer(IntPtr d, IntPtr t) { if (t != IntPtr.Zero) SDL_ReleaseGPUTransferBuffer(d, t); }

@@ -127,5 +127,51 @@ namespace ClassicUO.UnitTests.Renderer
             next.Should().Be(bytes);
             count.Should().Be((int)((bytes + Uo.Render.Renderer.PaletteChunkBytes - 1) / Uo.Render.Renderer.PaletteChunkBytes));
         }
+
+        // Codex audit P2 on poc/mem-reduce-2: a failed fence wait must stop the upload before the transfer buffer is
+        // staged again (the copy might still read it), release that fence, and surface as GpuFenceException rather than
+        // as a partially uploaded palette buffer. Renderer.UploadChunked is the chunk loop behind a seam, so this needs no
+        // GPU device.
+        [Theory]
+        [InlineData(0)]
+        [InlineData(2)]
+        [InlineData(4)] // the last of the shipped pack's 5 chunks
+        public void Palette_upload_stops_at_a_failed_fence_wait_without_restaging(int failAt)
+        {
+            const uint bytes = 37_888u * 256 * 2;
+            var log = new System.Collections.Generic.List<string>();
+            int submitted = 0;
+
+            var act = () => Uo.Render.Renderer.UploadChunked(bytes, "palette upload",
+                stage: (off, n) => log.Add("stage " + off),
+                submit: (off, n) => { log.Add("submit " + off); return (IntPtr)(++submitted); },
+                wait: f => { log.Add("wait " + f); return (int)f - 1 != failAt; },
+                release: f => log.Add("release " + f),
+                lastError: () => "device lost");
+
+            act.Should().Throw<Uo.Render.GpuFenceException>().WithMessage("palette upload: fence wait failed*device lost");
+            submitted.Should().Be(failAt + 1);
+            log.Should().HaveCount(4 * (failAt + 1), "nothing is staged or submitted after the failed wait");
+            log[^2].Should().Be("wait " + (failAt + 1));
+            log[^1].Should().Be("release " + (failAt + 1), "the failed fence is still released");
+        }
+
+        [Fact]
+        public void Palette_upload_waits_and_releases_each_fence_before_staging_the_next_chunk()
+        {
+            const uint bytes = 37_888u * 256 * 2;
+            var log = new System.Collections.Generic.List<string>();
+            int submitted = 0;
+
+            Uo.Render.Renderer.UploadChunked(bytes, "palette upload",
+                stage: (off, n) => log.Add("stage"),
+                submit: (off, n) => { log.Add("submit"); return (IntPtr)(++submitted); },
+                wait: f => { log.Add("wait"); return true; },
+                release: f => log.Add("release"),
+                lastError: () => "");
+
+            submitted.Should().Be(5);
+            log.Should().Equal(System.Linq.Enumerable.SelectMany(System.Linq.Enumerable.Range(0, 5), _ => new[] { "stage", "submit", "wait", "release" }));
+        }
     }
 }

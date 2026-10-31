@@ -16,9 +16,17 @@ namespace ClassicUO
     // per frame.
     internal static class MemLog
     {
+        // Unset, this allocates nothing: the closures live in the Start* helpers, which run only after their checks (a
+        // lambda here would allocate its captured locals' display class on entry, before the checks).
         public static void Start()
         {
-            StartRegions();
+            string regions = Environment.GetEnvironmentVariable("CUO_MEM_REGIONS");
+
+            if (!string.IsNullOrEmpty(regions) && OperatingSystem.IsWindows())
+            {
+                StartRegions(regions);
+            }
+
             string value = Environment.GetEnvironmentVariable("CUO_MEM_LOG");
 
             if (string.IsNullOrEmpty(value) || !double.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, out double seconds) || seconds <= 0)
@@ -26,6 +34,11 @@ namespace ClassicUO
                 return;
             }
 
+            StartLog(seconds);
+        }
+
+        private static void StartLog(double seconds)
+        {
             var thread = new Thread(() => Run(seconds)) { IsBackground = true, Name = "CUO_MEM_LOG", Priority = ThreadPriority.BelowNormal };
             thread.Start();
         }
@@ -33,15 +46,8 @@ namespace ClassicUO
         // CUO_MEM_REGIONS=<s>,<s>,...: at those seconds after start, logs every private allocation (one VirtualAlloc
         // reservation) with 1 MiB or more committed: base, reserved, committed and the protections (0x4 read-write,
         // 0x404 write-combined). The external walk keeps only the largest 40; this names the rest (mem-reduce-2).
-        private static void StartRegions()
+        private static void StartRegions(string value)
         {
-            string value = Environment.GetEnvironmentVariable("CUO_MEM_REGIONS");
-
-            if (string.IsNullOrEmpty(value) || !OperatingSystem.IsWindows())
-            {
-                return;
-            }
-
             var times = new System.Collections.Generic.List<double>();
 
             foreach (string s in value.Split(','))
@@ -90,7 +96,7 @@ namespace ClassicUO
             const uint MemCommit = 0x1000, MemPrivate = 0x20000;
             const double MB = 1024.0 * 1024.0;
             var inv = CultureInfo.InvariantCulture;
-            var allocs = new System.Collections.Generic.Dictionary<nint, (long reserved, long commit, string prots)>();
+            var allocs = new System.Collections.Generic.Dictionary<nint, (long reserved, long commit, System.Collections.Generic.HashSet<uint> prots)>();
             nint addr = 0;
 
             while (VirtualQuery(addr, out MemoryBasicInformation mbi, Marshal.SizeOf<MemoryBasicInformation>()) != 0)
@@ -103,12 +109,8 @@ namespace ClassicUO
                     if (mbi.State == MemCommit)
                     {
                         a.commit += mbi.RegionSize;
-                        string p = "0x" + mbi.Protect.ToString("x", inv);
-
-                        if (a.prots == null || !a.prots.Contains(p))
-                        {
-                            a.prots = a.prots == null ? p : a.prots + "|" + p;
-                        }
+                        // numbers, not substrings: "0x404" contains "0x4" and "0x40"
+                        (a.prots ??= new System.Collections.Generic.HashSet<uint>()).Add(mbi.Protect);
                     }
 
                     allocs[mbi.AllocationBase] = a;
@@ -135,11 +137,32 @@ namespace ClassicUO
                 if (kv.Value.commit >= 1 << 20)
                 {
                     n++;
-                    sb.Append(string.Format(inv, "\n[memregions]   0x{0:x} reserved {1:0.0} commit {2:0.0} MiB {3}", (long) kv.Key, kv.Value.reserved / MB, kv.Value.commit / MB, kv.Value.prots));
+                    sb.Append(string.Format(inv, "\n[memregions]   0x{0:x} reserved {1:0.0} commit {2:0.0} MiB {3}", (long) kv.Key, kv.Value.reserved / MB, kv.Value.commit / MB, FormatProtections(kv.Value.prots)));
                 }
             }
 
             Log.Info(string.Format(inv, "[memregions] t {0:0.0} s: {1} private allocations, {2:0.0} MiB committed; {3} with 1 MiB or more:{4}", t, allocs.Count, total / MB, n, sb));
+        }
+
+        // "0x4|0x404", ascending
+        private static string FormatProtections(System.Collections.Generic.HashSet<uint> prots)
+        {
+            if (prots == null)
+            {
+                return "";
+            }
+
+            uint[] sorted = new uint[prots.Count];
+            prots.CopyTo(sorted);
+            Array.Sort(sorted);
+            var sb = new System.Text.StringBuilder();
+
+            foreach (uint p in sorted)
+            {
+                sb.Append(sb.Length == 0 ? "0x" : "|0x").Append(p.ToString("x", CultureInfo.InvariantCulture));
+            }
+
+            return sb.ToString();
         }
 
         private static void Run(double seconds)
