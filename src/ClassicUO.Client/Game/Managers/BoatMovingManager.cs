@@ -130,9 +130,9 @@ namespace ClassicUO.Game.Managers
 
                 if (multiItem != null)
                 {
-                    multiItem.Offset.X = 0;
-                    multiItem.Offset.Y = 0;
-                    multiItem.Offset.Z = 0;
+                    multiItem.OffsetX = 0;
+                    multiItem.OffsetY = 0;
+                    multiItem.OffsetZ = 0;
                 }
 
                 if (_items.TryGetValue(serial, out var list))
@@ -149,9 +149,9 @@ namespace ClassicUO.Game.Managers
                             continue;
                         }
 
-                        ent.Offset.X = 0;
-                        ent.Offset.Y = 0;
-                        ent.Offset.Z = 0;
+                        ent.OffsetX = 0;
+                        ent.OffsetY = 0;
+                        ent.OffsetZ = 0;
                     }
 
                     list.Clear();
@@ -246,10 +246,10 @@ namespace ClassicUO.Game.Managers
                             float steps = maxDelay / (float) Constants.CHARACTER_ANIMATION_DELAY;
                             float x = delay / (float) Constants.CHARACTER_ANIMATION_DELAY;
                             float y = x;
-                            item.Offset.Z = (sbyte) ((step.Z - item.Z) * x * (4.0f / steps));
+                            item.OffsetZ = (sbyte) ((step.Z - item.Z) * x * (4.0f / steps));
                             MovementSpeed.GetPixelOffset((byte) step.MovingDir, ref x, ref y, steps);
-                            item.Offset.X = (sbyte) x;
-                            item.Offset.Y = (sbyte) y;
+                            item.OffsetX = (sbyte) x;
+                            item.OffsetY = (sbyte) y;
                         }
                     }
                     else
@@ -269,9 +269,9 @@ namespace ClassicUO.Game.Managers
                         item.Z = step.Z;
                         item.UpdateScreenPosition();
 
-                        item.Offset.X = 0;
-                        item.Offset.Y = 0;
-                        item.Offset.Z = 0;
+                        item.OffsetX = 0;
+                        item.OffsetY = 0;
+                        item.OffsetZ = 0;
 
                         deques.RemoveFromFront();
 
@@ -374,9 +374,9 @@ namespace ClassicUO.Game.Managers
                         entity.Z = (sbyte) (z - it.Z);
                         entity.UpdateScreenPosition();
 
-                        entity.Offset.X = 0;
-                        entity.Offset.Y = 0;
-                        entity.Offset.Z = 0;
+                        entity.OffsetX = 0;
+                        entity.OffsetY = 0;
+                        entity.OffsetZ = 0;
 
                         if (entity.IsPlaced)
                         {
