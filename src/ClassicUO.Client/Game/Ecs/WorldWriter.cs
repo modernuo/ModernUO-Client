@@ -464,7 +464,7 @@ namespace ClassicUO.Game
 
             parent = _world.Get(item.Container);
             uint serial = item.Serial;
-            CancelPlacements(item);
+            CancelSubtreePlacements(item);
 
             using (Open(item, null))
             {
@@ -603,21 +603,24 @@ namespace ClassicUO.Game
 
         /// <summary>
         /// 0x3C's bulk clear before its first item and 0x24 (OpenContainer) of a container that is not a corpse
-        /// (<c>ClearContainerAndRemoveItems</c> before T1): removes every item in the container
-        /// (<c>World.Get(containerSerial)</c>) with its contents, or, with <paramref name="keepEquipped"/> (0x3C into a
-        /// corpse), every item without a Layer, keeping the corpse's equipment in its child list in order. A removal: it owns
-        /// the removed subtrees and writes no value of its own (each removal's Sync and Destroy run as in
-        /// <see cref="RemoveWorldItem"/>, not folded: a corpse's removal queues it in the active-items list as before). The
-        /// container itself is not written (its child list only). Cancels the removed items' outstanding placements.
+        /// (<c>ClearContainerAndRemoveItems</c> before T1): removes every item in the container with its contents, or, with
+        /// <paramref name="keepEquipped"/> (0x3C into a corpse), every item without a Layer, keeping the corpse's equipment in
+        /// its child list in order. A removal: it owns the removed subtrees and writes no value of its own (each removal's Sync
+        /// and Destroy run as in <see cref="RemoveWorldItem"/>, not folded: a corpse's removal queues it in the active-items
+        /// list as before). The container itself is not written (its child list only). Cancels the outstanding placements of
+        /// every removed item and its contents at any depth (the kept equipment and its contents keep theirs).
         /// </summary>
-        public void ClearContainer(uint containerSerial, bool keepEquipped)
+        /// <param name="itemOnly">How the container is found, as each handler found it before T1: 0x24 by
+        /// <c>World.Items.Get</c> (true: the item, also when a mobile has the same serial), 0x3C by <c>World.Get</c> (false:
+        /// a mobile first).</param>
+        public void ClearContainer(uint containerSerial, bool keepEquipped, bool itemOnly)
         {
             if (!Admitted(nameof(ClearContainer), containerSerial))
             {
                 return;
             }
 
-            Entity container = _world.Get(containerSerial);
+            Entity container = itemOnly ? _world.Items.Get(containerSerial) : _world.Get(containerSerial);
 
             if (container == null || container.IsEmpty)
             {
@@ -629,7 +632,7 @@ namespace ClassicUO.Game
             {
                 if (i is Item it && !(keepEquipped && it.Layer != 0))
                 {
-                    CancelPlacements(it);
+                    CancelSubtreePlacements(it);
                 }
             }
 
@@ -758,7 +761,15 @@ namespace ClassicUO.Game
                 Item.CorpseState(ref v.Direction, out usedLayer, out v.Layer);
             }
 
-            CancelPlacements(item);
+            // a removal cancels its contents' placements too; a returned item keeps its contents (only its own is superseded)
+            if (result == HeldItemReturn.Removed)
+            {
+                CancelSubtreePlacements(item);
+            }
+            else
+            {
+                CancelPlacements(item);
+            }
 
             using (Open(item, item))
             {
@@ -805,8 +816,18 @@ namespace ClassicUO.Game
                         break;
 
                     case HeldItemReturn.Removed:
-                        // World.RemoveItem: its own unlink and Container write (owned), the contents, OPL, Destroy
-                        _world.RemoveItem(serial, true);
+                        // World.RemoveItem from the computed state, never reading item.Container back (T4's ECS-backed getter
+                        // returns the committed detached value there): the captured parent's unlink, the Container from v, then
+                        // the rest of the removal (the contents, OPL, Destroy). The item is the live one World holds for the
+                        // serial (GetOrCreateItem above), as World.RemoveItem(serial) required
+                        _world.UnlinkFromContainer(item, oldContainer);
+
+                        if (oldContainer != v.Container)
+                        {
+                            item.Container = v.Container;
+                        }
+
+                        _world.RemoveDetachedItem(item, true);
 
                         break;
 
@@ -830,7 +851,7 @@ namespace ClassicUO.Game
         // the destroy half of PlaceInContainer's destroy-vs-reuse, its own scope (owning the removed subtree)
         private void RemoveForReplacement(Item item)
         {
-            CancelPlacements(item);
+            CancelSubtreePlacements(item);
 
             using (Open(item, null))
             {
@@ -889,6 +910,27 @@ namespace ClassicUO.Game
             }
         }
 
+        // a removal's: the placements of the removed item and of everything it contains, at any depth (Codex audit of
+        // funnel-2, #3: a removed descendant's late placement is rejected as cancelled, not consumed and dropped). Runs before
+        // the removal, while the child lists are intact; nothing to walk when no placement is outstanding (the usual case)
+        private void CancelSubtreePlacements(Item root)
+        {
+            if (_placements.Count == 0)
+            {
+                return;
+            }
+
+            CancelPlacements(root);
+
+            for (LinkedObject i = root.Items; i != null; i = i.Next)
+            {
+                if (i is Item child)
+                {
+                    CancelSubtreePlacements(child);
+                }
+            }
+        }
+
         // ---- the pre-T1 paths: a release build's fallback after a placement or removal violation (the old handler code, the
         // hook syncs). Both run with no operation or fold open (a nesting is rejected, not given a fallback). The write-site
         // budget exempts them by name like the operations (coordinator, T1 round 3); its tests pin that each call follows an
@@ -915,7 +957,7 @@ namespace ClassicUO.Game
                 return;
             }
 
-            CancelPlacements(item);
+            CancelSubtreePlacements(item);
 
             if (item.IsMulti)
             {

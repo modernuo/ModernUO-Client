@@ -1654,7 +1654,7 @@ namespace ClassicUO.Network
 
                     if (!it.IsCorpse && graphic != 0xFFFF)
                     {
-                        world.Writer.ClearContainer(it.Serial, false);
+                        world.Writer.ClearContainer(it.Serial, false, itemOnly: true);
                     }
                 }
             }
@@ -2215,7 +2215,7 @@ namespace ClassicUO.Network
 
                     if (container != null)
                     {
-                        world.Writer.ClearContainer(containerSerial, container.Graphic == 0x2006);
+                        world.Writer.ClearContainer(containerSerial, container.Graphic == 0x2006, itemOnly: false);
                     }
                 }
 

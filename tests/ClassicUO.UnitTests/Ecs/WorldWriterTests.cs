@@ -1261,7 +1261,7 @@ namespace ClassicUO.UnitTests.Ecs
             List<uint> kept = before == null ? new List<uint>() : ChildSerials(before).Where(s => keepEquipped && newWorld.Items.Get(s).Layer != 0).ToList();
 
             OldClear(oldWorld, oldWorld.Get(containerSerial), keepEquipped);
-            newWorld.Writer.ClearContainer(containerSerial, keepEquipped);
+            newWorld.Writer.ClearContainer(containerSerial, keepEquipped, itemOnly: false);
 
             newWorld.Writer.InScope.Should().BeFalse();
             newWorld.Ecs.IsFolding.Should().BeFalse();
@@ -1276,26 +1276,112 @@ namespace ClassicUO.UnitTests.Ecs
             AssertSameCorpseBox(oldWorld, newWorld);
         }
 
+        // an upserted item (with an outstanding placement) moved under parent as a test shortcut: World.Get finds it there
+        private static WorldWriter.Placement PendingIn(World world, uint serial, uint parent)
+        {
+            Item it = world.Writer.UpsertWorldItem(serial, 0xEED, 0, 1, 1010, 1010, 0, Direction.North, 0, Flags.None, 0, out _, out WorldWriter.Placement p);
+            it.Container = parent;
+            world.Get(parent).PushToBack(it);
+
+            return p;
+        }
+
         [Fact]
         public void ClearContainer_Cancels_The_Removed_Items_Placements()
         {
+            // Codex audit of funnel-2, #3: every removed item's placement at any depth is cancelled (a late one is rejected,
+            // not consumed); BAG holds ITEM > CHILD > GRANDCHILD
             World world = Build(Start.InBag);
             world.Writer.ThrowOnViolation = true;
 
-            // an upsert of an item that is then put into the bag... and cleared before its placement
-            Item it = world.Writer.UpsertWorldItem(0x4000_7040, 0xEED, 0, 1, 1010, 1010, 0, Direction.North, 0, Flags.None, 0, out _, out WorldWriter.Placement p);
+            WorldWriter.Placement direct = PendingIn(world, 0x4000_7040, BAG);
+            WorldWriter.Placement grand = PendingIn(world, 0x4000_7042, CHILD);      // BAG > ITEM > CHILD > it
+            WorldWriter.Placement greatGrand = PendingIn(world, 0x4000_7043, GRANDCHILD);
             Item other = world.Writer.UpsertWorldItem(0x4000_7041, 0xEED, 0, 1, 1011, 1010, 0, Direction.North, 0, Flags.None, 0, out _, out WorldWriter.Placement q);
-            it.Container = BAG; // a test shortcut: World.Get(BAG) lists it below
-            world.Items.Get(BAG).PushToBack(it);
-            world.Writer.OutstandingPlacements.Should().Be(2);
+            world.Writer.OutstandingPlacements.Should().Be(4);
 
-            world.Writer.ClearContainer(BAG, false);
+            world.Writer.ClearContainer(BAG, false, itemOnly: false);
 
-            world.Writer.OutstandingPlacements.Should().Be(1, "the removed item's placement is cancelled, the other stays");
+            world.Writer.OutstandingPlacements.Should().Be(1, "the removed items' placements are cancelled at every depth, the other stays");
+
+            foreach (WorldWriter.Placement p in new[] { direct, grand, greatGrand })
+            {
+                Action stale = () => world.Writer.PlaceWorldItem(p);
+                stale.Should().Throw<ArgumentException>();
+            }
+
             world.Writer.PlaceWorldItem(q);
-            Action stale = () => world.Writer.PlaceWorldItem(p);
-            stale.Should().Throw<ArgumentException>();
             other.IsDestroyed.Should().BeFalse();
+        }
+
+        [Fact]
+        public void ClearContainer_Keeps_The_Kept_Equipments_Placements()
+        {
+            // a corpse clear keeps its equipment with its contents: their placements stay; the removed plain item's go
+            World world = BuildClear(Start.InBag);
+            world.Writer.ThrowOnViolation = true;
+
+            WorldWriter.Placement underKept = PendingIn(world, 0x4000_7044, KEPT1);
+            WorldWriter.Placement underKeptDeep = PendingIn(world, 0x4000_7045, 0x4000_7044);
+            WorldWriter.Placement underRemoved = PendingIn(world, 0x4000_7046, 0x4000_7021);
+            WorldWriter.Placement underRemovedDeep = PendingIn(world, 0x4000_7047, 0x4000_7046);
+            world.Writer.OutstandingPlacements.Should().Be(4);
+
+            world.Writer.ClearContainer(CORPSEBOX, true, itemOnly: false);
+
+            world.Writer.OutstandingPlacements.Should().Be(2);
+            ChildSerials(world.Items.Get(CORPSEBOX)).Should().Equal(KEPT1, KEPT2);
+
+            foreach (WorldWriter.Placement p in new[] { underRemoved, underRemovedDeep })
+            {
+                Action stale = () => world.Writer.PlaceWorldItem(p);
+                stale.Should().Throw<ArgumentException>();
+            }
+
+            world.Writer.PlaceWorldItem(underKept);
+            world.Writer.PlaceWorldItem(underKeptDeep);
+            world.Writer.OutstandingPlacements.Should().Be(0, "both kept placements were consumed");
+            world.Items.Get(0x4000_7045).IsDestroyed.Should().BeFalse();
+        }
+
+        [Fact]
+        public void ClearContainer_Of_0x24_Clears_The_Item_Under_A_Mobiles_Serial()
+        {
+            // Codex audit of funnel-2, #1: 0x24 found its container with World.Items.Get (the old OpenContainer lookup), 0x3C
+            // with World.Get, which prefers a mobile. An item under a live mobile's serial (the unconverted EquipItem path can
+            // make one) is what 0x24 clears; the mobile's equipment stays
+            static World BuildTwin()
+            {
+                World w = Build(Start.Worn); // MOB wears ITEM (> CHILD > GRANDCHILD)
+                Item twin = w.GetOrCreateItem(MOB, out _);
+                twin.Graphic = 0xE75;
+                Item inner = w.GetOrCreateItem(0x4000_7061, out _);
+                inner.Graphic = 0xF7C;
+                inner.Container = MOB;
+                twin.PushToBack(inner);
+
+                return w;
+            }
+
+            World oldWorld = BuildTwin(), newWorld = BuildTwin();
+
+            // OpenContainer before T1: `Item it = world.Items.Get(serial); ... ClearContainerAndRemoveItems(world, it)`
+            OldClear(oldWorld, oldWorld.Items.Get(MOB), false);
+            newWorld.Writer.ClearContainer(MOB, false, itemOnly: true);
+
+            newWorld.Items.Get(0x4000_7061).Should().BeNull("the item's contents are cleared");
+            newWorld.Items.Get(MOB).Items.Should().BeNull();
+            ChildSerials(newWorld.Mobiles.Get(MOB)).Should().Equal(new[] { ITEM }, "the mobile's equipment is not touched");
+            newWorld.Items.Get(ITEM).IsDestroyed.Should().BeFalse();
+            AssertSameWorld(oldWorld, newWorld);
+
+            // the fixture tells the lookups apart: World.Get (0x3C's) clears the mobile instead, as the old 0x3C did
+            World oldMobile = BuildTwin(), newMobile = BuildTwin();
+            OldClear(oldMobile, oldMobile.Get(MOB), false);
+            newMobile.Writer.ClearContainer(MOB, false, itemOnly: false);
+            newMobile.Items.Get(ITEM).Should().BeNull("World.Get found the mobile and removed its equipment");
+            newMobile.Items.Get(0x4000_7061).Should().NotBeNull();
+            AssertSameWorld(oldMobile, newMobile);
         }
 
         [Fact]
@@ -1305,30 +1391,33 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 World world = Build(Start.InBag);
                 world.Writer.ThrowOnViolation = throws;
-                Action nested = null;
                 bool ran = false;
                 world.Ecs.CommitObserver = (item, v) =>
                 {
                     if (!ran)
                     {
                         ran = true;
-                        nested = () => world.Writer.ClearContainer(BAG, false);
+                        Action nested = () => world.Writer.ClearContainer(BAG, false, itemOnly: false);
 
-                        if (!throws)
+                        // asserted here, inside the operation: the nesting is rejected before any removal
+                        if (throws)
+                        {
+                            nested.Should().Throw<InvalidOperationException>();
+                        }
+                        else
                         {
                             nested();
                         }
+
+                        world.Items.Get(ITEM).Should().NotBeNull("a rejected clear removes nothing");
                     }
                 };
 
                 world.Writer.UpsertWorldItem(0x4000_7050, 0xEED, 0, 1, 1010, 1010, 0, Direction.North, 0, Flags.None, 0, out _, out _);
                 world.Ecs.CommitObserver = null;
 
-                if (throws)
-                {
-                    nested.Should().NotBeNull();
-                }
-
+                ran.Should().BeTrue();
+                world.Writer.Violations.Should().Be(1);
                 world.Items.Get(ITEM).Should().NotBeNull("a rejected clear removes nothing");
                 ChildSerials(world.Items.Get(BAG)).Should().Contain(ITEM);
             }
@@ -1408,20 +1497,67 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 for (int i = 0; i < HeldPackets.Length; i++)
                 {
-                    yield return new object[] { s, i };
+                    foreach (bool crowded in new[] { false, true })
+                    {
+                        yield return new object[] { s, i, crowded };
+                    }
                 }
             }
         }
 
+        private const uint WORN_BEFORE = 0x4000_7030, WORN_AFTER = 0x4000_7031;
+
+        // the wearer with more equipment (Codex audit of funnel-2: one equipped item cannot show the sibling order): one item
+        // before ITEM's place and one after it, in the child list and the mirror's equipment index
+        private static void Crowd(World world)
+        {
+            Mobile m = world.Mobiles.Get(MOB);
+            Item item = world.Items.Get(ITEM);
+            bool worn = item != null && item.Container == MOB;
+
+            Item before = world.GetOrCreateItem(WORN_BEFORE);
+            before.Graphic = 0x1F7B;
+            before.Layer = Layer.Pants;
+            before.Container = MOB;
+
+            if (worn)
+            {
+                m.Remove(item);
+            }
+
+            m.PushToBack(before);
+            world.Ecs.Sync(before);
+
+            if (worn)
+            {
+                m.PushToBack(item);
+                world.Ecs.Sync(item);
+            }
+
+            Item after = world.GetOrCreateItem(WORN_AFTER);
+            after.Graphic = 0x1F7C;
+            after.Layer = Layer.Helmet;
+            after.Container = MOB;
+            m.PushToBack(after);
+            world.Ecs.Sync(after);
+
+            ChildSerials(m).Should().Equal(worn ? new[] { WORN_BEFORE, ITEM, WORN_AFTER } : new[] { WORN_BEFORE, WORN_AFTER });
+        }
+
         [Theory]
         [MemberData(nameof(HeldCases))]
-        public void ReturnHeldItem_Equals_The_Old_Path(Start start, int packet)
+        public void ReturnHeldItem_Equals_The_Old_Path(Start start, int packet, bool crowded)
         {
             World oldWorld = Build(start), newWorld = Build(start);
             HeldPacket h = HeldPackets[packet];
 
             foreach (World w in new[] { oldWorld, newWorld })
             {
+                if (crowded)
+                {
+                    Crowd(w);
+                }
+
                 Item it = w.Items.Get(ITEM);
 
                 if (it != null)
@@ -1441,6 +1577,11 @@ namespace ClassicUO.UnitTests.Ecs
             newWorld.Writer.InScope.Should().BeFalse();
             newWorld.Ecs.IsFolding.Should().BeFalse();
             AssertSameWorld(oldWorld, newWorld);
+
+            if (crowded && result == WorldWriter.HeldItemReturn.Paperdoll)
+            {
+                ChildSerials(newWorld.Mobiles.Get(MOB)).Should().Equal(new[] { WORN_BEFORE, WORN_AFTER, ITEM }, "re-equipped at the end, the siblings in order");
+            }
 
             // the same packet again
             OldDeny(oldWorld, ITEM, h);
@@ -1463,6 +1604,68 @@ namespace ClassicUO.UnitTests.Ecs
             seen.Should().Equal((0xFFFF_FFFFu, (ushort)0x1517, MOB, (ushort)0x1515), (MOB, (ushort)0x1517, MOB, (ushort)0x1517));
             world.Items.Get(ITEM).Container.Should().Be(MOB);
             ChildSerials(world.Mobiles.Get(MOB)).Should().Equal(ITEM);
+        }
+
+        [Fact]
+        public void ReturnHeldItem_Removal_Unlinks_From_The_Captured_Parent()
+        {
+            // Codex audit of funnel-2, #2: the removal branch must not read item.Container back after the detached commit.
+            // The observer makes the cache's Container the committed value (what T4's ECS-backed getter would return); the
+            // item still leaves its old parent's child list and is destroyed with its contents
+            World world = Build(Start.InBag);
+            world.Ecs.CommitObserver = (item, v) =>
+            {
+                if (item.Serial == ITEM)
+                {
+                    item.Container = v.Container;
+                }
+            };
+
+            world.Writer.ReturnHeldItem(ITEM, 0x1515, 0, 1, Flags.None, Layer.Shirt, 40, 50, 0, BAG, out _, out WorldWriter.HeldItemReturn result);
+            world.Ecs.CommitObserver = null;
+
+            result.Should().Be(WorldWriter.HeldItemReturn.Removed);
+            world.Items.Get(ITEM).Should().BeNull();
+            world.Items.Get(CHILD).Should().BeNull();
+            world.Items.Get(GRANDCHILD).Should().BeNull();
+            ChildSerials(world.Items.Get(BAG)).Should().Equal(new[] { 0x4000_7009u }, "unlinked from the captured parent, the sibling stays");
+        }
+
+        [Fact]
+        public void ReturnHeldItem_Removal_Cancels_The_Subtrees_Placements()
+        {
+            // Codex audit of funnel-2, #3: the deny removal cancels the placements of the item's contents at every depth; the
+            // paperdoll and terrain returns keep the item's contents, so their placements stay
+            foreach (bool removal in new[] { true, false })
+            {
+                World world = Build(Start.InBag); // BAG > ITEM > CHILD > GRANDCHILD
+                world.Writer.ThrowOnViolation = true;
+                WorldWriter.Placement child = PendingIn(world, 0x4000_7042, ITEM);
+                WorldWriter.Placement deep = PendingIn(world, 0x4000_7043, GRANDCHILD);
+                world.Writer.OutstandingPlacements.Should().Be(2);
+
+                world.Writer.ReturnHeldItem(ITEM, 0x1515, 0, 1, Flags.None, Layer.Shirt, 40, 50, 0, removal ? BAG : MOB, out _, out WorldWriter.HeldItemReturn result);
+
+                result.Should().Be(removal ? WorldWriter.HeldItemReturn.Removed : WorldWriter.HeldItemReturn.Paperdoll);
+
+                if (removal)
+                {
+                    world.Writer.OutstandingPlacements.Should().Be(0);
+
+                    foreach (WorldWriter.Placement p in new[] { child, deep })
+                    {
+                        Action stale = () => world.Writer.PlaceWorldItem(p);
+                        stale.Should().Throw<ArgumentException>();
+                    }
+                }
+                else
+                {
+                    world.Writer.OutstandingPlacements.Should().Be(2, "the re-equipped item's contents keep their placements");
+                    world.Writer.PlaceWorldItem(child);
+                    world.Writer.PlaceWorldItem(deep);
+                    world.Writer.OutstandingPlacements.Should().Be(0);
+                }
+            }
         }
 
         [Fact]
@@ -1683,12 +1886,17 @@ namespace ClassicUO.UnitTests.Ecs
             FunnelCheck.Reset();
 
             // the bulk clear owns the removed subtrees (their Container writes)
-            world.Writer.ClearContainer(bag.Serial, false);
+            world.Writer.ClearContainer(bag.Serial, false, itemOnly: false);
             FunnelCheck.Total.Should().Be(0);
 
             // each deny branch: paperdoll, terrain, the removal (of an item holding contents)
-            world.Writer.ReturnHeldItem(worn.Serial, 0x1517, 0x21, 1, Flags.None, Layer.Shirt, 1, 1, 0, m.Serial, out _, out _);
-            world.Writer.ReturnHeldItem(worn.Serial, 0x1517, 0x21, 1, Flags.None, Layer.Invalid, 1000, 1000, 0, 0xFFFF_FFFF, out _, out _);
+            // (each asserted right after its branch: the fixture setup below makes direct writes, and the Reset clears them)
+            world.Writer.ReturnHeldItem(worn.Serial, 0x1517, 0x21, 1, Flags.None, Layer.Shirt, 1, 1, 0, m.Serial, out _, out WorldWriter.HeldItemReturn r1);
+            r1.Should().Be(WorldWriter.HeldItemReturn.Paperdoll);
+            FunnelCheck.Total.Should().Be(0, "the paperdoll branch");
+            world.Writer.ReturnHeldItem(worn.Serial, 0x1517, 0x21, 1, Flags.None, Layer.Invalid, 1000, 1000, 0, 0xFFFF_FFFF, out _, out WorldWriter.HeldItemReturn r2);
+            r2.Should().Be(WorldWriter.HeldItemReturn.Terrain);
+            FunnelCheck.Total.Should().Be(0, "the terrain branch");
             Item box = world.GetOrCreateItem(0x4000_7105);
             Item held = world.GetOrCreateItem(0x4000_7106);
             held.Container = box.Serial;

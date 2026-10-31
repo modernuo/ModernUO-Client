@@ -216,7 +216,7 @@ namespace ClassicUO.UnitTests.Ecs
                 "#if SOMETHING_ELSE\n" +
                 "        PlacePreT1(item);\n" +                                                                     // line 9: disabled in both
                 "#endif\n" +
-                "        if (bad) { Reject(Violation.Placement, m); PlacePreT1(item); }\n" +                        // line 11: guarded
+                "        if (bad) { Reject(Violation.Placement, m); PlacePreT1(item); }\n" +                        // line 11: no guard since the funnel-2 audit (#4): the method has #if SOMETHING_ELSE
                 "    }\n" +
                 "    public void RemoveWorldItem(Item item, out Entity parent) {\n" +
                 "        if (bad) {\n" +
@@ -232,8 +232,46 @@ namespace ClassicUO.UnitTests.Ecs
                 "}\n";
 
             WriteSiteScanner.UnguardedFallbackUses(Src, out Dictionary<string, int> calls)
-                .Select(u => u.Line).Should().BeEquivalentTo(new[] { 4, 6, 9, 18 });
-            calls.Should().BeEquivalentTo(new Dictionary<string, int> { ["PlacePreT1"] = 2 });
+                .Select(u => u.Line).Should().BeEquivalentTo(new[] { 4, 6, 9, 11, 18 });
+            calls.Should().BeEquivalentTo(new Dictionary<string, int> { ["PlacePreT1"] = 1 });
+        }
+
+        [Fact]
+        public void A_Guard_That_Depends_On_An_Unexamined_Symbol_Is_No_Guard()
+        {
+            // Codex audit of funnel-2, #4: the parses leave DEBUG undefined, so `#if !DEBUG` keeps the Reject in both while a
+            // Debug build drops it and still runs the fallback. Any other symbol in an operation's #if/#elif: no guarded call
+            const string Src =
+                "internal sealed class WorldWriter {\n" +
+                "    public void PlaceWorldItem(in Placement placement) {\n" +
+                "        if (bad)\n" +
+                "        {\n" +
+                "#if !DEBUG\n" +
+                "            Reject(Violation.Placement, m);\n" +
+                "#endif\n" +
+                "            PlacePreT1(item);\n" +                                                                  // line 8: Reject gone in Debug
+                "        }\n" +
+                "    }\n" +
+                "    public void RemoveWorldItem(Item item, out Entity parent) {\n" +
+                "        if (bad) {\n" +
+                "#if CUO_DEVTOOLS\n" +
+                "#elif TRACE\n" +
+                "#endif\n" +
+                "            Reject(Violation.NotHeld, m);\n" +
+                "            RemovePreT1(s, out parent);\n" +                                                        // line 17: another symbol in an #elif
+                "        }\n" +
+                "    }\n" +
+                "    public void PlaceInContainer() {\n" +
+                "#if CUO_DEVTOOLS\n" +
+                "        Log(x);\n" +
+                "#endif\n" +
+                "        if (bad) { Reject(Violation.Placement, m); PlacePreT1(item); }\n" +                        // line 24: guarded (CUO_DEVTOOLS only)
+                "    }\n" +
+                "}\n";
+
+            WriteSiteScanner.UnguardedFallbackUses(Src, out Dictionary<string, int> calls)
+                .Select(u => u.Line).Should().BeEquivalentTo(new[] { 8, 17 });
+            calls.Should().BeEquivalentTo(new Dictionary<string, int> { ["PlacePreT1"] = 1 });
         }
 
         [Fact]
@@ -864,7 +902,12 @@ namespace ClassicUO.UnitTests.Ecs
                 // T1 funnel-2 (Codex audit round 5, #3): "a Reject before the call" is textual order, and a jump can skip it
                 // (`if (fast) goto skip; Reject(...); skip: Fallback();`), so an operation with a goto or a label has no
                 // guarded call at all
-                || method.Body.DescendantNodes().Any(d => d is GotoStatementSyntax or LabeledStatementSyntax))
+                || method.Body.DescendantNodes().Any(d => d is GotoStatementSyntax or LabeledStatementSyntax)
+                // Codex audit of funnel-2, #4: the two parses leave every other symbol undefined, so a Reject under
+                // `#if !DEBUG` (present in both parses, gone in a Debug build) would look like a guard while the fallback
+                // stays enabled. Conservatively: an operation with a conditional directive naming any symbol other than
+                // CUO_DEVTOOLS (the one the parses examine) has no guarded call at all
+                || DependsOnUnexaminedSymbols(method.Body))
             {
                 return false;
             }
@@ -899,6 +942,13 @@ namespace ClassicUO.UnitTests.Ecs
 
             return false;
         }
+
+        // an `#if`/`#elif` in the body whose condition names a symbol the two parses do not vary (anything but CUO_DEVTOOLS)
+        private static bool DependsOnUnexaminedSymbols(SyntaxNode body) =>
+            body.DescendantTrivia(descendIntoTrivia: true)
+                .Select(t => t.GetStructure())
+                .OfType<ConditionalDirectiveTriviaSyntax>()
+                .Any(d => d.Condition.DescendantNodesAndSelf().OfType<IdentifierNameSyntax>().Any(n => n.Identifier.ValueText != "CUO_DEVTOOLS"));
 
         // `Reject(...);` as a statement of its own (not under a condition)
         private static bool IsRejectStatement(StatementSyntax s) =>
