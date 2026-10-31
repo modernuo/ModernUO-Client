@@ -59,6 +59,55 @@ namespace ClassicUO.Assets
         /// <summary>Tests: the strings of a loose Clilocs.txt (null when there is none).</summary>
         public IReadOnlyDictionary<int, string> LooseOverrides => _state.Ours;
 
+        /// <summary>
+        /// The cliloc language codes that exist, lower-case: the pack's language records, or (no usable pack cliloc) the
+        /// Cliloc.* files of the client folder named with a 3-letter code, case-insensitively. Cheap: no table is read.
+        /// </summary>
+        public List<string> AvailableLanguages()
+        {
+            string path = PackPath;
+
+            if (path != null && File.Exists(path))
+            {
+                try
+                {
+                    using var store = RecordStore.Open(path, TextConst.MagicCliloc);
+
+                    return new List<string>(ClilocStore.Resolve(store).Languages.Keys);
+                }
+                catch (Exception e) when (e is IOException || e is InvalidDataException || e is UnauthorizedAccessException)
+                {
+                    Log.Error($"Cliloc: '{path}' is invalid ({e.Message}); listing Cliloc.* files");
+                }
+            }
+
+            var list = new List<string>();
+
+            try
+            {
+                foreach (string p in Directory.EnumerateFiles(FileManager.BasePath))
+                {
+                    string name = Path.GetFileName(p);
+
+                    if (name.Length == "cliloc.".Length + 3 && name.StartsWith("cliloc.", StringComparison.OrdinalIgnoreCase))
+                    {
+                        string ext = name.Substring("cliloc.".Length).ToLowerInvariant();
+
+                        if (ext.AsSpan().IndexOfAnyExceptInRange('a', 'z') < 0 && !list.Contains(ext))
+                        {
+                            list.Add(ext);
+                        }
+                    }
+                }
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+            {
+                Log.Error($"Cliloc: cannot list '{FileManager.BasePath}' ({e.Message})");
+            }
+
+            return list;
+        }
+
         public void Load(string lang)
         {
             _requested = string.IsNullOrEmpty(lang) ? "enu" : lang;

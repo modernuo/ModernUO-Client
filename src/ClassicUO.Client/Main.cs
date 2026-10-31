@@ -43,7 +43,7 @@ namespace ClassicUO
         /// as under invariant globalization; earlier runs may have saved it in settings.json) or ZZZ (no language).
         /// </summary>
         internal static bool IsNoLanguage(string code) =>
-            string.Equals(code?.Trim(), "IVL", StringComparison.OrdinalIgnoreCase) || string.Equals(code?.Trim(), "ZZZ", StringComparison.OrdinalIgnoreCase);
+            OsLanguage.IsNoLanguage(code);
 
 
         public static void Boot(UnmanagedAssistantHost pluginHost, string[] args)
@@ -134,31 +134,11 @@ namespace ClassicUO
                 Settings.GlobalSettings.Save();
             }
 
-            if (string.IsNullOrWhiteSpace(Settings.GlobalSettings.Language) || IsNoLanguage(Settings.GlobalSettings.Language))
+            // The language is chosen later, once the cliloc languages that exist are known (UltimaOnline.LoadUOFiles ->
+            // OsLanguage.Select, before any text loads). A saved "no language" placeholder is dropped here.
+            if (OsLanguage.IsNoLanguage(Settings.GlobalSettings.Language))
             {
-                Log.Trace("language is not set. Trying to get the OS language.");
-                string os = null;
-
-                try
-                {
-                    os = CultureInfo.InstalledUICulture.ThreeLetterWindowsLanguageName;
-                }
-                catch (Exception e)
-                {
-                    Log.Trace($"cannot read the OS language ({e.Message})");
-                }
-
-                // The build uses invariant globalization (Directory.Build.props), so the OS culture reads as the
-                // invariant one, "IVL": not a language. The routine default is English, set here so the settings, the
-                // cliloc loader and the language sent to the server all get ENU.
-                if (string.IsNullOrWhiteSpace(os) || IsNoLanguage(os))
-                {
-                    Log.Info("language: not set and the OS language is not available; using ENU");
-                    os = "ENU";
-                }
-
-                Settings.GlobalSettings.Language = os;
-                Log.Trace($"language set: '{Settings.GlobalSettings.Language}'");
+                Settings.GlobalSettings.Language = "";
             }
 
             if (string.IsNullOrWhiteSpace(Settings.GlobalSettings.UltimaOnlineDirectory))

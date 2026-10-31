@@ -175,6 +175,9 @@ namespace ClassicUO.Configuration
         }
 
 
+        /// <summary>The language the OS selected this run (null when it came from the profile); <see cref="Save"/> does not persist it.</summary>
+        internal static string AutoLanguage;
+
         public void Save()
         {
             // Make a copy of the settings object that we will use in the saving process
@@ -190,6 +193,12 @@ namespace ClassicUO.Configuration
             }
 
             settingsToSave.ProfilesPath = string.Empty;
+
+            // A language chosen from the OS is not a profile choice: leaving it unset lets the next run follow the OS again
+            if (AutoLanguage != null && string.Equals(settingsToSave.Language, AutoLanguage, StringComparison.OrdinalIgnoreCase))
+            {
+                settingsToSave.Language = string.Empty;
+            }
 
             // NOTE: We can do any other settings clean-ups here before we save them
 

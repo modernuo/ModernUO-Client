@@ -2566,6 +2566,7 @@ namespace ClassicUO.Network
             }
 
             writer.WriteUInt16BE(0x0B);
+            ClassicUO.Utility.Logging.Log.Info($"language packet: sending '{lang}'");
             writer.WriteASCII(lang, 3);
             writer.WriteUInt8(0x00);
 
