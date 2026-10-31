@@ -118,6 +118,11 @@ namespace ClassicUO.Game
 
         private int _loggedViolations;
 
+        // the boats whose steps a multi reload cleared inside an operation (Item.LoadMulti during an upsert or placement):
+        // their resets are operations of their own, so they run when that scope closes (see ClearBoatSteps)
+        private readonly List<uint> _deferredBoatClears = new List<uint>(1);
+        private bool _runningDeferred;
+
         public WorldWriter(World world)
         {
             _world = world;
@@ -179,6 +184,53 @@ namespace ClassicUO.Game
                 w._open = false;
                 w._subject = null;
                 w._subtree?.Clear();
+                w.RunDeferredBoatClears();
+            }
+        }
+
+        /// <summary>
+        /// <c>Item.LoadMulti</c>'s <c>BoatMovingManager.ClearSteps</c> (a multi's (re)load ends its boat movement: the boat's
+        /// and its passengers' offsets back to zero, the passengers and the queued steps dropped). With no operation open it
+        /// runs now, as before T1. Inside one (<see cref="UpsertWorldItem"/>, <see cref="PlaceInContainer"/>,
+        /// <see cref="ReturnHeldItem"/> and <see cref="WearItem"/> refresh a multi's load in their derived-state step) it runs
+        /// as soon as that operation's scope closes, before the operation returns: the resets are <see cref="ResetBoatOffset"/>
+        /// operations, which do not nest (T1 part 6, Codex audit). Nothing an operation does after its multi load reads an
+        /// offset, a passenger or a boat step, so every effect the handler and the next frame see is in the pre-T1 order.
+        /// </summary>
+        internal void ClearBoatSteps(uint serial)
+        {
+            if (_open)
+            {
+                _deferredBoatClears.Add(serial);
+
+                return;
+            }
+
+            _world.BoatMovingManager.ClearSteps(serial);
+        }
+
+        // after an operation's scope closed (its fold ended): the boat clears its multi load asked for, oldest first. The
+        // resets open scopes of their own, whose closes must not start the next clear in the middle of this one
+        private void RunDeferredBoatClears()
+        {
+            if (_runningDeferred || _deferredBoatClears.Count == 0)
+            {
+                return;
+            }
+
+            _runningDeferred = true;
+
+            try
+            {
+                for (int i = 0; i < _deferredBoatClears.Count; i++)
+                {
+                    _world.BoatMovingManager.ClearSteps(_deferredBoatClears[i]);
+                }
+            }
+            finally
+            {
+                _deferredBoatClears.Clear();
+                _runningDeferred = false;
             }
         }
 
@@ -2114,7 +2166,8 @@ namespace ClassicUO.Game
         }
 
         /// <summary>
-        /// <c>BoatMovingManager.ClearSteps</c> (0xD8's and 0xBF.1D's custom-house regeneration): the offset of the boat or of one object on it
+        /// <c>BoatMovingManager.ClearSteps</c> (0xD8's and 0xBF.1D's custom-house regeneration, a multi's (re)load through
+        /// <see cref="ClearBoatSteps"/>): the offset of the boat or of one object on it
         /// back to zero. Nothing reaches the ECS (the offset is not a record field, and an item has no inputs).
         /// Rejections as <see cref="SetHits"/>.
         /// </summary>

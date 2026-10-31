@@ -747,7 +747,7 @@ namespace ClassicUO.UnitTests.Ecs
             World world = Build(Start.Standing);
             Mobile m = world.Mobiles.Get(MOB);
             Time.Ticks = NOW + 999;
-            long pushes = WorldEcs.ClockPushes;
+            long pushes = world.Ecs.ClockWrites;
             world.Writer.AnimateMobile(m, 14, 3, 7, 2, true, false, true, frame: 1, hold: true);
             Time.Ticks = NOW;
 
@@ -755,7 +755,7 @@ namespace ClassicUO.UnitTests.Ecs
             e.GetComponent<MobileClock>().AnimDue.Should().Be(m.LastAnimationChangeTime);
             e.GetComponent<MobileClock>().IdleDue.Should().Be(m.IdleDue);
             (m.AnimIndex, m.ExecuteAnimation).Should().Be(((byte)1, false));
-            (WorldEcs.ClockPushes - pushes).Should().BeGreaterThan(0);
+            (world.Ecs.ClockWrites - pushes).Should().Be(1, "one commit of the final due times");
         }
 
         [Fact]
@@ -1051,6 +1051,111 @@ namespace ClassicUO.UnitTests.Ecs
                 $"{foreign.X},{foreign.Y} {foreign.Offset} {foreign.LastStepTime}".Should().Be(before);
                 world.Writer.Violations.Should().Be(4);
             }
+        }
+
+        // ---- the Codex audit of part 6 (P2): a multi reload inside UpsertWorldItem ends the boat's movement
+        // (LoadMulti -> BoatMovingManager.ClearSteps -> ResetBoatOffset). The resets are operations, so they used to nest in the
+        // upsert's open scope: a CUO_DEVTOOLS build threw mid-upsert, a release build rejected them while ClearSteps went on
+        // dropping the steps and passengers, leaving the mid-step offsets drawn. Both Worlds run the real manager (its own
+        // operations are compared with the old code above); the old World reloads through the pre-T1 handler code.
+
+        // a boat multi one step under way: mid-step, so the boat and both passengers (the mobile, the bag) have offsets
+        private static World BuildMovingBoat()
+        {
+            World world = BuildBoat(Start.Standing);
+            Item boat = world.Items.Get(BOAT);
+            boat.IsMulti = true;
+            world.Ecs.Sync(boat);
+            BoatMovingManager boats = world.BoatMovingManager;
+
+            Time.Ticks = NOW + 100;
+            boats.AddStep(BOAT, 3, Direction.East, Direction.East, 1001, 1000, 0);
+            boats.PushItemToList(BOAT, MOB, 1, 0, -2);
+            boats.PushItemToList(BOAT, BAG, -1, 1, 0);
+            Time.Ticks = NOW + 300;
+            boats.Update();
+            Time.Ticks = NOW;
+
+            return world;
+        }
+
+        [Theory]
+        [InlineData(true)] // CUO_DEVTOOLS: a nested reset threw mid-upsert
+        [InlineData(false)] // release: a nested reset was rejected, the offsets stayed
+        public void A_Multi_Reload_In_The_Upsert_Ends_The_Boat_Movement_As_Before_T1(bool throws)
+        {
+            World oldWorld = BuildMovingBoat(), newWorld = BuildMovingBoat();
+            newWorld.Writer.ThrowOnViolation = throws;
+
+            foreach (World w in new[] { oldWorld, newWorld })
+            {
+                foreach (uint serial in new[] { BOAT, MOB, BAG })
+                {
+                    w.Get(serial).Offset.Should().NotBe(default(Microsoft.Xna.Framework.Vector3), $"0x{serial:X8} mid-step");
+                }
+            }
+
+            void Compare(string when)
+            {
+                AssertSameWorld(oldWorld, newWorld);
+
+                foreach (uint serial in new[] { BOAT, MOB, BAG })
+                {
+                    BoatSnapshot(newWorld, serial).Should().Be(BoatSnapshot(oldWorld, serial), $"0x{serial:X8} {when} (throws: {throws})");
+                }
+
+                newWorld.HouseManager.TryGetHouse(BOAT, out _).Should().Be(oldWorld.HouseManager.TryGetHouse(BOAT, out _));
+                newWorld.Items.Get(BOAT).WantUpdateMulti.Should().Be(oldWorld.Items.Get(BOAT).WantUpdateMulti);
+                newWorld.Items.Get(BOAT).AllowedToDraw.Should().Be(oldWorld.Items.Get(BOAT).AllowedToDraw);
+            }
+
+            // 0xF3/0x1A: the boat multi moved (a reload: WantUpdateMulti), the handler's way (upsert, callbacks, placement)
+            var p = new WorldWriterTests.Packet { Serial = BOAT, Graphic = 0x3E4E, Count = 1, X = 1005, Y = 1000, Z = 0, Direction = Direction.North, Type = 2 };
+            WorldWriterTests.OldUpsert(oldWorld, in p);
+            Item boat = newWorld.Writer.UpsertWorldItem(p.Serial, p.Graphic, p.GraphicInc, p.Count, p.X, p.Y, p.Z, p.Direction, p.Hue, p.Flags, p.Type, out bool created, out WorldWriter.Placement placement);
+            boat.Should().BeSameAs(newWorld.Items.Get(BOAT));
+            created.Should().BeFalse();
+            newWorld.Writer.InScope.Should().BeFalse("the deferred resets ran before the upsert returned");
+            newWorld.Get(MOB).Offset.Should().Be(default(Microsoft.Xna.Framework.Vector3), "the passenger's reset ran before the handler's callbacks");
+            newWorld.Writer.PlaceWorldItem(placement);
+
+            Compare("after the reload");
+            oldWorld.HouseManager.TryGetHouse(BOAT, out _).Should().BeTrue("the multi loaded");
+
+            foreach (uint serial in new[] { BOAT, MOB, BAG })
+            {
+                newWorld.Get(serial).Offset.Should().Be(default(Microsoft.Xna.Framework.Vector3), $"0x{serial:X8} reset");
+            }
+
+            // the steps and the passengers are gone in both: a later frame moves nothing
+            Time.Ticks = NOW + 700;
+            oldWorld.BoatMovingManager.Update();
+            newWorld.BoatMovingManager.Update();
+            Time.Ticks = NOW;
+            Compare("a frame later");
+            newWorld.Items.Get(BOAT).X.Should().Be(1005);
+
+            // the boat sails on; a later upsert that reloads no multi clears nothing (no reset is left over)
+            foreach (World w in new[] { oldWorld, newWorld })
+            {
+                Time.Ticks = NOW + 800;
+                w.BoatMovingManager.AddStep(BOAT, 3, Direction.East, Direction.East, 1006, 1000, 0);
+                w.BoatMovingManager.PushItemToList(BOAT, MOB, 1, 0, -2);
+                Time.Ticks = NOW + 1000;
+                w.BoatMovingManager.Update();
+                Time.Ticks = NOW;
+            }
+
+            newWorld.Items.Get(BOAT).Offset.Should().NotBe(default(Microsoft.Xna.Framework.Vector3), "under way again");
+            var coin = new WorldWriterTests.Packet { Serial = 0x4000_7401, Graphic = 0xEED, Count = 1, X = 1010, Y = 1000, Z = 0, Direction = Direction.North };
+            WorldWriterTests.OldUpsert(oldWorld, in coin);
+            newWorld.Writer.UpsertWorldItem(coin.Serial, coin.Graphic, coin.GraphicInc, coin.Count, coin.X, coin.Y, coin.Z, coin.Direction, coin.Hue, coin.Flags, coin.Type, out _, out WorldWriter.Placement coinPlacement);
+            newWorld.Writer.PlaceWorldItem(coinPlacement);
+            Compare("another item's upsert");
+            newWorld.Items.Get(BOAT).Offset.Should().NotBe(default(Microsoft.Xna.Framework.Vector3), "still under way");
+
+            newWorld.Writer.Violations.Should().Be(0);
+            newWorld.Writer.InScope.Should().BeFalse();
         }
 
         // ---- group 4.3 (misc), 0xBF.1B: the spellbook's content
