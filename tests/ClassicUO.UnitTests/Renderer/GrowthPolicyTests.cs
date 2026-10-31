@@ -91,10 +91,14 @@ namespace ClassicUO.UnitTests.Renderer
         [Fact]
         public void Steps_from_the_start_sizes_to_the_ceilings()
         {
-            // art 12 -> 24 (1 step), anim 32 -> 64 -> 128 (2 steps), instances 256k -> 2M (3 steps)
-            Steps(12, 24).Should().Be(1);
-            Steps(32, 128).Should().Be(2);
-            Steps(256 << 10, 2 << 20).Should().Be(3);
+            // art starts at its ceiling (0 steps: every login filled a 12-layer start by frame 15, bench-000035),
+            // anim 32 -> 64 -> 128 (2 steps), instances 256k -> 2M (3 steps)
+            Steps(GrowthPolicy.ArtLayersStart, GrowthPolicy.ArtLayersMax).Should().Be(0);
+            Steps(GrowthPolicy.AnimLayersStart, GrowthPolicy.AnimLayersMax).Should().Be(2);
+            Steps(GrowthPolicy.InstancesStart, GrowthPolicy.InstancesMax).Should().Be(3);
+            GrowthPolicy.ArtLayersMax.Should().Be(24);
+            GrowthPolicy.AnimLayersMax.Should().Be(128);
+            GrowthPolicy.InstancesMax.Should().Be(2 << 20);
 
             static int Steps(int c, int max)
             {

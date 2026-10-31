@@ -3575,3 +3575,77 @@ Codex found no new playback, deadlock or EOF-race issue, and three smaller ones.
 - **P3, `build-linux.sh` could install a non-x86-64 build as linux-x64: fixed.** On a host other than x86_64 the script refuses to run unless `CUO_MP3_CROSS=1` is set together with `CC` or `CMAKE_TOOLCHAIN_FILE`. Before anything is installed, `readelf -h` must report ELF64 / X86-64 for the `.so` and for every member of the `.a`, and the export check now runs on the build output. The script also checks for readelf and nm. **Unverified:** it passed `bash -n` only, plus a check of the header parsing against sample `readelf` text, because this box has no Linux toolchain. Its first real run will be in CI.
 - **Test note: done.** `FailedNativeOpen_FreesTheInputCopy` now also covers `BadImageFormatException`.
 - **Verification:** client builds (Release and `-p:CuoDevTools=false`): 0 errors. `dotnet test tests/ClassicUO.UnitTests -c Release`: 1,014 passed, 1 skipped, 0 failed, 1,015 total (6 new).
+
+## Memory per client, round 2: art starts at 24, palette staging bounded (2026-10-31)
+
+Branch `poc/mem-reduce-2` from poc/modern-client 5ed1619dd. Owner follow-ups to "Memory per client: palettes, facet switch, grow on demand" (bench-000035).
+
+**1. The art page array starts at its ceiling, 24 layers (cfbd6e529).** bench-000035 showed every login growing art 12 → 24 at frame 15 (13 pages resident after login), so the smaller start saved nothing. The start sizes and ceilings are now `GrowthPolicy` constants (`ArtLayersStart = ArtLayersMax = 24`; anim 32 → 128 and instances 256k → 2M still grow on demand); `GrowthPolicyTests.Steps_from_the_start_sizes_to_the_ceilings` checks 0 / 2 / 3 steps and the ceilings.
+
+**2. Palette upload staged through 4 MiB (3a084a68b).** What the SDL_GPU source says (external/SDL 27ac7d26b, `SDL_gpu_vulkan.c`; the client runs FNA3D's device on Vulkan):
+- `VULKAN_CreateTransferBuffer` creates every transfer buffer as a **dedicated** allocation of exactly its size, in a host-visible, host-coherent type that prefers **HOST_CACHED**: on this machine that is ordinary private read-write (0x4) memory in our process, not the write-combined (0x404) upload heap. So the old one-shot upload made an 18.5 MiB read-write allocation: exactly the size of the region in bench-000035's walk (reserve 18.5 MiB).
+- Release is deferred: `SDL_ReleaseGPUTransferBuffer` marks it; it is destroyed in the cleanup of a later swapchain-presenting submit once its command buffer's fence has signalled, and the emptied `VkDeviceMemory` is freed (`vkFreeMemory`) at the cleanup after that. In steady state that is two presented frames, so SDL does not keep it forever by design.
+- But the walk only shows the 18.5 MiB region in `new` (16.7 MiB committed and resident at 120 s), not in `new_grow0`, which has the same +25 MiB. So it is not a deterministic leak; why it outlived the upload in one run is not settled offline (the job below walks it at 5–120 s).
+- Change: `Renderer.CreatePaletteBuffer` uploads in `PaletteChunks` of at most `PaletteChunkBytes` (4 MiB) through one transfer buffer, waiting for each chunk's fence (5 chunks for the shipped 18.5 MiB), then releases the idle buffer. The staging allocation is 4 MiB instead of 18.5 whatever SDL's release timing. Validation and the failure paths are unchanged (the `finally` also waits for and releases a pending fence). `PaletteFileTests.Palette_upload_chunks_tile_the_payload_within_the_staging_size` (5 cases).
+- **The rest of the 25 MiB is not attributed yet.** By reservation size, the extra resident memory in both new arms of bench-000035 is in 4–64 MiB reservations (ws 397 → 421 MiB), not the GC heap. Other host-cached transfer buffers are candidates: the page staging slots (`PageResidency._staging`, mapped with cycle=true, so SDL adds an internal buffer to the container whenever the active one is still in flight, and containers never shrink) and the frame transfer buffer (8 MiB, cycled each frame). With the world kept across the facet switch (change 2 of mem-reduce), those containers live for the session instead of being rebuilt at login. The walk's 16.0 MiB fully committed read-write allocations (3 in new, 1 in new_grow0; base's list was cut off) fit that.
+- **Diagnostics:** `CUO_MEM_REGIONS=<s>,<s>,...` (dev builds, `MemLog.cs`) logs every private allocation with 1 MiB or more committed, with its protections, at those times. The job's run.py copy lists every such allocation too (not the top 40).
+
+**Memory trade-off log (per client), computed before bench-000044 (measured results below):**
+
+| item | before | after | saving | what it costs |
+|---|---|---|---|---|
+| art page array (GPU commit, never resident) | 128 MiB, grown to 256 MiB at frame 15 | 256 MiB from the start | 0 steady (it always grew); the 384 MiB login transient (both arrays for one frame) becomes 256 MiB, and one 1.19 ms growth step goes | none: the same 256 MiB the session always reached |
+| palette upload staging (private read-write, host-cached) | 18.5 MiB, freed after SDL's deferred release (seen still resident at 120 s in one run) | 4 MiB, released idle after the last chunk | 14.5 MiB transient; 16.7 MiB resident where it lingered | 5 fence waits at renderer creation (startup, once per session) instead of none; the upload's GPU time is unchanged |
+
+**Measurement:** job bench-000044 (`mem-reduce-2-ab`, queued): base 5ed1619dd vs new 3a084a68b, interleaved base/new/base/new, JIT Release dev builds, through benchpin; plan login, Britain b1–b3, `[TestScene go` (large scene, zoom 1 and 2.5), `[TestScene return`, Britain (`q`); 3 windows of 5 s per spot; private WS and commit at 1 Hz, GC heap from `[mem]`, external walks at 60 and 120 s listing every private allocation of 1 MiB+, in-process walks at 5/15/30/60/120 s in new. Results below.
+
+- Unit tests 1028 pass (1 skipped); both client builds (dev and `-p:CuoDevTools=false`) 0 errors.
+
+### Measured: bench-000044
+
+Status ok (1684.6 s). All four runs (base1 new1 base2 new2) completed the plan; every large-scene window had 1,985 mobiles and 25,161 items. Each run stood 420 s; the plan ended at about 160 s. Windows use the 1 Hz samples and the `[mem]` lines: login = the 3 s before b1 starts (12–15 s), Britain = the b3 window (63–78 s), large scene = ls_z1 (91–106 s) and ls_zo (115–130 s), after the round trip = q (143–158 s), idle = the last 60 s, login transient = the maximum over 2–10 s. Values are medians in MiB, each arm as run 1 / run 2. Spread = (max-min)/min within an arm; a difference counts only if it is more than twice the larger within-arm spread.
+
+| window | metric | base 5ed1619dd | new 3a084a68b | new - base | spread base / new | counts? |
+|---|---|---|---|---|---|---|
+| login transient (max, 2–10 s) | commit | 1983 / 1980 | 1847 / 1859 | **-128** | 0.2 % / 0.6 % | **yes** |
+| login transient (max, 2–10 s) | private WS | 786 / 775 | 778 / 794 | +5 | 1.4 % / 2.1 % | no |
+| login (12–15 s) | commit | 1772 / 1757 | 1762 / 1774 | +3 | 0.9 % / 0.7 % | no |
+| login | private WS | 781 / 772 | 772 / 789 | +4 | 1.1 % / 2.3 % | no |
+| Britain b3 | commit | 1772 / 1747 | 1750 / 1771 | +1 | 1.4 % / 1.2 % | no |
+| Britain b3 | private WS | 784 / 767 | 766 / 791 | +3 | 2.2 % / 3.2 % | no |
+| Britain b3 | GC committed | 371 / 368 | 361 / 387 | +5 | 1.0 % / 7.2 % | no |
+| large scene ls_z1 | commit | 2062 / 2040 | 2046 / 2062 | +3 | 1.1 % / 0.8 % | no |
+| large scene ls_z1 | private WS | 943 / 930 | 930 / 952 | +4 | 1.3 % / 2.3 % | no |
+| large scene ls_zo | commit | 2067 / 2044 | 2050 / 2075 | +7 | 1.1 % / 1.2 % | no |
+| large scene ls_zo | private WS | 948 / 935 | 935 / 963 | +7 | 1.4 % / 3.1 % | no |
+| after round trip q | commit | 2104 / 2086 | 2099 / 2117 | +13 | 0.9 % / 0.9 % | no |
+| after round trip q | private WS | 980 / 972 | 974 / 1001 | +11 | 0.9 % / 2.7 % | no |
+| after round trip q | GC committed | 564 / 558 | 540 / 580 | -1 | 1.0 % / 7.4 % | no |
+| idle (last 60 s) | private WS | 981 / 975 | 977 / 1003 | +12 | 0.5 % / 2.6 % | no |
+| peak | commit | 2178 / 2164 | 2142 / 2184 | -8 | 0.6 % / 2.0 % | no |
+| peak | private WS | 987 / 976 | 977 / 1011 | +13 | 1.1 % / 3.4 % | no |
+
+- **Art at 24 layers:** the login growth step is gone (base grew 12 → 24 at frames 14 and 17, 1.06 and 0.97 ms; new 0 art steps). The login commit transient drops by 128 MiB, the computed 384 → 256 MiB. It lasted about 3 s in base (samples at 3–5 s), not one frame: the old 128 MiB array's release is deferred. Steady windows are unchanged, as computed. The facet-switch peak (82 s in every run) is unchanged.
+- **Palette staging: the 18.5 MiB region is gone.** The external walks list an 18.5 MiB read-write allocation in both base runs at 60 s (15.7 MiB resident in each) and at 120 s (17.7 and 15.7 MiB): this time it lingered in every base run. Neither new run has it, at any of the in-process walks (5/15/30/60/120 s) or the external ones, and no 4 MiB palette buffer remains either (the only 4 MiB read-write allocation is in all four runs and has 0 resident).
+- **Why the resident total didn't drop by those 17 MiB:** the art page staging containers. Their buffers are 10.67 MiB each (2048², B5G5R5A1, 6 mips: the art chain), private read-write and fully resident. Base held 7 and 6 of them, new 8 and 8, so new carried 1.5 more on average (+16 MiB), cancelling the palette saving. All read-write-only allocations with 4–64 MiB reservations at 120 s sum to 267.5 / 252.8 MiB committed (base) vs 276.1 / 275.1 MiB (new).
+
+**What the walk says about the 25 MiB from bench-000035 (diagnosis only; nothing changed):**
+- The art residency has 4 staging slots (`Math.Max(2, PageBudget * 2)`, PageBudget 2), but every run holds 6–8 art staging buffers: 64–85 MiB resident, where 4 slots need 42.7. `StartLoads` maps a slot with `cycle=true` as soon as its upload is recorded. If the copy is still in flight, SDL adds a new buffer to that slot's container, and a container never shrinks.
+- Timing: in both new runs all 8 buffers exist at the first in-process walk (5 s; 9 art pages had been uploaded by about 6 s), and the set of 4–64 MiB read-write allocations is identical at 5, 15, 30, 60 and 120 s, apart from heap-like 32 MiB regions whose commit moves. Base has the same counts at 60 and 120 s. So the extra buffers come from the login page burst. Nothing is added at the facet switch (about 80 s) or in the large scene.
+- So the walk supports the cycled staging containers as the mechanism. It does not support the facet-switch part of the earlier explanation: keeping the world across the switch does not grow them. The count varies by run within the same binary (6, 7, 8, 8 here), in steps of 10.7 MiB. Two extra buffers (21.3 MiB) fit most of bench-000035's +25 MiB. That job had one run per arm, so the 25 MiB is probably this variation, not a cost of mem-reduce. This job has no pre-mem-reduce arm to confirm it.
+- Other read-write regions, for reference: 2–3 fully resident 8 MiB regions in every run (the frame transfer buffer, cycled across frames in flight); three 16.0 MiB fully resident ones in every run (the size of SDL's `SMALL_ALLOCATION_SIZE` blocks for host-visible non-dedicated buffers, not staging); the anim staging buffers (1 MiB chain, 8 slots) are below the walk's size floor.
+- **Proposed fix (needs owner approval before it is built or measured):** keep a slot's staging buffer and never cycle it. Record the frame of each slot's last copy. `StartLoads` reuses a slot only once that frame has retired (SDL keeps at most 3 frames in flight; or keep the copy's fence), then maps it with `cycle=false`. Art then holds exactly 4 × 10.67 = 42.7 MiB. Expected saving: 2–4 buffers, 21–43 MiB resident per client (43 MiB in both new runs here), and the run-to-run 10.7 MiB steps go away, which also makes A/B memory jobs less noisy. Cost: during the login burst a slot may wait up to 3 frames before its next page load starts (a few ms at login); no change once the 9–10 pages are resident. An alternative is to drop to fewer art slots after the login burst, but that keeps the cycling. Anim staging would get the same change for consistency, at 1 MiB per buffer.
+
+| item | before | after (measured) | saving | what it costs |
+|---|---|---|---|---|
+| art page array starts at 24 | 384 MiB commit for ~3 s at login, then 256 | 256 MiB from the start | **128 MiB** of login commit transient (bench-000044); 0 steady, as computed; one ~1 ms growth step gone | none |
+| palette upload staging 4 MiB | 18.5 MiB RW, still resident at 120 s in both base runs (15.7–17.7 MiB) | gone by 5 s | 15.7–17.7 MiB resident where it lingers. Not visible in the window medians here, because the art staging count varied by +1.5 buffers (+16 MiB) the other way | 5 fence waits at renderer creation |
+
+### Codex audit (coordinator scratchpad `astra-memreduce2/out.md`) and dispositions (2026-10-31)
+
+Codex found one P2 and two P3s; all three are fixed. Chunk boundaries, empty input, upload ordering, the untrusted-palette checks, the 24 art layers, the enabled diagnostics and multi-instance safety were checked and found fine.
+- **P2, fence wait result ignored (fixed).** `SDL_WaitForGPUFences`' result was discarded, so a failed wait (e.g. device lost) let the palette upload remap and overwrite its transfer buffer while a copy might still read it, and return a partially filled buffer. Now `TryWaitFence` returns the result, and `WaitAndReleaseFence` releases the fence either way and throws `GpuFenceException` on failure. The palette chunk loop moved into `Renderer.UploadChunked` (stage, submit, wait, release per chunk), which throws before staging the next chunk; the `finally` no longer waits (no fence is outstanding there) and only releases, which cannot throw. Every other wait was fixed the same way: the throttled offscreen path (a zero fence from submit now counts as a submit failure; the new fence takes its slot before the old one is waited on), `MeasureSubmitOverheadMs`, `DrainInFlight` (releases every fence, checks `SDL_WaitForGPUIdle`, then throws), and `SubmitAndSave` (throws before mapping the download, so never a half-written screenshot; the transfer buffer is released in `finally`). `Dispose` catches a failed drain, logs it and still releases everything. Tests: `PaletteFileTests` drives `UploadChunked` with fakes (no GPU): a failed wait at chunk 0, 2 or 4 throws, releases that fence, and stages nothing more; a successful upload is stage, submit, wait, release five times.
+- **P3, protections deduplicated by substring (fixed).** `[memregions]` collected protections with `string.Contains`, so `0x404` hid a later `0x4`. They are now a `HashSet<uint>` per allocation, formatted ascending (`0x4|0x404`).
+- **P3, unset diagnostics allocated a closure (fixed).** `MemLog.Start` and `StartRegions` captured locals in lambdas, so their display classes were allocated on entry, before the environment checks. The threads now start in `StartLog(seconds)` and `StartRegions(value)`, called only after the checks; unset, `Start` allocates nothing.
+- Not part of this round: the art staging slot fix (cycle=false after the slot's fence), which waits for owner approval.
+- Verified: client Release build and `-p:CuoDevTools=false` build, 0 errors; unit tests 1032 pass, 1 skipped (was 1028: +4 `UploadChunked` cases). No client runs.
