@@ -128,6 +128,37 @@ namespace ClassicUO.Game
         /// kept across <see cref="Clear"/> (relog), released by <see cref="ReleasePools"/>.</summary>
         public Map.ChunkPool ChunkPool { get; }
 
+        // the slot array of the last destroyed Map, handed to the next one (a ~3.5 MiB LOH array otherwise per login/facet
+        // change). Held only while no Map owns it: RentChunkSlots takes it out, ReturnChunkSlots (Map.Destroy) puts it back.
+        private Chunk[] _spareSlots;
+
+        /// <summary>A cleared slot array of at least <paramref name="count"/> entries: the spare one if it is large enough
+        /// (the caller then owns it exclusively), else a new one.</summary>
+        internal Chunk[] RentChunkSlots(int count)
+        {
+            Chunk[] spare = _spareSlots;
+
+            if (spare != null && spare.Length >= count)
+            {
+                _spareSlots = null;
+
+                return spare;
+            }
+
+            return new Chunk[count];
+        }
+
+        /// <summary>The Map that owned <paramref name="slots"/> is destroyed; the array must already be cleared.</summary>
+        internal void ReturnChunkSlots(Chunk[] slots)
+        {
+            if (_spareSlots == null || _spareSlots.Length < slots.Length)
+            {
+                _spareSlots = slots;
+            }
+        }
+
+        internal Chunk[] SpareChunkSlots => _spareSlots;
+
         /// <summary>MapWarmup filled this World's pools for the current login (World.Clear re-arms it).</summary>
         internal bool WarmupDone;
 
@@ -137,6 +168,7 @@ namespace ClassicUO.Game
         {
             ChunkPool.Close();
             MapRecycler.Close();
+            _spareSlots = null;
             WarmupDone = false;
         }
 

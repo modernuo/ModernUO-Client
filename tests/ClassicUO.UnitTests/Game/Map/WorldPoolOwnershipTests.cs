@@ -160,6 +160,69 @@ namespace ClassicUO.UnitTests.Game.Map
             Assert.Null(m2.GetChunk(4095));
         }
 
+        private static Chunk[] SlotsOf(ClassicUO.Game.Map.Map m) =>
+            (Chunk[])typeof(ClassicUO.Game.Map.Map).GetField("_terrainChunks", BindingFlags.Instance | BindingFlags.NonPublic).GetValue(m);
+
+        [Fact]
+        public void Successive_Maps_Of_One_World_Reuse_The_Slot_Array()
+        {
+            var w = new World();
+            var m1 = new ClassicUO.Game.Map.Map(w, 0, 64);
+            Chunk[] first = SlotsOf(m1);
+            first[5] = new Chunk(w);
+
+            m1.Destroy();
+            m1.Destroy(); // idempotent: must not return (and clear) the array twice
+
+            var m2 = new ClassicUO.Game.Map.Map(w, 1, 32); // smaller fits
+            Assert.Same(first, SlotsOf(m2));
+            Assert.All(SlotsOf(m2), c => Assert.Null(c));
+            Assert.Null(m2.GetChunk(5));
+        }
+
+        [Fact]
+        public void An_Active_Maps_Array_Is_Never_Handed_Out()
+        {
+            var w = new World();
+            var m1 = new ClassicUO.Game.Map.Map(w, 0, 64);
+            var m2 = new ClassicUO.Game.Map.Map(w, 1, 64); // m1 still active: its array is not spare
+
+            Assert.NotSame(SlotsOf(m1), SlotsOf(m2));
+
+            m1.Destroy();
+            m1.Destroy(); // a stale second Destroy must not clear or return m2's array
+            var m3 = new ClassicUO.Game.Map.Map(w, 2, 64);
+            Assert.Same(SlotsOf(m1), SlotsOf(m3));
+            Assert.NotSame(SlotsOf(m2), SlotsOf(m3));
+
+            var m4 = new ClassicUO.Game.Map.Map(w, 3, 64); // nothing spare left: fresh array
+            Assert.NotSame(SlotsOf(m3), SlotsOf(m4));
+            Assert.NotSame(SlotsOf(m2), SlotsOf(m4));
+        }
+
+        [Fact]
+        public void A_Larger_Map_Does_Not_Take_A_Too_Small_Spare()
+        {
+            var w = new World();
+            var small = new ClassicUO.Game.Map.Map(w, 0, 16);
+            Chunk[] arr = SlotsOf(small);
+            small.Destroy();
+
+            var big = new ClassicUO.Game.Map.Map(w, 0, 4096);
+            Assert.NotSame(arr, SlotsOf(big));
+            Assert.Equal(4096, SlotsOf(big).Length);
+        }
+
+        [Fact]
+        public void The_World_Map_Gump_Holds_No_Map()
+        {
+            // the gump needs only the facet index and land Z (FacetView); a Map would allocate a full slot array
+            foreach (var f in typeof(ClassicUO.Game.UI.Gumps.WorldMapGump).GetFields(BindingFlags.Instance | BindingFlags.NonPublic | BindingFlags.Public))
+            {
+                Assert.NotEqual(typeof(ClassicUO.Game.Map.Map), f.FieldType);
+            }
+        }
+
         [Fact]
         public void Release_Empties_The_Chunk_And_Object_Pools()
         {

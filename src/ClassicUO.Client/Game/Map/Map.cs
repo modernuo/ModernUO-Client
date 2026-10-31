@@ -14,6 +14,7 @@ namespace ClassicUO.Game.Map
     {
         // instance-owned: two Worlds (or a World's old and new Map) never share chunk slots
         private readonly Chunk[] _terrainChunks;
+        private bool _slotsReturned;
         private static readonly bool[] _blockAccessList = new bool[0x1000];
         private readonly LinkedList<int> _usedIndices = new LinkedList<int>();
         private readonly World _world;
@@ -85,7 +86,7 @@ namespace ClassicUO.Game.Map
             Index = index;
             BlocksCount = blocksCount;
             _tryLoad = TryLoadQueued;
-            _terrainChunks = new Chunk[BlocksCount];
+            _terrainChunks = world.RentChunkSlots(BlocksCount);
 
             ClearBockAccess();
         }
@@ -813,6 +814,14 @@ namespace ClassicUO.Game.Map
 
             _parked.Clear();
             _queue.Clear();
+
+            // the slot array goes back to the World for the next Map (exclusive: this Map no longer owns it)
+            if (!_slotsReturned)
+            {
+                _slotsReturned = true;
+                Array.Clear(_terrainChunks);
+                _world.ReturnChunkSlots(_terrainChunks);
+            }
         }
     }
 }

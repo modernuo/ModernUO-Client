@@ -56,8 +56,8 @@ namespace ClassicUO.Game.Map
                 throw new InvalidOperationException("chunk of another World, or the pool is full");
             }
 
+            _pool.Enqueue(chunk); // may throw (growth): InPool only after it succeeded
             chunk.InPool = true;
-            _pool.Enqueue(chunk);
         }
 
         /// <summary>Login warm-up (Chunk.Prefill): fills the pool up to <paramref name="count"/> chunks. Returns the chunks added.</summary>
