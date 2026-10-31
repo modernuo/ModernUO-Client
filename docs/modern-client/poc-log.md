@@ -4447,3 +4447,62 @@ Codex (gpt-6-astra) found one P2 and two P3, no P0/P1. All three fixed.
 - **Revert check** (`revert.py`, each fix reverted alone, filter `WorldWriterMobile`, dev build): PlaceMobile fold back → `A_Walk…(UpdateObject)` fails; MoveMobile fold back → `A_Walk…(UpdatePlayer)` fails; direct `World.RemoveMobile` back → the PlaceInContainer test fails; `IsDetachedPlayer` → false → both cases of the detached-player test fail.
 - **Verification (78a85f284):** 1780 pass + 2 skipped in both `CuoDevTools` variants (1775 + 5 new). Both client builds 0 errors. Write-site budget unchanged (253: no new direct write; the detached-player path reuses the operations' writes).
 - **Gate:** `bench-000068` (the bench-000065 job rerun on 78a85f284, dev build, pack classic-1.3 (CURRENT has moved since 000065's classic-1.2); ModernUO listening on 2593) **passes** with the same numbers checked: `[ECS] check` mismatches 0 and no mismatch line in all three scripts; parity items 1,906,389 (1,494,135 + 342,510 + 69,744), 0 mismatched, 0 drawn- or lights-mismatched; mobiles 13,388,482 (10,883,239 + 973,103 + 1,532,140), 0 mismatched, 0 not mirrored; mobile-update-check: clocks 29.4M checked, 0 different, skipped updates 0 changed, order 0 out of order, table differences 0, no warning; mobile-input-check: pushed samples 12.5M checked, 0 different; no `WorldWriter` line and no pre-T1 line. Direct writes 3,317,504 / 750,042 / 237,528 (81 / 65 / 72 sites logged). Still no site from `UpdateGameObject`, `UpdateCharacter`, `UpdateObject`, `UpdatePlayer` or `DeleteObject`; the callers are those of bench-000065 (`World.RemoveMobile` 5 sites, the range sweep's, e.g. AnimIndex at World.cs:1191 in Destroy).
+
+## Stress scene: 7,500 Balrons, results (2026-10-31, `poc/balron-stress`)
+
+Measure only, no client code change. Base `poc/modern-client` 072f9a6f8; both arms of ours are the same NativeAOT publish of 072f9a6f8, upstream is ClassicUO main ee79d7ebc (NativeAOT). Method, spawn and wipe: large-scale.md, "Stress scene: 7,500 Balrons". Jobs: bench-000070 (spawn, 7,500 Balrons, AI on, Felucca 5140..5171 × 2214..2245), bench-000071 (gpu-tp1, upstream up-login1, gpu-login1, gpu-walk1), bench-000072 (legacy-login1, legacy-tp1, gpu-tp2, up-login2, legacy-tp2), bench-000073 (wipe). All ok. RTX 3090 Ti, client pinned to the P-cores; ModernUO on the same machine at about one core while a client was among the Balrons.
+
+- **Survival:** every run survived. Ours: 6 of 6 standing runs plus the walk, exit 0, never unresponsive. Upstream: 2 of 2 reached the world within 2 s, answered `WM_NULL` every second for the full 150 s, kept private bytes at 1.4–1.6 GB, and closed cleanly at the cap. **The upstream stall-and-crash was not reproduced** in a login among already-spawned Balrons; it was not tested with upstream present during the spawn itself. No 300 s upstream run is proposed: it was not stalling at the cap.
+- **Owner's observation:** no crash; fps dipped to about 39 during the spawn and settled at about 240 within seconds. This matches the logs: login and teleport-in show 60–150 frames over 16 ms in the first 12 s (worst 23–103 ms), then 182–236 fps standing. The network caps stay at their defaults (128 KB / 1,500 packets / 4 ms per frame; owner: hardware-dependent).
+
+**Results** (standing windows `bal`, 12 × 5 s; 2 reps per arm, interleaved; ms per frame):
+
+| run | survives | entry stall (longest frame, ms) | p50 / p95 / p99 | fps | mobiles in range | packets/s | private MB peak | GC by +60 s (gen2), pause | GPU world |
+|---|---|---|---|---|---|---|---|---|---|
+| gpu-tp1 | yes | 44 | 5.07 / 6.76 / 8.65 | 194 | 7,320 | 1,307 | 3,005 (anim layers grown to 128 after the TestScene) | 24 (6), 92 ms | 1,728 baked + 17.8k dynamic, 2 draws |
+| gpu-tp2 | yes | 39 | 4.35 / 5.89 / 6.99 | 213 | 6,582 | 1,382 | 2,291 | 30 (8), 122 ms | 1,728 + 16.5k |
+| gpu-login1 | yes | 55 | 4.71 / 6.14 / 7.34 | 236 | 5,858 | 1,414 | 2,164 | 22 (8), 80 ms | 1,728 + 14.0k |
+| legacy-tp1 | yes | 36 | 4.96 / 6.95 / 8.32 | 192 | 6,666 | 1,366 | 1,746 | 30 (10), 105 ms | – (45 draw calls) |
+| legacy-tp2 | yes | 23 | 4.12 / 5.83 / 6.74 | 233 | 6,357 | 1,397 | 1,649 | 28 (9), 92 ms | – |
+| legacy-login1 | yes | 103 | 5.27 / 7.45 / 9.25 | 182 | 6,762 | 1,415 | 1,711 | 23 (10), 58 ms | – |
+| up-login1 / 2 | yes / yes | n/a | n/a (no frame stats) | n/a | n/a | n/a | 1,639 / 1,466 | n/a | n/a |
+
+Packets/s is the client's `net_packets` counter over the windows (about 15 KB/s; the packets phase is 0.05–0.07 ms per frame); the Uo.Net.Cli count failed (the server closed the connection at the server list). Standing: at most one gen0 per 60 s, 400–860 B allocated per frame. Long frames while standing: 439 ms (gpu-login1), 384 and 87 ms (gpu-tp2), 112 ms (legacy-login1); in each the frame's measured work was under 8 ms (`work_max` 7.6–8.0 ms against `cpu_max` = the frame), so the time went outside every instrumented phase. Not renderer work; cause unknown (shared machine, server on the same box). gpu-walk1 (driver walk with `-ecscheck`): 325 fps walking among about 5,000, ECS checks 0 mismatches.
+
+**Noise.** Within-arm spread of frame p50 is 17 % (Gpu tp) and 20 % (Legacy tp), above the 5 % threshold, and the scene drifts: the Balrons wander off (7,320 in range in the first run, 6,357 in the last), so run order is confounded with load. **The data cannot show Legacy faster than Gpu, or the reverse.** Normalised per mobile in range the arms tie: whole frame 0.70–0.72 µs per mobile (Gpu) vs 0.67–0.81 (Legacy); world prepare + world draw 0.42–0.43 µs vs 0.44–0.49.
+
+**Phases per renderer** (window averages, ms per frame; Gpu tp1 / tp2 / login, Legacy tp1 / tp2 / login):
+
+| phase | Gpu | Legacy |
+|---|---|---|
+| update (of it world_mobiles; world_fx_text) | 0.62 / 0.56 / 0.53 (0.23 / 0.20 / 0.16; 0.28 / 0.25 / 0.25) | 0.60 / 0.44 / 0.62 (0.22 / 0.16 / 0.22; 0.25 / 0.17 / 0.27) |
+| world prepare | 2.47 / 2.29 / 1.98 | 0.73 / 0.53 / 0.77 |
+| · tile walk | 0.47 / 0.48 / 0.42 | 0.52 / 0.37 / 0.54 |
+| · text entities | 0.24 / 0.19 / 0.18 | 0.20 / 0.15 / 0.22 |
+| · mobile extract (prep_cap_mobile) | 1.66 / 1.52 / 1.29 | – |
+| · item cache (prep_item_cache) | 0.003, 0 rebuilds | – |
+| world draw (Gpu: batcher end, instance upload, 2 draws; Legacy: sprite batching, 45 draws) | 0.58 / 0.55 / 0.48 | 2.52 / 2.29 / 2.56 |
+| scene DrawUI (health lines, world text) | 1.07 / 0.87 / 0.84 | 0.93 / 0.67 / 1.10 |
+| present | 0.17 | 0.17–0.19 |
+| frame | 5.14 / 4.70 / 4.24 | 5.20 / 4.29 / 5.49 |
+
+- **Item cache invalidation from moving mobiles:** none. There are no ground items, `item_cache_builds` is 0 and the phase costs 3 µs.
+- **Instance upload vs draw:** not separable with these phases; both are inside Gpu's world draw (0.48–0.58 ms together). About 18k dynamic instances × 72 B ≈ 1.3 MB written per frame.
+
+**Why Gpu does not win here, the opposite of the frozen large scene.** The GPU path wins the frozen scene by baking: land and statics into chunk meshes and 11k+ ground items into the item cache, so most of its 21k objects cost nothing per frame. Here nothing is static: the view is 5,000–7,400 animated, wandering Balrons on bare grass (1,728 baked land instances). Every visible Balron is re-extracted from the ECS each frame (about 0.27 µs each, 3 instances: 1.3–1.7 ms) and uploaded again; Legacy spends the same per-sprite CPU time in its batcher instead (2.3–2.6 ms). The GPU path's other advantage, 2 draw calls instead of 45, buys nothing on this GPU (present 0.17 ms in both). So the two arms do the same O(mobiles) CPU work and tie. If the owner's interactive run saw Legacy ahead, the measured candidates are Gpu's extra per-frame extract plus upload (which grows with fps: about 260 MB/s of instance writes at 200 fps) and a different number of Balrons in view between the two looks; these runs can't tell which.
+
+**Fixes, ranked (not implemented):**
+1. **Reuse each mobile's instances between frames (Gpu).** A Balron's animation frame changes about every 100 ms and the client draws every 4–5 ms, so about 95 % of extracts rebuild the same sprites. Keep each mobile's last instances with a key (graphic, frame, direction, hue, flags, z) and on a hit only rewrite the screen offset. Expected: prep_cap_mobile 1.3–1.7 → about 0.3–0.5 ms, roughly 20–25 % of this frame.
+2. **Persistent dynamic instance buffer with dirty ranges (Gpu).** Give each mobile a stable slot and upload only changed slots instead of 1.3 MB per frame. Builds on 1; the gain is part of world draw's 0.5 ms plus GPU bandwidth.
+3. **`HealthLinesManager.Draw` walks all of `World.Mobiles` every frame** (7,000+ here) and checks whether health lines are enabled only inside the loop. Both arms: part of scene DrawUI's 0.7–1.1 ms. Iterate only the mobiles that can show a line (target and selection, plus those in view when ShowMobilesHP is on).
+4. **Text per mobile** (prep_text 0.15–0.24 and world_fx_text 0.17–0.28 ms, both arms): skip mobiles with no text instead of visiting all of them.
+5. **Log level of the split-packet warnings** (below): 250–760 `Warn` lines per entry burst, formatted and written on the main thread during the worst frames. Make them Trace.
+6. **Find the 100–440 ms stalls outside the phases** (a log of the gap between frames, or ETW, during a stand): investigation, not a fix.
+
+**"need more data ID: 78/DC/17" warnings: benign.** Count per run (all IDs; top four): gpu-tp1 589 (C1 117, 78 95, D6 83, DC 80), gpu-tp2 758 (C1 273, 11 125, D6 113, 78 102), gpu-login1 318, gpu-walk1 278, legacy-tp1 722, legacy-tp2 499, legacy-login1 297, wipe 481; upstream up-login1 368, up-login2 249. 78/DC/17 dominate at login (the incoming-mobile burst), then C1/D6/11 (cliloc messages, property lists, status). They come from `PacketHandlers.ParseQueue` (src/ClassicUO.Client/Network/PacketHandlers.cs:152): the buffered stream ends inside a packet (a TCP segment or drain-slice boundary), the loop logs a warning and breaks, and the partial packet stays in the circular buffer until the next read completes it. The 10–41 `Invalid ID: xx | len: -1 | stream.pos: 1–2` lines per run are the same case for a variable-length packet whose 2 length bytes have not arrived yet (`GetPacketInfo` returns false with fewer than 3 bytes buffered). Nothing is dropped: no `Malformed packet`, no protocol error or disconnect in any run, ECS checks 0 mismatches, and upstream has the same code and similar counts. Only the log level is wrong (fix 5).
+
+**Extra job that would separate the phases (proposed, not queued).** Two problems with this data: the scene drifts between runs, and Gpu's world draw holds upload and draw together. (a) One client session parked at the Balrons that switches renderer in-process with the DevBench plan entries `world:gpu` / `world:legacy`, alternating 6 × 20 s (g, l, g, l, g, l) at a fixed spot and zoom, `CUO_FRAMESTATS=1`, `prepdetail:on`, two such sessions. Same Balrons, interleaved, so the drift cancels. (b) Splitting upload from draw needs a client change: FrameStats phases for the instance copy into `DynamicBuffer` and for the native submit in `GpuWorldRenderer.Render` (ideally GPU timestamp queries too). Both need the Balrons again: the scene was wiped, so this means respawning with bench-000070's recipe and wiping afterwards (owner decision). The same respawn could also test upstream present *during* the spawn, the one case not covered here.
+
+**Left behind (owner's decision: no second wipe, no save count).** bench-000073's checks: centre 5156 2230 `mobiles=1`, 5120 2230 `mobiles=1`, but 5156 2200 `mobiles=23`, 5156 2260 `mobiles=44`, 5190 2230 `mobiles=34`. About 100 Balrons (AI on) that wandered outside the wipe box 5116..5196 × 2190..2270 remain around 5156 2230 and keep wandering. Later tests near there will meet them.
+
+**Memory:** none (measure only). **Scratch:** `C:/Users/kamron/AppData/Local/Temp/claude/C--Repositories-classicuo/c951be14-91b9-4850-98ea-3f5baf8b4cf1/scratchpad/balron-stress/` (binaries, run.py, drivers, analyze.py); job logs in `~/.claude/rf-agent/jobs/bench/done/bench-000070` to `bench-000073`.
