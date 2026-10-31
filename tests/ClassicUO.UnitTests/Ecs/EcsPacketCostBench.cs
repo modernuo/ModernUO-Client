@@ -295,9 +295,9 @@ namespace ClassicUO.UnitTests.Ecs
 
             rows.Add(("T1 funnel: 0x78 equipment list (ClearWornItems + 5 WearItem)", Measure(lists78, i =>
             {
-                uint owner = s.Mobiles[i % n].Serial;
+                Mobile owner = s.Mobiles[i % n];
                 var list = lists[i % n];
-                s.World.Writer.ClearWornItems(owner);
+                s.World.Writer.ClearWornItems(owner.Serial);
 
                 for (int k = 0; k < list.Length; k++)
                 {
