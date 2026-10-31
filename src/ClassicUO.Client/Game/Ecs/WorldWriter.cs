@@ -43,7 +43,10 @@ namespace ClassicUO.Game
     /// equipment list: <see cref="ClearWornItems"/>, <see cref="WearItem"/>) and mobiles (funnel part 4: UpdateGameObject's
     /// mobile branch, <see cref="UpsertMobile"/> and <see cref="PlaceMobile"/>; the notoriety of 0x77/0x78,
     /// <see cref="SetNotoriety"/>; the player's body of 0x20/0x77/0x78, <see cref="SetMobileBody"/>; 0x20's move,
-    /// <see cref="MoveMobile"/>; 0x1D for a mobile, <see cref="RemoveMobile"/>). Every other writer still relies on <see cref="WorldEcs.Sync"/> and <see cref="WorldEcs.PushInputs"/>, which
+    /// <see cref="MoveMobile"/>; 0x1D for a mobile, <see cref="RemoveMobile"/>), EnterWorld (funnel part 5: 0x1B,
+    /// <see cref="SetMobileGraphic"/>, <see cref="MoveMobile"/>, <see cref="SetMobileDirection"/>) and the walker (0x21 and
+    /// 0x20's deny, <see cref="StopMobile"/> and <see cref="MoveMobile"/>; 0x22's notoriety; <c>Mobile.ProcessSteps</c>' step
+    /// completion, <see cref="CompleteStep"/>). Every other writer still relies on <see cref="WorldEcs.Sync"/> and <see cref="WorldEcs.PushInputs"/>, which
     /// stay as the fallback until the last packet group is converted.
     /// </para>
     /// <para>
@@ -1334,14 +1337,17 @@ namespace ClassicUO.Game
                 return;
             }
 
-            if (!Holds(mobile))
+            bool detached = !Holds(mobile);
+
+            // funnel part 5: 0x22 (ConfirmWalk) passes World.Player, which may be the detached player (see IsDetachedPlayer)
+            if (detached && !IsDetachedPlayer(mobile))
             {
                 Reject(Violation.NotHeld, $"WorldWriter.SetNotoriety: 0x{mobile.Serial:X8} is not the mobile this World holds for its serial", rejected: true);
 
                 return;
             }
 
-            using (Open(mobile, mobile))
+            using (Open(mobile, detached ? null : mobile))
             {
                 mobile.NotorietyFlag = notoriety;
                 _world.Ecs.CommitMobileInputs(mobile);
@@ -1545,6 +1551,128 @@ namespace ClassicUO.Game
             {
                 EcsEntity e = _world.Ecs.CommitMobile(mobile, in v);
                 mobile.Direction = v.Direction;
+                _world.Ecs.CommitMobileInputs(mobile, e);
+            }
+        }
+
+        /// <summary>
+        /// The walker's step clear (<c>WalkerManager.DenyWalk</c>: 0x21, and 0x20's deny before its move): <c>ClearSteps</c>,
+        /// the walk queue emptied and the offset zeroed, then the derived inputs. No record field changes (the offset and the
+        /// queue are inputs only). No callback runs, so the mobile is folded. A mobile this World does not hold is a violation,
+        /// rejected (no pre-T1 path), except the detached <c>World.Player</c>, written as before T1.
+        /// </summary>
+        public void StopMobile(Mobile mobile)
+        {
+            if (mobile == null || !Admitted(nameof(StopMobile), mobile.Serial))
+            {
+                return;
+            }
+
+            bool detached = !Holds(mobile);
+
+            if (detached && !IsDetachedPlayer(mobile))
+            {
+                Reject(Violation.NotHeld, $"WorldWriter.StopMobile: 0x{mobile.Serial:X8} is not the mobile this World holds for its serial", rejected: true);
+
+                return;
+            }
+
+            using (Open(mobile, detached ? null : mobile))
+            {
+                mobile.ClearSteps();
+                _world.Ecs.CommitMobileInputs(mobile);
+            }
+        }
+
+        /// <summary>
+        /// <c>Mobile.ProcessSteps</c>' step completion (funnel part 5): the front step <paramref name="step"/> is done, so the
+        /// mobile takes its position, direction and run state, the offset is zeroed, the step leaves the queue and the idle
+        /// timer restarts. Unless <paramref name="directionChange"/> (a turn in place: ProcessSteps goes on with the next step
+        /// after this returns), it then refreshes its screen position, closes the player's out-of-range gumps, re-adds itself
+        /// to its tile and stamps <c>LastStepTime</c>, in the old order. The derived inputs and clock last.
+        /// <para>
+        /// The record is committed once, first, from the step's values. A mobile other than the player is folded: none of its
+        /// setters or helpers here run a callback, so its five hook Syncs and pushes become one commit and one push. The player is
+        /// not folded: its direction change (door check), screen position (the plugins' position callback, the door and corpse
+        /// checks) and <c>CloseRangedGumps</c> run code that can send packets and call plugins, so their pushes and Syncs publish
+        /// as before T1, and the inputs are also committed between the two halves, where the old code pushed them.
+        /// </para>
+        /// <para>
+        /// Called per step from the per-frame update; ProcessSteps passes its own instance, so a mobile this World does not
+        /// hold for its serial (a stale instance still updating, or the detached player) is written as before T1, unfolded
+        /// (every commit, Sync and push ignores it). Only an instance of another World is a violation, rejected (nothing
+        /// changes; the step stays queued).
+        /// </para>
+        /// </summary>
+        public void CompleteStep(Mobile mobile, in Mobile.Step step, bool directionChange)
+        {
+            if (mobile == null || !Admitted(nameof(CompleteStep), mobile.Serial))
+            {
+                return;
+            }
+
+            if (mobile.World != _world)
+            {
+                Reject(Violation.NotHeld, $"WorldWriter.CompleteStep: 0x{mobile.Serial:X8} belongs to another World", rejected: true);
+
+                return;
+            }
+
+            bool fold = Holds(mobile) && !ReferenceEquals(mobile, _world.Player);
+
+            // 2. compute (the step is the caller's front step: read here, before RemoveFirstStep)
+            MobileState v;
+            v.Serial = mobile.Serial;
+            v.Graphic = mobile.Graphic;
+            v.Hue = mobile.Hue;
+            v.X = (ushort)step.X;
+            v.Y = (ushort)step.Y;
+            v.Z = step.Z;
+            v.Direction = (Direction)step.Direction;
+            v.Flags = mobile.Flags;
+            v.IsPlayer = ReferenceEquals(mobile, _world.Player);
+            bool run = step.Run;
+            uint stepTime = Time.Ticks;
+
+            using (Open(mobile, fold ? mobile : null))
+            {
+                EcsEntity e = _world.Ecs.CommitMobile(mobile, in v);
+
+                mobile.X = v.X;
+                mobile.Y = v.Y;
+                mobile.Z = v.Z;
+                mobile.Direction = v.Direction;
+                mobile.IsRunning = run;
+                mobile.OffsetX = 0;
+                mobile.OffsetY = 0;
+                mobile.OffsetZ = 0;
+                mobile.RemoveFirstStep();
+                mobile.CalculateRandomIdleTime();
+
+                if (!directionChange)
+                {
+                    if (!fold)
+                    {
+                        // the old first push, before the callbacks below
+                        _world.Ecs.CommitMobileInputs(mobile, e);
+                    }
+
+                    mobile.UpdateScreenPosition();
+
+                    // looked up here, after the position callbacks, as the old code did
+                    if (_world.InGame && mobile.Serial == _world.Player)
+                    {
+                        _world.Player.CloseRangedGumps();
+                    }
+
+                    if (mobile.IsPlaced)
+                    {
+                        mobile.AddToTile();
+                    }
+
+                    mobile.LastStepTime = stepTime;
+                }
+
                 _world.Ecs.CommitMobileInputs(mobile, e);
             }
         }

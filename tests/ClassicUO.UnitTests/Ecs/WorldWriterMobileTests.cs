@@ -679,7 +679,7 @@ namespace ClassicUO.UnitTests.Ecs
             n.Should().BeSameAs(m);
         }
 
-        public enum MobileOp { Upsert, Place, Notoriety, Body, Move, Graphic, Turn }
+        public enum MobileOp { Upsert, Place, Notoriety, Body, Move, Graphic, Turn, Stop }
 
         private static void Run(World world, MobileOp op, Mobile m, WorldWriter.Placement placement = default)
         {
@@ -691,6 +691,7 @@ namespace ClassicUO.UnitTests.Ecs
                 case MobileOp.Body: world.Writer.SetMobileBody(m, 0x191, 0x21, Flags.Hidden, true, true, Direction.East); break;
                 case MobileOp.Graphic: world.Writer.SetMobileGraphic(m, 0x25E, checkBody: true); break;
                 case MobileOp.Turn: world.Writer.SetMobileDirection(m, Direction.West); break;
+                case MobileOp.Stop: world.Writer.StopMobile(m); break;
                 default: world.Writer.MoveMobile(m, 1200, 1200, 0); break;
             }
         }
@@ -710,6 +711,8 @@ namespace ClassicUO.UnitTests.Ecs
         [InlineData(MobileOp.Graphic, false)]
         [InlineData(MobileOp.Turn, true)]
         [InlineData(MobileOp.Turn, false)]
+        [InlineData(MobileOp.Stop, true)]
+        [InlineData(MobileOp.Stop, false)]
         public void A_Mobile_Operation_Inside_An_Operation_Is_Rejected_Before_Any_Change(MobileOp op, bool throws)
         {
             World world = Build(Start.Standing), reference = Build(Start.Standing);
@@ -755,6 +758,8 @@ namespace ClassicUO.UnitTests.Ecs
         [InlineData(MobileOp.Graphic, false)]
         [InlineData(MobileOp.Turn, true)]
         [InlineData(MobileOp.Turn, false)]
+        [InlineData(MobileOp.Stop, true)]
+        [InlineData(MobileOp.Stop, false)]
         public void A_Mobile_This_World_Does_Not_Hold_Is_Rejected_Before_Any_Change(MobileOp op, bool throws)
         {
             foreach (bool foreign in new[] { true, false })

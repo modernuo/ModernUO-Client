@@ -326,7 +326,7 @@ namespace ClassicUO.Game.GameObjects
             PushInputs();
         }
 
-        private void CalculateRandomIdleTime()
+        internal void CalculateRandomIdleTime()
         {
             const int TIME = 30000;
             FunnelCheck.Write(this, FunnelField.AnimationState);
@@ -988,18 +988,11 @@ namespace ClassicUO.Game.GameObjects
                             }
                         }
 
-                        X = (ushort)step.X;
-                        Y = (ushort)step.Y;
-                        Z = step.Z;
-
-                        Direction = (Direction)step.Direction;
-                        IsRunning = step.Run;
-                        OffsetX = 0;
-                        OffsetY = 0;
-                        OffsetZ = 0;
-                        RemoveFirstStep();
-                        CalculateRandomIdleTime();
-                        PushInputs();
+                        // T1 (funnel part 5): the position, direction, run state, offset, queue, idle timer, then (not for a
+                        // turn in place) the screen position, the player's ranged gumps, the tile and LastStepTime, through
+                        // the funnel. A copy of the step: the operation removes it from the queue.
+                        Step done = step;
+                        World.Writer.CompleteStep(this, in done, directionChange);
 
                         if (directionChange)
                         {
@@ -1007,21 +1000,6 @@ namespace ClassicUO.Game.GameObjects
 
                             return;
                         }
-
-                        UpdateScreenPosition();
-
-                        if (World.InGame && Serial == World.Player)
-                        {
-                            World.Player.CloseRangedGumps();
-                        }
-
-                        if (IsPlaced)
-                        {
-                            AddToTile();
-                        }
-
-                        LastStepTime = Time.Ticks;
-                        PushInputs();
                     }
 
                     UpdateTextCoordsV();
