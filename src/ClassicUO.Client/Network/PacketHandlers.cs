@@ -3776,19 +3776,8 @@ namespace ClassicUO.Network
 
             serial |= 0x80000000;
 
-            if (world.Mobiles.Remove(owner.Serial))
-            {
-                for (LinkedObject i = owner.Items; i != null; i = i.Next)
-                {
-                    Item it = (Item)i;
-                    it.Container = serial;
-                }
-
-                uint oldSerial = owner.Serial;
-                world.Mobiles[serial] = owner;
-                owner.Serial = serial;
-                world.Ecs.OnSerialChanged(oldSerial, owner);
-            }
+            // T1 (funnel part 7): the re-key to serial | 0x80000000, its children's Container and the mirror's re-key
+            world.Writer.RekeyDeadMobile(owner);
 
             if (SerialHelper.IsValid(corpseSerial))
             {

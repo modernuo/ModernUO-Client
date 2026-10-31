@@ -94,5 +94,3 @@ src/ClassicUO.Client/Game/UI/Gumps/RaceChangeGump.cs|IsFemale|1
 src/ClassicUO.Client/Game/UI/Gumps/RaceChangeGump.cs|Layer|1
 src/ClassicUO.Client/Game/UI/Gumps/RaceChangeGump.cs|Race|1
 src/ClassicUO.Client/Game/World.cs|Container|1
-src/ClassicUO.Client/Network/PacketHandlers.cs|Container|1
-src/ClassicUO.Client/Network/PacketHandlers.cs|Serial|1
