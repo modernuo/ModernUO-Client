@@ -17,6 +17,8 @@ namespace ClassicUO.IO.Audio
     ///     another thread waits for a native call in progress and later calls throw <see cref="ObjectDisposedException" />.
     ///     The native decoder and its input bytes are owned by one <see cref="SafeHandle" />, which is held
     ///     (DangerousAddRef) across every native call, so neither can be freed or finalised under the decoder.
+    ///     The release entry point (cuo_mp3_close) is resolved before any native allocation, so a library without it
+    ///     fails the open instead of leaking; release itself never throws (it can run on the finaliser thread).
     /// </summary>
     public sealed unsafe class Mp3Decoder : IDisposable
     {
@@ -36,10 +38,21 @@ namespace ClassicUO.IO.Audio
         }
 
         private static int s_Available; // 0 unknown, 1 yes, -1 no
+        private static int s_CloseResolved; // 0 unknown, 1 resolved, -1 missing (cached for the real library only)
         private static long s_LiveInputs;
+        private static long s_CloseFailures;
 
         /// <summary>Test hook: replaces cuo_mp3_open_memory (e.g. to force a load failure). Null in production.</summary>
         internal static Func<nint, nuint, nint> OpenMemoryOverride;
+
+        /// <summary>
+        ///     Test hook: replaces cuo_mp3_close (e.g. to simulate a library without the export). The pre-allocation
+        ///     probe calls it with 0, which cuo_mp3_close treats as a no-op. Null in production.
+        /// </summary>
+        internal static Action<nint> CloseOverride;
+
+        /// <summary>Native closes that threw during release (the input copy is still freed). Diagnostics and tests.</summary>
+        internal static long CloseFailures => Interlocked.Read(ref s_CloseFailures);
 
         /// <summary>Input copies currently allocated (each is freed by a failed open or by the owning handle).</summary>
         internal static long LiveInputAllocations => Interlocked.Read(ref s_LiveInputs);
@@ -59,6 +72,7 @@ namespace ClassicUO.IO.Audio
                     try
                     {
                         Mp3Native.Version();
+                        Mp3Native.Close(0); // binds the release entry point too (a no-op on null)
                         state = 1;
                     }
                     catch (Exception ex) when (ex is DllNotFoundException || ex is EntryPointNotFoundException || ex is BadImageFormatException)
@@ -100,6 +114,12 @@ namespace ClassicUO.IO.Audio
             {
                 lock (_sync)
                 {
+                    // Checked before the cache, so a count read earlier isn't returned after Dispose either.
+                    if (_owner.IsClosed)
+                    {
+                        throw new ObjectDisposedException(nameof(Mp3Decoder));
+                    }
+
                     if (_frameCount < 0)
                     {
                         nint h = Enter();
@@ -141,6 +161,11 @@ namespace ClassicUO.IO.Audio
                 return false;
             }
 
+            if (!CloseResolved(out error))
+            {
+                return false;
+            }
+
             byte* copy = AllocInput(mp3.Length);
             mp3.CopyTo(new Span<byte>(copy, mp3.Length));
 
@@ -151,6 +176,11 @@ namespace ClassicUO.IO.Audio
         public static bool TryOpen(Stream stream, out Mp3Decoder decoder, out string error)
         {
             decoder = null;
+
+            if (!CloseResolved(out error))
+            {
+                return false;
+            }
 
             try
             {
@@ -204,6 +234,62 @@ namespace ClassicUO.IO.Audio
                 error = ex.Message;
 
                 return false;
+            }
+        }
+
+        // Resolves cuo_mp3_close (by calling it with null, a no-op) before anything native is allocated, so a library
+        // that exports open but not close fails the open with an error instead of leaving what nothing can release.
+        private static bool CloseResolved(out string error)
+        {
+            Action<nint> hook = CloseOverride;
+
+            if (hook == null && Volatile.Read(ref s_CloseResolved) == 1)
+            {
+                error = null;
+
+                return true;
+            }
+
+            try
+            {
+                if (hook != null)
+                {
+                    hook(0);
+                }
+                else
+                {
+                    Mp3Native.Close(0);
+                    Volatile.Write(ref s_CloseResolved, 1);
+                }
+
+                error = null;
+
+                return true;
+            }
+            catch (Exception ex) when (ex is DllNotFoundException || ex is EntryPointNotFoundException || ex is BadImageFormatException)
+            {
+                error = $"native MP3 decoder ({Mp3Native.Library}) has no usable release entry point: {ex.GetType().Name}: {ex.Message}";
+
+                if (hook == null && Interlocked.Exchange(ref s_CloseResolved, -1) != -1)
+                {
+                    Log.Error(error);
+                }
+
+                return false;
+            }
+        }
+
+        private static void NativeClose(nint handle)
+        {
+            Action<nint> hook = CloseOverride;
+
+            if (hook != null)
+            {
+                hook(handle);
+            }
+            else
+            {
+                Mp3Native.Close(handle);
             }
         }
 
@@ -270,12 +356,17 @@ namespace ClassicUO.IO.Audio
             {
                 if (!owned)
                 {
-                    if (handle != 0)
+                    try
                     {
-                        Mp3Native.Close(handle);
+                        if (handle != 0)
+                        {
+                            NativeClose(handle);
+                        }
                     }
-
-                    FreeInput(data);
+                    finally
+                    {
+                        FreeInput(data);
+                    }
                 }
             }
         }
@@ -386,13 +477,30 @@ namespace ClassicUO.IO.Audio
 
             public override bool IsInvalid => handle == 0;
 
+            // Never throws (it can run on the finaliser thread): a failing close is counted and the input is still freed.
             protected override bool ReleaseHandle()
             {
-                Mp3Native.Close(handle);
-                FreeInput(_data);
-                _data = null;
+                bool closed = true;
 
-                return true;
+                try
+                {
+                    NativeClose(handle);
+                }
+                catch
+                {
+                    closed = false;
+                    Interlocked.Increment(ref s_CloseFailures);
+                }
+                finally
+                {
+                    if (_data != null)
+                    {
+                        FreeInput(_data);
+                        _data = null;
+                    }
+                }
+
+                return closed;
             }
         }
     }
