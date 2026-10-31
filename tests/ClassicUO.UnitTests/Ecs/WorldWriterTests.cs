@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using ClassicUO.Ecs;
 using ClassicUO.Game;
 using ClassicUO.Game.Data;
@@ -13,15 +14,17 @@ namespace ClassicUO.UnitTests.Ecs
 {
     // T1 (ecs-transition-plan.md): the world-item operations of WorldWriter must leave the GameObject and the ECS exactly as
     // the handler code they replace did. Each case runs the same packet through a copy of the old item branch of
-    // PacketHandlers.UpdateGameObject on one World and through the funnel on another,
-    // from identical starting states, and compares every item property, the mirror record and tags, the wearers' equipment
-    // dirty flags, the active-items list and the mirror's counters. Multis (type 2) are not covered: CheckGraphicChange loads
-    // the multi from the UO files. RemoveWorldItem (0x1D) is not covered either: Entity.Destroy needs a running client
-    // (GameActions.SendCloseStatus reads Client.Game); it makes the same calls in the same order as DeleteObject did, and the
-    // client runs check it (-ecscheck, CUO_ECS_PARITY).
+    // PacketHandlers.UpdateGameObject (or of DeleteObject's item branch) on one World and through the funnel on another, from
+    // identical starting states, and compares every item property, the child lists in order, the mirror records and tags, the
+    // wearer's equipment dirty tag (cleared before the packet), the mirror's contents and equipment indexes in order, the
+    // active-items list in order and the mirror's counters.
+    //
+    // Not covered here: real tile placement (the test Worlds have no Map: building one needs the UO map files, so tile
+    // insertion order and parking are covered by the client runs, -ecscheck and CUO_ECS_PARITY), and multis (type 2:
+    // CheckGraphicChange loads the multi from the UO files).
     public class WorldWriterTests
     {
-        private const uint MOB = 0x0000_3000, BAG = 0x4000_7000, ITEM = 0x4000_7001, CHILD = 0x4000_7002;
+        private const uint MOB = 0x0000_3000, BAG = 0x4000_7000, ITEM = 0x4000_7001, CHILD = 0x4000_7002, GRANDCHILD = 0x4000_7003;
 
         internal struct Packet
         {
@@ -37,8 +40,9 @@ namespace ClassicUO.UnitTests.Ecs
             public byte Type;
         }
 
-        // the item branch of UpdateGameObject before T1 (UI and cursor side effects left out: they write no world state)
-        internal static Item OldUpsert(World world, in Packet p)
+        // the item branch of UpdateGameObject before T1. The UI and cursor side effects are left out (they write no world
+        // state), except the callback point: the new-corpse SingleClick ran between the writes and the tile placement.
+        internal static Item OldUpsert(World world, in Packet p, Action<Item> beforePlacement = null)
         {
             Entity obj = world.Get(p.Serial);
             Item item;
@@ -99,6 +103,8 @@ namespace ClassicUO.UnitTests.Ecs
             item.Direction = p.Direction;
             item.CheckGraphicChange(item.AnimIndex);
 
+            beforePlacement?.Invoke(item);
+
             if (item.OnGround)
             {
                 item.SetInWorldTile(item.X, item.Y, item.Z);
@@ -107,8 +113,29 @@ namespace ClassicUO.UnitTests.Ecs
             return item;
         }
 
-        private static Item NewUpsert(World world, in Packet p, out bool created) =>
-            world.Writer.UpsertWorldItem(world.Get(p.Serial), p.Serial, p.Graphic, p.GraphicInc, p.Count, p.X, p.Y, p.Z, p.Direction, p.Hue, p.Flags, p.Type, out created);
+        private static Item NewUpsert(World world, in Packet p, out bool created, Action<Item> beforePlacement = null)
+        {
+            Item item = world.Writer.UpsertWorldItem(p.Serial, p.Graphic, p.GraphicInc, p.Count, p.X, p.Y, p.Z, p.Direction, p.Hue, p.Flags, p.Type, out created);
+            beforePlacement?.Invoke(item);
+            world.Writer.PlaceWorldItem(item);
+
+            return item;
+        }
+
+        // DeleteObject's item branch before T1 (the gump refreshes left out)
+        internal static void OldRemove(World world, uint serial)
+        {
+            Item item = (Item)world.Get(serial);
+
+            if (item.IsMulti)
+            {
+                world.HouseManager.Remove(serial);
+            }
+
+            Entity cont = world.Get(item.Container);
+            cont?.Remove(item);
+            world.RemoveItem(serial, true);
+        }
 
         // the starting states: a mobile wearing ITEM, a bag holding ITEM, ITEM on the ground, or no ITEM
         public enum Start { None, Ground, InBag, Worn, GroundCorpse }
@@ -124,48 +151,64 @@ namespace ClassicUO.UnitTests.Ecs
             bag.Graphic = 0xE75;
             bag.SetInWorldTile(1001, 1000, 0);
 
-            if (start == Start.None)
+            if (start != Start.None)
             {
-                return world;
+                Item it = world.GetOrCreateItem(ITEM);
+                it.Graphic = start == Start.GroundCorpse ? (ushort)0x2006 : (ushort)0x1515;
+                it.Hue = 0x21;
+                it.Amount = 3;
+
+                switch (start)
+                {
+                    case Start.Ground:
+                    case Start.GroundCorpse:
+                        it.SetInWorldTile(1002, 1003, 5);
+
+                        break;
+
+                    case Start.InBag:
+                        // a sibling before ITEM, so the child-list order is visible
+                        Item sibling = world.GetOrCreateItem(0x4000_7009);
+                        sibling.Container = BAG;
+                        bag.PushToBack(sibling);
+                        world.Ecs.Sync(sibling);
+                        it.Container = BAG;
+                        it.X = 40;
+                        it.Y = 50;
+                        bag.PushToBack(it);
+                        world.Ecs.Sync(it);
+
+                        break;
+
+                    case Start.Worn:
+                        it.Container = MOB;
+                        it.Layer = Layer.Shirt;
+                        m.PushToBack(it);
+                        world.Ecs.Sync(it);
+
+                        break;
+                }
+
+                // contents inside ITEM, two levels, so a removal has a subtree to remove
+                Item child = world.GetOrCreateItem(CHILD);
+                child.Graphic = 0xF7A;
+                child.Container = ITEM;
+                it.PushToBack(child);
+                world.Ecs.Sync(child);
+                Item grandchild = world.GetOrCreateItem(GRANDCHILD);
+                grandchild.Graphic = 0xF7B;
+                grandchild.Container = CHILD;
+                child.PushToBack(grandchild);
+                world.Ecs.Sync(grandchild);
             }
 
-            Item it = world.GetOrCreateItem(ITEM);
-            it.Graphic = start == Start.GroundCorpse ? (ushort)0x2006 : (ushort)0x1515;
-            it.Hue = 0x21;
-            it.Amount = 3;
+            // the wearer's equipment tag starts clear: a missed unequip would leave it clear
+            world.Ecs.Mirror.TryGetEntity(MOB, out EcsEntity me).Should().BeTrue();
 
-            switch (start)
+            if (me.Tags.Has<EquipmentDirty>())
             {
-                case Start.Ground:
-                case Start.GroundCorpse:
-                    it.SetInWorldTile(1002, 1003, 5);
-
-                    break;
-
-                case Start.InBag:
-                    it.Container = BAG;
-                    it.X = 40;
-                    it.Y = 50;
-                    bag.PushToBack(it);
-                    world.Ecs.Sync(it);
-
-                    break;
-
-                case Start.Worn:
-                    it.Container = MOB;
-                    it.Layer = Layer.Shirt;
-                    m.PushToBack(it);
-                    world.Ecs.Sync(it);
-
-                    break;
+                me.RemoveTag<EquipmentDirty>();
             }
-
-            // a child inside ITEM, so a removal has contents to remove
-            Item child = world.GetOrCreateItem(CHILD);
-            child.Graphic = 0xF7A;
-            child.Container = ITEM;
-            it.PushToBack(child);
-            world.Ecs.Sync(child);
 
             return world;
         }
@@ -201,16 +244,20 @@ namespace ClassicUO.UnitTests.Ecs
             Packet p = Packets[packet];
 
             Item a = OldUpsert(oldWorld, p);
+            long writes = newWorld.Ecs.ItemMirrorWrites;
             Item b = NewUpsert(newWorld, p, out bool created);
 
             created.Should().Be(start == Start.None);
             b.Should().BeSameAs(newWorld.Items.Get(ITEM));
+            (newWorld.Ecs.ItemMirrorWrites - writes).Should().Be(1, "the operation writes the item's mirror record once");
             AssertSameWorld(oldWorld, newWorld);
 
             // a second identical packet (a resend) on top
             OldUpsert(oldWorld, p);
+            writes = newWorld.Ecs.ItemMirrorWrites;
             NewUpsert(newWorld, p, out created);
             created.Should().BeFalse();
+            (newWorld.Ecs.ItemMirrorWrites - writes).Should().Be(1);
             AssertSameWorld(oldWorld, newWorld);
         }
 
@@ -225,13 +272,42 @@ namespace ClassicUO.UnitTests.Ecs
                 NewUpsert(newWorld, p, out _);
                 AssertSameWorld(oldWorld, newWorld);
             }
+        }
 
+        [Theory]
+        [InlineData(Start.None)]
+        [InlineData(Start.InBag)]
+        [InlineData(Start.GroundCorpse)]
+        public void The_Callback_Sees_The_Same_State_As_Before_T1(Start start)
+        {
+            // 0x1A's new-corpse SingleClick sends a packet and plugin send hooks run synchronously: they must see the item
+            // written (and its mirror record) but not yet placed, as before the funnel
+            World oldWorld = Build(start), newWorld = Build(start);
+            Packet p = Packets[3];
+            string seenOld = null, seenNew = null;
+
+            OldUpsert(oldWorld, p, it => seenOld = Snapshot(oldWorld, it));
+            NewUpsert(newWorld, p, out _, it =>
+            {
+                newWorld.Writer.InScope.Should().BeFalse("callbacks run outside the operation");
+                seenNew = Snapshot(newWorld, it);
+            });
+
+            seenNew.Should().Be(seenOld);
+            AssertSameWorld(oldWorld, newWorld);
+        }
+
+        private static string Snapshot(World world, Item it)
+        {
+            world.Ecs.Mirror.TryGet(it.Serial, out MirrorRecord r);
+
+            return $"{it.Graphic:X4} {it.Hue:X4} {it.X},{it.Y},{it.Z} {it.Direction} {it.Layer} {it.UsedLayer} {it.AnimIndex} {it.Container:X8} " +
+                   $"pos={it.IsPositionChanged} drawn={it.AllowedToDraw} | {r.Graphic:X4} {r.X},{r.Y},{r.Z} {r.Facing} {r.Layer}";
         }
 
         [Fact]
-        public void The_Operation_Writes_The_Mirror_Once()
+        public void The_Operation_Leaves_No_Scope_And_The_Hooks_Sync_Again()
         {
-            // the hooks (GetOrCreateItem, RemoveItemFromContainer, the Direction setter, AddToTile) fold into one commit
             World world = Build(Start.InBag);
             world.Ecs.Mirror.TryGetEntity(ITEM, out EcsEntity before).Should().BeTrue();
 
@@ -240,17 +316,158 @@ namespace ClassicUO.UnitTests.Ecs
             world.Ecs.Mirror.TryGetEntity(ITEM, out EcsEntity after).Should().BeTrue();
             after.Id.Should().Be(before.Id, "an existing entity is updated in place");
             world.Writer.InScope.Should().BeFalse();
+            world.Ecs.IsFolding.Should().BeFalse();
             world.Items.Get(ITEM).Direction = Direction.East; // after the operation, the hooks sync again
             world.Ecs.Mirror.TryGet(ITEM, out MirrorRecord r).Should().BeTrue();
             r.Facing.Should().Be((byte)Direction.East);
         }
 
+        [Fact]
+        public void Placement_Needs_The_Item_The_Upsert_Returned()
+        {
+            World world = Build(Start.None);
+            Item other = world.Items.Get(BAG);
+
+            Action noUpsert = () => world.Writer.PlaceWorldItem(other);
+            noUpsert.Should().Throw<ArgumentException>();
+
+            Item it = world.Writer.UpsertWorldItem(ITEM, 0xEED, 0, 1, 1100, 1100, 0, Direction.North, 0, Flags.None, 0, out _);
+            Action wrong = () => world.Writer.PlaceWorldItem(other);
+            wrong.Should().Throw<ArgumentException>();
+            world.Writer.PlaceWorldItem(it);
+
+            Action twice = () => world.Writer.PlaceWorldItem(it);
+            twice.Should().Throw<ArgumentException>("one placement per upsert");
+        }
+
+        [Fact]
+        public void A_Live_Mobile_Serial_Is_Rejected_Before_Any_Change()
+        {
+            World world = Build(Start.None);
+            long writes = world.Ecs.ItemMirrorWrites;
+            int items = world.Items.Count;
+
+            Action upsert = () => world.Writer.UpsertWorldItem(MOB, 0xEED, 0, 1, 1, 1, 0, Direction.North, 0, Flags.None, 3, out _);
+            upsert.Should().Throw<ArgumentException>();
+
+            world.Items.Count.Should().Be(items);
+            world.Ecs.ItemMirrorWrites.Should().Be(writes);
+            world.Writer.InScope.Should().BeFalse();
+        }
+
+        [Fact]
+        public void A_Mobile_Valued_Serial_With_Type_3_Is_An_Item_As_Before()
+        {
+            // the handler routes a mobile-valued serial with type 3 to the item path (no live mobile holds it); World.Get
+            // finds the item among the items on the second packet
+            const uint MSERIAL = 0x0000_3333;
+            World oldWorld = Build(Start.None), newWorld = Build(Start.None);
+            var p = new Packet { Serial = MSERIAL, Graphic = 0x1515, Count = 1, X = 1050, Y = 1050, Direction = Direction.North, Type = 3 };
+
+            OldUpsert(oldWorld, p);
+            NewUpsert(newWorld, p, out bool created);
+            created.Should().BeTrue();
+            p.X = 1051;
+            OldUpsert(oldWorld, p);
+            NewUpsert(newWorld, p, out created);
+            created.Should().BeFalse();
+
+            AssertSameItem(oldWorld.Items.Get(MSERIAL), newWorld.Items.Get(MSERIAL));
+            AssertSameWorld(oldWorld, newWorld);
+        }
+
+        [Theory]
+        [InlineData(Start.Ground)]
+        [InlineData(Start.InBag)]
+        [InlineData(Start.Worn)]
+        [InlineData(Start.GroundCorpse)]
+        public void RemoveWorldItem_Equals_The_Old_Path(Start start)
+        {
+            World oldWorld = Build(start), newWorld = Build(start);
+            Entity expectedParent = newWorld.Get(newWorld.Items.Get(ITEM).Container);
+
+            OldRemove(oldWorld, ITEM);
+            newWorld.Writer.RemoveWorldItem(newWorld.Items.Get(ITEM), out Entity parent);
+
+            parent.Should().BeSameAs(expectedParent);
+            newWorld.Items.Get(ITEM).Should().BeNull();
+            newWorld.Items.Get(CHILD).Should().BeNull("the contents go with it");
+            newWorld.Writer.InScope.Should().BeFalse();
+            AssertSameWorld(oldWorld, newWorld);
+        }
+
+        [Fact]
+        public void RemoveWorldItem_Rejects_Foreign_And_Stale_Items_Before_Any_Change()
+        {
+            World world = Build(Start.InBag), other = Build(Start.InBag);
+            Item live = world.Items.Get(ITEM);
+
+            // an instance of another World
+            Action foreign = () => world.Writer.RemoveWorldItem(other.Items.Get(ITEM), out _);
+            foreign.Should().Throw<ArgumentException>();
+
+            // a stale instance whose serial World now holds with a replacement
+            Item stale = Item.Create(world, ITEM);
+            Action staleRemove = () => world.Writer.RemoveWorldItem(stale, out _);
+            staleRemove.Should().Throw<ArgumentException>();
+
+            world.Items.Get(ITEM).Should().BeSameAs(live, "the replacement (here: the live item) stays");
+            live.IsDestroyed.Should().BeFalse();
+            world.Items.Get(BAG).Items.Should().NotBeNull();
+            ChildSerials(world.Items.Get(BAG)).Should().Contain(ITEM);
+            world.Writer.InScope.Should().BeFalse();
+        }
+
+        [Fact]
+        public void The_Fold_Is_Per_Instance_And_Not_Reentrant()
+        {
+            World world = Build(Start.InBag);
+            Item it = world.Items.Get(ITEM);
+            Item replacement = Item.Create(world, ITEM);
+
+            world.Ecs.BeginFold(replacement);
+            Action nested = () => world.Ecs.BeginFold(it);
+            nested.Should().Throw<InvalidOperationException>();
+
+            // the held instance with the same serial is not folded: its Sync writes the mirror
+            long writes = world.Ecs.ItemMirrorWrites;
+            world.Ecs.Sync(it);
+            world.Ecs.ItemMirrorWrites.Should().Be(writes + 1);
+
+            world.Ecs.EndFold(it); // another instance's end: no effect
+            world.Ecs.IsFolding.Should().BeTrue();
+            world.Ecs.EndFold(replacement);
+            world.Ecs.IsFolding.Should().BeFalse();
+
+            // a fold left open makes the next operation throw before it changes anything
+            world.Ecs.BeginFold(replacement);
+            Action op = () => world.Writer.UpsertWorldItem(ITEM, 0xEED, 0, 1, 1, 1, 0, Direction.North, 0, Flags.None, 0, out _);
+            op.Should().Throw<InvalidOperationException>();
+            world.Writer.InScope.Should().BeFalse();
+            it.Container.Should().Be(BAG, "nothing was changed");
+            world.Ecs.EndFold(replacement);
+        }
+
+        private static List<uint> ChildSerials(Entity e)
+        {
+            var list = new List<uint>();
+
+            for (LinkedObject i = e?.Items; i != null; i = i.Next)
+            {
+                list.Add(((Entity)i).Serial);
+            }
+
+            return list;
+        }
+
+        private static List<uint> Serials(Friflo.Engine.ECS.Entities entities) => entities.Select(x => x.GetComponent<Serial>().Value).ToList();
+
         private static void AssertSameWorld(World a, World b)
         {
             a.Items.Count.Should().Be(b.Items.Count);
-            a.ActiveItemCount.Should().Be(b.ActiveItemCount, "the corpse queue follows the same Syncs");
+            b.ActiveItems.Select(i => i.Serial).Should().Equal(a.ActiveItems.Select(i => i.Serial), "the active-items list, in order");
 
-            foreach (uint serial in new[] { ITEM, CHILD, BAG })
+            foreach (uint serial in new[] { ITEM, CHILD, GRANDCHILD, BAG })
             {
                 Item x = a.Items.Get(serial), y = b.Items.Get(serial);
                 (x == null).Should().Be(y == null, $"0x{serial:X8} exists in both or neither");
@@ -261,13 +478,15 @@ namespace ClassicUO.UnitTests.Ecs
                 }
             }
 
+            ChildSerials(b.Mobiles.Get(MOB)).Should().Equal(ChildSerials(a.Mobiles.Get(MOB)), "the wearer's child list, in order");
+
             WorldMirror ma = a.Ecs.Mirror, mb = b.Ecs.Mirror;
             mb.Count.Should().Be(ma.Count);
             mb.ItemCount.Should().Be(ma.ItemCount);
             mb.MobileCount.Should().Be(ma.MobileCount);
             mb.Epoch.Should().Be(ma.Epoch);
 
-            foreach (uint serial in new[] { ITEM, CHILD, BAG, MOB })
+            foreach (uint serial in new[] { ITEM, CHILD, GRANDCHILD, BAG, MOB })
             {
                 bool ha = ma.TryGet(serial, out MirrorRecord ra), hb = mb.TryGet(serial, out MirrorRecord rb);
                 hb.Should().Be(ha, $"0x{serial:X8} mirrored in both or neither");
@@ -284,8 +503,12 @@ namespace ClassicUO.UnitTests.Ecs
                 }
             }
 
-            mb.GetContents(BAG).Count.Should().Be(ma.GetContents(BAG).Count);
-            mb.GetEquipment(MOB).Count.Should().Be(ma.GetEquipment(MOB).Count);
+            foreach (uint parent in new[] { BAG, ITEM, CHILD })
+            {
+                Serials(mb.GetContents(parent)).Should().Equal(Serials(ma.GetContents(parent)), $"the contents index of 0x{parent:X8}, in order");
+            }
+
+            Serials(mb.GetEquipment(MOB)).Should().Equal(Serials(ma.GetEquipment(MOB)), "the equipment index, in order");
         }
 
         private static void AssertSameItem(Item x, Item y)
@@ -309,7 +532,9 @@ namespace ClassicUO.UnitTests.Ecs
             y.IsDestroyed.Should().Be(x.IsDestroyed);
             y.InUpdateList.Should().Be(x.InUpdateList);
             y.IsPositionChanged.Should().Be(x.IsPositionChanged);
-            (y.Items == null).Should().Be(x.Items == null, "child list");
+            ChildSerials(y).Should().Equal(ChildSerials(x), "the child list, in order");
+            (y.Next == null).Should().Be(x.Next == null);
+            (y.Previous == null).Should().Be(x.Previous == null);
         }
     }
 
@@ -387,7 +612,7 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Fact]
-        public void Writes_In_Scope_Are_Not_Counted()
+        public void The_Mutation_Methods_Are_Covered()
         {
             if (!FunnelCheck.Available)
             {
@@ -395,29 +620,51 @@ namespace ClassicUO.UnitTests.Ecs
             }
 
             var world = new World();
-            Item it = world.GetOrCreateItem(ITEM);
+            Mobile m = world.GetOrCreateMobile(MOB);
+            m.X = 100;
+            m.Y = 100;
             FunnelCheck.Reset();
 
-            using (world.Writer.Enter())
+            // SA poison: a private field behind a method
+            m.SetSAPoison(true);
+            FunnelCheck.Count(FunnelField.IsSAPoisoned).Should().Be(1);
+
+            // the step queue: a second step on a populated queue writes no property, only the queue
+            m.EnqueueStep(101, 100, 0, Direction.East, false).Should().BeTrue();
+            long steps = FunnelCheck.Count(FunnelField.Steps);
+            steps.Should().BeGreaterThan(0);
+            long props = FunnelCheck.Total - steps - FunnelCheck.Count(FunnelField.AnimationState);
+            m.EnqueueStep(102, 100, 0, Direction.East, false).Should().BeTrue();
+            FunnelCheck.Count(FunnelField.Steps).Should().BeGreaterThan(steps);
+            m.ClearSteps();
+            FunnelCheck.Count(FunnelField.Steps).Should().BeGreaterThan(steps + 1);
+            props.Should().BeGreaterThanOrEqualTo(0);
+
+            // the private animation timer
+            long anim = FunnelCheck.Count(FunnelField.AnimationState);
+            m.SetAnimation(3, 1, 2);
+            FunnelCheck.Count(FunnelField.AnimationState).Should().BeGreaterThan(anim);
+        }
+
+        [Fact]
+        public void A_ReKey_Serial_Write_Is_Counted()
+        {
+            if (!FunnelCheck.Available)
             {
-                world.Writer.InScope.Should().BeTrue();
-                it.Graphic = 1;
-                it.OffsetZ = 2;
-
-                using (world.Writer.Enter())
-                {
-                    it.Hue = 3;
-                }
-
-                world.Writer.InScope.Should().BeTrue("scopes nest");
-                it.X = 4;
+                return;
             }
 
-            world.Writer.InScope.Should().BeFalse();
-            FunnelCheck.Total.Should().Be(0);
+            // 0xAF (DisplayDeath): the dictionary moves to the new key first, then the Serial setter runs
+            var world = new World();
+            Mobile m = world.GetOrCreateMobile(MOB);
+            FunnelCheck.Reset();
 
-            it.Graphic = 5;
-            FunnelCheck.Total.Should().Be(1);
+            uint newSerial = MOB | 0x8000_0000;
+            world.Mobiles.Remove(m.Serial);
+            world.Mobiles[newSerial] = m;
+            m.Serial = newSerial;
+
+            FunnelCheck.Count(FunnelField.Serial).Should().Be(1);
         }
 
         [Fact]
@@ -434,12 +681,25 @@ namespace ClassicUO.UnitTests.Ecs
             it.Container = bag.Serial;
             bag.PushToBack(it);
             world.Ecs.Sync(it);
+            Item child = world.GetOrCreateItem(0x4000_7103);
+            child.Container = ITEM;
+            it.PushToBack(child);
+            world.Ecs.Sync(child);
             FunnelCheck.Reset();
 
-            world.Writer.UpsertWorldItem(world.Get(ITEM), ITEM, 0x2006, 0, 0x190, 1000, 1000, 0, Direction.Running | Direction.South, 0x455, Flags.None, 0, out _);
-            world.Writer.UpsertWorldItem(null, 0x4000_7102, 0xEED, 1, 5, 1001, 1000, 0, Direction.North, 0, Flags.None, 0, out _);
-
+            Item a = world.Writer.UpsertWorldItem(ITEM, 0x2006, 0, 0x190, 1000, 1000, 0, Direction.Running | Direction.South, 0x455, Flags.None, 0, out _);
+            world.Writer.PlaceWorldItem(a);
+            Item b = world.Writer.UpsertWorldItem(0x4000_7102, 0xEED, 1, 5, 1001, 1000, 0, Direction.North, 0, Flags.None, 0, out _);
+            world.Writer.PlaceWorldItem(b);
             FunnelCheck.Total.Should().Be(0);
+
+            // a removal owns its subtree (the contents' Container writes)
+            world.Writer.RemoveWorldItem(a, out _);
+            FunnelCheck.Total.Should().Be(0);
+
+            // outside an operation the same writes count again
+            b.Hue = 3;
+            FunnelCheck.Total.Should().Be(1);
         }
 
         [Fact]

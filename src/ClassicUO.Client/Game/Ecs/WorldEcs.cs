@@ -65,8 +65,8 @@ namespace ClassicUO.Game
 
             if (entity is Item item)
             {
-                // T1: a WorldWriter operation commits this item itself, once, after its last write
-                if (_folding && item.Serial == _foldSerial)
+                // T1: a WorldWriter operation commits this item itself, once, from its own values
+                if (ReferenceEquals(item, _foldItem))
                 {
                     return;
                 }
@@ -98,29 +98,62 @@ namespace ClassicUO.Game
             }
         }
 
-        // T1: the item whose hook Syncs fold into its WorldWriter operation's commit (one operation at a time; they don't nest)
-        private bool _folding;
-        private uint _foldSerial;
+        // T1: the item instance whose hook Syncs fold into its WorldWriter operation's commit. One operation at a time: a
+        // second BeginFold before EndFold is a programming error (an operation that calls another), and throws.
+        private Item _foldItem;
 
-        /// <summary>T1, <see cref="WorldWriter"/>: from here until <see cref="EndFold"/>, Syncs of the item with this serial are
-        /// skipped; the operation calls <see cref="Commit"/> once at the point the last of them would have run.</summary>
-        internal void BeginFold(uint serial)
+        /// <summary>
+        /// T1, <see cref="WorldWriter"/>: from here until <see cref="EndFold"/>, the hook Syncs of this item instance (not of
+        /// its serial: a replacement instance with the same serial still syncs) are skipped; the operation writes the ECS
+        /// itself with <see cref="CommitItem"/>. Not reentrant.
+        /// </summary>
+        internal void BeginFold(Item item)
         {
-            _foldSerial = serial;
-            _folding = true;
-        }
-
-        internal void EndFold()
-        {
-            _folding = false;
-        }
-
-        /// <summary>T1: the funnel's ECS write for an item: what <see cref="Sync"/> does, with no fold check.</summary>
-        internal void Commit(Item item)
-        {
-            if (item != null && !item.IsDestroyed)
+            if (item == null)
             {
-                SyncItem(item);
+                throw new ArgumentNullException(nameof(item));
+            }
+
+            if (_foldItem != null)
+            {
+                throw new InvalidOperationException($"WorldEcs fold of 0x{item.Serial:X8} inside the fold of 0x{_foldItem.Serial:X8}: funnel operations do not nest");
+            }
+
+            _foldItem = item;
+        }
+
+        /// <summary>Ends the fold of <paramref name="item"/>; a call for another instance (a stale scope) does nothing.</summary>
+        internal void EndFold(Item item)
+        {
+            if (ReferenceEquals(_foldItem, item))
+            {
+                _foldItem = null;
+            }
+        }
+
+        internal bool IsFolding => _foldItem != null;
+
+        /// <summary>T1, tests: every write of an item's mirror record (the hook Syncs and the funnel commits).</summary>
+        internal long ItemMirrorWrites;
+
+        /// <summary>
+        /// T1: the funnel's ECS write for an item, from the operation's values (never from the GameObject's getters: at T4 those
+        /// read the ECS). Ignores an item World does not hold under <see cref="ItemState.Serial"/>, as Sync does.
+        /// </summary>
+        internal void CommitItem(Item item, in ItemState v)
+        {
+            if (item == null || item.IsDestroyed || !ReferenceEquals(_world.Items.Get(v.Serial), item))
+            {
+                return;
+            }
+
+            ItemMirrorWrites++;
+            Mirror.UpsertItem(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.Amount, v.Container, (byte)v.Layer, v.IsMulti);
+
+            // W5: corpses animate in World.Update (SyncItem does the same)
+            if (v.Graphic == 0x2006)
+            {
+                _world.QueueItemUpdate(item);
             }
         }
 
@@ -132,6 +165,7 @@ namespace ClassicUO.Game
                 return;
             }
 
+            ItemMirrorWrites++;
             Mirror.UpsertItem
             (
                 item.Serial,
@@ -780,5 +814,21 @@ namespace ClassicUO.Game
                 Log.Warn($"[ECS] mismatch: {message}");
             }
         }
+    }
+
+    /// <summary>
+    /// T1: the ECS-owned values of a world item as a funnel operation computed them. The operation writes the ECS
+    /// (<see cref="WorldEcs.CommitItem"/>) and the GameObject cache from this, never by reading one back from the other.
+    /// </summary>
+    internal struct ItemState
+    {
+        public uint Serial;
+        public ushort Graphic, Hue, X, Y, Amount;
+        public sbyte Z;
+        public Direction Direction;
+        public ClassicUO.Game.Data.Flags Flags;
+        public uint Container;
+        public Layer Layer;
+        public bool IsMulti;
     }
 }

@@ -68,7 +68,7 @@ namespace ClassicUO.Game.GameObjects
         private string _name;
         public uint LastStepTime { get => _lastStepTime; set { FunnelCheck.Write(this, FunnelField.LastStepTime); _lastStepTime = value; } }
         public string Name { get => _name; set { FunnelCheck.Write(this, FunnelField.Name); _name = value; } }
-        public uint Serial { get => _serial; set { FunnelCheck.Write(this, FunnelField.Serial); _serial = value; } }
+        public uint Serial { get => _serial; set { FunnelCheck.WriteSerial(this, value); _serial = value; } }
         public HitsRequestStatus HitsRequest;
 
 
@@ -103,6 +103,12 @@ namespace ClassicUO.Game.GameObjects
 
         public void FixHue(ushort hue)
         {
+            Hue = FixedHue(hue);
+        }
+
+        /// <summary>T1: the hue <see cref="FixHue"/> stores for a packet hue (pure; the funnel writes the result itself).</summary>
+        internal static ushort FixedHue(ushort hue)
+        {
             ushort fixedColor = (ushort) (hue & 0x3FFF);
 
             if (fixedColor != 0)
@@ -119,7 +125,7 @@ namespace ClassicUO.Game.GameObjects
                 fixedColor = (ushort) (hue & 0x8000);
             }
 
-            Hue = fixedColor;
+            return fixedColor;
         }
 
         public void UpdateHits(byte perc)

@@ -341,29 +341,50 @@ namespace ClassicUO.Game.GameObjects
 
         public override void CheckGraphicChange(byte animIndex = 0)
         {
+            if (!IsMulti && IsCorpse)
+            {
+                Direction dir = Direction;
+                CorpseState(ref dir, out bool usedLayer, out Layer layer);
+                AnimIndex = 99;
+                UsedLayer = usedLayer;
+
+                if (usedLayer)
+                {
+                    Direction = dir;
+                }
+
+                Layer = layer;
+            }
+
+            RefreshGraphicState();
+        }
+
+        /// <summary>
+        /// T1: what <see cref="CheckGraphicChange"/> makes of a corpse's direction (the running bit sets UsedLayer and is
+        /// stripped; the remaining direction is the corpse's layer). Its animation index becomes 99. Pure: the funnel computes
+        /// a corpse's values with it before it writes them.
+        /// </summary>
+        internal static void CorpseState(ref Direction direction, out bool usedLayer, out Layer layer)
+        {
+            usedLayer = (direction & Direction.Running) != 0;
+
+            if (usedLayer)
+            {
+                direction &= (Direction)0x7F;
+            }
+
+            layer = (Layer)direction;
+        }
+
+        /// <summary>
+        /// T1: the part of <see cref="CheckGraphicChange"/> that writes no ECS-owned value: whether the item is drawn, and a
+        /// multi's (re)load. Reads Graphic, IsMulti, WantUpdateMulti, X and Y, so it runs after the funnel wrote them.
+        /// </summary>
+        internal void RefreshGraphicState()
+        {
             if (!IsMulti)
             {
-                if (!IsCorpse)
-                {
-                    AllowedToDraw = CanBeDrawn(World, Graphic);
-                }
-                else
-                {
-                    AnimIndex = 99;
-
-                    if ((Direction & Direction.Running) != 0)
-                    {
-                        UsedLayer = true;
-                        Direction &= (Direction)0x7F;
-                    }
-                    else
-                    {
-                        UsedLayer = false;
-                    }
-
-                    Layer = (Layer)Direction;
-                    AllowedToDraw = true;
-                }
+                AllowedToDraw = IsCorpse || CanBeDrawn(World, Graphic);
             }
             else if (WantUpdateMulti)
             {

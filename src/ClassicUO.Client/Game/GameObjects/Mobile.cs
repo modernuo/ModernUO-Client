@@ -308,6 +308,7 @@ namespace ClassicUO.Game.GameObjects
 
         public void SetSAPoison(bool value)
         {
+            FunnelCheck.Write(this, FunnelField.IsSAPoisoned);
             _isSA_Poisoned = value;
             PushInputs();
         }
@@ -315,6 +316,7 @@ namespace ClassicUO.Game.GameObjects
         private void CalculateRandomIdleTime()
         {
             const int TIME = 30000;
+            FunnelCheck.Write(this, FunnelField.AnimationState);
             _lastAnimationIdleDelay = Time.Ticks + (TIME + RandomHelper.GetValue(0, TIME));
 
             // E4: the idle due time (and, from SetAnimation, the frame due time written just before) reach the ECS clock
@@ -380,6 +382,7 @@ namespace ClassicUO.Game.GameObjects
 
         public void ClearSteps()
         {
+            FunnelCheck.Write(this, FunnelField.Steps);
             Steps.Clear();
             Offset = Vector3.Zero;
             PushInputs();
@@ -421,6 +424,7 @@ namespace ClassicUO.Game.GameObjects
                     step.Z = endZ;
                     step.Direction = (byte)moveDir;
                     step.Run = run;
+                    FunnelCheck.Write(this, FunnelField.Steps);
                     Steps.AddToBack(step);
                 }
 
@@ -429,6 +433,7 @@ namespace ClassicUO.Game.GameObjects
                 step.Z = z;
                 step.Direction = (byte)moveDir;
                 step.Run = run;
+                FunnelCheck.Write(this, FunnelField.Steps);
                 Steps.AddToBack(step);
             }
 
@@ -439,6 +444,7 @@ namespace ClassicUO.Game.GameObjects
                 step.Z = z;
                 step.Direction = (byte)direction;
                 step.Run = run;
+                FunnelCheck.Write(this, FunnelField.Steps);
                 Steps.AddToBack(step);
             }
 
@@ -476,6 +482,7 @@ namespace ClassicUO.Game.GameObjects
             bool fromServer = false
         )
         {
+            FunnelCheck.Write(this, FunnelField.AnimationState);
             _animationGroup = id;
             AnimIndex = (byte)(forward ? 0 : frameCount);
             _animationInterval = interval;
@@ -496,6 +503,7 @@ namespace ClassicUO.Game.GameObjects
 
             if (!IsMounted && !InWarMode && ExecuteAnimation)
             {
+                FunnelCheck.Write(this, FunnelField.AnimationState);
                 AnimIndex = 0;
                 AnimationFrameCount = 0;
                 _animationInterval = 1;
@@ -734,6 +742,7 @@ namespace ClassicUO.Game.GameObjects
                     currentDelay = AnimationTiming.Advance(ref timer, frames.Length, out AnimationAdvance advance);
 
                     AnimationFrameCount = timer.FrameCount;
+                    FunnelCheck.Write(this, FunnelField.AnimationState);
                     _animationRepeateMode = timer.RepeatMode;
                     _animationRepeatModeCount = timer.RepeatModeCount;
                     _animationRepeat = timer.Repeat;
@@ -914,6 +923,7 @@ namespace ClassicUO.Game.GameObjects
                         OffsetX = 0;
                         OffsetY = 0;
                         OffsetZ = 0;
+                        FunnelCheck.Write(this, FunnelField.Steps);
                         Steps.RemoveFromFront();
                         CalculateRandomIdleTime();
                         PushInputs();

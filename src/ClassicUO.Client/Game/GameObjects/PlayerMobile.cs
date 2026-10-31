@@ -663,6 +663,7 @@ namespace ClassicUO.Game.GameObjects
 
             Walker.StepsCount++;
 
+            FunnelCheck.Write(this, FunnelField.Steps);
             Steps.AddToBack
             (
                 new Step

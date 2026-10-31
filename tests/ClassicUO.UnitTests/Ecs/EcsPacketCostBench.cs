@@ -165,7 +165,7 @@ namespace ClassicUO.UnitTests.Ecs
             })));
 
             // T1: the whole item branch of UpdateGameObject (0x1A/0xF3) as the handler ran it before the funnel (a copy, in
-            // WorldWriterTests) and through WorldWriter.UpsertWorldItem, paired. Delete as in the row above.
+            // WorldWriterTests) and through WorldWriter.UpsertWorldItem + PlaceWorldItem, paired. Delete as in the row above.
             uint spareOld = SPARE0 + 0x30_0000, spareNew = SPARE0 + 0x40_0000;
             rows.Add(("T1 old path: 0x1A new ground item (handler branch) + delete, per packet", Measure(packets, i =>
             {
@@ -187,7 +187,7 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 if ((i & 1) == 0)
                 {
-                    s.World.Writer.UpsertWorldItem(null, spareNew, 0xEED, 0, 5, 1100, 1100, 0, Direction.North, 0, ClassicUO.Game.Data.Flags.None, 0, out _);
+                    s.World.Writer.PlaceWorldItem(s.World.Writer.UpsertWorldItem(spareNew, 0xEED, 0, 5, 1100, 1100, 0, Direction.North, 0, ClassicUO.Game.Data.Flags.None, 0, out _));
                 }
                 else
                 {
@@ -209,7 +209,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             rows.Add(("T1 funnel: 0x1A update of a ground item", Measure(packets, i =>
             {
-                s.World.Writer.UpsertWorldItem(upd, upd.Serial, 0xEED, 0, (ushort)(1 + (i & 63)), 1100, 1100, 0, Direction.North, 0, ClassicUO.Game.Data.Flags.None, 0, out _);
+                s.World.Writer.PlaceWorldItem(s.World.Writer.UpsertWorldItem(upd.Serial, 0xEED, 0, (ushort)(1 + (i & 63)), 1100, 1100, 0, Direction.North, 0, ClassicUO.Game.Data.Flags.None, 0, out _));
             })));
 
             // 0x25 item into a container, then out
