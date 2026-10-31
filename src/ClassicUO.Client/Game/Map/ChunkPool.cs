@@ -17,6 +17,7 @@ namespace ClassicUO.Game.Map
     {
         private readonly Queue<Chunk> _pool = new Queue<Chunk>();
         private readonly World _owner;
+        private bool _closed;
 
         public ChunkPool(World owner)
         {
@@ -28,10 +29,24 @@ namespace ClassicUO.Game.Map
         public IEnumerable<Chunk> Chunks => _pool;
 
         /// <summary>A pooled chunk, or null (allocate one).</summary>
-        public Chunk Take() => _pool.Count > 0 ? _pool.Dequeue() : null;
+        public Chunk Take()
+        {
+            if (_pool.Count == 0)
+            {
+                return null;
+            }
+
+            Chunk c = _pool.Dequeue();
+            c.InPool = false;
+
+            return c;
+        }
+
+        /// <summary>True after <see cref="Close"/>: nothing is kept any more.</summary>
+        public bool IsClosed => _closed;
 
         /// <summary>False when the pool is full, or the chunk belongs to another World (the caller clears it instead).</summary>
-        public bool CanAdd(Chunk chunk) => ReferenceEquals(chunk.Owner, _owner) && _pool.Count < Constants.PREDICTABLE_CHUNKS;
+        public bool CanAdd(Chunk chunk) => !_closed && !chunk.InPool && ReferenceEquals(chunk.Owner, _owner) && _pool.Count < Constants.PREDICTABLE_CHUNKS;
 
         /// <summary>Keeps a destroyed chunk of this World (<see cref="CanAdd"/> first).</summary>
         public void Add(Chunk chunk)
@@ -41,6 +56,7 @@ namespace ClassicUO.Game.Map
                 throw new InvalidOperationException("chunk of another World, or the pool is full");
             }
 
+            chunk.InPool = true;
             _pool.Enqueue(chunk);
         }
 
@@ -48,11 +64,17 @@ namespace ClassicUO.Game.Map
         public int Prefill(int count, int staticsCapacity)
         {
             int added = 0;
+
+            if (_closed)
+            {
+                return 0;
+            }
+
             count = Math.Min(count, Constants.PREDICTABLE_CHUNKS);
 
             while (_pool.Count < count)
             {
-                var c = new Chunk(_owner) { IsDestroyed = true };
+                var c = new Chunk(_owner) { IsDestroyed = true, InPool = true };
                 c.Mesh.Statics.EnsureCapacity(staticsCapacity);
                 _pool.Enqueue(c);
                 added++;
@@ -66,8 +88,18 @@ namespace ClassicUO.Game.Map
         {
             while (_pool.Count > 0)
             {
-                _pool.Dequeue().Mesh.Clear();
+                Chunk c = _pool.Dequeue();
+                c.InPool = false;
+                c.Mesh.Clear();
             }
+        }
+
+        /// <summary>Terminal release (<see cref="World.ReleasePools"/>): drops the pooled chunks and refuses every later return, so
+        /// a chunk destroyed afterwards clears its mesh instead of re-pooling it.</summary>
+        public void Close()
+        {
+            _closed = true;
+            Clear();
         }
     }
 }

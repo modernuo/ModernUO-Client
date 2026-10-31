@@ -12,7 +12,8 @@ namespace ClassicUO.Game.Map
 {
     internal sealed class Map
     {
-        private static Chunk[] _terrainChunks;
+        // instance-owned: two Worlds (or a World's old and new Map) never share chunk slots
+        private readonly Chunk[] _terrainChunks;
         private static readonly bool[] _blockAccessList = new bool[0x1000];
         private readonly LinkedList<int> _usedIndices = new LinkedList<int>();
         private readonly World _world;
@@ -73,14 +74,18 @@ namespace ClassicUO.Game.Map
 
 
         public Map(World world, int index)
+            : this(world, index, Client.Game.UO.FileManager.Maps.MapBlocksSize[index, 0] * Client.Game.UO.FileManager.Maps.MapBlocksSize[index, 1])
+        {
+        }
+
+        /// <summary>Test seam: a map of <paramref name="blocksCount"/> blocks without the map files.</summary>
+        internal Map(World world, int index, int blocksCount)
         {
             _world = world;
             Index = index;
-            BlocksCount = Client.Game.UO.FileManager.Maps.MapBlocksSize[Index, 0] * Client.Game.UO.FileManager.Maps.MapBlocksSize[Index, 1];
+            BlocksCount = blocksCount;
             _tryLoad = TryLoadQueued;
-
-            if (_terrainChunks == null || BlocksCount > _terrainChunks.Length)
-                _terrainChunks = new Chunk[BlocksCount];
+            _terrainChunks = new Chunk[BlocksCount];
 
             ClearBockAccess();
         }
@@ -116,7 +121,7 @@ namespace ClassicUO.Game.Map
         {
             int block = GetBlock(chunkX, chunkY);
 
-            if (block >= BlocksCount || block >= _terrainChunks.Length)
+            if (block >= BlocksCount)
             {
                 return null;
             }

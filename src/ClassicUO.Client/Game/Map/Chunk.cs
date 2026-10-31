@@ -26,6 +26,10 @@ namespace ClassicUO.Game.Map
 
         public GameObject[,] Tiles { get; } = new GameObject[8, 8];
         public bool IsDestroyed;
+
+        /// <summary>Held by its World's <see cref="ChunkPool"/> (set and cleared by the pool): a second Destroy while pooled is a no-op,
+        /// so the same chunk can never be handed out twice.</summary>
+        internal bool InPool;
         public long LastAccessTime;
         public LinkedListNode<int> Node;
         public readonly ChunkMesh Mesh = new ChunkMesh();
@@ -424,6 +428,11 @@ namespace ClassicUO.Game.Map
 
         public void Destroy()
         {
+            if (InPool)
+            {
+                return; // already destroyed and pooled
+            }
+
             MapObjectRecycler recycler = _world.MapRecycler;
             uint now = Time.Ticks;
             bool retired = false;
