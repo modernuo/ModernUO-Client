@@ -8,6 +8,8 @@ using Xunit;
 namespace ClassicUO.UnitTests.Ecs
 {
     // AnimationGroupRules.Select over a stub animation table (IAnimationSource) in place of the client's Animations.
+    // the random rolls share AnimationGroupRules' static roll tape with ProbeIsolationTests: one collection, not in parallel
+    [Collection("AnimationRolls")]
     public class AnimationGroupSelectTests
     {
         private const ushort HUMAN = 400, EQUIP = 401, ANIMAL = 100, MONSTER = 300, SEA = 200, ANIMAL_UOP = 101, HUMAN_UOP = 402, EQUIP_UOP = 403,

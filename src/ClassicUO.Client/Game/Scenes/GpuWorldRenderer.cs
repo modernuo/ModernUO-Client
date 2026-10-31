@@ -60,6 +60,45 @@ namespace ClassicUO.Game.Scenes
         public WorldRenderer World => _world;
         public int CaptureFallbacks { get; private set; }
 
+        /// <summary>E12 (CUO_GPU_ITEM_CHECK): the probe pass runs the capture before the batcher begins (and suppressed:
+        /// UltimaBatcher2D.BeginSuppress) and discards what it can't map (the batcher would draw it); <see cref="ProbeFallbacks"/>
+        /// counts those. Each object it captures has its view state (FrameInfo, the mirror bit: picking reads them) journaled in
+        /// <see cref="ProbeViews"/> first, so the probe can put it back.</summary>
+        internal bool Probe;
+        internal int ProbeFallbacks;
+        internal System.Collections.Generic.List<(GameObject Obj, Rectangle FrameInfo, bool Flipped)> ProbeViews;
+
+        /// <summary>E12: a sprite the capture couldn't map (FNA draws it, or the probe drops it), as the view asked for it:
+        /// the whole request, including which draw asked (<see cref="FallbackKind"/>) and a seated draw's deformation.</summary>
+        internal readonly record struct FallbackDraw(GameObject Obj, Texture2D Texture, Vector2 Position, Rectangle Source, Vector3 Hue, bool Flip,
+                                                     float Depth, SpriteCaptureMode Mode, float Rotation, InstanceBlend Blend, FallbackKind Kind, Vector3 Mod);
+
+        /// <summary>E12: the draw call behind a <see cref="FallbackDraw"/>.</summary>
+        internal enum FallbackKind : byte
+        {
+            Normal,
+            Scaled,
+            Seated
+        }
+
+        // E12: set around Emit by the scaled and seated draws, so a fallback records which draw asked
+        private FallbackKind _emitKind;
+        private Vector3 _emitMod;
+
+        /// <summary>E12: while set (both passes of a check frame), unmapped sprites are recorded in <see cref="Fallbacks"/>.</summary>
+        internal bool RecordFallbacks;
+        internal System.Collections.Generic.List<FallbackDraw> Fallbacks;
+
+        /// <summary>E12: the dynamic instances captured so far this frame.</summary>
+        internal ReadOnlySpan<SpriteInstance> DynamicInstances => new ReadOnlySpan<SpriteInstance>(_dynamic, 0, _dynamicCount);
+
+        /// <summary>E12: forgets the dynamic instances captured so far (the probe pass's).</summary>
+        internal void ResetDynamic()
+        {
+            _dynamicCount = 0;
+            _object = null;
+        }
+
         /// <summary>Dynamic instances not drawn because a frame had more than WorldOptions.MaxDynamic (cumulative).</summary>
         public long DynamicDropped { get; private set; }
 
@@ -334,6 +373,11 @@ namespace ClassicUO.Game.Scenes
         /// <summary>Draws a world object's view into the dynamic sprites. Sprites the capture can't map stay with the batcher.</summary>
         public bool DrawObject(UltimaBatcher2D batcher, GameObject obj, float depth, bool shadowOnly = false)
         {
+            if (Probe)
+            {
+                ProbeViews.Add((obj, obj.FrameInfo, obj.ViewFlipped));
+            }
+
             if (_ecsMobiles && obj is Mobile m && !shadowOnly && TryDrawMobileEcs(batcher, m, depth, out bool ecsDrawn))
             {
                 return ecsDrawn;
@@ -593,8 +637,11 @@ namespace ClassicUO.Game.Scenes
                 }
 
                 int before = _dynamicCount;
+                _emitKind = FallbackKind.Scaled;
+                bool emitted = Emit(texture, position, source, hue, flip, depth, mode, 0f);
+                _emitKind = FallbackKind.Normal;
 
-                if (!Emit(texture, position, source, hue, flip, depth, mode, 0f))
+                if (!emitted)
                 {
                     return false;
                 }
@@ -620,8 +667,13 @@ namespace ClassicUO.Game.Scenes
             }
 
             int before = _dynamicCount;
+            _emitKind = FallbackKind.Seated;
+            _emitMod = mod;
+            bool emitted = Emit(texture, position, source, hue, flip, depth, SpriteCaptureMode.Normal, 0f);
+            _emitKind = FallbackKind.Normal;
+            _emitMod = default;
 
-            if (!Emit(texture, position, source, hue, flip, depth, SpriteCaptureMode.Normal, 0f))
+            if (!emitted)
             {
                 return false;
             }
@@ -644,13 +696,31 @@ namespace ClassicUO.Game.Scenes
             return Emit(texture, position, source, hue, false, depth, SpriteCaptureMode.Normal, rotation);
         }
 
+        // A sprite the world pass can't draw: false = the batcher draws it (the probe pass drops it instead).
+        private bool Fallback(Texture2D texture, Vector2 position, Rectangle source, Vector3 hue, bool flip, float depth, SpriteCaptureMode mode, float rotation)
+        {
+            CaptureFallbacks++;
+
+            if (RecordFallbacks)
+            {
+                Fallbacks.Add(new FallbackDraw(_object, texture, position, source, hue, flip, depth, mode, rotation, _blend, _emitKind, _emitMod));
+            }
+
+            if (Probe)
+            {
+                ProbeFallbacks++;
+
+                return true;
+            }
+
+            return false;
+        }
+
         private bool Emit(Texture2D texture, Vector2 position, Rectangle source, Vector3 hue, bool flip, float depth, SpriteCaptureMode mode, float rotation)
         {
             if (!PackSpriteMap.TryFind(texture, source, out uint packRef, out Point origin))
             {
-                CaptureFallbacks++;
-
-                return false;
+                return Fallback(texture, position, source, hue, flip, depth, mode, rotation);
             }
 
             // alpha > 1 asks IsometricWorld.fx for the circle of transparency
@@ -700,9 +770,7 @@ namespace ClassicUO.Game.Scenes
                     break;
 
                 default:
-                    CaptureFallbacks++;
-
-                    return false;
+                    return Fallback(texture, position, source, hue, flip, depth, mode, rotation);
             }
 
             SpriteEntry sp;

@@ -85,6 +85,47 @@ namespace ClassicUO.Game
         /// changes every frame, so MobileFrameCache never reuses it.</summary>
         public static uint RandomRolls;
 
+        /// <summary>E12 (CUO_GPU_ITEM_CHECK): one random roll the selection took: the request (the animation flags and the
+        /// group it rolled for) and the value it got.</summary>
+        internal readonly record struct RollRecord(uint Flags, ushort Group, int Value);
+
+        /// <summary>E12 (CUO_GPU_ITEM_CHECK): 0 = roll; 1 = roll and record each roll in <see cref="RollTape"/>. Both passes of a
+        /// check frame record their own tape and start from the same random state (the probe runs between
+        /// RandomHelper.Save and Restore), so the same requests get the same values and the probe's rolls never reach the
+        /// drawn frame. Nothing is replayed: a pass that rolls more, fewer or different requests is a difference
+        /// (<see cref="RollsDiffer"/>).</summary>
+        internal static int RollMode;
+        internal static System.Collections.Generic.List<RollRecord> RollTape;
+
+        internal static int Roll(AnimationFlags flags, ushort group)
+        {
+            int value = RandomHelper.GetValue();
+
+            if (RollMode != 0)
+            {
+                RollTape.Add(new RollRecord((uint)flags, group, value));
+            }
+
+            return value;
+        }
+
+        /// <summary>E12: two passes' roll tapes differ (count, order, request or value); <paramref name="first"/> is the first
+        /// index that differs.</summary>
+        internal static bool RollsDiffer(System.Collections.Generic.List<RollRecord> a, System.Collections.Generic.List<RollRecord> b, out int first)
+        {
+            int n = System.Math.Min(a.Count, b.Count);
+
+            for (first = 0; first < n; first++)
+            {
+                if (a[first] != b[first])
+                {
+                    return true;
+                }
+            }
+
+            return a.Count != b.Count;
+        }
+
         private static readonly ushort[] HANDS_BASE_ANIMID =
         {
             0x0263,
@@ -252,7 +293,7 @@ namespace ClassicUO.Game
                         }
                         else
                         {
-                            v13 = (ushort)(6 - (RandomHelper.GetValue() % 2 != 0 ? 1 : 0));
+                            v13 = (ushort)(6 - (Roll(flags, v13) % 2 != 0 ? 1 : 0));
                             RandomRolls++;
                         }
 

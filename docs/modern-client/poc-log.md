@@ -2807,6 +2807,198 @@ Codex (gpt-6-astra) re-audited dd37d8586: the round-1 fixes (exactly-once releas
 **Pooled capacity peak (bench-000009), measured:** 7520 KiB (run c0a) and 9384 KiB (run c0b, house entry; 9.2 MiB), with no waiting and no cap engaged (cap 0). Coordinator rule: above 12 MiB raise the default to 32 MiB; the peak is below it, so `DefaultCapBytes` stays 16 MiB (about 1.7x headroom over the worst run). Memory cost, stated honestly: the cap is a ceiling, not a held allocation. In practice the decode path holds the measured peak, at most about 9.2 MiB per client at once, and that memory is rented from `ArrayPool` and returned as decodes finish; nothing is preallocated for the cap. At 16 MiB the ceiling bounds the worst case at 16 MiB of in-flight decode buffers per client. It is a safety net that should never engage in normal play. Noise: two runs differ by 1.9 MiB (house is larger in c0b), so the peak varies run to run with decode timing.
 
 
+## E12: same-frame item checker (bg/ecs-e12-checker)
+
+Base: poc/modern-client f2668520f, merged with 0acd0ef85 for the final runs. Setting-free: only `CUO_GPU_ITEM_CHECK` changes.
+
+> **Corrected after the Codex audit (round 1, below).** The probe pass described here was not side-effect isolated: auras it captured reached the batcher, the world overrides it queued stayed in the drawn frame (a fading baked sprite could blend twice), and it left view state, foliage stamps, the random state and the retry clock changed for the reference pass. The "0 differences" results below were real for what was compared, but they did not prove isolation, the skip rules hid every frame at 30 FPS and every fallback, and the "zero cost" claim was wrong (128 KiB allocated per scene, unconditional counters). The section "Codex audit round 1" says what changed and what is still not covered.
+
+**Defect (E6 audit):** the check compared a served frame with the check frame after it, so anything that changes between two frames (an effect expiring, a mobile stepping) could hide a real difference or give a legitimate one, and the effects part of the hash covered identity, alpha and order but not emitted geometry, blend, depth or lights.
+
+**Change:**
+- `CUO_GPU_ITEM_CHECK=1|every` (the default mode now) makes a check frame run the prepare and the capture twice on one frame state inside `DrawWorldGpu` (no Update between):
+  - **probe pass** (`GpuItemProbeRun`, before the frame's own fill): `FillGameObjectList` serving from the cache as a normal frame, then FinishGpuCollect, multis, statics, `CaptureRenderLists`, the multi preview and the effects (`RenderLists.CaptureEffectsOnly`), all before the batcher begins. It keeps the dynamic instances, the lights, a hash and a listing of the render lists, the selection and the sizes of the collected lists, then undoes its side effects (dynamic buffer, lights, selection, collected lists, `FoliageIndex`, `UpdateDrawPosition`). Sprites the capture can't map are dropped in the probe (`GpuWorldRenderer.Probe`; the batcher would draw them twice) and counted.
+  - **reference pass**: the frame's own fill and draw, a full walk, with the old per-item comparison unchanged. This is the frame that is drawn.
+  - after the reference pass captures its effects (`GpuItemProbeCompare`): all dynamic instances byte for byte (reported separately for items/mobiles and for effects, so position, depth, blend, hue and alpha), the lights, the render lists (identity, alpha, order), the selection, the collected lists' sizes.
+- **Frames not checked** (counted): alphas stepping that frame (the second fill would see the first one's result), a served tile that fell back to a walk because an item changed (the reference pass re-extracts and serves it), and a chunk cache built only in the reference pass (its retry time, which counts frames, passed between the two passes). Both showed up as false list differences before they were excluded; every remaining difference in the correct build is 0.
+- `CUO_GPU_ITEM_CHECK=legacy|legacy-every`: the old cross-frame check, unchanged (the docs for E7 and E6 referred to it).
+- ~~With the variable unset: a static readonly flag and nothing else on the frame~~ (false, see round 1: the checker's arrays were allocated for every scene and three counters were unconditional).
+
+**Results** (JIT, `TieredCompilation=0`, `CUO_ECS_PARITY=1 CUO_ANIM_SYNC=1 CUO_GPU_SKIP_CHECK=1 CUO_PREP_CHECK=1 -ecscheck 120`, `CUO_GPU_ITEM_CHECK=every`, kbatman3):
+
+| Run | Checks | Differences |
+|---|---|---|
+| `e6fx.txt` (mixed tiles, fixed effects in all blends, lightning, moving effects), night | 111k same-frame checks, 6.5M instances compared (3.5M effect) | **0** in instances, effects, lists, lights, selection and collected lists; 4k frames not checked |
+| `e6fx_day.txt` (`light off`) | 148k checks, 35M instances (4.4M effect) | **0**; parity view-effects 319k, 0 mismatched |
+| `e7mixed.txt`, standing | 154k checks, 3.8M instances | **0** |
+| Large scene (`ls`), zoom 1: 100 fixed fires, 60 moving effects, `lswalk` standing and with moving effects | 19k checks (both zooms), 487M instances (850k effect) | **0** |
+| Large scene zoom 2.5: 150 fires, 60 moving, `lswalk` with and without | included above | **0**; skip check 0, prep check 0 wrong (5.3M positions kept) |
+| Old (E7) check on the same scenes | only standing windows could read 0; the walking and moving-effect windows differed legitimately (227/950 and 271/791 frames in E6's log) | |
+
+Sensitivity (two deliberately broken builds, `e6fx.txt` night):
+- Effect walk left out of `GpuServeMixedTile`: 39,835 of 164,201 checks differ, all in effect instances and render lists (`effects: 86 served vs 100 full instances`, with the moving effect's x/y/depth in the sample).
+- Every 256th cached entry dropped from the served runs: 58,904 of 155,709 checks differ, 57,670 of them in item/mobile instances (`37 served vs 39 full`).
+
+**Zero cost with the check off** (NativeAOT, base = poc/modern-client 0acd0ef85, new = this branch merged, `CUO_GPU_ITEM_CHECK` unset, large scene `ls1`/`ls25`/`lsw` and Britain, 7 rounds alternated, 3 windows each, window averages of world prepare ms; the machine was shared and noisy: single runs of the same binary vary 0.78–1.33 at `ls1`):
+
+| Spot | base | new |
+|---|---|---|
+| zoom 1 | 0.984 | 0.954 |
+| zoom 2.5 | 1.281 | 1.253 |
+| `lswalk` | 1.114 | 1.005 |
+| Britain | 0.067 | 0.067 |
+
+New is equal or slightly lower in every row, within the noise; the first 3-round series (pre-merge builds) went the other way by 0.1–0.2 ms, and the order alternation shows that was whichever run came second. No difference can be claimed either way.
+
+**Unit tests:** 638 pass in both build variants (`-p:CuoDevTools=false` too), including the T0 write-site budget test (the checker writes no ECS-owned fields).
+
+**Not covered / notes:**
+- The probe leaves the world-pass overrides it set (hidden/alpha baked-object overrides): they are the same ones the reference pass sets, so they are not compared.
+- Frames with alphas stepping are never checked; a bug that shows only on those frames is still invisible to this check (the skip and prep checks cover them).
+- The reference pass runs the capture of picked items, so a served-only picking difference shows as a selection difference only when the selected object differs.
+
+
+### E12: Codex audit round 1 (e12-fix, 2026-10-31)
+
+Branch `bg/ecs-e12-checker`, merged with poc/modern-client a9700dab7 (merge 8d907e80f), fix 3614d9e34. Static audit of 0acd0ef85..785ecac90 (Codex gpt-6-astra); each finding re-checked against the code before changing it.
+
+| # | Finding | Disposition |
+|---|---|---|
+| P1 1 | Auras (and anything else the capture doesn't intercept: the rectangle `Draw` overload) were submitted to the batcher by the probe, before `batcher.Begin`, and drawn again by the reference | **Fixed.** The probe runs between `UltimaBatcher2D.BeginSuppress` and `EndSuppress`: a flush drops the queued sprites instead of drawing them, `EndSuppress` drops what is left and puts the blend, stencil and sampler states back; Debug's `EnsureStarted` allows it. Dropped sprites are counted and make the frame *partially compared* (FNA sprites are not compared). Self-check: a probe that leaves sprites in the batcher or flushes it counts in `isolation` (must be 0). Proof: broken build `brkSup` (no suppression) with auras on (new driver command `aura 3`) |
+| P1 2 | World overrides queued by the probe stayed in the drawn frame: each partial-alpha override adds a translucent draw, so a fading baked sprite blended twice, and probe overrides used up the pending queue | **Fixed.** The queue is now `Uo.Render.PendingOverrideQueue` (same layout, a mutable struct field of `WorldRenderer`) with `GetMark`/`Restore`; the probe takes a mark, copies its own overrides off the queue and restores the mark (drop count included). After the reference pass, its overrides since the mark are compared entry by entry with the probe's, and the drop count with the mark's (`in world overrides`). Unit tests (`ProbeIsolationTests`); broken build `brkOv` (no restore) must report override differences |
+| P2 3 | Probe capture rewrote `FrameInfo`/mirror bit (picking, the player rectangle) and foliage stamps before the reference fill | **Fixed.** `GpuWorldRenderer.DrawObject` journals each captured object's `FrameInfo` and mirror bit while `Probe` is set; the two foliage-stamp writes in the fill journal the old stamp on the probe pass. Both are put back in reverse order after the probe |
+| P2 4 | Resource readiness can change between the passes (animation job drains, atlas uploads, picker masks) | **Made honest.** A frame where `TextureUploads.Epoch` moved between the start of the probe and the comparison is counted as *partially compared* (`textures uploaded during the check`) and its differences are reported apart from the fully compared frames. Readiness is not frozen; first-use uploads in the probe are not undone |
+| P2 5 | Random animation choice (`AnimationGroupRules`, low-group extended actions 5/6) rolled in both passes | **Fixed.** `AnimationGroupRules.Roll` records the probe's rolls and the reference replays them (`RollMode` 1/2): the global random state advances once per check frame, as on a normal frame, and a reference that rolls a different number of times is a difference (`in animation rolls`). Unit test. **Superseded in round 2** (the probe's extra rolls still reached the drawn frame; replay was positional) |
+| P2 6 | Unmapped (fallback) sprites dropped by the probe were never compared | **Fixed for what the capture sees.** Both passes record every unmapped sprite at the capture (`GpuWorldRenderer.FallbackDraw`: object, texture, position, source, hue, flip, depth, mode, rotation, blend) and the lists are compared (`in unmapped sprites`). Not covered: sprites that bypass the capture altogether (they make the frame partial, P1 1), effects whose blend the world pass can't reproduce (FNA draws them in `DrawDeferredRenderLists`; neither pass captures them) and the batcher state FNA draws them with |
+| P2 7 | Whole-frame skips: any fallback, and a cache rebuilt only in the reference (partly caused by the probe advancing `_drawFrame`, hence `RetryFrame`) | **Fixed.** `RetryFrame` runs on `GpuRetryClock` (`_drawFrame` minus the probe passes), so the probe doesn't move retry times. Frames with fallen-back tiles are now compared: the reference's list hash leaves out only the tiles the probe really served (`GpuItemCache.ProbeServed`), not the cache's serve set; they are counted apart (`… with served tiles that fell back`, `… with fallen-back tiles with differences`). A cache rebuilt in the reference no longer skips the frame (the reference doesn't serve; counted as `caches rebuilt in the reference pass`). `_drawFrame` itself still steps twice per check frame: the probe's `DrawnFrame` and `GpuSeenFrame` stamps must not look like the reference's own |
+| P2 8 | `_alphaChanged` is the 20 ms timer, not an alpha change; skipped frames were never reported | **Fixed.** `_gpuAlphaSteps` counts real fade steps (`CalculateAlpha` moving an alpha, snap included; a chunk's or the scene's fade-step count going down). Only those frames are not compared; otherwise the probe puts the alpha timer back so the reference sees the same `_alphaChanged`. The report is evaluated every frame from `DrawWorldGpu`, compared or not, and logs its summary every 5 s (corrected in round 2: not one line per frame); skip reasons are counted apart (`alphas stepping`, `no item cache`) |
+| P3 9 | Unset path not zero-cost (128 KiB per `GameScene`, unconditional counters, a mutable test before the static guard) | **Fixed.** Checker storage is one `GpuProbeState`, allocated on the first check frame; the build, fallback and fade-step counters and the journal calls test `_gpuItemCheckSame` (static readonly) first. New and unconditional: one bool test per batcher flush, one per captured object (`DrawObject`'s `Probe`), and the fallback path's record/probe tests (unmapped sprites only). Not re-timed in this round (no AOT pair run) |
+| — | "Other state survives the probe" | Now restored: overrides, view state, foliage stamps, random state, alpha timer, retry clock, plus what E12 already restored. The rest is listed under "Not covered" |
+
+**Not covered (still):**
+- Position and draw stamps: `_screenPositionGen` steps twice when the camera moved; the probe's `DrawnFrame`/`GpuSeenFrame` stamps stay (the reference uses the next `_drawFrame`, so they never match its own); positions computed by the probe stay (the reference recomputes the same values).
+- Caches filled by the probe and reused by the reference: item and mask caches (a cache the probe built is the one the reference checks), ECS animation/render/equipment state (`EquipmentDirty` consumed by the probe), mobile frame caches, first-use texture and picker uploads.
+- `FrameStats`, ECS parity counters and `CaptureFallbacks` include the probe's work on check frames.
+- Fill side effects outside the world pass: object-handle open/close and `UpdateTextServerEntities` run twice (same inputs, same result).
+- Frames with a fade step are not compared (the probe's fill is the frame's own); bugs that show only while alphas move are still left to the skip and prep checks.
+- Sprites FNA draws that bypass the capture (auras) and effects FNA draws are not compared; their frames count as partial.
+- Resource readiness is detected, not frozen (P2 4).
+- A view that touches the device directly during capture (`SetWorldOffset`, scissor, `DrawBatch`) would still reach it under suppression; no capture path does today.
+
+**Verification:** both builds (`dotnet build … -c Release`, and `-p:CuoDevTools=false`) without errors; unit tests 724 pass in both (720 + 4 new in `ProbeIsolationTests`: override mark/restore, a full probe queue not making the reference drop, restore after clear, roll record/replay). The write-site budget test passes unchanged.
+
+**Client runs** (rf-agent jobs, JIT `TieredCompilation=0`, kbatman3, `CUO_ECS_PARITY=1 CUO_ANIM_SYNC=1 CUO_GPU_SKIP_CHECK=1 CUO_PREP_CHECK=1 -ecscheck 120 CUO_GPU_ITEM_CHECK=every` unless said): bench-000005 (correct build: `e6fx.txt` night, `e6fx_day.txt`, `e6fx.txt` with `aura 3`, `e6fx.txt` without parity and anim-sync) and bench-000006 (broken builds: A = effect walk left out of `GpuServeMixedTile`, B = every 256th cached entry dropped, Ov = probe overrides not restored, Sup = no batcher suppression, with `aura 3`).
+
+**Results** (bench-000005 correct build, bench-000006 four broken builds; each log has 15 to 83 per-segment `same frame` reports, summed here; scene `e6fx` = moving effects, walking, zoom 1 and 2.5; check frames include both passes):
+
+| Run | Check frames | Compared fully | Compared partially | Not compared | Differences | Isolation |
+|---|---|---|---|---|---|---|
+| new, night (e6fx) | 107489 | 107256 | 53 (textures uploaded) | 168 alphas stepping, 12 no item cache | 0 fully, 0 partially, 0 fallen-back | 0 probe passes left sprites |
+| new, day | 133040 | 132799 | 61 (textures uploaded) | 168 alphas, 12 no cache | 0 | 0 |
+| new, aura | 119047 | 23830 | 95036 (200504 FNA aura sprites dropped in the probe) plus 55 textures uploaded | 168 alphas, 13 no cache | 0 | 0 |
+| new, no parity (check only) | 1106673 | 1106658 | 0 | 2 alphas, 13 no cache | 0 | 0 |
+
+Fallback tiles: 0 frames with served tiles that fell back to the walk in every correct run, so "keep comparing them" was not exercised and no `served tile that fell back` counter/reason was needed. World overrides: 0 queued in every run (all 189 reports), and unmapped sprites compared 0: these scenes never queue an override or a fallback sprite.
+
+**Sensitivity** (same scene, broken builds):
+
+| Build | Check frames | Fully / partially compared with differences | Where | Verdict |
+|---|---|---|---|---|
+| A (effect geometry broken) | 102887 | 31186 / 50 | 31235 effect instances, 31236 render lists, 0 item/mobile | caught |
+| B (item/mobile geometry broken) | 154158 | 70808 / 51 | 70859 item/mobile instances, 0 effect | caught |
+| Ov (override handling broken) | 112271 | 0 / 0 | 0 | NOT caught: `e6fx` queues 0 world overrides, so the override comparison and the checkpoint are not exercised by any client scene. Covered only by the unit tests (override mark/restore, full probe queue). Needs a scene with fading baked sprites. |
+| Sup (batcher suppression removed, aura scene) | 174900 | 0 / 0 | isolation counter: 162756 probe passes left a trace in the batcher (the sample reads "left 0 sprites in the batcher and flushed 1 times": the unwanted flush tripped it) | caught by the isolation self-check, not by instance differences (as designed) |
+
+On the correct builds the isolation self-check reads 0 in all four runs. The correct build shows no differences on any scene including auras, so nothing was classified as an artefact or fixed in this round. Auras and resource changes only produce counted partial frames.
+
+Open from the runs: Ov and fallen-back-tile paths are not reachable from the current scenes (see above).
+
+### E12: Codex audit round 2 (e12-fix, 2026-10-31)
+
+Static audit of 3614d9e34 against 8d907e80f (Codex gpt-6-astra, `astra-e12r2`). No P1 and no unset-path rendering regression found. Each finding was re-checked against the code first; all four held. Fix commit 7fafa97e3 (on e4d7f7d3f).
+
+| # | Finding | Disposition |
+|---|---|---|
+| P2 1 | Probe rolls still changed the drawn frame's random state: a probe that rolled 3 times and a reference that rolled twice left one extra value consumed, so `Weather.Draw` (wind, particles) and later idle choices changed. Replay was positional, so a changed call order paired unrelated requests | **Fixed.** `RandomHelper` now keeps its own xoshiro256** state (the algorithm an unseeded `System.Random` uses on 64-bit .NET, with the same reductions for `Next()`, `Next(min, max)` and `NextDouble`) and exposes `Save`/`Restore`. The probe runs between `Save` and `Restore`, so the reference (drawn) pass starts from the same state as a frame without a probe and rolls exactly what that frame would. Nothing is replayed. Each pass records its own tape of `(animation flags, group rolled for, value)`. A different count, order, request or value is a difference (`AnimationGroupRules.RollsDiffer`), and no extra values are consumed. Tests: shorter, longer and reordered probe sequences, and the same and empty sequences. Each asserts that the reference's rolls, the following "weather" values and the global state after the frame equal the no-probe frame's |
+| P2 2 | The override comparison was asymmetric: the probe's drop count was discarded, and the reference's was compared against the initial mark. A probe that overflowed by one compared equal; the same overflow in both passes reported a difference. The tests never ran the production comparator, and removing `RestorePendingOverrides` passed them | **Fixed.** `PendingOverrideQueue.TakeSince(mark, list)` (called as `WorldRenderer.TakePendingOverrides` in the probe's `finally`) copies the probe's entries and returns its drop count, then restores the mark. `PendingOverrideQueue.Differ` (the production comparator) compares every field, order, count and both drop counts. Overflow in either pass is counted separately in the summary (`N checks with the override queue full`). Tests call `Differ` directly: every field, order and count, entries before the mark ignored, and overflow in the probe only, in both passes, and more in the reference. A `TakeSince` test fails when the restore is removed: commenting it out fails exactly that test (checked). The orchestration itself is not unit-tested; `GpuItemProbeRun` calls `TakePendingOverrides`, and the client run with `brkOv3` covers the call |
+| P2 3 | `DrawSitted` passed `Normal` to `Emit`, so an unmapped seated sprite's deformation (`mod`) and the scaled flag never reached `FallbackDraw`: differing geometry compared equal | **Fixed.** `FallbackDraw` also records `Kind` (Normal, Scaled, Seated) and `Mod`. `DrawSitted` and the scaled water draw set them around `Emit`, then reset them. Test through the capture (an uninitialised `GpuWorldRenderer` with an unmapped texture): two seated draws with different section fractions differ, the deformation doesn't leak into the next draw, and a scaled draw differs from the unscaled one. No current scene was found to produce an unmapped seated sprite (as the audit said) |
+| P3 4 | `ProbeIsolationTests` and `AnimationGroupSelectTests` shared the static roll tape without serialization | **Fixed.** Both classes are in one xUnit collection, `AnimationRolls`, with `DisableParallelization = true`, because the RNG test also asserts global state that any other test calling `RandomHelper` could move. The suite ran 5 times: 753 pass each time |
+| note | Only the suppression cleanup was in the capture's `finally`; the override, journal and RNG cleanup ran after it and would be skipped on an exception | **Fixed.** One `try`/`finally` now covers the probe from the fill on. The `finally` ends suppression (if it began), clears `Probe`, `RecordFallbacks`, `ProbeViews` and the roll mode, and (unless the frame is a fade-step frame, whose fill is the frame's own) resets the dynamic buffer, takes the probe's overrides off the queue, truncates the lights, clears the selection and the collected lists, restores the draw-position, foliage and alpha timer, undoes the foliage and view journals in reverse order, and restores the random state. The reference pass's own cleanup (in `GpuItemProbeCompare`) is not in a `finally`; an exception there ends the frame anyway (nothing catches it and resumes) |
+| note | "Only three unconditional checks" was wrong | **Corrected** below |
+| note | The summary is on a 5-second cadence, not one line per frame | **Corrected** in the round-1 text above ("evaluated every frame … logs its summary every 5 s") |
+
+**With the check unset, the full list of what remains** (as of 7fafa97e3):
+- the `_gpuItemCheckSame` tests (a `static readonly` bool, so tier-1 JIT folds them; NativeAOT reads a static and branches): 4 in the fill (`GameSceneDrawingSorting`: two foliage-stamp journals, the fade-step counter and the alpha result), 7 in the item cache, 2 in the prepare's fade-step counters and 2 in `DrawWorldGpu`;
+- one `_suppress` test per batcher flush (`UltimaBatcher2D`), plus one in Debug's `EnsureStarted`;
+- one `Probe` test per captured object (`GpuWorldRenderer.DrawObject`);
+- on unmapped sprites only: the `RecordFallbacks` and `Probe` tests in `Fallback`;
+- new in round 2: two field stores before and two after `Emit` in `DrawSitted`, and one before and one after in the scaled water draw;
+- one `RollMode` test per random animation roll (low-group extended actions 5/6 only);
+- the retry clock: one subtraction (`_drawFrame - _gpuProbeFrames`) each time a cache retry time is set or tested;
+- new in round 2: `RandomHelper` runs its own xoshiro256** instead of `System.Random` on every call (same algorithm, a static struct instead of an object's fields; values differ from before only in being a different random stream). `Save`/`Restore` are called only by the probe.
+
+bench-000018 (the NativeAOT pair, check unset) was built from e4d7f7d3f, so it does not include the round-2 changes to `RandomHelper`, `DrawSitted` or the scaled draw. Its result is in the timing table below.
+
+**Not covered: every `_drawFrame` reader** (it steps twice per check frame: the probe's fill, then the reference's):
+- `DrawnFrame` stamps (fill, `GpuQueueCachedEntries`) read by `CollectGpuHidden` (`obj.DrawnFrame == _drawFrame`) and the highlight override (`sel.DrawnFrame == _drawFrame`). They are read against the reference's own frame number, so a probe stamp never counts as "drawn this frame". This is why the frame steps twice. Harmless.
+- `GpuSeenFrame` (`GpuPrepareChunk`: a chunk not seen on `_drawFrame - 1` gets fresh fade steps). On a check frame the probe's stamp makes the reference treat the chunk as seen on the previous frame. A chunk that comes into view on a check frame gets its fresh steps in the probe; its first step makes that frame a fade-step frame, which is not compared and whose probe fill is the frame's own. Harmless; it costs at most one uncompared frame.
+- `GpuItemCache.CheckFrame` (the old per-item check, `_gpuCheckSkip`, `GpuItemCheckDrawn`): set and read within one pass's own frame number, so a probe stamp never matches the reference. Harmless.
+- The E7 cross-frame counters (`_gpuListHashFrame`, `_gpuOrderFrame` compared with `_drawFrame - 1`). On a check frame, the reference's "previous frame" is the probe pass, so these counters would compare the two passes. They are reported only in the legacy summary (`CUO_GPU_ITEM_CHECK=legacy`), never in the same-frame one. Harmless to the same-frame result.
+- `GpuRetryClock`: `_drawFrame` minus the probe passes, so retry times count frames, not passes (round 1).
+- Roll tape key: a roll is identified by its animation flags and the group rolled for, not by its mobile. Two mobiles of the same body that swap their roll order compare equal on the tape (both passes get the same value sequence), but their drawn groups differ, and the instance comparison sees that.
+
+**Driver scene that queues world overrides and rolls** (`<scratchpad aba6de71>/tools/e12ov.txt`; new driver command `season <name>`, which calls `World.ChangeSeason` as the server's season packet does). Britain bank (1430,1690), `season winter` (map trees and plants draw another graphic, so `GpuReplaceStatic` hides their baked sprite through an override), walks into and around the bank, `season summer`. Then the player becomes a grey wolf (body 25: animal, low-group extended in mobtypes.txt; wrong, see the client runs: 25 is a Body.def alias of 225 and never rolls; the scene now uses body 52), and `[Animate 5 …` and `[Animate 6 …` drive server actions 5/6, which roll in `AnimationGroupRules`. Broken builds: `brkOv3` (the probe's overrides copied but not taken off the queue) and `brkRng` (`RandomHelper.Restore` left out).
+
+**Verification:** both builds (`-c Release`, and `-p:CuoDevTools=false`) without errors. Unit tests: 753 pass, 5 runs in a row. That is 740 + 13: the old replay test is replaced by 8 RNG test cases (a 5-case theory, same request and same state, no tape, `RandomHelper` ranges), plus 5 override tests (4 comparator, 1 `TakeSince`) and 1 capture test for the seated and scaled fallbacks. The write-site budget test passes unchanged.
+
+**Client runs:** bench-000021 (JIT, `TieredCompilation=0`, the same environment as round 1, binaries from 7fafa97e3): the correct build on `e12ov.txt`, `e6fx.txt` night and `e6fx_aura.txt`; `brkOv3` and `brkRng` on `e12ov.txt`. Status ok, 312 s, every client exit 0. Each log's per-segment `same frame` reports (8 for `e12ov`, 15 for `e6fx`; the counters reset after each report) are summed:
+
+| Run | Check frames | Compared (partially) | Differences (fully / partially) | Where | Overrides compared | Isolation | Verdict |
+|---|---|---|---|---|---|---|---|
+| new, `e12ov` | 109820 | 107849 (12, textures uploaded) | 0 / 0 | none | 600474 (0 checks with the queue full) | 0 | clean |
+| `brkOv3`, `e12ov` | 86232 | 84780 (15) | 84364 / 15 | 84379 in world overrides, nothing else (first: "overrides: 13 served, 26 in the full pass") | 1103504 | 0 | caught |
+| `brkRng`, `e12ov` | 104583 | 102575 (13) | 0 / 0 | none | 675154 | 0 | NOT caught: no rolls happened (below) |
+| new, `e6fx` night | 118378 | 118184 (54) | 0 / 0 | none | 59570 | 0 | clean |
+| new, `e6fx_aura` | 134913 | 134733 (119616: FNA aura sprites dropped in the probe) | 0 / 0 | none | 0 | 0 | clean |
+
+The override comparison is now exercised (round 1 had 0 overrides in every scene): the winter season queues them and `brkOv3` is caught on every compared frame. The reference-pass item check reads 0 differences in all five runs.
+
+**`brkRng` was not caught because the scene never rolled.** `[set Body 25` worked (the parity counters show non-human mobile frames from then on), but `AnimationGroupRules.Select` first resolves the body through Body.def (`ConvertBodyIfNeeded`), and Body.def aliases 25 to 225 (`25 {225} 946`; so do 23, 27, 34, 37, 97 to 100). The flags are then read for 225, which mobtypes.txt lists as `ANIMAL 0`: no `CalculateOffsetLowGroupExtended`, so actions 5/6 go through `LABEL_222` without a roll. Of the animals with flag `20`, only 52 (snake) and 81 have no Body.def or Bodyconv.def alias. The scene now uses body 52 (`<scratchpad f33fe584>/e12-fix/e12ov52.txt`), and the same-frame report counts the rolls it compared (`N animation rolls`), so a scene without rolls shows 0 there instead of passing silently. Re-run: bench-000033 (new and `brkRng`, both built from the round-3 merge ceaa5df02), 8 same-frame reports per run:
+
+| run | frames checked | instances compared | overrides compared | animation rolls compared | roll differences | other differences |
+|---|---|---|---|---|---|---|
+| ov52_new | 108610 | 3436499 | 591279 | 41394 | 0 | 0 (isolation 0) |
+| ov52_brkRng | 105109 | 3552913 | 690921 | 38742 | **19371** | 9697 instance differences (the broken roll changes the frame drawn), isolation 0 |
+
+**`brkRng` is now caught:** the first difference is `animation rolls: 2 served, 2 in the full pass, first difference at 0`. The fixed build compares 41394 rolls with no difference.
+
+**Timing (check unset):** bench-000018 (e4d7f7d3f) was cancelled by the coordinator; the round-3 unset path is timed by bench-000034 (round 3 below).
+
+### E12: Codex audit round 3 (e12-fix, 2026-10-31)
+
+Audit `<scratchpad c951be14>/astra-e12r3/out.md` (static only). One finding, the rest clean (RNG transition and reductions match .NET's xoshiro, seeding, callers, restoration order, comparators, `season` inert when unused).
+
+| # | Finding | Disposition |
+|---|---|---|
+| P2 | The probe's Save/Restore of the global random state can erase a legitimate roll another thread made inside the window: SDL's raw-input thread (`SDL_WINDOWS_RAW_KEYBOARD=1`) dispatches `OnKeyUp` -> `ToggleWarMode` -> the war-music choice; a plugin `RequestMove` reaches `CalculateRandomIdleTime`. Overlapping calls also raced the four state words (the old `new Random()` had the same race) | **Fixed.** `RandomHelper`'s xoshiro state is `[ThreadStatic]`, each thread seeded from `Random.Shared` on first use (an all-zero state means not seeded yet; xoshiro never reaches it). `Save`/`Restore` read and write only the calling thread's state, so the probe touches the render thread's state only, and no thread shares or loses state. Callers checked (`AnimationGroupRules`, `GameActions` war music, `Mobile` idle time and animation picks, `OptionsGump` hues, `Weather`): none seeds the generator or relies on one sequence shared between threads. Tests: a roll on another thread inside the Save/Restore window survives (its state after the roll is unchanged by the render thread's restore, and its next value is the one its own stream gives); two threads get independent streams (different seeds, rolls on one thread don't move another's state, two threads put in the same state roll the same values). Both fail against the old shared state |
+
+Cost with the check unset: one thread-local access per roll (the rolls are rare: weather, idle times, animation picks). Measured as part of the AOT pair below.
+
+Also in this round: the same-frame report counts the animation rolls compared, and the override scene's roll part was fixed (round 2 client runs above).
+
+**Verification:** both builds (`-c Release` and `-p:CuoDevTools=false`) 0 errors, before and after merging poc/modern-client 2ced75119 (merge ceaa5df02, no conflicts). Unit tests: 755 pass before the merge (753 + the 2 thread tests), 806 after it. The write-site budget test passes unchanged.
+
+**Timing (check unset):** bench-000034, NativeAOT, base = poc/modern-client 2ced75119, new = ceaa5df02 (this branch merged with it), plans ls1/ls25/lswalk + Britain, 4 rounds interleaved (base/new, new/base, ...), 2 windows each. Not pinned (the job predates benchpin). Mean over the 4 runs of frame avg / frame p50 / world prepare p50, in ms, with the within-arm spread (max-min)/min of the per-run p50 values:
+
+| plan | base frame avg | new frame avg | base f.p50 (spread) | new f.p50 (spread) | base wp p50 (spread) | new wp p50 (spread) |
+|---|---|---|---|---|---|---|
+| ls1 | 1.872 | 2.274 | 1.759 (9 %) | 2.091 (32 %) | 0.870 (11 %) | 1.033 (30 %) |
+| ls25 | 2.622 | 2.513 | 2.512 (67 %) | 2.407 (23 %) | 1.300 (72 %) | 1.245 (23 %) |
+| lswalk | 3.062 | 2.427 | 2.524 (81 %) | 2.262 (42 %) | 1.133 (94 %) | 0.989 (46 %) |
+| Britain | 0.695 | 0.581 | 0.526 (53 %) | 0.485 (13 %) | 0.070 (94 %) | 0.059 (12 %) |
+
+p95 spreads were 23-273 %. Hitch windows (frame p95 over 16 ms): base lswalk 1 of 8, all others 0. **Too noisy to conclude.** Every arm but base ls1 is over the 10 % p50 threshold (base round 3 was slow on every plan; new ls1 rounds 1-2 were slow), and no base-vs-new difference is larger than twice the larger within-arm spread: the biggest, ls1 frame p50 +19 % for new, is below 2 x 32 %. The numbers show no sign that the unset check costs anything, but they do not prove it. A pinned re-run (benchpin) would be needed for a verdict; not resubmitted (coordinator's call).
+
 ## Chunk pool per World (2026-10-30)
 
 Base: poc/modern-client c6bd97205. Branch `poc/chunk-pool-per-world`.
