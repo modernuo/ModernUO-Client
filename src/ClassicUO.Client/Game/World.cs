@@ -59,9 +59,13 @@ namespace ClassicUO.Game
             Weather = new Weather(this);
             InfoBars = new InfoBarManager(this);
             Ecs = new WorldEcs(this);
+            Writer = new WorldWriter(this);
         }
 
         public WorldEcs Ecs { get; }
+
+        /// <summary>T1: the mutation funnel (ecs-transition-plan.md); converted packet groups write world state through it.</summary>
+        public WorldWriter Writer { get; }
 
         public Point RangeSize;
 

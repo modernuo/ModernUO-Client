@@ -112,6 +112,7 @@ namespace ClassicUO.Game.GameObjects
             get => _isMulti;
             set
             {
+                FunnelCheck.Write(this, FunnelField.IsMulti);
                 _isMulti = value;
 
                 if (!value)
@@ -158,18 +159,25 @@ namespace ClassicUO.Game.GameObjects
             && ItemData.Layer != (int)Layer.Face
             && Graphic != 0;
 
-        public ushort Amount { get; set; }
-        public uint Container { get; set; } = 0xFFFF_FFFF;
+        private ushort _amount;
+        private uint _container = 0xFFFF_FFFF;
+        private bool _isDamageable;
+        private Layer _layer;
+        private byte _lightID;
+        public ushort Amount { get => _amount; set { FunnelCheck.Write(this, FunnelField.Amount); _amount = value; } }
+        public uint Container { get => _container; set { FunnelCheck.Write(this, FunnelField.Container); _container = value; } }
 
-        public bool IsDamageable { get; set; }
-        public Layer Layer { get; set; }
-        public byte LightID { get; set; }
+        public bool IsDamageable { get => _isDamageable; set { FunnelCheck.Write(this, FunnelField.IsDamageable); _isDamageable = value; } }
+        public Layer Layer { get => _layer; set { FunnelCheck.Write(this, FunnelField.Layer); _layer = value; } }
+        public byte LightID { get => _lightID; set { FunnelCheck.Write(this, FunnelField.LightID); _lightID = value; } }
 
         public Rectangle? MultiInfo;
         public bool Opened;
 
-        public uint Price { get; set; }
-        public bool UsedLayer { get; set; }
+        private uint _price;
+        private bool _usedLayer;
+        public uint Price { get => _price; set { FunnelCheck.Write(this, FunnelField.Price); _price = value; } }
+        public bool UsedLayer { get => _usedLayer; set { FunnelCheck.Write(this, FunnelField.UsedLayer); _usedLayer = value; } }
         public bool WantUpdateMulti = true;
 
         public static Item Create(World world, uint serial)

@@ -157,6 +157,7 @@ namespace ClassicUO.Game.GameObjects
                 || _isDead;
             set
             {
+                FunnelCheck.Write(this, FunnelField.IsDead);
                 _isDead = value;
                 PushInputs();
             }
@@ -216,10 +217,13 @@ namespace ClassicUO.Game.GameObjects
 
         protected virtual bool IsWalking => LastStepTime > Time.Ticks - Constants.WALKING_DELAY;
 
-        public byte AnimationFrameCount { get; set; }
-        public bool AnimationFromServer { get; set; }
-        public bool IsRenamable { get; set; }
-        public long LastStepSoundTime { get; set; }
+        private byte _animationFrameCount;
+        private bool _animationFromServer, _isRenamable;
+        private long _lastStepSoundTime;
+        public byte AnimationFrameCount { get => _animationFrameCount; set { FunnelCheck.Write(this, FunnelField.AnimationFrameCount); _animationFrameCount = value; } }
+        public bool AnimationFromServer { get => _animationFromServer; set { FunnelCheck.Write(this, FunnelField.AnimationFromServer); _animationFromServer = value; } }
+        public bool IsRenamable { get => _isRenamable; set { FunnelCheck.Write(this, FunnelField.IsRenamable); _isRenamable = value; } }
+        public long LastStepSoundTime { get => _lastStepSoundTime; set { FunnelCheck.Write(this, FunnelField.LastStepSoundTime); _lastStepSoundTime = value; } }
 
         // W5: these are inputs of the mobile's animation and override hue; every write is pushed to the ECS (MobileInputs)
         private bool _isFemale, _isRunning;
@@ -230,6 +234,7 @@ namespace ClassicUO.Game.GameObjects
             get => _isFemale;
             set
             {
+                FunnelCheck.Write(this, FunnelField.IsFemale);
                 _isFemale = value;
                 PushInputs();
             }
@@ -240,6 +245,7 @@ namespace ClassicUO.Game.GameObjects
             get => _isRunning;
             set
             {
+                FunnelCheck.Write(this, FunnelField.IsRunning);
                 _isRunning = value;
                 PushInputs();
             }
@@ -250,6 +256,7 @@ namespace ClassicUO.Game.GameObjects
             get => _notorietyFlag;
             set
             {
+                FunnelCheck.Write(this, FunnelField.NotorietyFlag);
                 _notorietyFlag = value;
                 PushInputs();
             }
@@ -263,13 +270,17 @@ namespace ClassicUO.Game.GameObjects
             World?.Ecs.PushInputs(this);
         }
 
-        public RaceType Race { get; set; }
-        public CharacterSpeedType SpeedMode { get; set; } = CharacterSpeedType.Normal;
-        public ushort Stamina { get; set; }
-        public ushort StaminaMax { get; set; }
-        public ushort Mana { get; set; }
-        public ushort ManaMax { get; set; }
-        public int StepSoundOffset { get; set; }
+        private RaceType _race;
+        private CharacterSpeedType _speedMode = CharacterSpeedType.Normal;
+        private ushort _stamina, _staminaMax, _mana, _manaMax;
+        private int _stepSoundOffset;
+        public RaceType Race { get => _race; set { FunnelCheck.Write(this, FunnelField.Race); _race = value; } }
+        public CharacterSpeedType SpeedMode { get => _speedMode; set { FunnelCheck.Write(this, FunnelField.SpeedMode); _speedMode = value; } }
+        public ushort Stamina { get => _stamina; set { FunnelCheck.Write(this, FunnelField.Stamina); _stamina = value; } }
+        public ushort StaminaMax { get => _staminaMax; set { FunnelCheck.Write(this, FunnelField.StaminaMax); _staminaMax = value; } }
+        public ushort Mana { get => _mana; set { FunnelCheck.Write(this, FunnelField.Mana); _mana = value; } }
+        public ushort ManaMax { get => _manaMax; set { FunnelCheck.Write(this, FunnelField.ManaMax); _manaMax = value; } }
+        public int StepSoundOffset { get => _stepSoundOffset; set { FunnelCheck.Write(this, FunnelField.StepSoundOffset); _stepSoundOffset = value; } }
         public string Title = string.Empty;
 
         public static Mobile Create(World world, uint serial)

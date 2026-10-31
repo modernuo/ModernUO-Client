@@ -115,6 +115,15 @@ namespace ClassicUO.UnitTests.Ecs
             files.Should().NotContain(f => f.Contains("/obj/") || f.Contains("/bin/"));
         }
 
+        [Fact]
+        public void Only_The_Funnel_Is_Exempt()
+        {
+            // the exemption exists and names the funnel alone (a second exempt file would be an unbudgeted writer)
+            string root = WriteSiteScanner.FindRepoRoot();
+            WriteSiteScanner.FunnelFiles.Should().BeEquivalentTo(new[] { "src/ClassicUO.Client/Game/Ecs/WorldWriter.cs" });
+            File.Exists(Path.Combine(root, "src", "ClassicUO.Client", "Game", "Ecs", "WorldWriter.cs")).Should().BeTrue();
+        }
+
         // ---- the scanner's own behaviour on small sources ----
 
         private static List<WriteSite> Scan(string source, string path = "src/ClassicUO.Client/Game/Foo.cs") =>
@@ -246,6 +255,13 @@ namespace ClassicUO.UnitTests.Ecs
             "EntityTextContainer.cs", "RenderedText.cs", "TextObject.cs", "MobileTable.cs", "IsometricLight.cs", "House.cs", "EntityCollection.cs"
         };
 
+        // T1: the mutation funnel (ecs-transition-plan.md). Its writes are the allowed ones; the budget counts everything else.
+        // Keep this to the funnel alone: a file listed here can write world state without limit.
+        internal static readonly HashSet<string> FunnelFiles = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "src/ClassicUO.Client/Game/Ecs/WorldWriter.cs"
+        };
+
         private static readonly string FieldAlt = string.Join("|", AFields);
         private const string WorldTypes = "Item|Mobile|Entity|PlayerMobile|GameObject";
         private const string Op = @"(?:=(?![=>])|\+=|-=|\*=|/=|%=|&=|\|=|\^=|<<=|>>=|\?\?=|\+\+|--)";
@@ -354,6 +370,13 @@ namespace ClassicUO.UnitTests.Ecs
             foreach ((string path, string text) in files)
             {
                 string rel = Path.GetRelativePath(root, path).Replace('\\', '/');
+
+                // T1: the funnel is the one allowed writer, so its writes are not direct writes
+                if (FunnelFiles.Contains(rel))
+                {
+                    continue;
+                }
+
                 string name = Path.GetFileName(path);
                 bool gameObjectFile = rel.StartsWith("src/ClassicUO.Client/Game/GameObjects/", StringComparison.Ordinal) && !NotGameObjectFiles.Contains(name);
                 List<WriteSite> sites = ScanSource(text, rel, globalMembers, gameObjectFile);

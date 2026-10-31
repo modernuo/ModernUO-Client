@@ -39,6 +39,7 @@ namespace ClassicUO.Game.GameObjects
             get => _inWarMode;
             set
             {
+                FunnelCheck.Write(this, FunnelField.InWarMode);
                 _inWarMode = value;
                 PushInputs();
             }
