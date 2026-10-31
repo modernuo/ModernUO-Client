@@ -96,9 +96,7 @@ src/ClassicUO.Client/Game/UI/Gumps/RaceChangeGump.cs|Layer|1
 src/ClassicUO.Client/Game/UI/Gumps/RaceChangeGump.cs|Race|1
 src/ClassicUO.Client/Game/World.cs|Container|1
 src/ClassicUO.Client/Network/PacketHandlers.cs|Amount|1
-src/ClassicUO.Client/Network/PacketHandlers.cs|AnimIndex|3
 src/ClassicUO.Client/Network/PacketHandlers.cs|Container|3
-src/ClassicUO.Client/Network/PacketHandlers.cs|ExecuteAnimation|2
 src/ClassicUO.Client/Network/PacketHandlers.cs|Graphic|2
 src/ClassicUO.Client/Network/PacketHandlers.cs|InWarMode|1
 src/ClassicUO.Client/Network/PacketHandlers.cs|IsDead|1

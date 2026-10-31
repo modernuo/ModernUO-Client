@@ -6,6 +6,7 @@ using ClassicUO.Ecs;
 using ClassicUO.Game;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
+using ClassicUO.Utility;
 using FluentAssertions;
 using EcsEntity = Friflo.Engine.ECS.Entity;
 using Xunit;
@@ -662,6 +663,127 @@ namespace ClassicUO.UnitTests.Ecs
                 world.Writer.Violations.Should().Be(2);
             }
         }
+
+        // ---- group 4.2, the server's animations: 0x6E, 0xE2, 0xAF's death animation, 0xBF.19 and 0xBF.2B's held frame
+
+        public enum AnimPacket { CharacterAnimation, NewCharacterAnimation, Death, HeldFrame19, HeldFrame2B }
+
+        internal static void OldAnimate(Mobile m, AnimPacket kind)
+        {
+            switch (kind)
+            {
+                case AnimPacket.CharacterAnimation: m.SetAnimation(14, 3, 7, 2, true, false, true); break;
+                case AnimPacket.NewCharacterAnimation: m.SetAnimation(9, repeatCount: 1, repeat: false, forward: true, fromServer: true); break;
+                case AnimPacket.Death:
+                    m.SetAnimation(21, 0, 5, 1);
+                    m.AnimIndex = 0;
+
+                    break;
+                case AnimPacket.HeldFrame19:
+                    m.SetAnimation(17);
+                    m.ExecuteAnimation = false;
+                    m.AnimIndex = 4;
+
+                    break;
+                default:
+                    m.SetAnimation(6);
+                    m.AnimIndex = 2;
+                    m.ExecuteAnimation = false;
+
+                    break;
+            }
+        }
+
+        internal static void NewAnimate(World world, Mobile m, AnimPacket kind)
+        {
+            switch (kind)
+            {
+                case AnimPacket.CharacterAnimation: world.Writer.AnimateMobile(m, 14, 3, 7, 2, true, false, true); break;
+                case AnimPacket.NewCharacterAnimation: world.Writer.AnimateMobile(m, 9, repeatCount: 1, repeat: false, forward: true, fromServer: true); break;
+                case AnimPacket.Death: world.Writer.AnimateMobile(m, 21, 0, 5, 1, frame: 0); break;
+                case AnimPacket.HeldFrame19: world.Writer.AnimateMobile(m, 17, frame: 4, hold: true); break;
+                default: world.Writer.AnimateMobile(m, 6, frame: 2, hold: true); break;
+            }
+        }
+
+        public static IEnumerable<object[]> AnimCases()
+        {
+            foreach (Start s in new[] { Start.Standing, Start.Walking, Start.DestroyedHeld })
+            {
+                foreach (AnimPacket k in Enum.GetValues(typeof(AnimPacket)))
+                {
+                    yield return new object[] { s, k };
+                }
+            }
+        }
+
+        [Theory]
+        [MemberData(nameof(AnimCases))]
+        public void AnimateMobile_Equals_The_Old_Path(Start start, AnimPacket kind)
+        {
+            World oldWorld = Build(start), newWorld = Build(start);
+            newWorld.Writer.ThrowOnViolation = true;
+
+            // a later tick than the start's, so the due times differ from the start's clock
+            Time.Ticks = NOW + 777;
+            Pair(() => OldAnimate(oldWorld.Mobiles.Get(MOB), kind), () => NewAnimate(newWorld, newWorld.Mobiles.Get(MOB), kind));
+            AssertSameWorld(oldWorld, newWorld);
+
+            // then another kind on the bystander, a frame later
+            Time.Ticks = NOW + 1555;
+            AnimPacket next = (AnimPacket)(((int)kind + 1) % 5);
+            Pair(() => OldAnimate(oldWorld.Mobiles.Get(OTHER), next), () => NewAnimate(newWorld, newWorld.Mobiles.Get(OTHER), next));
+            Time.Ticks = NOW;
+            AssertSameWorld(oldWorld, newWorld);
+            newWorld.Writer.Violations.Should().Be(0);
+            newWorld.Writer.InScope.Should().BeFalse();
+            newWorld.Ecs.IsFolding.Should().BeFalse();
+        }
+
+        [Fact]
+        public void AnimateMobile_Commits_The_Clock_Once()
+        {
+            World world = Build(Start.Standing);
+            Mobile m = world.Mobiles.Get(MOB);
+            Time.Ticks = NOW + 999;
+            long pushes = WorldEcs.ClockPushes;
+            world.Writer.AnimateMobile(m, 14, 3, 7, 2, true, false, true, frame: 1, hold: true);
+            Time.Ticks = NOW;
+
+            world.Ecs.Mirror.TryGetEntity(MOB, out EcsEntity e);
+            e.GetComponent<MobileClock>().AnimDue.Should().Be(m.LastAnimationChangeTime);
+            e.GetComponent<MobileClock>().IdleDue.Should().Be(m.IdleDue);
+            (m.AnimIndex, m.ExecuteAnimation).Should().Be(((byte)1, false));
+            (WorldEcs.ClockPushes - pushes).Should().BeGreaterThan(0);
+        }
+
+        [Fact]
+        public void AnimateMobile_Of_A_Mobile_This_World_Does_Not_Hold_Changes_Nothing()
+        {
+            foreach (bool throws in new[] { true, false })
+            {
+                World world = Build(Start.Standing);
+                world.Writer.ThrowOnViolation = throws;
+                Mobile stranger = Mobile.Create(world, MOB);
+                int before = stranger.UpdateStateHash();
+                RandomHelper.State r = RandomHelper.Save();
+                Action act = () => world.Writer.AnimateMobile(stranger, 12, 2, 5, 1, frame: 3, hold: true);
+
+                if (throws)
+                {
+                    act.Should().Throw<ArgumentException>();
+                }
+                else
+                {
+                    act();
+                }
+
+                stranger.UpdateStateHash().Should().Be(before);
+                stranger.ExecuteAnimation.Should().BeTrue();
+                RandomHelper.Save().Should().Be(r, "no idle delay drawn");
+                world.Writer.Violations.Should().Be(1);
+            }
+        }
     }
 
     [Collection(nameof(FunnelCheckCollection))]
@@ -706,9 +828,10 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.SetStamina(m, 30, 15);
             world.Writer.SetRace(m, RaceType.GARGOYLE);
             world.Writer.SetHealthbar(m, Flags.YellowBar | Flags.Poisoned, true, true);
+            world.Writer.AnimateMobile(m, 14, 3, 7, 2, true, false, true, frame: 1, hold: true);
 
             (m.Name, m.Hits, m.Mana, m.Stamina, m.Race, m.IsFemale, m.Flags).Should().Be(("m", (ushort)40, (ushort)10, (ushort)15, RaceType.GARGOYLE, true, Flags.YellowBar | Flags.Poisoned));
-            FunnelCheck.Total.Should().Be(0, "0xA1, 0xA2, 0xA3, 0x2D, 0x11, 0x16/0x17");
+            FunnelCheck.Total.Should().Be(0, "0xA1, 0xA2, 0xA3, 0x2D, 0x11, 0x16/0x17, 0x6E/0xE2/0xAF/0xBF.19/0xBF.2B");
         }
     }
 }

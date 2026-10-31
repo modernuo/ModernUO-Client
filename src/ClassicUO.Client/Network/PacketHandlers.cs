@@ -2515,7 +2515,9 @@ namespace ClassicUO.Network
             bool repeat = p.ReadBool();
             byte delay = p.ReadUInt8();
 
-            mobile.SetAnimation(
+            // T1 (funnel part 6)
+            world.Writer.AnimateMobile(
+                mobile,
                 Mobile.GetReplacedObjectAnimation(mobile.Graphic, action),
                 delay,
                 (byte)frame_count,
@@ -3808,8 +3810,8 @@ namespace ClassicUO.Network
                 running != 0,
                 true
             );
-            owner.SetAnimation(group, 0, 5, 1);
-            owner.AnimIndex = 0;
+            // T1 (funnel part 6): the death animation from its first frame
+            world.Writer.AnimateMobile(owner, group, 0, 5, 1, frame: 0);
 
             if (ProfileManager.CurrentProfile.AutoOpenCorpses)
             {
@@ -4544,11 +4546,13 @@ namespace ClassicUO.Network
 
                                 if (mobile != null)
                                 {
-                                    mobile.SetAnimation(
-                                        Mobile.GetReplacedObjectAnimation(mobile.Graphic, animation)
+                                    // T1 (funnel part 6): the animation held at the frame
+                                    world.Writer.AnimateMobile(
+                                        mobile,
+                                        Mobile.GetReplacedObjectAnimation(mobile.Graphic, animation),
+                                        frame: (byte)frame,
+                                        hold: true
                                     );
-                                    mobile.ExecuteAnimation = false;
-                                    mobile.AnimIndex = (byte)frame;
                                 }
                             }
                             else if (world.Player != null && serial == world.Player)
@@ -4769,9 +4773,8 @@ namespace ClassicUO.Network
                     {
                         if ((m.Serial & 0xFFFF) == serial)
                         {
-                            m.SetAnimation(animID);
-                            m.AnimIndex = frameCount;
-                            m.ExecuteAnimation = false;
+                            // T1 (funnel part 6): the animation held at the frame
+                            world.Writer.AnimateMobile(m, animID, frame: frameCount, hold: true);
 
                             break;
                         }
@@ -5660,7 +5663,9 @@ namespace ClassicUO.Network
             byte mode = p.ReadUInt8();
             byte group = Mobile.GetObjectNewAnimation(mobile, type, action, mode);
 
-            mobile.SetAnimation(
+            // T1 (funnel part 6)
+            world.Writer.AnimateMobile(
+                mobile,
                 group,
                 repeatCount: 1,
                 repeat: (type == 1 || type == 2) && mobile.Graphic == 0x0015,
