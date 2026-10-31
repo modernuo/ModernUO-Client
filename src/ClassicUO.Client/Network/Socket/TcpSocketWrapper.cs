@@ -54,33 +54,87 @@ sealed class TcpSocketWrapper : SocketWrapper
         stream.Flush();
     }
 
-    public override int Read(byte[] buffer)
+    public override int Available
     {
-        if (!IsConnected)
-            return 0;
-
-        var available = Math.Min(buffer.Length, _socket.Available);
-        var done = 0;
-
-        var stream = _socket.GetStream();
-
-        while (done < available)
+        get
         {
-            var toRead = Math.Min(buffer.Length, available - done);
-            var read = stream.Read(buffer, done, toRead);
-
-            if (read <= 0)
+            try
             {
-                InvokeOnDisconnected();
-                Disconnect();
-
+                return _socket?.Client?.Available ?? 0;
+            }
+            catch (Exception)
+            {
                 return 0;
             }
+        }
+    }
 
-            done += read;
+    // Never blocks. The socket stays in blocking mode because sends go through NetworkStream, which rejects a non-blocking
+    // socket, so a read is either bounded by what Available says is queued (cannot block), or, when nothing is queued but the
+    // socket reports readable (a FIN or an error, or a spurious wake-up), a one-byte probe with the socket switched to
+    // non-blocking for that call only.
+    public override int Read(byte[] buffer)
+    {
+        var client = _socket?.Client;
+
+        if (client == null || !client.Connected)
+            return 0;
+
+        try
+        {
+            var queued = client.Available;
+
+            if (queued > 0)
+            {
+                var read = client.Receive(buffer, 0, Math.Min(buffer.Length, queued), SocketFlags.None, out var error);
+
+                return Finish(read, error);
+            }
+
+            if (!client.Poll(0, SelectMode.SelectRead))
+                return 0;
+
+            client.Blocking = false;
+
+            try
+            {
+                var read = client.Receive(buffer, 0, 1, SocketFlags.None, out var error);
+
+                return Finish(read, error);
+            }
+            finally
+            {
+                client.Blocking = true;
+            }
+        }
+        catch (ObjectDisposedException)
+        {
+            return 0;
+        }
+    }
+
+    private int Finish(int read, SocketError error)
+    {
+        if (error == SocketError.WouldBlock || error == SocketError.Interrupted)
+            return 0; // nothing there after all (a spurious readiness)
+
+        if (error != SocketError.Success)
+        {
+            InvokeOnError(error);
+            Disconnect();
+
+            return 0;
         }
 
-        return done;
+        if (read <= 0)
+        {
+            InvokeOnDisconnected();
+            Disconnect();
+
+            return 0;
+        }
+
+        return read;
     }
 
     public override void Disconnect()
