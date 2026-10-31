@@ -23,8 +23,19 @@ namespace ClassicUO.Renderer.Sounds
         /// <summary>Most sound ids cached at once (each may hold an FAudio voice once played).</summary>
         public const int SoundCacheMaxIds = 1024;
 
-        /// <summary>Most sound effects playing at once; the oldest is stopped to make room (ClassicUO had no limit).</summary>
-        public const int MaxPlayingSounds = 32;
+        /// <summary>
+        /// Most sound effects playing at once; the oldest silent one, else the oldest, is stopped to make room. ClassicUO
+        /// had no limit, and this is a guard against pathological shards, not a mixing policy: each id is one
+        /// UOSound with one FAudio voice and a replay delay of half its length, so the count is the number of DISTINCT ids
+        /// sounding at once. Crowded combat sends two sounds per swing (ModernUO BaseWeapon: attacker's hit/miss and
+        /// defender's hurt, distinct per weapon and creature type) plus spells and creature idle/anger/death sounds, and the
+        /// median stock sound lasts 1.25 s, so 30-60 distinct ids at once is plausible in a large fight: Codex round 2
+        /// showed 32 could cut audible sounds there. Neither FNA nor FAudio limits voices (FNA never throws
+        /// InstancePlayLimitException; FAudio keeps source voices in a list), and a voice costs its native PCM copy (bounded
+        /// by <see cref="MaxPlayingBytes"/>) plus mixing time. 256 is far above a crowded scene and still bounds the
+        /// mixer's work; the sound cache's 1,024 ids bound it too.
+        /// </summary>
+        public const int MaxPlayingSounds = 256;
 
         /// <summary>Most PCM submitted to FNA at once (FNA copies each play's buffer into native memory until it ends).</summary>
         public const long MaxPlayingBytes = 64L << 20;
@@ -77,31 +88,58 @@ namespace ClassicUO.Renderer.Sounds
 
         /// <summary>
         /// Makes room to play <paramref name="next"/>: drops it from <paramref name="playing"/> (a replay restarts it), then
-        /// stops and removes the oldest sounds until fewer than <paramref name="maxCount"/> remain and their PCM plus
-        /// <paramref name="next"/>'s fits in <paramref name="maxBytes"/>. Returns how many were stopped.
+        /// stops and removes sounds until fewer than <paramref name="maxCount"/> remain and their PCM plus
+        /// <paramref name="next"/>'s fits in <paramref name="maxBytes"/>: silent ones first (<see cref="IO.Audio.Sound.IsAudible"/>),
+        /// oldest first, then the oldest audible ones. Returns how many were stopped.
+        ///
+        /// A silent <paramref name="next"/> (<paramref name="audible"/> false: sound off, window in the background) never
+        /// stops another sound (Codex round 2, P2: it used to cut audible ones to play silence): when it does not fit
+        /// as is, the list is left untouched and -1 is returned, and the caller does not play it.
         /// </summary>
-        public static int LimitPlaying(LinkedList<UOSound> playing, UOSound next, int maxCount = MaxPlayingSounds, long maxBytes = MaxPlayingBytes)
+        public static int LimitPlaying(LinkedList<UOSound> playing, UOSound next, int maxCount = MaxPlayingSounds, long maxBytes = MaxPlayingBytes, bool audible = true)
         {
+            long bytes = next.PcmBytes;
+            int count = 0;
+
+            for (LinkedListNode<UOSound> n = playing.First; n != null; n = n.Next)
+            {
+                if (n.Value != next)
+                {
+                    bytes += n.Value.PcmBytes;
+                    count++;
+                }
+            }
+
+            if (!audible && (count >= maxCount || bytes > maxBytes))
+            {
+                return -1;
+            }
+
             while (playing.Remove(next))
             {
             }
 
-            long bytes = next.PcmBytes;
-
-            for (LinkedListNode<UOSound> n = playing.First; n != null; n = n.Next)
-            {
-                bytes += n.Value.PcmBytes;
-            }
-
             int stopped = 0;
 
-            while (playing.First != null && (playing.Count >= maxCount || bytes > maxBytes))
+            for (int pass = 0; pass < 2 && (playing.Count >= maxCount || bytes > maxBytes); pass++)
             {
-                UOSound oldest = playing.First.Value;
-                playing.RemoveFirst();
-                bytes -= oldest.PcmBytes;
-                oldest.Stop();
-                stopped++;
+                // pass 0: silent sounds only, oldest first; pass 1: any, oldest first
+                LinkedListNode<UOSound> n = playing.First;
+
+                while (n != null && (playing.Count >= maxCount || bytes > maxBytes))
+                {
+                    LinkedListNode<UOSound> after = n.Next;
+
+                    if (pass == 1 || !n.Value.IsAudible)
+                    {
+                        playing.Remove(n);
+                        bytes -= n.Value.PcmBytes;
+                        n.Value.Stop();
+                        stopped++;
+                    }
+
+                    n = after;
+                }
             }
 
             return stopped;
@@ -112,9 +150,13 @@ namespace ClassicUO.Renderer.Sounds
     /// The sound effects played so far (Codex audit P1: ClassicUO kept every played id's PCM for the session, and a pack
     /// whose ids alias one large record could make each id hold its own copy).
     /// - One PCM array per source: ids that share a pack record (Sound.def aliases) share the array, which nothing writes.
-    /// - <see cref="Bytes"/> (the distinct arrays) stays within <see cref="Budget"/>, and at most <see cref="MaxIds"/> ids are
-    ///   cached. The least recently played id that is not playing is evicted (its sound disposed, its array dropped
-    ///   when no other cached id uses it). A sound that cannot fit because everything else is playing is not played.
+    /// - <see cref="Bytes"/> (the distinct arrays, including those of sounds still playing from before a
+    ///   <see cref="Clear"/>) stays within <see cref="Budget"/>, and at most <see cref="MaxIds"/> ids hold a sound. The
+    ///   least recently played id that is not playing is evicted (its sound disposed, its array dropped when no other
+    ///   cached id uses it). A sound that cannot fit because everything else is playing is not played.
+    /// - Nothing is read before it is known to fit: the loader names every source's PCM size first (a pack record's from
+    ///   its table, a loose WAV's from its header, remembered), so a refused sound costs a scan, never a payload read, and
+    ///   evicts nothing; it plays once enough of the playing sounds have finished (Codex round 2, P2).
     /// Main thread only, like the rest of the audio code.
     /// </summary>
     public sealed class SoundCache
@@ -124,6 +166,7 @@ namespace ClassicUO.Renderer.Sounds
             public byte[] Data;
             public string Name;
             public int Users;
+            public int Mark; // scratch for Fits: the pass that last counted this array
         }
 
         private sealed class Entry
@@ -140,6 +183,9 @@ namespace ClassicUO.Renderer.Sounds
         private readonly Dictionary<int, Entry> _byId = new Dictionary<int, Entry>();
         private readonly Dictionary<long, Pcm> _byKey = new Dictionary<long, Pcm>();
         private readonly LinkedList<Entry> _lru = new LinkedList<Entry>(); // first = least recently played
+        // sounds that were playing when Clear ran: no longer served, still counted until they finish (then disposed)
+        private readonly List<Entry> _retired = new List<Entry>();
+        private int _mark;
 
         /// <param name="isBusy">Whether a sound may not be evicted; default: FNA holds a buffer of it (<see cref="IO.Audio.Sound.IsActive"/>).</param>
         public SoundCache(SoundsLoader loader, long budget, int maxIds, Func<UOSound, bool> isBusy = null)
@@ -153,20 +199,28 @@ namespace ClassicUO.Renderer.Sounds
         public long Budget { get; }
         public int MaxIds { get; }
 
-        /// <summary>Bytes of PCM held: each distinct array once.</summary>
+        /// <summary>Bytes of PCM held: each distinct array once, retired playing sounds included.</summary>
         public long Bytes { get; private set; }
 
-        /// <summary>Ids cached.</summary>
+        /// <summary>Ids cached (served by <see cref="Get"/>).</summary>
         public int Count => _byId.Count;
 
-        /// <summary>Distinct PCM arrays held.</summary>
+        /// <summary>Sounds dropped by <see cref="Clear"/> while playing, still counted until they finish.</summary>
+        public int Retired => _retired.Count;
+
+        /// <summary>Distinct PCM arrays held by cached ids.</summary>
         public int Arrays => _byKey.Count;
 
         public long Evictions { get; private set; }
         public long Refusals { get; private set; }
 
+        // ids holding a sound: the cached ones and the retired ones still playing
+        private int Ids => _byId.Count + _retired.Count;
+
         public UOSound Get(int id)
         {
+            SweepRetired();
+
             if (_byId.TryGetValue(id, out Entry hit))
             {
                 _lru.Remove(hit.Node);
@@ -175,6 +229,7 @@ namespace ClassicUO.Renderer.Sounds
                 return hit.Sound;
             }
 
+            // the size is known before any read: a pack record's from its table, a loose file's from its header
             if (!_loader.TryGetSoundSource(id, out long key, out long size))
             {
                 return null;
@@ -182,8 +237,7 @@ namespace ClassicUO.Renderer.Sounds
 
             if (!_byKey.TryGetValue(key, out Pcm pcm))
             {
-                // a pack record's size is known: make room first, and do not read what cannot be held
-                if (size > 0 && !Trim(size, null))
+                if (!Trim(Math.Max(size, 0), null))
                 {
                     Refuse(id, size);
 
@@ -197,7 +251,8 @@ namespace ClassicUO.Renderer.Sounds
                     return null;
                 }
 
-                // a loose file the loader refused falls back to the pack's record, which may already be cached
+                // the source changed between the two calls (a loose file was replaced, or became unreadable and the
+                // pack's record answered): it may already be cached, else it is budgeted again at its real size
                 if (got == key || !_byKey.TryGetValue(got, out pcm))
                 {
                     if (!Trim(data.Length, null))
@@ -233,13 +288,24 @@ namespace ClassicUO.Renderer.Sounds
         }
 
         // Evicts the least recently played idle ids (never keep) until extraBytes more fit in the budget and the id count
-        // is within MaxIds. False when that is impossible because the rest are playing.
+        // is within MaxIds. False, with nothing evicted, when that is impossible because the rest are playing.
         private bool Trim(long extraBytes, Entry keep)
         {
             int extraIds = keep == null ? 1 : 0;
+
+            if (Bytes + extraBytes <= Budget && Ids + extraIds <= MaxIds)
+            {
+                return true;
+            }
+
+            if (!Fits(extraBytes, extraIds, keep))
+            {
+                return false;
+            }
+
             LinkedListNode<Entry> n = _lru.First;
 
-            while ((Bytes + extraBytes > Budget || _byId.Count + extraIds > MaxIds) && n != null)
+            while ((Bytes + extraBytes > Budget || Ids + extraIds > MaxIds) && n != null)
             {
                 LinkedListNode<Entry> next = n.Next;
 
@@ -253,7 +319,41 @@ namespace ClassicUO.Renderer.Sounds
                 n = next;
             }
 
-            return Bytes + extraBytes <= Budget && _byId.Count + extraIds <= MaxIds;
+            return Bytes + extraBytes <= Budget && Ids + extraIds <= MaxIds;
+        }
+
+        // Whether evicting every idle id would make room: the arrays of busy ids, keep and retired sounds stay. So a
+        // refusal evicts nothing and costs this scan only.
+        private bool Fits(long extraBytes, int extraIds, Entry keep)
+        {
+            int mark = ++_mark;
+            long held = 0;
+            int ids = _retired.Count;
+
+            foreach (Entry r in _retired)
+            {
+                if (r.Pcm.Mark != mark)
+                {
+                    r.Pcm.Mark = mark;
+                    held += r.Pcm.Data.Length;
+                }
+            }
+
+            foreach (Entry e in _lru)
+            {
+                if (e == keep || _isBusy(e.Sound))
+                {
+                    ids++;
+
+                    if (e.Pcm.Mark != mark)
+                    {
+                        e.Pcm.Mark = mark;
+                        held += e.Pcm.Data.Length;
+                    }
+                }
+            }
+
+            return held + extraBytes <= Budget && ids + extraIds <= MaxIds;
         }
 
         private void Remove(Entry e)
@@ -276,21 +376,53 @@ namespace ClassicUO.Renderer.Sounds
             }
         }
 
-        /// <summary>Drops every id; sounds that are not playing are disposed (playing ones finish and are collected).</summary>
+        // retired sounds that finished: disposed, their arrays no longer counted
+        private void SweepRetired()
+        {
+            for (int i = _retired.Count - 1; i >= 0; i--)
+            {
+                Entry r = _retired[i];
+
+                if (!_isBusy(r.Sound))
+                {
+                    _retired.RemoveAt(i);
+                    r.Sound.Dispose();
+
+                    if (--r.Pcm.Users == 0)
+                    {
+                        Bytes -= r.Pcm.Data.Length;
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Drops every id (a reload: the sources may have changed). Sounds that are not playing are disposed. Playing ones
+        /// play to the end (a reload never cuts a sound off) and stay counted in <see cref="Bytes"/> and the id limit until
+        /// they finish (Codex round 2, P3: they used to be forgotten, so the new cache could fill its budget beside them).
+        /// </summary>
         public void Clear()
         {
             foreach (Entry e in _lru)
             {
-                if (!_isBusy(e.Sound))
+                if (_isBusy(e.Sound))
+                {
+                    _retired.Add(e);
+                }
+                else
                 {
                     e.Sound.Dispose();
+
+                    if (--e.Pcm.Users == 0)
+                    {
+                        Bytes -= e.Pcm.Data.Length;
+                    }
                 }
             }
 
             _lru.Clear();
             _byId.Clear();
             _byKey.Clear();
-            Bytes = 0;
         }
     }
 }

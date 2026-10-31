@@ -180,72 +180,205 @@ public static class AudioConst
     /// <summary>Largest loose WAV file read at all: <see cref="MaxSoundBytes"/> of PCM plus 1 MiB of headers and other chunks. Checked before the read.</summary>
     public const long MaxWaveFileBytes = MaxSoundBytes + (1L << 20);
 
+    // Where the chunk walk reads from: bytes in memory or an open file handle. A ref struct generic, so the span one
+    // costs nothing and both walks are the same code.
+    private interface IWaveBytes
+    {
+        long Length { get; }
+
+        /// <summary>Fills <paramref name="dst"/> from <paramref name="offset"/>; false when the source is shorter (a file that shrank).</summary>
+        bool Read(long offset, scoped Span<byte> dst);
+    }
+
+    private readonly ref struct SpanBytes(ReadOnlySpan<byte> raw) : IWaveBytes
+    {
+        private readonly ReadOnlySpan<byte> _raw = raw;
+        public long Length => _raw.Length;
+
+        public bool Read(long offset, scoped Span<byte> dst)
+        {
+            if (offset < 0 || offset > _raw.Length - dst.Length) return false;
+            _raw.Slice((int)offset, dst.Length).CopyTo(dst);
+            return true;
+        }
+    }
+
+    private readonly struct HandleBytes(Microsoft.Win32.SafeHandles.SafeFileHandle handle, long length) : IWaveBytes
+    {
+        public long Length { get; } = length;
+
+        public bool Read(long offset, scoped Span<byte> dst) => ReadExactly(handle, offset, dst);
+    }
+
+    // RandomAccess.Read until dst is full; false at the end of the file
+    private static bool ReadExactly(Microsoft.Win32.SafeHandles.SafeFileHandle handle, long offset, Span<byte> dst)
+    {
+        while (dst.Length > 0)
+        {
+            int n = RandomAccess.Read(handle, dst, offset);
+            if (n <= 0) return false;
+            dst = dst.Slice(n);
+            offset += n;
+        }
+        return true;
+    }
+
     /// <summary>
     /// The data chunk of a RIFF/WAVE file whose fmt chunk says 22,050 Hz mono 16-bit, as ClassicUO's SoundsLoader.ReadWave
     /// walked it (chunks in order, padded to even sizes, a size running past the end clamped to the end), with every size
     /// compared by subtraction so no chunk size can overflow the walk (Codex audit: a 44-byte file declaring 0x7FFFFFF0
-    /// data bytes). Returns the PCM's range in <paramref name="raw"/>, or an error. The length is not checked here: see
-    /// <see cref="CheckPcmLength"/>.
+    /// data bytes). Reads only the chunk headers and the fmt fields, so a file's payload is never touched to find its
+    /// length. Returns the PCM's range, or an error. The length is not checked here: see <see cref="CheckPcmLength"/>.
     /// </summary>
-    public static string? ParseWave(ReadOnlySpan<byte> raw, out int dataOffset, out int dataLength)
+    private static string? WalkWave<T>(scoped in T src, out long dataOffset, out int dataLength) where T : IWaveBytes, allows ref struct
     {
         dataOffset = dataLength = 0;
-        if (raw.Length < 44 || !raw.Slice(0, 4).SequenceEqual("RIFF"u8) || !raw.Slice(8, 4).SequenceEqual("WAVE"u8)) return "not a WAV";
-        int at = 12, channels = 0, rate = 0, bits = 0;
-        while (raw.Length - at >= 8)
+        long length = src.Length;
+        Span<byte> h = stackalloc byte[16];
+        if (length < 44) return "not a WAV";
+        if (!src.Read(0, h.Slice(0, 12))) return "the file shrank while it was read";
+        if (!h.Slice(0, 4).SequenceEqual("RIFF"u8) || !h.Slice(8, 4).SequenceEqual("WAVE"u8)) return "not a WAV";
+        long at = 12;
+        int channels = 0, rate = 0, bits = 0;
+        while (length - at >= 8)
         {
-            ReadOnlySpan<byte> kind = raw.Slice(at, 4);
-            int size = BinaryPrimitives.ReadInt32LittleEndian(raw.Slice(at + 4));
-            int avail = raw.Length - at - 8;
-            if (size < 0 || size > avail) size = avail;
-            if (kind.SequenceEqual("fmt "u8) && size >= 16)
+            if (!src.Read(at, h.Slice(0, 8))) return "the file shrank while it was read";
+            bool fmt = h.Slice(0, 4).SequenceEqual("fmt "u8), data = h.Slice(0, 4).SequenceEqual("data"u8);
+            int size = BinaryPrimitives.ReadInt32LittleEndian(h.Slice(4));
+            long avail = length - at - 8;
+            if (size < 0 || size > avail) size = (int)Math.Min(avail, int.MaxValue);
+            if (fmt && size >= 16)
             {
-                channels = BinaryPrimitives.ReadInt16LittleEndian(raw.Slice(at + 10));
-                rate = BinaryPrimitives.ReadInt32LittleEndian(raw.Slice(at + 12));
-                bits = BinaryPrimitives.ReadInt16LittleEndian(raw.Slice(at + 22));
+                if (!src.Read(at + 8, h)) return "the file shrank while it was read";
+                channels = BinaryPrimitives.ReadInt16LittleEndian(h.Slice(2));
+                rate = BinaryPrimitives.ReadInt32LittleEndian(h.Slice(4));
+                bits = BinaryPrimitives.ReadInt16LittleEndian(h.Slice(14));
             }
-            else if (kind.SequenceEqual("data"u8))
+            else if (data)
             {
                 if (channels != 1 || rate != SoundRate || bits != 16) return $"{rate} Hz {channels} ch {bits}-bit (the client plays 22050 mono 16-bit)";
                 dataOffset = at + 8;
                 dataLength = size;
                 return null;
             }
-            // at + 8 + size <= raw.Length here, so this stays at most raw.Length + 1
-            at += 8 + size + (size & 1);
+            // at + 8 + size <= length here, so this stays at most length + 1
+            at += 8 + (long)size + (size & 1);
         }
         return "no data chunk";
     }
 
-    /// <summary>
-    /// A loose Sounds/&lt;id&gt;.wav as the client plays it: the file's size is checked against
-    /// <see cref="MaxWaveFileBytes"/> before it is read, the chunks are walked by <see cref="ParseWave"/>, and the PCM
-    /// must pass <see cref="CheckPcmLength"/>. Returns an array of exactly the PCM, or null with <paramref name="error"/>;
-    /// never throws for a bad or unreadable file. The client and the converter both use it, so a WAV that one refuses
-    /// the other refuses too, and the archive's sound is used instead.
-    /// </summary>
-    public static byte[]? ReadWaveFile(string path, out string? error)
+    /// <summary><see cref="WalkWave"/> on bytes in memory: the PCM's range in <paramref name="raw"/>, or an error.</summary>
+    public static string? ParseWave(ReadOnlySpan<byte> raw, out int dataOffset, out int dataLength)
     {
-        byte[] raw;
+        var src = new SpanBytes(raw);
+        string? error = WalkWave(src, out long offset, out dataLength);
+        dataOffset = (int)offset;
+        return error;
+    }
+
+    /// <summary>
+    /// A loose Sounds/&lt;id&gt;.wav as the client plays it, through ONE open handle (Codex round 2, P3: the size used to be
+    /// checked on the path and the file read through another open, so a file replaced in between could be read whole):
+    /// that handle's length is checked against <see cref="MaxWaveFileBytes"/>, the chunk headers are walked
+    /// (<see cref="WalkWave"/>), the PCM must pass <see cref="CheckPcmLength"/> and be at most <paramref name="maxPcmBytes"/>,
+    /// and only then is exactly the PCM read, from the same handle. Returns an array of exactly the PCM, or null with
+    /// <paramref name="error"/>; never throws for a bad, vanished or unreadable file. The client and the converter both
+    /// use it, so a WAV that one refuses the other refuses too, and the archive's sound is used instead.
+    /// <paramref name="pcmBytes"/> is the PCM length the header declared (0 when it has none), also on a refusal.
+    /// </summary>
+    public static byte[]? ReadWaveFile(string path, out string? error, out int pcmBytes, int maxPcmBytes = MaxSoundBytes)
+    {
+        pcmBytes = 0;
         try
         {
-            long length = new FileInfo(path).Length;
-            if (length > MaxWaveFileBytes)
+            using var handle = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            error = OpenWave(handle, out long offset, out pcmBytes);
+            if (error != null) return null;
+            if (pcmBytes > maxPcmBytes)
             {
-                error = $"{length} bytes (a loose WAV is at most {MaxWaveFileBytes})";
+                error = $"{pcmBytes} bytes of PCM (at most {maxPcmBytes} here)";
                 return null;
             }
-            raw = File.ReadAllBytes(path);
+            var pcm = new byte[pcmBytes];
+            if (!ReadExactly(handle, offset, pcm))
+            {
+                error = "the file shrank while it was read";
+                return null;
+            }
+            return pcm;
         }
         catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
         {
             error = e.Message;
             return null;
         }
-        return ReadWave(raw, out error);
     }
 
-    /// <summary><see cref="ReadWaveFile"/> on bytes already in memory.</summary>
+    /// <summary><see cref="ReadWaveFile(string, out string?, out int, int)"/> without the declared length.</summary>
+    public static byte[]? ReadWaveFile(string path, out string? error) => ReadWaveFile(path, out error, out _);
+
+    /// <summary>
+    /// <see cref="ReadWaveFile(string, out string?, out int, int)"/>'s checks without reading the PCM: the length a loose
+    /// WAV would play (headers only, one handle), or an error when the client would refuse it.
+    /// </summary>
+    public static string? ProbeWaveFile(string path, out int pcmBytes)
+    {
+        pcmBytes = 0;
+        try
+        {
+            using var handle = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            return OpenWave(handle, out _, out pcmBytes);
+        }
+        catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+        {
+            return e.Message;
+        }
+    }
+
+    // the checks before any PCM is read: the handle's length, the chunk walk, a playable length
+    private static string? OpenWave(Microsoft.Win32.SafeHandles.SafeFileHandle handle, out long offset, out int pcmBytes)
+    {
+        offset = 0;
+        pcmBytes = 0;
+        long length = RandomAccess.GetLength(handle);
+        if (length > MaxWaveFileBytes) return $"{length} bytes (a loose WAV is at most {MaxWaveFileBytes})";
+        var src = new HandleBytes(handle, length);
+        return WalkWave(src, out offset, out pcmBytes) ?? CheckPcmLength(pcmBytes);
+    }
+
+    /// <summary>
+    /// Reads a whole file through one handle, refusing it before any allocation when that handle's length is over
+    /// <paramref name="maxBytes"/> (music: Mp3Validator.MaxBytes, so an oversized MP3 is never read). Null with
+    /// <paramref name="error"/> when it is too large, vanished, unreadable or shrank while read; never throws for those.
+    /// </summary>
+    public static byte[]? ReadFileBounded(string path, long maxBytes, out string? error)
+    {
+        try
+        {
+            using var handle = File.OpenHandle(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+            long length = RandomAccess.GetLength(handle);
+            if (length > maxBytes)
+            {
+                error = $"size {length} exceeds {maxBytes}";
+                return null;
+            }
+            var data = new byte[length];
+            if (!ReadExactly(handle, 0, data))
+            {
+                error = "the file shrank while it was read";
+                return null;
+            }
+            error = null;
+            return data;
+        }
+        catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+        {
+            error = e.Message;
+            return null;
+        }
+    }
+
+    /// <summary><see cref="ReadWaveFile(string, out string?, out int, int)"/>'s checks on bytes already in memory.</summary>
     public static byte[]? ReadWave(ReadOnlySpan<byte> raw, out string? error)
     {
         error = ParseWave(raw, out int offset, out int length) ?? CheckPcmLength(length);

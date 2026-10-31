@@ -28,6 +28,10 @@ namespace ClassicUO.Assets
         /// </summary>
         private readonly Dictionary<int, string> _ours = new Dictionary<int, string>();
 
+        // a loose file's PCM length from its header (TryGetSoundSource), kept so a sound the cache cannot hold yet is not
+        // probed again on every request; updated by the read itself if the file changed
+        private readonly Dictionary<int, int> _oursPcm = new Dictionary<int, int>();
+
         public const int MAX_SOUND_DATA_INDEX_COUNT = 0xFFFF;
 
         private RecordStore _sounds, _music;
@@ -151,6 +155,7 @@ namespace ClassicUO.Assets
         public void LoadOurs()
         {
             _ours.Clear();
+            _oursPcm.Clear();
 
             string folder = Path.Combine(FileManager.BasePath, "Sounds");
 
@@ -183,10 +188,12 @@ namespace ClassicUO.Assets
         public bool TryGetSound(int sound, out byte[] data, out string name) => TryGetSound(sound, out data, out name, out _);
 
         /// <summary>
-        /// Where <paramref name="sound"/> would come from, without reading it: <paramref name="key"/> names the source (a
-        /// pack record, shared by its aliases, or the id's loose file) and <paramref name="pcmBytes"/> is its PCM size (-1
-        /// for a loose file, known only once read). The renderer's sound cache uses it to share one array per record and
-        /// to make room before a read. False when the id has no playable source.
+        /// Where <paramref name="sound"/> would come from, without reading its PCM: <paramref name="key"/> names the source
+        /// (a pack record, shared by its aliases, or the id's loose file) and <paramref name="pcmBytes"/> is its PCM size: a
+        /// record's from the table, a loose file's from its header (one bounded read of the chunk headers on first use,
+        /// then remembered). A loose file the client would refuse is dropped here, so the pack's record is named instead
+        /// and budgeted before it is read (Codex round 2, P2). The renderer's sound cache uses it to share one array per
+        /// record and to make room before any read. False when the id has no playable source.
         /// </summary>
         public bool TryGetSoundSource(int sound, out long key, out long pcmBytes)
         {
@@ -198,11 +205,30 @@ namespace ClassicUO.Assets
                 return false;
             }
 
-            if (_ours.ContainsKey(sound))
+            if (_ours.TryGetValue(sound, out string mine))
             {
-                key = LooseKey(sound);
+                if (_oursPcm.TryGetValue(sound, out int known))
+                {
+                    key = LooseKey(sound);
+                    pcmBytes = known;
 
-                return true;
+                    return true;
+                }
+
+                if (AudioConst.ProbeWaveFile(mine, out int probed) is { } bad)
+                {
+                    // unreadable or unplayable: once is enough, the pack's sound (if any) plays from now on
+                    Log.Warn($"{Path.GetFileName(mine)}: {bad}; it is being ignored");
+                    _ours.Remove(sound);
+                }
+                else
+                {
+                    _oursPcm[sound] = probed;
+                    key = LooseKey(sound);
+                    pcmBytes = probed;
+
+                    return true;
+                }
             }
 
             RecordStore store = _sounds;
@@ -239,7 +265,8 @@ namespace ClassicUO.Assets
             // Ours first, so a replacement replaces and a new id works at all.
             if (_ours.TryGetValue(sound, out string mine))
             {
-                // size-capped read, overflow-safe chunk walk, playable length (the converter applies the same rules)
+                // one handle: size cap, overflow-safe chunk walk, playable length, then exactly the PCM (the converter
+                // applies the same rules)
                 byte[] wave = AudioConst.ReadWaveFile(mine, out string bad);
 
                 if (wave == null)
@@ -248,6 +275,7 @@ namespace ClassicUO.Assets
                 }
                 else
                 {
+                    _oursPcm[sound] = wave.Length; // the file may have changed since it was probed
                     data = wave;
                     name = Path.GetFileNameWithoutExtension(mine);
                     key = LooseKey(sound);
@@ -257,6 +285,7 @@ namespace ClassicUO.Assets
 
                 // unreadable or unplayable: once is enough, the pack's sound (if any) plays from now on
                 _ours.Remove(sound);
+                _oursPcm.Remove(sound);
             }
 
             RecordStore store = _sounds;
