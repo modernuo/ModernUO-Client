@@ -505,20 +505,54 @@ namespace ClassicUO
         /// not seen as a stalled world. Cleared after every frame.</summary>
         public static bool WorldHeld;
 
-        /// <summary>Set by GameScene when it presents a world frame: until the first one, frames are the login's (not played).</summary>
+        /// <summary>Set by GameScene when it presents a world frame: until the first one after a login, frames are the login's
+        /// (not played). Reset when the session ends (logout or disconnect).</summary>
         public static bool WorldShown;
 
         // Session timeline (CUO_FRAMESTATS=1), independent of the plan's windows: every collection and every frame over 8 ms
-        // from the first in-game frame on, marked held (the world was held this frame) or play, and summaries at +40 s and
-        // +60 s. The login warm-up collections happen before the first plan window, where the [gc] lines don't look.
+        // from the first in-game frame on, marked login, held (the world was held this frame) or play, and summaries at +40 s
+        // and +60 s. The login warm-up collections happen before the first plan window, where the [gc] lines don't look.
+        // Totals come from deltas of CollectionCount and GetTotalPauseDuration (several collections can fall in one frame);
+        // the per-collection detail is the latest one GetGCMemoryInfo sampled. A new login starts a new timeline.
         private static long _sessionStart, _sessionLast;
-        private static int _sessionGcSeen, _sessionGcs, _sessionGc1, _sessionGc2, _sessionGcsPlay, _sessionSlowPlay, _sessionSlowHeld, _sessionNextSummary = 40, _sessionNextPools = 20;
+        private static int _sessionGcSeen0, _sessionGcSeen1, _sessionGcSeen2, _sessionGcs, _sessionGc1, _sessionGc2, _sessionGcsPlay,
+            _sessionSlowPlay, _sessionSlowHeld, _sessionNextSummary, _sessionNextPools;
         private static double _sessionPause, _sessionPausePlay, _sessionSlowPlayMax;
+        private static TimeSpan _sessionPauseSeen;
 
         private static bool _sessionAfterReport;
 
+        // the baseline for the next frame: everything up to the end of this one
+        private static void SessionBaseline()
+        {
+            _sessionGcSeen0 = GC.CollectionCount(0);
+            _sessionGcSeen1 = GC.CollectionCount(1);
+            _sessionGcSeen2 = GC.CollectionCount(2);
+            _sessionPauseSeen = GC.GetTotalPauseDuration();
+        }
+
         private static void SessionTick(long now)
         {
+            bool inGame = Client.Game?.UO?.World?.InGame ?? false;
+
+            if (!inGame)
+            {
+                if (_sessionStart != 0)
+                {
+                    // logout or disconnect: the next login starts a new timeline, and its first frames are login frames again
+                    Log.Info("[gcs] session ended");
+                    _sessionStart = 0;
+                    WorldShown = false;
+                }
+
+                WorldHeld = false;
+                _sessionAfterReport = false;
+                _sessionLast = now;
+                SessionBaseline();
+
+                return;
+            }
+
             // before the first presented world frame (the login), a frame counts as held: nothing of the world is shown yet
             bool held = WorldHeld || !WorldShown;
             string kind = !WorldShown ? "login" : WorldHeld ? "held" : "play";
@@ -526,41 +560,34 @@ namespace ClassicUO
             // the window report (string building and logging, 20-30 ms) ran after the previous frame's end: not the game's
             bool afterReport = _sessionAfterReport;
             _sessionAfterReport = false;
+            var inv = CultureInfo.InvariantCulture;
 
             if (_sessionStart == 0)
             {
-                _sessionLast = now;
-
-                if (!(Client.Game?.UO?.World?.InGame ?? false))
-                {
-                    return;
-                }
-
+                // the first in-game frame: the baseline was taken at the end of the previous (login) frame, so this frame's
+                // collections (Legacy's warm-up collection runs in it) are counted
                 _sessionStart = now;
-                _sessionGcSeen = GC.CollectionCount(0);
-                Log.Info(string.Format(CultureInfo.InvariantCulture, "[gcs] in game: collections before gen0 {0} gen1 {1} gen2 {2}, pause {3:0.0} ms, heap {4:0.0} MB, allocated {5:0} MB",
-                    _sessionGcSeen, GC.CollectionCount(1), GC.CollectionCount(2), GC.GetTotalPauseDuration().TotalMilliseconds,
+                _sessionGcs = _sessionGc1 = _sessionGc2 = _sessionGcsPlay = _sessionSlowPlay = _sessionSlowHeld = 0;
+                _sessionPause = _sessionPausePlay = _sessionSlowPlayMax = 0;
+                _sessionNextSummary = 40;
+                _sessionNextPools = 20;
+                Log.Info(string.Format(inv, "[gcs] in game: collections before gen0 {0} gen1 {1} gen2 {2}, pause {3:0.0} ms, heap {4:0.0} MB, allocated {5:0} MB",
+                    _sessionGcSeen0, _sessionGcSeen1, _sessionGcSeen2, _sessionPauseSeen.TotalMilliseconds,
                     GC.GetGCMemoryInfo(GCKind.Any).HeapSizeBytes / 1048576.0, GC.GetTotalAllocatedBytes() / 1048576.0));
-
-                return;
             }
 
             double t = (now - _sessionStart) / (double)Stopwatch.Frequency;
             double frameMs = (now - _sessionLast) * 1000.0 / Stopwatch.Frequency;
             _sessionLast = now;
-            int seen = GC.CollectionCount(0);
-            var inv = CultureInfo.InvariantCulture;
+            int seen0 = GC.CollectionCount(0);
 
-            if (seen != _sessionGcSeen)
+            if (seen0 != _sessionGcSeen0)
             {
-                int count = seen - _sessionGcSeen;
-                _sessionGcSeen = seen;
-                GCMemoryInfo gi = GC.GetGCMemoryInfo(GCKind.Any);
-                ReadOnlySpan<TimeSpan> pauses = gi.PauseDurations;
-                double pause = pauses.Length > 0 ? pauses[0].TotalMilliseconds + (pauses.Length > 1 ? pauses[1].TotalMilliseconds : 0) : 0;
+                int count = seen0 - _sessionGcSeen0, count1 = GC.CollectionCount(1) - _sessionGcSeen1, count2 = GC.CollectionCount(2) - _sessionGcSeen2;
+                double pause = (GC.GetTotalPauseDuration() - _sessionPauseSeen).TotalMilliseconds;
                 _sessionGcs += count;
-                _sessionGc1 += gi.Generation >= 1 ? 1 : 0;
-                _sessionGc2 += gi.Generation >= 2 ? 1 : 0;
+                _sessionGc1 += count1;
+                _sessionGc2 += count2;
                 _sessionPause += pause;
 
                 if (!held)
@@ -569,9 +596,14 @@ namespace ClassicUO
                     _sessionPausePlay += pause;
                 }
 
-                Log.Info(string.Format(inv, "[gcs] +{0:0.00}s #{1} gen{2}{3}{4} pause {5:0.00} ms, promoted {6:0.00} MB, heap {7:0.0} MB, frame {8:0.00} ms, {9}{10}, tag {11}",
-                    t, gi.Index, gi.Generation, gi.Compacted ? " compacting" : "", gi.Concurrent ? " concurrent" : "", pause, gi.PromotedBytes / 1048576.0,
-                    gi.HeapSizeBytes / 1048576.0, frameMs, kind, count > 1 ? $" ({count - 1} more)" : "", _recording ? _tag : "-"));
+                GCMemoryInfo gi = GC.GetGCMemoryInfo(GCKind.Any);
+                ReadOnlySpan<TimeSpan> pauses = gi.PauseDurations;
+                double lastPause = pauses.Length > 0 ? pauses[0].TotalMilliseconds + (pauses.Length > 1 ? pauses[1].TotalMilliseconds : 0) : 0;
+
+                Log.Info(string.Format(inv, "[gcs] +{0:0.00}s {1} collection{2} (gen1+ {3}, gen2 {4}), pause {5:0.00} ms, frame {6:0.00} ms, {7}, tag {8}; latest sampled #{9} gen{10}{11}{12} pause {13:0.00} ms, promoted {14:0.00} MB, heap {15:0.0} MB",
+                    t, count, count > 1 ? "s" : "", count1, count2, pause, frameMs, kind, _recording ? _tag : "-",
+                    gi.Index, gi.Generation, gi.Compacted ? " compacting" : "", gi.Concurrent ? " concurrent" : "", lastPause,
+                    gi.PromotedBytes / 1048576.0, gi.HeapSizeBytes / 1048576.0));
             }
 
             if (frameMs > 8 && afterReport)
@@ -610,6 +642,8 @@ namespace ClassicUO
                     Game.GameObjects.Static.TotalNew, recycler?.PooledStatics ?? 0, Game.Map.Chunk.DescribeMeshCapacities(world?.Map)));
                 _sessionAfterReport = true;
             }
+
+            SessionBaseline();
         }
 
         // one line per garbage collection seen at the end of a recorded frame: what kind, how long, what it kept
