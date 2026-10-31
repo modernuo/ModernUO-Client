@@ -532,16 +532,82 @@ public static class AnimPaletteFile
         fs.Commit();
     }
 
+    /// <summary>Largest palette payload a reader accepts (bytes): 64k palettes, 32 MiB. The shipped pack has 37.9k
+    /// (18.5 MiB). Packs are untrusted input; the GPU upload sizes a buffer from this.</summary>
+    public const long MaxPaletteBytes = 32L << 20;
+    public const int MaxPalettes = (int)(MaxPaletteBytes / (Entries * 2));
+    /// <summary>Largest frame table a reader accepts (entries).</summary>
+    public const int MaxFrames = 1 << 24;
+
+    /// <summary>Where the parts of a validated palettes.bin are: counts, where the frame table and the palette data
+    /// start (bytes from the file start), and the palette data's size.</summary>
+    public readonly record struct Layout(int PaletteCount, int FrameCount, long FrameOffset, long PaletteOffset, long PaletteBytes);
+
+    /// <summary>Reads the header and counts and checks them against the stream's length before anything is sized from
+    /// them: non-negative counts within <see cref="MaxPalettes"/> / <see cref="MaxFrames"/>, and the frame table plus
+    /// the whole palette payload inside the file. Leaves the stream at the frame table.</summary>
+    public static Layout ReadLayout(Stream fs)
+    {
+        StructIo.ReadHeader(fs, AnimConst.MagicPalettes);
+        int pc = StructIo.Read<int>(fs);
+        int frames = StructIo.Read<int>(fs);
+        if (pc < 0 || pc > MaxPalettes)
+            throw new InvalidDataException($"{FileName}: palette count {pc} outside 0..{MaxPalettes}");
+        if (frames < 0 || frames > MaxFrames)
+            throw new InvalidDataException($"{FileName}: frame count {frames} outside 0..{MaxFrames}");
+        long frameOffset = fs.Position;
+        long palOffset = checked(frameOffset + (long)frames * sizeof(uint));
+        long palBytes = checked((long)pc * Entries * sizeof(ushort));
+        long end = checked(palOffset + palBytes);
+        if (end > fs.Length)
+            throw new InvalidDataException($"{FileName}: {frames} frames and {pc} palettes need {end} bytes, the file has {fs.Length}");
+        return new Layout(pc, frames, frameOffset, palOffset, palBytes);
+    }
+
+    /// <summary>Checks every frame's palette id: below <paramref name="paletteCount"/>, or uint.MaxValue (absent frame).</summary>
+    public static void ValidateFramePalette(ReadOnlySpan<uint> framePalette, int paletteCount)
+    {
+        for (int i = 0; i < framePalette.Length; i++)
+        {
+            uint id = framePalette[i];
+            if (id != uint.MaxValue && id >= (uint)paletteCount)
+                throw new InvalidDataException($"{FileName}: frame {i} names palette {id}, the file has {paletteCount}");
+        }
+    }
+
     public static (uint[] FramePalette, ushort[] Palettes) Read(string path)
     {
         using var fs = File.OpenRead(path);
-        StructIo.ReadHeader(fs, AnimConst.MagicPalettes);
-        int pc = StructIo.Read<int>(fs);
-        var fp = new uint[StructIo.Read<int>(fs)];
-        var pal = new ushort[pc * Entries];
+        var l = ReadLayout(fs);
+        var fp = new uint[l.FrameCount];
         StructIo.ReadSpan<uint>(fs, fp);
+        ValidateFramePalette(fp, l.PaletteCount);
+        var pal = new ushort[l.PaletteCount * Entries];
         StructIo.ReadSpan<ushort>(fs, pal);
         return (fp, pal);
+    }
+
+    /// <summary>The frame table only, plus where the palette data starts (<paramref name="paletteOffset"/>, bytes from
+    /// the file start) and how many palettes it holds: for readers that stream the palettes elsewhere (the GPU upload)
+    /// instead of holding a CPU copy. Validated (<see cref="ReadLayout(Stream)"/>, <see cref="ValidateFramePalette"/>).</summary>
+    public static uint[] ReadFramePalette(string path, out int paletteCount, out long paletteOffset)
+    {
+        using var fs = File.OpenRead(path);
+        var l = ReadLayout(fs);
+        var fp = new uint[l.FrameCount];
+        StructIo.ReadSpan<uint>(fs, fp);
+        ValidateFramePalette(fp, l.PaletteCount);
+        paletteCount = l.PaletteCount;
+        paletteOffset = l.PaletteOffset;
+        return fp;
+    }
+
+    /// <summary>The validated layout, without reading the frame table (the caller validates a shared one with
+    /// <see cref="ValidateFramePalette"/>).</summary>
+    public static Layout ReadLayout(string path)
+    {
+        using var fs = File.OpenRead(path);
+        return ReadLayout(fs);
     }
 }
 

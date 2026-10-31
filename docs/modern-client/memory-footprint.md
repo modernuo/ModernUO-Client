@@ -9,7 +9,7 @@ What one client costs in memory, what each large contributor buys, and whether i
 - bench-000031: the upstream baseline. Upstream ClassicUO 9a23aa253 is retargeted to net10.0 in a scratch build.
 - bench-000032: two GC arms, `CUO_WARMUP_GC=2` and `DOTNET_GCConserveMemory=5`.
 
-The waste this page found (the anim palette CPU copy, the second Gpu world at login) and the grow-on-demand GPU arrays are implemented on `poc/mem-reduce` (not merged yet; poc-log "Memory per client: palettes, facet switch, grow on demand"). This page keeps the numbers from before that branch.
+The waste this page found (the anim palette CPU copy, the second Gpu world at login) and the grow-on-demand GPU arrays are implemented on `poc/mem-reduce` (poc-log "Memory per client: palettes, facet switch, grow on demand", measured by bench-000035). This page keeps the numbers from before that branch; the measured effect is summarised under "Short answer" and at the end of "Where the memory goes".
 
 ## Method
 
@@ -166,7 +166,7 @@ The items above add up to about 230–260 MiB of the 311 MB live (JIT Gpu). The 
 | anim palettes CPU copy | 18.5 MiB managed | yes | needed once, at upload | – | – | **waste:** removed on `poc/mem-reduce` |
 | CPU instance mirror | 16 + 2 MiB managed | partly | ~4.3k of 512k | – | – | grow on demand: `poc/mem-reduce` starts it at 256k |
 
-**Short answer.** Yes for the three big GPU arrays (implemented on `poc/mem-reduce`): art pages, anim layers and the instance buffer. Together they are 448 MiB of GPU commit per client, and a normal session uses about 15% of it. Starting at 12 art layers, 32 anim layers and 256k instances saves about 320 MiB of commit and VRAM per client: about 1.3 GB across four clients. The large scene still reaches today's ceilings, with growth steps during holds and at 75% occupancy.
+**Short answer.** Yes for the three big GPU arrays (implemented on `poc/mem-reduce`): art pages, anim layers and the instance buffer. Together they are 448 MiB of GPU commit per client, and a normal session uses about 15% of it. Starting at 12 art layers, 32 anim layers and 256k instances was computed to save about 280 MiB of commit and VRAM per client. Measured (bench-000035): 145 MiB of private commit in Britain, because the art array grows to its old 24 layers at login in every session; 54–66 MiB after a crowded scene, where the anim array reaches its ceiling too (only the instance buffer stays small). Each growth step took 0.7–1.2 ms of main-thread time, none in a frame over 8 ms.
 
 **But it doesn't lower Task Manager's "Memory" column.** These arrays were never resident. What it lowers is commit charge and VRAM. Both matter with several clients: on a smaller GPU, VRAM is what runs out first.
 
@@ -199,7 +199,7 @@ Pools, prefill, the PackPages caches, the decode pools and the atlases stay: the
 - **Upstream is flat:** 565–586 MB pws from the smoke through every spot, commit 1023–1064 MB. Its peak of 982 MB comes after the heap dump, which reads every committed page and makes it resident; ignore it. The same artifact affects our dump runs, so their post-dump samples are left out everywhere.
 - **Where our extra memory goes** (AOT, region walks): the managed heap (+116 to +126 MB), runtime reservations (+11 to +23 MB) and, in the Gpu world only, native memory (+90 MB). GPU-mapped resident memory and Legacy's native heaps match upstream to the MB.
 - **What it buys:** the pack (decoded-page caches, decode pools, anim tables; ~140 MB more live LOH than upstream's indexes) and the Gpu world. Upstream instead maps 2.4 GB of MUL/UOP files, which costs it no resident memory and no commit.
-- **After `poc/mem-reduce`**, the expected gap to upstream on Gpu is about 160–180 MB pws: up to ~66 MB less (palettes, frame table, mirror, second world), per that branch's estimate. Its measured numbers are pending there (bench-000035).
+- **After `poc/mem-reduce`** (bench-000035, JIT, one run per arm): private commit 208 MiB lower per client in Britain (63 from the palettes and the single world build, 145 from growth), 298 MiB lower after a facet round trip, and 499 MiB lower at peak. The GC heap is about 50 MB smaller at login and 91 MB smaller after the round trip, but Task Manager's private WS moves by only 6–9 MiB at login (inside the ±20 MiB run-to-run noise) and 34 MiB after the round trip: other native read-write memory is 25 MiB higher on the branch, not yet attributed (poc-log "Measured: bench-000035").
 
 ## Reproduce
 

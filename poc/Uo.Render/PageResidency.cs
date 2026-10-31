@@ -245,8 +245,17 @@ public sealed unsafe class PageResidency
     enum PState : byte { None, Queued, Loading, Resident, Failed }
 
     readonly IntPtr _device;
-    public readonly IntPtr Texture;
-    public readonly int Layers, LogicalCount, PageSize, MipCount;
+    /// <summary>The page array. Replaced when it grows (bind it per frame, after <see cref="Upload"/>).</summary>
+    public IntPtr Texture { get; private set; }
+    /// <summary>Layers of the array now; grows on demand up to <see cref="MaxLayers"/> (<see cref="GrowthPolicy"/>).</summary>
+    public int Layers { get; private set; }
+    public readonly int MaxLayers;
+    public readonly int LogicalCount, PageSize, MipCount;
+    readonly SDL_GPUTextureCreateInfo _ci;
+    readonly string _name;
+    GrowthPolicy _growth;
+    /// <summary>Growth steps and their main-thread cost (create the larger array + record the layer copies).</summary>
+    public GrowthStats Growth;
     /// <summary>Pack (source) format; shader flags follow it. <see cref="UploadFormat"/> is what the GPU array holds.</summary>
     public readonly PixelFormat Format, UploadFormat;
     /// <summary>16-bit pack on a GPU (or --force-expand) without sampleable B5G5R5A1: workers expand pages to RGBA8.</summary>
@@ -277,16 +286,19 @@ public sealed unsafe class PageResidency
     public int UploadsThisFrame, ResidentCount, MissingVisible, Evictions, TotalUploads;
     public int UploadBudget;
 
-    public PageResidency(IntPtr device, PackSet pack, WorkerPool workers, int layers, int uploadBudget, int stagingSlots, bool forceExpand = false)
-        : this(device, pack.PagePaths, pack.Format, pack.PageSize, pack.PageMips, workers, layers, uploadBudget, stagingSlots, forceExpand) { }
+    public PageResidency(IntPtr device, PackSet pack, WorkerPool workers, int layers, int uploadBudget, int stagingSlots, bool forceExpand = false, int maxLayers = 0)
+        : this(device, pack.PagePaths, pack.Format, pack.PageSize, pack.PageMips, workers, layers, uploadBudget, stagingSlots, forceExpand, maxLayers) { }
 
-    /// <summary>A residency manager over any set of same-format pages (art+tex, or the Indexed8 anim pages).</summary>
-    public PageResidency(IntPtr device, string[] paths, PixelFormat format, int pageSize, int mips, WorkerPool workers, int layers, int uploadBudget, int stagingSlots, bool forceExpand = false)
+    /// <summary>A residency manager over any set of same-format pages (art+tex, or the Indexed8 anim pages).
+    /// <paramref name="maxLayers"/> &gt; <paramref name="layers"/>: the array starts at <paramref name="layers"/> and grows
+    /// on demand (<see cref="GrowthPolicy"/>); 0 = fixed.</param></summary>
+    public PageResidency(IntPtr device, string[] paths, PixelFormat format, int pageSize, int mips, WorkerPool workers, int layers, int uploadBudget, int stagingSlots, bool forceExpand = false, int maxLayers = 0)
     {
         _device = device;
         _paths = paths;
         _workers = workers;
         Layers = layers;
+        MaxLayers = Math.Max(layers, maxLayers);
         LogicalCount = Math.Max(1, paths.Length);
         PageSize = pageSize;
         MipCount = mips;
@@ -312,12 +324,15 @@ public sealed unsafe class PageResidency
             layer_count_or_depth = (uint)layers,
             num_levels = (uint)MipCount,
         };
-        Texture = Renderer.CreateNamedTexture(device, ci, $"Uo.Render pages {PageFormats.Name(Format)} {PageSize}px x{layers}");
+        _ci = ci;
+        _name = $"Uo.Render pages {PageFormats.Name(Format)} {PageSize}px";
+        Texture = Renderer.CreateNamedTexture(device, ci, $"{_name} x{layers}");
         if (Texture == IntPtr.Zero) throw new Exception($"atlas texture ({PageFormats.Name(Format)}): " + SDL_GetError());
 
+        // per-layer tables at the ceiling (a few hundred bytes), so growing never reallocates them
         _layerOf = new int[LogicalCount];
-        _logicalOf = new int[layers];
-        _layerUsed = new long[layers];
+        _logicalOf = new int[MaxLayers];
+        _layerUsed = new long[MaxLayers];
         _state = new PState[LogicalCount];
         _requested = new long[LogicalCount];
         _queue = new int[LogicalCount];
@@ -424,9 +439,17 @@ public sealed unsafe class PageResidency
     public long ReadTicksSum, DecodeTicksSum, ExpandTicksSum, WaitTicksSum, FileBytesSum;
     public int CompressedPages;
 
-    /// <summary>Uploads loaded pages (up to the budget) into free or least-recently-used layers. Call inside a copy pass.</summary>
-    public void Upload(IntPtr copyPass, long frame)
+    /// <summary>Uploads loaded pages (up to the budget) into free or least-recently-used layers. Call inside a copy pass,
+    /// before anything samples <see cref="Texture"/> in this command buffer: it may first grow the array
+    /// (<paramref name="hold"/> = the host shows its previous frame or the camera jumped, a good moment to grow).</summary>
+    public void Upload(IntPtr copyPass, long frame, bool hold = false)
     {
+        // the whole batch counts: growing only when the array is already full would let this batch's later uploads
+        // evict (or wait for) layers that a larger array keeps
+        int incoming = BatchUploads();
+        if (Layers < MaxLayers && !GrowFailed && _growth.CheckBatch(ResidentCount, Layers, MaxLayers, incoming, hold, frame))
+            Grow(copyPass, GrowthPolicy.NextFor(Layers, MaxLayers, (long)ResidentCount + incoming));
+
         for (int s = 0; s < _staging.Length; s++)
         {
             if (_slotState[s] != 2) continue;
@@ -478,6 +501,51 @@ public sealed unsafe class PageResidency
             _slotState[s] = 0;
         }
     }
+
+    /// <summary>Loaded pages this upload pass will place: the loaded, successful slots, within what is left of the budget.</summary>
+    int BatchUploads()
+    {
+        int n = 0;
+        for (int i = 0; i < _slotState.Length; i++) if (_slotState[i] == 2 && _jobs[i].Ok) n++;
+        return Math.Min(n, Math.Max(0, UploadBudget - UploadsThisFrame));
+    }
+
+    /// <summary>Replaces the array with a larger one: the resident layers are copied GPU-side (every mip) inside this copy
+    /// pass, before this frame's uploads; layer indices and the page table stay as they are, so nothing is dropped or
+    /// redrawn differently. The old array is released (SDL destroys it once the frames in flight are done with it).</summary>
+    void Grow(IntPtr copyPass, int newLayers)
+    {
+        long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+        var ci = _ci;
+        ci.layer_count_or_depth = (uint)newLayers;
+        var tex = Renderer.CreateNamedTexture(_device, ci, $"{_name} x{newLayers}");
+        _growth.Grew();
+        if (tex == IntPtr.Zero)
+        {
+            Console.Error.WriteLine($"page array growth {Layers} -> {newLayers} layers failed: {SDL_GetError()}; staying at {Layers}");
+            GrowFailed = true;
+            return;
+        }
+        for (int l = 0; l < Layers; l++)
+        {
+            if (_logicalOf[l] < 0) continue;
+            for (int m = 0; m < MipCount; m++)
+            {
+                uint dim = (uint)Math.Max(1, PageSize >> m);
+                var src = new SDL_GPUTextureLocation { texture = Texture, mip_level = (uint)m, layer = (uint)l };
+                var dst = new SDL_GPUTextureLocation { texture = tex, mip_level = (uint)m, layer = (uint)l };
+                SDL_CopyGPUTextureToTexture(copyPass, in src, in dst, dim, dim, 1, false);
+            }
+        }
+        SDL_ReleaseGPUTexture(_device, Texture);
+        int from = Layers;
+        Texture = tex;
+        Layers = newLayers;
+        Growth.Add((System.Diagnostics.Stopwatch.GetTimestamp() - t0) * 1000.0 / System.Diagnostics.Stopwatch.Frequency, from, newLayers);
+    }
+
+    /// <summary>A growth step could not create the larger array; the array stays at its size (and evicts as before).</summary>
+    public bool GrowFailed;
 
     int PickLayer(long frame)
     {
