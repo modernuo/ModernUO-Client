@@ -1,4 +1,4 @@
-﻿using ClassicUO.Assets;
+using ClassicUO.Assets;
 using ClassicUO.IO.Audio;
 using System;
 using System.Collections.Generic;
@@ -15,13 +15,11 @@ namespace ClassicUO.Renderer.Sounds
 
         private readonly IO.Audio.Sound[] _musics = new IO.Audio.Sound[MAX_SOUND_DATA_INDEX_COUNT];
         private readonly IO.Audio.Sound[] _sounds = new IO.Audio.Sound[MAX_SOUND_DATA_INDEX_COUNT];
-        private readonly bool _useDigitalMusicFolder;
         private readonly SoundsLoader _soundsLoader;
 
         public Sound(SoundsLoader soundsLoader)
         {
             _soundsLoader = soundsLoader;
-            _useDigitalMusicFolder = Directory.Exists(Path.Combine(soundsLoader.FileManager.BasePath, "Music", "Digital"));
         }
 
         public void Reload()
@@ -36,9 +34,17 @@ namespace ClassicUO.Renderer.Sounds
             {
                 ref IO.Audio.Sound sound = ref _sounds[index];
 
-                if (sound == null && _soundsLoader.TryGetSound(index, out byte[] data, out string name))
+                if (sound == null)
                 {
-                    sound = new UOSound(name, index, data);
+                    // first play of this id: one positional read of the pack record (or a loose WAV); cached after
+                    long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+
+                    if (_soundsLoader.TryGetSound(index, out ArraySegment<byte> data, out string name))
+                    {
+                        sound = new UOSound(name, index, data);
+                        ClassicUO.Utility.Logging.Log.Trace(
+                            $"sound {index} ({name}): first read {System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds:0.000} ms, {data.Count} bytes");
+                    }
                 }
 
                 return sound;
@@ -53,15 +59,10 @@ namespace ClassicUO.Renderer.Sounds
             {
                 ref IO.Audio.Sound music = ref _musics[index];
 
-                if (music == null && _soundsLoader.TryGetMusicData(index, out string name, out bool loop))
+                // the MP3 bytes come from the pack's music record, opened on the music worker
+                if (music == null && _soundsLoader.TryGetMusic(index, out string name, out bool loop, out Func<Stream> open))
                 {
-                    var path = _useDigitalMusicFolder ? $"Music/Digital/{name}" : $"Music/{name}";
-                    if (!path.EndsWith(".mp3", StringComparison.InvariantCultureIgnoreCase))
-                    {
-                        path += ".mp3";
-                    }
-
-                    music = new UOMusic(index, name, loop, _soundsLoader.FileManager.GetUOFilePath(path));
+                    music = new UOMusic(index, name, loop, open, $"pack music {index}");
                 }
 
                 return music;

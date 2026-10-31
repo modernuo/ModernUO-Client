@@ -11,6 +11,8 @@ public static class Verify
     private static int _errors;
     /// <summary>--only: check just these stages (plus the manifest); null = everything.</summary>
     public static HashSet<string>? Only;
+    /// <summary>Stages turned off with --no-sounds / --no-music: a full verify does not require their files.</summary>
+    public static readonly HashSet<string> Off = new();
     private static bool Want(string stage) => Only == null || Only.Contains(stage);
 
     public static void Fail(string msg)
@@ -78,6 +80,18 @@ public static class Verify
         if (Want("fonts") && File.Exists(Path.Combine(outDir, TextConst.AsciiFontsFile))) TextConvert.VerifyFonts(fm, outDir);
         if (Want("cliloc") && File.Exists(Path.Combine(outDir, TextConst.ClilocFile))) TextConvert.VerifyCliloc(fm, outDir);
         if (Want("speech") && File.Exists(Path.Combine(outDir, TextConst.SpeechFile))) TextConvert.VerifySpeech(fm, outDir);
+        // Sounds and music have no MUL fallback in the client: a pack without them is silent, so a verify that asks
+        // for them (a full verify, or --only sounds/music) fails when they are missing.
+        if (Want("sounds") && !Off.Contains("sounds"))
+        {
+            if (File.Exists(Path.Combine(outDir, AudioConst.SoundsFile))) AudioConvert.VerifySounds(fm, outDir);
+            else Fail($"missing {AudioConst.SoundsFile} (the client's only sound source besides loose Sounds/*.wav)");
+        }
+        if (Want("music") && !Off.Contains("music"))
+        {
+            if (File.Exists(Path.Combine(outDir, AudioConst.MusicFile))) AudioConvert.VerifyMusic(fm, outDir);
+            else Fail($"missing {AudioConst.MusicFile} (the client's only music source)");
+        }
         // hues_raw.bin is the only hue source (the client builds the LUT from it; hues.bin is retired), so a pack without
         // it cannot load. Checked before the tiledata early return so --only hues cannot pass on a pack that lacks it.
         if (Want("hues") && !File.Exists(Path.Combine(outDir, TableConst.HueRawFile))) Fail($"missing {TableConst.HueRawFile} (the pack's only hue source)");

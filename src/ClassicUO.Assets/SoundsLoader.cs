@@ -1,213 +1,135 @@
 ﻿// SPDX-License-Identifier: BSD-2-Clause
 
-using ClassicUO.IO;
-using ClassicUO.Utility;
 using ClassicUO.Utility.Logging;
 using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Text;
-using System.Text.RegularExpressions;
-using System.Threading.Tasks;
+using Uo.Pack;
 
 namespace ClassicUO.Assets
 {
+    /// <summary>
+    /// Sound effects and music from the pack (docs/modern-client/pack-format.md, "Audio"): audio/sounds.bin holds every
+    /// sound as raw 22,050 Hz mono 16-bit PCM (one positional read on first play, no decode), audio/music.bin every
+    /// music id's original MP3 bytes and loop flag (streamed to dr_mp3 on the music worker). sound.mul,
+    /// soundLegacyMUL.uop, Sound.def, Config.txt and the loose Music MP3s are the converter's input and are no longer
+    /// read here. Loose Sounds/&lt;id&gt;.wav files still win over the pack (below).
+    /// </summary>
     public sealed class SoundsLoader : UOFileLoader
     {
-        private static readonly char[] _configFileDelimiters = { ' ', ',', '\t' };
-        private static readonly Dictionary<int, (string, bool)> _musicData = new Dictionary<int, (string, bool)>();
-
         /// <summary>
-        /// Sounds of the shard's own, as loose files, looked at before the archive.
+        /// Sounds of the shard's own, as loose files, looked at before the pack.
         ///
-        /// There is no patch file for sounds the way there is for maps, and Sound.def cannot help:
-        /// it remaps an id to another id and skips any id that already holds data, so it can add
-        /// an alias and can never replace a sound. Rewriting soundLegacyMUL.uop would work and
-        /// means shipping a two hundred megabyte archive to change one clang.
-        ///
-        /// A folder does the same job for the price of a directory listing. Anything in
-        /// Sounds/&lt;id&gt;.wav wins over the archive, and any id the archive does not have becomes
-        /// a sound the shard can ask for - the client already allows ids up to 0xFFFF and the
-        /// archive stops at 1666, so there are sixty-three thousand free.
+        /// The converter folds the client folder's Sounds/&lt;id&gt;.wav files into audio/sounds.bin, so a shipped pack
+        /// needs no loose files. The folder is still read at runtime so a shard can try a sound without rebuilding the
+        /// pack: anything in Sounds/&lt;id&gt;.wav wins over the pack, and any id the pack does not have becomes a sound
+        /// the shard can ask for (ids up to 0xFFFE).
         /// </summary>
         private readonly Dictionary<int, string> _ours = new Dictionary<int, string>();
 
-
         public const int MAX_SOUND_DATA_INDEX_COUNT = 0xFFFF;
 
-        private UOFile _file;
+        private RecordStore _sounds, _music;
+        // per record: false once the record failed its checks or its read (absent for the session, logged once)
+        private bool[] _soundOk = Array.Empty<bool>(), _musicOk = Array.Empty<bool>();
 
         public SoundsLoader(UOFileManager fileManager) : base(fileManager)
         {
         }
 
-        public override void Load()
+        /// <summary>True when audio/sounds.bin is open.</summary>
+        public bool HasPackSounds => _sounds != null;
+
+        /// <summary>True when audio/music.bin is open.</summary>
+        public bool HasPackMusic => _music != null;
+
+        public override void Load() => LoadFrom(FileManager.Pack?.Root);
+
+        /// <summary>Opens audio/sounds.bin and audio/music.bin under <paramref name="packRoot"/> (null: none) and indexes the loose sounds.</summary>
+        public void LoadFrom(string packRoot)
         {
-            string path = FileManager.GetUOFilePath("soundLegacyMUL.uop");
+            long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
+            CloseStores();
+            _sounds = OpenStore(packRoot, AudioConst.SoundsFile, AudioConst.OpenSoundStore, "only loose Sounds/*.wav files play");
+            _music = OpenStore(packRoot, AudioConst.MusicFile, AudioConst.OpenMusicStore, "no music plays");
+            _soundOk = CheckRecords(_sounds, "sound", static (in StoreRecord r) => AudioConst.CheckSoundRecord(r));
+            _musicOk = CheckRecords(_music, "music", static (in StoreRecord r) => AudioConst.CheckMusicRecord(r));
 
-            if (FileManager.IsUOPInstallation && File.Exists(path))
+            if (_music != null)
             {
-                _file = new UOFileUop(path, "build/soundlegacymul/{0:D8}.dat");
-            }
-            else
-            {
-                path = FileManager.GetUOFilePath("sound.mul");
-                string idxpath = FileManager.GetUOFilePath("soundidx.mul");
-
-                if (File.Exists(path) && File.Exists(idxpath))
+                for (int i = 0; i < _music.Slots.Length; i++)
                 {
-                    _file = new UOFileMul(path, idxpath);
-                }
-                else
-                {
-                    throw new FileNotFoundException("no sounds found");
+                    if (_music.Slots[i].Present && AudioConst.CheckMusicSlot(_music.Slots[i]) is { } err)
+                    {
+                        Log.Error($"Audio: music {i}: {err}; the track is left out");
+                        _music.Slots[i] = default;
+                    }
                 }
             }
-
-            _file.FillEntries();
 
             LoadOurs();
 
-            string def = FileManager.GetUOFilePath("Sound.def");
+            Log.Trace(
+                $"Audio: pack, {(_sounds == null ? 0 : _sounds.Records.Length)} sound records, {(_music == null ? 0 : _music.Records.Length)} music records " +
+                $"in {System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds:0.00} ms");
+        }
 
-            if (File.Exists(def))
+        private static RecordStore OpenStore(string packRoot, string file, Func<string, RecordStore> open, string without)
+        {
+            string path = packRoot == null ? null : Path.Combine(packRoot, file);
+
+            if (path == null || !File.Exists(path))
             {
-                using (DefReader reader = new DefReader(def))
+                Log.Warn($"Audio: the pack has no {file}; {without}");
+
+                return null;
+            }
+
+            try
+            {
+                RecordStore store = open(path);
+
+                if (AudioConst.CheckNoOverlap(store.Records) is { } overlap)
                 {
-                    while (reader.Next())
-                    {
-                        int index = reader.ReadInt();
+                    store.Dispose();
 
-                        if (index < 0 || index >= MAX_SOUND_DATA_INDEX_COUNT || index >= _file.Entries.Length || _file.Entries[index].Length > 0)
-                        {
-                            continue;
-                        }
+                    throw new InvalidDataException(overlap);
+                }
 
-                        int[] group = reader.ReadGroup();
+                return store;
+            }
+            catch (Exception e) when (e is IOException || e is InvalidDataException || e is UnauthorizedAccessException || e is OverflowException)
+            {
+                Log.Error($"Audio: '{path}' is invalid ({e.Message}); {without}");
 
-                        if (group == null)
-                        {
-                            continue;
-                        }
+                return null;
+            }
+        }
 
-                        for (int i = 0; i < group.Length; i++)
-                        {
-                            int checkIndex = group[i];
+        private delegate string RecordCheck(in StoreRecord r);
 
-                            if (checkIndex < -1 || checkIndex >= MAX_SOUND_DATA_INDEX_COUNT)
-                            {
-                                continue;
-                            }
+        private static bool[] CheckRecords(RecordStore store, string what, RecordCheck check)
+        {
+            if (store == null)
+            {
+                return Array.Empty<bool>();
+            }
 
-                            ref UOFileIndex ind = ref _file.Entries[index];
+            bool[] ok = new bool[store.Records.Length];
 
-                            if (checkIndex == -1)
-                            {
-                                ind = default;
-                            }
-                            else
-                            {
-                                ref readonly UOFileIndex outInd = ref _file.Entries[checkIndex];
+            for (int i = 0; i < ok.Length; i++)
+            {
+                string err = check(store.Records[i]);
+                ok[i] = err == null;
 
-                                if (outInd.Length == 0)
-                                {
-                                    continue;
-                                }
-
-                                _file.Entries[index] = _file.Entries[checkIndex];
-                            }
-                        }
-                    }
+                if (err != null)
+                {
+                    Log.Error($"Audio: {what} record {i}: {err}; its ids are left out");
                 }
             }
 
-            path = FileManager.GetUOFilePath(FileManager.Version >= ClientVersion.CV_4011C ?  @"Music/Digital/Config.txt" : @"Music/Config.txt");
-
-            if (File.Exists(path))
-            {
-                using (var reader = new StreamReader(path))
-                {
-                    string line;
-
-                    while ((line = reader.ReadLine()) != null)
-                    {
-                        if (TryParseConfigLine(line, out (int index, string name, bool loop) data))
-                        {
-                            _musicData[data.index] = (data.name, data.loop);
-                        }
-                    }
-                }
-            }
-            else
-            {
-                _musicData.Add(0, ("oldult01", true));
-                _musicData.Add(1, ("create1", false));
-                _musicData.Add(2, ("dragflit", false));
-                _musicData.Add(3, ("oldult02", true));
-                _musicData.Add(4, ("oldult03", true));
-                _musicData.Add(5, ("oldult04", true));
-                _musicData.Add(6, ("oldult05", true));
-                _musicData.Add(7, ("oldult06", true));
-                _musicData.Add(8, ("stones2", true));
-                _musicData.Add(9, ("britain1", true));
-                _musicData.Add(10, ("britain2", true));
-                _musicData.Add(11, ("bucsden", true));
-                _musicData.Add(12, ("jhelom", false));
-                _musicData.Add(13, ("lbcastle", false));
-                _musicData.Add(14, ("linelle", false));
-                _musicData.Add(15, ("magincia", true));
-                _musicData.Add(16, ("minoc", true));
-                _musicData.Add(17, ("ocllo", true));
-                _musicData.Add(18, ("samlethe", false));
-                _musicData.Add(19, ("serpents", true));
-                _musicData.Add(20, ("skarabra", true));
-                _musicData.Add(21, ("trinsic", true));
-                _musicData.Add(22, ("vesper", true));
-                _musicData.Add(23, ("wind", true));
-                _musicData.Add(24, ("yew", true));
-                _musicData.Add(25, ("cave01", false));
-                _musicData.Add(26, ("dungeon9", false));
-                _musicData.Add(27, ("forest_a", false));
-                _musicData.Add(28, ("intown01", false));
-                _musicData.Add(29, ("jungle_a", false));
-                _musicData.Add(30, ("mountn_a", false));
-                _musicData.Add(31, ("plains_a", false));
-                _musicData.Add(32, ("sailing", false));
-                _musicData.Add(33, ("swamp_a", false));
-                _musicData.Add(34, ("tavern01", false));
-                _musicData.Add(35, ("tavern02", false));
-                _musicData.Add(36, ("tavern03", false));
-                _musicData.Add(37, ("tavern04", false));
-                _musicData.Add(38, ("combat1", false));
-                _musicData.Add(39, ("combat2", false));
-                _musicData.Add(40, ("combat3", false));
-                _musicData.Add(41, ("approach", false));
-                _musicData.Add(42, ("death", false));
-                _musicData.Add(43, ("victory", false));
-                _musicData.Add(44, ("btcastle", false));
-                _musicData.Add(45, ("nujelm", true));
-                _musicData.Add(46, ("dungeon2", false));
-                _musicData.Add(47, ("cove", true));
-                _musicData.Add(48, ("moonglow", true));
-                _musicData.Add(49, ("zento", true));
-                _musicData.Add(50, ("tokunodungeon", true));
-                _musicData.Add(51, ("Taiko", true));
-                _musicData.Add(52, ("dreadhornarea", true));
-                _musicData.Add(53, ("elfcity", true));
-                _musicData.Add(54, ("grizzledungeon", true));
-                _musicData.Add(55, ("melisandeslair", true));
-                _musicData.Add(56, ("paroxysmuslair", true));
-                _musicData.Add(57, ("gwennoconversation", true));
-                _musicData.Add(58, ("goodendgame", true));
-                _musicData.Add(59, ("goodvsevil", true));
-                _musicData.Add(60, ("greatearthserpents", true));
-                _musicData.Add(61, ("humanoids_u9", true));
-                _musicData.Add(62, ("minocnegative", true));
-                _musicData.Add(63, ("paws", true));
-                _musicData.Add(64, ("selimsbar", true));
-                _musicData.Add(65, ("serpentislecombat_u7", true));
-                _musicData.Add(66, ("valoriaships", true));
-            }
+            return ok;
         }
 
         /// <summary>
@@ -317,9 +239,13 @@ namespace ClassicUO.Assets
             return null;
         }
 
-        public unsafe bool TryGetSound(int sound, out byte[] data, out string name)
+        /// <summary>
+        /// The PCM of a sound (22,050 Hz mono 16-bit) and its name: a loose Sounds/&lt;id&gt;.wav first, else the pack's
+        /// record, read whole with one positional read (the name trails the PCM in the same array).
+        /// </summary>
+        public bool TryGetSound(int sound, out ArraySegment<byte> data, out string name)
         {
-            data = null;
+            data = default;
             name = null;
 
             if (sound < 0)
@@ -330,115 +256,103 @@ namespace ClassicUO.Assets
             // Ours first, so a replacement replaces and a new id works at all.
             if (_ours.TryGetValue(sound, out string mine))
             {
-                data = ReadWave(mine);
+                byte[] wave = ReadWave(mine);
 
-                if (data != null)
+                if (wave != null)
                 {
+                    data = wave;
                     name = Path.GetFileNameWithoutExtension(mine);
 
                     return true;
                 }
             }
 
-            ref var entry = ref _file.GetValidRefEntry(sound);
-            if (entry.Length <= 0)
+            RecordStore store = _sounds;
+
+            if (store == null || !store.TryGet(sound, out StoreSlot slot, out StoreRecord rec) || !_soundOk[slot.Record - 1])
+            {
                 return false;
+            }
 
-            _file.Seek(entry.Offset, SeekOrigin.Begin);
+            byte[] payload = new byte[rec.RawBytes];
 
-            Span<byte> buf = stackalloc byte[40];
-            _file.Read(buf);
+            try
+            {
+                store.Read(rec, payload);
+            }
+            catch (Exception e) when (e is IOException || e is InvalidDataException || e is ObjectDisposedException)
+            {
+                _soundOk[slot.Record - 1] = false;
+                Log.Error($"Audio: sound {sound}: {e.Message}; left out for this session");
 
-            name = Encoding.UTF8.GetString(buf);
-            data = new byte[entry.Length - 40];
-            _file.Read(data);
+                return false;
+            }
+
+            name = AudioConst.Name(rec, payload);
+            data = new ArraySegment<byte>(payload, 0, AudioConst.AudioBytes(rec));
 
             return true;
         }
 
         /// <summary>
-        ///     Attempts to parse a line from UO's music Config.txt.
+        /// A music id's name, loop flag and an opener for its MP3 bytes: a positional stream over the pack record, opened
+        /// on the music worker; Mp3Validator checks the bytes before dr_mp3 sees them.
         /// </summary>
-        /// <param name="line">A line from the file.</param>
-        /// <param name="?">If successful, contains a tuple with these fields: int songIndex, string songName, bool doesLoop</param>
-        /// <returns>true if line could be parsed, false otherwise.</returns>
-        private bool TryParseConfigLine(string line, out (int index, string name, bool loop) data)
-        {
-            data = default;
-
-            string[] splits = line.Split(_configFileDelimiters);
-
-            if (splits.Length < 2 || splits.Length > 3)
-            {
-                return false;
-            }
-
-            data.index = int.Parse(splits[0]);
-            // check if name exists as file, ignoring case since UO isn't consistent with file case (necessary for *nix)
-            // also, not every filename in Config.txt has a file extension, so let's strip it out just in case.
-            data.name = GetTrueFileName(Path.GetFileNameWithoutExtension(splits[1]));
-            data.loop = splits.Length == 3 && splits[2] == "loop";
-
-            return true;
-        }
-
-        /// <summary>
-        ///     Returns true filename from name, ignoring case since UO isn't consistent with file case (necessary for *nix)
-        /// </summary>
-        /// <param name="name">The filename from the music Config.txt</param>
-        /// <returns>a string with the true case sensitive filename</returns>
-        private string GetTrueFileName(string name)
-        {
-            // don't worry about subdirectories, we'll recursively search them all
-            string dir = FileManager.BasePath + $"/Music";
-
-            // Enumerate all files in the directory, using the file name as a pattern
-            // This will list all case variants of the filename even on file systems that
-            // are case sensitive.
-            Regex  pattern = new Regex($"^{name}.mp3", RegexOptions.IgnoreCase);
-            //string[] fileList = Directory.GetFiles(dir, "*.mp3", SearchOption.AllDirectories).Where(path => pattern.IsMatch(Path.GetFileName(path))).ToArray();
-            string[] fileList = Directory.GetFiles(dir, "*.mp3", SearchOption.AllDirectories);
-            fileList = Array.FindAll(fileList, path => pattern.IsMatch(Path.GetFileName(path)));
-
-            if (fileList != null && fileList.Length != 0)
-            {
-                if (fileList.Length > 1)
-                {
-                    // More than one file with the same name but different case spelling found
-                    Log.Warn($"Ambiguous File reference for {name}. More than one file found with different spellings.");
-                }
-
-                Log.Debug($"Loading music:\t\t{fileList[0]}");
-
-                return Path.GetFileName(fileList[0]);
-            }
-
-            // If we've made it this far, there is no file with that name, regardless of case spelling
-            // return name and GetMusic will fail gracefully (play nothing)
-            Log.Warn($"No File found known as {name}");
-            return name;
-        }
-
-        public bool TryGetMusicData(int index, out string name, out bool doesLoop)
+        public bool TryGetMusic(int index, out string name, out bool loop, out Func<Stream> open)
         {
             name = null;
-            doesLoop = false;
+            loop = false;
+            open = null;
 
-            if (_musicData.ContainsKey(index))
+            RecordStore store = _music;
+
+            if (store == null || !store.TryGet(index, out StoreSlot slot, out StoreRecord rec) || !_musicOk[slot.Record - 1])
             {
-                name = _musicData[index].Item1;
-
-                doesLoop = _musicData[index].Item2;
-
-                return true;
+                return false;
             }
 
-            return false;
+            loop = (slot.Arg & AudioConst.MusicArgLoop) != 0;
+            int mp3 = AudioConst.AudioBytes(rec);
+
+            try
+            {
+                byte[] nameBytes = new byte[rec.Meta2];
+
+                using (Stream s = store.OpenRawStream(rec, mp3, rec.Meta2))
+                {
+                    s.ReadExactly(nameBytes);
+                }
+
+                name = Encoding.UTF8.GetString(nameBytes);
+            }
+            catch (Exception e) when (e is IOException || e is ObjectDisposedException)
+            {
+                _musicOk[slot.Record - 1] = false;
+                Log.Error($"Audio: music {index}: {e.Message}; left out for this session");
+
+                return false;
+            }
+
+            if (name.Length == 0)
+            {
+                name = $"music {index}";
+            }
+
+            open = () => store.OpenRawStream(rec, 0, mp3);
+
+            return true;
+        }
+
+        private void CloseStores()
+        {
+            _sounds?.Dispose();
+            _music?.Dispose();
+            _sounds = _music = null;
         }
 
         public override void ClearResources()
         {
-            _musicData.Clear();
+            CloseStores();
         }
     }
 }
