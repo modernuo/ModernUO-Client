@@ -23,6 +23,10 @@ public sealed class GpuFenceException(string message) : Exception(message);
 public sealed unsafe class Renderer : IDisposable
 {
     public readonly IntPtr Device, Window;
+    /// <summary>When the page staging copies of each frame command buffer have finished (memory round 3): the page
+    /// residencies reuse a staging slot only after its last copy retired, so they never cycle it.</summary>
+    readonly CopyRetirement _copies;
+    public CopyRetirement Copies => _copies;
     public readonly RendererMode Mode;
     public readonly bool OwnsDevice;
     public bool Offscreen => Mode == RendererMode.Offscreen;
@@ -144,6 +148,7 @@ public sealed unsafe class Renderer : IDisposable
     {
         Device = device;
         OwnsDevice = ownsDevice;
+        _copies = new CopyRetirement(f => SDL_QueryGPUFence(Device, f), f => SDL_ReleaseGPUFence(Device, f));
         Window = window;
         Mode = mode;
         ColorFormat = colorFormat;
@@ -722,6 +727,9 @@ public sealed unsafe class Renderer : IDisposable
             var dst = new SDL_GPUBufferRegion { buffer = InstanceBuffer, offset = f.DynamicFirst * (uint)sizeof(SpriteInstance), size = dynBytes };
             SDL_UploadToGPUBuffer(copy, in src, in dst, false);
         }
+        _copies.Poll();
+        f.Pages.Retire = _copies;
+        if (f.AnimPages != null) f.AnimPages.Retire = _copies;
         f.Pages.Upload(copy, f.Frame, f.StreamOnly || f.Hold);
         f.AnimPages?.Upload(copy, f.Frame, f.StreamOnly || f.Hold);
         if (f.Pages.TableDirty || f.AnimPages is { TableDirty: true })
@@ -747,7 +755,7 @@ public sealed unsafe class Renderer : IDisposable
         {
             // uploads only: the host keeps showing its previous frame while the view streams in
             DrawCalls = 0;
-            if (SDL_SubmitGPUCommandBuffer(cmd)) return true;
+            if (SubmitFrame(cmd)) return true;
             SubmitFailures++;
             LastSubmitError = SDL_GetError();
             return false;
@@ -772,7 +780,7 @@ public sealed unsafe class Renderer : IDisposable
             AcquireWaitTicks = System.Diagnostics.Stopwatch.GetTimestamp() - w0;
             if (!ok || target == IntPtr.Zero)
             {
-                SDL_SubmitGPUCommandBuffer(cmd);
+                SubmitFrame(cmd); // it carries this frame's uploads
                 return false;
             }
         }
@@ -847,7 +855,7 @@ public sealed unsafe class Renderer : IDisposable
         SDL_EndGPURenderPass(pass);
 
         if (f.ScreenshotPath != null && Offscreen)
-            return SubmitAndSave(cmd, f.ScreenshotPath, _offscreen, tw, th, ColorFormat);
+            return SubmitAndSave(cmd, f.ScreenshotPath, _offscreen, tw, th, ColorFormat, frame: true);
 
         if (Offscreen && Throttle)
         {
@@ -855,8 +863,10 @@ public sealed unsafe class Renderer : IDisposable
             // becomes max(CPU, GPU) and a GPU-bound run measures GPU frame time.
             long ts = System.Diagnostics.Stopwatch.GetTimestamp();
             var fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
+            long serial = _copies.Submit();
             if (fence == IntPtr.Zero)
             {
+                _copies.MarkRetired(serial); // not submitted: the GPU never runs its copies
                 SubmitFailures++;
                 LastSubmitError = SDL_GetError();
                 return false;
@@ -864,18 +874,25 @@ public sealed unsafe class Renderer : IDisposable
             if (f.GpuSample)
             {
                 WaitAndReleaseFence(fence, "GPU sample");
+                _copies.MarkRetired(serial);
                 GpuSampleTicks = System.Diagnostics.Stopwatch.GetTimestamp() - ts;
                 return true;
             }
             // the new fence takes its slot first, so a failed wait on the old one leaves no fence untracked
             var old = _fences[_fenceHead];
+            long oldSerial = _fenceSerials[_fenceHead];
             _fences[_fenceHead] = fence;
+            _fenceSerials[_fenceHead] = serial;
             _fenceHead = (_fenceHead + 1) % _fences.Length;
-            if (old != IntPtr.Zero) WaitAndReleaseFence(old, "frame throttle");
+            if (old != IntPtr.Zero)
+            {
+                WaitAndReleaseFence(old, "frame throttle");
+                _copies.MarkRetired(oldSerial);
+            }
             return true;
         }
 
-        if (!SDL_SubmitGPUCommandBuffer(cmd))
+        if (!SubmitFrame(cmd))
         {
             // e.g. VK_ERROR_DEVICE_LOST after a driver reset: every later frame fails too
             SubmitFailures++;
@@ -889,6 +906,21 @@ public sealed unsafe class Renderer : IDisposable
     /// device, typically). SDL_GPU doesn't recover from that, and its Vulkan backend leaks every failed submit.</summary>
     public int SubmitFailures;
     public string LastSubmitError;
+
+    /// <summary>Submits the frame command buffer; with a fence (tracked by <see cref="Copies"/>) when it carries page
+    /// staging copies, so their slots can be reused once it signals.</summary>
+    bool SubmitFrame(IntPtr cmd)
+    {
+        if (!_copies.Staged)
+        {
+            bool ok = SDL_SubmitGPUCommandBuffer(cmd);
+            _copies.Submit();
+            return ok;
+        }
+        var fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
+        _copies.Track(_copies.Submit(), fence);
+        return fence != IntPtr.Zero;
+    }
 
     void UploadFrameTable(IntPtr copy, uint srcOffset, uint dstOffset, uint bytes, ref bool cycle)
     {
@@ -919,6 +951,7 @@ public sealed unsafe class Renderer : IDisposable
     /// <summary>Offscreen bench: fence-throttle submissions (see RenderFrame).</summary>
     public bool Throttle;
     readonly IntPtr[] _fences = new IntPtr[2];
+    readonly long[] _fenceSerials = new long[2];
     int _fenceHead;
     /// <summary>Submit → fence-signalled time of the last GpuSample frame (taken after the GPU was idle).</summary>
     public long GpuSampleTicks;
@@ -972,6 +1005,11 @@ public sealed unsafe class Renderer : IDisposable
             _fences[i] = IntPtr.Zero;
         }
         if (!SDL_WaitForGPUIdle(Device)) failed ??= SDL_GetError();
+        else if (_copies != null)
+        {
+            _copies.MarkRetired(_copies.Serial - 1);
+            _copies.Poll(); // every fence has signalled: release them
+        }
         if (failed != null) throw new GpuFenceException("drain in-flight frames: GPU wait failed: " + failed);
     }
 
@@ -983,7 +1021,7 @@ public sealed unsafe class Renderer : IDisposable
     public bool SaveTexture(IntPtr texture, uint w, uint h, SDL_GPUTextureFormat format, string path)
         => SubmitAndSave(SDL_AcquireGPUCommandBuffer(Device), path, texture, w, h, format);
 
-    bool SubmitAndSave(IntPtr cmd, string path, IntPtr texture, uint w, uint h, SDL_GPUTextureFormat format)
+    bool SubmitAndSave(IntPtr cmd, string path, IntPtr texture, uint w, uint h, SDL_GPUTextureFormat format, bool frame = false)
     {
         uint bytes = w * h * 4;
         var tb = CreateTransfer(bytes, false);
@@ -993,11 +1031,13 @@ public sealed unsafe class Renderer : IDisposable
         SDL_DownloadFromGPUTexture(copy, in src, in dst);
         SDL_EndGPUCopyPass(copy);
         var fence = SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);
+        long serial = frame ? _copies.Submit() : 0; // the frame command buffer: it carries this frame's uploads
         byte[] px;
         try
         {
             // a failed wait throws before the download is mapped: never a half-written screenshot
             WaitAndReleaseFence(fence, "screenshot download");
+            if (frame) _copies.MarkRetired(serial);
             var p = (byte*)SDL_MapGPUTransferBuffer(Device, tb, false);
             if (p == null) throw new Exception("screenshot transfer buffer map: " + SDL_GetError());
             px = new ReadOnlySpan<byte>(p, (int)bytes).ToArray();
@@ -1020,6 +1060,7 @@ public sealed unsafe class Renderer : IDisposable
         if (Device == IntPtr.Zero) return;
         // a failed wait (device lost) must not stop the releases below
         try { DrainInFlight(); } catch (GpuFenceException e) { Console.Error.WriteLine("renderer dispose: " + e.Message); }
+        _copies?.Dispose(); // fences a failed drain left
         static void Tex(IntPtr d, IntPtr t) { if (t != IntPtr.Zero) SDL_ReleaseGPUTexture(d, t); }
         static void Buf(IntPtr d, IntPtr b) { if (b != IntPtr.Zero) SDL_ReleaseGPUBuffer(d, b); }
         static void Xfer(IntPtr d, IntPtr t) { if (t != IntPtr.Zero) SDL_ReleaseGPUTransferBuffer(d, t); }
