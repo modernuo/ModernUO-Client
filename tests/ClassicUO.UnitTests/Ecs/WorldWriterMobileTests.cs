@@ -259,10 +259,16 @@ namespace ClassicUO.UnitTests.Ecs
             switch (start)
             {
                 case Start.OneStep:
-                    // one queued step from an earlier frame (a walk start sets LastStepTime only on an empty queue)
+                    // one queued step from an earlier frame (a walk start sets LastStepTime only on an empty queue);
+                    // a step in the facing direction, so no turn step is queued before it
                     Time.Ticks = NOW - 1000;
-                    OldEnqueueStep(m, 1001, 1000, 0, Direction.East, false);
+                    OldEnqueueStep(m, 1000, 999, 0, Direction.North, false);
                     Time.Ticks = NOW;
+
+                    if (m.Steps.Count != 1)
+                    {
+                        throw new InvalidOperationException($"Start.OneStep queued {m.Steps.Count} steps");
+                    }
 
                     break;
 
