@@ -7,6 +7,8 @@ using System;
 using System.Net;
 using System.Net.Sockets;
 using System.Net.WebSockets;
+using System.Diagnostics;
+using System.Threading;
 using ClassicUO.Network.Socket;
 
 namespace ClassicUO.Network
@@ -98,14 +100,18 @@ namespace ClassicUO.Network
 
         private void SetupSocket(SocketWrapperType wrapperType)
         {
-            _socket?.Dispose();
-
-            _socket = wrapperType switch
+            AttachSocket(wrapperType switch
             {
                 SocketWrapperType.TcpSocket => new TcpSocketWrapper(),
                 SocketWrapperType.WebSocket => new WebSocketWrapper(),
                 _ => throw new ArgumentOutOfRangeException(nameof(wrapperType), wrapperType, null)
-            };
+            });
+        }
+
+        internal void AttachSocket(SocketWrapper socket)
+        {
+            _socket?.Dispose();
+            _socket = socket;
 
             _socket.OnConnected += (o, e) =>
             {
@@ -113,14 +119,97 @@ namespace ClassicUO.Network
                 Connected?.Invoke(this, EventArgs.Empty);
             };
 
-            _socket.OnDisconnected += (_, _) => Disconnected?.Invoke(this, SocketError.Success);
-            _socket.OnError += (_, e) => Disconnected?.Invoke(this, e);
+            // A close or error may be reported from any thread (a WebSocket's receive task). The callbacks only record it
+            // against the connection they belong to; Drain, on the update thread, reads that connection's data first and only
+            // then runs Terminate. A connection already ended or replaced (Retired) ignores late callbacks, and the first
+            // close wins, so two reports of one close (an exception and then the end of the receive loop) are one Terminate.
+            var conn = new Connection();
+            _connection?.Retire();
+            _connection = conn;
+
+            _socket.OnDisconnected += (_, _) => conn.Report(SocketError.Success);
+            _socket.OnError += (_, e) => conn.Report(e);
+        }
+
+        private sealed class Connection
+        {
+            private int _closed;
+            private volatile bool _retired;
+            private SocketError _error;
+
+            public bool Retired => _retired;
+
+            /// <summary>Set once a close or error was reported (and not retired).</summary>
+            public bool Closed => !_retired && Volatile.Read(ref _closed) == 2;
+
+            public SocketError Error => _error;
+
+            public void Retire() => _retired = true;
+
+            public void Report(SocketError error)
+            {
+                if (_retired)
+                    return;
+
+                if (Interlocked.CompareExchange(ref _closed, 1, 0) == 0)
+                {
+                    _error = error;
+                    Volatile.Write(ref _closed, 2);
+                }
+            }
+        }
+
+        private Connection _connection;
+
+        /// <summary>Bumped whenever a connection starts or ends; the packet parser drops its partial data when it changes.</summary>
+        public int ConnectionGeneration => Volatile.Read(ref _generation);
+
+        private int _generation;
+
+        /// <summary>
+        /// Puts the protocol back to its start state: login-server mode (no compression, so no game-server encryption mode), a
+        /// fresh Huffman state, nothing queued to send, and a new connection generation.
+        /// </summary>
+        private void ResetProtocolState()
+        {
+            _isCompressionEnabled = false;
+            _huffman.Reset();
+            _sendStream.Clear();
+            Interlocked.Increment(ref _generation);
+        }
+
+        /// <summary>
+        /// The one place a connection ends from the receive or send side (peer close, reset, socket error, a bad stream):
+        /// protocol state is reset first, so whatever the Disconnected handlers do next (a reconnect to the login server)
+        /// starts clean, then the socket is closed and the handlers are told.
+        /// </summary>
+        private void Terminate(SocketError error, Connection only = null)
+        {
+            // Idempotent per connection: a connection that already ended (a malformed-header ProtocolError inside the parser
+            // pump, then the Drain that saw the close) or was replaced (a Disconnected handler reconnected) is not ended again.
+            var current = _connection;
+
+            if (current != null && (current.Retired || (only != null && !ReferenceEquals(only, current))))
+            {
+                return;
+            }
+
+            current?.Retire(); // late callbacks of this connection, and its unread data, are void from here on
+            ResetProtocolState();
+            Statistics.Reset();
+            _socket?.Disconnect();
+            Disconnected?.Invoke(this, error);
+        }
+
+        /// <summary>The stream can't be parsed any more (a malformed packet header): drop the connection.</summary>
+        internal void ProtocolError()
+        {
+            Terminate(SocketError.ProtocolNotSupported);
         }
 
         public void Connect(string ip, ushort port)
         {
-            _sendStream.Clear();
-            _huffman.Reset();
+            ResetProtocolState();
             Statistics.Reset();
 
             if (string.IsNullOrEmpty(ip))
@@ -142,9 +231,10 @@ namespace ClassicUO.Network
 
         public void Disconnect()
         {
-            _isCompressionEnabled = false;
+            _connection?.Retire();
+            ResetProtocolState();
             Statistics.Reset();
-            _socket.Disconnect();
+            _socket?.Disconnect();
         }
 
         public void EnableCompression()
@@ -155,11 +245,132 @@ namespace ClassicUO.Network
         }
 
 
+        /// <summary>Raw bytes read per slice. Huffman output for one slice stays under the 64 KB decompression buffer.</summary>
+        public const int SliceSize = 4096;
+
+        /// <summary>Default most raw bytes drained in one frame (about 7.7 MB/s at 60 Hz).</summary>
+        public const int DefaultFrameByteCap = 128 * 1024;
+
+        /// <summary>Default most packets dispatched in one frame; checked between slices.</summary>
+        public const int DefaultFramePacketCap = 1500;
+
+        /// <summary>Default time budget for one frame's drain, in ms: the drain stops after the slice that passes it (0 = none).</summary>
+        public const double DefaultFrameMs = 4;
+
+        /// <summary>Also read the socket's available byte count in each drain (CUO_NET_TRACE; FrameStats does it anyway).</summary>
+        public static bool TrackAvailable { get; set; }
+
+        /// <summary>Bytes the socket had ready (the kernel receive queue) when the drain started (FrameStats runs only).</summary>
+        public int LastDrainAvailable { get; private set; }
+
+        /// <summary>Raw bytes read by the last <see cref="Drain"/>.</summary>
+        public int LastDrainBytes { get; private set; }
+
+        /// <summary>Slices read by the last <see cref="Drain"/>.</summary>
+        public int LastDrainSlices { get; private set; }
+
+        /// <summary>
+        /// Reads what the socket has ready in <see cref="SliceSize"/> slices, in order, handing each decoded slice to
+        /// <paramref name="sink"/> (which parses it and returns the packets it dispatched). Stops when the socket is empty, a
+        /// close or error was raised, or the byte, packet or time cap (maxMs, 0 = none) is reached (the rest stays queued for the next frame, so a
+        /// burst cannot stall one). The caps are checked between slices, so a frame can go over by up to one slice.
+        /// </summary>
+        public int Drain(Func<ArraySegment<byte>, int> sink, int maxBytes = DefaultFrameByteCap, int maxPackets = DefaultFramePacketCap, double maxMs = 0)
+        {
+            LastDrainAvailable = 0;
+            LastDrainBytes = 0;
+            LastDrainSlices = 0;
+
+            var packets = 0;
+            var start = maxMs > 0 ? Stopwatch.GetTimestamp() : 0;
+            var sinkCalled = false;
+
+            if (_socket != null && (TrackAvailable || FrameStats.On))
+            {
+                LastDrainAvailable = _socket.Available;
+            }
+
+            var emptied = false;
+            Connection closeSeen = null; // the connection whose close was seen
+
+            while (_socket != null && LastDrainBytes < maxBytes && packets < maxPackets)
+            {
+                // always one slice, then stop once the frame's time budget is spent
+                if (LastDrainSlices > 0 && maxMs > 0 && Stopwatch.GetElapsedTime(start).TotalMilliseconds >= maxMs)
+                {
+                    break;
+                }
+
+                if (!ReadSlice(out var raw, out var data))
+                {
+                    // An empty read only ends the connection if it was made after the close had been seen: a receive task
+                    // enqueues its last frame and then reports the close, so a read that was empty a moment earlier can
+                    // be followed by that frame. Seeing the close sends us round once more; the caps still apply, and a
+                    // capped frame carries on next time.
+                    if (closeSeen != null && ReferenceEquals(closeSeen, _connection))
+                    {
+                        emptied = true;
+
+                        break;
+                    }
+
+                    if (_connection is { Closed: true } seen)
+                    {
+                        closeSeen = seen;
+
+                        continue;
+                    }
+
+                    break;
+                }
+
+                LastDrainBytes += raw;
+                LastDrainSlices++;
+
+                if (data.Count > 0)
+                {
+                    packets += sink(data);
+                    sinkCalled = true;
+                }
+            }
+
+            if (emptied && _connection is { Closed: true } closing)
+            {
+                // everything the connection delivered before it closed has been read and handed to the parser: now end it
+                if (!sinkCalled)
+                {
+                    packets += sink(ArraySegment<byte>.Empty);
+                    sinkCalled = true;
+                }
+
+                Terminate(closing.Error, closing);
+            }
+
+            if (!sinkCalled)
+            {
+                // The parser also owns the plugin queue (packets plugins inject), which has to be worked every frame whether
+                // or not the socket had anything: pump it with an empty slice. This is inside the frame's time budget too.
+                packets += sink(ArraySegment<byte>.Empty);
+            }
+
+            return packets;
+        }
+
+        /// <summary>One slice, for callers that do not drain (kept for compatibility). Empty when nothing is ready.</summary>
         public ArraySegment<byte> CollectAvailableData()
         {
-            if (_socket == null)
+            return ReadSlice(out _, out var data) ? data : ArraySegment<byte>.Empty;
+        }
+
+        // False when nothing was read (empty socket, close, error); true with the decoded slice otherwise (possibly empty).
+        private bool ReadSlice(out int rawBytes, out ArraySegment<byte> data)
+        {
+            rawBytes = 0;
+            data = ArraySegment<byte>.Empty;
+
+            if (_socket == null || _connection is { Retired: true })
             {
-                return ArraySegment<byte>.Empty;
+                return false;
             }
 
             try
@@ -168,9 +379,10 @@ namespace ClassicUO.Network
 
                 if (size <= 0)
                 {
-                    return ArraySegment<byte>.Empty;
+                    return false;
                 }
 
+                rawBytes = size;
                 Statistics.TotalBytesReceived += (uint)size;
 
                 var segment = new ArraySegment<byte>(_compressedBuffer, 0, size);
@@ -178,14 +390,15 @@ namespace ClassicUO.Network
 
                 ProcessEncryption(span);
 
-                return DecompressBuffer(segment);
+                data = DecompressBuffer(segment);
+
+                return true;
             }
             catch (SocketException ex)
             {
                 Log.Error("socket error when receving:\n" + ex);
 
-                Disconnect();
-                Disconnected?.Invoke(this, ex.SocketErrorCode);
+                Terminate(ex.SocketErrorCode);
             }
             catch (Exception ex)
             {
@@ -194,21 +407,19 @@ namespace ClassicUO.Network
                     Log.Error("main exception:\n" + ex);
                     Log.Error("socket error when receving:\n" + socketEx);
 
-                    Disconnect();
-                    Disconnected?.Invoke(this, socketEx.SocketErrorCode);
+                    Terminate(socketEx.SocketErrorCode);
                 }
                 else
                 {
                     Log.Error("fatal error when receving:\n" + ex);
 
-                    Disconnect();
-                    Disconnected?.Invoke(this, SocketError.SocketError);
+                    Terminate(SocketError.SocketError);
 
                     throw;
                 }
             }
 
-            return ArraySegment<byte>.Empty;
+            return false;
         }
 
         public void Flush()
@@ -283,8 +494,7 @@ namespace ClassicUO.Network
             {
                 Log.Error("socket error when sending:\n" + ex);
 
-                Disconnect();
-                Disconnected?.Invoke(this, ex.SocketErrorCode);
+                Terminate(ex.SocketErrorCode);
             }
             catch (Exception ex)
             {
@@ -293,15 +503,13 @@ namespace ClassicUO.Network
                     Log.Error("main exception:\n" + ex);
                     Log.Error("socket error when sending:\n" + socketEx);
 
-                    Disconnect();
-                    Disconnected?.Invoke(this, socketEx.SocketErrorCode);
+                    Terminate(socketEx.SocketErrorCode);
                 }
                 else
                 {
                     Log.Error("fatal error when sending:\n" + ex);
 
-                    Disconnect();
-                    Disconnected?.Invoke(this, SocketError.SocketError);
+                    Terminate(SocketError.SocketError);
 
                     throw;
                 }
@@ -317,8 +525,7 @@ namespace ClassicUO.Network
 
             if (!_huffman.Decompress(buffer, _uncompressedBuffer, ref size))
             {
-                Disconnect();
-                Disconnected?.Invoke(this, SocketError.SocketError);
+                Terminate(SocketError.SocketError);
 
                 return ArraySegment<byte>.Empty;
             }

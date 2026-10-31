@@ -26,7 +26,14 @@ abstract class SocketWrapper : IDisposable
     public abstract void Connect(Uri uri);
     public abstract void Send(byte[] buffer, int offset, int count);
 
+    /// <summary>
+    /// Reads whatever is ready, up to buffer.Length, without blocking. Returns 0 when nothing is ready. A peer close or a
+    /// socket error raises OnDisconnected / OnError (and closes) instead of returning data.
+    /// </summary>
     public abstract int Read(byte[] buffer);
+
+    /// <summary>Bytes ready to read (diagnostics only).</summary>
+    public virtual int Available => 0;
 
     public abstract void Disconnect();
 

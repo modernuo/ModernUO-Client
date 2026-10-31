@@ -282,6 +282,9 @@ namespace ClassicUO.Game.Scenes
                 return;
             }
 
+            // a login that never reached its hold (disconnect): the warm-up collection must not wait for a later scene
+            Map.MapWarmup.Cancel("game scene unloaded");
+
             ProfileManager.CurrentProfile.GameWindowPosition = new Point(
                 Camera.Bounds.X,
                 Camera.Bounds.Y
@@ -350,6 +353,14 @@ namespace ClassicUO.Game.Scenes
 
         private void SocketOnDisconnected(object sender, SocketError e)
         {
+            Log.Warn($"Disconnected from the game server: {e}");
+
+            // a clean close by the server reports Success; say what it is
+            if (e == SocketError.Success)
+            {
+                e = SocketError.ConnectionReset;
+            }
+
             if (Settings.GlobalSettings.Reconnect)
             {
                 _forceStopScene = true;
@@ -1203,6 +1214,9 @@ namespace ClassicUO.Game.Scenes
                     _settleTarget = target;
                 }
 
+                FrameStats.WorldHeld = hold;
+                FrameStats.WorldShown |= !hold;
+
                 if (!hold)
                 {
                     FrameStats.Begin(FramePhase.Lights);
@@ -1227,6 +1241,12 @@ namespace ClassicUO.Game.Scenes
                     bool visibleReady = gpu.VisibleReady && _world.Map.DrawPending == 0;
                     _settle.End(visibleReady);
 
+                    if (Map.MapWarmup.CollectPending)
+                    {
+                        // the login's deliberate collection, in a frame whose world isn't shown (MapWarmup)
+                        Map.MapWarmup.OnWorldFrame(true, hold, visibleReady, _settle.Episode == WorldDiscontinuity.Entry, _settle.TimeoutMs);
+                    }
+
                     if (SettleLog && !hold && !visibleReady)
                     {
                         LogUnsettledFrame(gpu);
@@ -1250,6 +1270,14 @@ namespace ClassicUO.Game.Scenes
 
                 DrawWorld(batcher, ref matrix, renderTargets);
                 _settle.OnOtherRenderer();
+                FrameStats.WorldShown = true;
+
+                if (Map.MapWarmup.CollectPending)
+                {
+                    // no settle hold in Legacy: the first world frame is the login transition (MapWarmup)
+                    Map.MapWarmup.OnWorldFrame(false, false, true, true, 0);
+                }
+
                 _settleTarget = renderTargets.WorldRenderTarget;
                 renderTargets.WorldFade = 1f;
                 FrameStats.Set(FrameCounter.GpuInstances, 0);

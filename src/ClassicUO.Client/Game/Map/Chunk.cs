@@ -84,6 +84,46 @@ namespace ClassicUO.Game.Map
 
         /// <summary>Chunks allocated because the pool was empty (FrameStats chunk_new; reset by it).</summary>
         public static int Created;
+        /// <summary>Chunks allocated over the session ([gcs] pool lines).</summary>
+        public static long TotalCreated;
+        public static int PooledCount => _pool.Count;
+
+        /// <summary>[gcs] pool lines: how many pooled and used chunks have each statics mesh capacity.</summary>
+        public static string DescribeMeshCapacities(Map map)
+        {
+            var hist = new System.Collections.Generic.SortedDictionary<int, int>();
+
+            void Add(Chunk c)
+            {
+                int cap = c.Mesh.Statics.Vertices.Length;
+                hist[cap] = hist.TryGetValue(cap, out int n) ? n + 1 : 1;
+            }
+
+            foreach (Chunk c in _pool)
+            {
+                Add(c);
+            }
+
+            if (map != null)
+            {
+                foreach (Chunk c in map.GetUsedChunks())
+                {
+                    if (c != null)
+                    {
+                        Add(c);
+                    }
+                }
+            }
+
+            var sb = new System.Text.StringBuilder();
+
+            foreach (var kv in hist)
+            {
+                sb.Append(' ').Append(kv.Key).Append(':').Append(kv.Value);
+            }
+
+            return sb.ToString();
+        }
 
         public static Chunk Create(World world, int x, int y)
         {
@@ -97,6 +137,7 @@ namespace ClassicUO.Game.Map
             {
                 c = new Chunk(world);
                 Created++;
+                TotalCreated++;
             }
 
             c.LastAccessTime = Time.Ticks + Constants.CLEAR_TEXTURES_DELAY;
@@ -108,6 +149,28 @@ namespace ClassicUO.Game.Map
             c.ContentVersion++;
 
             return c;
+        }
+
+        /// <summary>
+        /// Login warm-up (<see cref="MapWarmup"/>): fills the pool up to <paramref name="count"/> chunks (at most
+        /// <see cref="Constants.PREDICTABLE_CHUNKS"/>) with statics mesh layers sized for <paramref name="staticsCapacity"/>
+        /// sprites, so the first teleports take pooled chunks instead of allocating them and their mesh arrays while playing.
+        /// A new chunk is in the same state as a pooled one (Destroy: no tiles, no node, cleared mesh). Returns the chunks added.
+        /// </summary>
+        public static int Prefill(World world, int count, int staticsCapacity)
+        {
+            int added = 0;
+            count = Math.Min(count, Constants.PREDICTABLE_CHUNKS);
+
+            while (_pool.Count < count)
+            {
+                var c = new Chunk(world) { IsDestroyed = true };
+                c.Mesh.Statics.EnsureCapacity(staticsCapacity);
+                _pool.Enqueue(c);
+                added++;
+            }
+
+            return added;
         }
 
         public static void ClearPool()

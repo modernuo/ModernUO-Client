@@ -145,6 +145,7 @@ sealed class WebSocketWrapper : SocketWrapper
         var buffer = Shared.Rent(4096);
         var memory = buffer.AsMemory();
         var position = 0;
+        var reported = false;
 
         try
         {
@@ -179,13 +180,15 @@ sealed class WebSocketWrapper : SocketWrapper
         {
             Log.Trace($"WebSocket error in StartReceiveAsync {e}");
             InvokeOnError(SocketError.SocketError);
+            reported = true;
         }
         finally
         {
             Shared.Return(buffer);
         }
 
-        if (!IsCanceled)
+        // (the NetClient also treats a second report of one connection's close as the same close)
+        if (!IsCanceled && !reported)
             InvokeOnError(SocketError.ConnectionReset);
     }
 
