@@ -84,6 +84,46 @@ namespace ClassicUO.Game.Map
 
         /// <summary>Chunks allocated because the pool was empty (FrameStats chunk_new; reset by it).</summary>
         public static int Created;
+        /// <summary>Chunks allocated over the session ([gcs] pool lines).</summary>
+        public static long TotalCreated;
+        public static int PooledCount => _pool.Count;
+
+        /// <summary>[gcs] pool lines: how many pooled and used chunks have each statics mesh capacity.</summary>
+        public static string DescribeMeshCapacities(Map map)
+        {
+            var hist = new System.Collections.Generic.SortedDictionary<int, int>();
+
+            void Add(Chunk c)
+            {
+                int cap = c.Mesh.Statics.Vertices.Length;
+                hist[cap] = hist.TryGetValue(cap, out int n) ? n + 1 : 1;
+            }
+
+            foreach (Chunk c in _pool)
+            {
+                Add(c);
+            }
+
+            if (map != null)
+            {
+                foreach (Chunk c in map.GetUsedChunks())
+                {
+                    if (c != null)
+                    {
+                        Add(c);
+                    }
+                }
+            }
+
+            var sb = new System.Text.StringBuilder();
+
+            foreach (var kv in hist)
+            {
+                sb.Append(' ').Append(kv.Key).Append(':').Append(kv.Value);
+            }
+
+            return sb.ToString();
+        }
 
         public static Chunk Create(World world, int x, int y)
         {
@@ -97,6 +137,7 @@ namespace ClassicUO.Game.Map
             {
                 c = new Chunk(world);
                 Created++;
+                TotalCreated++;
             }
 
             c.LastAccessTime = Time.Ticks + Constants.CLEAR_TEXTURES_DELAY;
@@ -108,6 +149,28 @@ namespace ClassicUO.Game.Map
             c.ContentVersion++;
 
             return c;
+        }
+
+        /// <summary>
+        /// Login warm-up (<see cref="MapWarmup"/>): fills the pool up to <paramref name="count"/> chunks (at most
+        /// <see cref="Constants.PREDICTABLE_CHUNKS"/>) with statics mesh layers sized for <paramref name="staticsCapacity"/>
+        /// sprites, so the first teleports take pooled chunks instead of allocating them and their mesh arrays while playing.
+        /// A new chunk is in the same state as a pooled one (Destroy: no tiles, no node, cleared mesh). Returns the chunks added.
+        /// </summary>
+        public static int Prefill(World world, int count, int staticsCapacity)
+        {
+            int added = 0;
+            count = Math.Min(count, Constants.PREDICTABLE_CHUNKS);
+
+            while (_pool.Count < count)
+            {
+                var c = new Chunk(world) { IsDestroyed = true };
+                c.Mesh.Statics.EnsureCapacity(staticsCapacity);
+                _pool.Enqueue(c);
+                added++;
+            }
+
+            return added;
         }
 
         public static void ClearPool()
@@ -187,12 +250,17 @@ namespace ClassicUO.Game.Map
             return obj;
         }
 
+        /// <summary>The static tiledata AddGameObject's priority reads: the loaded array (Client's FileManager setup assigns
+        /// it once after TileDataLoader.Load, which is the only place that array is replaced); unit tests set their own.</summary>
+        internal static StaticTiles[] StaticTileData = Array.Empty<StaticTiles>();
+
         public void AddGameObject(GameObject obj, int x, int y)
         {
             Mesh.MarkDirtyIfNeeded(obj);
             obj.RemoveFromTile();
             OnTileContentChanged(obj);
             obj.TileChunk = this;
+            obj.TileCell = (byte)((x << 3) | y);
 
             short priorityZ = obj.Z;
             sbyte state = -1;
@@ -272,7 +340,7 @@ namespace ClassicUO.Game.Map
                     goto default;
 
                 default:
-                    ref StaticTiles data = ref Client.Game.UO.FileManager.TileData.StaticData[graphic];
+                    ref StaticTiles data = ref StaticTileData[graphic];
 
                     if (data.IsBackground)
                     {
@@ -298,6 +366,8 @@ namespace ClassicUO.Game.Map
             }
 
             obj.PriorityZ = priorityZ;
+            // T6a: insertion stamp; TileOrder.Key(obj) predicts this list's order from it (CUO_TILE_ORDER_CHECK)
+            obj.TileSeq = ++TileOrder.NextSeq;
 
             if (Tiles[x, y] == null)
             {
@@ -309,23 +379,10 @@ namespace ClassicUO.Game.Map
             }
 
 
+            // Tiles[x, y] is never obj here: RemoveFromTile above moved the anchor off it (ReleaseAnchor). The old code had an
+            // "o == obj" branch for a stale anchor that followed the LinkedObject container links (Previous/Next), which on a
+            // landless tile could put obj into another tile's list (T6a audit).
             GameObject o = Tiles[x, y];
-
-            if (o == obj)
-            {
-                if (o.Previous != null)
-                {
-                    o = (GameObject) o.Previous;
-                }
-                else if (o.Next != null)
-                {
-                    o = (GameObject) o.Next;
-                }
-                else
-                {
-                    return;
-                }
-            }
 
             while (o?.TPrevious != null)
             {
@@ -368,39 +425,20 @@ namespace ClassicUO.Game.Map
             }
         }
 
-        public void RemoveGameObject(GameObject obj, int x, int y)
+        /// <summary>
+        /// RemoveFromTile only (the one place objects leave a tile list): when <paramref name="obj"/> is the anchor of its
+        /// cell (Tiles[x, y], the node the walk starts from), a surviving neighbour takes its place, or null when it was
+        /// alone. Normally the anchor is the land, which never leaves; on a landless tile (a block without map data) the
+        /// first object placed used to stay the anchor after leaving, which hid the rest of the list.
+        /// </summary>
+        public void ReleaseAnchor(GameObject obj)
         {
-            Mesh.MarkDirtyIfNeeded(obj);
-            OnTileContentChanged(obj);
+            ref GameObject anchor = ref Tiles[obj.TileCell >> 3, obj.TileCell & 7];
 
-            if (obj != null && obj.TileChunk == this)
+            if (ReferenceEquals(anchor, obj))
             {
-                obj.TileChunk = null;
+                anchor = obj.TPrevious ?? obj.TNext;
             }
-            ref GameObject firstNode = ref Tiles[x, y];
-
-            if (firstNode == null || obj == null)
-            {
-                return;
-            }
-
-            if (firstNode == obj)
-            {
-                firstNode = obj.TNext;
-            }
-
-            if (obj.TNext != null)
-            {
-                obj.TNext.TPrevious = obj.TPrevious;
-            }
-
-            if (obj.TPrevious != null)
-            {
-                obj.TPrevious.TNext = obj.TNext;
-            }
-
-            obj.TPrevious = null;
-            obj.TNext = null;
         }
 
 

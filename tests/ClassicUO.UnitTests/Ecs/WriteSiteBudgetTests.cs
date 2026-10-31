@@ -137,6 +137,7 @@ namespace ClassicUO.UnitTests.Ecs
         [InlineData("void F(Item i) { i.X = i.Y = 0; }", "X,Y")]
         [InlineData("void F(Mobile m) { m.Steps.AddToBack(s); m.Steps.RemoveFromFront(); m.Steps.Clear(); }", "Steps,Steps,Steps")]
         [InlineData("void F(Mobile m) { m.Offset.Z = 4; m.Offset.X += 1; }", "Offset,Offset")]
+        [InlineData("void F(Mobile m) { m.OffsetZ = 4; m.OffsetX += 1; }", "Offset,Offset")]
         public void Writes_Are_Found(string source, string expectedFields) =>
             Fields(source).Should().Be(expectedFields);
 
@@ -220,7 +221,7 @@ namespace ClassicUO.UnitTests.Ecs
         // the world-state ("A") members of GameObject/Entity/Item/Mobile (ecs-state-census.md, section 2)
         internal static readonly string[] AFields =
         {
-            "Graphic", "Hue", "X", "Y", "Z", "Offset", "Flags", "Serial", "Name", "Direction", "Hits", "HitsMax",
+            "Graphic", "Hue", "X", "Y", "Z", "Offset", "OffsetX", "OffsetY", "OffsetZ", "Flags", "Serial", "Name", "Direction", "Hits", "HitsMax",
             "Amount", "Container", "Layer", "Price", "IsDamageable", "LightID", "UsedLayer", "DisplayedGraphic", "IsMulti",
             "Race", "SpeedMode", "Stamina", "StaminaMax", "Mana", "ManaMax", "IsRenamable", "IsFemale", "IsRunning",
             "NotorietyFlag", "IsDead", "InWarMode", "AnimIndex", "ExecuteAnimation", "LastAnimationChangeTime",
@@ -484,6 +485,15 @@ namespace ClassicUO.UnitTests.Ecs
                     {
                         result.Add(new WriteSite(path, LineOf(code, m.Index), "Offset", "this", "bare"));
                     }
+                }
+            }
+
+            // OffsetX/OffsetY/OffsetZ are the member-wise accessors of Offset (T0c): they count as the old `Offset.X = ` writes
+            for (int i = 0; i < result.Count; i++)
+            {
+                if (result[i].Field is "OffsetX" or "OffsetY" or "OffsetZ")
+                {
+                    result[i] = result[i] with { Field = "Offset" };
                 }
             }
 

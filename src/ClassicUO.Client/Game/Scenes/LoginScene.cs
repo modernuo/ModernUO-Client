@@ -494,27 +494,41 @@ namespace ClassicUO.Game.Scenes
 
             uint address = NetClient.Socket.LocalIP;
 
-            NetClient.Socket.Encryption?.Initialize(true, address);
+            // cipher initialisation, the seed and the first login packet are queued in order; other threads (plugins) are
+            // not admitted until EndHandshake
+            var handshake = NetClient.Socket.BeginLoginHandshake(address);
 
-            if (Client.Game.UO.Version >= ClientVersion.CV_6040)
+            try
             {
-                uint clientVersion = (uint) Client.Game.UO.Version;
+                if (Client.Game.UO.Version >= ClientVersion.CV_6040)
+                {
+                    uint clientVersion = (uint) Client.Game.UO.Version;
 
-                byte major = (byte) (clientVersion >> 24);
-                byte minor = (byte) (clientVersion >> 16);
-                byte build = (byte) (clientVersion >> 8);
-                byte extra = (byte) clientVersion;
+                    byte major = (byte) (clientVersion >> 24);
+                    byte minor = (byte) (clientVersion >> 16);
+                    byte build = (byte) (clientVersion >> 8);
+                    byte extra = (byte) clientVersion;
 
 
-                NetClient.Socket.Send_Seed(address, major, minor, build, extra);
+                    NetClient.Socket.Send_Seed(address, major, minor, build, extra);
+                }
+                else
+                {
+                    NetClient.Socket.Send_Seed_Old(address);
+                }
+
+                NetClient.Socket.Send_FirstLogin(Account, Password);
             }
-            else
+            finally
             {
-                NetClient.Socket.Send_Seed_Old(address);
+                NetClient.Socket.EndHandshake(handshake);
             }
-
-            NetClient.Socket.Send_FirstLogin(Account, Password);
         }
+
+        /// <summary>Steps in which a clean close by the server means the connection was lost (not a login denial's follow-up).</summary>
+        internal static bool IsLostOnCleanClose(LoginSteps step) =>
+            step is LoginSteps.Connecting or LoginSteps.VerifyingAccount or LoginSteps.ServerSelection or LoginSteps.LoginInToServer
+                or LoginSteps.CharacterSelection or LoginSteps.EnteringBritania or LoginSteps.CharacterCreationDone;
 
         private void OnNetClientDisconnected(object sender, SocketError e)
         {
@@ -523,6 +537,14 @@ namespace ClassicUO.Game.Scenes
             if (CurrentLoginStep == LoginSteps.CharacterCreation)
             {
                 return;
+            }
+
+            // A clean close by the server (Success) while we are still waiting on it is a lost connection too: before the
+            // network drain loop the client never noticed an idle close and sat on "Verifying Account". Once a step has
+            // ended in a popup (a login denial the server follows with a close) the message is kept.
+            if (e == 0 && IsLostOnCleanClose(CurrentLoginStep))
+            {
+                e = SocketError.ConnectionReset;
             }
 
             if (e != 0)
@@ -677,15 +699,22 @@ namespace ClassicUO.Game.Scenes
 
                 if (NetClient.Socket.IsConnected)
                 {
-                    NetClient.Socket.Encryption?.Initialize(false, seed);
-                    NetClient.Socket.EnableCompression();
-                    unsafe
-                    {
-                        Span<byte> b = stackalloc byte[4] { (byte)(seed >> 24), (byte)(seed >> 16), (byte)(seed >> 8), (byte)seed };
-                        NetClient.Socket.Send(b, true, true);
-                    }
+                    var handshake = NetClient.Socket.BeginGameHandshake(seed);
 
-                    NetClient.Socket.Send_SecondLogin(Account, Password, seed);
+                    try
+                    {
+                        unsafe
+                        {
+                            Span<byte> b = stackalloc byte[4] { (byte)(seed >> 24), (byte)(seed >> 16), (byte)(seed >> 8), (byte)seed };
+                            NetClient.Socket.Send(b, true, true);
+                        }
+
+                        NetClient.Socket.Send_SecondLogin(Account, Password, seed);
+                    }
+                    finally
+                    {
+                        NetClient.Socket.EndHandshake(handshake);
+                    }
                 }
             }
             finally
