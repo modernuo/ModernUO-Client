@@ -465,6 +465,38 @@ namespace ClassicUO.Assets
             return group;
         }
 
+        /// <summary>
+        /// One step of the corpse animation tick (Item.ProcessAnimation): the corpse of <paramref name="graphic"/> is drawn
+        /// as its Corpse.def target (<see cref="ResolveBody"/> with isCorpse, as the Gpu extract and ItemView draw and
+        /// pick), so its death action (<see cref="GetDeathAction"/>, <paramref name="second"/> = the UsedLayer bit) and
+        /// frame count come from that target, not from the live body. The frames are the ones
+        /// Animations.GetAnimationFrames(target, action, dir, isCorpse: true) returns (stored direction
+        /// <paramref name="storedDir"/> 0..4 = record dir + 3). <paramref name="frame"/> = <paramref name="next"/>, held at
+        /// the last frame once the animation is done. False when that direction has no frames (the index is left alone).
+        /// </summary>
+        public bool TryCorpseFrame(ushort graphic, bool second, byte storedDir, byte next, out byte frame)
+        {
+            frame = 0;
+
+            if (graphic >= _bodies.Length || storedDir >= 5)
+            {
+                return false;
+            }
+
+            ushort id = ResolveBody(graphic, true, out _);
+            ref readonly var e = ref _bodies[id];
+            byte action = GetDeathAction(id, (AnimationFlags)(e.Flags & ~AnimBodyEntry.MountAbsoluteFlag), (AnimationGroupsType)e.Type, second);
+
+            if (action >= MAX_ACTIONS || !TryGetDirection(ResolveBody(id, true, out _), action, storedDir + 3, out var dir))
+            {
+                return false;
+            }
+
+            frame = next >= dir.FrameCount ? (byte)(dir.FrameCount - 1) : next;
+
+            return true;
+        }
+
         /// <summary>Whether <paramref name="body"/> stores frames for <paramref name="action"/> in any direction.</summary>
         public bool HasAction(ushort body, int action)
         {

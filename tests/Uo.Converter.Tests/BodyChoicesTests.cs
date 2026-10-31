@@ -200,7 +200,7 @@ public sealed class BodyChoicesParseTests
         d.Columns[100] = [C(1, 7, -9)];
         bool Uop(int id) => id == 300;
         ushort? BodyDef(ushort id) => id == 200 ? (ushort)210 : null;
-        sbyte Shift(BodyPlan p, int b) => p.MountShift(b, p.MountBaseline(), Uop, BodyDef);
+        sbyte Shift(BodyPlan p, int b) { var seat = p.RiderSeat(b, p.MountBaseline(), Uop, BodyDef); seat.Absolute.Should().BeFalse("no Mounts table: relative shifts only"); return seat.Value; }
 
         var aos = BodyPlan.Resolve(d, BodyChoices.Parse("{}"));
         foreach (var b in new[] { 100, 101, 200, 201, 210, 300, 999 }) Shift(aos, b).Should().Be(0, $"the default pack draws the art the Mounts table was set for (body {b})");
@@ -534,13 +534,14 @@ public sealed class BodyChoicesInstallTests
         bool Uop(int id) => uop.TryGetValue(id, out var u) ? u : uop[id] = AnimConvert.Meta(w.Loader, fm.Version, id, aos).Uop;
         ushort? Def(ushort id) => AnimConvert.BodyDefNext(w.Loader, id);
         var aosBase = aos.MountBaseline();
-        for (int b = 0; b < aos.BodyCount; b++) aos.MountShift(b, aosBase, Uop, Def).Should().Be(0);
+        for (int b = 0; b < aos.BodyCount; b++) aos.RiderSeat(b, aosBase, Uop, Def).Should().Be(default(MountSeat));
         var tb = t2a.MountBaseline();
-        t2a.MountShift(793, tb, Uop, Def).Should().Be(9, "skeletal mount 793 draws horse 200 (0) instead of its anim2 art (-9)");
-        t2a.MountShift(192, tb, Uop, Def).Should().Be(9, "ethereal unicorn 192 draws its stand-in 228");
-        t2a.MountShift(200, tb, Uop, Def).Should().Be(0);
+        // without the Mounts table (the height rule alone): relative shifts
+        t2a.RiderSeat(793, tb, Uop, Def).Should().Be(new MountSeat(9, false), "skeletal mount 793 draws horse 200 (0) instead of its anim2 art (-9)");
+        t2a.RiderSeat(192, tb, Uop, Def).Should().Be(new MountSeat(9, false), "ethereal unicorn 192 draws its stand-in 228");
+        t2a.RiderSeat(200, tb, Uop, Def).Should().Be(default(MountSeat));
         var legacy = BodyPlan.Build(fm, BodyChoices.Legacy);
-        legacy.MountShift(793, legacy.MountBaseline(), Uop, Def).Should().Be(0);
+        legacy.RiderSeat(793, legacy.MountBaseline(), Uop, Def).Should().Be(default(MountSeat));
     }
 
     [ClassicUoFact]
@@ -755,36 +756,152 @@ public sealed class BodyChoicesInstallTests
     [ClassicUoFact]
     public void Stand_In_Mounts_Seat_The_Rider_As_On_The_Stand_In()
     {
-        // Owner, 2026-10-31: a mount body drawn as a Body.def stand-in takes the stand-in's own table offset. t2a: unicorn
-        // 122 (0x3EB4, table -9) draws horse 228 (0x3EA1, 0): shift +9, rider at 0. aos: no shift anywhere.
+        // Owner, 2026-10-31, made item-aware in round 4 (finding 3): a mount body drawn as a Body.def stand-in seats its
+        // rider at the stand-in's absolute table offset, whatever the item's own offset, for listed and unlisted items.
+        // Every one of the 65,536 tiledata items is taken as a mount item. aos: every seat is relative 0, so every rider
+        // sits at the table offset exactly as before.
         var fm = Fm();
         var offsets = BodyPlan.MountOffsets.FromTileData(fm);
         offsets.Conflicts.Should().BeEmpty("every mount body's table items agree on the offset");
+        if (fm.TileData.StaticData is not { Length: > 0 }) fm.TileData.Load();
+        var statics = fm.TileData.StaticData;
         var aos = BodyPlan.Build(fm, BodyChoices.Default);
         using var w = new AnimWorker(fm, aos);
         var uop = new Dictionary<int, bool>();
         bool Uop(int id) => uop.TryGetValue(id, out var u) ? u : uop[id] = AnimConvert.Meta(w.Loader, fm.Version, id, aos).Uop;
         ushort? Def(ushort id) => AnimConvert.BodyDefNext(w.Loader, id);
-        for (int b = 0; b < aos.BodyCount; b++) aos.MountShift(b, aos.MountBaseline(), Uop, Def, offsets).Should().Be(0);
-        foreach (var preset in new[] { "t2a", "lbr" })
+        foreach (var preset in new[] { "aos", "t2a", "lbr" })
         {
-            var p = BodyPlan.Build(fm, BodyChoices.Parse($"{{\"preset\":\"{preset}\"}}"));
+            var p = preset == "aos" ? aos : BodyPlan.Build(fm, BodyChoices.Parse($"{{\"preset\":\"{preset}\"}}"));
             var pb = p.MountBaseline();
-            if (fm.TileData.StaticData is not { Length: > 0 }) fm.TileData.Load();
-            foreach (var (item, _, off) in MountTable.Entries)
+            var seats = new Dictionary<int, MountSeat>();
+            var changed = new List<string>();
+            var relative = new SortedSet<int>();
+            for (int g = 0; g < 0x10000; g++)
             {
-                int body = MountTable.MountBody(item, fm.TileData.StaticData[item].AnimID);
+                ushort item = (ushort)g;
+                int body = MountTable.MountBody(item, g < statics.Length ? statics[g].AnimID : (ushort)0);
                 if (body >= p.BodyCount) continue;
-                int shift = p.MountShift(body, pb, Uop, Def, offsets);
+                if (!seats.TryGetValue(body, out var seat)) seats[body] = seat = p.RiderSeat(body, pb, Uop, Def, offsets);
+                int before = MountTable.OffsetY(item), now = seat.RiderOffset(item);
+                if (now != before) changed.Add($"0x{item:X4} ({(MountTable.TryGet(item, out _, out _) ? "listed" : "unlisted")}, body {body}): {before} -> {now}");
                 int drawn = BodyPlan.DrawnBody(body, p.Conv, Uop, Def);
-                if (shift != 0) Console.WriteLine($"{preset}: mount item 0x{item:X4} body {body} drawn as {drawn}: {off} -> {off + shift}");
                 if (drawn != body && drawn != BodyPlan.DrawnBody(body, pb.Conv, Uop, Def))
-                    (off + shift).Should().Be(offsets.Offset(drawn), $"{preset}: 0x{item:X4} (body {body}) is drawn as {drawn}");
+                {
+                    now.Should().Be(offsets.Offset(drawn), $"{preset}: 0x{item:X4} (body {body}) sits as on {drawn}");
+                    if (!seat.Absolute) relative.Add(body);
+                }
+            }
+            Console.WriteLine($"{preset}: {changed.Count} item offsets changed: {string.Join("; ", changed)}");
+            relative.Should().BeEmpty($"{preset}: a body drawn as its stand-in has an absolute seat");
+            if (preset == "aos")
+            {
+                seats.Values.Should().AllSatisfy(s => s.Should().Be(default(MountSeat)), "aos stores no seat anywhere");
+                changed.Should().BeEmpty();
+            }
+            if (preset == "t2a")
+            {
+                seats[122].Should().Be(new MountSeat(0, true), "unicorn 122 draws horse 228");
+                seats[793].Should().Be(new MountSeat(0, true), "skeletal mount 793 draws horse 200");
+                seats[122].RiderOffset(0x007A).Should().Be(0, "unlisted 0x007A falls back to body 122: it sits as on horse 228, not at +9");
+                seats[122].RiderOffset(0x3EB4).Should().Be(0);
+                changed.Should().BeEquivalentTo(
+                    "0x3E9B (listed, body 192): -9 -> 0", "0x3E9D (listed, body 192): -9 -> 0",
+                    "0x3EB4 (listed, body 122): -9 -> 0", "0x3EBB (listed, body 793): -9 -> 0");
             }
         }
-        var t2a = BodyPlan.Build(fm, BodyChoices.Parse("{\"preset\":\"t2a\"}"));
-        t2a.MountShift(122, t2a.MountBaseline(), Uop, Def, offsets).Should().Be(9, "unicorn 122 draws horse 228");
-        t2a.MountShift(793, t2a.MountBaseline(), Uop, Def, offsets).Should().Be(9, "skeletal mount 793 draws horse 200");
+    }
+
+    // ---- round 4 ----
+
+    /// <summary>The 7.0.103 install with <paramref name="lines"/> placed before its Corpse.def lines (the first line of a body wins).</summary>
+    private static UOFileManager FmWithCorpseDef(string dir, params string[] lines)
+    {
+        Directory.CreateDirectory(dir);
+        var src = Path.Combine(ClassicUoFactAttribute.Dir, "Corpse.def");
+        var path = Path.Combine(dir, "Corpse.def");
+        File.WriteAllLines(path, lines.Concat(File.Exists(src) ? File.ReadAllLines(src) : []));
+        ClientVersionHelper.IsClientVersionValid("7.0.103.0", out var cv);
+        return new UOFileManager(cv, ClassicUoFactAttribute.Dir, new ClassicUO.IO.UOFilesOverrideMap { ["corpse.def"] = path });
+    }
+
+    [ClassicUoFact]
+    public void Corpse_Def_Presence_Is_Explicit_Whatever_The_Hue()
+    {
+        // Round-4 finding 4: 191 {191} 65535 is a self-target. The loader's ReplaceCorpse writes 0xFFFF and returns false,
+        // which the old hue sentinel read as "no line": t2a then dropped 191's frames and drew 228 for its corpse.
+        var dir = Path.Combine(Path.GetTempPath(), $"uo_corpse_hop_{Guid.NewGuid():N}");
+        try
+        {
+            var fm = FmWithCorpseDef(dir, "191 {191} 65535", "193 {193} 0", "194 {9} 65535");
+            var plan = BodyPlan.Build(fm, BodyChoices.Parse("{\"preset\":\"t2a\"}"));
+            using var w = new AnimWorker(fm, plan);
+            AnimConvert.CorpseHop(w.Loader, 191).Should().Be(((ushort)191, (ushort)0xFFFF));
+            AnimConvert.CorpseHop(w.Loader, 193).Should().Be(((ushort)193, (ushort)0));
+            AnimConvert.CorpseHop(w.Loader, 194).Should().Be(((ushort)9, (ushort)0xFFFF));
+            AnimConvert.CorpseHop(w.Loader, 192).Should().BeNull("192 has no Corpse.def line");
+
+            var metas = new Dictionary<int, AnimConvert.BodyMeta>();
+            AnimConvert.BodyMeta MetaOf(int b) => metas.TryGetValue(b, out var m) ? m : metas[b] = AnimConvert.Meta(w.Loader, fm.Version, b, plan);
+            var standIns = plan.StandInIds.ToHashSet();
+            standIns.Should().Contain([191, 192, 193]);
+            var t191 = AnimConvert.Targets(w.Loader, 191, standIns.Contains, MetaOf);
+            (t191.Corpse, t191.CorpseHue, t191.DropFrames).Should().Be(((ushort)191, (ushort)0xFFFF, false), "an explicit self-target keeps 191's frames, hued 0xFFFF");
+            var t193 = AnimConvert.Targets(w.Loader, 193, standIns.Contains, MetaOf);
+            (t193.Corpse, t193.DropFrames).Should().Be((AnimConst.NoBody, false), "a zero-hue self-target: its own frames, unhued");
+            var t192 = AnimConvert.Targets(w.Loader, 192, standIns.Contains, MetaOf);
+            (t192.Corpse, t192.DropFrames).Should().Be((t192.Alias, true), "no line: the live stand-in");
+        }
+        finally
+        {
+            try { Directory.Delete(dir, recursive: true); } catch (IOException) { }
+        }
+    }
+
+    [ClassicUoFact]
+    public void Verification_Accepts_Stand_Ins_That_Keep_Their_Frames_For_A_Corpse_Self_Target()
+    {
+        // Round-4 finding 2: the pack's stand-in invariant follows Targets(...).DropFrames. A t2a pack with Corpse.def self-
+        // targets 318 {318} 65535 and 319 {319} 0 keeps both bodies' frames (319's corpse target is none: its own frames)
+        // and passes the verifier's body checks; a dropped stand-in with frames or without a corpse target still fails.
+        var dir = Path.Combine(Path.GetTempPath(), $"uo_corpse_verify_{Guid.NewGuid():N}");
+        try
+        {
+            var fm = FmWithCorpseDef(Path.Combine(dir, "def"), "318 {318} 65535", "319 {319} 0");
+            AnimConvert.Bodies = [318, 319, 9, 51, 192, 228]; // 318 and 319 (stand-ins 9 and 51) have art in their own slots
+            var plan = BodyPlan.Build(fm, BodyChoices.Parse("{\"preset\":\"t2a\"}"));
+            AnimConvert.Run(fm, dir, plan);
+            var bodies = AnimTableFile.Read(Path.Combine(dir, "anim", AnimTableFile.FileName)).Bodies;
+            plan.StandInIds.Should().Contain([318, 319, 192]);
+            bodies[318].HasFrames.Should().BeTrue("318's corpse needs its own frames");
+            (bodies[318].CorpseBody, bodies[318].CorpseHue).Should().Be(((ushort)318, (ushort)0xFFFF));
+            bodies[319].HasFrames.Should().BeTrue();
+            bodies[319].CorpseBody.Should().Be(AnimConst.NoBody, "zero-hue self-target: the corpse draws 319's own frames");
+            bodies[192].HasFrames.Should().BeFalse();
+
+            Verify.Reset();
+            Verify.CheckBodyEntries(fm, plan, bodies);
+            Verify.Failures.Should().BeEmpty();
+
+            foreach (var (b, broken) in new (int, Func<AnimBodyEntry, AnimBodyEntry>)[]
+            {
+                (192, e => { e.CorpseBody = AnimConst.NoBody; return e; }),
+                (192, e => { e.ActionCount = bodies[318].ActionCount; e.FirstDir = bodies[318].FirstDir; return e; }),
+            })
+            {
+                var bad = (AnimBodyEntry[])bodies.Clone();
+                bad[b] = broken(bad[b]);
+                Verify.Reset();
+                Verify.CheckBodyEntries(fm, plan, bad);
+                Verify.Failures.Should().Contain(f => f.StartsWith($"anim body {b}:"));
+            }
+            Verify.Reset();
+        }
+        finally
+        {
+            AnimConvert.Bodies = null;
+            try { Directory.Delete(dir, recursive: true); } catch (IOException) { }
+        }
     }
 }
 

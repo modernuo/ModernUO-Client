@@ -254,13 +254,24 @@ public struct AnimBodyEntry
     /// <summary>Bodyconv.def mounted height offset of this entry's own conversion (informational; the client reads MountShift).</summary>
     public sbyte MountHeight;
     /// <summary>
-    /// Rider shift for this body as a mount: the mount height of the art the pack draws for it (after its Body.def
-    /// stand-in, if any) minus that of the default (aos) art. The client adds it to the Mounts table's per-item offset,
-    /// so 0 (every default pack, and packs before this field, where it was padding) draws riders as the table says.
+    /// Rider seat for this body as a mount (<see cref="MountSeat"/>). Without <see cref="MountAbsoluteFlag"/>: a shift the
+    /// client adds to the Mounts table's per-item offset, the mount height of the art the pack draws minus that of the
+    /// default (aos) art, so 0 (every default pack, and packs before this field, where it was padding) draws riders as
+    /// the table says. With it: the rider offset itself, for every item (a mount body drawn as a Body.def stand-in it
+    /// doesn't draw by default sits as on the stand-in).
     /// </summary>
     public sbyte MountShift;
 
+    /// <summary>
+    /// Pack-only bit of <see cref="Flags"/>: <see cref="MountShift"/> is the absolute rider offset. mobtypes.txt never
+    /// defines it (ClassicUO's AnimationFlags stop at 0x80000 plus Found = bit 31); the converter clears it from the
+    /// mobtypes flags and the client's GetAnimFlags masks it.
+    /// </summary>
+    public const uint MountAbsoluteFlag = 0x40000000;
+
     public readonly bool HasFrames => ActionCount != 0;
+
+    public readonly MountSeat MountSeat => new(MountShift, (Flags & MountAbsoluteFlag) != 0);
 }
 
 [Flags]
