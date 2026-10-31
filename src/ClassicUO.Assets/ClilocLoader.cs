@@ -302,16 +302,16 @@ namespace ClassicUO.Assets
             failed = false;
             string path = FileManager.GetUOFilePath(ClilocOverrides.FileName);
 
-            if (!File.Exists(path))
-            {
-                return null;
-            }
-
             Dictionary<int, string> ours;
 
             try
             {
+                // read directly: File.Exists is false for an access error too, which must not read as "absent"
                 ours = ClilocOverrides.Parse(File.ReadLines(path));
+            }
+            catch (Exception e) when (e is FileNotFoundException || e is DirectoryNotFoundException)
+            {
+                return null; // optional, and not there
             }
             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
             {
