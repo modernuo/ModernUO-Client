@@ -11,7 +11,7 @@ public interface IItemAnimIds
     ushort Get(ushort graphic);
 }
 
-/// <summary>AnimID from the pack's extended tiledata (tiledata_ext.bin, format 1.0).</summary>
+/// <summary>AnimID from the pack's tiledata.bin.</summary>
 public sealed class PackAnimIds : IItemAnimIds
 {
     readonly ushort[] _anim;
@@ -26,12 +26,12 @@ public sealed class PackAnimIds : IItemAnimIds
 
     public static IItemAnimIds TryLoad(string packRoot)
     {
-        var path = Path.Combine(packRoot, TableConst.TileDataExtFile);
-        return File.Exists(path) ? new PackAnimIds(TileDataExtFile.Read(path).Statics) : null;
+        var path = Path.Combine(packRoot, TableConst.TileDataFile);
+        return File.Exists(path) ? new PackAnimIds(TileDataFile.Read(path).Statics) : null;
     }
 }
 
-/// <summary>FALLBACK for packs without tiledata_ext.bin: reads AnimID straight from the client's tiledata.mul (7.0.9+ layout) until the pack's tiledata
+/// <summary>FALLBACK for packs without tiledata.bin: reads AnimID straight from the client's tiledata.mul (7.0.9+ layout) until the pack's tiledata
 /// has it. This is the only MUL read in the client; remove it once every pack in use is format 1.0.</summary>
 public sealed class TileDataMulAnimIds : IItemAnimIds
 {

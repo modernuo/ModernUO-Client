@@ -2,6 +2,8 @@
 
 The authoritative specification of the asset pack the modern client loads instead of the UO client's MUL/UOP files. The converter (`poc/Uo.Converter`) writes packs, and `poc/Uo.Pack` holds the structs, readers and writers. History, measurements and rejected options are in [pack-format-v0.md](pack-format-v0.md); nothing there is needed to implement this spec.
 
+Revision 1.1 (pack classic-1.1, 2026-10-31): one tile data file with the draw rules as per-tile flags ("Tile data"), and the sprite table's partial-hue bit retired. `FileHeader.version` and the manifest version stay 1; the new `TILE` magic identifies the tile data layout, and a client of this revision rejects a 1.0 pack (it lacks a `TILE` `tiledata.bin`), while a 1.0 client rejects a 1.1 pack (it lacks `tiledata_ext.bin`).
+
 For every content type described here, the client reads only the pack. MUL/UOP stay only for the content listed in "Not in the pack" at the end. Patch formats (`verdata.mul`, `mapdif*`, `mapdifl*`, `stadif*`, `stadifi*`, `stadifl*`) are never read. Shard owners merge patches into the base files before converting. The `map*x`/`statics*x`/`staidx*x` files (`--xfiles`) are base files and are supported.
 
 ## Conventions
@@ -21,8 +23,7 @@ For every content type described here, the client reads only the pack. MUL/UOP s
 ```
 <pack>/
   manifest.json            pack version, source client, facets, files[{path, size, sha256}]
-  tiledata.bin             compact tile data for the renderer (TLTD)
-  tiledata_ext.bin         full tile data with names (TLDX)
+  tiledata.bin             tile data: every field, names and the draw flags (TILE); the only tile data file
   hues_raw.bin             hues.mul entries: 16-bit colours, TableStart/End, names (HERW); the RGBA8 hue LUT is built from it
   radarcol.bin             radar colours (RADC)
   multis.bin               multi component lists (MLTI)
@@ -70,8 +71,7 @@ Every binary file starts with a 16-byte `FileHeader`:
 | `PPAK` 0x4B415050 | atlas page |
 | `SPRS` 0x53525053 | sprite table |
 | `UORG` 0x47524F55 | map region |
-| `TLTD` 0x44544C54 | tiledata.bin |
-| `TLDX` 0x58444C54 | tiledata_ext.bin |
+| `TILE` 0x454C4954 | tiledata.bin |
 | `HERW` 0x57524548 | hues_raw.bin |
 | `RADC` 0x43444152 | radarcol.bin |
 | `MLTI` 0x49544C4D | multis.bin |
@@ -87,12 +87,11 @@ Every binary file starts with a 16-byte `FileHeader`:
 | `CLIL` 0x4C494C43 | text/cliloc.bin (a record store) |
 | `SPCH` 0x48435053 | text/speech.bin |
 
-Retired magic: `HUES` 0x53455548 (`hues.bin`, see "Hues"). Packs that still carry the file load as before; readers ignore it.
+Retired magic: `HUES` 0x53455548 (`hues.bin`, see "Hues"). Packs that still carry the file load as before; readers ignore it. `TLTD` 0x44544C54 (the compact `tiledata.bin` of packs before classic-1.1) and `TLDX` 0x58444C54 (`tiledata_ext.bin`): replaced by the single `tiledata.bin` (see "Tile data"). The tiledata reader rejects both magics with a "convert again" message, and a pack without `TILE` data does not load.
 
 **Reader rule.** A reader accepts `version` 0 and 1 and rejects anything higher. Version 0 files come from pre-1.0 packs. Every version-0 file has the same layout as its version-1 counterpart, so no reader branches on the version. What version-0 packs lack:
 
-- the game data tables (`tiledata_ext.bin`, `hues_raw.bin`, `radarcol.bin`, `multis.bin`, `lights.bin`, `tileart.bin`, `equipconv.bin`): a 1.0 client treats a pack without them as incomplete;
-- converter-derived `packFlags` in tiledata, which may be 0 (see "NoDraw flags");
+- the game data tables (`hues_raw.bin`, `radarcol.bin`, `multis.bin`, `lights.bin`, `tileart.bin`, `equipconv.bin`) and the single `tiledata.bin`: a client treats a pack without them as incomplete, so version-0 packs do not load and there is no fallback for their missing draw flags;
 - the canonical hue LUT: version-0 `hues.bin` used ClassicUO's `floor` expansion, up to 1/255 darker per channel. `hues.bin` is retired and ignored (the LUT is built from `hues_raw.bin`), so this no longer matters to a reader.
 
 `manifest.json`'s `version` is the pack's format version (1).
@@ -169,7 +168,7 @@ The mip chain follows: level 0 (side `s`), level 1 (`s/2`), and so on, back to b
 | w, h | u16 | trimmed size |
 | trimX, trimY | i16 | offset of the trimmed rect inside the original image |
 | origW, origH | u16 | original image size, used for UO draw anchoring |
-| flags | u16 | bit 0 land art, bit 1 texmap, bit 2 has partial-hue pixels (the tile's `PartialHue` flag) |
+| flags | u16 | bit 0 land art, bit 1 texmap. Bit 2 is retired: it copied the tile's `PartialHue` flag, which readers take from `tiledata.bin`. Packs before classic-1.1 still set it; it is no longer written and readers ignore it |
 
 - The art table has `0x4000 + staticCount` entries: land ids first, then statics at `0x4000 + graphic`. `art.def` and `TexTerr.def` substitutions are already applied.
 - An id that exists in the client but is fully transparent is absent and keeps `origW/origH`.
@@ -200,22 +199,15 @@ The data is semantic: the renderer bakes per-chunk instance buffers on worker th
 
 ## Tile data
 
-### `tiledata.bin`: compact, for the renderer
+### `tiledata.bin`
 
-`FileHeader`, `landCount i32`, `staticCount i32`, `LandTileData[landCount]`, `StaticTileData[staticCount]`.
+The pack's only tile data file (one source of truth, owner decision 2026-10-31). Before classic-1.1 the pack carried a compact renderer copy (`tiledata.bin`, `TLTD`, 12 bytes per entry) next to the full `tiledata_ext.bin` (`TLDX`); both are retired.
 
-- `LandTileData` (12 bytes): flags u64, texId u16, packFlags u16.
-- `StaticTileData` (12 bytes): flags u64, height u8, layer u8, packFlags u16.
+`FileHeader` (magic `TILE`, Kind 0), `landCount i32`, `staticCount i32`, `nameBytes i32`, `LandTileInfo[landCount]`, `StaticTileInfo[staticCount]`, then `nameBytes` of UTF-8 name table.
 
-Flags keep UO's `TileFlag` bit values (64-bit; pre-7.0.9.0 clients' 32-bit flags are widened). Values are after `art.def` substitution.
+`LandTileInfo` (20 bytes): flags u64, nameOffset u32, nameLength u16, texId u16, packFlags u16, pad u16.
 
-### `tiledata_ext.bin`: everything else
-
-`FileHeader`, `landCount i32`, `staticCount i32`, `nameBytes i32`, `LandTileInfo[landCount]`, `StaticTileInfo[staticCount]`, then `nameBytes` of UTF-8 name table. Entries are parallel to `tiledata.bin`.
-
-`LandTileInfo` (16 bytes): flags u64, nameOffset u32, nameLength u16, texId u16.
-
-`StaticTileInfo` (28 bytes):
+`StaticTileInfo` (32 bytes):
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -229,29 +221,48 @@ Flags keep UO's `TileFlag` bit values (64-bit; pre-7.0.9.0 clients' 32-bit flags
 | layer | u8 | equipment layer |
 | height | u8 | |
 | pad | u8 | |
+| packFlags | u16 | draw flags (`TilePackFlags`, below) |
+| pad2 | u16 | |
 
-A name is the UTF-8 encoding of ClassicUO's string: the 20-byte field decoded as UTF-8 with leading and trailing NULs trimmed. Length 0 = empty name. Duplicate names share bytes in the table.
+- Flags keep UO's `TileFlag` bit values (64-bit; pre-7.0.9.0 clients' 32-bit flags are widened). Values are after `art.def` substitution.
+- A name is the UTF-8 encoding of ClassicUO's string: the 20-byte field decoded as UTF-8 with leading and trailing NULs trimmed. Length 0 = empty name. Duplicate names share bytes in the table.
+- **Untrusted input.** `TileDataFile.Read` checks the magic, version and Kind 0, `landCount` = 0x4000 (the client indexes land by `tile & 0x3FFF`), `staticCount` in 1..0x10000, `nameBytes` in 0..5,242,880 (`MaxNameTableBytes`: every entry with a longest name), the file size equal to what the counts give (before allocating), and every name reference inside the table and at most 64 bytes long (`MaxNameBytes`; source names are 20 single-byte characters, at most 40 bytes as UTF-8). The references are checked before the name table is allocated. The converter refuses to write a longer name.
+- **Names are decoded once per distinct (offset, length)** (`TileDataFile.DecodeNames`): entries that share a reference share the string. With the caps, decoded names stay under about 10 MB even for a hostile file (81,920 distinct references of 64 bytes); before the caps, 81,920 references to one 65,535-byte name decoded to about 10 GiB.
+- **The renderer's compact arrays** (`LandTileData`: flags u64, texId u16, packFlags u16; `StaticTileData`: flags u64, height u8, layer u8, packFlags u16; 12 bytes each) are built at load by `TileDataFile.Compact` (`PackSet`, used by the client's `GpuWorldRenderer` and the poc apps). They are not stored. Cost on the 7.0.103 pack (2.50 MB file): read and validate 0.93 ms median, building the compact arrays 0.25 ms median (i9-12900K, JIT, 100 runs; `TileDrawOracleTests.Compact_Arrays_Load_Time`).
 
 ### NoDraw flags (`TilePackFlags`, in `packFlags`)
 
-ClassicUO hides some tiles in code rather than with tiledata flags. The converter evaluates that code once:
+ClassicUO used to hide some tiles in code rather than with tiledata flags. The converter (`Uo.Converter/TileRules.cs`, the only code that knows these rules) evaluates that code once and stores the result. Clients and the renderer read only the flags (`Uo.Pack.TileDraw`), so a shard admin hides or shows a tile by editing its flag, with no code change.
 
 | Bit | Name | Meaning |
 |---|---|---|
-| 0 | `NoDraw` | ClassicUO never draws the tile. |
-| 1 | `NoDrawUnlessGargoyle` | Static hidden unless the player is a gargoyle. |
-| 2 | `NameNoDraw` | The name starts with `nodraw` (case-insensitive). Informational for land. |
+| 0 | `NoDraw` | Never drawn: land, or a static/item/multi component/effect graphic. |
+| 1 | `NoDrawUnlessGargoyle` | Static graphic hidden unless the player is a gargoyle. |
+| 2 | `NameNoDraw` | Informational: the name starts with `nodraw` (case-insensitive). Nothing reads it; for statics the converter folds it into `NoDraw`. |
+| 3 | `NoDrawAsMulti` | A multi item whose display graphic (the multi's first component) is this static is not drawn. |
 
-- **Land** (`Land.AllowedToDraw`, graphic > 2): `NoDraw` for ids 0, 1 and 2. Season graphic swaps happen at runtime, so the renderer applies the `> 2` rule to the swapped graphic.
-- **Statics** (static-data part of `GameObject.CanBeDrawn`, in this order):
+What the converter writes (the client code these rules came from, now gone from the client):
+- **Land** (`Land.AllowedToDraw = graphic > 2`): `NoDraw` for ids 0, 1 and 2.
+- **Statics** (`GameObject.CanBeDrawn`, used for map statics, items, multi components, effects, the minimap, the world map and overhead names), in this order:
   1. 0x0001, 0x21BC, 0xA1FE..0xA201: `NoDraw`.
   2. 0x9E4C, 0x9E64, 0x9E65, 0x9E7D: `NoDraw` only with `Background` or `Surface`.
   3. 0x63D3 and 0x2198..0x21A4: `NoDraw`.
-  4. 0x0F65 (easel): drawn on clients older than 6.0.14.4.
+  4. 0x0F65 (easel): drawn on clients older than 6.0.14.4 (the source client's version), whatever its flags. See "The easel" below.
   5. A name starting with `nodraw`: `NoDraw`.
   6. `NoDiagonal` (0x02000000): `NoDraw`, or `NoDrawUnlessGargoyle` with `Animation`.
-- The flags apply to map statics and to items or multis that ClassicUO passes through `CanBeDrawn`. Multi components use their own `> 2` test.
-- Version-0 packs may have 0 here, so a renderer that reads them keeps its own id rules as a fallback.
+- **Multi items** (`Item.RefreshGraphicState`: `AllowedToDraw = MultiGraphic > 2`): `NoDrawAsMulti` for statics 0, 1 and 2.
+
+At runtime:
+- The season swap stays runtime; the flag is read for the swapped graphic.
+- The gargoyle exception stays runtime: `TileDraw.Static(flags, playerIsGargoyle)`.
+- The poc renderer (`ChunkBaker`) bakes as for a non-gargoyle player; the client shows `NoDrawUnlessGargoyle` statics through its own objects.
+- There is no fallback for packs without the flags: a pack without a `TILE` `tiledata.bin` is rejected.
+- The poc client's ground items (`Uo.Client` `RenderExtract`, through `Uo.Render.GroundItemDraw`) use the same flags with the player's race; a corpse (0x2006) is always drawn, as ClassicUO's `Item` does.
+- A static the client draws but the bake left out (a `NoDrawUnlessGargoyle` static seen by a gargoyle, e.g. 0x5683) is drawn by the Gpu host's list fill on every frame, as Legacy's `StaticView` draws it (`GameScene.BakeOmits`, the bake's own predicate).
+
+**The easel: a deliberate behaviour change (owner rule: the pack's data decides, not code).** ClassicUO hid the easel 0x0F65 by its `NoDiagonal` flag except on clients older than 6.0.14.4, and it asked the *runtime* client-version setting. The converter now applies that rule once with the *source* client's version, and the client never looks at the version for it. So the easel's visibility is whatever the pack says, and changing the client-version setting no longer changes it. The two can differ only when the pack was converted from a client on one side of 6.0.14.4 and the profile names a version on the other side; the pack wins. To change it, an admin edits the flag in the source tiledata (today: set or clear `NoDraw` in `packFlags` of static 0x0F65 in `tiledata.bin`; with a source tree, the `noDraw` column) and rebuilds the pack. There is no runtime version rule, by design (`TileDataAuditTests.The_Easel_Follows_Its_Pack_Flag_And_The_Runtime_Client_Version_Has_No_Effect`).
+
+Pixel-neutral: on the 7.0.103 pack, the flags give the same decision as the old code for all 212,992 cases (16,384 land ids; 65,536 static ids × 2 player races; 65,536 multi display graphics): 0 mismatches. Both the converter's verify step (`Verify.CheckNoDraw`, on the source client's tiledata) and the client's unit test (`TileDrawOracleTests`, through the client's own loader and draw functions, on the pack alone) compare against a verbatim copy of the old client code. Counts: 3 land `NoDraw`, 31 statics `NoDraw` (32 hidden for a non-gargoyle, 31 for a gargoyle), 1 `NoDrawUnlessGargoyle`, 20 named `nodraw`, 3 `NoDrawAsMulti`.
 
 ## Hues
 
@@ -538,7 +549,7 @@ camelCase JSON, read case-insensitively:
   - page sizes: `--page-size n`, `--anim-page-size n`;
   - compression: `--raw-pages`, `--compress-pages` (Kind 1), `--chunk-bytes n`, `--raw-regions`, `--raw-gumps` (gump records uncompressed, run-length layout), `--raw-text` (font records uncompressed), `--text-small n` (font records up to n raw bytes stay uncompressed; 16384), `--cliloc-brotli` (cliloc records Brotli);
   - testing: `--gump-def <file>` (read this gump.def instead of the client's), `--gump-report` (the gump storage measurements above; writes nothing).
-- Stages: `--only art,tex,hues,tiledata,data,gumps,fonts,cliloc,speech,maps,anims` (into an existing pack), `--no-maps`, `--no-anims`, `--no-gumps`, `--no-fonts`, `--no-cliloc`, `--no-speech`, `--verify-only`. `fonts` writes `text/fonts.bin` and `text/unifont.bin`. `hues` writes `hues_raw.bin` and `radarcol.bin` (and deletes a stale `hues.bin` from the output), `tiledata` writes both tiledata files, and `data` writes multis, lights, tileart and equipconv. `animdata.bin` belongs to `anims`.
+- Stages: `--only art,tex,hues,tiledata,data,gumps,fonts,cliloc,speech,maps,anims` (into an existing pack), `--no-maps`, `--no-anims`, `--no-gumps`, `--no-fonts`, `--no-cliloc`, `--no-speech`, `--verify-only`. `fonts` writes `text/fonts.bin` and `text/unifont.bin`. `hues` writes `hues_raw.bin` and `radarcol.bin` (and deletes a stale `hues.bin` from the output), `tiledata` writes `tiledata.bin` (and deletes a stale `tiledata_ext.bin` from the output), and `data` writes multis, lights, tileart and equipconv. `animdata.bin` belongs to `anims`.
 - **Outputs are replaced, never written in place.** Every pack file the converter writes (tables, pages, regions, record stores, text, anims, `facet.json`, `manifest.json`) goes to a temp file in the same folder (`.<name>.<guid>.replacing.tmp`), which is then moved over the target (`Uo.Pack.ReplacingFile`). Replacing the directory entry breaks a hard link instead of writing through it, so a test pack built by hard-linking a published pack's files (`cp -al`) and then converting `--only <sections>` leaves the published files untouched. A failed write deletes its temp file and leaves the target as it was; the manifest skips leftover temp files.
 - **Published packs are refused as output.** Published versions are immutable. Every write (`Uo.Pack.ReplacingFile`, at create and again before the commit) and every delete (`Uo.Pack.PackOutputFiles`) checks its own folder, so a junction inside an accepted output cannot reach a published pack. The tools also refuse an output folder (`--out`, `--debug`, `--bench-chunked`'s out, `Uo.Render.App --make-synthetic` and `--debug-compress-pages`) that is, lies under, or contains a published packs root. Roots: `C:/Repositories/uo-packs`, `UO_PACKS_ROOTS` (`;`-separated), every `--packs-root <dir>` (read once, before any other argument, by `PublishedPacks.ConfigureFromArgs`), and any ancestor folder holding a `CURRENT` file that names one of its subfolders. Paths are compared in canonical form (Windows: the file system's final path of the nearest existing folder, so junctions, symlinks, subst drives, `\\?\` and `\\.\` prefixes and volume GUID paths collapse to one drive path); network paths are also compared by file identity (volume serial + file id) with every folder of each root. When the relationship cannot be established (a link loop, an unreachable share, a device path without a drive letter) the write is refused. `--verify-only` only reads, so it may verify a published pack. The default `--debug` folder is `%TEMP%/uo-converter-debug/<pack folder name>`; `--make-synthetic` defaults to `%TEMP%/uo-synthetic-pack`.
 - **No recursive deletes.** A full conversion deletes only the files the previous output's `manifest.json` lists (plus crashed-writer temp files beside them and the manifest itself); a non-empty `--out` without a manifest is refused ("not a converter output"). `--only anims` deletes the `*.bin` files directly in `anim/`, and the debug folders lose only their `*.png` files. Each delete checks its folder like a write.
@@ -546,7 +557,7 @@ camelCase JSON, read case-insensitively:
 
 **Verification.** Every conversion ends with a verify step that reads the pack back with the `Uo.Pack` readers. It compares against ClassicUO's own loaders:
 - **Sampled.** Sprites are bit-exact including gutters. Indexed8 frames are bit-exact after the palette lookup.
-- **Every record and field, exact:** tiledata (all fields and names), hues (raw entries, and the LUT built from them against an independent expansion of ClassicUO's entries), radarcol, animdata, multis, lights, tileart appearances and equipconv.
+- **Every record and field, exact:** tiledata (all fields and names, and the draw flags against the converter's rules and, for every id and both player races, against a verbatim copy of the old client code), hues (raw entries, and the LUT built from them against an independent expansion of ClassicUO's entries), radarcol, animdata, multis, lights, tileart appearances and equipconv.
 - **Every gump slot of the client's index (81,919 for 7.0.103), exact:** present or not, width and height, and the RGBA8 image with the alias hue, against the converter's copy of `GumpsLoader.GetGump`. The client test `GumpPackTests` repeats it against the client's own MUL/UOP loader.
 - **Text, exact, against the converter's copies of the client loaders:** every ASCII glyph of every font and every unicode glyph of the 20 font slots × 65,536 characters (offsets, size, rows, existence); every (language, id) cliloc string, resolved as `ClilocLoader.Load(language)` resolves it (enu under the language); every speech entry (id, text, keywords, start and end flags). The client test `TextPackTests` repeats them against the client's own MUL path, plus rendered text.
 
@@ -558,7 +569,7 @@ camelCase JSON, read case-insensitively:
 | Texmaps | 4 pages + texmaps.bin | 16.5 MiB |
 | Animations | 2,652 pages + anim.bin, palettes.bin, animdata.bin | 675.3 MiB (628.0 MiB pages; 2,652 MiB raw) |
 | Maps | 6 facets, 297 regions | 57.3 MiB (349.7 MiB raw) |
-| Tile data | tiledata.bin, tiledata_ext.bin | 0.9 + 2.1 MiB |
+| Tile data | tiledata.bin | 2.4 MiB (2,503,351 B; before classic-1.1, tiledata.bin + tiledata_ext.bin were 0.9 + 2.1 MiB) |
 | Hues, radarcol | hues_raw.bin, radarcol.bin | 0.3 + 0.2 MiB (packs before 2026-10-31 also carry the retired 0.4 MiB hues.bin) |
 | Multis, lights, tileart, equipconv | | 1.8 MiB, 2.8 MiB, 692 B, 1,060 B |
 | Text | text/fonts.bin, unifont.bin, cliloc.bin, speech.bin | 23.4 MiB: 35 KiB + 7.5 MiB (763,025 glyphs in 866 page records, 2,171 pages shared) + 15.6 MiB (8 languages, 941,936 strings) + 141 KiB; 11.8 MiB with `--cliloc-brotli`; 62.5 MB of MUL files |
