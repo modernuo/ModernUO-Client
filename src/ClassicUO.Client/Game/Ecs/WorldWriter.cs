@@ -2235,6 +2235,169 @@ namespace ClassicUO.Game
             return spellbook;
         }
 
+        // ---- funnel part 7, group 1: the small writers. Name, Price and SpeedMode are cache-only (no mirror record field and no
+        // MobileInputs reads them); war mode and IsDead are inputs (MobileInputRules), so those operations fold the mobile and
+        // commit its inputs once (the setter's push before T1). The corpse equipment is an item placement into a container.
+
+        /// <summary>
+        /// The name writers: 0x98 (UpdateName), the speech handlers' name of an unnamed speaker (0x1C, 0xAE), 0xC1/0xCC
+        /// (DisplayClilocString) for an unnamed speaker, 0xD6 (MegaCliloc) for an item, 0xBF.10's item name and 0x74's shop
+        /// entries (BuyList). Cache-only. The handlers keep their reads (the empty-name checks) and run everything else as
+        /// before. An entity this World does not hold is a violation, rejected (no pre-T1 path: the handlers pass what they
+        /// just looked up), except the detached <c>World.Player</c>, written as before T1.
+        /// </summary>
+        public void SetName(Entity entity, string name)
+        {
+            if (entity == null || !Admitted(nameof(SetName), entity.Serial) || !Accepted(entity, nameof(SetName)))
+            {
+                return;
+            }
+
+            using (Open(entity, null))
+            {
+                entity.Name = name;
+            }
+        }
+
+        /// <summary>
+        /// 0x74 (BuyList): a shop entry's price. Cache-only. Rejections as <see cref="SetName"/>.
+        /// </summary>
+        public void SetPrice(Item item, uint price)
+        {
+            if (item == null || !Admitted(nameof(SetPrice), item.Serial) || !Accepted(item, nameof(SetPrice)))
+            {
+                return;
+            }
+
+            using (Open(item, null))
+            {
+                item.Price = price;
+            }
+        }
+
+        /// <summary>
+        /// 0xBF.26 (the player's movement speed mode). Cache-only. Rejections as <see cref="SetName"/>.
+        /// </summary>
+        public void SetSpeedMode(Mobile mobile, CharacterSpeedType mode)
+        {
+            if (mobile == null || !Admitted(nameof(SetSpeedMode), mobile.Serial) || !Accepted(mobile, nameof(SetSpeedMode)))
+            {
+                return;
+            }
+
+            using (Open(mobile, null))
+            {
+                mobile.SpeedMode = mode;
+            }
+        }
+
+        /// <summary>
+        /// 0x72 (Warmode): the player's war mode, an input (<c>PlayerMobile.InWarMode</c>; for any other mobile the setter is
+        /// empty and war mode is a flag). The mobile is folded and its inputs are committed once (the setter's push before
+        /// T1). Rejections as <see cref="SetName"/>; the detached <c>World.Player</c> is written unfolded (nothing of it
+        /// reaches the ECS).
+        /// </summary>
+        public void SetWarMode(Mobile mobile, bool warMode)
+        {
+            if (mobile == null || !Admitted(nameof(SetWarMode), mobile.Serial) || !Accepted(mobile, nameof(SetWarMode)))
+            {
+                return;
+            }
+
+            bool detached = !Holds(mobile);
+
+            using (Open(mobile, detached ? null : mobile))
+            {
+                mobile.InWarMode = warMode;
+                _world.Ecs.CommitMobileInputs(mobile);
+            }
+        }
+
+        /// <summary>
+        /// 0xBF.19 version 0 (a bonded pet's dead state): <c>Mobile.IsDead</c>, an input. Folded, the inputs committed once.
+        /// Rejections as <see cref="SetWarMode"/>.
+        /// </summary>
+        public void SetDead(Mobile mobile, bool dead)
+        {
+            if (mobile == null || !Admitted(nameof(SetDead), mobile.Serial) || !Accepted(mobile, nameof(SetDead)))
+            {
+                return;
+            }
+
+            bool detached = !Holds(mobile);
+
+            using (Open(mobile, detached ? null : mobile))
+            {
+                mobile.IsDead = dead;
+                _world.Ecs.CommitMobileInputs(mobile);
+            }
+        }
+
+        /// <summary>
+        /// 0x89 (CorpseEquipment), one entry that is not the backpack: the item (found or created among the items) leaves its
+        /// old container (the old path published that detached state: Container 0xFFFFFFFF, its other values unchanged), then
+        /// gets the corpse as its Container and the entry's layer, goes to the end of the corpse's child list and is published
+        /// (the old final Sync). No graphic change and no <c>CheckGraphicChange</c> (the old handler ran none). Cancels the
+        /// item's outstanding placements (it leaves its tile).
+        /// </summary>
+        /// <param name="corpse">The handler's <c>World.Get(serial)</c>, captured once before the list and passed to every
+        /// entry, as the old loop used it. Null: nothing happens and null is returned. An instance this World does not hold in
+        /// its table is a violation, rejected (null) before any side effect (no pre-T1 path).</param>
+        public Item PlaceCorpseEquipment(Entity corpse, uint serial, Layer layer)
+        {
+            if (!Admitted(nameof(PlaceCorpseEquipment), serial) || corpse == null)
+            {
+                return null;
+            }
+
+            if (!Holds(corpse))
+            {
+                Reject(Violation.NotHeld, $"WorldWriter.PlaceCorpseEquipment: corpse 0x{corpse.Serial:X8} is not the instance this World holds for its serial", rejected: true);
+
+                return null;
+            }
+
+            uint corpseSerial = corpse.Serial;
+            Item item = _world.GetOrCreateItem(serial);
+
+            // compute: every read of the previous state is here
+            uint oldContainer = item.Container;
+
+            ItemState detached;
+            detached.Serial = item.Serial;
+            detached.IsMulti = item.IsMulti;
+            detached.Graphic = item.Graphic;
+            detached.X = item.X;
+            detached.Y = item.Y;
+            detached.Z = item.Z;
+            detached.Hue = item.Hue;
+            detached.Amount = item.Amount;
+            detached.Flags = item.Flags;
+            detached.Container = 0xFFFF_FFFF;
+            detached.Direction = item.Direction;
+            detached.Layer = item.Layer;
+
+            ItemState v = detached;
+            v.Container = corpseSerial;
+            v.Layer = layer;
+
+            CancelPlacements(item);
+
+            using (Open(item, item))
+            {
+                // the old order: the unlink (gump refresh, list links, tile), the detached state's Sync, then the final one
+                _world.UnlinkFromContainer(item, oldContainer);
+                _world.Ecs.CommitItem(item, in detached);
+                _world.Ecs.CommitItem(item, in v);
+
+                item.Container = v.Container;
+                item.Layer = v.Layer;
+                corpse.PushToBack(item);
+            }
+
+            return item;
+        }
+
         // the held check of the status operations: the instance this World holds for the entity's serial, or the detached
         // World.Player (removed under its serial while World.Player stays; written as before T1: nothing of it reaches the
         // ECS). Anything else is a violation, rejected (no pre-T1 path: the handlers pass what they just looked up).
