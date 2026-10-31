@@ -3120,3 +3120,54 @@ Codex reviewed the converter safety work (`PublishedPacks`, `ReplacingFile`) and
 **Left on disk (for the owner).** While testing the UNC case from Git Bash, a mangled argument (`\localhost\C$\...`, one leading backslash) was a rooted path on the current drive. The converter wrote a 3-file `--only hues` pack under `C:\localhost\C$\Users\kamron\AppData\Local\Temp\claude\...\scratchpad\hues-r2\fake-packs\v1\x`. The guard was right to allow it, because that is an ordinary folder. A safety check blocked my `rm -rf` of `C:\localhost`, so the owner should delete that folder. The forward-slash form `//localhost/C$/...` was then used and refused as expected.
 
 **Verification.** Client builds Release and `-p:CuoDevTools=false`: 0 errors. Uo.Converter and Uo.Render.App: 0 errors. `dotnet test tests/ClassicUO.UnitTests -c Release`: 808 passed, 1 skipped (the symlink test), 0 failed, 809 total (9 new).
+
+## Tile data single source: one tiledata.bin, draw rules as data (2026-10-31)
+
+Branch `poc/tiledata-single`, from poc/modern-client f27759989. Owner decisions: one source of truth per pack file, and ClassicUO's hard-coded per-tile rules become data. The coordinator publishes classic-1.1 when it merges.
+
+**Format.** `tiledata.bin` (new magic `TILE`) is the pack's only tile data file: the full entries of the old `tiledata_ext.bin` (flags, names, texId, count, animId, hue, light, weight, layer, height) plus `packFlags` (land entry 16 → 20 B, static 28 → 32 B). The compact renderer copy (`TLTD`, 12 B per entry) and `tiledata_ext.bin` (`TLDX`) are retired: 2.50 MB instead of 0.98 + 2.18 MB.
+- I kept the name `tiledata.bin`: it is the natural name, and an old client fails loudly on a new pack (`tiledata_ext.bin` is missing, and its `tiledata.bin` reader meets the wrong magic).
+- `TileDataFile.Read` validates the magic, version, Kind 0, land count = 0x4000, static count 1..0x10000, the exact file size (before allocating) and every name reference. A 1.0 layout gets a "convert again (--only tiledata)" message.
+- The renderer's 12-byte `LandTileData`/`StaticTileData` arrays are built at load (`TileDataFile.Compact`, in `PackSet`, which the client's `GpuWorldRenderer` uses). **Read and validate: 0.93 ms median. Building the compact arrays: 0.25 ms median** (2.50 MB file, 100 runs in `TileDrawOracleTests.Compact_Arrays_Load_Time`, JIT, noisy machine; minimums 0.54 and 0.13 ms).
+- Memory: unchanged. The compact arrays are the same 0.98 MB as before, and the full arrays are transient.
+
+**Rules moved into data.** The converter's `Uo.Converter/TileRules.cs` is the only code that knows them; readers use `Uo.Pack.TileDraw`.
+
+| Rule | Lived in | Now |
+|---|---|---|
+| Land 0, 1, 2 not drawn | `Land.Create` and `Land.UpdateGraphicBySeason` (`graphic > 2`), `Map.RequestBlockArt` (`graphic <= 2`), poc `ChunkBaker` (`tile <= 2`) | land `NoDraw`; `Land.IsDrawn` |
+| Statics 0x1, 0x21BC, 0xA1FE–0xA201; 0x9E4C/64/65/7D with Background or Surface; 0x63D3; 0x2198–0x21A4 | `GameObject.CanBeDrawn`, poc `ChunkBaker.CanBeDrawn` | static `NoDraw` |
+| Easel 0x0F65 drawn before 6.0.14.4 | `GameObject.CanBeDrawn` (client version) | evaluated with the source client's version |
+| Name starts with `nodraw` | `GameObject.CanBeDrawn`, `ChunkBaker` (via `NameNoDraw`) | static `NoDraw` (`NameNoDraw` stays, informational only) |
+| `NoDiagonal` hides; animated ones are shown to gargoyles | `GameObject.CanBeDrawn`, `ChunkBaker` | `NoDraw` / `NoDrawUnlessGargoyle`; the race check stays runtime |
+| A multi item is drawn only when its display graphic > 2 | `Item.RefreshGraphicState` (`MultiGraphic > 2`) | new bit 3 `NoDrawAsMulti`; `Item.IsMultiItemDrawn` |
+
+- `GameObject.CanBeDrawn(world, g)` covers statics, items, multi components, effects, the minimap, the world map and overhead names. It is now `TileDraw.Static(StaticData[g].PackFlags, player is gargoyle)`.
+- The season swap stays runtime, and the flag is read on the swapped graphic.
+- The poc renderer bakes as for a non-gargoyle player, as before.
+- One change in the standalone poc renderer only: it used to bake 0x63D3 when the tile lacked `NoDiagonal` (its copy of the rules skipped the id rules for 0x63D3, unlike the client). It now hides 0x63D3 as the client did. The client already hid it with an override, so the client's picture does not change.
+
+**Pixel-neutral oracle.** The old client code is kept verbatim, only as an oracle, in two places:
+- the client test `TileDrawOracleTests`, through the client's own loader (`TileDataLoader.Read`) and draw functions, on the pack alone;
+- the converter's `Verify.CheckNoDraw`, on the source client's tiledata.
+
+On the 7.0.103 test pack, both report **212,992 decisions, 0 mismatches**: 16,384 land ids, 65,536 static ids × 2 player races, and 65,536 multi display graphics. Hidden: 3 land ids, 32 statics (31 for a gargoyle) and 3 multi items; 20 statics are named `nodraw`.
+
+Two portable tests go with it. One edits flags to show that no rule is left in code (0x0001 is drawn without its flag and hidden with it). The other tests the reader's validation: bad counts, sizes and name references, and the two pack 1.0 magics.
+
+**Version 0 / 1.0 packs.** There is no fallback. `ChunkBaker`'s own id rules (its version-0 fallback) are gone, and a pack without a `TILE` `tiledata.bin` fails at tiledata load with the "convert again" message. `PackAssets.Open` already required `tiledata_ext.bin`, so version-0 packs never loaded; it now requires `tiledata.bin`. Nothing still loads v0. `FileHeader.version` and the manifest version stay 1, because the magic identifies the layout.
+
+**`art/sprites.bin` partial-hue bit.** Bit 2 copied tiledata's `PartialHue`.
+- It is no longer written (`SpriteFlags.RetiredPartialHue`).
+- Nothing at runtime read it. The converter's verify and debug PNGs did, and they now take the flag from tiledata.
+- Packs before 1.1 still set it. Verify reports them (12,732 entries in the test pack, whose `sprites.bin` is hard-linked from classic-1.0) and fails on any other unknown bit.
+- A full conversion drops it.
+
+**Test pack.** A `cp -al` copy of classic-1.0, then `Uo.Converter --only tiledata --out <scratch>/tiledata-single/pack`. The converter deleted the stale `tiledata_ext.bin` from the copy, and the published files keep their bytes. `--verify-only` on everything: all checks passed.
+
+**Client parity job** `bench-000041` (submitted, not awaited): world shots with pixel diffs at Britain, the house spot (a multi) and the large scene at zoom 1 and 2.5, Gpu and Legacy. f27759989 runs on CURRENT, this branch on the test pack. Binaries: NativeAOT, in the scratch folder with build-info.txt.
+
+**Verification.**
+- Client builds, Release and `-p:CuoDevTools=false`: 0 errors. Uo.Converter, Uo.Render.App and Uo.Client: 0 errors.
+- `dotnet test tests/ClassicUO.UnitTests -c Release` with `CUO_TEST_PACK` set to the test pack: 982 passed, 1 skipped (the symlink test), 0 failed (4 new).
+- Without `CUO_TEST_PACK`, the two pack tests skip until CURRENT names a 1.1 pack.
