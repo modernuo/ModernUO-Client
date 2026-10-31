@@ -375,6 +375,38 @@ namespace ClassicUO.UnitTests.Ecs
                 }
             })));
 
+            // T1 mobiles (funnel part 4), after every older row so they cannot shift them: 0x77 for another mobile (the
+            // notoriety, then UpdateGameObject's mobile branch: a step east per visit; a full queue resets) and the player's
+            // body of 0x78 (here on a plain mobile), before the funnel (copies in WorldWriterMobileTests) and through it, paired
+            rows.Add(("T1 old path: 0x77 move of another mobile (notoriety + step + tile)", Measure(packets, i =>
+            {
+                Mobile m = s.Mobiles[i % n];
+                var p = new WorldWriterMobileTests.MobPacket { Serial = m.Serial, Graphic = 0x190, X = (ushort)(m.X + 1), Y = m.Y, Direction = Direction.East, Hue = (ushort)(i & 63) };
+                m.NotorietyFlag = (NotorietyFlag)(1 + (i & 3));
+                WorldWriterMobileTests.OldUpsertMobile(s.World, p);
+            })));
+
+            rows.Add(("T1 funnel: 0x77 move of another mobile (SetNotoriety + UpsertMobile + PlaceMobile)", Measure(packets, i =>
+            {
+                Mobile m = s.Mobiles[i % n];
+                s.World.Writer.SetNotoriety(m, (NotorietyFlag)(1 + (i & 3)));
+                s.World.Writer.UpsertMobile(m, m.Serial, 0x190, 0, (ushort)(m.X + 1), m.Y, 0, Direction.East, (ushort)(i & 63), 0, out _, out WorldWriter.Placement placement);
+                s.World.Writer.PlaceMobile(placement);
+            })));
+
+            rows.Add(("T1 old path: 0x78 player body (graphic, sex, hue, flags + Sync)", Measure(packets, i =>
+            {
+                Mobile m = s.Mobiles[i % n];
+                m.Graphic = (ushort)((i & 1) == 0 ? 0x191 : 0x190);
+                WorldWriterMobileTests.OldCheckGraphicChange(m);
+                m.FixHue((ushort)(i & 63));
+                m.Flags = (ClassicUO.Game.Data.Flags)(i & 0x40);
+                ecs.Sync(m);
+            })));
+
+            rows.Add(("T1 funnel: 0x78 player body (SetMobileBody)", Measure(packets, i =>
+                s.World.Writer.SetMobileBody(s.Mobiles[i % n], (ushort)((i & 1) == 0 ? 0x191 : 0x190), (ushort)(i & 63), (ClassicUO.Game.Data.Flags)(i & 0x40), checkBody: true, setDirection: false, 0))));
+
             sb.AppendLine($"mobiles={n} (each wearing {WORN}), items={itemCount}, packets per scenario={packets}");
             sb.AppendLine($"{"packet",-72} {"us/packet",10} {"bytes/packet",13}");
 
