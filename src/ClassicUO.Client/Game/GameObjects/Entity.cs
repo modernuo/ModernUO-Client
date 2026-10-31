@@ -30,10 +30,10 @@ namespace ClassicUO.Game.GameObjects
             Serial = serial;
         }
 
-        public byte AnimIndex;
-        public bool ExecuteAnimation = true;
-        internal long LastAnimationChangeTime;
-        public Flags Flags;
+        public byte AnimIndex { get; set; }
+        public bool ExecuteAnimation { get; set; } = true;
+        internal long LastAnimationChangeTime { get; set; }
+        public Flags Flags { get; set; }
         private ushort _hits, _hitsMax;
         public byte HitsPercentage;
 
@@ -58,9 +58,9 @@ namespace ClassicUO.Game.GameObjects
             }
         }
         public bool IsClicked;
-        public uint LastStepTime;
-        public string Name;
-        public uint Serial;
+        public uint LastStepTime { get; set; }
+        public string Name { get; set; }
+        public uint Serial { get; set; }
         public HitsRequestStatus HitsRequest;
 
 
