@@ -7,7 +7,10 @@ using ClassicUO.Assets;
 using ClassicUO.Configuration;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
+using ClassicUO.Game.Managers;
 using ClassicUO.Game.Map;
+using ClassicUO.Renderer;
+using ClassicUO.Utility;
 using ClassicUO.Utility.Logging;
 using Microsoft.Xna.Framework;
 using Uo.Render;
@@ -55,6 +58,9 @@ namespace ClassicUO.Game.Scenes
         // CUO_GPU_ITEM_CHECK: the frame and tiles the cache would have served
         public uint CheckFrame;
         public ulong CheckTiles;
+        // E12: the tiles the probe pass (stamp ProbeStamp) served
+        public uint ProbeStamp;
+        public ulong ProbeServed;
 
         // E7: items of served tiles the cache can't hold (animated art, corpses, fading, text...), walked alone where they lie
         // in the tile list: before entry Entry. Those of tile bit b: [WalkStart[b], WalkStart[b + 1]); WalkTiles = tiles with any.
@@ -154,13 +160,22 @@ namespace ClassicUO.Game.Scenes
     //     (Chunk.GpuEffectMask, rebuilt with the masks) walks them alone, in tile order with its mobiles and walked-alone items:
     //     an effect never ends a tile's walk and goes to the effects list (or the transparent one when its alpha isn't full),
     //     so only its order among the other transparent objects of the tile matters, and the single pass keeps it.
-    // CUO_GPU_ITEM_CHECK=1 (every 30th frame) or =every: the frame walks every item as usual and compares what the cache
-    // would have served, item by item and instance by instance, with what the walk and the extract produced.
+    // CUO_GPU_ITEM_CHECK=1 (every 30th frame) or =every (every frame), E12: a check frame runs the prepare and the capture twice
+    // on the same frame state (no Update between; DrawWorldGpu): first serving from the cache as a normal frame would (the
+    // probe pass, drawn to nothing: its instances, lights, render lists and selection are kept), then as a full walk (the
+    // reference pass, which is the frame drawn). The two must produce the same dynamic instances (items, mobiles and effects,
+    // with position, depth, blend, hue and alpha), lights, render lists and selection. The reference pass still compares the
+    // cache with the walk item by item, as before. A frame whose alphas step (the walk changes them) is not checked.
+    // CUO_GPU_ITEM_CHECK=legacy (every 30th frame) or =legacy-every: the older check: the frame walks every item and compares
+    // the cache item by item, and hashes of the render lists and the capture order are compared with the served frame before.
     internal partial class GameScene
     {
         private static readonly string _gpuItemCheckEnv = Environment.GetEnvironmentVariable("CUO_GPU_ITEM_CHECK");
-        private static readonly bool _gpuItemCheck = _gpuItemCheckEnv == "1" || _gpuItemCheckEnv == "every";
-        private static readonly bool _gpuItemCheckEvery = _gpuItemCheckEnv == "every";
+        private static readonly bool _gpuItemCheckLegacy = _gpuItemCheckEnv == "legacy" || _gpuItemCheckEnv == "legacy-every";
+        private static readonly bool _gpuItemCheck = _gpuItemCheckEnv == "1" || _gpuItemCheckEnv == "every" || _gpuItemCheckLegacy;
+        private static readonly bool _gpuItemCheckEvery = _gpuItemCheckEnv == "every" || _gpuItemCheckEnv == "legacy-every";
+        // E12: check frames run the served and the full prepare on the same frame state
+        private static readonly bool _gpuItemCheckSame = _gpuItemCheck && !_gpuItemCheckLegacy;
 
         /// <summary>A CUO_GPU_ITEM_CHECK frame's capture is running: GpuWorldRenderer reports each extracted item.</summary>
         internal static bool GpuItemCheckActive;
@@ -230,7 +245,7 @@ namespace ClassicUO.Game.Scenes
             _gpuSelContainer = SelectedObject.SelectedContainer;
 
             // =every: every other frame, so each check frame follows a served one (the capture-order comparison needs it)
-            if (_gpuItemCheck && (_gpuItemCheckEvery ? (++_gpuItemCheckCounter & 1) == 0 : ++_gpuItemCheckCounter % 30 == 0))
+            if (_gpuItemCheckSame && _gpuItemPass == 2 || _gpuItemCheckLegacy && (_gpuItemCheckEvery ? (++_gpuItemCheckCounter & 1) == 0 : ++_gpuItemCheckCounter % 30 == 0))
             {
                 _gpuItemCheckNow = true;
                 _gpuCheckExpectCount = 0;
@@ -311,6 +326,11 @@ namespace ClassicUO.Game.Scenes
         private void BuildGpuItemCache(Chunk chunk, GpuItemCache cache)
         {
             FrameStats.Inc(FrameCounter.ItemCacheBuilds);
+
+            if (_gpuItemCheckSame)
+            {
+                _gpuItemBuildTotal++;
+            }
             cache.Reset();
             GpuWorldRenderer gpu = _gpuWorld;
             ItemSpriteExtract extract = gpu.ItemExtract;
@@ -449,7 +469,7 @@ namespace ClassicUO.Game.Scenes
             cache.WalkStart[64] = cache.WalkedCount;
             cache.Valid = true;
             cache.Generation = _gpuItemGeneration;
-            cache.RetryFrame = transient ? _drawFrame + 30 : 0;
+            cache.RetryFrame = transient ? GpuRetryClock + 30 : 0;
             chunk.GpuItemsDirty = false;
         }
 
@@ -463,7 +483,7 @@ namespace ClassicUO.Game.Scenes
                 chunk.GpuItems = cache = new GpuItemCache();
             }
 
-            if (chunk.GpuItemsDirty || !cache.Valid || cache.Generation != _gpuItemGeneration || cache.RetryFrame != 0 && _drawFrame >= cache.RetryFrame)
+            if (chunk.GpuItemsDirty || !cache.Valid || cache.Generation != _gpuItemGeneration || cache.RetryFrame != 0 && GpuRetryClock >= cache.RetryFrame)
             {
                 BuildGpuItemCache(chunk, cache);
             }
@@ -533,6 +553,11 @@ namespace ClassicUO.Game.Scenes
                     chunk.GpuItemsDirty = true;
                     FrameStats.Inc(FrameCounter.ItemCacheFallbacks);
 
+                    if (_gpuItemCheckSame)
+                    {
+                        _gpuItemFallbackTotal++;
+                    }
+
                     return false;
                 }
             }
@@ -551,6 +576,11 @@ namespace ClassicUO.Game.Scenes
                 {
                     chunk.GpuItemsDirty = true;
                     FrameStats.Inc(FrameCounter.ItemCacheFallbacks);
+
+                    if (_gpuItemCheckSame)
+                    {
+                        _gpuItemFallbackTotal++;
+                    }
 
                     return false;
                 }
@@ -574,7 +604,23 @@ namespace ClassicUO.Game.Scenes
         }
 
         // The tile loop reached served tile b: its items join the capture here. False = an item changed: walk the tile.
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private bool GpuServeCachedTile(Chunk chunk, int b)
+        {
+            if (!GpuServeCachedTileCore(chunk, b))
+            {
+                return false;
+            }
+
+            if (_gpuItemCheckSame && _gpuItemPass == 1)
+            {
+                GpuProbeServed(chunk.GpuItems, b);
+            }
+
+            return true;
+        }
+
+        private bool GpuServeCachedTileCore(Chunk chunk, int b)
         {
             GpuItemCache cache = chunk.GpuItems;
             int s = cache.TileStart[b], e = cache.TileStart[b + 1];
@@ -798,6 +844,21 @@ namespace ClassicUO.Game.Scenes
 
             _gpuCheckSkip ??= obj => obj is Item it && it.TileChunk?.GpuItems is { } c && c.CheckFrame == _drawFrame &&
                                      (c.CheckTiles & 1UL << ((it.X & 7) << 3 | (it.Y & 7))) != 0 && !c.IsWalked((it.X & 7) << 3 | (it.Y & 7), it);
+
+            if (_gpuItemCheckSame)
+            {
+                // E12: the probe pass hashed its lists without a skip; the reference pass leaves out the cached items of the
+                // tiles the probe served (the probe's lists never held them; a tile that fell back to the walk was not served)
+                if (_gpuItemPass == 2)
+                {
+                    _gpuProbeSkip ??= obj => obj is Item it && it.TileChunk?.GpuItems is { } c && c.ProbeStamp == _gpuProbeServeStamp &&
+                                             (c.ProbeServed & 1UL << ((it.X & 7) << 3 | (it.Y & 7))) != 0 && !c.IsWalked((it.X & 7) << 3 | (it.Y & 7), it);
+                    _gpuProbeRefHash = _renderLists.DebugHash(_gpuProbeSkip);
+                }
+
+                return;
+            }
+
             // E7: the capture order of everything, cached items included (RenderLists.CaptureOrderHash), compared in GpuItemCheckEnd
             RenderLists.CaptureOrderOn = true;
             RenderLists.CaptureOrderHash = 1469598103934665603UL;
@@ -968,6 +1029,11 @@ namespace ClassicUO.Game.Scenes
                 _gpuOrderPrevServed = _gpuItemCacheOn && !_gpuItemCheckNow;
             }
 
+            if (_gpuItemCheckSame && _gpuItemPass == 2)
+            {
+                _gpuProbeRefSelected = SelectedObject.Object;
+            }
+
             if (!_gpuItemCheckNow)
             {
                 return;
@@ -994,6 +1060,16 @@ namespace ClassicUO.Game.Scenes
 
             Array.Clear(_gpuCheckExpect, 0, _gpuCheckExpectCount);
             _gpuCheckExpectCount = 0;
+
+            if (!_gpuItemCheckSame)
+            {
+                GpuItemCheckReport();
+            }
+        }
+
+        // The totals every 5 s (E12: called once per frame from DrawWorldGpu, whether or not the frame was compared).
+        private void GpuItemCheckReport()
+        {
             long now = System.Diagnostics.Stopwatch.GetTimestamp();
 
             if (_gpuItemCheckAt == 0)
@@ -1002,15 +1078,517 @@ namespace ClassicUO.Game.Scenes
             }
             else if (now - _gpuItemCheckAt >= System.Diagnostics.Stopwatch.Frequency * 5)
             {
-                Log.Info($"[gpu-item-check] {_gpuItemChecks} checks, {_gpuItemCheckStale} with differences; {_gpuItemCheckCompared} cached items compared: " +
-                         $"{_gpuItemCheckMissing} missing or out of order, {_gpuItemCheckExtra} extra, {_gpuItemCheckDiff} different, {_gpuItemCheckPlace} misplaced; " +
-                         $"{_gpuItemCheckFallbacks} tiles caught by the signature; other queued objects vs the served frame before: " +
-                         $"{_gpuListSame} same, {_gpuListDiff} different; capture order vs the served frame before: {_gpuOrderSame} same, {_gpuOrderDiff} different" +(_gpuItemCheckSample != null ? $"; first: {_gpuItemCheckSample}" : ""));
+                string items = $"{_gpuItemCheckCompared} cached items compared: " +
+                               $"{_gpuItemCheckMissing} missing or out of order, {_gpuItemCheckExtra} extra, {_gpuItemCheckDiff} different, {_gpuItemCheckPlace} misplaced; " +
+                               $"{_gpuItemCheckFallbacks} tiles caught by the signature";
+
+                if (_gpuItemCheckSame)
+                {
+                    Log.Info($"[gpu-item-check] same frame: {_gpuProbeAttempts} check frames, {_gpuProbeChecks} compared ({_gpuProbeFull} fully, {_gpuProbePartial} partially: " +
+                             $"{_gpuProbePartialUploads} textures uploaded during the check, {_gpuProbePartialFna} with {_gpuProbeSuppressed} sprites FNA would draw dropped in the probe), " +
+                             $"{_gpuProbeFellBack} of them with served tiles that fell back to the walk; not compared: {_gpuProbeSkipAlpha} alphas stepping, {_gpuProbeSkipNoCache} no item cache; " +
+                             $"{_gpuProbeStale} fully compared with differences, {_gpuProbeStalePartial} partially compared with differences, {_gpuProbeStaleFellBack} with fallen-back tiles with differences: " +
+                             $"{_gpuProbeInstDiff} in item/mobile instances, {_gpuProbeFxDiff} in effect instances, {_gpuProbeListDiff} in render lists, {_gpuProbeLightDiff} in lights, " +
+                             $"{_gpuProbeSelDiff} in the selection, {_gpuProbeCountDiff} in collected lists, {_gpuProbeOverrideDiff} in world overrides, {_gpuProbeFallbackDiff} in unmapped sprites, " +
+                             $"{_gpuProbeRollDiff} in animation rolls; {_gpuProbeInstCompared} instances compared ({_gpuProbeFxCompared} effect), {_gpuProbeOverridesCompared} overrides ({_gpuProbeOverflow} checks with the override queue full), {_gpuProbeRollsCompared} animation rolls, " +
+                             $"{_gpuProbeFallbacks} unmapped sprites compared, {_gpuProbeRefBuilds} caches rebuilt in the reference pass; " +
+                             $"isolation: {_gpuProbeLeaks} probe passes left sprites in the batcher; " +
+                             $"item check on the reference pass: {_gpuItemChecks} frames, {_gpuItemCheckStale} with differences, {items}" +
+                             (_gpuItemCheckSample != null ? $"; first: {_gpuItemCheckSample}" : ""));
+                }
+                else
+                {
+                    Log.Info($"[gpu-item-check] {_gpuItemChecks} checks, {_gpuItemCheckStale} with differences; {items}; other queued objects vs the served frame before: " +
+                             $"{_gpuListSame} same, {_gpuListDiff} different; capture order vs the served frame before: {_gpuOrderSame} same, {_gpuOrderDiff} different" +
+                             (_gpuItemCheckSample != null ? $"; first: {_gpuItemCheckSample}" : ""));
+                }
+
                 _gpuItemCheckAt = now;
                 _gpuItemChecks = _gpuItemCheckStale = _gpuItemCheckCompared = _gpuItemCheckMissing = _gpuItemCheckExtra = _gpuItemCheckDiff = _gpuItemCheckFallbacks = _gpuItemCheckPlace = 0;
                 _gpuListSame = _gpuListDiff = _gpuOrderSame = _gpuOrderDiff = 0;
+                _gpuProbeAttempts = _gpuProbeChecks = _gpuProbeFull = _gpuProbePartial = _gpuProbePartialUploads = _gpuProbePartialFna = _gpuProbeSuppressed = 0;
+                _gpuProbeFellBack = _gpuProbeSkipAlpha = _gpuProbeSkipNoCache = _gpuProbeStale = _gpuProbeStalePartial = _gpuProbeStaleFellBack = 0;
+                _gpuProbeInstDiff = _gpuProbeFxDiff = _gpuProbeListDiff = _gpuProbeLightDiff = _gpuProbeSelDiff = _gpuProbeCountDiff = 0;
+                _gpuProbeOverrideDiff = _gpuProbeFallbackDiff = _gpuProbeRollDiff = 0;
+                _gpuProbeInstCompared = _gpuProbeFxCompared = _gpuProbeOverridesCompared = _gpuProbeFallbacks = _gpuProbeRefBuilds = _gpuProbeLeaks = _gpuProbeOverflow = _gpuProbeRollsCompared = 0;
                 _gpuItemCheckSample = null;
             }
+        }
+
+        // ---- E12: the same-frame check ----
+
+        // 0 = a normal frame, 1 = the probe pass (serving from the cache, nothing drawn), 2 = the reference pass (a full walk, drawn)
+        private int _gpuItemPass;
+        // served tiles walked because an item changed since the cache was built (counted only with the check on)
+        private static int _gpuItemFallbackTotal;
+        // chunk caches built (counted only with the check on)
+        private static int _gpuItemBuildTotal;
+        // fade steps taken: CalculateAlpha moved an alpha, or a chunk's or the scene's fade-step count went down (check on only)
+        private static int _gpuAlphaSteps;
+        // the probe passes so far: each adds a _drawFrame step that isn't a frame of the retry clock (GpuRetryClock)
+        private uint _gpuProbeFrames;
+        // stamps GpuItemCache.ProbeServed with the probe pass that set it
+        private uint _gpuProbeServeStamp;
+        private Func<GameObject, bool> _gpuProbeSkip;
+
+        // The clock of GpuItemCache.RetryFrame: _drawFrame without the probe passes' steps (a check frame is one frame).
+        private uint GpuRetryClock => _drawFrame - _gpuProbeFrames;
+
+        // What the probe pass keeps and what it must put back; allocated on the first check frame.
+        private sealed class GpuProbeState
+        {
+            public SpriteInstance[] Inst = new SpriteInstance[4096];
+            public readonly System.Collections.Generic.List<(int List, GameObject Obj, byte Alpha, bool Allowed)> List = new(), RefList = new();
+            public (byte Id, ushort Color, bool IsHue, int X, int Y)[] Lights = new (byte, ushort, bool, int, int)[64];
+            public readonly System.Collections.Generic.List<GpuWorldRenderer.FallbackDraw> Fallbacks = new(), RefFallbacks = new();
+            public readonly System.Collections.Generic.List<PendingOverrideQueue.Entry> Overrides = new();
+            public readonly System.Collections.Generic.List<(GameObject Obj, Rectangle FrameInfo, bool Flipped)> Views = new();
+            public readonly System.Collections.Generic.List<(GameObject Obj, sbyte Index)> Foliage = new();
+            public readonly System.Collections.Generic.List<AnimationGroupRules.RollRecord> Rolls = new(), RefRolls = new();
+        }
+
+        private GpuProbeState _gpuProbe;
+        private bool _gpuProbeValid, _gpuProbeFellBackNow;
+        private ulong _gpuProbeHash, _gpuProbeRefHash;
+        private int _gpuProbeInstCount, _gpuProbeEffectsAt, _gpuProbeRefEffectsAt;
+        private int _gpuProbeLightCount, _gpuProbeLightBase;
+        private object _gpuProbeSelected, _gpuProbeRefSelected;
+        private int _gpuProbeStatics, _gpuProbeMultis, _gpuProbeFoliage;
+        private int _gpuProbeUploads, _gpuProbeSuppressedNow, _gpuProbeBuilds;
+        private PendingOverrideQueue.Mark _gpuProbeOverrideMark;
+        private int _gpuProbeOverrideDropped;
+        private int _gpuProbeAttempts, _gpuProbeChecks, _gpuProbeFull, _gpuProbePartial, _gpuProbePartialUploads, _gpuProbePartialFna, _gpuProbeSuppressed,
+            _gpuProbeFellBack, _gpuProbeSkipAlpha, _gpuProbeSkipNoCache, _gpuProbeStale, _gpuProbeStalePartial, _gpuProbeStaleFellBack,
+            _gpuProbeInstDiff, _gpuProbeFxDiff, _gpuProbeListDiff, _gpuProbeLightDiff, _gpuProbeSelDiff, _gpuProbeCountDiff, _gpuProbeOverrideDiff,
+            _gpuProbeFallbackDiff, _gpuProbeRollDiff, _gpuProbeInstCompared, _gpuProbeFxCompared, _gpuProbeOverridesCompared, _gpuProbeFallbacks,
+            _gpuProbeRefBuilds, _gpuProbeLeaks, _gpuProbeOverflow, _gpuProbeRollsCompared;
+
+        // The probe pass served tile b of the chunk (the reference pass's list hash leaves out its cached items).
+        private void GpuProbeServed(GpuItemCache cache, int b)
+        {
+            if (cache.ProbeStamp != _gpuProbeServeStamp)
+            {
+                cache.ProbeStamp = _gpuProbeServeStamp;
+                cache.ProbeServed = 0;
+            }
+
+            cache.ProbeServed |= 1UL << b;
+        }
+
+        // The probe pass's fill is about to change obj's foliage stamp: journal it (put back after the probe).
+        private void GpuProbeFoliageStamp(GameObject obj) => _gpuProbe.Foliage.Add((obj, obj.FoliageIndex));
+
+        /// <summary>
+        /// A check frame (DrawWorldGpu, before the frame's own list fill): the probe pass. It fills the lists and captures the
+        /// frame as a normal frame would (cached tiles served), keeps what that produced, and puts back what the fill and the
+        /// capture changed, so the frame's real fill that follows (a full walk, with the old item check) starts from the same
+        /// state. Nothing it does reaches the batcher (suppressed) or the world pass's overrides (restored to a checkpoint).
+        /// Returns 0: no probe, fill as usual; 1: the probe ran, fill (the reference pass); 2: the frame can't be checked and
+        /// this fill is its normal one (don't fill again).
+        /// </summary>
+        private int GpuItemProbeRun(UltimaBatcher2D batcher, GpuWorldRenderer gpu)
+        {
+            _gpuItemPass = 0;
+            _gpuProbeValid = false;
+            WorldRenderer world = gpu.World;
+
+            if (!_world.InGame || world == null || !(_gpuItemCheckEvery || ++_gpuItemCheckCounter % 30 == 0))
+            {
+                return 0;
+            }
+
+            GpuProbeState st = _gpuProbe ??= new GpuProbeState();
+            _gpuProbeAttempts++;
+            bool updatePosition = UpdateDrawPosition;
+            var foliage = FoliageIndex;
+            long alphaTimer = _alphaTimer;
+            int lightBase = _lightCount;
+            int alphaSteps = _gpuAlphaSteps;
+            int fallbacks = _gpuItemFallbackTotal;
+            int uploads = ClassicUO.Renderer.TextureUploads.Epoch;
+            PendingOverrideQueue.Mark overrides = world.MarkPendingOverrides();
+            // the probe's random rolls (animation selection, anything else) come from this state and it is put back after, so
+            // the reference pass (drawn) rolls exactly what a frame without the probe would
+            RandomHelper.State rng = RandomHelper.Save();
+            int pending = batcher.PendingSprites, flushes = batcher.FlushesDone;
+            bool restore = true, suppressing = false;
+            st.Foliage.Clear();
+            st.Views.Clear();
+            st.Rolls.Clear();
+            AnimationGroupRules.RollTape = st.Rolls;
+            AnimationGroupRules.RollMode = 1;
+
+            // everything the probe changes is put back in the finally below (with the suppression), so an exception can't
+            // leave it half-restored
+            try
+            {
+                _gpuProbeServeStamp++;
+                _gpuItemPass = 1;
+                FillGameObjectList();
+
+                // a fade step (an alpha moved, a fade-step count went down) can't be taken twice: the probe's fill is the frame's
+                if (!_gpuItemCacheOn || _gpuAlphaSteps != alphaSteps)
+                {
+                    if (_gpuItemCacheOn)
+                    {
+                        _gpuProbeSkipAlpha++;
+                    }
+                    else
+                    {
+                        _gpuProbeSkipNoCache++;
+                    }
+
+                    _gpuItemPass = 0;
+                    restore = false;
+
+                    return 2;
+                }
+
+                _gpuProbeFellBackNow = fallbacks != _gpuItemFallbackTotal;
+                _gpuProbeHash = _renderLists.DebugHash(static _ => false);
+                _renderLists.DebugCollect(static _ => false, st.List);
+                FinishGpuCollect();
+                gpu.SetOffset(_offset.X, _offset.Y);
+                st.Fallbacks.Clear();
+                gpu.ProbeViews = st.Views;
+                gpu.Fallbacks = st.Fallbacks;
+                gpu.Probe = true;
+                gpu.RecordFallbacks = true;
+                gpu.ProbeFallbacks = 0;
+                batcher.BeginSuppress();
+                suppressing = true;
+
+                foreach (var multi in _gpuMeshMultis)
+                {
+                    if (multi.Z <= _maxGroundZ)
+                    {
+                        gpu.DrawObject(batcher, multi, multi.CalculateDepthZ());
+                    }
+                }
+
+                for (int i = 0; i < _gpuStatics.Count; i++)
+                {
+                    var stat = _gpuStatics[i];
+
+                    if (stat.Z <= _maxGroundZ)
+                    {
+                        gpu.DrawObject(batcher, stat, stat.CalculateDepthZ(), _gpuStaticsShadowOnly[i]);
+                    }
+                }
+
+                _renderLists.CaptureRenderLists(batcher, _maxGroundZ, gpu, _gpuItemRunCount > 0 ? this : null);
+
+                if (_multi != null && _world.TargetManager.IsTargeting && _world.TargetManager.TargetingState == CursorTarget.MultiPlacement)
+                {
+                    gpu.DrawObject(batcher, _multi, _multi.CalculateDepthZ());
+                }
+
+                _gpuProbeSelected = SelectedObject.Object;
+                _gpuProbeEffectsAt = gpu.DynamicInstances.Length;
+                _renderLists.CaptureEffectsOnly(batcher, _maxGroundZ, gpu);
+
+                ReadOnlySpan<SpriteInstance> got = gpu.DynamicInstances;
+
+                if (st.Inst.Length < got.Length)
+                {
+                    st.Inst = new SpriteInstance[Math.Max(got.Length, st.Inst.Length * 2)];
+                }
+
+                got.CopyTo(st.Inst);
+                _gpuProbeInstCount = got.Length;
+                _gpuProbeLightCount = _lightCount - lightBase;
+                _gpuProbeLightBase = lightBase;
+
+                if (st.Lights.Length < _gpuProbeLightCount)
+                {
+                    st.Lights = new (byte, ushort, bool, int, int)[Math.Max(_gpuProbeLightCount, st.Lights.Length * 2)];
+                }
+
+                for (int i = 0; i < _gpuProbeLightCount; i++)
+                {
+                    st.Lights[i] = LightAt(lightBase + i);
+                }
+
+                _gpuProbeStatics = _gpuStatics.Count;
+                _gpuProbeMultis = _gpuMeshMultis.Count;
+                _gpuProbeFoliage = _gpuFoliage.Count;
+            }
+            finally
+            {
+                gpu.Probe = false;
+                gpu.RecordFallbacks = false;
+                gpu.ProbeViews = null;
+                AnimationGroupRules.RollMode = 0;
+                AnimationGroupRules.RollTape = null;
+
+                if (suppressing)
+                {
+                    _gpuProbeSuppressedNow = batcher.EndSuppress();
+                }
+
+                if (restore)
+                {
+                    // back to where the frame began: the overrides the probe queued come off the queue (kept, with its drops,
+                    // for the comparison), the journals are undone in reverse order, the random state is put back
+                    gpu.ResetDynamic();
+                    _gpuProbeOverrideDropped = world.TakePendingOverrides(overrides, st.Overrides);
+                    TruncateLights(lightBase);
+                    SelectedObject.Object = null;
+                    _gpuMeshMultis.Clear();
+                    _gpuStatics.Clear();
+                    _gpuStaticsShadowOnly.Clear();
+                    _gpuFoliage.Clear();
+                    UpdateDrawPosition = updatePosition;
+                    FoliageIndex = foliage;
+                    // no alpha moved (checked above): the reference pass's fill sees the alpha timer as the probe's did
+                    _alphaTimer = alphaTimer;
+
+                    for (int i = st.Foliage.Count - 1; i >= 0; i--)
+                    {
+                        st.Foliage[i].Obj.FoliageIndex = st.Foliage[i].Index;
+                    }
+
+                    for (int i = st.Views.Count - 1; i >= 0; i--)
+                    {
+                        (GameObject obj, Rectangle frameInfo, bool flipped) = st.Views[i];
+                        obj.FrameInfo = frameInfo;
+                        obj.ViewFlipped = flipped;
+                    }
+
+                    RandomHelper.Restore(in rng);
+                }
+
+                st.Foliage.Clear();
+                st.Views.Clear();
+            }
+
+            // isolation self-check: the probe left nothing to draw and drew nothing
+            if (batcher.PendingSprites != pending || batcher.FlushesDone != flushes)
+            {
+                _gpuProbeLeaks++;
+                _gpuItemCheckSample ??= $"isolation: the probe left {batcher.PendingSprites - pending} sprites in the batcher and flushed {batcher.FlushesDone - flushes} times";
+            }
+
+            _gpuProbeFallbacks += gpu.ProbeFallbacks;
+            _gpuProbeFrames++;
+            st.RefRolls.Clear();
+            AnimationGroupRules.RollTape = st.RefRolls;
+            AnimationGroupRules.RollMode = 1;
+            st.RefFallbacks.Clear();
+            gpu.Fallbacks = st.RefFallbacks;
+            gpu.RecordFallbacks = true;
+            _gpuProbeOverrideMark = overrides;
+            _gpuProbeUploads = uploads;
+            _gpuProbeBuilds = _gpuItemBuildTotal;
+            _gpuItemPass = 2;
+            _gpuProbeValid = true;
+
+            return 1;
+        }
+
+        // After the reference pass captured its effects: its instances, lights, lists, selection, overrides, unmapped sprites
+        // and animation rolls against the probe's.
+        private void GpuItemProbeCompare(GpuWorldRenderer gpu)
+        {
+            GpuProbeState st = _gpuProbe;
+            _gpuProbeValid = false;
+            _gpuItemPass = 0;
+            gpu.RecordFallbacks = false;
+            gpu.Fallbacks = null;
+            AnimationGroupRules.RollMode = 0;
+            AnimationGroupRules.RollTape = null;
+
+            _gpuProbeChecks++;
+            _gpuProbeRefBuilds += _gpuItemBuildTotal - _gpuProbeBuilds;
+            // partially checked: resources became ready during the check (the passes may not have seen the same textures,
+            // picking masks or animation frames), or the probe's suppressed batcher dropped sprites FNA draws (not compared)
+            bool uploads = ClassicUO.Renderer.TextureUploads.Epoch != _gpuProbeUploads;
+            bool fna = _gpuProbeSuppressedNow > 0;
+            bool partial = uploads || fna;
+
+            if (partial)
+            {
+                _gpuProbePartial++;
+                _gpuProbePartialUploads += uploads ? 1 : 0;
+                _gpuProbePartialFna += fna ? 1 : 0;
+                _gpuProbeSuppressed += _gpuProbeSuppressedNow;
+            }
+            else
+            {
+                _gpuProbeFull++;
+            }
+
+            if (_gpuProbeFellBackNow)
+            {
+                _gpuProbeFellBack++;
+            }
+
+            ReadOnlySpan<SpriteInstance> reference = gpu.DynamicInstances;
+            ReadOnlySpan<SpriteInstance> probe = new ReadOnlySpan<SpriteInstance>(st.Inst, 0, _gpuProbeInstCount);
+            int refAt = Math.Min(_gpuProbeRefEffectsAt, reference.Length);
+            int probeAt = Math.Min(_gpuProbeEffectsAt, probe.Length);
+            bool bad = false;
+
+            bool world = CompareInstances("items and mobiles", probe.Slice(0, probeAt), reference.Slice(0, refAt));
+            bool effects = CompareInstances("effects", probe.Slice(probeAt), reference.Slice(refAt));
+            _gpuProbeInstCompared += reference.Length;
+            _gpuProbeFxCompared += reference.Length - refAt;
+
+            if (world)
+            {
+                _gpuProbeInstDiff++;
+                bad = true;
+            }
+
+            if (effects)
+            {
+                _gpuProbeFxDiff++;
+                bad = true;
+            }
+
+            if (_gpuProbeHash != _gpuProbeRefHash)
+            {
+                _gpuProbeListDiff++;
+                bad = true;
+                _renderLists.DebugCollect(_gpuProbeSkip, st.RefList);
+                int n = Math.Min(st.List.Count, st.RefList.Count), k = 0;
+
+                while (k < n && st.List[k] == st.RefList[k])
+                {
+                    k++;
+                }
+
+                string D(System.Collections.Generic.List<(int List, GameObject Obj, byte Alpha, bool Allowed)> l, int i) =>
+                    i < l.Count ? $"list {l[i].List} {l[i].Obj.GetType().Name} 0x{l[i].Obj.Graphic:X4} at {l[i].Obj.X},{l[i].Obj.Y},{l[i].Obj.Z} alpha {l[i].Alpha} allowed {l[i].Allowed}" : "end";
+
+                _gpuItemCheckSample ??= $"lists: {st.List.Count} served vs {st.RefList.Count} full, first difference at {k}: served {D(st.List, k)}, full {D(st.RefList, k)}";
+            }
+
+            if (!ReferenceEquals(_gpuProbeSelected, _gpuProbeRefSelected))
+            {
+                _gpuProbeSelDiff++;
+                bad = true;
+                _gpuItemCheckSample ??= $"selection: served {_gpuProbeSelected}, full {_gpuProbeRefSelected}";
+            }
+
+            if (_gpuProbeStatics != _gpuStatics.Count || _gpuProbeMultis != _gpuMeshMultis.Count || _gpuProbeFoliage != _gpuFoliage.Count)
+            {
+                _gpuProbeCountDiff++;
+                bad = true;
+                _gpuItemCheckSample ??= $"collected: statics {_gpuProbeStatics}/{_gpuStatics.Count}, multis {_gpuProbeMultis}/{_gpuMeshMultis.Count}, foliage {_gpuProbeFoliage}/{_gpuFoliage.Count} (served/full)";
+            }
+
+            int refLights = _lightCount - _gpuProbeLightBase;
+            bool lightsDiffer = refLights != _gpuProbeLightCount;
+
+            for (int i = 0; !lightsDiffer && i < _gpuProbeLightCount; i++)
+            {
+                lightsDiffer = st.Lights[i] != LightAt(_gpuProbeLightBase + i);
+            }
+
+            if (lightsDiffer)
+            {
+                _gpuProbeLightDiff++;
+                bad = true;
+                _gpuItemCheckSample ??= $"lights: {_gpuProbeLightCount} served, {refLights} in the full pass";
+            }
+
+            // the world pass's overrides: the probe's (taken off the queue, with its drops) against what the reference pass queued
+            // since the mark (with its drops); an overflow in either pass is counted on its own (only what fitted is compared)
+            if (gpu.World is { } wr)
+            {
+                ref readonly PendingOverrideQueue queue = ref wr.PendingOverrides;
+                bool overridesDiffer = PendingOverrideQueue.Differ(st.Overrides, _gpuProbeOverrideDropped, in queue, _gpuProbeOverrideMark, out int refCount, out int refDropped);
+                _gpuProbeOverridesCompared += refCount;
+
+                if (_gpuProbeOverrideDropped > 0 || refDropped > 0)
+                {
+                    _gpuProbeOverflow++;
+                }
+
+                if (overridesDiffer)
+                {
+                    _gpuProbeOverrideDiff++;
+                    bad = true;
+                    _gpuItemCheckSample ??= $"overrides: {st.Overrides.Count} served ({_gpuProbeOverrideDropped} dropped), {refCount} in the full pass ({refDropped} dropped)";
+                }
+            }
+
+            // unmapped sprites (FNA draws them in the reference, the probe dropped them): the view's request, as asked
+            bool fallbacksDiffer = st.Fallbacks.Count != st.RefFallbacks.Count;
+
+            for (int i = 0; !fallbacksDiffer && i < st.Fallbacks.Count; i++)
+            {
+                fallbacksDiffer = !st.Fallbacks[i].Equals(st.RefFallbacks[i]);
+            }
+
+            if (fallbacksDiffer)
+            {
+                _gpuProbeFallbackDiff++;
+                bad = true;
+                _gpuItemCheckSample ??= $"unmapped sprites: {st.Fallbacks.Count} served, {st.RefFallbacks.Count} in the full pass";
+            }
+
+            st.Fallbacks.Clear();
+            st.RefFallbacks.Clear();
+
+            // both passes rolled from the same random state: the same requests in the same order get the same values
+            _gpuProbeRollsCompared += st.RefRolls.Count;
+            if (AnimationGroupRules.RollsDiffer(st.Rolls, st.RefRolls, out int firstRoll))
+            {
+                _gpuProbeRollDiff++;
+                bad = true;
+                _gpuItemCheckSample ??= $"animation rolls: {st.Rolls.Count} served, {st.RefRolls.Count} in the full pass, first difference at {firstRoll}";
+            }
+
+            st.Rolls.Clear();
+            st.RefRolls.Clear();
+
+            if (bad)
+            {
+                if (_gpuProbeFellBackNow)
+                {
+                    _gpuProbeStaleFellBack++;
+                }
+
+                if (partial)
+                {
+                    _gpuProbeStalePartial++;
+                }
+                else
+                {
+                    _gpuProbeStale++;
+                }
+            }
+        }
+
+        private bool CompareInstances(string what, ReadOnlySpan<SpriteInstance> probe, ReadOnlySpan<SpriteInstance> reference)
+        {
+            if (probe.Length == reference.Length && MemoryMarshal.AsBytes(probe).SequenceEqual(MemoryMarshal.AsBytes(reference)))
+            {
+                return false;
+            }
+
+            int n = Math.Min(probe.Length, reference.Length);
+            int first = n;
+
+            for (int i = 0; i < n; i++)
+            {
+                if (!MemoryMarshal.AsBytes(probe.Slice(i, 1)).SequenceEqual(MemoryMarshal.AsBytes(reference.Slice(i, 1))))
+                {
+                    first = i;
+
+                    break;
+                }
+            }
+
+            string at = first < n
+                ? $"first at {first}: served x {probe[first].X} y {probe[first].Y} depth {probe[first].Depth} blend {probe[first].Blend} hue {probe[first].PageHue >> 16}, " +
+                  $"full x {reference[first].X} y {reference[first].Y} depth {reference[first].Depth} blend {reference[first].Blend} hue {reference[first].PageHue >> 16}"
+                : "one is a prefix of the other";
+            _gpuItemCheckSample ??= $"{what}: {probe.Length} served vs {reference.Length} full instances; {at}";
+
+            return true;
         }
     }
 }
