@@ -61,9 +61,13 @@ namespace ClassicUO.Game
             Ecs = new WorldEcs(this);
             MapRecycler = new Map.MapObjectRecycler(this);
             ChunkPool = new Map.ChunkPool(this);
+            Writer = new WorldWriter(this);
         }
 
         public WorldEcs Ecs { get; }
+
+        /// <summary>T1: the mutation funnel (ecs-transition-plan.md); converted packet groups write world state through it.</summary>
+        public WorldWriter Writer { get; }
 
         public Point RangeSize;
 
@@ -642,6 +646,9 @@ namespace ClassicUO.Game
         /// <summary>Items in the per-frame update list (corpses, items whose handles just opened).</summary>
         public int ActiveItemCount => _activeItems.Count;
 
+        /// <summary>T1 tests: the per-frame update list in order.</summary>
+        internal IReadOnlyList<Item> ActiveItems => _activeItems;
+
         /// <summary>W5: <paramref name="item"/> needs <see cref="Item.Update"/> from now on (a corpse, or handles opened).</summary>
         public void QueueItemUpdate(Item item)
         {
@@ -999,6 +1006,19 @@ namespace ClassicUO.Game
 
         public Item GetOrCreateItem(uint serial)
         {
+            Item item = GetOrCreateItem(serial, out bool isNew);
+
+            if (isNew)
+            {
+                Ecs.Sync(item);
+            }
+
+            return item;
+        }
+
+        /// <summary>T1: <see cref="GetOrCreateItem(uint)"/> without the ECS write; the funnel commits the new item itself.</summary>
+        internal Item GetOrCreateItem(uint serial, out bool isNew)
+        {
             Item item = Items.Get(serial);
 
             if (item != null && item.IsDestroyed)
@@ -1007,11 +1027,12 @@ namespace ClassicUO.Game
                 item = null;
             }
 
-            if (item == null /*|| item.IsDestroyed*/)
+            isNew = item == null;
+
+            if (isNew /*|| item.IsDestroyed*/)
             {
                 item = Item.Create(this, serial);
                 Items.Add(item);
-                Ecs.Sync(item);
             }
 
             return item;
@@ -1050,9 +1071,26 @@ namespace ClassicUO.Game
         public void RemoveItemFromContainer(Item obj)
         {
             uint containerSerial = obj.Container;
+            UnlinkFromContainer(obj, containerSerial);
 
             // if entity is running the "dying" animation we have to reset container too.
             // SerialHelper.IsValid(containerSerial) is not ideal in this case
+            if (containerSerial != 0xFFFF_FFFF)
+            {
+                obj.Container = 0xFFFF_FFFF;
+            }
+
+            Ecs.Sync(obj);
+        }
+
+        /// <summary>
+        /// The link half of <see cref="RemoveItemFromContainer(Item)"/>: the parent's gump, the parent's child list, the item's
+        /// list links and its tile. It writes no world state of the item (its Container stays as it is, and nothing syncs): the
+        /// caller writes the resulting Container itself (T1: <see cref="WorldWriter"/> computes it, commits it to the ECS and the
+        /// cache, never reading it back).
+        /// </summary>
+        internal void UnlinkFromContainer(Item obj, uint containerSerial)
+        {
             if (containerSerial != 0xFFFF_FFFF)
             {
                 if (SerialHelper.IsMobile(containerSerial))
@@ -1070,14 +1108,11 @@ namespace ClassicUO.Game
                 {
                     container.Remove(obj);
                 }
-
-                obj.Container = 0xFFFF_FFFF;
             }
 
             obj.Next = null;
             obj.Previous = null;
             obj.RemoveFromTile();
-            Ecs.Sync(obj);
         }
 
         public bool RemoveItem(uint serial, bool forceRemove = false)

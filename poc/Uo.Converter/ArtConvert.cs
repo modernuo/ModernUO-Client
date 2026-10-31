@@ -194,19 +194,6 @@ public static class ArtConvert
         return new Stats(tableSize, res.Packed + res.Aliased, res.Packed, res.Aliased, empty, res.PageCount, res.Occupancy, res.PageBytes, res.PageBytesBrotli);
     }
 
-    public static int Hues(UOFileManager fm, string outDir)
-    {
-        var groups = fm.Hues.HuesRange;
-        int count = groups.Length * 8;
-        var rgba = new uint[count * HueFile.Shades];
-        for (int g = 0; g < groups.Length; g++)
-            for (int e = 0; e < 8; e++)
-                for (int s = 0; s < HueFile.Shades; s++)
-                    rgba[(g * 8 + e) * HueFile.Shades + s] = PackColor.ToRgb8(groups[g].Entries[e].ColorTable[s]) | 0xFF000000;
-        HueFile.Write(Path.Combine(outDir, "hues.bin"), count, rgba);
-        return count;
-    }
-
     public static (int Land, int Statics) TileData(UOFileManager fm, string outDir)
     {
         var land = fm.TileData.LandData;

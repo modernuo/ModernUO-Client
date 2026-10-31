@@ -46,7 +46,7 @@ public static class Png
         using var ms = new MemoryStream();
         using (var z = new ZLibStream(ms, CompressionLevel.Fastest, leaveOpen: true)) z.Write(raw);
 
-        using var fs = File.Create(path);
+        using var fs = Uo.Pack.ReplacingFile.Create(path); // checked against the published packs roots like every output
         fs.Write([0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A]);
         Span<byte> ihdr = stackalloc byte[13];
         BinaryPrimitives.WriteInt32BigEndian(ihdr, w);
@@ -55,6 +55,7 @@ public static class Png
         Chunk(fs, "IHDR", ihdr);
         Chunk(fs, "IDAT", ms.GetBuffer().AsSpan(0, (int)ms.Length));
         Chunk(fs, "IEND", []);
+        fs.Commit();
     }
 
     private static void Chunk(Stream s, string type, ReadOnlySpan<byte> data)

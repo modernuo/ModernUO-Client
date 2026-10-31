@@ -164,6 +164,102 @@ namespace ClassicUO.UnitTests.Ecs
                 }
             })));
 
+            // T1: the whole item branch of UpdateGameObject (0x1A/0xF3) as the handler ran it before the funnel (a copy, in
+            // WorldWriterTests) and through WorldWriter.UpsertWorldItem + PlaceWorldItem, paired. Delete as in the row above.
+            uint spareOld = SPARE0 + 0x30_0000, spareNew = SPARE0 + 0x40_0000;
+            rows.Add(("T1 old path: 0x1A new ground item (handler branch) + delete, per packet", Measure(packets, i =>
+            {
+                if ((i & 1) == 0)
+                {
+                    var p = new WorldWriterTests.Packet { Serial = spareOld, Graphic = 0xEED, Count = 5, X = 1100, Y = 1100, Direction = Direction.North };
+                    WorldWriterTests.OldUpsert(s.World, p);
+                }
+                else
+                {
+                    Item it = s.World.Items.Get(spareOld);
+                    s.World.Items.Remove(spareOld);
+                    ecs.OnDestroyed(it);
+                    spareOld++;
+                }
+            })));
+
+            rows.Add(("T1 funnel: 0x1A new ground item (UpsertWorldItem) + delete, per packet", Measure(packets, i =>
+            {
+                if ((i & 1) == 0)
+                {
+                    s.World.Writer.UpsertWorldItem(spareNew, 0xEED, 0, 5, 1100, 1100, 0, Direction.North, 0, ClassicUO.Game.Data.Flags.None, 0, out _, out WorldWriter.Placement pn);
+                    s.World.Writer.PlaceWorldItem(pn);
+                }
+                else
+                {
+                    Item it = s.World.Items.Get(spareNew);
+                    s.World.Items.Remove(spareNew);
+                    ecs.OnDestroyed(it);
+                    spareNew++;
+                }
+            })));
+
+            // an existing ground item updated in place (a resend, a stack amount change): the common 0x1A
+            Item upd = s.World.GetOrCreateItem(SPARE0 + 0x50_0000);
+            upd.SetInWorldTile(1100, 1100, 0);
+            rows.Add(("T1 old path: 0x1A update of a ground item", Measure(packets, i =>
+            {
+                var p = new WorldWriterTests.Packet { Serial = upd.Serial, Graphic = 0xEED, Count = (ushort)(1 + (i & 63)), X = 1100, Y = 1100, Direction = Direction.North };
+                WorldWriterTests.OldUpsert(s.World, p);
+            })));
+
+            rows.Add(("T1 funnel: 0x1A update of a ground item", Measure(packets, i =>
+            {
+                s.World.Writer.UpsertWorldItem(upd.Serial, 0xEED, 0, (ushort)(1 + (i & 63)), 1100, 1100, 0, Direction.North, 0, ClassicUO.Game.Data.Flags.None, 0, out _, out WorldWriter.Placement pu);
+                s.World.Writer.PlaceWorldItem(pu);
+            })));
+
+            // T1 containers: AddItemToContainer as before the funnel (a copy, in WorldWriterTests) and WorldWriter.PlaceInContainer,
+            // paired. A new item into the backpack, deleted (unlinked, as the 0x1D removal does) on the next packet; and an item
+            // already in the backpack updated in place (an amount change: the re-push)
+            uint cSpareOld = SPARE0 + 0x60_0000, cSpareNew = SPARE0 + 0x70_0000;
+            uint pack = s.Backpack.Serial;
+
+            void DeleteFromPack(uint serial)
+            {
+                Item it = s.World.Items.Get(serial);
+                s.Backpack.Remove(it);
+                s.World.Items.Remove(serial);
+                ecs.OnDestroyed(it);
+            }
+
+            rows.Add(("T1 old path: 0x25 new item into backpack (AddItemToContainer) + delete, per packet", Measure(packets, i =>
+            {
+                if ((i & 1) == 0)
+                {
+                    WorldWriterTests.OldAddToContainer(s.World, cSpareOld, 0xF7A, 1, 40, 50, 0, pack);
+                }
+                else
+                {
+                    DeleteFromPack(cSpareOld++);
+                }
+            })));
+
+            rows.Add(("T1 funnel: 0x25 new item into backpack (PlaceInContainer) + delete, per packet", Measure(packets, i =>
+            {
+                if ((i & 1) == 0)
+                {
+                    s.World.Writer.PlaceInContainer(cSpareNew, 0xF7A, 1, 40, 50, 0, pack, out _);
+                }
+                else
+                {
+                    DeleteFromPack(cSpareNew++);
+                }
+            })));
+
+            Item inPack = s.World.GetOrCreateItem(SPARE0 + 0x80_0000);
+            WorldWriterTests.OldAddToContainer(s.World, inPack.Serial, 0xF7A, 1, 40, 50, 0, pack);
+            rows.Add(("T1 old path: 0x25 update of an item in the backpack", Measure(packets, i =>
+                WorldWriterTests.OldAddToContainer(s.World, inPack.Serial, 0xF7A, (ushort)(1 + (i & 63)), 40, 50, 0, pack))));
+
+            rows.Add(("T1 funnel: 0x25 update of an item in the backpack", Measure(packets, i =>
+                s.World.Writer.PlaceInContainer(inPack.Serial, 0xF7A, (ushort)(1 + (i & 63)), 40, 50, 0, pack, out _))));
+
             // 0x25 item into a container, then out
             rows.Add(("item into backpack (0x25) + out, per packet", Measure(packets, i =>
             {

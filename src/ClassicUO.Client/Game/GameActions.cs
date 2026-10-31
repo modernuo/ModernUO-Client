@@ -611,7 +611,8 @@ namespace ClassicUO.Game
 
         public static void SendCloseStatus(World world, uint serial, bool force = false)
         {
-            if (Client.Game.UO.Version >= ClientVersion.CV_200 && world.InGame)
+            // world.InGame first: both are plain reads, and a World outside a running client (the unit tests) has no Client.Game
+            if (world.InGame && Client.Game.UO.Version >= ClientVersion.CV_200)
             {
                 Entity ent = world.Get(serial);
 

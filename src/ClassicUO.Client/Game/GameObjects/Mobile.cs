@@ -137,7 +137,20 @@ namespace ClassicUO.Game.GameObjects
 
         public Mobile(World world) : base(world, 0) { }
 
-        public Deque<Step> Steps { get; } = new Deque<Step>(Constants.MAX_STEP_COUNT);
+        // the walk queue: world state (T1). Read through Steps; changed only through the checked methods below.
+        private readonly Deque<Step> _walkSteps = new Deque<Step>(Constants.MAX_STEP_COUNT);
+
+        /// <summary>The walk queue, read-only (T1, Codex audit round 2, #5): changes go through <see cref="AddStep"/>,
+        /// <see cref="RemoveFirstStep"/>, <see cref="ReplaceStep"/> and <see cref="ClearStepQueue"/>, which the funnel check sees.</summary>
+        public StepQueue Steps => new StepQueue(_walkSteps);
+
+        internal void AddStep(in Step step) { FunnelCheck.Write(this, FunnelField.Steps); _walkSteps.AddToBack(step); }
+
+        internal void RemoveFirstStep() { FunnelCheck.Write(this, FunnelField.Steps); _walkSteps.RemoveFromFront(); }
+
+        internal void ReplaceStep(int index, in Step step) { FunnelCheck.Write(this, FunnelField.Steps); _walkSteps[index] = step; }
+
+        internal void ClearStepQueue() { FunnelCheck.Write(this, FunnelField.Steps); _walkSteps.Clear(); }
         public bool IsParalyzed => (Flags & Flags.Frozen) != 0;
         public bool IsYellowHits => (Flags & Flags.YellowBar) != 0;
         public bool IsPoisoned =>
@@ -157,6 +170,7 @@ namespace ClassicUO.Game.GameObjects
                 || _isDead;
             set
             {
+                FunnelCheck.Write(this, FunnelField.IsDead);
                 _isDead = value;
                 PushInputs();
             }
@@ -216,10 +230,13 @@ namespace ClassicUO.Game.GameObjects
 
         protected virtual bool IsWalking => LastStepTime > Time.Ticks - Constants.WALKING_DELAY;
 
-        public byte AnimationFrameCount { get; set; }
-        public bool AnimationFromServer { get; set; }
-        public bool IsRenamable { get; set; }
-        public long LastStepSoundTime { get; set; }
+        private byte _animationFrameCount;
+        private bool _animationFromServer, _isRenamable;
+        private long _lastStepSoundTime;
+        public byte AnimationFrameCount { get => _animationFrameCount; set { FunnelCheck.Write(this, FunnelField.AnimationFrameCount); _animationFrameCount = value; } }
+        public bool AnimationFromServer { get => _animationFromServer; set { FunnelCheck.Write(this, FunnelField.AnimationFromServer); _animationFromServer = value; } }
+        public bool IsRenamable { get => _isRenamable; set { FunnelCheck.Write(this, FunnelField.IsRenamable); _isRenamable = value; } }
+        public long LastStepSoundTime { get => _lastStepSoundTime; set { FunnelCheck.Write(this, FunnelField.LastStepSoundTime); _lastStepSoundTime = value; } }
 
         // W5: these are inputs of the mobile's animation and override hue; every write is pushed to the ECS (MobileInputs)
         private bool _isFemale, _isRunning;
@@ -230,6 +247,7 @@ namespace ClassicUO.Game.GameObjects
             get => _isFemale;
             set
             {
+                FunnelCheck.Write(this, FunnelField.IsFemale);
                 _isFemale = value;
                 PushInputs();
             }
@@ -240,6 +258,7 @@ namespace ClassicUO.Game.GameObjects
             get => _isRunning;
             set
             {
+                FunnelCheck.Write(this, FunnelField.IsRunning);
                 _isRunning = value;
                 PushInputs();
             }
@@ -250,6 +269,7 @@ namespace ClassicUO.Game.GameObjects
             get => _notorietyFlag;
             set
             {
+                FunnelCheck.Write(this, FunnelField.NotorietyFlag);
                 _notorietyFlag = value;
                 PushInputs();
             }
@@ -263,13 +283,17 @@ namespace ClassicUO.Game.GameObjects
             World?.Ecs.PushInputs(this);
         }
 
-        public RaceType Race { get; set; }
-        public CharacterSpeedType SpeedMode { get; set; } = CharacterSpeedType.Normal;
-        public ushort Stamina { get; set; }
-        public ushort StaminaMax { get; set; }
-        public ushort Mana { get; set; }
-        public ushort ManaMax { get; set; }
-        public int StepSoundOffset { get; set; }
+        private RaceType _race;
+        private CharacterSpeedType _speedMode = CharacterSpeedType.Normal;
+        private ushort _stamina, _staminaMax, _mana, _manaMax;
+        private int _stepSoundOffset;
+        public RaceType Race { get => _race; set { FunnelCheck.Write(this, FunnelField.Race); _race = value; } }
+        public CharacterSpeedType SpeedMode { get => _speedMode; set { FunnelCheck.Write(this, FunnelField.SpeedMode); _speedMode = value; } }
+        public ushort Stamina { get => _stamina; set { FunnelCheck.Write(this, FunnelField.Stamina); _stamina = value; } }
+        public ushort StaminaMax { get => _staminaMax; set { FunnelCheck.Write(this, FunnelField.StaminaMax); _staminaMax = value; } }
+        public ushort Mana { get => _mana; set { FunnelCheck.Write(this, FunnelField.Mana); _mana = value; } }
+        public ushort ManaMax { get => _manaMax; set { FunnelCheck.Write(this, FunnelField.ManaMax); _manaMax = value; } }
+        public int StepSoundOffset { get => _stepSoundOffset; set { FunnelCheck.Write(this, FunnelField.StepSoundOffset); _stepSoundOffset = value; } }
         public string Title = string.Empty;
 
         public static Mobile Create(World world, uint serial)
@@ -297,6 +321,7 @@ namespace ClassicUO.Game.GameObjects
 
         public void SetSAPoison(bool value)
         {
+            FunnelCheck.Write(this, FunnelField.IsSAPoisoned);
             _isSA_Poisoned = value;
             PushInputs();
         }
@@ -304,6 +329,7 @@ namespace ClassicUO.Game.GameObjects
         private void CalculateRandomIdleTime()
         {
             const int TIME = 30000;
+            FunnelCheck.Write(this, FunnelField.AnimationState);
             _lastAnimationIdleDelay = Time.Ticks + (TIME + RandomHelper.GetValue(0, TIME));
 
             // E4: the idle due time (and, from SetAnimation, the frame due time written just before) reach the ECS clock
@@ -369,7 +395,7 @@ namespace ClassicUO.Game.GameObjects
 
         public void ClearSteps()
         {
-            Steps.Clear();
+            ClearStepQueue();
             Offset = Vector3.Zero;
             PushInputs();
         }
@@ -410,7 +436,7 @@ namespace ClassicUO.Game.GameObjects
                     step.Z = endZ;
                     step.Direction = (byte)moveDir;
                     step.Run = run;
-                    Steps.AddToBack(step);
+                    AddStep(step);
                 }
 
                 step.X = x;
@@ -418,7 +444,7 @@ namespace ClassicUO.Game.GameObjects
                 step.Z = z;
                 step.Direction = (byte)moveDir;
                 step.Run = run;
-                Steps.AddToBack(step);
+                AddStep(step);
             }
 
             if (moveDir != direction)
@@ -428,7 +454,7 @@ namespace ClassicUO.Game.GameObjects
                 step.Z = z;
                 step.Direction = (byte)direction;
                 step.Run = run;
-                Steps.AddToBack(step);
+                AddStep(step);
             }
 
             PushInputs();
@@ -447,7 +473,7 @@ namespace ClassicUO.Game.GameObjects
             }
             else
             {
-                ref Step step = ref Steps.Back();
+                ref readonly Step step = ref Steps.Back();
                 x = step.X;
                 y = step.Y;
                 z = step.Z;
@@ -465,6 +491,7 @@ namespace ClassicUO.Game.GameObjects
             bool fromServer = false
         )
         {
+            FunnelCheck.Write(this, FunnelField.AnimationState);
             _animationGroup = id;
             AnimIndex = (byte)(forward ? 0 : frameCount);
             _animationInterval = interval;
@@ -485,6 +512,7 @@ namespace ClassicUO.Game.GameObjects
 
             if (!IsMounted && !InWarMode && ExecuteAnimation)
             {
+                FunnelCheck.Write(this, FunnelField.AnimationState);
                 AnimIndex = 0;
                 AnimationFrameCount = 0;
                 _animationInterval = 1;
@@ -644,7 +672,7 @@ namespace ClassicUO.Game.GameObjects
             {
                 if (Steps.Count != 0 && LastStepSoundTime < Time.Ticks)
                 {
-                    ref Step step = ref Steps.Back();
+                    ref readonly Step step = ref Steps.Back();
 
                     int incID = StepSoundOffset;
                     int soundID = 0x012B;
@@ -723,6 +751,7 @@ namespace ClassicUO.Game.GameObjects
                     currentDelay = AnimationTiming.Advance(ref timer, frames.Length, out AnimationAdvance advance);
 
                     AnimationFrameCount = timer.FrameCount;
+                    FunnelCheck.Write(this, FunnelField.AnimationState);
                     _animationRepeateMode = timer.RepeatMode;
                     _animationRepeatModeCount = timer.RepeatModeCount;
                     _animationRepeat = timer.Repeat;
@@ -761,7 +790,7 @@ namespace ClassicUO.Game.GameObjects
 
             if (Steps.Count != 0 && !IsDestroyed)
             {
-                ref Step step = ref Steps.Front();
+                ref readonly Step step = ref Steps.Front();
                 dir = step.Direction;
 
                 if (step.Run)
@@ -903,7 +932,7 @@ namespace ClassicUO.Game.GameObjects
                         OffsetX = 0;
                         OffsetY = 0;
                         OffsetZ = 0;
-                        Steps.RemoveFromFront();
+                        RemoveFirstStep();
                         CalculateRandomIdleTime();
                         PushInputs();
 
@@ -1159,6 +1188,22 @@ namespace ClassicUO.Game.GameObjects
             public sbyte Z;
             public byte Direction;
             public bool Run;
+        }
+
+        /// <summary>A read-only view of a mobile's walk queue (its steps come back by readonly reference or by value).</summary>
+        internal readonly struct StepQueue
+        {
+            private readonly Deque<Step> _queue;
+
+            internal StepQueue(Deque<Step> steps) => _queue = steps;
+
+            public int Count => _queue.Count;
+
+            public Step this[int index] => _queue[index];
+
+            public ref readonly Step Front() => ref _queue.Front();
+
+            public ref readonly Step Back() => ref _queue.Back();
         }
     }
 }
