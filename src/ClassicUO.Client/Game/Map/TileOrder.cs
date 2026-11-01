@@ -432,7 +432,7 @@ namespace ClassicUO.Game.Map
                 ref DynamicTileIndex.Entry e = ref entries[i];
                 GameObject o = e.Obj;
                 bool bad = o == null || !DynamicTileIndex.Holds(o) || !ReferenceEquals(o.TileChunk, chunk) || o.TileCell != cell ||
-                           e.Key.CompareTo(Key(o)) != 0 || e.Id != (o is Entity ent ? ent.Serial : 0) ||
+                           e.Key.CompareTo(Key(o)) != 0 ||
                            i > 0 && entries[i - 1].Key.CompareTo(e.Key) >= 0;
 
                 if (bad)
@@ -535,7 +535,7 @@ namespace ClassicUO.Game.Map
 
             foreach (var e in chunk.Dynamic != null ? chunk.Dynamic.Cell(x << 3 | y) : default)
             {
-                sb.Append(' ').Append(e.Key).Append(" id 0x").Append(e.Id.ToString("X")).Append(' ').Append(e.Obj == null ? "null" : Describe(e.Obj));
+                sb.Append(' ').Append(e.Key).Append(' ').Append(e.Obj == null ? "null" : Describe(e.Obj));
             }
 
             Log.Warn(sb.ToString());
