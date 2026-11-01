@@ -228,6 +228,44 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Fact]
+        public void A_Bare_Mobile_Removed_Reads_Its_Own_List_After_A_Cached_Read()
+        {
+            // a removal that changes no slot (the mobile wore nothing) still ends the verified identity (the mirror's epoch)
+            World world = WorldStateContentsTests.Build();
+            Mobile bare = world.GetOrCreateMobile(LATE);
+            world.State.ReadEquipmentOverride = true;
+            bare.FindItemByLayer(Layer.Shirt).Should().BeNull();
+            long writes = world.Ecs.Mirror.WornWrites;
+
+            world.Writer.RemoveMobile(bare);
+            world.Ecs.Mirror.WornWrites.Should().Be(writes, "no slot changed");
+            Item stale = Item.Create(world, PREVIEW_SHIRT);
+            stale.Layer = Layer.Shirt;
+            bare.PushToBack(stale);
+
+            bare.FindItemByLayer(Layer.Shirt).Should().BeSameAs(stale, "not held any more: its own list");
+            world.State.HasWornItems(bare).Should().BeTrue();
+        }
+
+        [Fact]
+        public void A_Slot_Change_Elsewhere_Refreshes_Without_Refilling()
+        {
+            World world = WorldStateContentsTests.Build();
+            Mobile m = world.Mobiles.Get(MOB);
+            world.GetOrCreateMobile(LATE);
+            world.State.ReadEquipmentOverride = true;
+            m.FindItemByLayer(Layer.Helmet).Serial.Should().Be(HELM);
+            long fills = world.State.CacheFills, refreshes = world.State.CacheRefreshes;
+
+            world.Writer.Equip(NEWSHIRT, 0x1517, Layer.Shirt, LATE, 0, out _, out _);
+            m.FindItemByLayer(Layer.Helmet).Serial.Should().Be(HELM);
+
+            (world.State.CacheRefreshes - refreshes).Should().Be(1, "the mirror's slot writes moved");
+            (world.State.CacheFills - fills).Should().Be(0, "this mobile's version did not");
+            world.Mobiles.Get(LATE).FindItemByLayer(Layer.Shirt).Serial.Should().Be(NEWSHIRT);
+        }
+
+        [Fact]
         public void An_Orphan_Is_Not_Worn_Either_Way()
         {
             World world = WorldStateContentsTests.Build();

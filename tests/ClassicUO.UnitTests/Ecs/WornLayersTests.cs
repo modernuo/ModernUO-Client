@@ -217,6 +217,28 @@ namespace ClassicUO.UnitTests.Ecs
             mirror.Worn(MOB, (byte)Layer.Helmet).Should().Be(HELM, "the lowest stamp");
             mirror.Worn(MOB, (byte)Layer.Shirt).Should().Be(SHIRT);
             mirror.Worn(MOB, (byte)Layer.Robe).Should().Be(0, "not attached");
+            mirror.WornCount(MOB, (byte)Layer.Helmet).Should().Be(2, "the rebuild counts the attached items");
+            mirror.WornCount(MOB, (byte)Layer.Robe).Should().Be(0);
+
+            // the first removed directly (still attached when it leaves): the next one, never the leaver
+            mirror.Remove(HELM);
+            mirror.Worn(MOB, (byte)Layer.Helmet).Should().Be(HELM2);
+            mirror.WornCount(MOB, (byte)Layer.Helmet).Should().Be(1);
+        }
+
+        [Fact]
+        public void The_Next_Item_On_A_Layer_Is_Attached_Never_An_Orphan()
+        {
+            var mirror = new WorldMirror();
+            mirror.UpsertMobile(MOB, 0x190, 0, 1, 1, 0, 0, 0, false);
+            mirror.UpsertItem(HELM3, 0x140A, 0, 1, 1, 0, 0, 0, 1, MOB, (byte)Layer.Helmet, false);
+            mirror.UpsertItem(HELM, 0x1408, 0, 1, 1, 0, 0, 0, 1, MOB, (byte)Layer.Helmet, false, attach: true);
+            mirror.UpsertItem(HELM2, 0x1409, 0, 1, 1, 0, 0, 0, 1, MOB, (byte)Layer.Helmet, false, attach: true);
+            mirror.Worn(MOB, (byte)Layer.Helmet).Should().Be(HELM);
+
+            // the first leaves for the ground: the next attached one, not the orphan (stamp 0, also in the index)
+            mirror.UpsertItem(HELM, 0x1408, 0, 1, 1, 0, 0, 0, 1, WorldMirror.NO_CONTAINER, 0, false);
+            mirror.Worn(MOB, (byte)Layer.Helmet).Should().Be(HELM2);
         }
 
         [Fact]
