@@ -32,6 +32,7 @@ namespace ClassicUO.Game
             Extract = new DynamicSpriteExtract(Mirror.Store);
             Animation = new MobileAnimationSystem(Mirror);
             Clock = new MobileClockSystem(Mirror.Store);
+            Sweep = new RangeSweepSystem(Mirror.Store);
         }
 
         public WorldMirror Mirror { get; }
@@ -42,6 +43,9 @@ namespace ClassicUO.Game
 
         /// <summary>E4: picks the mobiles whose Update has work this frame from their <see cref="MobileClock"/>.</summary>
         public MobileClockSystem Clock { get; }
+
+        /// <summary>T5c: the range sweep's selection and the world-map allies, from Position and MobileInputs.</summary>
+        public RangeSweepSystem Sweep { get; }
 
         // created on first use: needs the loaded animation tables
         public MobileSpriteExtract MobileExtract => _mobileExtract ??= new MobileSpriteExtract(Client.Game.UO.FileManager.Animations);
@@ -718,6 +722,9 @@ namespace ClassicUO.Game
 
             // T3a: CUO_EQUIP_READ_CHECK's 5 s summary
             _world.State.LogEquipmentChecks();
+
+            // T5c: CUO_SWEEP_CHECK's 5 s summary
+            _world.LogSweepSummary();
 
             // T3b: CUO_LAYER_RULES_CHECK's 5 s summary
             LayerRuleEval.LogSummary();
