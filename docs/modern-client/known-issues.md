@@ -2,6 +2,10 @@
 
 Visual or behavioural defects found in the PoC client that aren't fixed yet. Add new ones here; move them to the poc-log when fixed.
 
+## Flaky unit test: `WorldWriterMobileTests.The_Boat_Steps_Equal_The_Old_Path` (recorded 2026-11-01)
+
+Fails now and then in a full-suite run (seen by t3a-fold in the CuoDevTools=true variant and t3b-cache in the false variant, both on 2026-11-01), passes alone and on rerun. It compares boat steps against the old path using static time (tick) state, so it is timing-dependent; neither branch touches the boat code. Fix: drive the test from a fake clock instead of the static time. Not started.
+
 ## Empty tiledata entries still occlude roofs and lights (recorded 2026-10-31, deferred)
 
 Found by the Codex audit of `poc/tiledata-pad` (finding 2). A component whose tiledata entry is empty (no art, zero flags) still counts in two decisions:
