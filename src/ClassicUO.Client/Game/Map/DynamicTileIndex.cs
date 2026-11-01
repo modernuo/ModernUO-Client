@@ -9,8 +9,9 @@ namespace ClassicUO.Game.Map
 {
     /// <summary>
     /// T6b (ecs-transition-plan.md, <c>world_tile_index</c>): a chunk's per-tile sorted arrays of the dynamic objects on it
-    /// (items and mobiles; T8 adds effects through <see cref="Holds"/>), each entry the T6a key stored at insertion, the
-    /// entity id and the object. <see cref="Chunk.AddGameObject"/> (every placement: AddToTile, SetInWorldTile, moves,
+    /// (items and mobiles; T8 adds effects through <see cref="Holds"/>), each entry the T6a key stored at insertion and the
+    /// object (no entity id: a death re-key or a record replacement changes the serial/record under a placed object, and the
+    /// object's validated ECS handle already reaches the record). <see cref="Chunk.AddGameObject"/> (every placement: AddToTile, SetInWorldTile, moves,
     /// Map.Park's deferred add) and <see cref="GameObject.RemoveFromTile"/> maintain it; Chunk.Destroy/ClearForReload clear
     /// it. The tile's linked list still holds everything (both are maintained): with the walk switch on, the walks read the
     /// list's other objects (land, statics, multi components, effects until T8) merged by key with this array
@@ -21,8 +22,6 @@ namespace ClassicUO.Game.Map
         internal struct Entry
         {
             public TileOrderKey Key;
-            /// <summary>The entity id (Serial) at insertion; 0 for an object that is not an entity.</summary>
-            public uint Id;
             public GameObject Obj;
         }
 
@@ -102,7 +101,7 @@ namespace ClassicUO.Game.Map
                 Array.Copy(arr, pos, arr, pos + 1, n - pos);
             }
 
-            arr[pos] = new Entry { Key = key, Id = obj is Entity e ? e.Serial : 0, Obj = obj };
+            arr[pos] = new Entry { Key = key, Obj = obj };
             _counts[cell] = n + 1;
             Count++;
         }

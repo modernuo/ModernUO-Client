@@ -440,6 +440,55 @@ namespace ClassicUO.UnitTests.Game.Map
         }
 
         [Fact]
+        public void Death_Rekey_And_Record_Replacement_Leave_The_Entry_Valid()
+        {
+            // a mobile re-keyed in place (as at death: the serial changes, no re-add to the tile)
+            Place(_a, NewLand(_world, 0), 3, 3);
+            Mobile m = NewMobile(0);
+            Place(_a, m, 3, 3);
+            Item item = NewItem(Plain, 0);
+            Place(_a, item, 3, 3);
+            _world.Mobiles.Remove(m.Serial);
+            m.Serial = 0x8000_0100;
+            _world.Mobiles[m.Serial] = m;
+            _world.Ecs.OnSerialChanged(0x100, m);
+            Assert.False(TileOrder.CheckIndex(_a, 3, 3).Failed);
+
+            // the full death shape: BuildDead's mobile (re-keyed, its worn items moved) is placed on a chunk of this test's, then
+            // re-keyed once more under a corpse item with the same serial; the entries keep matching their objects
+            World dead = ClassicUO.UnitTests.Ecs.WorldWriterMobileTests.BuildDead();
+            Mobile dm = dead.Mobiles.Get(ClassicUO.UnitTests.Ecs.WorldWriterMobileTests.DEAD);
+            Assert.NotNull(dm);
+            dm.RemoveFromTile();
+            var chunk = new Chunk(dead) { X = 0, Y = 0 };
+            Place(chunk, NewLand(dead, 0), 1, 1);
+            Place(chunk, dm, 1, 1);
+            Item corpse = dead.GetOrCreateItem(0x4000_9000);
+            corpse.Graphic = 0x2006;
+            Place(chunk, corpse, 1, 1);
+            dead.Mobiles.Remove(dm.Serial);
+            dm.Serial = 0x8000_3001;
+            dead.Mobiles[dm.Serial] = dm;
+            dead.Ecs.OnSerialChanged(0x8000_3000, dm);
+            TileOrder.IndexCheck r = TileOrder.CheckIndex(chunk, 1, 1);
+            Assert.False(r.Failed);
+            Assert.Equal(0, r.BadEntries);
+        }
+
+        [Fact]
+        public void Checker_Flags_An_Entry_Whose_Key_Went_Stale()
+        {
+            Place(_a, NewLand(_world, 0), 5, 5);
+            Item a = NewItem(Plain, 0);
+            Place(_a, a, 5, 5);
+            Assert.Equal(0, TileOrder.CheckIndex(_a, 5, 5).BadEntries);
+
+            // the object's priority changes under a placed entry (no re-add): the entry's stored key is stale
+            a.PriorityZ = (short)(a.PriorityZ + 7);
+            Assert.True(TileOrder.CheckIndex(_a, 5, 5).BadEntries >= 1);
+        }
+
+        [Fact]
         public void Off_Means_No_Index()
         {
             DynamicTileIndex.Maintain = false;
