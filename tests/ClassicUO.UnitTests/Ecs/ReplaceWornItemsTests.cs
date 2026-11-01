@@ -572,9 +572,9 @@ namespace ClassicUO.UnitTests.Ecs
             Mobile m = w.Mobiles.Get(MOB);
             int v = w.Writer.Violations;
             w.Ecs.BeginFold(m);
-            w.Writer.ReplaceWornItems(m, Array.Empty<WornEntry>());
+            w.Writer.ReplaceWornItems(m, Outfit);
             w.Ecs.EndFold(m);
-            w.Writer.Violations.Should().Be(v + 1);
+            w.Writer.Violations.Should().Be(v + 1, "one rejection for the packet, not one per sub-operation");
             Children(m).Should().Contain(W1, "nothing was cleared");
         }
     
