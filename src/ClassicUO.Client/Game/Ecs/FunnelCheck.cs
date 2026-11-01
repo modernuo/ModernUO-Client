@@ -196,6 +196,7 @@ namespace ClassicUO.Game
         private static string Caller()
         {
             var trace = new StackTrace(2, true);
+            string writer = null;
 
             for (int i = 0; i < trace.FrameCount; i++)
             {
@@ -209,11 +210,20 @@ namespace ClassicUO.Game
 
                 string file = f.GetFileName();
                 string where = file == null ? "" : $" ({System.IO.Path.GetFileName(file)}:{f.GetFileLineNumber()})";
+                string frame = $"{m.DeclaringType?.Name}.{m.Name}{where}";
 
-                return $"{m.DeclaringType?.Name}.{m.Name}{where}";
+                // the writing method, then (T1 part 7) the method that called it, so a shared helper's writes name their caller
+                if (writer == null)
+                {
+                    writer = frame;
+
+                    continue;
+                }
+
+                return $"{writer} via {frame}";
             }
 
-            return "?";
+            return writer ?? "?";
         }
 
         /// <summary>Logs the totals by field every 5 s while the check is on (called from WorldEcs.Update).</summary>
