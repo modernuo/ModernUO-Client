@@ -156,7 +156,7 @@ namespace ClassicUO.Game
 
                     return true;
 
-                // use self|held|mobile <dx> <dy>: double-clicks (mounting an ethereal from the pack, dismounting on self)
+                // use self|held|mobile <dx> <dy>|pack <graphic>: double-clicks (mounting an ethereal from the pack, dismounting on self)
                 case "use" when args.Length > 0:
                     uint useSerial = args[0] switch
                     {
@@ -164,6 +164,22 @@ namespace ClassicUO.Game
                         "held" => _held,
                         _ => 0
                     };
+
+                    // use pack <graphic hex>: the first item of that graphic in the backpack (T1 funnel part 7: the spellbook)
+                    if (args[0] == "pack" && args.Length > 1 && backpack != null)
+                    {
+                        ushort useGraphic = Convert.ToUInt16(args[1], 16);
+
+                        for (LinkedObject ui = backpack.Items; ui != null; ui = ui.Next)
+                        {
+                            if (ui is Item packItem && packItem.Graphic == useGraphic)
+                            {
+                                useSerial = packItem.Serial;
+
+                                break;
+                            }
+                        }
+                    }
 
                     if (args[0] == "mobile" && args.Length > 2)
                     {
@@ -535,6 +551,48 @@ namespace ClassicUO.Game
                     }
 
                     return true;
+
+                // journal [n]: the last n (default 6) journal lines, e.g. a staff command's server answer ([Global Count)
+                case "journal":
+                    int jn = Math.Min(args.Length > 0 ? int.Parse(args[0]) : 6, JournalManager.Entries.Count);
+
+                    for (int ji = JournalManager.Entries.Count - jn; ji < JournalManager.Entries.Count; ji++)
+                    {
+                        JournalEntry je = JournalManager.Entries[ji];
+                        Log.Info($"[ECS] journal {je.Name}: {je.Text}");
+                    }
+
+                    return false;
+
+                // gumps: the open gumps' types and server serials (w5boat: did the spellbook open)
+                case "gumps":
+                    foreach (var og in UIManager.Gumps)
+                    {
+                        Log.Info($"[ECS] gump {og.GetType().Name} local 0x{og.LocalSerial:X8} server 0x{og.ServerSerial:X8}");
+                    }
+
+                    return false;
+
+                // smoothboat on|off: the profile's smooth boat movement (0xF6 queues boat steps instead of jumping the boat)
+                case "smoothboat" when args.Length > 0 && ProfileManager.CurrentProfile is { } boatProfile:
+                    boatProfile.UseSmoothBoatMovement = args[0] == "on";
+                    Log.Info($"[ECS] driver: smooth boat movement {args[0]}");
+
+                    return true;
+
+                // boat: the player's tile and the multis within 24 tiles (T1 part 7, w5boat: did the boat move and turn)
+                case "boat":
+                    Log.Info($"[ECS] boat: player at {player.X},{player.Y},{player.Z} offset ({player.Offset.X},{player.Offset.Y},{player.Offset.Z})");
+
+                    foreach (Item multi in world.Items.Values)
+                    {
+                        if (multi.IsMulti && !multi.IsDestroyed && Math.Abs(multi.X - player.X) <= 24 && Math.Abs(multi.Y - player.Y) <= 24)
+                        {
+                            Log.Info($"[ECS] boat: multi 0x{multi.Serial:X8} graphic 0x{multi.Graphic:X4} at {multi.X},{multi.Y},{multi.Z} offset ({multi.Offset.X},{multi.Offset.Y},{multi.Offset.Z})");
+                        }
+                    }
+
+                    return false;
 
                 case "items":
                     foreach (Item it in world.Items.Values)

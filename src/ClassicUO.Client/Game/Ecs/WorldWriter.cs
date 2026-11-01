@@ -224,6 +224,13 @@ namespace ClassicUO.Game
             {
                 for (int i = 0; i < _deferredBoatClears.Count; i++)
                 {
+#if CUO_DEVTOOLS
+                    // gate evidence (part 7, Codex audit P3 #2): a deferred clear that finds queued steps resets offsets
+                    if (_world.BoatMovingManager.DescribeQueuedSteps(_deferredBoatClears[i]) is { } queued)
+                    {
+                        Log.Info($"[funnel] deferred boat clear 0x{_deferredBoatClears[i]:X8}: {queued}");
+                    }
+#endif
                     _world.BoatMovingManager.ClearSteps(_deferredBoatClears[i]);
                 }
             }
@@ -2118,6 +2125,26 @@ namespace ClassicUO.Game
         }
 
         /// <summary>
+        /// 0xF6 without smooth boat movement (the profile's <c>UseSmoothBoatMovement</c> off, the default): the boat jumps to
+        /// the packet's position, <c>SetInWorldTile</c> (position, screen position flag, re-added to its tile), as the handler
+        /// did before T1; the handler then regenerates its house and moves the passengers (UpdatePlayer, UpdateGameObject).
+        /// Not folded (as <see cref="CompleteBoatStep"/>). Rejections as <see cref="CompleteBoatStep"/> (found by the part 7
+        /// gate: the boat's first live moves showed <c>SetInWorldTile</c> writing from <c>PacketHandlers.BoatMoving</c>).
+        /// </summary>
+        public void JumpBoat(Item boat, ushort x, ushort y, sbyte z)
+        {
+            if (boat == null || !Admitted(nameof(JumpBoat), boat.Serial) || !Accepted(boat, nameof(JumpBoat)))
+            {
+                return;
+            }
+
+            using (Open(boat, null))
+            {
+                boat.SetInWorldTile(x, y, z);
+            }
+        }
+
+        /// <summary>
         /// An object on a boat whose step is done (<c>BoatMovingManager.UpdateEntitiesInside</c>): the item or mobile takes
         /// its new position (the boat's minus its offset on deck), refreshes its screen position (the player's position
         /// callbacks run, unfolded), its offset is zeroed and it is re-added to its tile. Rejections as
@@ -2186,6 +2213,97 @@ namespace ClassicUO.Game
             }
         }
 
+        // ---- funnel part 7, group 4: the per-frame offset interpolation between steps (Mobile.ProcessSteps,
+        // BoatMovingManager.Update). Each runs the old writes in their old order inside a scope that owns the object,
+        // unfolded and committing nothing: an offset is not a record field and no input (the ECS sprite extract reads the
+        // object's offset each frame), so nothing is pushed, as before T1. The caller computes the values from its step, as
+        // the old code did (the frame delay, the step's timing and MovementSpeed.GetPixelOffset stay with the step's owner).
+
+        /// <summary>
+        /// <c>Mobile.ProcessSteps</c> between two steps: the walk offset toward the front step, <c>OffsetZ</c>, then
+        /// <c>OffsetX</c> and <c>OffsetY</c>, the casts' values. Called per frame from the update loops with the instance they
+        /// iterate: admission as <see cref="CompleteStep"/> (an instance this World does not hold for its serial is written
+        /// as before T1; only an instance of another World is a violation, rejected: nothing changes).
+        /// </summary>
+        public void InterpolateStep(Mobile mobile, sbyte x, sbyte y, sbyte z)
+        {
+            if (mobile == null || !Admitted(nameof(InterpolateStep), mobile.Serial))
+            {
+                return;
+            }
+
+            if (mobile.World != _world)
+            {
+                Reject(Violation.NotHeld, $"WorldWriter.InterpolateStep: 0x{mobile.Serial:X8} belongs to another World", rejected: true);
+
+                return;
+            }
+
+            using (Open(mobile, null))
+            {
+                mobile.OffsetZ = z;
+                mobile.OffsetX = x;
+                mobile.OffsetY = y;
+            }
+        }
+
+        /// <summary>
+        /// <c>BoatMovingManager.Update</c> between two boat steps: the boat's offset toward the front step, <c>OffsetZ</c>,
+        /// then <c>OffsetX</c> and <c>OffsetY</c>. Rejections as <see cref="CompleteBoatStep"/>.
+        /// </summary>
+        public void InterpolateBoat(Item boat, sbyte x, sbyte y, sbyte z)
+        {
+            if (boat == null || !Admitted(nameof(InterpolateBoat), boat.Serial) || !Accepted(boat, nameof(InterpolateBoat)))
+            {
+                return;
+            }
+
+            using (Open(boat, null))
+            {
+                boat.OffsetZ = z;
+                boat.OffsetX = x;
+                boat.OffsetY = y;
+            }
+        }
+
+        /// <summary>
+        /// <c>BoatMovingManager.Update</c> while a boat step is under way: each component of the boat's multi
+        /// (<paramref name="house"/>, the boat's own; its components are not world objects of their own) takes the boat's
+        /// offset, in the components' order. Rejections as <see cref="CompleteBoatStep"/>.
+        /// </summary>
+        public void FollowBoatComponents(Item boat, House house)
+        {
+            if (boat == null || house == null || !Admitted(nameof(FollowBoatComponents), boat.Serial) || !Accepted(boat, nameof(FollowBoatComponents)))
+            {
+                return;
+            }
+
+            using (Open(boat, null))
+            {
+                foreach (Multi c in house.Components)
+                {
+                    c.Offset = boat.Offset;
+                }
+            }
+        }
+
+        /// <summary>
+        /// <c>BoatMovingManager.UpdateEntitiesInside</c> while a boat step is under way: an item or mobile on the boat takes
+        /// the boat's offset <paramref name="offset"/>. Rejections as <see cref="MoveBoatPassenger"/>.
+        /// </summary>
+        public void FollowBoat(Entity passenger, Microsoft.Xna.Framework.Vector3 offset)
+        {
+            if (passenger == null || !Admitted(nameof(FollowBoat), passenger.Serial) || !Accepted(passenger, nameof(FollowBoat)))
+            {
+                return;
+            }
+
+            using (Open(passenger, null))
+            {
+                passenger.Offset = offset;
+            }
+        }
+
         /// <summary>
         /// 0xBF.1B (new spellbook content): finds or creates the spellbook, writes its graphic, empties its child list and
         /// syncs it (as before T1: unfolded, the old Sync), then links one detached entry per known spell (bit i of
@@ -2233,6 +2351,367 @@ namespace ClassicUO.Game
             }
 
             return spellbook;
+        }
+
+        // ---- funnel part 7, group 1: the small writers. Name, Price and SpeedMode are cache-only (no mirror record field and no
+        // MobileInputs reads them); war mode and IsDead are inputs (MobileInputRules), so those operations fold the mobile and
+        // commit its inputs once (the setter's push before T1). The corpse equipment is an item placement into a container.
+
+        /// <summary>
+        /// The name writers: 0x98 (UpdateName), the speech handlers' name of an unnamed speaker (0x1C, 0xAE), 0xC1/0xCC
+        /// (DisplayClilocString) for an unnamed speaker, 0xD6 (MegaCliloc) for an item, 0xBF.10's item name and 0x74's shop
+        /// entries (BuyList). Cache-only. The handlers keep their reads (the empty-name checks) and run everything else as
+        /// before. An entity this World does not hold is a violation, rejected (no pre-T1 path: the handlers pass what they
+        /// just looked up), except the detached <c>World.Player</c>, written as before T1.
+        /// </summary>
+        public void SetName(Entity entity, string name)
+        {
+            if (entity == null || !Admitted(nameof(SetName), entity.Serial) || !Accepted(entity, nameof(SetName)))
+            {
+                return;
+            }
+
+            using (Open(entity, null))
+            {
+                entity.Name = name;
+            }
+        }
+
+        /// <summary>
+        /// 0x74 (BuyList): a shop entry's price. Cache-only. Rejections as <see cref="SetName"/>.
+        /// </summary>
+        public void SetPrice(Item item, uint price)
+        {
+            if (item == null || !Admitted(nameof(SetPrice), item.Serial) || !Accepted(item, nameof(SetPrice)))
+            {
+                return;
+            }
+
+            using (Open(item, null))
+            {
+                item.Price = price;
+            }
+        }
+
+        /// <summary>
+        /// 0xBF.26 (the player's movement speed mode). Cache-only. Rejections as <see cref="SetName"/>.
+        /// </summary>
+        public void SetSpeedMode(Mobile mobile, CharacterSpeedType mode)
+        {
+            if (mobile == null || !Admitted(nameof(SetSpeedMode), mobile.Serial) || !Accepted(mobile, nameof(SetSpeedMode)))
+            {
+                return;
+            }
+
+            using (Open(mobile, null))
+            {
+                mobile.SpeedMode = mode;
+            }
+        }
+
+        /// <summary>
+        /// 0x72 (Warmode): the player's war mode, an input (<c>PlayerMobile.InWarMode</c>; for any other mobile the setter is
+        /// empty and war mode is a flag). The mobile is folded and its inputs are committed once (the setter's push before
+        /// T1). Rejections as <see cref="SetName"/>; the detached <c>World.Player</c> is written unfolded (nothing of it
+        /// reaches the ECS).
+        /// </summary>
+        public void SetWarMode(Mobile mobile, bool warMode)
+        {
+            if (mobile == null || !Admitted(nameof(SetWarMode), mobile.Serial) || !Accepted(mobile, nameof(SetWarMode)))
+            {
+                return;
+            }
+
+            bool detached = !Holds(mobile);
+
+            using (Open(mobile, detached ? null : mobile))
+            {
+                mobile.InWarMode = warMode;
+                _world.Ecs.CommitMobileInputs(mobile);
+            }
+        }
+
+        /// <summary>
+        /// 0xBF.19 version 0 (a bonded pet's dead state): <c>Mobile.IsDead</c>, an input. Folded, the inputs committed once.
+        /// Rejections as <see cref="SetWarMode"/>.
+        /// </summary>
+        public void SetDead(Mobile mobile, bool dead)
+        {
+            if (mobile == null || !Admitted(nameof(SetDead), mobile.Serial) || !Accepted(mobile, nameof(SetDead)))
+            {
+                return;
+            }
+
+            bool detached = !Holds(mobile);
+
+            using (Open(mobile, detached ? null : mobile))
+            {
+                mobile.IsDead = dead;
+                _world.Ecs.CommitMobileInputs(mobile);
+            }
+        }
+
+        /// <summary>
+        /// 0x89 (CorpseEquipment), one entry that is not the backpack: the item (found or created among the items) leaves its
+        /// old container (the old path published that detached state: Container 0xFFFFFFFF, its other values unchanged), then
+        /// gets the corpse as its Container and the entry's layer, goes to the end of the corpse's child list and is published
+        /// (the old final Sync). No graphic change and no <c>CheckGraphicChange</c> (the old handler ran none). Cancels the
+        /// item's outstanding placements (it leaves its tile).
+        /// </summary>
+        /// <param name="corpse">The handler's <c>World.Get(serial)</c>, captured once before the list and passed to every
+        /// entry, as the old loop used it. Null: nothing happens and null is returned. An instance this World does not hold in
+        /// its table is a violation, rejected (null) before any side effect (no pre-T1 path).</param>
+        public Item PlaceCorpseEquipment(Entity corpse, uint serial, Layer layer)
+        {
+            if (!Admitted(nameof(PlaceCorpseEquipment), serial) || corpse == null)
+            {
+                return null;
+            }
+
+            if (!Holds(corpse))
+            {
+                Reject(Violation.NotHeld, $"WorldWriter.PlaceCorpseEquipment: corpse 0x{corpse.Serial:X8} is not the instance this World holds for its serial", rejected: true);
+
+                return null;
+            }
+
+            uint corpseSerial = corpse.Serial;
+            Item item = _world.GetOrCreateItem(serial);
+
+            // compute: every read of the previous state is here
+            uint oldContainer = item.Container;
+
+            ItemState detached;
+            detached.Serial = item.Serial;
+            detached.IsMulti = item.IsMulti;
+            detached.Graphic = item.Graphic;
+            detached.X = item.X;
+            detached.Y = item.Y;
+            detached.Z = item.Z;
+            detached.Hue = item.Hue;
+            detached.Amount = item.Amount;
+            detached.Flags = item.Flags;
+            detached.Container = 0xFFFF_FFFF;
+            detached.Direction = item.Direction;
+            detached.Layer = item.Layer;
+
+            ItemState v = detached;
+            v.Container = corpseSerial;
+            v.Layer = layer;
+
+            CancelPlacements(item);
+
+            // not folded: no write here has a hook Sync (the Container and Layer setters publish nothing, nor does the unlink),
+            // so the two commits are the only ECS writes, as the old two Syncs were
+            using (Open(item, null))
+            {
+                // the old order: the unlink (gump refresh, list links, tile), the detached state's Sync, then the final one
+                _world.UnlinkFromContainer(item, oldContainer);
+                _world.Ecs.CommitItem(item, in detached);
+                _world.Ecs.CommitItem(item, in v);
+
+                item.Container = v.Container;
+                item.Layer = v.Layer;
+                corpse.PushToBack(item);
+            }
+
+            return item;
+        }
+
+        // ---- funnel part 7, group 2: the death re-key (the plan's Rekey)
+
+        /// <summary>
+        /// 0xAF (DisplayDeath): the dying mobile moves to <c>serial | 0x80000000</c> (its corpse animation runs under that key
+        /// while the server's corpse item takes the old serial's place). Before T1: out of the mobiles table under its serial,
+        /// each child's Container to the new serial, into the table under the new serial (replacing whatever was there, as
+        /// before: an earlier death's re-keyed mobile is not removed), the new Serial, then
+        /// <see cref="WorldEcs.OnSerialChanged"/> (the old entity removed, the new one synced with the mirror bit carried over,
+        /// then each child synced). The same here, in that order, in a scope that owns the mobile and its subtree, not folded:
+        /// the re-key's commit is <c>OnSerialChanged</c>, which reads the entity under its new serial, so it runs after the
+        /// cache writes as before T1 (a T4 move of the serial to the ECS needs a re-key commit that takes the values; see the
+        /// poc-log, "T1 funnel, part 7").
+        /// </summary>
+        /// <param name="mobile">The handler's <c>World.Mobiles.Get(serial)</c> (never the player: the handler returns first).
+        /// One this World does not hold for its serial is a violation, rejected (0, nothing changes; no pre-T1 path: the
+        /// handler passes what it just looked up, so the old <c>Mobiles.Remove</c> always succeeded).</param>
+        /// <returns>The new serial, or 0 when rejected.</returns>
+        public uint RekeyDeadMobile(Mobile mobile)
+        {
+            if (mobile == null || !Admitted(nameof(RekeyDeadMobile), mobile.Serial))
+            {
+                return 0;
+            }
+
+            if (!Holds(mobile))
+            {
+                Reject(Violation.NotHeld, $"WorldWriter.RekeyDeadMobile: 0x{mobile.Serial:X8} is not the mobile this World holds for its serial", rejected: true);
+
+                return 0;
+            }
+
+            // compute
+            uint oldSerial = mobile.Serial;
+            uint serial = oldSerial | 0x8000_0000;
+
+            using (Open(mobile, null))
+            {
+#if CUO_DEVTOOLS
+                if (FunnelCheck.Enabled)
+                {
+                    CollectSubtree(mobile);
+                }
+#endif
+
+                _world.Mobiles.Remove(oldSerial);
+
+                for (LinkedObject i = mobile.Items; i != null; i = i.Next)
+                {
+                    ((Item)i).Container = serial;
+                }
+
+                _world.Mobiles[serial] = mobile;
+                mobile.Serial = serial;
+                _world.Ecs.OnSerialChanged(oldSerial, mobile);
+            }
+
+            return serial;
+        }
+
+        // ---- funnel part 7, group 3: the per-frame animation (Mobile.Update after the ProcessAnimation split)
+
+        /// <summary>
+        /// The per-frame frame advance of a mobile (<c>Mobile.Update</c> → <c>AdvanceFrame</c>, once its frame is due): with
+        /// <paramref name="frameCount"/> &gt; 0 (the frames of its current animation group and direction, read by the caller
+        /// from the animation data) the timer steps (<c>AnimationTiming.Advance</c>), its frame count and repeat state are
+        /// written, a finished animation is reset (<c>SetAnimation(0xFF)</c>, which also draws the next idle delay) and the
+        /// frame index is written; then, in every case, the next frame's due time (<c>LastAnimationChangeTime</c>). The old
+        /// order. None of it is a record field or an input; the due times are the clock, which only <c>SetAnimation</c> pushes
+        /// here (the other setters push nothing): the update loops publish the rest after <c>Mobile.Update</c>
+        /// (<c>WorldEcs.PushClock</c> on the E4 path), as before T1. So the operation is not folded and commits nothing: a
+        /// fold would drop SetAnimation's push and a commit would add one the old path did not make.
+        /// <para>Returns true when the mobile's corpse animation is over (a death-rekeyed serial whose animation wrapped, or
+        /// that has no frames). Then this operation writes only the timer fields, and the caller passes
+        /// <paramref name="frame"/> and <paramref name="due"/> to <see cref="RemoveDeadMobile"/>, which removes the mobile and
+        /// then writes them, as before T1 (the removal ran between the timer fields and the frame index; <c>Destroy</c> resets
+        /// the due time, and the old code wrote the frame and the due time to the removed mobile after it).</para>
+        /// <para>Called per frame from the update loops (the legacy loop, the E4 clock path, its skipped-mobile check), which
+        /// iterate the mobiles table; an instance this World does not hold for its serial is written as before T1 (every push
+        /// ignores it), like <see cref="CompleteStep"/>. Only an instance of another World is a
+        /// violation, rejected (nothing changes).</para>
+        /// </summary>
+        public bool AdvanceAnimation(Mobile mobile, int frameCount, out int frame, out long due)
+        {
+            frame = -1;
+            due = 0;
+
+            if (mobile == null || !Admitted(nameof(AdvanceAnimation), mobile.Serial))
+            {
+                return false;
+            }
+
+            if (mobile.World != _world)
+            {
+                Reject(Violation.NotHeld, $"WorldWriter.AdvanceAnimation: 0x{mobile.Serial:X8} belongs to another World", rejected: true);
+
+                return false;
+            }
+
+            bool dead = (mobile.Serial & 0x8000_0000) != 0;
+
+            // compute: the timer step from the current state, before any write
+            int delay = Constants.CHARACTER_ANIMATION_DELAY;
+            AnimationTimer timer = default;
+            AnimationAdvance advance = default;
+            bool remove = dead;
+
+            if (frameCount > 0)
+            {
+                timer = mobile.AnimationTimerState;
+                delay = AnimationTiming.Advance(ref timer, frameCount, out advance);
+                remove = dead && advance == AnimationAdvance.Wrapped;
+                frame = timer.Frame;
+            }
+
+            due = Time.Ticks + delay;
+
+            using (Open(mobile, null))
+            {
+                if (frameCount > 0)
+                {
+                    mobile.ApplyAnimationTimer(in timer);
+
+                    if (advance == AnimationAdvance.Finished)
+                    {
+                        mobile.SetAnimation(0xFF);
+                    }
+                }
+
+                if (!remove)
+                {
+                    if (frame >= 0)
+                    {
+                        mobile.AnimIndex = (byte)frame;
+                    }
+
+                    mobile.LastAnimationChangeTime = due;
+                }
+            }
+
+            return remove;
+        }
+
+        /// <summary>
+        /// The end of a corpse animation (<c>Mobile.Update</c>, when <see cref="AdvanceAnimation"/> returned true): the
+        /// re-keyed mobile leaves the corpse manager (<c>CorpseManager.Remove(0, serial)</c>) and is removed with everything it
+        /// wears or holds and destroyed, staying in the mobiles table until the frame's destroyed list (<c>World.RemoveMobile</c>
+        /// without force, as before T1). A removal like <see cref="SweepMobile"/>: it owns the removed subtree, writes no value
+        /// of its own, does not fold, and first cancels the outstanding placements of the mobile and of everything removed. A
+        /// destroyed mobile is a no-op. One this World does not hold for its serial is a violation, rejected (nothing is
+        /// removed; no pre-T1 path: the update loops pass what they iterate). After the removal, the frame index (when
+        /// <paramref name="frame"/> &gt;= 0) and the due time <see cref="AdvanceAnimation"/> computed are written to the removed
+        /// mobile, as the old code did.
+        /// </summary>
+        public void RemoveDeadMobile(Mobile mobile, int frame, long due)
+        {
+            if (mobile == null || !Admitted(nameof(RemoveDeadMobile), mobile.Serial))
+            {
+                return;
+            }
+
+            if (!Holds(mobile))
+            {
+                Reject(Violation.NotHeld, $"WorldWriter.RemoveDeadMobile: 0x{mobile.Serial:X8} is not the mobile this World holds for its serial", rejected: true);
+
+                return;
+            }
+
+            if (mobile.IsDestroyed)
+            {
+                return;
+            }
+
+            uint serial = mobile.Serial;
+            CancelSubtreePlacements(mobile);
+
+            using (Open(mobile, null))
+            {
+#if CUO_DEVTOOLS
+                if (FunnelCheck.Enabled)
+                {
+                    CollectSubtree(mobile);
+                }
+#endif
+
+                _world.CorpseManager.Remove(0, serial);
+                _world.RemoveMobile(serial);
+
+                if (frame >= 0)
+                {
+                    mobile.AnimIndex = (byte)frame;
+                }
+
+                mobile.LastAnimationChangeTime = due;
+            }
         }
 
         // the held check of the status operations: the instance this World holds for the entity's serial, or the detached

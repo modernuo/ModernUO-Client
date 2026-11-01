@@ -36,14 +36,14 @@ src/ClassicUO.Client/Game/GameObjects/Item.cs|Serial|1
 src/ClassicUO.Client/Game/GameObjects/Item.cs|UsedLayer|1
 src/ClassicUO.Client/Game/GameObjects/Item.cs|_isMulti|1
 src/ClassicUO.Client/Game/GameObjects/Land.cs|Graphic|1
-src/ClassicUO.Client/Game/GameObjects/Mobile.cs|AnimIndex|3
+src/ClassicUO.Client/Game/GameObjects/Mobile.cs|AnimIndex|2
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|AnimationFrameCount|3
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|AnimationFromServer|2
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|IsFemale|1
-src/ClassicUO.Client/Game/GameObjects/Mobile.cs|LastAnimationChangeTime|3
+src/ClassicUO.Client/Game/GameObjects/Mobile.cs|LastAnimationChangeTime|2
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|LastStepSoundTime|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|LastStepTime|1
-src/ClassicUO.Client/Game/GameObjects/Mobile.cs|Offset|4
+src/ClassicUO.Client/Game/GameObjects/Mobile.cs|Offset|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|Race|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|Serial|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|StepSoundOffset|1
@@ -69,7 +69,6 @@ src/ClassicUO.Client/Game/GameObjects/PlayerMobile.cs|LastStepTime|1
 src/ClassicUO.Client/Game/GameObjects/PlayerMobile.cs|Steps|1
 src/ClassicUO.Client/Game/GameObjects/PlayerMobile.cs|_inWarMode|1
 src/ClassicUO.Client/Game/GameObjects/Static.cs|Graphic|2
-src/ClassicUO.Client/Game/Managers/BoatMovingManager.cs|Offset|4
 src/ClassicUO.Client/Game/Managers/BoatMovingManager.cs|X|1
 src/ClassicUO.Client/Game/Managers/BoatMovingManager.cs|Y|1
 src/ClassicUO.Client/Game/Managers/BoatMovingManager.cs|Z|1
@@ -94,11 +93,3 @@ src/ClassicUO.Client/Game/UI/Gumps/RaceChangeGump.cs|IsFemale|1
 src/ClassicUO.Client/Game/UI/Gumps/RaceChangeGump.cs|Layer|1
 src/ClassicUO.Client/Game/UI/Gumps/RaceChangeGump.cs|Race|1
 src/ClassicUO.Client/Game/World.cs|Container|1
-src/ClassicUO.Client/Network/PacketHandlers.cs|Container|2
-src/ClassicUO.Client/Network/PacketHandlers.cs|InWarMode|1
-src/ClassicUO.Client/Network/PacketHandlers.cs|IsDead|1
-src/ClassicUO.Client/Network/PacketHandlers.cs|Layer|1
-src/ClassicUO.Client/Network/PacketHandlers.cs|Name|10
-src/ClassicUO.Client/Network/PacketHandlers.cs|Price|1
-src/ClassicUO.Client/Network/PacketHandlers.cs|Serial|1
-src/ClassicUO.Client/Network/PacketHandlers.cs|SpeedMode|1
