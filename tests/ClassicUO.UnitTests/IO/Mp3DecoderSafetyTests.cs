@@ -293,7 +293,7 @@ namespace ClassicUO.UnitTests.IO
                 Thread.SpinWait(iter * 50);
                 d.Dispose();
 
-                disposer.Join();
+                disposer.Join(TimeSpan.FromSeconds(30)).Should().BeTrue("the disposer thread finishes");
                 reader.Join(TimeSpan.FromSeconds(10)).Should().BeTrue("the reader stops once the decoder is disposed");
                 unexpected.Should().BeNull();
                 d.IsDisposed.Should().BeTrue();
