@@ -416,6 +416,10 @@ namespace ClassicUO.Ecs
                 }
 
                 EnterWorn(worn.Parent, worn.Layer, serial, _childStamp);
+
+                // Codex audit P2 (#1): the wearer's EquipmentSlots are built from WornLayers; a re-order can change a
+                // layer's first item, so the slots rebuild (the normal dirty dispatch, not only an explicit Rebuild)
+                MarkEquipmentDirty(worn.Parent);
             }
 
             // T2: the parent's order changed (or, from 0, the item joined its contents)
@@ -452,6 +456,9 @@ namespace ClassicUO.Ecs
             if (oldStamp != 0 && e.TryGetComponent(out EquippedOn worn))
             {
                 LeaveWorn(worn.Parent, worn.Layer, serial);
+
+                // Codex audit P2 (#1): the item left the wearer's worn set, so its EquipmentSlots rebuild
+                MarkEquipmentDirty(worn.Parent);
             }
 
             return true;
