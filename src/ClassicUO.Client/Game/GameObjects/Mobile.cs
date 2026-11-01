@@ -951,7 +951,8 @@ namespace ClassicUO.Game.GameObjects
                 {
                     if (AnimationFromServer)
                     {
-                        SetAnimation(0xFF);
+                        // T1 (funnel part 8): a step ends the server's animation through the funnel
+                        World.Writer.EndServerAnimation(this);
                     }
 
                     int delay = (int)Time.Ticks - (int)LastStepTime;

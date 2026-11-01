@@ -409,6 +409,77 @@ namespace ClassicUO.UnitTests.Ecs
             (corpse.AnimIndex, corpse.LastAnimationChangeTime).Should().Be(held);
             w.Writer.Violations.Should().Be(1);
         }
+
+        // ---- group 3: a server animation that a step ends (ProcessSteps' SetAnimation(0xFF); ProcessSteps needs Client.Game,
+        // so the operation it now calls is compared with the old call)
+
+        [Theory]
+        [InlineData(AnimPacket.CharacterAnimation)]
+        [InlineData(AnimPacket.NewCharacterAnimation)]
+
+        public void EndServerAnimation_Equals_The_Old_SetAnimation(AnimPacket kind)
+        {
+            World oldWorld = Build(Start.Walking), newWorld = Build(Start.Walking);
+            newWorld.Writer.ThrowOnViolation = true;
+            Mobile a = oldWorld.Mobiles.Get(MOB), b = newWorld.Mobiles.Get(MOB);
+            Pair(() => OldAnimate(a, kind), () => OldAnimate(b, kind));
+            b.AnimationFromServer.Should().BeTrue();
+            Time.Ticks = NOW + 300;
+            long ca = oldWorld.Ecs.ClockWrites, cb = newWorld.Ecs.ClockWrites;
+
+            Pair(() => a.SetAnimation(0xFF), () => newWorld.Writer.EndServerAnimation(b));
+            Time.Ticks = NOW;
+
+            AssertSameWorld(oldWorld, newWorld);
+            ((byte)FGroup.GetValue(b), b.AnimationFromServer, (long)FIdle.GetValue(b)).Should().Be(((byte)FGroup.GetValue(a), false, (long)FIdle.GetValue(a)));
+            (newWorld.Ecs.ClockWrites - cb).Should().Be(oldWorld.Ecs.ClockWrites - ca).And.BeGreaterThan(0, "SetAnimation pushes the clock, as before");
+            newWorld.Writer.Violations.Should().Be(0);
+            newWorld.Writer.InScope.Should().BeFalse();
+            newWorld.Ecs.IsFolding.Should().BeFalse();
+        }
+
+        [Fact]
+        public void EndServerAnimation_Writes_A_Stale_Mobile_Rejects_Another_Worlds_And_Does_Not_Nest()
+        {
+            foreach (bool throws in new[] { true, false })
+            {
+                World world = BuildIdle(IdleStart.Animating), other = BuildIdle(IdleStart.Animating);
+                world.Writer.ThrowOnViolation = throws;
+                Mobile foreign = other.Mobiles.Get(MOB);
+                int before = foreign.UpdateStateHash();
+                Action act = () => world.Writer.EndServerAnimation(foreign);
+
+                if (throws)
+                {
+                    act.Should().Throw<ArgumentException>();
+                }
+                else
+                {
+                    act();
+                }
+
+                foreign.UpdateStateHash().Should().Be(before);
+                world.Writer.Violations.Should().Be(1);
+            }
+
+            World w = BuildIdle(IdleStart.Animating);
+            w.Writer.ThrowOnViolation = true;
+            Mobile stale = Mobile.Create(w, MOB);
+            stale.AnimationFromServer = true;
+            w.Writer.EndServerAnimation(stale);
+            stale.AnimationFromServer.Should().BeFalse();
+            w.Writer.Violations.Should().Be(0);
+
+            w.Writer.ThrowOnViolation = false;
+            Mobile m = w.Mobiles.Get(MOB);
+            int held = m.UpdateStateHash();
+            w.Ecs.BeginFold(w.Mobiles.Get(OTHER));
+            w.Writer.EndServerAnimation(m);
+            w.Ecs.EndFold(w.Mobiles.Get(OTHER));
+            m.UpdateStateHash().Should().Be(held);
+            m.AnimationFromServer.Should().BeTrue();
+            w.Writer.Violations.Should().Be(1);
+        }
     }
 
     [Collection(nameof(FunnelCheckCollection))]
@@ -480,6 +551,24 @@ namespace ClassicUO.UnitTests.Ecs
 
             (corpse.AnimIndex, corpse.LastAnimationChangeTime).Should().Be(((byte)2, 100_160L));
             FunnelCheck.Total.Should().Be(0, "Item.ProcessAnimation's frame and due time");
+        }
+
+        [Fact]
+        public void EndServerAnimation_Makes_No_Direct_Writes()
+        {
+            if (!FunnelCheck.Available)
+            {
+                return;
+            }
+
+            World world = BuildOne(out Mobile m);
+            world.Writer.AnimateMobile(m, 12, 1, 5, fromServer: true);
+            FunnelCheck.Reset();
+
+            world.Writer.EndServerAnimation(m);
+
+            m.AnimationFromServer.Should().BeFalse();
+            FunnelCheck.Total.Should().Be(0, "ProcessSteps' SetAnimation(0xFF) for a server animation a step ends");
         }
     }
 }

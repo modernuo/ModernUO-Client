@@ -2788,6 +2788,27 @@ namespace ClassicUO.Game
             }
         }
 
+        // ---- funnel part 8, group 3: a server animation that a step ends (Mobile.ProcessSteps)
+
+        /// <summary>
+        /// <c>Mobile.ProcessSteps</c> while the mobile has a step queued and its current animation came from the server:
+        /// <c>SetAnimation(0xFF)</c> (the default action, the timer reset, the idle delay drawn and its clock push), as before
+        /// T1. Unfolded and committing nothing: SetAnimation's own push is the old one. Admission as <see cref="IdleAnimation"/>
+        /// (the update loops pass what they iterate).
+        /// </summary>
+        public void EndServerAnimation(Mobile mobile)
+        {
+            if (!PerFrameAdmitted(mobile, nameof(EndServerAnimation)))
+            {
+                return;
+            }
+
+            using (Open(mobile, null))
+            {
+                mobile.SetAnimation(0xFF);
+            }
+        }
+
         // the admission of the per-frame operations of part 8 (as InterpolateStep's): no operation or fold open, and an
         // entity of this World (a stale instance included; only another World's is a violation, rejected)
         private bool PerFrameAdmitted(Entity entity, string operation)
