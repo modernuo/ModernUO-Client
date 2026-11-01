@@ -657,6 +657,7 @@ namespace ClassicUO.UnitTests.Ecs
             newWorld.Writer.Violations.Should().Be(0);
             newWorld.Writer.InScope.Should().BeFalse();
             newWorld.Writer.Owns(newWorld.Mobiles.Get(OTHER)).Should().BeFalse("the scope's ownership of the whole World ends with it");
+            ((bool)typeof(WorldWriter).GetField("_clearingWorld", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!.GetValue(newWorld.Writer)).Should().BeFalse("the next scope must not own the whole World");
         }
 
         [Fact]
