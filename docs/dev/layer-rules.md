@@ -1,7 +1,6 @@
-<!-- TODO: refresh after the layer-rules doc update lands -->
 # Equipment layering rules as data (`layerrules.bin`)
 
-This page describes `layerrules.bin`, the pack file that holds the equipment layering rules (worn-layer draw order, covering and gargoyle remaps) as data. It covers the binary layout, how the converter writes the file, how the client evaluates it, and the setting and environment variables that control it. The file is part of the pack format; see [pack-format.md](pack-format.md) for the shared header, versioning and the other files.
+This page describes `layerrules.bin`, the pack file that holds the equipment layering rules (worn-layer draw order, covering and gargoyle remaps) as data. It covers the binary layout, the JSON form a shard edits, how the converter writes and verifies the file, how the client evaluates it (including the per-mobile cache), and the setting and environment variables that control it. The file is part of the pack format; see [pack-format.md](pack-format.md) for the shared header, versioning and the other files.
 
 ## What the rules replace
 
@@ -67,15 +66,50 @@ The default rules live in code: `Uo.Pack.LayerRulesDefault.Create()` (`poc/Uo.Pa
 
 ## How the converter produces it
 
-The file has no install input. Stage `layers` of `poc/Uo.Converter` writes `LayerRulesDefault.Create()` to `layerrules.bin` (`poc/Uo.Converter/Program.cs`, `Stage("layerrules", ...)`). A full conversion includes the stage. To add it to an existing pack:
+Stage `layers` of `poc/Uo.Converter` writes `layerrules.bin` (`Stage("layerrules", ...)` in `poc/Uo.Converter/Program.cs`). It reads nothing from the install. A full conversion includes the stage. By default it writes `LayerRulesDefault.Create()`; with `--layer-rules <file.json>` it writes the rules from that JSON file.
+
+| Flag | Effect |
+|---|---|
+| `--only layers` | Convert only this stage into an existing pack and keep every other file. |
+| `--layer-rules <file.json>` | Write the rules from the JSON file (`LayerRulesJson.Load`) instead of the built-in rules. The file is read and checked before the converter clears or writes anything: an error prints `layer rules: <message>` naming the entry and stops the run with exit code 1, and the pack stays as it was. The flag is ignored with a warning when the run does not convert `layers`. |
+| `--export-layer-rules <file.json>` | Write the built-in rules as JSON and exit. It needs no client directory or pack, and writes only that file. |
 
 ```
-dotnet run -c Release --project poc/Uo.Converter -- --out <pack dir> --only layers
+dotnet run -c Release --project poc/Uo.Converter -- --export-layer-rules rules.json
+(edit rules.json)
+dotnet run -c Release --project poc/Uo.Converter -- --uo <client dir> --out <pack dir> --only layers --layer-rules rules.json
 ```
 
-The verify step (`CheckLayerRules` in `poc/Uo.Converter/Verify.cs`) compares an existing `layerrules.bin` byte for byte with the default. It prints `EXACT`, or `MISMATCH` and fails verification for a custom file. A run with `--only` and without `layers` skips the check.
+The built-in rules export and convert back to the identical 3,055 bytes.
+
+The verify step (`CheckLayerRules` in `poc/Uo.Converter/Verify.cs`) compares an existing `layerrules.bin` byte for byte with the JSON given by `--layer-rules`, or with the built-in rules when no JSON is given. It prints `EXACT`, or `MISMATCH` and fails verification. A pack built from a custom JSON therefore shows `MISMATCH` against the built-in rules: pass the same JSON to verify it, also with `--verify-only --only layers --layer-rules <file.json>`. A run with `--only` and without `layers` skips the check.
 
 The pack has no entry in its required-file list for `layerrules.bin`: the file is optional.
+
+## The JSON form
+
+`LayerRulesJson` reads and writes the same data as the binary file. Comments (`//`) and trailing commas are allowed. All four top-level keys are required. An unknown key, a key given twice, an unknown name or a value out of range is an error that names the entry. The converter applies the same checks as the client's loader (see "Load-time checks"), so a file it writes always loads.
+
+```jsonc
+{
+  "layerRules": 1,                      // format version
+  "bodies": [ { "body": "0x0190", "group": "HumanMale" } ],
+  "tables": [ ["Invalid", "Cloak", "Shirt" /* ... 25 layers */] ],
+  "rules": [
+    { "set": "world", "kind": "select", "table": 0, "when": [ { "anim": "Arms", "in": ["0x0210", "0x03B3"] } ] },
+    { "set": "world", "kind": "reorder", "op": "moveTo", "layer": "Pants", "other": "Shirt", "when": [ { "present": "Shirt" } ] },
+    { "set": "world", "kind": "cover", "layer": "Hair", "covered": true, "when": [ { "present": "Helmet" } ] },
+    { "set": "world", "kind": "dirmove", "layer": "Cloak", "directions": [0], "op": "top", "when": [] },
+    { "set": "world", "kind": "remap", "from": "0x01D5", "to": "0x0156", "when": [ { "flag": ["gargoyleDraw"] } ] }
+  ]
+}
+```
+
+- Graphics, AnimIDs and bodies are JSON numbers or strings, decimal (`"400"`) or hex (`"0x0190"`). A range is a string `"lo-hi"`, inclusive. Layers are names (`Invalid`, `OneHanded`, `TwoHanded`, `Shoes`, `Pants`, `Shirt`, `Helmet`, `Gloves`, `Ring`, `Talisman`, `Necklace`, `Hair`, `Waist`, `Torso`, `Bracelet`, `Face`, `Beard`, `Tunic`, `Earrings`, `Arms`, `Cloak`, `Backpack`, `Robe`, `Skirt`, `Legs`) or numbers 0 to 24. Exports use names and 4-digit hex.
+- `bodies` map a body graphic to a group: `Other`, `HumanMale`, `HumanFemale`, `ElfMale`, `ElfFemale`, `GargoyleMale`, `GargoyleFemale`.
+- `tables` are the base draw orders: 25 layers each, every layer once, at most 255 tables.
+- Every rule has `set` (`"paperdoll"` or `"world"`), `kind`, and `when` (all conditions must hold; empty means always). Per kind: `select` takes `table`; `reorder` takes `op` (`moveTo`, `moveAfter`, `swapIfAfter`), `layer` and `other`; `cover` takes `layer` and `covered`; `dirmove` takes `layer`, `directions` (0 to 7, or `"other"` for 8 and up), `op` (`top`, `bottom`, `before`) and `anchor` for `before`; `remap` takes `from` and `to`.
+- Conditions, each with an optional `"not": true`: `{ "present": layer }`, `{ "graphic": layer, "in": [...] }`, `{ "anim": layer, "in": [...] }`, `{ "flag": [...] }` with `female`, `gargoyleDraw` and `cv7000`, `{ "group": [...] }` and `{ "body": [...] }`. The `select`, `reorder` and `dirmove` rules see AnimIDs only (use `anim` or `present`). A `remap` may test only the wearer (`flag`, `group`, `body`).
 
 ## How the client evaluates it
 
@@ -86,16 +120,22 @@ The pack has no entry in its required-file list for `layerrules.bin`: the file i
 
 Callers: `MobileView` (draw and pick), `PaperDollInteractable`, `MobileAnimationSystem` and `MobileSpriteExtract` (ECS slots, with interned per-facing orders in `EquipDirOrders`), and `ItemView` / `ItemSpriteExtract` (corpses).
 
+### The per-mobile cache
+
+The world draw and pick do not evaluate the rules every frame. Each mobile's `WornCache` holds a `LayerDecision` (`LayerRuleEval.cs`, created at first use with the switch on, 408 bytes per mobile) with the wearer's full world-set answer: the filtered base order, the order after the direction moves (filled lazily for each facing class 0 to 7, and one for 8 and up), the covered flag of every worn layer, and the remapped AnimID of every worn layer.
+
+The cache key is everything the rules read: the rules instance, the wearer's subject (body and its group, and the female, gargoyle-draw and 7.0.0.0 flags), the worn slots' version, and the worn items' `Look` stamp (any write to a worn item's graphic or hue). A lookup that sees no equipment change anywhere in the mirror since the last check is a few compares; after a change somewhere, it re-reads the one `Look` stamp. A miss refills the answer from the rules. The facing only selects the direction class to read. The paperdoll and corpses are not cached.
+
 ## Switching it on
 
 | Control | Name | Default | Notes |
 |---|---|---|---|
-| Setting | `ecs_layer_rules` (`Settings.GlobalSettings.EcsLayerRules`, `src/ClassicUO.Client/Configuration/Settings.cs`) | off | Key in `settings.json` next to the executable. |
-| Environment | `CUO_ECS_LAYER_RULES` = `1` or `0` | unset | Overrides the setting. |
+| Setting | `ecs_layer_rules` (`Settings.GlobalSettings.EcsLayerRules`, `src/ClassicUO.Client/Configuration/Settings.cs`) | on | Key in `settings.json` next to the executable. |
+| Environment | `CUO_ECS_LAYER_RULES` = `1` or `0` | unset | Overrides the setting (builds with `CUO_DEVTOOLS` only). |
 | Runtime command | ECS session driver `layerrules on` or `off` (`EcsSessionDriver.cs`) | none | Overrides both. Marks every mobile's equipment dirty so cached slots rebuild. |
 
-Precedence, highest first: driver override, environment, setting (`LayerRuleEval.On`). With the switch off, the client uses the hard-coded `PaperdollOrder`, `IsCovered` and `FixGargoyleEquipments` code.
+Precedence, highest first: driver override, environment, setting (`LayerRuleEval.On`). With the switch off, the client uses the hard-coded `PaperdollOrder`, `IsCovered` and `FixGargoyleEquipments` code, which stays for now as the reference for the checker.
 
 ## The checker: `CUO_LAYER_RULES_CHECK`
 
-Set `CUO_LAYER_RULES_CHECK=1` to compare the two implementations. It works only in builds with the `CUO_DEVTOOLS` define; other builds ignore it (`CheckEnabled` is a constant false). With it on, every order, cover and remap decision in the world, the paperdoll, corpses and the ECS slot rebuild is computed both ways. A difference logs `[layers] mismatch (...)` as a warning (the first 200 only) and counts in `LayerRuleEval.Mismatches`. While the counters change, a summary line `[layers] checks N mismatches M rules <source> ecs_layer_rules=on|off` is logged at most every 5 seconds. The check runs whether the switch is on or off.
+Set `CUO_LAYER_RULES_CHECK=1` to compare the two implementations. It works only in builds with the `CUO_DEVTOOLS` define; other builds ignore it (`CheckEnabled` is a constant false). With it on, every order, cover and remap decision in the world, the paperdoll, corpses and the ECS slot rebuild is computed both ways. A difference logs `[layers] mismatch (...)` as a warning (the first 200 only) and counts in `LayerRuleEval.Mismatches`. While the counters change, a summary line `[layers] checks N mismatches M rules <source> ecs_layer_rules=on|off cache hits H misses X` is logged at most every 5 seconds. The check runs whether the switch is on or off. With the cache in use it also compares each cached answer (order, covered flags, remaps, subject) with a fresh evaluation and reports `(... cache ...)` mismatches.
