@@ -55,19 +55,7 @@ namespace ClassicUO.Game.Scenes
             if (TileOrder.Check)
             {
                 // T6b part 2: the same decision with the other walk (own reach: the first one is what the map keeps)
-                int maxZ = MaxZ;
-                sbyte maxGroundZ = MaxGroundZ;
-                bool noDrawRoofs = NoDrawRoofs;
-                var reach2 = new ChunkReach();
-                Compute(map, tiles, playerX, playerY, playerZ, drawRoofs, !DynamicTileIndex.WalkOn, ref reach2);
-                TileOrder.ReaderCheck(
-                    maxZ == MaxZ && maxGroundZ == MaxGroundZ && noDrawRoofs == NoDrawRoofs && reach.Missing == reach2.Missing,
-                    "MaxDrawZ",
-                    () => $"at {playerX},{playerY},{playerZ}: maxZ {maxZ}/{MaxZ} ground {maxGroundZ}/{MaxGroundZ} noDrawRoofs {noDrawRoofs}/{NoDrawRoofs}"
-                );
-                MaxZ = maxZ;
-                MaxGroundZ = maxGroundZ;
-                NoDrawRoofs = noDrawRoofs;
+                CheckCompute(map, tiles, playerX, playerY, playerZ, drawRoofs, reach.Missing);
             }
 
             map.SetDecisionReach(reach);
@@ -82,6 +70,24 @@ namespace ClassicUO.Game.Scenes
             Computations++;
 
             return true;
+        }
+
+        // kept out of Update so the lambda's closure is only allocated when CUO_TILE_ORDER_CHECK is on
+        private void CheckCompute(Map.Map map, StaticTiles[] tiles, int playerX, int playerY, int playerZ, bool drawRoofs, int missing)
+        {
+            int maxZ = MaxZ;
+            sbyte maxGroundZ = MaxGroundZ;
+            bool noDrawRoofs = NoDrawRoofs;
+            var reach2 = new ChunkReach();
+            Compute(map, tiles, playerX, playerY, playerZ, drawRoofs, !DynamicTileIndex.WalkOn, ref reach2);
+            TileOrder.ReaderCheck(
+                maxZ == MaxZ && maxGroundZ == MaxGroundZ && noDrawRoofs == NoDrawRoofs && missing == reach2.Missing,
+                "MaxDrawZ",
+                () => $"at {playerX},{playerY},{playerZ}: maxZ {maxZ}/{MaxZ} ground {maxGroundZ}/{MaxGroundZ} noDrawRoofs {noDrawRoofs}/{NoDrawRoofs}"
+            );
+            MaxZ = maxZ;
+            MaxGroundZ = maxGroundZ;
+            NoDrawRoofs = noDrawRoofs;
         }
 
         // the upstream decision, unchanged but for the tracked chunk lookups (Map.GetChunkForDecision)
