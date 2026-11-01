@@ -39,9 +39,21 @@ namespace ClassicUO.Ecs
         public byte Value;
     }
 
-    public struct Amount : IComponent
+    // The item-only record fields, in one component every item has from its creation (T1 part 9: an item's archetype keeps
+    // the width it had before -ecscheck v2, and the funnel's commit writes all three with one lookup and no archetype move):
+    // - Amount;
+    // - Layer: every item's (EquippedOn has it only for worn items);
+    // - Stamp: its place in its parent's child list (for T2). 0 = not attached (in no parent's child list: on the ground,
+    //   never linked, or linked under a parent that did not exist yet, which ClassicUO never adopts); otherwise a monotonic
+    //   stamp the funnel takes at every PushToBack (arrival order; a re-push moves the child to the back), so a parent's
+    //   attached children sorted by stamp are the GameObject linked list. A change of parent without a push detaches
+    //   (WorldMirror.UpsertItem). 64 bits: never wraps (at a billion stamps a second, after 584 years). Friflo's index order
+    //   is not stable across removes, so the order lives here.
+    public struct ItemData : IComponent
     {
-        public ushort Value;
+        public ulong Stamp;
+        public ushort Amount;
+        public byte Layer;
     }
 
     // Links are keyed by the parent's serial, not by Entity: ClassicUO accepts children before their
@@ -63,7 +75,7 @@ namespace ClassicUO.Ecs
 
     // -ecscheck v2 (T1 funnel part 9): the cold record fields the funnel commits besides the record. An entity has each
     // only once a funnel operation wrote it (absent = the GameObject's default: null name, 0 hits, Unknown notoriety, 0
-    // price); ItemSlot (the Layer and the child order) every item has from its creation.
+    // price). The Layer and the child order are in ItemData, which every item has from its creation.
     public struct EntityName : IComponent
     {
         public string Value;
@@ -82,19 +94,6 @@ namespace ClassicUO.Ecs
     public struct ItemPrice : IComponent
     {
         public uint Value;
-    }
-
-    // Every item's Layer (EquippedOn has it only for worn items) and its place in its parent's child list (T1 part 9, for
-    // T2), in one component every item has from its creation, so the funnel's commit writes both with no archetype move.
-    // Stamp: 0 = not attached (in no parent's child list: on the ground, never linked, or linked under a parent that did not
-    // exist yet, which ClassicUO never adopts); otherwise a monotonic stamp the funnel takes at every PushToBack (arrival
-    // order; a re-push moves the child to the back), so a parent's attached children sorted by stamp are the GameObject
-    // linked list. A change of parent without a push detaches (WorldMirror.UpsertItem). 64 bits: never wraps (at a billion
-    // stamps a second, after 584 years). Friflo's index order is not stable across removes, so the order lives here.
-    public struct ItemSlot : IComponent
-    {
-        public ulong Stamp;
-        public byte Layer;
     }
 
     public struct MobileTag : ITag { }
@@ -404,7 +403,7 @@ namespace ClassicUO.Ecs
             Component<Position>(aot);
             Component<Facing>(aot);
             Component<Flags>(aot);
-            Component<Amount>(aot);
+            Component<ItemData>(aot);
             aot.RegisterIndexedComponentStruct<EquippedOn, uint>();
             _registered.Add(typeof(EquippedOn));
             aot.RegisterIndexedComponentStruct<ContainedIn, uint>();
@@ -426,7 +425,6 @@ namespace ClassicUO.Ecs
             Component<Vitals>(aot);
             Component<MobileNotoriety>(aot);
             Component<ItemPrice>(aot);
-            Component<ItemSlot>(aot);
 
             return aot.CreateSchema();
         }

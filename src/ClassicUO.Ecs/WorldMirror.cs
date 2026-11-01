@@ -152,13 +152,16 @@ namespace ClassicUO.Ecs
                 oldWearer = worn.Parent;
             }
 
-            if (e.IsNull || !e.Tags.Has<ItemTag>())
+            bool created = e.IsNull || !e.Tags.Has<ItemTag>();
+
+            if (created)
             {
                 if (!e.IsNull)
                 {
                     Remove(serial);
                 }
 
+                // T1 part 9: a new record is attached only by the operation's push (attach), with the next stamp
                 e = Store.CreateEntity
                 (
                     new Serial { Value = serial },
@@ -167,8 +170,7 @@ namespace ClassicUO.Ecs
                     new Position { X = x, Y = y, Z = z },
                     new Facing { Value = facing },
                     new Flags { Value = flags },
-                    new Amount { Value = amount },
-                    new ItemSlot { Layer = layer },
+                    new ItemData { Amount = amount, Layer = layer, Stamp = attach ? ++_childStamp : 0 },
                     Tags.Get<ItemTag>()
                 );
 
@@ -178,24 +180,27 @@ namespace ClassicUO.Ecs
             else
             {
                 WriteCommon(e, graphic, hue, x, y, z, facing, flags);
-                e.GetComponent<Amount>().Value = amount;
             }
 
             bool moved = SetParent(e, container, layer);
 
-            // T1 part 9: attached (the operation's PushToBack) takes the next stamp; a new parent without a push detaches
-            // (ClassicUO links an item only when its parent exists: an orphan stays out of the list); otherwise it keeps its
-            // place. After SetParent: its component re-adds move the entity, so the ref is taken here
-            ref ItemSlot slot = ref e.GetComponent<ItemSlot>();
-            slot.Layer = layer;
+            // an existing record (T1 part 9): attached (the operation's PushToBack) takes the next stamp; a new parent without
+            // a push detaches (ClassicUO links an item only when its parent exists: an orphan stays out of the list);
+            // otherwise it keeps its place. After SetParent: its component re-adds move the entity, so the ref is taken here
+            if (!created)
+            {
+                ref ItemData slot = ref e.GetComponent<ItemData>();
+                slot.Amount = amount;
+                slot.Layer = layer;
 
-            if (attach)
-            {
-                slot.Stamp = ++_childStamp;
-            }
-            else if (moved)
-            {
-                slot.Stamp = 0;
+                if (attach)
+                {
+                    slot.Stamp = ++_childStamp;
+                }
+                else if (moved)
+                {
+                    slot.Stamp = 0;
+                }
             }
 
             // any write to a worn item (equip, unequip, graphic, hue) invalidates the old and new wearer's slots
@@ -304,12 +309,12 @@ namespace ClassicUO.Ecs
         /// </summary>
         public bool StampChild(uint serial)
         {
-            if (!_bySerial.TryGetValue(serial, out Entity e) || !e.HasComponent<ItemSlot>())
+            if (!_bySerial.TryGetValue(serial, out Entity e) || !e.HasComponent<ItemData>())
             {
                 return false;
             }
 
-            e.GetComponent<ItemSlot>().Stamp = ++_childStamp;
+            e.GetComponent<ItemData>().Stamp = ++_childStamp;
 
             return true;
         }
@@ -320,12 +325,12 @@ namespace ClassicUO.Ecs
         /// </summary>
         public bool DetachChild(uint serial)
         {
-            if (!_bySerial.TryGetValue(serial, out Entity e) || !e.HasComponent<ItemSlot>())
+            if (!_bySerial.TryGetValue(serial, out Entity e) || !e.HasComponent<ItemData>())
             {
                 return false;
             }
 
-            e.GetComponent<ItemSlot>().Stamp = 0;
+            e.GetComponent<ItemData>().Stamp = 0;
 
             return true;
         }
@@ -440,7 +445,7 @@ namespace ClassicUO.Ecs
                 x.Price = price.Value;
             }
 
-            if (e.TryGetComponent(out ItemSlot slot))
+            if (e.TryGetComponent(out ItemData slot))
             {
                 x.ItemLayer = slot.Layer;
                 x.ChildStamp = slot.Stamp;
@@ -485,7 +490,7 @@ namespace ClassicUO.Ecs
 
             if (!r.IsMobile)
             {
-                r.Amount = e.GetComponent<Amount>().Value;
+                r.Amount = e.GetComponent<ItemData>().Amount;
             }
 
             if (e.TryGetComponent(out EquippedOn eq))
