@@ -122,25 +122,46 @@ namespace ClassicUO.Game.Scenes
 
         private void ApplyFoliageTransparency(ushort graphic, int x, int y, int z)
         {
-            GameObject tile = _world.Map.GetTile(x, y);
-
-            if (tile != null)
+            if (TileOrder.Check)
             {
-                for (GameObject obj = tile; obj != null; obj = obj.TNext)
+                // T6b part 2: the objects the list walk and the merged walk would stamp are the same set (order does not matter here)
+                int listCount = CountFoliageMatches(x, y, graphic, z, false);
+                int mergedCount = CountFoliageMatches(x, y, graphic, z, true);
+                TileOrder.ReaderCheck(listCount == mergedCount, "ApplyFoliageTransparency", () => $"{x},{y} graphic {graphic:X4} z {z}: {listCount} vs {mergedCount}");
+            }
+
+            GameObject obj = _world.Map.OpenTile(x, y, true, DynamicTileIndex.WalkOn, out TileReader reader);
+
+            for (; obj != null; obj = reader.Next())
+            {
+                ushort testGraphic = obj.Graphic;
+
+                if (testGraphic == graphic && obj.Z == z)
                 {
-                    ushort testGraphic = obj.Graphic;
-
-                    if (testGraphic == graphic && obj.Z == z)
+                    if (_gpuItemCheckSame && _gpuItemPass == 1)
                     {
-                        if (_gpuItemCheckSame && _gpuItemPass == 1)
-                        {
-                            GpuProbeFoliageStamp(obj);
-                        }
-
-                        obj.FoliageIndex = FoliageIndex;
+                        GpuProbeFoliageStamp(obj);
                     }
+
+                    obj.FoliageIndex = FoliageIndex;
                 }
             }
+        }
+
+        private int CountFoliageMatches(int x, int y, ushort graphic, int z, bool merged)
+        {
+            int n = 0;
+            GameObject obj = _world.Map.OpenTile(x, y, true, merged, out TileReader reader);
+
+            for (; obj != null; obj = reader.Next())
+            {
+                if (obj.Graphic == graphic && obj.Z == z)
+                {
+                    n++;
+                }
+            }
+
+            return n;
         }
 
         private void UpdateObjectHandles(Entity obj, bool useObjectHandles)

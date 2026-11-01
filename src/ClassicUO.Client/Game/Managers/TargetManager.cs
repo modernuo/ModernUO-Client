@@ -3,6 +3,7 @@
 using ClassicUO.Configuration;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
+using ClassicUO.Game.Map;
 using ClassicUO.Game.UI.Gumps;
 using ClassicUO.Input;
 using ClassicUO.Assets;
@@ -404,6 +405,21 @@ namespace ClassicUO.Game.Managers
             }
         }
 
+        private GameObject FindTarget(int x, int y, ushort graphic, short z, bool merged)
+        {
+            GameObject candidate = _world.Map.OpenTile(x, y, true, merged, out TileReader reader);
+
+            for (; candidate != null; candidate = reader.Next())
+            {
+                if (candidate.Graphic == graphic && candidate.Z == z)
+                {
+                    return candidate;
+                }
+            }
+
+            return null;
+        }
+
         public void Target(ushort graphic, ushort x, ushort y, short z, bool wet = false)
         {
             if (!IsTargeting)
@@ -414,16 +430,18 @@ namespace ClassicUO.Game.Managers
             switch (TargetingState)
             {
                 case CursorTarget.CallbackTarget:
-                    GameObject candidate = _world.Map.GetTile(x, y);
+                    GameObject found = FindTarget(x, y, graphic, z, DynamicTileIndex.WalkOn);
 
-                    while (candidate != null)
+                    if (TileOrder.Check)
                     {
-                        if (candidate.Graphic == graphic && candidate.Z == z)
-                        {
-                            _targetCallback?.Invoke(candidate);
-                            break;
-                        }
-                        candidate = candidate.TNext;
+                        // T6b part 2
+                        GameObject other = FindTarget(x, y, graphic, z, !DynamicTileIndex.WalkOn);
+                        TileOrder.ReaderCheck(ReferenceEquals(found, other), "TargetManager.Target", () => $"{x},{y} graphic {graphic:X4} z {z}");
+                    }
+
+                    if (found != null)
+                    {
+                        _targetCallback?.Invoke(found);
                     }
 
                     ClearTargetingWithoutTargetCancelPacket();

@@ -308,7 +308,10 @@ namespace ClassicUO.Game
                 {
                     for (int y = 0; y < 8; y++)
                     {
-                        for (GameObject obj = chunk?.GetHeadObject(x, y); obj != null; obj = obj.TNext)
+                        // order does not matter (each object updates itself); the merged walk also reaches the index's objects
+                        TileReader reader = default;
+
+                        for (GameObject obj = chunk == null ? null : TileReader.Open(chunk, x << 3 | y, DynamicTileIndex.WalkOn, null, out reader); obj != null; obj = reader.Next())
                         {
                             obj.UpdateGraphicBySeason();
                         }

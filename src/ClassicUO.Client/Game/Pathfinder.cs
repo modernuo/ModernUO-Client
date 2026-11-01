@@ -6,6 +6,7 @@ using ClassicUO.Configuration;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
 using ClassicUO.Game.Managers;
+using ClassicUO.Game.Map;
 using ClassicUO.Assets;
 using Microsoft.Xna.Framework;
 using MathHelper = ClassicUO.Utility.MathHelper;
@@ -55,13 +56,36 @@ namespace ClassicUO.Game
 
         private bool CreateItemList(List<PathObject> list, int x, int y, int stepState)
         {
+            bool result = CreateItemList(list, x, y, stepState, DynamicTileIndex.WalkOn);
+
+            if (TileOrder.Check)
+            {
+                // T6b part 2: the same tile with the other walk must give the same objects in the same order
+                var other = new List<PathObject>();
+                bool result2 = CreateItemList(other, x, y, stepState, !DynamicTileIndex.WalkOn);
+                bool same = result == result2 && list.Count == other.Count;
+
+                for (int i = 0; same && i < list.Count; i++)
+                {
+                    PathObject a = list[i], b = other[i];
+                    same = ReferenceEquals(a.Object, b.Object) && a.Flags == b.Flags && a.Z == b.Z && a.AverageZ == b.AverageZ && a.Height == b.Height;
+                }
+
+                TileOrder.ReaderCheck(same, "Pathfinder.CreateItemList", () => $"{x},{y} step {stepState}: {list.Count} vs {other.Count} objects");
+            }
+
+            return result;
+        }
+
+        private bool CreateItemList(List<PathObject> list, int x, int y, int stepState, bool merged)
+        {
             // the draw walk used to load every chunk on screen the first time it saw it; it now loads them over a few frames
             // (Map.UpdateLoading), so chunks within the view range load here on demand and walking right after a teleport
             // sees the same tiles as before
             bool inView = Math.Max(Math.Abs(x - _world.Player.X), Math.Abs(y - _world.Player.Y)) <= _world.ClientViewRange + 8;
-            GameObject tile = _world.Map.GetTile(x, y, inView);
+            GameObject obj = _world.Map.OpenTile(x, y, inView, merged, out TileReader reader);
 
-            if (tile == null)
+            if (obj == null)
             {
                 return false;
             }
@@ -70,14 +94,7 @@ namespace ClassicUO.Game
 
             bool isGM = _world.Player.Graphic == 0x03DB;
 
-            GameObject obj = tile;
-
-            while (obj.TPrevious != null)
-            {
-                obj = obj.TPrevious;
-            }
-
-            for (; obj != null; obj = obj.TNext)
+            for (; obj != null; obj = reader.Next())
             {
                 if (_world.CustomHouseManager != null && obj.Z < _world.Player.Z)
                 {
