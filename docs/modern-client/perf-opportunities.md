@@ -198,7 +198,7 @@ Today the client parses incoming packets in place (`StackDataReader` over fixed 
 - A pipe buffer whose memory is mapped twice back to back in virtual memory, so a read or write that wraps the end is still one contiguous span. That removes the `CircularBuffer` and the wrap handling.
 - Packets are written straight into the pipe's free space and parsed straight from its filled space, with no `ArrayPool` rental and no staging copy.
 
-**References:** `C:/Repositories/IORingGroup` (its CLAUDE.md, README, TestClient and TestServer) and ModernUO's networking code.
+**References:** `C:/Repositories/IORingGroup` (its CLAUDE.md, README, TestClient and TestServer) and ModernUO's networking code in `C:/Repositories/ModernUO`.
 
 **Risk: high.** This touches every packet, the login and relay sequence, compression (Huffman on receive), encryption, plugins that hook send and receive, and the multi-instance requirement (each client needs its own mapping). Do it as a focused project of its own, not alongside other work:
 - byte-for-byte parity tests of send and receive against the current path, including wrap-around at every offset;
