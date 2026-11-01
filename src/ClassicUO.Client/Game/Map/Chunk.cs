@@ -53,6 +53,8 @@ namespace ClassicUO.Game.Map
         public uint GpuSeenFrame = uint.MaxValue - 1;
         public int GpuFreshSteps;
         // W4 (GameSceneGpuItemCache): the chunk's settled ground items' sprite instances; GpuItemsDirty = re-extract
+        /// <summary>T6b: the items and mobiles per tile, sorted by key (null until the first one when maintained).</summary>
+        public DynamicTileIndex Dynamic;
         public Scenes.GpuItemCache GpuItems;
         public bool GpuItemsDirty = true;
         // tiles holding a mobile, and a mobile the walk's max Z stops at (rebuilt with the masks); a mobile on a cached
@@ -363,6 +365,12 @@ namespace ClassicUO.Game.Map
             // T6a: insertion stamp; TileOrder.Key(obj) predicts this list's order from it (CUO_TILE_ORDER_CHECK)
             obj.TileSeq = ++TileOrder.NextSeq;
 
+            // T6b: the dynamic index files the object by the key just stamped (at the same point in update order)
+            if (DynamicTileIndex.Maintain && DynamicTileIndex.Holds(obj))
+            {
+                (Dynamic ??= new DynamicTileIndex()).Add(obj, obj.TileCell);
+            }
+
             if (Tiles[x, y] == null)
             {
                 Tiles[x, y] = obj;
@@ -519,6 +527,7 @@ namespace ClassicUO.Game.Map
             }
 
             IsDestroyed = true;
+            Dynamic?.Clear();
             GpuItems?.Reset();
             Array.Clear(GpuMobiles);
 
@@ -577,6 +586,7 @@ namespace ClassicUO.Game.Map
             }
 
             Mesh.SoftClear();
+            Dynamic?.Clear();
             GpuItems?.Reset();
             Array.Clear(GpuMobiles);
         }

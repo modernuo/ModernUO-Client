@@ -341,6 +341,7 @@ namespace ClassicUO.Game.Scenes
             bool transient = false;
             bool mixed = _gpuItemKeyMixed;
             bool fx = _gpuItemKeyEffects;
+            bool mergedWalk = DynamicTileIndex.WalkOn;
             ulong walk = chunk.GpuWalkMask;
 
             for (int b = 0; b < 64; b++)
@@ -357,7 +358,10 @@ namespace ClassicUO.Game.Scenes
                 int reason = 0;
                 bool any = false, alone = false;
 
-                for (GameObject obj = head; obj != null; obj = obj.TNext)
+                // T6b (world_tile_index): the served run is built in the merged order the walk reads
+                TileWalk tileWalk = default;
+
+                for (GameObject obj = mergedWalk ? TileWalk.Begin(chunk, b, out tileWalk) : head; obj != null; obj = mergedWalk ? tileWalk.Next() : obj.TNext)
                 {
                     // mobiles are walked on their own (GpuServeCachedTile's callers), E6: effects too
                     if (IsGpuBaked(obj) || obj is Mobile || fx && obj is GameEffect)
@@ -397,7 +401,7 @@ namespace ClassicUO.Game.Scenes
                     continue;
                 }
 
-                for (GameObject obj = head; obj != null; obj = obj.TNext)
+                for (GameObject obj = mergedWalk ? TileWalk.Begin(chunk, b, out tileWalk) : head; obj != null; obj = mergedWalk ? tileWalk.Next() : obj.TNext)
                 {
                     if (IsGpuBaked(obj) || obj is Mobile || fx && obj is GameEffect)
                     {
@@ -664,7 +668,13 @@ namespace ClassicUO.Game.Scenes
                 // mobiles or effects too (the tile left walkTiles): one pass over the tile list, walking the mobiles, effects
                 // and walked-alone items in their order (a corpse and a mobile share the animations list, a fading item, a
                 // fading mobile and a fading effect the transparent one)
-                for (GameObject obj = chunk.GetHeadObject(b >> 3, b & 7); obj != null; obj = obj.TNext)
+                // T6b (world_tile_index): the merged order, as the full walk would read it
+                bool mergedWalk = DynamicTileIndex.WalkOn;
+                TileWalk tileWalk = default;
+
+                for (GameObject obj = mergedWalk ? TileWalk.Begin(chunk, b, out tileWalk) : chunk.GetHeadObject(b >> 3, b & 7);
+                     obj != null;
+                     obj = mergedWalk ? tileWalk.Next() : obj.TNext)
                 {
                     if (obj is Mobile)
                     {
