@@ -47,9 +47,9 @@ namespace ClassicUO.Game
             var sb = new StringBuilder();
             sb.Append(CultureInfo.InvariantCulture, $"ecs: Serial=0x{s.Value:X8} Graphic=0x{e.GetComponent<Ecs.Graphic>().Value:X4} Hue=0x{e.GetComponent<Ecs.Hue>().Value:X4} Position=({p.X},{p.Y},{p.Z}) Facing={e.GetComponent<Facing>().Value} Flags=0x{e.GetComponent<Ecs.Flags>().Value:X2}");
 
-            if (e.TryGetComponent(out Amount amount))
+            if (e.TryGetComponent(out ItemData itemData))
             {
-                sb.Append(CultureInfo.InvariantCulture, $" Amount={amount.Value}");
+                sb.Append(CultureInfo.InvariantCulture, $" Amount={itemData.Amount} Layer={itemData.Layer} ChildStamp={itemData.Stamp}");
             }
 
             if (e.TryGetComponent(out EquippedOn worn))

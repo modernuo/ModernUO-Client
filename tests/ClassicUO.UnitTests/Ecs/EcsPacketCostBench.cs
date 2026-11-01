@@ -64,7 +64,9 @@ namespace ClassicUO.UnitTests.Ecs
 
         private static (double us, double bytes) Measure(int packets, Action<int> one)
         {
-            for (int i = 0; i < Math.Min(packets, 20_000); i++)
+            // warmup: one full pass (T1 part 9, Codex audit: a 20,000-call warmup left half of the 8,000-mobile scene's 40,000
+            // worn items to their first commit inside the measured loop)
+            for (int i = 0; i < packets; i++)
             {
                 one(i); // warmup
             }

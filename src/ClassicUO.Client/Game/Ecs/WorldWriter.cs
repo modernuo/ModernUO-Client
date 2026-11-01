@@ -651,8 +651,8 @@ namespace ClassicUO.Game
 
             using (Open(item, item))
             {
-                // 3. write: the ECS, then the cache from v in the old order
-                _world.Ecs.CommitItem(item, in v);
+                // 3. write: the ECS (attached: the push at the end, T1 part 9), then the cache from v in the old order
+                _world.Ecs.CommitItem(item, in v, attach: true);
 
                 item.Graphic = v.Graphic;
 
@@ -681,7 +681,8 @@ namespace ClassicUO.Game
                     item.Container = v.Container;
                 }
 
-                // at the end of the container's child list, also when it already was there (the re-push)
+                // at the end of the container's child list, also when it already was there (the re-push; the commit above
+                // took its child-order stamp)
                 container.PushToBack(item);
             }
 
@@ -897,7 +898,7 @@ namespace ClassicUO.Game
                         _world.UnlinkFromContainer(item, oldContainer);
                         container.PushToBack(item);
                         v.Container = container.Serial;
-                        _world.Ecs.CommitItem(item, in v);
+                        _world.Ecs.CommitItem(item, in v, attach: true);
                         item.Container = v.Container;
 
                         break;
@@ -998,8 +999,9 @@ namespace ClassicUO.Game
                     _world.Ecs.CommitItem(item, in detached);
                 }
 
-                // 3. write: the ECS, then the cache from v in the old order, then the link
-                _world.Ecs.CommitItem(item, in v);
+                // 3. write: the ECS (attached when there is a wearer to link it to; without one an orphan, T1 part 9), then
+                // the cache from v in the old order, then the link
+                _world.Ecs.CommitItem(item, in v, attach: wearer != null);
 
                 item.Graphic = v.Graphic;
                 item.Layer = v.Layer;
@@ -1157,7 +1159,7 @@ namespace ClassicUO.Game
                 item.Amount = v.Amount;
 
                 _world.UnlinkFromContainer(item, oldContainer);
-                _world.Ecs.CommitItem(item, in v);
+                _world.Ecs.CommitItem(item, in v, attach: true);
 
                 item.Container = v.Container;
                 item.Layer = layer;
@@ -1420,6 +1422,7 @@ namespace ClassicUO.Game
 
             using (Open(mobile, detached ? null : mobile))
             {
+                _world.Ecs.CommitNotoriety(mobile, notoriety);
                 mobile.NotorietyFlag = notoriety;
                 _world.Ecs.CommitMobileInputs(mobile);
             }
@@ -1901,6 +1904,7 @@ namespace ClassicUO.Game
 
             using (Open(entity, null))
             {
+                _world.Ecs.CommitVitals(entity, hits, hitsMax);
                 entity.HitsMax = hitsMax;
                 entity.Hits = hits;
 
@@ -1925,6 +1929,8 @@ namespace ClassicUO.Game
 
             using (Open(entity, null))
             {
+                _world.Ecs.CommitName(entity, name);
+                _world.Ecs.CommitVitals(entity, hits, hitsMax);
                 entity.Name = name;
                 entity.Hits = hits;
                 entity.HitsMax = hitsMax;
@@ -2332,6 +2338,16 @@ namespace ClassicUO.Game
 
             using (Open(spellbook, null))
             {
+                // T1 part 9: the clear drops every child from the list without touching its Container; a child World holds
+                // (an item the server put in the book) is no longer attached, committed first
+                for (LinkedObject i = spellbook.Items; i != null; i = i.Next)
+                {
+                    if (i is Item child)
+                    {
+                        _world.Ecs.CommitDetach(child);
+                    }
+                }
+
                 spellbook.Graphic = graphic;
                 spellbook.Clear();
                 _world.Ecs.Sync(spellbook);
@@ -2359,6 +2375,52 @@ namespace ClassicUO.Game
             return spellbook;
         }
 
+        private readonly List<Item> _sorted = new List<Item>();
+
+        /// <summary>
+        /// 0x74 (BuyList) for a shop container with graphic 0x2AF8: the client sorts its child list by X (the original
+        /// client's hard-coded order; <c>SortContents</c>, a stable merge sort). T1 part 9: the new order is computed first
+        /// (stable, by X), each child World holds re-stamped in it (the mirror's child order follows), then the list sorted as
+        /// before. Returns the list's new first child (null for an empty list, or a nested call: rejected, nothing sorted).
+        /// </summary>
+        public LinkedObject SortShopContents(Item container)
+        {
+            if (container == null || !Admitted(nameof(SortShopContents), container.Serial))
+            {
+                return null;
+            }
+
+            using (Open(container, null))
+            {
+                // 2. compute: the stable order by X (insertion sort: equal X keep their list order, as the merge sort)
+                _sorted.Clear();
+
+                for (LinkedObject i = container.Items; i != null; i = i.Next)
+                {
+                    Item it = (Item)i;
+                    int at = _sorted.Count;
+
+                    while (at > 0 && _sorted[at - 1].X > it.X)
+                    {
+                        at--;
+                    }
+
+                    _sorted.Insert(at, it);
+                }
+
+                // 3. the ECS, then the links
+                foreach (Item it in _sorted)
+                {
+                    _world.Ecs.CommitChildOrder(it);
+                }
+
+                LinkedObject first = container.SortContents<Item>((x, y) => x.X - y.X);
+                _sorted.Clear();
+
+                return first;
+            }
+        }
+
         // ---- funnel part 7, group 1: the small writers. Name, Price and SpeedMode are cache-only (no mirror record field and no
         // MobileInputs reads them); war mode and IsDead are inputs (MobileInputRules), so those operations fold the mobile and
         // commit its inputs once (the setter's push before T1). The corpse equipment is an item placement into a container.
@@ -2379,6 +2441,7 @@ namespace ClassicUO.Game
 
             using (Open(entity, null))
             {
+                _world.Ecs.CommitName(entity, name);
                 entity.Name = name;
             }
         }
@@ -2395,6 +2458,7 @@ namespace ClassicUO.Game
 
             using (Open(item, null))
             {
+                _world.Ecs.CommitPrice(item, price);
                 item.Price = price;
             }
         }
@@ -2514,7 +2578,7 @@ namespace ClassicUO.Game
                 // the old order: the unlink (gump refresh, list links, tile), the detached state's Sync, then the final one
                 _world.UnlinkFromContainer(item, oldContainer);
                 _world.Ecs.CommitItem(item, in detached);
-                _world.Ecs.CommitItem(item, in v);
+                _world.Ecs.CommitItem(item, in v, attach: true);
 
                 item.Container = v.Container;
                 item.Layer = v.Layer;
@@ -2532,10 +2596,14 @@ namespace ClassicUO.Game
         /// each child's Container to the new serial, into the table under the new serial (replacing whatever was there, as
         /// before: an earlier death's re-keyed mobile is not removed), the new Serial, then
         /// <see cref="WorldEcs.OnSerialChanged"/> (the old entity removed, the new one synced with the mirror bit carried over,
-        /// then each child synced). The same here, in that order, in a scope that owns the mobile and its subtree, not folded:
-        /// the re-key's commit is <c>OnSerialChanged</c>, which reads the entity under its new serial, so it runs after the
-        /// cache writes as before T1 (a T4 move of the serial to the ECS needs a re-key commit that takes the values; see the
-        /// poc-log, "T1 funnel, part 7").
+        /// then each child synced). Since funnel part 9 the ECS commit takes its values and runs first, as every other
+        /// operation's: <see cref="WorldEcs.CommitRekey"/> (the old record removed, the record under the new serial from the
+        /// computed <see cref="MobileState"/>, the mirror bit carried over), then each child's <see cref="WorldEcs.CommitItem"/>
+        /// with the new Container; then the cache writes in the old order (out of the table, each child's Container, into the
+        /// table, the Serial); then the derived inputs and clock from the getters
+        /// (<see cref="WorldEcs.CommitMobileInputs(Mobile, EcsEntity)"/>, as every mobile operation). The mirror ends as
+        /// <c>OnSerialChanged</c> left it, and nothing reads the serial or a Container back from the cache (T4 needs this). In
+        /// a scope that owns the mobile and its subtree, not folded.
         /// </summary>
         /// <param name="mobile">The handler's <c>World.Mobiles.Get(serial)</c> (never the player: the handler returns first).
         /// One this World does not hold for its serial is a violation, rejected (0, nothing changes; no pre-T1 path: the
@@ -2568,6 +2636,30 @@ namespace ClassicUO.Game
                 }
 #endif
 
+                // the ECS from the values: the record under the new serial, then each child under its new parent
+                MobileState v;
+                v.Serial = serial;
+                v.Graphic = mobile.Graphic;
+                v.Hue = mobile.Hue;
+                v.X = mobile.X;
+                v.Y = mobile.Y;
+                v.Z = mobile.Z;
+                v.Direction = mobile.Direction;
+                v.Flags = mobile.Flags;
+                v.IsPlayer = false;
+
+                EcsEntity e = _world.Ecs.CommitRekey(mobile, oldSerial, in v);
+
+                // (the list keeps its order under the new parent: each child is re-stamped in it, attached)
+                for (LinkedObject i = mobile.Items; i != null; i = i.Next)
+                {
+                    Item child = (Item)i;
+                    ItemState c = CurrentState(child);
+                    c.Container = serial;
+                    _world.Ecs.CommitItem(child, in c, attach: true);
+                }
+
+                // then the cache, in the old order
                 _world.Mobiles.Remove(oldSerial);
 
                 for (LinkedObject i = mobile.Items; i != null; i = i.Next)
@@ -2577,10 +2669,32 @@ namespace ClassicUO.Game
 
                 _world.Mobiles[serial] = mobile;
                 mobile.Serial = serial;
-                _world.Ecs.OnSerialChanged(oldSerial, mobile);
+
+                // the derived inputs and clock, from the getters (what OnSerialChanged's Sync pushed)
+                _world.Ecs.CommitMobileInputs(mobile, e);
             }
 
             return serial;
+        }
+
+        /// <summary>An item's current values: the starting point of an operation that changes only some of them.</summary>
+        private static ItemState CurrentState(Item item)
+        {
+            ItemState v;
+            v.Serial = item.Serial;
+            v.Graphic = item.Graphic;
+            v.Hue = item.Hue;
+            v.X = item.X;
+            v.Y = item.Y;
+            v.Z = item.Z;
+            v.Direction = item.Direction;
+            v.Flags = item.Flags;
+            v.Amount = item.Amount;
+            v.Container = item.Container;
+            v.Layer = item.Layer;
+            v.IsMulti = item.IsMulti;
+
+            return v;
         }
 
         // ---- funnel part 7, group 3: the per-frame animation (Mobile.Update after the ProcessAnimation split)
@@ -2953,6 +3067,156 @@ namespace ClassicUO.Game
                 foreach (Item item in _world.Items.Values)
                 {
                     _world.RemoveItem(item.Serial);
+                }
+            }
+        }
+
+        // ---- funnel part 9, group 2: the removal sites outside the converted callers (part 8's gate traced its only direct
+        // writes, Item.Destroy's, to World.RemoveItem from callers its two-level trace cut off)
+
+        /// <summary>
+        /// <c>PlayerMobile.CloseBank</c>'s removals (0x20 for the player, and the player's walk before its step): every item
+        /// in the open bank removed with force (<c>World.RemoveItem(item, true)</c>, contents first, as before T1), in the
+        /// bank's child order, in a scope that owns the bank and its subtree, not folded (a removal: no value of its own). The
+        /// caller then empties the bank's list, closes its gump and its Opened flag, as before. Admission as the walk's
+        /// (<see cref="AdmittedPlayerWalk"/>: <c>QueuePlayerStep</c> runs it, and a walk from the player's position or
+        /// direction callback joins the open operation on the player; the joined removal opens no scope and its subtree joins
+        /// the outer scope's), then the player check: only <c>World.Player</c> of this World; anything else is a violation,
+        /// rejected (false: nothing is removed and the caller leaves the bank open). The removed items' placements are
+        /// cancelled first.
+        /// </summary>
+        public bool RemoveBankContents(PlayerMobile player, Item bank)
+        {
+            if (player == null || bank == null || !AdmittedPlayerWalk(player, nameof(RemoveBankContents), out bool joined))
+            {
+                return false;
+            }
+
+            if (player.World != _world || !ReferenceEquals(player, _world.Player))
+            {
+                Reject(Violation.NotHeld, $"WorldWriter.RemoveBankContents: 0x{player.Serial:X8} is not this World's player", rejected: true);
+
+                return false;
+            }
+
+            CancelSubtreePlacements(bank);
+
+            using (joined ? default : Open(bank, null))
+            {
+#if CUO_DEVTOOLS
+                if (FunnelCheck.Enabled)
+                {
+                    CollectSubtree(bank);
+                }
+#endif
+
+                Item first = (Item)bank.Items;
+
+                while (first != null)
+                {
+                    Item next = (Item)first.Next;
+
+                    _world.RemoveItem(first, true);
+
+                    first = next;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// <c>World.Update</c>'s removal of the item the player picked up (<c>GameActions.PickUp</c> sets
+        /// <c>World.ObjectToRemove</c>; the next frame removes it with force, contents first). The old removal in a scope
+        /// that owns the item and its subtree, not folded; its placements are cancelled first. Only the item this World
+        /// holds for its serial (the caller's <c>Items.Get</c>); anything else is a violation, rejected (nothing removed). A
+        /// destroyed held item is left as <c>World.RemoveItem</c> left it (nothing happens).
+        /// </summary>
+        public void RemovePickedUpItem(Item item)
+        {
+            if (item == null || !Admitted(nameof(RemovePickedUpItem), item.Serial))
+            {
+                return;
+            }
+
+            if (!Holds(item))
+            {
+                Reject(Violation.NotHeld, $"WorldWriter.RemovePickedUpItem: 0x{item.Serial:X8} is not the item this World holds for its serial", rejected: true);
+
+                return;
+            }
+
+            CancelSubtreePlacements(item);
+
+            using (Open(item, null))
+            {
+#if CUO_DEVTOOLS
+                if (FunnelCheck.Enabled)
+                {
+                    CollectSubtree(item);
+                }
+#endif
+
+                _world.RemoveItem(item, true);
+            }
+        }
+
+        /// <summary>
+        /// <c>World.InternalMapChangeClear</c> (a map change: <c>World.MapIndex</c>'s setter, 0xBF.08, the map patches'
+        /// reload, EnterWorld without a map): the old body (<see cref="World.MapChangeRemovals"/>: without a kept player the
+        /// map and the player destroyed; every item but the player's (houses dropped from the house manager), then every
+        /// mobile but the player, removed with force) in a scope that owns every object of this World, as
+        /// <see cref="ClearWorld"/>'s. The placements of what it destroyed are cancelled afterwards. A nested call is
+        /// rejected (nothing removed); nothing changes the map inside an operation.
+        /// </summary>
+        public void ClearForMapChange(bool keepPlayer)
+        {
+            if (!Admitted(nameof(ClearForMapChange), 0))
+            {
+                return;
+            }
+
+            using (Open(null, null))
+            {
+                _clearingWorld = true;
+                _world.MapChangeRemovals(keepPlayer);
+            }
+
+            for (int i = _placements.Count - 1; i >= 0; i--)
+            {
+                if (_placements[i].Subject.IsDestroyed)
+                {
+                    _placements.RemoveAt(i);
+                }
+            }
+        }
+
+        /// <summary>
+        /// <c>LoginScene</c>'s reset of the World between login steps: every item, then every mobile, removed without force
+        /// (the scene then empties the tables), in the tables' order, as before T1; every placement cancelled first; a scope
+        /// that owns every object of this World. A nested call is rejected (nothing removed; the scene still empties the tables).
+        /// </summary>
+        public void ClearForLogin()
+        {
+            if (!Admitted(nameof(ClearForLogin), 0))
+            {
+                return;
+            }
+
+            _placements.Clear();
+
+            using (Open(null, null))
+            {
+                _clearingWorld = true;
+
+                foreach (Item item in _world.Items.Values)
+                {
+                    _world.RemoveItem(item);
+                }
+
+                foreach (Mobile mobile in _world.Mobiles.Values)
+                {
+                    _world.RemoveMobile(mobile);
                 }
             }
         }

@@ -24,6 +24,18 @@ namespace ClassicUO.Ecs
     }
 
     // Friflo copy of the legacy World's items and mobiles, keyed by serial. Single-threaded, written by the World hooks.
+    /// <summary>-ecscheck v2 (T1 funnel part 9): the cold fields of a record (defaults when never written).</summary>
+    public struct MirrorExtras
+    {
+        public string Name;
+        public ushort Hits, HitsMax;
+        public byte Notoriety, ItemLayer;
+        public uint Price;
+
+        /// <summary>The child-order stamp (0: not attached, in no parent's child list).</summary>
+        public ulong ChildStamp;
+    }
+
     public sealed class WorldMirror
     {
         public const uint NO_CONTAINER = 0xFFFF_FFFF;
@@ -129,7 +141,8 @@ namespace ClassicUO.Ecs
             ushort amount,
             uint container,
             byte layer,
-            bool isMulti
+            bool isMulti,
+            bool attach = false
         )
         {
             uint oldWearer = 0;
@@ -139,13 +152,16 @@ namespace ClassicUO.Ecs
                 oldWearer = worn.Parent;
             }
 
-            if (e.IsNull || !e.Tags.Has<ItemTag>())
+            bool created = e.IsNull || !e.Tags.Has<ItemTag>();
+
+            if (created)
             {
                 if (!e.IsNull)
                 {
                     Remove(serial);
                 }
 
+                // T1 part 9: a new record is attached only by the operation's push (attach), with the next stamp
                 e = Store.CreateEntity
                 (
                     new Serial { Value = serial },
@@ -154,7 +170,7 @@ namespace ClassicUO.Ecs
                     new Position { X = x, Y = y, Z = z },
                     new Facing { Value = facing },
                     new Flags { Value = flags },
-                    new Amount { Value = amount },
+                    new ItemData { Amount = amount, Layer = layer, Stamp = attach ? ++_childStamp : 0 },
                     Tags.Get<ItemTag>()
                 );
 
@@ -164,10 +180,28 @@ namespace ClassicUO.Ecs
             else
             {
                 WriteCommon(e, graphic, hue, x, y, z, facing, flags);
-                e.GetComponent<Amount>().Value = amount;
             }
 
-            SetParent(e, container, layer);
+            bool moved = SetParent(e, container, layer);
+
+            // an existing record (T1 part 9): attached (the operation's PushToBack) takes the next stamp; a new parent without
+            // a push detaches (ClassicUO links an item only when its parent exists: an orphan stays out of the list);
+            // otherwise it keeps its place. After SetParent: its component re-adds move the entity, so the ref is taken here
+            if (!created)
+            {
+                ref ItemData slot = ref e.GetComponent<ItemData>();
+                slot.Amount = amount;
+                slot.Layer = layer;
+
+                if (attach)
+                {
+                    slot.Stamp = ++_childStamp;
+                }
+                else if (moved)
+                {
+                    slot.Stamp = 0;
+                }
+            }
 
             // any write to a worn item (equip, unequip, graphic, hue) invalidates the old and new wearer's slots
             if (oldWearer != 0)
@@ -254,7 +288,181 @@ namespace ClassicUO.Ecs
             _scratch.Clear();
             _bySerial.Clear();
             MobileCount = 0;
+
+            // no record is left, so no stamp is live: the counter starts over
+            _childStamp = 0;
             ItemCount = 0;
+        }
+
+        private ulong _childStamp;
+
+        /// <summary>The last child-order stamp taken (tests).</summary>
+        public ulong ChildStamp => _childStamp;
+
+        /// <summary>Tests: the next stamp is <paramref name="last"/> + 1 (the boundary tests).</summary>
+        public void SetLastChildStampForTests(ulong last) => _childStamp = last;
+
+        /// <summary>
+        /// T1 part 9: an item went to the back of its parent's child list without a change of record (a re-order: the vendor
+        /// sort's re-stamp in the new order, the old re-key's re-link): it takes the next stamp. False when the serial has no
+        /// item record. (An operation that also changes the record stamps through <see cref="UpsertItem"/>'s attach.)
+        /// </summary>
+        public bool StampChild(uint serial)
+        {
+            if (!_bySerial.TryGetValue(serial, out Entity e) || !e.HasComponent<ItemData>())
+            {
+                return false;
+            }
+
+            e.GetComponent<ItemData>().Stamp = ++_childStamp;
+
+            return true;
+        }
+
+        /// <summary>
+        /// T1 part 9: an item left its parent's child list but keeps its Container (the spellbook's list cleared by 0xBF.1B):
+        /// not attached any more. False when the serial has no item record.
+        /// </summary>
+        public bool DetachChild(uint serial)
+        {
+            if (!_bySerial.TryGetValue(serial, out Entity e) || !e.HasComponent<ItemData>())
+            {
+                return false;
+            }
+
+            e.GetComponent<ItemData>().Stamp = 0;
+
+            return true;
+        }
+
+        /// <summary>The name of a record (the component is added on the first non-null name).</summary>
+        public bool SetName(uint serial, string name)
+        {
+            if (!_bySerial.TryGetValue(serial, out Entity e))
+            {
+                return false;
+            }
+
+            if (e.HasComponent<EntityName>())
+            {
+                e.GetComponent<EntityName>().Value = name;
+            }
+            else if (name != null)
+            {
+                e.AddComponent(new EntityName { Value = name });
+            }
+
+            return true;
+        }
+
+        public bool SetVitals(uint serial, ushort hits, ushort hitsMax)
+        {
+            if (!_bySerial.TryGetValue(serial, out Entity e))
+            {
+                return false;
+            }
+
+            if (e.HasComponent<Vitals>())
+            {
+                ref Vitals v = ref e.GetComponent<Vitals>();
+                v.Hits = hits;
+                v.HitsMax = hitsMax;
+            }
+            else if (hits != 0 || hitsMax != 0)
+            {
+                e.AddComponent(new Vitals { Hits = hits, HitsMax = hitsMax });
+            }
+
+            return true;
+        }
+
+        public bool SetNotoriety(uint serial, byte notoriety)
+        {
+            if (!_bySerial.TryGetValue(serial, out Entity e))
+            {
+                return false;
+            }
+
+            if (e.HasComponent<MobileNotoriety>())
+            {
+                e.GetComponent<MobileNotoriety>().Value = notoriety;
+            }
+            else if (notoriety != 0)
+            {
+                e.AddComponent(new MobileNotoriety { Value = notoriety });
+            }
+
+            return true;
+        }
+
+        public bool SetPrice(uint serial, uint price)
+        {
+            if (!_bySerial.TryGetValue(serial, out Entity e))
+            {
+                return false;
+            }
+
+            if (e.HasComponent<ItemPrice>())
+            {
+                e.GetComponent<ItemPrice>().Value = price;
+            }
+            else if (price != 0)
+            {
+                e.AddComponent(new ItemPrice { Value = price });
+            }
+
+            return true;
+        }
+
+        /// <summary>-ecscheck v2: the cold fields of a record; false when the serial has no record.</summary>
+        public bool TryGetExtras(uint serial, out MirrorExtras x)
+        {
+            x = default;
+
+            if (!_bySerial.TryGetValue(serial, out Entity e))
+            {
+                return false;
+            }
+
+            if (e.TryGetComponent(out EntityName name))
+            {
+                x.Name = name.Value;
+            }
+
+            if (e.TryGetComponent(out Vitals vitals))
+            {
+                x.Hits = vitals.Hits;
+                x.HitsMax = vitals.HitsMax;
+            }
+
+            if (e.TryGetComponent(out MobileNotoriety notoriety))
+            {
+                x.Notoriety = notoriety.Value;
+            }
+
+            if (e.TryGetComponent(out ItemPrice price))
+            {
+                x.Price = price.Value;
+            }
+
+            if (e.TryGetComponent(out ItemData slot))
+            {
+                x.ItemLayer = slot.Layer;
+                x.ChildStamp = slot.Stamp;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// The death re-key (T1 part 9): the name, hits and notoriety a mobile's old record had, written to its record under
+        /// the new serial (the mobile keeps them; a record already under that serial takes them, defaults included).
+        /// </summary>
+        public void CarryMobileExtras(in MirrorExtras x, uint serial)
+        {
+            SetName(serial, x.Name);
+            SetVitals(serial, x.Hits, x.HitsMax);
+            SetNotoriety(serial, x.Notoriety);
         }
 
         public bool TryGet(uint serial, out MirrorRecord r)
@@ -282,7 +490,7 @@ namespace ClassicUO.Ecs
 
             if (!r.IsMobile)
             {
-                r.Amount = e.GetComponent<Amount>().Value;
+                r.Amount = e.GetComponent<ItemData>().Amount;
             }
 
             if (e.TryGetComponent(out EquippedOn eq))
@@ -322,19 +530,23 @@ namespace ClassicUO.Ecs
         }
 
         // ClassicUO: 0xFFFFFFFF (or 0) = in the world; a mobile serial, or the 0x80000000 | serial of a dying mobile, = worn;
-        // anything else = inside that item.
-        private static void SetParent(Entity e, uint container, byte layer)
+        // anything else = inside that item. True when the parent changed (a layer change on the same wearer is not one).
+        private static bool SetParent(Entity e, uint container, byte layer)
         {
             if (container == NO_CONTAINER || container == 0)
             {
+                bool had = false;
+
                 if (e.HasComponent<EquippedOn>())
                 {
                     e.RemoveComponent<EquippedOn>();
+                    had = true;
                 }
 
                 if (e.HasComponent<ContainedIn>())
                 {
                     e.RemoveComponent<ContainedIn>();
+                    had = true;
                 }
 
                 if (!e.Tags.Has<OnGround>())
@@ -342,7 +554,7 @@ namespace ClassicUO.Ecs
                     e.AddTag<OnGround>();
                 }
 
-                return;
+                return had;
             }
 
             if (e.Tags.Has<OnGround>())
@@ -352,28 +564,40 @@ namespace ClassicUO.Ecs
 
             if (IsWearerSerial(container))
             {
+                bool moved = false;
+
                 if (e.HasComponent<ContainedIn>())
                 {
                     e.RemoveComponent<ContainedIn>();
+                    moved = true;
                 }
 
                 // indexed components must be re-added (not written by ref) so the index follows the new parent
                 if (!e.TryGetComponent(out EquippedOn eq) || eq.Parent != container || eq.Layer != layer)
                 {
+                    moved |= eq.Parent != container;
                     e.AddComponent(new EquippedOn { Parent = container, Layer = layer });
                 }
+
+                return moved;
             }
             else
             {
+                bool moved = false;
+
                 if (e.HasComponent<EquippedOn>())
                 {
                     e.RemoveComponent<EquippedOn>();
+                    moved = true;
                 }
 
                 if (!e.TryGetComponent(out ContainedIn ci) || ci.Parent != container)
                 {
                     e.AddComponent(new ContainedIn { Parent = container });
+                    moved = true;
                 }
+
+                return moved;
             }
         }
     }
