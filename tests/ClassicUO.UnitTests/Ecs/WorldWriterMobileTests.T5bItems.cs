@@ -84,7 +84,7 @@ namespace ClassicUO.UnitTests.Ecs
             return corpse.LastAnimationChangeTime < Time.Ticks && LegacyCorpse(corpse, src, out frame, out due);
         }
 
-        private static World BuildT5bItem(int layer, bool usedLayer, ushort body)
+        private static World BuildT5bItem(int layer, bool usedLayer, ushort body, byte start = 99)
         {
             World world = BuildCorpse(Start.Standing);
             world.Ecs.ItemAnimTimerEnabled = true;
@@ -92,7 +92,7 @@ namespace ClassicUO.UnitTests.Ecs
             corpse.Amount = body;
             corpse.Layer = (Layer)layer;
             corpse.UsedLayer = usedLayer;
-            corpse.AnimIndex = 99;
+            corpse.AnimIndex = start; // 99 is what CheckGraphicChange sets (the first step lands on the last frame)
             corpse.LastAnimationChangeTime = 0;
             world.Ecs.Sync(corpse);
 
@@ -107,7 +107,10 @@ namespace ClassicUO.UnitTests.Ecs
                 {
                     for (int layer = 0; layer < 8; layer++)
                     {
-                        yield return new object[] { layer, used, body };
+                        foreach (byte start in new byte[] { 99, 0 })
+                        {
+                            yield return new object[] { layer, used, body, start };
+                        }
                     }
                 }
             }
@@ -116,9 +119,9 @@ namespace ClassicUO.UnitTests.Ecs
         // the checker's counters are static (shared with other tests): compare before and after
         [Theory]
         [MemberData(nameof(T5bItemCases))]
-        public void The_Ecs_Corpse_Advance_Equals_The_Legacy_ProcessAnimation(int layer, bool usedLayer, ushort body)
+        public void The_Ecs_Corpse_Advance_Equals_The_Legacy_ProcessAnimation(int layer, bool usedLayer, ushort body, byte start)
         {
-            World oldWorld = BuildT5bItem(layer, usedLayer, body), newWorld = BuildT5bItem(layer, usedLayer, body);
+            World oldWorld = BuildT5bItem(layer, usedLayer, body, start), newWorld = BuildT5bItem(layer, usedLayer, body, start);
             newWorld.Writer.ThrowOnViolation = true;
             Item a = oldWorld.Items.Get(CORPSE), b = newWorld.Items.Get(CORPSE);
             var src = new FakeCorpseSource { Max = 1000 };
@@ -233,6 +236,37 @@ namespace ClassicUO.UnitTests.Ecs
             second.AnimIndex.Should().NotBe(99);
             second.AnimIndex.Should().BeLessThan(7);
             firstFrame.Should().BeLessThan(7);
+            Time.Ticks = NOW;
+        }
+
+        [Fact]
+        public void A_Replaced_But_Undestroyed_Instance_Neither_Runs_Nor_Overwrites_The_Record()
+        {
+            var src = new FakeCorpseSource { Max = 1000 };
+            var system = new ItemAnimationAdvanceSystem();
+            World world = BuildT5bItem(3, false, 400);
+            Item stale = world.Items.Get(CORPSE);
+
+            // the table now holds another object under the serial (the old one was never destroyed)
+            world.Items.Remove(CORPSE);
+            Item fresh = world.GetOrCreateItem(CORPSE);
+            fresh.Graphic = 0x2006;
+            fresh.Amount = 401;
+            fresh.Layer = (Layer)2;
+            fresh.AnimIndex = 7;
+            fresh.LastAnimationChangeTime = 0;
+            fresh.SetInWorldTile(1002, 1000, 0);
+            world.Ecs.Sync(fresh);
+            world.Ecs.Mirror.TryGetEntity(CORPSE, false, out EcsEntity e).Should().BeTrue();
+            AnimationTimer before = e.GetComponent<AnimationTimer>();
+            ItemAnimationAdvanceSystem.Same(before, fresh.CorpseTimer).Should().BeTrue();
+
+            stale.AnimIndex = 1;
+            world.Ecs.PushItemTimer(stale);
+            ItemAnimationAdvanceSystem.Same(e.GetComponent<AnimationTimer>(), before).Should().BeTrue("a stale instance's push is ignored");
+
+            Time.Ticks = NOW + 500;
+            system.TryRun(world, stale, src, false, null).Should().BeFalse();
             Time.Ticks = NOW;
         }
 
