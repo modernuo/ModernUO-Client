@@ -81,6 +81,7 @@ Every binary file starts with a 16-byte `FileHeader`:
 | `LGHT` 0x5448474C | lights.bin |
 | `TART` 0x54524154 | tileart.bin |
 | `EQCV` 0x56435145 | equipconv.bin |
+| `LAYR` 0x5259414C | layerrules.bin (optional, T3b) |
 | `ANIM` 0x4D494E41 | anim/anim.bin |
 | `APAL` 0x4C415041 | anim/palettes.bin |
 | `ANDT` 0x54444E41 | anim/animdata.bin |
@@ -391,6 +392,24 @@ The rows are Equipconv.def as ClassicUO resolves it in `ProcessEquipConvDef` (cl
 - later rows replace earlier ones.
 
 At runtime, an equipped item on body `body` with animId `graphic` is drawn as `newGraphic`, and the paperdoll uses `gump`.
+
+### `layerrules.bin` (optional; T3b, layering rules as data)
+
+ClassicUO's hard-coded equipment layering (the draw order `PaperdollOrder.Build`, the world's cloak-by-direction move, `MobileView.IsCovered`, the gargoyle draw remaps) as data. Not from the install: the converter writes `Uo.Pack.LayerRulesDefault.Create()` (stage `layers`, part of a full conversion; `--only layers` into an existing pack), and a client whose pack has no `layerrules.bin` uses the same `Create()`, so there is one source. Shard admins replace the file to add rules for custom equipment. The client reads it only with `ecs_layer_rules` on (default off). Verify compares it with `LayerRulesDefault` (EXACT, or MISMATCH for a custom file).
+
+`FileHeader`, then `LayerRulesHeader` (six i32: bodyCount, layerCount = 25, tableCount, ruleCount, condCount, rangeCount), then the arrays in this order:
+- `BodyGroupEntry[bodyCount]` (4 B: body u16, group u8, pad u8): groups 0 other, 1/2 human male/female, 3/4 elf male/female, 5/6 gargoyle male/female; an unlisted body is group 0.
+- `u8 tables[tableCount][25]`: base draw orders, back to front (layer bytes; entry 0 is the Invalid sentinel; each layer once).
+- `LayerRule[ruleCount]` (12 B: set u8, kind u8, layer u8, other u8, op u8, condCount u8, condStart u16, value u16, value2 u16). `set` 0 is the paperdoll, 1 the world. Kinds:
+  - 0 Select: base table `value`. The first matching select of the set wins; the set's last select has no conditions (the default).
+  - 1 Reorder: every matching rule, in file order, moves `layer` (A) relative to `other` (B): op 0 MoveTo (A takes B's index), 1 MoveAfter (A right after B), 2 SwapIfAfter (swap A and B if B comes first).
+  - 2 Cover: the first matching cover rule for target `layer` gives `other` (1 covered, 0 drawn); none matching = drawn.
+  - 3 DirMove (after the Backpack/Mount filter): for the directions in mask `value` (bit d for d 0..7, bit 8 for 8 and up), moves `layer`: op 0 on top, 1 at the bottom, 2 just below `other` (on top when `other` is absent).
+  - 4 Remap: a drawn equipment AnimID `value` becomes `value2` (first match; conditions on the wearer only).
+- `LayerCond[condCount]` (8 B: kind u8, layer u8, negate u8, rangeCount u8, rangeStart u16, pad u16): all of a rule's conditions must hold. Kinds 0 Present (an item on `layer`), 1 Graphic and 2 AnimId (the item's value is in one of the ranges; an absent layer reads 0), 3 Flag (`layer` is a mask: 1 female, 2 the caller's gargoyle-draw flag), 4 Group (the wearer's body group is in the ranges). Order rules (select, reorder, dirmove) read the order key: the AnimID per layer, present when non-zero (the paperdoll's key includes the held item's preview).
+- `LayerRange[rangeCount]` (4 B: lo u16, hi u16, inclusive).
+
+The default file is 3,023 bytes (91 rules, 128 conditions, 186 ranges). Its rule inventory, with the hard-coded sources, is in the T3b poc-log entry.
 
 ## Record stores
 
