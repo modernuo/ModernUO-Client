@@ -570,6 +570,24 @@ namespace ClassicUO.Game.GameObjects
             };
         }
 
+        /// <summary>
+        /// T1 (funnel part 8): <see cref="Walk"/>'s coalesced turn (three unconfirmed requests: the direction alone, no packet)
+        /// through the funnel (<c>TurnPlayer</c>: SetMobileDirection's writes, unfolded for the door check, with the walk's
+        /// admission, so a walk from a position callback joins the open operation on the player), then the turn's cooldown.
+        /// Rejected (Codex audit of part 8, P2 #1): nothing changed, no cooldown, false.
+        /// </summary>
+        internal bool CoalescedTurn(Direction direction, ushort walkTime)
+        {
+            if (!World.Writer.TurnPlayer(this, direction))
+            {
+                return false;
+            }
+
+            Walker.LastStepRequestTime = Time.Ticks + walkTime;
+
+            return true;
+        }
+
         public bool Walk(Direction direction, bool run)
         {
             if (Walker.WalkingFailed || Walker.LastStepRequestTime > Time.Ticks || Walker.StepsCount >= Constants.MAX_STEP_COUNT || Client.Game.UO.Version >= ClientVersion.CV_60142 && IsParalyzed)
@@ -670,22 +688,15 @@ namespace ClassicUO.Game.GameObjects
             // when the connection is healthy and automatically backs off under congestion.
             if (walkTime == (ushort)MovementSpeed.TurnDelay && Walker.UnacceptedPacketsCount >= 3)
             {
-                // T1 (funnel part 8): the coalesced turn through the funnel (unfolded: the player's direction setter runs
-                // its door check, as for 0x21)
-                World.Writer.SetMobileDirection(this, direction);
-                Walker.LastStepRequestTime = Time.Ticks + walkTime;
-
-                return true;
+                return CoalescedTurn(direction, walkTime);
             }
 
-            CloseBank();
-
-            // T1 (funnel part 8): the walk queue's writes through the funnel (QueuePlayerStep: SetAnimation(0xFF) when the
-            // walk starts while not walking, LastStepTime, the step, the inputs), computed here and written before the
-            // walker's step record; the walker is not world state and neither side reads the other
-            PlanWalkStep(x, y, z, direction, run, out StepPlan plan);
-
-            if (!World.Writer.QueuePlayerStep(this, in plan))
+            // T1 (funnel part 8): admission first, then CloseBank, then the walk queue's writes through the funnel
+            // (QueuePlayerStep: PlanWalkStep, then SetAnimation(0xFF) when the walk starts while not walking, LastStepTime,
+            // the step, the inputs), written before the walker's step record; the walker is not world state and neither side
+            // reads the other. A walk from the player's position callback joins the operation that runs it (Codex audit of
+            // part 8, P2 #1). Rejected: nothing changed, the bank stays open
+            if (!World.Writer.QueuePlayerStep(this, x, y, z, direction, run))
             {
                 return false;
             }

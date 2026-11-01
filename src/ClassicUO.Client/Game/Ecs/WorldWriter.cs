@@ -30,7 +30,9 @@ namespace ClassicUO.Game
     /// <see cref="Placement"/> token that the placement consumes.</item>
     /// </list>
     /// <para>
-    /// Operations do not nest, and only operations open a scope. A violation (nesting, a placement that is not outstanding,
+    /// Operations do not nest, and only operations open a scope (one documented exception: the player's own walk from a
+    /// position or direction callback joins the open unfolded operation on that player, see <see cref="AdmittedPlayerWalk"/>).
+    /// A violation (nesting, a placement that is not outstanding,
     /// a removal of an item this World does not hold, an item upsert of a live mobile) is a bug in the caller: it throws in
     /// CUO_DEVTOOLS builds; in a release build it logs an error once per kind, so a funnel bug never disconnects a player
     /// (coordinator, T1 round 2). A nested operation is then rejected outright (nothing changes; T1 round 4: production code
@@ -2816,15 +2818,17 @@ namespace ClassicUO.Game
         // ---- funnel part 8, group 4: the player's walk (PlayerMobile.Walk)
 
         /// <summary>
-        /// <c>PlayerMobile.Walk</c>'s step request: the walk queue's writes in their old order (<c>Mobile.ApplyStep</c> with
-        /// the plan Walk computed: when the walk starts, <c>SetAnimation(0xFF)</c> if the player was not walking and
-        /// <c>LastStepTime</c>; the step; the inputs). Unfolded, as every player path: Walk runs in the input handling, with
-        /// plugin hooks around it. Only <c>World.Player</c> of this World walks this way; anything else is a violation,
-        /// rejected (false: nothing changed, and Walk returns false before the walker records or sends the step).
+        /// <c>PlayerMobile.Walk</c>'s step request: first the admission (<see cref="AdmittedPlayerWalk"/>) and the player
+        /// check, then <c>CloseBank</c> (the caller's removals, unchanged and unscoped as before T1), then the walk queue's
+        /// writes in their old order (<c>PlanWalkStep</c> from the queue as it is now, then <c>Mobile.ApplyStep</c>: when the
+        /// walk starts, <c>SetAnimation(0xFF)</c> if the player was not walking and <c>LastStepTime</c>; the step; the
+        /// inputs). Unfolded, as every player path. Only <c>World.Player</c> of this World walks this way; anything else is a
+        /// violation, rejected (false: nothing changed, the bank stays open, and Walk returns false before the walker records
+        /// or sends the step).
         /// </summary>
-        public bool QueuePlayerStep(Mobile player, in Mobile.StepPlan plan)
+        public bool QueuePlayerStep(Mobile player, int x, int y, sbyte z, Direction direction, bool run)
         {
-            if (player == null || !Admitted(nameof(QueuePlayerStep), player.Serial))
+            if (player == null || !AdmittedPlayerWalk(player, nameof(QueuePlayerStep), out bool joined))
             {
                 return false;
             }
@@ -2836,12 +2840,84 @@ namespace ClassicUO.Game
                 return false;
             }
 
-            using (Open(player, null))
+            PlayerMobile walker = _world.Player;
+            walker.CloseBank();
+            walker.PlanWalkStep(x, y, z, direction, run, out Mobile.StepPlan plan);
+
+            using (joined ? default : Open(player, null))
             {
                 player.ApplyStep(in plan);
             }
 
             return true;
+        }
+
+        /// <summary>
+        /// <c>PlayerMobile.Walk</c>'s coalesced turn (three unconfirmed requests: the direction alone, no step): as
+        /// <see cref="SetMobileDirection"/> (the record committed with the new direction, the setter unfolded for the door
+        /// check, the inputs), with the walk's admission (<see cref="AdmittedPlayerWalk"/>). Only <c>World.Player</c> of this
+        /// World; anything else is a violation, rejected. False: rejected, nothing changed (Walk then returns false and keeps
+        /// its cooldown).
+        /// </summary>
+        public bool TurnPlayer(Mobile player, Direction direction)
+        {
+            if (player == null || !AdmittedPlayerWalk(player, nameof(TurnPlayer), out bool joined))
+            {
+                return false;
+            }
+
+            if (player.World != _world || !ReferenceEquals(player, _world.Player))
+            {
+                Reject(Violation.NotHeld, $"WorldWriter.TurnPlayer: 0x{player.Serial:X8} is not this World's player", rejected: true);
+
+                return false;
+            }
+
+            MobileState v;
+            v.Serial = player.Serial;
+            v.Graphic = player.Graphic;
+            v.Hue = player.Hue;
+            v.X = player.X;
+            v.Y = player.Y;
+            v.Z = player.Z;
+            v.Direction = direction;
+            v.Flags = player.Flags;
+            v.IsPlayer = true;
+
+            using (joined ? default : Open(player, null))
+            {
+                EcsEntity e = _world.Ecs.CommitMobile(player, in v);
+                player.Direction = v.Direction;
+                _world.Ecs.CommitMobileInputs(player, e);
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// The admission of the player's walk (<see cref="QueuePlayerStep"/>, <see cref="TurnPlayer"/>), Codex audit of part 8,
+        /// P2 #1. With nothing open it is <see cref="Admitted"/>. Inside an operation it is the one documented exception to
+        /// "operations do not nest": the player's position and direction callbacks run inside the unfolded operations on the
+        /// player (<see cref="PlaceMobile"/>, <see cref="MoveMobile"/>, <see cref="CompleteStep"/>,
+        /// <see cref="MoveBoatPassenger"/>, <see cref="SetMobileDirection"/>, <see cref="TurnPlayer"/>), and a plugin's
+        /// <c>RequestMove</c> there runs <c>Player.Walk</c> synchronously (<c>PlayerMobile.OnPositionChanged</c> →
+        /// <c>Plugin.UpdatePlayerPosition</c>; the door check's packet → the plugins' send hooks). Before T1 that walk wrote at
+        /// that point; it still does: the walk joins the open operation (no scope of its own, so the outer scope, its
+        /// ownership and its deferred work stay as they are) when that operation's subject is this exact instance (and the
+        /// caller then checks it is <c>World.Player</c> of this World) and nothing is folded (the operations that fold the player run no callback).
+        /// Its writes are then the outer operation's funnel writes, and every push and Sync publishes as before T1; what the
+        /// outer operation writes after its callback is what the old code wrote after it (its commits after the callback are
+        /// the inputs from the getters and the hook Syncs from the cache, never values computed before the callback). Any
+        /// other nesting is rejected as by <see cref="Admitted"/>.
+        /// </summary>
+        private bool AdmittedPlayerWalk(Mobile player, string operation, out bool joined)
+        {
+            // the open operation's own subject, nothing folded. ClearWorld's scope has no subject, so it never matches; a
+            // removal's subject is the removed mobile, and no removal runs a position callback. The caller's player check,
+            // next and still before any side effect, rejects a subject that is not this World's player
+            joined = _open && !_world.Ecs.IsFolding && ReferenceEquals(_subject, player);
+
+            return joined || Admitted(operation, player.Serial);
         }
 
         // ---- funnel part 8, group 5: logout's removals (World.Clear)
@@ -2881,8 +2957,10 @@ namespace ClassicUO.Game
         }
 
         // ---- funnel part 8, group 6: the gump-side writes (survey: ContainerGump.CheckItemControlPosition is the only gump
-        // or UI write to an object World holds; CreateCharAppearanceGump's and RaceChangeGump's writes go to their own
-        // preview mobiles, serial 0 and 1, which no World table holds)
+        // or UI write to an object World holds. CreateCharAppearanceGump and RaceChangeGump write their own preview mobiles
+        // and clothes; until the Codex audit of part 8 (P2 #2) character creation put its mobile in World.Mobiles and both
+        // made their clothes with World.GetOrCreateItem; they are now detached: Item.Create, no table, and the character
+        // creation paperdoll draws its preview instance)
 
         /// <summary>
         /// <c>ContainerGump.CheckItemControlPosition</c> (0x25's <c>AddItemToContainer</c>, after the item is placed in an
