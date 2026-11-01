@@ -1,5 +1,6 @@
 ﻿// SPDX-License-Identifier: BSD-2-Clause
 
+using Uo.Pack;
 using System;
 using System.Collections.Generic;
 using ClassicUO.Configuration;
@@ -143,11 +144,31 @@ namespace ClassicUO.Game.UI.Controls
 
             bool altTorso = mobile.IsFemale || IsGargoyleBody(mobile.Graphic);
 
-            Span<Layer> order = stackalloc Layer[PaperdollOrder.N];
-            PaperdollOrder.Build(layerGraphics, altTorso, order);
-
             Span<Layer> layers = stackalloc Layer[PaperdollOrder.N];
-            int layerCount = PaperdollOrder.Filter(order, includeBackpack: false, layers);
+            int layerCount;
+
+            // T3b: ecs_layer_rules (default off): the order and the covering from the layering rules data (paperdoll set)
+            bool layerData = LayerRuleEval.On;
+            LayerTables layerTables = default;
+            LayerSubject layerSubject = default;
+
+            if (layerData)
+            {
+                layerTables.Gather(mobile);
+                layerSubject = LayerRuleEval.Subject(mobile.Graphic, mobile.IsFemale, IsGargoyleBody(mobile.Graphic));
+                layerCount = LayerRuleEval.BuildPaperdoll(layerGraphics, layerSubject, layers);
+            }
+            else
+            {
+                Span<Layer> order = stackalloc Layer[PaperdollOrder.N];
+                PaperdollOrder.Build(layerGraphics, altTorso, order);
+                layerCount = PaperdollOrder.Filter(order, includeBackpack: false, layers);
+            }
+
+            if (LayerRuleEval.CheckEnabled)
+            {
+                LayerRuleEval.CheckPaperdoll(mobile, layerGraphics, altTorso, IsGargoyleBody(mobile.Graphic));
+            }
 
             // the body and every visible equipment gump, decoded on workers in one batch (pack only; Gump.Prefetch does
             // nothing when fewer than two are missing, as on most re-layouts after an equip change)
@@ -161,7 +182,7 @@ namespace ClassicUO.Game.UI.Controls
                 {
                     Item item = mobile.FindItemByLayer(layers[i]);
 
-                    if (item != null && !Mobile.IsCovered(mobile, layers[i]))
+                    if (item != null && !(layerData ? LayerRuleEval.IsCovered(LayerRuleSet.Paperdoll, layers[i], ref layerTables, layerSubject) : Mobile.IsCovered(mobile, layers[i])))
                     {
                         prefetch[prefetchCount++] = GetAnimID(mobile.Graphic, item.Graphic, item.ItemData.AnimID, mobile.IsFemale);
                     }
@@ -194,7 +215,7 @@ namespace ClassicUO.Game.UI.Controls
 
                 if (equipItem != null)
                 {
-                    if (Mobile.IsCovered(mobile, layer))
+                    if (layerData ? LayerRuleEval.IsCovered(LayerRuleSet.Paperdoll, layer, ref layerTables, layerSubject) : Mobile.IsCovered(mobile, layer))
                     {
                         continue;
                     }
@@ -347,7 +368,22 @@ namespace ClassicUO.Game.UI.Controls
         {
             int offset = isfemale ? Constants.FEMALE_GUMP_OFFSET : Constants.MALE_GUMP_OFFSET;
 
-            if (
+            // T3b: with ecs_layer_rules the paperdoll set's remap rules (default: R2, the gargoyle ghost's shroud on 7.0.0.0+),
+            // before the equip conversion as below
+            if (LayerRuleEval.On || LayerRuleEval.CheckEnabled)
+            {
+                ushort remapped = LayerRuleEval.On
+                    ? LayerRuleEval.RemapPaperdoll(animID, mobileGraphic, isfemale)
+                    : LayerRuleEval.RemapPaperdollHard(animID, mobileGraphic, Client.Game.UO.Version >= ClientVersion.CV_7000);
+
+                if (LayerRuleEval.CheckEnabled)
+                {
+                    LayerRuleEval.ComparePaperdollRemap(mobileGraphic, animID, isfemale, remapped);
+                }
+
+                animID = remapped;
+            }
+            else if (
                     Client.Game.UO.Version >= ClientVersion.CV_7000
                     && animID == 0x03CA // graphic for dead shroud
                     && (mobileGraphic == 0x02B7 || mobileGraphic == 0x02B6)

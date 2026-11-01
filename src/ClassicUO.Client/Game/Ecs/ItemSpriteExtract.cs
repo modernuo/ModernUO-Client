@@ -238,7 +238,7 @@ namespace ClassicUO.Game
             CorpseLayer(item, pack, anims, Layer.Invalid, item.AnimIndex, human, item.Hue, flipped, alpha, group, direction, x, y, depth, profile);
 
             Span<Layer> layers = stackalloc Layer[PaperdollOrder.N];
-            int layerCount = PaperdollOrder.BuildInWorld(item, altTorsoTable: false, direction, layers);
+            int layerCount = LayerRuleEval.CorpseOrder(item, item.Amount, direction, layers); // T3b: from data with ecs_layer_rules
 
             for (int i = 0; i < layerCount; i++)
             {

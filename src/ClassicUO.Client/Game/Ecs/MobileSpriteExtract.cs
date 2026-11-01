@@ -169,17 +169,10 @@ namespace ClassicUO.Game
         {
             byte frame = s.Frame;
 
-            // the facing-dependent cloak move (PaperdollOrder.ApplyDirectionCloak) on the slot indices
+            // the facing-dependent moves on the slot indices: PaperdollOrder.ApplyDirectionCloak, or with ecs_layer_rules the
+            // data's direction rules (the rebuild's interned per-facing orders)
             Span<byte> order = stackalloc byte[EquipmentSlots.MAX];
-            Span<byte> layerOf = stackalloc byte[EquipmentSlots.MAX];
-
-            for (int i = 0; i < n; i++)
-            {
-                order[i] = (byte)i;
-                layerOf[i] = eq.Slots[i].Layer;
-            }
-
-            n = AnimationRules.ApplyDirectionCloak(order, n, layerOf, s.Facing, eq.CloakAnchor);
+            n = AnimationRules.PaintOrder(in eq, s.Facing, order);
 
             for (int i = 0; i < n; i++)
             {

@@ -143,6 +143,33 @@ namespace ClassicUO.Game
         }
 
         /// <summary>
+        /// The slots' paint order for a facing (slot indices into <paramref name="order"/>; returns the count): the data's
+        /// interned direction orders when the rebuild made them (ecs_layer_rules), else the hard-coded cloak move. Used by
+        /// MobileSpriteExtract and the checkers, so they see the same order.
+        /// </summary>
+        public static int PaintOrder(in EquipmentSlots eq, byte facing, Span<byte> order)
+        {
+            int n = eq.Count;
+
+            if (eq.DirOrder != 0)
+            {
+                EquipDirOrders.Get(eq.DirOrder, EquipDirOrders.ClassOf(facing), n).CopyTo(order);
+
+                return n;
+            }
+
+            Span<byte> layerOf = stackalloc byte[EquipmentSlots.MAX];
+
+            for (int i = 0; i < n; i++)
+            {
+                order[i] = (byte)i;
+                layerOf[i] = eq.Slots[i].Layer;
+            }
+
+            return ApplyDirectionCloak(order, n, layerOf, facing, eq.CloakAnchor);
+        }
+
+        /// <summary>
         /// PaperdollOrder.ApplyDirectionCloak on a slot index list: the cloak goes on top facing north (0), behind facing
         /// south (3), else just below the helmet. MobileView moves the cloak on the full layer order, where Helmet is always
         /// listed, and skips empty layers afterwards; the slots hold only drawn layers, so "below the helmet" is

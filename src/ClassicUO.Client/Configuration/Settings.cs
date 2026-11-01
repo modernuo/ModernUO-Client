@@ -165,6 +165,12 @@ namespace ClassicUO.Configuration
         // the two at every call. Default off.
         [JsonPropertyName("ecs_read_equipment")] public bool EcsReadEquipment { get; set; }
 
+        // T3b (ecs-transition-plan.md, T3 "Equipment layering as data"): the worn-layer draw order, the covering and the
+        // gargoyle remaps come from the layering rules data (the pack's layerrules.bin, else the built-in default made from the
+        // same source) instead of the hard-coded PaperdollOrder/IsCovered/FixGargoyleEquipments. CUO_LAYER_RULES_CHECK=1
+        // compares the two at every decision. Default off.
+        [JsonPropertyName("ecs_layer_rules")] public bool EcsLayerRules { get; set; }
+
         // W5: the per-frame overhead text pass skips the text layout of mobiles and corpses whose texts have all expired
         // (expired texts stay in the entity's container; the layout would place nothing). Off = laid out every frame.
         [JsonPropertyName("text_skip_expired")] public bool TextSkipExpired { get; set; } = true;
