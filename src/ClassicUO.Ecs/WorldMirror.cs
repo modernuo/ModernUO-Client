@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
+using System;
 using System.Collections.Generic;
 using Friflo.Engine.ECS;
 
@@ -154,6 +155,21 @@ namespace ClassicUO.Ecs
 
             bool created = e.IsNull || !e.Tags.Has<ItemTag>();
 
+            // T2: the contents cache follows attachment (only when some parent's contents are cached: no cost otherwise)
+            bool track = _contents.Count != 0;
+            ulong oldStamp = 0;
+            uint oldParent = 0;
+
+            if (track && !created)
+            {
+                oldStamp = e.GetComponent<ItemData>().Stamp;
+
+                if (oldStamp != 0)
+                {
+                    oldParent = AttachedParent(e);
+                }
+            }
+
             if (created)
             {
                 if (!e.IsNull)
@@ -203,6 +219,26 @@ namespace ClassicUO.Ecs
                 }
             }
 
+            // T2: a change of attachment (attached, detached, re-pushed, moved to another parent) changes the old parent's
+            // and the new parent's contents
+            if (track)
+            {
+                ulong newStamp = e.GetComponent<ItemData>().Stamp;
+
+                if (newStamp != oldStamp)
+                {
+                    if (oldStamp != 0)
+                    {
+                        InvalidateContents(oldParent);
+                    }
+
+                    if (newStamp != 0)
+                    {
+                        InvalidateContents(container);
+                    }
+                }
+            }
+
             // any write to a worn item (equip, unequip, graphic, hue) invalidates the old and new wearer's slots
             if (oldWearer != 0)
             {
@@ -248,6 +284,17 @@ namespace ClassicUO.Ecs
                 }
             }
 
+            // T2: an attached child leaves its parent's contents; a parent's own cached contents go with its record
+            if (_contents.Count != 0)
+            {
+                if (e.TryGetComponent(out ItemData data) && data.Stamp != 0)
+                {
+                    InvalidateContents(AttachedParent(e));
+                }
+
+                DropContents(serial);
+            }
+
             Epoch++;
             e.DeleteEntity();
 
@@ -289,6 +336,14 @@ namespace ClassicUO.Ecs
             _bySerial.Clear();
             MobileCount = 0;
 
+            // T2: no record is left, so no parent has contents
+            foreach (ContentsSlot slot in _contents.Values)
+            {
+                ReleaseSlot(slot);
+            }
+
+            _contents.Clear();
+
             // no record is left, so no stamp is live: the counter starts over
             _childStamp = 0;
             ItemCount = 0;
@@ -316,6 +371,12 @@ namespace ClassicUO.Ecs
 
             e.GetComponent<ItemData>().Stamp = ++_childStamp;
 
+            // T2: the parent's order changed (or, from 0, the item joined its contents)
+            if (_contents.Count != 0)
+            {
+                InvalidateContents(AttachedParent(e));
+            }
+
             return true;
         }
 
@@ -330,7 +391,14 @@ namespace ClassicUO.Ecs
                 return false;
             }
 
-            e.GetComponent<ItemData>().Stamp = 0;
+            ref ItemData data = ref e.GetComponent<ItemData>();
+
+            if (data.Stamp != 0 && _contents.Count != 0)
+            {
+                InvalidateContents(AttachedParent(e));
+            }
+
+            data.Stamp = 0;
 
             return true;
         }
@@ -510,6 +578,189 @@ namespace ClassicUO.Ecs
             }
 
             return true;
+        }
+
+        /// <summary>T2: a spellbook's spell set from 0xBF.1B (bit i = spell i + 1); false when the serial has no record.</summary>
+        public bool SetSpellbook(uint serial, ulong spells)
+        {
+            if (!_bySerial.TryGetValue(serial, out Entity e))
+            {
+                return false;
+            }
+
+            if (e.HasComponent<SpellbookContent>())
+            {
+                e.GetComponent<SpellbookContent>().Spells = spells;
+            }
+            else if (spells != 0)
+            {
+                e.AddComponent(new SpellbookContent { Spells = spells });
+            }
+
+            return true;
+        }
+
+        /// <summary>T2: a spellbook's spell set (0 when none, or no record).</summary>
+        public ulong Spellbook(uint serial) =>
+            _bySerial.TryGetValue(serial, out Entity e) && e.TryGetComponent(out SpellbookContent c) ? c.Spells : 0;
+
+        // ---- T2: container contents. A parent's contents are its attached children (worn or contained, child-order stamp
+        // != 0) in stamp order: ClassicUO's child list (arrival order, a re-push to the back; orphans and the spellbook's
+        // detached entries are not in it). Friflo's index order is not stable across removes, so each parent's order is a
+        // cached sorted array, built on the first read after a change and invalidated by every change of attachment
+        // (UpsertItem's attach, detach and move, StampChild, DetachChild, Remove, Clear). Nothing is tracked until the
+        // first read (no cached parent: the writes skip the invalidation).
+
+        private sealed class ContentsSlot
+        {
+            public uint[] Serials = Array.Empty<uint>();
+            public int Count;
+            public bool Valid;
+        }
+
+        private readonly Dictionary<uint, ContentsSlot> _contents = new Dictionary<uint, ContentsSlot>(64);
+        private readonly Stack<ContentsSlot> _freeSlots = new Stack<ContentsSlot>();
+        private (ulong Stamp, uint Serial)[] _contentsScratch = new (ulong, uint)[64];
+
+        /// <summary>T2, tests and stats: contents builds (a read after a change) and invalidations of a valid cached parent.</summary>
+        public long ContentsBuilds, ContentsInvalidations;
+
+        /// <summary>T2: parents whose contents are cached (valid or not).</summary>
+        public int CachedContentsParents => _contents.Count;
+
+        /// <summary>
+        /// T2, the memory log: an estimate of the bytes the contents cache holds (64-bit: a slot object 40 B with its array's
+        /// 24 B header and 4 B per serial, a dictionary entry 24 B, the sort scratch 16 B per entry, the free slots).
+        /// </summary>
+        public long ContentsCacheBytes
+        {
+            get
+            {
+                long bytes = 24L * _contents.Count + 24 + 16L * _contentsScratch.Length;
+
+                foreach (ContentsSlot slot in _contents.Values)
+                {
+                    bytes += 40 + 24 + 4L * slot.Serials.Length;
+                }
+
+                foreach (ContentsSlot slot in _freeSlots)
+                {
+                    bytes += 40 + 24 + 4L * slot.Serials.Length;
+                }
+
+                return bytes;
+            }
+        }
+
+        /// <summary>
+        /// T2: the parent's attached children (serials), in child order (the stamp order). The span is valid until the next
+        /// change of this parent's contents: a reader must not change them while it walks the span. No allocation once the
+        /// parent's array is large enough.
+        /// </summary>
+        public ReadOnlySpan<uint> Contents(uint parent)
+        {
+            if (!_contents.TryGetValue(parent, out ContentsSlot slot))
+            {
+                slot = _freeSlots.Count != 0 ? _freeSlots.Pop() : new ContentsSlot();
+                _contents.Add(parent, slot);
+            }
+
+            if (!slot.Valid)
+            {
+                BuildContents(parent, slot);
+            }
+
+            return new ReadOnlySpan<uint>(slot.Serials, 0, slot.Count);
+        }
+
+        private void BuildContents(uint parent, ContentsSlot slot)
+        {
+            ContentsBuilds++;
+            int n = 0;
+
+            foreach (Entity e in GetContents(parent))
+            {
+                AddAttached(e, ref n);
+            }
+
+            foreach (Entity e in GetEquipment(parent))
+            {
+                AddAttached(e, ref n);
+            }
+
+            // stamps are unique (one counter), so the order is total
+            Span<(ulong Stamp, uint Serial)> found = _contentsScratch.AsSpan(0, n);
+            found.Sort(static (a, b) => a.Stamp.CompareTo(b.Stamp));
+
+            if (slot.Serials.Length < n)
+            {
+                slot.Serials = new uint[Math.Max(n, Math.Max(4, slot.Serials.Length * 2))];
+            }
+
+            for (int i = 0; i < n; i++)
+            {
+                slot.Serials[i] = found[i].Serial;
+            }
+
+            slot.Count = n;
+            slot.Valid = true;
+        }
+
+        private void AddAttached(Entity e, ref int n)
+        {
+            ulong stamp = e.GetComponent<ItemData>().Stamp;
+
+            if (stamp == 0)
+            {
+                return;
+            }
+
+            if (n == _contentsScratch.Length)
+            {
+                Array.Resize(ref _contentsScratch, n * 2);
+            }
+
+            _contentsScratch[n++] = (stamp, e.GetComponent<Serial>().Value);
+        }
+
+        private void InvalidateContents(uint parent)
+        {
+            if (_contents.TryGetValue(parent, out ContentsSlot slot) && slot.Valid)
+            {
+                slot.Valid = false;
+                ContentsInvalidations++;
+            }
+        }
+
+        private void DropContents(uint parent)
+        {
+            if (_contents.Remove(parent, out ContentsSlot slot))
+            {
+                ReleaseSlot(slot);
+            }
+        }
+
+        private void ReleaseSlot(ContentsSlot slot)
+        {
+            slot.Valid = false;
+            slot.Count = 0;
+
+            // a few free slots keep their arrays for the next parent read (containers opened and closed)
+            if (_freeSlots.Count < 64)
+            {
+                _freeSlots.Push(slot);
+            }
+        }
+
+        // the parent an attached item is in (its EquippedOn or ContainedIn; an attached item has one)
+        private static uint AttachedParent(Entity e)
+        {
+            if (e.TryGetComponent(out EquippedOn eq))
+            {
+                return eq.Parent;
+            }
+
+            return e.TryGetComponent(out ContainedIn ci) ? ci.Parent : NO_CONTAINER;
         }
 
         // Children of a mobile (equipment) or of a container item, by parent serial.
