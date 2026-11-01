@@ -405,11 +405,11 @@ ClassicUO's hard-coded equipment layering (the draw order `PaperdollOrder.Build`
   - 1 Reorder: every matching rule, in file order, moves `layer` (A) relative to `other` (B): op 0 MoveTo (A takes B's index), 1 MoveAfter (A right after B), 2 SwapIfAfter (swap A and B if B comes first).
   - 2 Cover: the first matching cover rule for target `layer` gives `other` (1 covered, 0 drawn); none matching = drawn.
   - 3 DirMove (after the Backpack/Mount filter): for the directions in mask `value` (bit d for d 0..7, bit 8 for 8 and up), moves `layer`: op 0 on top, 1 at the bottom, 2 just below `other` (on top when `other` is absent).
-  - 4 Remap: a drawn equipment AnimID `value` becomes `value2` (first match; conditions on the wearer only).
-- `LayerCond[condCount]` (8 B: kind u8, layer u8, negate u8, rangeCount u8, rangeStart u16, pad u16): all of a rule's conditions must hold. Kinds 0 Present (an item on `layer`), 1 Graphic and 2 AnimId (the item's value is in one of the ranges; an absent layer reads 0), 3 Flag (`layer` is a mask: 1 female, 2 the caller's gargoyle-draw flag), 4 Group (the wearer's body group is in the ranges). Order rules (select, reorder, dirmove) read the order key: the AnimID per layer, present when non-zero (the paperdoll's key includes the held item's preview).
+  - 4 Remap: a drawn equipment AnimID `value` becomes `value2` (first match; conditions on the wearer only: flags, group, body). World remaps apply to MobileView's draw and pick and the ECS slots; paperdoll remaps to the gump AnimID before the equip conversion (default: the gargoyle ghost's shroud 0x3CA -> 0x223 on 7.0.0.0+, bodies 0x2B6/0x2B7). Corpses use the world set's order and direction moves with no flags and no cover or remap pass.
+- `LayerCond[condCount]` (8 B: kind u8, layer u8, negate u8, rangeCount u8, rangeStart u16, pad u16): all of a rule's conditions must hold. Kinds 0 Present (an item on `layer`), 1 Graphic and 2 AnimId (the item's value is in one of the ranges; an absent layer reads 0), 3 Flag (`layer` is a mask: 1 female, 2 the caller's gargoyle-draw flag, 4 client 7.0.0.0 or later), 4 Group (the wearer's body group is in the ranges), 5 Body (the wearer's body graphic is in the ranges). A Present/Graphic/AnimId condition must name a layer below 25 (the evaluator's tables); a file that doesn't is refused at load and the client uses the built-in rules. Order rules (select, reorder, dirmove) read the order key: the AnimID per layer, present when non-zero (the paperdoll's key includes the held item's preview).
 - `LayerRange[rangeCount]` (4 B: lo u16, hi u16, inclusive).
 
-The default file is 3,023 bytes (91 rules, 128 conditions, 186 ranges). Its rule inventory, with the hard-coded sources, is in the T3b poc-log entry.
+The default file is 3,055 bytes (92 rules, 130 conditions, 187 ranges). Its rule inventory, with the hard-coded sources, is in the T3b poc-log entry.
 
 ## Record stores
 
