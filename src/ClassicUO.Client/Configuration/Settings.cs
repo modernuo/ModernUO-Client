@@ -171,6 +171,11 @@ namespace ClassicUO.Configuration
         // the off/on gates bench-000144/145); the off path and the checker stay for one phase.
         [JsonPropertyName("ecs_read_equipment")] public bool EcsReadEquipment { get; set; } = true;
 
+        // T4 (ecs-transition-plan.md, "thin handles"): the cold world-state getters (Name, Hits, HitsMax, Stamina, Mana and
+        // their maxima, Price) read the entity's ECS record; the GameObject field becomes a write-only cache. Read once at
+        // startup (EcsScalars.Owns). Default off.
+        [JsonPropertyName("ecs_owns_scalars")] public bool EcsOwnsScalars { get; set; }
+
         // T3b (ecs-transition-plan.md, T3 "Equipment layering as data"): the worn-layer draw order, the covering and the
         // gargoyle remaps come from the layering rules data (the pack's layerrules.bin, else the built-in default made from the
         // same source) instead of the hard-coded PaperdollOrder/IsCovered/FixGargoyleEquipments. CUO_LAYER_RULES_CHECK=1
