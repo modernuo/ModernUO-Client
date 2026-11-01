@@ -353,6 +353,7 @@ So the data file is keyed by body group (human male/female, elf male/female, gar
   - `CUO_BENCH_SHOTS` at Britain, the bank, zoomed out, and inside and around houses, multis and the owner's custom house, in both renderers;
   - `CUO_GPU_ITEM_CHECK` (after E12), `CUO_PREP_CHECK`, settle, `travel`/`glide` and teleport.
 - Size: 4–6. Tier: O.
+- **Status (2026-11-01, branch `bg/ecs-t6b-tileindex`, poc-log "T6b"): built, default off; client gates submitted.** Both are maintained: items and mobiles stay in the tile list too, and with the switch on the walks skip them in the list and take them from the index (`TileWalk`). Dropping them from the list needs the list's other readers ported first (the follow-up the poc-log entry lists). Effects join through `DynamicTileIndex.Holds` (T8).
 
 **T6c: steps as a system.**
 - `ProcessSteps` (interpolation offset, step completion, position, `AddToTile`, the player's walker bookkeeping) becomes `StepSystem` over a `Steps` component (a fixed ring of up to `MAX_STEP_COUNT`).
