@@ -294,6 +294,7 @@ So the data file is keyed by body group (human male/female, elf male/female, gar
 - **Checker `CUO_SWEEP_CHECK=1`:** the set the system removes equals the legacy `CheckToRemove`/`Distance > ClientViewRange` set computed over all objects in the same frame, and the `WMapManager.AddOrUpdate` calls are equal.
 - Must not change edge behaviour (ghost objects, perf-opportunities "Edge reconciliation").
 - Size: 1.5–2. Tier: S+C.
+- **Status (2026-11-01, `bg/ecs-t5c-sweep`):** built behind `world_sweep_system` (default off) with `CUO_SWEEP_CHECK`; scope is the E4 mobile loop and both item loops; see the poc-log entry. Default on after the off/on gates are clean and a Codex audit.
 
 **T5d: active items and the scheduler.**
 - Active items become a system over an `ItemActive` tag that replaces `_activeItems`.
