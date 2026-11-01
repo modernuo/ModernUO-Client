@@ -793,7 +793,8 @@ namespace ClassicUO.Game.Scenes
             Chunk chunk,
             bool skipBaked = false,
             bool forcePosition = false,
-            GameObject stopAt = null
+            GameObject stopAt = null,
+            bool single = false
         )
         {
             var profile = ProfileManager.CurrentProfile;
@@ -807,10 +808,21 @@ namespace ClassicUO.Game.Scenes
             bool detail = FrameStats.Detail;
             bool prepCheck = PrepCheck.On;
 
+            // T6b (world_tile_index): a whole tile's walk reads the list's land, statics, multis and effects merged by key with
+            // the tile's DynamicTileIndex array; the one-object walks (single: the callers pass stopAt = obj.TNext, which is
+            // null for a tile's last object, so stopAt cannot mark them) start at obj and need no merge
+            obj = TileWalk.Start(obj, chunk, single, DynamicTileIndex.WalkOn, out TileWalk tileWalk, out bool merged);
+
             // stopAt: the walk ends there, not at the tile's end (the Gpu prepare's item cache serves a tile's items and
             // walks its mobiles one by one: stopAt = mobile.TNext, GameSceneGpuItemCache)
-            for (; obj != stopAt; obj = obj.TNext)
+            for (; obj != stopAt; obj = merged ? tileWalk.Next() : obj.TNext)
             {
+                // CUO_TILE_ORDER_CHECK: an object already drawn this frame (the Gpu item cache stamps the ones it serves) walked again
+                if (TileOrder.Check && obj.DrawnFrame == _drawFrame && !(skipBaked && IsGpuBaked(obj)))
+                {
+                    TileOrder.NoteDoubleSubmission(obj);
+                }
+
                 // Gpu prepare (GameSceneGpuPrepare): settled baked land and statics are the GPU's alone
                 if (skipBaked && IsGpuBaked(obj))
                 {
