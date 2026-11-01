@@ -380,15 +380,106 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void Untracked_Layers_Read_The_List_Both_Ways()
         {
+            // layers WornLayers does not track (0: the trade boxes; above 0x1D), attached through the funnel: the list answers
+            // either way, and a mobile wearing only those has no worn item for the view's guard (its reads are tracked layers)
+            const uint BOX0 = 0x4000_7990, BOX1E = 0x4000_7991, ONLY = 0x0000_3990, ONLYBOX = 0x4000_7992;
             World world = WorldStateContentsTests.Build();
             Mobile m = world.Mobiles.Get(MOB);
             Item box = world.Items.Get(HELM);
+            world.Writer.Equip(BOX0, 0x1E5E, Layer.Invalid, MOB, 0, out _, out _);
+            world.Writer.Equip(BOX1E, 0x1E5E, (Layer)0x1E, MOB, 0, out _, out _);
+            Mobile only = world.GetOrCreateMobile(ONLY);
+            world.Writer.Equip(ONLYBOX, 0x1E5E, (Layer)0x1E, ONLY, 0, out _, out _);
 
-            // a layer WornLayers does not track (0: the trade boxes): the list answers either way
+            BothWays(world, () =>
+            {
+                m.FindItemByLayer(Layer.Invalid).Serial.Should().Be(BOX0);
+                m.FindItemByLayer((Layer)0x1E).Serial.Should().Be(BOX1E);
+                m.FindItemByLayer(Layer.Invalid).Should().BeSameAs(WornLayersTests.ListFind(m, Layer.Invalid));
+                only.FindItemByLayer((Layer)0x1E).Serial.Should().Be(ONLYBOX);
+                box.FindItemByLayer(Layer.Helmet).Should().BeNull("an item's own list");
+            });
+
+            world.Ecs.Mirror.Worn(MOB, 0).Should().Be(0);
+            world.Ecs.Mirror.Worn(MOB, 0x1E).Should().Be(0);
+            world.State.ReadEquipmentOverride = false;
+            world.State.HasWornItems(only).Should().BeTrue("off: !IsEmpty");
             world.State.ReadEquipmentOverride = true;
-            m.FindItemByLayer(Layer.Invalid).Should().BeSameAs(WornLayersTests.ListFind(m, Layer.Invalid));
-            m.FindItemByLayer((Layer)0x1E).Should().BeNull();
-            box.FindItemByLayer(Layer.Helmet).Should().BeNull("an item's own list");
+            world.State.HasWornItems(only).Should().BeFalse("on: no worn item on a tracked layer");
+        }
+
+        [Fact]
+        public void A_Cached_Missing_Record_Recovers_When_The_Record_Is_Created()
+        {
+            // Codex audit P3 (#4): a held mobile's record removed, read once (NoRecord cached), then created again over its
+            // attached children (a slot write, no epoch change): the read finds its items
+            World world = WorldStateContentsTests.Build();
+            Mobile m = world.Mobiles.Get(MOB);
+            world.State.ReadEquipmentOverride = true;
+            m.FindItemByLayer(Layer.Helmet).Serial.Should().Be(HELM);
+
+            world.Ecs.Mirror.Remove(MOB);
+            m.FindItemByLayer(Layer.Helmet).Should().BeNull("no record: nothing worn");
+            world.State.HasWornItems(m).Should().BeFalse();
+            uint epoch = world.Ecs.Mirror.Epoch;
+
+            world.Ecs.Mirror.UpsertMobile(MOB, m.Graphic, 0, m.X, m.Y, m.Z, 0, 0, false);
+            world.Ecs.Mirror.Epoch.Should().Be(epoch, "a creation moves no epoch");
+            m.FindItemByLayer(Layer.Helmet).Should().BeSameAs(world.Items.Get(HELM));
+            world.State.HasWornItems(m).Should().BeTrue();
+            AllReadersEqual(world);
+        }
+
+        [Fact]
+        public void A_Bare_Record_Created_After_A_Cached_Miss_Reads_Its_Later_Equipment()
+        {
+            // the same with no children: the creation writes no slot; the first equip then must not keep the cached NoRecord
+            World world = WorldStateContentsTests.Build();
+            Mobile late = world.GetOrCreateMobile(LATE);
+            world.State.ReadEquipmentOverride = true;
+            world.Ecs.Mirror.Remove(LATE);
+            late.FindItemByLayer(Layer.Shirt).Should().BeNull();
+
+            world.Ecs.Mirror.UpsertMobile(LATE, late.Graphic, 0, late.X, late.Y, late.Z, 0, 0, false);
+            world.Writer.Equip(NEWSHIRT, 0x1517, Layer.Shirt, LATE, 0, out _, out _);
+            late.FindItemByLayer(Layer.Shirt).Should().BeSameAs(world.Items.Get(NEWSHIRT));
+            AllReadersEqual(world);
+        }
+
+        [Fact]
+        public void A_Version_Past_32_Bits_Still_Refills_The_Cache()
+        {
+            // Codex audit P3 (#6): a version whose low 32 bits equal the cached one must not pass for it
+            World world = WorldStateContentsTests.Build();
+            Mobile m = world.Mobiles.Get(MOB);
+            world.State.ReadEquipmentOverride = true;
+            m.FindItemByLayer(Layer.Helmet).Serial.Should().Be(HELM);
+            world.Ecs.Mirror.TryGetEntity(MOB, out EcsEntity e).Should().BeTrue();
+            ulong cached = e.GetComponent<EquipmentSlots>().Worn.Version;
+
+            // the next slot write on this mobile takes 2^32 + cached
+            world.Ecs.Mirror.WornWrites = (1L << 32) + (long)cached - 1;
+            uint epoch = world.Ecs.Mirror.Epoch;
+            // one slot write and no removal (the mirror's detach; the list is not the subject here)
+            world.Ecs.Mirror.DetachChild(HELM);
+            world.Ecs.Mirror.Epoch.Should().Be(epoch, "no removal: only the version can tell");
+            e.GetComponent<EquipmentSlots>().Worn.Version.Should().Be((1UL << 32) + cached);
+
+            m.FindItemByLayer(Layer.Helmet).Should().BeNull("the ECS's helmet left, not the cached one");
+        }
+
+        [Fact]
+        public void The_Read_Cache_Sizes_Are_What_The_Summary_Counts()
+        {
+            // ReadCacheMemory's layout-based figures: a WornCache object, and its items array
+            long a0 = GC.GetAllocatedBytesForCurrentThread();
+            var c = new WornCache();
+            long a1 = GC.GetAllocatedBytesForCurrentThread();
+            c.Items = new Item[WornLayers.COUNT];
+            long a2 = GC.GetAllocatedBytesForCurrentThread();
+
+            (a1 - a0).Should().Be(72, "the 64-bit version fits the same object size");
+            (a2 - a1).Should().Be(24 + 8 * WornLayers.COUNT);
         }
 
         [Fact]
