@@ -21,7 +21,7 @@ catch (ArgumentException e)
 bool maps = true, convert = true, anims = true, gumps = true, fonts = true, cliloc = true, speech = true, sounds = true, music = true, formatGiven = false, gumpReport = false;
 string? gumpDef = null;
 string? audioReport = null;
-string? clientVersionArg = null, cuoSettingsArg = null, bodyChoicesArg = null;
+string? clientVersionArg = null, cuoSettingsArg = null, bodyChoicesArg = null, layerRulesArg = null;
 HashSet<string>? only = null; // --only: convert just these stages into an existing pack, keeping everything else
 for (int i = 0; i < args.Length; i++)
 {
@@ -55,6 +55,9 @@ for (int i = 0; i < args.Length; i++)
         case "--raw-gumps": GumpConvert.Raw = true; break;
         case "--gump-small": GumpConvert.SmallRle = int.Parse(args[++i]); break;
         case "--body-choices": bodyChoicesArg = args[++i]; break;
+        case "--layer-rules": layerRulesArg = args[++i]; break;
+        // T3b: the built-in layering rules as JSON (a shard's starting point for --layer-rules); writes only that file
+        case "--export-layer-rules": return ExportLayerRules(args[++i]);
         case "--bodies":
             AnimConvert.Bodies = args[++i].Split(',').Select(s => s.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? Convert.ToInt32(s[2..], 16) : int.Parse(s)).ToHashSet();
             break;
@@ -98,7 +101,7 @@ for (int i = 0; i < args.Length; i++)
         case "--regions": ConvertOptions.MaxRegions = int.Parse(args[++i]); break;
         case "--bench-bc7": Bench.Bc7(args[++i]); return 0;
         default:
-            Console.WriteLine("usage: Uo.Converter [--uo <client dir>] --out <pack dir> [--client-version x.y.z.w | --cuo-settings <settings.json>] [--debug <png dir>] [--packs-root <published packs root>] [--format b5g5r5a1|rgba8|bc7] [--bc7-quality fast|balanced|bestquality] [--bc7-refine-db 28] [--raw-regions] [--raw-pages|--compress-pages[=chunked]] [--chunk-bytes n] [--page-size 2048] [--anim-page-size 1024] [--anim-format indexed8|page] [--indexed-mips none|b16] [--threads n] [--pages a-b] [--facets 0,1] [--regions n] [--no-maps] [--no-map-diffs] [--no-anims] [--no-gumps] [--no-fonts] [--no-cliloc] [--no-speech] [--no-sounds] [--no-music] [--raw-gumps] [--raw-text] [--text-small n] [--cliloc-brotli] [--cliloc-skip ext,ext] [--no-cliloc-overrides] [--gump-small n] [--gump-def <file>] [--gump-report] [--audio-report <pack>] [--only art,tex,hues,tiledata,data,gumps,fonts,cliloc,speech,sounds,music,maps,anims] [--anims-only] [--body-choices bodies.json] [--bodies 400,0xC8] [--verify-only]");
+            Console.WriteLine("usage: Uo.Converter [--uo <client dir>] --out <pack dir> [--client-version x.y.z.w | --cuo-settings <settings.json>] [--debug <png dir>] [--packs-root <published packs root>] [--format b5g5r5a1|rgba8|bc7] [--bc7-quality fast|balanced|bestquality] [--bc7-refine-db 28] [--raw-regions] [--raw-pages|--compress-pages[=chunked]] [--chunk-bytes n] [--page-size 2048] [--anim-page-size 1024] [--anim-format indexed8|page] [--indexed-mips none|b16] [--threads n] [--pages a-b] [--facets 0,1] [--regions n] [--no-maps] [--no-map-diffs] [--no-anims] [--no-gumps] [--no-fonts] [--no-cliloc] [--no-speech] [--no-sounds] [--no-music] [--raw-gumps] [--raw-text] [--text-small n] [--cliloc-brotli] [--cliloc-skip ext,ext] [--no-cliloc-overrides] [--gump-small n] [--gump-def <file>] [--gump-report] [--audio-report <pack>] [--only art,tex,hues,tiledata,data,gumps,fonts,cliloc,speech,sounds,music,maps,anims] [--anims-only] [--body-choices bodies.json] [--layer-rules rules.json] [--export-layer-rules rules.json] [--bodies 400,0xC8] [--verify-only]");
             return 1;
     }
 }
@@ -135,6 +138,16 @@ if (convert && bodyChoicesArg != null && (only == null ? anims : only.Contains("
 }
 
 bool Want(string stage) => only != null ? only.Contains(stage) : stage switch { "maps" => maps, "anims" => anims, "gumps" => gumps, "fonts" => fonts, "cliloc" => cliloc, "speech" => speech, "sounds" => sounds, "music" => music, _ => true };
+
+// T3b: the layering rules from JSON (docs/modern-client/layer-rules.md), read and checked before anything is cleared or
+// written, so a typo leaves the previous pack as it was. Also read for --verify-only (verify compares the pack's
+// layerrules.bin with it instead of the built-in rules).
+LayerRules? layerRules = null;
+if (layerRulesArg != null && Want("layers"))
+{
+    try { layerRules = LayerRulesJson.Load(layerRulesArg); }
+    catch (LayerRulesJsonException e) { Console.Error.WriteLine($"layer rules: {e.Message}"); return 1; }
+}
 
 // The bodies record a pack keeps: a run that does not rebuild the anims carries the previous manifest's record forward
 // (--only without anims, --no-anims) and --verify-only checks the pack against it. Validate it before anything is
@@ -270,14 +283,16 @@ if (convert)
         Stage("tileart", () => TableConvert.TileArt(fm, outDir));
         Stage("equipconv", () => TableConvert.EquipConv(fm, outDir));
     }
-    // T3b: the layering rules (no install data: ClassicUO's hard-coded rules, LayerRulesDefault, the one source)
+    // T3b: the layering rules (no install data: ClassicUO's hard-coded rules, LayerRulesDefault, the one source; or the
+    // shard's --layer-rules JSON)
     if (Want("layers"))
         Stage("layerrules", () =>
         {
             var path = Path.Combine(outDir, Uo.Pack.LayerRulesConst.FileName);
-            Uo.Pack.LayerRulesDefault.Create().Write(path);
-            return path;
+            (layerRules ?? Uo.Pack.LayerRulesDefault.Create()).Write(path);
+            return $"{path} ({(layerRules != null ? Path.GetFullPath(layerRulesArg!) : "built-in rules")})";
         });
+    else if (layerRulesArg != null) Console.WriteLine("  warning: --layer-rules is ignored: layers are not converted in this run");
     if (Want("gumps")) stats["gumps"] = Stage("gumps", () => GumpConvert.Run(fm, outDir));
     if (Want("fonts")) stats["fonts"] = Stage("fonts", () => TextConvert.Fonts(fm, outDir));
     if (Want("cliloc")) stats["cliloc"] = Stage("cliloc", () => TextConvert.Cliloc(fm, outDir));
@@ -323,6 +338,8 @@ if (convert)
 
 Verify.Only = only;
 Verify.Maps = Want("maps");
+Verify.LayerRules = layerRules;
+Verify.LayerRulesSource = layerRulesArg;
 if (only == null && !sounds) Verify.Off.Add("sounds");
 if (only == null && !music) Verify.Off.Add("music");
 bool ok = Stage("verify (round-trip)", () => Verify.Run(fm, outDir, stats));
@@ -341,6 +358,23 @@ static int PageSide(string v)
     int s = int.Parse(v);
     if (s < 256 || s > 8192 || (s & (s - 1)) != 0) throw new ArgumentException($"page size {s}: power of two in 256..8192");
     return s;
+}
+
+// --export-layer-rules: the built-in rules (LayerRulesDefault) as JSON
+static int ExportLayerRules(string path)
+{
+    try
+    {
+        LayerRulesJson.Save(LayerRulesDefault.Create(), path);
+    }
+    catch (Exception e) when (e is IOException or UnauthorizedAccessException or InvalidOperationException or LayerRulesJsonException)
+    {
+        Console.Error.WriteLine($"export layer rules: {e.Message}");
+        return 1;
+    }
+
+    Console.WriteLine($"layer rules: the built-in rules written to {Path.GetFullPath(path)}");
+    return 0;
 }
 
 static int Guarded(Func<int> command)

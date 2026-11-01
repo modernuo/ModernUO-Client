@@ -537,17 +537,23 @@ public static class Verify
         }
     }
 
-    /// <summary>T3b: layerrules.bin, when present, is exactly LayerRulesDefault (the client's built-in rules).</summary>
+    /// <summary>T3b: the run's --layer-rules JSON (null: the built-in rules) and its path, for <see cref="CheckLayerRules"/>.</summary>
+    public static LayerRules? LayerRules;
+    public static string? LayerRulesSource;
+
+    /// <summary>T3b: layerrules.bin, when present, is exactly the run's --layer-rules JSON, else LayerRulesDefault (the
+    /// client's built-in rules).</summary>
     private static void CheckLayerRules(string outDir)
     {
         var path = Path.Combine(outDir, LayerRulesConst.FileName);
         if (!Want("layers") || !File.Exists(path)) return;
-        var pack = LayerRules.Read(path);
-        var own = LayerRulesDefault.Create();
+        var pack = Uo.Pack.LayerRules.Read(path);
+        var own = LayerRules ?? LayerRulesDefault.Create();
+        string what = LayerRules != null ? $"--layer-rules {LayerRulesSource}" : "LayerRulesDefault";
         static bool Same<T>(T[] a, T[] b) where T : unmanaged => MemoryMarshal.AsBytes(a.AsSpan()).SequenceEqual(MemoryMarshal.AsBytes(b.AsSpan()));
         bool same = Same(pack.Bodies, own.Bodies) && Same(pack.Tables, own.Tables) && Same(pack.Rules, own.Rules) && Same(pack.Conds, own.Conds) && Same(pack.Ranges, own.Ranges);
-        if (!same) Fail("layerrules: differs from LayerRulesDefault (a custom rules file, or a converter from another version)");
-        Console.WriteLine($"  layerrules: {pack.Rules.Length} rules {(same ? "EXACT" : "MISMATCH")} vs LayerRulesDefault");
+        if (!same) Fail($"layerrules: differs from {what} (a custom rules file: pass its JSON with --layer-rules; or a converter from another version)");
+        Console.WriteLine($"  layerrules: {pack.Rules.Length} rules {(same ? "EXACT" : "MISMATCH")} vs {what}");
     }
 
     /// <summary>animdata.bin against AnimDataLoader.CalculateCurrentGraphic for every graphic whose record is in the file.</summary>

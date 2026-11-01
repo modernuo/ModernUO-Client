@@ -444,6 +444,13 @@ public sealed class LayerRules
     public void Write(string path)
     {
         using var s = ReplacingFile.Create(path);
+        Write(s);
+        s.Commit();
+    }
+
+    /// <summary>The file's bytes to <paramref name="s"/> (the converter's JSON input checks them with <see cref="Read(Stream)"/>).</summary>
+    public void Write(Stream s)
+    {
         StructIo.WriteHeader(s, LayerRulesConst.Magic);
         var h = new LayerRulesHeader
         {
@@ -456,7 +463,6 @@ public sealed class LayerRules
         StructIo.WriteSpan<LayerRule>(s, Rules);
         StructIo.WriteSpan<LayerCond>(s, Conds);
         StructIo.WriteSpan<LayerRange>(s, Ranges);
-        s.Commit();
     }
 
     public static LayerRules Read(string path)
