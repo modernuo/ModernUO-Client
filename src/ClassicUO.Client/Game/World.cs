@@ -233,8 +233,10 @@ namespace ClassicUO.Game
                         Map = new Map.Map(this, value);
                         ClassicUO.Game.Map.MapWarmup.OnMapCreated(this);
 
-                        Player.SetInWorldTile(x, y, z);
-                        Player.ClearSteps();
+                        // T1 (funnel part 9, the gate's last direct writes: a map change at login): the player re-placed on
+                        // the new map and its walk queue emptied, as funnel operations (after ClearForMapChange's scope)
+                        Writer.MoveMobile(Player, x, y, z);
+                        Writer.StopMobile(Player);
                     }
                     else
                     {
