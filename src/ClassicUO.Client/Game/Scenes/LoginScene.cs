@@ -176,15 +176,8 @@ namespace ClassicUO.Game.Scenes
 
         private Gump GetGumpForStep()
         {
-            foreach (Item item in _world.Items.Values)
-            {
-                _world.RemoveItem(item);
-            }
-
-            foreach (Mobile mobile in _world.Mobiles.Values)
-            {
-                _world.RemoveMobile(mobile);
-            }
+            // T1 (funnel part 9): the removals as a funnel operation
+            _world.Writer.ClearForLogin();
 
             _world.Mobiles.Clear();
             _world.Items.Clear();
