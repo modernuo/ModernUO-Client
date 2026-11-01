@@ -66,7 +66,7 @@ namespace ClassicUO.UnitTests.Ecs
 
         public enum Divergence
         {
-            ListReorder, LayerInCacheOnly, MirrorOnlyDetach, MirrorOnlyRemove, ListOnlyUnlink, MirrorOnlyRestamp
+            ListReorder, LayerInCacheOnly, MirrorOnlyDetach, MirrorOnlyRemove, ListOnlyUnlink, MirrorOnlyRestamp, OtherInstance
         }
 
         [Theory]
@@ -82,6 +82,8 @@ namespace ClassicUO.UnitTests.Ecs
         [InlineData(Divergence.ListOnlyUnlink, true)]
         [InlineData(Divergence.MirrorOnlyRestamp, false)]
         [InlineData(Divergence.MirrorOnlyRestamp, true)]
+        [InlineData(Divergence.OtherInstance, false)]
+        [InlineData(Divergence.OtherInstance, true)]
         public void A_Divergence_Is_Reported(Divergence divergence, bool read)
         {
             if (!WorldState.EquipCheckAvailable)
@@ -119,6 +121,60 @@ namespace ClassicUO.UnitTests.Ecs
             world.State.EquipReads.Should().Be(0);
         }
 
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void A_Guard_Divergence_Is_Reported(bool read)
+        {
+            // Codex audit P3 (#5): MobileView's guard compared with the list's tracked live equipment: an item in the list
+            // only (pushed behind the funnel onto a bare mobile) makes the ECS's guard false and the list's true
+            if (!WorldState.EquipCheckAvailable)
+            {
+                return;
+            }
+
+            const uint BARE = 0x0000_39A0, LOOSE = 0x4000_79A0;
+            (World world, List<string> reports) = Build(read);
+            world.Writer.Equip(LOOSE, 0x1517, Layer.Shirt, BARE, 0, out _, out _); // before its mobile: an orphan
+            Mobile bare = world.GetOrCreateMobile(BARE);
+            world.State.HasWornItems(bare);
+            reports.Should().BeEmpty("the orphan is in neither");
+
+            bare.PushToBack(world.Items.Get(LOOSE));
+            bool found = world.State.HasWornItems(bare);
+
+            reports.Should().ContainSingle().Which.Should().Contain("(HasWornItems)").And.Contain("0x000039A0");
+            found.Should().Be(!read, "the switch picks the source");
+        }
+
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void A_Mobile_Wearing_Only_Untracked_Layers_Checks_Clean(bool read)
+        {
+            // !IsEmpty is true, but no tracked layer is worn on either side: not a divergence
+            if (!WorldState.EquipCheckAvailable)
+            {
+                return;
+            }
+
+            const uint ONLY = 0x0000_39A1, BOX = 0x4000_79A1, BOX0 = 0x4000_79A2;
+            (World world, List<string> reports) = Build(read);
+            Mobile only = world.GetOrCreateMobile(ONLY);
+            world.Writer.Equip(BOX, 0x1E5E, (Layer)0x1E, ONLY, 0, out _, out _);
+            world.Writer.Equip(BOX0, 0x1E5E, Layer.Invalid, ONLY, 0, out _, out _);
+
+            world.State.HasWornItems(only).Should().Be(!read);
+            ReadAll(world);
+
+            foreach (Mobile m in world.Mobiles.Values.ToList())
+            {
+                world.State.HasWornItems(m);
+            }
+
+            reports.Should().BeEmpty();
+        }
+
         // a change of one side behind the funnel; returns the layer it shows on
         internal static Layer Diverge(World world, Divergence divergence)
         {
@@ -151,6 +207,15 @@ namespace ClassicUO.UnitTests.Ecs
 
                 case Divergence.ListOnlyUnlink:
                     mob.Remove(world.Items.Get(HELM));
+
+                    return Layer.Helmet;
+
+                case Divergence.OtherInstance:
+                    // Codex audit P3 (#5): World holds another object under the helmet's serial; the list keeps the old one
+                    Item other = Item.Create(world, HELM);
+                    other.Layer = Layer.Helmet;
+                    world.Items.Remove(HELM);
+                    world.Items[HELM] = other;
 
                     return Layer.Helmet;
 

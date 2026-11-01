@@ -107,11 +107,20 @@ namespace ClassicUO.Game
         /// </summary>
         public bool HasWornItems(Mobile mobile)
         {
-            if (!ReadEquipment)
+            bool found = ReadEquipment ? WornGuard(mobile) : !mobile.IsEmpty;
+#if CUO_DEVTOOLS
+            if (EquipCheckEnabled)
             {
-                return !mobile.IsEmpty;
+                CheckGuard(mobile, found);
             }
+#endif
 
+            return found;
+        }
+
+        // the ECS's guard: any worn item on a tracked layer (a mobile World does not hold: its own list)
+        private bool WornGuard(Mobile mobile)
+        {
             WornCache c = Worn(mobile);
 
             return c.Held == WornHeld.NotHeld ? !mobile.IsEmpty : c.Items != null;
@@ -139,7 +148,9 @@ namespace ClassicUO.Game
             WornCache c = mobile.EquipCache ??= new WornCache();
             CacheRefreshes++;
 
-            if (c.Epoch != mirror.Epoch || c.Serial != mobile.Serial || c.Held == WornHeld.Unknown)
+            // Codex audit P3 (#4): a cached NoRecord is looked up again at every refresh (a record can be created for the serial,
+            // also over attached children, without an epoch change: only removals move the epoch)
+            if (c.Epoch != mirror.Epoch || c.Serial != mobile.Serial || c.Held == WornHeld.Unknown || c.Held == WornHeld.NoRecord)
             {
                 c.Serial = mobile.Serial;
                 c.Epoch = mirror.Epoch;
@@ -249,16 +260,55 @@ namespace ClassicUO.Game
             Item ecs = ReadEquipment ? found : WornItem(mobile, layer);
             uint ls = list?.Serial ?? 0, es = ecs?.Serial ?? 0;
 
-            if (ls != es)
+            // Codex audit P3 (#5): the same object, not only the same serial (a stale instance under a serial is a divergence)
+            if (ls != es || !ReferenceEquals(list, ecs))
             {
-                EquipMismatches++;
-                string message = $"[equip] mismatch (FindItemByLayer) 0x{mobile.Serial:X8} layer {layer} (0x{(byte)layer:X2}): World 0x{ls:X8} | ECS 0x{es:X8} | read_equipment={(ReadEquipment ? "on" : "off")}";
-                EquipMismatchObserver?.Invoke(message);
+                string same = ls == es ? " (same serial, another instance)" : "";
+                ReportEquip($"[equip] mismatch (FindItemByLayer) 0x{mobile.Serial:X8} layer {layer} (0x{(byte)layer:X2}): World 0x{ls:X8} | ECS 0x{es:X8}{same} | read_equipment={(ReadEquipment ? "on" : "off")}");
+            }
+        }
 
-                if (EquipMismatches <= MAX_LOGGED_MISMATCHES)
+        // Codex audit P3 (#5): MobileView's guard. The ECS's answer against the list's tracked live equipment: a child World
+        // holds (the same object), not destroyed, on a tracked layer. Not against !IsEmpty: a mobile whose children are all
+        // on untracked layers (0, above 0x1D) has no worn item, and the view's guarded reads are tracked layers only.
+        private void CheckGuard(Mobile mobile, bool found)
+        {
+            EquipReads++;
+            bool ecs = ReadEquipment ? found : WornGuard(mobile);
+            bool list = ListGuard(mobile);
+
+            if (ecs != list)
+            {
+                ReportEquip($"[equip] mismatch (HasWornItems) 0x{mobile.Serial:X8}: World {list} | ECS {ecs} | read_equipment={(ReadEquipment ? "on" : "off")}");
+            }
+        }
+
+        private bool ListGuard(Mobile mobile)
+        {
+            if (!ReferenceEquals(_world.Mobiles.Get(mobile.Serial), mobile))
+            {
+                return !mobile.IsEmpty;
+            }
+
+            for (LinkedObject i = mobile.Items; i != null; i = i.Next)
+            {
+                if (i is Item it && !it.IsDestroyed && WornLayers.Tracked((byte)it.Layer) && ReferenceEquals(_world.Items.Get(it.Serial), it))
                 {
-                    Log.Warn(message);
+                    return true;
                 }
+            }
+
+            return false;
+        }
+
+        private void ReportEquip(string message)
+        {
+            EquipMismatches++;
+            EquipMismatchObserver?.Invoke(message);
+
+            if (EquipMismatches <= MAX_LOGGED_MISMATCHES)
+            {
+                Log.Warn(message);
             }
         }
 
