@@ -3006,6 +3006,156 @@ namespace ClassicUO.Game
             }
         }
 
+        // ---- funnel part 9, group 2: the removal sites outside the converted callers (part 8's gate traced its only direct
+        // writes, Item.Destroy's, to World.RemoveItem from callers its two-level trace cut off)
+
+        /// <summary>
+        /// <c>PlayerMobile.CloseBank</c>'s removals (0x20 for the player, and the player's walk before its step): every item
+        /// in the open bank removed with force (<c>World.RemoveItem(item, true)</c>, contents first, as before T1), in the
+        /// bank's child order, in a scope that owns the bank and its subtree, not folded (a removal: no value of its own). The
+        /// caller then empties the bank's list, closes its gump and its Opened flag, as before. Admission as the walk's
+        /// (<see cref="AdmittedPlayerWalk"/>: <c>QueuePlayerStep</c> runs it, and a walk from the player's position or
+        /// direction callback joins the open operation on the player; the joined removal opens no scope and its subtree joins
+        /// the outer scope's), then the player check: only <c>World.Player</c> of this World; anything else is a violation,
+        /// rejected (false: nothing is removed and the caller leaves the bank open). The removed items' placements are
+        /// cancelled first.
+        /// </summary>
+        public bool RemoveBankContents(PlayerMobile player, Item bank)
+        {
+            if (player == null || bank == null || !AdmittedPlayerWalk(player, nameof(RemoveBankContents), out bool joined))
+            {
+                return false;
+            }
+
+            if (player.World != _world || !ReferenceEquals(player, _world.Player))
+            {
+                Reject(Violation.NotHeld, $"WorldWriter.RemoveBankContents: 0x{player.Serial:X8} is not this World's player", rejected: true);
+
+                return false;
+            }
+
+            CancelSubtreePlacements(bank);
+
+            using (joined ? default : Open(bank, null))
+            {
+#if CUO_DEVTOOLS
+                if (FunnelCheck.Enabled)
+                {
+                    CollectSubtree(bank);
+                }
+#endif
+
+                Item first = (Item)bank.Items;
+
+                while (first != null)
+                {
+                    Item next = (Item)first.Next;
+
+                    _world.RemoveItem(first, true);
+
+                    first = next;
+                }
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// <c>World.Update</c>'s removal of the item the player picked up (<c>GameActions.PickUp</c> sets
+        /// <c>World.ObjectToRemove</c>; the next frame removes it with force, contents first). The old removal in a scope
+        /// that owns the item and its subtree, not folded; its placements are cancelled first. Only the item this World
+        /// holds for its serial (the caller's <c>Items.Get</c>); anything else is a violation, rejected (nothing removed). A
+        /// destroyed held item is left as <c>World.RemoveItem</c> left it (nothing happens).
+        /// </summary>
+        public void RemovePickedUpItem(Item item)
+        {
+            if (item == null || !Admitted(nameof(RemovePickedUpItem), item.Serial))
+            {
+                return;
+            }
+
+            if (!Holds(item))
+            {
+                Reject(Violation.NotHeld, $"WorldWriter.RemovePickedUpItem: 0x{item.Serial:X8} is not the item this World holds for its serial", rejected: true);
+
+                return;
+            }
+
+            CancelSubtreePlacements(item);
+
+            using (Open(item, null))
+            {
+#if CUO_DEVTOOLS
+                if (FunnelCheck.Enabled)
+                {
+                    CollectSubtree(item);
+                }
+#endif
+
+                _world.RemoveItem(item, true);
+            }
+        }
+
+        /// <summary>
+        /// <c>World.InternalMapChangeClear</c> (a map change: <c>World.MapIndex</c>'s setter, 0xBF.08, the map patches'
+        /// reload, EnterWorld without a map): the old body (<see cref="World.MapChangeRemovals"/>: without a kept player the
+        /// map and the player destroyed; every item but the player's (houses dropped from the house manager), then every
+        /// mobile but the player, removed with force) in a scope that owns every object of this World, as
+        /// <see cref="ClearWorld"/>'s. The placements of what it destroyed are cancelled afterwards. A nested call is
+        /// rejected (nothing removed); nothing changes the map inside an operation.
+        /// </summary>
+        public void ClearForMapChange(bool keepPlayer)
+        {
+            if (!Admitted(nameof(ClearForMapChange), 0))
+            {
+                return;
+            }
+
+            using (Open(null, null))
+            {
+                _clearingWorld = true;
+                _world.MapChangeRemovals(keepPlayer);
+            }
+
+            for (int i = _placements.Count - 1; i >= 0; i--)
+            {
+                if (_placements[i].Subject.IsDestroyed)
+                {
+                    _placements.RemoveAt(i);
+                }
+            }
+        }
+
+        /// <summary>
+        /// <c>LoginScene</c>'s reset of the World between login steps: every item, then every mobile, removed without force
+        /// (the scene then empties the tables), in the tables' order, as before T1; every placement cancelled first; a scope
+        /// that owns every object of this World. A nested call is rejected (nothing removed; the scene still empties the tables).
+        /// </summary>
+        public void ClearForLogin()
+        {
+            if (!Admitted(nameof(ClearForLogin), 0))
+            {
+                return;
+            }
+
+            _placements.Clear();
+
+            using (Open(null, null))
+            {
+                _clearingWorld = true;
+
+                foreach (Item item in _world.Items.Values)
+                {
+                    _world.RemoveItem(item);
+                }
+
+                foreach (Mobile mobile in _world.Mobiles.Values)
+                {
+                    _world.RemoveMobile(mobile);
+                }
+            }
+        }
+
         // ---- funnel part 8, group 6: the gump-side writes (survey: ContainerGump.CheckItemControlPosition is the only gump
         // or UI write to an object World holds. CreateCharAppearanceGump and RaceChangeGump write their own preview mobiles
         // and clothes; until the Codex audit of part 8 (P2 #2) character creation put its mobile in World.Mobiles and both
