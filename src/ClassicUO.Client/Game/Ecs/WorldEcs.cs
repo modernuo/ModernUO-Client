@@ -533,6 +533,52 @@ namespace ClassicUO.Game
                     e.GetComponent<AnimationTimer>() = mobile.FullAnimationTimer;
                 }
             }
+
+            if (StepsEnabled)
+            {
+                // T6c: the step state travels with the clock too: every queue change (the input push), every step completion
+                // (CompleteStep's commit) and every Update (the loop's push) pass here
+                WriteSteps(mobile, e);
+            }
+        }
+
+        /// <summary>
+        /// T6c: the <see cref="Steps"/> component is kept with the clock (World.Update sets this each frame from
+        /// <c>world_step_system</c>; turning it on goes through <see cref="ResyncClocks"/>, which writes every queue).
+        /// </summary>
+        public bool StepsEnabled;
+
+        private uint _stepLogAt;
+
+        public static long StepWrites;
+
+        /// <summary>T6c: copies the Mobile's walk queue, <c>LastStepTime</c> and walk offset into its <see cref="Steps"/>.</summary>
+        internal static void WriteSteps(Mobile mobile, EcsEntity e)
+        {
+            if (!e.HasComponent<Steps>())
+            {
+                e.AddComponent(new Steps());
+            }
+
+            StepWrites++;
+            StepSystem.CopyFrom(mobile, ref e.GetComponent<Steps>());
+        }
+
+        /// <summary>
+        /// T6c: the step state of a mobile changed outside the clock pushes (a boat carrying it writes its offset or
+        /// position): rewrites its <see cref="Steps"/>. Ignores items, mobiles World does not hold and a disabled system.
+        /// </summary>
+        internal void PushSteps(Entity entity)
+        {
+            if (!StepsEnabled || !ClockEnabled || !(entity is Mobile mobile) || mobile.IsDestroyed || !ReferenceEquals(_world.Mobiles.Get(mobile.Serial), mobile))
+            {
+                return;
+            }
+
+            if (Mirror.TryGetEntity(mobile.Serial, out EcsEntity e))
+            {
+                WriteSteps(mobile, e);
+            }
         }
 
         /// <summary>
@@ -835,6 +881,12 @@ namespace ClassicUO.Game
             {
                 _animAdvanceLogAt = Time.Ticks + 5000;
                 Log.Info(MobileAnimationAdvanceSystem.Summary());
+            }
+
+            if (StepSystem.StepCheck && Time.Ticks >= _stepLogAt)
+            {
+                _stepLogAt = Time.Ticks + 5000;
+                Log.Info(StepSystem.Summary());
             }
 
             if ((MobileAnimationSystem.InputCheck || MobileAnimationSystem.InputBench) && Time.Ticks >= _inputLogAt)
