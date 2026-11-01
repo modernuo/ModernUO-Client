@@ -98,14 +98,15 @@ namespace ClassicUO.Ecs
                 // T3a: eleven components (WornLayers added), more than CreateEntity's generic overloads take: the entity is
                 // created in its final archetype (no structural change) and the components written in place
                 e = (isPlayer ? PlayerArchetype : MobileArchetype).CreateEntity();
-                e.GetComponent<Serial>().Value = serial;
-                e.GetComponent<Graphic>().Value = graphic;
-                e.GetComponent<Hue>().Value = hue;
-                e.GetComponent<Position>() = new Position { X = x, Y = y, Z = z };
-                e.GetComponent<Facing>().Value = facing;
-                e.GetComponent<Flags>().Value = flags;
-                e.GetComponent<AnimationState>() = new AnimationState { ServerGroup = 0xFF };
-                e.GetComponent<MobileRenderState>() = new MobileRenderState { Alpha = 0xFF };
+                EntityData d = e.Data;
+                d.Get<Serial>().Value = serial;
+                d.Get<Graphic>().Value = graphic;
+                d.Get<Hue>().Value = hue;
+                d.Get<Position>() = new Position { X = x, Y = y, Z = z };
+                d.Get<Facing>().Value = facing;
+                d.Get<Flags>().Value = flags;
+                d.Get<AnimationState>() = new AnimationState { ServerGroup = 0xFF };
+                d.Get<MobileRenderState>() = new MobileRenderState { Alpha = 0xFF };
 
                 _bySerial[serial] = e;
                 MobileCount++;
@@ -164,14 +165,14 @@ namespace ClassicUO.Ecs
             byte oldWornLayer = 0;
             ulong oldWornStamp = 0;
 
-            if (_bySerial.TryGetValue(serial, out Entity e) && e.Tags.Has<ItemTag>() && e.TryGetComponent(out EquippedOn worn))
+            bool created = !_bySerial.TryGetValue(serial, out Entity e) || !e.Tags.Has<ItemTag>();
+
+            if (!created && e.TryGetComponent(out EquippedOn worn))
             {
                 oldWearer = worn.Parent;
                 oldWornLayer = worn.Layer;
                 oldWornStamp = e.GetComponent<ItemData>().Stamp;
             }
-
-            bool created = e.IsNull || !e.Tags.Has<ItemTag>();
 
             // T2: the contents cache follows attachment (only when some parent's contents are cached: no cost otherwise)
             bool track = _contents.Count != 0;
@@ -180,7 +181,7 @@ namespace ClassicUO.Ecs
 
             if (track && !created)
             {
-                oldStamp = e.GetComponent<ItemData>().Stamp;
+                oldStamp = oldWearer != 0 ? oldWornStamp : e.GetComponent<ItemData>().Stamp;
 
                 if (oldStamp != 0)
                 {
@@ -221,6 +222,9 @@ namespace ClassicUO.Ecs
             // an existing record (T1 part 9): attached (the operation's PushToBack) takes the next stamp; a new parent without
             // a push detaches (ClassicUO links an item only when its parent exists: an orphan stays out of the list);
             // otherwise it keeps its place. After SetParent: its component re-adds move the entity, so the ref is taken here
+            // (the record's stamp after the write, for T2 and T3a without reading it back)
+            ulong stampNow = created && attach ? _childStamp : 0;
+
             if (!created)
             {
                 ref ItemData slot = ref e.GetComponent<ItemData>();
@@ -235,13 +239,15 @@ namespace ClassicUO.Ecs
                 {
                     slot.Stamp = 0;
                 }
+
+                stampNow = slot.Stamp;
             }
 
             // T2: a change of attachment (attached, detached, re-pushed, moved to another parent) changes the old parent's
             // and the new parent's contents
             if (track)
             {
-                ulong newStamp = e.GetComponent<ItemData>().Stamp;
+                ulong newStamp = stampNow;
 
                 if (newStamp != oldStamp)
                 {
@@ -259,9 +265,11 @@ namespace ClassicUO.Ecs
 
             // T3a: an attachment to a wearer that changed (attached, detached, re-pushed, another layer or wearer) moves the
             // item in the wearers' WornLayers
-            if (oldWearer != 0 || IsWearerSerial(container))
+            bool wearer = IsWearerSerial(container);
+
+            if (oldWearer != 0 || wearer)
             {
-                UpdateWorn(e, serial, oldWearer, oldWornLayer, oldWornStamp);
+                UpdateWorn(serial, oldWearer, oldWornLayer, oldWornStamp, wearer ? container : 0, wearer ? layer : (byte)0, wearer ? stampNow : 0);
             }
 
             // any write to a worn item (equip, unequip, graphic, hue) invalidates the old and new wearer's slots
@@ -848,19 +856,9 @@ namespace ClassicUO.Ecs
         public int WornCount(uint mobile, byte layer) =>
             _bySerial.TryGetValue(mobile, out Entity e) && e.TryGetComponent(out WornLayers w) && WornLayers.Tracked(layer) ? w.Counts[layer - 1] : 0;
 
-        private void UpdateWorn(Entity e, uint serial, uint oldParent, byte oldLayer, ulong oldStamp)
+        // the item's attachment to a wearer before and after a write (a wearer's parent, layer and stamp; 0 when none)
+        private void UpdateWorn(uint serial, uint oldParent, byte oldLayer, ulong oldStamp, uint newParent, byte newLayer, ulong newStamp)
         {
-            uint newParent = 0;
-            byte newLayer = 0;
-            ulong newStamp = 0;
-
-            if (e.TryGetComponent(out EquippedOn now))
-            {
-                newParent = now.Parent;
-                newLayer = now.Layer;
-                newStamp = e.GetComponent<ItemData>().Stamp;
-            }
-
             if (newParent == oldParent && newLayer == oldLayer && newStamp == oldStamp)
             {
                 return;
