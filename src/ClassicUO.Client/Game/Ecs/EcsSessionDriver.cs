@@ -734,6 +734,13 @@ namespace ClassicUO.Game
 
                     return false;
 
+                // paperdoll: opens the player's own paperdoll (T3a's shots; a double-click on a mounted self would dismount)
+                case "paperdoll":
+                    GameActions.OpenPaperdoll(world, player.Serial);
+                    Log.Info($"[ECS] ui paperdoll 0x{player.Serial:X8} mounted={player.IsMounted} read_equipment={(world.State.ReadEquipment ? "on" : "off")}");
+
+                    return true;
+
                 // readequipment on|off: the equipment readers from the ECS (ecs_read_equipment, T3a); the env override
                 // CUO_ECS_READ_EQUIPMENT wins over it
                 case "readequipment" when args.Length > 0:
