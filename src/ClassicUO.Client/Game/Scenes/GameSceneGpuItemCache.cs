@@ -680,7 +680,7 @@ namespace ClassicUO.Game.Scenes
                     {
                         if (!obj.IsDestroyed)
                         {
-                            AddTileToRenderList(obj, false, GPU_WALK_MAX_Z, chunk, true, true, obj.TNext);
+                            AddTileToRenderList(obj, false, GPU_WALK_MAX_Z, chunk, true, true, obj.TNext, true);
                         }
 
                         continue;
@@ -691,7 +691,7 @@ namespace ClassicUO.Game.Scenes
                         if (!obj.IsDestroyed)
                         {
                             FrameStats.Inc(FrameCounter.ItemCacheFx);
-                            AddTileToRenderList(obj, false, GPU_WALK_MAX_Z, chunk, true, true, obj.TNext);
+                            AddTileToRenderList(obj, false, GPU_WALK_MAX_Z, chunk, true, true, obj.TNext, true);
                         }
 
                         continue;
@@ -707,7 +707,7 @@ namespace ClassicUO.Game.Scenes
                             s = entry;
                         }
 
-                        AddTileToRenderList(obj, false, GPU_WALK_MAX_Z, chunk, true, true, obj.TNext);
+                        AddTileToRenderList(obj, false, GPU_WALK_MAX_Z, chunk, true, true, obj.TNext, true);
                     }
                 }
 
@@ -728,7 +728,7 @@ namespace ClassicUO.Game.Scenes
 
                 Item item = walked.Item;
                 // object handles never show while the cache serves (GpuItemCacheBegin)
-                AddTileToRenderList(item, false, GPU_WALK_MAX_Z, chunk, true, true, item.TNext);
+                AddTileToRenderList(item, false, GPU_WALK_MAX_Z, chunk, true, true, item.TNext, true);
             }
 
             GpuQueueCachedEntries(cache, s, e);

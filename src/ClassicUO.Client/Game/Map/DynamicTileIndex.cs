@@ -280,6 +280,25 @@ namespace ClassicUO.Game.Map
         private DynamicTileIndex.Entry[] _d;
         private int _di, _dn;
 
+        /// <summary>Where a render-list walk starts. A whole-tile walk (<paramref name="single"/> false) with the walk on starts
+        /// the merged order at the tile's head (<paramref name="merged"/> true: continue with <see cref="Next"/>); a
+        /// single-object walk (<paramref name="single"/>: one object submitted, the Gpu item cache and mobile calls) starts at
+        /// <paramref name="first"/> itself. Whole-tile vs single is explicit: the object's TNext is null for the tile's last
+        /// object, so it cannot tell the two apart (Codex P2: a tail mobile's call restarted at the tile head).</summary>
+        public static GameObject Start(GameObject first, Chunk chunk, bool single, bool walkOn, out TileWalk walk, out bool merged)
+        {
+            merged = walkOn && !single;
+
+            if (!merged)
+            {
+                walk = default;
+
+                return first;
+            }
+
+            return Begin(chunk, first.TileCell, out walk);
+        }
+
         /// <summary>The first object of (<paramref name="chunk"/>, <paramref name="cell"/>) in merged order, or null.</summary>
         public static GameObject Begin(Chunk chunk, int cell, out TileWalk walk)
         {

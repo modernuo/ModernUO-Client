@@ -137,6 +137,57 @@ namespace ClassicUO.UnitTests.Game.Map
             }
         }
 
+        // The render-list walk's start (AddTileToRenderList calls TileWalk.Start). The walk itself needs a scene; this is the
+        // entry point it uses for the whole-tile / single-object decision.
+        private static List<GameObject> WalkFrom(GameObject first, Chunk chunk, bool single, bool walkOn)
+        {
+            var seen = new List<GameObject>();
+            GameObject stopAt = single ? first.TNext : null;
+
+            for (GameObject o = TileWalk.Start(first, chunk, single, walkOn, out TileWalk w, out bool merged); o != stopAt; o = merged ? w.Next() : o.TNext)
+            {
+                seen.Add(o);
+                Assert.True(seen.Count < 100_000, "walk does not end");
+            }
+
+            return seen;
+        }
+
+        [Fact]
+        public void Single_Object_Walk_Of_A_Tail_Object_Does_Not_Restart_At_The_Tile_Head()
+        {
+            // Codex P2: the tile's last object has TNext == null, the same value a whole-tile call passes as "no stop"
+            Place(_a, NewLand(_world, 0), 2, 2);
+            Item item = NewItem(Plain, 0);
+            Place(_a, item, 2, 2);
+            Mobile m1 = NewMobile(0), m2 = NewMobile(0);
+            Place(_a, m1, 2, 2);
+            Place(_a, m2, 2, 2);
+            List<GameObject> list = List(_a, 2, 2);
+            Assert.Null(list[^1].TNext);
+
+            foreach (bool walkOn in new[] { true, false })
+            {
+                foreach (GameObject o in list)
+                {
+                    Assert.Equal(new[] { o }, WalkFrom(o, _a, true, walkOn));
+                }
+
+                Assert.Equal(list, WalkFrom(list[0], _a, false, walkOn));
+            }
+        }
+
+        [Fact]
+        public void Whole_Tile_Walk_From_A_Tail_Start_Is_The_Merged_Order()
+        {
+            Place(_a, NewStatic(Plain, 0), 1, 1);
+            Place(_a, NewItem(Plain, 0), 1, 1);
+            Place(_a, NewMobile(0), 1, 1);
+            List<GameObject> list = List(_a, 1, 1);
+            Assert.Equal(list, WalkFrom(list[0], _a, false, true));
+            Assert.Equal(list, WalkFrom(list[0], _a, false, false));
+        }
+
         [Fact]
         public void Holds_Items_And_Mobiles_Only()
         {
