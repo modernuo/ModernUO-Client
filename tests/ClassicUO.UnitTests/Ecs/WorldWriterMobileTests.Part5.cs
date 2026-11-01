@@ -68,6 +68,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void EnterWorld_On_The_Player_Publishes_Its_Callbacks_As_Before_T1()
         {
             World oldWorld = BuildPlayer(out TestPlayer a), newWorld = BuildPlayer(out TestPlayer b);
+            b.Funnel = true; // the new World's callbacks walk through the converted Walk path
             newWorld.Writer.ThrowOnViolation = true;
 
             // the position callback walks (RequestMove), the door check's packet turns (a plugin send hook)
@@ -175,6 +176,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void WalkerManager_DenyWalk_Goes_Through_The_Funnel_As_The_Old_Path()
         {
             World oldWorld = BuildPlayer(out TestPlayer a), newWorld = BuildPlayer(out TestPlayer b);
+            b.Funnel = true; // the new World's callbacks walk through the converted Walk path
             newWorld.Writer.ThrowOnViolation = true;
             GiveWalker(b);
             Pair(() => OldEnqueueStep(a, 1001, 1000, 0, Direction.East, true), () => OldEnqueueStep(b, 1001, 1000, 0, Direction.East, true));
@@ -304,6 +306,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void CompleteStep_Of_The_Player_Publishes_Its_Callbacks_As_Before_T1()
         {
             World oldWorld = BuildPlayer(out TestPlayer a), newWorld = BuildPlayer(out TestPlayer b);
+            b.Funnel = true; // the new World's callbacks walk through the converted Walk path
             newWorld.Writer.ThrowOnViolation = true;
 
             // a turn step, then the move
@@ -596,6 +599,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void The_Walker_And_EnterWorld_Operations_Write_The_Detached_Player_As_Before_T1(bool throws)
         {
             World oldWorld = BuildPlayer(out TestPlayer a), newWorld = BuildPlayer(out TestPlayer b);
+            b.Funnel = true; // the new World's callbacks walk through the converted Walk path
             newWorld.Writer.ThrowOnViolation = throws;
 
             foreach (World w in new[] { oldWorld, newWorld })

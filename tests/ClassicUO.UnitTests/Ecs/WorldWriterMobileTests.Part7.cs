@@ -114,6 +114,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void The_Players_War_Mode_And_Speed_Mode_Equal_The_Old_Path()
         {
             World oldWorld = BuildPlayer(out TestPlayer a), newWorld = BuildPlayer(out TestPlayer b);
+            b.Funnel = true; // the new World's callbacks walk through the converted Walk path
             newWorld.Writer.ThrowOnViolation = true;
 
             foreach (bool war in new[] { true, true, false })
