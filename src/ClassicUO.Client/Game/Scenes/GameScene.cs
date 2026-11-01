@@ -763,7 +763,7 @@ namespace ClassicUO.Game.Scenes
                                     if (!mobile.IsDestroyed)
                                     {
                                         nTiles++;
-                                        AddTileToRenderList(mobile, use_handles, GPU_WALK_MAX_Z, chunk, true, _gpuSkipEnabled, mobile.TNext);
+                                        AddTileToRenderList(mobile, use_handles, GPU_WALK_MAX_Z, chunk, true, _gpuSkipEnabled, mobile.TNext, true);
                                     }
                                 }
 
