@@ -78,8 +78,6 @@ src/ClassicUO.Client/Game/UI/Gumps/CharCreation/CreateCharAppearanceGump.cs|IsFe
 src/ClassicUO.Client/Game/UI/Gumps/CharCreation/CreateCharAppearanceGump.cs|Layer|1
 src/ClassicUO.Client/Game/UI/Gumps/CharCreation/CreateCharAppearanceGump.cs|Name|1
 src/ClassicUO.Client/Game/UI/Gumps/CharCreation/CreateCharAppearanceGump.cs|Race|1
-src/ClassicUO.Client/Game/UI/Gumps/ContainerGump.cs|X|2
-src/ClassicUO.Client/Game/UI/Gumps/ContainerGump.cs|Y|2
 src/ClassicUO.Client/Game/UI/Gumps/RaceChangeGump.cs|Flags|2
 src/ClassicUO.Client/Game/UI/Gumps/RaceChangeGump.cs|Graphic|5
 src/ClassicUO.Client/Game/UI/Gumps/RaceChangeGump.cs|Hue|7

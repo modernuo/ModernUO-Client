@@ -679,6 +679,109 @@ namespace ClassicUO.UnitTests.Ecs
             act.Should().Throw<InvalidOperationException>();
             world.Ecs.EndFold(world.Mobiles.Get(OTHER));
         }
+
+        // ---- group 6: ContainerGump.CheckItemControlPosition (the gump's bounds and the item's art need Client.Game: the
+        // clamp is a parameter of the operation; ClampToBounds is compared with the old branches)
+
+        internal static void OldClamp(World world, Item item, int boundX, int boundY, int boundWidth, int boundHeight)
+        {
+            if (item.X < boundX)
+            {
+                item.X = (ushort)boundX;
+            }
+            else if (item.X > boundWidth)
+            {
+                item.X = (ushort)boundWidth;
+            }
+
+            if (item.Y < boundY)
+            {
+                item.Y = (ushort)boundY;
+            }
+            else if (item.Y > boundHeight)
+            {
+                item.Y = (ushort)boundHeight;
+            }
+
+            world.Ecs.Sync(item);
+        }
+
+        internal static void NewClamp(World world, Item item, int boundX, int boundY, int boundWidth, int boundHeight)
+        {
+            ClassicUO.Game.UI.Gumps.ContainerGump.ClampToBounds(item.X, item.Y, boundX, boundY, boundWidth, boundHeight, out ushort x, out ushort y);
+            world.Writer.ClampContainerPosition(item, x, y);
+        }
+
+        [Theory]
+        [InlineData(10, 20, 44, 65, 140, 120)] // inside
+        [InlineData(2, 3, 44, 65, 140, 120)] // both low
+        [InlineData(300, 200, 44, 65, 140, 120)] // both high
+        [InlineData(2, 200, 44, 65, 140, 120)] // x low, y high
+        [InlineData(150, 70, 44, 65, 140, 120)] // x high only
+        [InlineData(50, 90, 44, 65, -10, 120)] // a bound below the origin (the item's art wider than the gump)
+        public void ClampContainerPosition_Equals_The_Old_Clamp(int ix, int iy, int bx, int by, int bw, int bh)
+        {
+            World oldWorld = BuildCorpse(Start.Standing), newWorld = BuildCorpse(Start.Standing);
+            newWorld.Writer.ThrowOnViolation = true;
+            Item a = oldWorld.Items.Get(CLOOT), b = newWorld.Items.Get(CLOOT);
+
+            foreach ((World w, Item it) in new[] { (oldWorld, a), (newWorld, b) })
+            {
+                it.X = (ushort)ix;
+                it.Y = (ushort)iy;
+                w.Ecs.Sync(it);
+            }
+
+            long ma = oldWorld.Ecs.ItemMirrorWrites, mb = newWorld.Ecs.ItemMirrorWrites;
+            Pair(() => OldClamp(oldWorld, a, bx, by, bw, bh), () => NewClamp(newWorld, b, bx, by, bw, bh));
+
+            AssertSameWorld(oldWorld, newWorld);
+            (b.X, b.Y).Should().Be((a.X, a.Y));
+            (newWorld.Ecs.ItemMirrorWrites - mb).Should().Be(oldWorld.Ecs.ItemMirrorWrites - ma, "the same Sync");
+            newWorld.Writer.Violations.Should().Be(0);
+            newWorld.Writer.InScope.Should().BeFalse();
+        }
+
+        [Fact]
+        public void ClampContainerPosition_Writes_A_Stale_Item_Rejects_Another_Worlds_And_Does_Not_Nest()
+        {
+            foreach (bool throws in new[] { true, false })
+            {
+                World world = BuildCorpse(Start.Standing), other = BuildCorpse(Start.Standing);
+                world.Writer.ThrowOnViolation = throws;
+                Item foreign = other.Items.Get(CLOOT);
+                (ushort, ushort) before = (foreign.X, foreign.Y);
+                Action act = () => world.Writer.ClampContainerPosition(foreign, 77, 88);
+
+                if (throws)
+                {
+                    act.Should().Throw<ArgumentException>();
+                }
+                else
+                {
+                    act();
+                }
+
+                (foreign.X, foreign.Y).Should().Be(before);
+                world.Writer.Violations.Should().Be(1);
+            }
+
+            World w = BuildCorpse(Start.Standing);
+            w.Writer.ThrowOnViolation = true;
+            Item stale = Item.Create(w, CLOOT);
+            w.Writer.ClampContainerPosition(stale, 77, 88);
+            (stale.X, stale.Y).Should().Be(((ushort)77, (ushort)88));
+            w.Writer.Violations.Should().Be(0);
+
+            w.Writer.ThrowOnViolation = false;
+            Item held = w.Items.Get(CLOOT);
+            (ushort, ushort) at = (held.X, held.Y);
+            w.Ecs.BeginFold(w.Mobiles.Get(OTHER));
+            w.Writer.ClampContainerPosition(held, 77, 88);
+            w.Ecs.EndFold(w.Mobiles.Get(OTHER));
+            (held.X, held.Y).Should().Be(at);
+            w.Writer.Violations.Should().Be(1);
+        }
     }
 
     [Collection(nameof(FunnelCheckCollection))]
@@ -814,6 +917,27 @@ namespace ClassicUO.UnitTests.Ecs
 
             (m.IsDestroyed, bag.IsDestroyed).Should().Be((true, true));
             FunnelCheck.Total.Should().Be(0, "World.Clear's removals (Destroy, the steps, the containers)");
+        }
+
+        [Fact]
+        public void ClampContainerPosition_Makes_No_Direct_Writes()
+        {
+            if (!FunnelCheck.Available)
+            {
+                return;
+            }
+
+            World world = BuildOne(out _);
+            Item bag = world.GetOrCreateItem(0x4000_7300);
+            bag.Graphic = 0xE75;
+            bag.SetInWorldTile(1001, 1000, 0);
+            Item gem = world.Writer.PlaceInContainer(0x4000_7301, 0x0F26, 1, 400, 2, 0, 0x4000_7300, out _);
+            FunnelCheck.Reset();
+
+            world.Writer.ClampContainerPosition(gem, 140, 65);
+
+            (gem.X, gem.Y).Should().Be(((ushort)140, (ushort)65));
+            FunnelCheck.Total.Should().Be(0, "ContainerGump.CheckItemControlPosition's clamp");
         }
     }
 }
