@@ -122,8 +122,11 @@ namespace ClassicUO.Ecs
     /// (the lowest child-order stamp among the attached items on that layer), 0 when none. Maintained by the mirror from
     /// attachment only (<see cref="ItemData.Stamp"/> != 0): an item equipped before its mobile existed (an orphan, stamp 0)
     /// is never in it, as ClassicUO never links it. Layer 0 (the trade boxes) and layers above 0x1D are not tracked.
+    /// Held in <see cref="EquipmentSlots.Worn"/>, not as a component of its own: an 11th component on the mobile archetype
+    /// made Friflo's delete + create of a mobile record 6x slower (0.40 us against 0.06 us for ten, populated archetypes),
+    /// and the E2 serial-reuse row +60 %.
     /// </summary>
-    public struct WornLayers : IComponent
+    public struct WornLayers
     {
         /// <summary>The tracked layers: 0x01 (OneHanded) .. 0x1D (Bank).</summary>
         public const int COUNT = 0x1D;
@@ -378,6 +381,9 @@ namespace ClassicUO.Ecs
     {
         public const int MAX = 25;
 
+        /// <summary>T3a: the worn items by layer, maintained by the mirror (kept across the slots' rebuilds).</summary>
+        public WornLayers Worn;
+
         public EquipSlotArray Slots;
         public byte Count;
 
@@ -476,8 +482,6 @@ namespace ClassicUO.Ecs
             // T2: container contents
             Component<SpellbookContent>(aot);
 
-            // T3a: equipment by layer
-            Component<WornLayers>(aot);
 
             return aot.CreateSchema();
         }
