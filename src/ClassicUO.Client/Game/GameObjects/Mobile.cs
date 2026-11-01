@@ -328,9 +328,22 @@ namespace ClassicUO.Game.GameObjects
 
         internal void CalculateRandomIdleTime()
         {
+            SetIdleDue(NextIdleDue());
+        }
+
+        /// <summary>T1 (funnel part 8): the next idle due time, 30 to 60 s from now (one random draw).</summary>
+        internal static long NextIdleDue()
+        {
             const int TIME = 30000;
+
+            return Time.Ticks + (TIME + RandomHelper.GetValue(0, TIME));
+        }
+
+        // the idle timer's write: the due time, then the clock push
+        private void SetIdleDue(long due)
+        {
             FunnelCheck.Write(this, FunnelField.AnimationState);
-            _lastAnimationIdleDelay = Time.Ticks + (TIME + RandomHelper.GetValue(0, TIME));
+            _lastAnimationIdleDelay = due;
 
             // E4: the idle due time (and, from SetAnimation, the frame due time written just before) reach the ECS clock
             PushClock();
@@ -576,25 +589,109 @@ namespace ClassicUO.Game.GameObjects
             CalculateRandomIdleTime();
         }
 
+        /// <summary>
+        /// T1 (funnel part 8): what <see cref="SetIdleAnimation"/> does, computed before any write. The random draws come in
+        /// the old order: the idle delay first, then the group's (a gargoyle's flight, the idle pair); a
+        /// <see cref="IdleGroup.SetAnimation"/> outcome draws its own idle delay inside <c>SetAnimation</c>, last, as before.
+        /// </summary>
+        internal struct IdlePlan
+        {
+            /// <summary>The idle timer's next due time (<see cref="NextIdleDue"/>).</summary>
+            public long IdleDue;
+            /// <summary>Not mounted, not in war mode and animating: the timer fields are reset to an idle animation.</summary>
+            public bool Resets;
+            /// <summary>What happens to the animation group after the reset.</summary>
+            public IdleGroup Group;
+            /// <summary>The group (<see cref="IdleGroup.Set"/>) or <c>SetAnimation</c>'s id (<see cref="IdleGroup.SetAnimation"/>).</summary>
+            public byte Value;
+        }
+
+        internal enum IdleGroup : byte
+        {
+            /// <summary>The group is not touched (no idle animation for this body).</summary>
+            None,
+            /// <summary>The group becomes <see cref="IdlePlan.Value"/>.</summary>
+            Set,
+            /// <summary>Neither idle action exists: <c>SetAnimation(Value)</c>, the group it had.</summary>
+            SetAnimation
+        }
+
         public void SetIdleAnimation()
         {
-            CalculateRandomIdleTime();
+            // T1 (funnel part 8): the plan from the animation data, then its writes through the funnel
+            PlanIdleAnimation(new LiveIdleAnimationData(Client.Game.UO.Animations), out IdlePlan plan);
+            World.Writer.IdleAnimation(this, in plan);
+        }
+
+        /// <summary>T1 (funnel part 8): the animation data <see cref="PlanIdleAnimation"/> reads (tests pass their own).</summary>
+        internal interface IIdleAnimationData
+        {
+            int MaxAnimationCount { get; }
+            AnimationGroupsType GetAnimType(ushort graphic);
+            AnimationFlags GetAnimFlags(ushort graphic);
+            bool AnimationExists(ushort graphic, byte group);
+            byte GetReplacedObjectAnimation(ushort graphic, ushort index);
+        }
+
+        private readonly struct LiveIdleAnimationData : IIdleAnimationData
+        {
+            private readonly ClassicUO.Renderer.Animations.Animations _animations;
+
+            public LiveIdleAnimationData(ClassicUO.Renderer.Animations.Animations animations) => _animations = animations;
+
+            public int MaxAnimationCount => _animations.MaxAnimationCount;
+            public AnimationGroupsType GetAnimType(ushort graphic) => _animations.GetAnimType(graphic);
+            public AnimationFlags GetAnimFlags(ushort graphic) => _animations.GetAnimFlags(graphic);
+            public bool AnimationExists(ushort graphic, byte group) => _animations.AnimationExists(graphic, group);
+            public byte GetReplacedObjectAnimation(ushort graphic, ushort index) => Mobile.GetReplacedObjectAnimation(graphic, index);
+        }
+
+        /// <summary>T1 (funnel part 8): the mutation half of <see cref="SetIdleAnimation"/>, in its old order.</summary>
+        internal void ApplyIdle(in IdlePlan plan)
+        {
+            SetIdleDue(plan.IdleDue);
+
+            if (!plan.Resets)
+            {
+                return;
+            }
+
+            FunnelCheck.Write(this, FunnelField.AnimationState);
+            AnimIndex = 0;
+            AnimationFrameCount = 0;
+            _animationInterval = 1;
+            _animationRepeateMode = 1;
+            _animationRepeatModeCount = 1;
+            _isAnimationForwardDirection = true;
+            _animationRepeat = false;
+            AnimationFromServer = true;
+
+            if (plan.Group == IdleGroup.Set)
+            {
+                _animationGroup = plan.Value;
+            }
+            else if (plan.Group == IdleGroup.SetAnimation)
+            {
+                SetAnimation(plan.Value);
+            }
+        }
+
+        /// <summary>
+        /// T1 (funnel part 8): the pure half of <see cref="SetIdleAnimation"/>: reads the mobile and the animation data, draws
+        /// the random numbers, writes nothing. The old code read nothing it had written before these reads (the reset writes
+        /// the timer fields; the body, the flags and the group are read).
+        /// </summary>
+        internal void PlanIdleAnimation<TData>(in TData animations, out IdlePlan plan) where TData : struct, IIdleAnimationData
+        {
+            plan = default;
+            plan.IdleDue = NextIdleDue();
 
             if (!IsMounted && !InWarMode && ExecuteAnimation)
             {
-                FunnelCheck.Write(this, FunnelField.AnimationState);
-                AnimIndex = 0;
-                AnimationFrameCount = 0;
-                _animationInterval = 1;
-                _animationRepeateMode = 1;
-                _animationRepeatModeCount = 1;
-                _isAnimationForwardDirection = true;
-                _animationRepeat = false;
-                AnimationFromServer = true;
+                plan.Resets = true;
 
                 ushort graphic = GetGraphicForAnimation();
 
-                var animations = Client.Game.UO.Animations;
                 if (graphic >= animations.MaxAnimationCount)
                 {
                     return;
@@ -651,32 +748,20 @@ namespace ClassicUO.Game.GameObjects
                     return;
                 }
 
+                plan.Group = IdleGroup.Set;
+
                 if ((flags & AnimationFlags.UseUopAnimation) != 0)
                 {
                     if (animGroup != AnimationGroups.People)
                     {
-                        if (InWarMode)
-                        {
-                            _animationGroup = 28;
-                        }
-                        else
-                        {
-                            _animationGroup = 26;
-                        }
+                        plan.Value = (byte)(InWarMode ? 28 : 26);
 
                         return;
                     }
 
                     if (IsGargoyle && IsFlying)
                     {
-                        if (RandomHelper.GetValue(0, 2) != 0)
-                        {
-                            _animationGroup = 66;
-                        }
-                        else
-                        {
-                            _animationGroup = 67;
-                        }
+                        plan.Value = (byte)(RandomHelper.GetValue(0, 2) != 0 ? 66 : 67);
 
                         return;
                     }
@@ -684,26 +769,27 @@ namespace ClassicUO.Game.GameObjects
 
                 int first_value = RandomHelper.GetValue(0, 2);
 
+                // the reset does not write the group, so this is the group before SetIdleAnimation, as the old read was
                 byte original_value = _animationGroup;
 
-                _animationGroup = _animationIdle[(byte)animGroup - 1, first_value];
+                byte group = _animationIdle[(byte)animGroup - 1, first_value];
 
-                if (isLowExtended && _animationGroup == 18)
+                if (isLowExtended && group == 18)
                 {
                     if (
                         !animations.AnimationExists(graphic, 18)
                         && animations.AnimationExists(graphic, 17)
                     )
                     {
-                        _animationGroup = GetReplacedObjectAnimation(graphic, 17);
+                        group = animations.GetReplacedObjectAnimation(graphic, 17);
                     }
                     else
                     {
-                        _animationGroup = 1;
+                        group = 1;
                     }
                 }
 
-                if (!animations.AnimationExists(graphic, _animationGroup))
+                if (!animations.AnimationExists(graphic, group))
                 {
                     if (first_value == 0)
                     {
@@ -714,13 +800,17 @@ namespace ClassicUO.Game.GameObjects
                         first_value = 0;
                     }
 
-                    _animationGroup = _animationIdle[(byte)animGroup - 1, first_value];
+                    group = _animationIdle[(byte)animGroup - 1, first_value];
 
-                    if (!animations.AnimationExists(graphic, _animationGroup))
+                    if (!animations.AnimationExists(graphic, group))
                     {
-                        SetAnimation(original_value);
+                        // SetAnimation overwrites the group the old code had written there: only its own writes remain
+                        plan.Group = IdleGroup.SetAnimation;
+                        group = original_value;
                     }
                 }
+
+                plan.Value = group;
             }
         }
 
@@ -744,6 +834,8 @@ namespace ClassicUO.Game.GameObjects
                 {
                     ref readonly Step step = ref Steps.Back();
 
+                    // T1 (funnel part 8): the values first, then the two writes through the funnel (StepSound), then the
+                    // sound, which reads neither field (it played between the two writes before)
                     int incID = StepSoundOffset;
                     int soundID = 0x012B;
                     int delaySound = 400;
@@ -766,10 +858,12 @@ namespace ClassicUO.Game.GameObjects
 
                     soundID += incID;
 
-                    StepSoundOffset = (incID + 1) % 2;
+                    int stepX = step.X, stepY = step.Y;
 
-                    Client.Game.Audio.PlaySoundWithDistance(World, soundID, step.X, step.Y);
-                    LastStepSoundTime = Time.Ticks + delaySound;
+                    if (World.Writer.StepSound(this, (incID + 1) % 2, Time.Ticks + delaySound))
+                    {
+                        Client.Game.Audio.PlaySoundWithDistance(World, soundID, stepX, stepY);
+                    }
                 }
             }
         }
