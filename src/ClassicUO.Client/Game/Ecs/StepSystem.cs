@@ -272,10 +272,8 @@ namespace ClassicUO.Game
 
                 Completed++;
                 Mobile.Step done = new Mobile.Step { X = front.X, Y = front.Y, Z = front.Z, Direction = front.Direction, Run = front.Run };
+                // its input commit (CommitMobileInputs, through the clock push) rewrites the component from the Mobile
                 world.Writer.CompleteStep(mob, in done, d.DirectionChange);
-
-                // the completion's own push (its input commit reaches the clock, but not when the inputs are not kept)
-                world.Ecs.PushSteps(mob);
 
                 if (d.DirectionChange)
                 {

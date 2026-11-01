@@ -26,7 +26,7 @@ namespace ClassicUO.UnitTests.Ecs
         public enum StepScenario
         {
             Walking, OneStep, FullQueue, Running, AcrossChunks, Parked, BadStep, TurnsOnly, TeleportMidStep, DeathMidStep,
-            BoatMidStep, ServerAnimation
+            BoatMidStep, ServerAnimation, BadStepCarried
         }
 
         // the scenario's World: Build's mobile and a player (ProcessSteps compares the serial with World.Player)
@@ -77,10 +77,17 @@ namespace ClassicUO.UnitTests.Ecs
 
                     break;
 
+                case StepScenario.BadStepCarried:
                 case StepScenario.BadStep:
                     // a step three tiles away (a server move the client could not walk): removed at once, no offset
                     m.AddStep(new Mobile.Step { X = 1003, Y = 1000, Z = 0, Direction = (byte)Direction.East, Run = false });
                     m.AddStep(new Mobile.Step { X = 1004, Y = 1000, Z = 0, Direction = (byte)Direction.East, Run = false });
+                    if (sc == StepScenario.BadStepCarried)
+                    {
+                        // the step started just now, so it is not overdue: only the bad-step test can end it at once
+                        m.LastStepTime = NOW;
+                    }
+
                     world.Ecs.PushInputs(m);
 
                     break;
@@ -89,7 +96,8 @@ namespace ClassicUO.UnitTests.Ecs
                     // two turns in place and a step: ProcessSteps' recursion
                     m.AddStep(new Mobile.Step { X = 1000, Y = 1000, Z = 0, Direction = (byte)Direction.East, Run = false });
                     m.AddStep(new Mobile.Step { X = 1000, Y = 1000, Z = 0, Direction = (byte)Direction.South, Run = false });
-                    m.AddStep(new Mobile.Step { X = 1000, Y = 1001, Z = 0, Direction = (byte)Direction.South, Run = false });
+                    // a running step: its direction carries the running bit, which the direction out masks off
+                    m.AddStep(new Mobile.Step { X = 1000, Y = 1001, Z = 0, Direction = (byte)Direction.South | 0x80, Run = true });
                     world.Ecs.PushInputs(m);
 
                     break;
@@ -148,20 +156,19 @@ namespace ClassicUO.UnitTests.Ecs
             }
         }
 
+        public static IEnumerable<object[]> StepCases()
+        {
+            // 37 ms frames land between the step deadlines; 16 ms frames hit them exactly (delay == maxDelay completes)
+            foreach (StepScenario sc in Enum.GetValues<StepScenario>())
+            {
+                yield return new object[] { sc, 37 };
+                yield return new object[] { sc, 16 };
+            }
+        }
+
         [Theory]
-        [InlineData(StepScenario.Walking)]
-        [InlineData(StepScenario.OneStep)]
-        [InlineData(StepScenario.FullQueue)]
-        [InlineData(StepScenario.Running)]
-        [InlineData(StepScenario.AcrossChunks)]
-        [InlineData(StepScenario.Parked)]
-        [InlineData(StepScenario.BadStep)]
-        [InlineData(StepScenario.TurnsOnly)]
-        [InlineData(StepScenario.TeleportMidStep)]
-        [InlineData(StepScenario.DeathMidStep)]
-        [InlineData(StepScenario.BoatMidStep)]
-        [InlineData(StepScenario.ServerAnimation)]
-        public void The_Step_System_Equals_ProcessSteps(StepScenario sc)
+        [MemberData(nameof(StepCases))]
+        public void The_Step_System_Equals_ProcessSteps(StepScenario sc, int frameMs)
         {
             Mobile.FrameDelayOverride = FRAME_DELAY;
 
@@ -178,7 +185,7 @@ namespace ClassicUO.UnitTests.Ecs
 
                 for (int f = 0; f < 60 && (a.Steps.Count != 0 || f < 3); f++, frames++)
                 {
-                    Time.Ticks += 37;
+                    Time.Ticks += (uint)frameMs;
 
                     if (sc == StepScenario.Parked)
                     {
@@ -218,6 +225,16 @@ namespace ClassicUO.UnitTests.Ecs
                         }
                     }
 
+                    if (sc == StepScenario.BadStepCarried && f == 0)
+                    {
+                        // carried with a zero X offset: ProcessSteps tests a bad step only when both offsets are 0
+                        oldWorld.Writer.FollowBoat(a, new Vector3(0, 2, 0));
+                        newWorld.Writer.FollowBoat(b, new Vector3(0, 2, 0));
+                    }
+
+                    // what CUO_STEP_CHECK's before-run check sees: the component follows every write outside the system
+                    StepSystem.Diff(b, StepEntity(newWorld, b)).Should().BeNull("before frame {0}", f);
+
                     StepFrame(oldWorld, newWorld, a, b);
                 }
 
@@ -226,7 +243,7 @@ namespace ClassicUO.UnitTests.Ecs
                 b.Steps.Count.Should().Be(0, "every step completed within {0} frames", frames);
                 completed.Should().BeGreaterThan(0);
 
-                if (sc != StepScenario.BadStep && sc != StepScenario.TurnsOnly && sc != StepScenario.DeathMidStep)
+                if (sc != StepScenario.BadStep && sc != StepScenario.TurnsOnly && sc != StepScenario.DeathMidStep && sc != StepScenario.BadStepCarried)
                 {
                     interpolated.Should().BeGreaterThan(0);
                 }
