@@ -1137,15 +1137,7 @@ namespace ClassicUO.Game
             }
 
             Span<byte> order = stackalloc byte[EquipmentSlots.MAX];
-            Span<byte> layerOf = stackalloc byte[EquipmentSlots.MAX];
-
-            for (int i = 0; i < eq.Count; i++)
-            {
-                order[i] = (byte)i;
-                layerOf[i] = eq.Slots[i].Layer;
-            }
-
-            int got = AnimationRules.ApplyDirectionCloak(order, eq.Count, layerOf, 1, eq.CloakAnchor);
+            int got = AnimationRules.PaintOrder(in eq, 1, order);
             bool same = got == n;
 
             for (int i = 0; same && i < n; i++)

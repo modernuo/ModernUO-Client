@@ -17,6 +17,7 @@ namespace ClassicUO.UnitTests.Ecs
     // FixGargoyleEquipment) for every body group, every combination of the values the rules reference (each range's
     // endpoints and their neighbours, singly, in pairs, in the rule groups' joint layers, and in random full outfits) and
     // every direction. Every single-entry mutation of the default file is caught.
+    [Collection(nameof(LayerRulesStateCollection))]
     public class LayerRulesTests
     {
         private const int N = PaperdollOrder.N;
@@ -173,19 +174,22 @@ namespace ClassicUO.UnitTests.Ecs
                 }
             }
 
+            // world: FixGargoyleEquipment for the gargoyle draw flag; paperdoll: GetAnimID's gargoyle-ghost shroud (7.0.0.0+)
             public void Remaps()
             {
+                foreach (ushort body in new ushort[] { 0x190, 0x191, 0x29A, 0x29B, 0x2B5, 0x2B6, 0x2B7, 0x2B8 })
                 for (int a = 0; a <= 0xFFFF; a++)
                 {
-                    foreach (byte flags in new byte[] { 0, 1, 2, 3 })
+                    for (byte flags = 0; flags < 8; flags++)
                     {
-                        var subject = new LayerSubject((byte)BodyGroup.GargoyleMale, flags);
+                        var subject = new LayerSubject(Rules.GroupOf(body), flags, body);
                         ushort hard = (flags & 2) != 0 ? AnimationRules.FixGargoyleEquipment((ushort)a) : (ushort)a;
-                        Checks++;
+                        ushort hardPd = LayerRuleEval.RemapPaperdollHard((ushort)a, body, (flags & 4) != 0);
+                        Checks += 2;
 
-                        if (Rules.Remap(LayerRuleSet.World, (ushort)a, subject) != hard || Rules.Remap(LayerRuleSet.Paperdoll, (ushort)a, subject) != (ushort)a)
+                        if (Rules.Remap(LayerRuleSet.World, (ushort)a, subject) != hard || Rules.Remap(LayerRuleSet.Paperdoll, (ushort)a, subject) != hardPd)
                         {
-                            Fail($"remap 0x{a:X4} flags {flags}");
+                            Fail($"remap 0x{a:X4} body 0x{body:X3} flags {flags}");
                             return;
                         }
                     }
@@ -225,7 +229,8 @@ namespace ClassicUO.UnitTests.Ecs
             var v = Values(source);
             int[] layers = RuleLayers(source);
             var items = layers.ToDictionary(l => l, l => Items(v, l));
-            ushort[] bodies = full ? Bodies : GroupBodies;
+            // every listed body, also in the mutation runs (a body-map mutant changes one body's group)
+            ushort[] bodies = Bodies;
 
             // singles: every layer, every item, every body; and the order with every direction
             foreach (int l in Enumerable.Range(1, N - 1))
@@ -429,6 +434,117 @@ namespace ClassicUO.UnitTests.Ecs
             FluentActions.Invoking(() => With((r, c, t) => c[r[remap].CondStart].Kind = (byte)LayerCondKind.AnimId)).Should().Throw<InvalidDataException>("a remap reads no layer");
         }
 
+        // Inventory fixtures: expectations written from the inventory (handoffs/t3-layering.md), not derived from either
+        // implementation; both the default data and the hard-coded rules must give them.
+        [Fact]
+        public void Inventory_Fixtures_Hold_For_Data_And_Hard_Coded_Rules()
+        {
+            LayerRules rules = LayerRulesDefault.Create();
+            var human = new LayerSubject(rules.GroupOf(0x190), 0, 0x190);
+
+            int Pos(ReadOnlySpan<Layer> o, Layer l) => o.IndexOf(l);
+
+            // O5: shirt worn + pants AnimID 0x398 -> Pants drawn before (under) Shirt
+            var key = new ushort[N];
+            key[(int)Layer.Shirt] = Ordinary;
+            key[(int)Layer.Pants] = 0x398;
+            Span<Layer> hard = stackalloc Layer[N];
+            Span<Layer> data = stackalloc Layer[N];
+            PaperdollOrder.Build(key, false, hard);
+            rules.BuildOrder(LayerRuleSet.World, key, human, MemoryMarshal.Cast<Layer, byte>(data));
+            Pos(hard, Layer.Pants).Should().BeLessThan(Pos(hard, Layer.Shirt));
+            Pos(data, Layer.Pants).Should().BeLessThan(Pos(data, Layer.Shirt));
+
+            // D1: cloak on top facing 0, at the bottom facing 3, else just below the helmet
+            key = new ushort[N];
+            key[(int)Layer.Cloak] = Ordinary;
+            key[(int)Layer.Helmet] = Ordinary;
+
+            foreach (byte dir in new byte[] { 0, 3, 5 })
+            {
+                PaperdollOrder.Build(key, false, hard);
+                int hc = PaperdollOrder.ApplyDirectionCloak(hard, PaperdollOrder.Filter(hard.ToArray(), false, hard), dir);
+                int dc = World(rules, key, human, dir, data);
+
+                foreach (var (o, c) in new[] { (hard.ToArray(), hc), (data.ToArray(), dc) })
+                {
+                    int ci = Array.IndexOf(o, Layer.Cloak, 0, c);
+                    if (dir == 0) ci.Should().Be(c - 1);
+                    else if (dir == 3) ci.Should().Be(0);
+                    else o[ci + 1].Should().Be(Layer.Helmet);
+                }
+            }
+
+            // R1: the gargoyle draw remaps the robe 0x1D5 -> 0x156; a human doesn't
+            var garg = new LayerSubject(rules.GroupOf(0x29A), LayerRulesConst.FlagGargoyleDraw, 0x29A);
+            rules.Remap(LayerRuleSet.World, 0x1D5, garg).Should().Be(0x156);
+            AnimationRules.FixGargoyleEquipment(0x1D5).Should().Be(0x156);
+            rules.Remap(LayerRuleSet.World, 0x1D5, human).Should().Be(0x1D5);
+
+            // R2: the paperdoll's gargoyle ghost (0x2B6/0x2B7) shroud 0x3CA -> 0x223 from 7.0.0.0 only; not a living gargoyle
+            foreach (var (body, cv, expected) in new (ushort, bool, ushort)[] { (0x2B6, true, 0x223), (0x2B7, true, 0x223), (0x2B6, false, 0x3CA), (0x29A, true, 0x3CA) })
+            {
+                LayerRuleEval.RemapPaperdollHard(0x3CA, body, cv).Should().Be(expected);
+                rules.Remap(LayerRuleSet.Paperdoll, 0x3CA, new LayerSubject(rules.GroupOf(body), cv ? LayerRulesConst.FlagCv7000 : (byte)0, body)).Should().Be(expected);
+            }
+
+            // C9: hood 0x4B9D covers the helmet on a human, not on a gargoyle; C1: pants 0x513 covers the shoes
+            var o2 = Outfit.Empty();
+            o2.Set((int)Layer.Robe, (0x4B9D, Ordinary));
+            o2.Set((int)Layer.Helmet, (Ordinary, Ordinary));
+            o2.Set((int)Layer.Pants, (Ordinary, 0x513));
+            o2.Set((int)Layer.Shoes, (Ordinary, Ordinary));
+
+            foreach (var (body, covered) in new (ushort, bool)[] { (0x190, true), (0x29A, false) })
+            {
+                AnimationRules.IsCovered(Layer.Helmet, o2.Gfx, o2.Anim, o2.Present, body).Should().Be(covered);
+                rules.IsCovered(LayerRuleSet.World, (byte)Layer.Helmet, o2.Present, o2.Gfx, o2.Anim, new LayerSubject(rules.GroupOf(body), 0, body)).Should().Be(covered);
+                rules.IsCovered(LayerRuleSet.Paperdoll, (byte)Layer.Shoes, o2.Present, o2.Gfx, o2.Anim, new LayerSubject(rules.GroupOf(body), 0, body)).Should().BeTrue();
+            }
+        }
+
+        [Theory]
+        [InlineData(24, true)]
+        [InlineData(25, false)]
+        [InlineData(31, false)]
+        [InlineData(32, false)]
+        public void A_File_Whose_Condition_Reads_A_Layer_Past_The_Tables_Is_Refused(int layer, bool accepted)
+        {
+            // the evaluator's tables hold LayerCount (25) layers: a layer-reading condition on 25..255 is refused at load
+            // (LayerRuleEval then falls back to the built-in rules), not left to throw at evaluation
+            LayerRules a = LayerRulesDefault.Create();
+            string path = Path.Combine(Path.GetTempPath(), $"layerrules-{Guid.NewGuid():N}.bin");
+
+            try
+            {
+                a.Write(path);
+                byte[] bytes = File.ReadAllBytes(path);
+                int condStart = bytes.Length - a.Ranges.Length * Marshal.SizeOf<LayerRange>() - a.Conds.Length * Marshal.SizeOf<LayerCond>();
+                int ci = Array.FindIndex(a.Conds, c => c.Kind == (byte)LayerCondKind.AnimId);
+                bytes[condStart + ci * Marshal.SizeOf<LayerCond>()].Should().Be((byte)LayerCondKind.AnimId, "the patched entry is the condition");
+                bytes[condStart + ci * Marshal.SizeOf<LayerCond>() + 1] = (byte)layer;
+                File.WriteAllBytes(path, bytes);
+
+                if (accepted)
+                {
+                    LayerRules b = LayerRules.Read(path);
+                    b.Conds[ci].Layer.Should().Be((byte)layer);
+                    Span<bool> present = stackalloc bool[N];
+                    Span<ushort> v = stackalloc ushort[N];
+                    for (byte l = 1; l < N; l++) b.IsCovered(LayerRuleSet.World, l, present, v, v, default);
+                    b.BuildOrder(LayerRuleSet.World, v, default, stackalloc byte[N]);
+                }
+                else
+                {
+                    FluentActions.Invoking(() => LayerRules.Read(path)).Should().Throw<InvalidDataException>();
+                }
+            }
+            finally
+            {
+                File.Delete(path);
+            }
+        }
+
         // Mutation check: change one entry of the default file at a time (a rule's result, table, operation, layers or
         // remap target; a condition's negation; a range's ends): the comparison must find a difference for every mutant.
         [Fact]
@@ -446,6 +562,26 @@ namespace ClassicUO.UnitTests.Ecs
                 return new LayerRules(a.Bodies, a.Tables, rules, conds, ranges);
             }
 
+            // body map: move each body across the only group partition the default rules read (the gargoyle groups of the
+            // hood exception); a move within a side (e.g. human male to elf female) changes no answer, as no rule reads it
+            for (int i = 0; i < a.Bodies.Length; i++)
+            {
+                int k = i;
+                var bodies = (BodyGroupEntry[])a.Bodies.Clone();
+                bool garg = bodies[k].Group >= (byte)BodyGroup.GargoyleMale;
+                bodies[k].Group = garg ? (byte)BodyGroup.HumanMale : (byte)BodyGroup.GargoyleMale;
+                mutants.Add(($"body 0x{a.Bodies[k].Body:X3} group", new LayerRules(bodies, a.Tables, a.Rules, a.Conds, a.Ranges)));
+            }
+
+            // table entries: swap each pair of neighbours in each table (a table must list each layer once)
+            for (int t = 0; t < a.Tables.Length / N; t++)
+            for (int i = 0; i < N - 1; i++)
+            {
+                var tables = (byte[])a.Tables.Clone();
+                (tables[t * N + i], tables[t * N + i + 1]) = (tables[t * N + i + 1], tables[t * N + i]);
+                mutants.Add(($"table {t} swap {i}/{i + 1} (0x{a.Tables[t * N + i]:X2},0x{a.Tables[t * N + i + 1]:X2})", new LayerRules(a.Bodies, tables, a.Rules, a.Conds, a.Ranges)));
+            }
+
             for (int i = 0; i < a.Rules.Length; i++)
             {
                 int k = i;
@@ -460,8 +596,14 @@ namespace ClassicUO.UnitTests.Ecs
                         mutants.Add(($"rule {k} table", Make((x, c, g) => x[k].Value = (ushort)((x[k].Value + 1) % 3))));
                         break;
                     case LayerRuleKind.Reorder:
-                        // (no op or A/B swap mutants: MoveTo and MoveAfter agree whenever B follows A, and the rules' A and B
-                        // are neighbours in every base table, so those mutants are equivalent; moving another layer is not)
+                        // every other operation and the A/B swap; the equivalent ones are listed (with why) in Equivalent
+                        for (byte op = 0; op < 3; op++)
+                        {
+                            byte o = op;
+                            if (o != r.Op) mutants.Add(($"rule {k} op {(LayerReorderOp)o}", Make((x, c, g) => x[k].Op = o)));
+                        }
+
+                        mutants.Add(($"rule {k} swap a/b", Make((x, c, g) => (x[k].Layer, x[k].Other) = (x[k].Other, x[k].Layer))));
                         mutants.Add(($"rule {k} layer a", Make((x, c, g) => x[k].Layer = LayerRulesDefault.Talisman)));
                         mutants.Add(($"rule {k} layer b", Make((x, c, g) => x[k].Other = LayerRulesDefault.Talisman)));
                         break;
@@ -505,7 +647,45 @@ namespace ClassicUO.UnitTests.Ecs
             }
 
             _out.WriteLine($"{mutants.Count} mutants, {mutants.Count - survivors.Count} caught");
-            survivors.Should().BeEmpty();
+            foreach (string sv in survivors) _out.WriteLine($"survivor: {sv}");
+            survivors.Should().BeEquivalentTo(Equivalent(a).Keys);
+        }
+
+        // Mutants shown equivalent one by one (the default rules give the same answer for every input); each entry says why.
+        // Anything else that survives is a corpus gap. Two facts carry the arguments: MoveTo and MoveAfter run the same code
+        // when B follows A (both shift A to B's index); and when B is A's immediate predecessor, MoveTo(A,B), MoveTo(B,A) and
+        // SwapIfAfter(A,B) all swap the two. Positions are those of every base table (T1, T2, T3) after the earlier
+        // reorders, which only move what each entry names.
+        private static Dictionary<string, string> Equivalent(LayerRules a)
+        {
+            var d = new Dictionary<string, string>();
+
+            foreach (byte set in new byte[] { 0, 1 })
+            {
+                int p = Array.FindIndex(a.Rules, r => r.Set == set && r.Kind == (byte)LayerRuleKind.Reorder);
+                // O5 MoveTo(Pants, Shirt): the first reorder; Shirt immediately precedes Pants in every table
+                d[$"rule {p} op SwapIfAfter"] = "O5: Shirt is Pants' immediate predecessor, so the swap is MoveTo";
+                d[$"rule {p} swap a/b"] = "O5: MoveTo(Shirt, Pants) on neighbours is the same swap";
+                // O6 SwapIfAfter(Shoes, Pants), pants 0x1EB/0x1FA/0x200 (O5 excluded by pants 0x398): Pants immediately precedes Shoes
+                d[$"rule {p + 1} op MoveTo"] = "O6: Pants is Shoes' immediate predecessor (O5 can't apply), so MoveTo(Shoes, Pants) is the swap";
+                // O7/O8 MoveTo(Pants, Shoes), pants 0x513/0x514 or 0x3E4 (O5, O6 excluded): Shoes follows Pants
+                d[$"rule {p + 2} op MoveAfter"] = "O7: Shoes follows Pants (MoveTo = MoveAfter)";
+                d[$"rule {p + 2} swap a/b"] = "O7: Pants and Shoes are neighbours, MoveTo(Shoes, Pants) is the same swap";
+                d[$"rule {p + 3} op MoveAfter"] = "O8: Shoes follows Pants (MoveTo = MoveAfter)";
+                d[$"rule {p + 3} swap a/b"] = "O8: Pants and Shoes are neighbours, MoveTo(Shoes, Pants) is the same swap";
+                // O9 MoveAfter(Tunic, Waist): Waist follows Tunic in every table, no earlier rule moves either
+                d[$"rule {p + 4} op MoveTo"] = "O9: Waist follows Tunic (MoveTo = MoveAfter)";
+                // O9b MoveTo(Robe, Necklace): Necklace follows Robe (O9 moved only Tunic)
+                d[$"rule {p + 5} op MoveAfter"] = "O9b: Necklace follows Robe (MoveTo = MoveAfter)";
+                // O10 MoveAfter(Cloak, Robe): Cloak is first after Invalid in every table, nothing earlier moves it
+                d[$"rule {p + 6} op MoveTo"] = "O10: Robe follows Cloak (MoveTo = MoveAfter)";
+                // O11 MoveAfter(Necklace, Helmet): Helmet follows Necklace (O9b's MoveTo keeps Necklace before Helmet)
+                d[$"rule {p + 7} op MoveTo"] = "O11: Helmet follows Necklace (MoveTo = MoveAfter)";
+                // O12 MoveTo(Robe, Helmet): Helmet follows Robe (also after O9b)
+                d[$"rule {p + 8} op MoveAfter"] = "O12: Helmet follows Robe (MoveTo = MoveAfter)";
+            }
+
+            return d;
         }
     }
 }

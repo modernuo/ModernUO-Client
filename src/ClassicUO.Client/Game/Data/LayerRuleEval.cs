@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
@@ -100,8 +101,21 @@ namespace ClassicUO.Game.Data
 
         public static bool On => Override ?? _env ?? Configuration.Settings.GlobalSettings.EcsLayerRules;
 
+        /// <summary>Tests: the client version gate (null: the loaded client's).</summary>
+        internal static bool? Cv7000Override;
+
+        private static bool Cv7000 => Cv7000Override ?? (Client.Game?.UO != null && Client.Game.UO.Version >= Utility.ClientVersion.CV_7000);
+
         public static LayerSubject Subject(ushort body, bool female, bool gargoyleDraw) =>
-            new LayerSubject(Rules.GroupOf(body), (byte)((female ? LayerRulesConst.FlagFemale : 0) | (gargoyleDraw ? LayerRulesConst.FlagGargoyleDraw : 0)));
+            new LayerSubject(
+                Rules.GroupOf(body),
+                (byte)((female ? LayerRulesConst.FlagFemale : 0) | (gargoyleDraw ? LayerRulesConst.FlagGargoyleDraw : 0) | (Cv7000 ? LayerRulesConst.FlagCv7000 : 0)),
+                body
+            );
+
+        /// <summary>A corpse's wearer: the corpse's body (Amount), and no flags (ItemView draws corpses with altTorsoTable: false,
+        /// no covering and no gargoyle remap).</summary>
+        public static LayerSubject CorpseSubject(ushort body) => new LayerSubject(Rules.GroupOf(body), 0, body);
 
         /// <summary>PaperdollOrder.BuildInWorld from data: order, Filter (no backpack), then the direction moves.</summary>
         public static int BuildInWorld(ReadOnlySpan<ushort> key, LayerSubject subject, byte direction, Span<Layer> dest)
@@ -127,6 +141,45 @@ namespace ClassicUO.Game.Data
             Rules.IsCovered(set, (byte)layer, t.Present, t.Graphic, t.Anim, subject);
 
         public static ushort Remap(ushort anim, LayerSubject subject) => Rules.Remap(LayerRuleSet.World, anim, subject);
+
+        /// <summary>
+        /// ItemView.DrawCorpse / the corpse pick / ItemSpriteExtract: a corpse's worn layers in paint order. With ecs_layer_rules
+        /// the world set's order and direction moves for the corpse's body with no flags (altTorsoTable: false); else
+        /// PaperdollOrder.BuildInWorld. Corpses keep no covering and no remap pass.
+        /// </summary>
+        public static int CorpseOrder(Entity corpse, ushort body, byte direction, Span<Layer> dest)
+        {
+            bool data = On;
+
+            if (!data && !CheckEnabled)
+            {
+                return PaperdollOrder.BuildInWorld(corpse, altTorsoTable: false, direction, dest);
+            }
+
+            Span<ushort> key = stackalloc ushort[PaperdollOrder.N];
+            PaperdollOrder.GraphicsFromEntity(corpse, key);
+            int count = data ? BuildInWorld(key, CorpseSubject(body), direction, dest) : PaperdollOrder.BuildInWorld(corpse, altTorsoTable: false, direction, dest);
+
+            if (CheckEnabled)
+            {
+                Span<Layer> other = stackalloc Layer[PaperdollOrder.N];
+                int oc = data ? PaperdollOrder.BuildInWorld(corpse, altTorsoTable: false, direction, other) : BuildInWorld(key, CorpseSubject(body), direction, other);
+                ReadOnlySpan<Layer> hard = data ? other.Slice(0, oc) : dest.Slice(0, count);
+                ReadOnlySpan<Layer> fromData = data ? dest.Slice(0, count) : other.Slice(0, oc);
+                CompareOrder("corpse", corpse.Serial, hard, fromData);
+            }
+
+            return count;
+        }
+
+        /// <summary>PaperDollInteractable.GetAnimID's remap (the gargoyle ghost's shroud) from the paperdoll set.</summary>
+        /// The subject is the paperdoll's (female; gargoyle = the ungated gargoyle bodies, as its altTorso).
+        public static ushort RemapPaperdoll(ushort anim, ushort body, bool female) =>
+            Rules.Remap(LayerRuleSet.Paperdoll, anim, Subject(body, female, body == 0x029A || body == 0x029B || body == 0x02B6 || body == 0x02B7));
+
+        /// <summary>The hard-coded GetAnimID remap, for CUO_LAYER_RULES_CHECK and the tests.</summary>
+        public static ushort RemapPaperdollHard(ushort anim, ushort body, bool cv7000) =>
+            cv7000 && anim == 0x03CA && (body == 0x02B7 || body == 0x02B6) ? (ushort)0x0223 : anim;
 
         // ---- CUO_LAYER_RULES_CHECK (CUO_DEVTOOLS builds only) -----------------------------------------------------------
         // Every covered/order decision in the world (MobileView draw and pick, MobileAnimationSystem) and the paperdoll
@@ -216,10 +269,16 @@ namespace ClassicUO.Game.Data
             {
                 ushort anim = t.Anim[l];
 
-                if (gargoyleDraw && anim != 0)
+                // every worn AnimID: the data's remap conditions decide whom it applies to
+                if (anim != 0)
                 {
                     ushort h = anim;
-                    Mobile.FixGargoyleEquipmentsHard(ref h);
+
+                    if (gargoyleDraw)
+                    {
+                        Mobile.FixGargoyleEquipmentsHard(ref h);
+                    }
+
                     ushort d = Remap(anim, subject);
                     Checks++;
 
@@ -231,10 +290,80 @@ namespace ClassicUO.Game.Data
             }
         }
 
-        /// <summary>MobileView's pick: one worn layer's IsCovered and the gargoyle remap.</summary>
+        /// <summary>MobileView's pick: one worn layer's IsCovered.</summary>
         public static void CheckPick(Mobile mobile, Layer layer, ref LayerTables t, LayerSubject subject)
         {
             CompareCovered("pick", mobile.Serial, layer, Mobile.IsCovered(mobile, layer), IsCovered(LayerRuleSet.World, layer, ref t, subject), ref t);
+        }
+
+        /// <summary>MobileView's pick: the graphic the hit test resolves (remap, then the equip conversion), from both helpers.</summary>
+        public static void ComparePickGraphic(uint serial, Layer layer, ushort hard, ushort data)
+        {
+            Checks++;
+
+            if (hard != data)
+            {
+                Report($"[layers] mismatch (pick graphic) 0x{serial:X8} layer {layer}: hard 0x{hard:X4} | data 0x{data:X4}");
+            }
+        }
+
+        /// <summary>The paperdoll's gump remap (PaperDollInteractable.GetAnimID), both answers.</summary>
+        public static void ComparePaperdollRemap(ushort body, ushort anim, bool female, ushort used)
+        {
+            ushort hard = RemapPaperdollHard(anim, body, Cv7000), data = RemapPaperdoll(anim, body, female);
+            Checks++;
+
+            if (hard != data || used != (On ? data : hard))
+            {
+                Report($"[layers] mismatch (paperdoll remap) body 0x{body:X4} anim 0x{anim:X4}: hard 0x{hard:X4} | data 0x{data:X4} | used 0x{used:X4}");
+            }
+        }
+
+        /// <summary>
+        /// MobileAnimationSystem's rebuilt slots: the final paint order (AnimationRules.PaintOrder, what MobileSpriteExtract
+        /// draws) for every direction class against the hard-coded world order (PaperdollOrder.Build, Filter,
+        /// ApplyDirectionCloak) restricted to the drawn layers.
+        /// </summary>
+        public static void CheckEcsSlots(uint serial, ReadOnlySpan<ushort> key, bool altTorso, in ClassicUO.Ecs.EquipmentSlots eq)
+        {
+            int n = eq.Count;
+            Span<Layer> raw = stackalloc Layer[PaperdollOrder.N];
+            Span<Layer> full = stackalloc Layer[PaperdollOrder.N];
+            Span<byte> slotLayers = stackalloc byte[ClassicUO.Ecs.EquipmentSlots.MAX];
+            Span<Layer> hard = stackalloc Layer[ClassicUO.Ecs.EquipmentSlots.MAX];
+            Span<Layer> got = stackalloc Layer[ClassicUO.Ecs.EquipmentSlots.MAX];
+            Span<byte> order = stackalloc byte[ClassicUO.Ecs.EquipmentSlots.MAX];
+
+            for (int i = 0; i < n; i++)
+            {
+                slotLayers[i] = eq.Slots[i].Layer;
+            }
+
+            PaperdollOrder.Build(key, altTorso, raw);
+
+            for (int c = 0; c < EquipDirOrders.Classes; c++)
+            {
+                byte dir = (byte)c;
+                int fc = PaperdollOrder.ApplyDirectionCloak(full, PaperdollOrder.Filter(raw, includeBackpack: false, full), dir);
+                int hn = 0;
+
+                for (int i = 0; i < fc && hn < n; i++)
+                {
+                    if (slotLayers.Slice(0, n).IndexOf((byte)full[i]) >= 0)
+                    {
+                        hard[hn++] = full[i];
+                    }
+                }
+
+                int gn = AnimationRules.PaintOrder(in eq, dir, order);
+
+                for (int i = 0; i < gn; i++)
+                {
+                    got[i] = (Layer)eq.Slots[order[i]].Layer;
+                }
+
+                CompareOrder($"ecs slots dir {dir}", serial, hard.Slice(0, hn), got.Slice(0, gn));
+            }
         }
 
         /// <summary>The paperdoll: its order key (held-item preview included) and every layer's IsCovered.</summary>
@@ -286,9 +415,9 @@ namespace ClassicUO.Game.Data
             {
                 CompareCovered("ecs", serial, (Layer)l, AnimationRules.IsCovered((Layer)l, gfx, anim, present, body), IsCovered(LayerRuleSet.World, (Layer)l, ref t, subject), ref t);
 
-                if (gargoyle && present[l] && anim[l] != 0)
+                if (present[l] && anim[l] != 0)
                 {
-                    ushort h = AnimationRules.FixGargoyleEquipment(anim[l]), d = Remap(anim[l], subject);
+                    ushort h = gargoyle ? AnimationRules.FixGargoyleEquipment(anim[l]) : anim[l], d = Remap(anim[l], subject);
                     Checks++;
 
                     if (h != d)
@@ -297,6 +426,100 @@ namespace ClassicUO.Game.Data
                     }
                 }
             }
+        }
+    }
+
+    /// <summary>
+    /// T3b, ecs_layer_rules: the ECS slots' paint order per facing from the data's direction rules. MobileAnimationSystem's
+    /// rebuild applies the world set's DirMove rules to the full layer order for each direction class (0..7, and 8 for any
+    /// facing of 8 or more), projects the result onto the drawn slots and interns the 9 permutations here;
+    /// <see cref="ClassicUO.Ecs.EquipmentSlots.DirOrder"/> holds the id (0: none, the hard-coded cloak move on the slots).
+    /// Few distinct permutations exist (they depend only on which slots are drawn and where the moved layers go), so the
+    /// table stays small: <see cref="Stride"/> bytes per distinct entry, kept for the session.
+    /// </summary>
+    internal static class EquipDirOrders
+    {
+        public const int Classes = 9;
+        public const int Stride = Classes * ClassicUO.Ecs.EquipmentSlots.MAX;
+
+        private static byte[] _data = new byte[Stride * 16];
+        private static int _count; // entries; id = index + 1
+        private static readonly Dictionary<ulong, int> _byHash = new Dictionary<ulong, int>();
+        private static bool _fullLogged;
+
+        public static int Count => _count;
+
+        public static int ClassOf(byte facing) => facing >= 8 ? 8 : facing;
+
+        /// <summary>The permutation (slot indices) of the entry for a direction class.</summary>
+        public static ReadOnlySpan<byte> Get(ushort id, int cls, int n) => _data.AsSpan((id - 1) * Stride + cls * ClassicUO.Ecs.EquipmentSlots.MAX, n);
+
+        /// <summary>Interns <paramref name="perms"/> (<see cref="Stride"/> bytes); 0 when the table is full.</summary>
+        public static ushort Intern(ReadOnlySpan<byte> perms)
+        {
+            ulong h = 14695981039346656037UL;
+
+            foreach (byte b in perms)
+            {
+                h = (h ^ b) * 1099511628211UL;
+            }
+
+            if (_byHash.TryGetValue(h, out int found) && _data.AsSpan(found * Stride, Stride).SequenceEqual(perms))
+            {
+                return (ushort)(found + 1);
+            }
+
+            if (_count >= ushort.MaxValue)
+            {
+                if (!_fullLogged)
+                {
+                    _fullLogged = true;
+                    Log.Error("[layers] direction order table full: the ECS falls back to the hard-coded cloak move");
+                }
+
+                return 0;
+            }
+
+            if ((_count + 1) * Stride > _data.Length)
+            {
+                Array.Resize(ref _data, _data.Length * 2);
+            }
+
+            perms.CopyTo(_data.AsSpan(_count * Stride, Stride));
+            _byHash.TryAdd(h, _count);
+
+            return (ushort)++_count;
+        }
+
+        /// <summary>
+        /// Rebuild: the 9 permutations of the slots (<paramref name="slotLayers"/>, in slot order) from the full layer order
+        /// (<paramref name="fullOrder"/>, PaperdollOrder.Filter's output from the data's order) and the world DirMove rules.
+        /// </summary>
+        public static ushort Build(ReadOnlySpan<Layer> fullOrder, ReadOnlySpan<byte> slotLayers, ReadOnlySpan<ushort> key, LayerSubject subject)
+        {
+            const int MAX = ClassicUO.Ecs.EquipmentSlots.MAX;
+            Span<byte> perms = stackalloc byte[Stride];
+            perms.Clear();
+            Span<byte> full = stackalloc byte[PaperdollOrder.N];
+
+            for (int c = 0; c < Classes; c++)
+            {
+                MemoryMarshal.Cast<Layer, byte>(fullOrder).CopyTo(full);
+                int count = LayerRuleEval.Rules.ApplyDirection(LayerRuleSet.World, full, fullOrder.Length, c == 8 ? (byte)8 : (byte)c, key, subject);
+                int n = 0;
+
+                for (int i = 0; i < count && n < slotLayers.Length; i++)
+                {
+                    int slot = slotLayers.IndexOf(full[i]);
+
+                    if (slot >= 0)
+                    {
+                        perms[c * MAX + n++] = (byte)slot;
+                    }
+                }
+            }
+
+            return Intern(perms);
         }
     }
 }

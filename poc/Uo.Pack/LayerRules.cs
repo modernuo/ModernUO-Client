@@ -20,6 +20,9 @@ public static class LayerRulesConst
     public const byte FlagFemale = 1;
     public const byte FlagGargoyleDraw = 2;
 
+    /// <summary>The client is 7.0.0.0 or later (the paperdoll's gargoyle-ghost shroud remap).</summary>
+    public const byte FlagCv7000 = 4;
+
     /// <summary>DirMove mask bit for any direction of 8 or more.</summary>
     public const ushort DirOther = 1 << 8;
 }
@@ -32,7 +35,7 @@ public enum LayerReorderOp : byte { MoveTo = 0, MoveAfter = 1, SwapIfAfter = 2 }
 
 public enum LayerDirOp : byte { Top = 0, Bottom = 1, Before = 2 }
 
-public enum LayerCondKind : byte { Present = 0, Graphic = 1, AnimId = 2, Flag = 3, Group = 4 }
+public enum LayerCondKind : byte { Present = 0, Graphic = 1, AnimId = 2, Flag = 3, Group = 4, Body = 5 }
 
 public enum BodyGroup : byte { Other = 0, HumanMale = 1, HumanFemale = 2, ElfMale = 3, ElfFemale = 4, GargoyleMale = 5, GargoyleFemale = 6 }
 
@@ -72,16 +75,19 @@ public struct LayerRange
     public ushort Lo, Hi;
 }
 
-/// <summary>Who wears the layers: the body group (from the file's body table) and the caller's flags (female, gargoyle draw).</summary>
+/// <summary>Who wears the layers: the body group (from the file's body table), the body graphic and the caller's flags
+/// (female, gargoyle draw, client 7.0.0.0+).</summary>
 public struct LayerSubject
 {
     public byte Group;
     public byte Flags;
+    public ushort Body;
 
-    public LayerSubject(byte group, byte flags)
+    public LayerSubject(byte group, byte flags, ushort body = 0)
     {
         Group = group;
         Flags = flags;
+        Body = body;
     }
 }
 
@@ -102,6 +108,9 @@ public sealed class LayerRules
     private readonly int[][] _select = new int[2][], _reorder = new int[2][], _dirMove = new int[2][], _remap = new int[2][];
     private readonly int[] _coverIdx;
     private readonly int[] _coverStart = new int[2 * LayerRulesConst.MaxLayer + 1];
+
+    // per set: a 1024-bit filter of the remapped AnimIDs (bit anim & 1023), so the common no-remap case skips the rule scan
+    private readonly ulong[] _remapFilter = new ulong[2 * 16];
 
     public LayerRules(BodyGroupEntry[] bodies, byte[] tables, LayerRule[] rules, LayerCond[] conds, LayerRange[] ranges)
     {
@@ -133,8 +142,9 @@ public sealed class LayerRules
 
         foreach (ref readonly LayerCond c in conds.AsSpan())
         {
-            if (c.Kind > (byte)LayerCondKind.Group) throw new InvalidDataException($"layerrules: cond kind {c.Kind}");
-            if (c.Kind <= (byte)LayerCondKind.AnimId && c.Layer >= LayerRulesConst.MaxLayer) throw new InvalidDataException($"layerrules: cond layer {c.Layer}");
+            if (c.Kind > (byte)LayerCondKind.Body) throw new InvalidDataException($"layerrules: cond kind {c.Kind}");
+            // the evaluator's tables hold the layers 0..LayerCount-1 (PaperdollOrder.N entries)
+            if (c.Kind <= (byte)LayerCondKind.AnimId && c.Layer >= LayerRulesConst.LayerCount) throw new InvalidDataException($"layerrules: cond layer {c.Layer}");
             if (c.RangeStart + c.RangeCount > ranges.Length) throw new InvalidDataException("layerrules: cond ranges out of bounds");
         }
 
@@ -173,6 +183,7 @@ public sealed class LayerRules
                         if (conds[c].Kind < (byte)LayerCondKind.Flag) throw new InvalidDataException($"layerrules: remap rule {i} reads a layer");
                     }
 
+                    _remapFilter[r.Set * 16 + ((r.Value & 1023) >> 6)] |= 1UL << (r.Value & 63);
                     break;
             }
 
@@ -228,6 +239,9 @@ public sealed class LayerRules
                     break;
                 case LayerCondKind.Group:
                     result = InRanges(c, subject.Group);
+                    break;
+                case LayerCondKind.Body:
+                    result = InRanges(c, subject.Body);
                     break;
                 default:
                 {
@@ -348,6 +362,8 @@ public sealed class LayerRules
     /// <summary>FixGargoyleEquipment generalised: the first matching remap of a draw AnimID, else the AnimID itself.</summary>
     public ushort Remap(LayerRuleSet set, ushort anim, LayerSubject subject)
     {
+        if ((_remapFilter[(int)set * 16 + ((anim & 1023) >> 6)] & (1UL << (anim & 63))) == 0) return anim;
+
         foreach (int ri in _remap[(int)set])
         {
             ref readonly LayerRule r = ref Rules[ri];
