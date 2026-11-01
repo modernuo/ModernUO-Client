@@ -3031,7 +3031,7 @@ namespace ClassicUO.Game
         /// extract reads them each frame), so nothing is committed or pushed, as before T1. Admission as
         /// <see cref="IdleAnimation"/> (the item update loop passes what it iterates).
         /// </summary>
-        public void AdvanceCorpseFrame(Item corpse, int frame, long due)
+        public void AdvanceCorpseFrame(Item corpse, int frame, long due, bool push = true)
         {
             if (!PerFrameAdmitted(corpse, nameof(AdvanceCorpseFrame)))
             {
@@ -3046,6 +3046,12 @@ namespace ClassicUO.Game
                 }
 
                 corpse.LastAnimationChangeTime = due;
+            }
+
+            // T5b-items: the timer component follows (the system's own advance already wrote it)
+            if (push)
+            {
+                _world.Ecs.PushItemTimer(corpse);
             }
         }
 
