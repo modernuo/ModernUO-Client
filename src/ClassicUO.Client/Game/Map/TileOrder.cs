@@ -360,7 +360,7 @@ namespace ClassicUO.Game.Map
             {
                 Log.Info(
                     $"[tile-order] index: tiles {_indexTiles}, entries {_indexEntries}, merged objects {_indexMerged}, mismatched tiles {_indexBadTiles} " +
-                    $"(order {_indexOrder}, bad entries {_indexBadEntries}, count {_indexCount}); world_tile_index walk {(DynamicTileIndex.WalkOn ? "on" : "off")}, " +
+                    $"(order {_indexOrder}, bad entries {_indexBadEntries}, count {_indexCount}); double submissions {_doubleSubmissions}; world_tile_index walk {(DynamicTileIndex.WalkOn ? "on" : "off")}, " +
                     $"pooled arrays {DynamicTileIndex.EntryPool.Pooled}"
                 );
             }
@@ -377,6 +377,20 @@ namespace ClassicUO.Game.Map
         }
 
         // ---- T6b: the merged order (list without dynamics + DynamicTileIndex) must equal the list while both are maintained ----
+
+        private static long _doubleSubmissions;
+
+        /// <summary>The render-list walk reached <paramref name="obj"/> after it was already drawn (or served by the Gpu item
+        /// cache) this frame: a submitted object that the list walk would not submit twice.</summary>
+        public static void NoteDoubleSubmission(GameObject obj)
+        {
+            _doubleSubmissions++;
+
+            if (_reports++ < MaxReports)
+            {
+                Log.Warn($"[tile-order] double submission: {Describe(obj)} at {obj.X},{obj.Y} drawn twice in one frame");
+            }
+        }
 
         private static long _indexTiles, _indexEntries, _indexMerged, _indexBadTiles, _indexOrder, _indexBadEntries, _indexCount;
 
