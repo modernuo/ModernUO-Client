@@ -4,6 +4,8 @@
 # 5156 2150 through [TestScene go) shot under the Gpu world, then under Legacy (MobileView reads FindItemByLayer for every
 # drawn mobile), each off then on. Run with CUO_BENCH_SHOTS=<dir> and without CUO_ECS_READ_EQUIPMENT (it would override the
 # readequipment command). The paperdoll is placed at a fixed position and the scripted cursor parked before each shot.
+# Each pair has an A/A control (<name>_off2: the same shot again with the switch still off, after the same delay) so the
+# animation between shots can be told from a difference the switch makes.
 wait 6
 say [self set Map Felucca
 wait 3
@@ -30,6 +32,14 @@ wait 1
 shot t3_mounted_off
 wait 1
 close PaperDollGump
+wait 1
+paperdoll
+wait 2
+place PaperDollGump 60 60
+wait 1
+shot t3_mounted_off2
+wait 1
+close PaperDollGump
 readequipment on
 wait 1
 paperdoll
@@ -51,6 +61,14 @@ wait 1
 shot t3_dismounted_off
 wait 1
 close PaperDollGump
+wait 1
+paperdoll
+wait 2
+place PaperDollGump 60 60
+wait 1
+shot t3_dismounted_off2
+wait 1
+close PaperDollGump
 readequipment on
 wait 1
 paperdoll
@@ -65,6 +83,8 @@ say [TestScene go
 wait 12
 check
 shot t3_scene_off
+wait 1
+shot t3_scene_off2
 readequipment on
 wait 1
 shot t3_scene_on
@@ -72,6 +92,8 @@ readequipment off
 renderer legacy
 wait 3
 shot t3_lscene_off
+wait 1
+shot t3_lscene_off2
 readequipment on
 wait 1
 shot t3_lscene_on
