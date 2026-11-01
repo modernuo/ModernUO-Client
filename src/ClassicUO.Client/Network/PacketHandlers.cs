@@ -2971,6 +2971,9 @@ namespace ClassicUO.Network
             }
         }
 
+        // t3a-fold: 0x78/0xD3's equipment list, read before the operation (grown when a list is longer; the game loop's thread)
+        private static WorldWriter.WornEntry[] _wornEntries = new WorldWriter.WornEntry[32];
+
         private static void UpdateObject(World world, ref StackDataReader p)
         {
             if (world.Player == null)
@@ -3008,9 +3011,9 @@ namespace ClassicUO.Network
                 return;
             }
 
-            // T1: the children that are neither opened nor the backpack go, with their contents
-            world.Writer.ClearWornItems(serial);
-
+            // t3a-fold: the clear of the children that are neither opened nor the backpack (with their contents) runs with the
+            // list in ReplaceWornItems below; the notoriety and the paperdoll's refresh request, which neither reads nor
+            // changes the equipment, now come before it
             if (SerialHelper.IsMobile(serial) && obj is Mobile mob)
             {
                 world.Writer.SetNotoriety(mob, notoriety);
@@ -3024,7 +3027,9 @@ namespace ClassicUO.Network
             }
 
             uint itemSerial = p.ReadUInt32BE();
+            int entryCount = 0;
 
+            // t3a-fold: the list is read first (before any change), then cleared and worn in one operation
             while (itemSerial != 0 && p.Position < p.Length)
             {
                 //if (!SerialHelper.IsItem(itemSerial))
@@ -3044,12 +3049,19 @@ namespace ClassicUO.Network
                     item_hue = p.ReadUInt16BE();
                 }
 
-                // T1: the entry's values, out of its old container, onto obj (captured once, before the list) at the end of
-                // its child list
-                world.Writer.WearItem(obj, itemSerial, itemGraphic, (Layer)layer, item_hue);
+                if (entryCount == _wornEntries.Length)
+                {
+                    Array.Resize(ref _wornEntries, entryCount * 2);
+                }
+
+                _wornEntries[entryCount++] = new WorldWriter.WornEntry(itemSerial, itemGraphic, (Layer)layer, item_hue);
 
                 itemSerial = p.ReadUInt32BE();
             }
+
+            // T1: the clear, then each entry's values, out of its old container, onto obj (captured once, before the list) at
+            // the end of its child list; t3a-fold: as one operation, the wearer's WornLayers written once
+            world.Writer.ReplaceWornItems(obj, new ReadOnlySpan<WorldWriter.WornEntry>(_wornEntries, 0, entryCount));
 
             if (serial == world.Player)
             {

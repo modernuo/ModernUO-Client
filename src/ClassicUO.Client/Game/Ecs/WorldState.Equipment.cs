@@ -329,7 +329,7 @@ namespace ClassicUO.Game
         {
             WorldMirror m = _world.Ecs.Mirror;
             (int caches, int withItems, long cacheBytes) = ReadCacheMemory();
-            Log.Info($"[equip] checks reads={EquipReads} mismatches={EquipMismatches} | read_equipment={(ReadEquipment ? "on" : "off")} mobiles={m.MobileCount} worn bytes={m.WornLayersBytes} writes={m.WornWrites} rescans={m.WornRescans} | read caches={caches} with items={withItems} bytes={cacheBytes} refreshes={CacheRefreshes} fills={CacheFills}");
+            Log.Info($"[equip] checks reads={EquipReads} mismatches={EquipMismatches} | read_equipment={(ReadEquipment ? "on" : "off")} mobiles={m.MobileCount} worn bytes={m.WornLayersBytes} writes={m.WornWrites} rescans={m.WornRescans} 0x78 batches written={m.WornBatchWrites} unchanged={m.WornBatchUnchanged} | read caches={caches} with items={withItems} bytes={cacheBytes} refreshes={CacheRefreshes} fills={CacheFills}");
         }
 #else
         public const bool EquipCheckAvailable = false;
