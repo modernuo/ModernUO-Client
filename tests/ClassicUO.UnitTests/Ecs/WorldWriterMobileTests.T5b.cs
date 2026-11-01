@@ -143,15 +143,16 @@ namespace ClassicUO.UnitTests.Ecs
             return true;
         }
 
-        public enum T5bStart { Standing, Repeating, Once, Held, Dead, WarMode, Walked, ServerFive, Gargoyle }
+        public enum T5bStart { Standing, Repeating, Once, Held, Dead, WarMode, Walked, ServerFive, Gargoyle, ReverseServerOnce }
 
-        public enum T5bData { People, PeopleNone, LowExtended, NoFrames, UopAnimal, OutOfRange }
+        public enum T5bData { People, PeopleNone, LowExtended, LowExtendedReplaced, NoFrames, UopAnimal, OutOfRange }
 
         private static FakeAdvanceSource T5bDataOf(T5bData d) => d switch
         {
             T5bData.People => new FakeAdvanceSource { Idle = IdleDataOf(IdleData.PeopleBoth) },
             T5bData.PeopleNone => new FakeAdvanceSource { Idle = IdleDataOf(IdleData.PeopleNone) },
             T5bData.LowExtended => new FakeAdvanceSource { Idle = IdleDataOf(IdleData.MonsterLowExtended18) },
+            T5bData.LowExtendedReplaced => new FakeAdvanceSource { Idle = IdleDataOf(IdleData.MonsterLowExtendedReplaced) },
             T5bData.NoFrames => new FakeAdvanceSource { Idle = IdleDataOf(IdleData.PeopleBoth), NoFrames = true },
             T5bData.UopAnimal => new FakeAdvanceSource { Idle = IdleDataOf(IdleData.UopAnimal) },
             _ => new FakeAdvanceSource { Idle = IdleDataOf(IdleData.OutOfRange) }
@@ -189,6 +190,11 @@ namespace ClassicUO.UnitTests.Ecs
                 case T5bStart.ServerFive:
                     // a server action 5: LowGroupExtended bodies roll for it in the selection
                     m.SetAnimation(5, 0, 7, 3, true, false, true);
+
+                    break;
+                case T5bStart.ReverseServerOnce:
+                    // reverse, from the server, count 1, no repeat: finishes with its frame at frames-1 after the reset
+                    m.SetAnimation(9, 0, 5, 1, false, false, true);
 
                     break;
                 case T5bStart.Gargoyle:
