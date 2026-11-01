@@ -104,6 +104,32 @@ namespace ClassicUO.Ecs
         public ulong Spells;
     }
 
+    [InlineArray(WornLayers.COUNT)]
+    public struct WornLayerArray
+    {
+        private uint _e;
+    }
+
+    /// <summary>
+    /// T3a: a mobile's worn equipment by layer (layers 0x01..0x1D; slot <c>layer - 1</c>): the serial of the first item
+    /// attached to the mobile on that layer, i.e. the one <c>Entity.FindItemByLayer</c> finds first in the mobile's child list
+    /// (the lowest child-order stamp among the attached items on that layer), 0 when none. Maintained by the mirror from
+    /// attachment only (<see cref="ItemData.Stamp"/> != 0): an item equipped before its mobile existed (an orphan, stamp 0)
+    /// is never in it, as ClassicUO never links it. Layer 0 (the trade boxes) and layers above 0x1D are not tracked.
+    /// </summary>
+    public struct WornLayers : IComponent
+    {
+        /// <summary>The tracked layers: 0x01 (OneHanded) .. 0x1D (Bank).</summary>
+        public const int COUNT = 0x1D;
+
+        public WornLayerArray Serials;
+
+        /// <summary>The first attached item's serial on <paramref name="layer"/>, 0 when none or the layer is not tracked.</summary>
+        public readonly uint Get(byte layer) => (uint)(layer - 1) < COUNT ? Serials[layer - 1] : 0;
+
+        public static bool Tracked(byte layer) => (uint)(layer - 1) < COUNT;
+    }
+
     public struct MobileTag : ITag { }
 
     public struct ItemTag : ITag { }
@@ -436,6 +462,9 @@ namespace ClassicUO.Ecs
 
             // T2: container contents
             Component<SpellbookContent>(aot);
+
+            // T3a: equipment by layer
+            Component<WornLayers>(aot);
 
             return aot.CreateSchema();
         }

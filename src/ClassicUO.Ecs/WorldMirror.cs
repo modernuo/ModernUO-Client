@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
 using Friflo.Engine.ECS;
 
 namespace ClassicUO.Ecs
@@ -48,7 +49,16 @@ namespace ClassicUO.Ecs
         {
             EcsSchema.Register();
             Store = new EntityStore();
+
+            ComponentTypes mobile = ComponentTypes.Get<Serial, Graphic, Hue, Position, Facing>();
+            mobile.Add(ComponentTypes.Get<Flags, AnimationState, MobileRenderState, EquipmentSlots, MobileInputs>());
+            mobile.Add(ComponentTypes.Get<WornLayers>());
+            MobileArchetype = Store.GetArchetype(mobile, Tags.Get<MobileTag, EquipmentDirty>());
+            PlayerArchetype = Store.GetArchetype(mobile, Tags.Get<MobileTag, PlayerTag, EquipmentDirty>());
         }
+
+        // a new mobile record's components and tags (the player's with PlayerTag)
+        private readonly Archetype MobileArchetype, PlayerArchetype;
 
         public EntityStore Store { get; }
 
@@ -85,23 +95,27 @@ namespace ClassicUO.Ecs
                     Remove(serial);
                 }
 
-                e = Store.CreateEntity
-                (
-                    new Serial { Value = serial },
-                    new Graphic { Value = graphic },
-                    new Hue { Value = hue },
-                    new Position { X = x, Y = y, Z = z },
-                    new Facing { Value = facing },
-                    new Flags { Value = flags },
-                    new AnimationState { ServerGroup = 0xFF },
-                    new MobileRenderState { Alpha = 0xFF },
-                    new EquipmentSlots(),
-                    new MobileInputs(),
-                    isPlayer ? Tags.Get<MobileTag, PlayerTag, EquipmentDirty>() : Tags.Get<MobileTag, EquipmentDirty>()
-                );
+                // T3a: eleven components (WornLayers added), more than CreateEntity's generic overloads take: the entity is
+                // created in its final archetype (no structural change) and the components written in place
+                e = (isPlayer ? PlayerArchetype : MobileArchetype).CreateEntity();
+                e.GetComponent<Serial>().Value = serial;
+                e.GetComponent<Graphic>().Value = graphic;
+                e.GetComponent<Hue>().Value = hue;
+                e.GetComponent<Position>() = new Position { X = x, Y = y, Z = z };
+                e.GetComponent<Facing>().Value = facing;
+                e.GetComponent<Flags>().Value = flags;
+                e.GetComponent<AnimationState>() = new AnimationState { ServerGroup = 0xFF };
+                e.GetComponent<MobileRenderState>() = new MobileRenderState { Alpha = 0xFF };
 
                 _bySerial[serial] = e;
                 MobileCount++;
+
+                // T3a: children attached under this serial before this record existed (a record replaced while its children
+                // stayed attached) are worn on it; normally none (one index lookup)
+                if (GetEquipment(serial).Count != 0)
+                {
+                    RebuildWorn(serial, ref e.GetComponent<WornLayers>());
+                }
 
                 return e;
             }
@@ -147,10 +161,14 @@ namespace ClassicUO.Ecs
         )
         {
             uint oldWearer = 0;
+            byte oldWornLayer = 0;
+            ulong oldWornStamp = 0;
 
             if (_bySerial.TryGetValue(serial, out Entity e) && e.Tags.Has<ItemTag>() && e.TryGetComponent(out EquippedOn worn))
             {
                 oldWearer = worn.Parent;
+                oldWornLayer = worn.Layer;
+                oldWornStamp = e.GetComponent<ItemData>().Stamp;
             }
 
             bool created = e.IsNull || !e.Tags.Has<ItemTag>();
@@ -239,6 +257,13 @@ namespace ClassicUO.Ecs
                 }
             }
 
+            // T3a: an attachment to a wearer that changed (attached, detached, re-pushed, another layer or wearer) moves the
+            // item in the wearers' WornLayers
+            if (oldWearer != 0 || IsWearerSerial(container))
+            {
+                UpdateWorn(e, serial, oldWearer, oldWornLayer, oldWornStamp);
+            }
+
             // any write to a worn item (equip, unequip, graphic, hue) invalidates the old and new wearer's slots
             if (oldWearer != 0)
             {
@@ -281,6 +306,12 @@ namespace ClassicUO.Ecs
                 if (e.TryGetComponent(out EquippedOn worn))
                 {
                     MarkEquipmentDirty(worn.Parent);
+
+                    // T3a: an attached worn item leaves its wearer's layer (the next one on that layer takes it)
+                    if (e.GetComponent<ItemData>().Stamp != 0)
+                    {
+                        LeaveWorn(worn.Parent, worn.Layer, serial);
+                    }
                 }
             }
 
@@ -369,7 +400,20 @@ namespace ClassicUO.Ecs
                 return false;
             }
 
-            e.GetComponent<ItemData>().Stamp = ++_childStamp;
+            ref ItemData data = ref e.GetComponent<ItemData>();
+            ulong oldStamp = data.Stamp;
+            data.Stamp = ++_childStamp;
+
+            // T3a: a worn item went to the back of its wearer's list (another item on its layer may now come first)
+            if (e.TryGetComponent(out EquippedOn worn))
+            {
+                if (oldStamp != 0)
+                {
+                    LeaveWorn(worn.Parent, worn.Layer, serial);
+                }
+
+                EnterWorn(worn.Parent, worn.Layer, serial, _childStamp);
+            }
 
             // T2: the parent's order changed (or, from 0, the item joined its contents)
             if (_contents.Count != 0)
@@ -398,7 +442,14 @@ namespace ClassicUO.Ecs
                 InvalidateContents(AttachedParent(e));
             }
 
+            ulong oldStamp = data.Stamp;
             data.Stamp = 0;
+
+            // T3a: a detached worn item (the re-key's displaced mobile) leaves its wearer's layer
+            if (oldStamp != 0 && e.TryGetComponent(out EquippedOn worn))
+            {
+                LeaveWorn(worn.Parent, worn.Layer, serial);
+            }
 
             return true;
         }
@@ -773,6 +824,150 @@ namespace ClassicUO.Ecs
         }
 
         // the parent an attached item is in (its EquippedOn or ContainedIn; an attached item has one)
+        // ---- T3a: WornLayers, a wearer's first attached item per layer (ecs-transition-plan.md, T3)
+
+        /// <summary>WornLayers slot changes (tests, the 5 s summary).</summary>
+        public long WornWrites, WornRescans;
+
+        /// <summary>
+        /// The serial of the first item attached to <paramref name="mobile"/> on <paramref name="layer"/> (the lowest
+        /// child-order stamp: what <c>FindItemByLayer</c> finds first in the child list), 0 when none, when the layer is not
+        /// tracked (0, above 0x1D) or when the serial has no mobile record.
+        /// </summary>
+        public uint Worn(uint mobile, byte layer) =>
+            _bySerial.TryGetValue(mobile, out Entity e) && e.TryGetComponent(out WornLayers w) ? w.Get(layer) : 0;
+
+        /// <summary>
+        /// Memory of WornLayers (layout-based accounting, as <see cref="ContentsCacheBytes"/>): the component's inline array in
+        /// each mobile record's archetype column (4 B per tracked layer; Friflo stores a component in a per-archetype struct
+        /// array, so the cost is the struct size per mobile record, plus the columns' spare capacity, not counted here).
+        /// </summary>
+        public long WornLayersBytes => (long)MobileCount * Unsafe.SizeOf<WornLayers>();
+
+        private void UpdateWorn(Entity e, uint serial, uint oldParent, byte oldLayer, ulong oldStamp)
+        {
+            uint newParent = 0;
+            byte newLayer = 0;
+            ulong newStamp = 0;
+
+            if (e.TryGetComponent(out EquippedOn now))
+            {
+                newParent = now.Parent;
+                newLayer = now.Layer;
+                newStamp = e.GetComponent<ItemData>().Stamp;
+            }
+
+            if (newParent == oldParent && newLayer == oldLayer && newStamp == oldStamp)
+            {
+                return;
+            }
+
+            if (oldStamp != 0)
+            {
+                LeaveWorn(oldParent, oldLayer, serial);
+            }
+
+            if (newStamp != 0)
+            {
+                EnterWorn(newParent, newLayer, serial, newStamp);
+            }
+        }
+
+        // the item joined the wearer's list on the layer with this stamp: it comes first unless an earlier one is there
+        private void EnterWorn(uint parent, byte layer, uint serial, ulong stamp)
+        {
+            if (!WornLayers.Tracked(layer) || !_bySerial.TryGetValue(parent, out Entity p) || !p.HasComponent<WornLayers>())
+            {
+                return;
+            }
+
+            ref uint slot = ref p.GetComponent<WornLayers>().Serials[layer - 1];
+
+            if (slot == serial)
+            {
+                return;
+            }
+
+            if (slot == 0 || StampOf(slot) > stamp)
+            {
+                slot = serial;
+                WornWrites++;
+            }
+        }
+
+        // the item left the wearer's list on the layer: when it was first, the next attached item on the layer (if any) is
+        private void LeaveWorn(uint parent, byte layer, uint serial)
+        {
+            if (!WornLayers.Tracked(layer) || !_bySerial.TryGetValue(parent, out Entity p) || !p.HasComponent<WornLayers>())
+            {
+                return;
+            }
+
+            ref uint slot = ref p.GetComponent<WornLayers>().Serials[layer - 1];
+
+            if (slot == serial)
+            {
+                slot = FirstWorn(parent, layer, serial);
+                WornWrites++;
+            }
+        }
+
+        // the attached child of the wearer on the layer with the lowest stamp, other than exclude (0 when none)
+        private uint FirstWorn(uint parent, byte layer, uint exclude)
+        {
+            WornRescans++;
+            uint best = 0;
+            ulong bestStamp = ulong.MaxValue;
+
+            foreach (Entity c in GetEquipment(parent))
+            {
+                if (c.GetComponent<EquippedOn>().Layer != layer)
+                {
+                    continue;
+                }
+
+                ulong stamp = c.GetComponent<ItemData>().Stamp;
+                uint s = c.GetComponent<Serial>().Value;
+
+                if (stamp != 0 && stamp < bestStamp && s != exclude)
+                {
+                    best = s;
+                    bestStamp = stamp;
+                }
+            }
+
+            return best;
+        }
+
+        // every tracked layer from the wearer's attached children (a record created under a serial that has some)
+        private void RebuildWorn(uint parent, ref WornLayers w)
+        {
+            w = default;
+            Span<ulong> stamps = stackalloc ulong[WornLayers.COUNT];
+            stamps.Clear();
+
+            foreach (Entity c in GetEquipment(parent))
+            {
+                byte layer = c.GetComponent<EquippedOn>().Layer;
+                ulong stamp = c.GetComponent<ItemData>().Stamp;
+
+                if (stamp == 0 || !WornLayers.Tracked(layer))
+                {
+                    continue;
+                }
+
+                if (w.Serials[layer - 1] == 0 || stamp < stamps[layer - 1])
+                {
+                    w.Serials[layer - 1] = c.GetComponent<Serial>().Value;
+                    stamps[layer - 1] = stamp;
+                    WornWrites++;
+                }
+            }
+        }
+
+        private ulong StampOf(uint serial) =>
+            _bySerial.TryGetValue(serial, out Entity e) && e.TryGetComponent(out ItemData d) ? d.Stamp : ulong.MaxValue;
+
         private static uint AttachedParent(Entity e)
         {
             if (e.TryGetComponent(out EquippedOn eq))
