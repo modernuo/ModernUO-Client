@@ -4857,3 +4857,38 @@ Base poc/modern-client 8af0946de; code commit f43e9d0fb. Setting `world_active_i
 - Merged (conflicts: this log, and Settings.cs where `world_tile_index` and `world_active_items_system` were added side by side: both kept). Unit tests 2,637 + 6 skipped in both variants; one dev run hit `RemovalSitesFunnelCheckTests.A_Direct_Removal_Names_The_Caller_Past_The_Removal_Plumbing` once (passes alone and on rerun): another parallel-static flake, known-issues.
 - Open (owner/T9): the `ItemActive` tag mirrors the list; making the ECS the source of membership and order needs a queue-stamp component (T5d agent's question).
 
+## T6b part 2: the remaining tile-list readers on TileReader (2026-11-01)
+
+Base: poc/modern-client bb4c73123. Branch `bg/ecs-t6b2-readers`, code commit ad2cc73c9. Items and mobiles are **still in the tile list** (part 3 removes them). Same switch `world_tile_index`.
+
+**What changed.** `TileReader` (DynamicTileIndex.cs): opens one tile either as the list walk (head, or from a given object) or as `TileWalk`'s merged order, same start object, `Open` then `Next`; `Map.OpenTile(x, y, load, merged)` is the tile-coordinate entry. Readers pass `DynamicTileIndex.WalkOn`. With `CUO_TILE_ORDER_CHECK` each converted reader also runs with the other walk and compares (`TileOrder.ReaderCheck`; a mismatch logs `[tile-order] reader mismatch: ...`; the index summary line gains `reader checks N, mismatches M`).
+
+**Reader inventory** (file:line at ad2cc73c9; C converted, N no change needed, S single-object):
+- Map.cs:820 `ScanMapZ` (GetMapZ), Map.cs:903 `FindNearRoof` (CalculateNearZ): C. The walk starts at `ScanStart`'s object (the land on a tile with land, so objects sorted before the land stay hidden, as before); the merged reader skips to that object. Checked.
+- MaxDrawZState.cs:109/160 `Compute` (both tile loops): C. Checked by recomputing the decision with the other walk (own reach).
+- Pathfinder.cs:86 `CreateItemList`: C. Checked: the same tile's PathObject list (object, flags, z, average z, height, order) with the other walk.
+- TargetManager.cs:410 `FindTarget` (CallbackTarget): C. Checked.
+- GameSceneDrawingSorting.cs:133 `ApplyFoliageTransparency`: C (stamps FoliageIndex on every object with the graphic and z, items included). Checked by match counts.
+- Mobile.cs:1217 `FindChair` (sitting; first chair-like item/static/multi within 1 Z, order matters): C. Checked.
+- Chunk.cs `HasNoExternalData`: C (with the walk on, a non-empty `Dynamic` answers false first; the list walk stays for multis). Not checked at run time (cheap but chunk-eviction only); equivalent to the list while the list holds dynamics.
+- World.cs:312 `ChangeSeason`: C (order-free; the merged walk reaches the index's objects). DevBench.cs:1289 art search: C (dev only).
+- GameSceneDrawingSorting.cs:446 `HasSurfaceOverhead`: N. Reads Static and Multi only (both stay in the list); the result does not depend on order (break on any hit).
+- GameScene.cs:454 light occlusion: N. Static and Multi only, break on any hit.
+- GameSceneGpuWorld.cs:167 `CollectGpuHidden`: N. Acts on Land and Static only. Part 3 note: callers pass `GetHeadObject` (GameScene.cs:813); a tile with only dynamics has head null, which is harmless.
+- GameSceneGpuPrepare.cs:534 `GpuHideCulledBaked`, :593 `SettleGpuChunk`, :639 `CheckGpuSkip`: N. `IsGpuBaked` (Land/Static) only.
+- GameSceneGpuPrepare.cs:375, GameSceneGpuItemCache.cs:364/404/675, GameSceneDrawingSorting.cs:839 (render walks): already on TileWalk in T6b. The five one-object `AddTileToRenderList(... obj.TNext ...)` calls (GameScene.cs:766, ItemCache 683/694/710/731): S.
+- GameScene.cs:778/813: S (pass the head to the render walk, which merges). GameScene.cs:908 bare-walk benchmark: N (order-free sum; dev). Map.cs:617 art request walk, ChunkMesh.cs:141/177 mesh build: N (Land/Static/Multi only; the mesh build also clears `InChunkMesh` on every list object, harmless for dynamics).
+- MiniMapGump.cs:334: N. Walks from the anchor to the tail and back for the last `Multi`; multis stay in the list.
+- GameScene.cs:1097 multi placement: S. It reads only `Chunk.Tiles[cell]` (the anchor object's X, Y, Z). Part 3 must keep the anchor a land/static/multi (Chunk.cs:442 hands the anchor to a neighbour on removal; a tile with only dynamics needs a rule).
+- Chunk.cs:469 `Destroy`, :567 `ClearForReload`: list teardown that destroys every object; part 3 must destroy the index's objects too (they currently leave through the list). MapObjectRecycler.cs:290, TileOrder.cs: list structure checkers, unchanged.
+
+**Tests.** `TileReaderTests` (8): reader sequence from the head and from every object equals the list in both modes (random tiles with items, mobiles, multis, statics, landless tiles, removals); a chunk without an index falls back to the list; GetMapZ and roof scans equal the pre-change code (kept in the test as the oracle) over 6 random seeds, landless dynamics-only tiles, and an object sorted before the land; chair search equal in both walks, item chairs found, first chair in tile order, unplaced mobile; HasNoExternalData with items and mobiles. Full suite 2,639 + 6 skipped in both variants (CuoDevTools true and false), both client flavours build, write-site budget unchanged.
+**Mutants (unit tests only): 4 of 4 killed** (merged reader ignores the start object; ScanMapZ opens at the head instead of the anchor; FindChair skips items; FindNearRoof ignores the z distance). A fifth, the plain reader not advancing, hangs the tests (killed by hang). Not killable yet: HasNoExternalData skipping the index check is equivalent while the list holds dynamics (part 3 makes it observable).
+
+**Client jobs (submitted, not awaited):** bench-000179 gate-off, 000180 gate-on (ls_parity, w5items, w5push, corpses, uistate with every checker, `CUO_TILE_ORDER_CHECK=1`; walk scripts exercise the pathfinder), 000181 plans (pickscan, house, travel, ltravel, glide), 000182 shots. The scripts now require `reader checks N>0, mismatches 0` and read "walk on" from any summary line. Results: pending. Not exercised by any script: targeting a callback target (TargetManager) and the season change; unit-level only.
+
+**Codex audit (gpt-6.1-sol medium), both findings verified and fixed (code d0ceee342).**
+- P2: the checker lambdas captured method parameters, so the closure objects were allocated at method entry even with checking off (GetMapZ per step, the pathfinder per search). Same pattern in FindNearRoof, sitting, targeting and the max-Z decision. Each check now lives in its own helper called only inside the `TileOrder.Check` branch. Test: allocation delta 0 (`GC.GetAllocatedBytesForCurrentThread`, warmed up) over repeated ScanMapZ/FindNearRoof and over the pathfinder item-list call (a far tile, so no chunk loads); both fail with the old inline lambda (mutants killed).
+- P3: the foliage checker compared match counts. It now compares the matching objects by reference with multiplicity (`TileOrder.SameObjects`). Test: a merged walk missing A and repeating B (same count) is reported; mutant (always true) killed.
+- Unit tests 2,642 + 6 skipped in both variants; both client builds. The part 2 gates (bench-000179..182) ran the pre-fix binary; gate-on is re-run on the fixed one (`gate-on-fix`).
+

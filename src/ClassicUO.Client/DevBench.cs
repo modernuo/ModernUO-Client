@@ -1286,7 +1286,9 @@ namespace ClassicUO
                 {
                     for (int dy = -r; dy <= r; dy++)
                     {
-                        for (var o = world.Map.GetTile(player.X + dx, player.Y + dy); o != null; o = o.TNext)
+                        var o = world.Map.OpenTile(player.X + dx, player.Y + dy, true, ClassicUO.Game.Map.DynamicTileIndex.WalkOn, out var reader);
+
+                        for (; o != null; o = reader.Next())
                         {
                             if (o is Game.GameObjects.Static st && Client.Game.UO.Arts.GetArt(st.Graphic).UV.Height > 40)
                             {

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
 using System;
+using System.Collections.Generic;
 using System.Text;
 using ClassicUO.Game.GameObjects;
 using ClassicUO.Game.Managers;
@@ -360,7 +361,7 @@ namespace ClassicUO.Game.Map
             {
                 Log.Info(
                     $"[tile-order] index: tiles {_indexTiles}, entries {_indexEntries}, merged objects {_indexMerged}, mismatched tiles {_indexBadTiles} " +
-                    $"(order {_indexOrder}, bad entries {_indexBadEntries}, count {_indexCount}); double submissions {_doubleSubmissions}; world_tile_index walk {(DynamicTileIndex.WalkOn ? "on" : "off")}, " +
+                    $"(order {_indexOrder}, bad entries {_indexBadEntries}, count {_indexCount}); double submissions {_doubleSubmissions}; reader checks {_readerChecks}, mismatches {_readerMismatches}; world_tile_index walk {(DynamicTileIndex.WalkOn ? "on" : "off")}, " +
                     $"pooled arrays {DynamicTileIndex.EntryPool.Pooled}"
                 );
             }
@@ -379,6 +380,54 @@ namespace ClassicUO.Game.Map
         // ---- T6b: the merged order (list without dynamics + DynamicTileIndex) must equal the list while both are maintained ----
 
         private static long _doubleSubmissions;
+        private static long _readerChecks, _readerMismatches;
+
+        /// <summary>T6b part 2: a converted reader ran with the walk on and off (<see cref="Check"/> only) and got the same
+        /// or different results; logs the first reports.</summary>
+        /// <summary>True when both lists hold the same objects (by reference) the same number of times, whatever the order.</summary>
+        public static bool SameObjects(List<GameObject> a, List<GameObject> b)
+        {
+            if (a.Count != b.Count)
+            {
+                return false;
+            }
+
+            var counts = new Dictionary<GameObject, int>(ReferenceEqualityComparer.Instance);
+
+            foreach (GameObject o in a)
+            {
+                counts[o] = counts.GetValueOrDefault(o) + 1;
+            }
+
+            foreach (GameObject o in b)
+            {
+                if (!counts.TryGetValue(o, out int n) || n == 0)
+                {
+                    return false;
+                }
+
+                counts[o] = n - 1;
+            }
+
+            return true;
+        }
+
+        public static void ReaderCheck(bool same, string reader, Func<string> detail)
+        {
+            _readerChecks++;
+
+            if (same)
+            {
+                return;
+            }
+
+            _readerMismatches++;
+
+            if (_reports++ < MaxReports)
+            {
+                Log.Warn($"[tile-order] reader mismatch: {reader} differs between the list walk and the merged walk: {detail()}");
+            }
+        }
 
         /// <summary>The render-list walk reached <paramref name="obj"/> after it was already drawn (or served by the Gpu item
         /// cache) this frame: a submitted object that the list walk would not submit twice.</summary>

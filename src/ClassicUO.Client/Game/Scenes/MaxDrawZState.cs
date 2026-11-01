@@ -50,7 +50,14 @@ namespace ClassicUO.Game.Scenes
             }
 
             var reach = new ChunkReach();
-            Compute(map, tiles, playerX, playerY, playerZ, drawRoofs, ref reach);
+            Compute(map, tiles, playerX, playerY, playerZ, drawRoofs, DynamicTileIndex.WalkOn, ref reach);
+
+            if (TileOrder.Check)
+            {
+                // T6b part 2: the same decision with the other walk (own reach: the first one is what the map keeps)
+                CheckCompute(map, tiles, playerX, playerY, playerZ, drawRoofs, reach.Missing);
+            }
+
             map.SetDecisionReach(reach);
 
             _x = playerX;
@@ -65,8 +72,26 @@ namespace ClassicUO.Game.Scenes
             return true;
         }
 
+        // kept out of Update so the lambda's closure is only allocated when CUO_TILE_ORDER_CHECK is on
+        private void CheckCompute(Map.Map map, StaticTiles[] tiles, int playerX, int playerY, int playerZ, bool drawRoofs, int missing)
+        {
+            int maxZ = MaxZ;
+            sbyte maxGroundZ = MaxGroundZ;
+            bool noDrawRoofs = NoDrawRoofs;
+            var reach2 = new ChunkReach();
+            Compute(map, tiles, playerX, playerY, playerZ, drawRoofs, !DynamicTileIndex.WalkOn, ref reach2);
+            TileOrder.ReaderCheck(
+                maxZ == MaxZ && maxGroundZ == MaxGroundZ && noDrawRoofs == NoDrawRoofs && missing == reach2.Missing,
+                "MaxDrawZ",
+                () => $"at {playerX},{playerY},{playerZ}: maxZ {maxZ}/{MaxZ} ground {maxGroundZ}/{MaxGroundZ} noDrawRoofs {noDrawRoofs}/{NoDrawRoofs}"
+            );
+            MaxZ = maxZ;
+            MaxGroundZ = maxGroundZ;
+            NoDrawRoofs = noDrawRoofs;
+        }
+
         // the upstream decision, unchanged but for the tracked chunk lookups (Map.GetChunkForDecision)
-        private void Compute(Map.Map map, StaticTiles[] tiles, int playerX, int playerY, int playerZ, bool drawRoofs, ref ChunkReach reach)
+        private void Compute(Map.Map map, StaticTiles[] tiles, int playerX, int playerY, int playerZ, bool drawRoofs, bool merged, ref ChunkReach reach)
         {
             sbyte maxGroundZ = 127;
             MaxGroundZ = 127;
@@ -85,7 +110,9 @@ namespace ClassicUO.Game.Scenes
             int pz14 = playerZ + 14;
             int pz16 = playerZ + 16;
 
-            for (GameObject obj = chunk.GetHeadObject(x, y); obj != null; obj = obj.TNext)
+            TileReader reader;
+
+            for (GameObject obj = TileReader.Open(chunk, x << 3 | y, merged, null, out reader); obj != null; obj = reader.Next())
             {
                 sbyte tileZ = obj.Z;
 
@@ -136,7 +163,7 @@ namespace ClassicUO.Game.Scenes
                 x = playerX % 8;
                 y = playerY % 8;
 
-                for (GameObject obj2 = chunk.GetHeadObject(x, y); obj2 != null; obj2 = obj2.TNext)
+                for (GameObject obj2 = TileReader.Open(chunk, x << 3 | y, merged, null, out reader); obj2 != null; obj2 = reader.Next())
                 {
                     if (obj2 is Mobile)
                     {
