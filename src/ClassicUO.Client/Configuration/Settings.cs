@@ -162,8 +162,9 @@ namespace ClassicUO.Configuration
         // animation group's hands, the abilities, the paperdoll, PaperdollOrder.BuildInWorld and Legacy's MobileView) take a
         // mobile's worn item per layer from the ECS (WornLayers: the mirror's first attached item per layer by child-order
         // stamp) instead of walking the LinkedObject child list, which is still maintained. CUO_EQUIP_READ_CHECK=1 compares
-        // the two at every call. Default off.
-        [JsonPropertyName("ecs_read_equipment")] public bool EcsReadEquipment { get; set; }
+        // the two at every call. Default on since 2026-11-01 (coordinator, after t3a-fold removed the 0x78 maintenance cost and
+        // the off/on gates bench-000144/145); the off path and the checker stay for one phase.
+        [JsonPropertyName("ecs_read_equipment")] public bool EcsReadEquipment { get; set; } = true;
 
         // T3b (ecs-transition-plan.md, T3 "Equipment layering as data"): the worn-layer draw order, the covering and the
         // gargoyle remaps come from the layering rules data (the pack's layerrules.bin, else the built-in default made from the
