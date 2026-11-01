@@ -320,6 +320,21 @@ namespace ClassicUO.UnitTests.Ecs
             x.ChildStamp.Should().Be(0UL);
             ((int)world.Ecs.Mirror.GetContents(CORPSE).Count).Should().Be(3);
 
+            // straight from one container to another, and from one wearer to another (no ground state in between): detached
+            Item c = world.Items.Get(C);
+            world.Items.Get(PACK).Remove(c);
+            c.Container = CORPSE;
+            world.Ecs.Sync(c);
+            world.Ecs.Mirror.TryGetExtras(C, out x).Should().BeTrue();
+            x.ChildStamp.Should().Be(0UL);
+
+            Item helm = world.Items.Get(HELM);
+            world.Mobiles.Get(MOB).Remove(helm);
+            helm.Container = VENDOR;
+            world.Ecs.Sync(helm);
+            world.Ecs.Mirror.TryGetExtras(HELM, out x).Should().BeTrue();
+            x.ChildStamp.Should().Be(0UL);
+
             Check(world).Should().BeEmpty();
         }
 
