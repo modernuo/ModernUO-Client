@@ -274,7 +274,7 @@ namespace ClassicUO.Game.UI.Controls
                 && item != null
                 && !item.IsDestroyed
                 && !item.ItemData.IsContainer
-                && item.IsEmpty
+                && !_gump.World.State.HasChildren(item)
                 && (container = _gump.World.Items.Get(item.RootContainer)) != null
                 && container != _gump.World.Player.FindItemByLayer(Layer.Backpack)
             )

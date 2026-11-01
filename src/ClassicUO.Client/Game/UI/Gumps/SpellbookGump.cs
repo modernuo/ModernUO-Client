@@ -199,9 +199,10 @@ namespace ClassicUO.Game.UI.Gumps
             // and its arrival triggers a rebuild that fills the right "Abilities" page.
             World.OPL.Contains(LocalSerial);
 
-            for (LinkedObject i = item.Items; i != null; i = i.Next)
+            // T2: the children from the ECS with ecs_read_contents on (WorldState.Children: the spell entries of 0xBF.1B's
+            // set, then the items in the book)
+            foreach (Item spell in World.State.Children(item))
             {
-                Item spell = (Item)i;
                 int currentCount = spell.Amount;
 
                 if (currentCount > 0 && currentCount <= maxSpellsCount)

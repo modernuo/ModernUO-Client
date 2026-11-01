@@ -739,6 +739,13 @@ namespace ClassicUO.Game
                 }
 #endif
 
+                // T2: the clear also drops a spellbook's detached spell entries (not world objects: RemoveItem skips them,
+                // the head below drops them); committed first
+                if (!keepEquipped && container is Item book && _world.Ecs.Mirror.Spellbook(book.Serial) != 0)
+                {
+                    _world.Ecs.CommitSpellbook(book, 0);
+                }
+
                 // the old loop: each removal by serial (World.RemoveItem: out of the child list, the contents, OPL,
                 // Destroy); the kept equipment's links are untouched and the head is set to the first kept one
                 LinkedObject first = container.Items;
@@ -2348,6 +2355,9 @@ namespace ClassicUO.Game
                     }
                 }
 
+                // T2: the spell set the detached entries below stand for (computed from the packet)
+                _world.Ecs.CommitSpellbook(spellbook, spells0 | ((ulong)spells1 << 32));
+
                 spellbook.Graphic = graphic;
                 spellbook.Clear();
                 _world.Ecs.Sync(spellbook);
@@ -2367,13 +2377,23 @@ namespace ClassicUO.Game
                             spellItem.Amount = cc;
                             spellItem.Container = spellbook;
                             spellbook.PushToBack(spellItem);
+                            _spellEntries.Add(spellItem);
                         }
                     }
                 }
+
+                // T2: the entries, for the readers of the ECS's contents (ecs_read_contents), with the set they stand for
+                _world.State.SetSpellEntries(spellbook.Serial, spells0 | ((ulong)spells1 << 32), _spellEntries);
+                _spellEntries.Clear();
             }
 
             return spellbook;
         }
+
+        // a book holds at most 64 spells, so the list never grows past this (WorldState.SpellScratchBytes counts it)
+        internal const int SpellScratchCapacity = 64;
+
+        private readonly List<Item> _spellEntries = new List<Item>(SpellScratchCapacity);
 
         private readonly List<Item> _sorted = new List<Item>();
 
@@ -2647,6 +2667,22 @@ namespace ClassicUO.Game
                 v.Direction = mobile.Direction;
                 v.Flags = mobile.Flags;
                 v.IsPlayer = false;
+
+                // Codex audit P2 (#2): an earlier death's re-keyed mobile still under the new serial is displaced (the table
+                // entry is replaced); its children keep their Container but leave the contents World reads under that
+                // serial (the new mobile's list), so they are detached before the incoming list is attached
+                Mobile displaced = _world.Mobiles.Get(serial);
+
+                if (displaced != null && !ReferenceEquals(displaced, mobile))
+                {
+                    for (LinkedObject i = displaced.Items; i != null; i = i.Next)
+                    {
+                        if (i is Item gone)
+                        {
+                            _world.Ecs.CommitDetach(gone);
+                        }
+                    }
+                }
 
                 EcsEntity e = _world.Ecs.CommitRekey(mobile, oldSerial, in v);
 

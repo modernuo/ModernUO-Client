@@ -540,14 +540,14 @@ namespace ClassicUO.Game.UI.Gumps
 
             bool is_corpse = container.Graphic == 0x2006;
 
-            if (!container.IsEmpty && _hideIfEmpty && !IsVisible)
+            if (World.State.HasChildren(container) && _hideIfEmpty && !IsVisible)
             {
                 IsVisible = true;
             }
 
-            for (LinkedObject i = container.Items; i != null; i = i.Next)
+            // T2: the children from the ECS with ecs_read_contents on (WorldState.Children)
+            foreach (Item item in World.State.Children(container))
             {
-                Item item = (Item)i;
 
                 // NOTE: Switched from 'item.Layer' property which comes from server to 'ItemData.Layer' from tiledata.mul.
                 //       In the past I found some issues using the server property.
@@ -716,9 +716,9 @@ namespace ClassicUO.Game.UI.Gumps
                     UIManager.SavePosition(item, Location);
                 }
 
-                for (LinkedObject i = item.Items; i != null; i = i.Next)
+                // T2: the children from the ECS with ecs_read_contents on (WorldState.Children)
+                foreach (Item child in World.State.Children(item))
                 {
-                    Item child = (Item)i;
 
                     if (child.Container == item)
                     {
