@@ -248,7 +248,8 @@ Checkers compare a new path with the old one and log mismatches. Do not measure 
 | `CUO_PREP_CHECK=1`, `CUO_GPU_ITEM_CHECK=1\|every`, `CUO_GPU_SKIP_CHECK` | Check the Gpu world prepare shortcuts against the full work |
 | `CUO_W5_CHECK=1`, `CUO_MOBILE_CACHE_CHECK=1`, `CUO_MOBILE_INPUT_CHECK=1` | Check the active item list, the mobile frame cache and the pushed inputs |
 | `CUO_UI_CACHE_CHECK=1\|N` | Compare the UI target with a replay every N frames |
-| `CUO_TILE_ORDER_CHECK=1\|every\|N`, `CUO_RECYCLE_CHECK=1\|reuse` | Check tile list order and map object reuse |
+| `CUO_TILE_ORDER_CHECK=1\|every\|N`, `CUO_RECYCLE_CHECK=1\|reuse` | Check tile list order (and the dynamic tile index against it) and map object reuse |
+| `CUO_WORLD_TILE_INDEX=1\|0` | Dev. Override `world_tile_index` (default off): `1` the world walks read the tile list merged with the dynamic tile index, `0` keep the index without using it |
 | `CUO_PACK_TEXT=0`, `CUO_PACK_GUMPS=0` | Read fonts, cliloc, speech or gumps from MUL/UOP files instead of the pack (for comparison) |
 | `CUO_ANIM_SYNC=1`, `CUO_ART_SYNC=1`, `CUO_CHUNK_SYNC=1` | Decode animations, art or map chunks synchronously |
 | `CUO_RENDERER_PROBE_FAIL=device\|world`, `CUO_RENDERER_LEGACY_DRIVER=OpenGL` | Force the renderer selection fallbacks for testing |
