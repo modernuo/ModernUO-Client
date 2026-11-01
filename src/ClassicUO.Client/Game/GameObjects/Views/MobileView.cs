@@ -335,7 +335,8 @@ namespace ClassicUO.Game.GameObjects
                 charSitting
             );
 
-            if (!IsEmpty)
+            // T3a: any worn item, from the ECS with ecs_read_equipment on (WorldState.HasWornItems)
+            if (World.State.HasWornItems(this))
             {
                 // draw order built from the layer algorithm (PaperdollOrder), keyed on
                 // the equipped item graphics; cloak is then repositioned by facing
@@ -1103,7 +1104,8 @@ namespace ClassicUO.Game.GameObjects
                 }
             }
 
-            if (!IsEmpty && isHuman)
+            // T3a: any worn item, from the ECS with ecs_read_equipment on (WorldState.HasWornItems)
+            if (isHuman && World.State.HasWornItems(this))
             {
                 for (Layer layer = Layer.Invalid + 1; layer < Layer.Mount; ++layer)
                 {
@@ -1173,7 +1175,8 @@ namespace ClassicUO.Game.GameObjects
 
         internal static bool IsCovered(Mobile mobile, Layer layer)
         {
-            if (mobile.IsEmpty)
+            // T3a: any worn item, from the ECS with ecs_read_equipment on (WorldState.HasWornItems)
+            if (!mobile.World.State.HasWornItems(mobile))
             {
                 return false;
             }

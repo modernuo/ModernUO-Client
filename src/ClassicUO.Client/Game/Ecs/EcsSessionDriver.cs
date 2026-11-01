@@ -734,6 +734,31 @@ namespace ClassicUO.Game
 
                     return false;
 
+                // paperdoll: opens the player's own paperdoll (T3a's shots; a double-click on a mounted self would dismount)
+                case "paperdoll":
+                    GameActions.OpenPaperdoll(world, player.Serial);
+                    Log.Info($"[ECS] ui paperdoll 0x{player.Serial:X8} mounted={player.IsMounted} read_equipment={(world.State.ReadEquipment ? "on" : "off")}");
+
+                    return true;
+
+                // renderer gpu|legacy: switches the world renderer for this session (T3a's shots of Legacy's MobileView)
+                case "renderer" when args.Length > 0:
+                {
+                    bool switched = RendererStartup.TrySwitch(args[0], out string message);
+                    Log.Info($"[ECS] driver: renderer {args[0]}: {(switched ? "switched" : "not switched: " + message)}");
+
+                    return true;
+                }
+
+                // readequipment on|off: the equipment readers from the ECS (ecs_read_equipment, T3a); the env override
+                // CUO_ECS_READ_EQUIPMENT wins over it
+                case "readequipment" when args.Length > 0:
+                    Settings.GlobalSettings.EcsReadEquipment = args[0] == "on";
+                    Log.Info($"[ECS] driver: read equipment from the ECS {args[0]} (effective {world.State.ReadEquipment})");
+                    world.State.LogEquipmentSummary();
+
+                    return false;
+
                 // itemcache on|off: the Gpu world prepare's ground-item cache (gpu_prepare_item_cache)
                 case "itemcache" when args.Length > 0:
                     Settings.GlobalSettings.GpuPrepareItemCache = args[0] == "on";

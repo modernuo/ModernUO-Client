@@ -793,9 +793,10 @@ namespace ClassicUO.Game
         /// removes it with its contents; none puts it on its tile. The item is found or created (<c>GetOrCreateItem</c>).
         /// <para>
         /// The old path published the item out of its container before re-adding it (a Sync after
-        /// <c>RemoveItemFromContainer</c>, then one after the re-equip), which moves it to the end of the mirror's equipment
-        /// index. The operation does the same with the computed values: it commits the detached state, then (paperdoll) the
-        /// final one. Its hook Syncs are folded.
+        /// <c>RemoveItemFromContainer</c>, then one after the re-equip), which moved it to the end of the mirror's equipment
+        /// index. T3a: the order of a wearer's equipment is its child-order stamps (WornLayers, EquipmentSlots and -ecscheck
+        /// read the stamps, never the index's order), so the paperdoll branch commits its final state once, attached (the
+        /// next stamp: the back of the wearer's list); the other branches commit the detached state. Its hook Syncs are folded.
         /// </para>
         /// </summary>
         public Item ReturnHeldItem
@@ -875,8 +876,14 @@ namespace ClassicUO.Game
                 }
 #endif
 
-                // 3. write: the ECS (the detached state), then the cache from v in the old order
-                _world.Ecs.CommitItem(item, in v);
+                // 3. write: the ECS (paperdoll: worn by the container at the back of its list, the equipment-order stamp
+                // taken in this one commit; otherwise the detached state), then the cache from v in the old order
+                if (result == HeldItemReturn.Paperdoll)
+                {
+                    v.Container = container.Serial;
+                }
+
+                _world.Ecs.CommitItem(item, in v, attach: result == HeldItemReturn.Paperdoll);
 
                 item.Graphic = v.Graphic;
                 item.Hue = v.Hue;
@@ -904,8 +911,6 @@ namespace ClassicUO.Game
                     case HeldItemReturn.Paperdoll:
                         _world.UnlinkFromContainer(item, oldContainer);
                         container.PushToBack(item);
-                        v.Container = container.Serial;
-                        _world.Ecs.CommitItem(item, in v, attach: true);
                         item.Container = v.Container;
 
                         break;
@@ -1004,6 +1009,15 @@ namespace ClassicUO.Game
                     // the old RemoveItemFromContainer: the links, then its Sync of the detached state
                     _world.UnlinkFromContainer(item, oldContainer);
                     _world.Ecs.CommitItem(item, in detached);
+                }
+                else if (oldContainer != containerSerial)
+                {
+                    // Behaviour fix (Codex audit P2 #2; legacy ClassicUO and the base have the same quirk): a backpack (or an
+                    // item without a graphic) keeps its link, and the new wearer's PushToBack below unlinks it only through its
+                    // neighbours, so as its old parent's first child it stayed that parent's list head (the backpack and the
+                    // old parent's other children lost). It leaves its old parent's list here; the gumps of the old container
+                    // are refreshed by the handler (shownContainer), and the mirror already moves its attachment.
+                    _world.Get(oldContainer)?.Remove(item);
                 }
 
                 // 3. write: the ECS (attached when there is a wearer to link it to; without one an orphan, T1 part 9), then
