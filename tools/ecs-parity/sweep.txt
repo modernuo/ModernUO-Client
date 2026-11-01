@@ -1,0 +1,64 @@
+# T5c gate: objects leave the update range by walking away and by teleporting, and come back (the range sweep, CUO_SWEEP_CHECK).
+wait 6
+say [go 5445 1153
+wait 4
+say [add Brigand
+wait 1
+target ground 10 0
+wait 1
+say [add SavageRider
+wait 1
+target ground -10 4
+wait 1
+say [add Horse
+wait 1
+target ground 4 -10
+wait 1
+say [add WoodenChair
+wait 1
+target ground 12 12
+wait 1
+say [add Gold
+wait 1
+target ground -12 -12
+wait 3
+check
+walk 2 20 run
+wait 4
+check
+walk 6 20 run
+wait 4
+parity
+check
+say [go 1496 1628
+wait 6
+check
+walk 4 20
+wait 2
+walk 0 20 run
+wait 4
+parity
+check
+say [go 5445 1153
+wait 6
+check
+say [go 1496 1628
+wait 4
+say [go 5445 1153
+wait 6
+parity
+check
+say [wipe mobiles
+wait 1
+target ground -18 -18
+wait 1
+target ground 18 18
+wait 3
+say [wipe items
+wait 1
+target ground -18 -18
+wait 1
+target ground 18 18
+wait 3
+check
+quit
