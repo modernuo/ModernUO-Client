@@ -158,6 +158,11 @@ namespace ClassicUO.Configuration
         // the off/on gates bench-000104/106 and two Codex audits); the off path and the checker stay for one phase.
         [JsonPropertyName("ecs_read_contents")] public bool EcsReadContents { get; set; } = true;
 
+        // T5c (ecs-transition-plan.md): the 50 ms range sweep and the world-map pass run as a system over the ECS (Position, with
+        // the last step's tile for stepping mobiles; MobileInputs.Notoriety plus the party list), removing through the funnel in
+        // table order, instead of the loops' own distance tests. CUO_SWEEP_CHECK=1 compares the two. Read once at startup. Default off.
+        [JsonPropertyName("world_sweep_system")] public bool WorldSweepSystem { get; set; }
+
         // T3a (ecs-transition-plan.md, T3): the equipment readers (Mobile.FindItemByLayer and through it IsMounted, the
         // animation group's hands, the abilities, the paperdoll, PaperdollOrder.BuildInWorld and Legacy's MobileView) take a
         // mobile's worn item per layer from the ECS (WornLayers: the mirror's first attached item per layer by child-order

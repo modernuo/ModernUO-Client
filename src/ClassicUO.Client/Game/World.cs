@@ -19,7 +19,7 @@ using ClassicUO.Network;
 
 namespace ClassicUO.Game
 {
-    internal sealed class World
+    internal sealed partial class World
     {
         private readonly EffectManager _effectManager;
 
@@ -604,13 +604,7 @@ namespace ClassicUO.Game
 
             if (do_delete)
             {
-                foreach (Mobile mob in Mobiles.Values)
-                {
-                    if (mob.Distance > ClientViewRange)
-                    {
-                        Writer.SweepMobile(mob); // T1 (funnel part 5): the sweep's removal
-                    }
-                }
+                SweepMobiles(); // T5c: the range sweep, by the system or the legacy rule
             }
 
             for (int i = 0; i < _destroyedMobiles.Count; i++)
@@ -626,24 +620,9 @@ namespace ClassicUO.Game
 
             _destroyedMobiles.Clear();
 
-            if (wmap)
+            if (wmap || SweepCheckOn)
             {
-                foreach (Mobile mob in Mobiles.Values)
-                {
-                    if (mob.IsDestroyed)
-                    {
-                        continue;
-                    }
-
-                    if (mob.NotorietyFlag == NotorietyFlag.Ally)
-                    {
-                        WMapManager.AddOrUpdate(mob.Serial, mob.X, mob.Y, MathHelper.PercetangeOf(mob.Hits, mob.HitsMax), MapIndex, true, mob.Name);
-                    }
-                    else if (Party.Leader != 0 && Party.Contains(mob))
-                    {
-                        WMapManager.AddOrUpdate(mob.Serial, mob.X, mob.Y, MathHelper.PercetangeOf(mob.Hits, mob.HitsMax), MapIndex, false, mob.Name);
-                    }
-                }
+                WorldMapPass(wmap); // T5c: the world-map pass, by the system or the legacy rule
             }
         }
 
@@ -699,23 +678,18 @@ namespace ClassicUO.Game
             _destroyedItems.Clear();
             ClearActiveItems();
 
+            if (do_delete)
+            {
+                PrepareItemSweep(); // T5c
+            }
+
             foreach (Item item in Items.Values)
             {
                 item.Update();
 
-                if (do_delete && item.OnGround && item.Distance > ClientViewRange /*CheckToRemove(item, ClientViewRange)*/)
+                if (do_delete && ItemBeyond(item) /*CheckToRemove(item, ClientViewRange)*/)
                 {
-                    if (item.IsMulti)
-                    {
-                        if (HouseManager.TryToRemove(item, ClientViewRange))
-                        {
-                            Writer.SweepItem(item); // T1 (funnel part 5): the sweep's removal
-                        }
-                    }
-                    else
-                    {
-                        Writer.SweepItem(item); // T1 (funnel part 5): the sweep's removal
-                    }
+                    SweepItemBeyond(item);
                 }
 
                 if (item.IsDestroyed)
@@ -732,6 +706,11 @@ namespace ClassicUO.Game
                 }
 
                 _toRemove.Clear();
+            }
+
+            if (do_delete)
+            {
+                FinishItemSweep(); // T5c
             }
         }
 
@@ -776,21 +755,13 @@ namespace ClassicUO.Game
 
             if (do_delete)
             {
+                PrepareItemSweep(); // T5c
+
                 foreach (Item item in Items.Values)
                 {
-                    if (item.OnGround && item.Distance > ClientViewRange)
+                    if (ItemBeyond(item))
                     {
-                        if (item.IsMulti)
-                        {
-                            if (HouseManager.TryToRemove(item, ClientViewRange))
-                            {
-                                Writer.SweepItem(item); // T1 (funnel part 5): the sweep's removal
-                            }
-                        }
-                        else
-                        {
-                            Writer.SweepItem(item); // T1 (funnel part 5): the sweep's removal
-                        }
+                        SweepItemBeyond(item);
                     }
 
                     if (item.IsDestroyed)
@@ -804,6 +775,8 @@ namespace ClassicUO.Game
                         MissedActiveItems++;
                     }
                 }
+
+                FinishItemSweep(); // T5c
             }
 
             QueueDestroyedForRemoval();
