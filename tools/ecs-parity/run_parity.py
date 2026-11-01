@@ -53,9 +53,11 @@ args = [exe, '-settings', spath, '-profilespath', os.path.join(work, 'profiles')
         '-worldrenderer', 'gpu', '-fps', '0', '-vsync', 'false', '-nomessagebox', '-ecscheck', a.ecscheck, '-ecsdriver', script]
 proc = subprocess.Popen(args, cwd=os.path.dirname(exe), env=env, stdout=open(log, 'w'), stderr=subprocess.STDOUT)
 print('pid', proc.pid, flush=True)
+timed_out = False
 try:
     proc.wait(a.timeout)
 except subprocess.TimeoutExpired:
+    timed_out = True
     print('timeout; closing', flush=True)
 finally:
     if proc.poll() is None:
@@ -75,3 +77,10 @@ finally:
     shutil.copy(log, a.out)
     shutil.rmtree(work, ignore_errors=True)
     print('temp removed:', not os.path.exists(work), flush=True)
+
+# T1 part 9 (bench-000095 exited 0 with every client crashed): a client that exits abnormally (an unhandled exception's
+# 0xE0434352, a kill) or does not end its script before the timeout fails the run
+if timed_out:
+    sys.exit(2)
+if proc.returncode != 0:
+    sys.exit(1)
