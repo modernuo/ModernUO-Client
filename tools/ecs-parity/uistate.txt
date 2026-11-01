@@ -157,10 +157,7 @@ say [remove
 wait 1
 target mine 0E76
 wait 2
-say [remove
-wait 1
-target mine 0F3F
-wait 2
+# the arrows left in the pack (the 10 dragged into a bag went with the first bag found)
 say [remove
 wait 1
 target mine 0F3F
@@ -173,10 +170,7 @@ say [remove
 wait 1
 target mine 1715
 wait 2
-say [remove
-wait 1
-target mine 09D0
-wait 2
+# (the apple went to the partner, which removes it)
 find 0E76
 find 0EFA
 find 1715
@@ -184,6 +178,5 @@ find 09D0
 find 0F3F
 named horse
 named Funnelpet
-named trainer
 check
 quit
