@@ -16,7 +16,7 @@ namespace ClassicUO.UnitTests.Ecs
     // them with World. A world built through the funnel checks clean; each deliberate divergence is reported.
     public class EcsCheckV2Tests
     {
-        private const uint MOB = 0x0000_3900, VENDOR = 0x0000_3901, PACK = 0x4000_7900, A = 0x4000_7901, B = 0x4000_7902, C = 0x4000_7903, SHIRT = 0x4000_7904, HELM = 0x4000_7905, CORPSE = 0x4000_7906, LOOT = 0x4000_7907, RET = 0x4000_7909, WEAR = 0x4000_790A, CLOOT = 0x4000_790B;
+        private const uint MOB = 0x0000_3900, VENDOR = 0x0000_3901, STAT = 0x0000_3902, PACK = 0x4000_7900, A = 0x4000_7901, B = 0x4000_7902, C = 0x4000_7903, SHIRT = 0x4000_7904, HELM = 0x4000_7905, CORPSE = 0x4000_7906, LOOT = 0x4000_7907, RET = 0x4000_7909, WEAR = 0x4000_790A, CLOOT = 0x4000_790B;
 
         // a world built only through funnel operations (and the creating Syncs of GetOrCreate*)
         private static World BuildFunnelWorld()
@@ -36,6 +36,9 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.SetName(vendor, "Bob");
             world.Writer.SetName(vendor, null);
             world.Writer.SetHits(vendor, 0, 0);
+
+            // a mobile only 0x11 (SetStatus) wrote
+            world.Writer.SetStatus(world.GetOrCreateMobile(STAT), "Stan", 9, 12);
 
             // a pack on the ground, three items in it, the first re-pushed to the back
             Item pack = world.Writer.UpsertWorldItem(PACK, 0xE75, 0, 1, 1001, 1000, 0, Direction.North, 0, Flags.None, 0, out _, out WorldWriter.Placement p);
@@ -85,6 +88,8 @@ namespace ClassicUO.UnitTests.Ecs
 
             world.Ecs.Mirror.TryGetExtras(MOB, out MirrorExtras m).Should().BeTrue();
             (m.Name, m.Hits, m.HitsMax, m.Notoriety).Should().Be(("Moe the Brave", (ushort)55, (ushort)60, (byte)NotorietyFlag.Murderer));
+            world.Ecs.Mirror.TryGetExtras(STAT, out MirrorExtras st).Should().BeTrue();
+            (st.Name, st.Hits, st.HitsMax).Should().Be(("Stan", (ushort)9, (ushort)12));
             world.Ecs.Mirror.TryGetExtras(C, out MirrorExtras c).Should().BeTrue();
             (c.Price, c.Hits, c.HitsMax).Should().Be((120u, (ushort)7, (ushort)10));
             world.Ecs.Mirror.TryGetExtras(HELM, out MirrorExtras helm).Should().BeTrue();
