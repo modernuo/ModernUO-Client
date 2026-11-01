@@ -2377,13 +2377,20 @@ namespace ClassicUO.Game
                             spellItem.Amount = cc;
                             spellItem.Container = spellbook;
                             spellbook.PushToBack(spellItem);
+                            _spellEntries.Add(spellItem);
                         }
                     }
                 }
+
+                // T2: the entries, for the readers of the ECS's contents (ecs_read_contents), with the set they stand for
+                _world.State.SetSpellEntries(spellbook.Serial, spells0 | ((ulong)spells1 << 32), _spellEntries);
+                _spellEntries.Clear();
             }
 
             return spellbook;
         }
+
+        private readonly List<Item> _spellEntries = new List<Item>(64);
 
         private readonly List<Item> _sorted = new List<Item>();
 

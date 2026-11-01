@@ -682,6 +682,8 @@ namespace ClassicUO.Game
 
         public void OnWorldCleared()
         {
+            _world.State.OnWorldCleared();
+
             if (Mirror.Count != 0)
             {
                 Log.Warn($"[ECS] {Mirror.Count} entities left after World.Clear; resetting mirror");

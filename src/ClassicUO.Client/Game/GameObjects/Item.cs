@@ -571,9 +571,10 @@ namespace ClassicUO.Game.GameObjects
 
         public void GetTotalAmount(ushort graphic, ushort? hue, ref int amount)
         {
-            for (LinkedObject i = Items; i != null; i = i.Next)
+            // T2: the children from the ECS with ecs_read_contents on (WorldState.Children)
+            foreach (Item item in World.State.Children(this))
             {
-                if (i is Item item)
+                if (item != null)
                 {
                     item.GetTotalAmount(graphic, hue, ref amount);
 

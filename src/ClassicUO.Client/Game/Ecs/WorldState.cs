@@ -37,7 +37,7 @@ namespace ClassicUO.Game
             if (CheckEnabled)
             {
                 ContentsReads++;
-                Compare(parent, contents, "read");
+                Compare(_world.Get(parent), SpellEntries(parent), contents, "read", parent);
             }
 #endif
 
@@ -77,16 +77,17 @@ namespace ClassicUO.Game
         {
             if (CheckEnabled)
             {
-                Compare(parent, _world.Ecs.Mirror.Contents(parent), where);
+                Compare(_world.Get(parent), SpellEntries(parent), _world.Ecs.Mirror.Contents(parent), where, parent);
             }
         }
 
-        private void Compare(uint parent, ReadOnlySpan<uint> contents, string where)
+        // the ECS enumeration Children returns with the switch on (the spell entries, then the contents) against the parent's
+        // World child list; the spell entries must also be the mirror's spell set (bit i: serial and amount i + 1)
+        private void Compare(Entity e, ReadOnlySpan<Item> spellEntries, ReadOnlySpan<uint> contents, string where, uint parent = 0)
         {
             _list.Clear();
             _ecs.Clear();
-
-            Entity e = _world.Get(parent);
+            parent = e?.Serial ?? parent;
 
             for (LinkedObject i = e?.Items; i != null; i = i.Next)
             {
@@ -94,13 +95,26 @@ namespace ClassicUO.Game
             }
 
             ulong spells = _world.Ecs.Mirror.Spellbook(parent);
+            int bit = 0;
+            int entries = 0;
 
-            for (int b = 0; b < 64; b++)
+            foreach (Item entry in spellEntries)
             {
-                if ((spells & (1UL << b)) != 0)
+                while (bit < 64 && (spells & (1UL << bit)) == 0)
                 {
-                    _ecs.Add((uint)(b + 1));
+                    bit++;
                 }
+
+                // an entry that is not the set's next spell shows as serial 0 (a mismatch)
+                _ecs.Add(bit < 64 && entry.Serial == (uint)(bit + 1) && entry.Amount == bit + 1 ? entry.Serial : 0);
+                bit++;
+                entries++;
+            }
+
+            // the set's spells without an entry (FillSpellbook's hand-over missing) are a mismatch
+            if (entries != System.Numerics.BitOperations.PopCount(spells))
+            {
+                _ecs.Add(0);
             }
 
             foreach (uint s in contents)
@@ -206,7 +220,222 @@ namespace ClassicUO.Game
         public void CheckOpenContainers() { }
 #endif
 
-        /// <summary>T2 (<c>ecs_read_contents</c>): the readers take container contents from the ECS. Read in step 3.</summary>
-        public bool ReadContents => false;
+        // ---- T2 readers (ecs_read_contents): the child-list readers (container, grid loot, trade and spellbook gumps, the
+        // shop's lists, FindItem*, the counters, macros) walk Children(parent), which is the ECS enumeration when the switch
+        // is on and the World child list when it is off. The child list is still maintained (dual) until T9.
+
+        /// <summary>Tests: the switch for this World (null: the setting).</summary>
+        internal bool? ReadContentsOverride;
+
+#if CUO_DEVTOOLS
+        // CLEANUP(release): the gate's override of the setting (CUO_ECS_READ_CONTENTS=1|0)
+        private static readonly bool? _envReadContents = Environment.GetEnvironmentVariable("CUO_ECS_READ_CONTENTS") switch
+        {
+            "1" => true,
+            "0" => false,
+            _ => null
+        };
+#else
+        private static readonly bool? _envReadContents = null;
+#endif
+
+        /// <summary>T2 (<c>ecs_read_contents</c>, default off): the readers take container contents from the ECS.</summary>
+        public bool ReadContents => ReadContentsOverride ?? _envReadContents ?? Configuration.Settings.GlobalSettings.EcsReadContents;
+
+        /// <summary>
+        /// T2: the parent's children, in child order: with <see cref="ReadContents"/> the ECS's (a spellbook's spell entries,
+        /// then <see cref="Contents"/>), else the World child list. Under <c>CUO_CONTENTS_CHECK</c> each call compares the
+        /// two. A reader must not change the parent's contents while it walks them (no reader does).
+        /// </summary>
+        public ChildList Children(Entity parent)
+        {
+            if (parent == null)
+            {
+                return default;
+            }
+
+            if (ReadContents)
+            {
+                ReadOnlySpan<uint> contents = _world.Ecs.Mirror.Contents(parent.Serial);
+                ReadOnlySpan<Item> spells = SpellEntries(parent.Serial);
+#if CUO_DEVTOOLS
+                if (CheckEnabled)
+                {
+                    ContentsReads++;
+                    Compare(parent, spells, contents, "read");
+                }
+#endif
+
+                return new ChildList(_world, spells, contents);
+            }
+#if CUO_DEVTOOLS
+            if (CheckEnabled)
+            {
+                ContentsReads++;
+                Compare(parent, SpellEntries(parent.Serial), _world.Ecs.Mirror.Contents(parent.Serial), "read");
+            }
+#endif
+
+            return new ChildList(parent.Items);
+        }
+
+        /// <summary>T2: <c>!parent.IsEmpty</c>, from the ECS when <see cref="ReadContents"/> is on.</summary>
+        public bool HasChildren(Entity parent) => !Children(parent).IsEmpty;
+
+        // ---- the spellbook's entries: 0xBF.1B's spells as the detached items FillSpellbook creates (graphic 0x1F2E, serial and
+        // amount = the spell number). The spell set is ECS state (SpellbookContent); the entries are its materialisation,
+        // handed over by FillSpellbook with the set they stand for, and valid only while the mirror's set is that set (a
+        // removed book, a clear, a refill: stale, never returned).
+
+        private sealed class SpellEntrySet
+        {
+            public ulong Spells;
+            public Item[] Entries = Array.Empty<Item>();
+            public int Count;
+        }
+
+        private readonly Dictionary<uint, SpellEntrySet> _spellEntries = new Dictionary<uint, SpellEntrySet>();
+
+        /// <summary>FillSpellbook: the entries it created for <paramref name="spells"/>, in list order.</summary>
+        internal void SetSpellEntries(uint book, ulong spells, List<Item> entries)
+        {
+            if (!_spellEntries.TryGetValue(book, out SpellEntrySet set))
+            {
+                set = new SpellEntrySet();
+                _spellEntries.Add(book, set);
+            }
+
+            if (set.Entries.Length < entries.Count)
+            {
+                set.Entries = new Item[64];
+            }
+
+            entries.CopyTo(set.Entries);
+            Array.Clear(set.Entries, entries.Count, set.Entries.Length - entries.Count);
+            set.Count = entries.Count;
+            set.Spells = spells;
+        }
+
+        /// <summary>The book's spell entries, while the mirror's spell set is the one they were made for (else none).</summary>
+        public ReadOnlySpan<Item> SpellEntries(uint book)
+        {
+            if (_spellEntries.Count == 0 || !_spellEntries.TryGetValue(book, out SpellEntrySet set))
+            {
+                return default;
+            }
+
+            ulong spells = _world.Ecs.Mirror.Spellbook(book);
+
+            if (spells == 0 || spells != set.Spells)
+            {
+                // stale (the book was cleared, removed or refilled without its entries)
+                _spellEntries.Remove(book);
+
+                return default;
+            }
+
+            return new ReadOnlySpan<Item>(set.Entries, 0, set.Count);
+        }
+
+        /// <summary>World.Clear: no book is left.</summary>
+        public void OnWorldCleared() => _spellEntries.Clear();
+    }
+
+    /// <summary>
+    /// T2: a parent's children for a foreach (<see cref="WorldState.Children"/>): the ECS's (spell entries, then the contents'
+    /// serials looked up in World) or the World child list (walked as the old loops did: the next link is read after the
+    /// body). No allocation.
+    /// </summary>
+    internal readonly ref struct ChildList
+    {
+        private readonly World _world;
+        private readonly ReadOnlySpan<Item> _spells;
+        private readonly ReadOnlySpan<uint> _contents;
+        private readonly LinkedObject _head;
+        private readonly bool _ecs;
+
+        public ChildList(World world, ReadOnlySpan<Item> spells, ReadOnlySpan<uint> contents)
+        {
+            _world = world;
+            _spells = spells;
+            _contents = contents;
+            _head = null;
+            _ecs = true;
+        }
+
+        public ChildList(LinkedObject head)
+        {
+            _world = null;
+            _spells = default;
+            _contents = default;
+            _head = head;
+            _ecs = false;
+        }
+
+        public bool IsEmpty => _ecs ? _spells.IsEmpty && _contents.IsEmpty : _head == null;
+
+        public Enumerator GetEnumerator() => new Enumerator(this);
+
+        public ref struct Enumerator
+        {
+            private readonly World _world;
+            private readonly ReadOnlySpan<Item> _spells;
+            private readonly ReadOnlySpan<uint> _contents;
+            private readonly LinkedObject _head;
+            private readonly bool _ecs;
+            private int _index;
+            private LinkedObject _node;
+            private bool _started;
+
+            public Enumerator(ChildList list)
+            {
+                _world = list._world;
+                _spells = list._spells;
+                _contents = list._contents;
+                _head = list._head;
+                _ecs = list._ecs;
+                _index = 0;
+                _node = null;
+                _started = false;
+                Current = null;
+            }
+
+            public Item Current { get; private set; }
+
+            public bool MoveNext()
+            {
+                if (!_ecs)
+                {
+                    _node = _started ? _node?.Next : _head;
+                    _started = true;
+                    Current = (Item)_node;
+
+                    return _node != null;
+                }
+
+                if (_index < _spells.Length)
+                {
+                    Current = _spells[_index++];
+
+                    return true;
+                }
+
+                while (_index - _spells.Length < _contents.Length)
+                {
+                    Item it = _world.Items.Get(_contents[_index++ - _spells.Length]);
+
+                    if (it != null)
+                    {
+                        Current = it;
+
+                        return true;
+                    }
+                }
+
+                Current = null;
+
+                return false;
+            }
+        }
     }
 }

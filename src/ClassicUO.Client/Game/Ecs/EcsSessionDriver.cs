@@ -444,9 +444,9 @@ namespace ClassicUO.Game
                     var csb = new System.Text.StringBuilder();
                     int cn = 0;
 
-                    for (LinkedObject ci = box.Items; ci != null; ci = ci.Next)
+                    // T2: the reader path (the ECS's contents with ecs_read_contents on)
+                    foreach (Item c in world.State.Children(box))
                     {
-                        Item c = (Item)ci;
                         csb.Append($" 0x{c.Serial:X8}:0x{c.Graphic:X4}x{c.Amount}");
                         cn++;
                     }
@@ -612,6 +612,19 @@ namespace ClassicUO.Game
                     Client.Game.RequestWorldShot(Path.Combine(shots, $"{args[0]}_gpu.png"));
 
                     return true;
+
+                // T2: without CUO_BENCH_SHOTS a shot is skipped on purpose (part 9's w5push logged it as an unknown command)
+                case "shot":
+                    Log.Info($"[ECS] driver: shot {arg} skipped (CUO_BENCH_SHOTS is not set)");
+
+                    return false;
+
+                // readcontents on|off: the container-contents readers from the ECS (ecs_read_contents, T2)
+                case "readcontents" when args.Length > 0:
+                    Settings.GlobalSettings.EcsReadContents = args[0] == "on";
+                    Log.Info($"[ECS] driver: read contents from the ECS {args[0]} (effective {world.State.ReadContents})");
+
+                    return false;
 
                 // itemcache on|off: the Gpu world prepare's ground-item cache (gpu_prepare_item_cache)
                 case "itemcache" when args.Length > 0:

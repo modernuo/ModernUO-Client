@@ -171,16 +171,16 @@ namespace ClassicUO.Game.GameObjects
 
             if (container != null)
             {
-                for (LinkedObject i = container.Items; i != null; i = i.Next)
+                // T2: the children from the ECS with ecs_read_contents on (WorldState.Children)
+                foreach (Item item in World.State.Children(container))
                 {
-                    Item item = (Item) i;
 
                     if (item.Graphic == graphic)
                     {
                         return item;
                     }
 
-                    if (!item.IsEmpty)
+                    if (World.State.HasChildren(item))
                     {
                         found = FindItemInContainerRecursive(item, graphic);
 
@@ -201,9 +201,9 @@ namespace ClassicUO.Game.GameObjects
 
             if (container != null)
             {
-                for (LinkedObject i = container.Items; i != null; i = i.Next)
+                // T2: the children from the ECS with ecs_read_contents on (WorldState.Children)
+                foreach (Item item in World.State.Children(container))
                 {
-                    Item item = (Item) i;
 
 
                     if (cliloc == World.OPL.GetNameCliloc(item.Serial))
@@ -211,7 +211,7 @@ namespace ClassicUO.Game.GameObjects
                         return item;
                     }
 
-                    if (!item.IsEmpty)
+                    if (World.State.HasChildren(item))
                     {
                         found = FindItemByClilocInContainerRecursive(item, cliloc);
 
@@ -247,17 +247,14 @@ namespace ClassicUO.Game.GameObjects
         {
             int _amount = 0;
 
-            for (
-                Item item = (Item)World.Player.Items;
-                item != null;
-                item = (Item)item.Next
-            )
+            // T2: the children from the ECS with ecs_read_contents on (WorldState.Children)
+            foreach (Item item in World.State.Children(World.Player))
             {
                 if (item.Layer < Layer.OneHanded || item.Layer > Layer.Legs)
                 {
                     continue;
                 }
-                if (item.ItemData.IsContainer && !item.IsEmpty)
+                if (item.ItemData.IsContainer && World.State.HasChildren(item))
                 {
                     item.GetTotalAmount(graphic, hue, ref _amount);
                 }
