@@ -26,7 +26,7 @@ namespace ClassicUO.UnitTests.Ecs
         public enum StepScenario
         {
             Walking, OneStep, FullQueue, Running, AcrossChunks, Parked, BadStep, TurnsOnly, TeleportMidStep, DeathMidStep,
-            BoatMidStep, ServerAnimation, BadStepCarried
+            BoatMidStep, ServerAnimation, BadStepCarried, SevenQueued
         }
 
         // the scenario's World: Build's mobile and a player (ProcessSteps compares the serial with World.Player)
@@ -99,6 +99,22 @@ namespace ClassicUO.UnitTests.Ecs
                     // a running step: its direction carries the running bit, which the direction out masks off
                     m.AddStep(new Mobile.Step { X = 1000, Y = 1001, Z = 0, Direction = (byte)Direction.South | 0x80, Run = true });
                     world.Ecs.PushInputs(m);
+
+                    break;
+
+                case StepScenario.SevenQueued:
+                    // the longest legal queue: four northbound steps (Count 4 < MAX_STEP_COUNT), then one packet that plans a turn,
+                    // the move and the final facing (4 + 3 = 7); the 4 + turn + move = 6 shape is seen on the way down
+                    Time.Ticks = NOW - 100;
+                    for (int y = 999; y >= 996; y--)
+                    {
+                        OldEnqueueStep(m, 1000, y, 0, Direction.North, false);
+                    }
+
+                    m.Steps.Count.Should().Be(Constants.MAX_STEP_COUNT - 1);
+                    OldEnqueueStep(m, 1001, 996, 0, Direction.South, false);
+                    m.Steps.Count.Should().Be(StepsComponent.CAPACITY);
+                    Time.Ticks = NOW;
 
                     break;
 
@@ -369,7 +385,7 @@ namespace ClassicUO.UnitTests.Ecs
             EcsEntity e = StepEntity(world, m);
             ref StepsComponent s = ref e.GetComponent<StepsComponent>();
             s.Count.Should().Be((byte)Constants.MAX_STEP_COUNT);
-            StepsComponent.CAPACITY.Should().Be(Constants.MAX_STEP_COUNT);
+            StepsComponent.CAPACITY.Should().Be(Constants.MAX_STEP_COUNT - 1 + 3, "PlanStep checks the room once, then adds up to three steps");
 
             for (int k = 0; k < m.Steps.Count; k++)
             {
