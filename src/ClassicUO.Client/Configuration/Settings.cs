@@ -158,6 +158,13 @@ namespace ClassicUO.Configuration
         // the off/on gates bench-000104/106 and two Codex audits); the off path and the checker stay for one phase.
         [JsonPropertyName("ecs_read_contents")] public bool EcsReadContents { get; set; } = true;
 
+        // T3a (ecs-transition-plan.md, T3): the equipment readers (Mobile.FindItemByLayer and through it IsMounted, the
+        // animation group's hands, the abilities, the paperdoll, PaperdollOrder.BuildInWorld and Legacy's MobileView) take a
+        // mobile's worn item per layer from the ECS (WornLayers: the mirror's first attached item per layer by child-order
+        // stamp) instead of walking the LinkedObject child list, which is still maintained. CUO_EQUIP_READ_CHECK=1 compares
+        // the two at every call. Default off.
+        [JsonPropertyName("ecs_read_equipment")] public bool EcsReadEquipment { get; set; }
+
         // W5: the per-frame overhead text pass skips the text layout of mobiles and corpses whose texts have all expired
         // (expired texts stay in the entity's container; the layout would place nothing). Off = laid out every frame.
         [JsonPropertyName("text_skip_expired")] public bool TextSkipExpired { get; set; } = true;

@@ -23,6 +23,9 @@ namespace ClassicUO.Game.GameObjects
         internal Friflo.Engine.ECS.Entity EcsEntity;
         internal uint EcsEntitySerial, EcsEntityEpoch;
 
+        /// <summary>T3a: the equipment read cache (WorldState.WornItem), made at the first read with ecs_read_equipment on.</summary>
+        internal WornCache EquipCache;
+
         //private static readonly QueuedPool<Mobile> _pool = new QueuedPool<Mobile>(
         //    Constants.PREDICTABLE_CHUNKS,
         //    mobile =>

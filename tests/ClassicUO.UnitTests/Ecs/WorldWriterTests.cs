@@ -1089,7 +1089,7 @@ namespace ClassicUO.UnitTests.Ecs
 
         private static List<uint> Serials(Friflo.Engine.ECS.Entities entities) => entities.Select(x => x.GetComponent<Serial>().Value).ToList();
 
-        private static void AssertSameWorld(World a, World b)
+        private static void AssertSameWorld(World a, World b, bool equipmentIndexOrder = true)
         {
             a.Items.Count.Should().Be(b.Items.Count);
             b.Mobiles.Count.Should().Be(a.Mobiles.Count);
@@ -1140,7 +1140,16 @@ namespace ClassicUO.UnitTests.Ecs
                 Serials(mb.GetContents(parent)).Should().Equal(Serials(ma.GetContents(parent)), $"the contents index of 0x{parent:X8}, in order");
             }
 
-            Serials(mb.GetEquipment(MOB)).Should().Equal(Serials(ma.GetEquipment(MOB)), "the equipment index, in order");
+            // T3a: ReturnHeldItem's paperdoll branch commits once (the equipment-order stamp), so it leaves the index's own order
+            // (which nothing reads any more) where the old path's two Syncs moved it: its members are compared in any order
+            if (equipmentIndexOrder)
+            {
+                Serials(mb.GetEquipment(MOB)).Should().Equal(Serials(ma.GetEquipment(MOB)), "the equipment index, in order");
+            }
+            else
+            {
+                Serials(mb.GetEquipment(MOB)).Should().BeEquivalentTo(Serials(ma.GetEquipment(MOB)), "the equipment index's members");
+            }
         }
 
         private static void AssertSameItem(Item x, Item y)
@@ -1576,7 +1585,7 @@ namespace ClassicUO.UnitTests.Ecs
             b.IsDestroyed.Should().Be(a.IsDestroyed);
             newWorld.Writer.InScope.Should().BeFalse();
             newWorld.Ecs.IsFolding.Should().BeFalse();
-            AssertSameWorld(oldWorld, newWorld);
+            AssertSameWorld(oldWorld, newWorld, equipmentIndexOrder: false);
 
             if (crowded && result == WorldWriter.HeldItemReturn.Paperdoll)
             {
@@ -1586,14 +1595,14 @@ namespace ClassicUO.UnitTests.Ecs
             // the same packet again
             OldDeny(oldWorld, ITEM, h);
             newWorld.Writer.ReturnHeldItem(ITEM, h.Graphic, h.Hue, h.Amount, h.Flags, h.Layer, h.X, h.Y, h.Z, h.Container, out _, out _);
-            AssertSameWorld(oldWorld, newWorld);
+            AssertSameWorld(oldWorld, newWorld, equipmentIndexOrder: false);
         }
 
         [Fact]
         public void ReturnHeldItem_Computes_Its_Values_Before_The_Writes()
         {
-            // the commits see the getters still on the previous values (as T4's ECS-backed getters would): the first commit
-            // is the detached state, the second (paperdoll) the wearer; every value is the packet's
+            // the commit sees the getters still on the previous values (as T4's ECS-backed getters would); T3a: the paperdoll
+            // branch commits once, the wearer with the equipment-order stamp (no detached commit before it)
             World world = Build(Start.Worn);
             var seen = new List<(uint Container, ushort Graphic, uint CacheContainer, ushort CacheGraphic)>();
             world.Ecs.CommitObserver = (item, v) => seen.Add((v.Container, v.Graphic, item.Container, item.Graphic));
@@ -1601,9 +1610,29 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.ReturnHeldItem(ITEM, 0x1517, 0x22, 1, Flags.None, Layer.Shirt, 1000, 1000, 0, MOB, out _, out _);
             world.Ecs.CommitObserver = null;
 
-            seen.Should().Equal((0xFFFF_FFFFu, (ushort)0x1517, MOB, (ushort)0x1515), (MOB, (ushort)0x1517, MOB, (ushort)0x1517));
+            seen.Should().Equal((MOB, (ushort)0x1517, MOB, (ushort)0x1515));
             world.Items.Get(ITEM).Container.Should().Be(MOB);
             ChildSerials(world.Mobiles.Get(MOB)).Should().Equal(ITEM);
+        }
+
+        [Fact]
+        public void ReturnHeldItem_To_The_Paperdoll_Commits_Once_At_The_Back_Of_The_Equipment_Order()
+        {
+            // T3a (the equipment-order stamp): one mirror write, the next child-order stamp, so the item is last in the wearer's
+            // stamp order and its layer's first item is the next one, as in the child list
+            World world = BuildEquip(Start.Worn, crowded: true, packLayer: false);
+            world.Writer.Equip(0x4000_7F01, 0x1517, Layer.Shirt, MOB, 0, out _, out _);
+            ulong before = world.Ecs.Mirror.ChildStamp;
+            long writes = world.Ecs.ItemMirrorWrites;
+
+            world.Writer.ReturnHeldItem(ITEM, 0x1515, 0, 1, Flags.None, Layer.Shirt, 0, 0, 0, MOB, out _, out WorldWriter.HeldItemReturn r);
+
+            r.Should().Be(WorldWriter.HeldItemReturn.Paperdoll);
+            (world.Ecs.ItemMirrorWrites - writes).Should().Be(1, "one commit");
+            world.Ecs.Mirror.ChildStamp.Should().Be(before + 1, "one stamp");
+            world.Ecs.Mirror.Contents(MOB).ToArray().Should().EndWith(new[] { 0x4000_7F01u, ITEM }, "the stamps (this world's siblings were linked without the funnel)");
+            ChildSerials(world.Mobiles.Get(MOB)).Last().Should().Be(ITEM);
+            world.Ecs.Mirror.Worn(MOB, (byte)Layer.Shirt).Should().Be(0x4000_7F01u, "the other shirt is first now");
         }
 
         [Fact]
@@ -1712,6 +1741,12 @@ namespace ClassicUO.UnitTests.Ecs
             if (item.Graphic != 0 && item.Layer != Layer.Backpack)
             {
                 world.RemoveItemFromContainer(item);
+            }
+            else if (item.Container != e.Container)
+            {
+                // the behaviour fix (Codex audit P2 #2, WorldWriter.Equip): the kept link leaves the old parent's list; the
+                // handler before it left a backpack that was its old parent's first child as that parent's list head
+                world.Get(item.Container)?.Remove(item);
             }
 
             shown = item.Container;

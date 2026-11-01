@@ -12,7 +12,7 @@ namespace ClassicUO.Game
     /// T2 (ecs-transition-plan.md): the world state the ECS owns, read by the client. The first piece is container contents:
     /// <see cref="Contents"/> is a parent's attached children in child order, from the mirror's per-parent cached span.
     /// </summary>
-    internal sealed class WorldState
+    internal sealed partial class WorldState
     {
         private readonly World _world;
 
@@ -21,6 +21,7 @@ namespace ClassicUO.Game
             _world = world;
 #if CUO_DEVTOOLS
             CheckEnabled = ContentsCheckFromEnv;
+            EquipCheckEnabled = EquipCheckFromEnv;
 #endif
         }
 

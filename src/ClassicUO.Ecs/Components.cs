@@ -104,6 +104,52 @@ namespace ClassicUO.Ecs
         public ulong Spells;
     }
 
+    [InlineArray(WornLayers.COUNT)]
+    public struct WornLayerArray
+    {
+        private uint _e;
+    }
+
+    [InlineArray(WornLayers.COUNT)]
+    public struct WornCountArray
+    {
+        private byte _e;
+    }
+
+    /// <summary>
+    /// T3a: a mobile's worn equipment by layer (layers 0x01..0x1D; slot <c>layer - 1</c>): the serial of the first item
+    /// attached to the mobile on that layer, i.e. the one <c>Entity.FindItemByLayer</c> finds first in the mobile's child list
+    /// (the lowest child-order stamp among the attached items on that layer), 0 when none. Maintained by the mirror from
+    /// attachment only (<see cref="ItemData.Stamp"/> != 0): an item equipped before its mobile existed (an orphan, stamp 0)
+    /// is never in it, as ClassicUO never links it. Layer 0 (the trade boxes) and layers above 0x1D are not tracked.
+    /// Held in <see cref="EquipmentSlots.Worn"/>, not as a component of its own: an 11th component on the mobile archetype
+    /// made Friflo's delete + create of a mobile record 6x slower (0.40 us against 0.06 us for ten, populated archetypes),
+    /// and the E2 serial-reuse row +60 %.
+    /// </summary>
+    public struct WornLayers
+    {
+        /// <summary>The tracked layers: 0x01 (OneHanded) .. 0x1D (Bank).</summary>
+        public const int COUNT = 0x1D;
+
+        public WornLayerArray Serials;
+
+        /// <summary>Per layer, the attached items on it (the first is in <see cref="Serials"/>): a departure rescans the
+        /// wearer's equipment only when another one is left.</summary>
+        public WornCountArray Counts;
+
+        /// <summary>Changes with every slot change (a mirror-wide 64-bit counter, never reused): readers' caches key on it.</summary>
+        public ulong Version;
+
+        /// <summary>A layer's count at 255 means 255 or more (it saturates, never wraps): a departure rescans the wearer's
+        /// equipment for the exact count and the first item.</summary>
+        public const byte SATURATED = byte.MaxValue;
+
+        /// <summary>The first attached item's serial on <paramref name="layer"/>, 0 when none or the layer is not tracked.</summary>
+        public readonly uint Get(byte layer) => (uint)(layer - 1) < COUNT ? Serials[layer - 1] : 0;
+
+        public static bool Tracked(byte layer) => (uint)(layer - 1) < COUNT;
+    }
+
     public struct MobileTag : ITag { }
 
     public struct ItemTag : ITag { }
@@ -339,6 +385,9 @@ namespace ClassicUO.Ecs
     {
         public const int MAX = 25;
 
+        /// <summary>T3a: the worn items by layer, maintained by the mirror (kept across the slots' rebuilds).</summary>
+        public WornLayers Worn;
+
         public EquipSlotArray Slots;
         public byte Count;
 
@@ -436,6 +485,7 @@ namespace ClassicUO.Ecs
 
             // T2: container contents
             Component<SpellbookContent>(aot);
+
 
             return aot.CreateSchema();
         }

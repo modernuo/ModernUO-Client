@@ -56,7 +56,7 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         private static void Wear(WorldMirror m, uint item, Layer layer, ushort graphic, ushort hue = 0) =>
-            m.UpsertItem(item, graphic, hue, 0, 0, 0, 0, 0, 1, MOBILE, (byte)layer, false);
+            m.UpsertItem(item, graphic, hue, 0, 0, 0, 0, 0, 1, MOBILE, (byte)layer, false, attach: true);
 
         private EquipmentSlots Run(WorldMirror mirror, Entity mobile, AnimStateFlags flags = AnimStateFlags.None, Mobile owner = null, bool cv7000 = true)
         {
@@ -77,6 +77,102 @@ namespace ClassicUO.UnitTests.Ecs
             }
 
             return l;
+        }
+
+        [Fact]
+        public void The_Slots_Come_From_The_Worn_Layers_Not_The_Index_Order()
+        {
+            // T3a (the equipment-order stamp): a layer's first item is the lowest child-order stamp (the child list's order),
+            // whatever order the mirror's equipment index holds them in; an item never attached (an orphan) is not worn
+            WorldMirror mirror = NewMirror(out Entity mobile);
+            Wear(mirror, 0x4000_0001, Layer.Shirt, SHIRT);
+            Wear(mirror, 0x4000_0002, Layer.Shirt, SHOES);
+            mirror.UpsertItem(0x4000_0003, HELM, 0, 0, 0, 0, 0, 0, 1, MOBILE, (byte)Layer.Helmet, false);
+            mirror.UpsertItem(0x4000_0004, MOUNT, 0, 0, 0, 0, 0, 0, 1, MOBILE, (byte)Layer.Mount, false);
+
+            // a layer round trip without a push re-adds the first shirt's index entry (to the index's end), keeping its stamp
+            mirror.UpsertItem(0x4000_0001, SHIRT, 0, 0, 0, 0, 0, 0, 1, MOBILE, (byte)Layer.Pants, false);
+            mirror.UpsertItem(0x4000_0001, SHIRT, 0, 0, 0, 0, 0, 0, 1, MOBILE, (byte)Layer.Shirt, false);
+            mirror.Worn(MOBILE, (byte)Layer.Shirt).Should().Be(0x4000_0001);
+
+            EquipmentSlots eq = Run(mirror, mobile);
+            var items = new List<uint>();
+
+            for (int i = 0; i < eq.Count; i++)
+            {
+                items.Add(eq.Slots[i].Item);
+            }
+
+            items.Should().Equal(0x4000_0001u);
+            eq.MountItem.Should().Be(0, "the unattached mount is not worn");
+            eq.Mounted.Should().BeFalse();
+        }
+
+        // the per-frame dispatch (MobileAnimationSystem.Update): TakeDirty, then a rebuild only when the record was dirty
+        private bool Dispatch(WorldMirror mirror, Entity mobile)
+        {
+            if (!MobileAnimationSystem.TakeDirty(mobile))
+            {
+                return false;
+            }
+
+            Run(mirror, mobile);
+
+            return true;
+        }
+
+        private static List<uint> SlotItems(in EquipmentSlots eq)
+        {
+            var items = new List<uint>();
+
+            for (int i = 0; i < eq.Count; i++)
+            {
+                items.Add(eq.Slots[i].Item);
+            }
+
+            return items;
+        }
+
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void A_Restamp_Or_Detach_Of_A_Worn_Item_Dirties_A_Clean_Record(bool detach)
+        {
+            // Codex audit P2 (#1): StampChild (the old re-key's re-link, the vendor sort) and DetachChild (the re-key's displaced
+            // mobile) change WornLayers; an already-built, clean record must be rebuilt through the normal dirty dispatch
+            WorldMirror mirror = NewMirror(out Entity mobile);
+            Wear(mirror, 0x4000_0001, Layer.Shirt, SHIRT);
+            Wear(mirror, 0x4000_0002, Layer.Shirt, SHOES);
+            Dispatch(mirror, mobile).Should().BeTrue("a new record starts dirty");
+            SlotItems(mobile.GetComponent<EquipmentSlots>()).Should().Equal(0x4000_0001u);
+            Dispatch(mirror, mobile).Should().BeFalse("built and clean");
+
+            if (detach)
+            {
+                mirror.DetachChild(0x4000_0001);
+            }
+            else
+            {
+                mirror.StampChild(0x4000_0001);
+            }
+
+            mirror.Worn(MOBILE, (byte)Layer.Shirt).Should().Be(0x4000_0002);
+            Dispatch(mirror, mobile).Should().BeTrue("the worn selection changed");
+            SlotItems(mobile.GetComponent<EquipmentSlots>()).Should().Equal(0x4000_0002u);
+
+            // the last one detached: nothing worn, and the slots follow
+            mirror.DetachChild(0x4000_0002);
+
+            if (detach)
+            {
+                Dispatch(mirror, mobile).Should().BeTrue();
+                SlotItems(mobile.GetComponent<EquipmentSlots>()).Should().BeEmpty();
+            }
+            else
+            {
+                Dispatch(mirror, mobile).Should().BeTrue();
+                SlotItems(mobile.GetComponent<EquipmentSlots>()).Should().Equal(new[] { 0x4000_0001u }, "the re-stamped one is still attached");
+            }
         }
 
         [Fact]
