@@ -82,6 +82,7 @@ namespace ClassicUO.Game
                 }
 
                 MobileMirrorWrites++;
+                uint epochBefore = Mirror.Epoch;
                 EcsEntity e = Mirror.UpsertMobile
                 (
                     mobile.Serial,
@@ -94,6 +95,7 @@ namespace ClassicUO.Game
                     (byte)mobile.Flags,
                     ReferenceEquals(mobile, _world.Player)
                 );
+                RestoreScalars(mobile, epochBefore);
 
                 // W5: graphic, flags and direction reach the mirror only here, so the pushed inputs follow them here
                 WriteInputs(mobile, e);
@@ -163,7 +165,9 @@ namespace ClassicUO.Game
 
             CommitObserver?.Invoke(item, v);
             ItemMirrorWrites++;
+            uint epochBefore = Mirror.Epoch;
             Mirror.UpsertItem(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.Amount, v.Container, (byte)v.Layer, v.IsMulti, attach);
+            RestoreScalars(item, epochBefore);
 
             // W5: corpses animate in World.Update (SyncItem does the same)
             if (v.Graphic == 0x2006)
@@ -197,8 +201,11 @@ namespace ClassicUO.Game
 
             MobileCommitObserver?.Invoke(mobile, v);
             MobileMirrorWrites++;
+            uint epochBefore = Mirror.Epoch;
+            EcsEntity e = Mirror.UpsertMobile(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.IsPlayer);
+            RestoreScalars(mobile, epochBefore);
 
-            return Mirror.UpsertMobile(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.IsPlayer);
+            return e;
         }
 
         /// <summary>
@@ -235,9 +242,39 @@ namespace ClassicUO.Game
         // their values, before their cache writes. Each ignores an entity World does not hold (the detached player, a stale
         // instance) or that has no record.
 
+        // T4: World holds this instance AND the record under its serial is of its kind (a death-rekeyed mobile and a corpse
+        // item can share a serial; the mirror keeps one record per serial, so a commit must not write the other kind's record)
         private bool HoldsEntity(Entity entity) =>
             entity != null && !entity.IsDestroyed &&
-            (entity is Mobile ? ReferenceEquals(_world.Mobiles.Get(entity.Serial), entity) : ReferenceEquals(_world.Items.Get(entity.Serial), entity));
+            (entity is Mobile ? ReferenceEquals(_world.Mobiles.Get(entity.Serial), entity) : ReferenceEquals(_world.Items.Get(entity.Serial), entity)) &&
+            Mirror.TryGetEntity(entity.Serial, entity is Mobile, out _);
+
+        /// <summary>
+        /// T4: an upsert replaced a record of the other kind under this serial (the epoch moved): the new record starts without
+        /// the cold fields, so the instance's cached values are written to it (the getters read the record).
+        /// </summary>
+        private void RestoreScalars(Entity entity, uint epochBefore)
+        {
+            if (Mirror.Epoch == epochBefore)
+            {
+                return;
+            }
+
+            uint s = entity.Serial;
+            Mirror.SetName(s, entity.CachedName);
+            Mirror.SetVitals(s, entity.CachedHits, entity.CachedHitsMax);
+
+            if (entity is Mobile m)
+            {
+                Mirror.SetStamina(s, m.CachedStaminaMax, m.CachedStamina);
+                Mirror.SetMana(s, m.CachedManaMax, m.CachedMana);
+                Mirror.SetNotoriety(s, (byte)m.NotorietyFlag);
+            }
+            else if (entity is Item i)
+            {
+                Mirror.SetPrice(s, i.CachedPrice);
+            }
+        }
 
         /// <summary>T1, tests: every cold-field commit (name, vitals, notoriety, price, child stamp) that reached a record.</summary>
         internal long ExtrasWrites;
@@ -342,6 +379,7 @@ namespace ClassicUO.Game
             }
 
             ItemMirrorWrites++;
+            uint epochBefore = Mirror.Epoch;
             Mirror.UpsertItem
             (
                 item.Serial,
@@ -357,6 +395,7 @@ namespace ClassicUO.Game
                 (byte)item.Layer,
                 item.IsMulti
             );
+            RestoreScalars(item, epochBefore);
 
             // W5: corpses animate in World.Update; every item change reaches the mirror here
             if (item.IsCorpse)

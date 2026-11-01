@@ -275,6 +275,170 @@ namespace ClassicUO.UnitTests.Ecs
             c.Price.Should().Be(120u);
         }
 
+        private static void SetDestroyedFlag(GameObject o) =>
+            typeof(GameObject).GetProperty(nameof(GameObject.IsDestroyed)).SetMethod.Invoke(o, new object[] { true });
+
+        // Destroy() also removes the record, so the destroyed check alone is never exercised there. Here the flag is set
+        // while World still holds the instance and the mirror still has its record: the getters must read the cache.
+        [Fact]
+        public void A_Destroyed_Instance_Whose_Record_Is_Still_In_The_Mirror_Reads_Its_Cache()
+        {
+            foreach (bool heldHandle in new[] { true, false })
+            {
+                World world = Build();
+                Mobile m = world.Mobiles.Get(MOB);
+                Item c = world.Items.Get(C);
+                m.TryScalarEntity(out _).Should().BeTrue();
+                c.TryScalarEntity(out _).Should().BeTrue();
+
+                // the cache differs from the record, so reading the record would show
+                m.Mana = 1;
+                m.Name = "cache";
+                c.Price = 5;
+                SetDestroyedFlag(m);
+                SetDestroyedFlag(c);
+                world.Mobiles.Get(MOB).Should().BeSameAs(m);
+                world.Ecs.Mirror.TryGetEntity(MOB, out _).Should().BeTrue();
+                world.Ecs.Mirror.TryGetEntity(C, out _).Should().BeTrue();
+
+                if (!heldHandle)
+                {
+                    // no valid handle: the lookup path must refuse the destroyed instance too
+                    m.EcsEntityHeld = false;
+                    c.EcsEntityHeld = false;
+                }
+
+                m.IsDestroyed.Should().BeTrue();
+                m.TryScalarEntity(out _).Should().BeFalse($"destroyed mobile, held handle: {heldHandle}");
+                c.TryScalarEntity(out _).Should().BeFalse($"destroyed item, held handle: {heldHandle}");
+                (m.Mana, m.Name, c.Price).Should().Be(((ushort)1, "cache", 5u));
+            }
+        }
+
+        // The cache is made different from the record by a direct cache write; with the switch on every converted getter
+        // returns the record, with it off the cache.
+        public static IEnumerable<object[]> ConvertedFields() => Fields.Select(f => new object[] { f.Name });
+
+        [Theory]
+        [MemberData(nameof(ConvertedFields))]
+        public void A_Stale_Cache_Is_Ignored_By_The_Getter_When_The_Switch_Is_On(string field)
+        {
+            World world = Build();
+            Mobile m = world.Mobiles.Get(MOB);
+            Item c = world.Items.Get(C);
+            Entity target = field == "Price" ? c : m;
+            object record = field switch
+            {
+                "Name" => "Moe the Brave",
+                "Hits" => (ushort)55,
+                "HitsMax" => (ushort)60,
+                "Stamina" => (ushort)85,
+                "StaminaMax" => (ushort)90,
+                "Mana" => (ushort)70,
+                "ManaMax" => (ushort)80,
+                "Price" => 120u,
+                _ => throw new ArgumentException(field)
+            };
+            Getter(target, field).Should().Be(record, "consistent before the stale write");
+
+            object stale = field switch
+            {
+                "Name" => "stale name",
+                "Price" => 7u,
+                _ => (ushort)11
+            };
+
+            switch (field)
+            {
+                case "Name": m.Name = (string)stale; break;
+                case "Hits": m.Hits = (ushort)stale; break;
+                case "HitsMax": m.HitsMax = (ushort)stale; break;
+                case "Stamina": m.Stamina = (ushort)stale; break;
+                case "StaminaMax": m.StaminaMax = (ushort)stale; break;
+                case "Mana": m.Mana = (ushort)stale; break;
+                case "ManaMax": m.ManaMax = (ushort)stale; break;
+                case "Price": c.Price = (uint)stale; break;
+            }
+
+            target.TryScalarEntity(out _).Should().BeTrue();
+            Getter(target, field).Should().Be(EcsScalars.Owns ? record : stale, $"{field} getter, switch {(EcsScalars.Owns ? "on" : "off")}");
+
+            // the other converted fields of the same entity are untouched by this one's stale cache
+            foreach (var (name, _, _) in Fields)
+            {
+                if (name == field || (name == "Price") != (target is Item))
+                {
+                    continue;
+                }
+
+                Getter(target, name).Should().NotBe(stale);
+            }
+        }
+
+        // P2 (Codex): a death-rekeyed mobile and a corpse item share a serial and the mirror keeps one record per serial. The
+        // item's creation replaced the mobile's record; the mobile must not read (or write) the item's record.
+        [Fact]
+        public void A_Rekeyed_Mobile_And_An_Item_Sharing_A_Serial_Never_Read_Or_Write_Each_Others_Record()
+        {
+            World world = WorldWriterMobileTests.BuildDead();
+            const uint DEAD = WorldWriterMobileTests.DEAD;
+            Mobile m = world.Mobiles.Get(DEAD);
+            Item corpse = world.Items.Get(DEAD);
+            world.Ecs.Mirror.TryGetEntity(DEAD, false, out _).Should().BeTrue("the item's record is under the serial");
+            world.Ecs.Mirror.TryGetEntity(DEAD, true, out _).Should().BeFalse();
+
+            world.Writer.SetStatus(m, "Moe", 30, 40);
+            world.Writer.SetMana(m, 20, 10);
+            world.Writer.SetStamina(m, 22, 11);
+
+            // the mobile reads its cache; the item's record got none of it
+            m.TryScalarEntity(out _).Should().BeFalse();
+            (m.Name, m.Hits, m.HitsMax, m.Mana, m.ManaMax, m.Stamina, m.StaminaMax).Should().Be(("Moe", (ushort)30, (ushort)40, (ushort)10, (ushort)20, (ushort)11, (ushort)22));
+            world.Ecs.Mirror.TryGetExtras(DEAD, out MirrorExtras x).Should().BeTrue();
+            (x.Name, x.Hits, x.Mana, x.Stamina).Should().Be(((string)null, (ushort)0, (ushort)0, (ushort)0));
+            corpse.TryScalarEntity(out _).Should().BeTrue();
+            (corpse.Name, corpse.Hits).Should().Be(((string)null, (ushort)0));
+
+            // the item's own writes do not reach the mobile
+            world.Writer.SetStatus(corpse, "a corpse", 1, 2);
+            (m.Name, m.Hits).Should().Be(("Moe", (ushort)30));
+            corpse.Name.Should().Be("a corpse");
+
+            // the mobile's record is created again (replacing the item's): the mobile's cached scalars go into it
+            world.Ecs.Sync(m);
+            m.TryScalarEntity(out var e).Should().BeTrue();
+            (EcsScalars.Name(e), EcsScalars.Hits(e), EcsScalars.Mana(e), EcsScalars.Stamina(e)).Should().Be(("Moe", (ushort)30, (ushort)10, (ushort)11));
+            (m.Name, m.Hits, m.Mana, m.Stamina).Should().Be(("Moe", (ushort)30, (ushort)10, (ushort)11));
+            corpse.TryScalarEntity(out _).Should().BeFalse();
+            corpse.Name.Should().Be("a corpse");
+        }
+
+        [Fact]
+        public void The_Mana_Pool_Of_A_Record_Without_Vitals_Is_Added_With_Its_Value()
+        {
+            var mirror = new WorldMirror();
+            mirror.UpsertMobile(0x1234, 0x190, 0, 1, 1, 0, 0, 0, false);
+            mirror.SetMana(0x1234, 20, 19).Should().BeTrue();
+            mirror.TryGetExtras(0x1234, out MirrorExtras x).Should().BeTrue();
+            (x.Mana, x.ManaMax).Should().Be(((ushort)19, (ushort)20));
+        }
+
+        // a commit for an instance World does not hold (a detached preview under a held serial) must not write the record
+        [Fact]
+        public void A_Commit_From_An_Instance_World_Does_Not_Hold_Leaves_The_Record_Alone()
+        {
+            World world = Build();
+            var preview = new Mobile(world, MOB);
+
+            world.Ecs.CommitMana(preview, 7, 6);
+            world.Ecs.CommitStamina(preview, 7, 6);
+            world.Ecs.CommitName(preview, "intruder");
+            world.Ecs.CommitVitals(preview, 1, 2);
+
+            world.Ecs.Mirror.TryGetExtras(MOB, out MirrorExtras x).Should().BeTrue();
+            (x.Name, x.Hits, x.HitsMax, x.Mana, x.ManaMax, x.Stamina, x.StaminaMax).Should().Be(("Moe the Brave", (ushort)55, (ushort)60, (ushort)70, (ushort)80, (ushort)85, (ushort)90));
+        }
+
         [Fact]
         public void A_Wrong_Cached_Handle_Under_The_Same_Serial_And_Epoch_Is_Not_Trusted_Unless_Held_Was_Set()
         {
