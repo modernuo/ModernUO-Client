@@ -981,7 +981,7 @@ namespace ClassicUO.Game
 
         private void AddAttached(EcsEntity e)
         {
-            if (e.TryGetComponent(out ItemSlot slot) && slot.Stamp != 0)
+            if (e.TryGetComponent(out ItemData slot) && slot.Stamp != 0)
             {
                 _ecsChildren.Add((slot.Stamp, e.GetComponent<ClassicUO.Ecs.Serial>().Value));
             }

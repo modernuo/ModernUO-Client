@@ -204,7 +204,7 @@ namespace ClassicUO.UnitTests.Ecs
                 .Where(t => t.IsValueType && (typeof(Friflo.Engine.ECS.IComponent).IsAssignableFrom(t) || typeof(Friflo.Engine.ECS.ITag).IsAssignableFrom(t)))
                 .ToArray();
 
-            kinds.Should().Contain(new[] { typeof(EntityName), typeof(Vitals), typeof(MobileNotoriety), typeof(ItemPrice), typeof(ItemSlot) });
+            kinds.Should().Contain(new[] { typeof(EntityName), typeof(Vitals), typeof(MobileNotoriety), typeof(ItemPrice), typeof(ItemData) });
             EcsSchema.RegisteredTypes.Should().BeEquivalentTo(kinds);
         }
 
