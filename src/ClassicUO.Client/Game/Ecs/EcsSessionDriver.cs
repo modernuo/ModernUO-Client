@@ -181,6 +181,12 @@ namespace ClassicUO.Game
                         }
                     }
 
+                    // use near <graphic>: a ground item of that graphic within 2 tiles (T1 part 9, uistate: the corpse)
+                    if (args[0] == "near" && args.Length > 1)
+                    {
+                        useSerial = FindNear(world, player, Convert.ToUInt16(args[1], 16));
+                    }
+
                     if (args[0] == "mobile" && args.Length > 2)
                     {
                         int ux = player.X + int.Parse(args[1]), uy = player.Y + int.Parse(args[2]);
@@ -236,11 +242,18 @@ namespace ClassicUO.Game
                         "worn" => FindWorn(player),
                         "backpack" => FindInBackpack(backpack),
                         "near" => FindNear(world, player, Convert.ToUInt16(args[1], 16)),
+                        // T1 part 9 (uistate): the first item of a graphic in the backpack or the bank, or what is worn on a layer
+                        "pack" when args.Length > 1 => FindChild(backpack, Convert.ToUInt16(args[1], 16)),
+                        "bank" when args.Length > 1 => FindChild(player.FindItemByLayer(Layer.Bank), Convert.ToUInt16(args[1], 16)),
+                        "layer" when args.Length > 1 => player.FindItemByLayer((Layer)int.Parse(args[1]))?.Serial ?? 0,
                         _ => _held
                     };
 
+                    // pick pack|bank <graphic> <amount>: part of a stack (the split, without the split gump)
+                    int pickAmount = (args[0] == "pack" || args[0] == "bank") && args.Length > 2 ? int.Parse(args[2]) : 0;
+
                     // an explicit amount skips the split-stack gump
-                    if (serial != 0 && GameActions.PickUp(world, serial, 0, 0, Math.Max(1, (int)(world.Items.Get(serial)?.Amount ?? 1))))
+                    if (serial != 0 && GameActions.PickUp(world, serial, 0, 0, pickAmount > 0 ? pickAmount : Math.Max(1, (int)(world.Items.Get(serial)?.Amount ?? 1))))
                     {
                         _held = serial;
                         Log.Info($"[ECS] driver: picked up 0x{serial:X8}");
@@ -268,6 +281,28 @@ namespace ClassicUO.Game
 
                         case "equip":
                             GameActions.Equip(world);
+
+                            break;
+
+                        // T1 part 9 (uistate): into the open bank box, into a container in the backpack, onto a mobile (a trade)
+                        case "bank" when player.FindItemByLayer(Layer.Bank) is { } dropBank:
+                            GameActions.DropItem(_held, 0xFFFF, 0xFFFF, 0, dropBank.Serial);
+
+                            break;
+
+                        default:
+                            if (args.Length > 1 && args[0] == "container" && FindChild(backpack, Convert.ToUInt16(args[1], 16)) is var into && into != 0)
+                            {
+                                GameActions.DropItem(_held, 0xFFFF, 0xFFFF, 0, into);
+                            }
+                            else if (args.Length > 2 && args[0] == "mobile" && FindMobileNear(world, player, int.Parse(args[1]), int.Parse(args[2])) is { } onto)
+                            {
+                                GameActions.DropItem(_held, 0xFFFF, 0xFFFF, 0, onto.Serial);
+                            }
+                            else
+                            {
+                                Log.Warn($"[ECS] driver: nowhere to drop ({arg})");
+                            }
 
                             break;
                     }
@@ -343,6 +378,28 @@ namespace ClassicUO.Game
 
                             break;
 
+                        // T1 part 9 (uistate cleanup): the first item of a graphic in the backpack / on the ground near / anywhere the
+                        // player holds it (pack, bank, worn); a mobile within 8 tiles whose name contains the text
+                        case "pack" when args.Length > 1 && FindChild(backpack, Convert.ToUInt16(args[1], 16)) is var tp && tp != 0:
+                            world.TargetManager.Target(tp);
+
+                            break;
+
+                        case "near" when args.Length > 1 && FindNear(world, player, Convert.ToUInt16(args[1], 16)) is var tn && tn != 0:
+                            world.TargetManager.Target(tn);
+
+                            break;
+
+                        case "mine" when args.Length > 1 && FindMine(world, player, Convert.ToUInt16(args[1], 16)) is var tm && tm != 0:
+                            world.TargetManager.Target(tm);
+
+                            break;
+
+                        case "named" when args.Length > 1 && FindNamed(world, player, args[1]) is { } tnm:
+                            world.TargetManager.Target(tnm.Serial);
+
+                            break;
+
                         // held: the item the last pick picked up (e.g. after drop backpack, to change it in the pack)
                         case "held" when _held != 0:
                             world.TargetManager.Target(_held);
@@ -355,6 +412,143 @@ namespace ClassicUO.Game
 
                             break;
                     }
+
+                    return true;
+
+                // ---- T1 funnel part 9 (uistate.txt): the UI-state gate's commands. Each logs "[ECS] ui ..." lines that prove a step
+
+                // contents backpack|bank|near <graphic>|held: a container's children (serial, graphic, amount, layer), in list order
+                case "contents" when args.Length > 0:
+                    Item box = args[0] switch
+                    {
+                        "backpack" => backpack,
+                        "bank" => player.FindItemByLayer(Layer.Bank),
+                        "near" when args.Length > 1 => world.Items.Get(FindNear(world, player, Convert.ToUInt16(args[1], 16))),
+                        "held" => world.Items.Get(_held),
+                        _ => null
+                    };
+
+                    if (box == null)
+                    {
+                        Log.Info($"[ECS] ui contents {arg}: no such container");
+
+                        return false;
+                    }
+
+                    var csb = new System.Text.StringBuilder();
+                    int cn = 0;
+
+                    for (LinkedObject ci = box.Items; ci != null; ci = ci.Next)
+                    {
+                        Item c = (Item)ci;
+                        csb.Append($" 0x{c.Serial:X8}:0x{c.Graphic:X4}x{c.Amount}");
+                        cn++;
+                    }
+
+                    Log.Info($"[ECS] ui contents {arg} 0x{box.Serial:X8} g=0x{box.Graphic:X4} opened={box.Opened} children={cn}:{csb}");
+
+                    return false;
+
+                // find <graphic>: every item of that graphic World holds: container, amount, layer, whether the player holds it
+                case "find" when args.Length > 0:
+                    ushort fg = Convert.ToUInt16(args[0], 16);
+                    int fn = 0;
+
+                    foreach (Item fi in world.Items.Values)
+                    {
+                        if (fi.Graphic == fg && !fi.IsDestroyed)
+                        {
+                            fn++;
+                            Log.Info($"[ECS] ui find 0x{fg:X4}: 0x{fi.Serial:X8} x{fi.Amount} container 0x{fi.Container:X8} layer {fi.Layer} mine={ReferenceEquals(fi.RootContainer, player)} name '{fi.Name}'");
+                        }
+                    }
+
+                    Log.Info($"[ECS] ui find 0x{fg:X4}: {fn} item(s)");
+
+                    return false;
+
+                // worn: the player's worn items by layer
+                case "worn":
+                    for (LinkedObject wi = player.Items; wi != null; wi = wi.Next)
+                    {
+                        Item w = (Item)wi;
+                        Log.Info($"[ECS] ui worn {w.Layer}: 0x{w.Serial:X8} g=0x{w.Graphic:X4}");
+                    }
+
+                    return false;
+
+                // buy <name text, _ for a space> <amount>: the vendor's buy-list entry whose name contains the text (after "vendor buy" opened the
+                // shop), bought as the shop gump's accept does (0x3B)
+                case "buy" when args.Length > 1:
+                    foreach (Item bi in world.Items.Values)
+                    {
+                        if (bi.Price > 0 && !bi.IsDestroyed && bi.Name != null && bi.Name.IndexOf(args[0].Replace('_', ' '), StringComparison.OrdinalIgnoreCase) >= 0 &&
+                            world.Items.Get(bi.Container) is { } buyBox && (buyBox.Layer == Layer.ShopBuy || buyBox.Layer == Layer.ShopBuyRestock))
+                        {
+                            Log.Info($"[ECS] ui buy '{bi.Name}' 0x{bi.Serial:X8} price {bi.Price} x{args[1]} from vendor 0x{buyBox.Container:X8}");
+                            NetClient.Socket.Send_BuyRequest(buyBox.Container, new[] { Tuple.Create(bi.Serial, ushort.Parse(args[1])) });
+
+                            return true;
+                        }
+                    }
+
+                    Log.Warn($"[ECS] driver: no buy-list entry named '{args[0]}'");
+
+                    return true;
+
+                // named <text>: the mobiles within 8 tiles whose name contains the text (name, notoriety, renamable)
+                case "named" when args.Length > 0:
+                    foreach (Mobile nm in world.Mobiles.Values)
+                    {
+                        if (!nm.IsDestroyed && nm.Name != null && nm.Name.IndexOf(args[0].Replace('_', ' '), StringComparison.OrdinalIgnoreCase) >= 0 &&
+                            Math.Max(Math.Abs(nm.X - player.X), Math.Abs(nm.Y - player.Y)) <= 8)
+                        {
+                            Log.Info($"[ECS] ui named '{args[0]}': 0x{nm.Serial:X8} g=0x{nm.Graphic:X4} name '{nm.Name}' noto {nm.NotorietyFlag} renamable {nm.IsRenamable} hits {nm.Hits}/{nm.HitsMax}");
+                        }
+                    }
+
+                    return false;
+
+                // status near|<name text>: asks the server for the status (0x34; the answer 0x11 carries the name) of every mobile
+                // within 4 tiles, or of the one named
+                case "status" when args.Length > 0:
+                    foreach (Mobile sm in world.Mobiles.Values)
+                    {
+                        if (!ReferenceEquals(sm, player) && !sm.IsDestroyed && Math.Max(Math.Abs(sm.X - player.X), Math.Abs(sm.Y - player.Y)) <= 4 &&
+                            (args[0] == "near" || ReferenceEquals(sm, FindNamed(world, player, args[0]))))
+                        {
+                            GameActions.RequestMobileStatus(world, sm.Serial, true);
+                        }
+                    }
+
+                    return true;
+
+                // rename <name text> <new name>: the pet's rename request (0x75), as the status gump's name field sends it
+                case "rename" when args.Length > 1 && FindNamed(world, player, args[0]) is { } rm:
+                    Log.Info($"[ECS] ui rename 0x{rm.Serial:X8} '{rm.Name}' -> '{args[1]}'");
+                    GameActions.Rename(rm.Serial, args[1]);
+
+                    return true;
+
+                // trade accept|log: the open trade gumps (accept: this side accepts, as the gump's check box)
+                case "trade" when args.Length > 0:
+                    int tn2 = 0;
+
+                    foreach (var tg in UIManager.Gumps)
+                    {
+                        if (tg is TradingGump trade)
+                        {
+                            tn2++;
+                            Log.Info($"[ECS] ui trade gump 0x{trade.LocalSerial:X8} id1 0x{trade.ID1:X8} id2 0x{trade.ID2:X8} mine 0x{trade.ID1:X8}");
+
+                            if (args[0] == "accept")
+                            {
+                                GameActions.AcceptTrade(trade.ID1, true);
+                            }
+                        }
+                    }
+
+                    Log.Info($"[ECS] ui trade {args[0]}: {tn2} trade gump(s)");
 
                     return true;
 
@@ -692,6 +886,75 @@ namespace ClassicUO.Game
             }
 
             return 0;
+        }
+
+        // T1 part 9: the first child of that graphic (a container's direct children)
+        private static uint FindChild(Item container, ushort graphic)
+        {
+            for (LinkedObject i = container?.Items; i != null; i = i.Next)
+            {
+                if (i is Item it && it.Graphic == graphic)
+                {
+                    return it.Serial;
+                }
+            }
+
+            return 0;
+        }
+
+        // the first item of that graphic the player holds anywhere (backpack, bank, worn, nested)
+        private static uint FindMine(World world, PlayerMobile player, ushort graphic)
+        {
+            foreach (Item it in world.Items.Values)
+            {
+                if (it.Graphic == graphic && !it.IsDestroyed && ReferenceEquals(it.RootContainer, player))
+                {
+                    return it.Serial;
+                }
+            }
+
+            return 0;
+        }
+
+        // the nearest mobile within 8 tiles (not the player) whose name contains the text
+        private static Mobile FindNamed(World world, PlayerMobile player, string text)
+        {
+            Mobile best = null;
+            int bestDist = 9;
+
+            foreach (Mobile m in world.Mobiles.Values)
+            {
+                int d = Math.Max(Math.Abs(m.X - player.X), Math.Abs(m.Y - player.Y));
+
+                if (!ReferenceEquals(m, player) && !m.IsDestroyed && m.Name != null && m.Name.IndexOf(text.Replace('_', ' '), StringComparison.OrdinalIgnoreCase) >= 0 && d < bestDist)
+                {
+                    best = m;
+                    bestDist = d;
+                }
+            }
+
+            return best;
+        }
+
+        // the mobile (not the player) nearest to the player's tile + (dx, dy), within 3 tiles of it
+        private static Mobile FindMobileNear(World world, PlayerMobile player, int dx, int dy)
+        {
+            int tx = player.X + dx, ty = player.Y + dy;
+            Mobile best = null;
+            int bestDist = 4;
+
+            foreach (Mobile m in world.Mobiles.Values)
+            {
+                int d = Math.Max(Math.Abs(m.X - tx), Math.Abs(m.Y - ty));
+
+                if (!ReferenceEquals(m, player) && !m.IsDestroyed && d < bestDist)
+                {
+                    best = m;
+                    bestDist = d;
+                }
+            }
+
+            return best;
         }
 
         // a ground item of that graphic within 2 tiles

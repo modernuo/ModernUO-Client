@@ -1,0 +1,182 @@
+# T1 funnel part 9 gate (ecs-transition-plan.md, T1 Gate): the UI-state script. The backpack, the bank and a corpse opened;
+# items dragged between containers; a stack split; a trade (with the partner client, uistate_partner.txt, standing one tile
+# east); a pet bought from a vendor and renamed; the spellbook opened; an item equipped and unequipped through the paperdoll.
+# Every step logs what proves it ("[ECS] ui ...", "[ECS] gump ...", the journal). Everything the script creates is
+# removed at the end ([remove). Graphics: bag 0E76, gold 0EED, spellbook 0EFA, cap 1715, apple 09D0, corpse 2006.
+wait 6
+say [go 5445 1153
+wait 4
+# setup: the items, in the backpack
+say [self addtopack Bag
+wait 1
+say [self addtopack Gold 3000
+wait 1
+say [self addtopack Spellbook
+wait 1
+say [self addtopack Cap
+wait 1
+say [self addtopack Apple
+wait 1
+# 1. the backpack
+backpack
+wait 2
+gumps
+contents backpack
+check
+# 2. a trade: the apple dropped on the partner (one tile east), both sides accept
+mobiles
+pick pack 09D0
+wait 1
+drop mobile 1 0
+wait 3
+gumps
+trade log
+trade accept
+wait 4
+trade log
+journal 6
+find 09D0
+check
+# 3. the bank (staff [bank on self: the server opens the player's bank box)
+say [bank
+wait 1
+target self
+wait 3
+gumps
+contents bank
+# 4. a split and a drag between containers: 100 of the 3000 gold into the bank, then back into the bag in the backpack
+pick pack 0EED 100
+wait 1
+drop bank
+wait 2
+contents bank
+contents backpack
+find 0EED
+check
+# walking closes the bank: CloseBank removes its contents from the client (RemoveBankContents)
+walk 4 1
+wait 1
+walk 0 1
+wait 2
+contents bank
+find 0EED
+# the bank again, and the 100 gold dragged from it into the bag in the backpack
+say [bank
+wait 1
+target self
+wait 3
+contents bank
+pick bank 0EED
+wait 1
+drop container 0E76
+wait 2
+contents bank
+contents backpack
+find 0EED
+check
+# 5. a corpse: an orc killed, its corpse opened
+say [add Orc
+wait 1
+target ground 2 0
+wait 2
+say [kill
+wait 1
+target mobile 2 0
+wait 3
+use near 2006
+wait 3
+gumps
+contents near 2006
+check
+# 6. the spellbook
+use pack 0EFA
+wait 3
+gumps
+# 7. the paperdoll: opened, the cap equipped from the backpack, then taken off back into the backpack
+use self
+wait 2
+gumps
+pick pack 1715
+wait 1
+drop equip
+wait 2
+worn
+find 1715
+pick layer 6
+wait 1
+drop backpack
+wait 2
+worn
+find 1715
+check
+# 8. a vendor: an animal trainer, its buy list, a horse bought (it comes as the player's pet)
+say [add AnimalTrainer
+wait 1
+target ground -2 0
+wait 3
+say vendor buy
+wait 4
+gumps
+buy a_horse 1
+wait 4
+journal 6
+find 0EED
+status near
+wait 2
+named horse
+# 9. the pet renamed (0x75), its new name read back from its status (0x11)
+rename a_horse T1Pet
+wait 3
+status near
+wait 2
+named T1Pet
+named horse
+journal 6
+check
+parity
+# cleanup: the pet, the vendor, the corpse and every item the script added
+say [remove
+wait 1
+target named T1Pet
+wait 2
+say [remove
+wait 1
+target named horse
+wait 2
+say [remove
+wait 1
+target named trainer
+wait 2
+say [remove
+wait 1
+target near 2006
+wait 2
+say [remove
+wait 1
+target mine 0E76
+wait 2
+say [remove
+wait 1
+target mine 0EED
+wait 2
+say [remove
+wait 1
+target mine 0EFA
+wait 2
+say [remove
+wait 1
+target mine 1715
+wait 2
+say [remove
+wait 1
+target mine 09D0
+wait 2
+find 0E76
+find 0EFA
+find 1715
+find 09D0
+named horse
+named T1Pet
+named trainer
+check
+quit
