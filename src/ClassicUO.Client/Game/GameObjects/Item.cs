@@ -553,16 +553,19 @@ namespace ClassicUO.Game.GameObjects
 
                 // the corpse is drawn as its Corpse.def target: the death action and frame count come from that body
                 // (AnimationsLoader.TryCorpseFrame); when the animation is done, stop at the last frame
+                int next = -1;
+
                 if (
                     id < animations.MaxAnimationCount
                     && dir < 5
                     && Client.Game.UO.FileManager.Animations.TryCorpseFrame(id, UsedLayer, dir, frameIndex, out byte frame)
                 )
                 {
-                    AnimIndex = frame;
+                    next = frame;
                 }
 
-                LastAnimationChangeTime = Time.Ticks + Constants.CHARACTER_ANIMATION_DELAY;
+                // T1 (funnel part 8): the frame and the due time through the funnel
+                World.Writer.AdvanceCorpseFrame(this, next, Time.Ticks + Constants.CHARACTER_ANIMATION_DELAY);
             }
         }
 

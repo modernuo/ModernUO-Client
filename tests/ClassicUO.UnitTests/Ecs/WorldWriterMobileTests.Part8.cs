@@ -328,6 +328,87 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.Violations.Should().Be(2);
             m.UpdateStateHash().Should().Be(before);
         }
+
+        // ---- group 2: a corpse's frame advance (Item.ProcessAnimation). The frame comes from the animation data, which the
+        // tests do not load: the caller's frame (or none) is a parameter of both paths
+
+        internal static void OldCorpseFrame(Item corpse, int frame)
+        {
+            if (frame >= 0)
+            {
+                corpse.AnimIndex = (byte)frame;
+            }
+
+            corpse.LastAnimationChangeTime = Time.Ticks + Constants.CHARACTER_ANIMATION_DELAY;
+        }
+
+        [Theory]
+        [InlineData(Start.Standing)]
+        [InlineData(Start.Walking)]
+        public void The_Corpse_Frame_Advance_Equals_The_Old_Path(Start start)
+        {
+            World oldWorld = BuildCorpse(start), newWorld = BuildCorpse(start);
+            newWorld.Writer.ThrowOnViolation = true;
+            Item a = oldWorld.Items.Get(CORPSE), b = newWorld.Items.Get(CORPSE);
+            long clocks = newWorld.Ecs.ClockWrites;
+
+            int i = 0;
+
+            foreach (int frame in new[] { 0, 1, 2, -1, 3, -1, 7 })
+            {
+                Time.Ticks = NOW + (uint)(++i * 100);
+                Pair(() => OldCorpseFrame(a, frame), () => newWorld.Writer.AdvanceCorpseFrame(b, frame, Time.Ticks + Constants.CHARACTER_ANIMATION_DELAY));
+                AssertSameWorld(oldWorld, newWorld);
+                (b.AnimIndex, b.LastAnimationChangeTime).Should().Be((a.AnimIndex, a.LastAnimationChangeTime), $"frame {frame}");
+            }
+
+            Time.Ticks = NOW;
+            b.AnimIndex.Should().Be(7);
+            (newWorld.Ecs.ClockWrites - clocks).Should().Be(0);
+            newWorld.Writer.Violations.Should().Be(0);
+            newWorld.Writer.InScope.Should().BeFalse();
+        }
+
+        [Fact]
+        public void AdvanceCorpseFrame_Writes_A_Stale_Item_Rejects_Another_Worlds_And_Does_Not_Nest()
+        {
+            foreach (bool throws in new[] { true, false })
+            {
+                World world = BuildCorpse(Start.Standing), other = BuildCorpse(Start.Standing);
+                world.Writer.ThrowOnViolation = throws;
+                Item foreign = other.Items.Get(CORPSE);
+                (byte, long) before = (foreign.AnimIndex, foreign.LastAnimationChangeTime);
+                Action act = () => world.Writer.AdvanceCorpseFrame(foreign, 4, NOW + 999);
+
+                if (throws)
+                {
+                    act.Should().Throw<ArgumentException>();
+                }
+                else
+                {
+                    act();
+                }
+
+                (foreign.AnimIndex, foreign.LastAnimationChangeTime).Should().Be(before);
+                world.Writer.Violations.Should().Be(1);
+            }
+
+            World w = BuildCorpse(Start.Standing);
+            w.Writer.ThrowOnViolation = true;
+            Item stale = Item.Create(w, CORPSE);
+            w.Writer.AdvanceCorpseFrame(stale, 3, NOW + 888);
+            (stale.AnimIndex, stale.LastAnimationChangeTime).Should().Be(((byte)3, (long)(NOW + 888)));
+            w.Writer.Violations.Should().Be(0);
+
+            w.Writer.ThrowOnViolation = false;
+            Item corpse = w.Items.Get(CORPSE);
+            (byte, long) held = (corpse.AnimIndex, corpse.LastAnimationChangeTime);
+            w.Ecs.BeginFold(w.Mobiles.Get(OTHER));
+            w.Writer.AdvanceCorpseFrame(corpse, 5, NOW + 999);
+            w.Ecs.EndFold(w.Mobiles.Get(OTHER));
+            (corpse.AnimIndex, corpse.LastAnimationChangeTime).Should().Be(held);
+            w.Writer.Violations.Should().Be(1);
+        }
     }
 
     [Collection(nameof(FunnelCheckCollection))]
@@ -378,6 +459,27 @@ namespace ClassicUO.UnitTests.Ecs
 
             (m.StepSoundOffset, m.AnimationFromServer).Should().Be((1, true));
             FunnelCheck.Total.Should().Be(0, "SetIdleAnimation (all its outcomes, SetAnimation's included) and ProcessFootstepsSound");
+        }
+
+        [Fact]
+        public void The_Corpse_Frame_Advance_Makes_No_Direct_Writes()
+        {
+            if (!FunnelCheck.Available)
+            {
+                return;
+            }
+
+            World world = BuildOne(out _);
+            Item corpse = world.GetOrCreateItem(0x4000_7302);
+            corpse.Graphic = 0x2006;
+            corpse.SetInWorldTile(1002, 1000, 0);
+            FunnelCheck.Reset();
+
+            world.Writer.AdvanceCorpseFrame(corpse, 2, 100_080);
+            world.Writer.AdvanceCorpseFrame(corpse, -1, 100_160);
+
+            (corpse.AnimIndex, corpse.LastAnimationChangeTime).Should().Be(((byte)2, 100_160L));
+            FunnelCheck.Total.Should().Be(0, "Item.ProcessAnimation's frame and due time");
         }
     }
 }
