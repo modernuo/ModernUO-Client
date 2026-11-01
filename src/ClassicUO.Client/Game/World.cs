@@ -507,6 +507,33 @@ namespace ClassicUO.Game
             }
         }
 
+        // T5b (world_anim_system) -------------------------------------------------------------------------------------------
+#if CUO_DEVTOOLS
+        // CLEANUP(release): the gate's override of the setting (CUO_WORLD_ANIM_SYSTEM=1|0)
+        private static readonly bool? _envAnimSystem = System.Environment.GetEnvironmentVariable("CUO_WORLD_ANIM_SYSTEM") switch
+        {
+            "1" => true,
+            "0" => false,
+            _ => null
+        };
+#else
+        private static readonly bool? _envAnimSystem = null;
+#endif
+
+        // read once, at the first world update (the settings are loaded by then)
+        private static class AnimSystemSwitch
+        {
+            public static readonly bool On = _envAnimSystem ?? Settings.GlobalSettings.WorldAnimSystem;
+        }
+
+        /// <summary>Tests: the switch for this World (null: the setting).</summary>
+        internal bool? AnimSystemOverride;
+
+        /// <summary>T5b: due mobiles without steps advance in the ECS (<see cref="MobileAnimationAdvanceSystem"/>).</summary>
+        internal bool AnimSystem => AnimSystemOverride ?? AnimSystemSwitch.On;
+
+        private readonly MobileAnimationAdvanceSystem _animAdvance = new MobileAnimationAdvanceSystem();
+
         private readonly List<Mobile> _dueObjects = new List<Mobile>();
         private static readonly System.Comparison<Mobile> s_byOrdinal = (a, b) => a.Ordinal.CompareTo(b.Ordinal);
 
@@ -530,6 +557,14 @@ namespace ClassicUO.Game
         private void UpdateMobilesByClock(bool do_delete, bool wmap)
         {
             Ecs.ClockEnabled = true;
+            bool animSystem = AnimSystem;
+
+            if (animSystem != Ecs.AnimTimerEnabled)
+            {
+                // T5b: the timers are written with the clocks from now on (or no longer): rebuild them all
+                Ecs.AnimTimerEnabled = animSystem;
+                _mobileClocksSynced = false;
+            }
 
             if (!_mobileClocksSynced)
             {
@@ -586,9 +621,16 @@ namespace ClassicUO.Game
                 Mobile mob = _dueObjects[i];
 
                 mob.UpdateStamp = _mobileUpdateStamp;
-                mob.Update();
 
-                // Update rewrote the timers (and may have emptied the step queue or opened the handles)
+                // T5b: a mobile without steps or a handles opening advances in the ECS; the others (and every mobile with the
+                // switch off) run Mobile.Update, in the same table order, so the random draws keep their sequence
+                if (!animSystem || !_animAdvance.TryRun(this, mob))
+                {
+                    mob.Update();
+                }
+
+                // Update (or the ECS advance's write-back) rewrote the timers (and may have emptied the step queue or opened
+                // the handles); the push also writes the animation timer component
                 Ecs.PushClock(mob);
             }
 

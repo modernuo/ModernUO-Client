@@ -606,18 +606,7 @@ namespace ClassicUO.Game
         }
     }
 
-    /// <summary>The frame-advance state of Mobile.ProcessAnimation.</summary>
-    internal struct AnimationTimer
-    {
-        public byte Frame;
-        public byte FrameCount;
-        public byte Interval;
-        public ushort RepeatMode;
-        public ushort RepeatModeCount;
-        public bool Repeat;
-        public bool Forward;
-        public bool FromServer;
-    }
+    // T5b: the frame-advance state Advance steps is the ECS component ClassicUO.Ecs.AnimationTimer (its first eight fields)
 
     internal enum AnimationAdvance : byte
     {

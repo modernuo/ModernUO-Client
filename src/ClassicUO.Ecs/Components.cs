@@ -326,6 +326,32 @@ namespace ClassicUO.Ecs
         }
     }
 
+    /// <summary>
+    /// T5b (world_anim_system): a mobile's animation timer, what <c>Mobile.Update</c>'s idle animation and frame advance read
+    /// and write. The first eight fields are the frame-advance state <c>AnimationTiming.Advance</c> steps (Mobile.AnimIndex,
+    /// AnimationFrameCount, the interval, the repeat mode and count, repeat, forward, AnimationFromServer); then the animation
+    /// group (the server's action, 0xFF = none), <c>ExecuteAnimation</c> and the two due times (<c>LastAnimationChangeTime</c>
+    /// and the idle delay). While the system runs, every write of these on the Mobile reaches the component with the clock
+    /// push (<c>WorldEcs.WriteClock</c>), and <c>MobileAnimationAdvanceSystem</c> reads only it and the pushed inputs for a
+    /// due mobile without steps.
+    /// </summary>
+    public struct AnimationTimer : IComponent
+    {
+        public byte Frame;
+        public byte FrameCount;
+        public byte Interval;
+        public ushort RepeatMode;
+        public ushort RepeatModeCount;
+        public bool Repeat;
+        public bool Forward;
+        public bool FromServer;
+
+        public byte Group;
+        public bool ExecuteAnimation;
+        public long AnimDue;
+        public long IdleDue;
+    }
+
     /// <summary>Per-frame view context of a mobile: overriding hue (highlight, notoriety, out of range...), alpha, step offset.</summary>
     public struct MobileRenderState : IComponent
     {
@@ -488,6 +514,7 @@ namespace ClassicUO.Ecs
             Tag<EquipmentDirty>(aot);
             Component<MobileInputs>(aot);
             Component<MobileClock>(aot);
+            Component<AnimationTimer>(aot); // T5b
 
             // -ecscheck v2 (T1 funnel part 9)
             Component<EntityName>(aot);

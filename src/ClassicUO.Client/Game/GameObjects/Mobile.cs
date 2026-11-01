@@ -87,7 +87,7 @@ namespace ClassicUO.Game.GameObjects
         //    }
         //);
 
-        private static readonly byte[,] _animationIdle =
+        internal static readonly byte[,] _animationIdle =
         {
             {
                 (byte)LowAnimationGroup.Fidget1,
@@ -625,6 +625,10 @@ namespace ClassicUO.Game.GameObjects
             World.Writer.IdleAnimation(this, in plan);
         }
 
+        /// <summary>T5b checker: <see cref="PlanIdleAnimation"/> over the client's animation data (draws, writes nothing).</summary>
+        internal void PlanIdleAnimationLive(out IdlePlan plan) =>
+            PlanIdleAnimation(new LiveIdleAnimationData(Client.Game.UO.Animations), out plan);
+
         /// <summary>T1 (funnel part 8): the animation data <see cref="PlanIdleAnimation"/> reads (tests pass their own).</summary>
         internal interface IIdleAnimationData
         {
@@ -909,7 +913,7 @@ namespace ClassicUO.Game.GameObjects
         }
 
         /// <summary>T1 (funnel part 7): the animation timer as <c>AnimationTiming.Advance</c> takes it (a pure read).</summary>
-        internal AnimationTimer AnimationTimerState => new AnimationTimer
+        internal ClassicUO.Ecs.AnimationTimer AnimationTimerState => new ClassicUO.Ecs.AnimationTimer
         {
             Frame = AnimIndex,
             FrameCount = AnimationFrameCount,
@@ -925,13 +929,58 @@ namespace ClassicUO.Game.GameObjects
         /// T1 (funnel part 7): the timer fields an advance changes (the frame count and the repeat state; the frame index is
         /// written by the caller, after a finished animation's reset). Called by <see cref="WorldWriter.AdvanceAnimation"/>.
         /// </summary>
-        internal void ApplyAnimationTimer(in AnimationTimer timer)
+        internal void ApplyAnimationTimer(in ClassicUO.Ecs.AnimationTimer timer)
         {
             AnimationFrameCount = timer.FrameCount;
             FunnelCheck.Write(this, FunnelField.AnimationState);
             _animationRepeateMode = timer.RepeatMode;
             _animationRepeatModeCount = timer.RepeatModeCount;
             _animationRepeat = timer.Repeat;
+        }
+
+        /// <summary>T5b: every field of the ECS <see cref="AnimationTimer"/> as this Mobile holds it (a pure read; the clock push
+        /// copies it into the component, the checkers compare it).</summary>
+        internal ClassicUO.Ecs.AnimationTimer FullAnimationTimer => new ClassicUO.Ecs.AnimationTimer
+        {
+            Frame = AnimIndex,
+            FrameCount = AnimationFrameCount,
+            Interval = _animationInterval,
+            RepeatMode = _animationRepeateMode,
+            RepeatModeCount = _animationRepeatModeCount,
+            Repeat = _animationRepeat,
+            Forward = _isAnimationForwardDirection,
+            FromServer = AnimationFromServer,
+            Group = _animationGroup,
+            ExecuteAnimation = ExecuteAnimation,
+            AnimDue = LastAnimationChangeTime,
+            IdleDue = _lastAnimationIdleDelay
+        };
+
+        /// <summary>
+        /// T5b: writes what <c>MobileAnimationAdvanceSystem</c> computed in the ECS back to this Mobile's fields (the cache the
+        /// views, the step path and the legacy update still read). <paramref name="frameAndDue"/> false leaves the frame index
+        /// and the frame due time for <see cref="WorldWriter.RemoveDeadMobile"/>, which writes them after the removal, as the
+        /// legacy advance did. Pushes nothing: the update loop pushes the clock after it. Called by
+        /// <see cref="WorldWriter.AdvanceAnimationFromEcs"/>.
+        /// </summary>
+        internal void WriteAnimationTimer(in ClassicUO.Ecs.AnimationTimer t, bool frameAndDue)
+        {
+            FunnelCheck.Write(this, FunnelField.AnimationState);
+            _animationGroup = t.Group;
+            _animationInterval = t.Interval;
+            _animationRepeateMode = t.RepeatMode;
+            _animationRepeatModeCount = t.RepeatModeCount;
+            _animationRepeat = t.Repeat;
+            _isAnimationForwardDirection = t.Forward;
+            _lastAnimationIdleDelay = t.IdleDue;
+            AnimationFrameCount = t.FrameCount;
+            AnimationFromServer = t.FromServer;
+
+            if (frameAndDue)
+            {
+                AnimIndex = t.Frame;
+                LastAnimationChangeTime = t.AnimDue;
+            }
         }
 
         public void ProcessSteps(out byte dir, bool evalutate = false)
