@@ -411,6 +411,12 @@ namespace ClassicUO.Game
                             world.TargetManager.Target(known.Serial);
 
                             break;
+
+                        default:
+                            Log.Warn($"[ECS] driver: nothing to target ({string.Join(' ', args)}); the cursor is cancelled");
+                            world.TargetManager.CancelTarget();
+
+                            break;
                     }
 
                     return true;
@@ -907,7 +913,9 @@ namespace ClassicUO.Game
         {
             foreach (Item it in world.Items.Values)
             {
-                if (it.Graphic == graphic && !it.IsDestroyed && ReferenceEquals(it.RootContainer, player))
+                // RootContainer is the top container's serial (bench-000098: a reference comparison never matched, so the
+                // cleanup's target mine found nothing)
+                if (it.Graphic == graphic && !it.IsDestroyed && it.RootContainer == player.Serial)
                 {
                     return it.Serial;
                 }

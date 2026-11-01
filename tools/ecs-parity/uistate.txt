@@ -4,6 +4,9 @@
 # Every step logs what proves it ("[ECS] ui ...", "[ECS] gump ...", the journal). Everything the script creates is
 # removed at the end ([remove). Graphics: bag 0E76, gold 0EED, spellbook 0EFA, cap 1715, apple 09D0, corpse 2006.
 wait 6
+# both clients on Felucca (bench-000098: the partner stood on Trammel, so the trade had no one to drop on)
+say [self set Map Felucca
+wait 3
 say [go 5445 1153
 wait 4
 # setup: the items, in the backpack
@@ -109,10 +112,11 @@ wait 2
 worn
 find 1715
 check
-# 8. a vendor: an animal trainer, its buy list, a horse bought (it comes as the player's pet)
+# 8. a vendor: an animal trainer, its buy list, a horse bought (it comes as the player's pet). Adjacent: ModernUO's VendorAI
+# answers "vendor buy" only within 1 tile under AOS (bench-000098: at 2 tiles no buy list came)
 say [add AnimalTrainer
 wait 1
-target ground -2 0
+target ground -1 0
 wait 3
 say vendor buy
 wait 4
