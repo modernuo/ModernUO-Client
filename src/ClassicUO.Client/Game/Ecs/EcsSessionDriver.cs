@@ -734,6 +734,15 @@ namespace ClassicUO.Game
 
                     return false;
 
+                // readequipment on|off: the equipment readers from the ECS (ecs_read_equipment, T3a); the env override
+                // CUO_ECS_READ_EQUIPMENT wins over it
+                case "readequipment" when args.Length > 0:
+                    Settings.GlobalSettings.EcsReadEquipment = args[0] == "on";
+                    Log.Info($"[ECS] driver: read equipment from the ECS {args[0]} (effective {world.State.ReadEquipment})");
+                    world.State.LogEquipmentSummary();
+
+                    return false;
+
                 // itemcache on|off: the Gpu world prepare's ground-item cache (gpu_prepare_item_cache)
                 case "itemcache" when args.Length > 0:
                     Settings.GlobalSettings.GpuPrepareItemCache = args[0] == "on";

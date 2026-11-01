@@ -75,6 +75,29 @@ namespace ClassicUO.Game
             return serial == 0 ? null : _world.Items.Get(serial);
         }
 
+        /// <summary>
+        /// MobileView's <c>!IsEmpty</c> guard before its equipment reads: with <see cref="ReadEquipment"/> whether the ECS
+        /// records any worn item on a tracked layer (the layers the view reads; a mobile World does not hold: its list), else
+        /// whether the child list has any child.
+        /// </summary>
+        public bool HasWornItems(Mobile mobile)
+        {
+            if (!ReadEquipment || !ReferenceEquals(_world.Mobiles.Get(mobile.Serial), mobile))
+            {
+                return !mobile.IsEmpty;
+            }
+
+            if (!TryGetMobileEntity(mobile, out EcsEntity e))
+            {
+                return false;
+            }
+
+            ref WornLayers worn = ref e.GetComponent<WornLayers>();
+            ReadOnlySpan<uint> serials = worn.Serials;
+
+            return serials.IndexOfAnyExcept(0u) >= 0;
+        }
+
         // the mobile's mirror record through E5's per-mobile handle cache (valid while the serial and the mirror's epoch are
         // unchanged; GpuWorldRenderer fills the same fields), else one dictionary lookup
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
