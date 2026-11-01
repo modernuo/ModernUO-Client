@@ -545,6 +545,31 @@ namespace ClassicUO.Game.GameObjects
         //}
         // #############################################
 
+        /// <summary>
+        /// T1 (funnel part 8): the walk queue's part of <see cref="Walk"/>, computed without a write: one step to
+        /// (<paramref name="x"/>, <paramref name="y"/>, <paramref name="z"/>) facing <paramref name="direction"/>; when the queue
+        /// is empty the walk starts now (<c>LastStepTime</c>), with <c>SetAnimation(0xFF)</c> if the player is not walking.
+        /// </summary>
+        internal void PlanWalkStep(int x, int y, sbyte z, Direction direction, bool run, out StepPlan plan)
+        {
+            bool emptyStack = Steps.Count == 0;
+            plan = default;
+            plan.Accepted = true;
+            plan.Changes = true;
+            plan.StartsWalk = emptyStack;
+            plan.SetsAnimation = emptyStack && !IsWalking;
+            plan.StepTime = Time.Ticks;
+            plan.Count = 1;
+            plan.S0 = new Step
+            {
+                X = x,
+                Y = y,
+                Z = z,
+                Direction = (byte) direction,
+                Run = run
+            };
+        }
+
         public bool Walk(Direction direction, bool run)
         {
             if (Walker.WalkingFailed || Walker.LastStepRequestTime > Time.Ticks || Walker.StepsCount >= Constants.MAX_STEP_COUNT || Client.Game.UO.Version >= ClientVersion.CV_60142 && IsParalyzed)
@@ -645,7 +670,9 @@ namespace ClassicUO.Game.GameObjects
             // when the connection is healthy and automatically backs off under congestion.
             if (walkTime == (ushort)MovementSpeed.TurnDelay && Walker.UnacceptedPacketsCount >= 3)
             {
-                Direction = direction;
+                // T1 (funnel part 8): the coalesced turn through the funnel (unfolded: the player's direction setter runs
+                // its door check, as for 0x21)
+                World.Writer.SetMobileDirection(this, direction);
                 Walker.LastStepRequestTime = Time.Ticks + walkTime;
 
                 return true;
@@ -653,14 +680,14 @@ namespace ClassicUO.Game.GameObjects
 
             CloseBank();
 
-            if (emptyStack)
-            {
-                if (!IsWalking)
-                {
-                    SetAnimation(0xFF);
-                }
+            // T1 (funnel part 8): the walk queue's writes through the funnel (QueuePlayerStep: SetAnimation(0xFF) when the
+            // walk starts while not walking, LastStepTime, the step, the inputs), computed here and written before the
+            // walker's step record; the walker is not world state and neither side reads the other
+            PlanWalkStep(x, y, z, direction, run, out StepPlan plan);
 
-                LastStepTime = Time.Ticks;
+            if (!World.Writer.QueuePlayerStep(this, in plan))
+            {
+                return false;
             }
 
             ref StepInfo step = ref Walker.StepInfos[Walker.StepsCount];
@@ -676,20 +703,6 @@ namespace ClassicUO.Game.GameObjects
             step.NoRotation = step.OldDirection == (byte) direction && oldZ - z >= 11;
 
             Walker.StepsCount++;
-
-            AddStep
-            (
-                new Step
-                {
-                    X = x,
-                    Y = y,
-                    Z = z,
-                    Direction = (byte) direction,
-                    Run = run
-                }
-            );
-
-            PushInputs();
 
 
             NetClient.Socket.Send_WalkRequest(direction, Walker.WalkSequence, run, Walker.FastWalkStack.GetValue());

@@ -61,9 +61,6 @@ src/ClassicUO.Client/Game/GameObjects/MovingEffect.cs|Offset|5
 src/ClassicUO.Client/Game/GameObjects/MovingEffect.cs|X|1
 src/ClassicUO.Client/Game/GameObjects/MovingEffect.cs|Y|1
 src/ClassicUO.Client/Game/GameObjects/Multi.cs|Graphic|1
-src/ClassicUO.Client/Game/GameObjects/PlayerMobile.cs|Direction|1
-src/ClassicUO.Client/Game/GameObjects/PlayerMobile.cs|LastStepTime|1
-src/ClassicUO.Client/Game/GameObjects/PlayerMobile.cs|Steps|1
 src/ClassicUO.Client/Game/GameObjects/PlayerMobile.cs|_inWarMode|1
 src/ClassicUO.Client/Game/GameObjects/Static.cs|Graphic|2
 src/ClassicUO.Client/Game/Managers/BoatMovingManager.cs|X|1
