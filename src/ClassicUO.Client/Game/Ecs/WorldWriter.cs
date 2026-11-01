@@ -793,9 +793,10 @@ namespace ClassicUO.Game
         /// removes it with its contents; none puts it on its tile. The item is found or created (<c>GetOrCreateItem</c>).
         /// <para>
         /// The old path published the item out of its container before re-adding it (a Sync after
-        /// <c>RemoveItemFromContainer</c>, then one after the re-equip), which moves it to the end of the mirror's equipment
-        /// index. The operation does the same with the computed values: it commits the detached state, then (paperdoll) the
-        /// final one. Its hook Syncs are folded.
+        /// <c>RemoveItemFromContainer</c>, then one after the re-equip), which moved it to the end of the mirror's equipment
+        /// index. T3a: the order of a wearer's equipment is its child-order stamps (WornLayers, EquipmentSlots and -ecscheck
+        /// read the stamps, never the index's order), so the paperdoll branch commits its final state once, attached (the
+        /// next stamp: the back of the wearer's list); the other branches commit the detached state. Its hook Syncs are folded.
         /// </para>
         /// </summary>
         public Item ReturnHeldItem
@@ -875,8 +876,14 @@ namespace ClassicUO.Game
                 }
 #endif
 
-                // 3. write: the ECS (the detached state), then the cache from v in the old order
-                _world.Ecs.CommitItem(item, in v);
+                // 3. write: the ECS (paperdoll: worn by the container at the back of its list, the equipment-order stamp
+                // taken in this one commit; otherwise the detached state), then the cache from v in the old order
+                if (result == HeldItemReturn.Paperdoll)
+                {
+                    v.Container = container.Serial;
+                }
+
+                _world.Ecs.CommitItem(item, in v, attach: result == HeldItemReturn.Paperdoll);
 
                 item.Graphic = v.Graphic;
                 item.Hue = v.Hue;
@@ -904,8 +911,6 @@ namespace ClassicUO.Game
                     case HeldItemReturn.Paperdoll:
                         _world.UnlinkFromContainer(item, oldContainer);
                         container.PushToBack(item);
-                        v.Container = container.Serial;
-                        _world.Ecs.CommitItem(item, in v, attach: true);
                         item.Container = v.Container;
 
                         break;
