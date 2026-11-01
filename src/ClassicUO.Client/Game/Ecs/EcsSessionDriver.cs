@@ -465,7 +465,7 @@ namespace ClassicUO.Game
                         if (fi.Graphic == fg && !fi.IsDestroyed)
                         {
                             fn++;
-                            Log.Info($"[ECS] ui find 0x{fg:X4}: 0x{fi.Serial:X8} x{fi.Amount} container 0x{fi.Container:X8} layer {fi.Layer} mine={ReferenceEquals(fi.RootContainer, player)} name '{fi.Name}'");
+                            Log.Info($"[ECS] ui find 0x{fg:X4}: 0x{fi.Serial:X8} x{fi.Amount} container 0x{fi.Container:X8} layer {fi.Layer} mine={fi.RootContainer == player.Serial} name '{fi.Name}'");
                         }
                     }
 
