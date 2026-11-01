@@ -549,9 +549,10 @@ namespace ClassicUO.UnitTests.Ecs
 
             // the coalesced turn (three unconfirmed requests): the direction alone
             Time.Ticks = NOW + 5_200;
-            uint pa = Inputs(oldWorld, MOB).Pushes, pb = Inputs(newWorld, MOB).Pushes;
+            // the inputs push writes the clock too (WriteInputs -> WriteClock), and ClockWrites is per World
+            long ca = oldWorld.Ecs.ClockWrites, cb = newWorld.Ecs.ClockWrites;
             Pair(() => a.Direction = Direction.West, () => newWorld.Writer.TurnPlayer(b, Direction.West).Should().BeTrue());
-            (Inputs(newWorld, MOB).Pushes - pb).Should().Be(Inputs(oldWorld, MOB).Pushes - pa, "the turn pushes its inputs as the old turn did");
+            (newWorld.Ecs.ClockWrites - cb).Should().Be(oldWorld.Ecs.ClockWrites - ca, "the turn pushes its inputs (and clock) as the old turn did");
             AssertSameWorld(oldWorld, newWorld);
             PlayerSnapshot(b).Should().Be(PlayerSnapshot(a));
             b.Direction.Should().Be(Direction.West);
