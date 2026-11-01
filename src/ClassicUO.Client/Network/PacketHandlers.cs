@@ -5858,7 +5858,8 @@ namespace ClassicUO.Network
                 //                 2,
                 //                 1);
 
-                multi.SetInWorldTile(x, y, (sbyte)z);
+                // T1 (funnel part 7)
+                world.Writer.JumpBoat(multi, x, y, (sbyte)z);
 
                 if (world.HouseManager.TryGetHouse(serial, out House house))
                 {
