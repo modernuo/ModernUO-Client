@@ -31,6 +31,18 @@ public sealed class LayerRulesJsonTests
     }
 
     [Fact]
+    public void An_Unnamed_Layer_Number_Round_Trips()
+    {
+        // Codex (t3b-cache audit, P3): a cover rule on layer 25 (no name) loaded, but the export wrote it as the string "25",
+        // which the importer refused. Unnamed layers are now exported as bare numbers.
+        string json = DefaultJson().Replace("\"rules\": [", "\"rules\": [\n    { \"set\": \"world\", \"kind\": \"cover\", \"layer\": 25, \"covered\": true },", StringComparison.Ordinal);
+        LayerRules parsed = LayerRulesJson.Parse(json);
+        string exported = LayerRulesJson.Export(parsed);
+        exported.Should().Contain("\"layer\": 25");
+        Bin(LayerRulesJson.Parse(exported)).Should().Equal(Bin(parsed));
+    }
+
+    [Fact]
     public void Save_And_Load_Through_A_File()
     {
         string dir = Path.Combine(Path.GetTempPath(), "layerrules-json-" + Guid.NewGuid().ToString("N"));

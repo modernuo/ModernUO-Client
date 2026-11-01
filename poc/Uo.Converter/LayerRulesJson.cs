@@ -92,12 +92,12 @@ public static class LayerRulesJson
             case LayerRuleKind.Reorder:
                 Unused("value", r.Value); Unused("value2", r.Value2);
                 f.Add($"\"op\": \"{ReorderOps[r.Op]}\"");
-                f.Add($"\"layer\": \"{LayerName(r.Layer)}\"");
-                f.Add($"\"other\": \"{LayerName(r.Other)}\"");
+                f.Add($"\"layer\": {LayerJson(r.Layer)}");
+                f.Add($"\"other\": {LayerJson(r.Other)}");
                 break;
             case LayerRuleKind.Cover:
                 Unused("op", r.Op); Unused("value", r.Value); Unused("value2", r.Value2);
-                f.Add($"\"layer\": \"{LayerName(r.Layer)}\"");
+                f.Add($"\"layer\": {LayerJson(r.Layer)}");
                 f.Add($"\"covered\": {(r.Other != 0 ? "true" : "false")}");
                 break;
             case LayerRuleKind.DirMove:
@@ -106,10 +106,10 @@ public static class LayerRulesJson
                 var dirs = new List<string>();
                 for (int d = 0; d < 8; d++) if ((r.Value & (1 << d)) != 0) dirs.Add(d.ToString(CultureInfo.InvariantCulture));
                 if ((r.Value & LayerRulesConst.DirOther) != 0) dirs.Add("\"other\"");
-                f.Add($"\"layer\": \"{LayerName(r.Layer)}\"");
+                f.Add($"\"layer\": {LayerJson(r.Layer)}");
                 f.Add($"\"directions\": [{string.Join(", ", dirs)}]");
                 f.Add($"\"op\": \"{DirOps[r.Op]}\"");
-                if (r.Other != 0 || r.Op == (byte)LayerDirOp.Before) f.Add($"\"anchor\": \"{LayerName(r.Other)}\"");
+                if (r.Other != 0 || r.Op == (byte)LayerDirOp.Before) f.Add($"\"anchor\": {LayerJson(r.Other)}");
                 break;
             case LayerRuleKind.Remap:
                 Unused("layer", r.Layer); Unused("other", r.Other); Unused("op", r.Op);
@@ -155,14 +155,14 @@ public static class LayerRulesJson
         {
             case LayerCondKind.Present:
                 NoRanges("present");
-                f.Add($"\"present\": \"{LayerName(c.Layer)}\"");
+                f.Add($"\"present\": {LayerJson(c.Layer)}");
                 break;
             case LayerCondKind.Graphic:
-                f.Add($"\"graphic\": \"{LayerName(c.Layer)}\"");
+                f.Add($"\"graphic\": {LayerJson(c.Layer)}");
                 f.Add($"\"in\": {Ranges(Hex)}");
                 break;
             case LayerCondKind.AnimId:
-                f.Add($"\"anim\": \"{LayerName(c.Layer)}\"");
+                f.Add($"\"anim\": {LayerJson(c.Layer)}");
                 f.Add($"\"in\": {Ranges(Hex)}");
                 break;
             case LayerCondKind.Flag:
@@ -197,6 +197,9 @@ public static class LayerRulesJson
     }
 
     private static string Hex(ushort v) => $"0x{v:X4}";
+    // a layer for the export: its name in quotes, or a bare JSON number when it has no name (the importer reads both)
+    private static string LayerJson(byte l) => l < LayerNames.Length ? $"\"{LayerNames[l]}\"" : l.ToString(CultureInfo.InvariantCulture);
+
     private static string LayerName(byte l) => l < LayerNames.Length ? LayerNames[l] : l.ToString(CultureInfo.InvariantCulture);
     private static string GroupName(ushort g) => g <= (ushort)BodyGroup.GargoyleFemale ? ((BodyGroup)g).ToString() : g.ToString(CultureInfo.InvariantCulture);
 
