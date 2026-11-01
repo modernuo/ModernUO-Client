@@ -13,6 +13,32 @@ namespace ClassicUO.Game
     // T3a (ecs-transition-plan.md, T3): a mobile's worn equipment by layer, owned by the ECS (WornLayers on the mobile's mirror
     // record: the first attached item per layer by child-order stamp). Entity.FindItemByLayer reads it for a mobile with
     // ecs_read_equipment on; the LinkedObject child list is still maintained (dual) until T9.
+    /// <summary>T3a: whether World holds a mobile instance for its serial, as its <see cref="WornCache"/> last verified.</summary>
+    internal enum WornHeld : byte
+    {
+        Unknown,
+        /// <summary>World does not hold this instance for its serial: its own list answers.</summary>
+        NotHeld,
+        /// <summary>World holds it but the mirror has no record for the serial: nothing worn.</summary>
+        NoRecord,
+        /// <summary>World holds it; <see cref="WornCache.Entity"/> is its record.</summary>
+        Record
+    }
+
+    /// <summary>
+    /// T3a: a mobile's equipment read cache (<c>Mobile.EquipCache</c>, made at its first read with ecs_read_equipment on): the
+    /// verified record, and the Item objects of its WornLayers serials (null when nothing is worn), valid for the mirror
+    /// epoch, slot-write count and WornLayers version it was filled at.
+    /// </summary>
+    internal sealed class WornCache
+    {
+        public EcsEntity Entity;
+        public uint Serial, Epoch, Version;
+        public long Writes;
+        public WornHeld Held;
+        public Item[] Items;
+    }
+
     internal sealed partial class WorldState
     {
         /// <summary>Tests: the switch for this World (null: the setting).</summary>
@@ -34,9 +60,9 @@ namespace ClassicUO.Game
         public bool ReadEquipment => ReadEquipmentOverride ?? _envReadEquipment ?? Configuration.Settings.GlobalSettings.EcsReadEquipment;
 
         /// <summary>
-        /// <c>Entity.FindItemByLayer</c> for a mobile: with <see cref="ReadEquipment"/> the ECS's worn item on the layer
-        /// (<see cref="WornItem"/>), else the child list's first item on it. Under <c>CUO_EQUIP_READ_CHECK=1</c> every call
-        /// compares the two.
+        /// <c>Entity.FindItemByLayer</c> for a mobile under the checker: with <see cref="ReadEquipment"/> the ECS's worn item
+        /// on the layer (<see cref="WornItem"/>), else the child list's first item on it; <c>CUO_EQUIP_READ_CHECK=1</c>
+        /// compares the two at every call.
         /// </summary>
         public Item FindWorn(Mobile mobile, Layer layer)
         {
@@ -56,28 +82,21 @@ namespace ClassicUO.Game
         /// WornLayers records (null when none). An instance World does not hold for its serial (the appearance gumps'
         /// detached preview mobile, serial 1; a replaced or destroyed mobile) never reads that serial's record: its own
         /// list answers, as the legacy read did (its clothes are UI objects, not world state). Layers WornLayers does not
-        /// track (0: the trade boxes; above 0x1D) are read from the list too.
+        /// track (0: the trade boxes; above 0x1D) are read from the list too. Served from the mobile's
+        /// <see cref="WornCache"/>: a hit is three compares and an array load.
         /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Item WornItem(Mobile mobile, Layer layer)
         {
-            if (!WornLayers.Tracked((byte)layer))
+            uint index = (uint)layer - 1;
+            WornCache c = Worn(mobile);
+
+            if (index >= WornLayers.COUNT || c.Held == WornHeld.NotHeld)
             {
                 return mobile.FindItemByLayerInList(layer);
             }
 
-            switch (Resolve(mobile, out EcsEntity e))
-            {
-                case Held.Record:
-                    uint serial = e.GetComponent<WornLayers>().Serials[(byte)layer - 1];
-
-                    return serial == 0 ? null : _world.Items.Get(serial);
-
-                case Held.NoRecord:
-                    return null;
-
-                default:
-                    return mobile.FindItemByLayerInList(layer);
-            }
+            return c.Items?[index];
         }
 
         /// <summary>
@@ -92,70 +111,111 @@ namespace ClassicUO.Game
                 return !mobile.IsEmpty;
             }
 
-            switch (Resolve(mobile, out EcsEntity e))
-            {
-                case Held.Record:
-                    ref WornLayers worn = ref e.GetComponent<WornLayers>();
-                    ReadOnlySpan<uint> serials = worn.Serials;
+            WornCache c = Worn(mobile);
 
-                    return serials.IndexOfAnyExcept(0u) >= 0;
-
-                case Held.NoRecord:
-                    return false;
-
-                default:
-                    return !mobile.IsEmpty;
-            }
+            return c.Held == WornHeld.NotHeld ? !mobile.IsEmpty : c.Items != null;
         }
 
-        private enum Held : byte
-        {
-            /// <summary>World does not hold this instance for its serial: its own list answers.</summary>
-            NotHeld,
-            /// <summary>World holds it but the mirror has no record for the serial: nothing worn.</summary>
-            NoRecord,
-            /// <summary>World holds it; the entity is its record.</summary>
-            Record
-        }
-
-        // the instance's mirror record, verified to be the instance World holds for its serial. The verification is cached on
-        // the mobile with the mirror's epoch (Mobile.EquipEntity*: its own fields, never E5's, which the Gpu world fills
-        // without the identity check): every change of the table's instance for a serial goes with a removal of the serial's
-        // record (RemoveMobile, the re-key, a clear), which bumps the epoch, so a hit costs two compares and no lookup
+        // the mobile's cache, current: valid while the mirror's epoch (no record removed: every change of the table's instance
+        // for a serial, and of the Item object for a serial, goes with a removal) and the mirror's count of slot writes are
+        // what it saw; when only the writes moved, the mobile's own WornLayers version decides whether its items are re-read
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private Held Resolve(Mobile mobile, out EcsEntity e)
+        private WornCache Worn(Mobile mobile)
         {
             WorldMirror mirror = _world.Ecs.Mirror;
+            WornCache c = mobile.EquipCache;
 
-            if (mobile.EquipEntityEpoch == mirror.Epoch && mobile.EquipEntitySerial == mobile.Serial && mobile.EquipEntitySerial != 0)
+            if (c != null && c.Epoch == mirror.Epoch && c.Writes == mirror.WornWrites && c.Serial == mobile.Serial)
             {
-                e = mobile.EquipEntity;
-
-                return Held.Record;
+                return c;
             }
 
-            return ResolveSlow(mobile, mirror, out e);
+            return Refresh(mobile, mirror);
         }
 
-        private Held ResolveSlow(Mobile mobile, WorldMirror mirror, out EcsEntity e)
+        private WornCache Refresh(Mobile mobile, WorldMirror mirror)
         {
-            e = default;
+            WornCache c = mobile.EquipCache ??= new WornCache();
+            CacheRefreshes++;
 
-            if (!ReferenceEquals(_world.Mobiles.Get(mobile.Serial), mobile))
+            if (c.Epoch != mirror.Epoch || c.Serial != mobile.Serial || c.Held == WornHeld.Unknown)
             {
-                return Held.NotHeld;
+                c.Serial = mobile.Serial;
+                c.Epoch = mirror.Epoch;
+                c.Version = 0;
+                c.Entity = default;
+
+                if (!ReferenceEquals(_world.Mobiles.Get(mobile.Serial), mobile))
+                {
+                    c.Held = WornHeld.NotHeld;
+                    c.Items = null;
+                }
+                else if (mirror.TryGetEntity(mobile.Serial, out EcsEntity e) && e.HasComponent<WornLayers>())
+                {
+                    c.Held = WornHeld.Record;
+                    c.Entity = e;
+                }
+                else
+                {
+                    c.Held = WornHeld.NoRecord;
+                    c.Items = null;
+                }
             }
 
-            if (!mirror.TryGetEntity(mobile.Serial, out e) || !e.HasComponent<WornLayers>())
+            if (c.Held == WornHeld.Record)
             {
-                return Held.NoRecord;
+                ref WornLayers w = ref c.Entity.GetComponent<WornLayers>();
+
+                if (w.Version != c.Version || c.Version == 0)
+                {
+                    CacheFills++;
+                    c.Version = w.Version;
+                    ReadOnlySpan<uint> serials = w.Serials;
+
+                    if (serials.IndexOfAnyExcept(0u) < 0)
+                    {
+                        c.Items = null;
+                    }
+                    else
+                    {
+                        Item[] items = c.Items ??= new Item[WornLayers.COUNT];
+
+                        for (int i = 0; i < serials.Length; i++)
+                        {
+                            items[i] = serials[i] == 0 ? null : _world.Items.Get(serials[i]);
+                        }
+                    }
+                }
             }
 
-            mobile.EquipEntity = e;
-            mobile.EquipEntitySerial = mobile.Serial;
-            mobile.EquipEntityEpoch = mirror.Epoch;
+            c.Writes = mirror.WornWrites;
 
-            return Held.Record;
+            return c;
+        }
+
+        /// <summary>Cache refreshes (a mirror change since the mobile's last read) and fills (its items re-read).</summary>
+        public long CacheRefreshes, CacheFills;
+
+        /// <summary>The read caches of the mobiles World holds (layout-based: <see cref="WornCache"/> 72 B, its items array
+        /// 24 + 8 B per tracked layer = 256 B).</summary>
+        public (int Caches, int WithItems, long Bytes) ReadCacheMemory()
+        {
+            int caches = 0, withItems = 0;
+
+            foreach (Mobile m in _world.Mobiles.Values)
+            {
+                if (m.EquipCache != null)
+                {
+                    caches++;
+
+                    if (m.EquipCache.Items != null)
+                    {
+                        withItems++;
+                    }
+                }
+            }
+
+            return (caches, withItems, caches * 72L + withItems * (24L + 8 * WornLayers.COUNT));
         }
 
         /// <summary>Memory of WornLayers (layout-based: the component per mobile record; see <see cref="WorldMirror.WornLayersBytes"/>).</summary>
@@ -217,7 +277,8 @@ namespace ClassicUO.Game
         public void LogEquipmentSummary()
         {
             WorldMirror m = _world.Ecs.Mirror;
-            Log.Info($"[equip] checks reads={EquipReads} mismatches={EquipMismatches} | read_equipment={(ReadEquipment ? "on" : "off")} mobiles={m.MobileCount} worn bytes={m.WornLayersBytes} writes={m.WornWrites} rescans={m.WornRescans}");
+            (int caches, int withItems, long cacheBytes) = ReadCacheMemory();
+            Log.Info($"[equip] checks reads={EquipReads} mismatches={EquipMismatches} | read_equipment={(ReadEquipment ? "on" : "off")} mobiles={m.MobileCount} worn bytes={m.WornLayersBytes} writes={m.WornWrites} rescans={m.WornRescans} | read caches={caches} with items={withItems} bytes={cacheBytes} refreshes={CacheRefreshes} fills={CacheFills}");
         }
 #else
         public const bool EquipCheckAvailable = false;

@@ -322,9 +322,17 @@ namespace ClassicUO.Game.GameObjects
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Item FindItemByLayer(Layer layer)
         {
-            if (this is Mobile mobile && World?.State is WorldState state && (state.ReadEquipment || state.EquipCheckEnabled))
+            if (this is Mobile mobile && World?.State is WorldState state)
             {
-                return state.FindWorn(mobile, layer);
+                if (state.EquipCheckEnabled)
+                {
+                    return state.FindWorn(mobile, layer);
+                }
+
+                if (state.ReadEquipment)
+                {
+                    return state.WornItem(mobile, layer);
+                }
             }
 
             return FindItemByLayerInList(layer);

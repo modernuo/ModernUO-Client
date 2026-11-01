@@ -110,6 +110,12 @@ namespace ClassicUO.Ecs
         private uint _e;
     }
 
+    [InlineArray(WornLayers.COUNT)]
+    public struct WornCountArray
+    {
+        private byte _e;
+    }
+
     /// <summary>
     /// T3a: a mobile's worn equipment by layer (layers 0x01..0x1D; slot <c>layer - 1</c>): the serial of the first item
     /// attached to the mobile on that layer, i.e. the one <c>Entity.FindItemByLayer</c> finds first in the mobile's child list
@@ -123,6 +129,13 @@ namespace ClassicUO.Ecs
         public const int COUNT = 0x1D;
 
         public WornLayerArray Serials;
+
+        /// <summary>Per layer, the attached items on it (the first is in <see cref="Serials"/>): a departure rescans the
+        /// wearer's equipment only when another one is left.</summary>
+        public WornCountArray Counts;
+
+        /// <summary>Changes with every slot change (a mirror-wide counter, never reused): readers' caches key on it.</summary>
+        public uint Version;
 
         /// <summary>The first attached item's serial on <paramref name="layer"/>, 0 when none or the layer is not tracked.</summary>
         public readonly uint Get(byte layer) => (uint)(layer - 1) < COUNT ? Serials[layer - 1] : 0;

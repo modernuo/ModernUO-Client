@@ -839,10 +839,14 @@ namespace ClassicUO.Ecs
 
         /// <summary>
         /// Memory of WornLayers (layout-based accounting, as <see cref="ContentsCacheBytes"/>): the component's inline array in
-        /// each mobile record's archetype column (4 B per tracked layer; Friflo stores a component in a per-archetype struct
+        /// each mobile record's archetype column (the serials, the per-layer counts and the version: 152 B; Friflo stores a component in a per-archetype struct
         /// array, so the cost is the struct size per mobile record, plus the columns' spare capacity, not counted here).
         /// </summary>
         public long WornLayersBytes => (long)MobileCount * Unsafe.SizeOf<WornLayers>();
+
+        /// <summary>Tests: the attached items on a wearer's layer, as WornLayers counts them.</summary>
+        public int WornCount(uint mobile, byte layer) =>
+            _bySerial.TryGetValue(mobile, out Entity e) && e.TryGetComponent(out WornLayers w) && WornLayers.Tracked(layer) ? w.Counts[layer - 1] : 0;
 
         private void UpdateWorn(Entity e, uint serial, uint oldParent, byte oldLayer, ulong oldStamp)
         {
@@ -873,15 +877,52 @@ namespace ClassicUO.Ecs
             }
         }
 
+        // the wearer's record with WornLayers: a one-entry cache (an operation touches one wearer many times: 0x78's clear and
+        // wears), valid while the serial is the same and no record was removed (the epoch); a new record for a serial only
+        // follows a removal of the old one
+        private Entity _wornParent;
+        private uint _wornParentSerial, _wornParentEpoch;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private bool TryGetWearer(uint parent, out Entity p)
+        {
+            if (_wornParentSerial == parent && _wornParentEpoch == Epoch && parent != 0)
+            {
+                p = _wornParent;
+
+                return true;
+            }
+
+            if (!_bySerial.TryGetValue(parent, out p) || !p.HasComponent<WornLayers>())
+            {
+                return false;
+            }
+
+            _wornParent = p;
+            _wornParentSerial = parent;
+            _wornParentEpoch = Epoch;
+
+            return true;
+        }
+
+        // a slot changed: the mobile's version (a never-reused value, so a reader's cache keyed on it can't see an old one)
+        private void Bump(ref WornLayers w)
+        {
+            WornWrites++;
+            w.Version = (uint)WornWrites;
+        }
+
         // the item joined the wearer's list on the layer with this stamp: it comes first unless an earlier one is there
         private void EnterWorn(uint parent, byte layer, uint serial, ulong stamp)
         {
-            if (!WornLayers.Tracked(layer) || !_bySerial.TryGetValue(parent, out Entity p) || !p.HasComponent<WornLayers>())
+            if (!WornLayers.Tracked(layer) || !TryGetWearer(parent, out Entity p))
             {
                 return;
             }
 
-            ref uint slot = ref p.GetComponent<WornLayers>().Serials[layer - 1];
+            ref WornLayers w = ref p.GetComponent<WornLayers>();
+            w.Counts[layer - 1]++;
+            ref uint slot = ref w.Serials[layer - 1];
 
             if (slot == serial)
             {
@@ -891,24 +932,33 @@ namespace ClassicUO.Ecs
             if (slot == 0 || StampOf(slot) > stamp)
             {
                 slot = serial;
-                WornWrites++;
+                Bump(ref w);
             }
         }
 
-        // the item left the wearer's list on the layer: when it was first, the next attached item on the layer (if any) is
+        // the item left the wearer's list on the layer: when it was first, the next attached item on the layer (if any) is;
+        // the layer's count of attached items spares the index scan when none is left
         private void LeaveWorn(uint parent, byte layer, uint serial)
         {
-            if (!WornLayers.Tracked(layer) || !_bySerial.TryGetValue(parent, out Entity p) || !p.HasComponent<WornLayers>())
+            if (!WornLayers.Tracked(layer) || !TryGetWearer(parent, out Entity p))
             {
                 return;
             }
 
-            ref uint slot = ref p.GetComponent<WornLayers>().Serials[layer - 1];
+            ref WornLayers w = ref p.GetComponent<WornLayers>();
+            ref byte count = ref w.Counts[layer - 1];
+
+            if (count != 0)
+            {
+                count--;
+            }
+
+            ref uint slot = ref w.Serials[layer - 1];
 
             if (slot == serial)
             {
-                slot = FirstWorn(parent, layer, serial);
-                WornWrites++;
+                slot = count == 0 ? 0 : FirstWorn(parent, layer, serial);
+                Bump(ref w);
             }
         }
 
@@ -956,13 +1006,16 @@ namespace ClassicUO.Ecs
                     continue;
                 }
 
+                w.Counts[layer - 1]++;
+
                 if (w.Serials[layer - 1] == 0 || stamp < stamps[layer - 1])
                 {
                     w.Serials[layer - 1] = c.GetComponent<Serial>().Value;
                     stamps[layer - 1] = stamp;
-                    WornWrites++;
                 }
             }
+
+            Bump(ref w);
         }
 
         private ulong StampOf(uint serial) =>
