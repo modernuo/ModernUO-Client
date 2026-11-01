@@ -353,6 +353,10 @@ namespace ClassicUO.Ecs
         public bool ExecuteAnimation;
         public long AnimDue;
         public long IdleDue;
+
+        // T5b-items: a corpse item's UsedLayer bit (the second death action). For a corpse, Frame is AnimIndex, AnimDue its
+        // LastAnimationChangeTime and ExecuteAnimation as on a mobile; the other fields stay 0. Always false on a mobile.
+        public bool UsedLayer;
     }
 
     /// <summary>Per-frame view context of a mobile: overriding hue (highlight, notoriety, out of range...), alpha, step offset.</summary>

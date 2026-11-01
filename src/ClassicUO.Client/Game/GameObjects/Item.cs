@@ -544,6 +544,16 @@ namespace ClassicUO.Game.GameObjects
             }
         }
 
+        /// <summary>T5b-items: the corpse timer fields as this Item holds them (a pure read; the record push copies it into the
+        /// component, the checker compares it).</summary>
+        internal ClassicUO.Ecs.AnimationTimer CorpseTimer => new ClassicUO.Ecs.AnimationTimer
+        {
+            Frame = AnimIndex,
+            ExecuteAnimation = ExecuteAnimation,
+            AnimDue = LastAnimationChangeTime,
+            UsedLayer = UsedLayer
+        };
+
         public override void ProcessAnimation(bool evalutate = false)
         {
             if (!IsCorpse)
