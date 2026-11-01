@@ -293,6 +293,89 @@ namespace ClassicUO.UnitTests.Ecs
             off.World.HouseManager.TryGetHouse(0x4000_0008, out _).Should().BeFalse();
         }
 
+        // Codex P2 #1: a dying mobile's equipment is re-keyed to 0x80000000 | mobile serial; Item.OnGround treats that container
+        // as no container, so the legacy sweep removes it when it is out of range
+        private static void FillDyingEquipment(Scene s)
+        {
+            AddMobile(s, 0x1001, 1005, 1000);
+
+            Item far = s.World.GetOrCreateItem(0x4000_0022);
+            far.Graphic = 0xEED;
+            far.Container = 0x1001 | 0x8000_0000;
+            far.Layer = Layer.Shirt;
+            far.X = 1000 + 60;
+            far.Y = 1000;
+            s.World.Ecs.Sync(far);
+            s.Items[far.Serial] = far;
+
+            Item near = s.World.GetOrCreateItem(0x4000_0023);
+            near.Graphic = 0xEED;
+            near.Container = 0x1001 | 0x8000_0000;
+            near.Layer = Layer.Pants;
+            near.X = 1000 + 3;
+            near.Y = 1000;
+            s.World.Ecs.Sync(near);
+            s.Items[near.Serial] = near;
+        }
+
+        [Fact]
+        public void A_Dying_Mobiles_Equipment_Is_Swept_Like_The_Legacy_Rule_Does()
+        {
+            Scene on = Build(true), off = Build(false);
+            FillDyingEquipment(on);
+            FillDyingEquipment(off);
+            on.Items[0x4000_0022].OnGround.Should().BeTrue("the dying-mobile key is not a valid container serial");
+
+            SweepItemLoop(on.World);
+            SweepItemLoop(off.World);
+
+            off.Items[0x4000_0022].IsDestroyed.Should().BeTrue();
+            on.Items[0x4000_0022].IsDestroyed.Should().BeTrue();
+            on.Items[0x4000_0023].IsDestroyed.Should().BeFalse();
+            on.Mismatches.Should().BeEmpty();
+            off.Mismatches.Should().BeEmpty();
+            on.World.SweepRemovedItems.Should().Be(off.World.SweepRemovedItems).And.Be(1);
+        }
+
+        // Codex P2 #2: a multi that was destroyed but is still held has no ECS entity; the legacy loop still runs the house check
+        [Fact]
+        public void A_Destroyed_Held_Multi_Still_Gets_Its_House_Cleanup()
+        {
+            Scene on = Build(true), off = Build(false);
+
+            foreach (Scene s in new[] { on, off })
+            {
+                Item multi = AddGround(s, 0x4000_0030, 1000 + 60, 1000, multi: true);
+                s.World.HouseManager.Add(multi.Serial, new House(s.World, multi.Serial, 1, false));
+                multi.Destroy();
+                multi.IsDestroyed.Should().BeTrue();
+                s.World.Items.Get(multi.Serial).Should().BeSameAs(multi, "the table still holds it");
+            }
+
+            SweepItemLoop(on.World);
+            SweepItemLoop(off.World);
+
+            off.World.HouseManager.TryGetHouse(0x4000_0030, out _).Should().BeFalse("the legacy loop cleans the house up");
+            on.World.HouseManager.TryGetHouse(0x4000_0030, out _).Should().BeFalse("and so does the system path");
+            on.Mismatches.Should().BeEmpty();
+            off.Mismatches.Should().BeEmpty();
+        }
+
+        [Fact]
+        public void The_Checker_Reports_A_Missed_House_Cleanup()
+        {
+            Scene s = Build(true);
+            Item multi = AddGround(s, 0x4000_0031, 1000 + 60, 1000, multi: true);
+            s.World.HouseManager.Add(multi.Serial, new House(s.World, multi.Serial, 1, false));
+            multi.Destroy();
+
+            // the loop skips the item: the legacy rule would have run the house check
+            s.World.PrepareItemSweep();
+            s.World.FinishItemSweep();
+
+            s.Mismatches.Should().Contain(m => m.StartsWith("[sweep] mismatch (house cleanup)"));
+        }
+
         [Fact]
         public void The_Item_Sweep_Runs_In_Table_Order()
         {

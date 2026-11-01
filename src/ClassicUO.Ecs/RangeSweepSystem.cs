@@ -27,13 +27,22 @@ namespace ClassicUO.Ecs
         private readonly ArchetypeQuery _mobiles;
         private readonly ArchetypeQuery _items;
         private readonly ArchetypeQuery _inputs;
+        private readonly ArchetypeQuery _wornItems;
+        private readonly ArchetypeQuery _containedItems;
 
         public RangeSweepSystem(EntityStore store)
         {
             _mobiles = store.Query().AllComponents(ComponentTypes.Get<Serial, Position, MobileClock>()).AllTags(Tags.Get<MobileTag>());
             _items = store.Query().AllComponents(ComponentTypes.Get<Serial, Position>()).AllTags(Tags.Get<ItemTag, OnGround>());
+            // Item.OnGround is "the container serial is not valid": a dying mobile's equipment is re-keyed to 0x80000000 | serial
+            // and stays EquippedOn without the OnGround tag, but the legacy sweep still treats it as a ground item
+            _wornItems = store.Query().AllComponents(ComponentTypes.Get<Serial, Position, EquippedOn>()).AllTags(Tags.Get<ItemTag>());
+            _containedItems = store.Query().AllComponents(ComponentTypes.Get<Serial, Position, ContainedIn>()).AllTags(Tags.Get<ItemTag>());
             _inputs = store.Query().AllComponents(ComponentTypes.Get<Serial, MobileInputs>()).AllTags(Tags.Get<MobileTag>());
         }
+
+        /// <summary>ClassicUO's <c>SerialHelper.IsValid</c>: a container serial that names a real mobile or item. Anything else (0, or the 0x80000000 | serial of a dying mobile) puts the item on the ground.</summary>
+        private static bool IsValidSerial(uint serial) => serial > 0 && serial < 0x80000000;
 
         /// <summary>Entities seen by the last collect.</summary>
         public int Scanned { get; private set; }
@@ -84,7 +93,7 @@ namespace ClassicUO.Ecs
             Scanned = scanned;
         }
 
-        /// <summary>Ground items beyond <paramref name="range"/> by their position go to <paramref name="beyond"/>.</summary>
+        /// <summary>Ground items (legacy <c>OnGround</c>: no valid container serial) beyond <paramref name="range"/> by their position go to <paramref name="beyond"/>.</summary>
         public void CollectItems(int cx, int cy, int range, List<uint> beyond)
         {
             int scanned = 0;
@@ -105,6 +114,50 @@ namespace ClassicUO.Ecs
                 for (int i = 0; i < n; i++)
                 {
                     if (RangeSweepRules.Beyond(positions[i].X, positions[i].Y, cx, cy, range))
+                    {
+                        beyond.Add(serials[i].Value);
+                    }
+                }
+            }
+
+            foreach (Archetype arch in _wornItems.Archetypes)
+            {
+                int n = arch.Count;
+
+                if (n == 0)
+                {
+                    continue;
+                }
+
+                ReadOnlySpan<Serial> serials = arch.Components<Serial>();
+                ReadOnlySpan<Position> positions = arch.Components<Position>();
+                ReadOnlySpan<EquippedOn> parents = arch.Components<EquippedOn>();
+
+                for (int i = 0; i < n; i++)
+                {
+                    if (!IsValidSerial(parents[i].Parent) && !arch.Tags.Has<OnGround>() && RangeSweepRules.Beyond(positions[i].X, positions[i].Y, cx, cy, range))
+                    {
+                        beyond.Add(serials[i].Value);
+                    }
+                }
+            }
+
+            foreach (Archetype arch in _containedItems.Archetypes)
+            {
+                int n = arch.Count;
+
+                if (n == 0)
+                {
+                    continue;
+                }
+
+                ReadOnlySpan<Serial> serials = arch.Components<Serial>();
+                ReadOnlySpan<Position> positions = arch.Components<Position>();
+                ReadOnlySpan<ContainedIn> parents = arch.Components<ContainedIn>();
+
+                for (int i = 0; i < n; i++)
+                {
+                    if (!IsValidSerial(parents[i].Parent) && !arch.Tags.Has<OnGround>() && RangeSweepRules.Beyond(positions[i].X, positions[i].Y, cx, cy, range))
                     {
                         beyond.Add(serials[i].Value);
                     }
