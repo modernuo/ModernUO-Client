@@ -15,16 +15,18 @@ namespace ClassicUO.UnitTests.Ecs
     // (so a reader that ignores the switch fails). The gumps (ContainerGump, GridLootGump, TradingGump, SpellbookGump, ItemGump),
     // the shop handlers (0x24's 0x30, 0x74), Profile's gump save and GetTotalAmountOfItem need the UI or the tile data: they
     // walk the same Children/HasChildren, and the gate runs them with the switch on.
+    // (not in parallel with the mobile tests: the builders set the static Time.Ticks and RandomHelper seed)
+    [Collection(nameof(FunnelCheckCollection))]
     public class WorldStateReaderTests
     {
-        private const uint PACK = 0x4000_7A00, BAG = 0x4000_7A01, GOLD1 = 0x4000_7A02, GOLD2 = 0x4000_7A03, ARROWS = 0x4000_7A04, BAND = 0x4000_7A05,
+        internal const uint PACK = 0x4000_7A00, BAG = 0x4000_7A01, GOLD1 = 0x4000_7A02, GOLD2 = 0x4000_7A03, ARROWS = 0x4000_7A04, BAND = 0x4000_7A05,
             BOOK = 0x4000_7A06, INBOOK = 0x4000_7A07, TRADE = 0x4000_7A08, TRADED = 0x4000_7A09, CAP = 0x4000_7A0A, GOLD3 = 0x4000_7A0B;
 
         private const int ARROW_CLILOC = 1023902;
 
-        internal static World Build(out PlayerMobile player)
+        internal static World Build(out PlayerMobile player, uint playerSerial = 0x0000_3000)
         {
-            World world = WorldWriterMobileTests.BuildPlayer(out WorldWriterMobileTests.TestPlayer p);
+            World world = WorldWriterMobileTests.BuildPlayer(out WorldWriterMobileTests.TestPlayer p, playerSerial);
             player = p;
             world.Writer.ThrowOnViolation = true;
 
@@ -64,7 +66,7 @@ namespace ClassicUO.UnitTests.Ecs
             return on;
         }
 
-        private static List<object> Walk(World world, Entity parent)
+        internal static List<object> Walk(World world, Entity parent)
         {
             var list = new List<object>();
 

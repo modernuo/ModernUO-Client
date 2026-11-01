@@ -292,7 +292,15 @@ namespace ClassicUO.Game
         /// </summary>
         internal void CommitSpellbook(Item book, ulong spells)
         {
-            if (HoldsEntity(book) && Mirror.SetSpellbook(book.Serial, spells))
+            if (!HoldsEntity(book))
+            {
+                return;
+            }
+
+            // Codex audit P2 (#3): the entries stand for the old set (FillSpellbook hands the new ones over after this)
+            _world.State.DropSpellEntries(book.Serial);
+
+            if (Mirror.SetSpellbook(book.Serial, spells))
             {
                 ExtrasWrites++;
             }
@@ -595,6 +603,12 @@ namespace ClassicUO.Game
             }
 
             Mirror.Remove(entity.Serial);
+
+            // Codex audit P2 (#3): a book's spell entries go with its record
+            if (entity is Item)
+            {
+                _world.State.DropSpellEntries(entity.Serial);
+            }
         }
 
         /// <summary>
@@ -687,8 +701,10 @@ namespace ClassicUO.Game
             if (Mirror.Count != 0)
             {
                 Log.Warn($"[ECS] {Mirror.Count} entities left after World.Clear; resetting mirror");
-                Mirror.Clear();
             }
+
+            // (also with no record left: the contents cache can hold slots of parents that had none; Codex audit)
+            Mirror.Clear();
         }
 
         private uint _cacheLogAt, _inputLogAt, _clockLogAt;
