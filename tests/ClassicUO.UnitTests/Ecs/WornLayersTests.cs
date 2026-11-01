@@ -42,6 +42,19 @@ namespace ClassicUO.UnitTests.Ecs
                 {
                     Item it = ListFind(m, (Layer)l);
                     world.Ecs.Mirror.Worn(m.Serial, (byte)l).Should().Be(it?.Serial ?? 0, $"layer 0x{l:X2} of 0x{m.Serial:X8}");
+
+                    // the layer's count of attached items (what spares the rescan) is the list's count of held items on it
+                    int listed = 0;
+
+                    for (LinkedObject i = m.Items; i != null; i = i.Next)
+                    {
+                        if (i is Item c && c.Layer == (Layer)l && ReferenceEquals(world.Items.Get(c.Serial), c))
+                        {
+                            listed++;
+                        }
+                    }
+
+                    world.Ecs.Mirror.WornCount(m.Serial, (byte)l).Should().Be(listed, $"count of layer 0x{l:X2} of 0x{m.Serial:X8}");
                 }
             }
         }
@@ -229,7 +242,7 @@ namespace ClassicUO.UnitTests.Ecs
             e.Tags.Has<PlayerTag>().Should().BeTrue();
             e.Tags.Has<EquipmentDirty>().Should().BeTrue();
             mirror.UpsertMobile(0x0000_1001, 0x190, 0, 0, 0, 0, 0, 0, false).Tags.Has<PlayerTag>().Should().BeFalse();
-            mirror.WornLayersBytes.Should().Be(2 * WornLayers.COUNT * 4);
+            mirror.WornLayersBytes.Should().Be(2 * 152, "4 B serials and 1 B counts per layer, a 4 B version, aligned");
         }
     }
 }
