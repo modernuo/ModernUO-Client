@@ -28,9 +28,8 @@ src/ClassicUO.Client/Game/GameObjects/GameObject.cs|X|2
 src/ClassicUO.Client/Game/GameObjects/GameObject.cs|Y|2
 src/ClassicUO.Client/Game/GameObjects/GameObject.cs|Z|2
 src/ClassicUO.Client/Game/GameObjects/GameObject.cs|_graphic|1
-src/ClassicUO.Client/Game/GameObjects/Item.cs|AnimIndex|2
+src/ClassicUO.Client/Game/GameObjects/Item.cs|AnimIndex|1
 src/ClassicUO.Client/Game/GameObjects/Item.cs|Direction|1
-src/ClassicUO.Client/Game/GameObjects/Item.cs|LastAnimationChangeTime|1
 src/ClassicUO.Client/Game/GameObjects/Item.cs|Layer|1
 src/ClassicUO.Client/Game/GameObjects/Item.cs|Serial|1
 src/ClassicUO.Client/Game/GameObjects/Item.cs|UsedLayer|1

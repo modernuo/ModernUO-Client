@@ -2761,6 +2761,33 @@ namespace ClassicUO.Game
             return true;
         }
 
+        // ---- funnel part 8, group 2: a corpse's frame advance (Item.ProcessAnimation, per item when due)
+
+        /// <summary>
+        /// <c>Item.ProcessAnimation</c> for a corpse whose frame is due: the frame the caller read from the animation data
+        /// (<c>TryCorpseFrame</c>; when <paramref name="frame"/> &lt; 0 there was none and the frame index stays), then the
+        /// next frame's due time, the old writes in their old order. Neither is a record field or an input (the ECS item
+        /// extract reads them each frame), so nothing is committed or pushed, as before T1. Admission as
+        /// <see cref="IdleAnimation"/> (the item update loop passes what it iterates).
+        /// </summary>
+        public void AdvanceCorpseFrame(Item corpse, int frame, long due)
+        {
+            if (!PerFrameAdmitted(corpse, nameof(AdvanceCorpseFrame)))
+            {
+                return;
+            }
+
+            using (Open(corpse, null))
+            {
+                if (frame >= 0)
+                {
+                    corpse.AnimIndex = (byte)frame;
+                }
+
+                corpse.LastAnimationChangeTime = due;
+            }
+        }
+
         // the admission of the per-frame operations of part 8 (as InterpolateStep's): no operation or fold open, and an
         // entity of this World (a stale instance included; only another World's is a violation, rejected)
         private bool PerFrameAdmitted(Entity entity, string operation)
