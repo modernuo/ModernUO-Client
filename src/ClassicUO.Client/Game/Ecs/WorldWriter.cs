@@ -739,6 +739,13 @@ namespace ClassicUO.Game
                 }
 #endif
 
+                // T2: the clear also drops a spellbook's detached spell entries (not world objects: RemoveItem skips them,
+                // the head below drops them); committed first
+                if (!keepEquipped && container is Item book && _world.Ecs.Mirror.Spellbook(book.Serial) != 0)
+                {
+                    _world.Ecs.CommitSpellbook(book, 0);
+                }
+
                 // the old loop: each removal by serial (World.RemoveItem: out of the child list, the contents, OPL,
                 // Destroy); the kept equipment's links are untouched and the head is set to the first kept one
                 LinkedObject first = container.Items;
@@ -2347,6 +2354,9 @@ namespace ClassicUO.Game
                         _world.Ecs.CommitDetach(child);
                     }
                 }
+
+                // T2: the spell set the detached entries below stand for (computed from the packet)
+                _world.Ecs.CommitSpellbook(spellbook, spells0 | ((ulong)spells1 << 32));
 
                 spellbook.Graphic = graphic;
                 spellbook.Clear();
