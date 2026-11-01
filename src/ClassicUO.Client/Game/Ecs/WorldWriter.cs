@@ -2714,6 +2714,72 @@ namespace ClassicUO.Game
             }
         }
 
+        // ---- funnel part 8, group 1: the idle animation and the footstep sound (Mobile.Update, per mobile when due). Like
+        // AdvanceAnimation: the update loops pass the instance they iterate, so a stale instance of this World is written as
+        // before T1 (every push ignores it) and only another World's is a violation, rejected (nothing changes). Unfolded and
+        // committing nothing: the setters push what they pushed before T1 (the idle timer's clock push; SetAnimation's), and
+        // the update loops publish the rest after Update.
+
+        /// <summary>
+        /// <c>Mobile.SetIdleAnimation</c> (its idle timer is due): the plan <c>Mobile.PlanIdleAnimation</c> computed from the
+        /// mobile and the animation data (the random draws included), written in the old order by <c>Mobile.ApplyIdle</c>:
+        /// the idle timer's next due time and its clock push; unless mounted, in war mode or not animating, the timer fields'
+        /// idle reset (frame 0, no frame count, interval 1, repeat mode 1, forward, no repeat, from the server); then the
+        /// group, or <c>SetAnimation</c> of the group it had when neither idle action exists.
+        /// </summary>
+        public void IdleAnimation(Mobile mobile, in Mobile.IdlePlan plan)
+        {
+            if (!PerFrameAdmitted(mobile, nameof(IdleAnimation)))
+            {
+                return;
+            }
+
+            using (Open(mobile, null))
+            {
+                mobile.ApplyIdle(in plan);
+            }
+        }
+
+        /// <summary>
+        /// <c>Mobile.ProcessFootstepsSound</c> (a walking human's step sound is due): the next sound offset, then the next
+        /// sound's due time, the old writes in their old order. The caller plays the sound after this returns true (it read
+        /// neither field; before T1 it played between the two writes). False: rejected, nothing changed, no sound.
+        /// </summary>
+        public bool StepSound(Mobile mobile, int offset, long due)
+        {
+            if (!PerFrameAdmitted(mobile, nameof(StepSound)))
+            {
+                return false;
+            }
+
+            using (Open(mobile, null))
+            {
+                mobile.StepSoundOffset = offset;
+                mobile.LastStepSoundTime = due;
+            }
+
+            return true;
+        }
+
+        // the admission of the per-frame operations of part 8 (as InterpolateStep's): no operation or fold open, and an
+        // entity of this World (a stale instance included; only another World's is a violation, rejected)
+        private bool PerFrameAdmitted(Entity entity, string operation)
+        {
+            if (entity == null || !Admitted(operation, entity.Serial))
+            {
+                return false;
+            }
+
+            if (entity.World != _world)
+            {
+                Reject(Violation.NotHeld, $"WorldWriter.{operation}: 0x{entity.Serial:X8} belongs to another World", rejected: true);
+
+                return false;
+            }
+
+            return true;
+        }
+
         // the held check of the status operations: the instance this World holds for the entity's serial, or the detached
         // World.Player (removed under its serial while World.Player stays; written as before T1: nothing of it reaches the
         // ECS). Anything else is a violation, rejected (no pre-T1 path: the handlers pass what they just looked up).
