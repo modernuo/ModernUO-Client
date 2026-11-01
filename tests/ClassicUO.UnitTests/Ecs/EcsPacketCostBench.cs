@@ -603,6 +603,13 @@ namespace ClassicUO.UnitTests.Ecs
             // "T3b hard", "T3b data", "T3b hard2" (e2t3b.py: data <= hard within the +0.1 us / 2x spread rule, 0 B).
             T3bRows(rows, n, packets);
 
+            // T4 (ecs_owns_scalars): the cost of one converted getter read, the cache (the getter with the switch off) against
+            // the record through the entity's handle (the getter's read with it on), on a fresh scene where every mobile has
+            // a name, hits, stamina and mana and every worn item a price. "settled": the handle is valid (no deletion since
+            // the last read); "after a deletion": the mirror epoch moved since each entity's last read, so every read looks
+            // the handle up again (the serial dictionary and World's identity check). New arm only (e2t4.py).
+            T4Rows(rows, n, packets);
+
             if (t3Sink < 0)
             {
                 sb.AppendLine("unreachable");
@@ -617,6 +624,84 @@ namespace ClassicUO.UnitTests.Ecs
             }
 
             sb.AppendLine();
+        }
+
+        private static void T4Rows(List<(string name, (double us, double bytes) r)> rows, int n, int packets)
+        {
+            Scene s = Build(n);
+            WorldMirror mirror = s.World.Ecs.Mirror;
+
+            for (int i = 0; i < n; i++)
+            {
+                Mobile m = s.Mobiles[i];
+                string name = "mobile " + i;
+                mirror.SetName(m.Serial, name);
+                mirror.SetVitals(m.Serial, (ushort)(i & 0x7F), 0x80);
+                mirror.SetStamina(m.Serial, 0x80, (ushort)(i & 0x3F));
+                mirror.SetMana(m.Serial, 0x80, (ushort)(i & 0x1F));
+                m.Name = name;
+                m.Hits = (ushort)(i & 0x7F);
+                m.HitsMax = 0x80;
+                m.StaminaMax = 0x80;
+                m.Stamina = (ushort)(i & 0x3F);
+                m.ManaMax = 0x80;
+                m.Mana = (ushort)(i & 0x1F);
+            }
+
+            for (int i = 0; i < s.Worn.Length; i++)
+            {
+                mirror.SetPrice(s.Worn[i].Serial, (uint)i + 1);
+                s.Worn[i].Price = (uint)i + 1;
+            }
+
+            long sink = 0;
+            int items = s.Worn.Length;
+
+            rows.Add(("T4 Name: cache", Measure(packets, i => sink += s.Mobiles[i % n].CachedName.Length)));
+            rows.Add(("T4 Name: ECS, settled", Measure(packets, i => { Mobile m = s.Mobiles[i % n]; sink += (m.TryScalarEntity(out var e) ? EcsScalars.Name(e) : m.CachedName).Length; })));
+            rows.Add(("T4 Hits: cache", Measure(packets, i => sink += s.Mobiles[i % n].CachedHits)));
+            rows.Add(("T4 Hits: ECS, settled", Measure(packets, i => { Mobile m = s.Mobiles[i % n]; sink += m.TryScalarEntity(out var e) ? EcsScalars.Hits(e) : m.CachedHits; })));
+            rows.Add(("T4 Mana: cache", Measure(packets, i => sink += s.Mobiles[i % n].CachedMana)));
+            rows.Add(("T4 Mana: ECS, settled", Measure(packets, i => { Mobile m = s.Mobiles[i % n]; sink += m.TryScalarEntity(out var e) ? EcsScalars.Mana(e) : m.CachedMana; })));
+            rows.Add(("T4 Price: cache", Measure(packets, i => sink += s.Worn[i % items].CachedPrice)));
+            rows.Add(("T4 Price: ECS, settled", Measure(packets, i => { Item it = s.Worn[i % items]; sink += it.TryScalarEntity(out var e) ? EcsScalars.Price(e) : it.CachedPrice; })));
+            // four getters of one mobile (a status bar's read: hits, max, mana, stamina)
+            rows.Add(("T4 status bar 4 reads: cache", Measure(packets, i => { Mobile m = s.Mobiles[i % n]; sink += m.CachedHits + m.CachedHitsMax + m.CachedMana + m.CachedStamina; })));
+            rows.Add(("T4 status bar 4 reads: ECS, settled", Measure(packets, i =>
+            {
+                Mobile m = s.Mobiles[i % n];
+                sink += (m.TryScalarEntity(out var e) ? EcsScalars.Hits(e) : m.CachedHits) + (m.TryScalarEntity(out e) ? EcsScalars.HitsMax(e) : m.CachedHitsMax) +
+                        (m.TryScalarEntity(out e) ? EcsScalars.Mana(e) : m.CachedMana) + (m.TryScalarEntity(out e) ? EcsScalars.Stamina(e) : m.CachedStamina);
+            })));
+
+            // the handle after a deletion: an epoch bump per pass over the entities (a spare record created and removed)
+            uint spare = 0x5100_0000;
+            rows.Add(("T4 Hits: cache, with the deletion", Measure(packets, i =>
+            {
+                if (i % n == 0)
+                {
+                    mirror.UpsertItem(spare, 0xEED, 0, 0, 0, 0, 0, 0, 1, WorldMirror.NO_CONTAINER, 0, false, false);
+                    mirror.Remove(spare);
+                }
+
+                sink += s.Mobiles[i % n].CachedHits;
+            })));
+            rows.Add(("T4 Hits: ECS, after a deletion", Measure(packets, i =>
+            {
+                if (i % n == 0)
+                {
+                    mirror.UpsertItem(spare, 0xEED, 0, 0, 0, 0, 0, 0, 1, WorldMirror.NO_CONTAINER, 0, false, false);
+                    mirror.Remove(spare);
+                }
+
+                Mobile m = s.Mobiles[i % n];
+                sink += m.TryScalarEntity(out var e) ? EcsScalars.Hits(e) : m.CachedHits;
+            })));
+
+            if (sink == long.MinValue)
+            {
+                rows.Add(("unreachable", (0, 0)));
+            }
         }
 
         private static void T3bRows(List<(string name, (double us, double bytes) r)> rows, int n, int packets)

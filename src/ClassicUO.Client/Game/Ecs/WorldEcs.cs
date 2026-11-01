@@ -86,6 +86,7 @@ namespace ClassicUO.Game
                 }
 
                 MobileMirrorWrites++;
+                uint epochBefore = Mirror.Epoch;
                 EcsEntity e = Mirror.UpsertMobile
                 (
                     mobile.Serial,
@@ -98,6 +99,7 @@ namespace ClassicUO.Game
                     (byte)mobile.Flags,
                     ReferenceEquals(mobile, _world.Player)
                 );
+                RestoreScalars(mobile, epochBefore);
 
                 // W5: graphic, flags and direction reach the mirror only here, so the pushed inputs follow them here
                 WriteInputs(mobile, e);
@@ -167,7 +169,9 @@ namespace ClassicUO.Game
 
             CommitObserver?.Invoke(item, v);
             ItemMirrorWrites++;
+            uint epochBefore = Mirror.Epoch;
             Mirror.UpsertItem(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.Amount, v.Container, (byte)v.Layer, v.IsMulti, attach);
+            RestoreScalars(item, epochBefore);
 
             // W5: corpses animate in World.Update (SyncItem does the same)
             if (v.Graphic == 0x2006)
@@ -201,8 +205,11 @@ namespace ClassicUO.Game
 
             MobileCommitObserver?.Invoke(mobile, v);
             MobileMirrorWrites++;
+            uint epochBefore = Mirror.Epoch;
+            EcsEntity e = Mirror.UpsertMobile(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.IsPlayer);
+            RestoreScalars(mobile, epochBefore);
 
-            return Mirror.UpsertMobile(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.IsPlayer);
+            return e;
         }
 
         /// <summary>
@@ -239,9 +246,39 @@ namespace ClassicUO.Game
         // their values, before their cache writes. Each ignores an entity World does not hold (the detached player, a stale
         // instance) or that has no record.
 
+        // T4: World holds this instance AND the record under its serial is of its kind (a death-rekeyed mobile and a corpse
+        // item can share a serial; the mirror keeps one record per serial, so a commit must not write the other kind's record)
         private bool HoldsEntity(Entity entity) =>
             entity != null && !entity.IsDestroyed &&
-            (entity is Mobile ? ReferenceEquals(_world.Mobiles.Get(entity.Serial), entity) : ReferenceEquals(_world.Items.Get(entity.Serial), entity));
+            (entity is Mobile ? ReferenceEquals(_world.Mobiles.Get(entity.Serial), entity) : ReferenceEquals(_world.Items.Get(entity.Serial), entity)) &&
+            Mirror.TryGetEntity(entity.Serial, entity is Mobile, out _);
+
+        /// <summary>
+        /// T4: an upsert replaced a record of the other kind under this serial (the epoch moved): the new record starts without
+        /// the cold fields, so the instance's cached values are written to it (the getters read the record).
+        /// </summary>
+        private void RestoreScalars(Entity entity, uint epochBefore)
+        {
+            if (Mirror.Epoch == epochBefore)
+            {
+                return;
+            }
+
+            uint s = entity.Serial;
+            Mirror.SetName(s, entity.CachedName);
+            Mirror.SetVitals(s, entity.CachedHits, entity.CachedHitsMax);
+
+            if (entity is Mobile m)
+            {
+                Mirror.SetStamina(s, m.CachedStaminaMax, m.CachedStamina);
+                Mirror.SetMana(s, m.CachedManaMax, m.CachedMana);
+                Mirror.SetNotoriety(s, (byte)m.NotorietyFlag);
+            }
+            else if (entity is Item i)
+            {
+                Mirror.SetPrice(s, i.CachedPrice);
+            }
+        }
 
         /// <summary>T1, tests: every cold-field commit (name, vitals, notoriety, price, child stamp) that reached a record.</summary>
         internal long ExtrasWrites;
@@ -257,6 +294,24 @@ namespace ClassicUO.Game
         internal void CommitVitals(Entity entity, ushort hits, ushort hitsMax)
         {
             if (HoldsEntity(entity) && Mirror.SetVitals(entity.Serial, hits, hitsMax))
+            {
+                ExtrasWrites++;
+            }
+        }
+
+        /// <summary>T4: a mobile's stamina pool (StaminaMax, Stamina), in the record's <c>Vitals</c>.</summary>
+        internal void CommitStamina(Mobile mobile, ushort staminaMax, ushort stamina)
+        {
+            if (HoldsEntity(mobile) && Mirror.SetStamina(mobile.Serial, staminaMax, stamina))
+            {
+                ExtrasWrites++;
+            }
+        }
+
+        /// <summary>T4: a mobile's mana pool (ManaMax, Mana), in the record's <c>Vitals</c>.</summary>
+        internal void CommitMana(Mobile mobile, ushort manaMax, ushort mana)
+        {
+            if (HoldsEntity(mobile) && Mirror.SetMana(mobile.Serial, manaMax, mana))
             {
                 ExtrasWrites++;
             }
@@ -328,6 +383,7 @@ namespace ClassicUO.Game
             }
 
             ItemMirrorWrites++;
+            uint epochBefore = Mirror.Epoch;
             Mirror.UpsertItem
             (
                 item.Serial,
@@ -343,6 +399,7 @@ namespace ClassicUO.Game
                 (byte)item.Layer,
                 item.IsMulti
             );
+            RestoreScalars(item, epochBefore);
 
             // W5: corpses animate in World.Update; every item change reaches the mirror here
             if (item.IsCorpse)
@@ -729,6 +786,9 @@ namespace ClassicUO.Game
             // T3b: CUO_LAYER_RULES_CHECK's 5 s summary
             LayerRuleEval.LogSummary();
 
+            // T4: CUO_SCALAR_READS's per-frame read counts (5 s summary)
+            ScalarReads.EndFrame();
+
             if (MobileAnimationSystem.CacheCheck && Time.Ticks >= _cacheLogAt)
             {
                 _cacheLogAt = Time.Ticks + 5000;
@@ -916,7 +976,8 @@ namespace ClassicUO.Game
             }
         }
 
-        // -ecscheck v2 (T1 funnel part 9): every item's Layer, its name, hits and price
+        // -ecscheck v2 (T1 funnel part 9): every item's Layer, its name, hits and price. T4: the caches (the fields the funnel
+        // writes), not the getters, so with ecs_owns_scalars on (the getters read the record) a difference is a stale cache.
         private void CompareItemExtras(Item item, ref int mismatches)
         {
             if (!Mirror.TryGetExtras(item.Serial, out MirrorExtras x))
@@ -924,19 +985,19 @@ namespace ClassicUO.Game
                 return; // CompareItem reported it missing
             }
 
-            if (x.ItemLayer != (byte)item.Layer || !string.Equals(x.Name, item.Name, StringComparison.Ordinal) || x.Hits != item.Hits ||
-                x.HitsMax != item.HitsMax || x.Price != item.Price)
+            if (x.ItemLayer != (byte)item.Layer || !string.Equals(x.Name, item.CachedName, StringComparison.Ordinal) || x.Hits != item.CachedHits ||
+                x.HitsMax != item.CachedHitsMax || x.Price != item.CachedPrice)
             {
                 Report
                 (
                     ref mismatches,
-                    $"item 0x{item.Serial:X8} v2: World layer={(byte)item.Layer} name={Quote(item.Name)} hits={item.Hits}/{item.HitsMax} price={item.Price} | " +
+                    $"item 0x{item.Serial:X8} v2{StaleTag}: World layer={(byte)item.Layer} name={Quote(item.CachedName)} hits={item.CachedHits}/{item.CachedHitsMax} price={item.CachedPrice} | " +
                     $"ECS layer={x.ItemLayer} name={Quote(x.Name)} hits={x.Hits}/{x.HitsMax} price={x.Price}"
                 );
             }
         }
 
-        // -ecscheck v2: a mobile's name, hits and notoriety
+        // -ecscheck v2: a mobile's name, hits and notoriety; T4: its stamina and mana. The caches, as above.
         private void CompareMobileExtras(Mobile mobile, ref int mismatches)
         {
             if (!Mirror.TryGetExtras(mobile.Serial, out MirrorExtras x))
@@ -944,17 +1005,22 @@ namespace ClassicUO.Game
                 return;
             }
 
-            if (!string.Equals(x.Name, mobile.Name, StringComparison.Ordinal) || x.Hits != mobile.Hits || x.HitsMax != mobile.HitsMax ||
-                x.Notoriety != (byte)mobile.NotorietyFlag)
+            if (!string.Equals(x.Name, mobile.CachedName, StringComparison.Ordinal) || x.Hits != mobile.CachedHits || x.HitsMax != mobile.CachedHitsMax ||
+                x.Notoriety != (byte)mobile.NotorietyFlag || x.Stamina != mobile.CachedStamina || x.StaminaMax != mobile.CachedStaminaMax ||
+                x.Mana != mobile.CachedMana || x.ManaMax != mobile.CachedManaMax)
             {
                 Report
                 (
                     ref mismatches,
-                    $"mobile 0x{mobile.Serial:X8} v2: World name={Quote(mobile.Name)} hits={mobile.Hits}/{mobile.HitsMax} noto={(byte)mobile.NotorietyFlag} | " +
-                    $"ECS name={Quote(x.Name)} hits={x.Hits}/{x.HitsMax} noto={x.Notoriety}"
+                    $"mobile 0x{mobile.Serial:X8} v2{StaleTag}: World name={Quote(mobile.CachedName)} hits={mobile.CachedHits}/{mobile.CachedHitsMax} noto={(byte)mobile.NotorietyFlag} " +
+                    $"stam={mobile.CachedStamina}/{mobile.CachedStaminaMax} mana={mobile.CachedMana}/{mobile.CachedManaMax} | " +
+                    $"ECS name={Quote(x.Name)} hits={x.Hits}/{x.HitsMax} noto={x.Notoriety} stam={x.Stamina}/{x.StaminaMax} mana={x.Mana}/{x.ManaMax}"
                 );
             }
         }
+
+        // T4: with ecs_owns_scalars on the ECS is the reference, so a difference is a stale write-only cache
+        private static string StaleTag => EcsScalars.Owns ? " stale cache" : "";
 
         private static string Quote(string s) => s == null ? "null" : $"\"{s}\"";
 

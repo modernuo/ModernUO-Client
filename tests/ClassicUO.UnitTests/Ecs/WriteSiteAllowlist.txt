@@ -3,7 +3,6 @@
 # regenerate with CUO_WRITE_BUDGET_REGEN=1 dotnet test --filter WriteSiteBudgetTests after removing writes.
 src/ClassicUO.Client/DevBench.cs|Amount|1
 src/ClassicUO.Client/DevBench.cs|Graphic|5
-src/ClassicUO.Client/DevBench.cs|Hits|2
 src/ClassicUO.Client/DevBench.cs|Hue|1
 src/ClassicUO.Client/DevBench.cs|X|1
 src/ClassicUO.Client/DevBench.cs|Y|1

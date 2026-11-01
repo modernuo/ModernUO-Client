@@ -81,9 +81,12 @@ namespace ClassicUO.Ecs
         public string Value;
     }
 
+    // T4: the stamina and mana pools share the component with the hits (one archetype column, added on the first non-zero
+    // write of any of the six; absent = all 0, the GameObject default).
     public struct Vitals : IComponent
     {
         public ushort Hits, HitsMax;
+        public ushort Stamina, StaminaMax, Mana, ManaMax;
     }
 
     public struct MobileNotoriety : IComponent

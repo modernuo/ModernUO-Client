@@ -265,6 +265,8 @@ So the data file is keyed by body group (human male/female, elf male/female, gar
 - **If T4 is neutral or better:** continue to T9.
 - **If it regresses frame time or memory beyond noise:** stop, and bring the numbers to the owner before T5.
 
+**Status, T4 (2026-11-01):** on `bg/ecs-t4-scalars` (39868757f; poc-log "T4: thin handles"). `ecs_owns_scalars` (default off) makes `Name`, `Hits`, `HitsMax`, `Stamina`, `StaminaMax`, `Mana`, `ManaMax` and `Price` read the record through `Entity.TryScalarEntity` (the handle moved to `Entity`, plus an identity-checked `EcsEntityHeld`); an entity without a held record reads its cache. `Flags`, `Direction`, `NotorietyFlag`, `Amount`, `Container` and `Layer` stay caches: they have per-object per-frame readers (`CUO_SCALAR_READS=1` measures it). The pools joined `Vitals`; `-ecscheck` v2 compares the caches and reports a stale cache with the switch on. Tests pass in both variants and with the switch on. Gates (bench-000150/151) and E2 (bench-000152) pending; the checkpoint series is parked (quiet machine).
+
 ### T5: `World.Update` as systems
 
 **T5a: E4 default on.** Audit and merge E10 (the owned `MobileTable`), then switch `world_update_mobile_system` on. It saves 0.02–0.03 ms in the large scene, and it is the base for T5b.

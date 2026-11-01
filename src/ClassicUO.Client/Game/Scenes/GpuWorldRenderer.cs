@@ -570,6 +570,7 @@ namespace ClassicUO.Game.Scenes
                 mobile.EcsEntity = e;
                 mobile.EcsEntitySerial = mobile.Serial;
                 mobile.EcsEntityEpoch = ecs.Mirror.Epoch;
+                mobile.EcsEntityHeld = false; // T4: no identity check here (Entity.TryScalarEntity redoes its own)
             }
 
             MobileSpriteExtract extract = ecs.MobileExtract;

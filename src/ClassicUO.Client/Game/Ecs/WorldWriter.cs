@@ -2052,8 +2052,8 @@ namespace ClassicUO.Game
         }
 
         /// <summary>
-        /// 0xA2 (UpdateMana), 0x2D (MobileAttributes) and the player's 0x11: ManaMax and Mana. Nothing reaches the ECS.
-        /// Rejections as <see cref="SetMobileStatus"/>.
+        /// 0xA2 (UpdateMana), 0x2D (MobileAttributes) and the player's 0x11: ManaMax and Mana, committed to the record first
+        /// (T4). Rejections as <see cref="SetMobileStatus"/>.
         /// </summary>
         public void SetMana(Mobile mobile, ushort manaMax, ushort mana)
         {
@@ -2064,14 +2064,15 @@ namespace ClassicUO.Game
 
             using (Open(mobile, null))
             {
+                _world.Ecs.CommitMana(mobile, manaMax, mana);
                 mobile.ManaMax = manaMax;
                 mobile.Mana = mana;
             }
         }
 
         /// <summary>
-        /// 0xA3 (UpdateStamina), 0x2D (MobileAttributes) and the player's 0x11: StaminaMax and Stamina. Nothing reaches the
-        /// ECS. Rejections as <see cref="SetMobileStatus"/>.
+        /// 0xA3 (UpdateStamina), 0x2D (MobileAttributes) and the player's 0x11: StaminaMax and Stamina, committed to the record
+        /// first (T4). Rejections as <see cref="SetMobileStatus"/>.
         /// </summary>
         public void SetStamina(Mobile mobile, ushort staminaMax, ushort stamina)
         {
@@ -2082,6 +2083,7 @@ namespace ClassicUO.Game
 
             using (Open(mobile, null))
             {
+                _world.Ecs.CommitStamina(mobile, staminaMax, stamina);
                 mobile.StaminaMax = staminaMax;
                 mobile.Stamina = stamina;
             }
