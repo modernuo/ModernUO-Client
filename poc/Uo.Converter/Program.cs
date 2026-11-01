@@ -270,6 +270,14 @@ if (convert)
         Stage("tileart", () => TableConvert.TileArt(fm, outDir));
         Stage("equipconv", () => TableConvert.EquipConv(fm, outDir));
     }
+    // T3b: the layering rules (no install data: ClassicUO's hard-coded rules, LayerRulesDefault, the one source)
+    if (Want("layers"))
+        Stage("layerrules", () =>
+        {
+            var path = Path.Combine(outDir, Uo.Pack.LayerRulesConst.FileName);
+            Uo.Pack.LayerRulesDefault.Create().Write(path);
+            return path;
+        });
     if (Want("gumps")) stats["gumps"] = Stage("gumps", () => GumpConvert.Run(fm, outDir));
     if (Want("fonts")) stats["fonts"] = Stage("fonts", () => TextConvert.Fonts(fm, outDir));
     if (Want("cliloc")) stats["cliloc"] = Stage("cliloc", () => TextConvert.Cliloc(fm, outDir));
