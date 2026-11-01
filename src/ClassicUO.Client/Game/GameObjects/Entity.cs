@@ -312,8 +312,24 @@ namespace ClassicUO.Game.GameObjects
             return null;
         }
 
+        /// <summary>
+        /// The first item on <paramref name="layer"/> among the entity's children. T3a: for a mobile, under
+        /// <c>CUO_EQUIP_READ_CHECK=1</c>, compared with the ECS's worn item (<see cref="WorldState.FindWorn"/>).
+        /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Item FindItemByLayer(Layer layer)
+        {
+            if (this is Mobile mobile && World?.State is WorldState state && state.EquipCheckEnabled)
+            {
+                return state.FindWorn(mobile, layer);
+            }
+
+            return FindItemByLayerInList(layer);
+        }
+
+        /// <summary>The legacy read: the first non-destroyed child on <paramref name="layer"/> in the child list.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal Item FindItemByLayerInList(Layer layer)
         {
             for (LinkedObject i = Items; i != null; i = i.Next)
             {

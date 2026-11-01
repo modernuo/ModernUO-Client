@@ -1,0 +1,187 @@
+// SPDX-License-Identifier: BSD-2-Clause
+
+using System;
+using System.Runtime.CompilerServices;
+using ClassicUO.Ecs;
+using ClassicUO.Game.Data;
+using ClassicUO.Game.GameObjects;
+using ClassicUO.Utility.Logging;
+using EcsEntity = Friflo.Engine.ECS.Entity;
+
+namespace ClassicUO.Game
+{
+    // T3a (ecs-transition-plan.md, T3): a mobile's worn equipment by layer, owned by the ECS (WornLayers on the mobile's mirror
+    // record: the first attached item per layer by child-order stamp). Entity.FindItemByLayer reads it for a mobile with
+    // ecs_read_equipment on; the LinkedObject child list is still maintained (dual) until T9.
+    internal sealed partial class WorldState
+    {
+        /// <summary>Tests: the switch for this World (null: the setting).</summary>
+        internal bool? ReadEquipmentOverride;
+
+#if CUO_DEVTOOLS
+        // CLEANUP(release): the gate's override of the setting (CUO_ECS_READ_EQUIPMENT=1|0)
+        private static readonly bool? _envReadEquipment = Environment.GetEnvironmentVariable("CUO_ECS_READ_EQUIPMENT") switch
+        {
+            "1" => true,
+            "0" => false,
+            _ => null
+        };
+#else
+        private static readonly bool? _envReadEquipment = null;
+#endif
+
+        /// <summary>T3a (<c>ecs_read_equipment</c>, default off): the equipment readers take a mobile's worn items from the ECS.</summary>
+        public bool ReadEquipment => ReadEquipmentOverride ?? _envReadEquipment ?? Configuration.Settings.GlobalSettings.EcsReadEquipment;
+
+        /// <summary>
+        /// <c>Entity.FindItemByLayer</c> for a mobile: with <see cref="ReadEquipment"/> the ECS's worn item on the layer
+        /// (<see cref="WornItem"/>), else the child list's first item on it. Under <c>CUO_EQUIP_READ_CHECK=1</c> every call
+        /// compares the two.
+        /// </summary>
+        public Item FindWorn(Mobile mobile, Layer layer)
+        {
+            Item found = ReadEquipment ? WornItem(mobile, layer) : mobile.FindItemByLayerInList(layer);
+#if CUO_DEVTOOLS
+            if (EquipCheckEnabled)
+            {
+                CheckWorn(mobile, layer, found);
+            }
+#endif
+
+            return found;
+        }
+
+        /// <summary>
+        /// The ECS's worn item of <paramref name="mobile"/> on <paramref name="layer"/>: the item World holds under the serial
+        /// WornLayers records (null when none). An instance World does not hold for its serial (the appearance gumps'
+        /// detached preview mobile, serial 1; a replaced or destroyed mobile) never reads that serial's record: its own
+        /// list answers, as the legacy read did (its clothes are UI objects, not world state). Layers WornLayers does not
+        /// track (0: the trade boxes; above 0x1D) are read from the list too.
+        /// </summary>
+        public Item WornItem(Mobile mobile, Layer layer)
+        {
+            if (!WornLayers.Tracked((byte)layer) || !ReferenceEquals(_world.Mobiles.Get(mobile.Serial), mobile))
+            {
+                return mobile.FindItemByLayerInList(layer);
+            }
+
+            if (!TryGetMobileEntity(mobile, out EcsEntity e))
+            {
+                return null;
+            }
+
+            uint serial = e.GetComponent<WornLayers>().Serials[(byte)layer - 1];
+
+            return serial == 0 ? null : _world.Items.Get(serial);
+        }
+
+        // the mobile's mirror record through E5's per-mobile handle cache (valid while the serial and the mirror's epoch are
+        // unchanged; GpuWorldRenderer fills the same fields), else one dictionary lookup
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private bool TryGetMobileEntity(Mobile mobile, out EcsEntity e)
+        {
+            WorldMirror mirror = _world.Ecs.Mirror;
+
+            if (mobile.EcsEntitySerial == mobile.Serial && mobile.EcsEntityEpoch == mirror.Epoch && mobile.EcsEntitySerial != 0)
+            {
+                e = mobile.EcsEntity;
+
+                return true;
+            }
+
+            if (!mirror.TryGetEntity(mobile.Serial, out e) || !e.HasComponent<WornLayers>())
+            {
+                return false;
+            }
+
+            mobile.EcsEntity = e;
+            mobile.EcsEntitySerial = mobile.Serial;
+            mobile.EcsEntityEpoch = mirror.Epoch;
+
+            return true;
+        }
+
+        /// <summary>Memory of WornLayers (layout-based: the component per mobile record; see <see cref="WorldMirror.WornLayersBytes"/>).</summary>
+        public long WornLayersBytes => _world.Ecs.Mirror.WornLayersBytes;
+
+        // ---- CUO_EQUIP_READ_CHECK (CUO_DEVTOOLS builds only): every FindItemByLayer call on a mobile compares the child list's
+        // first item on the layer with the ECS's (WornItem): the same serial (0 for none). CLEANUP(release): goes with the
+        // equipment half of the child list (T9).
+#if CUO_DEVTOOLS
+        public const bool EquipCheckAvailable = true;
+
+        public static readonly bool EquipCheckFromEnv = Environment.GetEnvironmentVariable("CUO_EQUIP_READ_CHECK") == "1";
+
+        /// <summary>The checker is on (from <c>CUO_EQUIP_READ_CHECK=1</c>; tests set it per World).</summary>
+        public bool EquipCheckEnabled;
+
+        /// <summary>Checker counts: calls compared, mismatches found.</summary>
+        public long EquipReads, EquipMismatches;
+
+        /// <summary>Tests: sees each mismatch report.</summary>
+        internal Action<string> EquipMismatchObserver;
+
+        private uint _equipLogAt;
+        private long _loggedEquipReads = -1;
+
+        private void CheckWorn(Mobile mobile, Layer layer, Item found)
+        {
+            EquipReads++;
+            Item list = mobile.FindItemByLayerInList(layer);
+            Item ecs = ReadEquipment ? found : WornItem(mobile, layer);
+            uint ls = list?.Serial ?? 0, es = ecs?.Serial ?? 0;
+
+            if (ls != es)
+            {
+                EquipMismatches++;
+                string message = $"[equip] mismatch (FindItemByLayer) 0x{mobile.Serial:X8} layer {layer} (0x{(byte)layer:X2}): World 0x{ls:X8} | ECS 0x{es:X8} | read_equipment={(ReadEquipment ? "on" : "off")}";
+                EquipMismatchObserver?.Invoke(message);
+
+                if (EquipMismatches <= MAX_LOGGED_MISMATCHES)
+                {
+                    Log.Warn(message);
+                }
+            }
+        }
+
+        /// <summary>The checker's 5 s summary while its counts change (called every frame by <c>WorldEcs.Update</c>).</summary>
+        public void LogEquipmentChecks()
+        {
+            if (!EquipCheckEnabled || Time.Ticks < _equipLogAt || EquipReads == _loggedEquipReads)
+            {
+                return;
+            }
+
+            _equipLogAt = Time.Ticks + 5000;
+            _loggedEquipReads = EquipReads;
+            LogEquipmentSummary();
+        }
+
+        public void LogEquipmentSummary()
+        {
+            WorldMirror m = _world.Ecs.Mirror;
+            Log.Info($"[equip] checks reads={EquipReads} mismatches={EquipMismatches} | read_equipment={(ReadEquipment ? "on" : "off")} mobiles={m.MobileCount} worn bytes={m.WornLayersBytes} writes={m.WornWrites} rescans={m.WornRescans}");
+        }
+#else
+        public const bool EquipCheckAvailable = false;
+
+        public bool EquipCheckEnabled
+        {
+            get => false;
+            set { }
+        }
+
+        public long EquipReads => 0;
+
+        public long EquipMismatches => 0;
+
+        internal Action<string> EquipMismatchObserver
+        {
+            get => null;
+            set { }
+        }
+
+        public void LogEquipmentChecks() { }
+#endif
+    }
+}
