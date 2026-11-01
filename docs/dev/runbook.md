@@ -220,8 +220,8 @@ These `settings.json` keys select ECS and renderer paths. Defaults are from `src
 |---|---|---|
 | `world_renderer` | `auto` | World renderer: `auto`, `gpu`, `legacy` |
 | `ecs_read_contents` | `true` | Container contents readers take a parent's children from the ECS instead of the `LinkedObject` child list |
-| `ecs_read_equipment` | `false` | Worn-item-per-layer readers (`FindItemByLayer`, paperdoll, animation hands) read from the ECS |
-| `ecs_layer_rules` | `false` | Worn-layer draw order, covering and gargoyle remaps come from the layer rules data (`layerrules.bin`, else the built-in default) instead of hard-coded code |
+| `ecs_read_equipment` | `true` | Worn-item-per-layer readers (`FindItemByLayer`, paperdoll, animation hands) read from the ECS |
+| `ecs_layer_rules` | `true` | Worn-layer draw order, covering and gargoyle remaps come from the layer rules data (`layerrules.bin`, else the built-in default) instead of hard-coded code |
 | `world_update_mobile_system` | `true` | `World.Update` updates only mobiles whose ECS clock is due (needs `world_update_active_items`) |
 | `world_update_active_items` | `true` | `World.Update` visits only items that need a per-frame update |
 | `gpu_ecs_sprites` | `true` | Gpu renderer: mobile sprites come from the ECS, not from capturing `MobileView.Draw` |
