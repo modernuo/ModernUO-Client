@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
+using Uo.Pack;
 using ClassicUO.Assets;
 using ClassicUO.Configuration;
 using ClassicUO.Game.Data;
@@ -342,7 +343,29 @@ namespace ClassicUO.Game.GameObjects
                 // the equipped item graphics; cloak is then repositioned by facing
                 // direction to match the in-world tables. Stack-allocated, no GC churn.
                 Span<Layer> layers = stackalloc Layer[PaperdollOrder.N];
-                int layerCount = PaperdollOrder.BuildInWorld(this, IsFemale || isGargoyle, layerDir, layers);
+
+                // T3b: ecs_layer_rules (default off) takes the order, the covering and the gargoyle remaps from the
+                // layering rules data (LayerRuleEval); CUO_LAYER_RULES_CHECK=1 compares both answers
+                bool layerData = LayerRuleEval.On;
+                LayerTables layerTables = default;
+                LayerSubject layerSubject = default;
+                int layerCount;
+
+                if (layerData)
+                {
+                    layerTables.Gather(this);
+                    layerSubject = LayerRuleEval.Subject(Graphic, IsFemale, isGargoyle);
+                    layerCount = LayerRuleEval.BuildInWorld(layerTables.Anim, layerSubject, layerDir, layers);
+                }
+                else
+                {
+                    layerCount = PaperdollOrder.BuildInWorld(this, IsFemale || isGargoyle, layerDir, layers);
+                }
+
+                if (LayerRuleEval.CheckEnabled)
+                {
+                    LayerRuleEval.CheckWorld(this, isGargoyle, layerDir);
+                }
 
                 for (int i = 0; i < layerCount; i++)
                 {
@@ -362,7 +385,7 @@ namespace ClassicUO.Game.GameObjects
 
                     if (isHuman)
                     {
-                        if (IsCovered(this, layer))
+                        if (layerData ? LayerRuleEval.IsCovered(LayerRuleSet.World, layer, ref layerTables, layerSubject) : IsCovered(this, layer))
                         {
                             continue;
                         }
@@ -371,7 +394,12 @@ namespace ClassicUO.Game.GameObjects
                         {
                             graphic = item.ItemData.AnimID;
 
-                            if (isGargoyle)
+                            // with ecs_layer_rules the remap rules' conditions decide (the defaults need the gargoyle draw flag)
+                            if (layerData)
+                            {
+                                graphic = LayerRuleEval.Remap(graphic, layerSubject);
+                            }
+                            else if (isGargoyle)
                             {
                                 FixGargoyleEquipments(ref graphic);
                             }
@@ -530,6 +558,37 @@ namespace ClassicUO.Game.GameObjects
 
             return 0xFFFF;
         }
+
+        /// <summary>T3b: GetAnimationInfo with the gargoyle remap from the layering rules data (ecs_layer_rules).</summary>
+        private static ushort GetAnimationInfoData(Mobile owner, Item item, LayerSubject subject)
+        {
+            if (item.ItemData.AnimID != 0)
+            {
+                // the remap rules' conditions decide (the defaults need the gargoyle draw flag), then the equip conversion
+                ushort graphic = LayerRuleEval.Remap(item.ItemData.AnimID, subject);
+
+                if (
+                    Client.Game.UO.FileManager.Animations.EquipConversions.TryGetValue(
+                        owner.Graphic,
+                        out Dictionary<ushort, EquipConvData> map
+                    )
+                )
+                {
+                    if (map.TryGetValue(item.ItemData.AnimID, out EquipConvData data))
+                    {
+                        _equipConvData = data;
+                        graphic = data.Graphic;
+                    }
+                }
+
+                return graphic;
+            }
+
+            return 0xFFFF;
+        }
+
+        /// <summary>T3b: the hard-coded remaps, for CUO_LAYER_RULES_CHECK.</summary>
+        internal static void FixGargoyleEquipmentsHard(ref ushort graphic) => FixGargoyleEquipments(ref graphic);
 
         private static void FixGargoyleEquipments(ref ushort graphic)
         {
@@ -1107,20 +1166,44 @@ namespace ClassicUO.Game.GameObjects
             // T3a: any worn item, from the ECS with ecs_read_equipment on (WorldState.HasWornItems)
             if (isHuman && World.State.HasWornItems(this))
             {
+                // T3b: ecs_layer_rules (default off): the covering and the gargoyle remaps from the layering rules data
+                bool layerData = LayerRuleEval.On;
+                LayerTables layerTables = default;
+                LayerSubject layerSubject = default;
+
+                if (layerData || LayerRuleEval.CheckEnabled)
+                {
+                    layerTables.Gather(this);
+                    layerSubject = LayerRuleEval.Subject(Graphic, IsFemale, isGargoyle);
+                }
+
                 for (Layer layer = Layer.Invalid + 1; layer < Layer.Mount; ++layer)
                 {
                     Item item = FindItemByLayer(layer);
 
-                    if (
-                        item == null
-                        || (IsDead && (layer == Layer.Hair || layer == Layer.Beard))
-                        || IsCovered(this, layer)
-                    )
+                    if (item == null || (IsDead && (layer == Layer.Hair || layer == Layer.Beard)))
                     {
                         continue;
                     }
 
-                    graphic = GetAnimationInfo(this, item, isGargoyle);
+                    if (LayerRuleEval.CheckEnabled)
+                    {
+                        LayerRuleEval.CheckPick(this, layer, ref layerTables, layerSubject);
+                    }
+
+                    if (layerData ? LayerRuleEval.IsCovered(LayerRuleSet.World, layer, ref layerTables, layerSubject) : IsCovered(this, layer))
+                    {
+                        continue;
+                    }
+
+                    if (LayerRuleEval.CheckEnabled)
+                    {
+                        // the resolved hit-test graphic from both helpers (the used one runs last below, so its equip
+                        // conversion is the one left in _equipConvData)
+                        LayerRuleEval.ComparePickGraphic(Serial, layer, GetAnimationInfo(this, item, isGargoyle), GetAnimationInfoData(this, item, layerSubject));
+                    }
+
+                    graphic = layerData ? GetAnimationInfoData(this, item, layerSubject) : GetAnimationInfo(this, item, isGargoyle);
 
                     if (graphic != 0xFFFF)
                     {
