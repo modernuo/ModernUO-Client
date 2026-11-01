@@ -172,6 +172,7 @@ public static class Verify
         Console.WriteLine($"  tiledata: {land.Length} land, {statics.Length} statics{(padded > 0 ? $" ({padded} padded empty)" : "")} (flags, texId, height, layer exact); {hueNote}");
         CheckNoDraw(fm, land, statics);
         CheckTables(fm, outDir);
+        CheckLayerRules(outDir);
 
         if (Want("art")) CheckAtlas(fm, Path.Combine(outDir, "art"), "sprites.bin", tex: false, statics);
         if (Want("tex")) CheckAtlas(fm, Path.Combine(outDir, "tex"), "texmaps.bin", tex: true, statics);
@@ -534,6 +535,19 @@ public static class Verify
             if (rows != pack.Length) Fail($"equipconv: {pack.Length} rows, expected {rows}");
             Console.WriteLine($"  equipconv: {pack.Length} rows {(bad == 0 && rows == pack.Length ? "EXACT" : "MISMATCH")} vs AnimationsLoader.EquipConversions");
         }
+    }
+
+    /// <summary>T3b: layerrules.bin, when present, is exactly LayerRulesDefault (the client's built-in rules).</summary>
+    private static void CheckLayerRules(string outDir)
+    {
+        var path = Path.Combine(outDir, LayerRulesConst.FileName);
+        if (!Want("layers") || !File.Exists(path)) return;
+        var pack = LayerRules.Read(path);
+        var own = LayerRulesDefault.Create();
+        static bool Same<T>(T[] a, T[] b) where T : unmanaged => MemoryMarshal.AsBytes(a.AsSpan()).SequenceEqual(MemoryMarshal.AsBytes(b.AsSpan()));
+        bool same = Same(pack.Bodies, own.Bodies) && Same(pack.Tables, own.Tables) && Same(pack.Rules, own.Rules) && Same(pack.Conds, own.Conds) && Same(pack.Ranges, own.Ranges);
+        if (!same) Fail("layerrules: differs from LayerRulesDefault (a custom rules file, or a converter from another version)");
+        Console.WriteLine($"  layerrules: {pack.Rules.Length} rules {(same ? "EXACT" : "MISMATCH")} vs LayerRulesDefault");
     }
 
     /// <summary>animdata.bin against AnimDataLoader.CalculateCurrentGraphic for every graphic whose record is in the file.</summary>

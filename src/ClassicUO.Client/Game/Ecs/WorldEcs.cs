@@ -719,6 +719,9 @@ namespace ClassicUO.Game
             // T3a: CUO_EQUIP_READ_CHECK's 5 s summary
             _world.State.LogEquipmentChecks();
 
+            // T3b: CUO_LAYER_RULES_CHECK's 5 s summary
+            LayerRuleEval.LogSummary();
+
             if (MobileAnimationSystem.CacheCheck && Time.Ticks >= _cacheLogAt)
             {
                 _cacheLogAt = Time.Ticks + 5000;
@@ -1134,15 +1137,7 @@ namespace ClassicUO.Game
             }
 
             Span<byte> order = stackalloc byte[EquipmentSlots.MAX];
-            Span<byte> layerOf = stackalloc byte[EquipmentSlots.MAX];
-
-            for (int i = 0; i < eq.Count; i++)
-            {
-                order[i] = (byte)i;
-                layerOf[i] = eq.Slots[i].Layer;
-            }
-
-            int got = AnimationRules.ApplyDirectionCloak(order, eq.Count, layerOf, 1, eq.CloakAnchor);
+            int got = AnimationRules.PaintOrder(in eq, 1, order);
             bool same = got == n;
 
             for (int i = 0; same && i < n; i++)

@@ -1,3 +1,4 @@
+using Uo.Pack;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -603,6 +604,14 @@ namespace ClassicUO.UnitTests.Ecs
             T3Scene("control2", false);
             GC.Collect();
 
+            // T3b: the layering decision of one drawn mobile, hard-coded (PaperdollOrder.Build + Filter + ApplyDirectionCloak,
+            // then AnimationRules.IsCovered for every drawn layer: the rules MobileView and MobileAnimationSystem run) against
+            // the data rules (LayerRules: BuildOrder + Filter + ApplyDirection + IsCovered), on the same per-mobile tables (n
+            // random outfits of typical items, the bodies of every group, the 8 directions). The tables are shared input
+            // (MobileView gathers them with FindItemByLayer either way), so the rows measure the decision only. New arm only:
+            // "T3b hard", "T3b data", "T3b hard2" (e2t3b.py: data <= hard within the +0.1 us / 2x spread rule, 0 B).
+            T3bRows(rows, n, packets);
+
             if (t3Sink < 0)
             {
                 sb.AppendLine("unreachable");
@@ -617,6 +626,99 @@ namespace ClassicUO.UnitTests.Ecs
             }
 
             sb.AppendLine();
+        }
+
+        private static void T3bRows(List<(string name, (double us, double bytes) r)> rows, int n, int packets)
+        {
+            const int N = PaperdollOrder.N;
+            var rnd = new Random(7);
+            ushort[] bodies = { 0x190, 0x191, 0x25D, 0x25E, 0x29A, 0x29B, 0x190, 0x191 };
+            // typical worn items per layer (graphic, AnimID), including the values the rules key on
+            var choices = new Dictionary<int, (ushort g, ushort a)[]>
+            {
+                [(int)Layer.Shirt] = new (ushort, ushort)[] { (0x1517, 0x1D2), (0x1EFD, 0x1E9) },
+                [(int)Layer.Pants] = new (ushort, ushort)[] { (0x152E, 0x1EB), (0x1539, 0x200), (0x1411, 0x513), (0x13BE, 0x3E4) },
+                [(int)Layer.Shoes] = new (ushort, ushort)[] { (0x170F, 0x1F1), (0x1711, 0x1F5) },
+                [(int)Layer.Helmet] = new (ushort, ushort)[] { (0x1408, 0x201), (0x1715, 0x1A9), (0xA42B, 0x5E9) },
+                [(int)Layer.Necklace] = new (ushort, ushort)[] { (0x13C7, 0x1C8), (0x1088, 0x5EC) },
+                [(int)Layer.Hair] = new (ushort, ushort)[] { (0x203B, 0x1F7), (0x203C, 0x1F8) },
+                [(int)Layer.Torso] = new (ushort, ushort)[] { (0x1415, 0x21A), (0x1C04, 0x39A), (0x13CC, 0x3A9) },
+                [(int)Layer.Tunic] = new (ushort, ushort)[] { (0x1FFD, 0x238), (0x1541, 0x1E5) },
+                [(int)Layer.Arms] = new (ushort, ushort)[] { (0x1410, 0x210), (0x13CD, 0x3B1) },
+                [(int)Layer.Cloak] = new (ushort, ushort)[] { (0x1515, 0x1E0), (0x2FB9, 0x380) },
+                [(int)Layer.Robe] = new (ushort, ushort)[] { (0x1F03, 0x504), (0x2683, 0x1E6), (0x9985, 0x4E8), (0x204E, 0x229) },
+                [(int)Layer.Skirt] = new (ushort, ushort)[] { (0x1516, 0x1C7), (0x1537, 0x1E4) },
+                [(int)Layer.Legs] = new (ushort, ushort)[] { (0x1411, 0x1F2) },
+                [(int)Layer.OneHanded] = new (ushort, ushort)[] { (0x0F5E, 0x2E0) },
+            };
+
+            var present = new bool[n][];
+            var gfx = new ushort[n][];
+            var anim = new ushort[n][];
+
+            for (int m = 0; m < n; m++)
+            {
+                present[m] = new bool[N];
+                gfx[m] = new ushort[N];
+                anim[m] = new ushort[N];
+
+                foreach (var (layer, c) in choices)
+                {
+                    if (rnd.Next(3) == 0) continue;
+                    var it = c[rnd.Next(c.Length)];
+                    present[m][layer] = true;
+                    gfx[m][layer] = it.g;
+                    anim[m][layer] = it.a;
+                }
+            }
+
+            LayerRules rules = LayerRulesDefault.Create();
+            int sink = 0;
+
+            (double, double) Hard() => Measure(packets, i =>
+            {
+                int m = i % n;
+                ushort body = bodies[m & 7];
+                bool garg = body == 0x29A || body == 0x29B;
+                Span<Layer> raw = stackalloc Layer[N];
+                Span<Layer> order = stackalloc Layer[N];
+                PaperdollOrder.Build(anim[m], (m & 1) != 0 || garg, raw);
+                int count = PaperdollOrder.ApplyDirectionCloak(order, PaperdollOrder.Filter(raw, false, order), (byte)(i & 7));
+
+                for (int k = 0; k < count; k++)
+                {
+                    Layer l = order[k];
+                    if (present[m][(int)l] && !AnimationRules.IsCovered(l, gfx[m], anim[m], present[m], body)) sink++;
+                }
+            });
+
+            (double, double) Data() => Measure(packets, i =>
+            {
+                int m = i % n;
+                ushort body = bodies[m & 7];
+                bool garg = body == 0x29A || body == 0x29B;
+                var subject = new LayerSubject(rules.GroupOf(body), (byte)(((m & 1) != 0 ? LayerRulesConst.FlagFemale : 0) | (garg ? LayerRulesConst.FlagGargoyleDraw : 0)));
+                Span<byte> raw = stackalloc byte[N];
+                Span<Layer> order = stackalloc Layer[N];
+                rules.BuildOrder(LayerRuleSet.World, anim[m], subject, raw);
+                int count = PaperdollOrder.Filter(System.Runtime.InteropServices.MemoryMarshal.Cast<byte, Layer>(raw), false, order);
+                count = rules.ApplyDirection(LayerRuleSet.World, System.Runtime.InteropServices.MemoryMarshal.Cast<Layer, byte>(order), count, (byte)(i & 7), anim[m], subject);
+
+                for (int k = 0; k < count; k++)
+                {
+                    byte l = (byte)order[k];
+                    if (present[m][l] && !rules.IsCovered(LayerRuleSet.World, l, present[m], gfx[m], anim[m], subject)) sink++;
+                }
+            });
+
+            rows.Add(("T3b hard: layering decision (order + covered), per mobile", Hard()));
+            rows.Add(("T3b data: layering decision (order + covered), per mobile", Data()));
+            rows.Add(("T3b hard2: layering decision (order + covered), per mobile", Hard()));
+
+            if (sink < 0)
+            {
+                rows.Add(("unreachable", (0, 0)));
+            }
         }
 
         [Fact]

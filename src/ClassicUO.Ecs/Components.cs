@@ -396,6 +396,10 @@ namespace ClassicUO.Ecs
         // the cloak on the full order, so it lands there even when no helmet is drawn
         public byte CloakAnchor;
 
+        // T3b, ecs_layer_rules: the interned per-facing paint orders from the data's direction rules (EquipDirOrders);
+        // 0 = the hard-coded cloak move with CloakAnchor (always 0 with the switch off)
+        public ushort DirOrder;
+
         public uint MountItem;
         public ushort MountGraphic, MountAnimId, MountHue;
 
