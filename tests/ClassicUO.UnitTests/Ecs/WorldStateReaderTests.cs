@@ -318,11 +318,16 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 world.State.ReadContentsOverride = on;
 
-                // the least of three rounds after a warm-up: the tiered JIT's re-compilation allocates on the calling
-                // thread now and then (15 of 45 mutation runs failed this test on unrelated mutants with one round)
+                // After a warm-up, six judged rounds: at most ONE may allocate (Codex audit round 2: the least of three rounds
+                // proved one clean round, not that every round is clean, so an allocation every few hundred walks passed;
+                // an allocation at least once per 600 walks lands in two or more of the six). One noisy round is tolerated because the test host's tiered JIT
+                // allocates on the calling thread now and then (15 of 45 mutation runs failed a one-round version on
+                // unrelated mutants; 7,520 B in one round also appeared with no method compiled on this thread, so
+                // JitInfo cannot excuse it), and tiering cannot be switched off for one test inside the shared host.
                 long least = long.MaxValue;
+                var noisy = new List<string>();
 
-                for (int round = 0; round < 4; round++)
+                for (int round = 0; round < 7; round++)
                 {
                     long before = GC.GetAllocatedBytesForCurrentThread();
 
@@ -334,10 +339,22 @@ namespace ClassicUO.UnitTests.Ecs
                     }
 
                     long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
-                    least = round == 0 ? least : Math.Min(least, allocated);
+
+                    if (round == 0)
+                    {
+                        continue; // the warm-up
+                    }
+
+                    least = Math.Min(least, allocated);
+
+                    if (allocated != 0)
+                    {
+                        noisy.Add($"round {round}: {allocated} B");
+                    }
                 }
 
                 least.Should().Be(0, $"switch {(on ? "on" : "off")}");
+                noisy.Should().HaveCountLessThanOrEqualTo(1, $"switch {(on ? "on" : "off")}: rounds that allocated");
             }
         }
     }

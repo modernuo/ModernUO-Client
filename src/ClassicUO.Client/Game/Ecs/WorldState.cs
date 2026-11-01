@@ -391,20 +391,25 @@ namespace ClassicUO.Game
             }
         }
 
+        /// <summary>The memory log: WorldWriter's spell-entry scratch list (List 32 B + Item[SpellScratchCapacity]).</summary>
+        internal const long SpellScratchBytes = 32 + 24 + 8L * WorldWriter.SpellScratchCapacity;
+
         /// <summary>Tests and the memory log: the books whose entries are held.</summary>
         public int SpellEntryBooks => _spellEntries.Count;
 
         /// <summary>
-        /// The memory log: the bytes the spell-entry storage holds, by the 64-bit layout (the dictionary object 80 B, its
-        /// buckets 4 B and entries 24 B per slot of capacity, each set 40 B with its Item[] 24 B + 8 B per slot). The entries'
-        /// Item objects are not counted: the book's child list holds the same objects until T9.
+        /// The memory log: the bytes the spell-entry storage holds, by layout-based accounting of the 64-bit runtime (not
+        /// measured): the dictionary (<see cref="ClassicUO.Ecs.WorldMirror.DictionaryBytes"/>: object, 8-aligned buckets,
+        /// entries 24 B per slot, the ValueCollection <c>.Values</c> keeps), each set 40 B with its Item[] 24 B + 8 B per
+        /// slot, and WorldWriter's permanent spell-entry scratch list (List 32 B + its Item[64] 24 + 512 B = 568 B; a book
+        /// has at most 64 spells, so it never grows). The entries' Item objects are not counted: the book's child list holds
+        /// the same objects until T9 (Codex audit round 2: alignment, the ValueCollection and the scratch list were missing).
         /// </summary>
         public long SpellEntriesBytes
         {
             get
             {
-                int capacity = _spellEntries.EnsureCapacity(0);
-                long bytes = 80 + (capacity == 0 ? 0 : 48 + 28L * capacity);
+                long bytes = ClassicUO.Ecs.WorldMirror.DictionaryBytes(_spellEntries.EnsureCapacity(0), 24) + SpellScratchBytes;
 
                 foreach (SpellEntrySet set in _spellEntries.Values)
                 {
