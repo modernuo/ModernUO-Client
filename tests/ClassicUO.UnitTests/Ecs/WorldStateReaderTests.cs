@@ -317,17 +317,27 @@ namespace ClassicUO.UnitTests.Ecs
             foreach (bool on in new[] { false, true })
             {
                 world.State.ReadContentsOverride = on;
-                pack.FindItem(0xEED);
-                long before = GC.GetAllocatedBytesForCurrentThread();
 
-                for (int i = 0; i < 200; i++)
+                // the least of three rounds after a warm-up: the tiered JIT's re-compilation allocates on the calling
+                // thread now and then (15 of 45 mutation runs failed this test on unrelated mutants with one round)
+                long least = long.MaxValue;
+
+                for (int round = 0; round < 4; round++)
                 {
-                    pack.FindItem(0xEED);
-                    int n = 0;
-                    pack.GetTotalAmount(0xEED, null, ref n);
+                    long before = GC.GetAllocatedBytesForCurrentThread();
+
+                    for (int i = 0; i < 200; i++)
+                    {
+                        pack.FindItem(0xEED);
+                        int n = 0;
+                        pack.GetTotalAmount(0xEED, null, ref n);
+                    }
+
+                    long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+                    least = round == 0 ? least : Math.Min(least, allocated);
                 }
 
-                (GC.GetAllocatedBytesForCurrentThread() - before).Should().Be(0, $"switch {(on ? "on" : "off")}");
+                least.Should().Be(0, $"switch {(on ? "on" : "off")}");
             }
         }
     }
