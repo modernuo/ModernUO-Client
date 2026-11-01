@@ -151,6 +151,12 @@ namespace ClassicUO.Configuration
         // (owner); the off path and CUO_MOBILE_UPDATE_CHECK stay for one phase.
         [JsonPropertyName("world_update_mobile_system")] public bool WorldUpdateMobileSystem { get; set; } = true;
 
+        // T2 (ecs-transition-plan.md): the container-contents readers (container, grid loot, trade and spellbook gumps, the
+        // shop's lists, FindItem*, the counters, macros) take a parent's children from the ECS (WorldState.Children: the
+        // mirror's attached children by child-order stamp, a spellbook's spell entries) instead of the LinkedObject child
+        // list, which is still maintained. CUO_CONTENTS_CHECK=1 compares the two. Default off until the coordinator flips it.
+        [JsonPropertyName("ecs_read_contents")] public bool EcsReadContents { get; set; }
+
         // W5: the per-frame overhead text pass skips the text layout of mobiles and corpses whose texts have all expired
         // (expired texts stay in the entity's container; the layout would place nothing). Off = laid out every frame.
         [JsonPropertyName("text_skip_expired")] public bool TextSkipExpired { get; set; } = true;

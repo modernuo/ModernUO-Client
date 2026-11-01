@@ -212,9 +212,9 @@ namespace ClassicUO.Game.UI.Gumps
 
             for (int displayGroup = 0; displayGroup < 2; displayGroup++)
             {
-                for (LinkedObject i = _corpse.Items; i != null; i = i.Next)
+                // T2: the children from the ECS with ecs_read_contents on (WorldState.Children)
+                foreach (Item it in World.State.Children(_corpse))
                 {
-                    Item it = (Item)i;
 
                     if (!ItemBelongsToGroup(it, displayGroup) || !it.IsLootable)
                     {

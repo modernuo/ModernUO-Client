@@ -306,10 +306,9 @@ namespace ClassicUO.Game.GameObjects
 
         public Item GetSecureTradeBox()
         {
-            for (LinkedObject i = Items; i != null; i = i.Next)
+            // T2: the children from the ECS with ecs_read_contents on (WorldState.Children)
+            foreach (Item it in World.State.Children(this))
             {
-                Item it = (Item)i;
-
                 if (it.Graphic == 0x1E5E && it.Layer == 0)
                 {
                     return it;
