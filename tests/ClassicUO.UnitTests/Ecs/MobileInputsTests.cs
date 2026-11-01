@@ -171,6 +171,7 @@ namespace ClassicUO.UnitTests.Ecs
             e.RemoveTag<EquipmentDirty>();
             rider.PushToBack(orphan);
             world.Ecs.Sync(orphan);
+            world.Ecs.CommitChildOrder(orphan); // the hand-linked push attaches it in the mirror, as the writer's attach does
             e.Tags.Has<EquipmentDirty>().Should().BeTrue("attaching marks the rider dirty");
             MobileAnimationSystem.IsMounted(rider, tiles).Should().BeTrue();
 
@@ -180,6 +181,9 @@ namespace ClassicUO.UnitTests.Ecs
             orphan.Graphic = 0x3EA0;
 
             // the rider leaves; a new mobile reuses the serial while the item still names it as container
+            // (World.RemoveMobile removes a rider's children with it, so none stays attached to a gone rider: the mirror gives
+            // children attached under a serial to a new record for it. The item only still names the serial.)
+            world.Ecs.Mirror.DetachChild(MOUNT).Should().BeTrue();
             world.Mobiles.Remove(SERIAL);
             world.Ecs.Mirror.Remove(SERIAL);
             Mobile next = world.GetOrCreateMobile(SERIAL);
