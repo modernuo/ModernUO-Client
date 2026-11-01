@@ -153,6 +153,12 @@ All merged and pushed, and each audited by Codex until clean or down to document
 
 ## In progress
 
+- **Autonomous run of 2026-11-01** (you away; the machine is not quiet): measurements that need a quiet machine are **parked** (FrameStats, the T4 checkpoint frame-time / world-prepare / memory series); their job scripts are prepared, not run. Paired E2 packet benches and correctness gates still run, with the noise stated. In flight:
+  - `bg/ecs-t3a-fold` and `bg/ecs-t3b-cache`: code done; gates and E2 queued (bench-000143..148); then a Codex review (gpt-6.1-sol medium), merge, and the default flips if they pass. The T3b FrameStats job (bench-000149) was cancelled: parked.
+  - `bg/ecs-t4-scalars` (T4 thin handles, Opus medium) and `bg/ecs-t5c-sweep` (T5c range sweep as a system, Sonnet medium). The T4 checkpoint measurement is parked; development continues past it with correctness gates. You review the parked numbers later.
+  - `docs/dev-docs` + `poc/modern-client-clean-2` (Opus medium): root CLAUDE.md and docs/dev (runbook, pack format, data formats, bodies, layer rules), and the clean history rebuilt as code-only plus those docs. Local only until I've checked its proofs.
+  - Rules added for agents: docs in their own commits (narrative docs never touch a code commit; main-bound docs are `devdocs:` commits); model and effort right-sized, medium by default; Codex only from me.
+
 - **E12: same-frame item checker** (`bg/ecs-e12-checker`): the Codex audit found that the probe pass is not side-effect isolated. Two paths can change the drawn frame: auras draw outside the capture, and world-renderer overrides get applied twice. There are also cases where the checker reports a difference that isn't there, or misses one that is. So its "0 differences" isn't proof yet. A fresh agent is fixing the two drawn-frame paths, and either fixing the checker cases or reporting those frames as partially checked.
 - **T1: the mutation funnel** (`bg/ecs-t1-funnel`, new): the `WorldWriter` API, `CUO_FUNNEL_CHECK`, and the world-items packet group first; the other groups follow in later agents.
 
