@@ -545,6 +545,49 @@ namespace ClassicUO.Game.GameObjects
         //}
         // #############################################
 
+        /// <summary>
+        /// T1 (funnel part 8): the walk queue's part of <see cref="Walk"/>, computed without a write: one step to
+        /// (<paramref name="x"/>, <paramref name="y"/>, <paramref name="z"/>) facing <paramref name="direction"/>; when the queue
+        /// is empty the walk starts now (<c>LastStepTime</c>), with <c>SetAnimation(0xFF)</c> if the player is not walking.
+        /// </summary>
+        internal void PlanWalkStep(int x, int y, sbyte z, Direction direction, bool run, out StepPlan plan)
+        {
+            bool emptyStack = Steps.Count == 0;
+            plan = default;
+            plan.Accepted = true;
+            plan.Changes = true;
+            plan.StartsWalk = emptyStack;
+            plan.SetsAnimation = emptyStack && !IsWalking;
+            plan.StepTime = Time.Ticks;
+            plan.Count = 1;
+            plan.S0 = new Step
+            {
+                X = x,
+                Y = y,
+                Z = z,
+                Direction = (byte) direction,
+                Run = run
+            };
+        }
+
+        /// <summary>
+        /// T1 (funnel part 8): <see cref="Walk"/>'s coalesced turn (three unconfirmed requests: the direction alone, no packet)
+        /// through the funnel (<c>TurnPlayer</c>: SetMobileDirection's writes, unfolded for the door check, with the walk's
+        /// admission, so a walk from a position callback joins the open operation on the player), then the turn's cooldown.
+        /// Rejected (Codex audit of part 8, P2 #1): nothing changed, no cooldown, false.
+        /// </summary>
+        internal bool CoalescedTurn(Direction direction, ushort walkTime)
+        {
+            if (!World.Writer.TurnPlayer(this, direction))
+            {
+                return false;
+            }
+
+            Walker.LastStepRequestTime = Time.Ticks + walkTime;
+
+            return true;
+        }
+
         public bool Walk(Direction direction, bool run)
         {
             if (Walker.WalkingFailed || Walker.LastStepRequestTime > Time.Ticks || Walker.StepsCount >= Constants.MAX_STEP_COUNT || Client.Game.UO.Version >= ClientVersion.CV_60142 && IsParalyzed)
@@ -645,22 +688,17 @@ namespace ClassicUO.Game.GameObjects
             // when the connection is healthy and automatically backs off under congestion.
             if (walkTime == (ushort)MovementSpeed.TurnDelay && Walker.UnacceptedPacketsCount >= 3)
             {
-                Direction = direction;
-                Walker.LastStepRequestTime = Time.Ticks + walkTime;
-
-                return true;
+                return CoalescedTurn(direction, walkTime);
             }
 
-            CloseBank();
-
-            if (emptyStack)
+            // T1 (funnel part 8): admission first, then CloseBank, then the walk queue's writes through the funnel
+            // (QueuePlayerStep: PlanWalkStep, then SetAnimation(0xFF) when the walk starts while not walking, LastStepTime,
+            // the step, the inputs), written before the walker's step record; the walker is not world state and neither side
+            // reads the other. A walk from the player's position callback joins the operation that runs it (Codex audit of
+            // part 8, P2 #1). Rejected: nothing changed, the bank stays open
+            if (!World.Writer.QueuePlayerStep(this, x, y, z, direction, run))
             {
-                if (!IsWalking)
-                {
-                    SetAnimation(0xFF);
-                }
-
-                LastStepTime = Time.Ticks;
+                return false;
             }
 
             ref StepInfo step = ref Walker.StepInfos[Walker.StepsCount];
@@ -676,20 +714,6 @@ namespace ClassicUO.Game.GameObjects
             step.NoRotation = step.OldDirection == (byte) direction && oldZ - z >= 11;
 
             Walker.StepsCount++;
-
-            AddStep
-            (
-                new Step
-                {
-                    X = x,
-                    Y = y,
-                    Z = z,
-                    Direction = (byte) direction,
-                    Run = run
-                }
-            );
-
-            PushInputs();
 
 
             NetClient.Socket.Send_WalkRequest(direction, Walker.WalkSequence, run, Walker.FastWalkStack.GetValue());
