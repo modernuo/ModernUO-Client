@@ -711,8 +711,66 @@ namespace ClassicUO.UnitTests.Ecs
                 }
             });
 
+            // T3b cache (LayerDecision): the same decision served from each mobile's cached answer, keyed as the client's
+            // WorldState.WorldLayers does: the subject (body, flags), the mirror record's WornLayers.Version (the WornCache's,
+            // held per mobile here) and, after an equipment mark anywhere, the record's Look. The tables stay shared input:
+            // a miss gathers them in the client, as the hard path does. Rows: "hit" (no equipment change), "miss" (every
+            // decision refills: the outfit changes every time), "mixed" (every 50th decision a mobile's outfit changes and
+            // the mirror sees a mark: 2 % misses, and the decisions after a mark take the Look read until they catch up).
+            var mirror = new WorldMirror();
+            var records = new Friflo.Engine.ECS.Entity[n];
+            var versions = new ulong[n];
+            var tables = new LayerTables[n];
+            var decisions = new LayerDecision[n];
+
+            for (int m = 0; m < n; m++)
+            {
+                records[m] = mirror.UpsertMobile(0x0000_5000 + (uint)m, bodies[m & 7], 0, 10, 10, 0, 0, 0, false);
+                mirror.UpsertItem(0x4100_0000 + (uint)m, 0x1517, 0, 0, 0, 0, 0, 0, 1, 0x0000_5000 + (uint)m, (byte)Layer.Shirt, false, attach: true);
+                versions[m] = records[m].GetComponent<EquipmentSlots>().Worn.Version;
+                decisions[m] = new LayerDecision();
+
+                for (int l = 0; l < N; l++)
+                {
+                    tables[m].Present[l] = present[m][l];
+                    tables[m].Graphic[l] = gfx[m][l];
+                    tables[m].Anim[l] = anim[m][l];
+                }
+            }
+
+            (double, double) Cached(int churn) => Measure(packets, i =>
+            {
+                int m = i % n;
+                ushort body = bodies[m & 7];
+                bool garg = body == 0x29A || body == 0x29B;
+                var subject = new LayerSubject(rules.GroupOf(body), (byte)(((m & 1) != 0 ? LayerRulesConst.FlagFemale : 0) | (garg ? LayerRulesConst.FlagGargoyleDraw : 0)), body);
+                LayerDecision d = decisions[m];
+
+                if (churn != 0 && i % churn == 0)
+                {
+                    d.Invalidate();
+                    mirror.EquipChanges++;
+                }
+
+                if (!d.Lookup(rules, subject, versions[m], mirror, records[m]))
+                {
+                    d.Fill(ref tables[m]);
+                }
+
+                ReadOnlySpan<Layer> order = d.Order((byte)(i & 7));
+
+                for (int k = 0; k < order.Length; k++)
+                {
+                    Layer l = order[k];
+                    if (present[m][(int)l] && !d.IsCovered(l)) sink++;
+                }
+            });
+
             rows.Add(("T3b hard: layering decision (order + covered), per mobile", Hard()));
             rows.Add(("T3b data: layering decision (order + covered), per mobile", Data()));
+            rows.Add(("T3b cache hit: layering decision (order + covered), per mobile", Cached(0)));
+            rows.Add(("T3b cache miss: layering decision (order + covered), per mobile", Cached(1)));
+            rows.Add(("T3b cache mixed: layering decision, 2 % outfit changes, per mobile", Cached(50)));
             rows.Add(("T3b hard2: layering decision (order + covered), per mobile", Hard()));
 
             if (sink < 0)

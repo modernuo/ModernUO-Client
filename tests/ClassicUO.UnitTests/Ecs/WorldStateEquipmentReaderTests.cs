@@ -478,7 +478,7 @@ namespace ClassicUO.UnitTests.Ecs
             c.Items = new Item[WornLayers.COUNT];
             long a2 = GC.GetAllocatedBytesForCurrentThread();
 
-            (a1 - a0).Should().Be(72, "the 64-bit version fits the same object size");
+            (a1 - a0).Should().Be(80, "T3b: + the LayerDecision reference");
             (a2 - a1).Should().Be(24 + 8 * WornLayers.COUNT);
         }
 
