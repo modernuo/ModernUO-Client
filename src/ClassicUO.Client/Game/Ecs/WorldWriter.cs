@@ -2809,6 +2809,37 @@ namespace ClassicUO.Game
             }
         }
 
+        // ---- funnel part 8, group 4: the player's walk (PlayerMobile.Walk)
+
+        /// <summary>
+        /// <c>PlayerMobile.Walk</c>'s step request: the walk queue's writes in their old order (<c>Mobile.ApplyStep</c> with
+        /// the plan Walk computed: when the walk starts, <c>SetAnimation(0xFF)</c> if the player was not walking and
+        /// <c>LastStepTime</c>; the step; the inputs). Unfolded, as every player path: Walk runs in the input handling, with
+        /// plugin hooks around it. Only <c>World.Player</c> of this World walks this way; anything else is a violation,
+        /// rejected (false: nothing changed, and Walk returns false before the walker records or sends the step).
+        /// </summary>
+        public bool QueuePlayerStep(Mobile player, in Mobile.StepPlan plan)
+        {
+            if (player == null || !Admitted(nameof(QueuePlayerStep), player.Serial))
+            {
+                return false;
+            }
+
+            if (player.World != _world || !ReferenceEquals(player, _world.Player))
+            {
+                Reject(Violation.NotHeld, $"WorldWriter.QueuePlayerStep: 0x{player.Serial:X8} is not this World's player", rejected: true);
+
+                return false;
+            }
+
+            using (Open(player, null))
+            {
+                player.ApplyStep(in plan);
+            }
+
+            return true;
+        }
+
         // the admission of the per-frame operations of part 8 (as InterpolateStep's): no operation or fold open, and an
         // entity of this World (a stale instance included; only another World's is a violation, rejected)
         private bool PerFrameAdmitted(Entity entity, string operation)

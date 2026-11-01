@@ -480,6 +480,135 @@ namespace ClassicUO.UnitTests.Ecs
             m.AnimationFromServer.Should().BeTrue();
             w.Writer.Violations.Should().Be(1);
         }
+
+        // ---- group 4: the player's walk (PlayerMobile.Walk's queue writes and its coalesced turn). Walk itself needs the
+        // pathfinder, the network and Client.Game: the plan it computes (PlanWalkStep) and the operations it calls are
+        // compared with the old writes
+
+        // the base revision's Walk from CloseBank to PushInputs (the walker's step record is not world state)
+        internal static void OldWalkStep(PlayerMobile p, int x, int y, sbyte z, Direction direction, bool run)
+        {
+            if (p.Steps.Count == 0)
+            {
+                if (!(p.LastStepTime > Time.Ticks - Constants.PLAYER_WALKING_DELAY))
+                {
+                    p.SetAnimation(0xFF);
+                }
+
+                p.LastStepTime = Time.Ticks;
+            }
+
+            p.AddStep(new Mobile.Step { X = x, Y = y, Z = z, Direction = (byte)direction, Run = run });
+            p.World.Ecs.PushInputs(p);
+        }
+
+        internal static void NewWalkStep(World world, PlayerMobile p, int x, int y, sbyte z, Direction direction, bool run)
+        {
+            p.PlanWalkStep(x, y, z, direction, run, out Mobile.StepPlan plan);
+            world.Writer.QueuePlayerStep(p, in plan).Should().BeTrue();
+        }
+
+        internal static World BuildWalkingPlayer(out TestPlayer p) => BuildPlayer(out p);
+
+        [Fact]
+        public void The_Players_Walk_Steps_And_Turn_Equal_The_Old_Path()
+        {
+            World oldWorld = BuildPlayer(out TestPlayer a), newWorld = BuildPlayer(out TestPlayer b);
+            newWorld.Writer.ThrowOnViolation = true;
+            Pair(() => OldAnimate(a, AnimPacket.NewCharacterAnimation), () => OldAnimate(b, AnimPacket.NewCharacterAnimation));
+
+            void Step(uint at, int x, int y, Direction d, bool run)
+            {
+                Time.Ticks = at;
+                long ca = oldWorld.Ecs.ClockWrites, cb = newWorld.Ecs.ClockWrites;
+                long ia = oldWorld.Ecs.MobileMirrorWrites, ib = newWorld.Ecs.MobileMirrorWrites;
+                Pair(() => OldWalkStep(a, x, y, 0, d, run), () => NewWalkStep(newWorld, b, x, y, 0, d, run));
+                AssertSameWorld(oldWorld, newWorld);
+                PlayerSnapshot(b).Should().Be(PlayerSnapshot(a));
+                (newWorld.Ecs.ClockWrites - cb, newWorld.Ecs.MobileMirrorWrites - ib).Should().Be((oldWorld.Ecs.ClockWrites - ca, oldWorld.Ecs.MobileMirrorWrites - ia), $"the pushes of the step at {at}");
+            }
+
+            // the walk starts while not walking (the server animation is reset), a second step queues behind it
+            Step(NOW + 5_000, 1001, 1000, Direction.East, false);
+            b.AnimationFromServer.Should().BeFalse();
+            Step(NOW + 5_100, 1002, 1000, Direction.East, true);
+            b.Steps.Count.Should().Be(2);
+
+            // the queue drained while still walking (LastStepTime from the first step, 120 ms ago): no animation reset
+            Pair(() => a.ClearSteps(), () => b.ClearSteps());
+            Pair(() => OldAnimate(a, AnimPacket.NewCharacterAnimation), () => OldAnimate(b, AnimPacket.NewCharacterAnimation));
+            Step(NOW + 5_120, 1001, 1001, Direction.South, false);
+            b.AnimationFromServer.Should().BeTrue("still walking: no SetAnimation");
+
+            // the coalesced turn (three unconfirmed requests): the direction alone
+            Time.Ticks = NOW + 5_200;
+            Pair(() => a.Direction = Direction.West, () => newWorld.Writer.SetMobileDirection(b, Direction.West));
+            AssertSameWorld(oldWorld, newWorld);
+            PlayerSnapshot(b).Should().Be(PlayerSnapshot(a));
+            b.Direction.Should().Be(Direction.West);
+
+            Time.Ticks = NOW;
+            newWorld.Writer.Violations.Should().Be(0);
+            newWorld.Writer.InScope.Should().BeFalse();
+            newWorld.Ecs.IsFolding.Should().BeFalse();
+        }
+
+        [Fact]
+        public void PlanWalkStep_Writes_Nothing()
+        {
+            BuildPlayer(out TestPlayer p);
+            Time.Ticks = NOW + 5_000;
+            int before = p.UpdateStateHash();
+            p.PlanWalkStep(1001, 1000, 0, Direction.East, true, out Mobile.StepPlan plan);
+            Time.Ticks = NOW;
+
+            p.UpdateStateHash().Should().Be(before);
+            (plan.Accepted, plan.Changes, plan.StartsWalk, plan.SetsAnimation, plan.StepTime, plan.Count).Should().Be((true, true, true, true, NOW + 5_000u, 1));
+            (plan.S0.X, plan.S0.Y, plan.S0.Z, plan.S0.Direction, plan.S0.Run).Should().Be((1001, 1000, (sbyte)0, (byte)Direction.East, true));
+        }
+
+        [Fact]
+        public void QueuePlayerStep_Rejects_Anything_But_This_Worlds_Player_And_Does_Not_Nest()
+        {
+            foreach (bool throws in new[] { true, false })
+            {
+                World world = BuildPlayer(out TestPlayer p), other = BuildPlayer(out TestPlayer foreign);
+                world.Writer.ThrowOnViolation = throws;
+                Mobile bystander = world.Mobiles.Get(OTHER);
+                p.PlanWalkStep(1001, 1000, 0, Direction.East, false, out Mobile.StepPlan plan);
+                int hp = foreign.UpdateStateHash(), hb = bystander.UpdateStateHash();
+                bool result = true;
+
+                foreach (Mobile m in new Mobile[] { foreign, bystander })
+                {
+                    Action act = () => result = world.Writer.QueuePlayerStep(m, in plan);
+
+                    if (throws)
+                    {
+                        act.Should().Throw<ArgumentException>();
+                    }
+                    else
+                    {
+                        act();
+                        result.Should().BeFalse();
+                    }
+                }
+
+                (foreign.UpdateStateHash(), bystander.UpdateStateHash()).Should().Be((hp, hb));
+                world.Writer.Violations.Should().Be(2);
+            }
+
+            World w = BuildPlayer(out TestPlayer player);
+            w.Writer.ThrowOnViolation = false;
+            player.PlanWalkStep(1001, 1000, 0, Direction.East, false, out Mobile.StepPlan p2);
+            int before = player.UpdateStateHash();
+            w.Ecs.BeginFold(w.Mobiles.Get(OTHER));
+            w.Writer.QueuePlayerStep(player, in p2).Should().BeFalse();
+            w.Ecs.EndFold(w.Mobiles.Get(OTHER));
+            player.UpdateStateHash().Should().Be(before);
+            player.Steps.Count.Should().Be(0);
+            w.Writer.Violations.Should().Be(1);
+        }
     }
 
     [Collection(nameof(FunnelCheckCollection))]
@@ -569,6 +698,30 @@ namespace ClassicUO.UnitTests.Ecs
 
             m.AnimationFromServer.Should().BeFalse();
             FunnelCheck.Total.Should().Be(0, "ProcessSteps' SetAnimation(0xFF) for a server animation a step ends");
+        }
+
+        [Fact]
+        public void The_Players_Walk_Makes_No_Direct_Writes()
+        {
+            if (!FunnelCheck.Available)
+            {
+                return;
+            }
+
+            Time.Ticks = 100_000;
+            World world = WorldWriterMobileTests.BuildWalkingPlayer(out WorldWriterMobileTests.TestPlayer p);
+            Time.Ticks = 105_000;
+            FunnelCheck.Reset();
+
+            p.PlanWalkStep(1001, 1000, 0, Direction.East, false, out Mobile.StepPlan plan);
+            world.Writer.QueuePlayerStep(p, in plan).Should().BeTrue();
+            p.PlanWalkStep(1002, 1000, 0, Direction.East, false, out plan);
+            world.Writer.QueuePlayerStep(p, in plan).Should().BeTrue();
+            world.Writer.SetMobileDirection(p, Direction.South);
+            Time.Ticks = 100_000;
+
+            (p.Steps.Count, p.Direction).Should().Be((2, Direction.South));
+            FunnelCheck.Total.Should().Be(0, "PlayerMobile.Walk's queue writes (SetAnimation, LastStepTime, the step) and its coalesced turn");
         }
     }
 }
