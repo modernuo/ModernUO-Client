@@ -321,17 +321,8 @@ namespace ClassicUO.Game.UI.Gumps
                 fakeMobile = new PlayerMobile(World, 0);
             }
 
-            LinkedObject first = fakeMobile.Items;
-
-            while (first != null)
-            {
-                LinkedObject next = first.Next;
-
-                World.RemoveItem((Item)first, true);
-
-                first = next;
-            }
-
+            // T1 (funnel part 8, Codex audit P2 #2): nothing is linked to the detached preview mobile (its hair and beard are
+            // held by the gump), so there is nothing to remove from the World; the list is cleared as before
             fakeMobile.Clear();
             fakeMobile.Race = selectedRace;
             fakeMobile.IsFemale = isFemale;
@@ -455,15 +446,7 @@ namespace ClassicUO.Game.UI.Gumps
                     );
                 }
 
-                //Cleanup
-                if (hair != null)
-                {
-                    World.RemoveItem(hair, true);
-                }
-                if (beard != null)
-                {
-                    World.RemoveItem(beard, true);
-                }
+                //Cleanup: the preview items are detached (see CreateItem): nothing to remove from the World
                 Dispose();
             }
         }
@@ -498,7 +481,10 @@ namespace ClassicUO.Game.UI.Gumps
                 return null;
             }
 
-            Item item = World.GetOrCreateItem(0x4000_0000 + (uint)layer); // use layer as unique Serial
+            // T1 (funnel part 8, Codex audit P2 #2): a detached item (Item.Create, not in World.Items): the custom paperdoll
+            // draws the instance it is given. Before, GetOrCreateItem put it in the in-game World under 0x4000_0000 + layer,
+            // a serial a real server item can have (that item would have been rewritten, then removed on Apply)
+            Item item = Item.Create(World, 0x4000_0000 + (uint)layer); // use layer as unique Serial
             item.Graphic = (ushort)id;
             item.Hue = hue;
             item.Layer = layer;

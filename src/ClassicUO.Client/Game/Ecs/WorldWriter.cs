@@ -30,7 +30,9 @@ namespace ClassicUO.Game
     /// <see cref="Placement"/> token that the placement consumes.</item>
     /// </list>
     /// <para>
-    /// Operations do not nest, and only operations open a scope. A violation (nesting, a placement that is not outstanding,
+    /// Operations do not nest, and only operations open a scope (one documented exception: the player's own walk from a
+    /// position or direction callback joins the open unfolded operation on that player, see <see cref="AdmittedPlayerWalk"/>).
+    /// A violation (nesting, a placement that is not outstanding,
     /// a removal of an item this World does not hold, an item upsert of a live mobile) is a bug in the caller: it throws in
     /// CUO_DEVTOOLS builds; in a release build it logs an error once per kind, so a funnel bug never disconnects a player
     /// (coordinator, T1 round 2). A nested operation is then rejected outright (nothing changes; T1 round 4: production code
@@ -149,7 +151,10 @@ namespace ClassicUO.Game
         /// subject (or in the subtree a removal owns).
         /// </summary>
         public bool Owns(Entity e) =>
-            _open && (ReferenceEquals(e, _subject) || (_subtree != null && _subtree.Contains(e)));
+            _open && (_clearingWorld || ReferenceEquals(e, _subject) || (_subtree != null && _subtree.Contains(e)));
+
+        // ClearWorld's scope owns every object of this World (the logout's removals)
+        private bool _clearingWorld;
 
         /// <summary>The scope of one operation. Only the operations of this class open one (no bare scopes).</summary>
         private ref struct Scope
@@ -183,6 +188,7 @@ namespace ClassicUO.Game
 
                 w._open = false;
                 w._subject = null;
+                w._clearingWorld = false;
                 w._subtree?.Clear();
                 w.RunDeferredBoatClears();
             }
@@ -2712,6 +2718,299 @@ namespace ClassicUO.Game
 
                 mobile.LastAnimationChangeTime = due;
             }
+        }
+
+        // ---- funnel part 8, group 1: the idle animation and the footstep sound (Mobile.Update, per mobile when due). Like
+        // AdvanceAnimation: the update loops pass the instance they iterate, so a stale instance of this World is written as
+        // before T1 (every push ignores it) and only another World's is a violation, rejected (nothing changes). Unfolded and
+        // committing nothing: the setters push what they pushed before T1 (the idle timer's clock push; SetAnimation's), and
+        // the update loops publish the rest after Update.
+
+        /// <summary>
+        /// <c>Mobile.SetIdleAnimation</c> (its idle timer is due): the plan <c>Mobile.PlanIdleAnimation</c> computed from the
+        /// mobile and the animation data (the random draws included), written in the old order by <c>Mobile.ApplyIdle</c>:
+        /// the idle timer's next due time and its clock push; unless mounted, in war mode or not animating, the timer fields'
+        /// idle reset (frame 0, no frame count, interval 1, repeat mode 1, forward, no repeat, from the server); then the
+        /// group, or <c>SetAnimation</c> of the group it had when neither idle action exists.
+        /// </summary>
+        public void IdleAnimation(Mobile mobile, in Mobile.IdlePlan plan)
+        {
+            if (!PerFrameAdmitted(mobile, nameof(IdleAnimation)))
+            {
+                return;
+            }
+
+            using (Open(mobile, null))
+            {
+                mobile.ApplyIdle(in plan);
+            }
+        }
+
+        /// <summary>
+        /// <c>Mobile.ProcessFootstepsSound</c> (a walking human's step sound is due): the next sound offset, then the next
+        /// sound's due time, the old writes in their old order. The caller plays the sound after this returns true (it read
+        /// neither field; before T1 it played between the two writes). False: rejected, nothing changed, no sound.
+        /// </summary>
+        public bool StepSound(Mobile mobile, int offset, long due)
+        {
+            if (!PerFrameAdmitted(mobile, nameof(StepSound)))
+            {
+                return false;
+            }
+
+            using (Open(mobile, null))
+            {
+                mobile.StepSoundOffset = offset;
+                mobile.LastStepSoundTime = due;
+            }
+
+            return true;
+        }
+
+        // ---- funnel part 8, group 2: a corpse's frame advance (Item.ProcessAnimation, per item when due)
+
+        /// <summary>
+        /// <c>Item.ProcessAnimation</c> for a corpse whose frame is due: the frame the caller read from the animation data
+        /// (<c>TryCorpseFrame</c>; when <paramref name="frame"/> &lt; 0 there was none and the frame index stays), then the
+        /// next frame's due time, the old writes in their old order. Neither is a record field or an input (the ECS item
+        /// extract reads them each frame), so nothing is committed or pushed, as before T1. Admission as
+        /// <see cref="IdleAnimation"/> (the item update loop passes what it iterates).
+        /// </summary>
+        public void AdvanceCorpseFrame(Item corpse, int frame, long due)
+        {
+            if (!PerFrameAdmitted(corpse, nameof(AdvanceCorpseFrame)))
+            {
+                return;
+            }
+
+            using (Open(corpse, null))
+            {
+                if (frame >= 0)
+                {
+                    corpse.AnimIndex = (byte)frame;
+                }
+
+                corpse.LastAnimationChangeTime = due;
+            }
+        }
+
+        // ---- funnel part 8, group 3: a server animation that a step ends (Mobile.ProcessSteps)
+
+        /// <summary>
+        /// <c>Mobile.ProcessSteps</c> while the mobile has a step queued and its current animation came from the server:
+        /// <c>SetAnimation(0xFF)</c> (the default action, the timer reset, the idle delay drawn and its clock push), as before
+        /// T1. Unfolded and committing nothing: SetAnimation's own push is the old one. Admission as <see cref="IdleAnimation"/>
+        /// (the update loops pass what they iterate).
+        /// </summary>
+        public void EndServerAnimation(Mobile mobile)
+        {
+            if (!PerFrameAdmitted(mobile, nameof(EndServerAnimation)))
+            {
+                return;
+            }
+
+            using (Open(mobile, null))
+            {
+                mobile.SetAnimation(0xFF);
+            }
+        }
+
+        // ---- funnel part 8, group 4: the player's walk (PlayerMobile.Walk)
+
+        /// <summary>
+        /// <c>PlayerMobile.Walk</c>'s step request: first the admission (<see cref="AdmittedPlayerWalk"/>) and the player
+        /// check, then <c>CloseBank</c> (the caller's removals, unchanged and unscoped as before T1), then the walk queue's
+        /// writes in their old order (<c>PlanWalkStep</c> from the queue as it is now, then <c>Mobile.ApplyStep</c>: when the
+        /// walk starts, <c>SetAnimation(0xFF)</c> if the player was not walking and <c>LastStepTime</c>; the step; the
+        /// inputs). Unfolded, as every player path. Only <c>World.Player</c> of this World walks this way; anything else is a
+        /// violation, rejected (false: nothing changed, the bank stays open, and Walk returns false before the walker records
+        /// or sends the step).
+        /// </summary>
+        public bool QueuePlayerStep(Mobile player, int x, int y, sbyte z, Direction direction, bool run)
+        {
+            if (player == null || !AdmittedPlayerWalk(player, nameof(QueuePlayerStep), out bool joined))
+            {
+                return false;
+            }
+
+            if (player.World != _world || !ReferenceEquals(player, _world.Player))
+            {
+                Reject(Violation.NotHeld, $"WorldWriter.QueuePlayerStep: 0x{player.Serial:X8} is not this World's player", rejected: true);
+
+                return false;
+            }
+
+            PlayerMobile walker = _world.Player;
+            walker.CloseBank();
+            walker.PlanWalkStep(x, y, z, direction, run, out Mobile.StepPlan plan);
+
+            using (joined ? default : Open(player, null))
+            {
+                player.ApplyStep(in plan);
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// <c>PlayerMobile.Walk</c>'s coalesced turn (three unconfirmed requests: the direction alone, no step): as
+        /// <see cref="SetMobileDirection"/> (the record committed with the new direction, then the setter unfolded for the door
+        /// check, whose Sync writes the inputs: the old turn's one push), with the walk's admission (<see cref="AdmittedPlayerWalk"/>). Only <c>World.Player</c> of this
+        /// World; anything else is a violation, rejected. False: rejected, nothing changed (Walk then returns false and keeps
+        /// its cooldown).
+        /// </summary>
+        public bool TurnPlayer(Mobile player, Direction direction)
+        {
+            if (player == null || !AdmittedPlayerWalk(player, nameof(TurnPlayer), out bool joined))
+            {
+                return false;
+            }
+
+            if (player.World != _world || !ReferenceEquals(player, _world.Player))
+            {
+                Reject(Violation.NotHeld, $"WorldWriter.TurnPlayer: 0x{player.Serial:X8} is not this World's player", rejected: true);
+
+                return false;
+            }
+
+            MobileState v;
+            v.Serial = player.Serial;
+            v.Graphic = player.Graphic;
+            v.Hue = player.Hue;
+            v.X = player.X;
+            v.Y = player.Y;
+            v.Z = player.Z;
+            v.Direction = direction;
+            v.Flags = player.Flags;
+            v.IsPlayer = true;
+
+            // the setter's Sync (unfolded) writes the inputs from the new direction, the one push the old turn made; no
+            // second inputs commit (unlike SetMobileDirection, whose 0x1B/0x21 callers it keeps as they were)
+            using (joined ? default : Open(player, null))
+            {
+                _world.Ecs.CommitMobile(player, in v);
+                player.Direction = v.Direction;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// The admission of the player's walk (<see cref="QueuePlayerStep"/>, <see cref="TurnPlayer"/>), Codex audit of part 8,
+        /// P2 #1. With nothing open it is <see cref="Admitted"/>. Inside an operation it is the one documented exception to
+        /// "operations do not nest": the player's position and direction callbacks run inside the unfolded operations on the
+        /// player (<see cref="PlaceMobile"/>, <see cref="MoveMobile"/>, <see cref="CompleteStep"/>,
+        /// <see cref="MoveBoatPassenger"/>, <see cref="SetMobileDirection"/>, <see cref="TurnPlayer"/>), and a plugin's
+        /// <c>RequestMove</c> there runs <c>Player.Walk</c> synchronously (<c>PlayerMobile.OnPositionChanged</c> →
+        /// <c>Plugin.UpdatePlayerPosition</c>; the door check's packet → the plugins' send hooks). Before T1 that walk wrote at
+        /// that point; it still does: the walk joins the open operation (no scope of its own, so the outer scope, its
+        /// ownership and its deferred work stay as they are) when that operation's subject is this exact instance (and the
+        /// caller then checks it is <c>World.Player</c> of this World) and nothing is folded (the operations that fold the player run no callback).
+        /// Its writes are then the outer operation's funnel writes, and every push and Sync publishes as before T1; what the
+        /// outer operation writes after its callback is what the old code wrote after it (its commits after the callback are
+        /// the inputs from the getters and the hook Syncs from the cache, never values computed before the callback). Any
+        /// other nesting is rejected as by <see cref="Admitted"/>.
+        /// </summary>
+        private bool AdmittedPlayerWalk(Mobile player, string operation, out bool joined)
+        {
+            // the open operation's own subject, nothing folded. ClearWorld's scope has no subject, so it never matches; a
+            // removal's subject is the removed mobile, and no removal runs a position callback. The caller's player check,
+            // next and still before any side effect, rejects a subject that is not this World's player
+            joined = _open && !_world.Ecs.IsFolding && ReferenceEquals(_subject, player);
+
+            return joined || Admitted(operation, player.Serial);
+        }
+
+        // ---- funnel part 8, group 5: logout's removals (World.Clear)
+
+        /// <summary>
+        /// <c>World.Clear</c> (the game scene's unload: logout, disconnect): every mobile, then every item, removed and
+        /// destroyed (<c>World.RemoveMobile</c>/<c>RemoveItem</c> without force, which leave them in their tables; Clear
+        /// empties the tables afterwards), in the tables' order, as before T1. A removal like <see cref="SweepMobile"/>: no
+        /// value of its own, no fold, and its scope owns every object of this World (the funnel check sees no direct write
+        /// from the removals). Every outstanding placement is cancelled first (their subjects are all removed). A nested
+        /// call is rejected (nothing is removed; <c>World.Clear</c> then empties the tables without destroying the objects,
+        /// and the mirror is reset by <c>WorldEcs.OnWorldCleared</c>); nothing runs <c>World.Clear</c> inside an operation.
+        /// </summary>
+        public void ClearWorld()
+        {
+            if (!Admitted(nameof(ClearWorld), 0))
+            {
+                return;
+            }
+
+            _placements.Clear();
+
+            using (Open(null, null))
+            {
+                _clearingWorld = true;
+
+                foreach (Mobile mobile in _world.Mobiles.Values)
+                {
+                    _world.RemoveMobile(mobile.Serial);
+                }
+
+                foreach (Item item in _world.Items.Values)
+                {
+                    _world.RemoveItem(item.Serial);
+                }
+            }
+        }
+
+        // ---- funnel part 8, group 6: the gump-side writes (survey: ContainerGump.CheckItemControlPosition is the only gump
+        // or UI write to an object World holds. CreateCharAppearanceGump and RaceChangeGump write their own preview mobiles
+        // and clothes; until the Codex audit of part 8 (P2 #2) character creation put its mobile in World.Mobiles and both
+        // made their clothes with World.GetOrCreateItem; they are now detached: Item.Create, no table, and the character
+        // creation paperdoll draws its preview instance)
+
+        /// <summary>
+        /// <c>ContainerGump.CheckItemControlPosition</c> (0x25's <c>AddItemToContainer</c>, after the item is placed in an
+        /// open container gump): the item's position in the gump clamped to the gump's bounds. The gump computes the clamped
+        /// <paramref name="x"/> and <paramref name="y"/> (its bounds and the item's art); this writes X, then Y, each only when
+        /// it changes (the old code wrote a coordinate only when it was out of bounds, and the clamp always changes it), then
+        /// syncs the item's record (the old explicit <c>Sync</c>), unfolded. Admission as <see cref="IdleAnimation"/>: a stale
+        /// instance of this World is written as before T1 (the Sync ignores it), another World's is rejected.
+        /// </summary>
+        public void ClampContainerPosition(Item item, ushort x, ushort y)
+        {
+            if (!PerFrameAdmitted(item, nameof(ClampContainerPosition)))
+            {
+                return;
+            }
+
+            using (Open(item, null))
+            {
+                if (item.X != x)
+                {
+                    item.X = x;
+                }
+
+                if (item.Y != y)
+                {
+                    item.Y = y;
+                }
+
+                _world.Ecs.Sync(item);
+            }
+        }
+
+        // the admission of the per-frame operations of part 8 (as InterpolateStep's): no operation or fold open, and an
+        // entity of this World (a stale instance included; only another World's is a violation, rejected)
+        private bool PerFrameAdmitted(Entity entity, string operation)
+        {
+            if (entity == null || !Admitted(operation, entity.Serial))
+            {
+                return false;
+            }
+
+            if (entity.World != _world)
+            {
+                Reject(Violation.NotHeld, $"WorldWriter.{operation}: 0x{entity.Serial:X8} belongs to another World", rejected: true);
+
+                return false;
+            }
+
+            return true;
         }
 
         // the held check of the status operations: the instance this World holds for the entity's serial, or the detached

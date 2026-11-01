@@ -229,19 +229,10 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
         {
             if (_character == null)
             {
+                // T1 (funnel part 8, Codex audit P2 #2): the preview mobile and its clothes are detached (no World table
+                // holds them, so they are not world state and never reach the ECS); the paperdoll draws this instance
+                // (PaperDollInteractable.Preview) instead of looking serial 1 up in World.Mobiles
                 _character = new PlayerMobile(World, 1);
-                World.Mobiles.Add(_character);
-            }
-
-            LinkedObject first = _character.Items;
-
-            while (first != null)
-            {
-                LinkedObject next = first.Next;
-
-                World.RemoveItem((Item) first, true);
-
-                first = next;
             }
 
             _character.Clear();
@@ -566,7 +557,8 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
             (
                 _paperDoll = new PaperDollInteractable(262, 135, _character, new PaperDollGump(World))
                 {
-                    AcceptMouseInput = false
+                    AcceptMouseInput = false,
+                    Preview = _character
                 },
                 1
             );
@@ -965,7 +957,6 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
 
             if (existsItem != null)
             {
-                World.RemoveItem(existsItem, true);
                 _character.Remove(existsItem);
             }
 
@@ -975,9 +966,9 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
             }
 
             // This is a workaround to avoid to see naked guy
-            // We are simulating server objects into World.Items map.
-            Item item = World.GetOrCreateItem(0x4000_0000 + (uint) layer); // use layer as unique Serial
-            _character.Remove(item);
+            // T1 (funnel part 8, Codex audit P2 #2): a detached item (Item.Create, not in World.Items), linked to the
+            // detached preview mobile below; the paperdoll finds it through the mobile's item list
+            Item item = Item.Create(World, 0x4000_0000 + (uint) layer); // use layer as unique Serial
             item.Graphic = (ushort) id;
             item.Hue = hue;
             item.Layer = layer;

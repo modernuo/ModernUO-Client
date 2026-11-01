@@ -1439,15 +1439,8 @@ namespace ClassicUO.Game
         {
             TextOwners.Clear();
 
-            foreach (Mobile mobile in Mobiles.Values)
-            {
-                RemoveMobile(mobile);
-            }
-
-            foreach (Item item in Items.Values)
-            {
-                RemoveItem(item);
-            }
+            // T1 (funnel part 8): the removals of every mobile, then every item, through the funnel
+            Writer.ClearWorld();
 
             UIManager.GetGump<BaseHealthBarGump>(Player?.Serial)?.Dispose();
 

@@ -28,9 +28,8 @@ src/ClassicUO.Client/Game/GameObjects/GameObject.cs|X|2
 src/ClassicUO.Client/Game/GameObjects/GameObject.cs|Y|2
 src/ClassicUO.Client/Game/GameObjects/GameObject.cs|Z|2
 src/ClassicUO.Client/Game/GameObjects/GameObject.cs|_graphic|1
-src/ClassicUO.Client/Game/GameObjects/Item.cs|AnimIndex|2
+src/ClassicUO.Client/Game/GameObjects/Item.cs|AnimIndex|1
 src/ClassicUO.Client/Game/GameObjects/Item.cs|Direction|1
-src/ClassicUO.Client/Game/GameObjects/Item.cs|LastAnimationChangeTime|1
 src/ClassicUO.Client/Game/GameObjects/Item.cs|Layer|1
 src/ClassicUO.Client/Game/GameObjects/Item.cs|Serial|1
 src/ClassicUO.Client/Game/GameObjects/Item.cs|UsedLayer|1
@@ -41,14 +40,12 @@ src/ClassicUO.Client/Game/GameObjects/Mobile.cs|AnimationFrameCount|3
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|AnimationFromServer|2
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|IsFemale|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|LastAnimationChangeTime|2
-src/ClassicUO.Client/Game/GameObjects/Mobile.cs|LastStepSoundTime|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|LastStepTime|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|Offset|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|Race|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|Serial|1
-src/ClassicUO.Client/Game/GameObjects/Mobile.cs|StepSoundOffset|1
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|Steps|4
-src/ClassicUO.Client/Game/GameObjects/Mobile.cs|_animationGroup|9
+src/ClassicUO.Client/Game/GameObjects/Mobile.cs|_animationGroup|2
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|_animationInterval|2
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|_animationRepeat|3
 src/ClassicUO.Client/Game/GameObjects/Mobile.cs|_animationRepeatModeCount|3
@@ -64,9 +61,6 @@ src/ClassicUO.Client/Game/GameObjects/MovingEffect.cs|Offset|5
 src/ClassicUO.Client/Game/GameObjects/MovingEffect.cs|X|1
 src/ClassicUO.Client/Game/GameObjects/MovingEffect.cs|Y|1
 src/ClassicUO.Client/Game/GameObjects/Multi.cs|Graphic|1
-src/ClassicUO.Client/Game/GameObjects/PlayerMobile.cs|Direction|1
-src/ClassicUO.Client/Game/GameObjects/PlayerMobile.cs|LastStepTime|1
-src/ClassicUO.Client/Game/GameObjects/PlayerMobile.cs|Steps|1
 src/ClassicUO.Client/Game/GameObjects/PlayerMobile.cs|_inWarMode|1
 src/ClassicUO.Client/Game/GameObjects/Static.cs|Graphic|2
 src/ClassicUO.Client/Game/Managers/BoatMovingManager.cs|X|1
@@ -84,8 +78,6 @@ src/ClassicUO.Client/Game/UI/Gumps/CharCreation/CreateCharAppearanceGump.cs|IsFe
 src/ClassicUO.Client/Game/UI/Gumps/CharCreation/CreateCharAppearanceGump.cs|Layer|1
 src/ClassicUO.Client/Game/UI/Gumps/CharCreation/CreateCharAppearanceGump.cs|Name|1
 src/ClassicUO.Client/Game/UI/Gumps/CharCreation/CreateCharAppearanceGump.cs|Race|1
-src/ClassicUO.Client/Game/UI/Gumps/ContainerGump.cs|X|2
-src/ClassicUO.Client/Game/UI/Gumps/ContainerGump.cs|Y|2
 src/ClassicUO.Client/Game/UI/Gumps/RaceChangeGump.cs|Flags|2
 src/ClassicUO.Client/Game/UI/Gumps/RaceChangeGump.cs|Graphic|5
 src/ClassicUO.Client/Game/UI/Gumps/RaceChangeGump.cs|Hue|7
