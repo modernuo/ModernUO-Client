@@ -228,6 +228,58 @@ namespace ClassicUO.Game
             }
         }
 
+        // ---- -ecscheck v2 (T1 funnel part 9): the cold record fields, committed by the operations that write them, from
+        // their values, before their cache writes. Each ignores an entity World does not hold (the detached player, a stale
+        // instance) or that has no record.
+
+        private bool HoldsEntity(Entity entity) =>
+            entity != null && !entity.IsDestroyed &&
+            (entity is Mobile ? ReferenceEquals(_world.Mobiles.Get(entity.Serial), entity) : ReferenceEquals(_world.Items.Get(entity.Serial), entity));
+
+        /// <summary>T1, tests: every cold-field commit (name, vitals, notoriety, price, child stamp) that reached a record.</summary>
+        internal long ExtrasWrites;
+
+        internal void CommitName(Entity entity, string name)
+        {
+            if (HoldsEntity(entity) && Mirror.SetName(entity.Serial, name))
+            {
+                ExtrasWrites++;
+            }
+        }
+
+        internal void CommitVitals(Entity entity, ushort hits, ushort hitsMax)
+        {
+            if (HoldsEntity(entity) && Mirror.SetVitals(entity.Serial, hits, hitsMax))
+            {
+                ExtrasWrites++;
+            }
+        }
+
+        internal void CommitNotoriety(Mobile mobile, NotorietyFlag notoriety)
+        {
+            if (HoldsEntity(mobile) && Mirror.SetNotoriety(mobile.Serial, (byte)notoriety))
+            {
+                ExtrasWrites++;
+            }
+        }
+
+        internal void CommitPrice(Item item, uint price)
+        {
+            if (HoldsEntity(item) && Mirror.SetPrice(item.Serial, price))
+            {
+                ExtrasWrites++;
+            }
+        }
+
+        /// <summary>T1 part 9: the item went to the back of its parent's child list (the operation's <c>PushToBack</c>).</summary>
+        internal void CommitChildOrder(Item item)
+        {
+            if (HoldsEntity(item) && Mirror.StampChild(item.Serial))
+            {
+                ExtrasWrites++;
+            }
+        }
+
         private void SyncItem(Item item)
         {
             // Only the instance World currently holds for this serial; stale or detached objects are ignored.
@@ -541,6 +593,8 @@ namespace ClassicUO.Game
                 keep = old.GetComponent<AnimationState>().Flags & AnimStateFlags.Mirror;
             }
 
+            // the cold fields (part 9) go with the mobile, as its mirror bit does
+            Mirror.TryGetExtras(oldSerial, out MirrorExtras extras);
             Mirror.Remove(oldSerial);
 
             if (mobile.IsDestroyed)
@@ -551,6 +605,7 @@ namespace ClassicUO.Game
             MobileCommitObserver?.Invoke(mobile, v);
             MobileMirrorWrites++;
             EcsEntity e = Mirror.UpsertMobile(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.IsPlayer);
+            Mirror.CarryMobileExtras(in extras, v.Serial);
 
             if (keep != 0 && e.HasComponent<AnimationState>())
             {
@@ -571,8 +626,14 @@ namespace ClassicUO.Game
                 keep = old.GetComponent<AnimationState>().Flags & AnimStateFlags.Mirror;
             }
 
+            Mirror.TryGetExtras(oldSerial, out MirrorExtras extras);
             Mirror.Remove(oldSerial);
             Sync(entity);
+
+            if (Mirror.TryGetEntity(entity.Serial, out _) && !entity.IsDestroyed)
+            {
+                Mirror.CarryMobileExtras(in extras, entity.Serial);
+            }
 
             if (keep != 0 && Mirror.TryGetEntity(entity.Serial, out EcsEntity rekeyed) && rekeyed.HasComponent<AnimationState>())
             {
@@ -695,6 +756,8 @@ namespace ClassicUO.Game
                 items++;
                 _live.Add(item.Serial);
                 CompareItem(item, ref mismatches);
+                CompareItemExtras(item, ref mismatches);
+                CompareChildren(item, ref mismatches);
             }
 
             foreach (Mobile mobile in _world.Mobiles.Values)
@@ -707,6 +770,8 @@ namespace ClassicUO.Game
                 mobiles++;
                 _live.Add(mobile.Serial);
                 CompareMobile(mobile, ref mismatches);
+                CompareMobileExtras(mobile, ref mismatches);
+                CompareChildren(mobile, ref mismatches);
                 CompareAnimation(mobile, ref mismatches);
             }
 
@@ -783,6 +848,113 @@ namespace ClassicUO.Game
             }
         }
 
+        // -ecscheck v2 (T1 funnel part 9): every item's Layer, its name, hits and price
+        private void CompareItemExtras(Item item, ref int mismatches)
+        {
+            if (!Mirror.TryGetExtras(item.Serial, out MirrorExtras x))
+            {
+                return; // CompareItem reported it missing
+            }
+
+            if (x.ItemLayer != (byte)item.Layer || !string.Equals(x.Name, item.Name, StringComparison.Ordinal) || x.Hits != item.Hits ||
+                x.HitsMax != item.HitsMax || x.Price != item.Price)
+            {
+                Report
+                (
+                    ref mismatches,
+                    $"item 0x{item.Serial:X8} v2: World layer={(byte)item.Layer} name={Quote(item.Name)} hits={item.Hits}/{item.HitsMax} price={item.Price} | " +
+                    $"ECS layer={x.ItemLayer} name={Quote(x.Name)} hits={x.Hits}/{x.HitsMax} price={x.Price}"
+                );
+            }
+        }
+
+        // -ecscheck v2: a mobile's name, hits and notoriety
+        private void CompareMobileExtras(Mobile mobile, ref int mismatches)
+        {
+            if (!Mirror.TryGetExtras(mobile.Serial, out MirrorExtras x))
+            {
+                return;
+            }
+
+            if (!string.Equals(x.Name, mobile.Name, StringComparison.Ordinal) || x.Hits != mobile.Hits || x.HitsMax != mobile.HitsMax ||
+                x.Notoriety != (byte)mobile.NotorietyFlag)
+            {
+                Report
+                (
+                    ref mismatches,
+                    $"mobile 0x{mobile.Serial:X8} v2: World name={Quote(mobile.Name)} hits={mobile.Hits}/{mobile.HitsMax} noto={(byte)mobile.NotorietyFlag} | " +
+                    $"ECS name={Quote(x.Name)} hits={x.Hits}/{x.HitsMax} noto={x.Notoriety}"
+                );
+            }
+        }
+
+        private static string Quote(string s) => s == null ? "null" : $"\"{s}\"";
+
+        private readonly List<uint> _worldChildren = new List<uint>();
+        private readonly List<(uint Stamp, uint Serial)> _ecsChildren = new List<(uint, uint)>();
+
+        /// <summary>
+        /// -ecscheck v2 (T1 part 9, for T2): the parent's children World holds, in its child list's order, against the
+        /// mirror's children of that parent (worn and contained) sorted by their child-order stamp. Children World does not
+        /// hold (the spellbook's detached spell items) are not world state and are skipped.
+        /// </summary>
+        private void CompareChildren(Entity parent, ref int mismatches)
+        {
+            _worldChildren.Clear();
+            _ecsChildren.Clear();
+
+            for (LinkedObject i = parent.Items; i != null; i = i.Next)
+            {
+                if (i is Item child && !child.IsDestroyed && ReferenceEquals(_world.Items.Get(child.Serial), child))
+                {
+                    _worldChildren.Add(child.Serial);
+                }
+            }
+
+            foreach (EcsEntity e in Mirror.GetContents(parent.Serial))
+            {
+                _ecsChildren.Add((e.TryGetComponent(out ChildOrder o) ? o.Stamp : 0, e.GetComponent<ClassicUO.Ecs.Serial>().Value));
+            }
+
+            foreach (EcsEntity e in Mirror.GetEquipment(parent.Serial))
+            {
+                _ecsChildren.Add((e.TryGetComponent(out ChildOrder o) ? o.Stamp : 0, e.GetComponent<ClassicUO.Ecs.Serial>().Value));
+            }
+
+            if (_worldChildren.Count == 0 && _ecsChildren.Count == 0)
+            {
+                return;
+            }
+
+            _ecsChildren.Sort();
+            bool same = _worldChildren.Count == _ecsChildren.Count;
+
+            for (int i = 0; same && i < _worldChildren.Count; i++)
+            {
+                same = _worldChildren[i] == _ecsChildren[i].Serial;
+            }
+
+            if (!same)
+            {
+                var sb = new System.Text.StringBuilder();
+                sb.Append($"children of 0x{parent.Serial:X8}: World");
+
+                foreach (uint s in _worldChildren)
+                {
+                    sb.Append($" 0x{s:X8}");
+                }
+
+                sb.Append(" | ECS");
+
+                foreach ((uint stamp, uint s) in _ecsChildren)
+                {
+                    sb.Append($" 0x{s:X8}@{stamp}");
+                }
+
+                Report(ref mismatches, sb.ToString());
+            }
+        }
+
         private void CompareMobile(Mobile mobile, ref int mismatches)
         {
             if (!Mirror.TryGet(mobile.Serial, out MirrorRecord r))
@@ -838,7 +1010,7 @@ namespace ClassicUO.Game
         }
 
         // W5: the pushed MobileInputs vs a fresh computation from the Mobile (a missed push leaves them stale)
-        private static void CompareInputs(Mobile mobile, EcsEntity e, ref int mismatches)
+        private void CompareInputs(Mobile mobile, EcsEntity e, ref int mismatches)
         {
             if (!e.HasComponent<MobileInputs>())
             {
@@ -942,8 +1114,13 @@ namespace ClassicUO.Game
             }
         }
 
-        private static void Report(ref int mismatches, string message)
+        /// <summary>Tests: every mismatch the check reports (logged or not).</summary>
+        internal Action<string> MismatchObserver;
+
+        private void Report(ref int mismatches, string message)
         {
+            MismatchObserver?.Invoke(message);
+
             if (mismatches++ < MAX_LOGGED_MISMATCHES)
             {
                 Log.Warn($"[ECS] mismatch: {message}");

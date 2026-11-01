@@ -60,6 +60,43 @@ namespace ClassicUO.Ecs
         public uint GetIndexedValue() => Parent;
     }
 
+    // -ecscheck v2 (T1 funnel part 9): the cold record fields the funnel commits besides the record. An entity has each
+    // only once a funnel operation wrote it (absent = the GameObject's default: null name, 0 hits, Unknown notoriety, 0
+    // price); ItemLayer every item has from its creation.
+    public struct EntityName : IComponent
+    {
+        public string Value;
+    }
+
+    public struct Vitals : IComponent
+    {
+        public ushort Hits, HitsMax;
+    }
+
+    public struct MobileNotoriety : IComponent
+    {
+        public byte Value;
+    }
+
+    public struct ItemPrice : IComponent
+    {
+        public uint Value;
+    }
+
+    // every item's Layer (EquippedOn has it only for worn items)
+    public struct ItemLayer : IComponent
+    {
+        public byte Value;
+    }
+
+    // T1 part 9 (for T2): a child's place in its parent's child list. A monotonic stamp the funnel takes at every
+    // PushToBack (arrival order, a re-push moves the child to the back), so a parent's children sorted by stamp are the
+    // GameObject linked list. Friflo's index order is not stable across removes, so the order lives here, not there.
+    public struct ChildOrder : IComponent
+    {
+        public uint Stamp;
+    }
+
     public struct MobileTag : ITag { }
 
     public struct ItemTag : ITag { }
