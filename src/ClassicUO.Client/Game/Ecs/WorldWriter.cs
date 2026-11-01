@@ -1206,6 +1206,68 @@ namespace ClassicUO.Game
             return item;
         }
 
+        /// <summary>One entry of a 0x78/0xD3 equipment list, as the packet gives it (the hue before FixHue).</summary>
+        internal readonly struct WornEntry
+        {
+            internal readonly uint Serial;
+            internal readonly ushort Graphic;
+            internal readonly Layer Layer;
+            internal readonly ushort Hue;
+
+            internal WornEntry(uint serial, ushort graphic, Layer layer, ushort hue)
+            {
+                Serial = serial;
+                Graphic = graphic;
+                Layer = layer;
+                Hue = hue;
+            }
+        }
+
+        /// <summary>
+        /// t3a-fold: 0x78 / 0xD3 (UpdateObject)'s whole equipment part as one operation: the handler resolves the packet's
+        /// list first (<paramref name="entries"/>, read before any change), then this runs <see cref="ClearWornItems"/> on the
+        /// owner's serial and one <see cref="WearItem"/> per entry, in the packet's order, exactly as the handler did before,
+        /// with one difference: the wearer's WornLayers are kept in the mirror's batch for the length of the packet (the
+        /// mirror's <c>BeginWornBatch</c>/<c>EndWornBatch</c>), so the departures and arrivals touch no component of the wearer,
+        /// and the batch writes the result back once, with one version bump, only when a serial or a per-layer count changed.
+        /// <para>
+        /// Kept as before, on purpose (owner, t3a-fold: real destruction semantics): every item the clear takes is removed and
+        /// destroyed with its contents, and every listed item is found or created after the clear, also an item the list
+        /// re-sends unchanged. The old path's result for such an item is a new Item object (the old one destroyed: IsDestroyed,
+        /// its overhead texts cleared, its OPL entry dropped, its fields back to defaults, its contents destroyed, the
+        /// destroyed-items callback, a new mirror record with a new child-order stamp and an epoch bump), and each of those is
+        /// observable (held references, tooltips, texts, the mirror's epoch that readers' caches key on), so the unchanged
+        /// item takes the same removal and creation. Only WornLayers is diffed (the batch's end state against its start).
+        /// </para>
+        /// </summary>
+        /// <param name="owner">The handler's <c>obj</c> (<c>World.Get(serial)</c>, captured once before the list); null: nothing.</param>
+        public void ReplaceWornItems(Entity owner, ReadOnlySpan<WornEntry> entries)
+        {
+            if (owner == null || !Admitted(nameof(ReplaceWornItems), owner.Serial))
+            {
+                return;
+            }
+
+            ClassicUO.Ecs.WorldMirror mirror = _world.Ecs.Mirror;
+            mirror.BeginWornBatch(owner.Serial);
+
+            try
+            {
+                // the old sequence, each its own operation (nothing is open between them)
+                ClearWornItems(owner.Serial);
+
+                for (int i = 0; i < entries.Length; i++)
+                {
+                    ref readonly WornEntry e = ref entries[i];
+                    WearItem(owner, e.Serial, e.Graphic, e.Layer, e.Hue);
+                }
+            }
+            finally
+            {
+                mirror.EndWornBatch();
+            }
+        }
+
         /// <summary>
         /// The mobile branch of <c>UpdateGameObject</c> (0x77 and 0x78/0xD3 for another mobile, and the item packets for a
         /// mobile's serial), first half. <paramref name="obj"/> is the handler's <c>World.Get(serial)</c>, captured once: null or
