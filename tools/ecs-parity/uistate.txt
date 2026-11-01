@@ -2,7 +2,8 @@
 # items dragged between containers; a stack split; a trade (with the partner client, uistate_partner.txt, standing one tile
 # east); a pet bought from a vendor and renamed; the spellbook opened; an item equipped and unequipped through the paperdoll.
 # Every step logs what proves it ("[ECS] ui ...", "[ECS] gump ...", the journal). Everything the script creates is
-# removed at the end ([remove). Graphics: bag 0E76, gold 0EED, spellbook 0EFA, cap 1715, apple 09D0, corpse 2006.
+# removed at the end ([remove). Graphics: bag 0E76, arrows 0F3F, spellbook 0EFA, cap 1715, apple 09D0, corpse 2006. (Not gold:
+# ModernUO turns coins dropped into a bank box into the account's balance, bench-000099.)
 wait 6
 # both clients on Felucca (bench-000098: the partner stood on Trammel, so the trade had no one to drop on)
 say [self set Map Felucca
@@ -12,7 +13,7 @@ wait 4
 # setup: the items, in the backpack
 say [self addtopack Bag
 wait 1
-say [self addtopack Gold 3000
+say [self addtopack Arrow 50
 wait 1
 say [self addtopack Spellbook
 wait 1
@@ -47,14 +48,14 @@ target self
 wait 3
 gumps
 contents bank
-# 4. a split and a drag between containers: 100 of the 3000 gold into the bank, then back into the bag in the backpack
-pick pack 0EED 100
+# 4. a split and a drag between containers: 10 of the 50 arrows into the bank, then back into the bag in the backpack
+pick pack 0F3F 10
 wait 1
 drop bank
 wait 2
 contents bank
 contents backpack
-find 0EED
+find 0F3F
 check
 # walking closes the bank: CloseBank removes its contents from the client (RemoveBankContents)
 walk 4 1
@@ -62,20 +63,20 @@ wait 1
 walk 0 1
 wait 2
 contents bank
-find 0EED
-# the bank again, and the 100 gold dragged from it into the bag in the backpack
+find 0F3F
+# the bank again, and the 10 arrows dragged from it into the bag in the backpack
 say [bank
 wait 1
 target self
 wait 3
 contents bank
-pick bank 0EED
+pick bank 0F3F
 wait 1
 drop container 0E76
 wait 2
 contents bank
 contents backpack
-find 0EED
+find 0F3F
 check
 # 5. a corpse: an orc killed, its corpse opened
 say [add Orc
@@ -128,12 +129,12 @@ find 0EED
 status near
 wait 2
 named horse
-# 9. the pet renamed (0x75), its new name read back from its status (0x11)
-rename a_horse T1Pet
+# 9. the pet renamed (0x75), its new name read back from its status (0x11). Letters only: ModernUO refused "T1Pet"
+rename a_horse Funnelpet
 wait 3
 status near
 wait 2
-named T1Pet
+named Funnelpet
 named horse
 journal 6
 check
@@ -141,15 +142,12 @@ parity
 # cleanup: the pet, the vendor, the corpse and every item the script added
 say [remove
 wait 1
-target named T1Pet
+target named Funnelpet
 wait 2
+# the trainer (its Name has no title, so by place: it stands one tile west)
 say [remove
 wait 1
-target named horse
-wait 2
-say [remove
-wait 1
-target named trainer
+target mobile -1 0
 wait 2
 say [remove
 wait 1
@@ -161,7 +159,11 @@ target mine 0E76
 wait 2
 say [remove
 wait 1
-target mine 0EED
+target mine 0F3F
+wait 2
+say [remove
+wait 1
+target mine 0F3F
 wait 2
 say [remove
 wait 1
@@ -179,8 +181,9 @@ find 0E76
 find 0EFA
 find 1715
 find 09D0
+find 0F3F
 named horse
-named T1Pet
+named Funnelpet
 named trainer
 check
 quit
