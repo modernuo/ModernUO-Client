@@ -1,6 +1,7 @@
 # T1 funnel part 7 gate: the spellbook (0xBF.1B) and a boat's steps (0xF6), turns (multi reload) and a turn while steps
 # are still queued (the deferred ClearBoatSteps reset, Codex audit P3 #2). The boat goes on open water (Felucca 1720 1770;
-# the sea is at least 32 tiles all around) and is deleted at the end (owner: clean up the script's boats).
+# the sea is at least 32 tiles all around) and is deleted at the end (owner: clean up the script's boats). The first half
+# runs with the profile's default (no smooth boat movement: 0xF6 jumps the boat, JumpBoat), the second with it on.
 wait 6
 say [self addtopack Spellbook
 wait 2
@@ -46,6 +47,24 @@ wait 2
 boat
 check
 parity
+# the same with smooth boat movement: 0xF6 queues boat steps (BoatMovingManager: offsets per frame, step completion), and a
+# turn's multi reload while steps are queued runs the deferred ClearBoatSteps reset ([funnel] deferred boat clear)
+smoothboat on
+say forward
+wait 1
+say turn right
+wait 0.5
+say turn left
+wait 1
+say turn right
+wait 1
+boat
+say stop
+wait 2
+boat
+check
+parity
+smoothboat off
 # cleanup: count, delete, count again (the box holds only this script's boat; a delete of several asks for an OK)
 say [Global Count where SmallBoat X >= 1680 X <= 1760 Y >= 1730 Y <= 1810
 wait 2

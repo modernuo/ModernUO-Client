@@ -2125,6 +2125,26 @@ namespace ClassicUO.Game
         }
 
         /// <summary>
+        /// 0xF6 without smooth boat movement (the profile's <c>UseSmoothBoatMovement</c> off, the default): the boat jumps to
+        /// the packet's position, <c>SetInWorldTile</c> (position, screen position flag, re-added to its tile), as the handler
+        /// did before T1; the handler then regenerates its house and moves the passengers (UpdatePlayer, UpdateGameObject).
+        /// Not folded (as <see cref="CompleteBoatStep"/>). Rejections as <see cref="CompleteBoatStep"/> (found by the part 7
+        /// gate: the boat's first live moves showed <c>SetInWorldTile</c> writing from <c>PacketHandlers.BoatMoving</c>).
+        /// </summary>
+        public void JumpBoat(Item boat, ushort x, ushort y, sbyte z)
+        {
+            if (boat == null || !Admitted(nameof(JumpBoat), boat.Serial) || !Accepted(boat, nameof(JumpBoat)))
+            {
+                return;
+            }
+
+            using (Open(boat, null))
+            {
+                boat.SetInWorldTile(x, y, z);
+            }
+        }
+
+        /// <summary>
         /// An object on a boat whose step is done (<c>BoatMovingManager.UpdateEntitiesInside</c>): the item or mobile takes
         /// its new position (the boat's minus its offset on deck), refreshes its screen position (the player's position
         /// callbacks run, unfolded), its offset is zeroed and it is re-added to its tile. Rejections as

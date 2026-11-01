@@ -670,6 +670,45 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Fact]
+        public void JumpBoat_Equals_The_Old_Jump_And_Rejects_Another_Worlds()
+        {
+            World oldWorld = BuildBoat(Start.Standing), newWorld = BuildBoat(Start.Standing);
+            newWorld.Writer.ThrowOnViolation = true;
+            Item a = oldWorld.Items.Get(BOAT), b = newWorld.Items.Get(BOAT);
+
+            foreach ((ushort x, ushort y, sbyte z) in new (ushort, ushort, sbyte)[] { (1003, 998, 0), (1003, 995, -5) })
+            {
+                Pair(() => a.SetInWorldTile(x, y, z), () => newWorld.Writer.JumpBoat(b, x, y, z));
+                AssertSameWorld(oldWorld, newWorld);
+                BoatSnapshot(newWorld, BOAT).Should().Be(BoatSnapshot(oldWorld, BOAT));
+                (b.X, b.Y, b.Z).Should().Be((x, y, z));
+            }
+
+            newWorld.Writer.Violations.Should().Be(0);
+            newWorld.Writer.InScope.Should().BeFalse();
+
+            foreach (bool throws in new[] { true, false })
+            {
+                World world = BuildBoat(Start.Standing), other = BuildBoat(Start.Standing);
+                world.Writer.ThrowOnViolation = throws;
+                Item foreign = other.Items.Get(BOAT);
+                Action act = () => world.Writer.JumpBoat(foreign, 5, 5, 0);
+
+                if (throws)
+                {
+                    act.Should().Throw<ArgumentException>();
+                }
+                else
+                {
+                    act();
+                }
+
+                (foreign.X, foreign.Y).Should().Be(((ushort)1000, (ushort)1000));
+                world.Writer.Violations.Should().Be(1);
+            }
+        }
+
+        [Fact]
         public void The_Offset_Operations_Write_A_Stale_Walker_And_Reject_Another_Worlds()
         {
             foreach (bool throws in new[] { true, false })
@@ -994,9 +1033,10 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.InterpolateBoat(boat, 2, 3, 0);
             world.Writer.FollowBoatComponents(boat, house);
             world.Writer.FollowBoat(m, boat.Offset);
+            world.Writer.JumpBoat(boat, 1002, 1000, 0);
 
             (m.Offset, house.Components[0].Offset).Should().Be((boat.Offset, boat.Offset));
-            FunnelCheck.Total.Should().Be(0, "ProcessSteps' walk offset, the boat's offset, its components' and its passengers'");
+            FunnelCheck.Total.Should().Be(0, "ProcessSteps' walk offset, the boat's offset, its components' and its passengers', 0xF6's jump");
         }
     }
 }

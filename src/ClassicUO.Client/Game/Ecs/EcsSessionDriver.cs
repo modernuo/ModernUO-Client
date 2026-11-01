@@ -573,6 +573,13 @@ namespace ClassicUO.Game
 
                     return false;
 
+                // smoothboat on|off: the profile's smooth boat movement (0xF6 queues boat steps instead of jumping the boat)
+                case "smoothboat" when args.Length > 0 && ProfileManager.CurrentProfile is { } boatProfile:
+                    boatProfile.UseSmoothBoatMovement = args[0] == "on";
+                    Log.Info($"[ECS] driver: smooth boat movement {args[0]}");
+
+                    return true;
+
                 // boat: the player's tile and the multis within 24 tiles (T1 part 7, w5boat: did the boat move and turn)
                 case "boat":
                     Log.Info($"[ECS] boat: player at {player.X},{player.Y},{player.Z} offset ({player.Offset.X},{player.Offset.Y},{player.Offset.Z})");
