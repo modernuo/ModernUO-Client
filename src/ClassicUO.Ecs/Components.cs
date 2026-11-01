@@ -372,7 +372,7 @@ namespace ClassicUO.Ecs
 
     /// <summary>
     /// T6c (world_step_system): a mobile's walk queue and the step state <c>StepSystem</c> reads: a fixed ring of up to
-    /// <see cref="CAPACITY"/> steps (<c>Constants.MAX_STEP_COUNT</c>; the front step is <c>Ring[Head]</c>), the time the
+    /// <see cref="CAPACITY"/> steps (<c>Constants.MAX_STEP_COUNT</c> - 1 + 3; the front step is <c>Ring[Head]</c>), the time the
     /// current step started (<c>Mobile.LastStepTime</c>) and the interpolated walk offset (<c>Mobile.Offset</c>). While the
     /// system runs, the clock push writes it from the Mobile after every queue change and step completion (the same push
     /// that keeps <see cref="MobileClock"/>'s Stepping flag), and the system writes the offset it interpolates. The Mobile's
@@ -380,7 +380,9 @@ namespace ClassicUO.Ecs
     /// </summary>
     public struct Steps : IComponent
     {
-        public const int CAPACITY = 5;
+        // the legacy queue holds at most 7: Mobile.PlanStep accepts a packet while Count < Constants.MAX_STEP_COUNT (5), so up to
+        // 4 queued + the 3 steps one packet plans (a turn, the move, the final facing). A test asserts it from the client's constant.
+        public const int CAPACITY = 7;
 
         public StepRing Ring;
         public byte Head, Count;
