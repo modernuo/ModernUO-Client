@@ -549,7 +549,9 @@ namespace ClassicUO.UnitTests.Ecs
 
             // the coalesced turn (three unconfirmed requests): the direction alone
             Time.Ticks = NOW + 5_200;
+            uint pa = Inputs(oldWorld, MOB).Pushes, pb = Inputs(newWorld, MOB).Pushes;
             Pair(() => a.Direction = Direction.West, () => newWorld.Writer.TurnPlayer(b, Direction.West).Should().BeTrue());
+            (Inputs(newWorld, MOB).Pushes - pb).Should().Be(Inputs(oldWorld, MOB).Pushes - pa, "the turn pushes its inputs as the old turn did");
             AssertSameWorld(oldWorld, newWorld);
             PlayerSnapshot(b).Should().Be(PlayerSnapshot(a));
             b.Direction.Should().Be(Direction.West);
@@ -1175,6 +1177,54 @@ namespace ClassicUO.UnitTests.Ecs
             p.OnMoved.Should().BeNull("the position callback walked");
             (p.Direction, p.Steps.Count).Should().Be((Direction.West, 1));
             FunnelCheck.Total.Should().Be(0, "the callback's walk and the step completion's writes after it are the operation's");
+        }
+
+        // Codex audit of part 8, P2 #2: CreateCharAppearanceGump and RaceChangeGump build their previews from detached
+        // objects (a PlayerMobile no table holds, Item.Create). The gumps need Client.Game; this pins what they rely on: their
+        // writes (the same fields, in the same way) reach no World table, no mirror and no funnel-check count, and a real
+        // item World holds under a preview serial (0x4000_0000 + layer) is left alone
+        [Fact]
+        public void The_Appearance_Previews_Writes_Are_Not_World_State()
+        {
+            Time.Ticks = 100_000;
+            World world = WorldWriterMobileTests.BuildWalkingPlayer(out WorldWriterMobileTests.TestPlayer player);
+            Item real = world.GetOrCreateItem(0x4000_0000 + (uint)Layer.Hair);
+            real.Graphic = 0x0EED;
+            real.SetInWorldTile(1002, 1000, 0);
+            (ushort, ushort, Layer, uint) realState = (real.Graphic, real.Hue, real.Layer, real.Container);
+            (int, int) tables = (world.Mobiles.Count, world.Items.Count);
+            (long, long) mirror = (world.Ecs.MobileMirrorWrites, world.Ecs.ItemMirrorWrites);
+            FunnelCheck.Reset();
+
+            // the preview mobile (character creation: serial 1, race change: serial 0) and its clothes
+            WorldWriterMobileTests.TestPlayer preview = WorldWriterMobileTests.TestPlayer.Create(world, 1);
+            preview.Clear();
+            preview.Race = RaceType.ELF;
+            preview.IsFemale = true;
+            preview.Flags |= Flags.Female;
+            preview.Graphic = 0x025E;
+            preview.Hue = 0x83EA;
+
+            foreach (Layer layer in new[] { Layer.Shirt, Layer.Pants, Layer.Shoes, Layer.Hair })
+            {
+                Item existing = preview.FindItemByLayer(layer);
+                preview.Remove(existing);
+                Item item = Item.Create(world, 0x4000_0000 + (uint)layer);
+                item.Graphic = 0x1518;
+                item.Hue = 0x0021;
+                item.Layer = layer;
+                item.Container = preview;
+                preview.PushToBack(item);
+                item.Hue = 0x0022; // a colour pick
+            }
+
+            preview.FindItemByLayer(Layer.Hair).Should().NotBeSameAs(real);
+            (world.Mobiles.Count, world.Items.Count).Should().Be(tables, "no World table holds a preview");
+            (world.Ecs.MobileMirrorWrites, world.Ecs.ItemMirrorWrites).Should().Be(mirror, "nothing reaches the mirror");
+            FunnelCheck.Total.Should().Be(0, "a detached object's writes are not world state");
+            world.Items.Get(0x4000_0000 + (uint)Layer.Hair).Should().BeSameAs(real);
+            (real.Graphic, real.Hue, real.Layer, real.Container).Should().Be(realState, "the real item under the preview serial is untouched");
+            Time.Ticks = 100_000;
         }
 
         [Fact]
