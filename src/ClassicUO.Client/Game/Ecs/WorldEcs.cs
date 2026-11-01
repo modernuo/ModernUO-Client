@@ -719,6 +719,9 @@ namespace ClassicUO.Game
             // T3a: CUO_EQUIP_READ_CHECK's 5 s summary
             _world.State.LogEquipmentChecks();
 
+            // T3b: CUO_LAYER_RULES_CHECK's 5 s summary
+            LayerRuleEval.LogSummary();
+
             if (MobileAnimationSystem.CacheCheck && Time.Ticks >= _cacheLogAt)
             {
                 _cacheLogAt = Time.Ticks + 5000;

@@ -1,7 +1,9 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
+using Uo.Pack;
 using System;
 using System.Collections.Generic;
+using System.Runtime.InteropServices;
 using ClassicUO.Assets;
 using ClassicUO.Configuration;
 using ClassicUO.Ecs;
@@ -634,7 +636,35 @@ namespace ClassicUO.Game
 
             Span<Layer> raw = stackalloc Layer[N];
             Span<Layer> order = stackalloc Layer[N];
-            PaperdollOrder.Build(orderKey, female || gargoyle, raw);
+
+            // T3b: ecs_layer_rules (default off): the order, the covering and the gargoyle remaps from the layering rules
+            // data (world set; the cloak's direction move stays AnimationRules.ApplyDirectionCloak on the slots)
+            bool layerData = LayerRuleEval.On;
+            LayerTables layerTables = default;
+            LayerSubject layerSubject = default;
+
+            if (layerData)
+            {
+                for (int l = (int)Layer.OneHanded; l <= (int)Layer.Legs; l++)
+                {
+                    layerTables.Present[l] = present[l];
+                    layerTables.Graphic[l] = gfx[l];
+                    layerTables.Anim[l] = anim[l];
+                }
+
+                layerSubject = LayerRuleEval.Subject(body, female, gargoyle);
+                LayerRuleEval.Rules.BuildOrder(LayerRuleSet.World, orderKey, layerSubject, MemoryMarshal.Cast<Layer, byte>(raw));
+            }
+            else
+            {
+                PaperdollOrder.Build(orderKey, female || gargoyle, raw);
+            }
+
+            if (LayerRuleEval.CheckEnabled)
+            {
+                LayerRuleEval.CheckEcs(owner?.Serial ?? 0, orderKey, present, gfx, anim, body, female, gargoyle);
+            }
+
             int count = PaperdollOrder.Filter(raw, includeBackpack: false, order);
 
             equipConversions.TryGetValue(body, out Dictionary<ushort, EquipConvData> conv);
@@ -649,7 +679,7 @@ namespace ClassicUO.Game
                     continue;
                 }
 
-                if (human && AnimationRules.IsCovered(layer, gfx, anim, present, body))
+                if (human && (layerData ? LayerRuleEval.IsCovered(LayerRuleSet.World, layer, ref layerTables, layerSubject) : AnimationRules.IsCovered(layer, gfx, anim, present, body)))
                 {
                     continue;
                 }
@@ -671,7 +701,7 @@ namespace ClassicUO.Game
                 slot.Hue = hue[li];
                 slot.Layer = (byte)layer;
                 slot.Group = 0xFF;
-                slot.DrawBody = gargoyle ? AnimationRules.FixGargoyleEquipment(anim[li]) : anim[li];
+                slot.DrawBody = gargoyle ? layerData ? LayerRuleEval.Remap(anim[li], layerSubject) : AnimationRules.FixGargoyleEquipment(anim[li]) : anim[li];
 
                 ref StaticTiles td = ref tiles[gfx[li]];
 
