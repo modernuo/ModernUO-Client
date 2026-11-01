@@ -165,6 +165,11 @@ namespace ClassicUO.Configuration
         // the off/on gates bench-000104/106 and two Codex audits); the off path and the checker stay for one phase.
         [JsonPropertyName("ecs_read_contents")] public bool EcsReadContents { get; set; } = true;
 
+        // T5c (ecs-transition-plan.md): the 50 ms range sweep and the world-map pass run as a system over the ECS (Position, with
+        // the last step's tile for stepping mobiles; MobileInputs.Notoriety plus the party list), removing through the funnel in
+        // table order, instead of the loops' own distance tests. CUO_SWEEP_CHECK=1 compares the two. Read once at startup. Default off.
+        [JsonPropertyName("world_sweep_system")] public bool WorldSweepSystem { get; set; }
+
         // T3a (ecs-transition-plan.md, T3): the equipment readers (Mobile.FindItemByLayer and through it IsMounted, the
         // animation group's hands, the abilities, the paperdoll, PaperdollOrder.BuildInWorld and Legacy's MobileView) take a
         // mobile's worn item per layer from the ECS (WornLayers: the mirror's first attached item per layer by child-order
@@ -176,8 +181,10 @@ namespace ClassicUO.Configuration
         // T3b (ecs-transition-plan.md, T3 "Equipment layering as data"): the worn-layer draw order, the covering and the
         // gargoyle remaps come from the layering rules data (the pack's layerrules.bin, else the built-in default made from the
         // same source) instead of the hard-coded PaperdollOrder/IsCovered/FixGargoyleEquipments. CUO_LAYER_RULES_CHECK=1
-        // compares the two at every decision. Default off.
-        [JsonPropertyName("ecs_layer_rules")] public bool EcsLayerRules { get; set; }
+        // compares the two at every decision. Default on since 2026-11-01 (coordinator, after the gates bench-000147/148 PASS, 120M
+        // [layers] checks with 0 mismatches, and E2 bench-000146/155: cache hit -51..-59 %, mixed -42..-47 % vs the hard-coded path);
+        // the hard-coded path and the checker stay for one phase.
+        [JsonPropertyName("ecs_layer_rules")] public bool EcsLayerRules { get; set; } = true;
 
         // W5: the per-frame overhead text pass skips the text layout of mobiles and corpses whose texts have all expired
         // (expired texts stay in the entity's container; the layout would place nothing). Off = laid out every frame.
