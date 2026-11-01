@@ -508,6 +508,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void CharacterStatus_Of_The_Player_Equals_The_Old_Path(byte type)
         {
             World oldWorld = BuildPlayer(out TestPlayer a), newWorld = BuildPlayer(out TestPlayer b);
+            b.Funnel = true; // the new World's callbacks walk through the converted Walk path
             newWorld.Writer.ThrowOnViolation = true;
 
             foreach (StatusPacket s in new[]
