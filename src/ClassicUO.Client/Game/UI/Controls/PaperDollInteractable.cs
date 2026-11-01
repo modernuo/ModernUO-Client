@@ -368,7 +368,22 @@ namespace ClassicUO.Game.UI.Controls
         {
             int offset = isfemale ? Constants.FEMALE_GUMP_OFFSET : Constants.MALE_GUMP_OFFSET;
 
-            if (
+            // T3b: with ecs_layer_rules the paperdoll set's remap rules (default: R2, the gargoyle ghost's shroud on 7.0.0.0+),
+            // before the equip conversion as below
+            if (LayerRuleEval.On || LayerRuleEval.CheckEnabled)
+            {
+                ushort remapped = LayerRuleEval.On
+                    ? LayerRuleEval.RemapPaperdoll(animID, mobileGraphic, isfemale)
+                    : LayerRuleEval.RemapPaperdollHard(animID, mobileGraphic, Client.Game.UO.Version >= ClientVersion.CV_7000);
+
+                if (LayerRuleEval.CheckEnabled)
+                {
+                    LayerRuleEval.ComparePaperdollRemap(mobileGraphic, animID, isfemale, remapped);
+                }
+
+                animID = remapped;
+            }
+            else if (
                     Client.Game.UO.Version >= ClientVersion.CV_7000
                     && animID == 0x03CA // graphic for dead shroud
                     && (mobileGraphic == 0x02B7 || mobileGraphic == 0x02B6)

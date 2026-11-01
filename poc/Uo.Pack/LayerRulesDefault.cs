@@ -117,6 +117,11 @@ public static class LayerRulesDefault
         b.Remap(LayerRuleSet.World, 1529, 1531, garg);
         b.Remap(LayerRuleSet.World, 1530, 1532, garg);
 
+        // ---- paperdoll only ----
+        // R2: the gargoyle ghost's death shroud gump (PaperDollInteractable.GetAnimID: client 7.0.0.0+, bodies 0x2B6/0x2B7;
+        // before the equip conversion, which then looks up the remapped AnimID)
+        b.Remap(LayerRuleSet.Paperdoll, 0x03CA, 0x0223, C.Flag(LayerRulesConst.FlagCv7000), C.Ranges(LayerCondKind.Body, 0, false, (0x02B6, 0x02B7)));
+
         return b.Build();
     }
 }
