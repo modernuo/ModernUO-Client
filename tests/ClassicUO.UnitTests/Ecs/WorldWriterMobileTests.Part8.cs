@@ -670,6 +670,11 @@ namespace ClassicUO.UnitTests.Ecs
             bank.PushToBack(gold);
             bank.Opened = true;
 
+            // The hand-linked PushToBack above never attaches the bank in the mirror (only the writer's operations stamp the
+            // child order), so with ecs_read_equipment on the ECS would see no bank on the player: sync it and stamp it.
+            world.Ecs.Sync(bank);
+            world.Ecs.CommitChildOrder(bank);
+
             return bank;
         }
 

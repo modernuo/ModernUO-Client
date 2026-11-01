@@ -92,9 +92,9 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Fact]
-        public void The_Switch_Is_Off_By_Default()
+        public void The_Switch_Is_On_By_Default()
         {
-            new ClassicUO.Configuration.Settings().EcsReadEquipment.Should().BeFalse();
+            new ClassicUO.Configuration.Settings().EcsReadEquipment.Should().BeTrue();
         }
 
         [Fact]
