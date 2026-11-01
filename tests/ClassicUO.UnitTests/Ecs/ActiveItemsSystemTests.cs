@@ -188,5 +188,46 @@ namespace ClassicUO.UnitTests.Ecs
             s.World.Update();
             s.Mismatches.Should().NotBeEmpty("a tagged entity that is not listed");
         }
+
+        // P2 (Codex): a replaced mirror record (a death re-key shares a serial between a mobile and its corpse) starts without
+        // the tag; the item is still listed, so Add would not repair it. The record write reconciles the tag.
+        [Fact]
+        public void A_Replaced_Record_Of_A_Listed_Item_Keeps_Its_Tag()
+        {
+            World world = WorldWriterMobileTests.BuildDead();
+            world.ActiveItemsSystemOverride = true;
+            Item corpse = world.Items.Get(WorldWriterMobileTests.DEAD);
+            Mobile m = world.Mobiles.Get(WorldWriterMobileTests.DEAD);
+            world.Ecs.Sync(corpse);
+            world.QueueItemUpdate(corpse);
+            world.ActiveItems.Should().Contain(corpse);
+            Tagged(world).Should().Be(1);
+
+            world.Ecs.Sync(m); // the mobile's record replaces the item's
+            world.Ecs.Sync(corpse); // and the item's replaces it again: a new entity
+
+            corpse.TryScalarEntity(out EcsEntity e).Should().BeTrue();
+            e.Tags.Has<ItemActive>().Should().BeTrue();
+            world.QueueItemUpdate(corpse); // already listed: no repair from the list
+            Tagged(world).Should().Be(1);
+        }
+
+        // P3 (Codex): the checker's duplicate test is by reference; a destroyed corpse and its successor share a serial
+        [Fact]
+        public void The_Checker_Tells_Two_Items_Of_One_Serial_Apart()
+        {
+            Scene s = Build(true);
+            Item first = AddItem(s, 0x4000_0001, 0x2006);
+            s.World.QueueItemUpdate(first);
+            first.Destroy();
+            s.World.Items.Remove(0x4000_0001);
+            Item second = AddItem(s, 0x4000_0001, 0x2006);
+            s.World.QueueItemUpdate(second);
+            s.World.ActiveItemCount.Should().Be(2);
+
+            s.World.Update();
+
+            s.Mismatches.Should().NotContain(x => x.Contains("listed twice"));
+        }
     }
 }

@@ -69,7 +69,7 @@ namespace ClassicUO.Game
         internal Action<string> ActiveItemsObserver;
 
         private ArchetypeQuery _activeTagQuery;
-        private readonly HashSet<Item> _activeSeen = new HashSet<Item>();
+        private readonly HashSet<Item> _activeSeen = new HashSet<Item>(ReferenceEqualityComparer.Instance);
         private uint _activeCheckNextLog;
 
         /// <summary>
