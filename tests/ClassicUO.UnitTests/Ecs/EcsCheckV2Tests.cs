@@ -264,7 +264,7 @@ namespace ClassicUO.UnitTests.Ecs
             Check(world).Should().BeEmpty();
         }
 
-        private const uint LATE = 0x0000_3910, ORPHAN = 0x4000_7930, BOOK = 0x4000_7931, INBOOK = 0x4000_7932;
+        private const uint LATE = 0x0000_3910, LATE2 = 0x0000_3911, ORPHAN = 0x4000_7930, BOOK = 0x4000_7931, INBOOK = 0x4000_7932;
 
         // P2: an item equipped before its mobile exists is in no child list (ClassicUO never adopts it); the mirror keeps its
         // Container but not as attached, and the check compares attachment
@@ -288,6 +288,14 @@ namespace ClassicUO.UnitTests.Ecs
             wearer.Should().BeSameAs(late);
             Children(world, LATE).Should().Equal(ORPHAN);
             ByStamp(world, LATE).Should().Equal(ORPHAN);
+            Check(world).Should().BeEmpty();
+
+            // an attached item re-equipped on a wearer that does not exist yet: out of its old list, an orphan (detached)
+            world.Writer.Equip(SHIRT, 0x1517, Layer.Shirt, LATE2, 0, out wearer, out _);
+            wearer.Should().BeNull();
+            world.Ecs.Mirror.TryGetExtras(SHIRT, out x).Should().BeTrue();
+            x.ChildStamp.Should().Be(0UL);
+            world.GetOrCreateMobile(LATE2).Items.Should().BeNull();
             Check(world).Should().BeEmpty();
         }
 
