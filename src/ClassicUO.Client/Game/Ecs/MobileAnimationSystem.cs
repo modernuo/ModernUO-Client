@@ -549,7 +549,9 @@ namespace ClassicUO.Game
         {
             Rebuilds++;
             ref EquipmentSlots eq = ref mobile.GetComponent<EquipmentSlots>();
+            WornLayers kept = eq.Worn; // T3a: the mirror's state, not derived here
             eq = default;
+            eq.Worn = kept;
             eq.Version = ++_equipVersions;
 
             ushort body = mobile.GetComponent<Graphic>().Value;
@@ -567,7 +569,7 @@ namespace ClassicUO.Game
             // T3a: the equipment by layer is WornLayers (each layer's first attached item, by child-order stamp: what
             // Entity.FindItemByLayer finds first in the child list), not the order of the mirror's equipment index; an item
             // equipped before its mobile existed (never attached) is not worn
-            ref readonly WornLayers worn = ref mobile.GetComponent<WornLayers>();
+            ref readonly WornLayers worn = ref eq.Worn;
 
             for (int layer = 1; layer <= (int)Layer.Mount; layer++)
             {

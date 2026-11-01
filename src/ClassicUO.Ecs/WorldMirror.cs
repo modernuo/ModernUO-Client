@@ -49,16 +49,7 @@ namespace ClassicUO.Ecs
         {
             EcsSchema.Register();
             Store = new EntityStore();
-
-            ComponentTypes mobile = ComponentTypes.Get<Serial, Graphic, Hue, Position, Facing>();
-            mobile.Add(ComponentTypes.Get<Flags, AnimationState, MobileRenderState, EquipmentSlots, MobileInputs>());
-            mobile.Add(ComponentTypes.Get<WornLayers>());
-            MobileArchetype = Store.GetArchetype(mobile, Tags.Get<MobileTag, EquipmentDirty>());
-            PlayerArchetype = Store.GetArchetype(mobile, Tags.Get<MobileTag, PlayerTag, EquipmentDirty>());
         }
-
-        // a new mobile record's components and tags (the player's with PlayerTag)
-        private readonly Archetype MobileArchetype, PlayerArchetype;
 
         public EntityStore Store { get; }
 
@@ -95,18 +86,20 @@ namespace ClassicUO.Ecs
                     Remove(serial);
                 }
 
-                // T3a: eleven components (WornLayers added), more than CreateEntity's generic overloads take: the entity is
-                // created in its final archetype (no structural change) and the components written in place
-                e = (isPlayer ? PlayerArchetype : MobileArchetype).CreateEntity();
-                EntityData d = e.Data;
-                d.Get<Serial>().Value = serial;
-                d.Get<Graphic>().Value = graphic;
-                d.Get<Hue>().Value = hue;
-                d.Get<Position>() = new Position { X = x, Y = y, Z = z };
-                d.Get<Facing>().Value = facing;
-                d.Get<Flags>().Value = flags;
-                d.Get<AnimationState>() = new AnimationState { ServerGroup = 0xFF };
-                d.Get<MobileRenderState>() = new MobileRenderState { Alpha = 0xFF };
+                e = Store.CreateEntity
+                (
+                    new Serial { Value = serial },
+                    new Graphic { Value = graphic },
+                    new Hue { Value = hue },
+                    new Position { X = x, Y = y, Z = z },
+                    new Facing { Value = facing },
+                    new Flags { Value = flags },
+                    new AnimationState { ServerGroup = 0xFF },
+                    new MobileRenderState { Alpha = 0xFF },
+                    new EquipmentSlots(),
+                    new MobileInputs(),
+                    isPlayer ? Tags.Get<MobileTag, PlayerTag, EquipmentDirty>() : Tags.Get<MobileTag, EquipmentDirty>()
+                );
 
                 _bySerial[serial] = e;
                 MobileCount++;
@@ -115,7 +108,7 @@ namespace ClassicUO.Ecs
                 // stayed attached) are worn on it; normally none (one index lookup)
                 if (GetEquipment(serial).Count != 0)
                 {
-                    RebuildWorn(serial, ref e.GetComponent<WornLayers>());
+                    RebuildWorn(serial, ref e.GetComponent<EquipmentSlots>().Worn);
                 }
 
                 return e;
@@ -306,6 +299,7 @@ namespace ClassicUO.Ecs
             if (e.Tags.Has<MobileTag>())
             {
                 MobileCount--;
+                _mobileEpoch++;
             }
             else
             {
@@ -374,6 +368,7 @@ namespace ClassicUO.Ecs
             _scratch.Clear();
             _bySerial.Clear();
             MobileCount = 0;
+            _mobileEpoch++;
 
             // T2: no record is left, so no parent has contents
             foreach (ContentsSlot slot in _contents.Values)
@@ -843,18 +838,18 @@ namespace ClassicUO.Ecs
         /// tracked (0, above 0x1D) or when the serial has no mobile record.
         /// </summary>
         public uint Worn(uint mobile, byte layer) =>
-            _bySerial.TryGetValue(mobile, out Entity e) && e.TryGetComponent(out WornLayers w) ? w.Get(layer) : 0;
+            _bySerial.TryGetValue(mobile, out Entity e) && e.TryGetComponent(out EquipmentSlots eq) ? eq.Worn.Get(layer) : 0;
 
         /// <summary>
-        /// Memory of WornLayers (layout-based accounting, as <see cref="ContentsCacheBytes"/>): the component's inline array in
-        /// each mobile record's archetype column (the serials, the per-layer counts and the version: 152 B; Friflo stores a component in a per-archetype struct
+        /// Memory of WornLayers (layout-based accounting, as <see cref="ContentsCacheBytes"/>): the struct in each mobile record's
+        /// EquipmentSlots (the serials, the per-layer counts and the version: 152 B; Friflo stores a component in a per-archetype struct
         /// array, so the cost is the struct size per mobile record, plus the columns' spare capacity, not counted here).
         /// </summary>
         public long WornLayersBytes => (long)MobileCount * Unsafe.SizeOf<WornLayers>();
 
         /// <summary>Tests: the attached items on a wearer's layer, as WornLayers counts them.</summary>
         public int WornCount(uint mobile, byte layer) =>
-            _bySerial.TryGetValue(mobile, out Entity e) && e.TryGetComponent(out WornLayers w) && WornLayers.Tracked(layer) ? w.Counts[layer - 1] : 0;
+            _bySerial.TryGetValue(mobile, out Entity e) && e.TryGetComponent(out EquipmentSlots eq) && WornLayers.Tracked(layer) ? eq.Worn.Counts[layer - 1] : 0;
 
         // the item's attachment to a wearer before and after a write (a wearer's parent, layer and stamp; 0 when none)
         private void UpdateWorn(uint serial, uint oldParent, byte oldLayer, ulong oldStamp, uint newParent, byte newLayer, ulong newStamp)
@@ -881,24 +876,28 @@ namespace ClassicUO.Ecs
         private Entity _wornParent;
         private uint _wornParentSerial, _wornParentEpoch;
 
+        // bumped when a mobile record is deleted (Remove, Clear): the wearer cache's validity (an item's removal, which bumps
+        // Epoch, leaves every wearer's record alive: 0x78's clear removes the items one by one, then the wears add them)
+        private uint _mobileEpoch;
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private bool TryGetWearer(uint parent, out Entity p)
         {
-            if (_wornParentSerial == parent && _wornParentEpoch == Epoch && parent != 0)
+            if (_wornParentSerial == parent && _wornParentEpoch == _mobileEpoch && parent != 0)
             {
                 p = _wornParent;
 
                 return true;
             }
 
-            if (!_bySerial.TryGetValue(parent, out p) || !p.HasComponent<WornLayers>())
+            if (!_bySerial.TryGetValue(parent, out p) || !p.HasComponent<EquipmentSlots>())
             {
                 return false;
             }
 
             _wornParent = p;
             _wornParentSerial = parent;
-            _wornParentEpoch = Epoch;
+            _wornParentEpoch = _mobileEpoch;
 
             return true;
         }
@@ -918,7 +917,7 @@ namespace ClassicUO.Ecs
                 return;
             }
 
-            ref WornLayers w = ref p.GetComponent<WornLayers>();
+            ref WornLayers w = ref p.GetComponent<EquipmentSlots>().Worn;
             w.Counts[layer - 1]++;
             ref uint slot = ref w.Serials[layer - 1];
 
@@ -943,7 +942,7 @@ namespace ClassicUO.Ecs
                 return;
             }
 
-            ref WornLayers w = ref p.GetComponent<WornLayers>();
+            ref WornLayers w = ref p.GetComponent<EquipmentSlots>().Worn;
             ref byte count = ref w.Counts[layer - 1];
 
             if (count != 0)

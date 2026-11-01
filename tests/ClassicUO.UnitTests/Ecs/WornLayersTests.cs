@@ -237,7 +237,6 @@ namespace ClassicUO.UnitTests.Ecs
             e.GetComponent<MobileRenderState>().Alpha.Should().Be(0xFF);
             e.HasComponent<EquipmentSlots>().Should().BeTrue();
             e.HasComponent<MobileInputs>().Should().BeTrue();
-            e.HasComponent<WornLayers>().Should().BeTrue();
             e.Tags.Has<MobileTag>().Should().BeTrue();
             e.Tags.Has<PlayerTag>().Should().BeTrue();
             e.Tags.Has<EquipmentDirty>().Should().BeTrue();

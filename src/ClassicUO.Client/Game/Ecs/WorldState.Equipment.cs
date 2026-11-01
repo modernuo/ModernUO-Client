@@ -150,7 +150,7 @@ namespace ClassicUO.Game
                     c.Held = WornHeld.NotHeld;
                     c.Items = null;
                 }
-                else if (mirror.TryGetEntity(mobile.Serial, out EcsEntity e) && e.HasComponent<WornLayers>())
+                else if (mirror.TryGetEntity(mobile.Serial, out EcsEntity e) && e.HasComponent<EquipmentSlots>())
                 {
                     c.Held = WornHeld.Record;
                     c.Entity = e;
@@ -164,7 +164,7 @@ namespace ClassicUO.Game
 
             if (c.Held == WornHeld.Record)
             {
-                ref WornLayers w = ref c.Entity.GetComponent<WornLayers>();
+                ref WornLayers w = ref c.Entity.GetComponent<EquipmentSlots>().Worn;
 
                 if (w.Version != c.Version || c.Version == 0)
                 {
