@@ -16,6 +16,7 @@ namespace ClassicUO.UnitTests.IO
     // dr_mp3 (native cuo_mp3) behind Mp3Decoder, the managed Mp3Validator guard, and MusicStream's loop fill.
     // Inputs are synthetic MP3s built here (silent Layer III frames, optionally led by a Xing/Info + LAME frame), so no
     // UO data is committed. Tests that also use real tracks from C:\Ultima Online Classic\Music\Digital skip without it.
+    [Collection("Mp3DecoderGlobals")]
     public partial class Mp3DecoderTests
     {
         private const string MusicDir = @"C:\Ultima Online Classic\Music\Digital";
