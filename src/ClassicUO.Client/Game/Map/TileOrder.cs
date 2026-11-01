@@ -287,6 +287,11 @@ namespace ClassicUO.Game.Map
                     {
                         for (int y = 0; y < 8; y++)
                         {
+                            if (DynamicTileIndex.Maintain)
+                            {
+                                CheckIndexCell(chunk, x, y);
+                            }
+
                             if (chunk.Tiles[x, y] == null)
                             {
                                 continue;
@@ -351,6 +356,15 @@ namespace ClassicUO.Game.Map
                 }
             }
 
+            if (Time.Ticks >= _nextLog && DynamicTileIndex.Maintain)
+            {
+                Log.Info(
+                    $"[tile-order] index: tiles {_indexTiles}, entries {_indexEntries}, merged objects {_indexMerged}, mismatched tiles {_indexBadTiles} " +
+                    $"(order {_indexOrder}, bad entries {_indexBadEntries}, count {_indexCount}); world_tile_index walk {(DynamicTileIndex.WalkOn ? "on" : "off")}, " +
+                    $"pooled arrays {DynamicTileIndex.EntryPool.Pooled}"
+                );
+            }
+
             if (Time.Ticks >= _nextLog)
             {
                 _nextLog = Time.Ticks + 5000;
@@ -360,6 +374,157 @@ namespace ClassicUO.Game.Map
                     $"other {_ranks[2]} (preview multis {_previews}), every {CheckInterval} frames, seq {NextSeq}"
                 );
             }
+        }
+
+        // ---- T6b: the merged order (list without dynamics + DynamicTileIndex) must equal the list while both are maintained ----
+
+        private static long _indexTiles, _indexEntries, _indexMerged, _indexBadTiles, _indexOrder, _indexBadEntries, _indexCount;
+
+        /// <summary>The result of one cell's index check (<see cref="CheckIndex"/>).</summary>
+        public struct IndexCheck
+        {
+            public int Entries;
+            public int Merged;
+            /// <summary>Positions where the merged order and the list differ (a missing, extra or misordered object).</summary>
+            public int OrderMismatches;
+            /// <summary>Entries out of key order, with a stored key or id other than the object's, on another cell, or of an
+            /// object the index must not hold.</summary>
+            public int BadEntries;
+            /// <summary>The list's dynamic objects and the entries differ in number.</summary>
+            public bool CountMismatch;
+            public int FirstMismatch;
+
+            public readonly bool Failed => OrderMismatches != 0 || BadEntries != 0 || CountMismatch;
+        }
+
+        /// <summary>T6b: cell (x, y) of <paramref name="chunk"/>: the merged order (<see cref="TileWalk"/>) equals the list, and
+        /// every entry is the object's own (key, id, cell). A list with a cycle is the list check's failure, not this one's.</summary>
+        public static IndexCheck CheckIndex(Chunk chunk, int x, int y)
+        {
+            var r = new IndexCheck { FirstMismatch = -1 };
+            int cell = x << 3 | y;
+            DynamicTileIndex.Entry[] entries = null;
+            int n = 0;
+
+            if (chunk.Dynamic != null)
+            {
+                entries = chunk.Dynamic.RawCell(cell, out n);
+            }
+
+            r.Entries = n;
+
+            for (int i = 0; i < n; i++)
+            {
+                ref DynamicTileIndex.Entry e = ref entries[i];
+                GameObject o = e.Obj;
+                bool bad = o == null || !DynamicTileIndex.Holds(o) || !ReferenceEquals(o.TileChunk, chunk) || o.TileCell != cell ||
+                           e.Key.CompareTo(Key(o)) != 0 || e.Id != (o is Entity ent ? ent.Serial : 0) ||
+                           i > 0 && entries[i - 1].Key.CompareTo(e.Key) >= 0;
+
+                if (bad)
+                {
+                    r.BadEntries++;
+                }
+            }
+
+            GameObject head = FindHead(chunk.Tiles[x, y], out bool cycle);
+
+            if (cycle)
+            {
+                return r;
+            }
+
+            int dynamicInList = 0, limit = 1 << 20, pos = 0;
+            GameObject merged = TileWalk.Begin(chunk, cell, out TileWalk walk);
+
+            for (GameObject o = head; (o != null || merged != null) && pos < limit; pos++)
+            {
+                if (merged != null)
+                {
+                    r.Merged++;
+                }
+
+                if (!ReferenceEquals(o, merged))
+                {
+                    r.OrderMismatches++;
+
+                    if (r.FirstMismatch < 0)
+                    {
+                        r.FirstMismatch = pos;
+                    }
+                }
+
+                if (o != null)
+                {
+                    if (DynamicTileIndex.Holds(o))
+                    {
+                        dynamicInList++;
+                    }
+
+                    o = o.TNext;
+                }
+
+                if (merged != null)
+                {
+                    merged = walk.Next();
+                }
+            }
+
+            r.CountMismatch = dynamicInList != n;
+
+            return r;
+        }
+
+        private static void CheckIndexCell(Chunk chunk, int x, int y)
+        {
+            if (chunk.Tiles[x, y] == null && (chunk.Dynamic == null || chunk.Dynamic.CountAt(x << 3 | y) == 0))
+            {
+                return;
+            }
+
+            _indexTiles++;
+            IndexCheck r = CheckIndex(chunk, x, y);
+            _indexEntries += r.Entries;
+            _indexMerged += r.Merged;
+            _indexOrder += r.OrderMismatches;
+            _indexBadEntries += r.BadEntries;
+
+            if (r.CountMismatch)
+            {
+                _indexCount++;
+            }
+
+            if (!r.Failed)
+            {
+                return;
+            }
+
+            _indexBadTiles++;
+
+            if (_reports++ >= MaxReports)
+            {
+                return;
+            }
+
+            var sb = new StringBuilder();
+            sb.Append("[tile-order] index mismatch at tile ").Append(chunk.X * 8 + x).Append(',').Append(chunk.Y * 8 + y).Append(": entries ")
+              .Append(r.Entries).Append(", order mismatches ").Append(r.OrderMismatches).Append(" (first at ").Append(r.FirstMismatch)
+              .Append("), bad entries ").Append(r.BadEntries).Append(", count mismatch ").Append(r.CountMismatch).Append(" | list:");
+            int i = 0;
+
+            for (GameObject o = chunk.Tiles[x, y] == null ? null : FindHead(chunk.Tiles[x, y], out _); o != null && i < 16; o = o.TNext, i++)
+            {
+                sb.Append(" #").Append(i).Append(' ').Append(Describe(o));
+            }
+
+            sb.Append(" | index:");
+
+            foreach (var e in chunk.Dynamic != null ? chunk.Dynamic.Cell(x << 3 | y) : default)
+            {
+                sb.Append(' ').Append(e.Key).Append(" id 0x").Append(e.Id.ToString("X")).Append(' ').Append(e.Obj == null ? "null" : Describe(e.Obj));
+            }
+
+            Log.Warn(sb.ToString());
         }
 
         private static void CountRanks(Chunk chunk, int x, int y)

@@ -807,9 +807,19 @@ namespace ClassicUO.Game.Scenes
             bool detail = FrameStats.Detail;
             bool prepCheck = PrepCheck.On;
 
+            // T6b (world_tile_index): a whole tile's walk (no stopAt) reads the list's land, statics, multis and effects merged by
+            // key with the tile's DynamicTileIndex array; the one-object walks (stopAt = obj.TNext) need no merge
+            bool merged = DynamicTileIndex.WalkOn && stopAt == null;
+            TileWalk tileWalk = default;
+
+            if (merged)
+            {
+                obj = TileWalk.Begin(chunk, obj.TileCell, out tileWalk);
+            }
+
             // stopAt: the walk ends there, not at the tile's end (the Gpu prepare's item cache serves a tile's items and
             // walks its mobiles one by one: stopAt = mobile.TNext, GameSceneGpuItemCache)
-            for (; obj != stopAt; obj = obj.TNext)
+            for (; obj != stopAt; obj = merged ? tileWalk.Next() : obj.TNext)
             {
                 // Gpu prepare (GameSceneGpuPrepare): settled baked land and statics are the GPU's alone
                 if (skipBaked && IsGpuBaked(obj))
