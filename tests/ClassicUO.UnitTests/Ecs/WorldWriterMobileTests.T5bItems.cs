@@ -308,6 +308,33 @@ namespace ClassicUO.UnitTests.Ecs
             Time.Ticks = NOW;
         }
 
+        // Codex audit P2: the funnel's commit pushed the timer before the operation wrote AnimIndex = 99 and UsedLayer
+        [Fact]
+        public void An_Existing_Corpse_Updated_Through_The_Funnel_Has_Its_Timer_Pushed_After_The_Corpse_State()
+        {
+            World world = BuildCorpse(Start.Standing);
+            world.Ecs.ItemAnimTimerEnabled = true;
+            Item corpse = world.Items.Get(CORPSE);
+            world.Ecs.Sync(corpse);
+            Time.Ticks = NOW + 500;
+            world.Writer.AdvanceCorpseFrame(corpse, 4, Time.Ticks + Constants.CHARACTER_ANIMATION_DELAY);
+            world.Ecs.Mirror.TryGetEntity(CORPSE, false, out EcsEntity e).Should().BeTrue();
+            e.GetComponent<AnimationTimer>().Frame.Should().Be(4);
+            e.GetComponent<AnimationTimer>().UsedLayer.Should().BeFalse();
+
+            // the server sends the corpse again with the running bit (the second death variant) and another direction
+            Item same = world.Writer.UpsertWorldItem(CORPSE, 0x2006, 0, 0x190, 1002, 1000, 0, Direction.Running | Direction.West, 0, ClassicUO.Game.Data.Flags.None, 0, out bool created, out WorldWriter.Placement p);
+            world.Writer.PlaceWorldItem(p);
+            created.Should().BeFalse();
+            same.AnimIndex.Should().Be(99);
+            same.UsedLayer.Should().BeTrue();
+            world.Ecs.Mirror.TryGetEntity(CORPSE, false, out e).Should().BeTrue();
+            e.GetComponent<AnimationTimer>().Should().Be(same.CorpseTimer);
+            e.GetComponent<AnimationTimer>().Frame.Should().Be(99);
+            e.GetComponent<AnimationTimer>().UsedLayer.Should().BeTrue();
+            Time.Ticks = NOW;
+        }
+
         [Fact]
         public void The_Item_Anim_Switch_Is_Off_By_Default_And_Builds_The_Timers_On_The_Stage()
         {
