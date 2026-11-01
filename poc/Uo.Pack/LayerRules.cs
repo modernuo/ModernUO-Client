@@ -112,6 +112,11 @@ public sealed class LayerRules
     // per set: a 1024-bit filter of the remapped AnimIDs (bit anim & 1023), so the common no-remap case skips the rule scan
     private readonly ulong[] _remapFilter = new ulong[2 * 16];
 
+    // E2 (perf): body -> group without the table scan; per rule, the layers that must be worn for it to match (a Present
+    // condition, or an AnimId/Graphic one whose ranges exclude 0, not negated), checked against the key's worn mask first
+    private readonly byte[] _groupByBody;
+    private readonly uint[] _require;
+
     public LayerRules(BodyGroupEntry[] bodies, byte[] tables, LayerRule[] rules, LayerCond[] conds, LayerRange[] ranges)
     {
         Bodies = bodies;
@@ -148,6 +153,13 @@ public sealed class LayerRules
             if (c.RangeStart + c.RangeCount > ranges.Length) throw new InvalidDataException("layerrules: cond ranges out of bounds");
         }
 
+        int maxBody = 0;
+        foreach (BodyGroupEntry e in bodies) maxBody = Math.Max(maxBody, e.Body);
+        _groupByBody = new byte[maxBody + 1];
+        for (int i = bodies.Length - 1; i >= 0; i--) _groupByBody[bodies[i].Body] = bodies[i].Group; // the first entry wins, as GroupOf's scan
+
+        _require = new uint[rules.Length];
+
         var lists = new List<int>[2, 5];
         var covers = new List<int>[2 * LayerRulesConst.MaxLayer];
         for (int s = 0; s < 2; s++)
@@ -159,6 +171,15 @@ public sealed class LayerRules
             ref readonly LayerRule r = ref rules[i];
             if (r.Set > 1 || r.Kind > (byte)LayerRuleKind.Remap) throw new InvalidDataException($"layerrules: rule {i} set {r.Set} kind {r.Kind}");
             if (r.CondStart + r.CondCount > conds.Length) throw new InvalidDataException($"layerrules: rule {i} conds out of bounds");
+
+            for (int c = r.CondStart; c < r.CondStart + r.CondCount; c++)
+            {
+                LayerCond cd = conds[c];
+                if (cd.Negate != 0 || cd.Kind > (byte)LayerCondKind.AnimId) continue;
+                bool zeroMatches = false;
+                for (int k = cd.RangeStart; k < cd.RangeStart + cd.RangeCount; k++) zeroMatches |= ranges[k].Lo == 0;
+                if (cd.Kind == (byte)LayerCondKind.Present || !zeroMatches) _require[i] |= 1u << cd.Layer;
+            }
 
             switch ((LayerRuleKind)r.Kind)
             {
@@ -214,14 +235,15 @@ public sealed class LayerRules
     }
 
     /// <summary>The body group of a body graphic (<see cref="BodyGroup.Other"/> when the file doesn't list it).</summary>
-    public byte GroupOf(ushort body)
-    {
-        foreach (ref readonly BodyGroupEntry e in Bodies.AsSpan())
-        {
-            if (e.Body == body) return e.Group;
-        }
+    public byte GroupOf(ushort body) => body < _groupByBody.Length ? _groupByBody[body] : (byte)BodyGroup.Other;
 
-        return (byte)BodyGroup.Other;
+    // the worn mask of an order key (bit l: key[l] != 0)
+    private static uint WornMask(ReadOnlySpan<ushort> key)
+    {
+        uint m = 0;
+        int n = Math.Min(key.Length, LayerRulesConst.LayerCount);
+        for (int l = 1; l < n; l++) m |= key[l] != 0 ? 1u << l : 0;
+        return m;
     }
 
     private bool Match(in LayerRule r, ReadOnlySpan<bool> present, ReadOnlySpan<ushort> graphic, ReadOnlySpan<ushort> anim, LayerSubject subject)
@@ -289,11 +311,12 @@ public sealed class LayerRules
     {
         const int N = LayerRulesConst.LayerCount;
         int table = 0;
+        uint worn = WornMask(key);
 
         foreach (int ri in _select[(int)set])
         {
             ref readonly LayerRule r = ref Rules[ri];
-            if (Match(r, default, key, key, subject))
+            if ((_require[ri] & ~worn) == 0 && Match(r, default, key, key, subject))
             {
                 table = r.Value;
                 break;
@@ -306,7 +329,7 @@ public sealed class LayerRules
         foreach (int ri in _reorder[(int)set])
         {
             ref readonly LayerRule r = ref Rules[ri];
-            if (!Match(r, default, key, key, subject)) continue;
+            if ((_require[ri] & ~worn) != 0 || !Match(r, default, key, key, subject)) continue;
 
             switch ((LayerReorderOp)r.Op)
             {
