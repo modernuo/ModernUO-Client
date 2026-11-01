@@ -2,6 +2,11 @@
 
 Visual or behavioural defects found in the PoC client that aren't fixed yet. Add new ones here; move them to the poc-log when fixed.
 
+## Gate flakes seen on 2026-11-01 (open)
+
+- **uistate vendor buy:** the script's `buy a_horse 1` sometimes finds no buy-list entry (vendor stock after repeated runs, or the list not loaded yet), and the following rename/pet steps fail (bench-000130, bench-000177; reruns pass). Fix idea: wait for the buy list, and restock or pick another vendor item in the script.
+- **`RemovalSitesFunnelCheckTests.A_Direct_Removal_Names_The_Caller_Past_The_Removal_Plumbing`** failed once in a full dev run after the T5d merge; passes alone. Probably the funnel-check static log shared with a parallel test: put it in `FunnelCheckCollection`.
+
 ## Flaky unit tests in full-suite runs: fixed by isolation on `bg/flaky-tests` (recorded 2026-11-01)
 
 Seen in full-suite runs, passing alone and on rerun: `WorldWriterMobileTests.The_Ecs_Advance_Equals_The_Legacy_Update` (several cases), `WorldWriterMobileTests.The_Boat_Steps_Equal_The_Old_Path`, `Mp3DecoderTests.Dispose_IsIdempotentAndFreesOnce`, `AudioPackTests.A_Track_From_The_Pack_Loops_Gaplessly_Through_MusicStream`, `TileDataAuditTests.A_Multi_Component_Takes_The_Draw_Flags_Of_Its_Season_Graphic`.
@@ -12,8 +17,10 @@ Root causes and fixes (tests only, no production change):
 - **`seasons.txt`**: `SeasonManager`'s static constructor reads or writes `<cwd>/Data/Client/seasons.txt` but never creates the folder, which existed in the bin folder only as a side effect of other tests. A module initializer in `tests/ClassicUO.UnitTests/TestEnvironment.cs` creates it.
 - Also: the join of the disposer thread in `Dispose_RacingRead_IsSafe` is now bounded (30 s).
 
-Verification on the fixed branch: dev variant 5 of 5 full-suite runs passed (2612 passed, 6 skipped each); `-p:CuoDevTools=false` 1 of 2 passed. The failing false-variant run hit a different test, `ChunkLoadingTests.Drain_Does_Not_Allocate_Per_Frame` (a per-thread `GC.GetAllocatedBytesForCurrentThread` delta that must be 0; it passed alone and in the next run). Not investigated: likely a one-off allocation on the test thread (tiered JIT or a delegate stub) under load; if it recurs, warm the loop twice before measuring.
-
+Verification on the fixed branch: dev variant 5 of 5 full-suite runs passed (2612 passed, 6 skipped each); `-p:CuoDevTools=false` 1 of 2 passed. The failing false-variant run hit a different test, `ChunkLoadingTests.Drain_Does_Not_Allocate_Per_Frame` (a per-thread `GC.GetAllocatedBytesForCurrentThread` delta that must be 0; it passed alone and in the next run). Not investigated: likely a one-off allocation on the test thread (tiered JIT or a delegate stub) under load; if it recurs, warm the loop twice before measuring.
+
+
+
 Remains: the full-suite stall after the `MountHeightTests` skips (seen twice by t5c-sweep with another dotnet process active) was not reproduced and no deadlock was found by reading the code. The only unbounded waits in the suite were `Barrier.SignalAndWait` and a thread join in `Dispose_RacingRead_IsSafe` (a busy spin loop of three threads over 200 iterations, which crawls on a loaded machine); the join is bounded now. If it stalls again, rerun with `--blame-hang-timeout 120s` to get the stuck test's dump. Tests outside the non-parallel collections that also mutate `Time.Ticks` or the shared RNG would still be exposed; they cannot overlap the exclusive collections, only each other.
 
 ## Empty tiledata entries still occlude roofs and lights (recorded 2026-10-31, deferred)
