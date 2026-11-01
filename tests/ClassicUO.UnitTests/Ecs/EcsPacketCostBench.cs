@@ -461,62 +461,82 @@ namespace ClassicUO.UnitTests.Ecs
             rows.Add(("T1 animation probe: the same through the funnel (SetRace)", Measure(packets, i =>
                 s.World.Writer.SetRace(s.Mobiles[i % n], (RaceType)(1 + (i & 1))))));
 
-            // T2, after every older row (so they run without a cached parent, as in the base). Each funnel row runs twice here:
-            // first as a control with nothing cached ("T2 control"), then with the parents' contents cached ("T2 cached": an open
-            // container gump, a counter's walk), so every change of attachment pays the cache maintenance (an invalidation
-            // lookup; the build waits for the next read). The control, not the earlier T1 row, is the pair: a repeated row
-            // differs from its first run without any cache (the 0x78 list allocates 1819 B/packet on its second run, 1400 on the
-            // first; the 0x2E re-equip is faster), so only the control isolates the cache's cost (Codex audit P2 #5). Then the
-            // worst case of a reader: the backpack's contents read after every packet (a build each time), paired with the
+            // T2, after every older row (so they run without a cached parent, as in the base). The funnel rows run on three
+            // fresh scenes, each built and prepared the same way and running the same rows in the same order: "T2 control"
+            // (nothing cached), "T2 cached" (the backpack's and every mobile's contents cached before the warm-up: an open
+            // container gump, a counter's walk; so every change of attachment pays the cache maintenance, an invalidation
+            // lookup, while the build waits for the next read) and "T2 control2" (nothing cached again). The two controls
+            // bracket the cached run and must allocate the same: that shows the scenes are equal, and only then is cached <=
+            // control a proof of no added allocation (Codex audit round 2; round 1's control ran back to back with the cached
+            // row on one mutated scene, where a repeated 0x78 row allocates 1819 B/packet against 1400 on its first run, a
+            // run-order effect older than T2, so +256 B in the cached path would still have passed). Then the worst case of a
+            // reader on the main scene: the backpack's contents read after every packet (a build each time), paired with the
             // cached update row.
-            uint t2Spare = SPARE0 + 0x78_0000;
-
-            void T2Rows(string kind)
+            void T2Scene(string kind, bool cached)
             {
+                Scene f = Build(n);
+                WorldEcs fecs = f.World.Ecs;
+                uint fpack = f.Backpack.Serial;
+                Item fin = f.World.GetOrCreateItem(SPARE0 + 0x80_0000);
+                WorldWriterTests.OldAddToContainer(f.World, fin.Serial, 0xF7A, 1, 40, 50, 0, fpack);
+                uint t2Spare = SPARE0 + 0x78_0000;
+
+                void Delete(uint serial)
+                {
+                    Item it = f.World.Items.Get(serial);
+                    f.Backpack.Remove(it);
+                    f.World.Items.Remove(serial);
+                    fecs.OnDestroyed(it);
+                }
+
+                if (cached)
+                {
+                    f.World.State.Contents(fpack);
+
+                    for (int m = 0; m < n; m++)
+                    {
+                        f.World.State.Contents(f.Mobiles[m].Serial);
+                    }
+                }
+
                 rows.Add(($"T2 {kind}: 0x25 new item into backpack (PlaceInContainer) + delete, per packet", Measure(packets, i =>
                 {
                     if ((i & 1) == 0)
                     {
-                        s.World.Writer.PlaceInContainer(t2Spare, 0xF7A, 1, 40, 50, 0, pack, out _);
+                        f.World.Writer.PlaceInContainer(t2Spare, 0xF7A, 1, 40, 50, 0, fpack, out _);
                     }
                     else
                     {
-                        DeleteFromPack(t2Spare++);
+                        Delete(t2Spare++);
                     }
                 })));
 
                 rows.Add(($"T2 {kind}: 0x25 update of an item in the backpack", Measure(packets, i =>
-                    s.World.Writer.PlaceInContainer(inPack.Serial, 0xF7A, (ushort)(1 + (i & 63)), 40, 50, 0, pack, out _))));
+                    f.World.Writer.PlaceInContainer(fin.Serial, 0xF7A, (ushort)(1 + (i & 63)), 40, 50, 0, fpack, out _))));
 
                 rows.Add(($"T2 {kind}: 0x2E re-equip of a worn item (Equip)", Measure(packets, i =>
                 {
-                    Item it = s.Worn[i % itemCount];
-                    s.World.Writer.Equip(it.Serial, it.Graphic, it.Layer, it.Container, (ushort)(i & 63), out _, out _);
+                    Item it = f.Worn[i % itemCount];
+                    f.World.Writer.Equip(it.Serial, it.Graphic, it.Layer, it.Container, (ushort)(i & 63), out _, out _);
                 })));
 
                 rows.Add(($"T2 {kind}: 0x78 equipment list (ClearWornItems + 5 WearItem)", Measure(lists78, i =>
                 {
-                    Mobile owner = s.Mobiles[i % n];
+                    Mobile owner = f.Mobiles[i % n];
                     var list = lists[i % n];
-                    s.World.Writer.ClearWornItems(owner.Serial);
+                    f.World.Writer.ClearWornItems(owner.Serial);
 
                     for (int k = 0; k < list.Length; k++)
                     {
-                        s.World.Writer.WearItem(owner, list[k].Serial, list[k].Graphic, list[k].Layer, list[k].Hue);
+                        f.World.Writer.WearItem(owner, list[k].Serial, list[k].Graphic, list[k].Layer, list[k].Hue);
                     }
                 })));
             }
 
-            T2Rows("control");
-
-            s.World.State.Contents(pack);
-
-            for (int m = 0; m < n; m++)
-            {
-                s.World.State.Contents(s.Mobiles[m].Serial);
-            }
-
-            T2Rows("cached");
+            T2Scene("control", false);
+            T2Scene("cached", true);
+            T2Scene("control2", false);
+            GC.Collect();
 
             rows.Add(("T2 read: 0x25 update in the backpack + its Contents read (a build)", Measure(packets, i =>
             {
