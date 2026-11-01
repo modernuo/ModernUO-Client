@@ -21,6 +21,7 @@ namespace ClassicUO.UnitTests.Assets
     // soundidx.mul / Sound.def / Sounds/*.wav / Music/Digital files, the stores read back by the client's SoundsLoader,
     // hostile stores rejected before allocation or record by record, and a looping track played gaplessly from a pack
     // record through MusicStream. No UO data needed.
+    [Collection("Mp3DecoderGlobals")] // MusicStream opens Mp3Decoders: the global LiveInputAllocations count is read by Mp3DecoderTests
     public sealed partial class AudioPackTests : IDisposable
     {
         private readonly string _tmp = Path.Combine(Path.GetTempPath(), "cuo-audiopack-" + Guid.NewGuid().ToString("N"));
