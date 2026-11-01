@@ -2854,7 +2854,7 @@ namespace ClassicUO.Game
 
             // compute: the timer step from the current state, before any write
             int delay = Constants.CHARACTER_ANIMATION_DELAY;
-            AnimationTimer timer = default;
+            ClassicUO.Ecs.AnimationTimer timer = default;
             AnimationAdvance advance = default;
             bool remove = dead;
 
@@ -2945,6 +2945,33 @@ namespace ClassicUO.Game
                 }
 
                 mobile.LastAnimationChangeTime = due;
+            }
+        }
+
+        /// <summary>
+        /// T5b (<c>world_anim_system</c>): what <c>MobileAnimationAdvanceSystem</c> computed in the ECS for a due mobile without
+        /// steps (the idle animation and the frame advance over its <c>AnimationTimer</c>) written to the Mobile's fields, the
+        /// cache the views and the step path read (<c>Mobile.WriteAnimationTimer</c>); with <paramref name="remove"/> the frame
+        /// index and the due time are left out and the dying mobile is removed (<see cref="RemoveDeadMobile"/>, which writes
+        /// <paramref name="frame"/> and <paramref name="due"/> after the removal), as <see cref="AdvanceAnimation"/>'s caller
+        /// does. Unfolded and committing nothing: the update loop pushes the clock (and with it the component) after it, as it
+        /// does after <c>Mobile.Update</c>. Admission as <see cref="IdleAnimation"/>.
+        /// </summary>
+        public void AdvanceAnimationFromEcs(Mobile mobile, in ClassicUO.Ecs.AnimationTimer timer, bool remove, int frame, long due)
+        {
+            if (!PerFrameAdmitted(mobile, nameof(AdvanceAnimationFromEcs)))
+            {
+                return;
+            }
+
+            using (Open(mobile, null))
+            {
+                mobile.WriteAnimationTimer(in timer, !remove);
+            }
+
+            if (remove)
+            {
+                RemoveDeadMobile(mobile, frame, due);
             }
         }
 
