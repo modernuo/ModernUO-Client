@@ -151,6 +151,13 @@ namespace ClassicUO.Configuration
         // (owner); the off path and CUO_MOBILE_UPDATE_CHECK stay for one phase.
         [JsonPropertyName("world_update_mobile_system")] public bool WorldUpdateMobileSystem { get; set; } = true;
 
+        // T5b (needs world_update_mobile_system): a due mobile without queued steps or a handles opening has its idle animation
+        // and frame advance computed in the ECS (MobileAnimationAdvanceSystem over AnimationTimer, MobileInputs and
+        // EquipmentSlots) instead of Mobile.Update; mobiles with steps or handles still run Mobile.Update until T6. Read once
+        // at startup (CUO_WORLD_ANIM_SYSTEM=1|0 overrides it in developer builds). Default off; CUO_ANIM_ADVANCE_CHECK=1
+        // compares every advance with the legacy one.
+        [JsonPropertyName("world_anim_system")] public bool WorldAnimSystem { get; set; } = false;
+
         // T2 (ecs-transition-plan.md): the container-contents readers (container, grid loot, trade and spellbook gumps, the
         // shop's lists, FindItem*, the counters, macros) take a parent's children from the ECS (WorldState.Children: the
         // mirror's attached children by child-order stamp, a spellbook's spell entries) instead of the LinkedObject child

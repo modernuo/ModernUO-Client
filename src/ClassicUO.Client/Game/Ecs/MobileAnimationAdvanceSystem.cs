@@ -1,0 +1,590 @@
+// SPDX-License-Identifier: BSD-2-Clause
+
+using System;
+using ClassicUO.Assets;
+using ClassicUO.Ecs;
+using ClassicUO.Game.Data;
+using ClassicUO.Game.GameObjects;
+using ClassicUO.Renderer.Animations;
+using ClassicUO.Utility;
+using ClassicUO.Utility.Logging;
+using EcsEntity = Friflo.Engine.ECS.Entity;
+
+namespace ClassicUO.Game
+{
+    /// <summary>T5b: the animation data the ECS advance reads: the action selection's queries, the idle planner's
+    /// replacement table, the stored direction and the frame count of an action.</summary>
+    internal interface IAnimationAdvanceSource : IAnimationSource
+    {
+        byte GetReplacedObjectAnimation(ushort graphic, ushort index);
+
+        void GetAnimDirection(ref byte dir, ref bool mirror);
+
+        /// <summary>The frames of <paramref name="action"/> in stored direction <paramref name="dir"/> (Mobile.AdvanceFrame's
+        /// <c>GetAnimationFrames(...).Length</c>).</summary>
+        int FrameCount(ushort body, byte action, byte dir);
+    }
+
+    /// <summary><see cref="IAnimationAdvanceSource"/> over the client's <see cref="Animations"/>.</summary>
+    internal readonly struct LiveAdvanceSource : IAnimationAdvanceSource
+    {
+        private readonly Animations _animations;
+
+        public LiveAdvanceSource(Animations animations) => _animations = animations;
+
+        public int MaxAnimationCount => _animations.MaxAnimationCount;
+        public AnimationGroupsType GetAnimType(ushort graphic) => _animations.GetAnimType(graphic);
+        public AnimationFlags GetAnimFlags(ushort graphic) => _animations.GetAnimFlags(graphic);
+        public void ConvertBodyIfNeeded(ref ushort graphic, bool isParent) => _animations.ConvertBodyIfNeeded(ref graphic, isParent);
+        public bool AnimationExists(ushort graphic, byte group) => _animations.AnimationExists(graphic, group);
+        public bool IsReplacedObjectAnimation(byte family, ushort group) => Mobile.IsReplacedObjectAnimation(family, group);
+        public byte GetReplacedObjectAnimation(ushort graphic, ushort index) => Mobile.GetReplacedObjectAnimation(graphic, index);
+        public void GetAnimDirection(ref byte dir, ref bool mirror) => _animations.GetAnimDirection(ref dir, ref mirror);
+        public int FrameCount(ushort body, byte action, byte dir) => _animations.GetAnimationFrames(body, action, dir, out _, out _).Length;
+    }
+
+    internal enum AnimAdvanceOutcome : byte
+    {
+        /// <summary>The frame was not due (or the mobile does not iterate its frames): only the idle part may have run.</summary>
+        NotAdvanced,
+
+        /// <summary>The frame advanced; the timer holds the new frame and due time.</summary>
+        Advanced,
+
+        /// <summary>A dying (death-rekeyed) mobile's animation is over: the caller removes it through the funnel
+        /// (<c>WorldWriter.RemoveDeadMobile</c>) and writes the frame and due time after the removal.</summary>
+        Remove
+    }
+
+    /// <summary>
+    /// T5b: <c>Mobile.Update</c> for a mobile without queued steps or a handles opening, over the ECS state only: the
+    /// <see cref="AnimationTimer"/> component, the pushed <see cref="MobileInputs"/> and the <see cref="EquipmentSlots"/>.
+    /// Each method mirrors one legacy piece in its old order, including every random draw (the idle delay, the idle pair, a
+    /// gargoyle's flight, the selection's LowGroupExtended roll), so a caller that runs the mobiles in table order draws the
+    /// same sequence as the legacy loop.
+    /// </summary>
+    internal static class AnimationAdvanceRules
+    {
+        /// <summary><c>Mobile.SetAnimation</c> on the timer: the state, the frame due time (now) and the next idle delay (one
+        /// random draw, last, as <c>CalculateRandomIdleTime</c>).</summary>
+        public static void SetAnimation(ref AnimationTimer t, byte id, byte interval = 0, byte frameCount = 0, ushort repeatCount = 0, bool repeat = false, bool forward = false, bool fromServer = false)
+        {
+            t.Group = id;
+            t.Frame = (byte)(forward ? 0 : frameCount);
+            t.Interval = interval;
+            t.FrameCount = (byte)(forward ? 0 : frameCount);
+            t.RepeatMode = repeatCount;
+            t.RepeatModeCount = repeatCount;
+            t.Repeat = repeat;
+            t.Forward = forward;
+            t.FromServer = fromServer;
+            t.AnimDue = Time.Ticks;
+            t.IdleDue = Mobile.NextIdleDue();
+        }
+
+        /// <summary>
+        /// <c>Mobile.PlanIdleAnimation</c> over the ECS state: mounted from the slots, war mode, the gargoyle and flying flags
+        /// and the body from the pushed inputs, the group and <c>ExecuteAnimation</c> from the timer. Draws in the old order
+        /// (the idle delay, then a gargoyle's flight or the idle pair); writes nothing.
+        /// </summary>
+        public static void PlanIdle<TAnims>(in AnimationTimer t, in MobileInputs inp, bool mounted, in TAnims animations, out Mobile.IdlePlan plan)
+            where TAnims : struct, IAnimationAdvanceSource
+        {
+            plan = default;
+            plan.IdleDue = Mobile.NextIdleDue();
+            bool warMode = (inp.Flags & AnimStateFlags.WarMode) != 0;
+
+            if (mounted || warMode || !t.ExecuteAnimation)
+            {
+                return;
+            }
+
+            plan.Resets = true;
+            ushort graphic = inp.Body;
+
+            if (graphic >= animations.MaxAnimationCount)
+            {
+                return;
+            }
+
+            AnimationGroupsType type = animations.GetAnimType(graphic);
+            AnimationFlags flags = animations.GetAnimFlags(graphic);
+            AnimationGroups animGroup = AnimationGroups.None;
+            bool isLowExtended = false;
+
+            if ((flags & AnimationFlags.CalculateOffsetLowGroupExtended) != 0)
+            {
+                isLowExtended = true;
+                type = AnimationGroupsType.Monster;
+            }
+            else if ((flags & AnimationFlags.CalculateOffsetByLowGroup) != 0)
+            {
+                type = AnimationGroupsType.Animal;
+            }
+
+            switch (type)
+            {
+                case AnimationGroupsType.SeaMonster:
+                case AnimationGroupsType.Monster:
+                    animGroup = AnimationGroups.High;
+
+                    break;
+
+                case AnimationGroupsType.Animal:
+                    animGroup = AnimationGroups.Low;
+
+                    break;
+
+                case AnimationGroupsType.Human:
+                case AnimationGroupsType.Equipment:
+                    animGroup = AnimationGroups.People;
+
+                    break;
+            }
+
+            if (animGroup == 0)
+            {
+                return;
+            }
+
+            plan.Group = Mobile.IdleGroup.Set;
+
+            if ((flags & AnimationFlags.UseUopAnimation) != 0)
+            {
+                if (animGroup != AnimationGroups.People)
+                {
+                    // war mode returned above, so this is always 26 (the legacy planner's 28 is unreachable too)
+                    plan.Value = (byte)(warMode ? 28 : 26);
+
+                    return;
+                }
+
+                if ((inp.Flags & AnimStateFlags.GargoyleProp) != 0 && (inp.Flags & AnimStateFlags.Flying) != 0)
+                {
+                    plan.Value = (byte)(RandomHelper.GetValue(0, 2) != 0 ? 66 : 67);
+
+                    return;
+                }
+            }
+
+            int first = RandomHelper.GetValue(0, 2);
+            byte original = t.Group;
+            byte group = Mobile._animationIdle[(byte)animGroup - 1, first];
+
+            if (isLowExtended && group == 18)
+            {
+                if (!animations.AnimationExists(graphic, 18) && animations.AnimationExists(graphic, 17))
+                {
+                    group = animations.GetReplacedObjectAnimation(graphic, 17);
+                }
+                else
+                {
+                    group = 1;
+                }
+            }
+
+            if (!animations.AnimationExists(graphic, group))
+            {
+                first = first == 0 ? 1 : 0;
+                group = Mobile._animationIdle[(byte)animGroup - 1, first];
+
+                if (!animations.AnimationExists(graphic, group))
+                {
+                    plan.Group = Mobile.IdleGroup.SetAnimation;
+                    group = original;
+                }
+            }
+
+            plan.Value = group;
+        }
+
+        /// <summary><c>Mobile.ApplyIdle</c> on the timer: the idle due time, the idle reset, then the group or
+        /// <c>SetAnimation</c> (which draws its own idle delay).</summary>
+        public static void ApplyIdle(ref AnimationTimer t, in Mobile.IdlePlan plan)
+        {
+            t.IdleDue = plan.IdleDue;
+
+            if (!plan.Resets)
+            {
+                return;
+            }
+
+            t.Frame = 0;
+            t.FrameCount = 0;
+            t.Interval = 1;
+            t.RepeatMode = 1;
+            t.RepeatModeCount = 1;
+            t.Forward = true;
+            t.Repeat = false;
+            t.FromServer = true;
+
+            if (plan.Group == Mobile.IdleGroup.Set)
+            {
+                t.Group = plan.Value;
+            }
+            else if (plan.Group == Mobile.IdleGroup.SetAnimation)
+            {
+                SetAnimation(ref t, plan.Value);
+            }
+        }
+
+        /// <summary><c>Mobile.GetAnimGroupInput</c> from the ECS: the server action from the timer, the rest from the pushed
+        /// inputs (walking against the tick) and the slots (mounted, the hands).</summary>
+        public static AnimGroupInput InputOf(in AnimationTimer t, in MobileInputs inp, in EquipmentSlots eq, uint ticks)
+        {
+            AnimStateFlags f = inp.Flags;
+
+            return new AnimGroupInput
+            {
+                ServerGroup = t.Group,
+                FromServer = t.FromServer,
+                WarMode = (f & AnimStateFlags.WarMode) != 0,
+                Walking = MobileInputRules.IsWalking(in inp, ticks),
+                Running = (f & AnimStateFlags.Running) != 0,
+                HasSteps = (f & AnimStateFlags.HasSteps) != 0,
+                StepRun = (f & AnimStateFlags.StepRun) != 0,
+                Mounted = eq.Mounted,
+                GargoyleProp = (f & AnimStateFlags.GargoyleProp) != 0,
+                Flying = (f & AnimStateFlags.Flying) != 0,
+                Dead = (f & AnimStateFlags.Dead) != 0,
+                Hand1 = eq.Hand1,
+                Hand2 = eq.Hand2
+            };
+        }
+
+        /// <summary>
+        /// <c>Mobile.AdvanceFrame</c> and the <c>AdvanceAnimation</c> operation on the timer: the due and iterate checks, the
+        /// action (<see cref="AnimationGroupRules.Select{TAnims}"/>, which may roll), the frame count of the action in the stored
+        /// direction, the timer step, a finished server animation's <c>SetAnimation(0xFF)</c> (an idle draw), then the frame
+        /// index and due time, unless the dying mobile is to be removed: then <paramref name="frame"/> and
+        /// <paramref name="due"/> are for the caller to write after the removal.
+        /// </summary>
+        public static AnimAdvanceOutcome Advance<TAnims>(ref AnimationTimer t, in MobileInputs inp, in EquipmentSlots eq, uint serial, in TAnims animations, out int frame, out long due)
+            where TAnims : struct, IAnimationAdvanceSource
+        {
+            frame = -1;
+            due = 0;
+
+            // NoIterateAnimIndex: not animating, or walking recently (Constants.WALKING_DELAY, not IsWalking's) with no step
+            if (t.AnimDue >= Time.Ticks || !t.ExecuteAnimation ||
+                (inp.LastStepTime > Time.Ticks - Constants.WALKING_DELAY && (inp.Flags & AnimStateFlags.HasSteps) == 0))
+            {
+                return AnimAdvanceOutcome.NotAdvanced;
+            }
+
+            ushort id = inp.Body;
+            AnimGroupInput input = InputOf(in t, in inp, in eq, Time.Ticks);
+            byte action = AnimationGroupRules.Select(in input, id, true, animations);
+
+            byte dir = inp.Facing;
+            bool mirror = false;
+            animations.GetAnimDirection(ref dir, ref mirror);
+            int frameCount = 0;
+
+            if (id < animations.MaxAnimationCount && dir < 5)
+            {
+                frameCount = animations.FrameCount(id, action, dir);
+            }
+
+            bool dead = (serial & 0x8000_0000) != 0;
+            int delay = Constants.CHARACTER_ANIMATION_DELAY;
+            bool remove = dead;
+
+            if (frameCount > 0)
+            {
+                AnimationTimer step = t;
+                delay = AnimationTiming.Advance(ref step, frameCount, out AnimationAdvance advance);
+                remove = dead && advance == AnimationAdvance.Wrapped;
+                frame = step.Frame;
+
+                // ApplyAnimationTimer: the frame count and the repeat state (the frame index comes last)
+                t.FrameCount = step.FrameCount;
+                t.RepeatMode = step.RepeatMode;
+                t.RepeatModeCount = step.RepeatModeCount;
+                t.Repeat = step.Repeat;
+
+                if (advance == AnimationAdvance.Finished)
+                {
+                    SetAnimation(ref t, 0xFF);
+                }
+            }
+
+            due = Time.Ticks + delay;
+
+            if (remove)
+            {
+                return AnimAdvanceOutcome.Remove;
+            }
+
+            if (frame >= 0)
+            {
+                t.Frame = (byte)frame;
+            }
+
+            t.AnimDue = due;
+
+            return AnimAdvanceOutcome.Advanced;
+        }
+
+        /// <summary><c>Mobile.Update</c> for a mobile without steps or a handles opening: the idle animation when its timer is
+        /// due, then the frame advance (the step processing and the footstep sound do nothing without steps).</summary>
+        public static AnimAdvanceOutcome Step<TAnims>(ref AnimationTimer t, in MobileInputs inp, in EquipmentSlots eq, uint serial, in TAnims animations, out int frame, out long due)
+            where TAnims : struct, IAnimationAdvanceSource
+        {
+            if (t.IdleDue < Time.Ticks)
+            {
+                PlanIdle(in t, in inp, eq.Mounted, in animations, out Mobile.IdlePlan plan);
+                ApplyIdle(ref t, in plan);
+            }
+
+            return Advance(ref t, in inp, in eq, serial, in animations, out frame, out due);
+        }
+    }
+
+    /// <summary>
+    /// T5b (<c>world_anim_system</c>): runs a due mobile's <c>Mobile.Update</c> in the ECS when it has no queued steps and no
+    /// handles opening (its <see cref="MobileClock"/> flags are clear): <see cref="AnimationAdvanceRules.Step{TAnims}"/> over
+    /// its <see cref="AnimationTimer"/>, then the results through the funnel (<c>WorldWriter.AdvanceAnimationFromEcs</c>:
+    /// the Mobile's cached fields, a dying mobile's removal). The caller runs the due mobiles in table order and calls
+    /// <c>Mobile.Update</c> for any this declines, so the random draws keep the legacy sequence.
+    /// </summary>
+    internal sealed class MobileAnimationAdvanceSystem
+    {
+        // CUO_ANIM_ADVANCE_CHECK=1: each advance is compared with the legacy one on a shadow timer (see Check)
+        public static readonly bool AdvanceCheck = Environment.GetEnvironmentVariable("CUO_ANIM_ADVANCE_CHECK") == "1";
+
+        public static long Ran, Declined;
+        public static long Checks, Diffs, SyncChecks, SyncDiffs, RandomDiffs;
+        private static int _logged;
+
+        /// <summary>
+        /// Advances <paramref name="mob"/> in the ECS; false (nothing changed) when it is not eligible: destroyed, not
+        /// mirrored, without the components, or with steps or a handles opening by its clock. The caller then runs
+        /// <c>Mobile.Update</c>.
+        /// </summary>
+        public bool TryRun(World world, Mobile mob) =>
+            TryRun(world, mob, new LiveAdvanceSource(Client.Game.UO.Animations), AdvanceCheck);
+
+        /// <summary><see cref="TryRun(World, Mobile)"/> over any animation data (the unit tests pass a stub; the checker needs
+        /// the client's).</summary>
+        internal bool TryRun<TAnims>(World world, Mobile mob, in TAnims source, bool check) where TAnims : struct, IAnimationAdvanceSource
+        {
+            if (mob.IsDestroyed || !world.Ecs.Mirror.TryGetEntity(mob.Serial, out EcsEntity e) ||
+                !e.TryGetComponent(out MobileClock clock) || clock.Flags != MobileClockFlags.None ||
+                !e.HasComponent<AnimationTimer>() || !e.HasComponent<MobileInputs>() || !e.HasComponent<EquipmentSlots>())
+            {
+                Declined++;
+
+                return false;
+            }
+
+            // the slots the drawn path rebuilds lazily: a mobile not drawn since its equipment changed is rebuilt here (the
+            // tag removal moves the entity, so before any component ref)
+            if (MobileAnimationSystem.TakeDirty(e))
+            {
+                AnimationState s = default;
+                s.Flags = e.GetComponent<MobileInputs>().Flags;
+                world.Ecs.Animation.Rebuild(e, in s, mob);
+            }
+
+            Ran++;
+            AnimationTimer t = e.GetComponent<AnimationTimer>();
+            MobileInputs inp = e.GetComponent<MobileInputs>();
+            EquipmentSlots eq = e.GetComponent<EquipmentSlots>();
+
+            if (check)
+            {
+                Check(mob, in t, in inp, in eq, in source);
+            }
+
+            AnimAdvanceOutcome outcome = AnimationAdvanceRules.Step(ref t, in inp, in eq, mob.Serial, in source, out int frame, out long due);
+            world.Writer.AdvanceAnimationFromEcs(mob, in t, outcome == AnimAdvanceOutcome.Remove, frame, due);
+
+            return true;
+        }
+
+        // ---- the checker -------------------------------------------------------------------------------------------------
+
+        /// <summary>
+        /// CUO_ANIM_ADVANCE_CHECK: the component must equal the Mobile's fields (a missed push otherwise); the legacy advance
+        /// (the legacy idle planner and inputs read from the Mobile, the legacy selection input, the Mobile's direction, the
+        /// old operation's step) runs on a shadow copy of the timer from the same random state as the ECS one, and the two
+        /// timers, the removal and the random state after them must be equal. The ECS run that follows starts from the same
+        /// state, so the client's draws are unchanged.
+        /// </summary>
+        private static void Check<TAnims>(Mobile mob, in AnimationTimer component, in MobileInputs inp, in EquipmentSlots eq, in TAnims source)
+            where TAnims : struct, IAnimationAdvanceSource
+        {
+            AnimationTimer legacy = mob.FullAnimationTimer;
+            SyncChecks++;
+
+            if (!Same(in component, in legacy))
+            {
+                SyncDiffs++;
+                Log1($"component of 0x{mob.Serial:X8} differs from the Mobile: ecs {Describe(in component)} | mobile {Describe(in legacy)}");
+            }
+
+            RandomHelper.State start = RandomHelper.Save();
+            AnimationTimer shadow = legacy;
+            AnimAdvanceOutcome legacyOutcome = LegacyShadowStep(mob, ref shadow, out int legacyFrame, out long legacyDue);
+            RandomHelper.State afterLegacy = RandomHelper.Save();
+            RandomHelper.Restore(in start);
+
+            AnimationTimer ecs = component;
+            AnimAdvanceOutcome ecsOutcome = AnimationAdvanceRules.Step(ref ecs, in inp, in eq, mob.Serial, in source, out int ecsFrame, out long ecsDue);
+            RandomHelper.State afterEcs = RandomHelper.Save();
+            RandomHelper.Restore(in start);
+
+            Checks++;
+
+            if (!afterLegacy.Equals(afterEcs))
+            {
+                RandomDiffs++;
+                Log1($"0x{mob.Serial:X8} g=0x{mob.Graphic:X4}: the ECS advance drew a different random sequence than the legacy one");
+            }
+
+            bool removeSame = legacyOutcome == ecsOutcome && (ecsOutcome != AnimAdvanceOutcome.Remove || (legacyFrame == ecsFrame && legacyDue == ecsDue));
+
+            if (!removeSame || !Same(in ecs, in shadow))
+            {
+                Diffs++;
+                Log1($"advance of 0x{mob.Serial:X8} g=0x{mob.Graphic:X4} body=0x{inp.Body:X4} (tick {Time.Ticks}): ecs {ecsOutcome} {Describe(in ecs)} | legacy {legacyOutcome} {Describe(in shadow)}");
+            }
+        }
+
+        /// <summary>
+        /// The legacy <c>Mobile.Update</c> of a mobile without steps on a shadow timer: <c>Mobile.PlanIdleAnimation</c> (the
+        /// Mobile's own inputs and group; its timer equals the shadow when this starts) and <c>ApplyIdle</c>, then
+        /// <c>AdvanceFrame</c> with the Mobile's inputs (<c>GetAnimGroupInput</c> with the shadow's group, <c>Direction</c>,
+        /// <c>LastStepTime</c>, the step queue) and the <c>AdvanceAnimation</c> operation's step. The writes are transcribed
+        /// from the base revision's Mobile and WorldWriter onto the shadow; nothing on the Mobile changes.
+        /// </summary>
+        private static AnimAdvanceOutcome LegacyShadowStep(Mobile m, ref AnimationTimer t, out int frame, out long due)
+        {
+            frame = -1;
+            due = 0;
+
+            if (t.IdleDue < Time.Ticks)
+            {
+                m.PlanIdleAnimationLive(out Mobile.IdlePlan plan);
+                t.IdleDue = plan.IdleDue;
+
+                if (plan.Resets)
+                {
+                    t.Frame = 0;
+                    t.FrameCount = 0;
+                    t.Interval = 1;
+                    t.RepeatMode = 1;
+                    t.RepeatModeCount = 1;
+                    t.Forward = true;
+                    t.Repeat = false;
+                    t.FromServer = true;
+
+                    if (plan.Group == Mobile.IdleGroup.Set)
+                    {
+                        t.Group = plan.Value;
+                    }
+                    else if (plan.Group == Mobile.IdleGroup.SetAnimation)
+                    {
+                        ShadowSetAnimation(ref t, plan.Value);
+                    }
+                }
+            }
+
+            if (t.AnimDue >= Time.Ticks || !t.ExecuteAnimation || (m.LastStepTime > Time.Ticks - Constants.WALKING_DELAY && m.Steps.Count == 0))
+            {
+                return AnimAdvanceOutcome.NotAdvanced;
+            }
+
+            Animations animations = Client.Game.UO.Animations;
+            ushort id = m.GetGraphicForAnimation();
+            AnimGroupInput input = m.GetAnimGroupInput();
+            input.ServerGroup = t.Group;
+            input.FromServer = t.FromServer;
+            byte action = AnimationGroupRules.Select(in input, id, true, animations);
+
+            byte dir = (byte)((byte)m.Direction & 7);
+            bool mirror = false;
+            animations.GetAnimDirection(ref dir, ref mirror);
+            int frameCount = 0;
+
+            if (id < animations.MaxAnimationCount && dir < 5)
+            {
+                frameCount = animations.GetAnimationFrames(id, action, dir, out _, out _).Length;
+            }
+
+            bool dead = (m.Serial & 0x8000_0000) != 0;
+            int delay = Constants.CHARACTER_ANIMATION_DELAY;
+            bool remove = dead;
+
+            if (frameCount > 0)
+            {
+                AnimationTimer timer = t;
+                delay = AnimationTiming.Advance(ref timer, frameCount, out AnimationAdvance advance);
+                remove = dead && advance == AnimationAdvance.Wrapped;
+                frame = timer.Frame;
+                t.FrameCount = timer.FrameCount;
+                t.RepeatMode = timer.RepeatMode;
+                t.RepeatModeCount = timer.RepeatModeCount;
+                t.Repeat = timer.Repeat;
+
+                if (advance == AnimationAdvance.Finished)
+                {
+                    ShadowSetAnimation(ref t, 0xFF);
+                }
+            }
+
+            due = Time.Ticks + delay;
+
+            if (remove)
+            {
+                return AnimAdvanceOutcome.Remove;
+            }
+
+            if (frame >= 0)
+            {
+                t.Frame = (byte)frame;
+            }
+
+            t.AnimDue = due;
+
+            return AnimAdvanceOutcome.Advanced;
+        }
+
+        // the base revision's Mobile.SetAnimation(id) with its defaults, on the shadow
+        private static void ShadowSetAnimation(ref AnimationTimer t, byte id)
+        {
+            t.Group = id;
+            t.Frame = 0;
+            t.Interval = 0;
+            t.FrameCount = 0;
+            t.RepeatMode = 0;
+            t.RepeatModeCount = 0;
+            t.Repeat = false;
+            t.Forward = false;
+            t.FromServer = false;
+            t.AnimDue = Time.Ticks;
+            t.IdleDue = Time.Ticks + (30000 + RandomHelper.GetValue(0, 30000));
+        }
+
+        internal static bool Same(in AnimationTimer a, in AnimationTimer b) =>
+            a.Frame == b.Frame && a.FrameCount == b.FrameCount && a.Interval == b.Interval && a.RepeatMode == b.RepeatMode &&
+            a.RepeatModeCount == b.RepeatModeCount && a.Repeat == b.Repeat && a.Forward == b.Forward && a.FromServer == b.FromServer &&
+            a.Group == b.Group && a.ExecuteAnimation == b.ExecuteAnimation && a.AnimDue == b.AnimDue && a.IdleDue == b.IdleDue;
+
+        internal static string Describe(in AnimationTimer t) =>
+            $"group {t.Group} frame {t.Frame}/{t.FrameCount} interval {t.Interval} repeat {t.RepeatMode}/{t.RepeatModeCount}/{t.Repeat} fwd {t.Forward} server {t.FromServer} exec {t.ExecuteAnimation} due {t.AnimDue} idle {t.IdleDue}";
+
+        private static void Log1(string message)
+        {
+            if (_logged++ < 25)
+            {
+                Log.Warn($"[anim-advance-check] {message}");
+            }
+        }
+
+        /// <summary>The checker and system counters for the periodic log line.</summary>
+        internal static string Summary() =>
+            $"[anim-advance-check] ecs advances {Ran}, declined to Mobile.Update {Declined}; checked {Checks}, {Diffs} different, {RandomDiffs} random sequences different; component syncs checked {SyncChecks}, {SyncDiffs} different";
+    }
+}

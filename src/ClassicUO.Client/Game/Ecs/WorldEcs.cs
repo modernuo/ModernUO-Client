@@ -510,7 +510,28 @@ namespace ClassicUO.Game
             c.AnimDue = mobile.LastAnimationChangeTime;
             c.IdleDue = mobile.IdleDue;
             c.Flags = ClockFlagsOf(mobile);
+
+            if (AnimTimerEnabled)
+            {
+                // T5b: the animation timer travels with the clock: every write of its fields outside the system (SetAnimation,
+                // the server's animation packets through AnimateMobile, the legacy Update of a stepping mobile) is followed by
+                // this push, and so is the system's own write-back
+                if (!e.HasComponent<AnimationTimer>())
+                {
+                    e.AddComponent(mobile.FullAnimationTimer);
+                }
+                else
+                {
+                    e.GetComponent<AnimationTimer>() = mobile.FullAnimationTimer;
+                }
+            }
         }
+
+        /// <summary>
+        /// T5b: the <see cref="AnimationTimer"/> component is kept with the clock (World.Update sets this each frame from
+        /// <c>world_anim_system</c>; turning it on goes through <see cref="ResyncClocks"/>, which writes every timer).
+        /// </summary>
+        public bool AnimTimerEnabled;
 
         internal static MobileClockFlags ClockFlagsOf(Mobile mobile)
         {
@@ -768,7 +789,7 @@ namespace ClassicUO.Game
             Mirror.Clear();
         }
 
-        private uint _cacheLogAt, _inputLogAt, _clockLogAt;
+        private uint _cacheLogAt, _inputLogAt, _clockLogAt, _animAdvanceLogAt;
 
         public void Update()
         {
@@ -800,6 +821,12 @@ namespace ClassicUO.Game
                 _clockLogAt = Time.Ticks + 5000;
                 long f = Math.Max(1, ClockFrames);
                 Log.Info($"[mobile-update-check] frames {ClockFrames}: due {ClockDue / (double)f:F1} of {ClockScanned / (double)f:F0} mobiles per frame; clocks checked {ClockChecks}, {ClockDiffs} different; skipped updates checked {SkippedChecks}, {SkippedDiffs} changed state; due-update order checked {OrderChecks}, {OrderDiffs} out of order, table checks {TableChecks}, table-vs-dictionary differences {TableDiffs}; clock pushes {ClockPushes}; per frame: scan {ClockCollectTicks * 1000.0 / Stopwatch.Frequency / f:F4} ms, due updates {ClockUpdateTicks * 1000.0 / Stopwatch.Frequency / f:F4} ms");
+            }
+
+            if (MobileAnimationAdvanceSystem.AdvanceCheck && Time.Ticks >= _animAdvanceLogAt)
+            {
+                _animAdvanceLogAt = Time.Ticks + 5000;
+                Log.Info(MobileAnimationAdvanceSystem.Summary());
             }
 
             if ((MobileAnimationSystem.InputCheck || MobileAnimationSystem.InputBench) && Time.Ticks >= _inputLogAt)
