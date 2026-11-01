@@ -452,6 +452,8 @@ namespace ClassicUO.Game
                 {
                     item.AnimIndex = 99;
                     item.UsedLayer = usedLayer;
+                    // T5b-items (Codex P2): the commit pushed the timer before these writes
+                    _world.Ecs.PushItemTimer(item);
                 }
 
                 // 4. derived state: drawability and the multi (reads Graphic, IsMulti, WantUpdateMulti, X, Y written above)
@@ -660,6 +662,8 @@ namespace ClassicUO.Game
                 {
                     item.AnimIndex = 99;
                     item.UsedLayer = usedLayer;
+                    // T5b-items (Codex P2): the commit pushed the timer before these writes
+                    _world.Ecs.PushItemTimer(item);
                     item.Direction = v.Direction;
                     item.Layer = v.Layer;
                 }
@@ -898,6 +902,8 @@ namespace ClassicUO.Game
                 {
                     item.AnimIndex = 99;
                     item.UsedLayer = usedLayer;
+                    // T5b-items (Codex P2): the commit pushed the timer before these writes
+                    _world.Ecs.PushItemTimer(item);
                     item.Direction = v.Direction;
                     item.Layer = v.Layer;
                 }
@@ -1189,6 +1195,8 @@ namespace ClassicUO.Game
                 {
                     item.AnimIndex = 99;
                     item.UsedLayer = usedLayer;
+                    // T5b-items (Codex P2): the commit pushed the timer before these writes
+                    _world.Ecs.PushItemTimer(item);
 
                     if (usedLayer)
                     {
@@ -3031,7 +3039,7 @@ namespace ClassicUO.Game
         /// extract reads them each frame), so nothing is committed or pushed, as before T1. Admission as
         /// <see cref="IdleAnimation"/> (the item update loop passes what it iterates).
         /// </summary>
-        public void AdvanceCorpseFrame(Item corpse, int frame, long due)
+        public void AdvanceCorpseFrame(Item corpse, int frame, long due, bool push = true)
         {
             if (!PerFrameAdmitted(corpse, nameof(AdvanceCorpseFrame)))
             {
@@ -3046,6 +3054,12 @@ namespace ClassicUO.Game
                 }
 
                 corpse.LastAnimationChangeTime = due;
+            }
+
+            // T5b-items: the timer component follows (the system's own advance already wrote it)
+            if (push)
+            {
+                _world.Ecs.PushItemTimer(corpse);
             }
         }
 
