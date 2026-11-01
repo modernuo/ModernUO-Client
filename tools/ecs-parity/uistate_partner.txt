@@ -1,6 +1,8 @@
 # T1 funnel part 9: the trade partner of uistate.txt (a second client, another staff account). It stands one tile east of
 # the main client's spot, accepts the trade the main client opens, logs the apple it received, then removes it.
 wait 6
+say [self set Map Felucca
+wait 3
 say [go 5446 1153
 wait 4
 backpack
