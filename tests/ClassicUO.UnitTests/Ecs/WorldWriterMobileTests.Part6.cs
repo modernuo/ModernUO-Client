@@ -902,6 +902,15 @@ namespace ClassicUO.UnitTests.Ecs
                     }
                     else
                     {
+                        // part 7, group 4: the boat's house components follow its offset (no house in the part 6 tests)
+                        if (_world.HouseManager.TryGetHouse(item, out House house))
+                        {
+                            foreach (Multi c in house.Components)
+                            {
+                                c.Offset = item.Offset;
+                            }
+                        }
+
                         Inside(false, item.X, item.Y, item.Z, item);
                     }
 

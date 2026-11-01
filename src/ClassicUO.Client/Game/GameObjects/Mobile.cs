@@ -390,7 +390,12 @@ namespace ClassicUO.Game.GameObjects
                 SetIdleAnimation();
             }
 
-            ProcessAnimation(true);
+            // T1 (funnel part 7): ProcessAnimation split. The step processing runs first and on its own (its step completion is
+            // the CompleteStep operation), then the frame advance (AdvanceAnimation) and, for a finished corpse animation, the
+            // removal (RemoveDeadMobile): each its own operation, none nested in another
+            ProcessSteps(out byte dir, true);
+            ProcessFootstepsSound();
+            AdvanceFrame(dir);
         }
 
         public void ClearSteps()
@@ -773,7 +778,15 @@ namespace ClassicUO.Game.GameObjects
         {
             ProcessSteps(out var dir, evalutate);
             ProcessFootstepsSound();
+            AdvanceFrame(dir);
+        }
 
+        // the frame advance (T1 funnel part 7): the frame count comes from the animation data here; the timer step, its writes
+        // and the frame's due time are the AdvanceAnimation operation, and a finished corpse animation (a death-rekeyed
+        // mobile whose animation wrapped, or that has none) is then removed by the RemoveDeadMobile operation, which writes
+        // the frame index and the due time after the removal, where the old code wrote them
+        private void AdvanceFrame(byte dir)
+        {
             if (LastAnimationChangeTime >= Time.Ticks || NoIterateAnimIndex())
             {
                 return;
@@ -786,66 +799,43 @@ namespace ClassicUO.Game.GameObjects
 
             bool mirror = false;
             animations.GetAnimDirection(ref dir, ref mirror);
-            int currentDelay = Constants.CHARACTER_ANIMATION_DELAY;
+            int frameCount = 0;
 
             if (id < animations.MaxAnimationCount && dir < 5)
             {
-                var frames = animations.GetAnimationFrames(
-                    id,
-                    action,
-                    dir,
-                    out _,
-                    out _
-                );
-
-                if (frames.Length != 0)
-                {
-                    // the frame step is a shared pure rule (AnimationTiming) so the ECS can run it too
-                    var timer = new AnimationTimer
-                    {
-                        Frame = AnimIndex,
-                        FrameCount = AnimationFrameCount,
-                        Interval = _animationInterval,
-                        RepeatMode = _animationRepeateMode,
-                        RepeatModeCount = _animationRepeatModeCount,
-                        Repeat = _animationRepeat,
-                        Forward = _isAnimationForwardDirection,
-                        FromServer = AnimationFromServer
-                    };
-
-                    currentDelay = AnimationTiming.Advance(ref timer, frames.Length, out AnimationAdvance advance);
-
-                    AnimationFrameCount = timer.FrameCount;
-                    FunnelCheck.Write(this, FunnelField.AnimationState);
-                    _animationRepeateMode = timer.RepeatMode;
-                    _animationRepeatModeCount = timer.RepeatModeCount;
-                    _animationRepeat = timer.Repeat;
-
-                    if (advance == AnimationAdvance.Finished)
-                    {
-                        SetAnimation(0xFF);
-                    }
-                    else if (advance == AnimationAdvance.Wrapped && (Serial & 0x80000000) != 0)
-                    {
-                        World.CorpseManager.Remove(0, Serial);
-                        World.RemoveMobile(Serial);
-                    }
-
-                    AnimIndex = timer.Frame;
-                }
-                else if ((Serial & 0x80000000) != 0)
-                {
-                    World.CorpseManager.Remove(0, Serial);
-                    World.RemoveMobile(Serial);
-                }
+                frameCount = animations.GetAnimationFrames(id, action, dir, out _, out _).Length;
             }
-            else if ((Serial & 0x80000000) != 0)
+
+            if (World.Writer.AdvanceAnimation(this, frameCount, out int frame, out long due))
             {
-                World.CorpseManager.Remove(0, Serial);
-                World.RemoveMobile(Serial);
+                World.Writer.RemoveDeadMobile(this, frame, due);
             }
+        }
 
-            LastAnimationChangeTime = Time.Ticks + currentDelay;
+        /// <summary>T1 (funnel part 7): the animation timer as <c>AnimationTiming.Advance</c> takes it (a pure read).</summary>
+        internal AnimationTimer AnimationTimerState => new AnimationTimer
+        {
+            Frame = AnimIndex,
+            FrameCount = AnimationFrameCount,
+            Interval = _animationInterval,
+            RepeatMode = _animationRepeateMode,
+            RepeatModeCount = _animationRepeatModeCount,
+            Repeat = _animationRepeat,
+            Forward = _isAnimationForwardDirection,
+            FromServer = AnimationFromServer
+        };
+
+        /// <summary>
+        /// T1 (funnel part 7): the timer fields an advance changes (the frame count and the repeat state; the frame index is
+        /// written by the caller, after a finished animation's reset). Called by <see cref="WorldWriter.AdvanceAnimation"/>.
+        /// </summary>
+        internal void ApplyAnimationTimer(in AnimationTimer timer)
+        {
+            AnimationFrameCount = timer.FrameCount;
+            FunnelCheck.Write(this, FunnelField.AnimationState);
+            _animationRepeateMode = timer.RepeatMode;
+            _animationRepeatModeCount = timer.RepeatModeCount;
+            _animationRepeat = timer.Repeat;
         }
 
         public void ProcessSteps(out byte dir, bool evalutate = false)
@@ -931,10 +921,11 @@ namespace ClassicUO.Game.GameObjects
                             float steps = maxDelay / (float)Constants.CHARACTER_ANIMATION_DELAY;
                             float x = delay / (float)Constants.CHARACTER_ANIMATION_DELAY;
                             float y = x;
-                            OffsetZ = (sbyte)((step.Z - Z) * x * (4.0f / steps));
+                            sbyte offsetZ = (sbyte)((step.Z - Z) * x * (4.0f / steps));
                             MovementSpeed.GetPixelOffset(step.Direction, ref x, ref y, steps);
-                            OffsetX = (sbyte)x;
-                            OffsetY = (sbyte)y;
+
+                            // T1 (funnel part 7, group 4): the walk offset through the funnel
+                            World.Writer.InterpolateStep(this, (sbyte)x, (sbyte)y, offsetZ);
                         }
                     }
                     else
