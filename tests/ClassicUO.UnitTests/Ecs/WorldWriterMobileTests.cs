@@ -1028,7 +1028,7 @@ namespace ClassicUO.UnitTests.Ecs
             }
         }
 
-        private static World BuildPlayer(out TestPlayer player)
+        internal static World BuildPlayer(out TestPlayer player)
         {
             World world = Build(Start.None);
             player = TestPlayer.Create(world, MOB);
