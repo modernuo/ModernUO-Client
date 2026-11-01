@@ -286,6 +286,18 @@ namespace ClassicUO.Game
             }
         }
 
+        /// <summary>
+        /// T2: a spellbook's 0xBF.1B spell set (bit i = spell i + 1), the detached entries at the front of its child list;
+        /// 0 when a clear drops them (ClearContainer).
+        /// </summary>
+        internal void CommitSpellbook(Item book, ulong spells)
+        {
+            if (HoldsEntity(book) && Mirror.SetSpellbook(book.Serial, spells))
+            {
+                ExtrasWrites++;
+            }
+        }
+
         /// <summary>T1 part 9: the item left its parent's child list but keeps its Container (the spellbook's clear).</summary>
         internal void CommitDetach(Item item)
         {
@@ -682,6 +694,9 @@ namespace ClassicUO.Game
         public void Update()
         {
             FunnelCheck.LogSummary();
+
+            // T2: CUO_CONTENTS_CHECK, the open container gumps every frame
+            _world.State.CheckOpenContainers();
 
             if (MobileAnimationSystem.CacheCheck && Time.Ticks >= _cacheLogAt)
             {
