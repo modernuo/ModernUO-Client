@@ -280,7 +280,7 @@ namespace ClassicUO.UnitTests.Ecs
             var reports = new List<string>();
             world.State.MismatchObserver = reports.Add;
             world.State.CheckParent(BOOK, "SpellbookGump");
-            reports.Should().ContainSingle();
+            reports.Should().HaveCount(WorldState.CheckAvailable ? 1 : 0);
 
             // the book removed: its set and entries are gone
             world.Writer.FillSpellbook(BOOK, 0xEFA, 0b1, 0);

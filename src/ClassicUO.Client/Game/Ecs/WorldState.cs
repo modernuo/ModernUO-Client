@@ -54,6 +54,8 @@ namespace ClassicUO.Game
         // gump, the ECS enumeration (the spell entries, then Contents) must equal the World child list: the same serials in
         // the same order. CLEANUP(release): goes with the container half of the child list (T9).
 #if CUO_DEVTOOLS
+        public const bool CheckAvailable = true;
+
         public static readonly bool ContentsCheckFromEnv = Environment.GetEnvironmentVariable("CUO_CONTENTS_CHECK") == "1";
 
         private const int MAX_LOGGED_MISMATCHES = 25;
@@ -213,7 +215,26 @@ namespace ClassicUO.Game
             Log.Info($"[contents] checks reads={ContentsReads} gumps={GumpChecks} mismatches={Mismatches} | read_contents={(ReadContents ? "on" : "off")} cached parents={m.CachedContentsParents} builds={m.ContentsBuilds} invalidations={m.ContentsInvalidations} cache bytes={m.ContentsCacheBytes}");
         }
 #else
-        public const bool CheckEnabled = false;
+        // release builds: no checker (the tests skip what needs it)
+        public const bool CheckAvailable = false;
+
+        public bool CheckEnabled
+        {
+            get => false;
+            set { }
+        }
+
+        public long ContentsReads => 0;
+
+        public long GumpChecks => 0;
+
+        public long Mismatches => 0;
+
+        internal Action<string> MismatchObserver
+        {
+            get => null;
+            set { }
+        }
 
         public void CheckParent(uint parent, string where) { }
 
