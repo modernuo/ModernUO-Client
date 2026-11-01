@@ -342,44 +342,9 @@ namespace ClassicUO.Game
         {
             if (Player != null)
             {
-                // region prefetch around the player and this frame's share of the queued chunk loads (Map.UpdateLoading)
-                Map?.UpdateLoading(Player.X, Player.Y);
-
-                if (SerialHelper.IsValid(ObjectToRemove))
-                {
-                    Item rem = Items.Get(ObjectToRemove);
-                    ObjectToRemove = 0;
-
-                    if (rem != null)
-                    {
-                        Entity container = Get(rem.Container);
-
-                        // T1 (funnel part 9): the removal with force, as a funnel operation
-                        Writer.RemovePickedUpItem(rem);
-
-                        if (rem.Layer == Layer.OneHanded || rem.Layer == Layer.TwoHanded)
-                        {
-                            Player.UpdateAbilities();
-                        }
-
-                        if (container != null)
-                        {
-                            if (SerialHelper.IsMobile(container.Serial))
-                            {
-                                UIManager.GetGump<PaperDollGump>(container.Serial)?.RequestUpdateContents();
-                            }
-                            else if (SerialHelper.IsItem(container.Serial))
-                            {
-                                UIManager.GetGump<ContainerGump>(container.Serial)?.RequestUpdateContents();
-
-                                if (container.Graphic == 0x2006)
-                                {
-                                    UIManager.GetGump<GridLootGump>(container)?.RequestUpdateContents();
-                                }
-                            }
-                        }
-                    }
-                }
+                // T5d: World.Update as ordered stages. The order of the side effects is the order the body had before.
+                RunStage(WorldStage.ChunkLoading);
+                RunStage(WorldStage.ObjectToRemove);
 
                 bool do_delete = _timeToDelete < Time.Ticks;
 
@@ -388,108 +353,224 @@ namespace ClassicUO.Game
                     _timeToDelete = Time.Ticks + 50;
                 }
 
-                if (WorldEcs.MobileUpdateCheck)
-                {
-                    // E10: the table against its shadow dictionary every frame, whichever mobile loop runs
-                    WorldEcs.TableChecks++;
-                    WorldEcs.TableDiffs += Mobiles.VerifyAgainstShadow();
-                }
-
-                FrameStats.Begin(FramePhase.WorldMobiles);
-
-                // W5: AddOrUpdate's own early-outs (no recent party/guild packet, the world map closed), asked once per frame;
-                // nothing in the loop changes them
-                bool wmap = !Settings.GlobalSettings.WorldUpdateActiveItems || WMapManager.AcceptsLocalUpdates;
-
-                if (Settings.GlobalSettings.WorldUpdateMobileSystem && Settings.GlobalSettings.WorldUpdateActiveItems)
-                {
-                    UpdateMobilesByClock(do_delete, wmap);
-                }
-                else
-                {
-                    _mobileClocksSynced = false;
-                    Ecs.ClockEnabled = false;
-                    _destroyedMobiles.Clear();
-
-                    foreach (Mobile mob in Mobiles.Values)
-                    {
-                        mob.Update();
-
-                        if (do_delete && mob.Distance > ClientViewRange /*CheckToRemove(mob, ClientViewRange)*/)
-                        {
-                            Writer.SweepMobile(mob); // T1 (funnel part 5): the sweep's removal
-                        }
-
-                        if (mob.IsDestroyed)
-                        {
-                            _toRemove.Add(mob.Serial);
-                        }
-                        else if (wmap)
-                        {
-                            if (mob.NotorietyFlag == NotorietyFlag.Ally)
-                            {
-                                WMapManager.AddOrUpdate
-                                (
-                                    mob.Serial,
-                                    mob.X,
-                                    mob.Y,
-                                    MathHelper.PercetangeOf(mob.Hits, mob.HitsMax),
-                                    MapIndex,
-                                    true,
-                                    mob.Name
-                                );
-                            }
-                            else if (Party.Leader != 0 && Party.Contains(mob))
-                            {
-                                WMapManager.AddOrUpdate
-                                (
-                                    mob.Serial,
-                                    mob.X,
-                                    mob.Y,
-                                    MathHelper.PercetangeOf(mob.Hits, mob.HitsMax),
-                                    MapIndex,
-                                    false,
-                                    mob.Name
-                                );
-                            }
-                        }
-                    }
-
-                    if (_toRemove.Count != 0)
-                    {
-                        for (int i = 0; i < _toRemove.Count; i++)
-                        {
-                            Mobiles.Remove(_toRemove[i]);
-                        }
-
-                        _toRemove.Clear();
-                    }
-                }
-
-                FrameStats.End(FramePhase.WorldMobiles);
-                FrameStats.Begin(FramePhase.WorldItems);
-
-                if (Settings.GlobalSettings.WorldUpdateActiveItems)
-                {
-                    UpdateActiveItems(do_delete);
-                }
-                else
-                {
-                    UpdateAllItems(do_delete);
-                }
-
-                FrameStats.End(FramePhase.WorldItems);
-                FrameStats.Begin(FramePhase.WorldEffectsText);
-                _effectManager.Update();
-                WorldTextManager.Update();
-                WMapManager.RemoveUnupdatedWEntity();
-                FrameStats.End(FramePhase.WorldEffectsText);
-                FrameStats.Begin(FramePhase.WorldEcs);
-                Ecs.Update();
-                FrameStats.End(FramePhase.WorldEcs);
-                FrameStats.Set(FrameCounter.Mobiles, Mobiles.Count);
-                FrameStats.Set(FrameCounter.Items, Items.Count);
+                RunStage(WorldStage.Mobiles, do_delete);
+                RunStage(WorldStage.ActiveItems, do_delete);
+                RunStage(WorldStage.EffectsText);
+                RunStage(WorldStage.EcsBookkeeping);
             }
+        }
+
+        private void RunStage(WorldStage stage, bool do_delete = false)
+        {
+            if (stage != WorldStage.EffectsText)
+            {
+                StageObserver?.Invoke(stage);
+            }
+
+            switch (stage)
+            {
+                case WorldStage.ChunkLoading:
+                    StageChunkLoading();
+
+                    break;
+
+                case WorldStage.ObjectToRemove:
+                    StageObjectToRemove();
+
+                    break;
+
+                case WorldStage.Mobiles:
+                    StageMobiles(do_delete);
+
+                    break;
+
+                case WorldStage.ActiveItems:
+                    StageActiveItems(do_delete);
+
+                    break;
+
+                case WorldStage.EffectsText:
+                    StageEffectsText();
+
+                    break;
+
+                case WorldStage.EcsBookkeeping:
+                    StageEcsBookkeeping();
+
+                    break;
+            }
+        }
+
+        // 1. region prefetch around the player and this frame's share of the queued chunk loads (Map.UpdateLoading)
+        private void StageChunkLoading()
+        {
+            Map?.UpdateLoading(Player.X, Player.Y);
+        }
+
+        // 2. the item the player picked up and the server confirmed gone
+        private void StageObjectToRemove()
+        {
+            if (SerialHelper.IsValid(ObjectToRemove))
+            {
+                Item rem = Items.Get(ObjectToRemove);
+                ObjectToRemove = 0;
+
+                if (rem != null)
+                {
+                    Entity container = Get(rem.Container);
+
+                    // T1 (funnel part 9): the removal with force, as a funnel operation
+                    Writer.RemovePickedUpItem(rem);
+
+                    if (rem.Layer == Layer.OneHanded || rem.Layer == Layer.TwoHanded)
+                    {
+                        Player.UpdateAbilities();
+                    }
+
+                    if (container != null)
+                    {
+                        if (SerialHelper.IsMobile(container.Serial))
+                        {
+                            UIManager.GetGump<PaperDollGump>(container.Serial)?.RequestUpdateContents();
+                        }
+                        else if (SerialHelper.IsItem(container.Serial))
+                        {
+                            UIManager.GetGump<ContainerGump>(container.Serial)?.RequestUpdateContents();
+
+                            if (container.Graphic == 0x2006)
+                            {
+                                UIManager.GetGump<GridLootGump>(container)?.RequestUpdateContents();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 3.-5. steps (T6, still Mobile.Update), the mobile clock and advance (T5b), the range sweep and the world-map pass
+        // (T5c). The legacy mobile loop interleaves them per mobile, and the E4 clock path keeps them in one method, so they
+        // are one stage here.
+        private void StageMobiles(bool do_delete)
+        {
+            if (WorldEcs.MobileUpdateCheck)
+            {
+                // E10: the table against its shadow dictionary every frame, whichever mobile loop runs
+                WorldEcs.TableChecks++;
+                WorldEcs.TableDiffs += Mobiles.VerifyAgainstShadow();
+            }
+
+            FrameStats.Begin(FramePhase.WorldMobiles);
+
+            // W5: AddOrUpdate's own early-outs (no recent party/guild packet, the world map closed), asked once per frame;
+            // nothing in the loop changes them
+            bool wmap = !Settings.GlobalSettings.WorldUpdateActiveItems || WMapManager.AcceptsLocalUpdates;
+
+            if (Settings.GlobalSettings.WorldUpdateMobileSystem && Settings.GlobalSettings.WorldUpdateActiveItems)
+            {
+                UpdateMobilesByClock(do_delete, wmap);
+            }
+            else
+            {
+                _mobileClocksSynced = false;
+                Ecs.ClockEnabled = false;
+                _destroyedMobiles.Clear();
+
+                foreach (Mobile mob in Mobiles.Values)
+                {
+                    mob.Update();
+
+                    if (do_delete && mob.Distance > ClientViewRange /*CheckToRemove(mob, ClientViewRange)*/)
+                    {
+                        Writer.SweepMobile(mob); // T1 (funnel part 5): the sweep's removal
+                    }
+
+                    if (mob.IsDestroyed)
+                    {
+                        _toRemove.Add(mob.Serial);
+                    }
+                    else if (wmap)
+                    {
+                        if (mob.NotorietyFlag == NotorietyFlag.Ally)
+                        {
+                            WMapManager.AddOrUpdate
+                            (
+                                mob.Serial,
+                                mob.X,
+                                mob.Y,
+                                MathHelper.PercetangeOf(mob.Hits, mob.HitsMax),
+                                MapIndex,
+                                true,
+                                mob.Name
+                            );
+                        }
+                        else if (Party.Leader != 0 && Party.Contains(mob))
+                        {
+                            WMapManager.AddOrUpdate
+                            (
+                                mob.Serial,
+                                mob.X,
+                                mob.Y,
+                                MathHelper.PercetangeOf(mob.Hits, mob.HitsMax),
+                                MapIndex,
+                                false,
+                                mob.Name
+                            );
+                        }
+                    }
+                }
+
+                if (_toRemove.Count != 0)
+                {
+                    for (int i = 0; i < _toRemove.Count; i++)
+                    {
+                        Mobiles.Remove(_toRemove[i]);
+                    }
+
+                    _toRemove.Clear();
+                }
+            }
+
+            FrameStats.End(FramePhase.WorldMobiles);
+        }
+
+        // 6. active items
+        private void StageActiveItems(bool do_delete)
+        {
+            FrameStats.Begin(FramePhase.WorldItems);
+
+            if (Settings.GlobalSettings.WorldUpdateActiveItems)
+            {
+                UpdateActiveItems(do_delete);
+            }
+            else
+            {
+                UpdateAllItems(do_delete);
+            }
+
+            FrameStats.End(FramePhase.WorldItems);
+        }
+
+        // 7. effects (T8, still legacy), 8. world text, the world-map pruning of entities nobody updated
+        private void StageEffectsText()
+        {
+            FrameStats.Begin(FramePhase.WorldEffectsText);
+            StageObserver?.Invoke(WorldStage.Effects);
+            _effectManager.Update();
+            StageObserver?.Invoke(WorldStage.WorldText);
+            WorldTextManager.Update();
+            StageObserver?.Invoke(WorldStage.WorldMapPrune);
+            WMapManager.RemoveUnupdatedWEntity();
+            FrameStats.End(FramePhase.WorldEffectsText);
+        }
+
+        // 10. ECS bookkeeping
+        private void StageEcsBookkeeping()
+        {
+            FrameStats.Begin(FramePhase.WorldEcs);
+            Ecs.Update();
+            FrameStats.End(FramePhase.WorldEcs);
+            FrameStats.Set(FrameCounter.Mobiles, Mobiles.Count);
+            FrameStats.Set(FrameCounter.Items, Items.Count);
         }
 
         // E4 (world_update_mobile_system) ---------------------------------------------------------------------------
@@ -669,7 +750,7 @@ namespace ClassicUO.Game
         }
 
         // W5 (world_update_active_items): items whose Update does something this frame (Item.NeedsFrameUpdate)
-        private readonly List<Item> _activeItems = new List<Item>();
+        private readonly ActiveItemList _activeItems = new ActiveItemList();
         // items destroyed since the last update; World.Update drops them from Items as the full loop did
         private readonly List<Item> _destroyedItems = new List<Item>();
         private bool _activeItemsValid;
@@ -678,16 +759,12 @@ namespace ClassicUO.Game
         public int ActiveItemCount => _activeItems.Count;
 
         /// <summary>T1 tests: the per-frame update list in order.</summary>
-        internal IReadOnlyList<Item> ActiveItems => _activeItems;
+        internal IReadOnlyList<Item> ActiveItems => _activeItems.Items;
 
         /// <summary>W5: <paramref name="item"/> needs <see cref="Item.Update"/> from now on (a corpse, or handles opened).</summary>
         public void QueueItemUpdate(Item item)
         {
-            if (!item.InUpdateList)
-            {
-                item.InUpdateList = true;
-                _activeItems.Add(item);
-            }
+            _activeItems.Add(item, ActiveItemsSystemOn);
         }
 
         // corpses and handle openings keep queuing while the setting is off (WorldEcs, the scene), so the full loop drains the
@@ -699,12 +776,7 @@ namespace ClassicUO.Game
                 return;
             }
 
-            foreach (Item item in _activeItems)
-            {
-                item.InUpdateList = false;
-            }
-
-            _activeItems.Clear();
+            _activeItems.Clear(ActiveItemsSystemOn);
         }
 
         internal void OnItemDestroyed(Item item)
@@ -766,6 +838,11 @@ namespace ClassicUO.Game
                 CheckActiveItems();
             }
 
+            if (ActiveItemsCheckOn)
+            {
+                CheckActiveItemsSystem();
+            }
+
             if (!_activeItemsValid)
             {
                 // first frame on (or after the setting was off): find every item that needs updates
@@ -788,9 +865,7 @@ namespace ClassicUO.Game
 
                 if (!item.NeedsFrameUpdate || !ReferenceEquals(Items.Get(item.Serial), item))
                 {
-                    item.InUpdateList = false;
-                    _activeItems[i] = _activeItems[_activeItems.Count - 1];
-                    _activeItems.RemoveAt(_activeItems.Count - 1);
+                    _activeItems.SwapRemoveAt(i, ActiveItemsSystemOn);
                     i--;
                 }
             }

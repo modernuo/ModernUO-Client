@@ -314,6 +314,7 @@ So the data file is keyed by body group (human male/female, elf male/female, gar
   9. the world-map pass;
   10. ECS bookkeeping.
 - Each stage keeps its `FrameStats` phase.
+- **Status (2026-11-01, bg/ecs-t5d-scheduler):** stage runner done (refactor); steps, clock/advance, sweep and world-map pass are one Mobiles stage until T6. The active item list is behind world_active_items_system (default off) with CUO_ACTIVE_ITEMS_CHECK; the ItemActive tag mirrors the list, which still holds the visiting order (the tag is not yet the source). See the poc-log entry.
 - Size: 2–3. Tier: S+C.
 
 ### T6: tile order from the ECS; steps as a system
