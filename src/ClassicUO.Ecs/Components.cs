@@ -459,6 +459,10 @@ namespace ClassicUO.Ecs
     // Equipment (or the body graphic or sex) changed: EquipmentSystem rebuilds EquipmentSlots before the next extract.
     public struct EquipmentDirty : ITag { }
 
+    // T5d: the item is in the world's per-frame update list (corpses, items whose object handles just opened); present only
+    // while world_active_items_system is on. The list order is the visiting order; the tag is the ECS-side membership.
+    public struct ItemActive : ITag { }
+
     public static class EcsSchema
     {
         private static readonly object _lock = new object();
@@ -515,6 +519,7 @@ namespace ClassicUO.Ecs
             Component<MobileRenderState>(aot);
             Component<EquipmentSlots>(aot);
             Tag<EquipmentDirty>(aot);
+            Tag<ItemActive>(aot); // T5d
             Component<MobileInputs>(aot);
             Component<MobileClock>(aot);
             Component<AnimationTimer>(aot); // T5b
