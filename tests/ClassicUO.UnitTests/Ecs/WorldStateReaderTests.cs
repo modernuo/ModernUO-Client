@@ -79,13 +79,13 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Fact]
-        public void The_Switch_Is_Off_By_Default()
+        public void The_Switch_Is_On_By_Default()
         {
             World world = Build(out _);
 
-            ClassicUO.Configuration.Settings.GlobalSettings.EcsReadContents.Should().BeFalse();
-            new ClassicUO.Configuration.Settings().EcsReadContents.Should().BeFalse();
-            world.State.ReadContents.Should().BeFalse();
+            ClassicUO.Configuration.Settings.GlobalSettings.EcsReadContents.Should().BeTrue();
+            new ClassicUO.Configuration.Settings().EcsReadContents.Should().BeTrue();
+            world.State.ReadContents.Should().BeTrue();
         }
 
         [Fact]
