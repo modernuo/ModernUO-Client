@@ -593,6 +593,13 @@ namespace ClassicUO.Game.Map
 
         public bool HasNoExternalData()
         {
+            // T6b part 2: dynamics (items, mobiles) are external data. They are also in the list today, so the list walk below
+            // finds them either way; once the list stops holding them this is the only place that sees them.
+            if (DynamicTileIndex.WalkOn && Dynamic != null && Dynamic.Count > 0)
+            {
+                return false;
+            }
+
             for (int i = 0; i < 8; i++)
             {
                 for (int j = 0; j < 8; j++)

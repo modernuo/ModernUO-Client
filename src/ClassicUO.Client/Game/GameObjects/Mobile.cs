@@ -4,6 +4,7 @@ using ClassicUO.Assets;
 using ClassicUO.Configuration;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.Managers;
+using ClassicUO.Game.Map;
 using ClassicUO.Game.UI.Gumps;
 using ClassicUO.Resources;
 using ClassicUO.Utility;
@@ -1210,33 +1211,65 @@ namespace ClassicUO.Game.GameObjects
             return TryGetSittingInfoIf(human && !mounted && !flying && !TestStepNoChangeDirection(this, group), out data);
         }
 
+        // the first chair-like object (item, static, multi) within 1 Z of this mobile on its tile, in tile order
+        internal bool FindChair(bool merged, out AnimationsLoader.SittingInfoData data)
+        {
+            TileReader reader = default;
+            GameObject start = this;
+
+            if (TileChunk != null)
+            {
+                start = TileReader.Open(TileChunk, TileCell, merged, null, out reader);
+            }
+            else
+            {
+                // not on a tile: the list walk from this object (it has no neighbours)
+                while (start?.TPrevious != null)
+                {
+                    start = start.TPrevious;
+                }
+            }
+
+            for (; start != null; start = TileChunk != null ? reader.Next() : (GameObject)start.TNext)
+            {
+                if ((start is Item || start is Static || start is Multi) && Math.Abs(Z - start.Z) <= 1)
+                {
+                    if (ChairTable.Table.TryGetValue(start.Graphic, out data))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            data = AnimationsLoader.SittingInfoData.Empty;
+
+            return false;
+        }
+
+        // kept out of TryGetSittingInfoIf so the lambda's closure is only allocated when CUO_TILE_ORDER_CHECK is on
+        private void CheckChair(bool found, AnimationsLoader.SittingInfoData data)
+        {
+            bool foundOther = FindChair(!DynamicTileIndex.WalkOn, out var dataOther);
+            TileOrder.ReaderCheck(found == foundOther && (!found || data.Equals(dataOther)), "Mobile.TryGetSittingInfo", () => $"{X},{Y},{Z}: {found}/{foundOther}");
+        }
+
         private bool TryGetSittingInfoIf(bool eligible, out AnimationsLoader.SittingInfoData data)
         {
             ushort result = 0;
 
             if (eligible)
             {
-                GameObject start = this;
+                bool found = FindChair(DynamicTileIndex.WalkOn, out data);
 
-                while (start?.TPrevious != null)
+                if (TileOrder.Check)
                 {
-                    start = start.TPrevious;
+                    // T6b part 2
+                    CheckChair(found, data);
                 }
 
-                while (start != null && result == 0)
+                if (found)
                 {
-                    if (
-                        (start is Item || start is Static || start is Multi)
-                        && Math.Abs(Z - start.Z) <= 1
-                    )
-                    {
-                        if (ChairTable.Table.TryGetValue(start.Graphic, out data))
-                        {
-                            return true;
-                        }
-                    }
-
-                    start = (GameObject)start.TNext;
+                    return true;
                 }
             }
 

@@ -757,6 +757,16 @@ namespace ClassicUO.Game.Map
             return GetChunk(x, y, load)?.GetHeadObject(x % 8, y % 8);
         }
 
+        /// <summary>T6b part 2: the first object of tile (x, y) and a reader for the rest, in the merged order when
+        /// <paramref name="merged"/> (else the list's). Null when the chunk is not loaded or the tile is empty.</summary>
+        internal GameObject OpenTile(int x, int y, bool load, bool merged, out TileReader reader)
+        {
+            reader = default;
+            Chunk chunk = GetChunk(x, y, load);
+
+            return chunk == null ? null : TileReader.Open(chunk, x % 8 << 3 | y % 8, merged, null, out reader);
+        }
+
         public sbyte GetTileZ(int x, int y)
         {
             // MapLoader caches the last block, so ApplyStretch's 13 neighbour lookups per cell skip the lock and region lookup
@@ -793,9 +803,28 @@ namespace ClassicUO.Game.Map
         /// <summary>GetMapZ's scan: the land's Z and the highest other Z on tile (cellX, cellY), from <see cref="ScanStart"/>.</summary>
         internal static void ScanMapZ(Chunk chunk, int cellX, int cellY, out sbyte groundZ, out sbyte staticZ)
         {
-            groundZ = staticZ = 0;
+            ScanMapZ(chunk, cellX, cellY, DynamicTileIndex.WalkOn, out groundZ, out staticZ);
 
-            for (GameObject obj = ScanStart(chunk, cellX, cellY); obj != null; obj = obj.TNext)
+            if (TileOrder.Check)
+            {
+                ScanMapZ(chunk, cellX, cellY, !DynamicTileIndex.WalkOn, out sbyte g2, out sbyte s2);
+                CheckMapZ(chunk, cellX, cellY, groundZ, staticZ, g2, s2);
+            }
+        }
+
+        // the checker's lambda lives here, so no closure is allocated unless CUO_TILE_ORDER_CHECK is on
+        private static void CheckMapZ(Chunk chunk, int cellX, int cellY, sbyte g, sbyte s, sbyte g2, sbyte s2)
+        {
+            TileOrder.ReaderCheck(g == g2 && s == s2, "GetMapZ", () => $"{chunk.X * 8 + cellX},{chunk.Y * 8 + cellY} ground {g}/{g2} static {s}/{s2}");
+        }
+
+        internal static void ScanMapZ(Chunk chunk, int cellX, int cellY, bool merged, out sbyte groundZ, out sbyte staticZ)
+        {
+            groundZ = staticZ = 0;
+            GameObject start = ScanStart(chunk, cellX, cellY);
+            TileReader reader = default;
+
+            for (GameObject obj = start == null ? null : TileReader.Open(chunk, cellX << 3 | cellY, merged, start, out reader); obj != null; obj = reader.Next())
             {
                 if (obj is Land)
                 {
@@ -862,7 +891,28 @@ namespace ClassicUO.Game.Map
         /// </summary>
         internal static GameObject FindNearRoof(Chunk chunk, int cellX, int cellY, int z, StaticTiles[] tiles)
         {
-            for (GameObject obj = ScanStart(chunk, cellX, cellY); obj != null; obj = obj.TNext)
+            GameObject found = FindNearRoof(chunk, cellX, cellY, z, tiles, DynamicTileIndex.WalkOn);
+
+            if (TileOrder.Check)
+            {
+                GameObject other = FindNearRoof(chunk, cellX, cellY, z, tiles, !DynamicTileIndex.WalkOn);
+                CheckNearRoof(chunk, cellX, cellY, z, found, other);
+            }
+
+            return found;
+        }
+
+        private static void CheckNearRoof(Chunk chunk, int cellX, int cellY, int z, GameObject found, GameObject other)
+        {
+            TileOrder.ReaderCheck(ReferenceEquals(found, other), "CalculateNearZ roof", () => $"{chunk.X * 8 + cellX},{chunk.Y * 8 + cellY} z {z}");
+        }
+
+        internal static GameObject FindNearRoof(Chunk chunk, int cellX, int cellY, int z, StaticTiles[] tiles, bool merged)
+        {
+            GameObject start = ScanStart(chunk, cellX, cellY);
+            TileReader reader = default;
+
+            for (GameObject obj = start == null ? null : TileReader.Open(chunk, cellX << 3 | cellY, merged, start, out reader); obj != null; obj = reader.Next())
             {
                 if (!(obj is Static) && !(obj is Multi))
                 {
