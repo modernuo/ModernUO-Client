@@ -176,6 +176,12 @@ namespace ClassicUO.Configuration
         // merged order with the list. Read once at startup (dev builds: CUO_WORLD_TILE_INDEX=1|0 overrides). Default off.
         [JsonPropertyName("world_tile_index")] public bool WorldTileIndex { get; set; }
 
+        // T5d (ecs-transition-plan.md): the per-frame item update list is owned by the ECS side: membership is the ItemActive tag,
+        // the visiting order is the system's list (same add and swap-remove rules as before). CUO_ACTIVE_ITEMS_CHECK=1 compares
+        // tags and list every frame. Read once at startup (CUO_WORLD_ACTIVE_ITEMS_SYSTEM=1|0 overrides it in developer builds).
+        // Only used with world_update_active_items. Default off.
+        [JsonPropertyName("world_active_items_system")] public bool WorldActiveItemsSystem { get; set; }
+
         // T3a (ecs-transition-plan.md, T3): the equipment readers (Mobile.FindItemByLayer and through it IsMounted, the
         // animation group's hands, the abilities, the paperdoll, PaperdollOrder.BuildInWorld and Legacy's MobileView) take a
         // mobile's worn item per layer from the ECS (WornLayers: the mirror's first attached item per layer by child-order
