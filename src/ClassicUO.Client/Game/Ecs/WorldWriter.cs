@@ -149,7 +149,10 @@ namespace ClassicUO.Game
         /// subject (or in the subtree a removal owns).
         /// </summary>
         public bool Owns(Entity e) =>
-            _open && (ReferenceEquals(e, _subject) || (_subtree != null && _subtree.Contains(e)));
+            _open && (_clearingWorld || ReferenceEquals(e, _subject) || (_subtree != null && _subtree.Contains(e)));
+
+        // ClearWorld's scope owns every object of this World (the logout's removals)
+        private bool _clearingWorld;
 
         /// <summary>The scope of one operation. Only the operations of this class open one (no bare scopes).</summary>
         private ref struct Scope
@@ -183,6 +186,7 @@ namespace ClassicUO.Game
 
                 w._open = false;
                 w._subject = null;
+                w._clearingWorld = false;
                 w._subtree?.Clear();
                 w.RunDeferredBoatClears();
             }
@@ -2838,6 +2842,42 @@ namespace ClassicUO.Game
             }
 
             return true;
+        }
+
+        // ---- funnel part 8, group 5: logout's removals (World.Clear)
+
+        /// <summary>
+        /// <c>World.Clear</c> (the game scene's unload: logout, disconnect): every mobile, then every item, removed and
+        /// destroyed (<c>World.RemoveMobile</c>/<c>RemoveItem</c> without force, which leave them in their tables; Clear
+        /// empties the tables afterwards), in the tables' order, as before T1. A removal like <see cref="SweepMobile"/>: no
+        /// value of its own, no fold, and its scope owns every object of this World (the funnel check sees no direct write
+        /// from the removals). Every outstanding placement is cancelled first (their subjects are all removed). A nested
+        /// call is rejected (nothing is removed; <c>World.Clear</c> then empties the tables without destroying the objects,
+        /// and the mirror is reset by <c>WorldEcs.OnWorldCleared</c>); nothing runs <c>World.Clear</c> inside an operation.
+        /// </summary>
+        public void ClearWorld()
+        {
+            if (!Admitted(nameof(ClearWorld), 0))
+            {
+                return;
+            }
+
+            _placements.Clear();
+
+            using (Open(null, null))
+            {
+                _clearingWorld = true;
+
+                foreach (Mobile mobile in _world.Mobiles.Values)
+                {
+                    _world.RemoveMobile(mobile.Serial);
+                }
+
+                foreach (Item item in _world.Items.Values)
+                {
+                    _world.RemoveItem(item.Serial);
+                }
+            }
         }
 
         // the admission of the per-frame operations of part 8 (as InterpolateStep's): no operation or fold open, and an

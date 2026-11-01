@@ -6,6 +6,7 @@ using ClassicUO.Game;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
 using ClassicUO.Utility;
+using Flags = ClassicUO.Game.Data.Flags;
 using FluentAssertions;
 using Xunit;
 
@@ -609,6 +610,75 @@ namespace ClassicUO.UnitTests.Ecs
             player.Steps.Count.Should().Be(0);
             w.Writer.Violations.Should().Be(1);
         }
+
+        // ---- group 5: logout's removals (World.Clear's two loops; the rest of Clear is unchanged)
+
+        internal static void OldClearRemovals(World world)
+        {
+            foreach (Mobile mobile in world.Mobiles.Values)
+            {
+                world.RemoveMobile(mobile);
+            }
+
+            foreach (Item item in world.Items.Values)
+            {
+                world.RemoveItem(item);
+            }
+        }
+
+        private static List<(uint, bool)> Destroyed(World w) =>
+            w.Mobiles.Values.Select(m => (m.Serial, m.IsDestroyed)).Concat(w.Items.Values.Select(i => (i.Serial, i.IsDestroyed))).OrderBy(x => x.Item1).ToList();
+
+        [Theory]
+        [InlineData(Start.Standing)]
+        [InlineData(Start.Walking)]
+        [InlineData(Start.DestroyedHeld)]
+        public void ClearWorld_Equals_The_Old_Removals(Start start)
+        {
+            World oldWorld = BuildCorpse(start), newWorld = BuildCorpse(start);
+            newWorld.Writer.ThrowOnViolation = true;
+
+            // an item worn by the mobile and a pending placement (its handler never placed it)
+            foreach (World w in new[] { oldWorld, newWorld })
+            {
+                w.Writer.Equip(0x4000_7A00, 0x1517, Layer.Shirt, MOB, 0, out _, out _);
+                w.Writer.UpsertWorldItem(0x4000_7A01, 0x0EED, 0, 1, 1003, 1000, 0, Direction.North, 0, Flags.None, 0, out _, out _);
+            }
+
+            newWorld.Writer.OutstandingPlacements.Should().Be(1);
+            Time.Ticks = NOW + 1000;
+            Pair(() => OldClearRemovals(oldWorld), () => newWorld.Writer.ClearWorld());
+            Time.Ticks = NOW;
+
+            Destroyed(newWorld).Should().Equal(Destroyed(oldWorld));
+            Destroyed(newWorld).Should().OnlyContain(x => x.Item2, "every object is removed and destroyed");
+            AssertSameWorld(oldWorld, newWorld);
+            newWorld.Writer.OutstandingPlacements.Should().Be(0, "the placements of the removed objects are cancelled");
+            newWorld.Writer.Violations.Should().Be(0);
+            newWorld.Writer.InScope.Should().BeFalse();
+            newWorld.Writer.Owns(newWorld.Mobiles.Get(OTHER)).Should().BeFalse("the scope's ownership of the whole World ends with it");
+        }
+
+        [Fact]
+        public void ClearWorld_Does_Not_Nest()
+        {
+            World world = BuildCorpse(Start.Walking);
+            world.Writer.ThrowOnViolation = false;
+            List<(uint, bool)> before = Destroyed(world);
+            world.Ecs.BeginFold(world.Mobiles.Get(OTHER));
+            world.Writer.ClearWorld();
+            world.Ecs.EndFold(world.Mobiles.Get(OTHER));
+
+            world.Writer.Violations.Should().Be(1);
+            Destroyed(world).Should().Equal(before, "a rejected clear removes nothing");
+            world.Mobiles.Get(OTHER).IsDestroyed.Should().BeFalse();
+
+            world.Writer.ThrowOnViolation = true;
+            world.Ecs.BeginFold(world.Mobiles.Get(OTHER));
+            Action act = () => world.Writer.ClearWorld();
+            act.Should().Throw<InvalidOperationException>();
+            world.Ecs.EndFold(world.Mobiles.Get(OTHER));
+        }
     }
 
     [Collection(nameof(FunnelCheckCollection))]
@@ -722,6 +792,28 @@ namespace ClassicUO.UnitTests.Ecs
 
             (p.Steps.Count, p.Direction).Should().Be((2, Direction.South));
             FunnelCheck.Total.Should().Be(0, "PlayerMobile.Walk's queue writes (SetAnimation, LastStepTime, the step) and its coalesced turn");
+        }
+
+        [Fact]
+        public void ClearWorld_Makes_No_Direct_Writes()
+        {
+            if (!FunnelCheck.Available)
+            {
+                return;
+            }
+
+            World world = BuildOne(out Mobile m);
+            Item bag = world.GetOrCreateItem(0x4000_7300);
+            bag.Graphic = 0xE75;
+            bag.SetInWorldTile(1001, 1000, 0);
+            world.Writer.Equip(0x4000_7301, 0x1517, Layer.Shirt, m.Serial, 0, out _, out _);
+            m.AddStep(new Mobile.Step { X = 1001, Y = 1000 });
+            FunnelCheck.Reset();
+
+            world.Writer.ClearWorld();
+
+            (m.IsDestroyed, bag.IsDestroyed).Should().Be((true, true));
+            FunnelCheck.Total.Should().Be(0, "World.Clear's removals (Destroy, the steps, the containers)");
         }
     }
 }
