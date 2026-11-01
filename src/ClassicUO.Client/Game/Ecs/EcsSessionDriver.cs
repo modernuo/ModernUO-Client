@@ -641,6 +641,44 @@ namespace ClassicUO.Game
 
                     return true;
 
+                // place <GumpType> <x> <y> [dx]: the open gumps of that type at fixed positions, in serial order, dx apart (the
+                // T2 shots: a reopened container cascades to a new position)
+                case "place" when args.Length > 2 && int.TryParse(args[1], out int px) && int.TryParse(args[2], out int py):
+                {
+                    int dx = args.Length > 3 && int.TryParse(args[3], out int d) ? d : 0;
+                    var toPlace = new System.Collections.Generic.List<Gump>();
+
+                    foreach (Gump g in UIManager.Gumps)
+                    {
+                        if (!g.IsDisposed && g.GetType().Name == args[0])
+                        {
+                            toPlace.Add(g);
+                        }
+                    }
+
+                    toPlace.Sort((a, b) => a.LocalSerial.CompareTo(b.LocalSerial));
+
+                    for (int k = 0; k < toPlace.Count; k++)
+                    {
+                        toPlace[k].X = px + k * dx;
+                        toPlace[k].Y = py;
+                    }
+
+                    Log.Info($"[ECS] ui place {args[0]}: {toPlace.Count}");
+
+                    return true;
+                }
+
+                // mouse <x> <y> | mouse off: the scripted cursor (Input.Mouse.Override; the OS cursor is not moved), so the
+                // shots hover the same spot
+                case "mouse" when args.Length > 0:
+                    Input.Mouse.Override = args.Length > 1 && int.TryParse(args[0], out int mx) && int.TryParse(args[1], out int my)
+                        ? new Microsoft.Xna.Framework.Point(mx, my)
+                        : null;
+                    Log.Info($"[ECS] ui mouse {string.Join(" ", args)}");
+
+                    return true;
+
                 // readcontents on|off: the container-contents readers from the ECS (ecs_read_contents, T2)
                 case "readcontents" when args.Length > 0:
                     Settings.GlobalSettings.EcsReadContents = args[0] == "on";
