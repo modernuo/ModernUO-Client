@@ -190,3 +190,19 @@ From the review of Max Kellermann's `legacy-main` branch ([legacy-main-review.md
   - removing verdata, dif and UOP support: the converter applies verdata for shards on purpose;
   - compile-time feature flags, and the refactors.
 - **Max's "300/600 MB saved"** figures are mapped virtual size, not resident memory; the fork point already memory-mapped every file.
+
+## Networking: ModernUO-style pipe (owner, 2026-10-31; deferred, HIGH RISK)
+Today the client parses incoming packets in place (`StackDataReader` over fixed receive buffers) and builds outgoing ones with `StackDataWriter` (an `ArrayPool` rental), then copies them through a `CircularBuffer` and a fixed send buffer. Steady state allocates nothing, but every packet is copied at least once more than it needs to be.
+
+**Idea:** use ModernUO's network architecture.
+- A pipe buffer whose memory is mapped twice back to back in virtual memory, so a read or write that wraps the end is still one contiguous span. That removes the `CircularBuffer` and the wrap handling.
+- Packets are written straight into the pipe's free space and parsed straight from its filled space, with no `ArrayPool` rental and no staging copy.
+
+**References:** `C:/Repositories/IORingGroup` (its CLAUDE.md, README, TestClient and TestServer) and ModernUO's networking code.
+
+**Risk: high.** This touches every packet, the login and relay sequence, compression (Huffman on receive), encryption, plugins that hook send and receive, and the multi-instance requirement (each client needs its own mapping). Do it as a focused project of its own, not alongside other work:
+- byte-for-byte parity tests of send and receive against the current path, including wrap-around at every offset;
+- fragmented and coalesced reads;
+- a long soak run, and the gate scripts on all clients.
+
+**Smaller, low priority:** an audit of the handlers that allocate strings (names, speech, cliloc arguments) with per-handler byte counts from the E2 bench, caching where the text repeats.
