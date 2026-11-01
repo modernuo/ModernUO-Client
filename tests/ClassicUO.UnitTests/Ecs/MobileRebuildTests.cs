@@ -56,7 +56,7 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         private static void Wear(WorldMirror m, uint item, Layer layer, ushort graphic, ushort hue = 0) =>
-            m.UpsertItem(item, graphic, hue, 0, 0, 0, 0, 0, 1, MOBILE, (byte)layer, false);
+            m.UpsertItem(item, graphic, hue, 0, 0, 0, 0, 0, 1, MOBILE, (byte)layer, false, attach: true);
 
         private EquipmentSlots Run(WorldMirror mirror, Entity mobile, AnimStateFlags flags = AnimStateFlags.None, Mobile owner = null, bool cv7000 = true)
         {
@@ -77,6 +77,35 @@ namespace ClassicUO.UnitTests.Ecs
             }
 
             return l;
+        }
+
+        [Fact]
+        public void The_Slots_Come_From_The_Worn_Layers_Not_The_Index_Order()
+        {
+            // T3a (the equipment-order stamp): a layer's first item is the lowest child-order stamp (the child list's order),
+            // whatever order the mirror's equipment index holds them in; an item never attached (an orphan) is not worn
+            WorldMirror mirror = NewMirror(out Entity mobile);
+            Wear(mirror, 0x4000_0001, Layer.Shirt, SHIRT);
+            Wear(mirror, 0x4000_0002, Layer.Shirt, SHOES);
+            mirror.UpsertItem(0x4000_0003, HELM, 0, 0, 0, 0, 0, 0, 1, MOBILE, (byte)Layer.Helmet, false);
+            mirror.UpsertItem(0x4000_0004, MOUNT, 0, 0, 0, 0, 0, 0, 1, MOBILE, (byte)Layer.Mount, false);
+
+            // a layer round trip without a push re-adds the first shirt's index entry (to the index's end), keeping its stamp
+            mirror.UpsertItem(0x4000_0001, SHIRT, 0, 0, 0, 0, 0, 0, 1, MOBILE, (byte)Layer.Pants, false);
+            mirror.UpsertItem(0x4000_0001, SHIRT, 0, 0, 0, 0, 0, 0, 1, MOBILE, (byte)Layer.Shirt, false);
+            mirror.Worn(MOBILE, (byte)Layer.Shirt).Should().Be(0x4000_0001);
+
+            EquipmentSlots eq = Run(mirror, mobile);
+            var items = new List<uint>();
+
+            for (int i = 0; i < eq.Count; i++)
+            {
+                items.Add(eq.Slots[i].Item);
+            }
+
+            items.Should().Equal(0x4000_0001u);
+            eq.MountItem.Should().Be(0, "the unattached mount is not worn");
+            eq.Mounted.Should().BeFalse();
         }
 
         [Fact]
