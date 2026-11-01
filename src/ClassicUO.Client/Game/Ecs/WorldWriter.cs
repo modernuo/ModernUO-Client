@@ -2880,6 +2880,41 @@ namespace ClassicUO.Game
             }
         }
 
+        // ---- funnel part 8, group 6: the gump-side writes (survey: ContainerGump.CheckItemControlPosition is the only gump
+        // or UI write to an object World holds; CreateCharAppearanceGump's and RaceChangeGump's writes go to their own
+        // preview mobiles, serial 0 and 1, which no World table holds)
+
+        /// <summary>
+        /// <c>ContainerGump.CheckItemControlPosition</c> (0x25's <c>AddItemToContainer</c>, after the item is placed in an
+        /// open container gump): the item's position in the gump clamped to the gump's bounds. The gump computes the clamped
+        /// <paramref name="x"/> and <paramref name="y"/> (its bounds and the item's art); this writes X, then Y, each only when
+        /// it changes (the old code wrote a coordinate only when it was out of bounds, and the clamp always changes it), then
+        /// syncs the item's record (the old explicit <c>Sync</c>), unfolded. Admission as <see cref="IdleAnimation"/>: a stale
+        /// instance of this World is written as before T1 (the Sync ignores it), another World's is rejected.
+        /// </summary>
+        public void ClampContainerPosition(Item item, ushort x, ushort y)
+        {
+            if (!PerFrameAdmitted(item, nameof(ClampContainerPosition)))
+            {
+                return;
+            }
+
+            using (Open(item, null))
+            {
+                if (item.X != x)
+                {
+                    item.X = x;
+                }
+
+                if (item.Y != y)
+                {
+                    item.Y = y;
+                }
+
+                _world.Ecs.Sync(item);
+            }
+        }
+
         // the admission of the per-frame operations of part 8 (as InterpolateStep's): no operation or fold open, and an
         // entity of this World (a stale instance included; only another World's is a violation, rejected)
         private bool PerFrameAdmitted(Entity entity, string operation)

@@ -638,25 +638,34 @@ namespace ClassicUO.Game.UI.Gumps
                 boundHeight -= (int)(spriteInfo.UV.Height / scale);
             }
 
-            if (item.X < boundX)
+            // T1 (funnel part 8): the clamp computed here, written through the funnel (with the item's Sync)
+            ClampToBounds(item.X, item.Y, boundX, boundY, boundWidth, boundHeight, out ushort x, out ushort y);
+            World.Writer.ClampContainerPosition(item, x, y);
+        }
+
+        /// <summary>T1 (funnel part 8): <see cref="CheckItemControlPosition"/>'s clamp of an item position to the bounds.</summary>
+        internal static void ClampToBounds(ushort itemX, ushort itemY, int boundX, int boundY, int boundWidth, int boundHeight, out ushort x, out ushort y)
+        {
+            x = itemX;
+            y = itemY;
+
+            if (itemX < boundX)
             {
-                item.X = (ushort)boundX;
+                x = (ushort)boundX;
             }
-            else if (item.X > boundWidth)
+            else if (itemX > boundWidth)
             {
-                item.X = (ushort)boundWidth;
+                x = (ushort)boundWidth;
             }
 
-            if (item.Y < boundY)
+            if (itemY < boundY)
             {
-                item.Y = (ushort)boundY;
+                y = (ushort)boundY;
             }
-            else if (item.Y > boundHeight)
+            else if (itemY > boundHeight)
             {
-                item.Y = (ushort)boundHeight;
+                y = (ushort)boundHeight;
             }
-
-            World.Ecs.Sync(item);
         }
 
         public override bool AddToRenderLists(RenderLists renderLists, int x, int y, ref float layerDepthRef)
