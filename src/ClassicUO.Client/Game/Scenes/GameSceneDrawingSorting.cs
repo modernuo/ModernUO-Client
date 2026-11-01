@@ -122,23 +122,48 @@ namespace ClassicUO.Game.Scenes
 
         private void ApplyFoliageTransparency(ushort graphic, int x, int y, int z)
         {
-            GameObject tile = _world.Map.GetTile(x, y);
-
-            if (tile != null)
+            if (TileOrder.Check)
             {
-                for (GameObject obj = tile; obj != null; obj = obj.TNext)
+                // T6b part 2: the objects the list walk and the merged walk would stamp are the same set (order does not matter here)
+                CheckFoliage(x, y, graphic, z);
+            }
+
+            GameObject obj = _world.Map.OpenTile(x, y, true, DynamicTileIndex.WalkOn, out TileReader reader);
+
+            for (; obj != null; obj = reader.Next())
+            {
+                ushort testGraphic = obj.Graphic;
+
+                if (testGraphic == graphic && obj.Z == z)
                 {
-                    ushort testGraphic = obj.Graphic;
-
-                    if (testGraphic == graphic && obj.Z == z)
+                    if (_gpuItemCheckSame && _gpuItemPass == 1)
                     {
-                        if (_gpuItemCheckSame && _gpuItemPass == 1)
-                        {
-                            GpuProbeFoliageStamp(obj);
-                        }
-
-                        obj.FoliageIndex = FoliageIndex;
+                        GpuProbeFoliageStamp(obj);
                     }
+
+                    obj.FoliageIndex = FoliageIndex;
+                }
+            }
+        }
+
+        private void CheckFoliage(int x, int y, ushort graphic, int z)
+        {
+            var listMatches = new List<GameObject>();
+            var mergedMatches = new List<GameObject>();
+            CollectFoliageMatches(x, y, graphic, z, false, listMatches);
+            CollectFoliageMatches(x, y, graphic, z, true, mergedMatches);
+            TileOrder.ReaderCheck(TileOrder.SameObjects(listMatches, mergedMatches), "ApplyFoliageTransparency", () => $"{x},{y} graphic {graphic:X4} z {z}: {listMatches.Count} vs {mergedMatches.Count}");
+        }
+
+        private void CollectFoliageMatches(int x, int y, ushort graphic, int z, bool merged, List<GameObject> into)
+        {
+            GameObject obj = _world.Map.OpenTile(x, y, true, merged, out TileReader reader);
+
+            for (; obj != null; obj = reader.Next())
+            {
+                if (obj.Graphic == graphic && obj.Z == z)
+                {
+                    into.Add(obj);
                 }
             }
         }
