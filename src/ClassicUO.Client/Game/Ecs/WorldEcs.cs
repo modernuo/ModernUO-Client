@@ -716,6 +716,9 @@ namespace ClassicUO.Game
             // T2: CUO_CONTENTS_CHECK, the open container gumps every frame
             _world.State.CheckOpenContainers();
 
+            // T3a: CUO_EQUIP_READ_CHECK's 5 s summary
+            _world.State.LogEquipmentChecks();
+
             if (MobileAnimationSystem.CacheCheck && Time.Ticks >= _cacheLogAt)
             {
                 _cacheLogAt = Time.Ticks + 5000;

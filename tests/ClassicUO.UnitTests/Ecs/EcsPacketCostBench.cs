@@ -544,6 +544,70 @@ namespace ClassicUO.UnitTests.Ecs
                 s.World.State.Contents(pack);
             })));
 
+            // T3a: the equipment read, MobileView's per-frame reads of one drawn mobile: the guard (HasWornItems: !IsEmpty off,
+            // any WornLayers slot on), then FindItemByLayer for layers 0x01..0x19 (the draw order's layers and the mount), with
+            // ecs_read_equipment off (the list walk) and on (WornLayers). Like T2's rows, on three freshly built, identically
+            // prepared scenes: "T3 control" (off), "T3 read" (on), "T3 control2" (off). Each scene's mobiles wear their 5 items
+            // through the funnel (0x78: attached, stamped, as in a session), and as many bare mobiles (a monster: the guard only).
+            int t3Sink = 0;
+
+            void T3Scene(string kind, bool read)
+            {
+                Scene f = Build(n);
+                var bare = new Mobile[n];
+
+                for (int m = 0; m < n; m++)
+                {
+                    Mobile owner = f.Mobiles[m];
+                    f.World.Writer.ClearWornItems(owner.Serial);
+
+                    for (int k = 0; k < WORN; k++)
+                    {
+                        Item it = f.Worn[m * WORN + k];
+                        f.World.Writer.WearItem(owner, it.Serial, it.Graphic, it.Layer, it.Hue);
+                    }
+
+                    bare[m] = f.World.GetOrCreateMobile(MOB0 + 0x10_0000 + (uint)m);
+                    f.World.Ecs.Sync(bare[m]);
+                }
+
+                f.World.State.ReadEquipmentOverride = read;
+
+                rows.Add(($"T3 {kind}: MobileView reads (guard + FindItemByLayer 0x01-0x19), per mobile", Measure(packets, i =>
+                {
+                    Mobile mob = f.Mobiles[i % n];
+
+                    if (f.World.State.HasWornItems(mob))
+                    {
+                        for (int l = 1; l <= (int)Layer.Mount; l++)
+                        {
+                            if (mob.FindItemByLayer((Layer)l) != null)
+                            {
+                                t3Sink++;
+                            }
+                        }
+                    }
+                })));
+
+                rows.Add(($"T3 {kind}: MobileView guard of a bare mobile, per mobile", Measure(packets, i =>
+                {
+                    if (f.World.State.HasWornItems(bare[i % n]))
+                    {
+                        t3Sink++;
+                    }
+                })));
+            }
+
+            T3Scene("control", false);
+            T3Scene("read", true);
+            T3Scene("control2", false);
+            GC.Collect();
+
+            if (t3Sink < 0)
+            {
+                sb.AppendLine("unreachable");
+            }
+
             sb.AppendLine($"mobiles={n} (each wearing {WORN}), items={itemCount}, packets per scenario={packets}");
             sb.AppendLine($"{"packet",-72} {"us/packet",10} {"bytes/packet",13}");
 

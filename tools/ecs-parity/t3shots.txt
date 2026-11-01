@@ -1,0 +1,107 @@
+# T3a gate (ecs-transition-plan.md, T3 Gate): paperdoll and world screenshots with ecs_read_equipment off, then on, in one
+# session, so both show the same character and scene. The player's own paperdoll mounted (an ethereal horse, w5push's) and
+# dismounted, each opened with the switch off and shot, closed, reopened with it on and shot; then the large scene (Felucca
+# 5156 2150 through [TestScene go) shot under the Gpu world, then under Legacy (MobileView reads FindItemByLayer for every
+# drawn mobile), each off then on. Run with CUO_BENCH_SHOTS=<dir> and without CUO_ECS_READ_EQUIPMENT (it would override the
+# readequipment command). The paperdoll is placed at a fixed position and the scripted cursor parked before each shot.
+# Each pair has an A/A control (<name>_off2: the same shot again with the switch still off, after the same delay) so the
+# animation between shots can be told from a difference the switch makes.
+wait 6
+say [self set Map Felucca
+wait 3
+say [go 5445 1153
+wait 4
+readequipment off
+mouse 600 300
+say [add EtherealHorse
+wait 1
+target ground 1 0
+wait 2
+pick near 20DD
+wait 1
+drop backpack
+wait 2
+use held
+wait 6
+mount
+check
+paperdoll
+wait 2
+place PaperDollGump 60 60
+wait 1
+shot t3_mounted_off
+wait 1
+close PaperDollGump
+wait 1
+paperdoll
+wait 2
+place PaperDollGump 60 60
+wait 1
+shot t3_mounted_off2
+wait 1
+close PaperDollGump
+readequipment on
+wait 1
+paperdoll
+wait 2
+place PaperDollGump 60 60
+wait 1
+shot t3_mounted_on
+wait 1
+close PaperDollGump
+readequipment off
+use self
+wait 4
+mount
+check
+paperdoll
+wait 2
+place PaperDollGump 60 60
+wait 1
+shot t3_dismounted_off
+wait 1
+close PaperDollGump
+wait 1
+paperdoll
+wait 2
+place PaperDollGump 60 60
+wait 1
+shot t3_dismounted_off2
+wait 1
+close PaperDollGump
+readequipment on
+wait 1
+paperdoll
+wait 2
+place PaperDollGump 60 60
+wait 1
+shot t3_dismounted_on
+wait 1
+close PaperDollGump
+readequipment off
+say [TestScene go
+wait 12
+check
+shot t3_scene_off
+wait 1
+shot t3_scene_off2
+readequipment on
+wait 1
+shot t3_scene_on
+readequipment off
+renderer legacy
+wait 3
+shot t3_lscene_off
+wait 1
+shot t3_lscene_off2
+readequipment on
+wait 1
+shot t3_lscene_on
+check
+readequipment off
+renderer gpu
+wait 2
+say [TestScene return
+wait 4
+mouse off
+quit
