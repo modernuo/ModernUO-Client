@@ -518,7 +518,49 @@ namespace ClassicUO.Game
             Mirror.Remove(entity.Serial);
         }
 
-        // Death re-keys a mobile to serial | 0x80000000 and repoints its items.
+        /// <summary>
+        /// T1 (funnel part 9), the death re-key's ECS commit from the operation's values, before its cache writes: the record
+        /// under <paramref name="oldSerial"/> removed, the mobile's record written under <see cref="MobileState.Serial"/>, the
+        /// persistent mirror bit carried over (the Mobile keeps IsFlipped). The children follow with <see cref="CommitItem"/>,
+        /// the inputs and clock with <see cref="CommitMobileInputs(Mobile, EcsEntity)"/> after the cache writes. Writes what
+        /// <see cref="OnSerialChanged"/> wrote without reading the serial or the table back: the mobile must be the one World
+        /// holds under <paramref name="oldSerial"/>; a destroyed one only loses its old record, as Sync skipped it.
+        /// </summary>
+        /// <returns>The new entity (a null entity when no record was written).</returns>
+        internal EcsEntity CommitRekey(Mobile mobile, uint oldSerial, in MobileState v)
+        {
+            if (mobile == null || !ReferenceEquals(_world.Mobiles.Get(oldSerial), mobile))
+            {
+                return default;
+            }
+
+            AnimStateFlags keep = 0;
+
+            if (Mirror.TryGetEntity(oldSerial, out EcsEntity old) && old.HasComponent<AnimationState>())
+            {
+                keep = old.GetComponent<AnimationState>().Flags & AnimStateFlags.Mirror;
+            }
+
+            Mirror.Remove(oldSerial);
+
+            if (mobile.IsDestroyed)
+            {
+                return default;
+            }
+
+            MobileCommitObserver?.Invoke(mobile, v);
+            MobileMirrorWrites++;
+            EcsEntity e = Mirror.UpsertMobile(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.IsPlayer);
+
+            if (keep != 0 && e.HasComponent<AnimationState>())
+            {
+                e.GetComponent<AnimationState>().Flags |= keep;
+            }
+
+            return e;
+        }
+
+        // Death re-keys a mobile to serial | 0x80000000 and repoints its items (before T1; the tests' old-path copies).
         public void OnSerialChanged(uint oldSerial, Entity entity)
         {
             // the Mobile keeps IsFlipped across the re-key; so must the persistent mirror bit
