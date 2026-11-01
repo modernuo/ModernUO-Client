@@ -461,6 +461,58 @@ namespace ClassicUO.UnitTests.Ecs
             rows.Add(("T1 animation probe: the same through the funnel (SetRace)", Measure(packets, i =>
                 s.World.Writer.SetRace(s.Mobiles[i % n], (RaceType)(1 + (i & 1))))));
 
+            // T2, after every older row (so they run without a cached parent, as in the base): the funnel rows above with the parents' contents cached (an open container gump, a counter's walk), so every
+            // change of attachment pays the cache maintenance (an invalidation lookup; the build waits for the next read).
+            // Then the worst case of a reader: the backpack's contents read after every packet (a build each time). Paired with
+            // the uncached funnel rows of the same run
+            s.World.State.Contents(pack);
+
+            for (int m = 0; m < n; m++)
+            {
+                s.World.State.Contents(s.Mobiles[m].Serial);
+            }
+
+            uint t2Spare = SPARE0 + 0x78_0000;
+
+            rows.Add(("T2 cached: 0x25 new item into backpack (PlaceInContainer) + delete, per packet", Measure(packets, i =>
+            {
+                if ((i & 1) == 0)
+                {
+                    s.World.Writer.PlaceInContainer(t2Spare, 0xF7A, 1, 40, 50, 0, pack, out _);
+                }
+                else
+                {
+                    DeleteFromPack(t2Spare++);
+                }
+            })));
+
+            rows.Add(("T2 cached: 0x25 update of an item in the backpack", Measure(packets, i =>
+                s.World.Writer.PlaceInContainer(inPack.Serial, 0xF7A, (ushort)(1 + (i & 63)), 40, 50, 0, pack, out _))));
+
+            rows.Add(("T2 cached: 0x2E re-equip of a worn item (Equip)", Measure(packets, i =>
+            {
+                Item it = s.Worn[i % itemCount];
+                s.World.Writer.Equip(it.Serial, it.Graphic, it.Layer, it.Container, (ushort)(i & 63), out _, out _);
+            })));
+
+            rows.Add(("T2 cached: 0x78 equipment list (ClearWornItems + 5 WearItem)", Measure(lists78, i =>
+            {
+                Mobile owner = s.Mobiles[i % n];
+                var list = lists[i % n];
+                s.World.Writer.ClearWornItems(owner.Serial);
+
+                for (int k = 0; k < list.Length; k++)
+                {
+                    s.World.Writer.WearItem(owner, list[k].Serial, list[k].Graphic, list[k].Layer, list[k].Hue);
+                }
+            })));
+
+            rows.Add(("T2 read: 0x25 update in the backpack + its Contents read (a build)", Measure(packets, i =>
+            {
+                s.World.Writer.PlaceInContainer(inPack.Serial, 0xF7A, (ushort)(1 + (i & 63)), 40, 50, 0, pack, out _);
+                s.World.State.Contents(pack);
+            })));
+
             sb.AppendLine($"mobiles={n} (each wearing {WORN}), items={itemCount}, packets per scenario={packets}");
             sb.AppendLine($"{"packet",-72} {"us/packet",10} {"bytes/packet",13}");
 

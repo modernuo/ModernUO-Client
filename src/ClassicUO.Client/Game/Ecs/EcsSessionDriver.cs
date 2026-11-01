@@ -619,6 +619,28 @@ namespace ClassicUO.Game
 
                     return false;
 
+                // close <gump type>: disposes the open gumps of that type (T2's shots: the same containers reopened under the
+                // other ecs_read_contents setting, so both shots show the same items at the same server positions)
+                case "close" when args.Length > 0:
+                    var toClose = new System.Collections.Generic.List<Gump>();
+
+                    foreach (Gump g in UIManager.Gumps)
+                    {
+                        if (!g.IsDisposed && g.GetType().Name == args[0])
+                        {
+                            toClose.Add(g);
+                        }
+                    }
+
+                    foreach (Gump g in toClose)
+                    {
+                        g.Dispose();
+                    }
+
+                    Log.Info($"[ECS] ui close {args[0]}: {toClose.Count}");
+
+                    return true;
+
                 // readcontents on|off: the container-contents readers from the ECS (ecs_read_contents, T2)
                 case "readcontents" when args.Length > 0:
                     Settings.GlobalSettings.EcsReadContents = args[0] == "on";
