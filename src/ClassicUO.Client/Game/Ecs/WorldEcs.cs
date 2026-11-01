@@ -150,8 +150,11 @@ namespace ClassicUO.Game
         /// <summary>
         /// T1: the funnel's ECS write for an item, from the operation's values (never from the GameObject's getters: at T4 those
         /// read the ECS). Ignores an item World does not hold under <see cref="ItemState.Serial"/>, as Sync does.
+        /// <paramref name="attach"/> (T1 part 9): the operation puts the item at the back of its new parent's child list
+        /// (<c>PushToBack</c>), so the record takes the next child-order stamp in the same write; without it a change of parent
+        /// detaches (an orphan: the parent does not exist, so ClassicUO links it nowhere) and the same parent keeps its place.
         /// </summary>
-        internal void CommitItem(Item item, in ItemState v)
+        internal void CommitItem(Item item, in ItemState v, bool attach = false)
         {
             if (item == null || item.IsDestroyed || !ReferenceEquals(_world.Items.Get(v.Serial), item))
             {
@@ -160,7 +163,7 @@ namespace ClassicUO.Game
 
             CommitObserver?.Invoke(item, v);
             ItemMirrorWrites++;
-            Mirror.UpsertItem(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.Amount, v.Container, (byte)v.Layer, v.IsMulti);
+            Mirror.UpsertItem(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.Amount, v.Container, (byte)v.Layer, v.IsMulti, attach);
 
             // W5: corpses animate in World.Update (SyncItem does the same)
             if (v.Graphic == 0x2006)
@@ -271,10 +274,22 @@ namespace ClassicUO.Game
             }
         }
 
-        /// <summary>T1 part 9: the item went to the back of its parent's child list (the operation's <c>PushToBack</c>).</summary>
+        /// <summary>
+        /// T1 part 9: the item went to the back of its parent's child list in a re-order that writes no record (the vendor
+        /// sort's re-stamp; an operation that also commits the item stamps with <see cref="CommitItem"/>'s attach).
+        /// </summary>
         internal void CommitChildOrder(Item item)
         {
             if (HoldsEntity(item) && Mirror.StampChild(item.Serial))
+            {
+                ExtrasWrites++;
+            }
+        }
+
+        /// <summary>T1 part 9: the item left its parent's child list but keeps its Container (the spellbook's clear).</summary>
+        internal void CommitDetach(Item item)
+        {
+            if (HoldsEntity(item) && Mirror.DetachChild(item.Serial))
             {
                 ExtrasWrites++;
             }
@@ -640,9 +655,16 @@ namespace ClassicUO.Game
                 rekeyed.GetComponent<AnimationState>().Flags |= keep;
             }
 
+            // each child's Sync takes its new Container (a new parent: detached); the list kept its order, so the children are
+            // re-stamped in it
             for (LinkedObject i = entity.Items; i != null; i = i.Next)
             {
                 Sync(i as Entity);
+
+                if (i is Item child)
+                {
+                    CommitChildOrder(child);
+                }
             }
         }
 
@@ -891,12 +913,14 @@ namespace ClassicUO.Game
         private static string Quote(string s) => s == null ? "null" : $"\"{s}\"";
 
         private readonly List<uint> _worldChildren = new List<uint>();
-        private readonly List<(uint Stamp, uint Serial)> _ecsChildren = new List<(uint, uint)>();
+        private readonly List<(ulong Stamp, uint Serial)> _ecsChildren = new List<(ulong, uint)>();
 
         /// <summary>
         /// -ecscheck v2 (T1 part 9, for T2): the parent's children World holds, in its child list's order, against the
-        /// mirror's children of that parent (worn and contained) sorted by their child-order stamp. Children World does not
-        /// hold (the spellbook's detached spell items) are not world state and are skipped.
+        /// mirror's attached children of that parent (worn and contained, with a nonzero child-order stamp) sorted by stamp.
+        /// Children World does not hold (the spellbook's detached spell items) are not world state and are skipped. The
+        /// relation compared is attachment, not the Container: an orphan (equipped or contained before its parent existed,
+        /// which ClassicUO never adopts) and a child the spellbook's clear dropped keep their Container but are in no list.
         /// </summary>
         private void CompareChildren(Entity parent, ref int mismatches)
         {
@@ -913,12 +937,12 @@ namespace ClassicUO.Game
 
             foreach (EcsEntity e in Mirror.GetContents(parent.Serial))
             {
-                _ecsChildren.Add((e.TryGetComponent(out ChildOrder o) ? o.Stamp : 0, e.GetComponent<ClassicUO.Ecs.Serial>().Value));
+                AddAttached(e);
             }
 
             foreach (EcsEntity e in Mirror.GetEquipment(parent.Serial))
             {
-                _ecsChildren.Add((e.TryGetComponent(out ChildOrder o) ? o.Stamp : 0, e.GetComponent<ClassicUO.Ecs.Serial>().Value));
+                AddAttached(e);
             }
 
             if (_worldChildren.Count == 0 && _ecsChildren.Count == 0)
@@ -946,12 +970,20 @@ namespace ClassicUO.Game
 
                 sb.Append(" | ECS");
 
-                foreach ((uint stamp, uint s) in _ecsChildren)
+                foreach ((ulong stamp, uint s) in _ecsChildren)
                 {
                     sb.Append($" 0x{s:X8}@{stamp}");
                 }
 
                 Report(ref mismatches, sb.ToString());
+            }
+        }
+
+        private void AddAttached(EcsEntity e)
+        {
+            if (e.TryGetComponent(out ItemSlot slot) && slot.Stamp != 0)
+            {
+                _ecsChildren.Add((slot.Stamp, e.GetComponent<ClassicUO.Ecs.Serial>().Value));
             }
         }
 

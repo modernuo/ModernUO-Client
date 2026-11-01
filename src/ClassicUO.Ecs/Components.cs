@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
 using System;
+using System.Collections.Generic;
 using System.Runtime.CompilerServices;
 using Friflo.Engine.ECS;
 
@@ -62,7 +63,7 @@ namespace ClassicUO.Ecs
 
     // -ecscheck v2 (T1 funnel part 9): the cold record fields the funnel commits besides the record. An entity has each
     // only once a funnel operation wrote it (absent = the GameObject's default: null name, 0 hits, Unknown notoriety, 0
-    // price); ItemLayer every item has from its creation.
+    // price); ItemSlot (the Layer and the child order) every item has from its creation.
     public struct EntityName : IComponent
     {
         public string Value;
@@ -83,18 +84,17 @@ namespace ClassicUO.Ecs
         public uint Value;
     }
 
-    // every item's Layer (EquippedOn has it only for worn items)
-    public struct ItemLayer : IComponent
+    // Every item's Layer (EquippedOn has it only for worn items) and its place in its parent's child list (T1 part 9, for
+    // T2), in one component every item has from its creation, so the funnel's commit writes both with no archetype move.
+    // Stamp: 0 = not attached (in no parent's child list: on the ground, never linked, or linked under a parent that did not
+    // exist yet, which ClassicUO never adopts); otherwise a monotonic stamp the funnel takes at every PushToBack (arrival
+    // order; a re-push moves the child to the back), so a parent's attached children sorted by stamp are the GameObject
+    // linked list. A change of parent without a push detaches (WorldMirror.UpsertItem). 64 bits: never wraps (at a billion
+    // stamps a second, after 584 years). Friflo's index order is not stable across removes, so the order lives here.
+    public struct ItemSlot : IComponent
     {
-        public byte Value;
-    }
-
-    // T1 part 9 (for T2): a child's place in its parent's child list. A monotonic stamp the funnel takes at every
-    // PushToBack (arrival order, a re-push moves the child to the back), so a parent's children sorted by stamp are the
-    // GameObject linked list. Friflo's index order is not stable across removes, so the order lives here, not there.
-    public struct ChildOrder : IComponent
-    {
-        public uint Stamp;
+        public ulong Stamp;
+        public byte Layer;
     }
 
     public struct MobileTag : ITag { }
@@ -379,31 +379,68 @@ namespace ClassicUO.Ecs
             }
         }
 
+        private static readonly List<Type> _registered = new List<Type>();
+
+        /// <summary>
+        /// Every component and tag type the schema registers (tests: each IComponent/ITag type of this assembly must be here;
+        /// an unregistered one throws "IComponent type not found" at its first use in a client, bench-000095).
+        /// </summary>
+        public static IReadOnlyList<Type> RegisteredTypes
+        {
+            get
+            {
+                Register();
+
+                return _registered;
+            }
+        }
+
         private static EntitySchema CreateSchema()
         {
             NativeAOT aot = new NativeAOT();
-            aot.RegisterComponent<Serial>();
-            aot.RegisterComponent<Graphic>();
-            aot.RegisterComponent<Hue>();
-            aot.RegisterComponent<Position>();
-            aot.RegisterComponent<Facing>();
-            aot.RegisterComponent<Flags>();
-            aot.RegisterComponent<Amount>();
+            Component<Serial>(aot);
+            Component<Graphic>(aot);
+            Component<Hue>(aot);
+            Component<Position>(aot);
+            Component<Facing>(aot);
+            Component<Flags>(aot);
+            Component<Amount>(aot);
             aot.RegisterIndexedComponentStruct<EquippedOn, uint>();
+            _registered.Add(typeof(EquippedOn));
             aot.RegisterIndexedComponentStruct<ContainedIn, uint>();
-            aot.RegisterTag<MobileTag>();
-            aot.RegisterTag<ItemTag>();
-            aot.RegisterTag<PlayerTag>();
-            aot.RegisterTag<OnGround>();
-            aot.RegisterTag<MultiTag>();
-            aot.RegisterComponent<AnimationState>();
-            aot.RegisterComponent<MobileRenderState>();
-            aot.RegisterComponent<EquipmentSlots>();
-            aot.RegisterTag<EquipmentDirty>();
-            aot.RegisterComponent<MobileInputs>();
-            aot.RegisterComponent<MobileClock>();
+            _registered.Add(typeof(ContainedIn));
+            Tag<MobileTag>(aot);
+            Tag<ItemTag>(aot);
+            Tag<PlayerTag>(aot);
+            Tag<OnGround>(aot);
+            Tag<MultiTag>(aot);
+            Component<AnimationState>(aot);
+            Component<MobileRenderState>(aot);
+            Component<EquipmentSlots>(aot);
+            Tag<EquipmentDirty>(aot);
+            Component<MobileInputs>(aot);
+            Component<MobileClock>(aot);
+
+            // -ecscheck v2 (T1 funnel part 9)
+            Component<EntityName>(aot);
+            Component<Vitals>(aot);
+            Component<MobileNotoriety>(aot);
+            Component<ItemPrice>(aot);
+            Component<ItemSlot>(aot);
 
             return aot.CreateSchema();
+        }
+
+        private static void Component<T>(NativeAOT aot) where T : struct, IComponent
+        {
+            aot.RegisterComponent<T>();
+            _registered.Add(typeof(T));
+        }
+
+        private static void Tag<T>(NativeAOT aot) where T : struct, ITag
+        {
+            aot.RegisterTag<T>();
+            _registered.Add(typeof(T));
         }
     }
 }

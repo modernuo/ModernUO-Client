@@ -651,8 +651,8 @@ namespace ClassicUO.Game
 
             using (Open(item, item))
             {
-                // 3. write: the ECS, then the cache from v in the old order
-                _world.Ecs.CommitItem(item, in v);
+                // 3. write: the ECS (attached: the push at the end, T1 part 9), then the cache from v in the old order
+                _world.Ecs.CommitItem(item, in v, attach: true);
 
                 item.Graphic = v.Graphic;
 
@@ -681,10 +681,9 @@ namespace ClassicUO.Game
                     item.Container = v.Container;
                 }
 
-                // at the end of the container's child list, also when it already was there (the re-push); the mirror's
-                // child-order stamp follows (T1 part 9)
+                // at the end of the container's child list, also when it already was there (the re-push; the commit above
+                // took its child-order stamp)
                 container.PushToBack(item);
-                _world.Ecs.CommitChildOrder(item);
             }
 
             return item;
@@ -899,8 +898,7 @@ namespace ClassicUO.Game
                         _world.UnlinkFromContainer(item, oldContainer);
                         container.PushToBack(item);
                         v.Container = container.Serial;
-                        _world.Ecs.CommitChildOrder(item);
-                        _world.Ecs.CommitItem(item, in v);
+                        _world.Ecs.CommitItem(item, in v, attach: true);
                         item.Container = v.Container;
 
                         break;
@@ -1001,8 +999,9 @@ namespace ClassicUO.Game
                     _world.Ecs.CommitItem(item, in detached);
                 }
 
-                // 3. write: the ECS, then the cache from v in the old order, then the link
-                _world.Ecs.CommitItem(item, in v);
+                // 3. write: the ECS (attached when there is a wearer to link it to; without one an orphan, T1 part 9), then
+                // the cache from v in the old order, then the link
+                _world.Ecs.CommitItem(item, in v, attach: wearer != null);
 
                 item.Graphic = v.Graphic;
                 item.Layer = v.Layer;
@@ -1010,11 +1009,7 @@ namespace ClassicUO.Game
                 item.Hue = v.Hue;
                 item.Amount = v.Amount;
 
-                if (wearer != null)
-                {
-                    wearer.PushToBack(item);
-                    _world.Ecs.CommitChildOrder(item);
-                }
+                wearer?.PushToBack(item);
             }
 
             return item;
@@ -1164,7 +1159,7 @@ namespace ClassicUO.Game
                 item.Amount = v.Amount;
 
                 _world.UnlinkFromContainer(item, oldContainer);
-                _world.Ecs.CommitItem(item, in v);
+                _world.Ecs.CommitItem(item, in v, attach: true);
 
                 item.Container = v.Container;
                 item.Layer = layer;
@@ -1185,7 +1180,6 @@ namespace ClassicUO.Game
                 // 4. derived state where CheckGraphicChange ran it, then the link
                 item.RefreshGraphicState();
                 owner.PushToBack(item);
-                _world.Ecs.CommitChildOrder(item);
             }
 
             return item;
@@ -2344,6 +2338,16 @@ namespace ClassicUO.Game
 
             using (Open(spellbook, null))
             {
+                // T1 part 9: the clear drops every child from the list without touching its Container; a child World holds
+                // (an item the server put in the book) is no longer attached, committed first
+                for (LinkedObject i = spellbook.Items; i != null; i = i.Next)
+                {
+                    if (i is Item child)
+                    {
+                        _world.Ecs.CommitDetach(child);
+                    }
+                }
+
                 spellbook.Graphic = graphic;
                 spellbook.Clear();
                 _world.Ecs.Sync(spellbook);
@@ -2369,6 +2373,52 @@ namespace ClassicUO.Game
             }
 
             return spellbook;
+        }
+
+        private readonly List<Item> _sorted = new List<Item>();
+
+        /// <summary>
+        /// 0x74 (BuyList) for a shop container with graphic 0x2AF8: the client sorts its child list by X (the original
+        /// client's hard-coded order; <c>SortContents</c>, a stable merge sort). T1 part 9: the new order is computed first
+        /// (stable, by X), each child World holds re-stamped in it (the mirror's child order follows), then the list sorted as
+        /// before. Returns the list's new first child (null for an empty list, or a nested call: rejected, nothing sorted).
+        /// </summary>
+        public LinkedObject SortShopContents(Item container)
+        {
+            if (container == null || !Admitted(nameof(SortShopContents), container.Serial))
+            {
+                return null;
+            }
+
+            using (Open(container, null))
+            {
+                // 2. compute: the stable order by X (insertion sort: equal X keep their list order, as the merge sort)
+                _sorted.Clear();
+
+                for (LinkedObject i = container.Items; i != null; i = i.Next)
+                {
+                    Item it = (Item)i;
+                    int at = _sorted.Count;
+
+                    while (at > 0 && _sorted[at - 1].X > it.X)
+                    {
+                        at--;
+                    }
+
+                    _sorted.Insert(at, it);
+                }
+
+                // 3. the ECS, then the links
+                foreach (Item it in _sorted)
+                {
+                    _world.Ecs.CommitChildOrder(it);
+                }
+
+                LinkedObject first = container.SortContents<Item>((x, y) => x.X - y.X);
+                _sorted.Clear();
+
+                return first;
+            }
         }
 
         // ---- funnel part 7, group 1: the small writers. Name, Price and SpeedMode are cache-only (no mirror record field and no
@@ -2528,12 +2578,11 @@ namespace ClassicUO.Game
                 // the old order: the unlink (gump refresh, list links, tile), the detached state's Sync, then the final one
                 _world.UnlinkFromContainer(item, oldContainer);
                 _world.Ecs.CommitItem(item, in detached);
-                _world.Ecs.CommitItem(item, in v);
+                _world.Ecs.CommitItem(item, in v, attach: true);
 
                 item.Container = v.Container;
                 item.Layer = v.Layer;
                 corpse.PushToBack(item);
-                _world.Ecs.CommitChildOrder(item);
             }
 
             return item;
@@ -2601,12 +2650,13 @@ namespace ClassicUO.Game
 
                 EcsEntity e = _world.Ecs.CommitRekey(mobile, oldSerial, in v);
 
+                // (the list keeps its order under the new parent: each child is re-stamped in it, attached)
                 for (LinkedObject i = mobile.Items; i != null; i = i.Next)
                 {
                     Item child = (Item)i;
                     ItemState c = CurrentState(child);
                     c.Container = serial;
-                    _world.Ecs.CommitItem(child, in c);
+                    _world.Ecs.CommitItem(child, in c, attach: true);
                 }
 
                 // then the cache, in the old order

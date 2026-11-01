@@ -192,6 +192,171 @@ namespace ClassicUO.UnitTests.Ecs
             Check(world).Should().BeEmpty();
         }
 
+        // ---- the Codex audit of part 9
+
+        // P1 (bench-000095: every client crashed at login with "IComponent type not found: MobileNotoriety"): NativeAOT's
+        // schema has only what EcsSchema registers, so every component and tag type of ClassicUO.Ecs must be registered. A
+        // test process may build Friflo's reflection schema first and so never sees the gap; this compares the lists.
+        [Fact]
+        public void Every_Component_And_Tag_Type_Is_Registered_In_The_Schema()
+        {
+            Type[] kinds = typeof(WorldMirror).Assembly.GetTypes()
+                .Where(t => t.IsValueType && (typeof(Friflo.Engine.ECS.IComponent).IsAssignableFrom(t) || typeof(Friflo.Engine.ECS.ITag).IsAssignableFrom(t)))
+                .ToArray();
+
+            kinds.Should().Contain(new[] { typeof(EntityName), typeof(Vitals), typeof(MobileNotoriety), typeof(ItemPrice), typeof(ItemSlot) });
+            EcsSchema.RegisteredTypes.Should().BeEquivalentTo(kinds);
+        }
+
+        private const uint SHOP = 0x4000_7920, S1 = 0x4000_7921, S2 = 0x4000_7922, S3 = 0x4000_7923, S4 = 0x4000_7924;
+
+        // P2: 0x74 sorts a 0x2AF8 shop container's list by X; the mirror's child order follows (arrival order differs)
+        [Fact]
+        public void The_Vendor_Sort_Restamps_The_Child_Order_In_The_Sorted_Order()
+        {
+            World world = BuildFunnelWorld();
+            Item shop = world.Writer.UpsertWorldItem(SHOP, 0x2AF8, 0, 1, 1003, 1000, 0, Direction.North, 0, Flags.None, 0, out _, out WorldWriter.Placement p);
+            world.Writer.PlaceWorldItem(p);
+            world.Writer.PlaceInContainer(S1, 0xEED, 1, 30, 10, 0, SHOP, out _);
+            world.Writer.PlaceInContainer(S2, 0xEED, 1, 10, 10, 0, SHOP, out _);
+            world.Writer.PlaceInContainer(S3, 0xEED, 1, 20, 10, 0, SHOP, out _);
+            world.Writer.PlaceInContainer(S4, 0xEED, 1, 10, 20, 0, SHOP, out _);
+            Children(world, SHOP).Should().Equal(S1, S2, S3, S4);
+
+            LinkedObject first = world.Writer.SortShopContents(shop);
+
+            ((Item)first).Serial.Should().Be(S2);
+            Children(world, SHOP).Should().Equal(new[] { S2, S4, S3, S1 }, "by X, equal X in arrival order (a stable sort)");
+            ByStamp(world, SHOP).Should().Equal(S2, S4, S3, S1);
+            Check(world).Should().BeEmpty();
+        }
+
+        [Fact]
+        public void The_Vendor_Sort_Unstamped_Is_A_Mismatch()
+        {
+            World world = BuildFunnelWorld();
+            Item shop = world.Writer.UpsertWorldItem(SHOP, 0x2AF8, 0, 1, 1003, 1000, 0, Direction.North, 0, Flags.None, 0, out _, out WorldWriter.Placement p);
+            world.Writer.PlaceWorldItem(p);
+            world.Writer.PlaceInContainer(S1, 0xEED, 1, 30, 10, 0, SHOP, out _);
+            world.Writer.PlaceInContainer(S2, 0xEED, 1, 10, 10, 0, SHOP, out _);
+
+            shop.SortContents<Item>((x, y) => x.X - y.X);
+
+            Check(world).Should().Contain(s => s.StartsWith("children of 0x40007920", StringComparison.Ordinal));
+        }
+
+        [Fact]
+        public void The_Vendor_Sort_Nested_Is_Rejected_And_Sorts_Nothing()
+        {
+            World world = BuildFunnelWorld();
+            world.Writer.ThrowOnViolation = false;
+            Item shop = world.Writer.UpsertWorldItem(SHOP, 0x2AF8, 0, 1, 1003, 1000, 0, Direction.North, 0, Flags.None, 0, out _, out WorldWriter.Placement p);
+            world.Writer.PlaceWorldItem(p);
+            world.Writer.PlaceInContainer(S1, 0xEED, 1, 30, 10, 0, SHOP, out _);
+            world.Writer.PlaceInContainer(S2, 0xEED, 1, 10, 10, 0, SHOP, out _);
+            world.Ecs.BeginFold(world.Mobiles.Get(MOB));
+            LinkedObject first = world.Writer.SortShopContents(shop);
+            world.Ecs.EndFold(world.Mobiles.Get(MOB));
+
+            first.Should().BeNull();
+            world.Writer.Violations.Should().Be(1);
+            Children(world, SHOP).Should().Equal(S1, S2);
+            Check(world).Should().BeEmpty();
+        }
+
+        private const uint LATE = 0x0000_3910, ORPHAN = 0x4000_7930, BOOK = 0x4000_7931, INBOOK = 0x4000_7932;
+
+        // P2: an item equipped before its mobile exists is in no child list (ClassicUO never adopts it); the mirror keeps its
+        // Container but not as attached, and the check compares attachment
+        [Fact]
+        public void An_Orphan_Equip_Is_Not_Attached_And_Checks_Clean_Then_Reattaches()
+        {
+            World world = BuildFunnelWorld();
+            world.Writer.Equip(ORPHAN, 0x1517, Layer.Shirt, LATE, 0, out Entity wearer, out _);
+            wearer.Should().BeNull();
+
+            Mobile late = world.GetOrCreateMobile(LATE);
+
+            late.Items.Should().BeNull("the legacy orphan behaviour is unchanged");
+            ((int)world.Ecs.Mirror.GetEquipment(LATE).Count).Should().Be(1, "the mirror has its Container");
+            world.Ecs.Mirror.TryGetExtras(ORPHAN, out MirrorExtras x).Should().BeTrue();
+            x.ChildStamp.Should().Be(0UL);
+            Check(world).Should().BeEmpty();
+
+            // re-equipped now that the wearer exists: linked and attached
+            world.Writer.Equip(ORPHAN, 0x1517, Layer.Shirt, LATE, 0, out wearer, out _);
+            wearer.Should().BeSameAs(late);
+            Children(world, LATE).Should().Equal(ORPHAN);
+            ByStamp(world, LATE).Should().Equal(ORPHAN);
+            Check(world).Should().BeEmpty();
+        }
+
+        [Fact]
+        public void An_Attached_Item_Moved_Without_A_Push_Detaches()
+        {
+            World world = BuildFunnelWorld();
+
+            // to the ground through the funnel: no parent
+            Item a = world.Items.Get(A);
+            world.Writer.UpsertWorldItem(A, a.Graphic, 0, a.Amount, 1005, 1000, 0, Direction.North, 0, Flags.None, 0, out _, out WorldWriter.Placement p);
+            world.Writer.PlaceWorldItem(p);
+            world.Ecs.Mirror.TryGetExtras(A, out MirrorExtras x).Should().BeTrue();
+            x.ChildStamp.Should().Be(0UL);
+
+            // the old Sync path: another parent's Container without a link (as an orphan): detached
+            Item b = world.Items.Get(B);
+            world.RemoveItemFromContainer(b);
+            b.Container = CORPSE;
+            world.Ecs.Sync(b);
+            world.Ecs.Mirror.TryGetExtras(B, out x).Should().BeTrue();
+            x.ChildStamp.Should().Be(0UL);
+            ((int)world.Ecs.Mirror.GetContents(CORPSE).Count).Should().Be(3);
+
+            Check(world).Should().BeEmpty();
+        }
+
+        // P2: 0xBF.1B's spellbook clear drops a held child from the list without changing its Container
+        [Fact]
+        public void The_Spellbook_Clear_Detaches_A_Held_Child_And_A_Later_Push_Reattaches_It()
+        {
+            World world = BuildFunnelWorld();
+            Item book = world.Writer.UpsertWorldItem(BOOK, 0xEFA, 0, 1, 1004, 1000, 0, Direction.North, 0, Flags.None, 0, out _, out WorldWriter.Placement p);
+            world.Writer.PlaceWorldItem(p);
+            world.Writer.PlaceInContainer(INBOOK, 0x1F2E, 1, 0, 0, 0, BOOK, out _);
+            Children(world, BOOK).Should().Equal(INBOOK);
+
+            world.Writer.FillSpellbook(BOOK, 0xEFA, 0b101, 0);
+
+            world.Items.Get(INBOOK).Container.Should().Be(BOOK, "the clear keeps the Container (legacy)");
+            world.Ecs.Mirror.TryGetExtras(INBOOK, out MirrorExtras x).Should().BeTrue();
+            x.ChildStamp.Should().Be(0UL);
+            Check(world).Should().BeEmpty();
+
+            world.Writer.PlaceInContainer(INBOOK, 0x1F2E, 1, 0, 0, 0, BOOK, out _);
+            ByStamp(world, BOOK).Should().Equal(INBOOK);
+            Check(world).Should().BeEmpty();
+        }
+
+        // P3: the stamp is 64-bit: past the old 32-bit wrap the order holds; Clear resets the counter (no record is left)
+        [Fact]
+        public void The_Child_Order_Holds_Past_The_32_Bit_Boundary_And_Clear_Resets_The_Counter()
+        {
+            World world = BuildFunnelWorld();
+            world.Ecs.Mirror.SetLastChildStampForTests(uint.MaxValue - 1);
+
+            world.Writer.PlaceInContainer(B, 0xEEE, 1, 20, 20, 0, PACK, out _);
+            world.Writer.PlaceInContainer(C, 0xEEF, 1, 30, 30, 0, PACK, out _);
+            world.Writer.PlaceInContainer(A, 0xEED, 6, 11, 11, 0, PACK, out _);
+
+            world.Ecs.Mirror.ChildStamp.Should().Be((ulong)uint.MaxValue + 2);
+            Children(world, PACK).Should().Equal(B, C, A);
+            ByStamp(world, PACK).Should().Equal(B, C, A);
+            Check(world).Should().BeEmpty();
+
+            world.Ecs.Mirror.Clear();
+            world.Ecs.Mirror.ChildStamp.Should().Be(0UL);
+        }
+
         private static List<uint> Children(World world, uint parent)
         {
             var list = new List<uint>();
@@ -208,9 +373,13 @@ namespace ClassicUO.UnitTests.Ecs
         {
             WorldMirror mirror = world.Ecs.Mirror;
 
+            // the attached children (a nonzero stamp), by stamp
             return mirror.GetContents(parent).Concat(mirror.GetEquipment(parent))
                 .Select(e => e.GetComponent<ClassicUO.Ecs.Serial>().Value)
-                .OrderBy(s => { mirror.TryGetExtras(s, out MirrorExtras x); return x.ChildStamp; })
+                .Select(s => { mirror.TryGetExtras(s, out MirrorExtras x); return (s, x.ChildStamp); })
+                .Where(t => t.ChildStamp != 0)
+                .OrderBy(t => t.ChildStamp)
+                .Select(t => t.s)
                 .ToList();
         }
     }
