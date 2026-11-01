@@ -59,12 +59,16 @@ namespace ClassicUO.Game
             Weather = new Weather(this);
             InfoBars = new InfoBarManager(this);
             Ecs = new WorldEcs(this);
+            State = new WorldState(this);
             MapRecycler = new Map.MapObjectRecycler(this);
             ChunkPool = new Map.ChunkPool(this);
             Writer = new WorldWriter(this);
         }
 
         public WorldEcs Ecs { get; }
+
+        /// <summary>T2: the world state the ECS owns (container contents first), read by the client.</summary>
+        public WorldState State { get; }
 
         /// <summary>T1: the mutation funnel (ecs-transition-plan.md); converted packet groups write world state through it.</summary>
         public WorldWriter Writer { get; }
