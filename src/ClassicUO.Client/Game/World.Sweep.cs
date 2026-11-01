@@ -62,6 +62,8 @@ namespace ClassicUO.Game
         private readonly List<uint> _actual = new List<uint>();
         private readonly List<uint> _selected = new List<uint>();
         private readonly List<uint> _checkRemovals = new List<uint>();
+        private readonly List<string> _houseExpected = new List<string>();
+        private readonly List<string> _houseActual = new List<string>();
         private bool _recordItems;
 
         // ---- mobiles ------------------------------------------------------------------------------------------------
@@ -248,10 +250,14 @@ namespace ClassicUO.Game
             _expected.Clear();
             _selected.Clear();
             _checkRemovals.Clear();
+            _houseExpected.Clear();
+            _houseActual.Clear();
 
             foreach (Item item in Items.Values)
             {
-                if (item.IsDestroyed)
+                // a destroyed item the table still holds is only decided when it is a multi: the legacy loop still runs the
+                // house check for it (TryToRemove), while the funnel's removal of a destroyed item does nothing
+                if (item.IsDestroyed && !item.IsMulti)
                 {
                     continue;
                 }
@@ -259,14 +265,23 @@ namespace ClassicUO.Game
                 if (item.OnGround && item.Distance > ClientViewRange)
                 {
                     _expected.Add(item.Serial);
+                    bool houseGone = item.IsMulti && !HouseManager.IsHouseInRange(item.Serial, ClientViewRange);
 
-                    if (!item.IsMulti || !HouseManager.IsHouseInRange(item.Serial, ClientViewRange))
+                    if (item.IsMulti)
                     {
-                        _checkRemovals.Add(item.Serial);
+                        _houseExpected.Add(HouseLine(item.Serial, houseGone));
+                    }
+
+                    if (!item.IsMulti || houseGone)
+                    {
+                        if (!item.IsDestroyed)
+                        {
+                            _checkRemovals.Add(item.Serial);
+                        }
                     }
                 }
 
-                if (_sweepItemSet.Contains(item))
+                if (_sweepItemSet.Contains(item) || DestroyedHeldMultiBeyond(item))
                 {
                     _selected.Add(item.Serial);
                 }
@@ -275,10 +290,19 @@ namespace ClassicUO.Game
             CompareSweep("items selected", _expected, _selected);
         }
 
+        private static string HouseLine(uint serial, bool removed) => $"{serial:X8} house {(removed ? "removed" : "kept")}";
+
+        // a multi that was destroyed but is still in the Items table has no ECS entity, so the system cannot select it; the
+        // legacy loop still runs its range and house check (HouseManager.TryToRemove), and so does the system path
+        private bool DestroyedHeldMultiBeyond(Item item)
+        {
+            return item.IsDestroyed && item.IsMulti && item.OnGround && item.Distance > ClientViewRange;
+        }
+
         // the loops' range test: the system's selection, else the legacy rule
         internal bool ItemBeyond(Item item)
         {
-            return _sweepItemsBySystem ? _sweepItemSet.Contains(item) : item.OnGround && item.Distance > ClientViewRange;
+            return _sweepItemsBySystem ? _sweepItemSet.Contains(item) || DestroyedHeldMultiBeyond(item) : item.OnGround && item.Distance > ClientViewRange;
         }
 
         // the loops' removal of an out-of-range item (a multi only once its house is out of range too)
@@ -286,7 +310,14 @@ namespace ClassicUO.Game
         {
             if (item.IsMulti)
             {
-                if (HouseManager.TryToRemove(item, ClientViewRange))
+                bool removed = HouseManager.TryToRemove(item, ClientViewRange);
+
+                if (_recordItems)
+                {
+                    _houseActual.Add(HouseLine(item.Serial, removed));
+                }
+
+                if (removed)
                 {
                     RecordItemSweep(item);
                     Writer.SweepItem(item); // T1 (funnel part 5): the sweep's removal
@@ -313,6 +344,7 @@ namespace ClassicUO.Game
             {
                 SweepRemovedItems += _actual.Count;
                 CompareSweep("items removed", _checkRemovals, _actual);
+                CompareLines("house cleanup", _houseExpected, _houseActual);
                 _recordItems = false;
             }
 
