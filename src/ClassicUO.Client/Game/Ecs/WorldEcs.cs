@@ -259,6 +259,11 @@ namespace ClassicUO.Game
         /// </summary>
         private void RestoreScalars(Entity entity, uint epochBefore)
         {
+            if (ItemAnimTimerEnabled && entity is Item corpse)
+            {
+                PushItemTimer(corpse);
+            }
+
             // T5d: a listed item's tag follows its list membership whenever its record is written (a replaced record starts
             // without the tag, and ActiveItemList.Add returns early for an item already listed)
             if (entity is Item listed && listed.InUpdateList && _world.ActiveItemsSystemOn
@@ -540,6 +545,32 @@ namespace ClassicUO.Game
         /// <c>world_anim_system</c>; turning it on goes through <see cref="ResyncClocks"/>, which writes every timer).
         /// </summary>
         public bool AnimTimerEnabled;
+
+        /// <summary>
+        /// T5b-items: a corpse's <see cref="AnimationTimer"/> is kept with its item record (World.UpdateActiveItems sets this
+        /// each frame from <c>world_item_anim_system</c>; turning it on pushes every corpse). Only corpses carry it.
+        /// </summary>
+        public bool ItemAnimTimerEnabled;
+
+        /// <summary>T5b-items: writes the corpse's timer fields into its entity's <see cref="AnimationTimer"/> (added on the
+        /// first push). Nothing for another item, a destroyed or an unmirrored one.</summary>
+        internal void PushItemTimer(Item item)
+        {
+            if (!ItemAnimTimerEnabled || item == null || item.IsDestroyed || !item.IsCorpse || !Mirror.TryGetEntity(item.Serial, false, out EcsEntity e)
+                || !ReferenceEquals(_world.Items.Get(item.Serial), item))
+            {
+                return;
+            }
+
+            if (!e.HasComponent<AnimationTimer>())
+            {
+                e.AddComponent(item.CorpseTimer);
+            }
+            else
+            {
+                e.GetComponent<AnimationTimer>() = item.CorpseTimer;
+            }
+        }
 
         internal static MobileClockFlags ClockFlagsOf(Mobile mobile)
         {
@@ -835,6 +866,7 @@ namespace ClassicUO.Game
             {
                 _animAdvanceLogAt = Time.Ticks + 5000;
                 Log.Info(MobileAnimationAdvanceSystem.Summary());
+                Log.Info(ItemAnimationAdvanceSystem.Summary());
             }
 
             if ((MobileAnimationSystem.InputCheck || MobileAnimationSystem.InputBench) && Time.Ticks >= _inputLogAt)
