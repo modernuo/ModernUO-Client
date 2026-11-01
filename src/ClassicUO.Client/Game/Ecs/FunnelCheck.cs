@@ -196,7 +196,7 @@ namespace ClassicUO.Game
         private static string Caller()
         {
             var trace = new StackTrace(2, true);
-            string writer = null;
+            string writer = null, via = null;
 
             for (int i = 0; i < trace.FrameCount; i++)
             {
@@ -220,10 +220,46 @@ namespace ClassicUO.Game
                     continue;
                 }
 
-                return $"{writer} via {frame}";
+                if (via == null)
+                {
+                    via = frame;
+
+                    if (!IsRemovalPlumbing(m))
+                    {
+                        return $"{writer} via {via}";
+                    }
+
+                    continue;
+                }
+
+                // (T1 part 9) a removal's Destroy writes: past the removal plumbing (Destroy, World.RemoveItem/RemoveMobile and
+                // their helpers), the method that asked for the removal
+                if (IsRemovalPlumbing(m))
+                {
+                    continue;
+                }
+
+                return $"{writer} via {via} from {frame}";
             }
 
-            return writer ?? "?";
+            return via != null ? $"{writer} via {via}" : writer ?? "?";
+        }
+
+        private static bool IsRemovalPlumbing(System.Reflection.MethodBase m)
+        {
+            switch (m.Name)
+            {
+                case "Destroy":
+                    return typeof(GameObject).IsAssignableFrom(m.DeclaringType);
+                case "RemoveItem":
+                case "RemoveMobile":
+                case "RemoveContentsAndDestroy":
+                case "RemoveDetachedItem":
+                case "RemoveItemFromContainer":
+                    return m.DeclaringType == typeof(World);
+                default:
+                    return false;
+            }
         }
 
         /// <summary>Logs the totals by field every 5 s while the check is on (called from WorldEcs.Update).</summary>

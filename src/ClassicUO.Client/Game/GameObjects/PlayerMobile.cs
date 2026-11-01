@@ -413,15 +413,10 @@ namespace ClassicUO.Game.GameObjects
             {
                 if (!bank.IsEmpty)
                 {
-                    Item first = (Item) bank.Items;
-
-                    while (first != null)
+                    // T1 (funnel part 9): the removals; a rejected call removes nothing and leaves the bank open
+                    if (!World.Writer.RemoveBankContents(this, bank))
                     {
-                        Item next = (Item) first.Next;
-
-                        World.RemoveItem(first, true);
-
-                        first = next;
+                        return;
                     }
 
                     bank.Items = null;

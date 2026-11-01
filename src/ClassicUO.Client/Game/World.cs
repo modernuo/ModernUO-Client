@@ -233,8 +233,10 @@ namespace ClassicUO.Game
                         Map = new Map.Map(this, value);
                         ClassicUO.Game.Map.MapWarmup.OnMapCreated(this);
 
-                        Player.SetInWorldTile(x, y, z);
-                        Player.ClearSteps();
+                        // T1 (funnel part 9, the gate's last direct writes: a map change at login): the player re-placed on
+                        // the new map and its walk queue emptied, as funnel operations (after ClearForMapChange's scope)
+                        Writer.MoveMobile(Player, x, y, z);
+                        Writer.StopMobile(Player);
                     }
                     else
                     {
@@ -348,7 +350,8 @@ namespace ClassicUO.Game
                     {
                         Entity container = Get(rem.Container);
 
-                        RemoveItem(rem, true);
+                        // T1 (funnel part 9): the removal with force, as a funnel operation
+                        Writer.RemovePickedUpItem(rem);
 
                         if (rem.Layer == Layer.OneHanded || rem.Layer == Layer.TwoHanded)
                         {
@@ -1482,7 +1485,11 @@ namespace ClassicUO.Game
             Ecs.OnWorldCleared();
         }
 
-        private void InternalMapChangeClear(bool noplayer)
+        // T1 (funnel part 9): the removals run as a funnel operation (WorldWriter.ClearForMapChange)
+        private void InternalMapChangeClear(bool noplayer) => Writer.ClearForMapChange(noplayer);
+
+        /// <summary>The old body of <c>InternalMapChangeClear</c>, run only by <see cref="WorldWriter.ClearForMapChange"/>.</summary>
+        internal void MapChangeRemovals(bool noplayer)
         {
             if (!noplayer)
             {
