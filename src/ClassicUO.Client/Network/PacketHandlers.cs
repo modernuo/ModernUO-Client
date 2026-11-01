@@ -2820,8 +2820,8 @@ namespace ClassicUO.Network
 
                 if (container.Graphic == 0x2AF8) //hardcoded logic in original client that we must match
                 {
-                    //sort the contents
-                    first = container.SortContents<Item>((x, y) => x.X - y.X);
+                    //sort the contents (T1 part 9: through the funnel, which re-stamps the mirror's child order)
+                    first = world.Writer.SortShopContents(container);
                 }
                 else
                 {

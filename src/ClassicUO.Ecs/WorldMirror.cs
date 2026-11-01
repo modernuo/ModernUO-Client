@@ -32,8 +32,8 @@ namespace ClassicUO.Ecs
         public byte Notoriety, ItemLayer;
         public uint Price;
 
-        /// <summary>The child-order stamp (0: never placed in a parent's list by the funnel).</summary>
-        public uint ChildStamp;
+        /// <summary>The child-order stamp (0: not attached, in no parent's child list).</summary>
+        public ulong ChildStamp;
     }
 
     public sealed class WorldMirror
@@ -141,7 +141,8 @@ namespace ClassicUO.Ecs
             ushort amount,
             uint container,
             byte layer,
-            bool isMulti
+            bool isMulti,
+            bool attach = false
         )
         {
             uint oldWearer = 0;
@@ -167,7 +168,7 @@ namespace ClassicUO.Ecs
                     new Facing { Value = facing },
                     new Flags { Value = flags },
                     new Amount { Value = amount },
-                    new ItemLayer { Value = layer },
+                    new ItemSlot { Layer = layer },
                     Tags.Get<ItemTag>()
                 );
 
@@ -178,10 +179,24 @@ namespace ClassicUO.Ecs
             {
                 WriteCommon(e, graphic, hue, x, y, z, facing, flags);
                 e.GetComponent<Amount>().Value = amount;
-                e.GetComponent<ItemLayer>().Value = layer;
             }
 
-            SetParent(e, container, layer);
+            bool moved = SetParent(e, container, layer);
+
+            // T1 part 9: attached (the operation's PushToBack) takes the next stamp; a new parent without a push detaches
+            // (ClassicUO links an item only when its parent exists: an orphan stays out of the list); otherwise it keeps its
+            // place. After SetParent: its component re-adds move the entity, so the ref is taken here
+            ref ItemSlot slot = ref e.GetComponent<ItemSlot>();
+            slot.Layer = layer;
+
+            if (attach)
+            {
+                slot.Stamp = ++_childStamp;
+            }
+            else if (moved)
+            {
+                slot.Stamp = 0;
+            }
 
             // any write to a worn item (equip, unequip, graphic, hue) invalidates the old and new wearer's slots
             if (oldWearer != 0)
@@ -268,35 +283,49 @@ namespace ClassicUO.Ecs
             _scratch.Clear();
             _bySerial.Clear();
             MobileCount = 0;
+
+            // no record is left, so no stamp is live: the counter starts over
+            _childStamp = 0;
             ItemCount = 0;
         }
 
-        private uint _childStamp;
+        private ulong _childStamp;
 
         /// <summary>The last child-order stamp taken (tests).</summary>
-        public uint ChildStamp => _childStamp;
+        public ulong ChildStamp => _childStamp;
+
+        /// <summary>Tests: the next stamp is <paramref name="last"/> + 1 (the boundary tests).</summary>
+        public void SetLastChildStampForTests(ulong last) => _childStamp = last;
 
         /// <summary>
-        /// T1 part 9: a child went to the back of its parent's child list (<c>PushToBack</c>): it takes the next stamp.
-        /// False when the serial has no record.
+        /// T1 part 9: an item went to the back of its parent's child list without a change of record (a re-order: the vendor
+        /// sort's re-stamp in the new order, the old re-key's re-link): it takes the next stamp. False when the serial has no
+        /// item record. (An operation that also changes the record stamps through <see cref="UpsertItem"/>'s attach.)
         /// </summary>
         public bool StampChild(uint serial)
         {
-            if (!_bySerial.TryGetValue(serial, out Entity e))
+            if (!_bySerial.TryGetValue(serial, out Entity e) || !e.HasComponent<ItemSlot>())
             {
                 return false;
             }
 
-            uint stamp = ++_childStamp;
+            e.GetComponent<ItemSlot>().Stamp = ++_childStamp;
 
-            if (e.HasComponent<ChildOrder>())
+            return true;
+        }
+
+        /// <summary>
+        /// T1 part 9: an item left its parent's child list but keeps its Container (the spellbook's list cleared by 0xBF.1B):
+        /// not attached any more. False when the serial has no item record.
+        /// </summary>
+        public bool DetachChild(uint serial)
+        {
+            if (!_bySerial.TryGetValue(serial, out Entity e) || !e.HasComponent<ItemSlot>())
             {
-                e.GetComponent<ChildOrder>().Stamp = stamp;
+                return false;
             }
-            else
-            {
-                e.AddComponent(new ChildOrder { Stamp = stamp });
-            }
+
+            e.GetComponent<ItemSlot>().Stamp = 0;
 
             return true;
         }
@@ -411,14 +440,10 @@ namespace ClassicUO.Ecs
                 x.Price = price.Value;
             }
 
-            if (e.TryGetComponent(out ItemLayer layer))
+            if (e.TryGetComponent(out ItemSlot slot))
             {
-                x.ItemLayer = layer.Value;
-            }
-
-            if (e.TryGetComponent(out ChildOrder order))
-            {
-                x.ChildStamp = order.Stamp;
+                x.ItemLayer = slot.Layer;
+                x.ChildStamp = slot.Stamp;
             }
 
             return true;
@@ -500,19 +525,23 @@ namespace ClassicUO.Ecs
         }
 
         // ClassicUO: 0xFFFFFFFF (or 0) = in the world; a mobile serial, or the 0x80000000 | serial of a dying mobile, = worn;
-        // anything else = inside that item.
-        private static void SetParent(Entity e, uint container, byte layer)
+        // anything else = inside that item. True when the parent changed (a layer change on the same wearer is not one).
+        private static bool SetParent(Entity e, uint container, byte layer)
         {
             if (container == NO_CONTAINER || container == 0)
             {
+                bool had = false;
+
                 if (e.HasComponent<EquippedOn>())
                 {
                     e.RemoveComponent<EquippedOn>();
+                    had = true;
                 }
 
                 if (e.HasComponent<ContainedIn>())
                 {
                     e.RemoveComponent<ContainedIn>();
+                    had = true;
                 }
 
                 if (!e.Tags.Has<OnGround>())
@@ -520,7 +549,7 @@ namespace ClassicUO.Ecs
                     e.AddTag<OnGround>();
                 }
 
-                return;
+                return had;
             }
 
             if (e.Tags.Has<OnGround>())
@@ -530,28 +559,40 @@ namespace ClassicUO.Ecs
 
             if (IsWearerSerial(container))
             {
+                bool moved = false;
+
                 if (e.HasComponent<ContainedIn>())
                 {
                     e.RemoveComponent<ContainedIn>();
+                    moved = true;
                 }
 
                 // indexed components must be re-added (not written by ref) so the index follows the new parent
                 if (!e.TryGetComponent(out EquippedOn eq) || eq.Parent != container || eq.Layer != layer)
                 {
+                    moved |= eq.Parent != container;
                     e.AddComponent(new EquippedOn { Parent = container, Layer = layer });
                 }
+
+                return moved;
             }
             else
             {
+                bool moved = false;
+
                 if (e.HasComponent<EquippedOn>())
                 {
                     e.RemoveComponent<EquippedOn>();
+                    moved = true;
                 }
 
                 if (!e.TryGetComponent(out ContainedIn ci) || ci.Parent != container)
                 {
                     e.AddComponent(new ContainedIn { Parent = container });
+                    moved = true;
                 }
+
+                return moved;
             }
         }
     }
