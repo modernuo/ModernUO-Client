@@ -232,9 +232,9 @@ namespace ClassicUO.Game.GameObjects
             {
                 int minColor = 0xFFFF;
 
-                for (LinkedObject i = Items; i != null; i = i.Next)
+                // T2: the children from the ECS with ecs_read_contents on (WorldState.Children)
+                foreach (Item it in World.State.Children(this))
                 {
-                    Item it = (Item) i;
 
                     if (it.Graphic == graphic)
                     {
@@ -259,9 +259,9 @@ namespace ClassicUO.Game.GameObjects
             }
             else
             {
-                for (LinkedObject i = Items; i != null; i = i.Next)
+                // T2: the children from the ECS with ecs_read_contents on (WorldState.Children)
+                foreach (Item it in World.State.Children(this))
                 {
-                    Item it = (Item) i;
 
                     if (it.Graphic == graphic && it.Hue == hue)
                     {
@@ -285,20 +285,19 @@ namespace ClassicUO.Game.GameObjects
 
         public Item GetItemByGraphic(ushort graphic, bool deepsearch = false)
         {
-            for (LinkedObject i = Items; i != null; i = i.Next)
+            // T2: the children from the ECS with ecs_read_contents on (WorldState.Children)
+            foreach (Item item in World.State.Children(this))
             {
-                Item item = (Item) i;
-
                 if (item.Graphic == graphic)
                 {
                     return item;
                 }
 
-                if (deepsearch && !item.IsEmpty)
+                // (legacy: the deep search walks this entity's children again, not the item's)
+                if (deepsearch && World.State.HasChildren(item))
                 {
-                    for (LinkedObject ic = Items; ic != null; ic = ic.Next)
+                    foreach (Item childItem in World.State.Children(this))
                     {
-                        Item childItem = (Item) ic;
 
                         Item res = childItem.GetItemByGraphic(graphic, deepsearch);
 

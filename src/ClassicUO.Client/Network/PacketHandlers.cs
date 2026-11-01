@@ -1458,6 +1458,25 @@ namespace ClassicUO.Network
                 {
                     Item item = vendor.FindItemByLayer(layer);
 
+                    // T2: the shop's list from the ECS with ecs_read_contents on (the same order: reversed unless 0x2AF8)
+                    if (world.State.ReadContents)
+                    {
+                        bool backwards = item.Graphic != 0x2AF8;
+                        ReadOnlySpan<uint> shopContents = world.State.Contents(item.Serial);
+
+                        for (int k = 0; k < shopContents.Length; k++)
+                        {
+                            Item it = world.Items.Get(shopContents[backwards ? shopContents.Length - 1 - k : k]);
+
+                            if (it != null)
+                            {
+                                gump.AddItem(it.Serial, it.Graphic, it.Hue, it.Amount, it.Price, it.Name, false);
+                            }
+                        }
+
+                        continue;
+                    }
+
                     LinkedObject first = item.Items;
 
                     if (first == null)
@@ -2809,9 +2828,12 @@ namespace ClassicUO.Network
             {
                 byte count = p.ReadUInt8();
 
-                LinkedObject first = container.Items;
+                // T2: with ecs_read_contents on, the list is the ECS's contents (after the sort, which re-stamps them)
+                bool ecs = world.State.ReadContents;
+                ReadOnlySpan<uint> shopContents = ecs ? world.State.Contents(container.Serial) : default;
+                LinkedObject first = ecs ? null : container.Items;
 
-                if (first == null)
+                if (ecs ? shopContents.IsEmpty : first == null)
                 {
                     return;
                 }
@@ -2822,6 +2844,12 @@ namespace ClassicUO.Network
                 {
                     //sort the contents (T1 part 9: through the funnel, which re-stamps the mirror's child order)
                     first = world.Writer.SortShopContents(container);
+
+                    if (ecs)
+                    {
+                        first = null;
+                        shopContents = world.State.Contents(container.Serial);
+                    }
                 }
                 else
                 {
@@ -2834,14 +2862,30 @@ namespace ClassicUO.Network
                     }
                 }
 
+                int at = reverse ? shopContents.Length - 1 : 0;
+
                 for (int i = 0; i < count; i++)
                 {
-                    if (first == null)
-                    {
-                        break;
-                    }
+                    Item it;
 
-                    Item it = (Item)first;
+                    if (ecs)
+                    {
+                        if (at < 0 || at >= shopContents.Length || (it = world.Items.Get(shopContents[at])) == null)
+                        {
+                            break;
+                        }
+
+                        at += reverse ? -1 : 1;
+                    }
+                    else
+                    {
+                        if (first == null)
+                        {
+                            break;
+                        }
+
+                        it = (Item)first;
+                    }
 
                     world.Writer.SetPrice(it, p.ReadUInt32BE());
                     byte nameLen = p.ReadUInt8();
@@ -2870,6 +2914,11 @@ namespace ClassicUO.Network
                     }
 
                     world.Writer.SetName(it, itName);
+
+                    if (ecs)
+                    {
+                        continue;
+                    }
 
                     if (reverse)
                     {

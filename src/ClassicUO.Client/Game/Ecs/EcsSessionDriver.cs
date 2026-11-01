@@ -33,10 +33,28 @@ namespace ClassicUO.Game
         private uint _walkGiveUp;
         private uint _held;
         private uint _logoutAt;
+        private bool _ownsMouse;
 
         private EcsSessionDriver(string[] lines)
         {
             _lines = lines;
+        }
+
+        // Tests: a driver over in-memory lines (no file, no world).
+        internal static EcsSessionDriver FromLines(string[] lines) => new EcsSessionDriver(lines);
+
+        // The script's `mouse` override is the driver's: set only by `mouse`, released when the script ends (EOF, quit,
+        // logout), when the driver gump goes away or the world leaves the game (disconnect), and if a line throws, so a
+        // frozen scripted cursor never outlives the script. An override the driver did not set (DevBench) is left alone.
+        internal bool OwnsMouse => _ownsMouse;
+
+        internal void ReleaseMouse()
+        {
+            if (_ownsMouse)
+            {
+                _ownsMouse = false;
+                Input.Mouse.Override = null;
+            }
         }
 
         public static EcsSessionDriver Load(string path)
@@ -104,22 +122,62 @@ namespace ClassicUO.Game
                 return;
             }
 
-            while (_pc < _lines.Length)
+            Step(line => Execute(world, player, line));
+        }
+
+        // Runs script lines until one yields (true) or the script ends (false; the scripted cursor is released).
+        internal bool Step(Func<string, bool> execute)
+        {
+            try
             {
-                string line = _lines[_pc++].Trim();
-
-                if (line.Length == 0 || line[0] == '#')
+                while (_pc < _lines.Length)
                 {
-                    continue;
-                }
+                    string line = _lines[_pc++].Trim();
 
-                Log.Info($"[ECS] driver> {line}");
+                    if (line.Length == 0 || line[0] == '#')
+                    {
+                        continue;
+                    }
 
-                if (Execute(world, player, line))
-                {
-                    return;
+                    Log.Info($"[ECS] driver> {line}");
+
+                    if (line.StartsWith("mouse ", StringComparison.Ordinal) ? ExecuteMouse(line.Substring(6)) : execute(line))
+                    {
+                        return true;
+                    }
                 }
             }
+            catch
+            {
+                ReleaseMouse();
+
+                throw;
+            }
+
+            ReleaseMouse();
+
+            return false;
+        }
+
+        // mouse <x> <y> | mouse off: the scripted cursor (Input.Mouse.Override; the OS cursor is not moved), so the
+        // shots hover the same spot
+        private bool ExecuteMouse(string arg)
+        {
+            string[] args = arg.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+            if (args.Length > 1 && int.TryParse(args[0], out int mx) && int.TryParse(args[1], out int my))
+            {
+                Input.Mouse.Override = new Microsoft.Xna.Framework.Point(mx, my);
+                _ownsMouse = true;
+            }
+            else
+            {
+                ReleaseMouse();
+            }
+
+            Log.Info($"[ECS] ui mouse {string.Join(" ", args)}");
+
+            return true;
         }
 
         // returns true when the script should yield for at least a frame
@@ -444,9 +502,9 @@ namespace ClassicUO.Game
                     var csb = new System.Text.StringBuilder();
                     int cn = 0;
 
-                    for (LinkedObject ci = box.Items; ci != null; ci = ci.Next)
+                    // T2: the reader path (the ECS's contents with ecs_read_contents on)
+                    foreach (Item c in world.State.Children(box))
                     {
-                        Item c = (Item)ci;
                         csb.Append($" 0x{c.Serial:X8}:0x{c.Graphic:X4}x{c.Amount}");
                         cn++;
                     }
@@ -612,6 +670,69 @@ namespace ClassicUO.Game
                     Client.Game.RequestWorldShot(Path.Combine(shots, $"{args[0]}_gpu.png"));
 
                     return true;
+
+                // T2: without CUO_BENCH_SHOTS a shot is skipped on purpose (part 9's w5push logged it as an unknown command)
+                case "shot":
+                    Log.Info($"[ECS] driver: shot {arg} skipped (CUO_BENCH_SHOTS is not set)");
+
+                    return false;
+
+                // close <gump type>: disposes the open gumps of that type (T2's shots: the same containers reopened under the
+                // other ecs_read_contents setting, so both shots show the same items at the same server positions)
+                case "close" when args.Length > 0:
+                    var toClose = new System.Collections.Generic.List<Gump>();
+
+                    foreach (Gump g in UIManager.Gumps)
+                    {
+                        if (!g.IsDisposed && g.GetType().Name == args[0])
+                        {
+                            toClose.Add(g);
+                        }
+                    }
+
+                    foreach (Gump g in toClose)
+                    {
+                        g.Dispose();
+                    }
+
+                    Log.Info($"[ECS] ui close {args[0]}: {toClose.Count}");
+
+                    return true;
+
+                // place <GumpType> <x> <y> [dx]: the open gumps of that type at fixed positions, in serial order, dx apart (the
+                // T2 shots: a reopened container cascades to a new position)
+                case "place" when args.Length > 2 && int.TryParse(args[1], out int px) && int.TryParse(args[2], out int py):
+                {
+                    int dx = args.Length > 3 && int.TryParse(args[3], out int d) ? d : 0;
+                    var toPlace = new System.Collections.Generic.List<Gump>();
+
+                    foreach (Gump g in UIManager.Gumps)
+                    {
+                        if (!g.IsDisposed && g.GetType().Name == args[0])
+                        {
+                            toPlace.Add(g);
+                        }
+                    }
+
+                    toPlace.Sort((a, b) => a.LocalSerial.CompareTo(b.LocalSerial));
+
+                    for (int k = 0; k < toPlace.Count; k++)
+                    {
+                        toPlace[k].X = px + k * dx;
+                        toPlace[k].Y = py;
+                    }
+
+                    Log.Info($"[ECS] ui place {args[0]}: {toPlace.Count}");
+
+                    return true;
+                }
+
+                // readcontents on|off: the container-contents readers from the ECS (ecs_read_contents, T2)
+                case "readcontents" when args.Length > 0:
+                    Settings.GlobalSettings.EcsReadContents = args[0] == "on";
+                    Log.Info($"[ECS] driver: read contents from the ECS {args[0]} (effective {world.State.ReadContents})");
+
+                    return false;
 
                 // itemcache on|off: the Gpu world prepare's ground-item cache (gpu_prepare_item_cache)
                 case "itemcache" when args.Length > 0:
@@ -826,12 +947,14 @@ namespace ClassicUO.Game
 
                 // logout: drop the socket, then swap to the login scene (World.Clear) and exit; log back in with a new process
                 case "logout":
+                    ReleaseMouse();
                     NetClient.Socket.Disconnect();
                     _logoutAt = Time.Ticks + 2000;
 
                     return true;
 
                 case "quit":
+                    ReleaseMouse();
                     world.Ecs.RunCheck(true);
                     EcsParity.Summary();
                     Client.Game.Exit();
@@ -864,6 +987,16 @@ namespace ClassicUO.Game
                 {
                     _driver.Update(World);
                 }
+                else
+                {
+                    _driver.ReleaseMouse(); // disconnected: the driver no longer advances, so its cursor must not stay
+                }
+            }
+
+            public override void Dispose()
+            {
+                _driver.ReleaseMouse();
+                base.Dispose();
             }
         }
 

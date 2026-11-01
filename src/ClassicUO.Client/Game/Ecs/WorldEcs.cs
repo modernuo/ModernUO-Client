@@ -286,6 +286,26 @@ namespace ClassicUO.Game
             }
         }
 
+        /// <summary>
+        /// T2: a spellbook's 0xBF.1B spell set (bit i = spell i + 1), the detached entries at the front of its child list;
+        /// 0 when a clear drops them (ClearContainer).
+        /// </summary>
+        internal void CommitSpellbook(Item book, ulong spells)
+        {
+            if (!HoldsEntity(book))
+            {
+                return;
+            }
+
+            // Codex audit P2 (#3): the entries stand for the old set (FillSpellbook hands the new ones over after this)
+            _world.State.DropSpellEntries(book.Serial);
+
+            if (Mirror.SetSpellbook(book.Serial, spells))
+            {
+                ExtrasWrites++;
+            }
+        }
+
         /// <summary>T1 part 9: the item left its parent's child list but keeps its Container (the spellbook's clear).</summary>
         internal void CommitDetach(Item item)
         {
@@ -583,6 +603,12 @@ namespace ClassicUO.Game
             }
 
             Mirror.Remove(entity.Serial);
+
+            // Codex audit P2 (#3): a book's spell entries go with its record
+            if (entity is Item)
+            {
+                _world.State.DropSpellEntries(entity.Serial);
+            }
         }
 
         /// <summary>
@@ -670,11 +696,15 @@ namespace ClassicUO.Game
 
         public void OnWorldCleared()
         {
+            _world.State.OnWorldCleared();
+
             if (Mirror.Count != 0)
             {
                 Log.Warn($"[ECS] {Mirror.Count} entities left after World.Clear; resetting mirror");
-                Mirror.Clear();
             }
+
+            // (also with no record left: the contents cache can hold slots of parents that had none; Codex audit)
+            Mirror.Clear();
         }
 
         private uint _cacheLogAt, _inputLogAt, _clockLogAt;
@@ -682,6 +712,9 @@ namespace ClassicUO.Game
         public void Update()
         {
             FunnelCheck.LogSummary();
+
+            // T2: CUO_CONTENTS_CHECK, the open container gumps every frame
+            _world.State.CheckOpenContainers();
 
             if (MobileAnimationSystem.CacheCheck && Time.Ticks >= _cacheLogAt)
             {

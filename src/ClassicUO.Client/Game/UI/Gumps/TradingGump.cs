@@ -160,9 +160,9 @@ namespace ClassicUO.Game.UI.Gumps
 
             ArtLoader loader = Client.Game.UO.FileManager.Arts;
 
-            for (LinkedObject i = container.Items; i != null; i = i.Next)
+            // T2: the children from the ECS with ecs_read_contents on (WorldState.Children)
+            foreach (Item it in World.State.Children(container))
             {
-                Item it = (Item)i;
 
                 ItemGump g = new ItemGump(this, it.Serial, it.DisplayedGraphic, it.Hue, it.X, it.Y)
                 {
@@ -215,9 +215,9 @@ namespace ClassicUO.Game.UI.Gumps
                 v.Dispose();
             }
 
-            for (LinkedObject i = container.Items; i != null; i = i.Next)
+            // T2: the children from the ECS with ecs_read_contents on (WorldState.Children)
+            foreach (Item it in World.State.Children(container))
             {
-                Item it = (Item)i;
 
                 ItemGump g = new ItemGump(this, it.Serial, it.DisplayedGraphic, it.Hue, it.X, it.Y)
                 {

@@ -96,6 +96,14 @@ namespace ClassicUO.Ecs
         public uint Value;
     }
 
+    // T2: the spells a spellbook's 0xBF.1B content lists (bit i = spell i + 1). ClassicUO keeps them as detached entries at
+    // the front of the book's child list (not world objects, so no records); the mirror keeps the set. Added on the first
+    // non-empty content (absent = none).
+    public struct SpellbookContent : IComponent
+    {
+        public ulong Spells;
+    }
+
     public struct MobileTag : ITag { }
 
     public struct ItemTag : ITag { }
@@ -425,6 +433,9 @@ namespace ClassicUO.Ecs
             Component<Vitals>(aot);
             Component<MobileNotoriety>(aot);
             Component<ItemPrice>(aot);
+
+            // T2: container contents
+            Component<SpellbookContent>(aot);
 
             return aot.CreateSchema();
         }
