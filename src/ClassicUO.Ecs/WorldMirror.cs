@@ -24,6 +24,18 @@ namespace ClassicUO.Ecs
     }
 
     // Friflo copy of the legacy World's items and mobiles, keyed by serial. Single-threaded, written by the World hooks.
+    /// <summary>-ecscheck v2 (T1 funnel part 9): the cold fields of a record (defaults when never written).</summary>
+    public struct MirrorExtras
+    {
+        public string Name;
+        public ushort Hits, HitsMax;
+        public byte Notoriety, ItemLayer;
+        public uint Price;
+
+        /// <summary>The child-order stamp (0: never placed in a parent's list by the funnel).</summary>
+        public uint ChildStamp;
+    }
+
     public sealed class WorldMirror
     {
         public const uint NO_CONTAINER = 0xFFFF_FFFF;
@@ -155,6 +167,7 @@ namespace ClassicUO.Ecs
                     new Facing { Value = facing },
                     new Flags { Value = flags },
                     new Amount { Value = amount },
+                    new ItemLayer { Value = layer },
                     Tags.Get<ItemTag>()
                 );
 
@@ -165,6 +178,7 @@ namespace ClassicUO.Ecs
             {
                 WriteCommon(e, graphic, hue, x, y, z, facing, flags);
                 e.GetComponent<Amount>().Value = amount;
+                e.GetComponent<ItemLayer>().Value = layer;
             }
 
             SetParent(e, container, layer);
@@ -255,6 +269,170 @@ namespace ClassicUO.Ecs
             _bySerial.Clear();
             MobileCount = 0;
             ItemCount = 0;
+        }
+
+        private uint _childStamp;
+
+        /// <summary>The last child-order stamp taken (tests).</summary>
+        public uint ChildStamp => _childStamp;
+
+        /// <summary>
+        /// T1 part 9: a child went to the back of its parent's child list (<c>PushToBack</c>): it takes the next stamp.
+        /// False when the serial has no record.
+        /// </summary>
+        public bool StampChild(uint serial)
+        {
+            if (!_bySerial.TryGetValue(serial, out Entity e))
+            {
+                return false;
+            }
+
+            uint stamp = ++_childStamp;
+
+            if (e.HasComponent<ChildOrder>())
+            {
+                e.GetComponent<ChildOrder>().Stamp = stamp;
+            }
+            else
+            {
+                e.AddComponent(new ChildOrder { Stamp = stamp });
+            }
+
+            return true;
+        }
+
+        /// <summary>The name of a record (the component is added on the first non-null name).</summary>
+        public bool SetName(uint serial, string name)
+        {
+            if (!_bySerial.TryGetValue(serial, out Entity e))
+            {
+                return false;
+            }
+
+            if (e.HasComponent<EntityName>())
+            {
+                e.GetComponent<EntityName>().Value = name;
+            }
+            else if (name != null)
+            {
+                e.AddComponent(new EntityName { Value = name });
+            }
+
+            return true;
+        }
+
+        public bool SetVitals(uint serial, ushort hits, ushort hitsMax)
+        {
+            if (!_bySerial.TryGetValue(serial, out Entity e))
+            {
+                return false;
+            }
+
+            if (e.HasComponent<Vitals>())
+            {
+                ref Vitals v = ref e.GetComponent<Vitals>();
+                v.Hits = hits;
+                v.HitsMax = hitsMax;
+            }
+            else if (hits != 0 || hitsMax != 0)
+            {
+                e.AddComponent(new Vitals { Hits = hits, HitsMax = hitsMax });
+            }
+
+            return true;
+        }
+
+        public bool SetNotoriety(uint serial, byte notoriety)
+        {
+            if (!_bySerial.TryGetValue(serial, out Entity e))
+            {
+                return false;
+            }
+
+            if (e.HasComponent<MobileNotoriety>())
+            {
+                e.GetComponent<MobileNotoriety>().Value = notoriety;
+            }
+            else if (notoriety != 0)
+            {
+                e.AddComponent(new MobileNotoriety { Value = notoriety });
+            }
+
+            return true;
+        }
+
+        public bool SetPrice(uint serial, uint price)
+        {
+            if (!_bySerial.TryGetValue(serial, out Entity e))
+            {
+                return false;
+            }
+
+            if (e.HasComponent<ItemPrice>())
+            {
+                e.GetComponent<ItemPrice>().Value = price;
+            }
+            else if (price != 0)
+            {
+                e.AddComponent(new ItemPrice { Value = price });
+            }
+
+            return true;
+        }
+
+        /// <summary>-ecscheck v2: the cold fields of a record; false when the serial has no record.</summary>
+        public bool TryGetExtras(uint serial, out MirrorExtras x)
+        {
+            x = default;
+
+            if (!_bySerial.TryGetValue(serial, out Entity e))
+            {
+                return false;
+            }
+
+            if (e.TryGetComponent(out EntityName name))
+            {
+                x.Name = name.Value;
+            }
+
+            if (e.TryGetComponent(out Vitals vitals))
+            {
+                x.Hits = vitals.Hits;
+                x.HitsMax = vitals.HitsMax;
+            }
+
+            if (e.TryGetComponent(out MobileNotoriety notoriety))
+            {
+                x.Notoriety = notoriety.Value;
+            }
+
+            if (e.TryGetComponent(out ItemPrice price))
+            {
+                x.Price = price.Value;
+            }
+
+            if (e.TryGetComponent(out ItemLayer layer))
+            {
+                x.ItemLayer = layer.Value;
+            }
+
+            if (e.TryGetComponent(out ChildOrder order))
+            {
+                x.ChildStamp = order.Stamp;
+            }
+
+            return true;
+        }
+
+        /// <summary>
+        /// The death re-key (T1 part 9): the name, hits and notoriety a mobile's old record had, written to its record under
+        /// the new serial (the mobile keeps them; a record already under that serial takes them, defaults included).
+        /// </summary>
+        public void CarryMobileExtras(in MirrorExtras x, uint serial)
+        {
+            SetName(serial, x.Name);
+            SetVitals(serial, x.Hits, x.HitsMax);
+            SetNotoriety(serial, x.Notoriety);
         }
 
         public bool TryGet(uint serial, out MirrorRecord r)

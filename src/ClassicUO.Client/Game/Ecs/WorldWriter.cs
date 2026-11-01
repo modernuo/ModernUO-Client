@@ -681,8 +681,10 @@ namespace ClassicUO.Game
                     item.Container = v.Container;
                 }
 
-                // at the end of the container's child list, also when it already was there (the re-push)
+                // at the end of the container's child list, also when it already was there (the re-push); the mirror's
+                // child-order stamp follows (T1 part 9)
                 container.PushToBack(item);
+                _world.Ecs.CommitChildOrder(item);
             }
 
             return item;
@@ -897,6 +899,7 @@ namespace ClassicUO.Game
                         _world.UnlinkFromContainer(item, oldContainer);
                         container.PushToBack(item);
                         v.Container = container.Serial;
+                        _world.Ecs.CommitChildOrder(item);
                         _world.Ecs.CommitItem(item, in v);
                         item.Container = v.Container;
 
@@ -1007,7 +1010,11 @@ namespace ClassicUO.Game
                 item.Hue = v.Hue;
                 item.Amount = v.Amount;
 
-                wearer?.PushToBack(item);
+                if (wearer != null)
+                {
+                    wearer.PushToBack(item);
+                    _world.Ecs.CommitChildOrder(item);
+                }
             }
 
             return item;
@@ -1178,6 +1185,7 @@ namespace ClassicUO.Game
                 // 4. derived state where CheckGraphicChange ran it, then the link
                 item.RefreshGraphicState();
                 owner.PushToBack(item);
+                _world.Ecs.CommitChildOrder(item);
             }
 
             return item;
@@ -1420,6 +1428,7 @@ namespace ClassicUO.Game
 
             using (Open(mobile, detached ? null : mobile))
             {
+                _world.Ecs.CommitNotoriety(mobile, notoriety);
                 mobile.NotorietyFlag = notoriety;
                 _world.Ecs.CommitMobileInputs(mobile);
             }
@@ -1901,6 +1910,7 @@ namespace ClassicUO.Game
 
             using (Open(entity, null))
             {
+                _world.Ecs.CommitVitals(entity, hits, hitsMax);
                 entity.HitsMax = hitsMax;
                 entity.Hits = hits;
 
@@ -1925,6 +1935,8 @@ namespace ClassicUO.Game
 
             using (Open(entity, null))
             {
+                _world.Ecs.CommitName(entity, name);
+                _world.Ecs.CommitVitals(entity, hits, hitsMax);
                 entity.Name = name;
                 entity.Hits = hits;
                 entity.HitsMax = hitsMax;
@@ -2379,6 +2391,7 @@ namespace ClassicUO.Game
 
             using (Open(entity, null))
             {
+                _world.Ecs.CommitName(entity, name);
                 entity.Name = name;
             }
         }
@@ -2395,6 +2408,7 @@ namespace ClassicUO.Game
 
             using (Open(item, null))
             {
+                _world.Ecs.CommitPrice(item, price);
                 item.Price = price;
             }
         }
@@ -2519,6 +2533,7 @@ namespace ClassicUO.Game
                 item.Container = v.Container;
                 item.Layer = v.Layer;
                 corpse.PushToBack(item);
+                _world.Ecs.CommitChildOrder(item);
             }
 
             return item;
