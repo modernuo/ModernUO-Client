@@ -6,6 +6,14 @@ Visual or behavioural defects found in the PoC client that aren't fixed yet. Add
 
 Fails now and then in a full-suite run (seen by t3a-fold in the CuoDevTools=true variant and t3b-cache in the false variant, both on 2026-11-01), passes alone and on rerun. It compares boat steps against the old path using static time (tick) state, so it is timing-dependent; neither branch touches the boat code. Fix: drive the test from a fake clock instead of the static time. Not started.
 
+## Flaky unit tests seen in full-suite runs (recorded 2026-11-01)
+
+Each passed alone and on rerun; none is touched by the branches that hit them:
+- `AudioPackTests.A_Track_From_The_Pack_Loops_Gaplessly_Through_MusicStream` (t5c-fix, dev variant): looks like order-dependent static state in the MP3 decoder path.
+- `TileDataAuditTests.A_Multi_Component_Takes_The_Draw_Flags_Of_Its_Season_Graphic` (read-equip-on): `Data/Client/seasons.txt` missing under the test bin folder in one run.
+- Full-suite stalls after the MountHeightTests skips while another dotnet process was active (t5c-sweep, twice; `--blame-hang-timeout` reruns passed).
+Fix: isolate the static state per test class (or a collection without parallelism) and copy test data deterministically. Not started.
+
 ## Empty tiledata entries still occlude roofs and lights (recorded 2026-10-31, deferred)
 
 Found by the Codex audit of `poc/tiledata-pad` (finding 2). A component whose tiledata entry is empty (no art, zero flags) still counts in two decisions:
