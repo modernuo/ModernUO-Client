@@ -49,7 +49,12 @@ namespace ClassicUO.Game.Map
         /// <summary>Kept in the index (and skipped in the list by <see cref="TileWalk"/>). The extension point for T8: add
         /// GameEffect here, and the walks, the checker and the item cache's merged loops follow.</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static bool Holds(GameObject obj) => obj is Item || obj is Mobile;
+        public static bool Holds(GameObject obj) => obj is Item || obj is Mobile || EffectsHeld && obj is GameEffect;
+
+        /// <summary>T8 (<c>ecs_effects</c>): effects are kept in the index too (priority +2, T6a's key). Read once like
+        /// <see cref="Maintain"/>: an effect placed under one value and removed under the other would leave its entry behind;
+        /// tests set it before they build a world.</summary>
+        public static bool EffectsHeld = EffectSystem.GlobalOn;
 
         private readonly Entry[][] _cells = new Entry[64][];
         private readonly int[] _counts = new int[64];

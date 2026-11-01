@@ -24,7 +24,7 @@ namespace ClassicUO.UnitTests.Game.Map
         private readonly World _world = new World();
         private readonly Chunk _a, _b;
         private readonly StaticTiles[] _savedStaticData;
-        private readonly bool _savedMaintain;
+        private readonly bool _savedMaintain, _savedEffectsHeld;
         private uint _nextSerial = 0x4000_0100, _nextMobile = 0x100;
 
         public DynamicTileIndexTests()
@@ -38,6 +38,7 @@ namespace ClassicUO.UnitTests.Game.Map
             _savedStaticData = Chunk.StaticTileData;
             Chunk.StaticTileData = data;
             _savedMaintain = DynamicTileIndex.Maintain;
+            _savedEffectsHeld = DynamicTileIndex.EffectsHeld;
             DynamicTileIndex.Maintain = true;
             _a = new Chunk(_world) { X = 0, Y = 0 };
             _b = new Chunk(_world) { X = 1, Y = 0 };
@@ -47,6 +48,7 @@ namespace ClassicUO.UnitTests.Game.Map
         {
             Chunk.StaticTileData = _savedStaticData;
             DynamicTileIndex.Maintain = _savedMaintain;
+            DynamicTileIndex.EffectsHeld = _savedEffectsHeld;
         }
 
         private static Land NewLand(World world, sbyte z)
@@ -318,6 +320,73 @@ namespace ClassicUO.UnitTests.Game.Map
             Assert.Equal(-1, item.PendingBlock);
             Assert.Equal(new GameObject[] { item }, Indexed(_a, 3, 3));
             AssertMerged(_a, 3, 3);
+        }
+
+        private FixedEffect NewEffect(sbyte z = 0)
+        {
+            var fx = new FixedEffect(_world, _world.Effects, 1, 1, z, 0x3779, 0, 100, 0);
+            fx.RemoveFromTile(); // the constructor placed it (no map: nothing to remove); Place adds it to the test chunk
+
+            return fx;
+        }
+
+        [Fact]
+        public void Effects_Are_Held_Only_With_The_T8_Switch()
+        {
+            FixedEffect fx = NewEffect();
+            Assert.False(DynamicTileIndex.Holds(fx));
+            DynamicTileIndex.EffectsHeld = true;
+            Assert.True(DynamicTileIndex.Holds(fx));
+            Assert.True(DynamicTileIndex.Holds(NewItem(Plain, 0)));
+            Assert.False(DynamicTileIndex.Holds(NewStatic(Plain, 0)));
+        }
+
+        [Fact]
+        public void Effects_Interleave_With_Items_And_Mobiles_By_The_Plus_Two_Priority_And_Move_Between_Tiles()
+        {
+            DynamicTileIndex.EffectsHeld = true;
+            Place(_a, NewLand(_world, 0), 2, 2);
+            Place(_a, NewStatic(Tall, 0), 2, 2);
+            Mobile m = NewMobile(0);
+            Place(_a, m, 2, 2);
+            FixedEffect fx = NewEffect();
+            Place(_a, fx, 2, 2);
+            Item item = NewItem(Plain, 0);
+            Place(_a, item, 2, 2);
+            FixedEffect fx2 = NewEffect(6);
+            Place(_a, fx2, 2, 2);
+            Assert.Equal(new GameObject[] { fx, fx2 }, Indexed(_a, 2, 2).Where(o => o is GameEffect).ToArray());
+            AssertMerged(_a, 2, 2);
+
+            // an effect moves (SetInWorldTile: out of the old cell, into the new one, in another chunk too)
+            fx.RemoveFromTile();
+            Place(_b, fx, 3, 4);
+            Assert.DoesNotContain(fx, Indexed(_a, 2, 2));
+            Assert.Contains(fx, Indexed(_b, 3, 4));
+            AssertAll();
+
+            fx2.RemoveFromTile();
+            fx.RemoveFromTile();
+            m.RemoveFromTile();
+            AssertAll();
+            Assert.Equal(new GameObject[] { item }, Indexed(_a, 2, 2));
+        }
+
+        [Fact]
+        public void An_Effect_On_A_Landless_Tile_And_A_Parked_Effect_Keep_The_Index_Consistent()
+        {
+            DynamicTileIndex.EffectsHeld = true;
+            FixedEffect fx = NewEffect();
+            Place(_a, fx, 5, 5);
+            Assert.Equal(new GameObject[] { fx }, Indexed(_a, 5, 5));
+            AssertMerged(_a, 5, 5);
+
+            fx.RemoveFromTile();
+            fx.PendingBlock = 77;
+            Assert.Empty(Indexed(_a, 5, 5));
+            Place(_a, fx, 5, 5);
+            Assert.Equal(new GameObject[] { fx }, Indexed(_a, 5, 5));
+            AssertAll();
         }
 
         [Fact]

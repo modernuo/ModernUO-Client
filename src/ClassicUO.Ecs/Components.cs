@@ -463,6 +463,31 @@ namespace ClassicUO.Ecs
     // while world_active_items_system is on. The list order is the visiting order; the tag is the ECS-side membership.
     public struct ItemActive : ITag { }
 
+    /// <summary>
+    /// T8: a graphic effect (fixed, moving, drag, lightning) of <c>EffectManager</c>, while <c>ecs_effects</c> is on. It owns the
+    /// animation and lifetime state (frame, next change time, duration) that <c>EffectSystem</c> advances; position, offset,
+    /// angle and target are published by the effect's own update (the kinds' motion rules stay on the object). The entity has no
+    /// serial and is not in the mirror's serial index.
+    /// </summary>
+    public struct EffectState : IComponent
+    {
+        public const byte KIND_FIXED = 0, KIND_MOVING = 1, KIND_DRAG = 2, KIND_LIGHTNING = 3;
+        public const byte FLAG_ENABLED = 1, FLAG_EXPLODES = 2, FLAG_FIXED_DIR = 4, FLAG_MOVING = 8;
+
+        public byte Kind;
+        public byte Blend;
+        public byte AnimIndex;
+        public byte Flags;
+        public ushort Graphic, AnimGraphic, Hue;
+        public ushort X, Y, TargetX, TargetY;
+        public sbyte Z, TargetZ;
+        public uint Interval;
+        public long Duration;
+        public long NextChange;
+        public float OffsetX, OffsetY, Angle;
+        public uint SourceSerial, TargetSerial;
+    }
+
     public static class EcsSchema
     {
         private static readonly object _lock = new object();
@@ -520,6 +545,7 @@ namespace ClassicUO.Ecs
             Component<EquipmentSlots>(aot);
             Tag<EquipmentDirty>(aot);
             Tag<ItemActive>(aot); // T5d
+            Component<EffectState>(aot); // T8
             Component<MobileInputs>(aot);
             Component<MobileClock>(aot);
             Component<AnimationTimer>(aot); // T5b
