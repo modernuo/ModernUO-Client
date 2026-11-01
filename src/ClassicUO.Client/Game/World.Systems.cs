@@ -60,6 +60,17 @@ namespace ClassicUO.Game
         /// <summary>T5d (<c>world_active_items_system</c>, default off): the update list's membership is the <see cref="ItemActive"/> tag too.</summary>
         public bool ActiveItemsSystemOn => ActiveItemsSystemOverride ?? s_activeItemsSystem;
 
+        /// <summary>Tests: the T8 switch for this World (null: <c>ecs_effects</c>, read once at startup).</summary>
+        internal bool? EffectsSystemOverride;
+
+        /// <summary>Tests: the T8 checker for this World (null: <c>CUO_EFFECT_CHECK=1</c>).</summary>
+        internal bool? EffectsCheckOverride;
+
+        /// <summary>T8 (<c>ecs_effects</c>, default off): effects are ECS entities advanced by <see cref="EffectSystem"/>.</summary>
+        public bool EffectsSystemOn => EffectsSystemOverride ?? EffectSystem.GlobalOn;
+
+        public bool EffectsCheckOn => EffectsCheckOverride ?? EffectSystem.GlobalCheck;
+
         public bool ActiveItemsCheckOn => ActiveItemsCheckOverride ?? s_activeItemsCheck;
 
         /// <summary>Checker counts: frames compared, mismatches found.</summary>
