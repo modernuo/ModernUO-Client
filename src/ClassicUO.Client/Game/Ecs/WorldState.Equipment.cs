@@ -33,7 +33,8 @@ namespace ClassicUO.Game
     internal sealed class WornCache
     {
         public EcsEntity Entity;
-        public uint Serial, Epoch, Version;
+        public uint Serial, Epoch;
+        public ulong Version;
         public long Writes;
         public WornHeld Held;
         public Item[] Items;

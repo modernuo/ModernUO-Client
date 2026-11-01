@@ -137,8 +137,12 @@ namespace ClassicUO.Ecs
         /// wearer's equipment only when another one is left.</summary>
         public WornCountArray Counts;
 
-        /// <summary>Changes with every slot change (a mirror-wide counter, never reused): readers' caches key on it.</summary>
-        public uint Version;
+        /// <summary>Changes with every slot change (a mirror-wide 64-bit counter, never reused): readers' caches key on it.</summary>
+        public ulong Version;
+
+        /// <summary>A layer's count at 255 means 255 or more (it saturates, never wraps): a departure rescans the wearer's
+        /// equipment for the exact count and the first item.</summary>
+        public const byte SATURATED = byte.MaxValue;
 
         /// <summary>The first attached item's serial on <paramref name="layer"/>, 0 when none or the layer is not tracked.</summary>
         public readonly uint Get(byte layer) => (uint)(layer - 1) < COUNT ? Serials[layer - 1] : 0;

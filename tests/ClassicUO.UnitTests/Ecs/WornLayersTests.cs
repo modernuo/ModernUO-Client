@@ -1,3 +1,5 @@
+using System;
+using System.Collections.Generic;
 using System.Linq;
 using ClassicUO.Ecs;
 using ClassicUO.Game;
@@ -263,7 +265,109 @@ namespace ClassicUO.UnitTests.Ecs
             e.Tags.Has<PlayerTag>().Should().BeTrue();
             e.Tags.Has<EquipmentDirty>().Should().BeTrue();
             mirror.UpsertMobile(0x0000_1001, 0x190, 0, 0, 0, 0, 0, 0, false).Tags.Has<PlayerTag>().Should().BeFalse();
-            mirror.WornLayersBytes.Should().Be(2 * 152, "4 B serials and 1 B counts per layer, a 4 B version, aligned");
+            mirror.WornLayersBytes.Should().Be(2 * 160, "4 B serials and 1 B counts per layer, an 8 B version, aligned");
+            System.Runtime.CompilerServices.Unsafe.SizeOf<WornLayers>().Should().Be(160);
+            System.Runtime.CompilerServices.Unsafe.SizeOf<EquipmentSlots>().Should().Be(712, "WornLayers inside (T3a)");
+        }
+
+        // the lowest-stamp attached item on the layer and the number of them, from the mirror's equipment index
+        private static (uint First, int Count) Scan(WorldMirror mirror, uint mobile, byte layer)
+        {
+            uint first = 0;
+            ulong best = ulong.MaxValue;
+            int n = 0;
+
+            foreach (Friflo.Engine.ECS.Entity c in mirror.GetEquipment(mobile))
+            {
+                ulong stamp = c.GetComponent<ItemData>().Stamp;
+
+                if (c.GetComponent<EquippedOn>().Layer != layer || stamp == 0)
+                {
+                    continue;
+                }
+
+                n++;
+
+                if (stamp < best)
+                {
+                    best = stamp;
+                    first = c.GetComponent<Serial>().Value;
+                }
+            }
+
+            return (first, n);
+        }
+
+        private static void AssertLayer(WorldMirror mirror, string because)
+        {
+            (uint first, int n) = Scan(mirror, MOB, (byte)Layer.Helmet);
+            mirror.Worn(MOB, (byte)Layer.Helmet).Should().Be(first, because);
+            mirror.WornCount(MOB, (byte)Layer.Helmet).Should().Be(Math.Min(n, WornLayers.SATURATED), because);
+        }
+
+        [Theory]
+        [InlineData(255, false)]
+        [InlineData(256, false)]
+        [InlineData(257, false)]
+        [InlineData(255, true)]
+        [InlineData(256, true)]
+        [InlineData(257, true)]
+        public void A_Layer_With_255_Or_More_Items_Saturates_And_Rescans(int items, bool rebuilt)
+        {
+            // Codex audit P2 (#3): the per-layer byte count saturated at 255 (255 or more) instead of wrapping at 256, where
+            // a departure of the first item cleared the slot with others still attached
+            var mirror = new WorldMirror();
+            mirror.UpsertMobile(MOB, 0x190, 0, 1, 1, 0, 0, 0, false);
+            var serials = new List<uint>();
+
+            for (int i = 0; i < items; i++)
+            {
+                uint s = 0x4100_0000u + (uint)i;
+                serials.Add(s);
+                mirror.UpsertItem(s, 0x1408, 0, 1, 1, 0, 0, 0, 1, MOB, (byte)Layer.Helmet, false, attach: true);
+                AssertLayer(mirror, $"attach {i + 1}");
+            }
+
+            mirror.Worn(MOB, (byte)Layer.Helmet).Should().Be(serials[0]);
+
+            if (rebuilt)
+            {
+                // reconstruction over the attached children: the rebuild saturates too
+                mirror.Remove(MOB);
+                mirror.UpsertMobile(MOB, 0x190, 0, 1, 1, 0, 0, 0, false);
+                AssertLayer(mirror, "rebuilt");
+                mirror.WornCount(MOB, (byte)Layer.Helmet).Should().Be(255);
+            }
+
+            // departures, the first then the last in turn (the first departure is the one that wrapped to 0 before)
+            int k = 0;
+
+            while (serials.Count > 0)
+            {
+                int at = k++ % 2 == 0 ? 0 : serials.Count - 1;
+                mirror.Remove(serials[at]);
+                serials.RemoveAt(at);
+                AssertLayer(mirror, $"{serials.Count} left");
+                mirror.Worn(MOB, (byte)Layer.Helmet).Should().Be(serials.Count == 0 ? 0 : serials[0]);
+            }
+
+            mirror.WornCount(MOB, (byte)Layer.Helmet).Should().Be(0);
+        }
+
+        [Fact]
+        public void The_Version_Is_64_Bit_Past_The_32_Bit_Boundary()
+        {
+            // Codex audit P3 (#6): the version was the write counter truncated to 32 bits
+            var mirror = new WorldMirror();
+            Friflo.Engine.ECS.Entity e = mirror.UpsertMobile(MOB, 0x190, 0, 1, 1, 0, 0, 0, false);
+            mirror.WornWrites = uint.MaxValue - 1;
+
+            mirror.UpsertItem(HELM, 0x1408, 0, 1, 1, 0, 0, 0, 1, MOB, (byte)Layer.Helmet, false, attach: true);
+            e.GetComponent<EquipmentSlots>().Worn.Version.Should().Be(uint.MaxValue);
+            mirror.UpsertItem(SHIRT, 0x1517, 0, 1, 1, 0, 0, 0, 1, MOB, (byte)Layer.Shirt, false, attach: true);
+            e.GetComponent<EquipmentSlots>().Worn.Version.Should().Be((ulong)uint.MaxValue + 1, "not 0");
+            mirror.Remove(HELM);
+            e.GetComponent<EquipmentSlots>().Worn.Version.Should().Be((ulong)uint.MaxValue + 2);
         }
     }
 }

@@ -849,7 +849,7 @@ namespace ClassicUO.Ecs
 
         /// <summary>
         /// Memory of WornLayers (layout-based accounting, as <see cref="ContentsCacheBytes"/>): the struct in each mobile record's
-        /// EquipmentSlots (the serials, the per-layer counts and the version: 152 B; Friflo stores a component in a per-archetype struct
+        /// EquipmentSlots (the serials, the per-layer counts and the 64-bit version: 160 B; Friflo stores a component in a per-archetype struct
         /// array, so the cost is the struct size per mobile record, plus the columns' spare capacity, not counted here).
         /// </summary>
         public long WornLayersBytes => (long)MobileCount * Unsafe.SizeOf<WornLayers>();
@@ -909,11 +909,11 @@ namespace ClassicUO.Ecs
             return true;
         }
 
-        // a slot changed: the mobile's version (a never-reused value, so a reader's cache keyed on it can't see an old one)
+        // a slot changed: the mobile's version (a never-reused 64-bit value, so a reader's cache keyed on it can't see an old one)
         private void Bump(ref WornLayers w)
         {
             WornWrites++;
-            w.Version = (uint)WornWrites;
+            w.Version = (ulong)WornWrites; // Codex audit P3 (#6): 64-bit end to end, never wraps
         }
 
         // the item joined the wearer's list on the layer with this stamp: it comes first unless an earlier one is there
@@ -925,7 +925,14 @@ namespace ClassicUO.Ecs
             }
 
             ref WornLayers w = ref p.GetComponent<EquipmentSlots>().Worn;
-            w.Counts[layer - 1]++;
+            ref byte count = ref w.Counts[layer - 1];
+
+            // Codex audit P2 (#3): the count saturates (255 = 255 or more) instead of wrapping to 0; a departure then rescans
+            if (count != WornLayers.SATURATED)
+            {
+                count++;
+            }
+
             ref uint slot = ref w.Serials[layer - 1];
 
             if (slot == serial)
@@ -951,13 +958,27 @@ namespace ClassicUO.Ecs
 
             ref WornLayers w = ref p.GetComponent<EquipmentSlots>().Worn;
             ref byte count = ref w.Counts[layer - 1];
+            ref uint slot = ref w.Serials[layer - 1];
+
+            if (count == WornLayers.SATURATED)
+            {
+                // Codex audit P2 (#3): the count is 255 or more, so the exact number left is not known: one rescan of the
+                // wearer's equipment counts what is left on the layer (exact again below 255) and finds its first item
+                count = (byte)Math.Min(ScanWorn(parent, layer, serial, out uint first), WornLayers.SATURATED);
+
+                if (slot == serial)
+                {
+                    slot = first;
+                    Bump(ref w);
+                }
+
+                return;
+            }
 
             if (count != 0)
             {
                 count--;
             }
-
-            ref uint slot = ref w.Serials[layer - 1];
 
             if (slot == serial)
             {
@@ -969,7 +990,17 @@ namespace ClassicUO.Ecs
         // the attached child of the wearer on the layer with the lowest stamp, other than exclude (0 when none)
         private uint FirstWorn(uint parent, byte layer, uint exclude)
         {
+            ScanWorn(parent, layer, exclude, out uint first);
+
+            return first;
+        }
+
+        // the attached children of the wearer on the layer other than exclude: their number, and the one with the lowest stamp
+        // (0 when none)
+        private int ScanWorn(uint parent, byte layer, uint exclude, out uint first)
+        {
             WornRescans++;
+            int n = 0;
             uint best = 0;
             ulong bestStamp = ulong.MaxValue;
 
@@ -983,14 +1014,23 @@ namespace ClassicUO.Ecs
                 ulong stamp = c.GetComponent<ItemData>().Stamp;
                 uint s = c.GetComponent<Serial>().Value;
 
-                if (stamp != 0 && stamp < bestStamp && s != exclude)
+                if (stamp == 0 || s == exclude)
+                {
+                    continue;
+                }
+
+                n++;
+
+                if (stamp < bestStamp)
                 {
                     best = s;
                     bestStamp = stamp;
                 }
             }
 
-            return best;
+            first = best;
+
+            return n;
         }
 
         // every tracked layer from the wearer's attached children (a record created under a serial that has some)
@@ -1010,7 +1050,10 @@ namespace ClassicUO.Ecs
                     continue;
                 }
 
-                w.Counts[layer - 1]++;
+                if (w.Counts[layer - 1] != WornLayers.SATURATED)
+                {
+                    w.Counts[layer - 1]++;
+                }
 
                 if (w.Serials[layer - 1] == 0 || stamp < stamps[layer - 1])
                 {
