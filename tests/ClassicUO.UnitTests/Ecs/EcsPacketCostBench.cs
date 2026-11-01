@@ -3,6 +3,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Text;
 using ClassicUO.Ecs;
 using ClassicUO.Game;
@@ -62,6 +63,10 @@ namespace ClassicUO.UnitTests.Ecs
 
             return s;
         }
+
+        // t3a-fold: the lists as the handler hands them to ReplaceWornItems
+        private static WorldWriter.WornEntry[][] ToEntries((uint Serial, ushort Graphic, Layer Layer, ushort Hue)[][] lists) =>
+            lists.Select(l => l.Select(e => new WorldWriter.WornEntry(e.Serial, e.Graphic, e.Layer, e.Hue)).ToArray()).ToArray();
 
         private static (double us, double bytes) Measure(int packets, Action<int> one)
         {
@@ -296,17 +301,12 @@ namespace ClassicUO.UnitTests.Ecs
             rows.Add(("T1 old path: 0x78 equipment list (clear + 5 entries), per packet", Measure(lists78, i =>
                 WorldWriterTests.OldWear(s.World, s.Mobiles[i % n].Serial, lists[i % n]))));
 
-            rows.Add(("T1 funnel: 0x78 equipment list (ClearWornItems + 5 WearItem)", Measure(lists78, i =>
-            {
-                Mobile owner = s.Mobiles[i % n];
-                var list = lists[i % n];
-                s.World.Writer.ClearWornItems(owner.Serial);
+            // t3a-fold: the handler's path is ReplaceWornItems (the clear and the 5 wears in one operation); the row keeps its
+            // name so E2 pairs it with the base's
+            var entries78 = ToEntries(lists);
 
-                for (int k = 0; k < list.Length; k++)
-                {
-                    s.World.Writer.WearItem(owner, list[k].Serial, list[k].Graphic, list[k].Layer, list[k].Hue);
-                }
-            })));
+            rows.Add(("T1 funnel: 0x78 equipment list (ClearWornItems + 5 WearItem)", Measure(lists78, i =>
+                s.World.Writer.ReplaceWornItems(s.Mobiles[i % n], entries78[i % n]))));
 
             // 0x25 item into a container, then out
             rows.Add(("item into backpack (0x25) + out, per packet", Measure(packets, i =>
@@ -522,16 +522,7 @@ namespace ClassicUO.UnitTests.Ecs
                 })));
 
                 rows.Add(($"T2 {kind}: 0x78 equipment list (ClearWornItems + 5 WearItem)", Measure(lists78, i =>
-                {
-                    Mobile owner = f.Mobiles[i % n];
-                    var list = lists[i % n];
-                    f.World.Writer.ClearWornItems(owner.Serial);
-
-                    for (int k = 0; k < list.Length; k++)
-                    {
-                        f.World.Writer.WearItem(owner, list[k].Serial, list[k].Graphic, list[k].Layer, list[k].Hue);
-                    }
-                })));
+                    f.World.Writer.ReplaceWornItems(f.Mobiles[i % n], entries78[i % n]))));
             }
 
             T2Scene("control", false);

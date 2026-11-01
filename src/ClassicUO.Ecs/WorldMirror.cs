@@ -300,6 +300,14 @@ namespace ClassicUO.Ecs
             {
                 MobileCount--;
                 _mobileEpoch++;
+
+                // t3a-fold: the batch wearer's record goes, and its batched WornLayers with it (later leaves and enters find
+                // no wearer, as they would without the batch)
+                if (serial == _batchWearer)
+                {
+                    _batchWearer = 0;
+                    _batchLoaded = false;
+                }
             }
             else
             {
@@ -369,6 +377,8 @@ namespace ClassicUO.Ecs
             _bySerial.Clear();
             MobileCount = 0;
             _mobileEpoch++;
+            _batchWearer = 0;
+            _batchLoaded = false;
 
             // T2: no record is left, so no parent has contents
             foreach (ContentsSlot slot in _contents.Values)
@@ -845,6 +855,7 @@ namespace ClassicUO.Ecs
         /// tracked (0, above 0x1D) or when the serial has no mobile record.
         /// </summary>
         public uint Worn(uint mobile, byte layer) =>
+            _batchLoaded && mobile == _batchWearer ? _batchWorn.Get(layer) :
             _bySerial.TryGetValue(mobile, out Entity e) && e.TryGetComponent(out EquipmentSlots eq) ? eq.Worn.Get(layer) : 0;
 
         /// <summary>
@@ -856,7 +867,9 @@ namespace ClassicUO.Ecs
 
         /// <summary>Tests: the attached items on a wearer's layer, as WornLayers counts them.</summary>
         public int WornCount(uint mobile, byte layer) =>
-            _bySerial.TryGetValue(mobile, out Entity e) && e.TryGetComponent(out EquipmentSlots eq) && WornLayers.Tracked(layer) ? eq.Worn.Counts[layer - 1] : 0;
+            !WornLayers.Tracked(layer) ? 0 :
+            _batchLoaded && mobile == _batchWearer ? _batchWorn.Counts[layer - 1] :
+            _bySerial.TryGetValue(mobile, out Entity e) && e.TryGetComponent(out EquipmentSlots eq) ? eq.Worn.Counts[layer - 1] : 0;
 
         // the item's attachment to a wearer before and after a write (a wearer's parent, layer and stamp; 0 when none)
         private void UpdateWorn(uint serial, uint oldParent, byte oldLayer, ulong oldStamp, uint newParent, byte newLayer, ulong newStamp)
@@ -887,6 +900,104 @@ namespace ClassicUO.Ecs
         // Epoch, leaves every wearer's record alive: 0x78's clear removes the items one by one, then the wears add them)
         private uint _mobileEpoch;
 
+        // t3a-fold (0x78's ReplaceWornItems): one wearer's WornLayers held in a copy for the length of one operation. Every
+        // leave and enter on that wearer works on the copy (no component access per item); EndWornBatch writes it back once,
+        // with one version bump, and only when a serial or a count differs from what the batch loaded (an identical outfit
+        // resent: no write, no bump). Loaded lazily at the first leave or enter on the wearer.
+        private uint _batchWearer;
+        private bool _batchLoaded;
+        private Entity _batchEntity;
+        private WornLayers _batchWorn, _batchStart;
+
+        /// <summary>Tests and the 5 s summary: batches that wrote their wearer's WornLayers back (a change) and that did not.</summary>
+        public long WornBatchWrites, WornBatchUnchanged;
+
+        /// <summary>
+        /// t3a-fold: from now until <see cref="EndWornBatch"/>, WornLayers changes on <paramref name="wearer"/> (a mobile
+        /// serial, or a dying mobile's 0x80000000 | serial; anything else: no batch) are collected and written once. One
+        /// operation at a time (the funnel's operations do not nest); a batch already open is ended first.
+        /// </summary>
+        public void BeginWornBatch(uint wearer)
+        {
+            if (_batchWearer != 0)
+            {
+                EndWornBatch();
+            }
+
+            _batchWearer = IsWearerSerial(wearer) ? wearer : 0;
+            _batchLoaded = false;
+        }
+
+        /// <summary>
+        /// t3a-fold: ends the batch: when its wearer's serials or counts changed, writes them to the wearer's record (one
+        /// component access) and bumps its version once; otherwise writes nothing. A wearer whose record was removed during
+        /// the batch has nothing to write.
+        /// </summary>
+        public void EndWornBatch()
+        {
+            bool loaded = _batchLoaded;
+            _batchWearer = 0;
+            _batchLoaded = false;
+
+            if (!loaded)
+            {
+                return;
+            }
+
+            if (SameSlots(in _batchWorn, in _batchStart))
+            {
+                WornBatchUnchanged++;
+
+                return;
+            }
+
+            WornBatchWrites++;
+            ref WornLayers w = ref _batchEntity.GetComponent<EquipmentSlots>().Worn;
+            w.Serials = _batchWorn.Serials;
+            w.Counts = _batchWorn.Counts;
+            Bump(ref w);
+        }
+
+        private static bool SameSlots(in WornLayers a, in WornLayers b) =>
+            ((ReadOnlySpan<uint>)a.Serials).SequenceEqual(b.Serials) && ((ReadOnlySpan<byte>)a.Counts).SequenceEqual(b.Counts);
+
+        // the WornLayers a leave or an enter on parent changes: the batch's copy for the batch wearer (loaded at its first
+        // use), else the wearer record's component; a null ref when parent has no record with EquipmentSlots
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private ref WornLayers WornOf(uint parent, out bool batched)
+        {
+            if (parent == _batchWearer && parent != 0)
+            {
+                batched = true;
+
+                if (_batchLoaded)
+                {
+                    return ref _batchWorn;
+                }
+
+                if (!TryGetWearer(parent, out Entity b))
+                {
+                    return ref Unsafe.NullRef<WornLayers>();
+                }
+
+                _batchEntity = b;
+                _batchWorn = b.GetComponent<EquipmentSlots>().Worn;
+                _batchStart = _batchWorn;
+                _batchLoaded = true;
+
+                return ref _batchWorn;
+            }
+
+            batched = false;
+
+            if (!TryGetWearer(parent, out Entity p))
+            {
+                return ref Unsafe.NullRef<WornLayers>();
+            }
+
+            return ref p.GetComponent<EquipmentSlots>().Worn;
+        }
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         private bool TryGetWearer(uint parent, out Entity p)
         {
@@ -910,6 +1021,15 @@ namespace ClassicUO.Ecs
         }
 
         // a slot changed: the mobile's version (a never-reused 64-bit value, so a reader's cache keyed on it can't see an old one)
+        private void Bump(ref WornLayers w, bool batched)
+        {
+            // t3a-fold: a batched change is counted and versioned once, when the batch writes back
+            if (!batched)
+            {
+                Bump(ref w);
+            }
+        }
+
         private void Bump(ref WornLayers w)
         {
             WornWrites++;
@@ -919,12 +1039,18 @@ namespace ClassicUO.Ecs
         // the item joined the wearer's list on the layer with this stamp: it comes first unless an earlier one is there
         private void EnterWorn(uint parent, byte layer, uint serial, ulong stamp)
         {
-            if (!WornLayers.Tracked(layer) || !TryGetWearer(parent, out Entity p))
+            if (!WornLayers.Tracked(layer))
             {
                 return;
             }
 
-            ref WornLayers w = ref p.GetComponent<EquipmentSlots>().Worn;
+            ref WornLayers w = ref WornOf(parent, out bool batched);
+
+            if (Unsafe.IsNullRef(ref w))
+            {
+                return;
+            }
+
             ref byte count = ref w.Counts[layer - 1];
 
             // Codex audit P2 (#3): the count saturates (255 = 255 or more) instead of wrapping to 0; a departure then rescans
@@ -943,7 +1069,7 @@ namespace ClassicUO.Ecs
             if (slot == 0 || StampOf(slot) > stamp)
             {
                 slot = serial;
-                Bump(ref w);
+                Bump(ref w, batched);
             }
         }
 
@@ -951,12 +1077,18 @@ namespace ClassicUO.Ecs
         // the layer's count of attached items spares the index scan when none is left
         private void LeaveWorn(uint parent, byte layer, uint serial)
         {
-            if (!WornLayers.Tracked(layer) || !TryGetWearer(parent, out Entity p))
+            if (!WornLayers.Tracked(layer))
             {
                 return;
             }
 
-            ref WornLayers w = ref p.GetComponent<EquipmentSlots>().Worn;
+            ref WornLayers w = ref WornOf(parent, out bool batched);
+
+            if (Unsafe.IsNullRef(ref w))
+            {
+                return;
+            }
+
             ref byte count = ref w.Counts[layer - 1];
             ref uint slot = ref w.Serials[layer - 1];
 
@@ -969,7 +1101,7 @@ namespace ClassicUO.Ecs
                 if (slot == serial)
                 {
                     slot = first;
-                    Bump(ref w);
+                    Bump(ref w, batched);
                 }
 
                 return;
@@ -983,7 +1115,7 @@ namespace ClassicUO.Ecs
             if (slot == serial)
             {
                 slot = count == 0 ? 0 : FirstWorn(parent, layer, serial);
-                Bump(ref w);
+                Bump(ref w, batched);
             }
         }
 
