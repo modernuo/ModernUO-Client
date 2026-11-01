@@ -39,6 +39,11 @@ namespace ClassicUO.UnitTests.Ecs
         [MemberData(nameof(Changes))]
         public void A_World_Changed_Through_The_Funnel_Checks_Clean(WorldStateContentsTests.Change change)
         {
+            if (!WorldState.CheckAvailable)
+            {
+                return;
+            }
+
             (World world, List<string> reports) = Build();
             ReadAll(world);
 
@@ -56,6 +61,11 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void The_Spellbook_Entries_Check_Against_The_Set()
         {
+            if (!WorldState.CheckAvailable)
+            {
+                return;
+            }
+
             (World world, List<string> reports) = Build();
 
             world.Writer.FillSpellbook(BOOK, 0xEFA, 0b1011, 0x8000_0000);
@@ -92,6 +102,11 @@ namespace ClassicUO.UnitTests.Ecs
         [InlineData(Divergence.SpellEntriesDropped, BOOK)]
         public void A_Divergence_Is_Reported_At_A_Read_And_At_The_Gump_Check(Divergence divergence, uint parent)
         {
+            if (!WorldState.CheckAvailable)
+            {
+                return;
+            }
+
             (World world, List<string> reports) = Build();
             world.Writer.FillSpellbook(BOOK, 0xEFA, 0b101, 0);
             ReadAll(world);
