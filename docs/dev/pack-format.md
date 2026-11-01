@@ -390,7 +390,7 @@ At runtime, an equipped item on body `body` with animId `graphic` is drawn as `n
 
 ### `layerrules.bin` (optional)
 
-ClassicUO's hard-coded equipment layering (the draw order, the cloak move by facing, the covering rules and the gargoyle remaps) as data: magic `LAYR`, a `LayerRulesHeader` of six i32 counts, then body groups, base draw-order tables, rules, conditions and ranges. The converter writes it from `Uo.Pack.LayerRulesDefault.Create()` (stage `layers`, no install data), and a client whose pack has no such file uses the same `Create()`. The client reads it only when the `ecs_layer_rules` setting is on. The full layout, the evaluation rules, the setting and the checker are in [layer-rules.md](layer-rules.md).
+ClassicUO's hard-coded equipment layering (the draw order, the cloak move by facing, the covering rules and the gargoyle remaps) as data: magic `LAYR`, a `LayerRulesHeader` of six i32 counts, then body groups, base draw-order tables, rules, conditions and ranges. The converter writes it from `Uo.Pack.LayerRulesDefault.Create()`, or from a JSON file given with `--layer-rules` (stage `layers`, no install data), and a client whose pack has no such file uses the same `Create()`. The client reads it while the `ecs_layer_rules` setting is on (the default). The full layout, the evaluation rules, the setting and the checker are in [layer-rules.md](layer-rules.md).
 
 ## Record stores
 
