@@ -33,10 +33,28 @@ namespace ClassicUO.Game
         private uint _walkGiveUp;
         private uint _held;
         private uint _logoutAt;
+        private bool _ownsMouse;
 
         private EcsSessionDriver(string[] lines)
         {
             _lines = lines;
+        }
+
+        // Tests: a driver over in-memory lines (no file, no world).
+        internal static EcsSessionDriver FromLines(string[] lines) => new EcsSessionDriver(lines);
+
+        // The script's `mouse` override is the driver's: set only by `mouse`, released when the script ends (EOF, quit,
+        // logout), when the driver gump goes away or the world leaves the game (disconnect), and if a line throws, so a
+        // frozen scripted cursor never outlives the script. An override the driver did not set (DevBench) is left alone.
+        internal bool OwnsMouse => _ownsMouse;
+
+        internal void ReleaseMouse()
+        {
+            if (_ownsMouse)
+            {
+                _ownsMouse = false;
+                Input.Mouse.Override = null;
+            }
         }
 
         public static EcsSessionDriver Load(string path)
@@ -104,22 +122,62 @@ namespace ClassicUO.Game
                 return;
             }
 
-            while (_pc < _lines.Length)
+            Step(line => Execute(world, player, line));
+        }
+
+        // Runs script lines until one yields (true) or the script ends (false; the scripted cursor is released).
+        internal bool Step(Func<string, bool> execute)
+        {
+            try
             {
-                string line = _lines[_pc++].Trim();
-
-                if (line.Length == 0 || line[0] == '#')
+                while (_pc < _lines.Length)
                 {
-                    continue;
-                }
+                    string line = _lines[_pc++].Trim();
 
-                Log.Info($"[ECS] driver> {line}");
+                    if (line.Length == 0 || line[0] == '#')
+                    {
+                        continue;
+                    }
 
-                if (Execute(world, player, line))
-                {
-                    return;
+                    Log.Info($"[ECS] driver> {line}");
+
+                    if (line.StartsWith("mouse ", StringComparison.Ordinal) ? ExecuteMouse(line.Substring(6)) : execute(line))
+                    {
+                        return true;
+                    }
                 }
             }
+            catch
+            {
+                ReleaseMouse();
+
+                throw;
+            }
+
+            ReleaseMouse();
+
+            return false;
+        }
+
+        // mouse <x> <y> | mouse off: the scripted cursor (Input.Mouse.Override; the OS cursor is not moved), so the
+        // shots hover the same spot
+        private bool ExecuteMouse(string arg)
+        {
+            string[] args = arg.Split(' ', StringSplitOptions.RemoveEmptyEntries);
+
+            if (args.Length > 1 && int.TryParse(args[0], out int mx) && int.TryParse(args[1], out int my))
+            {
+                Input.Mouse.Override = new Microsoft.Xna.Framework.Point(mx, my);
+                _ownsMouse = true;
+            }
+            else
+            {
+                ReleaseMouse();
+            }
+
+            Log.Info($"[ECS] ui mouse {string.Join(" ", args)}");
+
+            return true;
         }
 
         // returns true when the script should yield for at least a frame
@@ -669,16 +727,6 @@ namespace ClassicUO.Game
                     return true;
                 }
 
-                // mouse <x> <y> | mouse off: the scripted cursor (Input.Mouse.Override; the OS cursor is not moved), so the
-                // shots hover the same spot
-                case "mouse" when args.Length > 0:
-                    Input.Mouse.Override = args.Length > 1 && int.TryParse(args[0], out int mx) && int.TryParse(args[1], out int my)
-                        ? new Microsoft.Xna.Framework.Point(mx, my)
-                        : null;
-                    Log.Info($"[ECS] ui mouse {string.Join(" ", args)}");
-
-                    return true;
-
                 // readcontents on|off: the container-contents readers from the ECS (ecs_read_contents, T2)
                 case "readcontents" when args.Length > 0:
                     Settings.GlobalSettings.EcsReadContents = args[0] == "on";
@@ -899,12 +947,14 @@ namespace ClassicUO.Game
 
                 // logout: drop the socket, then swap to the login scene (World.Clear) and exit; log back in with a new process
                 case "logout":
+                    ReleaseMouse();
                     NetClient.Socket.Disconnect();
                     _logoutAt = Time.Ticks + 2000;
 
                     return true;
 
                 case "quit":
+                    ReleaseMouse();
                     world.Ecs.RunCheck(true);
                     EcsParity.Summary();
                     Client.Game.Exit();
@@ -937,6 +987,16 @@ namespace ClassicUO.Game
                 {
                     _driver.Update(World);
                 }
+                else
+                {
+                    _driver.ReleaseMouse(); // disconnected: the driver no longer advances, so its cursor must not stay
+                }
+            }
+
+            public override void Dispose()
+            {
+                _driver.ReleaseMouse();
+                base.Dispose();
             }
         }
 
