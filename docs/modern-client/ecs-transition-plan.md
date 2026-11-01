@@ -242,6 +242,8 @@ So the data file is keyed by body group (human male/female, elf male/female, gar
 - paperdoll and world screenshots for each body group wearing the same reference outfits, compared with the EA client (the owner can supply EA shots);
 - outfits that include the issue #39 cases (ringmail arms over a shirt, thigh boots over leggings), a robe with a hood, and a gargoyle robe and spellbook.
 
+**Status, T3b (2026-11-01):** on `bg/ecs-t3-layering` (poc-log "T3b: equipment layering rules as data"). Today's rules are data (`layerrules.bin`, `LayerRulesDefault` the one source, the converter's `layers` stage; the pack publish is the coordinator's), evaluated behind `ecs_layer_rules` (default off) in MobileView, the paperdoll and MobileAnimationSystem; `CUO_LAYER_RULES_CHECK=1` compares every decision; 68 M-check exhaustive tests and 634 mutants. Left: the EA comparison and issue #39's rules (data entries), the default flip, the ECS slot cloak move from data, T9 (delete the hard-coded copy).
+
 ### T4: thin handles; the ECS owns scalar state
 
 **What changes:**
