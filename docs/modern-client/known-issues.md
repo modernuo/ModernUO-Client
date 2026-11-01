@@ -2,17 +2,19 @@
 
 Visual or behavioural defects found in the PoC client that aren't fixed yet. Add new ones here; move them to the poc-log when fixed.
 
-## Flaky unit test: `WorldWriterMobileTests.The_Boat_Steps_Equal_The_Old_Path` (recorded 2026-11-01)
+## Flaky unit tests in full-suite runs: fixed by isolation on `bg/flaky-tests` (recorded 2026-11-01)
 
-Fails now and then in a full-suite run (seen by t3a-fold in the CuoDevTools=true variant and t3b-cache in the false variant, both on 2026-11-01), passes alone and on rerun. It compares boat steps against the old path using static time (tick) state, so it is timing-dependent; neither branch touches the boat code. Fix: drive the test from a fake clock instead of the static time. Not started.
+Seen in full-suite runs, passing alone and on rerun: `WorldWriterMobileTests.The_Ecs_Advance_Equals_The_Legacy_Update` (several cases), `WorldWriterMobileTests.The_Boat_Steps_Equal_The_Old_Path`, `Mp3DecoderTests.Dispose_IsIdempotentAndFreesOnce`, `AudioPackTests.A_Track_From_The_Pack_Loops_Gaplessly_Through_MusicStream`, `TileDataAuditTests.A_Multi_Component_Takes_The_Draw_Flags_Of_Its_Season_Graphic`.
 
-## Flaky unit tests seen in full-suite runs (recorded 2026-11-01)
+Root causes and fixes (tests only, no production change):
+- **`WorldWriterMobileTests` (T5b advance and boat steps)**: the class had no `[Collection]`, so it ran in parallel with other test classes while it advances the static `Time.Ticks` and compares the shared RNG draw sequence. It now joins the non-parallel `FunnelCheckCollection` like the other funnel-check classes in that file family.
+- **MP3 tests**: `Mp3Decoder.LiveInputAllocations` is a process-wide count and `OpenMemoryOverride` a static hook; `Mp3DecoderTests` asserts exact before/after counts while `AudioPackTests` (MusicStream) opened decoders in parallel. Both classes now share the non-parallel collection `Mp3DecoderGlobals`.
+- **`seasons.txt`**: `SeasonManager`'s static constructor reads or writes `<cwd>/Data/Client/seasons.txt` but never creates the folder, which existed in the bin folder only as a side effect of other tests. A module initializer in `tests/ClassicUO.UnitTests/TestEnvironment.cs` creates it.
+- Also: the join of the disposer thread in `Dispose_RacingRead_IsSafe` is now bounded (30 s).
 
-Each passed alone and on rerun; none is touched by the branches that hit them:
-- `AudioPackTests.A_Track_From_The_Pack_Loops_Gaplessly_Through_MusicStream` (t5c-fix, dev variant): looks like order-dependent static state in the MP3 decoder path.
-- `TileDataAuditTests.A_Multi_Component_Takes_The_Draw_Flags_Of_Its_Season_Graphic` (read-equip-on): `Data/Client/seasons.txt` missing under the test bin folder in one run.
-- Full-suite stalls after the MountHeightTests skips while another dotnet process was active (t5c-sweep, twice; `--blame-hang-timeout` reruns passed).
-Fix: isolate the static state per test class (or a collection without parallelism) and copy test data deterministically. Not started.
+Verification on the fixed branch: dev variant 5 of 5 full-suite runs passed (2612 passed, 6 skipped each); `-p:CuoDevTools=false` 1 of 2 passed. The failing false-variant run hit a different test, `ChunkLoadingTests.Drain_Does_Not_Allocate_Per_Frame` (a per-thread `GC.GetAllocatedBytesForCurrentThread` delta that must be 0; it passed alone and in the next run). Not investigated: likely a one-off allocation on the test thread (tiered JIT or a delegate stub) under load; if it recurs, warm the loop twice before measuring.
+
+Remains: the full-suite stall after the `MountHeightTests` skips (seen twice by t5c-sweep with another dotnet process active) was not reproduced and no deadlock was found by reading the code. The only unbounded waits in the suite were `Barrier.SignalAndWait` and a thread join in `Dispose_RacingRead_IsSafe` (a busy spin loop of three threads over 200 iterations, which crawls on a loaded machine); the join is bounded now. If it stalls again, rerun with `--blame-hang-timeout 120s` to get the stuck test's dump. Tests outside the non-parallel collections that also mutate `Time.Ticks` or the shared RNG would still be exposed; they cannot overlap the exclusive collections, only each other.
 
 ## Empty tiledata entries still occlude roofs and lights (recorded 2026-10-31, deferred)
 
