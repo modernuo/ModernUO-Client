@@ -808,9 +808,14 @@ namespace ClassicUO.Game.Map
             if (TileOrder.Check)
             {
                 ScanMapZ(chunk, cellX, cellY, !DynamicTileIndex.WalkOn, out sbyte g2, out sbyte s2);
-                sbyte g = groundZ, s = staticZ;
-                TileOrder.ReaderCheck(g == g2 && s == s2, "GetMapZ", () => $"{chunk.X * 8 + cellX},{chunk.Y * 8 + cellY} ground {g}/{g2} static {s}/{s2}");
+                CheckMapZ(chunk, cellX, cellY, groundZ, staticZ, g2, s2);
             }
+        }
+
+        // the checker's lambda lives here, so no closure is allocated unless CUO_TILE_ORDER_CHECK is on
+        private static void CheckMapZ(Chunk chunk, int cellX, int cellY, sbyte g, sbyte s, sbyte g2, sbyte s2)
+        {
+            TileOrder.ReaderCheck(g == g2 && s == s2, "GetMapZ", () => $"{chunk.X * 8 + cellX},{chunk.Y * 8 + cellY} ground {g}/{g2} static {s}/{s2}");
         }
 
         internal static void ScanMapZ(Chunk chunk, int cellX, int cellY, bool merged, out sbyte groundZ, out sbyte staticZ)
@@ -891,10 +896,15 @@ namespace ClassicUO.Game.Map
             if (TileOrder.Check)
             {
                 GameObject other = FindNearRoof(chunk, cellX, cellY, z, tiles, !DynamicTileIndex.WalkOn);
-                TileOrder.ReaderCheck(ReferenceEquals(found, other), "CalculateNearZ roof", () => $"{chunk.X * 8 + cellX},{chunk.Y * 8 + cellY} z {z}");
+                CheckNearRoof(chunk, cellX, cellY, z, found, other);
             }
 
             return found;
+        }
+
+        private static void CheckNearRoof(Chunk chunk, int cellX, int cellY, int z, GameObject found, GameObject other)
+        {
+            TileOrder.ReaderCheck(ReferenceEquals(found, other), "CalculateNearZ roof", () => $"{chunk.X * 8 + cellX},{chunk.Y * 8 + cellY} z {z}");
         }
 
         internal static GameObject FindNearRoof(Chunk chunk, int cellX, int cellY, int z, StaticTiles[] tiles, bool merged)

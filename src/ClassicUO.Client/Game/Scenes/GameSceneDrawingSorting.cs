@@ -125,9 +125,7 @@ namespace ClassicUO.Game.Scenes
             if (TileOrder.Check)
             {
                 // T6b part 2: the objects the list walk and the merged walk would stamp are the same set (order does not matter here)
-                int listCount = CountFoliageMatches(x, y, graphic, z, false);
-                int mergedCount = CountFoliageMatches(x, y, graphic, z, true);
-                TileOrder.ReaderCheck(listCount == mergedCount, "ApplyFoliageTransparency", () => $"{x},{y} graphic {graphic:X4} z {z}: {listCount} vs {mergedCount}");
+                CheckFoliage(x, y, graphic, z);
             }
 
             GameObject obj = _world.Map.OpenTile(x, y, true, DynamicTileIndex.WalkOn, out TileReader reader);
@@ -148,20 +146,26 @@ namespace ClassicUO.Game.Scenes
             }
         }
 
-        private int CountFoliageMatches(int x, int y, ushort graphic, int z, bool merged)
+        private void CheckFoliage(int x, int y, ushort graphic, int z)
         {
-            int n = 0;
+            var listMatches = new List<GameObject>();
+            var mergedMatches = new List<GameObject>();
+            CollectFoliageMatches(x, y, graphic, z, false, listMatches);
+            CollectFoliageMatches(x, y, graphic, z, true, mergedMatches);
+            TileOrder.ReaderCheck(TileOrder.SameObjects(listMatches, mergedMatches), "ApplyFoliageTransparency", () => $"{x},{y} graphic {graphic:X4} z {z}: {listMatches.Count} vs {mergedMatches.Count}");
+        }
+
+        private void CollectFoliageMatches(int x, int y, ushort graphic, int z, bool merged, List<GameObject> into)
+        {
             GameObject obj = _world.Map.OpenTile(x, y, true, merged, out TileReader reader);
 
             for (; obj != null; obj = reader.Next())
             {
                 if (obj.Graphic == graphic && obj.Z == z)
                 {
-                    n++;
+                    into.Add(obj);
                 }
             }
-
-            return n;
         }
 
         private void UpdateObjectHandles(Entity obj, bool useObjectHandles)

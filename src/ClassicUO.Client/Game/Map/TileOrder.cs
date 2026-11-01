@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
 using System;
+using System.Collections.Generic;
 using System.Text;
 using ClassicUO.Game.GameObjects;
 using ClassicUO.Game.Managers;
@@ -383,6 +384,34 @@ namespace ClassicUO.Game.Map
 
         /// <summary>T6b part 2: a converted reader ran with the walk on and off (<see cref="Check"/> only) and got the same
         /// or different results; logs the first reports.</summary>
+        /// <summary>True when both lists hold the same objects (by reference) the same number of times, whatever the order.</summary>
+        public static bool SameObjects(List<GameObject> a, List<GameObject> b)
+        {
+            if (a.Count != b.Count)
+            {
+                return false;
+            }
+
+            var counts = new Dictionary<GameObject, int>(ReferenceEqualityComparer.Instance);
+
+            foreach (GameObject o in a)
+            {
+                counts[o] = counts.GetValueOrDefault(o) + 1;
+            }
+
+            foreach (GameObject o in b)
+            {
+                if (!counts.TryGetValue(o, out int n) || n == 0)
+                {
+                    return false;
+                }
+
+                counts[o] = n - 1;
+            }
+
+            return true;
+        }
+
         public static void ReaderCheck(bool same, string reader, Func<string> detail)
         {
             _readerChecks++;

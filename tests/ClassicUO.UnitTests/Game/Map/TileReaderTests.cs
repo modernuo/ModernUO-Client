@@ -346,5 +346,74 @@ namespace ClassicUO.UnitTests.Game.Map
             }
 #endif
         }
+
+        [Fact]
+        public void Foliage_Check_Compares_Object_Identity_And_Multiplicity_Not_Counts()
+        {
+            Static a = NewStatic(Plain, 0), b = NewStatic(Plain, 0), c = NewStatic(Plain, 0);
+
+            Assert.True(TileOrder.SameObjects(new List<GameObject> { a, b, b }, new List<GameObject> { b, a, b }));
+            Assert.True(TileOrder.SameObjects(new List<GameObject>(), new List<GameObject>()));
+            // the merged walk misses A and repeats B: same count, different objects
+            Assert.False(TileOrder.SameObjects(new List<GameObject> { a, b }, new List<GameObject> { b, b }));
+            Assert.False(TileOrder.SameObjects(new List<GameObject> { a, b }, new List<GameObject> { a, c }));
+            Assert.False(TileOrder.SameObjects(new List<GameObject> { a }, new List<GameObject> { a, a }));
+        }
+
+        [Fact]
+        public void Readers_Allocate_Nothing_With_The_Checker_Off()
+        {
+            Assert.False(TileOrder.Check, "the unit tests run with CUO_TILE_ORDER_CHECK off");
+            Place(NewLand(_world, 3), 1, 1);
+            Place(NewStatic(RoofA, 5), 1, 1);
+            Place(NewItem(Plain, 6), 1, 1);
+            StaticTiles[] tiles = Chunk.StaticTileData;
+
+            void Run()
+            {
+                for (int i = 0; i < 200; i++)
+                {
+                    ClassicUO.Game.Map.Map.ScanMapZ(_a, 1, 1, out _, out _);
+                    ClassicUO.Game.Map.Map.FindNearRoof(_a, 1, 1, 5, tiles);
+                }
+            }
+
+            Run();
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            Run();
+            Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);
+        }
+
+        [Fact]
+        public void Pathfinder_CreateItemList_Allocates_Nothing_With_The_Checker_Off()
+        {
+            Assert.False(TileOrder.Check);
+            World world = ClassicUO.UnitTests.Ecs.WorldWriterMobileTests.BuildPlayer(out _);
+            typeof(World).GetProperty(nameof(World.Map))!.SetValue(world, new ClassicUO.Game.Map.Map(world, 0, 1));
+            var pathfinder = new Pathfinder(world);
+            Type pathObject = typeof(Pathfinder).GetNestedType("PathObject", BindingFlags.NonPublic)!;
+            Func<Pathfinder, int, bool> call = (Func<Pathfinder, int, bool>)typeof(TileReaderTests).GetMethod(nameof(MakeCreateItemListCaller), BindingFlags.Static | BindingFlags.NonPublic)!
+                .MakeGenericMethod(pathObject).Invoke(null, null)!;
+            call(pathfinder, 5); // far from the player at 1000,1000: no chunk is loaded, the call returns early
+
+            long before = GC.GetAllocatedBytesForCurrentThread();
+
+            for (int i = 0; i < 200; i++)
+            {
+                call(pathfinder, 5);
+            }
+
+            Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);
+        }
+
+        // a delegate over the private CreateItemList(List<PathObject>, x, y, step), with one list reused
+        private static Func<Pathfinder, int, bool> MakeCreateItemListCaller<T>()
+        {
+            var open = (Func<Pathfinder, List<T>, int, int, int, bool>)Delegate.CreateDelegate(typeof(Func<Pathfinder, List<T>, int, int, int, bool>),
+                typeof(Pathfinder).GetMethod("CreateItemList", BindingFlags.Instance | BindingFlags.NonPublic, null, new[] { typeof(List<T>), typeof(int), typeof(int), typeof(int) }, null)!);
+            var list = new List<T>();
+
+            return (p, x) => open(p, list, x, x, 0);
+        }
     }
 }

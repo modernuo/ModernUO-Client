@@ -61,20 +61,26 @@ namespace ClassicUO.Game
             if (TileOrder.Check)
             {
                 // T6b part 2: the same tile with the other walk must give the same objects in the same order
-                var other = new List<PathObject>();
-                bool result2 = CreateItemList(other, x, y, stepState, !DynamicTileIndex.WalkOn);
-                bool same = result == result2 && list.Count == other.Count;
-
-                for (int i = 0; same && i < list.Count; i++)
-                {
-                    PathObject a = list[i], b = other[i];
-                    same = ReferenceEquals(a.Object, b.Object) && a.Flags == b.Flags && a.Z == b.Z && a.AverageZ == b.AverageZ && a.Height == b.Height;
-                }
-
-                TileOrder.ReaderCheck(same, "Pathfinder.CreateItemList", () => $"{x},{y} step {stepState}: {list.Count} vs {other.Count} objects");
+                CheckItemList(list, x, y, stepState, result);
             }
 
             return result;
+        }
+
+        // kept out of CreateItemList so its lambda's closure is only allocated when CUO_TILE_ORDER_CHECK is on
+        private void CheckItemList(List<PathObject> list, int x, int y, int stepState, bool result)
+        {
+            var other = new List<PathObject>();
+            bool result2 = CreateItemList(other, x, y, stepState, !DynamicTileIndex.WalkOn);
+            bool same = result == result2 && list.Count == other.Count;
+
+            for (int i = 0; same && i < list.Count; i++)
+            {
+                PathObject a = list[i], b = other[i];
+                same = ReferenceEquals(a.Object, b.Object) && a.Flags == b.Flags && a.Z == b.Z && a.AverageZ == b.AverageZ && a.Height == b.Height;
+            }
+
+            TileOrder.ReaderCheck(same, "Pathfinder.CreateItemList", () => $"{x},{y} step {stepState}: {list.Count} vs {other.Count} objects");
         }
 
         private bool CreateItemList(List<PathObject> list, int x, int y, int stepState, bool merged)
