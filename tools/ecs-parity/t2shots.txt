@@ -3,6 +3,8 @@
 # earlier runs: bags, a cap, spellbooks) and an orc's corpse are opened with the switch off and shot, closed, reopened with
 # the switch on and shot again. Run with CUO_BENCH_SHOTS=<dir> (the shot command saves <name>_gpu.png, _ui.png and
 # _screen.png) and without CUO_ECS_READ_CONTENTS (it would override the readcontents command). The corpse is removed.
+# Before each shot the containers are placed at fixed positions and the scripted cursor parked on the same spot (a reopened
+# gump cascades elsewhere; the tooltip follows the cursor), and the kill's system message has faded (wait 15).
 wait 6
 say [self set Map Felucca
 wait 3
@@ -16,7 +18,8 @@ wait 2
 say [kill
 wait 1
 target mobile 2 0
-wait 4
+wait 15
+mouse 600 300
 backpack
 wait 2
 use near 2006
@@ -25,6 +28,8 @@ gumps
 contents backpack
 contents near 2006
 check
+place ContainerGump 60 60 260
+place GridLootGump 60 300
 wait 1
 shot t2_off
 wait 2
@@ -40,12 +45,15 @@ gumps
 contents backpack
 contents near 2006
 check
+place ContainerGump 60 60 260
+place GridLootGump 60 300
 wait 1
 shot t2_on
 wait 2
 close ContainerGump
 close GridLootGump
 readcontents off
+mouse off
 say [remove
 wait 1
 target near 2006
