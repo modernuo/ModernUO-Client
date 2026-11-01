@@ -452,6 +452,8 @@ namespace ClassicUO.Game
                 {
                     item.AnimIndex = 99;
                     item.UsedLayer = usedLayer;
+                    // T5b-items (Codex P2): the commit pushed the timer before these writes
+                    _world.Ecs.PushItemTimer(item);
                 }
 
                 // 4. derived state: drawability and the multi (reads Graphic, IsMulti, WantUpdateMulti, X, Y written above)
@@ -660,6 +662,8 @@ namespace ClassicUO.Game
                 {
                     item.AnimIndex = 99;
                     item.UsedLayer = usedLayer;
+                    // T5b-items (Codex P2): the commit pushed the timer before these writes
+                    _world.Ecs.PushItemTimer(item);
                     item.Direction = v.Direction;
                     item.Layer = v.Layer;
                 }
@@ -898,6 +902,8 @@ namespace ClassicUO.Game
                 {
                     item.AnimIndex = 99;
                     item.UsedLayer = usedLayer;
+                    // T5b-items (Codex P2): the commit pushed the timer before these writes
+                    _world.Ecs.PushItemTimer(item);
                     item.Direction = v.Direction;
                     item.Layer = v.Layer;
                 }
@@ -1189,6 +1195,8 @@ namespace ClassicUO.Game
                 {
                     item.AnimIndex = 99;
                     item.UsedLayer = usedLayer;
+                    // T5b-items (Codex P2): the commit pushed the timer before these writes
+                    _world.Ecs.PushItemTimer(item);
 
                     if (usedLayer)
                     {
