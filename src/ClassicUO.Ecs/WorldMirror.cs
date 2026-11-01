@@ -629,17 +629,18 @@ namespace ClassicUO.Ecs
         public int CachedContentsParents => _contents.Count;
 
         /// <summary>
-        /// T2, the memory log: the bytes the contents cache holds, by the 64-bit layout, capacities included (Codex audit: not
-        /// an estimate from the counts): the dictionary object 80 B, its buckets 4 B and entries 24 B per slot of capacity
-        /// (+ two 24 B array headers); each slot (cached or free) 32 B with its uint[] 24 B + 4 B per element (8-aligned);
-        /// the free-slot stack 32 B with its array 24 B + 8 B per slot; the sort scratch 24 B + 16 B per entry.
+        /// T2, the memory log: the bytes the contents cache holds, by layout-based accounting of the 64-bit runtime (computed
+        /// from the object layouts and capacities, not measured with a heap tool): the dictionary object 80 B, its buckets
+        /// (24 B header + 4 B per slot of capacity, 8-aligned) and entries (24 B header + 24 B per slot), and the
+        /// ValueCollection 24 B that <c>.Values</c> creates once and the dictionary keeps; each slot (cached or free) 32 B
+        /// with its uint[] 24 B + 4 B per element (8-aligned); the free-slot stack 32 B with its array 24 B + 8 B per slot;
+        /// the sort scratch 24 B + 16 B per entry (Codex audit round 2: alignment and the ValueCollection were missing).
         /// </summary>
         public long ContentsCacheBytes
         {
             get
             {
-                int capacity = _contents.EnsureCapacity(0);
-                long bytes = 80 + (capacity == 0 ? 0 : 48 + 28L * capacity);
+                long bytes = DictionaryBytes(_contents.EnsureCapacity(0), 24);
                 bytes += 32 + 24 + 8L * _freeSlotsCapacity;
                 bytes += 24 + 16L * _contentsScratch.Length;
 
@@ -656,6 +657,14 @@ namespace ClassicUO.Ecs
                 return bytes;
             }
         }
+
+        /// <summary>
+        /// T2, layout-based accounting of a <c>Dictionary</c> enumerated through <c>.Values</c> (64-bit): the object 80 B, the
+        /// buckets int[] (24 B header + 4 B per slot of capacity, 8-aligned), the entries array (24 B header + the entry size
+        /// per slot) and the cached ValueCollection 24 B (the enumeration allocates it once; the dictionary keeps it).
+        /// </summary>
+        public static long DictionaryBytes(int capacity, int entryBytes) =>
+            80 + 24 + (capacity == 0 ? 0 : ((24 + 4L * capacity + 7) & ~7L) + 24 + (long)entryBytes * capacity);
 
         private static long SlotBytes(ContentsSlot slot) => 32 + (slot.Serials.Length == 0 ? 0 : (24 + 4L * slot.Serials.Length + 7) & ~7L);
 

@@ -358,5 +358,20 @@ namespace ClassicUO.UnitTests.Ecs
             world.Ecs.Mirror.ContentsCacheBytes.Should().BeGreaterThan(empty);
             world.Ecs.Mirror.CachedContentsParents.Should().Be(Parents(world).Count());
         }
+
+        // Codex audit round 2: the layout-based accounting counts the 8-aligned buckets, the ValueCollection `.Values` keeps
+        // and WorldWriter's spell-entry scratch list (List 32 B + Item[64] 536 B).
+        [Fact]
+        public void The_Layout_Accounting_Counts_Alignment_The_ValueCollection_And_The_Spell_Scratch()
+        {
+            WorldMirror.DictionaryBytes(0, 24).Should().Be(80 + 24);
+            // 3 slots: buckets 24 + 12 -> 40 (8-aligned), entries 24 + 72
+            WorldMirror.DictionaryBytes(3, 24).Should().Be(80 + 24 + 40 + 24 + 72);
+            WorldMirror.DictionaryBytes(4, 24).Should().Be(80 + 24 + 40 + 24 + 96);
+            WorldState.SpellScratchBytes.Should().Be(568);
+
+            World world = new World();
+            world.State.SpellEntriesBytes.Should().Be(80 + 24 + 568, "an empty dictionary, its ValueCollection and the scratch list");
+        }
     }
 }

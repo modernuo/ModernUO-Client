@@ -2390,7 +2390,10 @@ namespace ClassicUO.Game
             return spellbook;
         }
 
-        private readonly List<Item> _spellEntries = new List<Item>(64);
+        // a book holds at most 64 spells, so the list never grows past this (WorldState.SpellScratchBytes counts it)
+        internal const int SpellScratchCapacity = 64;
+
+        private readonly List<Item> _spellEntries = new List<Item>(SpellScratchCapacity);
 
         private readonly List<Item> _sorted = new List<Item>();
 
