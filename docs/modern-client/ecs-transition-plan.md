@@ -283,6 +283,7 @@ So the data file is keyed by body group (human male/female, elf male/female, gar
 - Mobiles with steps or handles still call `Mobile.Update` until T6.
 - `SetAnimation`, `SetIdleAnimation` and the four packet sites (PacketHandlers 0x6E, 0xAF, 0xBF.19, the frame-count packet, 0xE2; line list in poc-log E10) write the component through the funnel.
 - **Status (2026-11-01, `bg/ecs-t5b-anim`): mobiles done** (`world_anim_system`, default off; gates bench-000161/162 pending). Items (`Item.ProcessAnimation`) are deferred to a follow-up phase T5b-items. The timer fields stay a write-through cache on `Mobile`: `AnimIndex` and `LastAnimationChangeTime` are read per frame, so the getters are not switched to the ECS (coordinator accepted).
+- **Status (2026-11-01, `bg/ecs-t5b-items`): items done** (`world_item_anim_system`, default off; separate switch; only corpses animate in `Item.ProcessAnimation`; gates bench-000184/185 pending). See the poc-log entry.
 - `Mobile.AnimIndex` and the rest become ECS-backed properties. This is E10's "move the clock with the advance".
 - **Risk:** `GetGroupForAnimation`'s random fidget picks consume the shared RNG. The system must run in table order (E10) and draw in the same sequence, or the checker flags differences.
 - **Items share the same `Entity` fields** (`Item.ProcessAnimation`: corpses, animated items). Do mobiles first and items second, in the same phase.

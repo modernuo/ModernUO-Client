@@ -158,6 +158,12 @@ namespace ClassicUO.Configuration
         // compares every advance with the legacy one.
         [JsonPropertyName("world_anim_system")] public bool WorldAnimSystem { get; set; } = false;
 
+        // T5b-items (needs world_update_active_items): a due corpse's frame advance (Item.ProcessAnimation) is computed in the
+        // ECS (ItemAnimationAdvanceSystem over AnimationTimer and ItemData). Separate from world_anim_system so the two halves
+        // are gated and rolled back apart. Read once at startup (CUO_WORLD_ITEM_ANIM_SYSTEM=1|0 overrides it in developer
+        // builds). Default off; CUO_ANIM_ADVANCE_CHECK=1 compares every advance with the legacy one.
+        [JsonPropertyName("world_item_anim_system")] public bool WorldItemAnimSystem { get; set; } = false;
+
         // T2 (ecs-transition-plan.md): the container-contents readers (container, grid loot, trade and spellbook gumps, the
         // shop's lists, FindItem*, the counters, macros) take a parent's children from the ECS (WorldState.Children: the
         // mirror's attached children by child-order stamp, a spellbook's spell entries) instead of the LinkedObject child
