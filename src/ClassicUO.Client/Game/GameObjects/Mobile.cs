@@ -23,6 +23,11 @@ namespace ClassicUO.Game.GameObjects
         internal Friflo.Engine.ECS.Entity EcsEntity;
         internal uint EcsEntitySerial, EcsEntityEpoch;
 
+        /// <summary>T3a: the mirror entity WorldState's equipment reads verified for this instance (World held it under
+        /// <see cref="EquipEntitySerial"/>), valid while the mirror's epoch is <see cref="EquipEntityEpoch"/>.</summary>
+        internal Friflo.Engine.ECS.Entity EquipEntity;
+        internal uint EquipEntitySerial, EquipEntityEpoch;
+
         //private static readonly QueuedPool<Mobile> _pool = new QueuedPool<Mobile>(
         //    Constants.PREDICTABLE_CHUNKS,
         //    mobile =>

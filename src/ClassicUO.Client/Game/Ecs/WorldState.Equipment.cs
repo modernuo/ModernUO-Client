@@ -60,19 +60,24 @@ namespace ClassicUO.Game
         /// </summary>
         public Item WornItem(Mobile mobile, Layer layer)
         {
-            if (!WornLayers.Tracked((byte)layer) || !ReferenceEquals(_world.Mobiles.Get(mobile.Serial), mobile))
+            if (!WornLayers.Tracked((byte)layer))
             {
                 return mobile.FindItemByLayerInList(layer);
             }
 
-            if (!TryGetMobileEntity(mobile, out EcsEntity e))
+            switch (Resolve(mobile, out EcsEntity e))
             {
-                return null;
+                case Held.Record:
+                    uint serial = e.GetComponent<WornLayers>().Serials[(byte)layer - 1];
+
+                    return serial == 0 ? null : _world.Items.Get(serial);
+
+                case Held.NoRecord:
+                    return null;
+
+                default:
+                    return mobile.FindItemByLayerInList(layer);
             }
-
-            uint serial = e.GetComponent<WornLayers>().Serials[(byte)layer - 1];
-
-            return serial == 0 ? null : _world.Items.Get(serial);
         }
 
         /// <summary>
@@ -82,46 +87,75 @@ namespace ClassicUO.Game
         /// </summary>
         public bool HasWornItems(Mobile mobile)
         {
-            if (!ReadEquipment || !ReferenceEquals(_world.Mobiles.Get(mobile.Serial), mobile))
+            if (!ReadEquipment)
             {
                 return !mobile.IsEmpty;
             }
 
-            if (!TryGetMobileEntity(mobile, out EcsEntity e))
+            switch (Resolve(mobile, out EcsEntity e))
             {
-                return false;
+                case Held.Record:
+                    ref WornLayers worn = ref e.GetComponent<WornLayers>();
+                    ReadOnlySpan<uint> serials = worn.Serials;
+
+                    return serials.IndexOfAnyExcept(0u) >= 0;
+
+                case Held.NoRecord:
+                    return false;
+
+                default:
+                    return !mobile.IsEmpty;
             }
-
-            ref WornLayers worn = ref e.GetComponent<WornLayers>();
-            ReadOnlySpan<uint> serials = worn.Serials;
-
-            return serials.IndexOfAnyExcept(0u) >= 0;
         }
 
-        // the mobile's mirror record through E5's per-mobile handle cache (valid while the serial and the mirror's epoch are
-        // unchanged; GpuWorldRenderer fills the same fields), else one dictionary lookup
+        private enum Held : byte
+        {
+            /// <summary>World does not hold this instance for its serial: its own list answers.</summary>
+            NotHeld,
+            /// <summary>World holds it but the mirror has no record for the serial: nothing worn.</summary>
+            NoRecord,
+            /// <summary>World holds it; the entity is its record.</summary>
+            Record
+        }
+
+        // the instance's mirror record, verified to be the instance World holds for its serial. The verification is cached on
+        // the mobile with the mirror's epoch (Mobile.EquipEntity*: its own fields, never E5's, which the Gpu world fills
+        // without the identity check): every change of the table's instance for a serial goes with a removal of the serial's
+        // record (RemoveMobile, the re-key, a clear), which bumps the epoch, so a hit costs two compares and no lookup
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private bool TryGetMobileEntity(Mobile mobile, out EcsEntity e)
+        private Held Resolve(Mobile mobile, out EcsEntity e)
         {
             WorldMirror mirror = _world.Ecs.Mirror;
 
-            if (mobile.EcsEntitySerial == mobile.Serial && mobile.EcsEntityEpoch == mirror.Epoch && mobile.EcsEntitySerial != 0)
+            if (mobile.EquipEntityEpoch == mirror.Epoch && mobile.EquipEntitySerial == mobile.Serial && mobile.EquipEntitySerial != 0)
             {
-                e = mobile.EcsEntity;
+                e = mobile.EquipEntity;
 
-                return true;
+                return Held.Record;
+            }
+
+            return ResolveSlow(mobile, mirror, out e);
+        }
+
+        private Held ResolveSlow(Mobile mobile, WorldMirror mirror, out EcsEntity e)
+        {
+            e = default;
+
+            if (!ReferenceEquals(_world.Mobiles.Get(mobile.Serial), mobile))
+            {
+                return Held.NotHeld;
             }
 
             if (!mirror.TryGetEntity(mobile.Serial, out e) || !e.HasComponent<WornLayers>())
             {
-                return false;
+                return Held.NoRecord;
             }
 
-            mobile.EcsEntity = e;
-            mobile.EcsEntitySerial = mobile.Serial;
-            mobile.EcsEntityEpoch = mirror.Epoch;
+            mobile.EquipEntity = e;
+            mobile.EquipEntitySerial = mobile.Serial;
+            mobile.EquipEntityEpoch = mirror.Epoch;
 
-            return true;
+            return Held.Record;
         }
 
         /// <summary>Memory of WornLayers (layout-based: the component per mobile record; see <see cref="WorldMirror.WornLayersBytes"/>).</summary>
