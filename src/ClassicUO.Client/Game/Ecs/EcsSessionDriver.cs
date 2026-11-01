@@ -741,6 +741,15 @@ namespace ClassicUO.Game
 
                     return true;
 
+                // renderer gpu|legacy: switches the world renderer for this session (T3a's shots of Legacy's MobileView)
+                case "renderer" when args.Length > 0:
+                {
+                    bool switched = RendererStartup.TrySwitch(args[0], out string message);
+                    Log.Info($"[ECS] driver: renderer {args[0]}: {(switched ? "switched" : "not switched: " + message)}");
+
+                    return true;
+                }
+
                 // readequipment on|off: the equipment readers from the ECS (ecs_read_equipment, T3a); the env override
                 // CUO_ECS_READ_EQUIPMENT wins over it
                 case "readequipment" when args.Length > 0:
