@@ -30,6 +30,57 @@ namespace ClassicUO.Game.GameObjects
             Serial = serial;
         }
 
+        /// <summary>
+        /// E5 (mobiles) and T4 (every entity): the mirror entity last found for <see cref="EcsEntitySerial"/>, so a read skips
+        /// the serial dictionary. Valid while <see cref="EcsEntityEpoch"/> is the mirror's <c>Epoch</c> (no record was deleted
+        /// since: a deletion, the death re-key and the map clear all bump it) and the serial is the entity's own; 0 = none.
+        /// The Gpu world's E5 draw writes it for the mobiles it draws without the identity check, so the scalar reads trust
+        /// it only while <see cref="EcsEntityHeld"/> (set by their own lookup, which checks World holds this instance).
+        /// </summary>
+        internal Friflo.Engine.ECS.Entity EcsEntity;
+        internal uint EcsEntitySerial, EcsEntityEpoch;
+        internal bool EcsEntityHeld;
+
+        /// <summary>
+        /// T4 (ecs_owns_scalars): this entity's mirror record, when World holds this instance (not destroyed, the instance
+        /// under its serial in <c>World.Items</c>/<c>World.Mobiles</c>) and the mirror has a record for its serial. False for
+        /// a destroyed or stale instance (a reused serial's old object), a detached one (the character-creation preview, a
+        /// player not in World yet) and a serial without a record: the getters then return their cache, which the funnel
+        /// still writes. A miss is not cached (a later record creation does not bump the epoch).
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal bool TryScalarEntity(out Friflo.Engine.ECS.Entity e)
+        {
+            e = EcsEntity;
+
+            return EcsEntityHeld && EcsEntitySerial == _serial && EcsEntityEpoch == World.Ecs.Mirror.Epoch && !IsDestroyed || FindScalarEntity(out e);
+        }
+
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private bool FindScalarEntity(out Friflo.Engine.ECS.Entity e)
+        {
+            e = default;
+
+            if (IsDestroyed || _serial == 0 || World?.Ecs == null)
+            {
+                return false;
+            }
+
+            Entity held = this is Mobile ? World.Mobiles.Get(_serial) : World.Items.Get(_serial);
+
+            if (!ReferenceEquals(held, this) || !World.Ecs.Mirror.TryGetEntity(_serial, out e))
+            {
+                return false;
+            }
+
+            EcsEntity = e;
+            EcsEntitySerial = _serial;
+            EcsEntityEpoch = World.Ecs.Mirror.Epoch;
+            EcsEntityHeld = true;
+
+            return true;
+        }
+
         private byte _animIndex;
         private bool _executeAnimation = true;
         private long _lastAnimationChangeTime;
@@ -37,14 +88,19 @@ namespace ClassicUO.Game.GameObjects
         public byte AnimIndex { get => _animIndex; set { FunnelCheck.Write(this, FunnelField.AnimIndex); _animIndex = value; } }
         public bool ExecuteAnimation { get => _executeAnimation; set { FunnelCheck.Write(this, FunnelField.ExecuteAnimation); _executeAnimation = value; } }
         internal long LastAnimationChangeTime { get => _lastAnimationChangeTime; set { FunnelCheck.Write(this, FunnelField.LastAnimationChangeTime); _lastAnimationChangeTime = value; } }
-        public Flags Flags { get => _flags; set { FunnelCheck.Write(this, FunnelField.Flags); _flags = value; } }
+        public Flags Flags { get { ScalarReads.Count(ScalarField.Flags); return _flags; } set { FunnelCheck.Write(this, FunnelField.Flags); _flags = value; } }
         private ushort _hits, _hitsMax;
         public byte HitsPercentage;
 
         // W5: the percentage (and its cached text) is recomputed when Hits or HitsMax change, not every frame
         public ushort Hits
         {
-            get => _hits;
+            get
+            {
+                ScalarReads.Count(ScalarField.Hits);
+
+                return EcsScalars.Owns && TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Hits(e) : _hits;
+            }
             set
             {
                 FunnelCheck.Write(this, FunnelField.Hits);
@@ -55,7 +111,12 @@ namespace ClassicUO.Game.GameObjects
 
         public ushort HitsMax
         {
-            get => _hitsMax;
+            get
+            {
+                ScalarReads.Count(ScalarField.HitsMax);
+
+                return EcsScalars.Owns && TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.HitsMax(e) : _hitsMax;
+            }
             set
             {
                 FunnelCheck.Write(this, FunnelField.HitsMax);
@@ -67,7 +128,21 @@ namespace ClassicUO.Game.GameObjects
         private uint _lastStepTime, _serial;
         private string _name;
         public uint LastStepTime { get => _lastStepTime; set { FunnelCheck.Write(this, FunnelField.LastStepTime); _lastStepTime = value; } }
-        public string Name { get => _name; set { FunnelCheck.Write(this, FunnelField.Name); _name = value; } }
+        public string Name
+        {
+            get
+            {
+                ScalarReads.Count(ScalarField.Name);
+
+                return EcsScalars.Owns && TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Name(e) : _name;
+            }
+            set { FunnelCheck.Write(this, FunnelField.Name); _name = value; }
+        }
+
+        // T4: the caches the funnel writes (write-only for the getters with ecs_owns_scalars on); -ecscheck v2 compares them
+        internal string CachedName => _name;
+        internal ushort CachedHits => _hits;
+        internal ushort CachedHitsMax => _hitsMax;
         public uint Serial { get => _serial; set { FunnelCheck.WriteSerial(this, value); _serial = value; } }
         public HitsRequestStatus HitsRequest;
 
@@ -76,7 +151,12 @@ namespace ClassicUO.Game.GameObjects
 
         public Direction Direction
         {
-            get => _direction;
+            get
+            {
+                ScalarReads.Count(ScalarField.Direction);
+
+                return _direction;
+            }
             set
             {
                 FunnelCheck.Write(this, FunnelField.Direction);

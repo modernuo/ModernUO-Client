@@ -1355,9 +1355,11 @@ namespace ClassicUO.UnitTests.Ecs
 
         // funnel part 6: the cache-only status (the hits and their derived percentage, the hits request, the name; for a mobile
         // the mana, the stamina, IsRenamable, the race and the SA poison)
+        // the caches the operations write (T4: with ecs_owns_scalars on the getters read the record, which the old paths never
+        // wrote; the records are compared by -ecscheck v2 and EcsScalarsTests)
         internal static string StatusOf(Entity e) =>
-            $"{e.Name} {e.Hits}/{e.HitsMax} {e.HitsPercentage}% {e.HitsRequest}" +
-            (e is Mobile m ? $" mana {m.Mana}/{m.ManaMax} stamina {m.Stamina}/{m.StaminaMax} renamable {m.IsRenamable} race {m.Race} sa {m.SAPoisoned}" : "");
+            $"{e.CachedName} {e.CachedHits}/{e.CachedHitsMax} {e.HitsPercentage}% {e.HitsRequest}" +
+            (e is Mobile m ? $" mana {m.CachedMana}/{m.CachedManaMax} stamina {m.CachedStamina}/{m.CachedStaminaMax} renamable {m.IsRenamable} race {m.Race} sa {m.SAPoisoned}" : "");
 
         private static List<uint> ChildSerials(Entity e)
         {

@@ -258,6 +258,24 @@ namespace ClassicUO.Game
             }
         }
 
+        /// <summary>T4: a mobile's stamina pool (StaminaMax, Stamina), in the record's <c>Vitals</c>.</summary>
+        internal void CommitStamina(Mobile mobile, ushort staminaMax, ushort stamina)
+        {
+            if (HoldsEntity(mobile) && Mirror.SetStamina(mobile.Serial, staminaMax, stamina))
+            {
+                ExtrasWrites++;
+            }
+        }
+
+        /// <summary>T4: a mobile's mana pool (ManaMax, Mana), in the record's <c>Vitals</c>.</summary>
+        internal void CommitMana(Mobile mobile, ushort manaMax, ushort mana)
+        {
+            if (HoldsEntity(mobile) && Mirror.SetMana(mobile.Serial, manaMax, mana))
+            {
+                ExtrasWrites++;
+            }
+        }
+
         internal void CommitNotoriety(Mobile mobile, NotorietyFlag notoriety)
         {
             if (HoldsEntity(mobile) && Mirror.SetNotoriety(mobile.Serial, (byte)notoriety))
@@ -722,6 +740,9 @@ namespace ClassicUO.Game
             // T3b: CUO_LAYER_RULES_CHECK's 5 s summary
             LayerRuleEval.LogSummary();
 
+            // T4: CUO_SCALAR_READS's per-frame read counts (5 s summary)
+            ScalarReads.EndFrame();
+
             if (MobileAnimationSystem.CacheCheck && Time.Ticks >= _cacheLogAt)
             {
                 _cacheLogAt = Time.Ticks + 5000;
@@ -909,7 +930,8 @@ namespace ClassicUO.Game
             }
         }
 
-        // -ecscheck v2 (T1 funnel part 9): every item's Layer, its name, hits and price
+        // -ecscheck v2 (T1 funnel part 9): every item's Layer, its name, hits and price. T4: the caches (the fields the funnel
+        // writes), not the getters, so with ecs_owns_scalars on (the getters read the record) a difference is a stale cache.
         private void CompareItemExtras(Item item, ref int mismatches)
         {
             if (!Mirror.TryGetExtras(item.Serial, out MirrorExtras x))
@@ -917,19 +939,19 @@ namespace ClassicUO.Game
                 return; // CompareItem reported it missing
             }
 
-            if (x.ItemLayer != (byte)item.Layer || !string.Equals(x.Name, item.Name, StringComparison.Ordinal) || x.Hits != item.Hits ||
-                x.HitsMax != item.HitsMax || x.Price != item.Price)
+            if (x.ItemLayer != (byte)item.Layer || !string.Equals(x.Name, item.CachedName, StringComparison.Ordinal) || x.Hits != item.CachedHits ||
+                x.HitsMax != item.CachedHitsMax || x.Price != item.CachedPrice)
             {
                 Report
                 (
                     ref mismatches,
-                    $"item 0x{item.Serial:X8} v2: World layer={(byte)item.Layer} name={Quote(item.Name)} hits={item.Hits}/{item.HitsMax} price={item.Price} | " +
+                    $"item 0x{item.Serial:X8} v2{StaleTag}: World layer={(byte)item.Layer} name={Quote(item.CachedName)} hits={item.CachedHits}/{item.CachedHitsMax} price={item.CachedPrice} | " +
                     $"ECS layer={x.ItemLayer} name={Quote(x.Name)} hits={x.Hits}/{x.HitsMax} price={x.Price}"
                 );
             }
         }
 
-        // -ecscheck v2: a mobile's name, hits and notoriety
+        // -ecscheck v2: a mobile's name, hits and notoriety; T4: its stamina and mana. The caches, as above.
         private void CompareMobileExtras(Mobile mobile, ref int mismatches)
         {
             if (!Mirror.TryGetExtras(mobile.Serial, out MirrorExtras x))
@@ -937,17 +959,22 @@ namespace ClassicUO.Game
                 return;
             }
 
-            if (!string.Equals(x.Name, mobile.Name, StringComparison.Ordinal) || x.Hits != mobile.Hits || x.HitsMax != mobile.HitsMax ||
-                x.Notoriety != (byte)mobile.NotorietyFlag)
+            if (!string.Equals(x.Name, mobile.CachedName, StringComparison.Ordinal) || x.Hits != mobile.CachedHits || x.HitsMax != mobile.CachedHitsMax ||
+                x.Notoriety != (byte)mobile.NotorietyFlag || x.Stamina != mobile.CachedStamina || x.StaminaMax != mobile.CachedStaminaMax ||
+                x.Mana != mobile.CachedMana || x.ManaMax != mobile.CachedManaMax)
             {
                 Report
                 (
                     ref mismatches,
-                    $"mobile 0x{mobile.Serial:X8} v2: World name={Quote(mobile.Name)} hits={mobile.Hits}/{mobile.HitsMax} noto={(byte)mobile.NotorietyFlag} | " +
-                    $"ECS name={Quote(x.Name)} hits={x.Hits}/{x.HitsMax} noto={x.Notoriety}"
+                    $"mobile 0x{mobile.Serial:X8} v2{StaleTag}: World name={Quote(mobile.CachedName)} hits={mobile.CachedHits}/{mobile.CachedHitsMax} noto={(byte)mobile.NotorietyFlag} " +
+                    $"stam={mobile.CachedStamina}/{mobile.CachedStaminaMax} mana={mobile.CachedMana}/{mobile.CachedManaMax} | " +
+                    $"ECS name={Quote(x.Name)} hits={x.Hits}/{x.HitsMax} noto={x.Notoriety} stam={x.Stamina}/{x.StaminaMax} mana={x.Mana}/{x.ManaMax}"
                 );
             }
         }
+
+        // T4: with ecs_owns_scalars on the ECS is the reference, so a difference is a stale write-only cache
+        private static string StaleTag => EcsScalars.Owns ? " stale cache" : "";
 
         private static string Quote(string s) => s == null ? "null" : $"\"{s}\"";
 

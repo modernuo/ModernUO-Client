@@ -22,7 +22,7 @@ namespace ClassicUO.UnitTests.Ecs
 
         // funnel part 7: the other cache-only and input fields the small writers touch
         internal static string MiscOf(Entity e) =>
-            e is Item i ? $"price {i.Price}" :
+            e is Item i ? $"price {i.CachedPrice}" : // the cache (T4: StatusOf)
             e is Mobile m ? $"speed {m.SpeedMode} dead {m.IsDead} war {m.InWarMode}" : "";
 
         // ---- the old handler code (pre-T1), one write each as the handlers made it
