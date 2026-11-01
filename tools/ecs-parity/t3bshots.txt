@@ -1,0 +1,103 @@
+# T3b gate (ecs-transition-plan.md, T3 layering as data): t3shots with the layering rules switch (layerrules off|on,
+# ecs_layer_rules) instead of readequipment: the player's paperdoll mounted and dismounted, the large scene under the Gpu
+# world (MobileAnimationSystem; the driver marks every mobile's equipment dirty so its slots are rebuilt) and Legacy
+# (MobileView), each off, off again (A/A control) and on. Run with CUO_BENCH_SHOTS=<dir> and without CUO_ECS_LAYER_RULES.
+wait 6
+say [self set Map Felucca
+wait 3
+say [go 5445 1153
+wait 4
+layerrules off
+mouse 600 300
+say [add EtherealHorse
+wait 1
+target ground 1 0
+wait 2
+pick near 20DD
+wait 1
+drop backpack
+wait 2
+use held
+wait 6
+mount
+check
+paperdoll
+wait 2
+place PaperDollGump 60 60
+wait 1
+shot t3b_mounted_off
+wait 1
+close PaperDollGump
+wait 1
+paperdoll
+wait 2
+place PaperDollGump 60 60
+wait 1
+shot t3b_mounted_off2
+wait 1
+close PaperDollGump
+layerrules on
+wait 1
+paperdoll
+wait 2
+place PaperDollGump 60 60
+wait 1
+shot t3b_mounted_on
+wait 1
+close PaperDollGump
+layerrules off
+use self
+wait 4
+mount
+check
+paperdoll
+wait 2
+place PaperDollGump 60 60
+wait 1
+shot t3b_dismounted_off
+wait 1
+close PaperDollGump
+wait 1
+paperdoll
+wait 2
+place PaperDollGump 60 60
+wait 1
+shot t3b_dismounted_off2
+wait 1
+close PaperDollGump
+layerrules on
+wait 1
+paperdoll
+wait 2
+place PaperDollGump 60 60
+wait 1
+shot t3b_dismounted_on
+wait 1
+close PaperDollGump
+layerrules off
+say [TestScene go
+wait 12
+check
+shot t3b_scene_off
+wait 1
+shot t3b_scene_off2
+layerrules on
+wait 1
+shot t3b_scene_on
+layerrules off
+renderer legacy
+wait 3
+shot t3b_lscene_off
+wait 1
+shot t3b_lscene_off2
+layerrules on
+wait 1
+shot t3b_lscene_on
+check
+layerrules off
+renderer gpu
+wait 2
+say [TestScene return
+wait 4
+mouse off
+quit
