@@ -30,6 +30,12 @@ namespace ClassicUO.UnitTests.Ecs
         private readonly StaticTiles[] _tiles = new StaticTiles[0x4000 + 0x100];
         private readonly Dictionary<ushort, Dictionary<ushort, EquipConvData>> _conv = new();
 
+        [Fact]
+        public void The_Switch_Is_On_By_Default()
+        {
+            new ClassicUO.Configuration.Settings().EcsLayerRules.Should().BeTrue();
+        }
+
         private readonly ITestOutputHelper _out;
 
         public LayerRulesEcsTests(ITestOutputHelper output)
