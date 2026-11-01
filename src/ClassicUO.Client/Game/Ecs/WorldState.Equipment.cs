@@ -6,6 +6,7 @@ using ClassicUO.Ecs;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
 using ClassicUO.Utility.Logging;
+using Uo.Pack;
 using EcsEntity = Friflo.Engine.ECS.Entity;
 
 namespace ClassicUO.Game
@@ -38,6 +39,9 @@ namespace ClassicUO.Game
         public long Writes;
         public WornHeld Held;
         public Item[] Items;
+
+        /// <summary>T3b: the cached world layering answer (ecs_layer_rules; null until first used with the switch on).</summary>
+        public LayerDecision Layers;
     }
 
     internal sealed partial class WorldState
@@ -205,14 +209,44 @@ namespace ClassicUO.Game
             return c;
         }
 
+        /// <summary>
+        /// T3b (ecs_layer_rules): the mobile's cached world layering answer (<see cref="LayerDecision"/>), refilled when its
+        /// key moved (the record's WornLayers Version or Look, the subject: body and flags, the rules). Null for an instance
+        /// World does not hold for its serial or one without a record (the caller evaluates the rules directly).
+        /// </summary>
+        public LayerDecision WorldLayers(Mobile mobile, bool gargoyleDraw)
+        {
+            WornCache c = Worn(mobile);
+
+            if (c.Held != WornHeld.Record)
+            {
+                return null;
+            }
+
+            LayerRules rules = LayerRuleEval.Rules;
+            LayerSubject subject = LayerRuleEval.Subject(mobile.Graphic, mobile.IsFemale, gargoyleDraw);
+            LayerDecision d = c.Layers ??= new LayerDecision();
+
+            if (d.Lookup(rules, subject, c.Version, _world.Ecs.Mirror, c.Entity))
+            {
+                return d;
+            }
+
+            LayerTables t = default;
+            t.Gather(mobile);
+            d.Fill(ref t);
+
+            return d;
+        }
+
         /// <summary>Cache refreshes (a mirror change since the mobile's last read) and fills (its items re-read).</summary>
         public long CacheRefreshes, CacheFills;
 
-        /// <summary>The read caches of the mobiles World holds (layout-based: <see cref="WornCache"/> 72 B, its items array
+        /// <summary>The read caches of the mobiles World holds (layout-based: <see cref="WornCache"/> 80 B, its items array
         /// 24 + 8 B per tracked layer = 256 B).</summary>
         public (int Caches, int WithItems, long Bytes) ReadCacheMemory()
         {
-            int caches = 0, withItems = 0;
+            int caches = 0, withItems = 0, withLayers = 0;
 
             foreach (Mobile m in _world.Mobiles.Values)
             {
@@ -224,10 +258,15 @@ namespace ClassicUO.Game
                     {
                         withItems++;
                     }
+
+                    if (m.EquipCache.Layers != null)
+                    {
+                        withLayers++;
+                    }
                 }
             }
 
-            return (caches, withItems, caches * 72L + withItems * (24L + 8 * WornLayers.COUNT));
+            return (caches, withItems, caches * 80L + withItems * (24L + 8 * WornLayers.COUNT) + withLayers * (long)LayerDecision.Bytes);
         }
 
         /// <summary>Memory of WornLayers (layout-based: the component per mobile record; see <see cref="WorldMirror.WornLayersBytes"/>).</summary>
