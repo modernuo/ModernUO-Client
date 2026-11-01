@@ -629,28 +629,38 @@ namespace ClassicUO.Ecs
         public int CachedContentsParents => _contents.Count;
 
         /// <summary>
-        /// T2, the memory log: an estimate of the bytes the contents cache holds (64-bit: a slot object 40 B with its array's
-        /// 24 B header and 4 B per serial, a dictionary entry 24 B, the sort scratch 16 B per entry, the free slots).
+        /// T2, the memory log: the bytes the contents cache holds, by the 64-bit layout, capacities included (Codex audit: not
+        /// an estimate from the counts): the dictionary object 80 B, its buckets 4 B and entries 24 B per slot of capacity
+        /// (+ two 24 B array headers); each slot (cached or free) 32 B with its uint[] 24 B + 4 B per element (8-aligned);
+        /// the free-slot stack 32 B with its array 24 B + 8 B per slot; the sort scratch 24 B + 16 B per entry.
         /// </summary>
         public long ContentsCacheBytes
         {
             get
             {
-                long bytes = 24L * _contents.Count + 24 + 16L * _contentsScratch.Length;
+                int capacity = _contents.EnsureCapacity(0);
+                long bytes = 80 + (capacity == 0 ? 0 : 48 + 28L * capacity);
+                bytes += 32 + 24 + 8L * _freeSlotsCapacity;
+                bytes += 24 + 16L * _contentsScratch.Length;
 
                 foreach (ContentsSlot slot in _contents.Values)
                 {
-                    bytes += 40 + 24 + 4L * slot.Serials.Length;
+                    bytes += SlotBytes(slot);
                 }
 
                 foreach (ContentsSlot slot in _freeSlots)
                 {
-                    bytes += 40 + 24 + 4L * slot.Serials.Length;
+                    bytes += SlotBytes(slot);
                 }
 
                 return bytes;
             }
         }
+
+        private static long SlotBytes(ContentsSlot slot) => 32 + (slot.Serials.Length == 0 ? 0 : (24 + 4L * slot.Serials.Length + 7) & ~7L);
+
+        // the free-slot stack's array length (Stack<T> doubles from 4; it never shrinks)
+        private int _freeSlotsCapacity;
 
         /// <summary>
         /// T2: the parent's attached children (serials), in child order (the stamp order). The span is valid until the next
@@ -749,6 +759,7 @@ namespace ClassicUO.Ecs
             if (_freeSlots.Count < 64)
             {
                 _freeSlots.Push(slot);
+                _freeSlotsCapacity = Math.Max(_freeSlotsCapacity, _freeSlots.Count <= 4 ? 4 : (int)System.Numerics.BitOperations.RoundUpToPowerOf2((uint)_freeSlots.Count));
             }
         }
 

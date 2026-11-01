@@ -212,7 +212,7 @@ namespace ClassicUO.Game
         public void LogSummary()
         {
             ClassicUO.Ecs.WorldMirror m = _world.Ecs.Mirror;
-            Log.Info($"[contents] checks reads={ContentsReads} gumps={GumpChecks} mismatches={Mismatches} | read_contents={(ReadContents ? "on" : "off")} cached parents={m.CachedContentsParents} builds={m.ContentsBuilds} invalidations={m.ContentsInvalidations} cache bytes={m.ContentsCacheBytes}");
+            Log.Info($"[contents] checks reads={ContentsReads} gumps={GumpChecks} mismatches={Mismatches} | read_contents={(ReadContents ? "on" : "off")} cached parents={m.CachedContentsParents} builds={m.ContentsBuilds} invalidations={m.ContentsInvalidations} cache bytes={m.ContentsCacheBytes} | spell books={SpellEntryBooks} bytes={SpellEntriesBytes}");
         }
 #else
         // release builds: no checker (the tests skip what needs it)
@@ -275,6 +275,15 @@ namespace ClassicUO.Game
                 return default;
             }
 
+            // Codex audit P1: the ECS keys contents by serial, so an instance that is not the entity World holds for its
+            // serial (a spellbook's detached spell entry, serial 1-64, which can be a real mobile's; a destroyed or replaced
+            // object) must not read that entity's contents: with the switch on it is a leaf, with it off its own list
+            // (the legacy read; a spell entry's is empty), unchecked
+            if (!IsCurrent(parent))
+            {
+                return ReadContents ? default : new ChildList(parent.Items);
+            }
+
             if (ReadContents)
             {
                 ReadOnlySpan<uint> contents = _world.Ecs.Mirror.Contents(parent.Serial);
@@ -300,6 +309,10 @@ namespace ClassicUO.Game
             return new ChildList(parent.Items);
         }
 
+        // the instance World holds for the entity's serial (the one the ECS's record under that serial stands for)
+        private bool IsCurrent(Entity e) =>
+            e is Mobile ? ReferenceEquals(_world.Mobiles.Get(e.Serial), e) : ReferenceEquals(_world.Items.Get(e.Serial), e);
+
         /// <summary>T2: <c>!parent.IsEmpty</c>, from the ECS when <see cref="ReadContents"/> is on.</summary>
         public bool HasChildren(Entity parent) => !Children(parent).IsEmpty;
 
@@ -320,6 +333,14 @@ namespace ClassicUO.Game
         /// <summary>FillSpellbook: the entries it created for <paramref name="spells"/>, in list order.</summary>
         internal void SetSpellEntries(uint book, ulong spells, List<Item> entries)
         {
+            // an empty set holds nothing (its entries went with the set's commit)
+            if (entries.Count == 0)
+            {
+                DropSpellEntries(book);
+
+                return;
+            }
+
             if (!_spellEntries.TryGetValue(book, out SpellEntrySet set))
             {
                 set = new SpellEntrySet();
@@ -358,8 +379,48 @@ namespace ClassicUO.Game
             return new ReadOnlySpan<Item>(set.Entries, 0, set.Count);
         }
 
+        /// <summary>
+        /// Codex audit P2 (#3): the book's record went (destroyed: a removal, the bank's, a map change's) or its set changed
+        /// (a clear, a refill): its entries go now, not at the next read (a removed book is never read again).
+        /// </summary>
+        internal void DropSpellEntries(uint book)
+        {
+            if (_spellEntries.Count != 0)
+            {
+                _spellEntries.Remove(book);
+            }
+        }
+
+        /// <summary>Tests and the memory log: the books whose entries are held.</summary>
+        public int SpellEntryBooks => _spellEntries.Count;
+
+        /// <summary>
+        /// The memory log: the bytes the spell-entry storage holds, by the 64-bit layout (the dictionary object 80 B, its
+        /// buckets 4 B and entries 24 B per slot of capacity, each set 40 B with its Item[] 24 B + 8 B per slot). The entries'
+        /// Item objects are not counted: the book's child list holds the same objects until T9.
+        /// </summary>
+        public long SpellEntriesBytes
+        {
+            get
+            {
+                int capacity = _spellEntries.EnsureCapacity(0);
+                long bytes = 80 + (capacity == 0 ? 0 : 48 + 28L * capacity);
+
+                foreach (SpellEntrySet set in _spellEntries.Values)
+                {
+                    bytes += 40 + (set.Entries.Length == 0 ? 0 : 24 + 8L * set.Entries.Length);
+                }
+
+                return bytes;
+            }
+        }
+
         /// <summary>World.Clear: no book is left.</summary>
-        public void OnWorldCleared() => _spellEntries.Clear();
+        public void OnWorldCleared()
+        {
+            _spellEntries.Clear();
+            _spellEntries.TrimExcess();
+        }
     }
 
     /// <summary>

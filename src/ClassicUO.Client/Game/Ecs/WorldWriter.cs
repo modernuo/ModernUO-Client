@@ -2665,6 +2665,22 @@ namespace ClassicUO.Game
                 v.Flags = mobile.Flags;
                 v.IsPlayer = false;
 
+                // Codex audit P2 (#2): an earlier death's re-keyed mobile still under the new serial is displaced (the table
+                // entry is replaced); its children keep their Container but leave the contents World reads under that
+                // serial (the new mobile's list), so they are detached before the incoming list is attached
+                Mobile displaced = _world.Mobiles.Get(serial);
+
+                if (displaced != null && !ReferenceEquals(displaced, mobile))
+                {
+                    for (LinkedObject i = displaced.Items; i != null; i = i.Next)
+                    {
+                        if (i is Item gone)
+                        {
+                            _world.Ecs.CommitDetach(gone);
+                        }
+                    }
+                }
+
                 EcsEntity e = _world.Ecs.CommitRekey(mobile, oldSerial, in v);
 
                 // (the list keeps its order under the new parent: each child is re-stamped in it, attached)

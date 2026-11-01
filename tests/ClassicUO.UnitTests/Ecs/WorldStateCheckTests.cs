@@ -90,23 +90,9 @@ namespace ClassicUO.UnitTests.Ecs
             reports.Should().BeEmpty();
         }
 
-        public enum Divergence { ChildOrder, StrayChild, MissingChild, MirrorDetach, MirrorRestamp, SpellSet, SpellEntriesDropped }
-
-        [Theory]
-        [InlineData(Divergence.ChildOrder, PACK)]
-        [InlineData(Divergence.StrayChild, PACK)]
-        [InlineData(Divergence.MissingChild, PACK)]
-        [InlineData(Divergence.MirrorDetach, PACK)]
-        [InlineData(Divergence.MirrorRestamp, PACK)]
-        [InlineData(Divergence.SpellSet, BOOK)]
-        [InlineData(Divergence.SpellEntriesDropped, BOOK)]
-        public void A_Divergence_Is_Reported_At_A_Read_And_At_The_Gump_Check(Divergence divergence, uint parent)
+        /// <summary>A checked world (each mismatch in the list) whose <paramref name="divergence"/> was made behind the funnel's back, and the parent it diverged.</summary>
+        internal static (World World, List<string> Reports, uint Parent) Diverged(Divergence divergence)
         {
-            if (!WorldState.CheckAvailable)
-            {
-                return;
-            }
-
             (World world, List<string> reports) = Build();
             world.Writer.FillSpellbook(BOOK, 0xEFA, 0b101, 0);
             ReadAll(world);
@@ -153,6 +139,29 @@ namespace ClassicUO.UnitTests.Ecs
 
                     break;
             }
+
+            return (world, reports, divergence is Divergence.SpellSet or Divergence.SpellEntriesDropped ? BOOK : PACK);
+        }
+
+        public enum Divergence { ChildOrder, StrayChild, MissingChild, MirrorDetach, MirrorRestamp, SpellSet, SpellEntriesDropped }
+
+        [Theory]
+        [InlineData(Divergence.ChildOrder, PACK)]
+        [InlineData(Divergence.StrayChild, PACK)]
+        [InlineData(Divergence.MissingChild, PACK)]
+        [InlineData(Divergence.MirrorDetach, PACK)]
+        [InlineData(Divergence.MirrorRestamp, PACK)]
+        [InlineData(Divergence.SpellSet, BOOK)]
+        [InlineData(Divergence.SpellEntriesDropped, BOOK)]
+        public void A_Divergence_Is_Reported_At_A_Read_And_At_The_Gump_Check(Divergence divergence, uint parent)
+        {
+            if (!WorldState.CheckAvailable)
+            {
+                return;
+            }
+
+            (World world, List<string> reports, uint diverged) = Diverged(divergence);
+            diverged.Should().Be(parent);
 
             string prefix = $"children of 0x{parent:X8}";
 

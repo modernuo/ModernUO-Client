@@ -1028,10 +1028,10 @@ namespace ClassicUO.UnitTests.Ecs
             }
         }
 
-        internal static World BuildPlayer(out TestPlayer player)
+        internal static World BuildPlayer(out TestPlayer player, uint serial = MOB)
         {
             World world = Build(Start.None);
-            player = TestPlayer.Create(world, MOB);
+            player = TestPlayer.Create(world, serial);
             typeof(World).GetProperty(nameof(World.Player))!.SetValue(world, player);
             world.Mobiles.Add(player);
             world.Ecs.Sync(player);
