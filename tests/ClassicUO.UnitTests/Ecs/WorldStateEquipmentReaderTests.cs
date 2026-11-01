@@ -328,6 +328,55 @@ namespace ClassicUO.UnitTests.Ecs
             AllReadersEqual(world);
         }
 
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public void A_Backpack_Moved_To_Another_Wearer_Leaves_Its_First_Wearers_List(bool first)
+        {
+            // Behaviour fix (Codex audit P2 #2): 0x2E keeps a backpack's link (no unlink for Layer.Backpack); as the old wearer's
+            // first child it stayed that wearer's list head after the new wearer's PushToBack, with the old wearer's other
+            // children cut off behind it. Legacy ClassicUO and the base had the same quirk; the fix unlinks it from the old list.
+            const uint A = 0x0000_3980, B = 0x0000_3981, APACK = 0x4000_7980, AHELM = 0x4000_7981, ASHIRT = 0x4000_7982;
+            World world = WorldStateContentsTests.Build();
+            Mobile a = world.GetOrCreateMobile(A);
+            Mobile b = world.GetOrCreateMobile(B);
+
+            if (!first)
+            {
+                world.Writer.Equip(AHELM, 0x1408, Layer.Helmet, A, 0, out _, out _);
+            }
+
+            world.Writer.Equip(APACK, 0x0E75, Layer.Backpack, A, 0, out _, out _);
+
+            if (first)
+            {
+                world.Writer.Equip(AHELM, 0x1408, Layer.Helmet, A, 0, out _, out _);
+            }
+
+            world.Writer.Equip(ASHIRT, 0x1517, Layer.Shirt, A, 0, out _, out _);
+            WorldStateContentsTests.HeldChildren(world, A).Should().Equal(first ? new[] { APACK, AHELM, ASHIRT } : new[] { AHELM, APACK, ASHIRT });
+
+            world.Writer.Equip(APACK, 0x0E75, Layer.Backpack, B, 0, out _, out _);
+
+            // the lists: the pack is B's only, A keeps its other children in order
+            WorldStateContentsTests.HeldChildren(world, A).Should().Equal(AHELM, ASHIRT);
+            WorldStateContentsTests.HeldChildren(world, B).Should().Equal(APACK);
+            world.Items.Get(APACK).Previous.Should().BeNull();
+            world.Items.Get(APACK).Next.Should().BeNull();
+
+            // the ECS read and the list read agree, both ways
+            BothWays(world, () =>
+            {
+                a.FindItemByLayer(Layer.Backpack).Should().BeNull();
+                a.FindItemByLayer(Layer.Helmet).Serial.Should().Be(AHELM);
+                a.FindItemByLayer(Layer.Shirt).Serial.Should().Be(ASHIRT);
+                b.FindItemByLayer(Layer.Backpack).Serial.Should().Be(APACK);
+            });
+
+            WornLayersTests.AllWornMatch(world);
+            AllReadersEqual(world);
+        }
+
         [Fact]
         public void Untracked_Layers_Read_The_List_Both_Ways()
         {

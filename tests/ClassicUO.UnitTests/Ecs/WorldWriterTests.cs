@@ -1742,6 +1742,12 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 world.RemoveItemFromContainer(item);
             }
+            else if (item.Container != e.Container)
+            {
+                // the behaviour fix (Codex audit P2 #2, WorldWriter.Equip): the kept link leaves the old parent's list; the
+                // handler before it left a backpack that was its old parent's first child as that parent's list head
+                world.Get(item.Container)?.Remove(item);
+            }
 
             shown = item.Container;
 

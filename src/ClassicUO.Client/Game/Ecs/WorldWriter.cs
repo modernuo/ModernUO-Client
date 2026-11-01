@@ -1010,6 +1010,15 @@ namespace ClassicUO.Game
                     _world.UnlinkFromContainer(item, oldContainer);
                     _world.Ecs.CommitItem(item, in detached);
                 }
+                else if (oldContainer != containerSerial)
+                {
+                    // Behaviour fix (Codex audit P2 #2; legacy ClassicUO and the base have the same quirk): a backpack (or an
+                    // item without a graphic) keeps its link, and the new wearer's PushToBack below unlinks it only through its
+                    // neighbours, so as its old parent's first child it stayed that parent's list head (the backpack and the
+                    // old parent's other children lost). It leaves its old parent's list here; the gumps of the old container
+                    // are refreshed by the handler (shownContainer), and the mirror already moves its attachment.
+                    _world.Get(oldContainer)?.Remove(item);
+                }
 
                 // 3. write: the ECS (attached when there is a wearer to link it to; without one an orphan, T1 part 9), then
                 // the cache from v in the old order, then the link
