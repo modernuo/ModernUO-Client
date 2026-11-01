@@ -349,9 +349,18 @@ namespace ClassicUO.Game.GameObjects
                 bool layerData = LayerRuleEval.On;
                 LayerTables layerTables = default;
                 LayerSubject layerSubject = default;
+                // T3b cache: the mobile's whole answer, reused until its equipment, body or flags change (null: evaluate)
+                LayerDecision layerCache = layerData ? World.State.WorldLayers(this, isGargoyle) : null;
                 int layerCount;
 
-                if (layerData)
+                if (layerCache != null)
+                {
+                    ReadOnlySpan<Layer> cached = layerCache.Order(layerDir);
+                    cached.CopyTo(layers);
+                    layerCount = cached.Length;
+                    layerSubject = layerCache.Subject;
+                }
+                else if (layerData)
                 {
                     layerTables.Gather(this);
                     layerSubject = LayerRuleEval.Subject(Graphic, IsFemale, isGargoyle);
@@ -364,7 +373,7 @@ namespace ClassicUO.Game.GameObjects
 
                 if (LayerRuleEval.CheckEnabled)
                 {
-                    LayerRuleEval.CheckWorld(this, isGargoyle, layerDir);
+                    LayerRuleEval.CheckWorld(this, isGargoyle, layerDir, layerCache);
                 }
 
                 for (int i = 0; i < layerCount; i++)
@@ -385,7 +394,7 @@ namespace ClassicUO.Game.GameObjects
 
                     if (isHuman)
                     {
-                        if (layerData ? LayerRuleEval.IsCovered(LayerRuleSet.World, layer, ref layerTables, layerSubject) : IsCovered(this, layer))
+                        if (layerCache != null ? layerCache.IsCovered(layer) : layerData ? LayerRuleEval.IsCovered(LayerRuleSet.World, layer, ref layerTables, layerSubject) : IsCovered(this, layer))
                         {
                             continue;
                         }
@@ -395,7 +404,11 @@ namespace ClassicUO.Game.GameObjects
                             graphic = item.ItemData.AnimID;
 
                             // with ecs_layer_rules the remap rules' conditions decide (the defaults need the gargoyle draw flag)
-                            if (layerData)
+                            if (layerCache != null)
+                            {
+                                graphic = layerCache.Remap(layer);
+                            }
+                            else if (layerData)
                             {
                                 graphic = LayerRuleEval.Remap(graphic, layerSubject);
                             }
@@ -560,12 +573,13 @@ namespace ClassicUO.Game.GameObjects
         }
 
         /// <summary>T3b: GetAnimationInfo with the gargoyle remap from the layering rules data (ecs_layer_rules).</summary>
-        private static ushort GetAnimationInfoData(Mobile owner, Item item, LayerSubject subject)
+        private static ushort GetAnimationInfoData(Mobile owner, Item item, LayerSubject subject, LayerDecision cache)
         {
             if (item.ItemData.AnimID != 0)
             {
-                // the remap rules' conditions decide (the defaults need the gargoyle draw flag), then the equip conversion
-                ushort graphic = LayerRuleEval.Remap(item.ItemData.AnimID, subject);
+                // the remap rules' conditions decide (the defaults need the gargoyle draw flag), then the equip conversion;
+                // T3b cache: the worn layer's remap from the mobile's cached answer
+                ushort graphic = cache != null ? cache.Remap(item.Layer) : LayerRuleEval.Remap(item.ItemData.AnimID, subject);
 
                 if (
                     Client.Game.UO.FileManager.Animations.EquipConversions.TryGetValue(
@@ -1170,8 +1184,15 @@ namespace ClassicUO.Game.GameObjects
                 bool layerData = LayerRuleEval.On;
                 LayerTables layerTables = default;
                 LayerSubject layerSubject = default;
+                // T3b cache: the covering and the remaps from the mobile's cached answer (null: evaluate)
+                LayerDecision layerCache = layerData ? World.State.WorldLayers(this, isGargoyle) : null;
 
-                if (layerData || LayerRuleEval.CheckEnabled)
+                if (layerCache != null)
+                {
+                    layerSubject = layerCache.Subject;
+                }
+
+                if ((layerData && layerCache == null) || LayerRuleEval.CheckEnabled)
                 {
                     layerTables.Gather(this);
                     layerSubject = LayerRuleEval.Subject(Graphic, IsFemale, isGargoyle);
@@ -1188,10 +1209,10 @@ namespace ClassicUO.Game.GameObjects
 
                     if (LayerRuleEval.CheckEnabled)
                     {
-                        LayerRuleEval.CheckPick(this, layer, ref layerTables, layerSubject);
+                        LayerRuleEval.CheckPick(this, layer, ref layerTables, layerSubject, layerCache);
                     }
 
-                    if (layerData ? LayerRuleEval.IsCovered(LayerRuleSet.World, layer, ref layerTables, layerSubject) : IsCovered(this, layer))
+                    if (layerCache != null ? layerCache.IsCovered(layer) : layerData ? LayerRuleEval.IsCovered(LayerRuleSet.World, layer, ref layerTables, layerSubject) : IsCovered(this, layer))
                     {
                         continue;
                     }
@@ -1200,10 +1221,10 @@ namespace ClassicUO.Game.GameObjects
                     {
                         // the resolved hit-test graphic from both helpers (the used one runs last below, so its equip
                         // conversion is the one left in _equipConvData)
-                        LayerRuleEval.ComparePickGraphic(Serial, layer, GetAnimationInfo(this, item, isGargoyle), GetAnimationInfoData(this, item, layerSubject));
+                        LayerRuleEval.ComparePickGraphic(Serial, layer, GetAnimationInfo(this, item, isGargoyle), GetAnimationInfoData(this, item, layerSubject, layerCache));
                     }
 
-                    graphic = layerData ? GetAnimationInfoData(this, item, layerSubject) : GetAnimationInfo(this, item, isGargoyle);
+                    graphic = layerData ? GetAnimationInfoData(this, item, layerSubject, layerCache) : GetAnimationInfo(this, item, isGargoyle);
 
                     if (graphic != 0xFFFF)
                     {

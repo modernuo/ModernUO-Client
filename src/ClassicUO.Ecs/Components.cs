@@ -137,6 +137,14 @@ namespace ClassicUO.Ecs
         /// wearer's equipment only when another one is left.</summary>
         public WornCountArray Counts;
 
+        /// <summary>
+        /// T3b: changes with every write the mirror sees to the wearer's equipment (<c>MarkEquipmentDirty</c>: a worn item's
+        /// graphic or hue, an equip or unequip, the body), a superset of <see cref="Version"/>'s slot changes: a worn item that
+        /// changes its graphic in place keeps its slot. A per-record counter (it sits in the padding before Version, so
+        /// WornLayers stays 160 B); LayerDecision keys on it with Version and the mirror-wide <c>EquipChanges</c>.
+        /// </summary>
+        public uint Look;
+
         /// <summary>Changes with every slot change (a mirror-wide 64-bit counter, never reused): readers' caches key on it.</summary>
         public ulong Version;
 

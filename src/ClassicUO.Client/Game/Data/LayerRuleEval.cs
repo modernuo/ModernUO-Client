@@ -220,7 +220,7 @@ namespace ClassicUO.Game.Data
 
             _summaryAt = Time.Ticks + 5000;
             _summaryChecks = Checks;
-            Log.Info($"[layers] checks {Checks} mismatches {Mismatches} rules {Source} ecs_layer_rules={(On ? "on" : "off")}");
+            Log.Info($"[layers] checks {Checks} mismatches {Mismatches} rules {Source} ecs_layer_rules={(On ? "on" : "off")} cache hits {LayerDecision.Hits} misses {LayerDecision.Misses}");
         }
 
         private static string Fmt(ReadOnlySpan<Layer> a)
@@ -250,8 +250,11 @@ namespace ClassicUO.Game.Data
             }
         }
 
-        /// <summary>MobileView's draw: the order (BuildInWorld), every layer's IsCovered, and the gargoyle remap.</summary>
-        public static void CheckWorld(Mobile mobile, bool gargoyleDraw, byte direction)
+        /// <summary>
+        /// MobileView's draw: the order (BuildInWorld), every layer's IsCovered, and the gargoyle remap; with the T3b cache
+        /// (<paramref name="cache"/>, the answer the draw used) also the cached answer against a fresh evaluation.
+        /// </summary>
+        public static void CheckWorld(Mobile mobile, bool gargoyleDraw, byte direction, LayerDecision cache = null)
         {
             LayerTables t = default;
             t.Gather(mobile);
@@ -264,6 +267,11 @@ namespace ClassicUO.Game.Data
             CompareOrder("world", mobile.Serial, hard.Slice(0, hc), data.Slice(0, dc));
 
             CheckCovered("world", mobile, LayerRuleSet.World, ref t, subject);
+
+            if (cache != null)
+            {
+                CheckCache("world", mobile.Serial, cache, ref t, subject, direction);
+            }
 
             for (int l = (int)Layer.OneHanded; l <= (int)Layer.Legs; l++)
             {
@@ -290,10 +298,53 @@ namespace ClassicUO.Game.Data
             }
         }
 
-        /// <summary>MobileView's pick: one worn layer's IsCovered.</summary>
-        public static void CheckPick(Mobile mobile, Layer layer, ref LayerTables t, LayerSubject subject)
+        /// <summary>MobileView's pick: one worn layer's IsCovered (and the T3b cache's flag against the fresh data).</summary>
+        public static void CheckPick(Mobile mobile, Layer layer, ref LayerTables t, LayerSubject subject, LayerDecision cache = null)
         {
-            CompareCovered("pick", mobile.Serial, layer, Mobile.IsCovered(mobile, layer), IsCovered(LayerRuleSet.World, layer, ref t, subject), ref t);
+            bool data = IsCovered(LayerRuleSet.World, layer, ref t, subject);
+            CompareCovered("pick", mobile.Serial, layer, Mobile.IsCovered(mobile, layer), data, ref t);
+
+            if (cache != null)
+            {
+                CompareCovered("pick cache", mobile.Serial, layer, data, cache.IsCovered(layer), ref t);
+            }
+        }
+
+        /// <summary>
+        /// T3b cache: the cached answer (order for the facing, the worn layers' covered flags and remaps, the subject) against
+        /// a fresh evaluation of the wearer's tables: a stale entry (a key input that didn't invalidate) shows as
+        /// "(where cache ...)" mismatches.
+        /// </summary>
+        public static void CheckCache(string where, uint serial, LayerDecision cache, ref LayerTables t, LayerSubject subject, byte direction)
+        {
+            Span<Layer> data = stackalloc Layer[PaperdollOrder.N];
+            int dc = BuildInWorld(t.Anim, subject, direction, data);
+            CompareOrder(where + " cache", serial, data.Slice(0, dc), cache.Order(direction));
+            Checks++;
+
+            LayerSubject cs = cache.Subject;
+
+            if (subject.Group != cs.Group || subject.Flags != cs.Flags || subject.Body != cs.Body)
+            {
+                Report($"[layers] mismatch ({where} cache subject) 0x{serial:X8}");
+            }
+
+            for (int l = (int)Layer.OneHanded; l <= (int)Layer.Legs; l++)
+            {
+                if (!t.Present[l])
+                {
+                    continue;
+                }
+
+                CompareCovered(where + " cache", serial, (Layer)l, IsCovered(LayerRuleSet.World, (Layer)l, ref t, subject), cache.IsCovered((Layer)l), ref t);
+                ushort fresh = t.Anim[l] == 0 ? (ushort)0 : Remap(t.Anim[l], subject), got = cache.Remap((Layer)l);
+                Checks++;
+
+                if (fresh != got)
+                {
+                    Report($"[layers] mismatch ({where} cache remap) 0x{serial:X8} layer {(Layer)l} anim 0x{t.Anim[l]:X4}: fresh 0x{fresh:X4} | cached 0x{got:X4}");
+                }
+            }
         }
 
         /// <summary>MobileView's pick: the graphic the hit test resolves (remap, then the equip conversion), from both helpers.</summary>
@@ -521,5 +572,180 @@ namespace ClassicUO.Game.Data
 
             return Intern(perms);
         }
+    }
+
+    [InlineArray(PaperdollOrder.N)]
+    internal struct LayerOrderBytes
+    {
+        private Layer _e;
+    }
+
+    [InlineArray(EquipDirOrders.Classes * PaperdollOrder.N)]
+    internal struct LayerDirOrderBytes
+    {
+        private Layer _e;
+    }
+
+    /// <summary>
+    /// T3b cache (ecs_layer_rules): one wearer's full world-set layering answer, reused until an input changes. The answer:
+    /// the filtered order (PaperdollOrder.Filter of BuildOrder) and, filled lazily per direction class (0..7, 8 for any facing
+    /// of 8 or more), the order after the DirMove rules; the covered flag of every worn layer; the remapped draw AnimID of
+    /// every worn layer. The key is everything the rules read: the worn layers' present / graphic / AnimID through the
+    /// record's <see cref="ClassicUO.Ecs.WornLayers.Version"/> (slot changes) and <see cref="ClassicUO.Ecs.WornLayers.Look"/>
+    /// (any write to a worn item: graphic, hue; the AnimID follows the graphic); the subject compared whole (body, so its
+    /// group; the female, gargoyle-draw and 7.0.0.0 flags); the rules instance (fixed once loaded; tests swap it). The
+    /// direction only selects the class. A hit with no equipment mark anywhere since the last check (the mirror-wide
+    /// <see cref="ClassicUO.Ecs.WorldMirror.EquipChanges"/>) is a handful of compares; after a mark anywhere, one component
+    /// read of Look. Held by the mobile's <see cref="WornCache.Layers"/>, made at its first use with the switch on.
+    /// </summary>
+    internal sealed class LayerDecision
+    {
+        private const int N = PaperdollOrder.N;
+
+        // key
+        private LayerRules _rules;
+        private uint _subject; // LayerSubject as 4 bytes
+        private uint _look;
+        private ulong _version;
+        private ulong _seenChanges;
+
+        // answer
+        private byte _count;
+        private ushort _dirValid;
+        private uint _covered;
+        private LayerOrderBytes _base;
+        private LayerDirOrderBytes _dir;
+        private LayerUShorts _anim; // the order key (worn AnimIDs) for the lazy direction moves
+        private LayerUShorts _remap;
+
+        /// <summary>Cache hits and misses (the 5 s checker summary, tests).</summary>
+        public static long Hits, Misses;
+
+        /// <summary>The object's size (layout-based; a test measures it): the memory summary counts it per mobile.</summary>
+        public const int Bytes = 408;
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static uint Pack(LayerSubject s) => Unsafe.As<LayerSubject, uint>(ref s);
+
+        public LayerSubject Subject
+        {
+            get
+            {
+                uint s = _subject;
+
+                return Unsafe.As<uint, LayerSubject>(ref s);
+            }
+        }
+
+        /// <summary>The fast check: the same rules, subject and slot version, and no equipment mark in the mirror since.</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public bool IsCurrent(LayerRules rules, LayerSubject subject, ulong version, ulong changes) =>
+            _seenChanges == changes && _version == version && _subject == Pack(subject) && ReferenceEquals(_rules, rules);
+
+        /// <summary>
+        /// After a mark somewhere: true (a hit) when the key still matches with the wearer's <paramref name="look"/>; else
+        /// takes the new key and returns false: the caller fills the answer (<see cref="Fill"/>) before using it.
+        /// </summary>
+        public bool Revalidate(LayerRules rules, LayerSubject subject, ulong version, uint look, ulong changes)
+        {
+            if (_version == version && _look == look && _subject == Pack(subject) && ReferenceEquals(_rules, rules))
+            {
+                _seenChanges = changes;
+
+                return true;
+            }
+
+            _rules = rules;
+            _subject = Pack(subject);
+            _version = version;
+            _look = look;
+            _seenChanges = changes;
+            _dirValid = 0;
+
+            return false;
+        }
+
+        /// <summary>
+        /// The cache step of <c>WorldState.WorldLayers</c>: true when the answer is current for the key (the record's
+        /// slot <paramref name="version"/>, its Look read only after a mark somewhere in <paramref name="mirror"/>); false
+        /// when the key moved: the key is taken and the caller gathers the wearer's tables and calls <see cref="Fill"/>.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public bool Lookup(LayerRules rules, LayerSubject subject, ulong version, ClassicUO.Ecs.WorldMirror mirror, Friflo.Engine.ECS.Entity record)
+        {
+            ulong changes = mirror.EquipChanges;
+
+            if (IsCurrent(rules, subject, version, changes)
+                || Revalidate(rules, subject, version, record.GetComponent<ClassicUO.Ecs.EquipmentSlots>().Worn.Look, changes))
+            {
+                Hits++;
+
+                return true;
+            }
+
+            Misses++;
+
+            return false;
+        }
+
+        /// <summary>Tests and the bench: forget the answer (the next check misses).</summary>
+        public void Invalidate() => _rules = null;
+
+        /// <summary>The answer for the wearer's tables (the rules and subject from the key just taken).</summary>
+        public void Fill(ref LayerTables t)
+        {
+            LayerRules rules = _rules;
+            LayerSubject subject = Subject;
+            Span<byte> raw = stackalloc byte[N];
+            rules.BuildOrder(LayerRuleSet.World, t.Anim, subject, raw);
+            _count = (byte)PaperdollOrder.Filter(MemoryMarshal.Cast<byte, Layer>(raw), includeBackpack: false, _base);
+            _dirValid = 0;
+            _anim = t.Anim;
+            uint covered = 0;
+
+            for (int l = (int)Layer.OneHanded; l <= (int)Layer.Legs; l++)
+            {
+                if (!t.Present[l])
+                {
+                    _remap[l] = 0;
+
+                    continue;
+                }
+
+                if (rules.IsCovered(LayerRuleSet.World, (byte)l, t.Present, t.Graphic, t.Anim, subject))
+                {
+                    covered |= 1u << l;
+                }
+
+                ushort anim = t.Anim[l];
+                _remap[l] = anim == 0 ? (ushort)0 : rules.Remap(LayerRuleSet.World, anim, subject);
+            }
+
+            _covered = covered;
+        }
+
+        /// <summary>The paint order for a facing (BuildInWorld's answer): the direction class's, computed at its first use.</summary>
+        public ReadOnlySpan<Layer> Order(byte direction)
+        {
+            int c = direction >= 8 ? 8 : direction;
+            Span<Layer> o = ((Span<Layer>)_dir).Slice(c * N, N);
+
+            if ((_dirValid & (1 << c)) == 0)
+            {
+                ((ReadOnlySpan<Layer>)_base).CopyTo(o);
+                _rules.ApplyDirection(LayerRuleSet.World, MemoryMarshal.Cast<Layer, byte>(o), _count, (byte)c, _anim, Subject);
+                _dirValid |= (ushort)(1 << c);
+            }
+
+            return o.Slice(0, _count);
+        }
+
+        /// <summary>A worn layer's covered flag (false for a layer not worn when filled).</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public bool IsCovered(Layer layer) => (uint)layer < N && (_covered & (1u << (int)layer)) != 0;
+
+        /// <summary>A worn layer's draw AnimID after the remap rules (0 for a layer not worn or without an AnimID).</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public ushort Remap(Layer layer) => (uint)layer < N ? _remap[(int)layer] : (ushort)0;
     }
 }
