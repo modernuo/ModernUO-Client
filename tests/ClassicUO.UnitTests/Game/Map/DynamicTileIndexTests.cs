@@ -341,6 +341,35 @@ namespace ClassicUO.UnitTests.Game.Map
             Assert.False(DynamicTileIndex.Holds(NewStatic(Plain, 0)));
         }
 
+        [Theory]
+        [InlineData(false, false, false, false, false)] // everything off: no index
+        [InlineData(true, false, false, false, true)]   // the walk
+        [InlineData(false, true, false, false, true)]   // CUO_WORLD_TILE_INDEX=0
+        [InlineData(false, false, true, false, true)]   // CUO_TILE_ORDER_CHECK
+        [InlineData(false, false, false, true, true)]   // ecs_effects alone (walk off, no overrides): effects still indexed
+        public void The_Index_Is_Maintained_When_Any_Reader_Needs_It(bool walk, bool envOff, bool orderCheck, bool effects, bool expected)
+        {
+            Assert.Equal(expected, DynamicTileIndex.ShouldMaintain(walk, envOff, orderCheck, effects));
+        }
+
+        [Fact]
+        public void Peek_Chunk_Neither_Loads_A_Chunk_Nor_Touches_Its_Access_Time()
+        {
+            var map = new ClassicUO.Game.Map.Map(_world, 0, 4, 4);
+            Assert.Null(map.PeekChunk(9, 9));
+            Assert.Null(map.PeekChunk(-1, 3));
+            Assert.Null(map.PeekChunk(9999, 9999));
+            Assert.Null(map.GetChunk(9, 9, false));
+
+            map.LoadEmptyChunkForTest(1, 1);
+            Chunk c = map.GetChunk(9, 9, false);
+            c.LastAccessTime = 12345;
+            Assert.Same(c, map.PeekChunk(9, 9));
+            Assert.Equal(12345, c.LastAccessTime);
+            map.GetChunk(9, 9, false);
+            Assert.NotEqual(12345, c.LastAccessTime); // GetChunk does touch it (the behavior the checker must not have)
+        }
+
         [Fact]
         public void Effects_Interleave_With_Items_And_Mobiles_By_The_Plus_Two_Priority_And_Move_Between_Tiles()
         {

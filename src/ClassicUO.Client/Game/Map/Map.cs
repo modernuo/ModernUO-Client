@@ -238,6 +238,20 @@ namespace ClassicUO.Game.Map
             return null;
         }
 
+        /// <summary>The chunk at a tile if it is loaded: never loads one and leaves LastAccessTime alone (diagnostics must not
+        /// change chunk lifetime).</summary>
+        internal Chunk PeekChunk(int x, int y)
+        {
+            if (x < 0 || y < 0)
+            {
+                return null;
+            }
+
+            int chunkX = x >> 3, chunkY = y >> 3;
+
+            return IsInMap(chunkX, chunkY) ? _terrainChunks[GetBlock(chunkX, chunkY)] : null;
+        }
+
         public Chunk GetChunk(int x, int y, bool load = true)
         {
             if (x < 0 || y < 0)

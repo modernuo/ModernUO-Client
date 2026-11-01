@@ -40,11 +40,15 @@ namespace ClassicUO.Game.Map
 
         /// <summary>Placements keep the index (the walk switch, an explicit CUO_WORLD_TILE_INDEX, or CUO_TILE_ORDER_CHECK).
         /// Read once: an index started late would miss the objects already placed. Tests set it.</summary>
-        public static bool Maintain = WalkOn || s_env == "0" || TileOrder.Check;
+        public static bool Maintain = ShouldMaintain(WalkOn, s_env == "0", TileOrder.Check, EffectSystem.GlobalOn);
 #else
         public static readonly bool WalkOn = Configuration.Settings.GlobalSettings?.WorldTileIndex ?? false;
-        public static bool Maintain = WalkOn;
+        public static bool Maintain = ShouldMaintain(WalkOn, false, false, EffectSystem.GlobalOn);
 #endif
+
+        /// <summary>Whether placements keep the index: the walk, an explicit CUO_WORLD_TILE_INDEX=0, the order checker, or held
+        /// effects (ecs_effects holds them in the index even with the walk off).</summary>
+        internal static bool ShouldMaintain(bool walkOn, bool envOff, bool orderCheck, bool effectsOn) => walkOn || envOff || orderCheck || effectsOn;
 
         /// <summary>Kept in the index (and skipped in the list by <see cref="TileWalk"/>). The extension point for T8: add
         /// GameEffect here, and the walks, the checker and the item cache's merged loops follow.</summary>

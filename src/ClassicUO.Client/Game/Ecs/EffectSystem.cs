@@ -246,7 +246,7 @@ namespace ClassicUO.Game
 
                 if (e.PendingBlock < 0 && e.TileChunk != null)
                 {
-                    Game.Map.Chunk chunk = world.Map?.GetChunk(e.X, e.Y);
+                    Game.Map.Chunk chunk = world.Map?.PeekChunk(e.X, e.Y);
 
                     if (!ReferenceEquals(chunk, e.TileChunk) || e.TileCell != (byte)(((e.X & 7) << 3) | (e.Y & 7)))
                     {
