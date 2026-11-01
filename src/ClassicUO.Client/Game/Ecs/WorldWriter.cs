@@ -2532,10 +2532,14 @@ namespace ClassicUO.Game
         /// each child's Container to the new serial, into the table under the new serial (replacing whatever was there, as
         /// before: an earlier death's re-keyed mobile is not removed), the new Serial, then
         /// <see cref="WorldEcs.OnSerialChanged"/> (the old entity removed, the new one synced with the mirror bit carried over,
-        /// then each child synced). The same here, in that order, in a scope that owns the mobile and its subtree, not folded:
-        /// the re-key's commit is <c>OnSerialChanged</c>, which reads the entity under its new serial, so it runs after the
-        /// cache writes as before T1 (a T4 move of the serial to the ECS needs a re-key commit that takes the values; see the
-        /// poc-log, "T1 funnel, part 7").
+        /// then each child synced). Since funnel part 9 the ECS commit takes its values and runs first, as every other
+        /// operation's: <see cref="WorldEcs.CommitRekey"/> (the old record removed, the record under the new serial from the
+        /// computed <see cref="MobileState"/>, the mirror bit carried over), then each child's <see cref="WorldEcs.CommitItem"/>
+        /// with the new Container; then the cache writes in the old order (out of the table, each child's Container, into the
+        /// table, the Serial); then the derived inputs and clock from the getters
+        /// (<see cref="WorldEcs.CommitMobileInputs(Mobile, EcsEntity)"/>, as every mobile operation). The mirror ends as
+        /// <c>OnSerialChanged</c> left it, and nothing reads the serial or a Container back from the cache (T4 needs this). In
+        /// a scope that owns the mobile and its subtree, not folded.
         /// </summary>
         /// <param name="mobile">The handler's <c>World.Mobiles.Get(serial)</c> (never the player: the handler returns first).
         /// One this World does not hold for its serial is a violation, rejected (0, nothing changes; no pre-T1 path: the
@@ -2568,6 +2572,29 @@ namespace ClassicUO.Game
                 }
 #endif
 
+                // the ECS from the values: the record under the new serial, then each child under its new parent
+                MobileState v;
+                v.Serial = serial;
+                v.Graphic = mobile.Graphic;
+                v.Hue = mobile.Hue;
+                v.X = mobile.X;
+                v.Y = mobile.Y;
+                v.Z = mobile.Z;
+                v.Direction = mobile.Direction;
+                v.Flags = mobile.Flags;
+                v.IsPlayer = false;
+
+                EcsEntity e = _world.Ecs.CommitRekey(mobile, oldSerial, in v);
+
+                for (LinkedObject i = mobile.Items; i != null; i = i.Next)
+                {
+                    Item child = (Item)i;
+                    ItemState c = CurrentState(child);
+                    c.Container = serial;
+                    _world.Ecs.CommitItem(child, in c);
+                }
+
+                // then the cache, in the old order
                 _world.Mobiles.Remove(oldSerial);
 
                 for (LinkedObject i = mobile.Items; i != null; i = i.Next)
@@ -2577,10 +2604,32 @@ namespace ClassicUO.Game
 
                 _world.Mobiles[serial] = mobile;
                 mobile.Serial = serial;
-                _world.Ecs.OnSerialChanged(oldSerial, mobile);
+
+                // the derived inputs and clock, from the getters (what OnSerialChanged's Sync pushed)
+                _world.Ecs.CommitMobileInputs(mobile, e);
             }
 
             return serial;
+        }
+
+        /// <summary>An item's current values: the starting point of an operation that changes only some of them.</summary>
+        private static ItemState CurrentState(Item item)
+        {
+            ItemState v;
+            v.Serial = item.Serial;
+            v.Graphic = item.Graphic;
+            v.Hue = item.Hue;
+            v.X = item.X;
+            v.Y = item.Y;
+            v.Z = item.Z;
+            v.Direction = item.Direction;
+            v.Flags = item.Flags;
+            v.Amount = item.Amount;
+            v.Container = item.Container;
+            v.Layer = item.Layer;
+            v.IsMulti = item.IsMulti;
+
+            return v;
         }
 
         // ---- funnel part 7, group 3: the per-frame animation (Mobile.Update after the ProcessAnimation split)
