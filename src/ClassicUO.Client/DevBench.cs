@@ -1037,7 +1037,7 @@ namespace ClassicUO
                 case 11:
                     if (_uiHits != 0)
                     {
-                        world.Player.Hits = (ushort)Math.Max(1, world.Player.HitsMax * (0.5 + 0.5 * Math.Sin(Math.PI * 2 * f)));
+                        world.Writer.SetHits(world.Player, world.Player.HitsMax, (ushort)Math.Max(1, world.Player.HitsMax * (0.5 + 0.5 * Math.Sin(Math.PI * 2 * f))));
                     }
 
                     mouse = new Microsoft.Xna.Framework.Point(600, 80);
@@ -1124,7 +1124,7 @@ namespace ClassicUO
                 case 11:
                     if (_uiHits != 0)
                     {
-                        world.Player.Hits = _uiHits;
+                        world.Writer.SetHits(world.Player, world.Player.HitsMax, _uiHits);
                         _uiHits = 0;
                     }
 

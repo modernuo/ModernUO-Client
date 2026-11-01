@@ -164,11 +164,11 @@ namespace ClassicUO.Game.GameObjects
         private bool _isDamageable;
         private Layer _layer;
         private byte _lightID;
-        public ushort Amount { get => _amount; set { FunnelCheck.Write(this, FunnelField.Amount); _amount = value; } }
-        public uint Container { get => _container; set { FunnelCheck.Write(this, FunnelField.Container); _container = value; } }
+        public ushort Amount { get { ScalarReads.Count(ScalarField.Amount); return _amount; } set { FunnelCheck.Write(this, FunnelField.Amount); _amount = value; } }
+        public uint Container { get { ScalarReads.Count(ScalarField.Container); return _container; } set { FunnelCheck.Write(this, FunnelField.Container); _container = value; } }
 
         public bool IsDamageable { get => _isDamageable; set { FunnelCheck.Write(this, FunnelField.IsDamageable); _isDamageable = value; } }
-        public Layer Layer { get => _layer; set { FunnelCheck.Write(this, FunnelField.Layer); _layer = value; } }
+        public Layer Layer { get { ScalarReads.Count(ScalarField.Layer); return _layer; } set { FunnelCheck.Write(this, FunnelField.Layer); _layer = value; } }
         public byte LightID { get => _lightID; set { FunnelCheck.Write(this, FunnelField.LightID); _lightID = value; } }
 
         public Rectangle? MultiInfo;
@@ -176,7 +176,19 @@ namespace ClassicUO.Game.GameObjects
 
         private uint _price;
         private bool _usedLayer;
-        public uint Price { get => _price; set { FunnelCheck.Write(this, FunnelField.Price); _price = value; } }
+        public uint Price
+        {
+            get
+            {
+                ScalarReads.Count(ScalarField.Price);
+
+                return EcsScalars.Owns && TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Price(e) : _price;
+            }
+            set { FunnelCheck.Write(this, FunnelField.Price); _price = value; }
+        }
+
+        /// <summary>T4: the Price cache the funnel writes (-ecscheck v2 compares it).</summary>
+        internal uint CachedPrice => _price;
         public bool UsedLayer { get => _usedLayer; set { FunnelCheck.Write(this, FunnelField.UsedLayer); _usedLayer = value; } }
         public bool WantUpdateMulti = true;
 

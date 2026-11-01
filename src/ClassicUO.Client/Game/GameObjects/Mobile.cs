@@ -18,11 +18,6 @@ namespace ClassicUO.Game.GameObjects
         /// <summary>W5: the Gpu world's reused selection and sprite instances (gpu_mobile_frame_cache).</summary>
         internal MobileFrameCache FrameCache;
 
-        /// <summary>E5: the mirror entity the Gpu world last found for <see cref="EcsEntitySerial"/>, so the per-frame
-        /// draw skips the serial dictionary. Valid while the entity is alive and the serial is the mobile's own.</summary>
-        internal Friflo.Engine.ECS.Entity EcsEntity;
-        internal uint EcsEntitySerial, EcsEntityEpoch;
-
         /// <summary>T3a: the equipment read cache (WorldState.WornItem), made at the first read with ecs_read_equipment on.</summary>
         internal WornCache EquipCache;
 
@@ -269,7 +264,12 @@ namespace ClassicUO.Game.GameObjects
 
         public NotorietyFlag NotorietyFlag
         {
-            get => _notorietyFlag;
+            get
+            {
+                ScalarReads.Count(ScalarField.NotorietyFlag);
+
+                return _notorietyFlag;
+            }
             set
             {
                 FunnelCheck.Write(this, FunnelField.NotorietyFlag);
@@ -292,10 +292,58 @@ namespace ClassicUO.Game.GameObjects
         private int _stepSoundOffset;
         public RaceType Race { get => _race; set { FunnelCheck.Write(this, FunnelField.Race); _race = value; } }
         public CharacterSpeedType SpeedMode { get => _speedMode; set { FunnelCheck.Write(this, FunnelField.SpeedMode); _speedMode = value; } }
-        public ushort Stamina { get => _stamina; set { FunnelCheck.Write(this, FunnelField.Stamina); _stamina = value; } }
-        public ushort StaminaMax { get => _staminaMax; set { FunnelCheck.Write(this, FunnelField.StaminaMax); _staminaMax = value; } }
-        public ushort Mana { get => _mana; set { FunnelCheck.Write(this, FunnelField.Mana); _mana = value; } }
-        public ushort ManaMax { get => _manaMax; set { FunnelCheck.Write(this, FunnelField.ManaMax); _manaMax = value; } }
+        public ushort Stamina
+        {
+            get
+            {
+                ScalarReads.Count(ScalarField.Stamina);
+
+                return EcsScalars.Owns && TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Stamina(e) : _stamina;
+            }
+            set { FunnelCheck.Write(this, FunnelField.Stamina); _stamina = value; }
+        }
+
+        internal ushort CachedStamina => _stamina;
+
+        public ushort StaminaMax
+        {
+            get
+            {
+                ScalarReads.Count(ScalarField.StaminaMax);
+
+                return EcsScalars.Owns && TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.StaminaMax(e) : _staminaMax;
+            }
+            set { FunnelCheck.Write(this, FunnelField.StaminaMax); _staminaMax = value; }
+        }
+
+        internal ushort CachedStaminaMax => _staminaMax;
+
+        public ushort Mana
+        {
+            get
+            {
+                ScalarReads.Count(ScalarField.Mana);
+
+                return EcsScalars.Owns && TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Mana(e) : _mana;
+            }
+            set { FunnelCheck.Write(this, FunnelField.Mana); _mana = value; }
+        }
+
+        internal ushort CachedMana => _mana;
+
+        public ushort ManaMax
+        {
+            get
+            {
+                ScalarReads.Count(ScalarField.ManaMax);
+
+                return EcsScalars.Owns && TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.ManaMax(e) : _manaMax;
+            }
+            set { FunnelCheck.Write(this, FunnelField.ManaMax); _manaMax = value; }
+        }
+
+        internal ushort CachedManaMax => _manaMax;
+
         public int StepSoundOffset { get => _stepSoundOffset; set { FunnelCheck.Write(this, FunnelField.StepSoundOffset); _stepSoundOffset = value; } }
         public string Title = string.Empty;
 
