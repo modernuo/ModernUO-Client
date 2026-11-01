@@ -350,4 +350,58 @@ namespace ClassicUO.Game.Map
             return s;
         }
     }
+
+    /// <summary>
+    /// T6b part 2: one tile's objects for the readers that are not in the render hot path (GetMapZ, the pathfinder, the
+    /// foliage, lights, targeting, the max-Z decision, sitting). <paramref name="merged"/> false walks the tile list from its head
+    /// (or from <c>from</c>); true walks <see cref="TileWalk"/>'s merged order (the list's other objects plus the index's
+    /// array), starting at the same object. While both are maintained the two give the same sequence; the callers take the
+    /// switch from <see cref="DynamicTileIndex.WalkOn"/> and CUO_TILE_ORDER_CHECK runs both and compares the results.
+    /// </summary>
+    internal struct TileReader
+    {
+        private TileWalk _walk;
+        private GameObject _cur;
+        private bool _merged;
+
+        /// <summary>The first object at or after <paramref name="from"/> (the tile's head when null), or null; continue with
+        /// <see cref="Next"/>.</summary>
+        public static GameObject Open(Chunk chunk, int cell, bool merged, GameObject from, out TileReader reader)
+        {
+            reader = default;
+
+            if (chunk == null)
+            {
+                return null;
+            }
+
+            reader._merged = merged && chunk.Dynamic != null;
+
+            if (!reader._merged)
+            {
+                reader._cur = from ?? chunk.GetHeadObject(cell >> 3, cell & 7);
+
+                return reader._cur;
+            }
+
+            GameObject obj = TileWalk.Begin(chunk, cell, out reader._walk);
+
+            while (from != null && obj != null && !ReferenceEquals(obj, from))
+            {
+                obj = reader._walk.Next();
+            }
+
+            return obj;
+        }
+
+        public GameObject Next()
+        {
+            if (_merged)
+            {
+                return _walk.Next();
+            }
+
+            return _cur = _cur?.TNext;
+        }
+    }
 }
