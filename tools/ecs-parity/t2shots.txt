@@ -1,0 +1,61 @@
+# T2 gate (ecs-transition-plan.md, T2 Gate): container screenshots with ecs_read_contents off, then on, in one session, so
+# both show the same containers with the same items at the same server positions. The backpack (kbatman3's leftovers from
+# earlier runs: bags, a cap, spellbooks) and an orc's corpse are opened with the switch off and shot, closed, reopened with
+# the switch on and shot again. Run with CUO_BENCH_SHOTS=<dir> (the shot command saves <name>_gpu.png, _ui.png and
+# _screen.png) and without CUO_ECS_READ_CONTENTS (it would override the readcontents command). The corpse is removed.
+# Before each shot the containers are placed at fixed positions and the scripted cursor parked on the same spot (a reopened
+# gump cascades elsewhere; the tooltip follows the cursor), and the kill's system message has faded (wait 15).
+wait 6
+say [self set Map Felucca
+wait 3
+say [go 5445 1153
+wait 4
+readcontents off
+say [add Orc
+wait 1
+target ground 2 0
+wait 2
+say [kill
+wait 1
+target mobile 2 0
+wait 15
+mouse 600 300
+backpack
+wait 2
+use near 2006
+wait 3
+gumps
+contents backpack
+contents near 2006
+check
+place ContainerGump 60 60 260
+place GridLootGump 60 300
+wait 1
+shot t2_off
+wait 2
+close ContainerGump
+close GridLootGump
+wait 1
+readcontents on
+backpack
+wait 2
+use near 2006
+wait 3
+gumps
+contents backpack
+contents near 2006
+check
+place ContainerGump 60 60 260
+place GridLootGump 60 300
+wait 1
+shot t2_on
+wait 2
+close ContainerGump
+close GridLootGump
+readcontents off
+mouse off
+say [remove
+wait 1
+target near 2006
+wait 2
+quit
