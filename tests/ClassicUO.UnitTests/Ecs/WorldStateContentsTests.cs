@@ -107,6 +107,28 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Fact]
+        public void A_Record_Removed_Directly_Leaves_Its_Cached_Parent()
+        {
+            // the funnel detaches before it removes, so this is the mirror's own guarantee (mutation round)
+            World world = Build();
+            world.State.Contents(PACK).ToArray().Should().Contain(A);
+
+            world.Ecs.Mirror.Remove(A).Should().BeTrue();
+            world.Ecs.Mirror.Contents(PACK).ToArray().Should().NotContain(A);
+        }
+
+        [Fact]
+        public void A_Removed_Parent_Releases_Its_Cached_Slot()
+        {
+            World world = Build();
+            world.State.Contents(BAG);
+            world.Ecs.Mirror.CachedContentsParents.Should().Be(1);
+
+            world.Writer.RemoveWorldItem(world.Items.Get(BAG), out _);
+            world.Ecs.Mirror.CachedContentsParents.Should().Be(0);
+        }
+
+        [Fact]
         public void Nothing_Is_Tracked_Before_The_First_Read()
         {
             World world = Build();

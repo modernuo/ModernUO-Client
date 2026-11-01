@@ -156,7 +156,7 @@ namespace ClassicUO.UnitTests.Ecs
             Both(world, () => world.State.HasChildren(world.Items.Get(ARROWS))).Should().BeFalse();
         }
 
-        public enum Reader { FindItem, FindItemHue, GetItemByGraphic, GetTotalAmount, SecureTradeBox, FindItemByGraphic, FindItemByCliloc, HasChildren, SpellEntries, Order }
+        public enum Reader { FindItem, FindItemHue, GetItemByGraphic, GetTotalAmount, SecureTradeBox, FindItemByGraphic, FindItemByCliloc, HasChildren, SpellEntries, Order, FindItemByGraphicEmptied, FindItemByClilocEmptied }
 
         // the child list changed behind the funnel's back: the switch-off reader sees the list, the switch-on reader the ECS
         [Theory]
@@ -168,6 +168,8 @@ namespace ClassicUO.UnitTests.Ecs
         [InlineData(Reader.FindItemByGraphic)]
         [InlineData(Reader.FindItemByCliloc)]
         [InlineData(Reader.HasChildren)]
+        [InlineData(Reader.FindItemByGraphicEmptied)]
+        [InlineData(Reader.FindItemByClilocEmptied)]
         [InlineData(Reader.SpellEntries)]
         [InlineData(Reader.Order)]
         public void With_The_Switch_On_The_Readers_Follow_The_ECS(Reader reader)
@@ -224,6 +226,21 @@ namespace ClassicUO.UnitTests.Ecs
 
                 case Reader.FindItemByCliloc:
                     bag.Remove(world.Items.Get(ARROWS));
+                    read = () => p.FindItemByCliloc(ARROW_CLILOC)?.Serial;
+                    (offExpected, onExpected) = (null, ARROWS);
+
+                    break;
+
+                // the recursion into a container is decided by HasChildren (the ECS's with the switch on), not the list's IsEmpty
+                case Reader.FindItemByGraphicEmptied:
+                    bag.Clear();
+                    read = () => p.FindItemByGraphic(0xF3F)?.Serial;
+                    (offExpected, onExpected) = (null, ARROWS);
+
+                    break;
+
+                case Reader.FindItemByClilocEmptied:
+                    bag.Clear();
                     read = () => p.FindItemByCliloc(ARROW_CLILOC)?.Serial;
                     (offExpected, onExpected) = (null, ARROWS);
 
