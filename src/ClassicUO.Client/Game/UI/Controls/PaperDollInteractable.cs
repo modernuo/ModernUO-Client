@@ -33,6 +33,12 @@ namespace ClassicUO.Game.UI.Controls
 
         public bool HasFakeItem { get; private set; }
 
+        /// <summary>
+        /// T1 (funnel part 8, Codex audit P2 #2): a detached preview mobile (character creation's) drawn instead of the mobile
+        /// World holds for <see cref="Control.LocalSerial"/>. Null: the lookup, as before.
+        /// </summary>
+        internal Mobile Preview { get; init; }
+
         public override void Update()
         {
             base.Update();
@@ -58,7 +64,7 @@ namespace ClassicUO.Game.UI.Controls
                 return;
             }
 
-            Mobile mobile = _paperDollGump.World.Mobiles.Get(LocalSerial);
+            Mobile mobile = Preview ?? _paperDollGump.World.Mobiles.Get(LocalSerial);
 
             if (mobile == null || mobile.IsDestroyed)
             {
