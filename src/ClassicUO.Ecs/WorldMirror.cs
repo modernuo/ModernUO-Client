@@ -350,13 +350,26 @@ namespace ClassicUO.Ecs
             }
         }
 
-        private static void MarkEquipmentDirty(Entity e)
+        private void MarkEquipmentDirty(Entity e)
         {
-            if (e.HasComponent<EquipmentSlots>() && !e.Tags.Has<EquipmentDirty>())
+            if (!e.HasComponent<EquipmentSlots>())
+            {
+                return;
+            }
+
+            // T3b: every mark moves the wearer's Look and the mirror-wide count (LayerDecision's key), also while the tag is set
+            e.GetComponent<EquipmentSlots>().Worn.Look++;
+            EquipChanges++;
+
+            if (!e.Tags.Has<EquipmentDirty>())
             {
                 e.AddTag<EquipmentDirty>();
             }
         }
+
+        /// <summary>T3b: the equipment marks (<see cref="MarkEquipmentDirty(uint)"/>) so far: while it and
+        /// <see cref="WornWrites"/> stand still, no wearer's <see cref="WornLayers.Look"/> or Version moved.</summary>
+        public ulong EquipChanges;
 
         public void Clear()
         {
