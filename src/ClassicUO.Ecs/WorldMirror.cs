@@ -31,6 +31,7 @@ namespace ClassicUO.Ecs
     {
         public string Name;
         public ushort Hits, HitsMax;
+        public ushort Stamina, StaminaMax, Mana, ManaMax;
         public byte Notoriety, ItemLayer;
         public uint Price;
 
@@ -505,6 +506,50 @@ namespace ClassicUO.Ecs
             return true;
         }
 
+        /// <summary>T4: a mobile's stamina pool (0xA3, 0x2D, the player's 0x11), in <see cref="Vitals"/>.</summary>
+        public bool SetStamina(uint serial, ushort staminaMax, ushort stamina)
+        {
+            if (!_bySerial.TryGetValue(serial, out Entity e))
+            {
+                return false;
+            }
+
+            if (e.HasComponent<Vitals>())
+            {
+                ref Vitals v = ref e.GetComponent<Vitals>();
+                v.StaminaMax = staminaMax;
+                v.Stamina = stamina;
+            }
+            else if (stamina != 0 || staminaMax != 0)
+            {
+                e.AddComponent(new Vitals { Stamina = stamina, StaminaMax = staminaMax });
+            }
+
+            return true;
+        }
+
+        /// <summary>T4: a mobile's mana pool (0xA2, 0x2D, the player's 0x11), in <see cref="Vitals"/>.</summary>
+        public bool SetMana(uint serial, ushort manaMax, ushort mana)
+        {
+            if (!_bySerial.TryGetValue(serial, out Entity e))
+            {
+                return false;
+            }
+
+            if (e.HasComponent<Vitals>())
+            {
+                ref Vitals v = ref e.GetComponent<Vitals>();
+                v.ManaMax = manaMax;
+                v.Mana = mana;
+            }
+            else if (mana != 0 || manaMax != 0)
+            {
+                e.AddComponent(new Vitals { Mana = mana, ManaMax = manaMax });
+            }
+
+            return true;
+        }
+
         public bool SetNotoriety(uint serial, byte notoriety)
         {
             if (!_bySerial.TryGetValue(serial, out Entity e))
@@ -562,6 +607,10 @@ namespace ClassicUO.Ecs
             {
                 x.Hits = vitals.Hits;
                 x.HitsMax = vitals.HitsMax;
+                x.Stamina = vitals.Stamina;
+                x.StaminaMax = vitals.StaminaMax;
+                x.Mana = vitals.Mana;
+                x.ManaMax = vitals.ManaMax;
             }
 
             if (e.TryGetComponent(out MobileNotoriety notoriety))
@@ -585,12 +634,15 @@ namespace ClassicUO.Ecs
 
         /// <summary>
         /// The death re-key (T1 part 9): the name, hits and notoriety a mobile's old record had, written to its record under
-        /// the new serial (the mobile keeps them; a record already under that serial takes them, defaults included).
+        /// the new serial (the mobile keeps them; a record already under that serial takes them, defaults included). T4: the
+        /// stamina and mana too (the getters read them from the record with ecs_owns_scalars on).
         /// </summary>
         public void CarryMobileExtras(in MirrorExtras x, uint serial)
         {
             SetName(serial, x.Name);
             SetVitals(serial, x.Hits, x.HitsMax);
+            SetStamina(serial, x.StaminaMax, x.Stamina);
+            SetMana(serial, x.ManaMax, x.Mana);
             SetNotoriety(serial, x.Notoriety);
         }
 
