@@ -2854,8 +2854,8 @@ namespace ClassicUO.Game
 
         /// <summary>
         /// <c>PlayerMobile.Walk</c>'s coalesced turn (three unconfirmed requests: the direction alone, no step): as
-        /// <see cref="SetMobileDirection"/> (the record committed with the new direction, the setter unfolded for the door
-        /// check, the inputs), with the walk's admission (<see cref="AdmittedPlayerWalk"/>). Only <c>World.Player</c> of this
+        /// <see cref="SetMobileDirection"/> (the record committed with the new direction, then the setter unfolded for the door
+        /// check, whose Sync writes the inputs: the old turn's one push), with the walk's admission (<see cref="AdmittedPlayerWalk"/>). Only <c>World.Player</c> of this
         /// World; anything else is a violation, rejected. False: rejected, nothing changed (Walk then returns false and keeps
         /// its cooldown).
         /// </summary>
@@ -2884,11 +2884,12 @@ namespace ClassicUO.Game
             v.Flags = player.Flags;
             v.IsPlayer = true;
 
+            // the setter's Sync (unfolded) writes the inputs from the new direction, the one push the old turn made; no
+            // second inputs commit (unlike SetMobileDirection, whose 0x1B/0x21 callers it keeps as they were)
             using (joined ? default : Open(player, null))
             {
-                EcsEntity e = _world.Ecs.CommitMobile(player, in v);
+                _world.Ecs.CommitMobile(player, in v);
                 player.Direction = v.Direction;
-                _world.Ecs.CommitMobileInputs(player, e);
             }
 
             return true;
