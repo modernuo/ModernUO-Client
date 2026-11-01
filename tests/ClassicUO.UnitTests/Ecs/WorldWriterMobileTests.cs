@@ -23,6 +23,7 @@ namespace ClassicUO.UnitTests.Ecs
     // Not covered here: the player's own branch of UpdateGameObject (serial == World.Player: no step) and the PlayerMobile
     // callbacks (door and corpse checks), because a PlayerMobile needs the UO files; the client gate (0x20, 0x77, 0x78 on a
     // live server) covers them. SetMobileBody and MoveMobile, the player's operations, are compared here on a plain mobile.
+    [Collection(nameof(FunnelCheckCollection))] // Time.Ticks and the shared RNG are process-wide: never in parallel with other tests
     public partial class WorldWriterMobileTests
     {
         internal const uint DEAD = 0x8000_3000;
