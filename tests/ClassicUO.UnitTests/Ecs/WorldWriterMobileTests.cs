@@ -25,7 +25,8 @@ namespace ClassicUO.UnitTests.Ecs
     // live server) covers them. SetMobileBody and MoveMobile, the player's operations, are compared here on a plain mobile.
     public partial class WorldWriterMobileTests
     {
-        private const uint MOB = 0x0000_3000, OTHER = 0x0000_3001, NEWMOB = 0x0000_3002, DEAD = 0x8000_3000, BAG = 0x4000_7000, ITEM = 0x4000_7001;
+        internal const uint DEAD = 0x8000_3000;
+        private const uint MOB = 0x0000_3000, OTHER = 0x0000_3001, NEWMOB = 0x0000_3002, BAG = 0x4000_7000, ITEM = 0x4000_7001;
 
         internal struct MobPacket
         {
@@ -527,7 +528,7 @@ namespace ClassicUO.UnitTests.Ecs
         // ---- 0x77's lookups: the notoriety on World.Mobiles.Get's mobile, then UpdateGameObject's World.Get (an item first
         // for a serial outside the mobile range, e.g. a death-rekeyed mobile's)
 
-        private static World BuildDead()
+        internal static World BuildDead()
         {
             World world = Build(Start.Standing);
             Mobile m = world.Mobiles.Get(MOB);

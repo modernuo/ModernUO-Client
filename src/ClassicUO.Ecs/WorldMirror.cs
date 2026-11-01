@@ -77,6 +77,13 @@ namespace ClassicUO.Ecs
 
         public bool TryGetEntity(uint serial, out Entity entity) => _bySerial.TryGetValue(serial, out entity);
 
+        /// <summary>
+        /// T4: the record under the serial when it is of the asked kind. A death-rekeyed mobile and a corpse item can share
+        /// a serial, and the mirror keeps one record per serial, so a lookup by serial may find the other kind's record.
+        /// </summary>
+        public bool TryGetEntity(uint serial, bool mobile, out Entity entity) =>
+            _bySerial.TryGetValue(serial, out entity) && entity.Tags.Has<MobileTag>() == mobile;
+
         /// <summary>Creates or updates a mobile's entity and returns it (the caller pushes <see cref="MobileInputs"/>).</summary>
         public Entity UpsertMobile(uint serial, ushort graphic, ushort hue, ushort x, ushort y, sbyte z, byte facing, byte flags, bool isPlayer)
         {
