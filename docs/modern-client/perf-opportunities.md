@@ -223,4 +223,7 @@ Today the client parses incoming packets in place (`StackDataReader` over fixed 
 - **Paperdoll slot lookups every frame** (PaperDollGump.cs ~755): about 14 `FindItemByLayer` calls per frame. Cache per equipment change. Source: perf-4.
 - **Missing-art error log every frame** (ClassicUO.Renderer/Arts/Art.cs:205): the placeholder isn't cached, so each such item allocates and logs a string every frame. Caching the placeholder fixes it. Source: t7b2a fix round.
 - **Legacy sink: repeated frame lookups** (LegacySpriteResolve.cs:87, MobileSpriteExtract.Layer): `GetAnimationFrames` runs once per strip and again per layer. Caching the last (body, group, dir, equip) would save about 3–5 lookups per mobile layer. Source: t7b2a.
+- **Targeted take for gumps** (`Gump.GetGump`, src/ClassicUO.Renderer/Gumps/Gump.cs ~290): it drains the whole ready queue to reach one gump, uploading unrelated sprites outside the frame allowance. A `TryTakeReady` would upload only the needed gump. Source: perf-5.
+- **Mobile pixel check from records** (MobileView.CheckMouseSelection ~1060–1270): once the rect hits, it redoes the texture, layer and equip lookups per layer, although the draw records already hold body, group, direction, frame, flip and position. Source: t7b2b.
+- **One component read per mobile** (TryDrawMobileEcs, LegacySpriteSink.DrawMobile): `AnimationState` and `MobileRenderState` are looked up separately. One `e.Data` read, as `ItemSpriteInput.ReadRecord` does, saves one lookup per mobile per frame. Source: t7b2b.
 
