@@ -142,9 +142,15 @@ namespace ClassicUO.Game
 
         /// <summary>
         /// T9 child-list slice B2: the attaches refused because they would close a loop in the merged serial graph (see
-        /// <see cref="WouldCycle"/>). A server's packet, not a caller bug: no violation.
+        /// <see cref="CheckAttach"/>). A server's packet, not a caller bug: no violation.
         /// </summary>
         internal int CycleRefusals { get; private set; }
+
+        /// <summary>
+        /// T9 child-list slice B3: the attaches refused because an item would end up more than
+        /// <see cref="WorldState.MaxNestingDepth"/> levels below its root, past what the destroy cascades reach.
+        /// </summary>
+        internal int DepthRefusals { get; private set; }
 
         /// <summary>Tests: the placements issued and not yet consumed or cancelled.</summary>
         internal int OutstandingPlacements => _placements.Count;
@@ -601,15 +607,31 @@ namespace ClassicUO.Game
             }
 
             Item item = _world.Items.Get(serial);
+            Mobile asItem = SerialHelper.IsMobile(serial) ? _world.Mobiles.Get(serial) : null;
+            bool removeMobile = asItem != null && !asItem.IsDestroyed;
+
+            // destroy-vs-reuse: another container's item is destroyed (contents too) and recreated below, unless it is an
+            // equipped item going into a corpse (the corpse's equipment)
+            bool replace = item != null && item.Container != containerSerial && (container.Graphic != 0x2006 || item.Layer == Layer.Invalid);
+
+            // T9 slice B3 (Codex audit of B2, P2 #1): the refusal is decided before the removals below, against the graph they
+            // leave (CheckAttach: a chain from the container back to the item through what the removals take is gone with it),
+            // so a refused attach removes nothing either; the handler sees no container (it returns, as for a missing one).
+            // An item is never inside itself: the self case is refused (before T1 it destroyed the item and recreated it
+            // contained in its own serial; with a mobile-range serial, the mobile was removed first)
+            if (RefusedAttach(nameof(PlaceInContainer), serial, containerSerial, false, childRemoved: removeMobile || replace))
+            {
+                container = null;
+
+                return null;
+            }
 
             if (SerialHelper.IsMobile(serial))
             {
                 // through the removal path (Codex audit of part 4, #2): the placements of the mobile and of everything it
                 // wears or holds are cancelled first, and the removal owns its subtree. World.RemoveMobile did nothing for a
                 // missing or destroyed mobile, so neither does this.
-                Mobile asItem = _world.Mobiles.Get(serial);
-
-                if (asItem != null && !asItem.IsDestroyed)
+                if (removeMobile)
                 {
                     RemoveMobileSubtree(asItem);
                 }
@@ -617,21 +639,10 @@ namespace ClassicUO.Game
                 Log.Warn("AddItemToContainer function adds mobile as Item");
             }
 
-            // destroy-vs-reuse: another container's item is destroyed (contents too) and recreated below, unless it is an
-            // equipped item going into a corpse (the corpse's equipment)
+            // (read again after the mobile's removal, as before: the item may have gone with it)
             if (item != null && item.Container != containerSerial && (container.Graphic != 0x2006 || item.Layer == Layer.Invalid))
             {
                 RemoveForReplacement(item);
-            }
-
-            // T9 slice B2: after the old removals (a replaced item's subtree, the container too when it was inside, is gone),
-            // an attach that would still close a loop (equipment moved into a corpse inside it, an item under a dead mobile's
-            // serial) is refused: nothing more is written, and the handler sees no container (it returns, as for a missing one)
-            if (RefusedAttach(nameof(PlaceInContainer), serial, containerSerial, serial == containerSerial ? SelfParentIsMobile(serial) : container is Mobile))
-            {
-                container = null;
-
-                return null;
             }
 
             item = _world.GetOrCreateItem(serial, out _);
@@ -2833,7 +2844,8 @@ namespace ClassicUO.Game
                         // T9 slice B2: the record under the new serial is now the mobile's (no parent), so no re-attach can
                         // close a loop; only if the commit wrote none (a destroyed mobile) could an item's record above the
                         // children remain: such a child keeps the Container but is not attached (an orphan)
-                        bool refused = RefusedAttach(nameof(RekeyDeadMobile), s, serial, true);
+                        // (a mobile's child to the new mobile: every depth is kept, no subtree walk)
+                        bool refused = RefusedAttach(nameof(RekeyDeadMobile), s, serial, true, keepsDepth: true);
                         _world.Ecs.CommitItem(child, in c, attach: !refused);
                     }
                 }
@@ -3533,35 +3545,114 @@ namespace ClassicUO.Game
         // attached or not, so the cache's Container chain stays acyclic too) reaches the child's serial. A record that is its
         // own parent is slice B's shared case (the item a mobile wears under its own serial): a root. A chain longer than
         // WorldState.MaxNestingDepth is refused too. Attach time only; no allocation.
-        private bool WouldCycle(uint child, uint parent, bool parentIsMobile)
+        //
+        // T9 slice B3 (Codex audit of B2, P2 #2): the destroy cascades and recursive readers stop at MaxNestingDepth, so an
+        // accepted attach must also keep every attached item within that depth of its root: the parent's depth (the walk's
+        // length; one more when the walk ends at a self-parent record, because the mobile's cascade reaches what it wears a
+        // second time through the item under its serial) + 1 + the moved item's attached subtree height <= MaxNestingDepth.
+        // With that invariant every bounded walk is complete on an accepted graph, and the bounds only matter for a loop forced
+        // in behind the funnel (the alternative, unbounded iterative cascades, would fix the destroy but leave the readers cut
+        // short and need a visited set per cascade).
+        //
+        // T9 slice B3 (P2 #1): childRemoved: the operation removes the child's attached subtree before it attaches
+        // (PlaceInContainer's destroy-vs-reuse or its mobile removal); the check is made before that removal, against the
+        // graph it leaves: a chain from the parent that reaches the child through attached links only is removed with it (the
+        // parent's record is gone: the new item goes under a serial no record holds, as before T1), and the new item has no
+        // contents. A chain that reaches it through an unattached link survives the removal: still a loop.
+        private AttachCheck CheckAttach(uint child, uint parent, bool parentIsMobile, bool childRemoved, bool keepsDepth)
         {
             if (parent == child)
             {
                 // the mobile under the item's serial wears it (the shared case); an item is never its own parent
-                return !parentIsMobile;
+                return parentIsMobile ? AttachCheck.Ok : AttachCheck.Loop;
             }
 
             ClassicUO.Ecs.WorldMirror mirror = _world.Ecs.Mirror;
             uint s = parent;
+            int depth = 0;
+            bool attached = true;
 
-            for (int i = 0; i < WorldState.MaxNestingDepth; i++)
+            while (true)
             {
-                uint up = mirror.ParentOf(s);
+                uint up = mirror.ParentOf(s, out bool linked);
 
-                if (up == ClassicUO.Ecs.WorldMirror.NO_CONTAINER || up == 0 || up == s)
+                if (up == ClassicUO.Ecs.WorldMirror.NO_CONTAINER || up == 0)
                 {
-                    return false;
+                    break;
+                }
+
+                if (up == s)
+                {
+                    depth++;
+
+                    break;
                 }
 
                 if (up == child)
                 {
-                    return true;
+                    return childRemoved && attached && linked ? AttachCheck.Ok : AttachCheck.Loop;
                 }
 
+                attached &= linked;
                 s = up;
+
+                if (++depth >= WorldState.MaxNestingDepth)
+                {
+                    return AttachCheck.TooDeep;
+                }
             }
 
-            return true;
+            // the levels left below the child
+            int budget = WorldState.MaxNestingDepth - depth - 1;
+
+            if (budget < 0)
+            {
+                return AttachCheck.TooDeep;
+            }
+
+            // a removed child is recreated empty; a re-push under its own attached parent (0x25 into the same container) or
+            // the death rekey (a mobile's children to the new mobile) keeps every depth
+            if (childRemoved || keepsDepth || (mirror.ParentOf(child, out bool childLinked) == parent && childLinked))
+            {
+                return AttachCheck.Ok;
+            }
+
+            return SubtreeDeeperThan(mirror, child, child, budget) ? AttachCheck.TooDeep : AttachCheck.Ok;
+        }
+
+        // whether serial's attached subtree reaches more than budget levels below it, walked as the destroy cascade walks it
+        // (an item never lists itself; the walk does not come back to its root). Recursion at most budget + 1 deep; the
+        // contents spans are the mirror's cached arrays (no allocation once each parent's array is large enough). Attach time
+        // only: a move of an item with contents visits each item of its subtree once (a leaf costs two index probes and caches
+        // no contents).
+        private static bool SubtreeDeeperThan(ClassicUO.Ecs.WorldMirror mirror, uint root, uint serial, int budget)
+        {
+            if (!mirror.IsNamedAsParent(serial))
+            {
+                return false;
+            }
+
+            foreach (uint c in mirror.Contents(serial))
+            {
+                if (c == serial || c == root)
+                {
+                    continue;
+                }
+
+                if (budget == 0 || SubtreeDeeperThan(mirror, root, c, budget - 1))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private enum AttachCheck : byte
+        {
+            Ok,
+            Loop,
+            TooDeep
         }
 
         // what World.Get(parent) returns once the item under child exists (the operations create it before resolving the
@@ -3569,18 +3660,33 @@ namespace ClassicUO.Game
         // item itself
         private bool SelfParentIsMobile(uint serial) => SerialHelper.IsMobile(serial) && _world.Mobiles.Get(serial) != null;
 
-        // a refused attach: the operation writes nothing (the item keeps its values and its place, and is not created)
-        private bool RefusedAttach(string operation, uint child, uint parent, bool parentIsMobile)
+        // a refused attach: the operation writes nothing (the item keeps its values and its place, is not created, and
+        // nothing is removed)
+        private bool RefusedAttach(string operation, uint child, uint parent, bool parentIsMobile, bool childRemoved = false, bool keepsDepth = false)
         {
-            if (!WouldCycle(child, parent, parentIsMobile))
+            AttachCheck check = CheckAttach(child, parent, parentIsMobile, childRemoved, keepsDepth);
+
+            if (check == AttachCheck.Ok)
             {
                 return false;
             }
 
-            CycleRefusals++;
+            if (check == AttachCheck.Loop)
+            {
+                CycleRefusals++;
+            }
+            else
+            {
+                DepthRefusals++;
+            }
 
 #if CUO_DEVTOOLS
-            Log.Warn($"WorldWriter.{operation}: 0x{child:X8} under 0x{parent:X8} would close a loop in the serial graph; refused (nothing written)");
+            Log.Warn
+            (
+                check == AttachCheck.Loop
+                    ? $"WorldWriter.{operation}: 0x{child:X8} under 0x{parent:X8} would close a loop in the serial graph; refused (nothing written)"
+                    : $"WorldWriter.{operation}: 0x{child:X8} under 0x{parent:X8} would nest deeper than {WorldState.MaxNestingDepth} levels; refused (nothing written)"
+            );
 #endif
 
             return true;

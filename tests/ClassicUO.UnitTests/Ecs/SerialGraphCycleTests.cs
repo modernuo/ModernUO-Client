@@ -304,6 +304,189 @@ namespace ClassicUO.UnitTests.Ecs
             RunReaders(world, PACK);
         }
 
+        // ---- T9 slice B3 (Codex audit of B2, P2 #1): the refusal is decided before PlaceInContainer's removals, against
+        // the graph those removals leave
+
+        [Fact]
+        public void PlaceInContainer_Of_A_Ground_Container_Into_Itself_Is_Refused_Before_Anything_Is_Removed()
+        {
+            // PACK is still waiting for its placement (an outstanding token), holds BAG > X; 0x25 puts PACK into PACK
+            World world = NewWorld();
+            world.Writer.UpsertWorldItem(PACK, 0xE75, 0, 1, 1000, 1000, 0, Direction.North, 0, Flags.None, 0, out _, out WorldWriter.Placement p);
+            world.Writer.PlaceInContainer(BAG, 0xE76, 1, 10, 10, 0, PACK, out _);
+            world.Writer.PlaceInContainer(X, 0xEED, 1, 10, 10, 0, BAG, out _);
+            Item pack = world.Items.Get(PACK);
+            world.Writer.OutstandingPlacements.Should().Be(1);
+
+            world.Writer.PlaceInContainer(PACK, 0xE75, 1, 1, 1, 0, PACK, out Entity container).Should().BeNull("an item is never inside itself");
+
+            container.Should().BeNull();
+            world.Writer.CycleRefusals.Should().Be(1);
+            pack.IsDestroyed.Should().BeFalse("a refused attach removes nothing");
+            world.Items.Get(PACK).Should().BeSameAs(pack);
+            world.State.Contents(PACK).ToArray().Should().Equal(BAG);
+            world.State.Contents(BAG).ToArray().Should().Equal(X);
+            world.Writer.OutstandingPlacements.Should().Be(1, "its placement is not cancelled");
+            world.Writer.PlaceWorldItem(p);
+            pack.OnGround.Should().BeTrue();
+            AssertAcyclic(world);
+            RunReaders(world, PACK);
+        }
+
+        [Fact]
+        public void PlaceInContainer_Of_A_Mobile_Serial_Into_Itself_Is_Refused_Before_The_Mobile_Is_Removed()
+        {
+            World world = NewWorld();
+            Mobile mob = world.GetOrCreateMobile(MOB);
+            world.Writer.Equip(B, 0x1F03, Layer.Robe, MOB, 0, out _, out _);
+
+            world.Writer.PlaceInContainer(MOB, 0xEED, 1, 1, 1, 0, MOB, out Entity container).Should().BeNull();
+
+            container.Should().BeNull();
+            world.Writer.CycleRefusals.Should().Be(1);
+            mob.IsDestroyed.Should().BeFalse();
+            world.Mobiles.Get(MOB).Should().BeSameAs(mob);
+            world.Items.Get(MOB).Should().BeNull();
+            world.State.Contents(MOB).ToArray().Should().Equal(B);
+            AssertAcyclic(world);
+        }
+
+        [Fact]
+        public void PlaceInContainer_Refused_Through_An_Unattached_Link_Removes_Nothing()
+        {
+            // Y names W as its wearer but is not attached (0x2E before W existed); W then appears on the ground. 0x25 puts W
+            // into Y: W's replacement would not remove Y (not in W's contents), so the loop W > Y > W would remain: refused
+            // before W is destroyed
+            World world = NewWorld();
+            world.Writer.Equip(Y, 0x1F03, Layer.Robe, B, 0, out _, out _).Should().NotBeNull("no wearer: an orphan");
+            world.Writer.UpsertWorldItem(B, 0xE75, 0, 1, 1000, 1000, 0, Direction.North, 0, Flags.None, 0, out _, out WorldWriter.Placement p);
+            world.Writer.PlaceWorldItem(p);
+            world.Writer.PlaceInContainer(C, 0xEED, 1, 1, 1, 0, B, out _);
+            Item b = world.Items.Get(B);
+
+            world.Writer.PlaceInContainer(B, 0xE75, 1, 1, 1, 0, Y, out _).Should().BeNull();
+
+            world.Writer.CycleRefusals.Should().Be(1);
+            b.IsDestroyed.Should().BeFalse("a refused attach removes nothing");
+            world.Items.Get(B).Should().BeSameAs(b);
+            b.OnGround.Should().BeTrue();
+            world.State.Contents(B).ToArray().Should().Equal(C);
+            AssertAcyclic(world);
+            RunReaders(world, B);
+        }
+
+        [Fact]
+        public void PlaceInContainer_Of_A_Mobile_Serial_Into_What_It_Wears_Removes_The_Mobile_Then_Places()
+        {
+            // the mobile branch removes MOB with B (what it wears) first, so the item goes under a serial no record holds (as
+            // before T1): not a loop in the graph the removal leaves
+            World world = NewWorld();
+            world.GetOrCreateMobile(MOB);
+            world.Writer.Equip(B, 0x1F03, Layer.Robe, MOB, 0, out _, out _);
+
+            world.Writer.PlaceInContainer(MOB, 0xEED, 1, 1, 1, 0, B, out _).Should().NotBeNull();
+
+            world.Writer.CycleRefusals.Should().Be(0);
+            world.Mobiles.Get(MOB).Should().BeNull();
+            world.Items.Get(B).Should().BeNull();
+            AssertAcyclic(world);
+            RunReaders(world, MOB);
+        }
+
+        // ---- T9 slice B3 (Codex audit of B2, P2 #2): no accepted attach makes a chain the destroy cascades cannot finish
+
+        private const uint DEEP = 0x4001_0000;
+
+        // DEEP + 0 on the ground, DEEP + i inside DEEP + i - 1 (i = 1..levels): DEEP + levels is levels deep
+        private static void Chain(World world, int levels)
+        {
+            world.Writer.UpsertWorldItem(DEEP, 0xE75, 0, 1, 1000, 1000, 0, Direction.North, 0, Flags.None, 0, out _, out WorldWriter.Placement p);
+            world.Writer.PlaceWorldItem(p);
+
+            for (uint i = 1; i <= levels; i++)
+            {
+                world.Writer.PlaceInContainer(DEEP + i, 0xE75, 1, 1, 1, 0, DEEP + i - 1, out _).Should().NotBeNull($"level {i}");
+            }
+        }
+
+        [Fact]
+        public void Equip_Of_A_Subtree_That_Would_Nest_Past_The_Bound_Is_Refused()
+        {
+            // the Codex scenario: an accepted chain WorldState.MaxNestingDepth deep, its root then equipped under a fresh
+            // parent: its deepest item would sit one level past what the destroy cascade reaches
+            World world = NewWorld();
+            Chain(world, WorldState.MaxNestingDepth);
+            world.Writer.UpsertWorldItem(GROUND, 0xE75, 0, 1, 1000, 1000, 0, Direction.North, 0, Flags.None, 0, out _, out WorldWriter.Placement p);
+            world.Writer.PlaceWorldItem(p);
+
+            world.Writer.Equip(DEEP, 0xE75, Layer.Robe, GROUND, 0, out _, out _).Should().BeNull("too deep: refused");
+
+            world.Writer.DepthRefusals.Should().Be(1);
+            world.Writer.CycleRefusals.Should().Be(0, "not a loop");
+            world.Items.Get(DEEP).OnGround.Should().BeTrue("the chain stays where it was");
+            world.State.Contents(GROUND).ToArray().Should().BeEmpty();
+
+            // and a leaf one level below the deepest item
+            world.Writer.PlaceInContainer(Y, 0xEED, 1, 1, 1, 0, DEEP + (uint)WorldState.MaxNestingDepth, out _).Should().BeNull();
+            world.Writer.DepthRefusals.Should().Be(2);
+            AssertAcyclic(world);
+        }
+
+        [Fact]
+        public void A_Subtree_Moved_To_Exactly_The_Bound_Is_Destroyed_Whole()
+        {
+            World world = NewWorld();
+            Chain(world, WorldState.MaxNestingDepth - 1);
+            world.Writer.UpsertWorldItem(GROUND, 0xE75, 0, 1, 1000, 1000, 0, Direction.North, 0, Flags.None, 0, out _, out WorldWriter.Placement p);
+            world.Writer.PlaceWorldItem(p);
+
+            world.Writer.Equip(DEEP, 0xE75, Layer.Robe, GROUND, 0, out _, out _).Should().NotBeNull("its deepest item is MaxNestingDepth deep");
+            world.Writer.PlaceInContainer(Y, 0xEED, 1, 1, 1, 0, DEEP + (uint)WorldState.MaxNestingDepth - 1, out _).Should().BeNull("one more is too deep");
+            world.Writer.DepthRefusals.Should().Be(1);
+
+            world.Writer.RemoveWorldItem(world.Items.Get(GROUND), out _);
+
+            for (uint i = 0; i < WorldState.MaxNestingDepth; i++)
+            {
+                world.Items.Get(DEEP + i).Should().BeNull($"DEEP + {i} is removed with GROUND");
+            }
+
+            world.Ecs.Mirror.Serials.Should().BeEmpty("no record survives the cascade");
+        }
+
+        [Fact]
+        public void A_Wearers_Chain_Through_The_Item_Under_Its_Serial_Is_Destroyed_Whole()
+        {
+            // the shared case: the mobile's cascade reaches what it wears a second time through the item under its serial, one
+            // level deeper than the record graph says; the bound counts that level
+            World world = DeadWearer();
+            Mobile dead = world.Mobiles.Get(DEAD);
+            world.Writer.WearItem(dead, DEAD, 0x1F05, Layer.Cloak, 0).Should().NotBeNull();
+            world.Writer.Equip(B, 0x1F03, Layer.Robe, DEAD, 0, out _, out _).Should().NotBeNull("B after the shared item");
+
+            uint parent = C;
+            uint next = DEEP;
+
+            while (world.Writer.PlaceInContainer(next, 0xEED, 1, 1, 1, 0, parent, out _) != null)
+            {
+                parent = next++;
+            }
+
+            world.Writer.DepthRefusals.Should().Be(1);
+            var removed = new HashSet<uint>();
+            world.RemovalObserver = s => removed.Add(s);
+
+            world.Writer.RemoveMobile(dead);
+
+            for (uint s = DEEP; s < next; s++)
+            {
+                world.Items.Get(s).Should().BeNull($"0x{s:X8} is removed with the mobile");
+            }
+
+            removed.Should().Contain(parent);
+            world.State.SnapshotDepth.Should().Be(0);
+        }
+
         [Fact]
         public void PlaceCorpseEquipment_Onto_A_Corpse_Inside_The_Item_Is_Refused()
         {
