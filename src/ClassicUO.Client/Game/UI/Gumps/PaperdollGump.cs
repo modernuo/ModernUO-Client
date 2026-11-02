@@ -32,6 +32,8 @@ namespace ClassicUO.Game.UI.Gumps
         private GumpPic _picBase;
         private GumpPic _profilePic;
         private readonly List<EquipmentSlot> _slots = new List<EquipmentSlot>();
+        // perf-8: the mobile every slot's per-frame update looks at, one lookup while it stays valid
+        private EntityRef _slotMobile;
         private Label _titleLabel;
         private GumpPic _virtueMenuPic;
         private Button _warModeBtn;
@@ -719,6 +721,8 @@ namespace ClassicUO.Game.UI.Gumps
             Status
         }
 
+        private Mobile SlotMobile() => _slotMobile.Mobile(World, LocalSerial);
+
         private class EquipmentSlot : Control
         {
             private ItemGumpFixed _itemGump;
@@ -752,10 +756,11 @@ namespace ClassicUO.Game.UI.Gumps
             public Layer Layer { get; }
 
             private string _emptySlotTooltip;
+            private EntityRef _item;
 
             public override void Update()
             {
-                Item item = _paperDollGump.World.Items.Get(LocalSerial);
+                Item item = _item.Item(_paperDollGump.World, LocalSerial);
 
                 if (item == null || item.IsDestroyed)
                 {
@@ -771,7 +776,7 @@ namespace ClassicUO.Game.UI.Gumps
                     }
                 }
 
-                Mobile mobile = _paperDollGump.World.Mobiles.Get(_paperDollGump.LocalSerial);
+                Mobile mobile = _paperDollGump.SlotMobile();
 
                 if (mobile != null)
                 {

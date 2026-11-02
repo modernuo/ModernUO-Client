@@ -24,6 +24,15 @@ namespace ClassicUO.Game.UI.Controls
             _gump = gump;
             _is_gump = is_gump;
 
+            Reset(serial, graphic, hue, x, y);
+        }
+
+        /// <summary>
+        /// What the constructor sets; perf-8: also how a container window reuses the control of an item it shows again
+        /// (ContainerItemControls), so a reused control holds what a new one would.
+        /// </summary>
+        internal void Reset(uint serial, ushort graphic, ushort hue, int x, int y)
+        {
             AcceptMouseInput = true;
             X = (short)x;
             Y = (short)y;
@@ -36,8 +45,17 @@ namespace ClassicUO.Game.UI.Controls
             Graphic = graphic;
             Hue = hue;
 
-            SetTooltip(serial);
+            // the boxed serial is kept when it is the same (a reused control's)
+            if (!(Tooltip is uint shown && shown == serial))
+            {
+                SetTooltip(serial);
+            }
         }
+
+        /// <summary>Tests only: the sprite size and partial-hue flag without a game (false: no texture).</summary>
+        internal delegate bool SpriteLookup(ushort graphic, bool isGump, out int width, out int height, out bool partialHue);
+
+        internal static SpriteLookup SpriteForTests;
 
         public ushort Graphic
         {
@@ -45,6 +63,22 @@ namespace ClassicUO.Game.UI.Controls
             set
             {
                 _graphic = value;
+
+                if (SpriteForTests != null)
+                {
+                    if (!SpriteForTests(value, _is_gump, out int w, out int h, out bool partial))
+                    {
+                        Dispose();
+
+                        return;
+                    }
+
+                    Width = w;
+                    Height = h;
+                    IsPartialHue = partial;
+
+                    return;
+                }
 
                 // perf-6: the size without decoding; the art decodes at first draw or hit test (a worker started on it here)
                 if (!TryGetSpriteSize(value, _is_gump, out int width, out int height))

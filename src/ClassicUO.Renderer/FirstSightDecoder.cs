@@ -177,6 +177,12 @@ namespace ClassicUO.Renderer
             return true;
         }
 
+        /// <summary>
+        /// Sprite <paramref name="idx"/>'s worker decode has finished (decoded, failed or cancelled) and is not taken yet: a
+        /// caller waiting for it can stop. A failed one stays <see cref="IsRequested"/> until a drain marks it failed. Main thread.
+        /// </summary>
+        public bool HasFinished(uint idx) => IsRequested(idx) && _inFlight.TryGetValue(idx, out var job) && job.Finished;
+
         /// <summary>Finished decodes uploaded by <see cref="TryTakeReady"/> so far (main thread; never reset).</summary>
         public int TakenReady { get; private set; }
 

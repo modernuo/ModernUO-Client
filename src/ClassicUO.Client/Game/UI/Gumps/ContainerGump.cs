@@ -24,6 +24,7 @@ namespace ClassicUO.Game.UI.Gumps
         private readonly bool _hideIfEmpty;
         private HitBox _hitBox;
         private bool _isMinimized;
+        private readonly ContainerItemControls _itemControls = new ContainerItemControls();
 
         internal const int CORPSES_GUMP = 0x0009;
 
@@ -507,10 +508,22 @@ namespace ClassicUO.Game.UI.Gumps
                 global::ClassicUO.Game.Map.ContentsArt.PrefetchContents(World, World.Get(LocalSerial));
             }
 
-            Clear();
+            // perf-8: Clear(), keeping the item controls of items still shown for ItemsOnAdded to reuse
+            _itemControls.Begin(this, ContainerItemControls.Enabled && !ContainerItemControls.InputHeld(this));
             BuildGump();
             IsMinimized = IsMinimized;
+#if CUO_DEVTOOLS
+            int start = Children.Count;
+#endif
             ItemsOnAdded();
+#if CUO_DEVTOOLS
+            if (ContainerItemControls.CheckOn && !IsDisposed)
+            {
+                ContainerItemControls.Verify(this, start, Children.Count, World.Get(LocalSerial), IsChessboard, IsBackgammonBoard,
+                    IsMinimized, GetScale());
+            }
+#endif
+            _itemControls.End(this);
         }
 
         public override void Save(XmlTextWriter writer)
@@ -544,61 +557,12 @@ namespace ClassicUO.Game.UI.Gumps
                 return;
             }
 
-            bool is_corpse = container.Graphic == 0x2006;
-
             if (World.State.HasChildren(container) && _hideIfEmpty && !IsVisible)
             {
                 IsVisible = true;
             }
 
-            // T2: the children from the ECS (WorldState.Children)
-            foreach (Item item in World.State.Children(container))
-            {
-
-                // NOTE: Switched from 'item.Layer' property which comes from server to 'ItemData.Layer' from tiledata.mul.
-                //       In the past I found some issues using the server property.
-                //       Probably lack of knowledge about some client behaviour.
-                //       Remember it.
-
-                // some items has layer = [face | beard | hair] and we need to check if it's a wearable item or not.
-                // when the item is wearable we dont add it to the container.
-                // Tested with --> client = 7.0.95.0 | graphic = 0x0A02
-                if (!global::ClassicUO.Game.Map.ContentsArt.ShownInContainer(item, is_corpse))
-                {
-                    continue;
-                }
-
-                ItemGump itemControl = new ItemGump(
-                    this,
-                    item.Serial,
-                    (ushort)(
-                        item.DisplayedGraphic
-                        - ((IsChessboard || IsBackgammonBoard) ? Constants.ITEM_GUMP_TEXTURE_OFFSET : 0)
-                    ),
-                    item.Hue,
-                    item.X,
-                    item.Y,
-                    (IsChessboard || IsBackgammonBoard)
-                );
-
-                itemControl.IsVisible = !IsMinimized;
-
-                float scale = GetScale();
-
-                if (
-                    ProfileManager.CurrentProfile != null
-                    && ProfileManager.CurrentProfile.ScaleItemsInsideContainers
-                )
-                {
-                    itemControl.Width = (int)(itemControl.Width * scale);
-                    itemControl.Height = (int)(itemControl.Height * scale);
-                }
-
-                itemControl.X = (int)((short)item.X * scale);
-                itemControl.Y = (int)(((short)item.Y - (IsChessboard ? 20 : 0)) * scale);
-
-                Add(itemControl);
-            }
+            ContainerItemControls.AddItems(this, _itemControls, container, IsChessboard, IsBackgammonBoard, IsMinimized, GetScale());
         }
 
         public void CheckItemControlPosition(Item item)
@@ -703,7 +667,7 @@ namespace ClassicUO.Game.UI.Gumps
                     UIManager.SavePosition(item, Location);
                 }
 
-                // T2: the children from the ECS (WorldState.Children)
+                // T2: the children from the ECS with ecs_read_contents on (WorldState.Children)
                 foreach (Item child in World.State.Children(item))
                 {
 
