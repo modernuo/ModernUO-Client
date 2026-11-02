@@ -19,6 +19,7 @@ Which doc is authoritative for what. When two docs disagree, the one listed here
 | Testing: ground rules, accounts, locks, job runner, DevBench | [testing-playbook.md](testing-playbook.md); per-area procedures in `testing/` |
 | Bugs | [known-issues.md](known-issues.md) |
 | Performance backlog and verdicts | [perf-opportunities.md](perf-opportunities.md) |
+| Accepted costs (time and memory) for the final performance audit | [accepted-costs.md](accepted-costs.md) |
 | Memory per client: breakdown vs upstream, memory-for-performance trade-off log | [memory-footprint.md](memory-footprint.md) |
 | Per-graphic records vs pre-packed pages for art and animations (measured; pages kept) | [records-eval.md](records-eval.md) |
 | Graphics: FNA vs owning the device (Tiers 1–4 deferred), batcher/UI work | [graphics-ownership-plan.md](graphics-ownership-plan.md) |
