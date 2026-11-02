@@ -116,7 +116,11 @@ namespace ClassicUO
                 gs.UpdateDrawPosition = true;
             }
 
-            world.Player.SetInWorldTile((ushort)x, (ushort)y, z == -125 ? (sbyte)0 : z);
+            // a dev-only direct write: FunnelCheck exempts it by scope, not by caller name (NativeAOT has no frame names)
+            using (FunnelCheck.DevWrite())
+            {
+                world.Player.SetInWorldTile((ushort)x, (ushort)y, z == -125 ? (sbyte)0 : z);
+            }
         }
 
         private static (int X, int Y)? _fixZ;
@@ -136,7 +140,10 @@ namespace ClassicUO
             else if (Client.Game.UO.FileManager.Maps.TryGetLandZ(world.Map.Index, t.X, t.Y, out sbyte z))
             {
                 _fixZ = null;
-                world.Player.SetInWorldTile((ushort)t.X, (ushort)t.Y, z == -125 ? (sbyte)0 : z);
+                using (FunnelCheck.DevWrite())
+                {
+                    world.Player.SetInWorldTile((ushort)t.X, (ushort)t.Y, z == -125 ? (sbyte)0 : z);
+                }
             }
         }
 

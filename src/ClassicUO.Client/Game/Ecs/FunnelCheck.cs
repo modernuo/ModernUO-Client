@@ -112,8 +112,37 @@ namespace ClassicUO.Game
 #endif
         }
 
+        /// <summary>
+        /// A known dev-only direct write (DevBench's client-side teleport): writes made while a scope is open are counted in
+        /// <see cref="DevExempt"/> and not reported. Gates used to recognise these writes by the caller name in the warning,
+        /// which NativeAOT cannot resolve (its frames read <c>Bootstrap.Main</c>). Scopes nest; the scope is a struct, so
+        /// opening one does not allocate. Without CUO_DEVTOOLS both calls are empty.
+        /// </summary>
+        public static DevScope DevWrite()
+        {
+#if CUO_DEVTOOLS
+            _devDepth++;
+#endif
+            return default;
+        }
+
+        public readonly struct DevScope : IDisposable
+        {
+            public void Dispose()
+            {
+#if CUO_DEVTOOLS
+                _devDepth--;
+#endif
+            }
+        }
+
 #if CUO_DEVTOOLS
         public const bool Available = true;
+
+        private static int _devDepth;
+
+        /// <summary>Direct writes made inside a <see cref="DevWrite"/> scope; not in <see cref="Total"/>.</summary>
+        public static long DevExempt { get; private set; }
 
         /// <summary>Set from <c>CUO_FUNNEL_CHECK=1</c> at startup; tests turn it on and off.</summary>
         public static bool Enabled = Environment.GetEnvironmentVariable("CUO_FUNNEL_CHECK") == "1";
@@ -137,6 +166,7 @@ namespace ClassicUO.Game
             Array.Clear(_counts, 0, _counts.Length);
             _sites.Clear();
             Total = 0;
+            DevExempt = 0;
         }
 
         /// <summary>The (field, caller) pairs seen so far with their sampled counts.</summary>
@@ -159,6 +189,13 @@ namespace ClassicUO.Game
 
             if (!IsHeld(world, e, e.Serial) && !(hasOtherSerial && IsHeld(world, e, otherSerial)))
             {
+                return;
+            }
+
+            if (_devDepth > 0)
+            {
+                DevExempt++;
+
                 return;
             }
 
@@ -299,6 +336,12 @@ namespace ClassicUO.Game
             }
 
             sb.Append($" | (field, caller) sites {_sites.Count}");
+
+            if (DevExempt != 0)
+            {
+                sb.Append($" | dev-exempt {DevExempt}");
+            }
+
             Log.Info(sb.ToString());
         }
 #else
@@ -311,6 +354,8 @@ namespace ClassicUO.Game
         }
 
         public static long Total => 0;
+
+        public static long DevExempt => 0;
 
         public static long Count(FunnelField field) => 0;
 
