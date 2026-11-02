@@ -52,7 +52,8 @@ namespace ClassicUO
     //   plan entries textskip:on|off switch skipping the text layout of entities whose overhead texts all expired (text_skip_expired, W5)
     //   pickscan:CxR hovers a C x R grid of the game view and compares the selection with that skipping off and on;
     //   pickscan:CxR:world_tile_index compares it with the T6b merged walk off and on instead (both renderers; needs the index
-    //   maintained: CUO_WORLD_TILE_INDEX=0|1 or CUO_TILE_ORDER_CHECK); cot:on|off
+    //   maintained: CUO_WORLD_TILE_INDEX=0|1 or CUO_TILE_ORDER_CHECK); pickscan:CxR:legacy_ecs_sprites compares the T7b Legacy
+    //   sink off and on (Legacy only); legacysprites:on|off|setting overrides legacy_ecs_sprites; cot:on|off
     //   switches the circle of transparency
     //   name:reinit drops the GPU world pass every 2 s (recreated next frame, as on a facet change); name:reinitrt also drops
     //   the world render target (as at login). Each plan entry logs the world settle counters (WorldSettleGate) when it ends.
@@ -1417,6 +1418,8 @@ namespace ClassicUO
         private static string _scanOff;
         // pickscan's world_tile_index mode (T6b): the setting compared is DynamicTileIndex.WalkOn, not the Gpu prepare's skipping
         private static bool _scanTileIndex, _scanTileIndexWas;
+        // pickscan's legacy_ecs_sprites mode (T7b): the Legacy sink (LegacySpriteSink.Override) off, then on
+        private static bool _scanLegacySprites;
 
         // frames a point may wait for the Gpu prepare's skipping to become active before the scan gives up
         private const int SCAN_WAIT_LIMIT = 600;
@@ -1448,7 +1451,11 @@ namespace ClassicUO
 
             if (_scanPhase == 0)
             {
-                if (_scanTileIndex)
+                if (_scanLegacySprites)
+                {
+                    Game.Scenes.LegacySpriteSink.Override = false;
+                }
+                else if (_scanTileIndex)
                 {
                     SetTileIndexWalk(game, false);
                 }
@@ -1461,7 +1468,11 @@ namespace ClassicUO
                 {
                     _scanOff = Describe(SelectedObject.Object);
 
-                    if (_scanTileIndex)
+                    if (_scanLegacySprites)
+                    {
+                        Game.Scenes.LegacySpriteSink.Override = true;
+                    }
+                    else if (_scanTileIndex)
                     {
                         SetTileIndexWalk(game, true);
                     }
@@ -1476,7 +1487,7 @@ namespace ClassicUO
             }
             else if (_scanPhase == 1)
             {
-                if (!_scanTileIndex && !gs.IsGpuPrepareSkipping)
+                if (!_scanTileIndex && !_scanLegacySprites && !gs.IsGpuPrepareSkipping)
                 {
                     _scanFrames = 0;
 
@@ -1498,7 +1509,7 @@ namespace ClassicUO
                     else
                     {
                         _scanDiff++;
-                        string what = _scanTileIndex ? "world_tile_index" : "skip";
+                        string what = _scanLegacySprites ? "legacy_ecs_sprites" : _scanTileIndex ? "world_tile_index" : "skip";
                         Log.Info($"[bench-scan] point {index} mouse {_mouse}: {what} off picks {_scanOff}, {what} on picks {on}");
                     }
 
@@ -1508,7 +1519,7 @@ namespace ClassicUO
 
                     if (--_scanLeft == 0)
                     {
-                        Log.Info($"[bench-scan] done{(_scanTileIndex ? " (world_tile_index)" : "")}: {_scanSame} same ({_scanEmpty} of them nothing), {_scanDiff} different");
+                        Log.Info($"[bench-scan] done{(_scanLegacySprites ? " (legacy_ecs_sprites)" : _scanTileIndex ? " (world_tile_index)" : "")}: {_scanSame} same ({_scanEmpty} of them nothing), {_scanDiff} different");
                         EndPickScan();
                     }
                 }
@@ -1560,6 +1571,12 @@ namespace ClassicUO
             {
                 _scanTileIndex = false;
                 Game.Map.DynamicTileIndex.SetWalk(_scanTileIndexWas);
+            }
+
+            if (_scanLegacySprites)
+            {
+                _scanLegacySprites = false;
+                Game.Scenes.LegacySpriteSink.Override = null;
             }
 
             _scanLeft = 0;
@@ -1888,6 +1905,16 @@ namespace ClassicUO
                         // pickscan:CxR hovers a C x R grid over the game view; at each point the selection with the Gpu
                         // prepare's skipping off and then on must be the same object
                         bool tileIndexMode = _plan[_planIndex].EndsWith(":world_tile_index");
+                        bool legacySpritesMode = _plan[_planIndex].EndsWith(":legacy_ecs_sprites");
+
+                        if (legacySpritesMode && Configuration.Settings.GlobalSettings.UseGpuWorldRenderer)
+                        {
+                            // T7b: the Legacy sink only draws in the Legacy world
+                            Log.Info($"[bench-scan] {_plan[_planIndex]} skipped: the Legacy world renderer isn't active");
+                            _planIndex++;
+
+                            break;
+                        }
 
                         if (tileIndexMode && !Game.Map.DynamicTileIndex.Maintain)
                         {
@@ -1906,7 +1933,7 @@ namespace ClassicUO
                             break;
                         }
 
-                        if (!tileIndexMode && (!Configuration.Settings.GlobalSettings.UseGpuWorldRenderer || game.GetGpuWorld() == null))
+                        if (!tileIndexMode && !legacySpritesMode && (!Configuration.Settings.GlobalSettings.UseGpuWorldRenderer || game.GetGpuWorld() == null))
                         {
                             // Legacy has no Gpu prepare, so its skipping never becomes active and the scan would never end
                             Log.Info($"[bench-scan] {_plan[_planIndex]} skipped: the Gpu world renderer isn't active");
@@ -1917,6 +1944,7 @@ namespace ClassicUO
 
                         string[] g = _plan[_planIndex].Substring(9).Split(':')[0].Split('x');
                         _scanTileIndex = tileIndexMode;
+                        _scanLegacySprites = legacySpritesMode;
                         _scanTileIndexWas = Game.Map.DynamicTileIndex.IndexWalkOn;
                         _scanCols = int.Parse(g[0]);
                         _scanRows = int.Parse(g[1]);
@@ -1927,6 +1955,18 @@ namespace ClassicUO
                         _scanSame = _scanDiff = _scanEmpty = 0;
                         Log.Info($"[bench-scan] {_plan[_planIndex]} at {world.Player.X},{world.Player.Y},{world.Player.Z} zoom {gs.Camera.Zoom:0.0}");
                         _planIndex++;
+
+                        break;
+                    }
+
+                    if (_plan[_planIndex].StartsWith("legacysprites:"))
+                    {
+                        // T7b: the Legacy sink (legacy_ecs_sprites) on, off, or back to the setting, for shots of both in one session
+                        string v = _plan[_planIndex].Substring(14);
+                        Game.Scenes.LegacySpriteSink.Override = v == "on" ? true : v == "off" ? false : null;
+                        Log.Info($"[bench] legacy_ecs_sprites override {v}");
+                        _planIndex++;
+                        _stepAt = now + sec;
 
                         break;
                     }

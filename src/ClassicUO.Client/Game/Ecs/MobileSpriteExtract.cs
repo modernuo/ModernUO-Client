@@ -100,8 +100,21 @@ namespace ClassicUO.Game
             BeginCore(offsetX, offsetY);
         }
 
+        /// <summary>T7b Legacy sink: <see cref="Select"/> only. The select reads frame sizes from the loader's pack tables, so
+        /// no PackSet is needed; nothing is resolved to instances. <paramref name="atlas"/>: a layer whose atlas frame has no
+        /// texture yet (a direction decoding on a worker) adds no records, FrameInfo or light, as in MobileView.DrawInternal.</summary>
+        internal void BeginSelect(ILegacySpriteSource atlas = null)
+        {
+            _pack = null;
+            _hasAnims = _anims.PackFrames != null;
+            _tables = default;
+            BeginCore(0, 0);
+            _atlas = atlas;
+        }
+
         private void BeginCore(int offsetX, int offsetY)
         {
+            _atlas = null;
             _offsetX = offsetX;
             _offsetY = offsetY;
             _count = 0;
@@ -151,6 +164,7 @@ namespace ClassicUO.Game
         private bool _selectOnly;
         private bool _hasAnims;
         private GpuSpriteTables _tables;
+        private ILegacySpriteSource _atlas;
 
         /// <summary>Appends the instances of one mobile drawn at screen position (<paramref name="posX"/>, <paramref name="posY"/>) with the scene's base depth.</summary>
         public void Emit(EcsEntity e, int posX, int posY, float depth)
@@ -345,6 +359,16 @@ namespace ClassicUO.Game
             if (w == 0 || h == 0)
             {
                 return;
+            }
+
+            if (_atlas != null)
+            {
+                Span<SpriteInfo> atlasFrames = _atlas.Frames(id, group, dir, isEquip, false);
+
+                if (frameIndex >= atlasFrames.Length || atlasFrames[frameIndex].Texture == null)
+                {
+                    return;
+                }
             }
 
             x -= mirror ? w - fe.CenterX : fe.CenterX;

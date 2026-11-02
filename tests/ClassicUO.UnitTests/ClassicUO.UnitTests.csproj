@@ -7,6 +7,12 @@
     <CopyLocalLockFileAssemblies>true</CopyLocalLockFileAssemblies>
   </PropertyGroup>
 
+  <!-- the client's CUO_DEVTOOLS (src/Directory.Build.props: on unless -p:CuoDevTools=false), so tests of guarded code compile
+       in the dev variant -->
+  <PropertyGroup Condition="'$(CuoDevTools)' != 'false'">
+    <DefineConstants>$(DefineConstants);CUO_DEVTOOLS</DefineConstants>
+  </PropertyGroup>
+
   <ItemGroup>
     <PackageReference Include="FluentAssertions" Version="6.12.0" />
     <!-- T1 round 4: syntax trees for the write-site scanner's structural checks (fallback guards, the walk queue) -->
