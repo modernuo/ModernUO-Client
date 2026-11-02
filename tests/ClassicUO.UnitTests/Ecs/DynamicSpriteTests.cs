@@ -252,6 +252,47 @@ namespace ClassicUO.UnitTests.Ecs
             AssertSame(emitted, emitted.Length, got, count, 0);
         }
 
+        // perf-11: the draw paths read the entity's record once (EntityData) and pass it on; the answers are those of the
+        // per-component reads, fresh, recorded into the frame cache and replayed from it
+        [Theory]
+        [MemberData(nameof(MobileCases))]
+        public void Mobile_Emit_From_Record_Data_Equals_Component_Reads(string name)
+        {
+            (AnimationsLoader anims, GpuSpriteTables tables) = AnimFixture(5);
+            var mirror = new WorldMirror();
+            EcsEntity e = MobileCase(mirror, name);
+            var extract = new MobileSpriteExtract(anims);
+
+            extract.Begin(in tables, 37, -12);
+            extract.Emit(e, in e.GetComponent<AnimationState>(), in e.GetComponent<MobileRenderState>(), 600, 400, 812.25f, null);
+            SpriteInstance[] want = extract.Instances.ToArray();
+            Rectangle wantFi = extract.FrameInfo;
+            int wantLights = extract.Lights.Length;
+
+            var cache = new MobileFrameCache { SelectValid = true };
+
+            for (int pass = 0; pass < 2; pass++)
+            {
+                Friflo.Engine.ECS.EntityData data = e.Data;
+                extract.Begin(in tables, 37, -12);
+                extract.Emit(e, data, in data.Get<AnimationState>(), in data.Get<MobileRenderState>(), 600, 400, 812.25f, cache);
+                SpriteInstance[] got = extract.Instances.ToArray();
+
+                AssertSame(want, want.Length, got, got.Length, 0);
+                Assert.Equal(wantFi, extract.FrameInfo);
+                Assert.Equal(wantLights, extract.Lights.Length);
+            }
+
+            Assert.True(cache.EmitValid, name);
+
+            extract.Begin(in tables, 37, -12);
+            extract.Select(e, e.Data, 600, 400, 812.25f);
+            DynamicSprite[] fromData = extract.Selected.ToArray();
+            extract.Begin(in tables, 37, -12);
+            extract.Select(e, 600, 400, 812.25f);
+            Assert.Equal(extract.Selected.ToArray(), fromData);
+        }
+
         [Fact]
         public void Mobile_Select_Records()
         {

@@ -71,7 +71,8 @@ namespace ClassicUO.Game
         public void Update(World world, Mobile m, EcsEntity e)
         {
             bool dirty = TakeDirty(e);
-            UpdateInPlace(world, m, e, dirty, ref e.GetComponent<AnimationState>(), ref e.GetComponent<MobileRenderState>());
+            EntityData data = e.Data;
+            UpdateInPlace(world, m, e, data, dirty, ref data.Get<AnimationState>(), ref data.Get<MobileRenderState>());
         }
 
         /// <summary>
@@ -98,15 +99,16 @@ namespace ClassicUO.Game
         /// E5: <see cref="Update(World, Mobile, EcsEntity)"/> working on the entity's own <see cref="AnimationState"/> and
         /// <see cref="MobileRenderState"/> (<paramref name="s"/>, <paramref name="rs"/>, taken after
         /// <see cref="TakeDirty"/>; <paramref name="dirty"/> is its result) instead of copies, so the caller can pass them
-        /// on to the extract without more lookups. Nothing in here changes the entity's archetype.
+        /// on to the extract without more lookups. Nothing in here changes the entity's archetype, so <paramref name="data"/>
+        /// (<paramref name="e"/>'s record, read once by the caller after TakeDirty; perf-11) stays valid throughout.
         /// </summary>
-        public void UpdateInPlace(World world, Mobile m, EcsEntity e, bool dirty, ref AnimationState s, ref MobileRenderState rs)
+        public void UpdateInPlace(World world, Mobile m, EcsEntity e, EntityData data, bool dirty, ref AnimationState s, ref MobileRenderState rs)
         {
             // W5: the slow-changing inputs come from MobileInputs, pushed at their mutation sites (the mirror gives every
             // mobile one; without it, as in a hand-built entity, they are read from the Mobile)
             // perf-10: read in place (the component is not copied); nothing below changes the entity's archetype
-            bool push = e.HasComponent<MobileInputs>();
-            ref readonly MobileInputs inp = ref push ? ref e.GetComponent<MobileInputs>() : ref _noInputs;
+            bool push = data.Has<MobileInputs>();
+            ref readonly MobileInputs inp = ref push ? ref data.Get<MobileInputs>() : ref _noInputs;
 
             if (InputBench && push)
             {
@@ -120,7 +122,7 @@ namespace ClassicUO.Game
                 Rebuild(e, in s, m);
             }
 
-            ref EquipmentSlots eq = ref e.GetComponent<EquipmentSlots>();
+            ref EquipmentSlots eq = ref data.Get<EquipmentSlots>();
 
             if (push)
             {
