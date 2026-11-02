@@ -147,7 +147,7 @@ namespace ClassicUO.Game.Scenes
             // as GpuWorldRenderer.TryDrawMobileEcs: TakeDirty first (removing the tag moves the entity)
             bool dirty = MobileAnimationSystem.TakeDirty(e);
             // one record read for both components (as ItemSpriteInput.ReadRecord)
-            Friflo.Engine.ECS.EntityData data = e.Data;
+            EcsRow data = EcsRead.Row(e);
             ref AnimationState state = ref data.Get<AnimationState>();
             ref MobileRenderState render = ref data.Get<MobileRenderState>();
             ecs.Animation.UpdateInPlace(world, mobile, e, data, dirty, ref state, ref render);
