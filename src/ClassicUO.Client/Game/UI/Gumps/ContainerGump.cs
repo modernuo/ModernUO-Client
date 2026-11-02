@@ -501,6 +501,12 @@ namespace ClassicUO.Game.UI.Gumps
 
         protected override void UpdateContents()
         {
+            // art_container_prefetch: the contents' art decoded on the workers before ItemsOnAdded looks it up
+            if (!IsChessboard && !IsBackgammonBoard)
+            {
+                global::ClassicUO.Game.Map.ContentsArt.PrefetchContents(World, World.Get(LocalSerial));
+            }
+
             Clear();
             BuildGump();
             IsMinimized = IsMinimized;
@@ -554,25 +560,10 @@ namespace ClassicUO.Game.UI.Gumps
                 //       Probably lack of knowledge about some client behaviour.
                 //       Remember it.
 
-                if (item.Amount <= 0)
-                {
-                    continue;
-                }
-
-                var layer = (Layer)item.ItemData.Layer;
-
-                if (is_corpse && item.Layer > 0 && !Constants.BAD_CONTAINER_LAYERS[(int)layer])
-                {
-                    continue;
-                }
-
                 // some items has layer = [face | beard | hair] and we need to check if it's a wearable item or not.
                 // when the item is wearable we dont add it to the container.
                 // Tested with --> client = 7.0.95.0 | graphic = 0x0A02
-                if (
-                    item.ItemData.IsWearable
-                    && (layer == Layer.Face || layer == Layer.Beard || layer == Layer.Hair)
-                )
+                if (!global::ClassicUO.Game.Map.ContentsArt.ShownInContainer(item, is_corpse))
                 {
                     continue;
                 }

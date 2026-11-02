@@ -566,6 +566,25 @@ namespace ClassicUO.Game.UI.Gumps
 
                     _slots[i].LocalSerial = mobile.FindItemByLayer((Layer)idx)?.Serial ?? 0;
                 }
+
+                // art_container_prefetch: the slots' item art decoded on the workers before their controls look it up
+                if (_slots.Count > 1 && global::ClassicUO.Game.Map.ContentsArt.Enabled)
+                {
+                    Span<uint> graphics = stackalloc uint[32];
+                    int n = 0;
+
+                    for (int i = 0; i < _slots.Count && n < graphics.Length; i++)
+                    {
+                        Item item = mobile.FindItemByLayer(_slots[i].Layer);
+
+                        if (item != null)
+                        {
+                            graphics[n++] = item.DisplayedGraphic;
+                        }
+                    }
+
+                    global::ClassicUO.Game.Map.ContentsArt.Prefetch(graphics.Slice(0, n));
+                }
             }
         }
 

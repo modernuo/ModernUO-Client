@@ -19,7 +19,7 @@ namespace ClassicUO.Game.Map
     internal static class FirstSightArt
     {
         // requests on, and a game with its art loaded (unit tests place objects without one)
-        private static bool On => Map.ArtWait && Client.Game?.UO?.Arts != null;
+        internal static bool On => Map.ArtWait && Client.Game?.UO?.Arts != null;
 
         /// <summary>
         /// Requests static art <paramref name="graphic"/> and, when <paramref name="frames"/> is set and the tile is
