@@ -228,4 +228,7 @@ Today the client parses incoming packets in place (`StackDataReader` over fixed 
 - **One component read per mobile** (TryDrawMobileEcs, LegacySpriteSink.DrawMobile): `AnimationState` and `MobileRenderState` are looked up separately. One `e.Data` read, as `ItemSpriteInput.ReadRecord` does, saves one lookup per mobile per frame. Source: t7b2b.
 - **Paperdoll slots look up two dictionaries per slot per frame** (PaperDollGump.cs ~758, `EquipmentSlot.Update`): `World.Items.Get` and `World.Mobiles.Get` for 14 slots. Caching the mobile reference saves about 28 lookups per frame per open paperdoll. Source: perf-7.
 - **`Gump.Prefetch` uploads unrelated finished decodes while it waits** (Gump.cs ~215). Taking only the batch's decodes keeps other uploads within `DrainReady`'s 1 ms budget. Source: perf-7.
+- **`MobileInputs` copied per mobile per frame** (MobileAnimationSystem.cs `UpdateInPlace`, `TryGetComponent(out inp)`). Reading it by reference saves the struct copy. Source: t9-slice2.
+- **Hue inputs rebuilt per mobile per frame** (`SelectOverrideHue` rebuilds a ~20-field input from the profile). Take the profile flags once per frame. Source: t9-slice2.
+- **25 `WornCache` checks per mobile per frame on Legacy** (MobileView's layer loop calls `FindItemByLayer` per layer). Fetch the cache once per mobile; E2 measured 0.07 µs per mobile. Source: t9-slice2.
 

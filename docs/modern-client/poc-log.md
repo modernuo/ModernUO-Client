@@ -5195,3 +5195,15 @@ Paired NativeAOT builds (`CuoDevTools=true`, checkers off), all on the quiet mac
 - New backlog items:
   - paperdoll slots look up two dictionaries per slot per frame (PaperDollGump.cs ~758);
   - `Gump.Prefetch` uploads unrelated ready decodes while waiting (Gump.cs ~215).
+
+### T9 slice 2 merged (coordinator, 2026-11-02)
+
+- Merge ec089d912 deletes the off paths of `gpu_mobile_frame_cache` (ca0e343d4), `mobile_push_inputs` (4e20f899b), `ecs_read_contents` (f717e593b) and `ecs_read_equipment` (4f5e02bac), with the devdocs in 09b8cef25.
+- Checkers kept or trimmed: `CUO_MOBILE_CACHE_CHECK`, `CUO_MOBILE_INPUT_CHECK`, `CUO_CONTENTS_CHECK` and `CUO_EQUIP_READ_CHECK` all still check live code.
+- `ecs_layer_rules` is deferred to slice 3: its hard-coded rules are the reference for LayerRulesTests, AnimationRulesTests and EcsPacketCostBench.
+- **Removable next:**
+  - the container and equipment halves of the `LinkedObject` child list, then the contents and equipment checkers;
+  - `Sample`, the Mobile-based override hue and the input bench, after the Mobile cold caches go;
+  - `MobileFrameCache.Invalidate`, now used only by tests;
+  - the unused return value of `SortShopContents`.
+- Gates bench-000264/265/266/267 PASS. Codex: no findings. Unit tests: 3,024 passed, 6 skipped; 32 fewer, all duplicate switch-off cases or tests of deleted paths.
