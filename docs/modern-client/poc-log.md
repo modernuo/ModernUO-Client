@@ -5304,3 +5304,19 @@ Paired NativeAOT builds (`CuoDevTools=true`, checkers off), all on the quiet mac
 - Also: tip gates for slice A + perf-10 (7faac3caf) bench-000287/288 PASS.
 - Timing parked (`measure/t9-childlist-b/job-timing-PARKED.sh`).
 - Next: optional `LinkedObject` off `BaseGameObject` (−24 B per Item/Mobile); T9 for the 7 switches flipped today.
+
+### perf-11 merged (coordinator, 2026-11-02)
+
+- Merge 90abc7444 (tree equal to the branch tip d7d383cbe; unit tests 3,040 passed, 6 skipped; release 3,035):
+  - a7a015481: each drawn mobile reads its entity record once per frame for the update and the extract (6 lookups on the Gpu cache replay, 9 on Legacy → 1);
+  - d7d383cbe: corpse layers come from a per-parent table (8 reused `Item[256]` tables, ~17 KB per client), invalidated by `WorldMirror.Epoch` and the new `ItemWrites`; `CUO_LAYER_CACHE_CHECK` compares table answers with the scan;
+  - cc01a0ea8: dev-only counters `child_layer_scans`, `child_layer_gets`.
+- Skipped, already covered: the `Children` spellbook fast path, `LayerDecision` storing items (perf-10's view), paperdoll slots (`EntityRef`).
+- Gates: Gpu bench-000302, Legacy bench-000303 PASS. Counts bench-000304, corpse scene, per frame:
+
+  | | Base | perf-11 |
+  |---|---|---|
+  | `child_layer_scans` | 474 (Gpu), 568 (Legacy) | 0 |
+  | `child_layer_gets` | 1,582 (Gpu), 1,782 (Legacy) | 0 |
+
+- Codex: no P0–P2. P3 accepted: the 8 tables can keep destroyed corpse items alive until a table is reused (bounded). Timing parked (`measure/perf-11/job-timing-PARKED.sh`).
