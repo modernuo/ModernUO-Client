@@ -97,10 +97,23 @@ namespace ClassicUO.Game.Map
         /// </summary>
         public static int FrameObjectRequests;
 
+        /// <summary>
+        /// Tests only: sees every placement request, with or without a game (unit tests have no art). Thread-static so
+        /// parallel test classes don't see each other's placements.
+        /// </summary>
+        [System.ThreadStatic]
+        internal static System.Action<ushort> PlacedForTests;
+
+        // CUO_PLACED_ART_SYNC=1: placements request nothing (chunk art still does), so a counter run can compare art_sync
+        // with and without the placement requests alone; CUO_ART_SYNC=1 turns every request off
+        private static readonly bool PlacedOff = System.Environment.GetEnvironmentVariable("CUO_PLACED_ART_SYNC") == "1";
+
         /// <summary>A ground item or multi component was placed on the map (GameObject.AddToTile): request what its view draws.</summary>
         public static void RequestPlaced(ushort graphic)
         {
-            if (On && !RequestStatic(graphic, frames: true))
+            PlacedForTests?.Invoke(graphic);
+
+            if (On && !PlacedOff && !RequestStatic(graphic, frames: true))
             {
                 FrameObjectRequests++;
             }
