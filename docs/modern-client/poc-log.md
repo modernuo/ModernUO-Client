@@ -5182,3 +5182,16 @@ Paired NativeAOT builds (`CuoDevTools=true`, checkers off), all on the quiet mac
 - **Kept:** `CUO_MOBILE_UPDATE_CHECK`. Its clock and skipped-mobile checks still compare live paths (`Mobile.Update`), useful for T5b/T6c. Its shadow-dictionary and order parts belonged to the deleted loop and can be trimmed later; the agent's full-deletion commit 6565be136 is not merged.
 - Gates: Gpu with the mobile checker bench-000258 PASS (the last comparison against the legacy loop on record); Legacy bench-000259 PASS; plans bench-000260 PASS; shots bench-000261 within the A/A controls.
 - Unit tests 3,049 passed, 6 skipped.
+
+### perf-7 merged: small hot-path cuts (coordinator, 2026-11-02)
+
+- Merge c869488c9:
+  - `IsMounted` does one lookup (18b8ffb69);
+  - one `e.Data` read per mobile on both renderers (90c1547da);
+  - the Legacy sink checks `PackFrames` once per frame (9ddd87630);
+  - `GetGump` takes only its own ready decode (a640f8aa9).
+- Skipped: the paperdoll slot cache (`WornCache` already covers it).
+- Gates bench-000262/263 PASS. Unit tests 3,056 passed, 6 skipped. Timing pending (parked: `measure/perf-7/`, build the base first).
+- New backlog items:
+  - paperdoll slots look up two dictionaries per slot per frame (PaperDollGump.cs ~758);
+  - `Gump.Prefetch` uploads unrelated ready decodes while waiting (Gump.cs ~215).
