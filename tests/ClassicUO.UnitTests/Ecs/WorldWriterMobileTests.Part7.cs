@@ -51,6 +51,7 @@ namespace ClassicUO.UnitTests.Ecs
             item.Layer = layer;
             corpse.PushToBack(item);
             world.Ecs.Sync(item);
+            WorldWriterTests.AttachLists(world);
         }
 
         [Theory]
@@ -142,6 +143,7 @@ namespace ClassicUO.UnitTests.Ecs
             loot.Layer = Layer.Robe;
             corpse.PushToBack(loot);
             world.Ecs.Sync(loot);
+            WorldWriterTests.AttachLists(world);
 
             return world;
         }

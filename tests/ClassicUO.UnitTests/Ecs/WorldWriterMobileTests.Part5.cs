@@ -483,6 +483,7 @@ namespace ClassicUO.UnitTests.Ecs
             coin.Container = CHEST;
             chest.PushToBack(coin);
             world.Ecs.Sync(coin);
+            WorldWriterTests.AttachLists(world);
 
             return world;
         }
@@ -716,6 +717,7 @@ namespace ClassicUO.UnitTests.Ecs
             Item inside = world.GetOrCreateItem(0x4000_7212);
             inside.Container = bag.Serial;
             bag.PushToBack(inside);
+            WorldWriterTests.AttachLists(world);
             world.Writer.UpsertMobile(m, m.Serial, 0x190, 0, (ushort)(m.X + 1), m.Y, 0, Direction.East, 0, 0, out _, out WorldWriter.Placement p2);
             world.Writer.PlaceMobile(p2);
             FunnelCheck.Reset();

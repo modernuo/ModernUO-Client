@@ -147,6 +147,54 @@ namespace ClassicUO.UnitTests.Ecs
         // the starting states: a mobile wearing ITEM, a bag holding ITEM, ITEM on the ground, or no ITEM
         public enum Start { None, Ground, InBag, Worn, GroundCorpse }
 
+        /// <summary>
+        /// T9 child-list slice A: these fixtures link children by hand (PushToBack, then the hook Sync, which does not
+        /// attach), so the ECS's contents miss them. The funnel's walks now read the ECS children, as a world built by the
+        /// funnel has them: each child is stamped in its list's order (CommitChildOrder), so Contents equals the list.
+        /// </summary>
+        internal static void AttachLists(World world)
+        {
+            var parents = new List<Entity>();
+            parents.AddRange(world.Mobiles.Values);
+            parents.AddRange(world.Items.Values);
+
+            // the wearers' equipment tags as the fixture left them (a stamp marks the wearer dirty)
+            var clean = new List<EcsEntity>();
+
+            foreach (Mobile m in world.Mobiles.Values)
+            {
+                if (world.Ecs.Mirror.TryGetEntity(m.Serial, out EcsEntity me) && !me.Tags.Has<EquipmentDirty>())
+                {
+                    clean.Add(me);
+                }
+            }
+
+            foreach (Entity parent in parents)
+            {
+                for (LinkedObject i = parent.Items; i != null; i = i.Next)
+                {
+                    if (i is Item child && ReferenceEquals(world.Items.Get(child.Serial), child) && child.Container == parent.Serial)
+                    {
+                        // a child linked without its hook Sync: its record does not have the parent yet
+                        if (world.Ecs.Mirror.Contents(parent.Serial).IndexOf(child.Serial) < 0)
+                        {
+                            world.Ecs.Sync(child);
+                        }
+
+                        world.Ecs.CommitChildOrder(child);
+                    }
+                }
+            }
+
+            foreach (EcsEntity me in clean)
+            {
+                if (me.Tags.Has<EquipmentDirty>())
+                {
+                    me.RemoveTag<EquipmentDirty>();
+                }
+            }
+        }
+
         private static World Build(Start start)
         {
             var world = new World();
@@ -208,6 +256,8 @@ namespace ClassicUO.UnitTests.Ecs
                 child.PushToBack(grandchild);
                 world.Ecs.Sync(grandchild);
             }
+
+            AttachLists(world);
 
             // the wearer's equipment tag starts clear: a missed unequip would leave it clear
             world.Ecs.Mirror.TryGetEntity(MOB, out EcsEntity me).Should().BeTrue();
@@ -895,6 +945,7 @@ namespace ClassicUO.UnitTests.Ecs
             inside.Container = CORPSEBOX;
             box.PushToBack(inside);
             world.Ecs.Sync(inside);
+            AttachLists(world);
 
             return world;
         }
@@ -1244,6 +1295,8 @@ namespace ClassicUO.UnitTests.Ecs
                 world.Ecs.Sync(k);
             }
 
+            AttachLists(world);
+
             return world;
         }
 
@@ -1291,6 +1344,7 @@ namespace ClassicUO.UnitTests.Ecs
             Item it = world.Writer.UpsertWorldItem(serial, 0xEED, 0, 1, 1010, 1010, 0, Direction.North, 0, Flags.None, 0, out _, out WorldWriter.Placement p);
             it.Container = parent;
             world.Get(parent).PushToBack(it);
+            AttachLists(world);
 
             return p;
         }
@@ -1368,6 +1422,7 @@ namespace ClassicUO.UnitTests.Ecs
                 inner.Graphic = 0xF7C;
                 inner.Container = MOB;
                 twin.PushToBack(inner);
+                AttachLists(w);
 
                 return w;
             }
@@ -1810,6 +1865,7 @@ namespace ClassicUO.UnitTests.Ecs
             if (crowded)
             {
                 Crowd(world);
+                AttachLists(world);
             }
 
             Item it = world.Items.Get(ITEM);
@@ -2011,6 +2067,7 @@ namespace ClassicUO.UnitTests.Ecs
                 m.PushToBack(pack);
                 world.Ecs.Sync(pack);
                 world.Items.Get(WORN_AFTER).Opened = true;
+                AttachLists(world);
             }
 
             return world;
@@ -2434,6 +2491,7 @@ namespace ClassicUO.UnitTests.Ecs
             child.Container = ITEM;
             it.PushToBack(child);
             world.Ecs.Sync(child);
+            WorldWriterTests.AttachLists(world);
             FunnelCheck.Reset();
 
             Item a = world.Writer.UpsertWorldItem(ITEM, 0x2006, 0, 0x190, 1000, 1000, 0, Direction.Running | Direction.South, 0x455, Flags.None, 0, out _, out WorldWriter.Placement pa);
@@ -2475,6 +2533,7 @@ namespace ClassicUO.UnitTests.Ecs
             worn.Layer = Layer.Shirt;
             m.PushToBack(worn);
             world.Ecs.Sync(worn);
+            WorldWriterTests.AttachLists(world);
             FunnelCheck.Reset();
 
             // the bulk clear owns the removed subtrees (their Container writes)
@@ -2496,6 +2555,7 @@ namespace ClassicUO.UnitTests.Ecs
             Item inner = world.GetOrCreateItem(0x4000_7107);
             inner.Container = held.Serial;
             held.PushToBack(inner);
+            WorldWriterTests.AttachLists(world);
             FunnelCheck.Reset();
             world.Writer.ReturnHeldItem(held.Serial, 0x1517, 0, 1, Flags.None, Layer.Shirt, 1, 1, 0, box.Serial, out _, out _);
             FunnelCheck.Total.Should().Be(0);
@@ -2523,6 +2583,7 @@ namespace ClassicUO.UnitTests.Ecs
             child.Container = worn.Serial;
             worn.PushToBack(child);
             world.Ecs.Sync(child);
+            WorldWriterTests.AttachLists(world);
             FunnelCheck.Reset();
 
             // 0x2E: a re-equip (the unlink), into an item, a new item
