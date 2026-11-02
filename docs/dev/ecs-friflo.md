@@ -56,13 +56,26 @@ The helper reads these Friflo internals:
 
 All but `heapMap` go through `[UnsafeAccessor]`, which is bound at compile time and works in NativeAOT. `heapMap`'s type (`StructHeap[]`) is internal, and .NET 10 cannot name it in a field accessor (`UnsafeAccessorType` is not supported on field return types). So it is read at a field offset, which a probe finds once. The probe compares the archetype's pointer-sized slots, as integers, with the heap map that `Entity.Data` holds. It then checks the match with a typed read, and checks the node, archetype and heap reads against Friflo's own answers on two stores and three archetypes.
 
-If the probe fails (a changed Friflo), the first read throws `InvalidOperationException` that names the reason. A component type kept in another heap kind throws `InvalidCastException` at its first read: the accessor checks the heap's class. Preview.2 uses another heap kind for a struct whose only field is a `float` or vector named `Value`. `EcsReadTests` checks that every mirror component reads directly.
+If the probe fails (a changed Friflo), the first read throws `InvalidOperationException` that names the reason.
 
-The hot path reads only statics of classes without a static constructor. Its only out-of-line calls are one-time setup calls with no struct argument or result. So neither the JIT nor NativeAOT adds initialisation checks, and the entity and the row (four fields, like `EntityData`) stay in registers. Keep it that way when editing the file: a struct argument to a cold call, or a fifth `EcsRow` field, cost 2–6 ns per read in the measurements.
+### Heap kinds
+
+Only `StructHeapGen<T>` (a plain `T[]`) is read directly. Preview.2 picks another heap kind (`ComponentType<T>.CreateHeap`, `SimdUtils.GetLayout`) for a struct whose public field named `Value` (or `value`) is a `float`, `Vector2`, `Vector3`, `Vector4` or `Quaternion` and makes up the whole struct:
+
+| type | heap |
+|---|---|
+| `float`, `Vector2`, `Vector4` or `Quaternion` `Value` | `StructAoSFloat`, `StructAoSVector2`, `StructAoSVector4` (aligned arrays) |
+| `Vector2`..`Vector4` `Value` with `[SoA]` | `StructSoAVector2..4` |
+| `Vector2`..`Vector4` `Value` with `[AoSoA]` | `StructAoSoAVector2..4` |
+| `Vector3` `Value` without an attribute, or anything else | `StructHeapGen<T>` |
+
+`EcsRead.Slot<T>` decides once per type, at the type's first read, with that rule (`Slot<T>.InPlainArray`, from `SimdInfo<T>.FieldCountSoA` and the attributes). `Slot<T>.Value` is then the heap map index + 1 for a direct type, or -1 for any other. Reads of a direct type index the array. Reads of any other type go through Friflo's own `GetComponent`, `TryGetComponent`, `EntityData.Has/Get/TryGet`, so they give Friflo's answers, refs and exceptions; `GetComponent` on an SoA or AoSoA heap throws Friflo's `InvalidOperationException`. The first read of every type also goes through Friflo. The hot path tests `Slot<T>.Value <= 0`, the branch it already had for the first read, so a direct type pays nothing more. If the rule were wrong for some type, the accessor's class check would throw `InvalidCastException`; it never reads the wrong memory. `EcsReadTests` checks the rule against the heap Friflo creates for every mirror component and for each special kind, and compares `Get`, `TryGet` and `Row` with Friflo for each.
+
+The hot path reads only statics of classes without a static constructor. Its only out-of-line calls are the first read of a type and the reads of other heap kinds, and they take no struct argument and return no struct. So neither the JIT nor NativeAOT adds initialisation checks, and the entity and the row (four fields, like `EntityData`) stay in registers. Keep it that way when editing the file: a struct argument to a cold call, or a fifth `EcsRow` field, cost 2–6 ns per read in the measurements. For the same reason the `TryGet` fallbacks return a `ref` to a thread-static copy of the value (or a null ref) instead of taking an `out` argument: an `out` address passed to a cold call puts the caller's value on the stack and adds a store on the direct path too.
 
 ## Validity rule
 
-Nothing is cached per entity or per archetype. The process keeps only the heap map offset and each component type's schema index.
+Nothing is cached per entity or per archetype. The process keeps only the heap map offset and each component type's schema index (or -1 for another heap kind).
 
 A `ref` from `Get`, or an `EcsRow`, is valid until the next structural change of the store: a component or tag added or removed, or an entity created or deleted. Those move entities between archetypes and grow or replace component arrays. This is the same rule as for Friflo's own `ref`s and `EntityData`, so read again after a structural change. For example, `MobileAnimationSystem.TakeDirty` removes a tag, so the mobile draw takes its row after it.
 
@@ -100,4 +113,4 @@ Steps after upgrading the package:
    - `EcsRead.Row(e)` / `EcsRow` become `e.Data` / `EntityData`.
 
    `grep -rn "EcsRead\.\|EcsRow" src tests` lists them all.
-4. If Friflo is still slower (its calls stay non-inlined), keep the API and adapt `EcsRead.Layout` and `Access<T>` to the new internals: the heap class name, and `heapMap`'s type, if it became nameable. Keep the probe checks.
+4. If Friflo is still slower (its calls stay non-inlined), keep the API and adapt `EcsRead.Layout` and `Access<T>` to the new internals: the heap class name, `heapMap`'s type, if it became nameable, and `Slot<T>.InPlainArray` (with main's single sealed heap class it is always true). Keep the probe checks.
