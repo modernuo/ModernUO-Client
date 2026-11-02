@@ -153,6 +153,12 @@ All merged and pushed, and each audited by Codex until clean or down to document
 
 ## In progress
 
+- **Autonomous run of 2026-11-02** (you away; the machine is busy, so timing is parked). For you when you're back:
+  - **Parked timing** (resubmit when quiet; list in `cuo-poc-state/handoffs/parked-timing.txt`): fix A off/on, which decides whether `world_tile_index` goes on by default; the picker flat table; the pick-bounds follow-ups; T7b part 1.
+  - **Merged with timing pending:** PixelPicker flat table (2ec71344f), tile-index fix A (2ee3cd208).
+  - **In flight:** perf-2 (pick bounds and the picker array), T7b part 1 (extract split into select and resolve), funnel dev scope (AOT-safe exemption for DevBench teleports).
+  - **Open questions for you** (added as they come up):
+
 - **Autonomous run of 2026-11-01/02, status at T6b part 3 start** (all merged and pushed; each phase: Codex review at gpt-6.1-sol medium, findings fixed with a failing-first test, gates off/on with every checker, clean branch appended):
   - **Defaults switched on:** `ecs_read_equipment`, `ecs_layer_rules` (combined gate PASS).
   - **New, default off (each with a checker, 0 mismatches in its gates):** T4 `ecs_owns_scalars`, T5b `world_anim_system`, T5b-items `world_item_anim_system`, T5c `world_sweep_system`, T5d `world_active_items_system` (+ World.Update as stages), T6b `world_tile_index` (dynamic tile index, merged walk, all readers converted), T6c `world_step_system`, T8 `ecs_effects`.
