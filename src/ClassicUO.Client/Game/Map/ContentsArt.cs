@@ -24,8 +24,17 @@ namespace ClassicUO.Game.Map
     /// </summary>
     internal static class ContentsArt
     {
-        /// <summary>Most time one batch waits for its decodes (main thread).</summary>
-        public const int TimeoutMs = 8;
+        /// <summary>Most time one batch waits for its decodes (main thread; soft, see Art.Prefetch).</summary>
+        public const int TimeoutMs = 4;
+
+        /// <summary>
+        /// Main-thread time per frame for art uploads and prefetch waits together (Art.BeginFrame, from Map.UpdateLoading):
+        /// several windows rebuilding in one frame share it with the chunk loader's art drain.
+        /// </summary>
+        public const double FrameAllowanceMs = 4;
+
+        /// <summary>Tests: whether a graphic still needs a decode (null: the art cache answers; without a game, every one).</summary>
+        [ThreadStatic] internal static Func<uint, bool> NeedsDecodeForTests;
 
 #if CUO_DEVTOOLS
         // CLEANUP(release): the gate's override of the setting (CUO_ART_CONTAINER_PREFETCH=1|0)
@@ -63,12 +72,6 @@ namespace ClassicUO.Game.Map
                 return false;
             }
 
-            // no tile data (unit tests place items without a game): the amount alone decides
-            if (Client.Game?.UO?.FileManager?.TileData == null)
-            {
-                return true;
-            }
-
             var layer = (Layer)item.ItemData.Layer;
 
             if (corpse && item.Layer > 0 && !Constants.BAD_CONTAINER_LAYERS[(int)layer])
@@ -79,10 +82,24 @@ namespace ClassicUO.Game.Map
             return !(item.ItemData.IsWearable && (layer == Layer.Face || layer == Layer.Beard || layer == Layer.Hair));
         }
 
+        // the switch's paths only: without tile data (unit tests place items without a game) the amount alone decides
+        private static bool Shown(Item item, bool corpse)
+            => Client.Game?.UO?.FileManager?.TileData == null ? item.Amount > 0 : ShownInContainer(item, corpse);
+
+        private static bool NeedsDecode(uint graphic)
+        {
+            if (NeedsDecodeForTests != null)
+            {
+                return NeedsDecodeForTests(graphic);
+            }
+
+            return !FirstSightArt.On || Client.Game.UO.Arts.NeedsDecode(graphic);
+        }
+
         /// <summary>WorldWriter.PlaceInContainer: <paramref name="item"/> went into <paramref name="container"/>.</summary>
         public static void RequestContained(Item item, Entity container)
         {
-            if (item == null || !(container is Item box) || !box.Opened || !Enabled || !ShownInContainer(item, box.IsCorpse))
+            if (!Enabled || item == null || !(container is Item box) || !box.Opened || !Shown(item, box.IsCorpse))
             {
                 return;
             }
@@ -99,7 +116,7 @@ namespace ClassicUO.Game.Map
         /// <summary>ContainerGump.UpdateContents, before it builds the item controls of <paramref name="container"/>.</summary>
         public static void PrefetchContents(World world, Entity container)
         {
-            if (container == null || !Enabled)
+            if (!Enabled || container == null)
             {
                 return;
             }
@@ -115,7 +132,8 @@ namespace ClassicUO.Game.Map
                     break;
                 }
 
-                if (ShownInContainer(item, corpse))
+                // the cap counts sprites that still need a decode: cached ones don't crowd out a cold tail
+                if (Shown(item, corpse) && NeedsDecode(item.DisplayedGraphic))
                 {
                     n = AddDistinct(graphics, n, item.DisplayedGraphic);
                 }
@@ -139,7 +157,10 @@ namespace ClassicUO.Game.Map
 
             for (int i = 0; i < graphics.Length && n < distinct.Length; i++)
             {
-                n = AddDistinct(distinct, n, graphics[i]);
+                if (NeedsDecode(graphics[i]))
+                {
+                    n = AddDistinct(distinct, n, graphics[i]);
+                }
             }
 
             Flush(distinct.Slice(0, n));

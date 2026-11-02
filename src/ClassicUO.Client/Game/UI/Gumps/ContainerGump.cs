@@ -502,7 +502,7 @@ namespace ClassicUO.Game.UI.Gumps
         protected override void UpdateContents()
         {
             // art_container_prefetch: the contents' art decoded on the workers before ItemsOnAdded looks it up
-            if (!IsChessboard && !IsBackgammonBoard)
+            if (global::ClassicUO.Game.Map.ContentsArt.Enabled && !IsChessboard && !IsBackgammonBoard)
             {
                 global::ClassicUO.Game.Map.ContentsArt.PrefetchContents(World, World.Get(LocalSerial));
             }

@@ -94,6 +94,38 @@ namespace ClassicUO.UnitTests.Game.GameObjects
         }
 
         [Fact]
+        public void Batch_Cap_Counts_Only_Sprites_That_Still_Need_A_Decode()
+        {
+            // Codex P3: 128 cached graphics first must not crowd the two cold ones out of the batch
+            ContentsArt.NeedsDecodeForTests = g => g >= 0x2000;
+
+            try
+            {
+                var world = new World();
+                Item bag = Bag(world, opened: false);
+
+                for (uint i = 0; i < 128; i++)
+                {
+                    world.Writer.PlaceInContainer(0x4001_0000 + i, (ushort)(0x1000 + i), 1, 10, 10, 0, BAG, out _);
+                }
+
+                world.Writer.PlaceInContainer(0x4001_1000, 0x2000, 1, 10, 10, 0, BAG, out _);
+                world.Writer.PlaceInContainer(0x4001_1001, 0x2001, 1, 10, 10, 0, BAG, out _);
+
+                ContentsArt.PrefetchContents(world, bag);
+                ContentsArt.Prefetch(new uint[] { 0x1000, 0x1001, 0x2002, 0x2003 });
+
+                _batches.Should().HaveCount(2);
+                _batches[0].Should().Equal(0x2000u, 0x2001u);
+                _batches[1].Should().Equal(0x2002u, 0x2003u);
+            }
+            finally
+            {
+                ContentsArt.NeedsDecodeForTests = null;
+            }
+        }
+
+        [Fact]
         public void Prefetch_Needs_Two_Distinct_Sprites()
         {
             var world = new World();

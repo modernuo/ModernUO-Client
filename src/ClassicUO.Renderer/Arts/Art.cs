@@ -81,12 +81,35 @@ namespace ClassicUO.Renderer.Arts
             return false;
         }
 
-        /// <summary>Static art decoded or awaited by <see cref="Prefetch"/> batches, and their wall time (never reset; for scripted measurements).</summary>
+        /// <summary>Static art awaited by <see cref="Prefetch"/> batches, and their wall time (never reset; for scripted measurements).</summary>
         public static int TotalPrefetched;
         public static long TotalPrefetchTicks;
+        /// <summary>Prefetch batches that did not wait: the frame allowance was spent or the decode budget was blocked.</summary>
+        public static int TotalPrefetchSkipped;
 
-        /// <summary>Most distinct sprites one <see cref="Prefetch"/> batch waits for.</summary>
+        /// <summary>Most distinct missing sprites one <see cref="Prefetch"/> batch waits for.</summary>
         public const int PrefetchMaxBatch = 128;
+
+        /// <summary>A wait slice: nothing finishing within it ends the wait (the workers are busy elsewhere).</summary>
+        public const int PrefetchStallMs = 2;
+
+        // the frame's main-thread time for prefetch waits and art uploads (Map.UpdateLoading's drain and the prefetches share
+        // it); 0 until BeginFrame, so nothing waits unless a frame granted it
+        private long _frameAllowance;
+
+        /// <summary>
+        /// Once per frame, before the chunk loader's drain (Map.UpdateLoading; only with art_container_prefetch on): the
+        /// main-thread time this frame's art uploads and <see cref="Prefetch"/> waits may take together.
+        /// </summary>
+        public void BeginFrame(long allowanceTicks) => _frameAllowance = allowanceTicks;
+
+        /// <summary>True when static art <paramref name="artId"/> is not in the atlas and a worker could decode it.</summary>
+        public bool NeedsDecode(uint artId)
+        {
+            uint idx = artId + 0x4000;
+
+            return idx < _spriteInfos.Length && _spriteInfos[idx].Texture == null && !_decoder.IsFailed(idx) && _artLoader.Exists((int)idx);
+        }
 
         /// <summary>
         /// A window about to build controls for many static art sprites (a container's contents, the paperdoll's slots):
@@ -94,13 +117,16 @@ namespace ClassicUO.Renderer.Arts
         /// so the controls' synchronous <see cref="GetArt"/> calls find them uploaded. The main thread then waits for the
         /// slowest decode instead of doing every decode in turn (Gump.Prefetch's pattern). Main thread.
         /// <list type="bullet">
-        /// <item>At most <see cref="PrefetchMaxBatch"/> distinct sprites; fewer than two missing: nothing to gain, nothing is
-        /// queued or awaited. The decodes go through the shared decode budget like every first-sight request.</item>
-        /// <item><paramref name="timeoutMs"/> bounds queueing and waiting; the wait uploads finished decodes only before the
-        /// deadline (one upload can overrun it). A sprite still in flight then decodes on the spot when a control asks, and
-        /// the worker's result is dropped, as for any first-sight request.</item>
+        /// <item>At most <see cref="PrefetchMaxBatch"/> distinct missing sprites; fewer than two: nothing is queued or awaited.
+        /// The decodes go through the shared decode budget like every first-sight request.</item>
+        /// <item>The wait is soft and bounded by <paramref name="timeoutMs"/> and by what is left of the frame allowance
+        /// (<see cref="BeginFrame"/>, shared with the chunk loader's uploads and every other prefetch this frame): no upload
+        /// starts after it. It ends early when nothing finishes for <see cref="PrefetchStallMs"/>, and does not start when
+        /// the budget can't admit the batch now (FirstSightDecoder.RequestAndWait); the requests stay queued then.</item>
+        /// <item>A sprite still in flight decodes on the spot when a control asks, and the worker's result is dropped, as for
+        /// any first-sight request.</item>
         /// </list>
-        /// Returns the number of sprites waited for.
+        /// Returns the number of sprites waited for (0: none, or no wait).
         /// </summary>
         public int Prefetch(ReadOnlySpan<uint> artIds, int timeoutMs)
         {
@@ -110,7 +136,6 @@ namespace ClassicUO.Renderer.Arts
             }
 
             long t0 = Stopwatch.GetTimestamp();
-            long deadline = t0 + Stopwatch.Frequency * timeoutMs / 1000;
             Span<uint> batch = stackalloc uint[PrefetchMaxBatch];
             int n = 0;
 
@@ -123,13 +148,10 @@ namespace ClassicUO.Renderer.Arts
 
                 uint idx = id + 0x4000;
 
-                if (idx >= _spriteInfos.Length || _spriteInfos[idx].Texture != null || _decoder.IsFailed(idx)
-                    || !_artLoader.Exists((int)idx) || batch.Slice(0, n).Contains(idx))
+                if (NeedsDecode(id) && !batch.Slice(0, n).Contains(idx))
                 {
-                    continue;
+                    batch[n++] = idx;
                 }
-
-                batch[n++] = idx;
             }
 
             if (n < 2)
@@ -137,46 +159,34 @@ namespace ClassicUO.Renderer.Arts
                 return 0;
             }
 
-            for (int i = 0; i < n; i++)
-            {
-                _decoder.Request(batch[i]);
-            }
+            long wait = Math.Min(_frameAllowance, Stopwatch.Frequency * timeoutMs / 1000);
 
-            while (Stopwatch.GetTimestamp() < deadline)
+            if (wait <= 0)
             {
-                bool waiting = false;
-
+                // the frame's allowance is spent: queue only (the decodes still run ahead of the controls)
                 for (int i = 0; i < n; i++)
                 {
-                    if (_decoder.IsRequested(batch[i]))
-                    {
-                        waiting = true;
-
-                        break;
-                    }
+                    _decoder.Request(batch[i]);
                 }
 
-                if (!waiting)
-                {
-                    break;
-                }
+                TotalPrefetchSkipped++;
 
-                if (_decoder.HasReady)
-                {
-                    long u0 = Stopwatch.GetTimestamp();
-                    _decoder.Drain(deadline);
-                    FrameUploadTicks += Stopwatch.GetTimestamp() - u0;
-                }
-                else
-                {
-                    System.Threading.Thread.Yield();
-                }
+                return 0;
             }
 
-            TotalPrefetched += n;
-            TotalPrefetchTicks += Stopwatch.GetTimestamp() - t0;
+            int pending = _decoder.RequestAndWait(batch.Slice(0, n), t0 + wait, PrefetchStallMs);
+            long spent = Stopwatch.GetTimestamp() - t0;
+            _frameAllowance -= spent;
 
-            return n;
+            if (pending == n)
+            {
+                TotalPrefetchSkipped++;
+            }
+
+            TotalPrefetched += n - pending;
+            TotalPrefetchTicks += spent;
+
+            return n - pending;
         }
 
         /// <summary>Uploads finished worker decodes until <paramref name="deadline"/> (Stopwatch ticks), at least one. Main thread.</summary>
@@ -186,7 +196,9 @@ namespace ClassicUO.Renderer.Arts
             {
                 long t0 = Stopwatch.GetTimestamp();
                 _decoder.Drain(deadline);
-                FrameUploadTicks += Stopwatch.GetTimestamp() - t0;
+                long spent = Stopwatch.GetTimestamp() - t0;
+                FrameUploadTicks += spent;
+                _frameAllowance -= spent;
             }
         }
 

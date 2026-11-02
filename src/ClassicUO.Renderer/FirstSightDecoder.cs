@@ -126,9 +126,98 @@ namespace ClassicUO.Renderer
         }
 
         /// <summary>Uploads finished decodes until <paramref name="deadline"/> (Stopwatch ticks), at least one (main thread).</summary>
-        public void Drain(long deadline)
+        public void Drain(long deadline) => Drain(deadline, atLeastOne: true);
+
+        /// <summary>
+        /// Requests the sprites of <paramref name="batch"/> and waits for them, uploading finished decodes, until none is
+        /// pending, <paramref name="deadline"/> (Stopwatch ticks; no upload starts after it), or nothing finishes for
+        /// <paramref name="stallMs"/>. It does not wait at all when the batch can't start now: other decodes wait for budget
+        /// room, or the batch doesn't fit the room left (the bytes may be held by owners only this thread drains). The
+        /// requests stay queued either way. Main thread. Returns how many of the batch are still pending.
+        /// </summary>
+        public int RequestAndWait(ReadOnlySpan<uint> batch, long deadline, int stallMs)
         {
-            bool first = true;
+            bool blocked = false;
+
+            if (_bytesOf != null)
+            {
+                long bytes = 0;
+
+                foreach (uint idx in batch)
+                {
+                    if (idx < (uint)_state.Length && _state[idx] == StateNone)
+                    {
+                        bytes += _bytesOf(idx);
+                    }
+                }
+
+                var budget = _queue.Budget;
+                long inFlight = budget.InFlightBytes;
+                blocked = budget.Waiting > 0 || (bytes > 0 && budget.CapBytes > 0 && inFlight > 0 && inFlight + bytes > budget.CapBytes);
+            }
+
+            foreach (uint idx in batch)
+            {
+                Request(idx);
+            }
+
+            if (blocked)
+            {
+                return CountPending(batch);
+            }
+
+            while (true)
+            {
+                int pending = CountPending(batch);
+
+                if (pending == 0)
+                {
+                    return 0;
+                }
+
+                long now = Stopwatch.GetTimestamp();
+
+                if (now >= deadline)
+                {
+                    return pending;
+                }
+
+                if (_queue.HasReady)
+                {
+                    Drain(deadline, atLeastOne: false);
+
+                    continue;
+                }
+
+                long leftMs = (deadline - now) * 1000 / Stopwatch.Frequency;
+                int sliceMs = (int)Math.Max(1, Math.Min(stallMs, leftMs));
+
+                // nothing finished within a slice: the workers are busy elsewhere, waiting longer only adds latency
+                if (!_queue.WaitPublished(sliceMs))
+                {
+                    return CountPending(batch);
+                }
+            }
+        }
+
+        private int CountPending(ReadOnlySpan<uint> batch)
+        {
+            int n = 0;
+
+            foreach (uint idx in batch)
+            {
+                if (IsRequested(idx))
+                {
+                    n++;
+                }
+            }
+
+            return n;
+        }
+
+        private void Drain(long deadline, bool atLeastOne)
+        {
+            bool first = atLeastOne;
 
             while ((first || Stopwatch.GetTimestamp() < deadline) && _queue.TryDequeue(out var job))
             {
