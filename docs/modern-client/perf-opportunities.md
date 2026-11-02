@@ -238,4 +238,7 @@ Today the client parses incoming packets in place (`StackDataReader` over fixed 
 - **Dropped (perf-10: no per-frame caller; only constructors, clicks and Save): `FindControls` allocates on every call** (Control.cs ~503, `OfType().Where().ToArray()`). Source: perf-9.
 - **Dev builds only: `Extract.Run` runs every frame whenever `-ecscheck` > 0, even between checks** (WorldEcs.cs ~972). Source: perf-9.
 - **Store each layer's item or serial in `LayerDecision`** (MobileView.cs draw loop): the loop still does one `FindItemByLayer` per layer after a cache hit, about 10–20 lookups per drawn mobile per frame. Source: t9-slice3.
-
+- **Spell-entry lookup on every `Children` call** (WorldState.cs `Children` → `SpellEntries`): a mirror Spellbook lookup per parent per call; gumps call it every frame. A fast path for non-books skips it. Source: t9-childlist-b.
+- **Corpse layer reads** (WorldState.Equipment.cs `ChildByLayer`): an `Items.Get` per child per layer; CorpseOrder reads many layers per corpse per frame. A per-corpse layer table makes it O(1); shows only in corpse-heavy scenes. Source: t9-childlist-b.
+- **`LinkedObject` fields on Item/Mobile are now unused** (24 B per object via `BaseGameObject`, about 2–5 MB per client): move `LinkedObject` off `BaseGameObject`. Memory, not frame time. Source: t9-childlist-b.
+- **Attach-time walks** (WorldWriter `WouldCycle`, `SubtreeDeeperThan`; WorldMirror `ParentOf` probes up to three components per level): a cached parent and subtree height per record would make them O(depth). Packets only; negligible. Source: t9-childlist-b2/b3.
