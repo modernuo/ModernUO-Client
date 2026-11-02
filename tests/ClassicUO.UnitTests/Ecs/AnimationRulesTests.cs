@@ -60,7 +60,7 @@ namespace ClassicUO.UnitTests.Ecs
             for (byte dir = 0; dir < 8; dir++)
             {
                 Span<Layer> expected = (Layer[])baseOrder.Clone();
-                int n = PaperdollOrder.ApplyDirectionCloak(expected, baseOrder.Length, dir);
+                int n = LegacyLayerRulesReference.ApplyDirectionCloak(expected, baseOrder.Length, dir);
 
                 Span<byte> order = stackalloc byte[baseOrder.Length];
                 Span<byte> layerOf = stackalloc byte[baseOrder.Length];
@@ -102,7 +102,7 @@ namespace ClassicUO.UnitTests.Ecs
             gfx.Clear();
             Span<Layer> raw = stackalloc Layer[PaperdollOrder.N];
             Span<Layer> full = stackalloc Layer[PaperdollOrder.N];
-            PaperdollOrder.Build(gfx, false, raw);
+            LegacyLayerRulesReference.Build(gfx, false, raw);
             int fullCount = PaperdollOrder.Filter(raw, includeBackpack: false, full);
 
             // the ECS slots: the drawn layers in table order (Rebuild)
@@ -124,7 +124,7 @@ namespace ClassicUO.UnitTests.Ecs
                 // MobileView: BuildInWorld's cloak move on the full order, then the empty layers skipped
                 Span<Layer> view = stackalloc Layer[PaperdollOrder.N];
                 full.Slice(0, fullCount).CopyTo(view);
-                int vc = PaperdollOrder.ApplyDirectionCloak(view, fullCount, dir);
+                int vc = LegacyLayerRulesReference.ApplyDirectionCloak(view, fullCount, dir);
                 Span<Layer> expected = stackalloc Layer[PaperdollOrder.N];
                 int e = 0;
 
@@ -182,12 +182,12 @@ namespace ClassicUO.UnitTests.Ecs
             gfx[(int)Layer.Torso] = 0x1;
             Span<Layer> order = stackalloc Layer[PaperdollOrder.N];
 
-            PaperdollOrder.Build(gfx, false, order);
+            LegacyLayerRulesReference.Build(gfx, false, order);
 
             order.IndexOf(Layer.Arms).Should().BeGreaterThan(order.IndexOf(Layer.Torso));
 
             gfx[(int)Layer.Arms] = 0x1;
-            PaperdollOrder.Build(gfx, false, order);
+            LegacyLayerRulesReference.Build(gfx, false, order);
             order.IndexOf(Layer.Arms).Should().BeLessThan(order.IndexOf(Layer.Torso));
         }
 
@@ -229,9 +229,9 @@ namespace ClassicUO.UnitTests.Ecs
             AnimationRules.IsGargoyleDrawBody(666, false).Should().BeFalse();
             AnimationRules.IsGargoyleProp(0x029B, false).Should().BeTrue("Mobile.IsGargoyle: '&&' binds tighter than '||'");
             AnimationRules.IsGargoyleProp(0x029A, false).Should().BeFalse();
-            AnimationRules.FixGargoyleEquipment(0x01D5).Should().Be(0x0156);
-            AnimationRules.FixGargoyleEquipment(1529).Should().Be(1531);
-            AnimationRules.FixGargoyleEquipment(0x0200).Should().Be(0x0200);
+            LegacyLayerRulesReference.FixGargoyleEquipment(0x01D5).Should().Be(0x0156);
+            LegacyLayerRulesReference.FixGargoyleEquipment(1529).Should().Be(1531);
+            LegacyLayerRulesReference.FixGargoyleEquipment(0x0200).Should().Be(0x0200);
         }
 
         [Fact]
@@ -324,30 +324,30 @@ namespace ClassicUO.UnitTests.Ecs
             }
 
             Put(Layer.Torso, 0x1415, 0x0001, gfx, anim, present);
-            AnimationRules.IsCovered(Layer.Torso, gfx, anim, present, 0x190).Should().BeFalse();
+            LegacyLayerRulesReference.IsCovered(Layer.Torso, gfx, anim, present, 0x190).Should().BeFalse();
 
             // a full robe hides torso and arms; an open robe doesn't
             Put(Layer.Robe, 0x1F03, 0x01DF, gfx, anim, present);
-            AnimationRules.IsCovered(Layer.Torso, gfx, anim, present, 0x190).Should().BeTrue();
-            AnimationRules.IsCovered(Layer.Arms, gfx, anim, present, 0x190).Should().BeTrue();
+            LegacyLayerRulesReference.IsCovered(Layer.Torso, gfx, anim, present, 0x190).Should().BeTrue();
+            LegacyLayerRulesReference.IsCovered(Layer.Arms, gfx, anim, present, 0x190).Should().BeTrue();
             Put(Layer.Robe, 0x9985, 0x01DF, gfx, anim, present);
-            AnimationRules.IsCovered(Layer.Torso, gfx, anim, present, 0x190).Should().BeFalse();
+            LegacyLayerRulesReference.IsCovered(Layer.Torso, gfx, anim, present, 0x190).Should().BeFalse();
 
             // hood robes hide hair; the 0x2683 range on every body, the 0xA0AB range except on gargoyles
             Put(Layer.Hair, 0x203B, 0x0001, gfx, anim, present);
             Put(Layer.Robe, 0x2683, 0x01DF, gfx, anim, present);
-            AnimationRules.IsCovered(Layer.Hair, gfx, anim, present, 0x190).Should().BeTrue();
-            AnimationRules.IsCovered(Layer.Hair, gfx, anim, present, 0x29A).Should().BeTrue();
+            LegacyLayerRulesReference.IsCovered(Layer.Hair, gfx, anim, present, 0x190).Should().BeTrue();
+            LegacyLayerRulesReference.IsCovered(Layer.Hair, gfx, anim, present, 0x29A).Should().BeTrue();
             Put(Layer.Robe, 0xA0AB, 0x01DF, gfx, anim, present);
-            AnimationRules.IsCovered(Layer.Hair, gfx, anim, present, 0x190).Should().BeTrue();
-            AnimationRules.IsCovered(Layer.Hair, gfx, anim, present, 0x29A).Should().BeFalse();
+            LegacyLayerRulesReference.IsCovered(Layer.Hair, gfx, anim, present, 0x190).Should().BeTrue();
+            LegacyLayerRulesReference.IsCovered(Layer.Hair, gfx, anim, present, 0x29A).Should().BeFalse();
 
             // plate legs over shoes
             present[(int)Layer.Robe] = false;
             Put(Layer.Shoes, 0x170F, 0x0001, gfx, anim, present);
-            AnimationRules.IsCovered(Layer.Shoes, gfx, anim, present, 0x190).Should().BeFalse();
+            LegacyLayerRulesReference.IsCovered(Layer.Shoes, gfx, anim, present, 0x190).Should().BeFalse();
             Put(Layer.Legs, 0x1411, 0x0002, gfx, anim, present);
-            AnimationRules.IsCovered(Layer.Shoes, gfx, anim, present, 0x190).Should().BeTrue();
+            LegacyLayerRulesReference.IsCovered(Layer.Shoes, gfx, anim, present, 0x190).Should().BeTrue();
         }
 
         [Fact]

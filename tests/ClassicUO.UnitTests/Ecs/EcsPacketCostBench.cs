@@ -756,13 +756,13 @@ namespace ClassicUO.UnitTests.Ecs
                 bool garg = body == 0x29A || body == 0x29B;
                 Span<Layer> raw = stackalloc Layer[N];
                 Span<Layer> order = stackalloc Layer[N];
-                PaperdollOrder.Build(anim[m], (m & 1) != 0 || garg, raw);
-                int count = PaperdollOrder.ApplyDirectionCloak(order, PaperdollOrder.Filter(raw, false, order), (byte)(i & 7));
+                LegacyLayerRulesReference.Build(anim[m], (m & 1) != 0 || garg, raw);
+                int count = LegacyLayerRulesReference.ApplyDirectionCloak(order, PaperdollOrder.Filter(raw, false, order), (byte)(i & 7));
 
                 for (int k = 0; k < count; k++)
                 {
                     Layer l = order[k];
-                    if (present[m][(int)l] && !AnimationRules.IsCovered(l, gfx[m], anim[m], present[m], body)) sink++;
+                    if (present[m][(int)l] && !LegacyLayerRulesReference.IsCovered(l, gfx[m], anim[m], present[m], body)) sink++;
                 }
             });
 

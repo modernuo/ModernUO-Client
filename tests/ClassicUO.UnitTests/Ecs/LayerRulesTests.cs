@@ -116,7 +116,7 @@ namespace ClassicUO.UnitTests.Ecs
 
                     for (int l = 1; l < N; l++)
                     {
-                        bool hard = AnimationRules.IsCovered((Layer)l, o.Gfx, o.Anim, o.Present, body);
+                        bool hard = LegacyLayerRulesReference.IsCovered((Layer)l, o.Gfx, o.Anim, o.Present, body);
                         bool data1 = Rules.IsCovered(LayerRuleSet.World, (byte)l, o.Present, o.Gfx, o.Anim, subject);
                         bool data2 = Rules.IsCovered(LayerRuleSet.Paperdoll, (byte)l, o.Present, o.Gfx, o.Anim, subject);
                         Checks += 2;
@@ -141,7 +141,7 @@ namespace ClassicUO.UnitTests.Ecs
                 {
                     bool female = (f & 1) != 0, garg = (f & 2) != 0;
                     var subject = new LayerSubject(Rules.GroupOf(body), (byte)((female ? 1 : 0) | (garg ? 2 : 0)));
-                    PaperdollOrder.Build(key, female || garg, raw);
+                    LegacyLayerRulesReference.Build(key, female || garg, raw);
 
                     foreach (LayerRuleSet set in new[] { LayerRuleSet.Paperdoll, LayerRuleSet.World })
                     {
@@ -161,7 +161,7 @@ namespace ClassicUO.UnitTests.Ecs
                     {
                         byte d = dir == 8 ? (byte)0x80 : (byte)dir;
                         int hc = PaperdollOrder.Filter(raw, false, hard);
-                        hc = PaperdollOrder.ApplyDirectionCloak(hard, hc, d);
+                        hc = LegacyLayerRulesReference.ApplyDirectionCloak(hard, hc, d);
                         int dc = World(Rules, key, subject, d, data);
                         Checks++;
 
@@ -183,8 +183,8 @@ namespace ClassicUO.UnitTests.Ecs
                     for (byte flags = 0; flags < 8; flags++)
                     {
                         var subject = new LayerSubject(Rules.GroupOf(body), flags, body);
-                        ushort hard = (flags & 2) != 0 ? AnimationRules.FixGargoyleEquipment((ushort)a) : (ushort)a;
-                        ushort hardPd = LayerRuleEval.RemapPaperdollHard((ushort)a, body, (flags & 4) != 0);
+                        ushort hard = (flags & 2) != 0 ? LegacyLayerRulesReference.FixGargoyleEquipment((ushort)a) : (ushort)a;
+                        ushort hardPd = LegacyLayerRulesReference.RemapPaperdoll((ushort)a, body, (flags & 4) != 0);
                         Checks += 2;
 
                         if (Rules.Remap(LayerRuleSet.World, (ushort)a, subject) != hard || Rules.Remap(LayerRuleSet.Paperdoll, (ushort)a, subject) != hardPd)
@@ -395,14 +395,14 @@ namespace ClassicUO.UnitTests.Ecs
 
             for (byte dir = 0; dir < 8; dir++)
             {
-                PaperdollOrder.Build(key, true, raw);
-                int hc = PaperdollOrder.ApplyDirectionCloak(hard, PaperdollOrder.Filter(raw, false, hard), dir);
+                LegacyLayerRulesReference.Build(key, true, raw);
+                int hc = LegacyLayerRulesReference.ApplyDirectionCloak(hard, PaperdollOrder.Filter(raw, false, hard), dir);
                 int dc = LayerRuleEval.BuildInWorld(key, LayerRuleEval.Subject(0x191, true, false), dir, data);
                 data.Slice(0, dc).ToArray().Should().Equal(hard.Slice(0, hc).ToArray());
             }
 
             int pc = LayerRuleEval.BuildPaperdoll(key, LayerRuleEval.Subject(0x29A, false, true), data);
-            PaperdollOrder.Build(key, true, raw);
+            LegacyLayerRulesReference.Build(key, true, raw);
             int ph = PaperdollOrder.Filter(raw, false, hard);
             data.Slice(0, pc).ToArray().Should().Equal(hard.Slice(0, ph).ToArray());
 
@@ -450,7 +450,7 @@ namespace ClassicUO.UnitTests.Ecs
             key[(int)Layer.Pants] = 0x398;
             Span<Layer> hard = stackalloc Layer[N];
             Span<Layer> data = stackalloc Layer[N];
-            PaperdollOrder.Build(key, false, hard);
+            LegacyLayerRulesReference.Build(key, false, hard);
             rules.BuildOrder(LayerRuleSet.World, key, human, MemoryMarshal.Cast<Layer, byte>(data));
             Pos(hard, Layer.Pants).Should().BeLessThan(Pos(hard, Layer.Shirt));
             Pos(data, Layer.Pants).Should().BeLessThan(Pos(data, Layer.Shirt));
@@ -462,8 +462,8 @@ namespace ClassicUO.UnitTests.Ecs
 
             foreach (byte dir in new byte[] { 0, 3, 5 })
             {
-                PaperdollOrder.Build(key, false, hard);
-                int hc = PaperdollOrder.ApplyDirectionCloak(hard, PaperdollOrder.Filter(hard.ToArray(), false, hard), dir);
+                LegacyLayerRulesReference.Build(key, false, hard);
+                int hc = LegacyLayerRulesReference.ApplyDirectionCloak(hard, PaperdollOrder.Filter(hard.ToArray(), false, hard), dir);
                 int dc = World(rules, key, human, dir, data);
 
                 foreach (var (o, c) in new[] { (hard.ToArray(), hc), (data.ToArray(), dc) })
@@ -478,13 +478,13 @@ namespace ClassicUO.UnitTests.Ecs
             // R1: the gargoyle draw remaps the robe 0x1D5 -> 0x156; a human doesn't
             var garg = new LayerSubject(rules.GroupOf(0x29A), LayerRulesConst.FlagGargoyleDraw, 0x29A);
             rules.Remap(LayerRuleSet.World, 0x1D5, garg).Should().Be(0x156);
-            AnimationRules.FixGargoyleEquipment(0x1D5).Should().Be(0x156);
+            LegacyLayerRulesReference.FixGargoyleEquipment(0x1D5).Should().Be(0x156);
             rules.Remap(LayerRuleSet.World, 0x1D5, human).Should().Be(0x1D5);
 
             // R2: the paperdoll's gargoyle ghost (0x2B6/0x2B7) shroud 0x3CA -> 0x223 from 7.0.0.0 only; not a living gargoyle
             foreach (var (body, cv, expected) in new (ushort, bool, ushort)[] { (0x2B6, true, 0x223), (0x2B7, true, 0x223), (0x2B6, false, 0x3CA), (0x29A, true, 0x3CA) })
             {
-                LayerRuleEval.RemapPaperdollHard(0x3CA, body, cv).Should().Be(expected);
+                LegacyLayerRulesReference.RemapPaperdoll(0x3CA, body, cv).Should().Be(expected);
                 rules.Remap(LayerRuleSet.Paperdoll, 0x3CA, new LayerSubject(rules.GroupOf(body), cv ? LayerRulesConst.FlagCv7000 : (byte)0, body)).Should().Be(expected);
             }
 
@@ -497,7 +497,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             foreach (var (body, covered) in new (ushort, bool)[] { (0x190, true), (0x29A, false) })
             {
-                AnimationRules.IsCovered(Layer.Helmet, o2.Gfx, o2.Anim, o2.Present, body).Should().Be(covered);
+                LegacyLayerRulesReference.IsCovered(Layer.Helmet, o2.Gfx, o2.Anim, o2.Present, body).Should().Be(covered);
                 rules.IsCovered(LayerRuleSet.World, (byte)Layer.Helmet, o2.Present, o2.Gfx, o2.Anim, new LayerSubject(rules.GroupOf(body), 0, body)).Should().Be(covered);
                 rules.IsCovered(LayerRuleSet.Paperdoll, (byte)Layer.Shoes, o2.Present, o2.Gfx, o2.Anim, new LayerSubject(rules.GroupOf(body), 0, body)).Should().BeTrue();
             }
