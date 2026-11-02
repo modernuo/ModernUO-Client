@@ -32,6 +32,13 @@ namespace ClassicUO.Assets
             _entries = new ArtEntry[_sprites.Length];
         }
 
+        /// <summary>Tests: the sprite table without a pack on disk.</summary>
+        internal void SetTablesForTests(SpriteEntry[] sprites)
+        {
+            _sprites = sprites;
+            _entries = new ArtEntry[sprites.Length];
+        }
+
         public bool Exists(int idx) => (uint)idx < (uint)_sprites.Length && _sprites[idx].OrigW != 0 && _sprites[idx].OrigH != 0;
 
         public ref ArtEntry GetEntry(int idx)

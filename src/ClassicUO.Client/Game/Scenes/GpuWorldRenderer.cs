@@ -491,14 +491,14 @@ namespace ClassicUO.Game.Scenes
                 }
 
                 long t1 = System.Diagnostics.Stopwatch.GetTimestamp();
-                drawn = _itemExtract.Emit(item, _pack, _offsetX, _offsetY, posX, posY, depth);
+                drawn = EmitItem(item, _offsetX, _offsetY, posX, posY, depth);
                 long t2 = System.Diagnostics.Stopwatch.GetTimestamp();
                 EcsParity.OnItemCaptured(item, _dynamic, start, _dynamicCount, _itemExtract, viewDrawn, drawn, _scene, lightsBefore, t1 - t0, t2 - t1);
                 _dynamicCount = start;
             }
             else
             {
-                drawn = _itemExtract.Emit(item, _pack, _offsetX, _offsetY, posX, posY, depth);
+                drawn = EmitItem(item, _offsetX, _offsetY, posX, posY, depth);
 
                 if (_itemExtract.Light)
                 {
@@ -520,9 +520,21 @@ namespace ClassicUO.Game.Scenes
 
         /// <summary>W4 (GameSceneGpuItemCache): <see cref="ItemSpriteExtract.Emit"/> for a chunk's item cache, with the
         /// scene's draw offset (the frame's <see cref="SetOffset"/> comes after the walk). The result is in <see cref="ItemExtract"/>.</summary>
-        public bool ExtractItem(Item item, int offsetX, int offsetY, int posX, int posY, float depth)
+        public bool ExtractItem(Item item, int offsetX, int offsetY, int posX, int posY, float depth) => EmitItem(item, offsetX, offsetY, posX, posY, depth);
+
+        // T7b: the extract reads the item's input (its mirror record, plus what is still only on the GameObject); a
+        // corpse's mirror bit goes back to the GameObject, as the view's DrawCorpse stores it
+        private bool EmitItem(Item item, int offsetX, int offsetY, int posX, int posY, float depth)
         {
-            return _itemExtract.Emit(item, _pack, offsetX, offsetY, posX, posY, depth);
+            ItemSpriteInput.Gather(item, out ItemSpriteInput input);
+            bool drawn = _itemExtract.Emit(in input, _pack, offsetX, offsetY, posX, posY, depth);
+
+            if (_itemExtract.SetsFlipped)
+            {
+                item.ViewFlipped = _itemExtract.Flipped;
+            }
+
+            return drawn;
         }
 
         public ItemSpriteExtract ItemExtract => _itemExtract;
