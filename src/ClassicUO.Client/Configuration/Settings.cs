@@ -136,10 +136,6 @@ namespace ClassicUO.Configuration
         // batcher calls with the sink's. Read every frame (dev builds: CUO_LEGACY_ECS_SPRITES=1|0 overrides). Default off.
         [JsonPropertyName("legacy_ecs_sprites")] public bool LegacyEcsSprites { get; set; }
 
-        // W5: World.Update visits only the items that need a per-frame update (corpses, items whose object handles just
-        // opened) plus a range sweep every 50 ms, instead of every item every frame. Off = the full per-frame loop.
-        [JsonPropertyName("world_update_active_items")] public bool WorldUpdateActiveItems { get; set; } = true;
-
         // W5, with gpu_ecs_sprites: a mobile's action selection and sprite instances are reused while their inputs are
         // unchanged (MobileFrameCache: the sampled state, equipment, seat tile, hues, alpha); position and depth are
         // reapplied every frame. Off = selected and extracted every frame.
@@ -151,7 +147,7 @@ namespace ClassicUO.Configuration
         // run. Off = sampled from the Mobile every frame.
         [JsonPropertyName("mobile_push_inputs")] public bool MobilePushInputs { get; set; } = true;
 
-        // E4 (needs world_update_active_items): World.Update updates only the mobiles whose per-mobile clock is
+        // E4: World.Update updates only the mobiles whose per-mobile clock is
         // due (queued steps, frame or idle timer expired, handles opening), picked from the ECS (MobileClock) instead of
         // calling Mobile.Update on every mobile every frame. Off = the full per-frame loop. Default on since 2026-10-31
         // (owner); the off path and CUO_MOBILE_UPDATE_CHECK stay for one phase.
@@ -164,7 +160,7 @@ namespace ClassicUO.Configuration
         // advance with the legacy one. Default on since 2026-11-02 (owner, after the quiet-machine per-switch timing bench-000206/207/208: timing-neutral on both renderers); the off path and the checker stay for one phase.
         [JsonPropertyName("world_anim_system")] public bool WorldAnimSystem { get; set; } = true;
 
-        // T5b-items (needs world_update_active_items): a due corpse's frame advance (Item.ProcessAnimation) is computed in the
+        // T5b-items: a due corpse's frame advance (Item.ProcessAnimation) is computed in the
         // ECS (ItemAnimationAdvanceSystem over AnimationTimer and ItemData). Separate from world_anim_system so the two halves
         // are gated and rolled back apart. Read once at startup (CUO_WORLD_ITEM_ANIM_SYSTEM=1|0 overrides it in developer
         // builds). CUO_ANIM_ADVANCE_CHECK=1 compares every advance with the legacy one. Default on since 2026-11-02 (owner, after the quiet-machine per-switch timing bench-000206/207/208: timing-neutral on both renderers); the off path and the checker stay for one phase.
@@ -211,7 +207,7 @@ namespace ClassicUO.Configuration
         // T5d (ecs-transition-plan.md): the per-frame item update list is owned by the ECS side: membership is the ItemActive tag,
         // the visiting order is the system's list (same add and swap-remove rules as before). CUO_ACTIVE_ITEMS_CHECK=1 compares
         // tags and list every frame. Read once at startup (CUO_WORLD_ACTIVE_ITEMS_SYSTEM=1|0 overrides it in developer builds).
-        // Only used with world_update_active_items. Default on since 2026-11-02 (owner, after the quiet-machine per-switch timing bench-000206/207/208: timing-neutral on both renderers); the off path and the checker stay for one phase.
+        // Default on since 2026-11-02 (owner, after the quiet-machine per-switch timing bench-000206/207/208: timing-neutral on both renderers); the off path and the checker stay for one phase.
         [JsonPropertyName("world_active_items_system")] public bool WorldActiveItemsSystem { get; set; } = true;
 
         // T8 (ecs-transition-plan.md): graphic effects (0x70, 0xC0, 0xC7) are ECS entities (EffectState): the frame and lifetime

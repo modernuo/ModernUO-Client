@@ -5,7 +5,7 @@ using Xunit;
 
 namespace ClassicUO.UnitTests.Game
 {
-    // W5: World.Update's active item list and the hits percentage computed on change (world_update_active_items).
+    // W5: World.Update's active item list and the hits percentage computed on change.
     // Destroying entities and the hits text need the running client (GameActions, RenderedText); the in-client
     // checker CUO_W5_CHECK covers those paths.
     public class WorldUpdateActiveItemsTests
