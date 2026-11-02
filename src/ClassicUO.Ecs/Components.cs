@@ -255,7 +255,7 @@ namespace ClassicUO.Ecs
     }
 
     /// <summary>
-    /// W5 (setting mobile_push_inputs): the selection and override-hue inputs of a mobile that change only on a server
+    /// W5: the selection and override-hue inputs of a mobile that change only on a server
     /// update, a step or a client-side state change. The client's change funnel (WorldEcs.Sync / WorldEcs.PushInputs,
     /// called from every mutation site of these values) recomputes it, so the per-frame sample doesn't read them from the
     /// legacy Mobile. Whether the mobile is mounted comes from <see cref="EquipmentSlots.Mounted"/> (rebuilt on

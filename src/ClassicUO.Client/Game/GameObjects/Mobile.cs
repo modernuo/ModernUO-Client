@@ -1229,7 +1229,7 @@ namespace ClassicUO.Game.GameObjects
             );
         }
 
-        /// <summary>W5 (mobile_push_inputs): <see cref="TryGetSittingInfo(out AnimationsLoader.SittingInfoData)"/> with the
+        /// <summary>W5: <see cref="TryGetSittingInfo(out AnimationsLoader.SittingInfoData)"/> with the
         /// human, mounted, flying and action inputs already known from the ECS: the seat test without its equipment walks.</summary>
         internal bool TryGetSittingInfo(bool human, bool mounted, bool flying, byte group, out AnimationsLoader.SittingInfoData data)
         {
