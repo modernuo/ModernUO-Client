@@ -5164,3 +5164,11 @@ Paired NativeAOT builds (`CuoDevTools=true`, checkers off), all on the quiet mac
   - default flips of `legacy_ecs_sprites`/`gpu_ecs_sprites` (need quiet timing);
   - the effect extract (deferred by the owner until effect ownership is in the ECS);
   - removing the views' Draw and the hot caches (T9).
+
+### perf-6 merged: item controls size without decoding (coordinator, 2026-11-02)
+
+- cd46fec4d and 0aa99c22e, merge b891dec69.
+- `Art.TryGetArtSize` gives a sprite's size without decoding it. Item controls (ItemGump, paperdoll slots, StaticPic, ButtonTileArt, MenuGump items, the trade clamps, container positioning) use it, and the decode moves to first draw or hit test.
+- Codex found 3 P2s, all fixed: StaticPic hit test before first draw; MUL gump sizes with loose overrides; undrained speculative requests.
+- Counts bench-000255/256 PASS; gate bench-000257 PASS. Unit tests after the merge: 3,049 passed, 6 skipped.
+- Timing pending (parked: `measure/perf-6/job-timing-PARKED.sh`). The agent expects perf-4's prefetch to stay useful (the decode moves to the first draw in the same frame); its counts jobs show the off/on numbers.
