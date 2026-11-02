@@ -74,23 +74,8 @@ namespace ClassicUO.Game
                 Log.Info($"[ecsdump] legacy item: container=0x{item.Container:X8} layer={(byte)item.Layer} amount={item.Amount} multi={item.IsMulti} corpse={item.IsCorpse}");
             }
 
-            // the children the mirror indexes under this serial, next to the legacy list
+            // the children the mirror indexes under this serial
             Log.Info($"[ecsdump] indexed equipment: {Join(world.Ecs.Mirror.GetEquipment(serial))} | contents: {Join(world.Ecs.Mirror.GetContents(serial))}");
-
-            if (legacy != null)
-            {
-                var children = new StringBuilder();
-
-                for (LinkedObject i = legacy.Items; i != null; i = i.Next)
-                {
-                    if (i is Item it)
-                    {
-                        children.Append(CultureInfo.InvariantCulture, $" 0x{it.Serial:X8}(g=0x{it.Graphic:X4} layer={(byte)it.Layer})");
-                    }
-                }
-
-                Log.Info($"[ecsdump] legacy children:{children}");
-            }
         }
 
         private static string LegacyKind(World world, Entity legacy)

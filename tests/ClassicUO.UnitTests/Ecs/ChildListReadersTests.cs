@@ -8,9 +8,9 @@ using Xunit;
 namespace ClassicUO.UnitTests.Ecs
 {
     // T9 child-list slice A: the readers moved from the LinkedObject child list to the ECS (WorldState.Children/Contents,
-    // the worn layers) give the list's answers, order included. Each operation is run with CUO_CONTENTS_CHECK and
-    // CUO_EQUIP_READ_CHECK on (no mismatch), and its removals are compared with the order the list walk gave (computed from
-    // the list before the operation). The list is still written, so it is the reference here.
+    // the worn layers) give the list's answers, order included. Slice B removed the list: the reference is the children
+    // computed afresh from the mirror's indexes (WorldStateContentsTests.HeldChildren), and each operation's removals are
+    // compared with the order the list walk gave over them (computed before the operation).
     public class ChildListReadersTests
     {
         private const uint MOB = 0x0000_3900, PACK = 0x4000_7900, A = 0x4000_7901, B = 0x4000_7902, C = 0x4000_7903, CORPSE = 0x4000_7906, LOOT = 0x4000_7907, CLOOT = 0x4000_790B;
@@ -23,16 +23,12 @@ namespace ClassicUO.UnitTests.Ecs
 
             // one level deeper: an item inside the bag's item
             world.Writer.PlaceInContainer(DEEP, 0xF3F, 1, 1, 1, 0, NEW, out _);
-            world.State.CheckEnabled = true;
-            world.State.EquipCheckEnabled = true;
 
             return world;
         }
 
         private static void NoMismatches(World world)
         {
-            world.State.Mismatches.Should().Be(0);
-            world.State.EquipMismatches.Should().Be(0);
             world.State.SnapshotDepth.Should().Be(0, "every snapshot is released");
             WorldStateContentsTests.AllMatch(world);
         }
@@ -40,9 +36,9 @@ namespace ClassicUO.UnitTests.Ecs
         // the list walk's destroy order: each held, live child's contents first, then the child (World.RemoveItem by serial)
         private static void LegacyOrder(World world, Entity e, List<uint> order)
         {
-            for (LinkedObject i = e.Items; i != null; i = i.Next)
+            foreach (uint s in WorldStateContentsTests.HeldChildren(world, e.Serial))
             {
-                if (world.Items.Get(((Item)i).Serial) is Item held && !held.IsDestroyed)
+                if (world.Items.Get(s) is Item held && !held.IsDestroyed)
                 {
                     LegacyOrder(world, held, order);
                 }
@@ -95,9 +91,9 @@ namespace ClassicUO.UnitTests.Ecs
             World world = Build();
             var expected = new List<uint>();
 
-            for (LinkedObject i = world.Items.Get(PACK).Items; i != null; i = i.Next)
+            foreach (uint s in WorldStateContentsTests.HeldChildren(world, PACK))
             {
-                LegacyOrder(world, (Item)i, expected);
+                LegacyOrder(world, world.Items.Get(s), expected);
             }
 
             List<uint> removed = Removals(world);
@@ -105,7 +101,6 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.ClearContainer(PACK, keepEquipped: false, itemOnly: true);
 
             removed.Should().Equal(expected);
-            world.Items.Get(PACK).IsEmpty.Should().BeTrue();
             world.State.HasChildren(world.Items.Get(PACK)).Should().BeFalse();
             NoMismatches(world);
         }
@@ -121,7 +116,7 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.ClearContainer(CORPSE, keepEquipped: true, itemOnly: false);
 
             removed.Should().Equal(LOOT, 0x4000_7962u);
-            ((Item)corpse.Items).Serial.Should().Be(CLOOT);
+            world.State.FirstChild(corpse).Serial.Should().Be(CLOOT);
             world.State.Contents(CORPSE).ToArray().Should().Equal(CLOOT);
             NoMismatches(world);
         }
@@ -132,9 +127,9 @@ namespace ClassicUO.UnitTests.Ecs
             World world = Build();
             var expected = new List<uint>();
 
-            for (LinkedObject i = world.Mobiles.Get(MOB).Items; i != null; i = i.Next)
+            foreach (uint s in WorldStateContentsTests.HeldChildren(world, MOB))
             {
-                Item it = (Item)i;
+                Item it = world.Items.Get(s);
 
                 if (!it.Opened && it.Layer != Layer.Backpack)
                 {
@@ -160,13 +155,13 @@ namespace ClassicUO.UnitTests.Ecs
             world.State.Contents(BOOK).ToArray().Should().BeEmpty("the clear detached the item the server put in the book");
             world.Items.Get(INBOOK).Should().NotBeNull();
 
-            // the entries are the book's first children, layer Invalid: the list's first match is the first entry
+            // the entries are the book's first children, layer Invalid: the first match is the first entry
             Item book = world.Items.Get(BOOK);
-            book.FindItemByLayer(Layer.Invalid).Should().BeSameAs(book.FindItemByLayerInList(Layer.Invalid));
-            world.State.FirstChild(book).Should().BeSameAs(book.Items);
+            book.FindItemByLayer(Layer.Invalid).Should().BeSameAs(world.State.SpellEntries(BOOK)[0]);
+            world.State.FirstChild(book).Should().BeSameAs(world.State.SpellEntries(BOOK)[0]);
 
             world.Writer.FillSpellbook(BOOK, 0xEFA, 0b1, 0);
-            world.State.FirstChild(book).Should().BeSameAs(book.Items);
+            world.State.FirstChild(book).Should().BeSameAs(world.State.SpellEntries(BOOK)[0]);
             NoMismatches(world);
         }
 
@@ -217,7 +212,7 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 for (int l = 0; l <= (int)Layer.Bank; l++)
                 {
-                    parent.FindItemByLayer((Layer)l).Should().BeSameAs(parent.FindItemByLayerInList((Layer)l), $"0x{parent.Serial:X8} layer {l}");
+                    parent.FindItemByLayer((Layer)l).Should().BeSameAs(FirstOnLayer(world, parent, (Layer)l), $"0x{parent.Serial:X8} layer {l}");
                 }
             }
 
@@ -231,12 +226,12 @@ namespace ClassicUO.UnitTests.Ecs
             World world = Build();
             Mobile m = world.Mobiles.Get(MOB);
 
-            m.FindItemByLayer(Layer.Invalid).Should().BeSameAs(m.FindItemByLayerInList(Layer.Invalid));
+            m.FindItemByLayer(Layer.Invalid).Should().BeSameAs(FirstOnLayer(world, m, Layer.Invalid));
             NoMismatches(world);
         }
 
         [Fact]
-        public void The_Preview_Mobile_Reads_Its_Table_Like_The_List()
+        public void The_Preview_Mobile_Reads_Its_Table()
         {
             World world = Build();
 
@@ -244,14 +239,15 @@ namespace ClassicUO.UnitTests.Ecs
             Mobile preview = Mobile.Create(world, 1);
             preview.Preview = new PreviewEquipment();
             world.State.HasWornItems(preview).Should().BeFalse();
+            var worn = new Dictionary<Layer, Item>();
 
             Item Wear(Layer layer, ushort graphic)
             {
                 Item it = Item.Create(world, 0x4000_0000 + (uint)layer);
                 it.Graphic = graphic;
                 it.Layer = layer;
-                preview.PushToBack(it);
                 preview.Preview.Wear(it);
+                worn[layer] = it;
 
                 return it;
             }
@@ -264,7 +260,7 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 for (int l = 0; l <= (int)Layer.Bank; l++)
                 {
-                    preview.FindItemByLayer((Layer)l).Should().BeSameAs(preview.FindItemByLayerInList((Layer)l), $"layer {l}");
+                    preview.FindItemByLayer((Layer)l).Should().BeSameAs(worn.GetValueOrDefault((Layer)l), $"layer {l}");
                 }
             }
 
@@ -272,26 +268,42 @@ namespace ClassicUO.UnitTests.Ecs
             world.State.HasWornItems(preview).Should().BeTrue();
 
             // the gump's swap: the old item off, the new one on
-            preview.Remove(pants);
             preview.Preview.TakeOff(pants);
+            worn.Remove(Layer.Pants);
+            Same();
             Wear(Layer.Pants, 0x1539);
             Same();
 
-            preview.Clear();
             preview.Preview.Clear();
+            worn.Clear();
             Same();
             world.State.HasWornItems(preview).Should().BeFalse();
             NoMismatches(world);
+        }
 
-            // a table that disagrees with the list is reported
-            if (WorldState.EquipCheckAvailable)
+        // the reference for FindItemByLayer on a held parent: its first non-destroyed child on the layer, the spell entries
+        // first, then the children computed afresh from the mirror's indexes
+        private static Item FirstOnLayer(World world, Entity parent, Layer layer)
+        {
+            foreach (Item entry in world.State.SpellEntries(parent.Serial))
             {
-                Item hat = Item.Create(world, 0x4000_0000 + (uint)Layer.Helmet);
-                hat.Layer = Layer.Helmet;
-                preview.PushToBack(hat);
-                preview.FindItemByLayer(Layer.Helmet);
-                world.State.EquipMismatches.Should().Be(1);
+                if (!entry.IsDestroyed && entry.Layer == layer)
+                {
+                    return entry;
+                }
             }
+
+            foreach (uint s in WorldStateContentsTests.HeldChildren(world, parent.Serial))
+            {
+                Item it = world.Items.Get(s);
+
+                if (!it.IsDestroyed && it.Layer == layer)
+                {
+                    return it;
+                }
+            }
+
+            return null;
         }
     }
 }

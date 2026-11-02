@@ -167,7 +167,7 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 Pair(() => OldCorpseEquipment(oldWorld, oldCorpse, serial, layer), () => newWorld.Writer.PlaceCorpseEquipment(newCorpse, serial, layer).Should().NotBeNull());
                 AssertSameWorld(oldWorld, newWorld);
-                ChildSerials(newCorpse).Should().Equal(ChildSerials(oldCorpse));
+                ChildSerials(newCorpse).Should().Equal(OldChildSerials(oldCorpse));
                 MirrorChildren(newWorld, CORPSE).Should().Equal(MirrorChildren(oldWorld, CORPSE), "the mirror's equipment index order");
                 MirrorChildren(newWorld, MOB).Should().Equal(MirrorChildren(oldWorld, MOB));
             }
@@ -297,23 +297,14 @@ namespace ClassicUO.UnitTests.Ecs
 
         // ---- group 2: the death re-key (0xAF DisplayDeath): the mobile moves to serial | 0x80000000 with its children
 
-        // the old handler block, from the owner lookup to OnSerialChanged
+        // the old handler block, from the owner lookup to OnSerialChanged (LegacyRekeyReference since T9 child-list slice B)
         internal static void OldRekey(World world, Mobile owner)
         {
             uint serial = owner.Serial | 0x80000000;
 
             if (world.Mobiles.Remove(owner.Serial))
             {
-                for (LinkedObject i = owner.Items; i != null; i = i.Next)
-                {
-                    Item it = (Item)i;
-                    it.Container = serial;
-                }
-
-                uint oldSerial = owner.Serial;
-                world.Mobiles[serial] = owner;
-                owner.Serial = serial;
-                world.Ecs.OnSerialChanged(oldSerial, owner);
+                LegacyRekeyReference.Rekey(world, owner, serial);
             }
         }
 
@@ -335,7 +326,7 @@ namespace ClassicUO.UnitTests.Ecs
                 world.Mobiles.Remove(OTHER);
                 world.Mobiles[DEAD] = earlier;
                 earlier.Serial = DEAD;
-                world.Ecs.OnSerialChanged(OTHER, earlier);
+                LegacyRekeyReference.SerialChanged(world, OTHER, earlier);
             }
             else if (rk == RekeyStart.AlreadyDead)
             {
@@ -369,7 +360,7 @@ namespace ClassicUO.UnitTests.Ecs
             AssertSameWorld(oldWorld, newWorld, DEAD);
             AssertSameWorld(oldWorld, newWorld, MOB);
             newWorld.Mobiles.Get(DEAD).Should().BeSameAs(b);
-            ChildSerials(b).Should().Equal(ChildSerials(a));
+            ChildSerials(b).Should().Equal(OldChildSerials(a));
             MirrorChildren(newWorld, DEAD).Should().Equal(MirrorChildren(oldWorld, DEAD));
             MirrorChildren(newWorld, MOB).Should().Equal(MirrorChildren(oldWorld, MOB));
 

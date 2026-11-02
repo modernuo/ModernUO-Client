@@ -44,10 +44,15 @@ namespace ClassicUO.UnitTests.Ecs
 
         private static bool Yield(string line) => true;
 
-        // the dev variant (CUO_DEVTOOLS, as WorldState's checker) must have the driver; the release variant has neither
+        // the dev variant (CUO_DEVTOOLS) must have the driver; the release variant has none
         private static bool Dev()
         {
-            (DriverType != null).Should().Be(ClassicUO.Game.WorldState.CheckAvailable, "the driver exists exactly in the dev variant");
+#if CUO_DEVTOOLS
+            const bool dev = true;
+#else
+            const bool dev = false;
+#endif
+            (DriverType != null).Should().Be(dev, "the driver exists exactly in the dev variant");
 
             return DriverType != null;
         }
