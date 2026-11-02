@@ -278,6 +278,7 @@ namespace ClassicUO.Game.Scenes
             CaptureFallbacks = 0;
             UpdateWaterWobble();
             EcsParity.BeginFrame();
+            SpritePickTable.BeginDraw();
             _ecsMobiles = Configuration.Settings.GlobalSettings.GpuEcsSprites && _pack != null && _pack.HasAnims;
             _scene = Client.Game.GetScene<GameScene>();
         }
@@ -506,6 +507,11 @@ namespace ClassicUO.Game.Scenes
                 }
             }
 
+            if (!Probe)
+            {
+                SpritePickTable.RecordItem(item, _itemExtract);
+            }
+
             ReadOnlySpan<SpriteInstance> got = _itemExtract.Instances;
 
             if (GameScene.GpuItemCheckActive)
@@ -613,9 +619,17 @@ namespace ClassicUO.Game.Scenes
                 extract.Emit(e, in state, in render, posX, posY, depth, Configuration.Settings.GlobalSettings.GpuMobileFrameCache ? mobile.FrameCache : null);
                 drawn = true;
 
-                // the view's side effects: picking, text and health bars read FrameInfo and IsFlipped
+                // the view's side effects: picking (unless recorded below), text and health bars read FrameInfo and IsFlipped
+                bool mirror = (state.Flags & ClassicUO.Ecs.AnimStateFlags.Mirror) != 0;
                 mobile.FrameInfo = extract.FrameInfo;
-                mobile.ViewFlipped = (state.Flags & ClassicUO.Ecs.AnimStateFlags.Mirror) != 0;
+                mobile.ViewFlipped = mirror;
+
+                if (!Probe)
+                {
+                    // T7b part 2b: picking reads the same state from the records (the side effects above stay: other
+                    // readers, the mirror history). EcsParity frames keep the view's and record nothing.
+                    SpritePickTable.RecordMobile(mobile, extract.FrameInfo, mirror);
+                }
 
                 if (_scene != null)
                 {

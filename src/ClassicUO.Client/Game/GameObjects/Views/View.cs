@@ -27,6 +27,9 @@ namespace ClassicUO.Game.GameObjects
         public int MeshSpriteIndex = -1;
         // GameScene's frame stamp when the list fill decided to draw this object (the GPU world pass reads it)
         public uint DrawnFrame;
+        // T7b part 2b: this object's entry in SpritePickTable (the draw stamp it was recorded under, and its slot)
+        internal uint PickStamp;
+        internal int PickSlot;
         public ObjectHandlesStatus ObjectHandlesStatus;
         public Rectangle FrameInfo;
         protected bool IsFlipped;

@@ -619,6 +619,7 @@ namespace ClassicUO.Game
                 case "parity":
                     EcsParity.Summary();
                     Scenes.LegacyEcsParity.Summary();
+                    Scenes.SpritePickTable.Summary();
 
                     return false;
 
@@ -1002,6 +1003,7 @@ namespace ClassicUO.Game
                     world.Ecs.RunCheck(true);
                     EcsParity.Summary();
                     Scenes.LegacyEcsParity.Summary();
+                    Scenes.SpritePickTable.Summary();
                     Client.Game.Exit();
 
                     return true;
