@@ -13,22 +13,77 @@ namespace ClassicUO.Renderer
         Dictionary<ulong, int> m_IDs = new Dictionary<ulong, int>();
         readonly List<byte> m_Data = new List<byte>(InitialDataCount); // list<t> access is 10% slower than t[].
 
+        // Keys below _denseCapacity (art and gump ids) live in _dense instead of m_IDs: the world walk pick-tests every drawn
+        // static and item each frame, and nearly every test misses on the size check, so a dictionary lookup plus two varint
+        // reads per test became an array load. Grown on Set, up to _denseCapacity.
+        private readonly int _denseCapacity;
+        private DenseEntry[] _dense = Array.Empty<DenseEntry>();
+
+        private struct DenseEntry
+        {
+            public int Width;
+            public int Height;
+            public int RunsIndex; // m_Data index of the first run, +1 (0 = no entry)
+        }
+
+        public PixelPicker() : this(0)
+        {
+        }
+
+        /// <param name="denseCapacity">Keys below this are kept in a flat table (ids of a fixed-size sprite set).</param>
+        public PixelPicker(int denseCapacity)
+        {
+            _denseCapacity = Math.Max(0, denseCapacity);
+        }
+
         public bool Get(ulong textureID, int x, int y, int extraRange = 0)
         {
             int index;
-            if (!m_IDs.TryGetValue(textureID, out index))
+            int width;
+            int height;
+
+            if (textureID < (ulong)_denseCapacity)
             {
-                return false;
+                if (textureID >= (ulong)_dense.Length)
+                {
+                    return false;
+                }
+
+                ref DenseEntry e = ref _dense[(int)textureID];
+
+                if (e.RunsIndex == 0)
+                {
+                    return false;
+                }
+
+                width = e.Width;
+                if (x < 0 || x >= width)
+                {
+                    return false;
+                }
+                height = e.Height;
+                if (y < 0 || y >= height)
+                {
+                    return false;
+                }
+                index = e.RunsIndex - 1;
             }
-            int width = ReadIntegerFromData(ref index);
-            if (x < 0 || x >= width)
+            else
             {
-                return false;
-            }
-            int height = ReadIntegerFromData(ref index);
-            if (y < 0 || y >= height)
-            {
-                return false;
+                if (!m_IDs.TryGetValue(textureID, out index))
+                {
+                    return false;
+                }
+                width = ReadIntegerFromData(ref index);
+                if (x < 0 || x >= width)
+                {
+                    return false;
+                }
+                height = ReadIntegerFromData(ref index);
+                if (y < 0 || y >= height)
+                {
+                    return false;
+                }
             }
             int current = 0;
             int target = x + y * width;
@@ -67,6 +122,21 @@ namespace ClassicUO.Renderer
 
         public void GetDimensions(ulong textureID, out int width, out int height)
         {
+            if (textureID < (ulong)_denseCapacity)
+            {
+                if (textureID < (ulong)_dense.Length && _dense[(int)textureID].RunsIndex != 0)
+                {
+                    width = _dense[(int)textureID].Width;
+                    height = _dense[(int)textureID].Height;
+                }
+                else
+                {
+                    width = height = 0;
+                }
+
+                return;
+            }
+
             int index;
             if (!m_IDs.TryGetValue(textureID, out index))
             {
@@ -80,6 +150,7 @@ namespace ClassicUO.Renderer
         public void Clear()
         {
             m_IDs.Clear();
+            Array.Clear(_dense);
             m_Data.Clear();
         }
 
@@ -107,7 +178,7 @@ namespace ClassicUO.Renderer
                 count += 1;
             }
             WriteIntegerToData(count);
-            m_IDs[textureID] = begin;
+            AddEntry(textureID, begin);
         }
 
         /// <summary>
@@ -149,7 +220,7 @@ namespace ClassicUO.Renderer
             }
 
             runs.Finish();
-            m_IDs[textureID] = begin;
+            AddEntry(textureID, begin);
         }
 
         /// <summary>Makes <see cref="SetTrimmed"/> scalar (no SIMD), for parity tests and benchmarks.</summary>
@@ -359,7 +430,36 @@ namespace ClassicUO.Renderer
 
         bool Has(ulong textureID)
         {
+            if (textureID < (ulong)_denseCapacity)
+            {
+                return textureID < (ulong)_dense.Length && _dense[(int)textureID].RunsIndex != 0;
+            }
+
             return m_IDs.ContainsKey(textureID);
+        }
+
+        // begin: m_Data index of the entry (width, height, then runs), as m_IDs stores it
+        private void AddEntry(ulong textureID, int begin)
+        {
+            if (textureID >= (ulong)_denseCapacity)
+            {
+                m_IDs[textureID] = begin;
+
+                return;
+            }
+
+            int key = (int)textureID;
+
+            if (key >= _dense.Length)
+            {
+                Array.Resize(ref _dense, Math.Min(_denseCapacity, Math.Max(key + 1, Math.Max(256, _dense.Length * 2))));
+            }
+
+            // decoded back, so the table holds exactly what the dictionary path would read
+            int runs = begin;
+            int w = ReadIntegerFromData(ref runs);
+            int h = ReadIntegerFromData(ref runs);
+            _dense[key] = new DenseEntry { Width = w, Height = h, RunsIndex = runs + 1 };
         }
 
         void WriteIntegerToData(int value)

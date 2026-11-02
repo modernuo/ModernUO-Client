@@ -5030,3 +5030,11 @@ Paired NativeAOT builds (`CuoDevTools=true`, checkers off), all on the quiet mac
   - Codex gpt-6.1-sol medium: no findings (`cuo-poc-state/audits/tile-index-fix-a/out.md`).
   - Change B (skip `SkipDynamic` type checks) showed no gain (bench-000219) and is not taken.
 - Scripts and results: `cuo-poc-state/measure/tile-index-prof/`.
+
+### Dictionary<UInt64,Int32>.FindValue hotspot: PixelPicker flat table (perf-1, 2026-11-02)
+
+- **Caller:** the only `Dictionary<ulong, int>` in `src/` is `PixelPicker.m_IDs`. The Legacy walk pick-tests every drawn static, multi and item each frame (`CheckMouseSelectionTimed` → `StaticView.CheckMouseSelection` → `Art.PixelCheck` → `PixelPicker.Get`): 2,697 pick tests per frame at Britain zoom 2.5 (bench-000211 `pick_tests`), walk_pick 0.08 ms of a 0.86 ms frame. Nearly every test misses on the size check, after a dictionary lookup and two varint reads. Profile share (bench-000212): FindValue 1.8–2.4 %, TryGetValue 0.2–0.4 %, ReadIntegerFromData ~1 %, Get ~0.6 %. This is the backlog's "`Static.CheckMouseSelection` … `PixelPicker` dictionary lookup" item.
+- **Change (bg/perf-dict-lookup 6cec191ea):** keys below the sprite count (art statics, gumps) index a flat table holding width, height and the run offset; other keys (animation frames, rendered text) keep the dictionary. Results are unchanged (`PixelPickerDenseTests` compares both paths over random and trimmed masks, missing keys, keys around the capacity, Clear and re-Set).
+- **Memory:** 12 B per entry, grown by doubling up to the highest id seen: at most ~0.8 MB for art and ~0.8 MB for gumps per client, typically less (only ids seen so far).
+- Unit tests: 2,855 passed, 6 skipped.
+- Timing: paired NativeAOT job, see the handoff `cuo-poc-state/handoffs/perf-1.md` (pending).
