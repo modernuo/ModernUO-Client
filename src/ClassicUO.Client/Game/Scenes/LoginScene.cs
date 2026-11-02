@@ -676,6 +676,11 @@ namespace ClassicUO.Game.Scenes
             ushort port = p.ReadUInt16BE();
             uint seed = p.ReadUInt32BE();
 
+            // The seed is the server's auth id (a credential), so only its first byte is logged: a
+            // ModernUO server before the auth-id fix can issue 0xEF.., which it then parses as the 0xEF
+            // seed packet and drops after its 5 s idle limit (the bench login-disconnect flake).
+            Log.Trace($"Relay to game server: seed first byte 0x{seed >> 24:X2}");
+
             NetClient.Socket.Disconnect();
             NetClient.Socket.Connected -= OnNetClientConnected;
 
