@@ -211,3 +211,10 @@ Today the client parses incoming packets in place (`StackDataReader` over fixed 
 
 - **`TileWalk.First` / `Chunk.GetHeadObject` walk the `TPrevious` chain from the anchor to the list head for every tile** (DynamicTileIndex.cs `First`; Chunk.cs:240). This is 7–8 % of the Legacy britain_z samples even with `world_tile_index` off. A per-tile head, or keeping the anchor at the head, could remove most of it. Source: tile-index-prof (bench-000212). Not measured.
 - **`Dictionary<UInt64,Int32>.FindValue` is 1.8 % of the Legacy britain_z samples in both arms.** The caller isn't traced yet; it may be a per-frame lookup that an array could replace. Source: tile-index-prof (bench-000212).
+- **Friflo `GetComponent` costs about 25 ns per call** (non-inlined, cast check, virtual call; 4.0.0-preview.2). It is paid by every per-entity ECS read: `ItemSpriteExtract.ReadRecord` and the systems. Upgrading Friflo or adding a direct array-access helper cut a probe from 27 to 15 ns per item. Source: t7b1-gather. Owner question 2 of 2026-11-02.
+- **`Entity.TryScalarEntity` (Entity.cs:52) costs about 4.5 ns per call** (the World→Ecs→Mirror→Epoch chain). Passing a per-frame epoch snapshot into the extract would remove it. Source: t7b1-gather.
+- **`Mobile.IsMounted` walks the equipment list twice** (`FindItemByLayer`, then again via `IsDrivingBoat`; Mobile.cs:206-227), on every step decision and footstep check. Source: t6c-mount-inputs.
+- **Container and paperdoll item art decodes on the main thread when a gump first opens.** Requesting the art in `WorldWriter.PlaceInContainer` while the container is open would remove first-open hitches (about 20–50 µs per sprite). Source: perf-3.
+- **Gpu multi components draw through `Multi.Draw`, so pending art for them decodes on the main thread.** Feeding them through the item extract would fix it. This is rare. Source: perf-3.
+- **Stale entry:** the "request item art at first sight on 0x1A/0xF3" item is already done (2170394b6, 2026-10-26: `travel` art_sync 48–56 → 0). perf-3 added tests and the `CUO_PLACED_ART_SYNC=1` diagnostic.
+
