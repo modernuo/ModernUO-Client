@@ -877,6 +877,19 @@ namespace ClassicUO.Game
 
         private uint _cacheLogAt, _inputLogAt, _clockLogAt, _animAdvanceLogAt;
 
+#if CUO_DEVTOOLS
+        internal void AttachDriver()
+        {
+            if (Driver == null && CUOEnviroment.EcsDriverScript != null)
+            {
+                Driver = EcsSessionDriver.Load(CUOEnviroment.EcsDriverScript);
+                CUOEnviroment.EcsDriverScript = null;
+            }
+
+            Driver?.EnsureAttached(_world);
+        }
+#endif
+
         public void Update()
         {
             FunnelCheck.LogSummary();
@@ -946,22 +959,17 @@ namespace ClassicUO.Game
                 Log.Info($"[mobile-input-check] pushed samples checked {MobileAnimationSystem.InputChecks}, {MobileAnimationSystem.InputDiffs} different; seat tests checked {MobileAnimationSystem.SeatChecks}, {MobileAnimationSystem.SeatDiffs} different; pushes {InputPushes}");
             }
 
+#if CUO_DEVTOOLS
+            // before the -ecscheck guard: a driver run with the checks off (-ecscheck 0, e.g. FrameStats counter jobs) must still play
+            AttachDriver();
+#endif
+
             int interval = CUOEnviroment.EcsCheckFrames;
 
             if (interval <= 0)
             {
                 return;
             }
-
-#if CUO_DEVTOOLS
-            if (Driver == null && CUOEnviroment.EcsDriverScript != null)
-            {
-                Driver = EcsSessionDriver.Load(CUOEnviroment.EcsDriverScript);
-                CUOEnviroment.EcsDriverScript = null;
-            }
-
-            Driver?.EnsureAttached(_world);
-#endif
 
             if (_world.Player != null)
             {

@@ -19,6 +19,13 @@ namespace ClassicUO.Game.UI.Controls
         private readonly bool _is_gump;
         private readonly Gump _gump;
 
+        // perf-9: the stack check in AddToRenderLists/Contains runs per frame per item shown; EntityRef repeats the lookup only
+        // when the item may have changed
+        private EntityRef _item;
+
+        /// <summary>What <c>World.Items.Get(LocalSerial)</c> returns.</summary>
+        internal Item ShownItem() => _item.Item(_gump.World, LocalSerial);
+
         public ItemGump(Gump gump, uint serial, ushort graphic, ushort hue, int x, int y, bool is_gump = false)
         {
             _gump = gump;
@@ -202,7 +209,7 @@ namespace ClassicUO.Game.UI.Controls
                 var sourceRectangle = spriteInfo.UV;
                 renderLists.AddGumpWithAtlas(GumpCommand.Sprite(texture, rect, sourceRectangle, hueVector, layerDepth));
 
-                Item item = _gump.World.Items.Get(LocalSerial);
+                Item item = ShownItem();
 
                 if (
                     item != null
@@ -254,7 +261,7 @@ namespace ClassicUO.Game.UI.Controls
                     return true;
                 }
 
-                Item item = _gump.World.Items.Get(LocalSerial);
+                Item item = ShownItem();
 
                 if (item != null && !item.IsCoin && item.Amount > 1 && item.ItemData.IsStackable)
                 {
@@ -271,7 +278,7 @@ namespace ClassicUO.Game.UI.Controls
                     return true;
                 }
 
-                Item item = _gump.World.Items.Get(LocalSerial);
+                Item item = ShownItem();
 
                 if (item != null && !item.IsCoin && item.Amount > 1 && item.ItemData.IsStackable)
                 {

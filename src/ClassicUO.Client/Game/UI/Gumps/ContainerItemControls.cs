@@ -77,6 +77,9 @@ namespace ClassicUO.Game.UI.Gumps
 
                     if (c is ItemGump ig && !ig.IsDisposed && _spare.TryAdd(ig.LocalSerial, ig))
                     {
+                        // perf-9: its re-add (gump.Add) then skips the child-list scan
+                        ig.OutOfParentList();
+
                         continue;
                     }
 
@@ -125,6 +128,7 @@ namespace ClassicUO.Game.UI.Gumps
             {
                 ig.Dispose();
                 gump.Children.Add(ig);
+                ig.InParentList();
             }
 
             _spare.Clear();
