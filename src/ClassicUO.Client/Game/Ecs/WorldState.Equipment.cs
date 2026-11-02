@@ -272,6 +272,13 @@ namespace ClassicUO.Game
 
             if (d.Lookup(rules, subject, c.Version, _world.Ecs.Mirror, c.Entity))
             {
+#if CUO_DEVTOOLS
+                if (LayerCacheCheck.Enabled)
+                {
+                    LayerCacheCheck.OnHit(mobile, d, rules, subject);
+                }
+#endif
+
                 return d;
             }
 
