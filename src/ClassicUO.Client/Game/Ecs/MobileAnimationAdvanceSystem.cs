@@ -370,7 +370,7 @@ namespace ClassicUO.Game
         internal bool TryRun<TAnims>(World world, Mobile mob, in TAnims source, bool check) where TAnims : struct, IAnimationAdvanceSource
         {
             if (mob.IsDestroyed || !world.Ecs.Mirror.TryGetEntity(mob.Serial, out EcsEntity e) ||
-                !e.TryGetComponent(out MobileClock clock) || clock.Flags != MobileClockFlags.None ||
+                !EcsRead.TryGet(e, out MobileClock clock) || clock.Flags != MobileClockFlags.None ||
                 !e.HasComponent<AnimationTimer>() || !e.HasComponent<MobileInputs>() || !e.HasComponent<EquipmentSlots>())
             {
                 Declined++;
@@ -383,14 +383,14 @@ namespace ClassicUO.Game
             if (MobileAnimationSystem.TakeDirty(e))
             {
                 AnimationState s = default;
-                s.Flags = e.GetComponent<MobileInputs>().Flags;
+                s.Flags = EcsRead.Get<MobileInputs>(e).Flags;
                 world.Ecs.Animation.Rebuild(e, in s, mob);
             }
 
             Ran++;
-            AnimationTimer t = e.GetComponent<AnimationTimer>();
-            MobileInputs inp = e.GetComponent<MobileInputs>();
-            EquipmentSlots eq = e.GetComponent<EquipmentSlots>();
+            AnimationTimer t = EcsRead.Get<AnimationTimer>(e);
+            MobileInputs inp = EcsRead.Get<MobileInputs>(e);
+            EquipmentSlots eq = EcsRead.Get<EquipmentSlots>(e);
 
             if (check)
             {

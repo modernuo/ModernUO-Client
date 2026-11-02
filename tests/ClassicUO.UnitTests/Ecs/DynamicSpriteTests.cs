@@ -252,7 +252,7 @@ namespace ClassicUO.UnitTests.Ecs
             AssertSame(emitted, emitted.Length, got, count, 0);
         }
 
-        // perf-11: the draw paths read the entity's record once (EntityData) and pass it on; the answers are those of the
+        // perf-11: the draw paths read the entity's record once (EcsRow) and pass it on; the answers are those of the
         // per-component reads, fresh, recorded into the frame cache and replayed from it
         [Theory]
         [MemberData(nameof(MobileCases))]
@@ -273,7 +273,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             for (int pass = 0; pass < 2; pass++)
             {
-                Friflo.Engine.ECS.EntityData data = e.Data;
+                ClassicUO.Ecs.EcsRow data = ClassicUO.Ecs.EcsRead.Row(e);
                 extract.Begin(in tables, 37, -12);
                 extract.Emit(e, data, in data.Get<AnimationState>(), in data.Get<MobileRenderState>(), 600, 400, 812.25f, cache);
                 SpriteInstance[] got = extract.Instances.ToArray();
@@ -286,7 +286,7 @@ namespace ClassicUO.UnitTests.Ecs
             Assert.True(cache.EmitValid, name);
 
             extract.Begin(in tables, 37, -12);
-            extract.Select(e, e.Data, 600, 400, 812.25f);
+            extract.Select(e, ClassicUO.Ecs.EcsRead.Row(e), 600, 400, 812.25f);
             DynamicSprite[] fromData = extract.Selected.ToArray();
             extract.Begin(in tables, 37, -12);
             extract.Select(e, 600, 400, 812.25f);

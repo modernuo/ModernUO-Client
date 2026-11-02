@@ -43,28 +43,28 @@ namespace ClassicUO.Game
         // on its first non-default write. No allocation: the name is the string reference the funnel committed.
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static string Name(Friflo.Engine.ECS.Entity e) => e.TryGetComponent(out EntityName n) ? n.Value : null;
+        public static string Name(Friflo.Engine.ECS.Entity e) => EcsRead.TryGet(e, out EntityName n) ? n.Value : null;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static ushort Hits(Friflo.Engine.ECS.Entity e) => e.TryGetComponent(out Vitals v) ? v.Hits : (ushort)0;
+        public static ushort Hits(Friflo.Engine.ECS.Entity e) => EcsRead.TryGet(e, out Vitals v) ? v.Hits : (ushort)0;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static ushort HitsMax(Friflo.Engine.ECS.Entity e) => e.TryGetComponent(out Vitals v) ? v.HitsMax : (ushort)0;
+        public static ushort HitsMax(Friflo.Engine.ECS.Entity e) => EcsRead.TryGet(e, out Vitals v) ? v.HitsMax : (ushort)0;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static ushort Stamina(Friflo.Engine.ECS.Entity e) => e.TryGetComponent(out Vitals v) ? v.Stamina : (ushort)0;
+        public static ushort Stamina(Friflo.Engine.ECS.Entity e) => EcsRead.TryGet(e, out Vitals v) ? v.Stamina : (ushort)0;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static ushort StaminaMax(Friflo.Engine.ECS.Entity e) => e.TryGetComponent(out Vitals v) ? v.StaminaMax : (ushort)0;
+        public static ushort StaminaMax(Friflo.Engine.ECS.Entity e) => EcsRead.TryGet(e, out Vitals v) ? v.StaminaMax : (ushort)0;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static ushort Mana(Friflo.Engine.ECS.Entity e) => e.TryGetComponent(out Vitals v) ? v.Mana : (ushort)0;
+        public static ushort Mana(Friflo.Engine.ECS.Entity e) => EcsRead.TryGet(e, out Vitals v) ? v.Mana : (ushort)0;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static ushort ManaMax(Friflo.Engine.ECS.Entity e) => e.TryGetComponent(out Vitals v) ? v.ManaMax : (ushort)0;
+        public static ushort ManaMax(Friflo.Engine.ECS.Entity e) => EcsRead.TryGet(e, out Vitals v) ? v.ManaMax : (ushort)0;
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static uint Price(Friflo.Engine.ECS.Entity e) => e.TryGetComponent(out ItemPrice p) ? p.Value : 0;
+        public static uint Price(Friflo.Engine.ECS.Entity e) => EcsRead.TryGet(e, out ItemPrice p) ? p.Value : 0;
     }
 
     internal enum ScalarField
