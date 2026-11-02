@@ -5232,3 +5232,25 @@ Paired NativeAOT builds (`CuoDevTools=true`, checkers off), all on the quiet mac
   - Slice A: move the remaining readers to the ECS (funnel walks, destroy cascades, corpses, bank, driver, char-creation preview).
   - Slice B: a last gate with both checkers, then stop writing the list and delete `FindItemByLayerInList`, `CUO_CONTENTS_CHECK` and `CUO_EQUIP_READ_CHECK`.
   - Optional: move `LinkedObject` off `BaseGameObject` (−24 B per object, about 2–5 MB per client).
+
+### perf-9 merged; perf-8 counts measured (coordinator, 2026-11-02)
+
+- Merge 22536e8c6.
+  - d00bf5b8d fixes a driver bug: `WorldEcs.Update` returned at its `-ecscheck` guard before loading the `-ecsdriver` script, so `--ecscheck 0` silently disabled the driver. This was the cause of the perf-8 counts failure.
+  - ec49adc2e: ItemGump and ItemGumpFixed use `EntityRef`.
+  - ffc8fcf8e: `Gump.AwaitBatch` blocks instead of spinning.
+  - a43f3619d: re-added item controls skip the Parent scan.
+- The tip gates for T9 slice 2 and perf-8 together, bench-000275/276, PASS. Branch uistate gate bench-000278 PASS. Unit tests 3,046 passed, 6 skipped.
+- **perf-8 counts, bench-000277** (backpack open, 8 arrows added one by one, then removed one by one):
+
+  | | Full rebuild | Incremental |
+  |---|---|---|
+  | Controls created over 17 updates | 1,679 | 103 (1,576 reused) |
+  | alloc/frame, adds | 141–159 B | 115–132 B |
+  | alloc/frame, removes | 113–127 B | 100–115 B |
+  | alloc/frame, idle | 89 B | 88 B |
+
+- New backlog items:
+  - removing disposed children in `Control.Update` is O(n²) (`RemoveAt` in the loop);
+  - `FindControls` allocates on every call;
+  - in dev builds, `Extract.Run` runs every frame whenever `-ecscheck` > 0, even between checks.
