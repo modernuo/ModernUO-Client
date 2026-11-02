@@ -207,14 +207,10 @@ namespace ClassicUO.Game.GameObjects
         {
             get
             {
+                // one equipment walk: IsDrivingBoat would look the same Mount-layer item up again
                 Item it = FindItemByLayer(Layer.Mount);
 
-                if (it != null && !IsDrivingBoat && it.GetGraphicForAnimation() != 0xFFFF)
-                {
-                    return true;
-                }
-
-                return false;
+                return it != null && it.Graphic != 0x3E96 && it.GetGraphicForAnimation() != 0xFFFF;
             }
         }
 
