@@ -175,8 +175,9 @@ namespace ClassicUO.Game.GameObjects
             }
         }
 
+        // T6c: false without a client (unit tests run ProcessSteps, which reads it), as WorldEcs.Cv7000
         public bool IsFlying =>
-            Client.Game.UO.Version >= ClientVersion.CV_7000 && (Flags & Flags.Poisoned) != 0;
+            Client.Game?.UO != null && Client.Game.UO.Version >= ClientVersion.CV_7000 && (Flags & Flags.Poisoned) != 0;
 
         public virtual bool InWarMode
         {
@@ -430,6 +431,18 @@ namespace ClassicUO.Game.GameObjects
             h.Add((byte)Direction);
             h.Add(Offset);
             h.Add(Steps.Count);
+
+            // T6c: the queued steps themselves
+            for (int i = 0; i < Steps.Count; i++)
+            {
+                Step s = Steps[i];
+                h.Add(s.X);
+                h.Add(s.Y);
+                h.Add(s.Z);
+                h.Add(s.Direction);
+                h.Add(s.Run);
+            }
+
             h.Add(LastStepTime);
             h.Add(LastStepSoundTime);
             h.Add(StepSoundOffset);
@@ -457,10 +470,22 @@ namespace ClassicUO.Game.GameObjects
             // T1 (funnel part 7): ProcessAnimation split. The step processing runs first and on its own (its step completion is
             // the CompleteStep operation), then the frame advance (AdvanceAnimation) and, for a finished corpse animation, the
             // removal (RemoveDeadMobile): each its own operation, none nested in another
-            ProcessSteps(out byte dir, true);
+            // T6c (world_step_system): the step processing as a system over the Steps component, at the same point
+            byte dir;
+
+            if (!World.Ecs.StepsEnabled || !World.StepSystem.TryRun(World, this, Time.Ticks, StepFrameDelay, out dir))
+            {
+                ProcessSteps(out dir, true);
+            }
+
             ProcessFootstepsSound();
             AdvanceFrame(dir);
         }
+
+        /// <summary>Tests: the frame delay ProcessSteps subtracts (null: <c>Client.Game.FrameDelay[1]</c>).</summary>
+        internal static int? FrameDelayOverride;
+
+        internal static int StepFrameDelay => FrameDelayOverride ?? (int)Client.Game.FrameDelay[1];
 
         public void ClearSteps()
         {
@@ -1080,7 +1105,7 @@ namespace ClassicUO.Game.GameObjects
 
                     int maxDelay =
                         MovementSpeed.TimeToCompleteMovement(run, mounted)
-                        - (int)Client.Game.FrameDelay[1];
+                        - StepFrameDelay;
 
                     bool removeStep = delay >= maxDelay;
                     bool directionChange = false;
