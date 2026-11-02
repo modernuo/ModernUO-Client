@@ -119,6 +119,15 @@ namespace ClassicUO.Assets
             }
         }
 
+        /// <summary>Tests: the animation tables without a pack on disk.</summary>
+        internal void SetTablesForTests(AnimBodyEntry[] bodies, AnimDirEntry[] dirs, AnimFrameEntry[] frames)
+        {
+            _bodies = bodies;
+            _dirs = dirs;
+            _frames = frames;
+            _framePalette = new uint[frames.Length];
+        }
+
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public ref readonly AnimBodyEntry GetBody(ushort body) => ref _bodies[body];
 
