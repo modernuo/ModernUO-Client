@@ -63,7 +63,7 @@ dotnet test tests/Uo.Converter.Tests -c Release
 
 ### New ECS paths: switch plus checker
 
-A new ECS read or update path lands behind a `settings.json` switch (`Configuration/Settings.cs`), default off at first, with a `CUO_*_CHECK` environment checker that compares the new path with the old one at every use and logs mismatches. Examples: `ecs_read_contents` and `CUO_CONTENTS_CHECK`, `ecs_read_equipment` and `CUO_EQUIP_READ_CHECK`, `ecs_layer_rules` and `CUO_LAYER_RULES_CHECK`, `world_update_mobile_system` and `CUO_MOBILE_UPDATE_CHECK`. The old path and the checker stay until the switch has been default on for a while. Checkers and `CUO_ECS_*` overrides are compiled only with `CUO_DEVTOOLS`. Add unit tests that exercise both switch states.
+A new ECS read or update path lands behind a `settings.json` switch (`Configuration/Settings.cs`), default off at first, with a `CUO_*_CHECK` environment checker that compares the new path with the old one at every use and logs mismatches. Examples: `ecs_read_contents` and `CUO_CONTENTS_CHECK`, `ecs_read_equipment` and `CUO_EQUIP_READ_CHECK`, `ecs_layer_rules` and `CUO_LAYER_RULES_CHECK`, `world_anim_system` and `CUO_ANIM_ADVANCE_CHECK`. The old path and the checker stay until the switch has been default on for a while. Checkers and `CUO_ECS_*` overrides are compiled only with `CUO_DEVTOOLS`. Add unit tests that exercise both switch states.
 
 ### The pack is the asset source
 
