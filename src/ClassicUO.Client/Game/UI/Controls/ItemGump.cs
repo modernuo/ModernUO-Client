@@ -46,22 +46,49 @@ namespace ClassicUO.Game.UI.Controls
             {
                 _graphic = value;
 
-                ref readonly var spriteInfo = ref _is_gump
-                    ? ref Client.Game.UO.Gumps.GetGump(value)
-                    : ref Client.Game.UO.Arts.GetArt(value);
-
-                if (spriteInfo.Texture == null)
+                // perf-6: the size without decoding; the art decodes at first draw or hit test (a worker started on it here)
+                if (!TryGetSpriteSize(value, _is_gump, out int width, out int height))
                 {
                     Dispose();
 
                     return;
                 }
 
-                Width = spriteInfo.UV.Width;
-                Height = spriteInfo.UV.Height;
+                if (!_is_gump)
+                {
+                    Client.Game.UO.Arts.RequestArt(value);
+                }
+
+                Width = width;
+                Height = height;
 
                 IsPartialHue = !_is_gump && Client.Game.UO.FileManager.TileData.StaticData[value].IsPartialHue;
             }
+        }
+
+        /// <summary>
+        /// The UV size of the sprite <see cref="AddToRenderLists"/> draws for <paramref name="graphic"/> (static art, or a gump
+        /// for chess and backgammon pieces), read from the size tables where possible. False where the lookup would return
+        /// no texture.
+        /// </summary>
+        internal static bool TryGetSpriteSize(ushort graphic, bool isGump, out int width, out int height)
+        {
+            if (!isGump)
+            {
+                return Client.Game.UO.Arts.TryGetArtSize(graphic, out width, out height);
+            }
+
+            if (Client.Game.UO.Gumps.TryGetSize(graphic, out width, out height) && width > 0 && height > 0)
+            {
+                return true;
+            }
+
+            // a MUL/UOP gump whose size sits inside its compressed data: decode it, as before
+            ref readonly var spriteInfo = ref Client.Game.UO.Gumps.GetGump(graphic);
+            width = spriteInfo.UV.Width;
+            height = spriteInfo.UV.Height;
+
+            return spriteInfo.Texture != null;
         }
 
         public ushort Hue { get; set; }

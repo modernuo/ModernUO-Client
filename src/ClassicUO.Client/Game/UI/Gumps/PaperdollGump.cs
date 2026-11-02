@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-2-Clause
+﻿// SPDX-License-Identifier: BSD-2-Clause
 
 using ClassicUO.Configuration;
 using ClassicUO.Game.Data;
@@ -817,9 +817,10 @@ namespace ClassicUO.Game.UI.Gumps
             private class ItemGumpFixed : ItemGump
             {
                 private readonly PaperDollGump _gump;
-                private readonly Point _originalSize;
-                private readonly Point _point;
-                private readonly Rectangle _rect;
+                private Point _originalSize;
+                private Point _point;
+                private Rectangle _rect;
+                private bool _boundsSet;
 
                 public ItemGumpFixed(PaperDollGump gump, Item item, int w, int h)
                     : base(gump, item.Serial, item.DisplayedGraphic, item.Hue, item.X, item.Y)
@@ -828,8 +829,14 @@ namespace ClassicUO.Game.UI.Gumps
                     Width = w;
                     Height = h;
                     WantUpdateSize = false;
+                }
 
-                    _rect = Client.Game.UO.Arts.GetRealArtBounds(item.DisplayedGraphic);
+                // perf-6: the art's visible bounds exist once it is decoded, so they are read at the first draw (the
+                // constructor's graphic, as before) instead of decoding the art at construction
+                private void SetBounds()
+                {
+                    _boundsSet = true;
+                    _rect = Client.Game.UO.Arts.GetRealArtBounds(Graphic);
 
                     _originalSize.X = Width;
                     _originalSize.Y = Height;
@@ -869,6 +876,12 @@ namespace ClassicUO.Game.UI.Gumps
                     );
 
                     ref readonly var artInfo = ref Client.Game.UO.Arts.GetArt(item.DisplayedGraphic);
+
+                    if (!_boundsSet)
+                    {
+                        Client.Game.UO.Arts.GetArt(Graphic);
+                        SetBounds();
+                    }
 
                     var texture = artInfo.Texture;
                     if (texture != null)
