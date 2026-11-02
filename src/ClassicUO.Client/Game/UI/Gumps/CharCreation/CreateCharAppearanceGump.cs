@@ -233,9 +233,11 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
                 // holds them, so they are not world state and never reach the ECS); the paperdoll draws this instance
                 // (PaperDollInteractable.Preview) instead of looking serial 1 up in World.Mobiles
                 _character = new PlayerMobile(World, 1);
+                _character.Preview = new PreviewEquipment();
             }
 
             _character.Clear();
+            _character.Preview.Clear();
             _character.Race = race;
             _character.IsFemale = isFemale;
 
@@ -255,37 +257,37 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
 
                     Item it = CreateItem(0x4001, CurrentColorOption[Layer.Shirt].Item2, Layer.Robe);
 
-                    _character.PushToBack(it);
+                    Wear(it);
 
                     break;
 
                 case RaceType.ELF when isFemale:
                     _character.Graphic = 0x025E;
                     it = CreateItem(0x1710, 0x0384, Layer.Shoes);
-                    _character.PushToBack(it);
+                    Wear(it);
 
                     it = CreateItem(0x1531, CurrentColorOption[Layer.Pants].Item2, Layer.Skirt);
 
-                    _character.PushToBack(it);
+                    Wear(it);
 
                     it = CreateItem(0x1518, CurrentColorOption[Layer.Shirt].Item2, Layer.Shirt);
 
-                    _character.PushToBack(it);
+                    Wear(it);
 
                     break;
 
                 case RaceType.ELF:
                     _character.Graphic = 0x025D;
                     it = CreateItem(0x1710, 0x0384, Layer.Shoes);
-                    _character.PushToBack(it);
+                    Wear(it);
 
                     it = CreateItem(0x152F, CurrentColorOption[Layer.Pants].Item2, Layer.Pants);
 
-                    _character.PushToBack(it);
+                    Wear(it);
 
                     it = CreateItem(0x1518, CurrentColorOption[Layer.Shirt].Item2, Layer.Shirt);
 
-                    _character.PushToBack(it);
+                    Wear(it);
 
                     break;
 
@@ -296,29 +298,29 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
                     {
                         _character.Graphic = 0x0191;
                         it = CreateItem(0x1710, 0x0384, Layer.Shoes);
-                        _character.PushToBack(it);
+                        Wear(it);
 
                         it = CreateItem(0x1531, CurrentColorOption[Layer.Pants].Item2, Layer.Pants);
 
-                        _character.PushToBack(it);
+                        Wear(it);
 
                         it = CreateItem(0x1518, CurrentColorOption[Layer.Shirt].Item2, Layer.Shirt);
 
-                        _character.PushToBack(it);
+                        Wear(it);
                     }
                     else
                     {
                         _character.Graphic = 0x0190;
                         it = CreateItem(0x1710, 0x0384, Layer.Shoes);
-                        _character.PushToBack(it);
+                        Wear(it);
 
                         it = CreateItem(0x152F, CurrentColorOption[Layer.Pants].Item2, Layer.Pants);
 
-                        _character.PushToBack(it);
+                        Wear(it);
 
                         it = CreateItem(0x1518, CurrentColorOption[Layer.Shirt].Item2, Layer.Shirt);
 
-                        _character.PushToBack(it);
+                        Wear(it);
                     }
 
                     break;
@@ -341,7 +343,7 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
 
                 Item iti = CreateItem(content.GetGraphic(CurrentOption[layer]), CurrentColorOption[layer].Item2, layer);
 
-                _character.PushToBack(iti);
+                Wear(iti);
             }
 
             layer = Layer.Hair;
@@ -349,7 +351,7 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
 
             Item it = CreateItem(content.GetGraphic(CurrentOption[layer]), CurrentColorOption[layer].Item2, layer);
 
-            _character.PushToBack(it);
+            Wear(it);
         }
 
         private void HandleRaceChanged()
@@ -951,6 +953,14 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
             "origin"
         };
 
+        // T9 child-list slice A: the preview's clothes are read from its table (Mobile.Preview); the child list is still
+        // written until slice B
+        private void Wear(Item item)
+        {
+            _character.PushToBack(item);
+            _character.Preview.Wear(item);
+        }
+
         private Item CreateItem(int id, ushort hue, Layer layer)
         {
             Item existsItem = _character.FindItemByLayer(layer);
@@ -958,6 +968,7 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
             if (existsItem != null)
             {
                 _character.Remove(existsItem);
+                _character.Preview.TakeOff(existsItem);
             }
 
             if (id == 0)

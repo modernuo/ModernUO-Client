@@ -22,6 +22,9 @@ namespace ClassicUO.Game.GameObjects
         /// <summary>T3a: the equipment read cache (WorldState.WornItem), made at the first read.</summary>
         internal WornCache EquipCache;
 
+        /// <summary>T9 child-list slice A: a detached preview mobile's clothes (character creation); null for every other mobile.</summary>
+        internal PreviewEquipment Preview;
+
         //private static readonly QueuedPool<Mobile> _pool = new QueuedPool<Mobile>(
         //    Constants.PREDICTABLE_CHUNKS,
         //    mobile =>
