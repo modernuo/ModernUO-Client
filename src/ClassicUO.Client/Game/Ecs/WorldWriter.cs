@@ -717,15 +717,17 @@ namespace ClassicUO.Game
 
             Entity container = itemOnly ? _world.Items.Get(containerSerial) : _world.Get(containerSerial);
 
-            if (container == null || container.IsEmpty)
+            // T9 child-list slice A: the children are the ECS's (WorldState.Children: the spell entries, then the contents, in
+            // child order)
+            if (container == null || !_world.State.HasChildren(container))
             {
                 return;
             }
 
-            // 1. resolve: the removed children, in child-list order, before anything changes
-            for (LinkedObject i = container.Items; i != null; i = i.Next)
+            // 1. resolve: the removed children, in child order, before anything changes
+            foreach (Item it in _world.State.Children(container))
             {
-                if (i is Item it && !(keepEquipped && it.Layer != 0))
+                if (!(keepEquipped && it.Layer != 0))
                 {
                     CancelSubtreePlacements(it);
                 }
@@ -736,9 +738,9 @@ namespace ClassicUO.Game
 #if CUO_DEVTOOLS
                 if (FunnelCheck.Enabled)
                 {
-                    for (LinkedObject i = container.Items; i != null; i = i.Next)
+                    foreach (Item it in _world.State.Children(container))
                     {
-                        if (i is Item it && !(keepEquipped && it.Layer != 0))
+                        if (!(keepEquipped && it.Layer != 0))
                         {
                             CollectSubtree(it);
                         }
@@ -753,29 +755,37 @@ namespace ClassicUO.Game
                     _world.Ecs.CommitSpellbook(book, 0);
                 }
 
-                // the old loop: each removal by serial (World.RemoveItem: out of the child list, the contents, OPL,
-                // Destroy); the kept equipment's links are untouched and the head is set to the first kept one
-                LinkedObject first = container.Items;
-                LinkedObject newFirst = null;
-
-                while (first != null)
+                // the old loop: each removal by serial in child order (World.RemoveItem: out of the child list, the
+                // contents, OPL, Destroy). The spell entries are no world items (RemoveItem skipped them): the copy of the
+                // ECS contents leaves them out
+                using (ContentsSnapshot children = _world.State.SnapshotContents(container.Serial))
                 {
-                    LinkedObject next = first.Next;
-                    Item it = (Item)first;
-
-                    if (keepEquipped && it.Layer != 0)
+                    foreach (uint serial in children.Serials)
                     {
-                        newFirst ??= first;
-                    }
-                    else
-                    {
-                        _world.RemoveItem(it, true);
-                    }
+                        Item it = _world.Items.Get(serial);
 
-                    first = next;
+                        if (it != null && !(keepEquipped && it.Layer != 0))
+                        {
+                            _world.RemoveItem(serial, true);
+                        }
+                    }
                 }
 
-                container.Items = keepEquipped ? newFirst : null;
+                // the list's head (list upkeep, goes in T9 slice B): the kept equipment's links are untouched and the head
+                // is the first kept one, the first child left with a Layer
+                LinkedObject newFirst = null;
+
+                for (LinkedObject i = keepEquipped ? container.Items : null; i != null; i = i.Next)
+                {
+                    if (((Item)i).Layer != 0)
+                    {
+                        newFirst = i;
+
+                        break;
+                    }
+                }
+
+                container.Items = newFirst;
             }
         }
 
@@ -1060,15 +1070,16 @@ namespace ClassicUO.Game
 
             Entity owner = _world.Get(ownerSerial);
 
-            if (owner == null || owner.IsEmpty)
+            // T9 child-list slice A: the children are the ECS's, in child order
+            if (owner == null || !_world.State.HasChildren(owner))
             {
                 return;
             }
 
             // 1. resolve: the removed children, before anything changes
-            for (LinkedObject i = owner.Items; i != null; i = i.Next)
+            foreach (Item it in _world.State.Children(owner))
             {
-                if (i is Item it && !it.Opened && it.Layer != Layer.Backpack)
+                if (!it.Opened && it.Layer != Layer.Backpack)
                 {
                     CancelSubtreePlacements(it);
                 }
@@ -1079,9 +1090,9 @@ namespace ClassicUO.Game
 #if CUO_DEVTOOLS
                 if (FunnelCheck.Enabled)
                 {
-                    for (LinkedObject i = owner.Items; i != null; i = i.Next)
+                    foreach (Item it in _world.State.Children(owner))
                     {
-                        if (i is Item it && !it.Opened && it.Layer != Layer.Backpack)
+                        if (!it.Opened && it.Layer != Layer.Backpack)
                         {
                             CollectSubtree(it);
                         }
@@ -1089,20 +1100,18 @@ namespace ClassicUO.Game
                 }
 #endif
 
-                // the old loop
-                LinkedObject o = owner.Items;
-
-                while (o != null)
+                // the old loop, over a copy of the contents (each removal changes them)
+                using (ContentsSnapshot children = _world.State.SnapshotContents(owner.Serial))
                 {
-                    LinkedObject next = o.Next;
-                    Item it = (Item)o;
-
-                    if (!it.Opened && it.Layer != Layer.Backpack)
+                    foreach (uint serial in children.Serials)
                     {
-                        _world.RemoveItem(it.Serial, true);
-                    }
+                        Item it = _world.Items.Get(serial);
 
-                    o = next;
+                        if (it != null && !it.Opened && it.Layer != Layer.Backpack)
+                        {
+                            _world.RemoveItem(serial, true);
+                        }
+                    }
                 }
             }
         }
@@ -2441,12 +2450,17 @@ namespace ClassicUO.Game
             using (Open(spellbook, null))
             {
                 // T1 part 9: the clear drops every child from the list without touching its Container; a child World holds
-                // (an item the server put in the book) is no longer attached, committed first
-                for (LinkedObject i = spellbook.Items; i != null; i = i.Next)
+                // (an item the server put in the book) is no longer attached, committed first. T9 child-list slice A: over
+                // a copy of the ECS contents (each detach changes them); the old spell entries are not world items (the
+                // commit skipped them)
+                using (ContentsSnapshot children = _world.State.SnapshotContents(spellbook.Serial))
                 {
-                    if (i is Item child)
+                    foreach (uint child in children.Serials)
                     {
-                        _world.Ecs.CommitDetach(child);
+                        if (_world.Items.Get(child) is Item held)
+                        {
+                            _world.Ecs.CommitDetach(held);
+                        }
                     }
                 }
 
@@ -2510,9 +2524,9 @@ namespace ClassicUO.Game
                 // 2. compute: the stable order by X (insertion sort: equal X keep their list order, as the merge sort)
                 _sorted.Clear();
 
-                for (LinkedObject i = container.Items; i != null; i = i.Next)
+                // T9 child-list slice A: the children in the ECS's child order (nothing changes them during the walk)
+                foreach (Item it in _world.State.Children(container))
                 {
-                    Item it = (Item)i;
                     int at = _sorted.Count;
 
                     while (at > 0 && _sorted[at - 1].X > it.X)
@@ -2771,36 +2785,47 @@ namespace ClassicUO.Game
                 // Codex audit P2 (#2): an earlier death's re-keyed mobile still under the new serial is displaced (the table
                 // entry is replaced); its children keep their Container but leave the contents World reads under that
                 // serial (the new mobile's list), so they are detached before the incoming list is attached
+                // T9 child-list slice A: the dying mobile's children from the ECS, copied before anything changes (the
+                // re-key and the re-attach move them to the new serial)
+                using ContentsSnapshot children = _world.State.SnapshotContents(oldSerial);
                 Mobile displaced = _world.Mobiles.Get(serial);
 
                 if (displaced != null && !ReferenceEquals(displaced, mobile))
                 {
-                    for (LinkedObject i = displaced.Items; i != null; i = i.Next)
+                    using (ContentsSnapshot gone = _world.State.SnapshotContents(serial))
                     {
-                        if (i is Item gone)
+                        foreach (uint s in gone.Serials)
                         {
-                            _world.Ecs.CommitDetach(gone);
+                            if (_world.Items.Get(s) is Item it)
+                            {
+                                _world.Ecs.CommitDetach(it);
+                            }
                         }
                     }
                 }
 
                 EcsEntity e = _world.Ecs.CommitRekey(mobile, oldSerial, in v);
 
-                // (the list keeps its order under the new parent: each child is re-stamped in it, attached)
-                for (LinkedObject i = mobile.Items; i != null; i = i.Next)
+                // (the children keep their order under the new parent: each is re-stamped in it, attached)
+                foreach (uint s in children.Serials)
                 {
-                    Item child = (Item)i;
-                    ItemState c = CurrentState(child);
-                    c.Container = serial;
-                    _world.Ecs.CommitItem(child, in c, attach: true);
+                    if (_world.Items.Get(s) is Item child)
+                    {
+                        ItemState c = CurrentState(child);
+                        c.Container = serial;
+                        _world.Ecs.CommitItem(child, in c, attach: true);
+                    }
                 }
 
                 // then the cache, in the old order
                 _world.Mobiles.Remove(oldSerial);
 
-                for (LinkedObject i = mobile.Items; i != null; i = i.Next)
+                foreach (uint s in children.Serials)
                 {
-                    ((Item)i).Container = serial;
+                    if (_world.Items.Get(s) is Item child)
+                    {
+                        child.Container = serial;
+                    }
                 }
 
                 _world.Mobiles[serial] = mobile;
@@ -3279,15 +3304,13 @@ namespace ClassicUO.Game
                 }
 #endif
 
-                Item first = (Item)bank.Items;
-
-                while (first != null)
+                // T9 child-list slice A: over a copy of the ECS contents, in child order (each removal changes them)
+                using (ContentsSnapshot children = _world.State.SnapshotContents(bank.Serial))
                 {
-                    Item next = (Item)first.Next;
-
-                    _world.RemoveItem(first, true);
-
-                    first = next;
+                    foreach (uint serial in children.Serials)
+                    {
+                        _world.RemoveItem(serial, true);
+                    }
                 }
             }
 
@@ -3556,12 +3579,10 @@ namespace ClassicUO.Game
 
             CancelPlacements(root);
 
-            for (LinkedObject i = root.Items; i != null; i = i.Next)
+            // T9 child-list slice A: the ECS's children (read only: nothing changes during the walk)
+            foreach (Item child in _world.State.Children(root))
             {
-                if (i is Item child)
-                {
-                    CancelSubtreePlacements(child);
-                }
+                CancelSubtreePlacements(child);
             }
         }
 
@@ -3612,12 +3633,9 @@ namespace ClassicUO.Game
             _subtree ??= new HashSet<Entity>(ReferenceEqualityComparer.Instance);
             _subtree.Add(root);
 
-            for (LinkedObject i = root.Items; i != null; i = i.Next)
+            foreach (Item child in _world.State.Children(root))
             {
-                if (i is Item child)
-                {
-                    CollectSubtree(child);
-                }
+                CollectSubtree(child);
             }
         }
 #endif
