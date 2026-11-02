@@ -23,10 +23,9 @@ namespace ClassicUO.Game
     {
         private readonly EffectManager _effectManager;
 
-#if CUO_DEVTOOLS
-        /// <summary>The graphic effects (moving, fixed, drag, lightning) alive in this world; DevBench's effect tooling reads it.</summary>
+        /// <summary>The graphic effects (moving, fixed, drag, lightning) alive in this world; DevBench's effect tooling, the
+        /// T8 tests and the effect checker read it.</summary>
         internal EffectManager Effects => _effectManager;
-#endif
         private readonly List<uint> _toRemove = new List<uint>();
         private uint _timeToDelete;
 
