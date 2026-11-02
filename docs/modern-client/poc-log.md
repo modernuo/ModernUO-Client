@@ -5123,3 +5123,20 @@ Paired NativeAOT builds (`CuoDevTools=true`, checkers off), all on the quiet mac
   All are fixed with tests.
 - Counts bench-000246 PASS; gate bench-000247 PASS. Unit tests after the merge: 2,964 passed, 6 skipped.
 - Timing parked.
+
+### T7b part 2a merged: Legacy sink (coordinator, 2026-11-02)
+
+- `legacy_ecs_sprites` (default off). Merge fb6547125. Commits: ae64fbfa8 and 5df47796f (the sink, resolve and checker), 4cc5ec8a9 (fix round), c6e1d076f (tests).
+- **Design:**
+  - The Legacy world render lists hand mobiles and items to `LegacySpriteSink` at the `view.Draw` position, so painter order is unchanged.
+  - The sink runs the shared select (`MobileSpriteExtract.BeginSelect`, `ItemSpriteExtract.Select`), and `LegacySpriteResolve` produces the view's batcher calls through `Arts.GetArt`/`GetAnimationFrames`.
+  - Picking state and lights come from the extract. Effects stay on their views.
+  - Checker `CUO_LEGACY_ECS_PARITY`.
+- **The first gate, bench-000244, "failed" on a checker bug:** `problem += CompareLights(...)` turned null + null into "". The fix round also addressed Codex's two P2s (no picking state or lights from layers still decoding; a missing-art placeholder record for Legacy) and a P3 (the checker forks the RNG so both paths start from the same state).
+- **Repo-wide finding:** the unit-test project never defined `CUO_DEVTOOLS`, so every `#if CUO_DEVTOOLS` test was dead. c6e1d076f fixes this. Unit tests: 3,004 passed with dev tools, 2,999 without (6 skipped).
+- **Evidence:**
+  - Legacy gate bench-000248 PASS: 45M batcher calls compared, mismatched 0, day and night.
+  - Shots and pickscan bench-000249 PASS.
+  - Codex re-review: no findings.
+- Timing parked: `measure/t7b2a/job-timing-legacy-PARKED.sh`.
+- **Next, part 2b:** picking from the sink's own rects; the effect extract; then the hot-field caches can go after the default flip (T9).
