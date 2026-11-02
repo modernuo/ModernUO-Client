@@ -2,6 +2,11 @@
 
 Visual or behavioural defects found in the PoC client that aren't fixed yet. Add new ones here; move them to the poc-log when fixed.
 
+## Flaky unit tests seen on 2026-11-02 (open)
+
+- **`ChunkLoadingTests.Drain_Does_Not_Allocate_Per_Frame`:** failed once in a full-suite run on `bg/t9-slice3` while the machine was loaded, and passes when run alone (9/9). It is probably load-sensitive allocation sampling. If it fails again, isolate it the way the 2026-11-01 flakes were isolated.
+- **One unnamed failure** after the tile-index fix A merge (2ee3cd208). It passed on rerun, and the test name wasn't captured.
+
 ## Gate flakes seen on 2026-11-01 (open)
 
 - **uistate vendor buy:** the script's `buy a_horse 1` sometimes finds no buy-list entry (vendor stock after repeated runs, or the list not loaded yet), and the following rename/pet steps fail (bench-000130, bench-000177; reruns pass). Fix idea: wait for the buy list, and restock or pick another vendor item in the script.
