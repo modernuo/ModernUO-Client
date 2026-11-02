@@ -105,7 +105,7 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         // perf-7: the mobile draw paths (GpuWorldRenderer.TryDrawMobileEcs, LegacySpriteSink.DrawMobile) read AnimationState and
-        // MobileRenderState through one e.Data after TakeDirty; the refs must be the components GetComponent returns, and a
+        // MobileRenderState through one EcsRead.Row after TakeDirty; the refs must be the components GetComponent returns, and a
         // write through them must land in the entity, with the dirty tag set or already taken
         [Theory]
         [InlineData(true)]
@@ -122,7 +122,7 @@ namespace ClassicUO.UnitTests.Ecs
             }
 
             ClassicUO.Game.MobileAnimationSystem.TakeDirty(m).Should().Be(dirty);
-            EntityData data = m.Data;
+            EcsRow data = EcsRead.Row(m);
             ref AnimationState state = ref data.Get<AnimationState>();
             ref MobileRenderState render = ref data.Get<MobileRenderState>();
 

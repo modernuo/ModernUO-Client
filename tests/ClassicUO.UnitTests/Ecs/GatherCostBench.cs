@@ -17,7 +17,8 @@ namespace ClassicUO.UnitTests.Ecs
     // CUO_GATHER_BENCH=<output file> is set. Run with the JIT settled:
     //   DOTNET_TieredCompilation=0 CUO_GATHER_BENCH=<file> dotnet test tests/ClassicUO.UnitTests -c Release --filter GatherCostBench
     // A and B alternate in many short rounds (the order flips every round) so machine noise lands on both equally. Candidates:
-    // T7b part 1's read (d3f6f52c6: one GetComponent per field) and the current ReadRecord. CUO_GATHER_BENCH_PROBES=1 adds
+    // T7b part 1's read (d3f6f52c6: one GetComponent per field), ReadRecord before the EcsRead helper (EntityData) and
+    // the current ReadRecord (EcsRead.Row). CUO_GATHER_BENCH_PROBES=1 adds
     // breakdown probes; "probe direct" reads the component arrays past Friflo's accessors (EntityData layout mirror, probe
     // only) to size what a direct-access helper would save.
     [Trait("Category", "Manual")]
@@ -120,6 +121,61 @@ namespace ClassicUO.UnitTests.Ecs
             i.TileContainer = tile.IsContainer;
             i.TileStackable = tile.IsStackable;
             i.TileHeavy = tile.Weight > 90;
+        }
+
+        // ReadRecord before the EcsRead helper (9028cd040: the record through Entity.Data / EntityData.Get)
+        [MethodImpl(MethodImplOptions.NoInlining)]
+        private static void DataRecord(Item item, StaticTiles[] staticData, ref ItemSpriteInput i, out ushort y)
+        {
+            bool record = item.TryScalarEntity(out Friflo.Engine.ECS.Entity e);
+            Friflo.Engine.ECS.EntityData data = default;
+
+            if (record)
+            {
+                data = e.Data;
+                i.Serial = item.Serial;
+                i.Graphic = data.Get<ClassicUO.Ecs.Graphic>().Value;
+                i.Hue = data.Get<ClassicUO.Ecs.Hue>().Value;
+                ref readonly ClassicUO.Ecs.Position p = ref data.Get<ClassicUO.Ecs.Position>();
+                i.X = p.X;
+                y = p.Y;
+                var flags = (Flags)data.Get<ClassicUO.Ecs.Flags>().Value;
+                i.Hidden = (flags & Flags.Hidden) != 0;
+                i.Movable = (flags & Flags.Movable) != 0;
+                Friflo.Engine.ECS.Tags tags = data.Tags;
+                i.OnGround = tags.Has<ClassicUO.Ecs.OnGround>();
+                i.Multi = tags.Has<ClassicUO.Ecs.MultiTag>();
+            }
+            else
+            {
+                i.Serial = item.Serial;
+                i.Graphic = item.Graphic;
+                i.Hue = item.Hue;
+                i.X = item.X;
+                y = item.Y;
+                i.Hidden = item.IsHidden;
+                i.Movable = (item.Flags & Flags.Movable) != 0;
+                i.Amount = item.Amount;
+                i.Layer = (byte)item.Layer;
+                i.OnGround = item.OnGround;
+                i.Multi = item.IsMulti;
+            }
+
+            i.MultiGraphic = item.MultiGraphic;
+            ref StaticTiles tile = ref staticData[i.Multi ? i.MultiGraphic : i.Graphic];
+            i.TileLight = tile.IsLight;
+            i.TilePartialHue = tile.IsPartialHue;
+            i.TileAnimated = tile.IsAnimated;
+            i.TileContainer = tile.IsContainer;
+            i.TileStackable = tile.IsStackable;
+            i.TileHeavy = tile.Weight > 90;
+
+            if (record && i.UsesItemData)
+            {
+                ref readonly ClassicUO.Ecs.ItemData d = ref data.Get<ClassicUO.Ecs.ItemData>();
+                i.Amount = d.Amount;
+                i.Layer = d.Layer;
+            }
         }
 
         [MethodImpl(MethodImplOptions.NoInlining)]
@@ -325,9 +381,11 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 int passes = Math.Max(1, 200_000 / n);
                 Run(sb, "T7b1 (d3f6f52c6)", T7b1Record, true, n, false, 201, passes);
-                Run(sb, "ReadRecord (lean)", NewRecord, true, n, false, 201, passes);
+                Run(sb, "ReadRecord, EntityData (9028cd040)", DataRecord, true, n, false, 201, passes);
+                Run(sb, "ReadRecord, EcsRead.Row", NewRecord, true, n, false, 201, passes);
                 Run(sb, "T7b1 (d3f6f52c6)", T7b1Record, true, n, true, 201, passes);
-                Run(sb, "ReadRecord (lean)", NewRecord, true, n, true, 201, passes);
+                Run(sb, "ReadRecord, EntityData (9028cd040)", DataRecord, true, n, true, 201, passes);
+                Run(sb, "ReadRecord, EcsRead.Row", NewRecord, true, n, true, 201, passes);
             }
 
             if (Environment.GetEnvironmentVariable("CUO_GATHER_BENCH_PROBES") == "1")
