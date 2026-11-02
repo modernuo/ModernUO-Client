@@ -248,3 +248,5 @@ Today the client parses incoming packets in place (`StackDataReader` over fixed 
 - **Paperdoll slots validate the worn cache once per slot** (PaperDollGump.cs ~790, `FindItemByLayer` in 14 slots): one `WornView` per gump update. Only with a paperdoll open. Source: perf-11.
 - **Corpse layers look up the equipment conversion twice** (ItemSpriteExtract.CorpseLayer ~540): two dictionary lookups per drawn corpse layer per frame; cache with the corpse table. Source: perf-11.
 - **Corpse layer tables hold destroyed items until reused** (WorldState.Equipment.cs ~198, Codex P3): bounded by 8 tables; clear on destroy or cache serials. Memory only. Source: perf-11.
+- **Texmaps fill a picker nobody reads** (Texmap.cs:13,54,124 call `_picker.Set` on every load; nothing calls `Get` on it): removing it saves the per-pixel scan on each load and the picker's memory (the array starts at 256 KB). Source: picker-first-pixel.
+- **Animation picks use the dictionary path** (Animation.cs:61,68: a dictionary lookup plus two varint reads before the size check; art and gumps use the flat table): a flat index for animations. Small. Source: picker-first-pixel.
