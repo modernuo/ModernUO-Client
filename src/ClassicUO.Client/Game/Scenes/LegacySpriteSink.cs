@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
 using System;
+using ClassicUO.Assets;
 using ClassicUO.Ecs;
 using ClassicUO.Game.GameObjects;
 using ClassicUO.Renderer;
@@ -30,7 +31,7 @@ namespace ClassicUO.Game.Scenes
         /// <summary>DevBench (pickscan's legacy_ecs_sprites mode) and tests: wins over the env override and the setting.</summary>
         internal static bool? Override;
 
-        private static bool _on, _route;
+        private static bool _on, _route, _hasAnims;
         private static GameScene _scene;
         private static readonly ItemSpriteExtract _items = new ItemSpriteExtract();
 
@@ -60,8 +61,13 @@ namespace ClassicUO.Game.Scenes
             _route = _on;
 #endif
             _scene = _route ? Client.Game.GetScene<GameScene>() : null;
+            // the pack's animation tables are loaded once at startup: read per frame, not per item
+            _hasAnims = _route && HasPackAnims(Client.Game.UO.FileManager.Animations);
             SpritePickTable.BeginDraw();
         }
+
+        /// <summary>Whether corpses can be drawn from the pack's animations (DrawItem's select input).</summary>
+        internal static bool HasPackAnims(AnimationsLoader anims) => anims.PackFrames != null;
 
         /// <summary>End of the Legacy world's render-list draw (the render lists are also drawn by UI controls).</summary>
         public static void EndFrame()
@@ -191,8 +197,7 @@ namespace ClassicUO.Game.Scenes
         private static bool DrawItem(UltimaBatcher2D batcher, Item item, float depth, bool effects)
         {
             ItemSpriteInput.Gather(item, out ItemSpriteInput input);
-            bool hasAnims = Client.Game.UO.FileManager.Animations.PackFrames != null;
-            bool drawn = _items.Select(in input, hasAnims, item.RealScreenPosition.X, item.RealScreenPosition.Y, depth);
+            bool drawn = _items.Select(in input, _hasAnims, item.RealScreenPosition.X, item.RealScreenPosition.Y, depth);
 
             if (_on)
             {
