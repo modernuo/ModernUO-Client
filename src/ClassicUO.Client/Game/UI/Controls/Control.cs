@@ -27,6 +27,7 @@ namespace ClassicUO.Game.UI.Controls
         private bool _handlesKeyboardFocus;
         private Point _offset;
         private Control _parent;
+        private bool _outOfParentList;
 
         protected Control(Control parent = null)
         {
@@ -130,18 +131,35 @@ namespace ClassicUO.Game.UI.Controls
             get => _parent;
             internal set
             {
-                if (value == null)
-                {
-                    _parent?.Children.Remove(this);
-                }
-                else
-                {
-                    _parent?.Children.Remove(this);
-                    value.Children.Add(this);
-                }
+                LeaveParentList();
+
+                value?.Children.Add(this);
 
                 _parent = value;
             }
+        }
+
+        /// <summary>
+        /// perf-9: the caller took this control out of its parent's child list itself and keeps <see cref="Parent"/> as it
+        /// is (ContainerItemControls.Begin keeps a container window's item controls for reuse). The next re-parent skips the
+        /// list scan, which would not find it: re-adding n controls this way scanned the list n times. A caller that puts
+        /// the control back into the list directly calls <see cref="InParentList"/>.
+        /// </summary>
+        internal void OutOfParentList() => _outOfParentList = true;
+
+        /// <summary>Undoes <see cref="OutOfParentList"/>: the caller put the control back into its parent's child list.</summary>
+        internal void InParentList() => _outOfParentList = false;
+
+        private void LeaveParentList()
+        {
+            if (_outOfParentList)
+            {
+                _outOfParentList = false;
+
+                return;
+            }
+
+            _parent?.Children.Remove(this);
         }
 
         public Control RootParent
@@ -469,7 +487,7 @@ namespace ClassicUO.Game.UI.Controls
         {
             c.Page = 0;
 
-            c._parent?.Children.Remove(c);
+            c.LeaveParentList();
 
             c._parent = this;
 
