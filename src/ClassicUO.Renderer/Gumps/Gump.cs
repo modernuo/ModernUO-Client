@@ -185,17 +185,42 @@ namespace ClassicUO.Renderer.Gumps
                 }
             }
 
+            AwaitBatch(_decoder, batch.Slice(0, n), deadline);
+
+            TotalPrefetched += queued;
+            TotalPrefetchTicks += Stopwatch.GetTimestamp() - t0;
+
+            return queued;
+        }
+
+        /// <summary>
+        /// <see cref="Prefetch"/>'s wait: until every gump of <paramref name="batch"/> is uploaded or its decode has finished
+        /// without a result, or until <paramref name="deadline"/> (Stopwatch ticks). Takes only the batch's finished decodes
+        /// (FirstSightDecoder.TryTakeReady); other finished decodes wait for <see cref="DrainReady"/>'s per-frame budget, and
+        /// a failed one stays requested until a drain marks it failed. Main thread.
+        /// </summary>
+        public static void AwaitBatch(FirstSightDecoder decoder, ReadOnlySpan<uint> batch, long deadline)
+        {
             while (true)
             {
-                bool waiting = false;
+                bool waiting = false, took = false;
 
-                for (int i = 0; i < n; i++)
+                for (int i = 0; i < batch.Length; i++)
                 {
-                    if (_decoder.IsRequested(batch[i]))
+                    uint id = batch[i];
+
+                    if (!decoder.IsRequested(id))
+                    {
+                        continue;
+                    }
+
+                    if (Stopwatch.GetTimestamp() < deadline && decoder.TryTakeReady(id))
+                    {
+                        took = true;
+                    }
+                    else if (!decoder.HasFinished(id))
                     {
                         waiting = true;
-
-                        break;
                     }
                 }
 
@@ -204,20 +229,11 @@ namespace ClassicUO.Renderer.Gumps
                     break;
                 }
 
-                if (_decoder.HasReady)
-                {
-                    _decoder.Drain(deadline);
-                }
-                else
+                if (!took)
                 {
                     System.Threading.Thread.Yield();
                 }
             }
-
-            TotalPrefetched += queued;
-            TotalPrefetchTicks += Stopwatch.GetTimestamp() - t0;
-
-            return queued;
         }
 
         /// <summary>Uploads finished worker decodes until <paramref name="deadline"/> (Stopwatch ticks), at least one. Main thread.</summary>
