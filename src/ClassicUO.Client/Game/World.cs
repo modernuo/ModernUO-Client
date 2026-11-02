@@ -450,8 +450,7 @@ namespace ClassicUO.Game
         }
 
         // 3.-5. steps (T6, still Mobile.Update), the mobile clock and advance (T5b), the range sweep and the world-map pass
-        // (T5c). The legacy mobile loop interleaves them per mobile, and the E4 clock path keeps them in one method, so they
-        // are one stage here.
+        // (T5c). The E4 clock path keeps them in one method, so they are one stage here.
         private void StageMobiles(bool do_delete)
         {
             if (WorldEcs.MobileUpdateCheck)
@@ -467,71 +466,7 @@ namespace ClassicUO.Game
             // nothing in the loop changes them
             bool wmap = WMapManager.AcceptsLocalUpdates;
 
-            if (Settings.GlobalSettings.WorldUpdateMobileSystem)
-            {
-                UpdateMobilesByClock(do_delete, wmap);
-            }
-            else
-            {
-                _mobileClocksSynced = false;
-                Ecs.ClockEnabled = false;
-                Ecs.StepsEnabled = false; // T6c: needs the clock path
-                _destroyedMobiles.Clear();
-
-                foreach (Mobile mob in Mobiles.Values)
-                {
-                    mob.Update();
-
-                    if (do_delete && mob.Distance > ClientViewRange /*CheckToRemove(mob, ClientViewRange)*/)
-                    {
-                        Writer.SweepMobile(mob); // T1 (funnel part 5): the sweep's removal
-                    }
-
-                    if (mob.IsDestroyed)
-                    {
-                        _toRemove.Add(mob.Serial);
-                    }
-                    else if (wmap)
-                    {
-                        if (mob.NotorietyFlag == NotorietyFlag.Ally)
-                        {
-                            WMapManager.AddOrUpdate
-                            (
-                                mob.Serial,
-                                mob.X,
-                                mob.Y,
-                                MathHelper.PercetangeOf(mob.Hits, mob.HitsMax),
-                                MapIndex,
-                                true,
-                                mob.Name
-                            );
-                        }
-                        else if (Party.Leader != 0 && Party.Contains(mob))
-                        {
-                            WMapManager.AddOrUpdate
-                            (
-                                mob.Serial,
-                                mob.X,
-                                mob.Y,
-                                MathHelper.PercetangeOf(mob.Hits, mob.HitsMax),
-                                MapIndex,
-                                false,
-                                mob.Name
-                            );
-                        }
-                    }
-                }
-
-                if (_toRemove.Count != 0)
-                {
-                    for (int i = 0; i < _toRemove.Count; i++)
-                    {
-                        Mobiles.Remove(_toRemove[i]);
-                    }
-
-                    _toRemove.Clear();
-                }
-            }
+            UpdateMobilesByClock(do_delete, wmap);
 
             FrameStats.End(FramePhase.WorldMobiles);
         }
@@ -569,7 +504,7 @@ namespace ClassicUO.Game
             FrameStats.Set(FrameCounter.Items, Items.Count);
         }
 
-        // E4 (world_update_mobile_system) ---------------------------------------------------------------------------
+        // E4 (the mobile clock path) ---------------------------------------------------------------------------
         private readonly List<uint> _dueMobiles = new List<uint>();
         private readonly List<Mobile> _destroyedMobiles = new List<Mobile>();
         private bool _mobileClocksSynced;
@@ -577,7 +512,7 @@ namespace ClassicUO.Game
 
         internal void OnMobileDestroyed(Mobile mobile)
         {
-            // only the clock path reads the queue; with it off the legacy loop finds destroyed mobiles itself
+            // the queue is read by the clock path, which is enabled at the first update
             if (Ecs.ClockEnabled)
             {
                 _destroyedMobiles.Add(mobile);
