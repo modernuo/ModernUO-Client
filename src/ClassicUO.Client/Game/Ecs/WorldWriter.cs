@@ -3690,11 +3690,19 @@ namespace ClassicUO.Game
 
         // what World.Get(parent) returns once the item under child exists (the operations create it before resolving the
         // parent): for parent == child the mobile (World.Get looks a mobile-range serial up among the mobiles first), else the
-        // item itself
+        // item itself.
+        // Known edge case (Codex audit of slice B4, P3; left as is): a mobile that was swept but not yet removed from Mobiles
+        // still counts, so 0x2E of that serial onto itself leaves an unattached item whose Container is its own serial.
+        // Walks stay bounded. Refusing it here would also refuse ReturnHeldItem's terrain branch. Only a misconfigured server
+        // sends this; if an item under a mobile-range serial shows up stuck or invisible, look here.
         private bool SelfParentIsMobile(uint serial) => SerialHelper.IsMobile(serial) && _world.Mobiles.Get(serial) != null;
 
         // a refused attach: the operation writes nothing (the item keeps its values and its place, is not created, and
-        // nothing is removed)
+        // nothing is removed). Normal server traffic never gets here: ModernUO and OSI keep mobiles below ItemOffset and items
+        // above it, and never nest an item inside itself. A refusal means a misconfigured or buggy server (an item created under
+        // a mobile's serial, a container moved into its own contents). To troubleshoot "an item didn't appear or move", run a
+        // dev build: each refusal is logged with the packet's operation and both serials, and counted in CycleRefusals or
+        // DepthRefusals.
         private bool RefusedAttach(string operation, uint child, uint parent, bool parentIsMobile, bool childRemoved = false, bool keepsDepth = false) =>
             Refused(operation, child, parent, CheckAttach(child, parent, parentIsMobile, childRemoved, keepsDepth));
 
