@@ -5068,3 +5068,12 @@ Paired NativeAOT builds (`CuoDevTools=true`, checkers off), all on the quiet mac
   - Unit tests: 2,866 passed, 6 skipped.
 - Quiet timing is pending (parked).
 - Observation, parked for the owner: `PixelPicker.Get` never hits the first pixel of an opaque run, or pixel 0,0. This is old ClassicUO behaviour and was kept unchanged.
+
+### T6c follow-up merged: mount inputs from the ECS (coordinator, 2026-11-02)
+
+- `bg/ecs-t6c-mount-inputs` (f6f43c785, merge cbfad6ac9) adds the switch `ecs_step_mount_inputs` (default off; `CUO_ECS_STEP_MOUNT_INPUTS`). With it on, `StepSystem` takes the mounted pace from `EquipmentSlots.Mounted`, the `MobileInputs` Flying bit and the new `MobileInputs.SpeedMode`. `WorldWriter.SetSpeedMode` handles 0xBF.26.
+- Checker `CUO_STEP_MOUNT_CHECK`. 38 tests; mutants 6/6 killed.
+- Gates: on bench-000233 PASS (3,429 ECS decisions, 0 different); off bench-000234 PASS. Codex: no findings.
+- Unit tests after the merge: 2,904 passed, 6 skipped.
+- Still on the Mobile: footstep sounds, `PlayerMobile.Walk`'s walk time and the old animation path (follow-ups).
+- Timing parked: `cuo-poc-state/measure/t6c-mount-inputs/job-timing-mount-PARKED.sh`. The default flip waits for it.
