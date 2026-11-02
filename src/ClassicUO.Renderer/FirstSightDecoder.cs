@@ -141,9 +141,10 @@ namespace ClassicUO.Renderer
         /// The owner's synchronous lookup needs sprite <paramref name="idx"/> now: when its worker decode has finished (ready,
         /// not drained yet), uploads that result instead of a second decode, releases its bytes and buffer, and returns true.
         /// A decode still running, failed or cancelled: false, nothing changes (the lookup decodes as before; no wait). The job
-        /// stays in the ready queue until a drain or cancel dequeues it, and is only recycled there. Main thread.
+        /// stays in the ready queue until a drain or cancel dequeues it, and is only recycled there. The upload time is charged
+        /// to <paramref name="allowance"/> (a no-op while it is inactive); the take itself is never refused for it. Main thread.
         /// </summary>
-        public bool TryTakeReady(uint idx)
+        public bool TryTakeReady(uint idx, FrameAllowance allowance = null)
         {
             if (!IsRequested(idx) || !_inFlight.TryGetValue(idx, out var job) || !job.Finished || !_queue.IsCurrent(job)
                 || job.Pixels == null)
@@ -167,7 +168,10 @@ namespace ClassicUO.Renderer
                 _queue.Release(job);
                 Completed++;
                 TakenReady++;
-                DrainTicks += Stopwatch.GetTimestamp() - t0;
+                long spent = Stopwatch.GetTimestamp() - t0;
+                DrainTicks += spent;
+                // main-thread art time like a drain's: while active, the frame's later prefetches and drains see it spent
+                allowance?.Spend(spent);
             }
 
             return true;

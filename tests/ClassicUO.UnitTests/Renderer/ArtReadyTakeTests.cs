@@ -64,6 +64,44 @@ namespace ClassicUO.UnitTests.Renderer
             d.Pending.Should().Be(1, "the sprite can be requested again");
         }
 
+        // Codex audit P2: the take's upload is main-thread art time; while the frame allowance is active it is charged
+        // there, so a later Prefetch or drain in the same frame sees it spent
+        [Fact]
+        public void A_Take_Spends_The_Active_Frame_Allowance()
+        {
+            var started = new List<IThreadPoolWorkItem>();
+            long uploadTicks = System.Diagnostics.Stopwatch.Frequency / 200; // 5 ms
+            var d = new FirstSightDecoder("art", 64, Fill, _ =>
+            {
+                long end = System.Diagnostics.Stopwatch.GetTimestamp() + uploadTicks;
+                while (System.Diagnostics.Stopwatch.GetTimestamp() < end) { }
+            }, _ => 16, new DecodeBudget(1L << 20, started.Add));
+            d.Request(5);
+            started[0].Execute();
+            var allowance = new FrameAllowance();
+            long granted = System.Diagnostics.Stopwatch.Frequency; // 1 s
+            allowance.Begin(granted);
+
+            d.TryTakeReady(5, allowance).Should().BeTrue();
+
+            allowance.Remaining.Should().BeLessOrEqualTo(granted - uploadTicks);
+        }
+
+        [Fact]
+        public void A_Take_Leaves_An_Inactive_Allowance_Alone()
+        {
+            var (d, _, started, uploads) = Make();
+            d.Request(5);
+            started[0].Execute();
+            var allowance = new FrameAllowance();
+
+            d.TryTakeReady(5, allowance).Should().BeTrue();
+
+            uploads.Should().Equal(5u);
+            allowance.IsActive.Should().BeFalse();
+            allowance.Remaining.Should().Be(0);
+        }
+
         [Fact]
         public void Does_Not_Take_A_Decode_Still_In_Flight()
         {
