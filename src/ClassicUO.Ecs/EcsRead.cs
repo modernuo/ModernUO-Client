@@ -27,14 +27,21 @@ namespace ClassicUO.Ecs
     /// <c>StructHeapGen&lt;T&gt;.components</c>, and <c>Archetype.heapMap</c>, whose type (<c>StructHeap[]</c>) is internal
     /// so no accessor can name it: it is read at a field offset found and checked once against what <c>Entity.Data</c>
     /// holds (<see cref="Layout"/>). If a Friflo upgrade changes them, the first read throws
-    /// <see cref="InvalidOperationException"/> (and EcsReadTests fail). A component type that Friflo keeps in another heap
-    /// kind (preview.2 does so for a struct whose only field is a float or vector named Value) throws
-    /// <see cref="InvalidCastException"/> at its first read; EcsReadTests checks every mirror component.
+    /// <see cref="InvalidOperationException"/> (and EcsReadTests fail).
+    /// </para>
+    /// <para>
+    /// Heap kinds: only <c>StructHeapGen&lt;T&gt;</c> (a plain <c>T[]</c>) is read directly. Preview.2 keeps a struct
+    /// whose only field is a float, Vector2, Vector4 or Quaternion named Value (and, with [SoA] or [AoSoA], a Vector2..4)
+    /// in an aligned or SoA heap instead; reads of such a type go through Friflo's own <c>GetComponent</c>,
+    /// <c>TryGetComponent</c> and <c>EntityData</c>, so they give Friflo's answers, refs and exceptions (an SoA heap's
+    /// <c>GetComponent</c> throws <see cref="InvalidOperationException"/>). The choice is made once per type at its first
+    /// read (<see cref="Slot{T}"/>); a direct type's read keeps the one branch it had. Every mirror component is a
+    /// direct type (EcsReadTests).
     /// </para>
     /// <para>
     /// Validity: nothing is cached per entity or per archetype. Kept per process: the heap map offset and each component
-    /// type's schema index. A returned <c>ref</c> or <see cref="EcsRow"/> is valid until the next structural change of the
-    /// store (a component or tag added or removed, an entity created or deleted: they move entities between archetypes and
+    /// type's schema index (or -1 for another heap kind). A returned <c>ref</c> or <see cref="EcsRow"/> is valid until the
+    /// next structural change of the store (a component or tag added or removed, an entity created or deleted: they move entities between archetypes and
     /// grow component arrays), exactly like Friflo's own <c>ref</c>s and <c>EntityData</c>. Read again after one.
     /// </para>
     /// </remarks>
@@ -47,7 +54,7 @@ namespace ClassicUO.Ecs
 
             if (slot <= 0)
             {
-                slot = Slot<T>.Init();
+                return ref Slot<T>.Get(Layout.Store(e), e.Id, e.Revision);
             }
 
             ref EntityNode node = ref Layout.Node(e);
@@ -69,7 +76,18 @@ namespace ClassicUO.Ecs
 
             if (slot <= 0)
             {
-                slot = Slot<T>.Init();
+                ref T found = ref Slot<T>.TryGet(Layout.Store(e), e.Id, e.Revision);
+
+                if (Unsafe.IsNullRef(ref found))
+                {
+                    value = default;
+
+                    return false;
+                }
+
+                value = found;
+
+                return true;
             }
 
             ref EntityNode node = ref Layout.Node(e);
@@ -122,26 +140,130 @@ namespace ClassicUO.Ecs
         private static void ThrowDeleted() => throw new NullReferenceException("the entity is deleted");
 
         // The hot paths read only statics of classes without a static constructor (Slot<T>, Layout.HeapMapOffset) and call
-        // out of line only to set them up once, with no struct argument or result, so neither the JIT nor NativeAOT adds
-        // class-initialisation checks and the entity and the row stay in registers.
+        // out of line only for the first read of a type and for types in another heap kind, with no struct argument or
+        // result, so neither the JIT nor NativeAOT adds class-initialisation checks and the entity and the row stay in
+        // registers.
 
-        /// <summary>The component type's schema index + 1 (the heap map index); 0 until the first read.</summary>
+        /// <summary>The component type's schema index + 1 (the heap map index) if Friflo keeps it in a plain array
+        /// (<c>StructHeapGen&lt;T&gt;</c>), read directly; -1 if it keeps it in another heap kind, read through Friflo's
+        /// own <c>GetComponent</c> / <c>TryGetComponent</c> / <c>EntityData</c> on every read; 0 until the first read,
+        /// which also goes through Friflo. The hot paths test only <c>Value &lt;= 0</c>, the branch they had before.</summary>
         internal static class Slot<T> where T : struct, IComponent
         {
             public static int Value;
 
             [MethodImpl(MethodImplOptions.NoInlining)]
-            public static int Init()
+            private static void Init()
             {
                 Layout.Init();
+                int index = EntityStore.GetEntitySchema().GetComponentType<T>().StructIndex;
+                Value = InPlainArray() ? index + 1 : -1;
+            }
 
-                return Value = EntityStore.GetEntitySchema().GetComponentType<T>().StructIndex + 1;
+            /// <summary>Friflo 4.0.0-preview.2's choice of heap (<c>ComponentType&lt;T&gt;.CreateHeap</c> with
+            /// <c>SimdUtils.GetLayout</c>): a type with a public float, Vector2, Vector3, Vector4 or Quaternion field named
+            /// Value (or value) that is the whole struct gets an aligned or SoA heap, except a Vector3 without [SoA] or
+            /// [AoSoA]; every other type gets <c>StructHeapGen&lt;T&gt;</c>. EcsReadTests checks this against the heap
+            /// Friflo creates, for every mirror component and every special kind.</summary>
+            internal static bool InPlainArray()
+            {
+                int fields = SimdInfo<T>.FieldCountSoA;
+
+                if (fields == 0)
+                {
+                    return true;
+                }
+
+                if (typeof(T).IsDefined(typeof(SoAAttribute), false) || typeof(T).IsDefined(typeof(AoSoAAttribute), false))
+                {
+                    return false;
+                }
+
+                return fields == 3;
+            }
+
+            [MethodImpl(MethodImplOptions.NoInlining)]
+            public static ref T Get(EntityStore store, int id, short revision)
+            {
+                if (Value == 0)
+                {
+                    Init();
+                }
+
+                return ref Layout.MakeEntity(store, id, revision).GetComponent<T>();
+            }
+
+            // The TryGet fallbacks return a ref to this thread's copy of the value, or a null ref for "not found": an out
+            // argument (the caller's value or a bool) whose address went to a call would live on the stack, and be
+            // stored to on every read, in the direct path too.
+            [ThreadStatic]
+            private static T _found;
+
+            [MethodImpl(MethodImplOptions.NoInlining)]
+            public static ref T TryGet(EntityStore store, int id, short revision)
+            {
+                if (Value == 0)
+                {
+                    Init();
+                }
+
+                if (Layout.MakeEntity(store, id, revision).TryGetComponent(out T value))
+                {
+                    _found = value;
+
+                    return ref _found;
+                }
+
+                return ref Unsafe.NullRef<T>();
+            }
+
+            // a row's fallbacks take its four fields, not the row: a struct argument would keep the row in memory
+            [MethodImpl(MethodImplOptions.NoInlining)]
+            public static bool Has(object[] heapMap, Archetype archetype, int id, int compIndex)
+            {
+                if (Value == 0)
+                {
+                    Init();
+                }
+
+                return Layout.MakeData(heapMap, archetype, id, compIndex).Has<T>();
+            }
+
+            [MethodImpl(MethodImplOptions.NoInlining)]
+            public static ref T Get(object[] heapMap, Archetype archetype, int id, int compIndex)
+            {
+                if (Value == 0)
+                {
+                    Init();
+                }
+
+                return ref Layout.MakeData(heapMap, archetype, id, compIndex).Get<T>();
+            }
+
+            [MethodImpl(MethodImplOptions.NoInlining)]
+            public static ref T TryGet(object[] heapMap, Archetype archetype, int id, int compIndex)
+            {
+                if (Value == 0)
+                {
+                    Init();
+                }
+
+                if (Layout.MakeData(heapMap, archetype, id, compIndex).TryGet(out T value))
+                {
+                    _found = value;
+
+                    return ref _found;
+                }
+
+                return ref Unsafe.NullRef<T>();
             }
         }
 
         internal static class Access<T> where T : struct, IComponent
         {
-            // the accessor checks the heap's class (a sealed-class compare): any other heap kind is an InvalidCastException
+            // the accessor checks the heap's class (a sealed-class compare); only types whose Slot is positive (plain array
+            // heaps) get here, so the check never fails unless Slot.InPlainArray is wrong (then InvalidCastException, never
+            // a wrong read)
             [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "components")]
             public static extern ref T[] Components([UnsafeAccessorType("Friflo.Engine.ECS.StructHeapGen`1[[!0]], Friflo.Engine.ECS")] object heap);
         }
@@ -175,17 +297,30 @@ namespace ClassicUO.Ecs
             /// <summary><c>Entity</c>'s fields (<c>store</c> at 0, <c>Id</c> at 8, <c>Revision</c> at 12), read by value
             /// (Unsafe.BitCast) so the entity stays in registers; an accessor would need it by <c>ref</c>. The probe checks
             /// it.</summary>
-#pragma warning disable CS0649 // the layout structs are only reinterpreted, never assigned
             private struct EntityLayout
             {
                 public EntityStore Store;
                 public int Id;
                 public short Revision;
             }
-#pragma warning restore CS0649
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public static ref EntityNode Node(Entity e) => ref Nodes(Unsafe.BitCast<Entity, EntityLayout>(e).Store)[e.Id];
+
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            public static EntityStore Store(Entity e) => Unsafe.BitCast<Entity, EntityLayout>(e).Store;
+
+            /// <summary>The entity from its fields (the fallbacks take them as scalars, see <see cref="Slot{T}"/>).</summary>
+            public static Entity MakeEntity(EntityStore store, int id, short revision) =>
+                Unsafe.BitCast<EntityLayout, Entity>(new EntityLayout { Store = store, Id = id, Revision = revision });
+
+            /// <summary><c>EntityData</c> from an <see cref="EcsRow"/>'s fields (the probe checks the layout).</summary>
+            public static EntityData MakeData(object[] heapMap, Archetype archetype, int id, int compIndex)
+            {
+                var d = new DataLayout { HeapMap = heapMap, Archetype = archetype, Id = id, CompIndex = compIndex };
+
+                return Unsafe.As<DataLayout, EntityData>(ref d);
+            }
 
             /// <summary><c>Archetype.heapMap</c> (a <c>StructHeap[]</c>, so an <c>object[]</c> by array covariance), read at
             /// the offset <see cref="Probe"/> found. A field's offset is fixed for the process.</summary>
@@ -211,7 +346,6 @@ namespace ClassicUO.Ecs
 
             /// <summary><c>EntityData</c>'s fields in 4.0.0-preview.2, in order (the probe's reference for the heap map;
             /// same field types in the same order, so the runtime lays both out alike, and the probe checks it).</summary>
-#pragma warning disable CS0649
             private struct DataLayout
             {
                 public object[] HeapMap;
@@ -219,7 +353,6 @@ namespace ClassicUO.Ecs
                 public int Id;
                 public int CompIndex;
             }
-#pragma warning restore CS0649
 
             private static bool Probe()
             {
@@ -358,7 +491,7 @@ namespace ClassicUO.Ecs
 
             if (slot <= 0)
             {
-                slot = EcsRead.Slot<T>.Init();
+                return EcsRead.Slot<T>.Has(_heapMap, _archetype, _id, _compIndex);
             }
 
             // a deleted entity's row has no heap map: NullReferenceException, as EntityData.Has
@@ -372,7 +505,7 @@ namespace ClassicUO.Ecs
 
             if (slot <= 0)
             {
-                slot = EcsRead.Slot<T>.Init();
+                return ref EcsRead.Slot<T>.Get(_heapMap, _archetype, _id, _compIndex);
             }
 
             return ref EcsRead.Access<T>.Components(_heapMap[slot - 1])[_compIndex];
@@ -385,7 +518,18 @@ namespace ClassicUO.Ecs
 
             if (slot <= 0)
             {
-                slot = EcsRead.Slot<T>.Init();
+                ref T found = ref EcsRead.Slot<T>.TryGet(_heapMap, _archetype, _id, _compIndex);
+
+                if (Unsafe.IsNullRef(ref found))
+                {
+                    value = default;
+
+                    return false;
+                }
+
+                value = found;
+
+                return true;
             }
 
             object heap = _heapMap[slot - 1];
