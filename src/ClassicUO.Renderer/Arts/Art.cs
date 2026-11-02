@@ -27,6 +27,7 @@ namespace ClassicUO.Renderer.Arts
             _spriteInfos = new SpriteInfo[_artLoader.Count];
             _realArtBounds = new Rectangle[_spriteInfos.Length];
             _picker = new PixelPicker(_spriteInfos.Length);
+            _missing = new ulong[(_spriteInfos.Length + 63) >> 6];
             _decoder = new FirstSightDecoder("art", _spriteInfos.Length, DecodeOnWorker, UploadDecoded,
                 idx => DecodeBudget.PooledBytes(_artLoader.PixelCount(idx)));
         }
@@ -50,6 +51,16 @@ namespace ClassicUO.Renderer.Arts
         /// <summary>Main-thread decodes and their time since start (never reset; for scripted measurements).</summary>
         public static int TotalSyncLoads;
         public static long TotalSyncTicks;
+        /// <summary>Sprites found missing from the pack and logged (once per id until <see cref="Reload"/>; never reset).</summary>
+        public static int TotalMissingLogs;
+#if CUO_DEVTOOLS
+        /// <summary>Lookups that took a finished worker decode instead of decoding again (FrameStats resets the frame count).</summary>
+        public static int FrameReadyTakes;
+        public static int TotalReadyTakes;
+#endif
+
+        // sprites the pack has no image for: their lookups return the placeholder without decoding or logging again
+        private readonly ulong[] _missing;
 
         /// <summary>Worker decodes requested and not uploaded yet.</summary>
         public int PendingDecodes => _decoder.Pending;
@@ -131,7 +142,8 @@ namespace ClassicUO.Renderer.Arts
         /// starts after it. It ends early when nothing finishes for <see cref="PrefetchStallMs"/>, and does not start when
         /// the budget can't admit the batch now (FirstSightDecoder.RequestAndWait); the requests stay queued then.</item>
         /// <item>A sprite still in flight decodes on the spot when a control asks, and the worker's result is dropped, as for
-        /// any first-sight request.</item>
+        /// any first-sight request; one whose decode has finished is uploaded from the worker's result
+        /// (FirstSightDecoder.TryTakeReady).</item>
         /// </list>
         /// Returns the number of sprites waited for (0: none, or no wait).
         /// </summary>
@@ -285,6 +297,7 @@ namespace ClassicUO.Renderer.Arts
         {
             Array.Clear(_spriteInfos);
             Array.Clear(_realArtBounds);
+            Array.Clear(_missing);
             _picker.Clear();
             Generation++;
         }
@@ -315,6 +328,26 @@ namespace ClassicUO.Renderer.Arts
 
             ref var spriteInfo = ref _spriteInfos[idx];
 
+            if (spriteInfo.Texture == null && (_missing[idx >> 6] & (1UL << (int)(idx & 63))) != 0)
+            {
+                return ref Get(0);
+            }
+
+            if (spriteInfo.Texture == null && _decoder.IsRequested(idx))
+            {
+                // a worker decoded it already (not drained yet): upload that result instead of decoding it again
+                long drained = _decoder.DrainTicks;
+
+                if (_decoder.TryTakeReady(idx))
+                {
+                    FrameUploadTicks += _decoder.DrainTicks - drained;
+#if CUO_DEVTOOLS
+                    FrameReadyTakes++;
+                    TotalReadyTakes++;
+#endif
+                }
+            }
+
             if (spriteInfo.Texture == null)
             {
                 long syncStart = Stopwatch.GetTimestamp();
@@ -337,7 +370,10 @@ namespace ClassicUO.Renderer.Arts
                     if (artInfo.Pixels.IsEmpty && idx > 0)
                     {
                         // Trying to load a texture that does not exist in the client MULs
-                        // Degrading gracefully and only crash if not even the fallback ItemID exists
+                        // Degrading gracefully and only crash if not even the fallback ItemID exists. Remembered per
+                        // id: later lookups (every frame for a drawn item) go straight to the placeholder.
+                        _missing[idx >> 6] |= 1UL << (int)(idx & 63);
+                        TotalMissingLogs++;
                         Log.Error(
                             $"Texture not found for sprite: idx: {idx}; itemid: {(idx > 0x4000 ? idx - 0x4000 : '-')}"
                         );

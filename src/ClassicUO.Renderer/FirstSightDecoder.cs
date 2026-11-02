@@ -23,7 +23,8 @@ namespace ClassicUO.Renderer
     /// budget, and makes running workers return their buffers and bytes when they finish (<see cref="DecodeQueue{T}"/>).</item>
     /// </list>
     /// The owner's synchronous lookup still decodes on the spot when it needs a sprite whose decode is in flight; the
-    /// worker's result is then dropped by the upload callback.
+    /// worker's result is then dropped by the upload callback. A decode that has finished can be taken instead
+    /// (<see cref="TryTakeReady"/>).
     /// </summary>
     public sealed class FirstSightDecoder
     {
@@ -36,6 +37,11 @@ namespace ClassicUO.Renderer
             public uint[] Pixels;
             public int Width, Height, TrimX, TrimY, TrimW, TrimH;
             public Rectangle Bounds;
+
+            // the worker's result is complete (set before Publish; read by TryTakeReady on the main thread)
+            internal volatile bool Finished;
+            // main thread: TryTakeReady uploaded it; the drain or cancel that later dequeues it only recycles it
+            internal bool Taken;
 
             public override void Execute()
             {
@@ -56,6 +62,7 @@ namespace ClassicUO.Renderer
                     ClassicUO.Utility.Logging.Log.Warn($"{Owner._name} {Index}: worker decode failed ({ex.Message})");
                 }
 
+                Finished = true;
                 Owner._queue.Publish(this); // cancelled meanwhile: returns the buffer and the bytes here
             }
 
@@ -79,6 +86,8 @@ namespace ClassicUO.Renderer
         private readonly byte[] _state;
         private readonly Func<uint, long> _bytesOf;
         private readonly Action<Job> _retire;
+        // requested sprites and their jobs, for TryTakeReady (main thread)
+        private readonly Dictionary<uint, Job> _inFlight = new Dictionary<uint, Job>();
 
         /// <param name="decode">Worker: decodes job.Index into job.Pixels (rented) and the size fields; false = nothing to upload.</param>
         /// <param name="upload">Main thread: uploads a finished job (always with pixels).</param>
@@ -122,7 +131,57 @@ namespace ClassicUO.Renderer
             var job = _free.Count > 0 ? _free.Pop() : new Job { Owner = this };
             job.Index = idx;
             job.Pixels = null;
+            job.Finished = false;
+            job.Taken = false;
+            _inFlight[idx] = job;
             _queue.Submit(job, _bytesOf?.Invoke(idx) ?? 0, counted: _bytesOf != null);
+        }
+
+        /// <summary>
+        /// The owner's synchronous lookup needs sprite <paramref name="idx"/> now: when its worker decode has finished (ready,
+        /// not drained yet), uploads that result instead of a second decode, releases its bytes and buffer, and returns true.
+        /// A decode still running, failed or cancelled: false, nothing changes (the lookup decodes as before; no wait). The job
+        /// stays in the ready queue until a drain or cancel dequeues it, and is only recycled there. Main thread.
+        /// </summary>
+        public bool TryTakeReady(uint idx)
+        {
+            if (!IsRequested(idx) || !_inFlight.TryGetValue(idx, out var job) || !job.Finished || !_queue.IsCurrent(job)
+                || job.Pixels == null)
+            {
+                return false;
+            }
+
+            long t0 = Stopwatch.GetTimestamp();
+            _inFlight.Remove(idx);
+            job.Taken = true;
+
+            try
+            {
+                _state[idx] = StateNone;
+                _upload(job);
+            }
+            finally
+            {
+                Pending--;
+                job.ReturnPixels();
+                _queue.Release(job);
+                Completed++;
+                TakenReady++;
+                DrainTicks += Stopwatch.GetTimestamp() - t0;
+            }
+
+            return true;
+        }
+
+        /// <summary>Finished decodes uploaded by <see cref="TryTakeReady"/> so far (main thread; never reset).</summary>
+        public int TakenReady { get; private set; }
+
+        private void Forget(Job job)
+        {
+            if (_inFlight.TryGetValue(job.Index, out var current) && current == job)
+            {
+                _inFlight.Remove(job.Index);
+            }
         }
 
         /// <summary>Uploads finished decodes until <paramref name="deadline"/> (Stopwatch ticks), at least one (main thread).</summary>
@@ -214,7 +273,17 @@ namespace ClassicUO.Renderer
 
             while ((first || Stopwatch.GetTimestamp() < deadline) && _queue.TryDequeue(out var job))
             {
+                if (job.Taken)
+                {
+                    // uploaded and accounted by TryTakeReady: recycle only (and it doesn't count as this drain's upload)
+                    job.Taken = false;
+                    _free.Push(job);
+
+                    continue;
+                }
+
                 first = false;
+                Forget(job);
 
                 try
                 {
@@ -254,6 +323,15 @@ namespace ClassicUO.Renderer
 
         private void Retire(Job job)
         {
+            if (job.Taken)
+            {
+                job.Taken = false;
+                _free.Push(job);
+
+                return;
+            }
+
+            Forget(job);
             _state[job.Index] = StateNone;
             Pending--;
             _free.Push(job);
