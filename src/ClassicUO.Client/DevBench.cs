@@ -1509,15 +1509,21 @@ namespace ClassicUO
             Input.Mouse.Override = null;
         }
 
-        // T6b: the merged walk on or off; the Gpu item caches rebuild, so the served runs are built in the order compared
-        private static void SetTileIndexWalk(GameController game, bool on)
+        // T6b: the merged walk on or off; the Gpu item caches rebuild, so the served runs are built in the order compared.
+        // T6b part 3: with the list dropped "off" is the shadow list (the legacy order; CUO_TILE_ORDER_CHECK keeps it)
+        private static bool SetTileIndexWalk(GameController game, bool on)
         {
-            if (Game.Map.DynamicTileIndex.WalkOn == on)
+            if (Game.Map.DynamicTileIndex.IndexWalkOn == on)
             {
-                return;
+                return true;
             }
 
-            Game.Map.DynamicTileIndex.WalkOn = on;
+            if (!Game.Map.DynamicTileIndex.SetWalk(on))
+            {
+                Log.Warn("[bench] tile index walk off needs the shadow list once the list is dropped (set CUO_TILE_ORDER_CHECK=1)");
+
+                return false;
+            }
 
             if (game.UO.World?.Map is { } map)
             {
@@ -1530,6 +1536,8 @@ namespace ClassicUO
                     }
                 }
             }
+
+            return true;
         }
 
         private static void EndPickScan()
@@ -1537,7 +1545,7 @@ namespace ClassicUO
             if (_scanTileIndex)
             {
                 _scanTileIndex = false;
-                Game.Map.DynamicTileIndex.WalkOn = _scanTileIndexWas;
+                Game.Map.DynamicTileIndex.SetWalk(_scanTileIndexWas);
             }
 
             _scanLeft = 0;
@@ -1875,6 +1883,15 @@ namespace ClassicUO
                             break;
                         }
 
+                        if (tileIndexMode && Game.Map.DynamicTileIndex.ListDropped && !Game.Map.DynamicTileIndex.Shadow)
+                        {
+                            // T6b part 3: with the list dropped, "off" is the shadow list's legacy order (CUO_TILE_ORDER_CHECK only)
+                            Log.Info($"[bench-scan] {_plan[_planIndex]} skipped: the list is dropped and no shadow list is kept (set CUO_TILE_ORDER_CHECK=1)");
+                            _planIndex++;
+
+                            break;
+                        }
+
                         if (!tileIndexMode && (!Configuration.Settings.GlobalSettings.UseGpuWorldRenderer || game.GetGpuWorld() == null))
                         {
                             // Legacy has no Gpu prepare, so its skipping never becomes active and the scan would never end
@@ -1886,7 +1903,7 @@ namespace ClassicUO
 
                         string[] g = _plan[_planIndex].Substring(9).Split(':')[0].Split('x');
                         _scanTileIndex = tileIndexMode;
-                        _scanTileIndexWas = Game.Map.DynamicTileIndex.WalkOn;
+                        _scanTileIndexWas = Game.Map.DynamicTileIndex.IndexWalkOn;
                         _scanCols = int.Parse(g[0]);
                         _scanRows = int.Parse(g[1]);
                         _scanLeft = _scanCols * _scanRows;
@@ -1906,7 +1923,7 @@ namespace ClassicUO
                         if (Game.Map.DynamicTileIndex.Maintain)
                         {
                             SetTileIndexWalk(game, _plan[_planIndex] == "tileindex:on");
-                            Log.Info($"[bench] tile index walk {(Game.Map.DynamicTileIndex.WalkOn ? "on" : "off")}");
+                            Log.Info($"[bench] tile index walk {(Game.Map.DynamicTileIndex.IndexWalkOn ? "on" : "off")}{(Game.Map.DynamicTileIndex.ShadowWalk ? " (shadow list, legacy order)" : "")}");
                         }
                         else
                         {

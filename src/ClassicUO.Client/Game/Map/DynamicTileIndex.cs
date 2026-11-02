@@ -13,9 +13,10 @@ namespace ClassicUO.Game.Map
     /// object (no entity id: a death re-key or a record replacement changes the serial/record under a placed object, and the
     /// object's validated ECS handle already reaches the record). <see cref="Chunk.AddGameObject"/> (every placement: AddToTile, SetInWorldTile, moves,
     /// Map.Park's deferred add) and <see cref="GameObject.RemoveFromTile"/> maintain it; Chunk.Destroy/ClearForReload clear
-    /// it. The tile's linked list still holds everything (both are maintained): with the walk switch on, the walks read the
-    /// list's other objects (land, statics, multi components, effects until T8) merged by key with this array
-    /// (<see cref="TileWalk"/>), and CUO_TILE_ORDER_CHECK compares that merged order with the list.
+    /// it. With the walk switch off (and the index maintained for a checker or effects) the tile's linked list still holds
+    /// everything. With it on (T6b part 3, <see cref="ListDropped"/>) the list keeps only land, statics and multi components and
+    /// the dynamics live only here: the walks read the list merged by key with this array (<see cref="TileWalk"/>), and
+    /// CUO_TILE_ORDER_CHECK compares that merged order with the legacy order kept in a dev-only <see cref="ShadowTileList"/>.
     /// </summary>
     internal sealed class DynamicTileIndex
     {
@@ -41,10 +42,64 @@ namespace ClassicUO.Game.Map
         /// <summary>Placements keep the index (the walk switch, an explicit CUO_WORLD_TILE_INDEX, or CUO_TILE_ORDER_CHECK).
         /// Read once: an index started late would miss the objects already placed. Tests set it.</summary>
         public static bool Maintain = ShouldMaintain(WalkOn, s_env == "0", TileOrder.Check, EffectSystem.GlobalOn);
+
+        /// <summary>T6b part 3, dev builds: the walks read the shadow list (<see cref="ShadowTileList"/>, the legacy order) instead of
+        /// the merged order: what "walk off" means once the list no longer holds the dynamics (<see cref="SetWalk"/>; pickscan's
+        /// world_tile_index mode and the plans' tileindex:off). Needs <see cref="Shadow"/>.</summary>
+        public static bool ShadowWalk;
+
+        /// <summary>DevBench: the walk on (the merged order) or off. With the list kept, off is the list walk; with the list dropped,
+        /// off is the shadow list (the legacy order, CUO_TILE_ORDER_CHECK only): false when that is not available.</summary>
+        public static bool SetWalk(bool on)
+        {
+            if (!ListDropped)
+            {
+                WalkOn = on;
+                ShadowWalk = false;
+
+                return true;
+            }
+
+            if (!on && !Shadow)
+            {
+                return false;
+            }
+
+            WalkOn = true;
+            ShadowWalk = !on;
+
+            return true;
+        }
+
+        /// <summary>The walks read the index (the merged order), not the list or the shadow list.</summary>
+        public static bool IndexWalkOn => (WalkOn || ListDropped) && !ShadowWalk;
 #else
         public static readonly bool WalkOn = Configuration.Settings.GlobalSettings?.WorldTileIndex ?? false;
         public static bool Maintain = ShouldMaintain(WalkOn, false, false, EffectSystem.GlobalOn);
+        public static bool IndexWalkOn => WalkOn || ListDropped;
 #endif
+
+        /// <summary>
+        /// T6b part 3: with the walk switch on, the tile lists stop holding the dynamics (<see cref="Holds"/>): items, mobiles and
+        /// (with ecs_effects) effects live only in the index; the list keeps land, statics and multi components. Read once at
+        /// startup like <see cref="Maintain"/> (an object linked under one value and unlinked under the other would corrupt the
+        /// list); tests set it before they build a world. Implies <see cref="Maintain"/>. Off (the default): nothing changes.
+        /// </summary>
+        public static bool ListDropped = WalkOn;
+
+        /// <summary>
+        /// T6b part 3: CUO_TILE_ORDER_CHECK with the list dropped keeps <see cref="ShadowTileList"/> per chunk (every object,
+        /// dynamics included, inserted by the legacy list rule), so the checker and the readers' checks can still compare the
+        /// merged order with the legacy list. Read once; tests set it.
+        /// </summary>
+        public static bool Shadow = ListDropped && TileOrder.Check;
+
+        /// <summary>The walks read the merged order: the walk switch, or a dropped list (whose dynamics only the index holds).</summary>
+        public static bool Merged
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => WalkOn || ListDropped;
+        }
 
         /// <summary>Whether placements keep the index: the walk, an explicit CUO_WORLD_TILE_INDEX=0, the order checker, or held
         /// effects (ecs_effects holds them in the index even with the walk off).</summary>
@@ -194,6 +249,22 @@ namespace ClassicUO.Game.Map
             return true;
         }
 
+        /// <summary>Whether <paramref name="cell"/> holds <paramref name="obj"/> (by identity; the checker's reachability).</summary>
+        public bool Contains(GameObject obj, int cell)
+        {
+            Entry[] arr = _cells[cell];
+
+            for (int i = 0, n = _counts[cell]; i < n; i++)
+            {
+                if (ReferenceEquals(arr[i].Obj, obj))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
         /// <summary>Chunk.Destroy and ClearForReload: every entry leaves, the arrays go back to the pool.</summary>
         public void Clear()
         {
@@ -287,6 +358,10 @@ namespace ClassicUO.Game.Map
         private TileOrderKey _sKey;
         private DynamicTileIndex.Entry[] _d;
         private int _di, _dn;
+#if CUO_DEVTOOLS
+        // DynamicTileIndex.ShadowWalk: the shadow list's cell (the legacy order) instead of the merge
+        private List<GameObject> _sh;
+#endif
 
         /// <summary>Where a render-list walk starts. A whole-tile walk (<paramref name="single"/> false) with the walk on starts
         /// the merged order at the tile's head (<paramref name="merged"/> true: continue with <see cref="Next"/>); a
@@ -307,8 +382,47 @@ namespace ClassicUO.Game.Map
             return Begin(chunk, first.TileCell, out walk);
         }
 
-        /// <summary>The first object of (<paramref name="chunk"/>, <paramref name="cell"/>) in merged order, or null.</summary>
+        /// <summary>The first object of (<paramref name="chunk"/>, <paramref name="cell"/>) in merged order, or null. Dev builds
+        /// with <see cref="DynamicTileIndex.ShadowWalk"/>: the shadow list's order (the legacy list) instead.</summary>
         public static GameObject Begin(Chunk chunk, int cell, out TileWalk walk)
+        {
+#if CUO_DEVTOOLS
+            if (DynamicTileIndex.ShadowWalk && chunk.Shadow != null)
+            {
+                walk = default;
+                walk._sh = chunk.Shadow.Cell(cell) ?? s_emptyShadow;
+                walk._dn = walk._sh.Count;
+
+                return walk.Next();
+            }
+#endif
+
+            return BeginIndex(chunk, cell, out walk);
+        }
+
+#if CUO_DEVTOOLS
+        private static readonly List<GameObject> s_emptyShadow = new List<GameObject>();
+#endif
+
+        /// <summary>
+        /// The tile's first object for a whole-tile walk: the list's head, else (a tile holding only dynamics once the list
+        /// drops them: no land, no anchor) the index's first entry, else null. A starting point for <see cref="Start"/>, which
+        /// reads only its cell.
+        /// </summary>
+        public static GameObject First(Chunk chunk, int x, int y)
+        {
+            GameObject head = chunk.GetHeadObject(x, y);
+
+            if (head == null && chunk.Dynamic != null && chunk.Dynamic.CountAt(x << 3 | y) > 0)
+            {
+                head = chunk.Dynamic.RawCell(x << 3 | y, out _)[0].Obj;
+            }
+
+            return head;
+        }
+
+        /// <summary><see cref="Begin"/> without the dev shadow walk: always the merged order (the checker's side).</summary>
+        public static GameObject BeginIndex(Chunk chunk, int cell, out TileWalk walk)
         {
             walk = default;
             walk._s = SkipDynamic(chunk.GetHeadObject(cell >> 3, cell & 7));
@@ -339,6 +453,13 @@ namespace ClassicUO.Game.Map
 
         public GameObject Next()
         {
+#if CUO_DEVTOOLS
+            if (_sh != null)
+            {
+                return _di < _dn ? _sh[_di++] : null;
+            }
+#endif
+
             if (_di < _dn && (_s == null || _d[_di].Key.CompareTo(_sKey) < 0))
             {
                 return _d[_di++].Obj;
@@ -372,6 +493,9 @@ namespace ClassicUO.Game.Map
         private TileWalk _walk;
         private GameObject _cur;
         private bool _merged;
+        // T6b part 3: with the list dropped the list walk is the shadow list's (CUO_TILE_ORDER_CHECK)
+        private List<GameObject> _shadow;
+        private int _si;
 
         /// <summary>The first object at or after <paramref name="from"/> (the tile's head when null), or null; continue with
         /// <see cref="Next"/>.</summary>
@@ -384,7 +508,33 @@ namespace ClassicUO.Game.Map
                 return null;
             }
 
-            reader._merged = merged && chunk.Dynamic != null;
+            // the list without its dynamics is not "the list walk": with the list dropped, not merged means the shadow list (the
+            // legacy order, kept only under the checker), and without one the merged order
+            if (!merged && DynamicTileIndex.ListDropped && chunk.Shadow != null)
+            {
+                List<GameObject> cellList = chunk.Shadow.Cell(cell);
+                int i = 0;
+
+                if (cellList != null && from != null)
+                {
+                    while (i < cellList.Count && !ReferenceEquals(cellList[i], from))
+                    {
+                        i++;
+                    }
+                }
+
+                if (cellList == null || i >= cellList.Count)
+                {
+                    return null;
+                }
+
+                reader._shadow = cellList;
+                reader._si = i + 1;
+
+                return cellList[i];
+            }
+
+            reader._merged = (merged || DynamicTileIndex.ListDropped) && chunk.Dynamic != null;
 
             if (!reader._merged)
             {
@@ -405,12 +555,100 @@ namespace ClassicUO.Game.Map
 
         public GameObject Next()
         {
+            if (_shadow != null)
+            {
+                return _si < _shadow.Count ? _shadow[_si++] : null;
+            }
+
             if (_merged)
             {
                 return _walk.Next();
             }
 
             return _cur = _cur?.TNext;
+        }
+    }
+
+    /// <summary>
+    /// T6b part 3, CUO_TILE_ORDER_CHECK with the list dropped (<see cref="DynamicTileIndex.Shadow"/>): per tile, every object
+    /// (land, statics, multis and the dynamics the list no longer holds) in the legacy list order. Kept by
+    /// <see cref="Chunk.AddGameObject"/> with the list's insertion rule applied verbatim (the scan from the head stops at the first
+    /// object with a higher stored priority, or an equal one when the new object is land, or a state-1 multi and the other is
+    /// not land; the new object goes there) and emptied by identity in <see cref="GameObject.RemoveFromTile"/>. It is an
+    /// independent copy of the old list, derived from neither the index nor the T6a key, so the checker still proves the
+    /// merged order equals the legacy order. Dev tooling only: one list per occupied tile.
+    /// </summary>
+    internal sealed class ShadowTileList
+    {
+        private readonly List<GameObject>[] _cells = new List<GameObject>[64];
+
+        public List<GameObject> Cell(int cell) => _cells[cell];
+
+        public void Add(GameObject obj, int cell, short priorityZ, sbyte state)
+        {
+            List<GameObject> list = _cells[cell] ??= new List<GameObject>(4);
+            int i = 0;
+
+            for (; i < list.Count; i++)
+            {
+                GameObject o = list[i];
+                int testPriorityZ = o.PriorityZ;
+
+                if (testPriorityZ > priorityZ || testPriorityZ == priorityZ && (state == 0 || state == 1 && !(o is Land)))
+                {
+                    break;
+                }
+            }
+
+            list.Insert(i, obj);
+        }
+
+        public bool Remove(GameObject obj, int cell)
+        {
+            List<GameObject> list = _cells[cell];
+
+            if (list == null)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < list.Count; i++)
+            {
+                if (ReferenceEquals(list[i], obj))
+                {
+                    list.RemoveAt(i);
+
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        public bool Contains(GameObject obj, int cell)
+        {
+            List<GameObject> list = _cells[cell];
+
+            if (list != null)
+            {
+                foreach (GameObject o in list)
+                {
+                    if (ReferenceEquals(o, obj))
+                    {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        public void Clear()
+        {
+            foreach (List<GameObject> list in _cells)
+            {
+                list?.Clear();
+            }
         }
     }
 }
