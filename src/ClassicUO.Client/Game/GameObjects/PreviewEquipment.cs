@@ -6,9 +6,9 @@ namespace ClassicUO.Game.GameObjects
 {
     /// <summary>
     /// T9 child-list slice A: the clothes of the character creation's detached preview mobile, by layer. The preview is no
-    /// world entity (no ECS record), so <c>Entity.FindItemByLayer</c> reads this table for it instead of the child list.
-    /// The gump wears at most one item per layer (it takes the old one off first); the first item worn on a layer is the
-    /// one found, as the list's first match was. <c>CUO_EQUIP_READ_CHECK</c> compares each read with the list.
+    /// world entity (no ECS record), so <c>Entity.FindItemByLayer</c> reads this table for it (slice B removed the child
+    /// list it replaced). The gump wears at most one item per layer (it takes the old one off first); the first item worn on
+    /// a layer is the one found, as the list's first match was.
     /// </summary>
     internal sealed class PreviewEquipment
     {

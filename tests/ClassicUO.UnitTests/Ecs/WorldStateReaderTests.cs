@@ -9,10 +9,8 @@ using Xunit;
 
 namespace ClassicUO.UnitTests.Ecs
 {
-    // T2 step 3: the child-list readers, which read the ECS through WorldState.Children (T9 deleted the list path). With
-    // CUO_CONTENTS_CHECK on (the builder turns it on in CUO_DEVTOOLS builds) every read is also compared with the World child
-    // list, which is still maintained; on a world whose child list was changed behind the funnel's back, the reader follows
-    // the ECS. The gumps (ContainerGump, GridLootGump, TradingGump, SpellbookGump, ItemGump),
+    // T2 step 3: the child-list readers, which read the ECS through WorldState.Children (T9 deleted the list path and, in
+    // child-list slice B, the list). The gumps (ContainerGump, GridLootGump, TradingGump, SpellbookGump, ItemGump),
     // the shop handlers (0x24's 0x30, 0x74), Profile's gump save and GetTotalAmountOfItem need the UI or the tile data: they
     // walk the same Children/HasChildren, and the gate runs them with the switch on.
     // (not in parallel with the mobile tests: the builders set the static Time.Ticks and RandomHelper seed)
@@ -48,9 +46,6 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.PlaceInContainer(GOLD1, 0xEED, 100, 11, 11, 0, PACK, out _);
             world.OPL.Add(ARROWS, 1, "arrows", "", ARROW_CLILOC);
 
-            world.State.CheckEnabled = true;
-            world.State.MismatchObserver = m => throw new InvalidOperationException(m);
-
             return world;
         }
 
@@ -76,19 +71,20 @@ namespace ClassicUO.UnitTests.Ecs
             foreach (uint serial in WorldStateContentsTests.Parents(world))
             {
                 Entity parent = world.Get(serial);
-                var off = new List<object>();
 
-                for (LinkedObject i = parent.Items; i != null; i = i.Next)
+                // T9 child-list slice B: the spell entries, then the children computed afresh from the mirror's indexes
+                var expected = new List<object>();
+
+                foreach (Item entry in world.State.SpellEntries(serial))
                 {
-                    off.Add(i);
+                    expected.Add(entry);
                 }
 
-                bool offAny = off.Count > 0;
+                expected.AddRange(WorldStateContentsTests.HeldChildren(world, serial).Select(s => (object)world.Items.Get(s)));
                 List<object> on = Walk(world, parent);
-                bool onAny = world.State.HasChildren(parent);
 
-                on.Should().Equal(off, (a, b) => ReferenceEquals(a, b), $"children of 0x{serial:X8}");
-                onAny.Should().Be(offAny);
+                on.Should().Equal(expected, (a, b) => ReferenceEquals(a, b), $"children of 0x{serial:X8}");
+                world.State.HasChildren(parent).Should().Be(expected.Count > 0);
             }
 
             // the book: its three spell entries (the legacy objects), then the scroll the server put in it
@@ -158,7 +154,6 @@ namespace ClassicUO.UnitTests.Ecs
         public void With_The_Switch_On_The_Readers_Follow_The_ECS(Reader reader)
         {
             World world = Build(out PlayerMobile p);
-            world.State.CheckEnabled = false;
             Item pack = world.Items.Get(PACK), bag = world.Items.Get(BAG);
             object onExpected;
             Func<object> read;
@@ -272,13 +267,9 @@ namespace ClassicUO.UnitTests.Ecs
             world.State.SpellEntries(BOOK).Length.Should().Be(0);
             Walk(world, book).Should().BeEmpty();
 
-            // a set without its hand-over (not FillSpellbook) gives no entries, and the check reports it
+            // a set without its hand-over (not FillSpellbook) gives no entries
             world.Ecs.Mirror.SetSpellbook(BOOK, 0b1);
             world.State.SpellEntries(BOOK).Length.Should().Be(0);
-            var reports = new List<string>();
-            world.State.MismatchObserver = reports.Add;
-            world.State.CheckParent(BOOK, "SpellbookGump");
-            reports.Should().HaveCount(WorldState.CheckAvailable ? 1 : 0);
 
             // the book removed: its set and entries are gone
             world.Writer.FillSpellbook(BOOK, 0xEFA, 0b1, 0);
@@ -290,7 +281,6 @@ namespace ClassicUO.UnitTests.Ecs
         public void A_Walk_Allocates_Nothing()
         {
             World world = Build(out PlayerMobile p);
-            world.State.CheckEnabled = false;
             Item pack = world.Items.Get(PACK);
 
             {

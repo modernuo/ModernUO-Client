@@ -1147,8 +1147,8 @@ namespace ClassicUO.Game
         }
 
         /// <summary>
-        /// The link half of <see cref="RemoveItemFromContainer(Item)"/>: the parent's gump, the parent's child list, the item's
-        /// list links and its tile. It writes no world state of the item (its Container stays as it is, and nothing syncs): the
+        /// The link half of <see cref="RemoveItemFromContainer(Item)"/>: the parent's gump and the item's tile (the parent's
+        /// child list went in T9: the children are the ECS's). It writes no world state of the item (its Container stays as it is, and nothing syncs): the
         /// caller writes the resulting Container itself (T1: <see cref="WorldWriter"/> computes it, commits it to the ECS and the
         /// cache, never reading it back).
         /// </summary>
@@ -1164,17 +1164,8 @@ namespace ClassicUO.Game
                 {
                     UIManager.GetGump<ContainerGump>(containerSerial)?.RequestUpdateContents();
                 }
-
-                Entity container = Get(containerSerial);
-
-                if (container != null)
-                {
-                    container.Remove(obj);
-                }
             }
 
-            obj.Next = null;
-            obj.Previous = null;
             obj.RemoveFromTile();
         }
 
@@ -1190,8 +1181,7 @@ namespace ClassicUO.Game
                 return false;
             }
 
-            // T9 child-list slice A: the children from the ECS, copied before the item leaves its container (where the list
-            // walk captured its head)
+            // T9 child-list slice A: the children from the ECS, copied before the item leaves its container
             using (ContentsSnapshot children = State.SnapshotChildren(item))
             {
                 RemoveItemFromContainer(item);
