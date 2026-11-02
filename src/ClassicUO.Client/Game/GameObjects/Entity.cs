@@ -387,10 +387,9 @@ namespace ClassicUO.Game.GameObjects
 
         /// <summary>
         /// The first item on <paramref name="layer"/> among the entity's children. T3a: for a mobile, the ECS's worn item
-        /// (<see cref="WorldState.WornItem"/>: WornLayers), under <c>CUO_EQUIP_READ_CHECK=1</c> compared with the list
-        /// (<see cref="WorldState.FindWorn"/>). Every equipment reader goes through here: IsMounted, the animation group's
-        /// hands, the abilities, the paperdoll, the layering rules, Legacy's MobileView. An item's (a corpse's laid
-        /// equipment) is its list.
+        /// (<see cref="WorldState.WornItem"/>: WornLayers). Every equipment reader goes through here: IsMounted, the animation
+        /// group's hands, the abilities, the paperdoll, the layering rules, Legacy's MobileView. An item's (a corpse's laid
+        /// equipment) is its first child on the layer in the ECS's child order (<see cref="WorldState.FindChild"/>).
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Item FindItemByLayer(Layer layer)
@@ -399,28 +398,11 @@ namespace ClassicUO.Game.GameObjects
             {
                 if (this is Mobile mobile)
                 {
-                    return state.EquipCheckEnabled ? state.FindWorn(mobile, layer) : state.WornItem(mobile, layer);
+                    return state.WornItem(mobile, layer);
                 }
 
                 // T9 child-list slice A: an item's (a corpse's) children from the ECS
                 return state.FindChild(this, layer);
-            }
-
-            return FindItemByLayerInList(layer);
-        }
-
-        /// <summary>The legacy read: the first non-destroyed child on <paramref name="layer"/> in the child list.</summary>
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        internal Item FindItemByLayerInList(Layer layer)
-        {
-            for (LinkedObject i = Items; i != null; i = i.Next)
-            {
-                Item it = (Item) i;
-
-                if (!it.IsDestroyed && it.Layer == layer)
-                {
-                    return it;
-                }
             }
 
             return null;

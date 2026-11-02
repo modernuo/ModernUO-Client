@@ -416,8 +416,6 @@ namespace ClassicUO.Game.GameObjects
                     {
                         return;
                     }
-
-                    bank.Items = null;
                 }
 
                 UIManager.GetGump<ContainerGump>(bank.Serial)?.Dispose();

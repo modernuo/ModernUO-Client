@@ -1201,9 +1201,20 @@ namespace ClassicUO.UnitTests.Ecs
             return spellbook;
         }
 
-        private static string SpellbookSnapshot(Item book)
+        // the book's children: the old path's own list, or (ecs, T9 child-list slice B: the funnel writes no list) the ECS's
+        private static string SpellbookSnapshot(Item book, bool ecs = false)
         {
             var sb = new System.Text.StringBuilder($"{book.Serial:X8} {book.Graphic:X4}:");
+
+            if (ecs)
+            {
+                foreach (Item it in book.World.State.Children(book))
+                {
+                    sb.Append($" {it.Serial}/{it.Graphic:X4}/{it.Amount}/{it.Container:X8}/{it.World == book.World}");
+                }
+
+                return sb.ToString();
+            }
 
             for (LinkedObject i = book.Items; i != null; i = i.Next)
             {
@@ -1237,11 +1248,11 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 Item a = null, b = null;
                 Pair(() => a = OldFillSpellbook(oldWorld, BOOK, graphic, s0, s1), () => b = newWorld.Writer.FillSpellbook(BOOK, graphic, s0, s1));
-                SpellbookSnapshot(b).Should().Be(SpellbookSnapshot(a));
+                SpellbookSnapshot(b, ecs: true).Should().Be(SpellbookSnapshot(a));
                 AssertSameWorld(oldWorld, newWorld);
             }
 
-            SpellbookSnapshot(newWorld.Items.Get(BOOK)).Should().EndWith($" 5/1F2E/5/{BOOK:X8}/True");
+            SpellbookSnapshot(newWorld.Items.Get(BOOK), ecs: true).Should().EndWith($" 5/1F2E/5/{BOOK:X8}/True");
             newWorld.Writer.Violations.Should().Be(0);
             newWorld.Writer.InScope.Should().BeFalse();
         }

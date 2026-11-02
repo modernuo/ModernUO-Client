@@ -37,26 +37,43 @@ namespace ClassicUO.UnitTests.Ecs
             return world;
         }
 
+        // T9 child-list slice B: the oracle without the child list. The parent's attached children (worn or contained, with a
+        // child-order stamp) computed afresh from the mirror's indexes, sorted by stamp: what the cached Contents must equal
+        // (a missed invalidation shows as a difference)
         internal static List<uint> HeldChildren(World world, uint parent)
         {
-            var list = new List<uint>();
-            Entity e = world.Get(parent);
+            var found = new List<(ulong Stamp, uint Serial)>();
 
-            for (LinkedObject i = e?.Items; i != null; i = i.Next)
+            foreach (Friflo.Engine.ECS.Entity e in world.Ecs.Mirror.GetContents(parent))
             {
-                if (i is Item it && ReferenceEquals(world.Items.Get(it.Serial), it))
-                {
-                    list.Add(it.Serial);
-                }
+                Add(e);
             }
 
-            return list;
+            foreach (Friflo.Engine.ECS.Entity e in world.Ecs.Mirror.GetEquipment(parent))
+            {
+                Add(e);
+            }
+
+            found.Sort();
+
+            return found.Select(f => f.Serial).ToList();
+
+            void Add(Friflo.Engine.ECS.Entity e)
+            {
+                ulong stamp = e.GetComponent<ItemData>().Stamp;
+                uint serial = e.GetComponent<Serial>().Value;
+
+                if (stamp != 0 && world.Items.Get(serial) != null)
+                {
+                    found.Add((stamp, serial));
+                }
+            }
         }
 
         internal static IEnumerable<uint> Parents(World world) =>
             world.Items.Values.Select(i => i.Serial).Concat(world.Mobiles.Values.Select(m => m.Serial)).ToList();
 
-        // every parent's contents equal its held child list (read twice: the second from the cache)
+        // every parent's contents equal its children computed afresh (read twice: the second from the cache)
         internal static void AllMatch(World world)
         {
             foreach (uint parent in Parents(world))
@@ -205,6 +222,10 @@ namespace ClassicUO.UnitTests.Ecs
 
             AllMatch(world);
         }
+
+        // every change but the mirror's clear
+        public static IEnumerable<object[]> Changes() =>
+            Enum.GetValues<Change>().Where(c => c != Change.MirrorClear).Select(c => new object[] { c });
 
         internal static void Apply(World world, Change change)
         {

@@ -236,7 +236,6 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
                 _character.Preview = new PreviewEquipment();
             }
 
-            _character.Clear();
             _character.Preview.Clear();
             _character.Race = race;
             _character.IsFemale = isFemale;
@@ -953,13 +952,8 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
             "origin"
         };
 
-        // T9 child-list slice A: the preview's clothes are read from its table (Mobile.Preview); the child list is still
-        // written until slice B
-        private void Wear(Item item)
-        {
-            _character.PushToBack(item);
-            _character.Preview.Wear(item);
-        }
+        // T9 child-list slice A: the preview's clothes are its table (Mobile.Preview)
+        private void Wear(Item item) => _character.Preview.Wear(item);
 
         private Item CreateItem(int id, ushort hue, Layer layer)
         {
@@ -967,7 +961,6 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
 
             if (existsItem != null)
             {
-                _character.Remove(existsItem);
                 _character.Preview.TakeOff(existsItem);
             }
 

@@ -406,7 +406,7 @@ namespace ClassicUO.Game
 
             using (Open(item, item))
             {
-                // the links only (the parent's gump and child list, the tile); the Container is written from v below
+                // the parent's gump and the tile; the Container is written from v below
                 if (unlink)
                 {
                     _world.UnlinkFromContainer(item, oldContainer);
@@ -560,8 +560,6 @@ namespace ClassicUO.Game
                     _world.HouseManager.Remove(serial);
                 }
 
-                parent?.Remove(item);
-
                 // by instance: if something replaced the item under its serial meanwhile, the replacement stays
                 if (ReferenceEquals(_world.Items.Get(serial), item))
                 {
@@ -680,14 +678,10 @@ namespace ClassicUO.Game
 
                 if (relink)
                 {
-                    // the links only (the old parent's gump and child list, the tile); the Container is written from v
+                    // the old parent's gump and the tile; the Container is written from v
                     _world.UnlinkFromContainer(item, oldContainer);
                     item.Container = v.Container;
                 }
-
-                // at the end of the container's child list, also when it already was there (the re-push; the commit above
-                // took its child-order stamp)
-                container.PushToBack(item);
             }
 
             // art_container_prefetch: an open container's new item starts its art decode on the workers (no world state)
@@ -700,9 +694,9 @@ namespace ClassicUO.Game
         /// 0x3C's bulk clear before its first item and 0x24 (OpenContainer) of a container that is not a corpse
         /// (<c>ClearContainerAndRemoveItems</c> before T1): removes every item in the container with its contents, or, with
         /// <paramref name="keepEquipped"/> (0x3C into a corpse), every item without a Layer, keeping the corpse's equipment in
-        /// its child list in order. A removal: it owns the removed subtrees and writes no value of its own (each removal's Sync
+        /// its child order. A removal: it owns the removed subtrees and writes no value of its own (each removal's Sync
         /// and Destroy run as in <see cref="RemoveWorldItem"/>, not folded: a corpse's removal queues it in the active-items
-        /// list as before). The container itself is not written (its child list only). Cancels the outstanding placements of
+        /// list as before). The container itself is not written. Cancels the outstanding placements of
         /// every removed item and its contents at any depth (the kept equipment and its contents keep theirs).
         /// </summary>
         /// <param name="itemOnly">How the container is found, as each handler found it before T1: 0x24 by
@@ -748,18 +742,17 @@ namespace ClassicUO.Game
                 }
 #endif
 
-                // T9 child-list slice A: the children copied while the ECS and the list still agree (before the spell set
-                // below is dropped)
+                // T9 child-list slice A: the children copied before any removal changes them
                 using ContentsSnapshot children = _world.State.SnapshotChildren(container);
 
-                // T2: the clear also drops a spellbook's detached spell entries (not world objects: RemoveItem skips them,
-                // the head below drops them); committed first
+                // T2: the clear also drops a spellbook's detached spell entries (not world objects: RemoveItem skips them);
+                // committed first
                 if (!keepEquipped && container is Item book && _world.Ecs.Mirror.Spellbook(book.Serial) != 0)
                 {
                     _world.Ecs.CommitSpellbook(book, 0);
                 }
 
-                // the old loop: each removal by serial in child order (World.RemoveItem: out of the child list, the
+                // the old loop: each removal by serial in child order (World.RemoveItem: out of its container, the
                 // contents, OPL, Destroy). The spell entries are no world items (RemoveItem skipped them): the copy of the
                 // ECS contents leaves them out
                 foreach (uint serial in children.Serials)
@@ -771,22 +764,6 @@ namespace ClassicUO.Game
                         _world.RemoveItem(serial, true);
                     }
                 }
-
-                // the list's head (list upkeep, goes in T9 slice B): the kept equipment's links are untouched and the head
-                // is the first kept one, the first child left with a Layer
-                LinkedObject newFirst = null;
-
-                for (LinkedObject i = keepEquipped ? container.Items : null; i != null; i = i.Next)
-                {
-                    if (((Item)i).Layer != 0)
-                    {
-                        newFirst = i;
-
-                        break;
-                    }
-                }
-
-                container.Items = newFirst;
             }
         }
 
@@ -930,7 +907,6 @@ namespace ClassicUO.Game
                 {
                     case HeldItemReturn.Paperdoll:
                         _world.UnlinkFromContainer(item, oldContainer);
-                        container.PushToBack(item);
                         item.Container = v.Container;
 
                         break;
@@ -1026,22 +1002,14 @@ namespace ClassicUO.Game
             {
                 if (unlink)
                 {
-                    // the old RemoveItemFromContainer: the links, then its Sync of the detached state
+                    // the old RemoveItemFromContainer: the gump and tile, then its Sync of the detached state
                     _world.UnlinkFromContainer(item, oldContainer);
                     _world.Ecs.CommitItem(item, in detached);
                 }
-                else if (oldContainer != containerSerial)
-                {
-                    // Behaviour fix (Codex audit P2 #2; legacy ClassicUO and the base have the same quirk): a backpack (or an
-                    // item without a graphic) keeps its link, and the new wearer's PushToBack below unlinks it only through its
-                    // neighbours, so as its old parent's first child it stayed that parent's list head (the backpack and the
-                    // old parent's other children lost). It leaves its old parent's list here; the gumps of the old container
-                    // are refreshed by the handler (shownContainer), and the mirror already moves its attachment.
-                    _world.Get(oldContainer)?.Remove(item);
-                }
 
-                // 3. write: the ECS (attached when there is a wearer to link it to; without one an orphan, T1 part 9), then
-                // the cache from v in the old order, then the link
+                // 3. write: the ECS (attached when there is a wearer; without one an orphan, T1 part 9), then the cache from
+                // v in the old order. A backpack (or an item without a graphic) that changes parent moves its attachment
+                // in the mirror; its old container's gumps are refreshed by the handler (shownContainer)
                 _world.Ecs.CommitItem(item, in v, attach: wearer != null);
 
                 item.Graphic = v.Graphic;
@@ -1049,8 +1017,6 @@ namespace ClassicUO.Game
                 item.Container = v.Container;
                 item.Hue = v.Hue;
                 item.Amount = v.Amount;
-
-                wearer?.PushToBack(item);
             }
 
             return item;
@@ -1219,9 +1185,8 @@ namespace ClassicUO.Game
                     item.Layer = v.Layer;
                 }
 
-                // 4. derived state where CheckGraphicChange ran it, then the link
+                // 4. derived state where CheckGraphicChange ran it
                 item.RefreshGraphicState();
-                owner.PushToBack(item);
             }
 
             return item;
@@ -2469,7 +2434,6 @@ namespace ClassicUO.Game
                 _world.Ecs.CommitSpellbook(spellbook, spells0 | ((ulong)spells1 << 32));
 
                 spellbook.Graphic = graphic;
-                spellbook.Clear();
                 _world.Ecs.Sync(spellbook);
 
                 for (int j = 0; j < 2; j++)
@@ -2486,7 +2450,6 @@ namespace ClassicUO.Game
                             spellItem.Graphic = 0x1F2E;
                             spellItem.Amount = cc;
                             spellItem.Container = spellbook;
-                            spellbook.PushToBack(spellItem);
                             _spellEntries.Add(spellItem);
                         }
                     }
@@ -2508,16 +2471,16 @@ namespace ClassicUO.Game
         private readonly List<Item> _sorted = new List<Item>();
 
         /// <summary>
-        /// 0x74 (BuyList) for a shop container with graphic 0x2AF8: the client sorts its child list by X (the original
-        /// client's hard-coded order; <c>SortContents</c>, a stable merge sort). T1 part 9: the new order is computed first
-        /// (stable, by X), each child World holds re-stamped in it (the mirror's child order follows), then the list sorted as
-        /// before. Returns the list's new first child (null for an empty list, or a nested call: rejected, nothing sorted).
+        /// 0x74 (BuyList) for a shop container with graphic 0x2AF8: the client sorts its children by X (the original
+        /// client's hard-coded order; before T9 <c>SortContents</c>, a stable merge sort of the child list). The new order is
+        /// computed (stable, by X) and each child World holds re-stamped in it: the mirror's child order is the sorted order.
+        /// A nested call is rejected (nothing sorted).
         /// </summary>
-        public LinkedObject SortShopContents(Item container)
+        public void SortShopContents(Item container)
         {
             if (container == null || !Admitted(nameof(SortShopContents), container.Serial))
             {
-                return null;
+                return;
             }
 
             using (Open(container, null))
@@ -2538,16 +2501,13 @@ namespace ClassicUO.Game
                     _sorted.Insert(at, it);
                 }
 
-                // 3. the ECS, then the links
+                // 3. the ECS
                 foreach (Item it in _sorted)
                 {
                     _world.Ecs.CommitChildOrder(it);
                 }
 
-                LinkedObject first = container.SortContents<Item>((x, y) => x.X - y.X);
                 _sorted.Clear();
-
-                return first;
             }
         }
 
@@ -2710,14 +2670,13 @@ namespace ClassicUO.Game
             // so the two commits are the only ECS writes, as the old two Syncs were
             using (Open(item, null))
             {
-                // the old order: the unlink (gump refresh, list links, tile), the detached state's Sync, then the final one
+                // the old order: the unlink (gump refresh, tile), the detached state's Sync, then the final one
                 _world.UnlinkFromContainer(item, oldContainer);
                 _world.Ecs.CommitItem(item, in detached);
                 _world.Ecs.CommitItem(item, in v, attach: true);
 
                 item.Container = v.Container;
                 item.Layer = v.Layer;
-                corpse.PushToBack(item);
             }
 
             return item;
@@ -2730,7 +2689,7 @@ namespace ClassicUO.Game
         /// while the server's corpse item takes the old serial's place). Before T1: out of the mobiles table under its serial,
         /// each child's Container to the new serial, into the table under the new serial (replacing whatever was there, as
         /// before: an earlier death's re-keyed mobile is not removed), the new Serial, then
-        /// <see cref="WorldEcs.OnSerialChanged"/> (the old entity removed, the new one synced with the mirror bit carried over,
+        /// <c>WorldEcs.OnSerialChanged</c> (removed in T9; the old entity removed, the new one synced with the mirror bit carried over,
         /// then each child synced). Since funnel part 9 the ECS commit takes its values and runs first, as every other
         /// operation's: <see cref="WorldEcs.CommitRekey"/> (the old record removed, the record under the new serial from the
         /// computed <see cref="MobileState"/>, the mirror bit carried over), then each child's <see cref="WorldEcs.CommitItem"/>
@@ -3624,7 +3583,6 @@ namespace ClassicUO.Game
             }
 
             parent = _world.Get(item.Container);
-            parent?.Remove(item);
             _world.RemoveItem(serial, true);
         }
 

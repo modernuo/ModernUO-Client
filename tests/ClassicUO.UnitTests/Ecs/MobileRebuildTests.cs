@@ -519,7 +519,8 @@ namespace ClassicUO.UnitTests.Ecs
             var world = new World();
             var owner = new Mobile(world, MOBILE);
             var mount = new Item(world) { Serial = 0x4000_0001, Graphic = MOUNT, Layer = Layer.Mount };
-            owner.Insert(owner.Items, mount);
+            owner.Preview = new PreviewEquipment();
+            owner.Preview.Wear(mount);
 
             // the mirror holds no mount (not yet synced): the Mobile decides
             WorldMirror mirror = NewMirror(out Entity mobile);
@@ -546,12 +547,14 @@ namespace ClassicUO.UnitTests.Ecs
             MobileAnimationSystem.IsMounted(m, _tiles).Should().BeFalse("no mount item");
 
             var tiller = new Item(world) { Serial = 0x4000_0001, Graphic = TILLER, Layer = Layer.Mount };
-            m.Insert(m.Items, tiller);
+            m.Preview = new PreviewEquipment();
+            m.Preview.Wear(tiller);
             MobileAnimationSystem.IsMounted(m, _tiles).Should().BeFalse("a boat's tiller");
 
             var m2 = new Mobile(world, MOBILE + 1);
             var horse = new Item(world) { Serial = 0x4000_0002, Graphic = MOUNT, Layer = Layer.Mount };
-            m2.Insert(m2.Items, horse);
+            m2.Preview = new PreviewEquipment();
+            m2.Preview.Wear(horse);
             MobileAnimationSystem.IsMounted(m2, _tiles).Should().BeTrue();
 
             _tiles[MOUNT].AnimID = 0xFFFF;
@@ -571,7 +574,8 @@ namespace ClassicUO.UnitTests.Ecs
         {
             var world = new World();
             var m = new Mobile(world, MOBILE);
-            m.Insert(m.Items, new Item(world) { Serial = 0, Graphic = MOUNT, Layer = Layer.Mount });
+            m.Preview = new PreviewEquipment();
+            m.Preview.Wear(new Item(world) { Serial = 0, Graphic = MOUNT, Layer = Layer.Mount });
 
             MobileAnimationSystem.IsMounted(m, _tiles).Should().BeFalse();
 

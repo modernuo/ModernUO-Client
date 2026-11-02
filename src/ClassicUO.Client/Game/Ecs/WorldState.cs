@@ -2,9 +2,7 @@
 
 using System;
 using System.Collections.Generic;
-using System.Text;
 using ClassicUO.Game.GameObjects;
-using ClassicUO.Utility.Logging;
 
 namespace ClassicUO.Game
 {
@@ -19,237 +17,28 @@ namespace ClassicUO.Game
         public WorldState(World world)
         {
             _world = world;
-#if CUO_DEVTOOLS
-            CheckEnabled = ContentsCheckFromEnv;
-            EquipCheckEnabled = EquipCheckFromEnv;
-#endif
         }
 
         /// <summary>
         /// T2: the serials of the parent's attached children (worn or contained) in child order: arrival order, a re-push to
         /// the back, as ClassicUO's <c>LinkedObject</c> list. Orphans (a child that arrived before its parent) and the
         /// spellbook's detached spell entries (<see cref="Spellbook"/>) are not in it. Valid until the parent's contents
-        /// change; no allocation. With <c>CUO_CONTENTS_CHECK=1</c> every read is compared with the child list.
+        /// change; no allocation.
         /// </summary>
-        public ReadOnlySpan<uint> Contents(uint parent)
-        {
-            ReadOnlySpan<uint> contents = _world.Ecs.Mirror.Contents(parent);
-#if CUO_DEVTOOLS
-            if (CheckEnabled)
-            {
-                ContentsReads++;
-                Compare(_world.Get(parent), SpellEntries(parent), contents, "read", parent);
-            }
-#endif
-
-            return contents;
-        }
+        public ReadOnlySpan<uint> Contents(uint parent) => _world.Ecs.Mirror.Contents(parent);
 
         /// <summary>
         /// T2: the spell set of a spellbook's 0xBF.1B content (bit i = spell i + 1; 0 for none). ClassicUO keeps it as
-        /// detached entries (serial and amount i + 1, graphic 0x1F2E) at the front of the book's child list.
+        /// detached entries (serial and amount i + 1, graphic 0x1F2E) enumerated first by <see cref="Children"/>.
         /// </summary>
         public ulong Spellbook(uint book) => _world.Ecs.Mirror.Spellbook(book);
 
-        // ---- CUO_CONTENTS_CHECK (CUO_DEVTOOLS builds only): at every Contents read, and every frame for each open container
-        // gump, the ECS enumeration (the spell entries, then Contents) must equal the World child list: the same serials in
-        // the same order. CLEANUP(release): goes with the container half of the child list (T9).
-#if CUO_DEVTOOLS
-        public const bool CheckAvailable = true;
-
-        public static readonly bool ContentsCheckFromEnv = Environment.GetEnvironmentVariable("CUO_CONTENTS_CHECK") == "1";
-
-        private const int MAX_LOGGED_MISMATCHES = 25;
-
-        /// <summary>The checker is on (from <c>CUO_CONTENTS_CHECK=1</c>; tests set it per World).</summary>
-        public bool CheckEnabled;
-
-        /// <summary>Checker counts: reads compared, per-frame gump comparisons, mismatches found.</summary>
-        public long ContentsReads, GumpChecks, Mismatches;
-
-        /// <summary>Tests: sees each mismatch report.</summary>
-        internal Action<string> MismatchObserver;
-
-        private readonly List<uint> _list = new List<uint>();
-        private readonly List<uint> _ecs = new List<uint>();
-        private uint _logAt;
-        private long _loggedReads = -1, _loggedGumps = -1;
-
-        /// <summary>Compares one parent's ECS enumeration with its World child list (no-op unless <see cref="CheckEnabled"/>).</summary>
-        public void CheckParent(uint parent, string where)
-        {
-            if (CheckEnabled)
-            {
-                Compare(_world.Get(parent), SpellEntries(parent), _world.Ecs.Mirror.Contents(parent), where, parent);
-            }
-        }
-
-        // the ECS enumeration Children returns with the switch on (the spell entries, then the contents) against the parent's
-        // World child list; the spell entries must also be the mirror's spell set (bit i: serial and amount i + 1)
-        private void Compare(Entity e, ReadOnlySpan<Item> spellEntries, ReadOnlySpan<uint> contents, string where, uint parent = 0)
-        {
-            _list.Clear();
-            _ecs.Clear();
-            parent = e?.Serial ?? parent;
-
-            for (LinkedObject i = e?.Items; i != null; i = i.Next)
-            {
-                _list.Add(i is Entity child ? child.Serial : 0);
-            }
-
-            ulong spells = _world.Ecs.Mirror.Spellbook(parent);
-            int bit = 0;
-            int entries = 0;
-
-            foreach (Item entry in spellEntries)
-            {
-                while (bit < 64 && (spells & (1UL << bit)) == 0)
-                {
-                    bit++;
-                }
-
-                // an entry that is not the set's next spell shows as serial 0 (a mismatch)
-                _ecs.Add(bit < 64 && entry.Serial == (uint)(bit + 1) && entry.Amount == bit + 1 ? entry.Serial : 0);
-                bit++;
-                entries++;
-            }
-
-            // the set's spells without an entry (FillSpellbook's hand-over missing) are a mismatch
-            if (entries != System.Numerics.BitOperations.PopCount(spells))
-            {
-                _ecs.Add(0);
-            }
-
-            foreach (uint s in contents)
-            {
-                _ecs.Add(s);
-            }
-
-            bool same = _list.Count == _ecs.Count;
-
-            for (int i = 0; same && i < _list.Count; i++)
-            {
-                same = _list[i] == _ecs[i];
-            }
-
-            if (same)
-            {
-                return;
-            }
-
-            Mismatches++;
-            var sb = new StringBuilder();
-            sb.Append($"[contents] mismatch ({where}) children of 0x{parent:X8}: World");
-
-            foreach (uint s in _list)
-            {
-                sb.Append($" 0x{s:X8}");
-            }
-
-            sb.Append(" | ECS");
-
-            foreach (uint s in _ecs)
-            {
-                sb.Append($" 0x{s:X8}");
-            }
-
-            string message = sb.ToString();
-            MismatchObserver?.Invoke(message);
-
-            if (Mismatches <= MAX_LOGGED_MISMATCHES)
-            {
-                Log.Warn(message);
-            }
-        }
-
-        /// <summary>
-        /// Every frame (World.Update, through WorldEcs.Update): each open container gump's parent (ContainerGump,
-        /// GridLootGump, SpellbookGump, both sides of a TradingGump), then a summary every 5 s while the counts change.
-        /// </summary>
-        public void CheckOpenContainers()
-        {
-            if (!CheckEnabled)
-            {
-                return;
-            }
-
-            for (LinkedListNode<UI.Gumps.Gump> n = Managers.UIManager.Gumps.First; n != null; n = n.Next)
-            {
-                UI.Gumps.Gump g = n.Value;
-
-                if (g.IsDisposed)
-                {
-                    continue;
-                }
-
-                switch (g)
-                {
-                    case UI.Gumps.ContainerGump:
-                    case UI.Gumps.GridLootGump:
-                    case UI.Gumps.SpellbookGump:
-                        GumpChecks++;
-                        CheckParent(g.LocalSerial, g.GetType().Name);
-
-                        break;
-
-                    case UI.Gumps.TradingGump t:
-                        GumpChecks += 2;
-                        CheckParent(t.ID1, "TradingGump");
-                        CheckParent(t.ID2, "TradingGump");
-
-                        break;
-                }
-            }
-
-            if (Time.Ticks >= _logAt && (ContentsReads != _loggedReads || GumpChecks != _loggedGumps))
-            {
-                _logAt = Time.Ticks + 5000;
-                _loggedReads = ContentsReads;
-                _loggedGumps = GumpChecks;
-                LogSummary();
-            }
-        }
-
-        public void LogSummary()
-        {
-            ClassicUO.Ecs.WorldMirror m = _world.Ecs.Mirror;
-            Log.Info($"[contents] checks reads={ContentsReads} gumps={GumpChecks} mismatches={Mismatches} | cached parents={m.CachedContentsParents} builds={m.ContentsBuilds} invalidations={m.ContentsInvalidations} cache bytes={m.ContentsCacheBytes} | spell books={SpellEntryBooks} bytes={SpellEntriesBytes}");
-        }
-#else
-        // release builds: no checker (the tests skip what needs it)
-        public const bool CheckAvailable = false;
-
-        public bool CheckEnabled
-        {
-            get => false;
-            set { }
-        }
-
-        public long ContentsReads => 0;
-
-        public long GumpChecks => 0;
-
-        public long Mismatches => 0;
-
-        internal Action<string> MismatchObserver
-        {
-            get => null;
-            set { }
-        }
-
-        public void CheckParent(uint parent, string where) { }
-
-        public void CheckOpenContainers() { }
-#endif
-
-        // ---- T2 readers: the child-list readers (container, grid loot, trade and spellbook gumps, the shop's lists, FindItem*,
-        // the counters, macros) walk Children(parent), the ECS enumeration. The child list is still maintained (dual) until T9
-        // removes its container half; CUO_CONTENTS_CHECK compares the two.
+        // ---- T2 readers: the child readers (container, grid loot, trade and spellbook gumps, the shop's lists, FindItem*,
+        // the counters, macros) walk Children(parent), the ECS enumeration. T9 removed the entity child list they replaced.
 
         /// <summary>
         /// T2: the parent's children, in child order, from the ECS (a spellbook's spell entries, then <see cref="Contents"/>).
-        /// Under <c>CUO_CONTENTS_CHECK</c> each call compares them with the World child list. A reader must not change the
-        /// parent's contents while it walks them (no reader does).
+        /// A reader must not change the parent's contents while it walks them (no reader does).
         /// </summary>
         public ChildList Children(Entity parent)
         {
@@ -260,83 +49,47 @@ namespace ClassicUO.Game
 
             // Codex audit P1: the ECS keys contents by serial, so an instance that is not the entity World holds for its
             // serial (a spellbook's detached spell entry, serial 1-64, which can be a real mobile's; a destroyed or replaced
-            // object) must not read that entity's contents: it is a leaf, unchecked
+            // object) must not read that entity's contents: it is a leaf
             if (!IsCurrent(parent))
             {
                 return default;
             }
 
-            if (Shared(parent))
-            {
-                return new ChildList(_world, default, ListSerials(parent));
-            }
-
-            ReadOnlySpan<uint> contents = _world.Ecs.Mirror.Contents(parent.Serial);
-            ReadOnlySpan<Item> spells = SpellEntries(parent.Serial);
-#if CUO_DEVTOOLS
-            if (CheckEnabled)
-            {
-                ContentsReads++;
-                Compare(parent, spells, contents, "read");
-            }
-#endif
-
-            return new ChildList(_world, spells, contents);
-        }
-
-        // T9 child-list slice A: an item and a mobile World holds under one serial (a fixture's or a server's reuse). The ECS
-        // keys contents by serial and records any child of a mobile-range serial as worn, so it cannot tell the item's
-        // children from the mobile's: that parent's walks read its own list (held children only; allocates, rare). Slice B
-        // must decide this case before the list goes.
-        internal bool Shared(Entity parent) => _world.Items.Get(parent.Serial) != null && _world.Mobiles.Get(parent.Serial) != null;
-
-        private uint[] ListSerials(Entity parent)
-        {
-            int n = 0;
-
-            for (LinkedObject i = parent.Items; i != null; i = i.Next)
-            {
-                n++;
-            }
-
-            uint[] serials = new uint[n];
-            n = 0;
-
-            for (LinkedObject i = parent.Items; i != null; i = i.Next)
-            {
-                if (i is Item it && ReferenceEquals(_world.Items.Get(it.Serial), it))
-                {
-                    serials[n++] = it.Serial;
-                }
-            }
-
-            return n == serials.Length ? serials : serials.AsSpan(0, n).ToArray();
+            // T9 child-list slice B: an item and a mobile World holds under one serial (the unconverted EquipItem path can
+            // make one) read the same, merged contents: the mirror keeps one record per serial and cannot tell their
+            // children apart. The item is never its own child (it can be worn by the mobile under its serial): skipped, so
+            // the recursive readers and the destroy cascade do not loop
+            return new ChildList(_world, SpellEntries(parent.Serial), _world.Ecs.Mirror.Contents(parent.Serial), parent as Item);
         }
 
         /// <summary>
-        /// T9 slice A: <see cref="SnapshotContents"/> for an entity World holds; an item and a mobile under one serial copy
-        /// the entity's own list (see <see cref="Shared"/>).
+        /// T9 child-list slices A and B: <see cref="SnapshotContents"/> of an entity's children, as <see cref="Children"/>
+        /// gives them without the spell entries: an item never lists itself (the shared-serial case, see <see cref="Children"/>).
         /// </summary>
         public ContentsSnapshot SnapshotChildren(Entity parent)
         {
-            if (!Shared(parent))
-            {
-                return SnapshotContents(parent.Serial);
-            }
-
-            uint[] list = ListSerials(parent);
+            ReadOnlySpan<uint> contents = Contents(parent.Serial);
+            bool item = parent is Item;
             int start = _snapshotTop;
-            int end = start + list.Length;
 
-            if (end > _snapshots.Length)
+            if (start + contents.Length > _snapshots.Length)
             {
-                Array.Resize(ref _snapshots, Math.Max(end, _snapshots.Length * 2));
+                Array.Resize(ref _snapshots, Math.Max(start + contents.Length, _snapshots.Length * 2));
             }
 
-            list.CopyTo(_snapshots, start);
-            _snapshotTop = end;
+            int n = 0;
 
-            return new ContentsSnapshot(this, start, new ReadOnlySpan<uint>(_snapshots, start, list.Length));
+            foreach (uint serial in contents)
+            {
+                if (!(item && serial == parent.Serial))
+                {
+                    _snapshots[start + n++] = serial;
+                }
+            }
+
+            _snapshotTop = start + n;
+
+            return new ContentsSnapshot(this, start, new ReadOnlySpan<uint>(_snapshots, start, n));
         }
 
         // the instance World holds for the entity's serial (the one the ECS's record under that serial stands for)
@@ -365,8 +118,7 @@ namespace ClassicUO.Game
         private int _snapshotTop;
 
         /// <summary>
-        /// T9 slice A: a copy of <see cref="Contents"/> (checked like it under <c>CUO_CONTENTS_CHECK</c>), for a walk that
-        /// changes the parent's contents. Dispose it (a <c>using</c>) in reverse order of taking.
+        /// T9 slice A: a copy of <see cref="Contents"/>, for a walk that changes the parent's contents. Dispose it (a <c>using</c>) in reverse order of taking.
         /// </summary>
         public ContentsSnapshot SnapshotContents(uint parent)
         {
@@ -476,8 +228,7 @@ namespace ClassicUO.Game
         /// measured): the dictionary (<see cref="ClassicUO.Ecs.WorldMirror.DictionaryBytes"/>: object, 8-aligned buckets,
         /// entries 24 B per slot, the ValueCollection <c>.Values</c> keeps), each set 40 B with its Item[] 24 B + 8 B per
         /// slot, and WorldWriter's permanent spell-entry scratch list (List 32 B + its Item[64] 24 + 512 B = 568 B; a book
-        /// has at most 64 spells, so it never grows). The entries' Item objects are not counted: the book's child list holds
-        /// the same objects until T9 (Codex audit round 2: alignment, the ValueCollection and the scratch list were missing).
+        /// has at most 64 spells, so it never grows). The entries' Item objects are not counted (Codex audit round 2: alignment, the ValueCollection and the scratch list were missing).
         /// </summary>
         public long SpellEntriesBytes
         {
@@ -529,15 +280,20 @@ namespace ClassicUO.Game
         private readonly World _world;
         private readonly ReadOnlySpan<Item> _spells;
         private readonly ReadOnlySpan<uint> _contents;
+        private readonly Item _self;
 
-        public ChildList(World world, ReadOnlySpan<Item> spells, ReadOnlySpan<uint> contents)
+        /// <param name="self">T9 child-list slice B: an item parent, skipped among its contents (an item under a mobile's
+        /// serial, worn by that mobile, is in the merged contents of that serial); null for a mobile.</param>
+        public ChildList(World world, ReadOnlySpan<Item> spells, ReadOnlySpan<uint> contents, Item self)
         {
             _world = world;
             _spells = spells;
             _contents = contents;
+            _self = self;
         }
 
-        public bool IsEmpty => _spells.IsEmpty && _contents.IsEmpty;
+        public bool IsEmpty =>
+            _spells.IsEmpty && (_contents.IsEmpty || _self != null && _contents.Length == 1 && _contents[0] == _self.Serial);
 
         public Enumerator GetEnumerator() => new Enumerator(this);
 
@@ -546,6 +302,7 @@ namespace ClassicUO.Game
             private readonly World _world;
             private readonly ReadOnlySpan<Item> _spells;
             private readonly ReadOnlySpan<uint> _contents;
+            private readonly Item _self;
             private int _index;
 
             public Enumerator(ChildList list)
@@ -553,6 +310,7 @@ namespace ClassicUO.Game
                 _world = list._world;
                 _spells = list._spells;
                 _contents = list._contents;
+                _self = list._self;
                 _index = 0;
                 Current = null;
             }
@@ -572,7 +330,7 @@ namespace ClassicUO.Game
                 {
                     Item it = _world.Items.Get(_contents[_index++ - _spells.Length]);
 
-                    if (it != null)
+                    if (it != null && !ReferenceEquals(it, _self))
                     {
                         Current = it;
 

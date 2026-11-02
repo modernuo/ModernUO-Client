@@ -48,9 +48,6 @@ namespace ClassicUO.UnitTests.Ecs
                 world.State.HasChildren(entry).Should().BeFalse();
                 world.State.Children(entry).IsEmpty.Should().BeTrue();
             });
-
-            // the checker (on in Build: a mismatch throws) compared nothing for the entry
-            world.State.Mismatches.Should().Be(0);
         }
 
         [Fact]
@@ -74,8 +71,6 @@ namespace ClassicUO.UnitTests.Ecs
                 world.Items.Get(R.PACK).GetTotalAmount(0x1415, null, ref n);
                 n.Should().Be(0);
             });
-
-            world.State.Mismatches.Should().Be(0);
         }
 
         [Fact]
@@ -84,13 +79,10 @@ namespace ClassicUO.UnitTests.Ecs
             // an object World no longer holds for its serial does not read the current one's contents: a leaf
             World world = R.Build(out _);
             Item stale = Item.Create(world, R.BAG);
-            Item own = Item.Create(world, 0x4000_7A31);
-            stale.PushToBack(own);
-            world.Items.Get(R.BAG).Items.Should().NotBeNull();
+            world.State.HasChildren(world.Items.Get(R.BAG)).Should().BeTrue();
 
             R.Walk(world, stale).Should().BeEmpty();
             world.State.HasChildren(stale).Should().BeFalse();
-            world.State.Mismatches.Should().Be(0);
         }
 
         [Fact]
@@ -114,13 +106,11 @@ namespace ClassicUO.UnitTests.Ecs
         public void A_Rekey_Onto_An_Occupied_Dead_Serial_Drops_The_Displaced_Children(bool warm, bool incomingWorn)
         {
             World world = WorldStateContentsTests.Build();
-            world.State.CheckEnabled = true;
-            world.State.MismatchObserver = m => throw new InvalidOperationException(m);
 
             // the first death: MOB's worn items go with it to DEAD
             world.Writer.RekeyDeadMobile(world.Mobiles.Get(MOB)).Should().Be(DEAD);
             Mobile displaced = world.Mobiles.Get(DEAD);
-            displaced.Items.Should().NotBeNull();
+            world.State.HasChildren(displaced).Should().BeTrue();
 
             if (warm)
             {
@@ -165,7 +155,6 @@ namespace ClassicUO.UnitTests.Ecs
         public void The_Spell_Entries_Go_With_The_Book_Without_Another_Read(BookGone how)
         {
             World world = R.Build(out PlayerMobile p);
-            world.State.CheckEnabled = false;
             uint book = R.BOOK;
 
             if (how == BookGone.Bank)
@@ -238,39 +227,6 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.FillSpellbook(R.BOOK, 0xEFA, 0b110, 0);
             world.State.SpellEntryBooks.Should().Be(1);
             world.State.SpellEntries(R.BOOK).ToArray().Select(i => i.Serial).Should().Equal(2u, 3u);
-        }
-
-        // ---- (6) the divergences through every read, both ways
-
-        [Theory]
-        [InlineData(WorldStateCheckTests.Divergence.ChildOrder)]
-        [InlineData(WorldStateCheckTests.Divergence.StrayChild)]
-        [InlineData(WorldStateCheckTests.Divergence.MissingChild)]
-        [InlineData(WorldStateCheckTests.Divergence.MirrorDetach)]
-        [InlineData(WorldStateCheckTests.Divergence.MirrorRestamp)]
-        [InlineData(WorldStateCheckTests.Divergence.SpellSet)]
-        [InlineData(WorldStateCheckTests.Divergence.SpellEntriesDropped)]
-        public void A_Divergence_Is_Reported_By_Children_And_HasChildren_Both_Ways(WorldStateCheckTests.Divergence divergence)
-        {
-            if (!WorldState.CheckAvailable)
-            {
-                return;
-            }
-
-            (World world, List<string> reports, uint parent) = WorldStateCheckTests.Diverged(divergence);
-            Entity e = world.Get(parent);
-            string prefix = $"(read) children of 0x{parent:X8}";
-            int n = 0;
-
-            R.Walk(world, e);
-            reports.Should().HaveCount(++n, "Children");
-            reports[^1].Should().Contain(prefix);
-
-            world.State.HasChildren(e);
-            reports.Should().HaveCount(++n, "HasChildren");
-            reports[^1].Should().Contain(prefix);
-
-            world.State.Mismatches.Should().Be(n);
         }
     }
 }

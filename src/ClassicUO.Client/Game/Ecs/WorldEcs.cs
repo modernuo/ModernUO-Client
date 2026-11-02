@@ -784,7 +784,7 @@ namespace ClassicUO.Game
         /// under <paramref name="oldSerial"/> removed, the mobile's record written under <see cref="MobileState.Serial"/>, the
         /// persistent mirror bit carried over (the Mobile keeps IsFlipped). The children follow with <see cref="CommitItem"/>,
         /// the inputs and clock with <see cref="CommitMobileInputs(Mobile, EcsEntity)"/> after the cache writes. Writes what
-        /// <see cref="OnSerialChanged"/> wrote without reading the serial or the table back: the mobile must be the one World
+        /// the old <c>OnSerialChanged</c> wrote without reading the serial or the table back: the mobile must be the one World
         /// holds under <paramref name="oldSerial"/>; a destroyed one only loses its old record, as Sync skipped it.
         /// </summary>
         /// <returns>The new entity (a null entity when no record was written).</returns>
@@ -824,44 +824,6 @@ namespace ClassicUO.Game
             return e;
         }
 
-        // Death re-keys a mobile to serial | 0x80000000 and repoints its items (before T1; the tests' old-path copies).
-        public void OnSerialChanged(uint oldSerial, Entity entity)
-        {
-            // the Mobile keeps IsFlipped across the re-key; so must the persistent mirror bit
-            AnimStateFlags keep = 0;
-
-            if (Mirror.TryGetEntity(oldSerial, out EcsEntity old) && old.HasComponent<AnimationState>())
-            {
-                keep = old.GetComponent<AnimationState>().Flags & AnimStateFlags.Mirror;
-            }
-
-            Mirror.TryGetExtras(oldSerial, out MirrorExtras extras);
-            Mirror.Remove(oldSerial);
-            Sync(entity);
-
-            if (Mirror.TryGetEntity(entity.Serial, out _) && !entity.IsDestroyed)
-            {
-                Mirror.CarryMobileExtras(in extras, entity.Serial);
-            }
-
-            if (keep != 0 && Mirror.TryGetEntity(entity.Serial, out EcsEntity rekeyed) && rekeyed.HasComponent<AnimationState>())
-            {
-                rekeyed.GetComponent<AnimationState>().Flags |= keep;
-            }
-
-            // each child's Sync takes its new Container (a new parent: detached); the list kept its order, so the children are
-            // re-stamped in it
-            for (LinkedObject i = entity.Items; i != null; i = i.Next)
-            {
-                Sync(i as Entity);
-
-                if (i is Item child)
-                {
-                    CommitChildOrder(child);
-                }
-            }
-        }
-
         public void OnWorldCleared()
         {
             _world.State.OnWorldCleared();
@@ -893,12 +855,6 @@ namespace ClassicUO.Game
         public void Update()
         {
             FunnelCheck.LogSummary();
-
-            // T2: CUO_CONTENTS_CHECK, the open container gumps every frame
-            _world.State.CheckOpenContainers();
-
-            // T3a: CUO_EQUIP_READ_CHECK's 5 s summary
-            _world.State.LogEquipmentChecks();
 #if CUO_DEVTOOLS
             // CUO_LAYER_CACHE_CHECK's 5 s summary
             Data.LayerCacheCheck.LogSummary();
@@ -1020,7 +976,6 @@ namespace ClassicUO.Game
                 _live.Add(item.Serial);
                 CompareItem(item, ref mismatches);
                 CompareItemExtras(item, ref mismatches);
-                CompareChildren(item, ref mismatches);
             }
 
             foreach (Mobile mobile in _world.Mobiles.Values)
@@ -1034,7 +989,6 @@ namespace ClassicUO.Game
                 _live.Add(mobile.Serial);
                 CompareMobile(mobile, ref mismatches);
                 CompareMobileExtras(mobile, ref mismatches);
-                CompareChildren(mobile, ref mismatches);
                 CompareAnimation(mobile, ref mismatches);
             }
 
@@ -1158,81 +1112,6 @@ namespace ClassicUO.Game
         private static string StaleTag => EcsScalars.Owns ? " stale cache" : "";
 
         private static string Quote(string s) => s == null ? "null" : $"\"{s}\"";
-
-        private readonly List<uint> _worldChildren = new List<uint>();
-        private readonly List<(ulong Stamp, uint Serial)> _ecsChildren = new List<(ulong, uint)>();
-
-        /// <summary>
-        /// -ecscheck v2 (T1 part 9, for T2): the parent's children World holds, in its child list's order, against the
-        /// mirror's attached children of that parent (worn and contained, with a nonzero child-order stamp) sorted by stamp.
-        /// Children World does not hold (the spellbook's detached spell items) are not world state and are skipped. The
-        /// relation compared is attachment, not the Container: an orphan (equipped or contained before its parent existed,
-        /// which ClassicUO never adopts) and a child the spellbook's clear dropped keep their Container but are in no list.
-        /// </summary>
-        private void CompareChildren(Entity parent, ref int mismatches)
-        {
-            _worldChildren.Clear();
-            _ecsChildren.Clear();
-
-            for (LinkedObject i = parent.Items; i != null; i = i.Next)
-            {
-                if (i is Item child && !child.IsDestroyed && ReferenceEquals(_world.Items.Get(child.Serial), child))
-                {
-                    _worldChildren.Add(child.Serial);
-                }
-            }
-
-            foreach (EcsEntity e in Mirror.GetContents(parent.Serial))
-            {
-                AddAttached(e);
-            }
-
-            foreach (EcsEntity e in Mirror.GetEquipment(parent.Serial))
-            {
-                AddAttached(e);
-            }
-
-            if (_worldChildren.Count == 0 && _ecsChildren.Count == 0)
-            {
-                return;
-            }
-
-            _ecsChildren.Sort();
-            bool same = _worldChildren.Count == _ecsChildren.Count;
-
-            for (int i = 0; same && i < _worldChildren.Count; i++)
-            {
-                same = _worldChildren[i] == _ecsChildren[i].Serial;
-            }
-
-            if (!same)
-            {
-                var sb = new System.Text.StringBuilder();
-                sb.Append($"children of 0x{parent.Serial:X8}: World");
-
-                foreach (uint s in _worldChildren)
-                {
-                    sb.Append($" 0x{s:X8}");
-                }
-
-                sb.Append(" | ECS");
-
-                foreach ((ulong stamp, uint s) in _ecsChildren)
-                {
-                    sb.Append($" 0x{s:X8}@{stamp}");
-                }
-
-                Report(ref mismatches, sb.ToString());
-            }
-        }
-
-        private void AddAttached(EcsEntity e)
-        {
-            if (e.TryGetComponent(out ItemData slot) && slot.Stamp != 0)
-            {
-                _ecsChildren.Add((slot.Stamp, e.GetComponent<ClassicUO.Ecs.Serial>().Value));
-            }
-        }
 
         private void CompareMobile(Mobile mobile, ref int mismatches)
         {
