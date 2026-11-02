@@ -320,6 +320,8 @@ namespace ClassicUO.UnitTests.Ecs
             m.UpdateRealScreenPositionOnly(0, 0);
             other.UpdateRealScreenPositionOnly(0, 0);
 
+            WorldWriterTests.AttachLists(world);
+
             // the mobile's equipment tag starts clear: a body change sets it
             if (world.Ecs.Mirror.TryGetEntity(MOB, out EcsEntity me) && me.Tags.Has<EquipmentDirty>())
             {
@@ -561,6 +563,7 @@ namespace ClassicUO.UnitTests.Ecs
             corpse.Graphic = 0x2006;
             corpse.Amount = 0x190;
             corpse.SetInWorldTile(1000, 1001, 0);
+            WorldWriterTests.AttachLists(world);
 
             return world;
         }
@@ -919,6 +922,7 @@ namespace ClassicUO.UnitTests.Ecs
             gem.Container = LOOT;
             loot.PushToBack(gem);
             world.Ecs.Sync(gem);
+            WorldWriterTests.AttachLists(world);
 
             return world;
         }
@@ -1451,6 +1455,7 @@ namespace ClassicUO.UnitTests.Ecs
             Item loot = world.GetOrCreateItem(0x4000_7111);
             loot.Container = pack.Serial;
             pack.PushToBack(loot);
+            WorldWriterTests.AttachLists(world);
             world.Writer.UpsertMobile(n, n.Serial, 0x191, 0, 1003, 1003, 0, Direction.East, 0, 0, out _, out WorldWriter.Placement p3);
             world.Writer.PlaceMobile(p3);
             n.Steps.Count.Should().BeGreaterThan(0);
