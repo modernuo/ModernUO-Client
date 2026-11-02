@@ -17,7 +17,7 @@ namespace ClassicUO.UnitTests.Ecs
     // extract wrote before the split, bit for bit (golden: the pre-split WriteFrame and art code below, verbatim but for the
     // tables argument), and Emit must equal resolve(select). In the client, CUO_ECS_PARITY diffs the extract against the
     // view capture and the shots job compares base and new frames.
-    public class DynamicSpriteTests
+    public partial class DynamicSpriteTests
     {
         private const int HUE_COUNT = 3000;
         private const int ANIM_PAGE_BASE = 40;
@@ -95,7 +95,7 @@ namespace ClassicUO.UnitTests.Ecs
 
         // ---- mobile select ----
 
-        private const ushort HUMAN = 400, HORSE = 200, ROBE = 0x01F0, LANTERN = 0x01F5;
+        private const ushort HUMAN = 400, HORSE = 200, ROBE = 0x01F0, LANTERN = 0x01F5, MISSING_ART = 0x0E77;
 
         private static (AnimationsLoader Anims, GpuSpriteTables Tables) AnimFixture(int seed)
         {
@@ -321,6 +321,9 @@ namespace ClassicUO.UnitTests.Ecs
                 sprites[g + 0x4000] = new SpriteEntry { Page = 3, X = 10, Y = 20, W = 40, H = 50, TrimX = 2, TrimY = 4, OrigW = 44, OrigH = 60 };
             }
 
+            // art the pack has no pixels for (Legacy draws Arts.GetArt's placeholder)
+            sprites[MISSING_ART + 0x4000] = default;
+
             var arts = new ArtLoader(new UOFileManager(default, Path.GetTempPath(), null));
             arts.SetTablesForTests(sprites);
 
@@ -351,6 +354,8 @@ namespace ClassicUO.UnitTests.Ecs
                 case "light": i.Graphic = 0x0A15; i.TileLight = true; break;
                 case "multi": i.Multi = true; i.MultiGraphic = 0x1F14; break;
                 case "fading": i.AlphaHue = 90; i.Offset = new Vector3(2, -3, 1); break;
+                case "missing": i.Graphic = MISSING_ART; break;
+                case "missing-stack": i.Graphic = MISSING_ART; i.Amount = 3; i.TileStackable = true; break;
             }
 
             return i;
