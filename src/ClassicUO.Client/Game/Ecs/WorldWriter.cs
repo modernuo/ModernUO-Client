@@ -1893,8 +1893,8 @@ namespace ClassicUO.Game
         }
 
         /// <summary>
-        /// The range sweep (<c>World.Update</c>, every 50 ms: a mobile beyond the view range, in the legacy mobile loop and
-        /// in the E4 clock path): <c>World.RemoveMobile(mobile)</c> before T1, which removes it and everything it wears or
+        /// The range sweep (<c>World.Update</c>, every 50 ms: a mobile beyond the view range, in the
+        /// E4 clock path): <c>World.RemoveMobile(mobile)</c> before T1, which removes it and everything it wears or
         /// holds and destroys it, but leaves it in the mobiles table (no force: the sweep iterates the table; the destroyed
         /// mobile leaves it with the frame's destroyed list). A removal like <see cref="RemoveMobile"/>: it owns the removed
         /// subtree, writes no value of its own, does not fold, and first cancels the outstanding placements of the mobile and
@@ -2850,7 +2850,7 @@ namespace ClassicUO.Game
         /// <paramref name="frame"/> and <paramref name="due"/> to <see cref="RemoveDeadMobile"/>, which removes the mobile and
         /// then writes them, as before T1 (the removal ran between the timer fields and the frame index; <c>Destroy</c> resets
         /// the due time, and the old code wrote the frame and the due time to the removed mobile after it).</para>
-        /// <para>Called per frame from the update loops (the legacy loop, the E4 clock path, its skipped-mobile check), which
+        /// <para>Called per frame from the update loops (the E4 clock path, its skipped-mobile check), which
         /// iterate the mobiles table; an instance this World does not hold for its serial is written as before T1 (every push
         /// ignores it), like <see cref="CompleteStep"/>. Only an instance of another World is a
         /// violation, rejected (nothing changes).</para>
