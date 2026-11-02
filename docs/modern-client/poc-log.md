@@ -5327,3 +5327,24 @@ Paired NativeAOT builds (`CuoDevTools=true`, checkers off), all on the quiet mac
 - Root cause: `PixelPicker.Get`'s run walk was `while (current < target)`, so a target on a run boundary never read the run starting there. Pixel 0,0 and the first pixel of every opaque run never hit; this was inherited from ClassicUO. It is now `<=`; every other pixel takes the same path.
 - Visible change: one more pickable pixel per opaque run at sprite edges; 1-px vertical lines can be picked.
 - Tests: 36 new cases, every pixel of 39 images across all picker sources, both run writers; all failed before the fix. Unit tests 3,076 passed, 6 skipped. Gates Gpu bench-000305, Legacy bench-000306 PASS.
+
+### ECS read helper merged (coordinator, 2026-11-02)
+
+- Owner decision (owner-review question 2): write our own read helper, and wait for a stable Friflo release before upgrading. Merge 02c0ef387 (unit tests 3,092 passed, 6 skipped; release 3,087).
+- `EcsRead.Get`/`TryGet`/`Row` (src/ClassicUO.Ecs/EcsRead.cs) read Friflo 4.0.0-preview.2's component arrays directly:
+  - access is through `[UnsafeAccessor]`, plus one field offset found and checked at startup;
+  - answers, refs and exceptions equal Friflo's, and if the internals differ the first read throws with the reason;
+  - refs and rows stay valid until the next structural change, as with Friflo's own.
+- Converted: the item Gather, the mobile draw (both renderers), the T4 scalar getters, and the per-frame systems. `WorldMirror` and `WorldWriter` (packet rate) still call Friflo.
+- Codex P2 fixed (be326d272): types that preview.2 stores in another heap kind (SoA, AoS float/vector) are decided once per type and read through Friflo. Codex P3 accepted: a thread-static scratch copy can keep one value per such type per thread alive (no mirror type is affected).
+- Micro-bench (busy machine, TC=0, medians):
+
+  | Read | Friflo | EcsRead |
+  |---|---|---|
+  | One component, 2k entities | 5.9 ns | 3.8–3.9 ns |
+  | One component, 25k entities | 9.1 ns | 5.0–5.3 ns |
+  | Five components through a row | 24 ns | 12.6 ns |
+
+  Item Gather over the old field reads: 30–40 → 16–22 ns per item. The "25 ns per `GetComponent`" in owner question 2 was measured inside a larger record read; a single read in a tight loop is 6–9 ns.
+- Friflo main (13 commits past preview.2) reverts preview.2's SoA storage: `StructHeap<T>` is sealed again, with no virtual call. A stable release may make the helper mostly unnecessary. See [ecs-friflo.md](../dev/ecs-friflo.md).
+- Gates: Gpu bench-000307, Legacy bench-000308 (branch); tip gates bench-000309/310 on 02c0ef387 (first NativeAOT run of the fallback) PASS. Timing parked (`measure/ecs-read-helper/job-timing-PARKED.sh`, build the base first).
