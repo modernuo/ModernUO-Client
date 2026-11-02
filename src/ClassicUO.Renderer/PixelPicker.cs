@@ -11,7 +11,9 @@ namespace ClassicUO.Renderer
         const int InitialDataCount = 0x40000; // 256kb
 
         Dictionary<ulong, int> m_IDs = new Dictionary<ulong, int>();
-        readonly List<byte> m_Data = new List<byte>(InitialDataCount); // list<t> access is 10% slower than t[].
+        // varint data of every entry; a plain array (List<byte> was ~10% slower on reads), doubled when full
+        byte[] m_Data = new byte[InitialDataCount];
+        int m_DataCount;
 
         // Keys below _denseCapacity (art and gump ids) live in _dense instead of m_IDs: the world walk pick-tests every drawn
         // static and item each frame, and nearly every test misses on the size check, so a dictionary lookup plus two varint
@@ -151,7 +153,7 @@ namespace ClassicUO.Renderer
         {
             m_IDs.Clear();
             Array.Clear(_dense);
-            m_Data.Clear();
+            m_DataCount = 0;
         }
 
         public void Set(ulong textureID, int width, int height, ReadOnlySpan<uint> pixels)
@@ -161,7 +163,7 @@ namespace ClassicUO.Renderer
                 return;
             }
 
-            int begin = m_Data.Count;
+            int begin = m_DataCount;
             WriteIntegerToData(width);
             WriteIntegerToData(height);
             bool countingTransparent = true;
@@ -193,7 +195,7 @@ namespace ClassicUO.Renderer
                 return;
             }
 
-            int begin = m_Data.Count;
+            int begin = m_DataCount;
             WriteIntegerToData(width);
             WriteIntegerToData(height);
             var runs = new RunWriter(this);
@@ -464,12 +466,18 @@ namespace ClassicUO.Renderer
 
         void WriteIntegerToData(int value)
         {
+            // a varint of a non-negative int is at most 5 bytes
+            if (m_Data.Length - m_DataCount < 5)
+            {
+                Array.Resize(ref m_Data, m_Data.Length * 2);
+            }
+
             while (value > 0x7f)
             {
-                m_Data.Add((byte)((value & 0x7f) | 0x80));
+                m_Data[m_DataCount++] = (byte)((value & 0x7f) | 0x80);
                 value >>= 7;
             }
-            m_Data.Add((byte)value);
+            m_Data[m_DataCount++] = (byte)value;
         }
 
         int ReadIntegerFromData(ref int index)
