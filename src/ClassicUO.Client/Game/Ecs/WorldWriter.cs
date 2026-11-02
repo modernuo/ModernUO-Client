@@ -2278,6 +2278,8 @@ namespace ClassicUO.Game
                     entity.AddToTile();
                 }
             }
+
+            _world.Ecs.PushSteps(entity); // T6c: a carried mobile's position and offset reach its Steps component
         }
 
         /// <summary>
@@ -2316,6 +2318,8 @@ namespace ClassicUO.Game
                 entity.OffsetY = 0;
                 entity.OffsetZ = 0;
             }
+
+            _world.Ecs.PushSteps(entity); // T6c
         }
 
         // ---- funnel part 7, group 4: the per-frame offset interpolation between steps (Mobile.ProcessSteps,
@@ -2407,6 +2411,8 @@ namespace ClassicUO.Game
             {
                 passenger.Offset = offset;
             }
+
+            _world.Ecs.PushSteps(passenger); // T6c
         }
 
         /// <summary>

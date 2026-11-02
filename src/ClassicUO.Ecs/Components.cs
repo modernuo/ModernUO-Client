@@ -359,6 +359,41 @@ namespace ClassicUO.Ecs
         public bool UsedLayer;
     }
 
+    /// <summary>T6c: one queued step of a mobile (<c>Mobile.Step</c>): the tile it ends on, its direction and run flag.</summary>
+    public struct StepEntry
+    {
+        public int X, Y;
+        public sbyte Z;
+        public byte Direction;
+        public bool Run;
+    }
+
+    [InlineArray(Steps.CAPACITY)]
+    public struct StepRing
+    {
+        private StepEntry _e;
+    }
+
+    /// <summary>
+    /// T6c (world_step_system): a mobile's walk queue and the step state <c>StepSystem</c> reads: a fixed ring of up to
+    /// <see cref="CAPACITY"/> steps (<c>Constants.MAX_STEP_COUNT</c> - 1 + 3; the front step is <c>Ring[Head]</c>), the time the
+    /// current step started (<c>Mobile.LastStepTime</c>) and the interpolated walk offset (<c>Mobile.Offset</c>). While the
+    /// system runs, the clock push writes it from the Mobile after every queue change and step completion (the same push
+    /// that keeps <see cref="MobileClock"/>'s Stepping flag), and the system writes the offset it interpolates. The Mobile's
+    /// queue and offset stay a write-through cache: views read them every frame.
+    /// </summary>
+    public struct Steps : IComponent
+    {
+        // the legacy queue holds at most 7: Mobile.PlanStep accepts a packet while Count < Constants.MAX_STEP_COUNT (5), so up to
+        // 4 queued + the 3 steps one packet plans (a turn, the move, the final facing). A test asserts it from the client's constant.
+        public const int CAPACITY = 7;
+
+        public StepRing Ring;
+        public byte Head, Count;
+        public uint LastStepTime;
+        public float OffsetX, OffsetY, OffsetZ;
+    }
+
     /// <summary>Per-frame view context of a mobile: overriding hue (highlight, notoriety, out of range...), alpha, step offset.</summary>
     public struct MobileRenderState : IComponent
     {
@@ -553,6 +588,7 @@ namespace ClassicUO.Ecs
             Component<MobileInputs>(aot);
             Component<MobileClock>(aot);
             Component<AnimationTimer>(aot); // T5b
+            Component<Steps>(aot); // T6c
 
             // -ecscheck v2 (T1 funnel part 9)
             Component<EntityName>(aot);

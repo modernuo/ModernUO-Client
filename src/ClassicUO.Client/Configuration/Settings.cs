@@ -164,6 +164,12 @@ namespace ClassicUO.Configuration
         // builds). Default off; CUO_ANIM_ADVANCE_CHECK=1 compares every advance with the legacy one.
         [JsonPropertyName("world_item_anim_system")] public bool WorldItemAnimSystem { get; set; } = false;
 
+        // T6c (needs world_update_mobile_system): a due mobile's step processing (Mobile.ProcessSteps: the walk offset, the
+        // step completion through the funnel, the player's walker bookkeeping) runs as StepSystem over its Steps component.
+        // Read once at startup (CUO_WORLD_STEP_SYSTEM=1|0 overrides it in developer builds). Default off; CUO_STEP_CHECK=1
+        // compares the component and the decision with the Mobile's.
+        [JsonPropertyName("world_step_system")] public bool WorldStepSystem { get; set; } = false;
+
         // T2 (ecs-transition-plan.md): the container-contents readers (container, grid loot, trade and spellbook gumps, the
         // shop's lists, FindItem*, the counters, macros) take a parent's children from the ECS (WorldState.Children: the
         // mirror's attached children by child-order stamp, a spellbook's spell entries) instead of the LinkedObject child
