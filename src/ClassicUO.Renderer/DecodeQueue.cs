@@ -32,6 +32,8 @@ namespace ClassicUO.Renderer
         // a main-thread caller blocked in WaitPublished; workers only touch the event while one is (no cost otherwise)
         private readonly ManualResetEventSlim _published = new ManualResetEventSlim(false);
         private int _publishWaiter;
+        // every publish (current or cancelled), for a waiter that needs a new one while older items still sit in the queue
+        private int _publishCount;
 
         /// <param name="returnBuffers">Returns the item's pooled buffers and clears them; must tolerate an item that has none.
         /// Runs on the worker (cancelled publish) or the main thread (cancel), never both for one item.</param>
@@ -91,6 +93,7 @@ namespace ClassicUO.Renderer
             _returnBuffers(item);
             _budget.Release(item);
             _ready.Enqueue(item);
+            SignalPublished();
         }
 
         /// <summary>Main thread.</summary>
@@ -98,6 +101,9 @@ namespace ClassicUO.Renderer
 
         private void SignalPublished()
         {
+            // a full fence before the waiter check, paired with the waiter's flag exchange before its count read
+            Interlocked.Increment(ref _publishCount);
+
             if (Volatile.Read(ref _publishWaiter) != 0)
             {
                 _published.Set();
@@ -117,6 +123,29 @@ namespace ClassicUO.Renderer
             {
                 // an item published before the flag was visible is seen here; one published after it sets the event
                 return !_ready.IsEmpty || (timeoutMs > 0 && _published.Wait(timeoutMs)) || !_ready.IsEmpty;
+            }
+            finally
+            {
+                Volatile.Write(ref _publishWaiter, 0);
+            }
+        }
+
+        /// <summary>Publishes so far (any thread; wraps). Read before checking for finished items, then pass to
+        /// <see cref="WaitPublishedSince"/>.</summary>
+        public int PublishedCount => Volatile.Read(ref _publishCount);
+
+        /// <summary>
+        /// As <see cref="WaitPublished"/>, but for a publish after <paramref name="seen"/> (a <see cref="PublishedCount"/>):
+        /// items already in the queue, such as finished decodes left for a later drain, do not end the wait. Main thread.
+        /// </summary>
+        public bool WaitPublishedSince(int seen, int timeoutMs)
+        {
+            _published.Reset();
+            Interlocked.Exchange(ref _publishWaiter, 1);
+
+            try
+            {
+                return PublishedCount != seen || (timeoutMs > 0 && _published.Wait(timeoutMs)) || PublishedCount != seen;
             }
             finally
             {

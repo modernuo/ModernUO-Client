@@ -861,7 +861,7 @@ namespace ClassicUO.Game.UI.Gumps
 
                 public override bool AddToRenderLists(RenderLists renderLists, int x, int y, ref float layerDepthRef)
                 {
-                    Item item = _gump.World.Items.Get(LocalSerial);
+                    Item item = ShownItem();
 
                     if (item == null)
                     {

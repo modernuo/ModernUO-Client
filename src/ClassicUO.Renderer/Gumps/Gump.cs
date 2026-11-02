@@ -204,6 +204,8 @@ namespace ClassicUO.Renderer.Gumps
             while (true)
             {
                 bool waiting = false, took = false;
+                // read before the scan: a decode finishing during it ends the wait below at once
+                int seen = decoder.PublishedCount;
 
                 for (int i = 0; i < batch.Length; i++)
                 {
@@ -224,14 +226,19 @@ namespace ClassicUO.Renderer.Gumps
                     }
                 }
 
-                if (!waiting || Stopwatch.GetTimestamp() >= deadline)
+                long now = Stopwatch.GetTimestamp();
+
+                if (!waiting || now >= deadline)
                 {
                     break;
                 }
 
+                // perf-9: a signaled wait for the next finished decode instead of a Thread.Yield spin, bounded by the
+                // deadline as Art's wait (FirstSightDecoder.RequestAndWait)
                 if (!took)
                 {
-                    System.Threading.Thread.Yield();
+                    long leftMs = (deadline - now) / Math.Max(1, Stopwatch.Frequency / 1000);
+                    decoder.WaitPublishedSince(seen, (int)Math.Clamp(leftMs, 1, int.MaxValue));
                 }
             }
         }

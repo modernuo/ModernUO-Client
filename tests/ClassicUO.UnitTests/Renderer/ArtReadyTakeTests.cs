@@ -322,6 +322,52 @@ namespace ClassicUO.UnitTests.Renderer
             d.Pending.Should().Be(0);
         }
 
+        // perf-9: Prefetch's wait blocks for the next finished decode (no Thread.Yield spin). Decodes already finished and left
+        // for the drain must not end that wait, or it would spin as before.
+        [Fact]
+        public void A_Wait_For_A_New_Decode_Ignores_Those_Waiting_For_A_Drain()
+        {
+            var (d, started, _) = Make();
+            d.Request(3);
+            d.Request(5);
+            started[0].Execute(); // 3 finished, left for the drain
+            int seen = d.PublishedCount;
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            d.WaitPublishedSince(seen, 60).Should().BeFalse("nothing finished since");
+            sw.ElapsedMilliseconds.Should().BeGreaterThanOrEqualTo(40, "it blocked instead of returning on 3");
+            d.HasReady.Should().BeTrue();
+
+            started[1].Execute();
+            sw.Restart();
+            d.WaitPublishedSince(seen, 5000).Should().BeTrue();
+            sw.ElapsedMilliseconds.Should().BeLessThan(1000);
+        }
+
+        [Fact]
+        public void Prefetch_Wait_Wakes_When_A_Worker_Finishes_The_Batch()
+        {
+            var (d, started, uploads) = Make();
+            d.Request(3);
+            d.Request(5);
+            started[0].Execute();
+            var worker = new System.Threading.Thread(() =>
+            {
+                System.Threading.Thread.Sleep(50);
+                started[1].Execute();
+            });
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            worker.Start();
+            ClassicUO.Renderer.Gumps.Gump.AwaitBatch(d, new uint[] { 5 },
+                System.Diagnostics.Stopwatch.GetTimestamp() + System.Diagnostics.Stopwatch.Frequency * 10);
+            worker.Join();
+
+            sw.ElapsedMilliseconds.Should().BeLessThan(5000, "the finished decode ends the wait, not the deadline");
+            uploads.Should().Equal(5u);
+            d.IsRequested(3).Should().BeTrue("3 waits for the normal drain");
+        }
+
         [Fact]
         public void Prefetch_Wait_Gives_Up_At_The_Deadline_And_Takes_What_Finishes()
         {
