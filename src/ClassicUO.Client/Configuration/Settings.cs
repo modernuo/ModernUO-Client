@@ -136,11 +136,6 @@ namespace ClassicUO.Configuration
         // batcher calls with the sink's. Read every frame (dev builds: CUO_LEGACY_ECS_SPRITES=1|0 overrides). Default off.
         [JsonPropertyName("legacy_ecs_sprites")] public bool LegacyEcsSprites { get; set; }
 
-        // W5, with gpu_ecs_sprites: a mobile's action selection and sprite instances are reused while their inputs are
-        // unchanged (MobileFrameCache: the sampled state, equipment, seat tile, hues, alpha); position and depth are
-        // reapplied every frame. Off = selected and extracted every frame.
-        [JsonPropertyName("gpu_mobile_frame_cache")] public bool GpuMobileFrameCache { get; set; } = true;
-
         // W5, with gpu_ecs_sprites: a mobile's slow-changing selection and override-hue inputs (body flags, sex, dead, war
         // mode, running, steps, notoriety, status bits, mounted) are read from the ECS, where their mutation sites push
         // them (MobileInputs, EquipmentSlots.Mounted), instead of from the legacy Mobile every frame. The pushes always

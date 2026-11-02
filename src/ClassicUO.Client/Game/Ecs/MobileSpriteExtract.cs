@@ -499,7 +499,7 @@ namespace ClassicUO.Game
         private int _recordStart;
 
         /// <summary>
-        /// W5 (gpu_mobile_frame_cache): <see cref="Emit(EcsEntity, int, int, float)"/>, or the instances, FrameInfo and
+        /// W5 (MobileFrameCache): <see cref="Emit(EcsEntity, int, int, float)"/>, or the instances, FrameInfo and
         /// lights <paramref name="cache"/> recorded when the selection (<see cref="MobileFrameCache.SelectGen"/>), alpha,
         /// override hue, body hue and pack are the same, moved to this frame's position, walking offset and depth.
         /// </summary>
