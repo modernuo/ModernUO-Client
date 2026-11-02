@@ -281,6 +281,9 @@ namespace ClassicUO.Ecs
         public uint LastStepTime;
         public uint WalkingDelay;
 
+        // Mobile.SpeedMode (CharacterSpeedType; 0xBF.26, the player's only): its fast-unmount modes step at the mounted pace
+        public byte SpeedMode;
+
         // pushes since the entity was created (diagnostics)
         public uint Pushes;
     }

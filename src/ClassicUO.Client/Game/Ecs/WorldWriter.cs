@@ -2533,8 +2533,8 @@ namespace ClassicUO.Game
             }
         }
 
-        // ---- funnel part 7, group 1: the small writers. Name, Price and SpeedMode are cache-only (no mirror record field and no
-        // MobileInputs reads them); war mode and IsDead are inputs (MobileInputRules), so those operations fold the mobile and
+        // ---- funnel part 7, group 1: the small writers. Name and Price are cache-only (no mirror record field and no
+        // MobileInputs reads them); speed mode, war mode and IsDead are inputs (MobileInputRules), so those operations fold the mobile and
         // commit its inputs once (the setter's push before T1). The corpse equipment is an item placement into a container.
 
         /// <summary>
@@ -2576,7 +2576,9 @@ namespace ClassicUO.Game
         }
 
         /// <summary>
-        /// 0xBF.26 (the player's movement speed mode). Cache-only. Rejections as <see cref="SetName"/>.
+        /// 0xBF.26 (the player's movement speed mode): an input since the T6c follow-up (<c>MobileInputs.SpeedMode</c>, the
+        /// step system's mounted pace with <c>ecs_step_mount_inputs</c>). Folded, the inputs committed once, as
+        /// <see cref="SetWarMode"/>; rejections as <see cref="SetName"/>.
         /// </summary>
         public void SetSpeedMode(Mobile mobile, CharacterSpeedType mode)
         {
@@ -2585,9 +2587,12 @@ namespace ClassicUO.Game
                 return;
             }
 
-            using (Open(mobile, null))
+            bool detached = !Holds(mobile);
+
+            using (Open(mobile, detached ? null : mobile))
             {
                 mobile.SpeedMode = mode;
+                _world.Ecs.CommitMobileInputs(mobile);
             }
         }
 
