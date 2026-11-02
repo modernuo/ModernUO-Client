@@ -1064,7 +1064,14 @@ namespace ClassicUO.Game.GameObjects
             position.X += (int)Offset.X + 22;
             position.Y += (int)(Offset.Y - Offset.Z) + 22;
 
-            Rectangle r = FrameInfo;
+            // T7b part 2b: the last draw's frame rectangle and mirror bit from the extract's records when it drew this mobile
+            // (legacy_ecs_sprites / gpu_ecs_sprites), else the ones the draw left on the mobile
+            if (!Scenes.SpritePickTable.TryMobile(this, out Rectangle r, out bool pickFlipped))
+            {
+                r = FrameInfo;
+                pickFlipped = IsFlipped;
+            }
+
             r.X = position.X - r.X;
             r.Y = position.Y - r.Y;
 
@@ -1081,7 +1088,7 @@ namespace ClassicUO.Game.GameObjects
             var animations = Client.Game.UO.Animations;
 
             ProcessSteps(out byte dir);
-            bool isFlipped = IsFlipped;
+            bool isFlipped = pickFlipped;
             animations.GetAnimDirection(ref dir, ref isFlipped);
 
             ushort graphic = GetGraphicForAnimation();

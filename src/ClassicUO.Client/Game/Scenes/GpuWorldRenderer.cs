@@ -278,6 +278,7 @@ namespace ClassicUO.Game.Scenes
             CaptureFallbacks = 0;
             UpdateWaterWobble();
             EcsParity.BeginFrame();
+            SpritePickTable.BeginDraw();
             _ecsMobiles = Configuration.Settings.GlobalSettings.GpuEcsSprites && _pack != null && _pack.HasAnims;
             _scene = Client.Game.GetScene<GameScene>();
         }
@@ -506,6 +507,11 @@ namespace ClassicUO.Game.Scenes
                 }
             }
 
+            if (!Probe)
+            {
+                SpritePickTable.RecordItem(item, _itemExtract);
+            }
+
             ReadOnlySpan<SpriteInstance> got = _itemExtract.Instances;
 
             if (GameScene.GpuItemCheckActive)
@@ -563,26 +569,10 @@ namespace ClassicUO.Game.Scenes
             World world = mobile.World;
             WorldEcs ecs = world.Ecs;
 
-            // E5: the entity found last frame, while no mirror entity was deleted since (WorldMirror.Epoch; Friflo's 16-bit
-            // revision can wrap, so IsNull is not trusted) and the serial is unchanged. Only entities that had an
-            // AnimationState are cached, and a mirror entity never loses it. Costs two integer compares per mobile; every
-            // deletion makes all mobiles repeat one dictionary lookup.
-            Friflo.Engine.ECS.Entity e = mobile.EcsEntity;
-
-            if (mobile.EcsEntitySerial != mobile.Serial || mobile.EcsEntityEpoch != ecs.Mirror.Epoch)
+            // E5 (MobileEntityLookup, shared with the Legacy sink)
+            if (!MobileEntityLookup.TryGet(mobile, out Friflo.Engine.ECS.Entity e))
             {
-                if (!ecs.Mirror.TryGetEntity(mobile.Serial, out e) || !e.HasComponent<ClassicUO.Ecs.AnimationState>())
-                {
-                    mobile.EcsEntity = default;
-                    mobile.EcsEntitySerial = 0;
-
-                    return false;
-                }
-
-                mobile.EcsEntity = e;
-                mobile.EcsEntitySerial = mobile.Serial;
-                mobile.EcsEntityEpoch = ecs.Mirror.Epoch;
-                mobile.EcsEntityHeld = false; // T4: no identity check here (Entity.TryScalarEntity redoes its own)
+                return false;
             }
 
             MobileSpriteExtract extract = ecs.MobileExtract;
@@ -629,9 +619,17 @@ namespace ClassicUO.Game.Scenes
                 extract.Emit(e, in state, in render, posX, posY, depth, Configuration.Settings.GlobalSettings.GpuMobileFrameCache ? mobile.FrameCache : null);
                 drawn = true;
 
-                // the view's side effects: picking, text and health bars read FrameInfo and IsFlipped
+                // the view's side effects: picking (unless recorded below), text and health bars read FrameInfo and IsFlipped
+                bool mirror = (state.Flags & ClassicUO.Ecs.AnimStateFlags.Mirror) != 0;
                 mobile.FrameInfo = extract.FrameInfo;
-                mobile.ViewFlipped = (state.Flags & ClassicUO.Ecs.AnimStateFlags.Mirror) != 0;
+                mobile.ViewFlipped = mirror;
+
+                if (!Probe)
+                {
+                    // T7b part 2b: picking reads the same state from the records (the side effects above stay: other
+                    // readers, the mirror history). EcsParity frames keep the view's and record nothing.
+                    SpritePickTable.RecordMobile(mobile, extract.FrameInfo, mirror);
+                }
 
                 if (_scene != null)
                 {

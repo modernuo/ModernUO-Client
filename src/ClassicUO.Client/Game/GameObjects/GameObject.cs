@@ -579,6 +579,8 @@ namespace ClassicUO.Game.GameObjects
             InChunkMesh = false;
             MeshSpriteIndex = -1;
             DrawnFrame = 0;
+            PickStamp = 0;
+            PickSlot = 0;
             ObjectHandlesStatus = ObjectHandlesStatus.NONE;
             FrameInfo = Rectangle.Empty;
             IsFlipped = false;
