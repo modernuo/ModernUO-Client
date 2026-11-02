@@ -90,7 +90,10 @@ namespace ClassicUO.Renderer
             int current = 0;
             int target = x + y * width;
             bool inTransparentSpan = true;
-            while (current < target)
+            // <=, not <: a target on a run boundary is the first texel of the next run, so that run must be read too
+            // (with < pixel 0,0 and the first texel of every opaque run never hit; the runs cover width * height, so
+            // the walk always returns inside)
+            while (current <= target)
             {
                 int spanLength = ReadIntegerFromData(ref index);
                 current += spanLength;
