@@ -88,6 +88,10 @@ namespace ClassicUO.Game.UI.Controls
 
         public override bool Contains(int x, int y)
         {
+            // perf-6: the size came from the table; the pixel mask exists once the art is decoded (a hit test can come
+            // before the first draw)
+            Client.Game.UO.Arts.GetArt(Graphic);
+
             return Client.Game.UO.Arts.PixelCheck(Graphic, x - Offset.X, y - Offset.Y);
         }
     }
