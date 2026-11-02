@@ -136,12 +136,6 @@ namespace ClassicUO.Configuration
         // batcher calls with the sink's. Read every frame (dev builds: CUO_LEGACY_ECS_SPRITES=1|0 overrides). Default off.
         [JsonPropertyName("legacy_ecs_sprites")] public bool LegacyEcsSprites { get; set; }
 
-        // W5, with gpu_ecs_sprites: a mobile's slow-changing selection and override-hue inputs (body flags, sex, dead, war
-        // mode, running, steps, notoriety, status bits, mounted) are read from the ECS, where their mutation sites push
-        // them (MobileInputs, EquipmentSlots.Mounted), instead of from the legacy Mobile every frame. The pushes always
-        // run. Off = sampled from the Mobile every frame.
-        [JsonPropertyName("mobile_push_inputs")] public bool MobilePushInputs { get; set; } = true;
-
         // T5b: a due mobile without queued steps or a handles opening has its idle animation
         // and frame advance computed in the ECS (MobileAnimationAdvanceSystem over AnimationTimer, MobileInputs and
         // EquipmentSlots) instead of Mobile.Update; mobiles with steps or handles still run Mobile.Update until T6. Read once

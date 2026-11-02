@@ -866,22 +866,16 @@ namespace ClassicUO.Game
 
                     return true;
 
-                // w5 on|off: the W5 shortcuts that still have a switch (text_skip_expired, mobile_push_inputs)
+                // w5 on|off: the W5 shortcut that still has a switch (text_skip_expired)
                 case "w5" when args.Length > 0:
-                    Settings.GlobalSettings.TextSkipExpired = Settings.GlobalSettings.MobilePushInputs = args[0] == "on";
+                    Settings.GlobalSettings.TextSkipExpired = args[0] == "on";
                     Log.Info($"[ECS] driver: W5 shortcuts {args[0]}");
-
-                    return true;
-
-                // pushinputs on|off: mobiles' pushed ECS inputs (mobile_push_inputs, W5)
-                case "pushinputs" when args.Length > 0:
-                    Settings.GlobalSettings.MobilePushInputs = args[0] == "on";
-                    Log.Info($"[ECS] driver: mobile pushed inputs {args[0]}");
 
                     return true;
 
                 // T9: switches whose off path is deleted; older session scripts still name them, so they are accepted and ignored
                 case "mobcache":
+                case "pushinputs":
                     Log.Info($"[ECS] driver: '{cmd}' has no off path any more (T9), ignored");
 
                     return false;
