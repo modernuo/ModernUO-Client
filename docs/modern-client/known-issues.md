@@ -5,7 +5,7 @@ Visual or behavioural defects found in the PoC client that aren't fixed yet. Add
 ## Gate flakes seen on 2026-11-01 (open)
 
 - **uistate vendor buy:** the script's `buy a_horse 1` sometimes finds no buy-list entry (vendor stock after repeated runs, or the list not loaded yet), and the following rename/pet steps fail (bench-000130, bench-000177; reruns pass). Fix idea: wait for the buy list, and restock or pick another vendor item in the script.
-- **`RemovalSitesFunnelCheckTests.A_Direct_Removal_Names_The_Caller_Past_The_Removal_Plumbing`** failed once in a full dev run after the T5d merge; passes alone. Probably the funnel-check static log shared with a parallel test: put it in `FunnelCheckCollection`.
+- **`RemovalSitesFunnelCheckTests.A_Direct_Removal_Names_The_Caller_Past_The_Removal_Plumbing`** (fixed on `bg/removal-flake`): failed in most full dev runs, passed alone. Not a shared-state race: the assertion text was `World.RemoveItem (World.cs:1246) via RemovalSitesFunnelCheckTests.RemoveDirectly`. After enough calls in a full run the JIT tiers up `World.RemoveItem` and inlines `Destroy` into it, so the writing frame is already removal plumbing and the next frame (the caller) was taken as the non-plumbing `via`, which returns without the ` from <caller>` part. Alone, the method stays at tier 0 and `Destroy` keeps its own frame. `FunnelCheck.Caller` now skips the plumbing from the writer frame too (code commit on the branch).
 
 ## Flaky unit tests in full-suite runs: fixed by isolation on `bg/flaky-tests` (recorded 2026-11-01)
 

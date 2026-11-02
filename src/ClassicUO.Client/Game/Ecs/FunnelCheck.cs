@@ -197,6 +197,7 @@ namespace ClassicUO.Game
         {
             var trace = new StackTrace(2, true);
             string writer = null, via = null;
+            bool writerIsPlumbing = false;
 
             for (int i = 0; i < trace.FrameCount; i++)
             {
@@ -216,8 +217,21 @@ namespace ClassicUO.Game
                 if (writer == null)
                 {
                     writer = frame;
+                    // the JIT inlines Destroy into World.RemoveItem once that method is tiered up, so the writing frame can
+                    // itself be removal plumbing: there is no separate "via" frame, the next non-plumbing frame is the caller
+                    writerIsPlumbing = IsRemovalPlumbing(m);
 
                     continue;
+                }
+
+                if (writerIsPlumbing)
+                {
+                    if (IsRemovalPlumbing(m))
+                    {
+                        continue;
+                    }
+
+                    return $"{writer} from {frame}";
                 }
 
                 if (via == null)
