@@ -53,7 +53,8 @@ namespace ClassicUO
     //   pickscan:CxR hovers a C x R grid of the game view and compares the selection with that skipping off and on;
     //   pickscan:CxR:world_tile_index compares it with the T6b merged walk off and on instead (both renderers; needs the index
     //   maintained: CUO_WORLD_TILE_INDEX=0|1 or CUO_TILE_ORDER_CHECK); pickscan:CxR:legacy_ecs_sprites compares the T7b Legacy
-    //   sink off and on (Legacy only); legacysprites:on|off|setting overrides legacy_ecs_sprites; cot:on|off
+    //   sink off and on (Legacy only); pickscan:CxR:pick_records compares picking from the T7b extract's records
+    //   (SpritePickTable) off and on (both renderers); legacysprites:on|off|setting overrides legacy_ecs_sprites; cot:on|off
     //   switches the circle of transparency
     //   name:reinit drops the GPU world pass every 2 s (recreated next frame, as on a facet change); name:reinitrt also drops
     //   the world render target (as at login). Each plan entry logs the world settle counters (WorldSettleGate) when it ends.
@@ -1420,6 +1421,10 @@ namespace ClassicUO
         private static bool _scanTileIndex, _scanTileIndexWas;
         // pickscan's legacy_ecs_sprites mode (T7b): the Legacy sink (LegacySpriteSink.Override) off, then on
         private static bool _scanLegacySprites;
+        // pickscan's pick_records mode (T7b part 2b): picking from the extract's records (SpritePickTable.ReadOverride) off, then on
+        private static bool _scanPickRecords;
+
+        private static string ScanWhat => _scanPickRecords ? "pick_records" : _scanLegacySprites ? "legacy_ecs_sprites" : _scanTileIndex ? "world_tile_index" : "skip";
 
         // frames a point may wait for the Gpu prepare's skipping to become active before the scan gives up
         private const int SCAN_WAIT_LIMIT = 600;
@@ -1451,7 +1456,11 @@ namespace ClassicUO
 
             if (_scanPhase == 0)
             {
-                if (_scanLegacySprites)
+                if (_scanPickRecords)
+                {
+                    Game.Scenes.SpritePickTable.ReadOverride = false;
+                }
+                else if (_scanLegacySprites)
                 {
                     Game.Scenes.LegacySpriteSink.Override = false;
                 }
@@ -1468,7 +1477,11 @@ namespace ClassicUO
                 {
                     _scanOff = Describe(SelectedObject.Object);
 
-                    if (_scanLegacySprites)
+                    if (_scanPickRecords)
+                    {
+                        Game.Scenes.SpritePickTable.ReadOverride = true;
+                    }
+                    else if (_scanLegacySprites)
                     {
                         Game.Scenes.LegacySpriteSink.Override = true;
                     }
@@ -1487,7 +1500,7 @@ namespace ClassicUO
             }
             else if (_scanPhase == 1)
             {
-                if (!_scanTileIndex && !_scanLegacySprites && !gs.IsGpuPrepareSkipping)
+                if (!_scanTileIndex && !_scanLegacySprites && !_scanPickRecords && !gs.IsGpuPrepareSkipping)
                 {
                     _scanFrames = 0;
 
@@ -1509,7 +1522,7 @@ namespace ClassicUO
                     else
                     {
                         _scanDiff++;
-                        string what = _scanLegacySprites ? "legacy_ecs_sprites" : _scanTileIndex ? "world_tile_index" : "skip";
+                        string what = ScanWhat;
                         Log.Info($"[bench-scan] point {index} mouse {_mouse}: {what} off picks {_scanOff}, {what} on picks {on}");
                     }
 
@@ -1519,7 +1532,7 @@ namespace ClassicUO
 
                     if (--_scanLeft == 0)
                     {
-                        Log.Info($"[bench-scan] done{(_scanLegacySprites ? " (legacy_ecs_sprites)" : _scanTileIndex ? " (world_tile_index)" : "")}: {_scanSame} same ({_scanEmpty} of them nothing), {_scanDiff} different");
+                        Log.Info($"[bench-scan] done{(_scanPickRecords || _scanLegacySprites || _scanTileIndex ? $" ({ScanWhat})" : "")}: {_scanSame} same ({_scanEmpty} of them nothing), {_scanDiff} different");
                         EndPickScan();
                     }
                 }
@@ -1577,6 +1590,12 @@ namespace ClassicUO
             {
                 _scanLegacySprites = false;
                 Game.Scenes.LegacySpriteSink.Override = null;
+            }
+
+            if (_scanPickRecords)
+            {
+                _scanPickRecords = false;
+                Game.Scenes.SpritePickTable.ReadOverride = null;
             }
 
             _scanLeft = 0;
@@ -1906,6 +1925,7 @@ namespace ClassicUO
                         // prepare's skipping off and then on must be the same object
                         bool tileIndexMode = _plan[_planIndex].EndsWith(":world_tile_index");
                         bool legacySpritesMode = _plan[_planIndex].EndsWith(":legacy_ecs_sprites");
+                        bool pickRecordsMode = _plan[_planIndex].EndsWith(":pick_records");
 
                         if (legacySpritesMode && Configuration.Settings.GlobalSettings.UseGpuWorldRenderer)
                         {
@@ -1933,7 +1953,7 @@ namespace ClassicUO
                             break;
                         }
 
-                        if (!tileIndexMode && !legacySpritesMode && (!Configuration.Settings.GlobalSettings.UseGpuWorldRenderer || game.GetGpuWorld() == null))
+                        if (!tileIndexMode && !legacySpritesMode && !pickRecordsMode && (!Configuration.Settings.GlobalSettings.UseGpuWorldRenderer || game.GetGpuWorld() == null))
                         {
                             // Legacy has no Gpu prepare, so its skipping never becomes active and the scan would never end
                             Log.Info($"[bench-scan] {_plan[_planIndex]} skipped: the Gpu world renderer isn't active");
@@ -1945,6 +1965,7 @@ namespace ClassicUO
                         string[] g = _plan[_planIndex].Substring(9).Split(':')[0].Split('x');
                         _scanTileIndex = tileIndexMode;
                         _scanLegacySprites = legacySpritesMode;
+                        _scanPickRecords = pickRecordsMode;
                         _scanTileIndexWas = Game.Map.DynamicTileIndex.IndexWalkOn;
                         _scanCols = int.Parse(g[0]);
                         _scanRows = int.Parse(g[1]);
