@@ -36,6 +36,8 @@ namespace ClassicUO.UnitTests.Ecs
             private readonly Dictionary<(ushort, byte, byte, bool, bool), SpriteInfo[]> _dirs = new();
             private SpriteInfo _artInfo;
 
+            public static readonly SpriteInfo Placeholder = new SpriteInfo { Texture = FakeTextures[2], UV = new Rectangle(3, 5, 48, 52) };
+
             /// <summary>Frames whose atlas texture is not uploaded yet (a direction decoding on a worker).</summary>
             public ushort PendingBody = 0xFFFF;
 
@@ -48,8 +50,11 @@ namespace ClassicUO.UnitTests.Ecs
             public ref readonly SpriteInfo Art(uint graphic)
             {
                 SpriteEntry sp = _art[graphic + 0x4000];
+
+                // Arts.GetArt: art without pixels gets the placeholder sprite (Get(0)); its size here is not 44 x 44 so the
+                // placeholder's draw offset is visible
                 _artInfo = sp.OrigW == 0 || sp.OrigH == 0
-                    ? SpriteInfo.Empty
+                    ? Placeholder
                     : new SpriteInfo { Texture = FakeTextures[graphic % 3], UV = new Rectangle(100 + (int)graphic % 50, 7, sp.OrigW, sp.OrigH) };
 
                 return ref _artInfo;
@@ -117,8 +122,16 @@ namespace ClassicUO.UnitTests.Ecs
 
         // ---- the view, transcribed (MobileView.Draw → DrawInternal) ----
 
+        // the view's side outputs: the owner's FrameInfo and the lights (GameScene.AddLight(owner, item, X, Y)) in order
+        private sealed class ViewSide
+        {
+            public Rectangle FrameInfo;
+            public readonly List<(uint Item, int X, int Y)> Lights = new();
+        }
+
         private static void ViewDrawInternal(List<LegacyDraw> calls, ILegacySpriteSource src, ushort id, byte group, byte dir, byte frameIndex,
-            bool isEquip, int x, int y, bool mirror, bool hasShadow, float depth, int mountOffset, Vector3 hueVec, bool sitting, Vector3 sitMod)
+            bool isEquip, int x, int y, bool mirror, bool hasShadow, float depth, int mountOffset, Vector3 hueVec, bool sitting, Vector3 sitMod,
+            ViewSide side = null, uint lightItem = 0)
         {
             Span<SpriteInfo> frames = src.Frames(id, group, dir, isEquip, false);
 
@@ -159,6 +172,22 @@ namespace ClassicUO.UnitTests.Ecs
 
             Vector2 pos = new Vector2(x, y);
             Rectangle rect = si.UV;
+
+            if (side != null)
+            {
+                int xx = mirror ? -(si.UV.Width - si.Center.X) : -si.Center.X;
+                int yy = -(si.UV.Height + si.Center.Y + 3);
+                ref Rectangle fi = ref side.FrameInfo;
+                fi.X = Math.Min(fi.X, xx);
+                fi.Y = Math.Min(fi.Y, yy);
+                fi.Width = Math.Max(fi.Width, xx + si.UV.Width);
+                fi.Height = Math.Max(fi.Height, yy + si.UV.Height);
+
+                if (lightItem != 0)
+                {
+                    side.Lights.Add((lightItem, mirror ? x + si.UV.Width : x, y));
+                }
+            }
 
             if (sitting)
             {
@@ -210,7 +239,7 @@ namespace ClassicUO.UnitTests.Ecs
             return ShaderHueTranslator.GetHueVector(hue, partial, alpha);
         }
 
-        private static List<LegacyDraw> ViewMobile(ILegacySpriteSource src, EcsEntity e, int posX, int posY, float depth, DynamicSprite[] selected)
+        private static List<LegacyDraw> ViewMobile(ILegacySpriteSource src, EcsEntity e, int posX, int posY, float depth, DynamicSprite[] selected, ViewSide side = null)
         {
             var calls = new List<LegacyDraw>();
             AnimationState s = e.GetComponent<AnimationState>();
@@ -248,7 +277,7 @@ namespace ClassicUO.UnitTests.Ecs
                 }
 
                 ViewDrawInternal(calls, src, s.MountBody, s.MountGroup, s.Dir, s.Frame, false, drawX, drawY, mirror, false, depth, mountOffset,
-                    ViewHue(over, true, eq.MountHue, false, ownerHue, true, alpha), false, default);
+                    ViewHue(over, true, eq.MountHue, false, ownerHue, true, alpha), false, default, side);
                 drawY += mountOffset;
             }
             else if ((s.Flags & AnimStateFlags.Sitting) != 0)
@@ -262,7 +291,7 @@ namespace ClassicUO.UnitTests.Ecs
             }
 
             ViewDrawInternal(calls, src, s.Body, s.Group, s.Dir, s.Frame, false, drawX, drawY, mirror, false, depth, mountOffset,
-                ViewHue(over, false, 0, false, ownerHue, false, alpha), sitting, sitting ? NextSitMod() : default);
+                ViewHue(over, false, 0, false, ownerHue, false, alpha), sitting, sitting ? NextSitMod() : default, side);
 
             Span<byte> order = stackalloc byte[EquipmentSlots.MAX];
             int n = AnimationRules.PaintOrder(in eq, s.Facing, order);
@@ -272,10 +301,37 @@ namespace ClassicUO.UnitTests.Ecs
                 EquipSlot slot = eq.Slots[order[i]];
                 byte group = slot.Group == 0xFF ? s.Group : slot.Group;
                 ViewDrawInternal(calls, src, slot.DrawBody, group, s.Dir, s.Frame, true, drawX, drawY, mirror, false, depth, mountOffset,
-                    ViewHue(over, true, slot.Hue, (slot.Bits & EquipSlotBits.PartialHue) != 0, ownerHue, false, alpha), sitting, sitting ? NextSitMod() : default);
+                    ViewHue(over, true, slot.Hue, (slot.Bits & EquipSlotBits.PartialHue) != 0, ownerHue, false, alpha), sitting, sitting ? NextSitMod() : default,
+                    side, (slot.Bits & EquipSlotBits.Light) != 0 ? slot.Item : 0);
+            }
+
+            if (side != null)
+            {
+                for (int i = 0; i < eq.LightCount; i++)
+                {
+                    side.Lights.Add((eq.LightItems[i], drawX, drawY));
+                }
+
+                ref Rectangle fi = ref side.FrameInfo;
+                fi.X = Math.Abs(fi.X);
+                fi.Y = Math.Abs(fi.Y);
+                fi.Width += fi.X;
+                fi.Height += fi.Y;
             }
 
             return calls;
+        }
+
+        private static void AssertSameSide(ViewSide want, MobileSpriteExtract extract, string name)
+        {
+            Assert.Equal(want.FrameInfo, extract.FrameInfo);
+            Assert.Equal(want.Lights.Count, extract.Lights.Length);
+
+            for (int i = 0; i < want.Lights.Count; i++)
+            {
+                MobileSpriteExtract.LightRequest l = extract.Lights[i];
+                Assert.True(want.Lights[i] == (l.Item, l.X, l.Y), $"{name} light {i}: view {want.Lights[i]} | sink {(l.Item, l.X, l.Y)}");
+            }
         }
 
         [Theory]
@@ -288,14 +344,16 @@ namespace ClassicUO.UnitTests.Ecs
             EcsEntity e = MobileCase(mirror, name);
             var extract = new MobileSpriteExtract(anims);
 
-            extract.BeginSelect();
+            extract.BeginSelect(atlas);
             extract.Select(e, 600, 400, 812.25f);
             DynamicSprite[] selected = extract.Selected.ToArray();
 
             List<LegacyDraw> got = ResolveAll(atlas, selected);
-            List<LegacyDraw> want = ViewMobile(atlas, e, 600, 400, 812.25f, selected);
+            var side = new ViewSide();
+            List<LegacyDraw> want = ViewMobile(atlas, e, 600, 400, 812.25f, selected, side);
 
             AssertSameCalls(want, got, name);
+            AssertSameSide(side, extract, name);
 
             switch (name)
             {
@@ -322,25 +380,53 @@ namespace ClassicUO.UnitTests.Ecs
             }
         }
 
+        [Theory]
+        [InlineData("mounted", HUMAN)]
+        [InlineData("mounted", HORSE)]
+        [InlineData("equipped", LANTERN)]
+        [InlineData("equipped", ROBE)]
+        public void Legacy_Mobile_Select_Skips_Layers_Still_Decoding(string name, ushort pending)
+        {
+            // Codex P2 (t7b2a): a layer whose atlas frame has no texture yet (a direction decoding on a worker; the parity
+            // checker loads synchronously, so only this test sees it) adds no draw, FrameInfo or light in
+            // MobileView.DrawInternal
+            (AnimationsLoader anims, _) = AnimFixture(5);
+            var atlas = new FakeAtlas(anims, Array.Empty<SpriteEntry>()) { PendingBody = pending };
+            var mirror = new WorldMirror();
+            EcsEntity e = MobileCase(mirror, name);
+            var extract = new MobileSpriteExtract(anims);
+
+            extract.BeginSelect(atlas);
+            extract.Select(e, 600, 400, 812.25f);
+            DynamicSprite[] selected = extract.Selected.ToArray();
+            List<LegacyDraw> got = ResolveAll(atlas, selected);
+            var side = new ViewSide();
+            List<LegacyDraw> want = ViewMobile(atlas, e, 600, 400, 812.25f, selected, side);
+
+            Assert.DoesNotContain(selected, s => s.Body == pending);
+            AssertSameCalls(want, got, name);
+            AssertSameSide(side, extract, name);
+
+            if (pending == LANTERN)
+            {
+                Assert.Empty(extract.Lights.ToArray());
+            }
+        }
+
         [Fact]
-        public void Legacy_Mobile_Resolve_Draws_Nothing_For_A_Direction_Still_Decoding()
+        public void Legacy_Mobile_Select_Whose_Every_Layer_Is_Decoding_Has_No_FrameInfo()
         {
             (AnimationsLoader anims, _) = AnimFixture(5);
             var atlas = new FakeAtlas(anims, Array.Empty<SpriteEntry>()) { PendingBody = HUMAN };
             var mirror = new WorldMirror();
-            EcsEntity e = MobileCase(mirror, "mounted");
+            EcsEntity e = MobileCase(mirror, "plain");
             var extract = new MobileSpriteExtract(anims);
 
-            extract.BeginSelect();
+            extract.BeginSelect(atlas);
             extract.Select(e, 600, 400, 812.25f);
-            List<LegacyDraw> got = ResolveAll(atlas, extract.Selected);
 
-            // the rider's records resolve to nothing, the mount's (shadow and body) are drawn, as the view does
-            Assert.Contains(extract.Selected.ToArray(), s => s.Body == HUMAN);
-            Assert.NotEmpty(got);
-            Assert.Equal(ViewMobile(atlas, e, 600, 400, 812.25f, extract.Selected.ToArray()).Count, got.Count);
-            // and the extract's FrameInfo still has the rider (picking: see the handoff)
-            Assert.NotEqual(Rectangle.Empty, extract.FrameInfo);
+            Assert.Empty(extract.Selected.ToArray());
+            Assert.Equal(Rectangle.Empty, extract.FrameInfo);
         }
 
         [Fact]
@@ -413,6 +499,31 @@ namespace ClassicUO.UnitTests.Ecs
             ViewArt(want, atlas, graphic, posX, posY, hue, 455.5f);
 
             AssertSameCalls(want, got, name);
+
+            // the picking offset the view stores on the art entry: from the drawn sprite; for missing art GetEntry is a
+            // discarded scratch entry, so it reads 0, 0
+            bool missing = (extract.Selected[0].Flags & DynamicSpriteFlags.MissingArt) != 0;
+            Rectangle uv = atlas.Art(graphic).UV;
+            Assert.Equal(missing ? 0 : (uv.Width >> 1) - 22, arts.GetEntry(graphic + 0x4000).Width);
+            Assert.Equal(missing ? 0 : uv.Height - 44, arts.GetEntry(graphic + 0x4000).Height);
+            Assert.Equal(name.StartsWith("missing"), missing);
+        }
+
+        public static TheoryData<string> LegacyItemCases => new TheoryData<string> { "missing", "missing-stack" };
+
+        [Theory]
+        [MemberData(nameof(LegacyItemCases))]
+        public void Legacy_Item_Missing_Art_Draws_The_Placeholder(string name) => Legacy_Item_Resolve_Makes_The_Views_Batcher_Calls(name);
+
+        [Fact]
+        public void Item_Emit_Of_Missing_Art_Draws_Nothing_On_The_Gpu_Path()
+        {
+            (ArtLoader arts, GpuSpriteTables tables) = ArtFixture();
+            var extract = new ItemSpriteExtract(arts, null);
+            ItemSpriteInput input = ItemCase("missing");
+
+            Assert.True(extract.Emit(in input, in tables, 15, -40, 700, 300, 455.5f));
+            Assert.Equal(0, extract.Instances.Length);
         }
 
         // ---- the switch and the checker ----
@@ -472,6 +583,43 @@ namespace ClassicUO.UnitTests.Ecs
             c[0].Texture = FakeTextures[1];
             Assert.Equal(0, LegacyEcsParity.FirstDifference(a, c));
             Assert.Equal(1, LegacyEcsParity.FirstDifference(a, b.Slice(0, 1)));
+        }
+
+        [Fact]
+        public void Legacy_Parity_No_Problem_Parts_Is_No_Mismatch()
+        {
+            // bench-000244: problem += CompareLights(…) turned null + null into "", so every compared object with matching
+            // lights counted as a mismatch with an empty reason
+            Assert.Null(LegacyEcsParity.AddProblem(null, null));
+            Assert.Equal(" lights view=1 sink=0", LegacyEcsParity.AddProblem(null, " lights view=1 sink=0"));
+            Assert.Equal(" drawn view=True sink=False", LegacyEcsParity.AddProblem(" drawn view=True sink=False", null));
+            Assert.Equal(" a b", LegacyEcsParity.AddProblem(" a", " b"));
+        }
+
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void Legacy_Parity_Runs_Both_Paths_From_One_Rng_State_And_Keeps_The_Drawn_Ones(bool sinkDraws)
+        {
+            // Codex P3 (t7b2a): the view's and the sink's animation-group rolls see the same values, and the RNG ends as if
+            // only the drawn path had run (view: 1 roll, sink: 2 rolls here)
+            ClassicUO.Utility.RandomHelper.State start = ClassicUO.Utility.RandomHelper.Save();
+            int r1 = ClassicUO.Utility.RandomHelper.GetValue();
+            int r2 = ClassicUO.Utility.RandomHelper.GetValue();
+            int r3 = ClassicUO.Utility.RandomHelper.GetValue();
+            ClassicUO.Utility.RandomHelper.Restore(in start);
+
+            var fork = new LegacyEcsParity.RngFork();
+            fork.Begin();
+            int view = ClassicUO.Utility.RandomHelper.GetValue();
+            fork.Second();
+            int sink = ClassicUO.Utility.RandomHelper.GetValue();
+            ClassicUO.Utility.RandomHelper.GetValue();
+            fork.End(sinkDraws);
+
+            Assert.Equal(r1, view);
+            Assert.Equal(r1, sink);
+            Assert.Equal(sinkDraws ? r3 : r2, ClassicUO.Utility.RandomHelper.GetValue());
         }
 
         [Fact]

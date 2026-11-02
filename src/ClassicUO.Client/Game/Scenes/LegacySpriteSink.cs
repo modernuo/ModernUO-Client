@@ -163,7 +163,7 @@ namespace ClassicUO.Game.Scenes
 
             mobile.DrawAura(batcher, posX, posY, depth);
             MobileSpriteExtract extract = ecs.MobileExtract;
-            extract.BeginSelect();
+            extract.BeginSelect(ClientLegacySpriteSource.Instance);
             extract.Select(e, posX, posY, depth);
             LegacySpriteResolve.DrawAll(batcher, ClientLegacySpriteSource.Instance, extract.Selected);
 

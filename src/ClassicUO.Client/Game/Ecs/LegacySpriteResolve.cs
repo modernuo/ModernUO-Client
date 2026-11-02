@@ -75,7 +75,9 @@ namespace ClassicUO.Game
                 }
 
                 d.Texture = art.Texture;
-                d.Position = new Vector2(s.X, s.Y);
+                d.Position = (s.Flags & DynamicSpriteFlags.MissingArt) != 0
+                    ? new Vector2(s.X - ArtOffsetX(art.UV), s.Y - ArtOffsetY(art.UV))
+                    : new Vector2(s.X, s.Y);
                 d.Source = art.UV;
                 d.Hue = s.Hue;
                 d.Depth = s.Depth;
@@ -129,6 +131,12 @@ namespace ClassicUO.Game
 
             return true;
         }
+
+        // View.DrawStaticAnimated's draw offset of an art sprite. For the placeholder it also writes it to the art entry, but
+        // ArtLoader.GetEntry of art the pack lacks is a discarded scratch entry, so picking keeps 0, 0: nothing to store.
+        private static int ArtOffsetX(Rectangle uv) => (uv.Width >> 1) - 22;
+
+        private static int ArtOffsetY(Rectangle uv) => uv.Height - 44;
 
         /// <summary>The batcher call of <paramref name="d"/>, as the view makes it.</summary>
         public static void Draw(UltimaBatcher2D batcher, in LegacyDraw d)
