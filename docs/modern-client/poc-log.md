@@ -5172,3 +5172,13 @@ Paired NativeAOT builds (`CuoDevTools=true`, checkers off), all on the quiet mac
 - Codex found 3 P2s, all fixed: StaticPic hit test before first draw; MUL gump sizes with loose overrides; undrained speculative requests.
 - Counts bench-000255/256 PASS; gate bench-000257 PASS. Unit tests after the merge: 3,049 passed, 6 skipped.
 - Timing pending (parked: `measure/perf-6/job-timing-PARKED.sh`). The agent expects perf-4's prefetch to stay useful (the decode moves to the first draw in the same frame); its counts jobs show the off/on numbers.
+
+### T9 slice 1 merged: first deletions (coordinator, 2026-11-02)
+
+- Merge 9265cbc9b, devdocs e01c400b5.
+- **Deleted** under the owner's delete-early rule (on by default for at least a phase, gates held, Codex-audited):
+  - `world_update_active_items` off path (e42a478e0): `UpdateAllItems`, the per-frame hits refresh, the setting, the DevBench toggles;
+  - `world_update_mobile_system` off path (a0f67c3cf): E4's legacy mobile loop, the setting, the toggles.
+- **Kept:** `CUO_MOBILE_UPDATE_CHECK`. Its clock and skipped-mobile checks still compare live paths (`Mobile.Update`), useful for T5b/T6c. Its shadow-dictionary and order parts belonged to the deleted loop and can be trimmed later; the agent's full-deletion commit 6565be136 is not merged.
+- Gates: Gpu with the mobile checker bench-000258 PASS (the last comparison against the legacy loop on record); Legacy bench-000259 PASS; plans bench-000260 PASS; shots bench-000261 within the A/A controls.
+- Unit tests 3,049 passed, 6 skipped.
