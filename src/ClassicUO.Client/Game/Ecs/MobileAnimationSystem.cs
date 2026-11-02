@@ -132,15 +132,7 @@ namespace ClassicUO.Game
                 }
             }
 
-            if (Configuration.Settings.GlobalSettings.GpuMobileFrameCache)
-            {
-                SelectCached(world, m, ref s, ref eq);
-            }
-            else
-            {
-                m.FrameCache?.Invalidate();
-                Select(m, ref s, ref eq);
-            }
+            SelectCached(world, m, ref s, ref eq);
         }
 
         // W5: Select, or the last frame's result when the sampled inputs are the same (MobileFrameCache)

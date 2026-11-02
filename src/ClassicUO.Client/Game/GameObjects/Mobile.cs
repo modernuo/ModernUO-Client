@@ -16,7 +16,7 @@ namespace ClassicUO.Game.GameObjects
 {
     internal partial class Mobile : Entity
     {
-        /// <summary>W5: the Gpu world's reused selection and sprite instances (gpu_mobile_frame_cache).</summary>
+        /// <summary>W5: the Gpu world's reused selection and sprite instances (MobileFrameCache).</summary>
         internal MobileFrameCache FrameCache;
 
         /// <summary>T3a: the equipment read cache (WorldState.WornItem), made at the first read with ecs_read_equipment on.</summary>

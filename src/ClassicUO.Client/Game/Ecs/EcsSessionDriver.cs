@@ -866,10 +866,9 @@ namespace ClassicUO.Game
 
                     return true;
 
-                // w5 on|off: the W5 shortcuts that still have a switch (gpu_mobile_frame_cache, text_skip_expired, mobile_push_inputs)
+                // w5 on|off: the W5 shortcuts that still have a switch (text_skip_expired, mobile_push_inputs)
                 case "w5" when args.Length > 0:
-                    Settings.GlobalSettings.GpuMobileFrameCache =
-                        Settings.GlobalSettings.TextSkipExpired = Settings.GlobalSettings.MobilePushInputs = args[0] == "on";
+                    Settings.GlobalSettings.TextSkipExpired = Settings.GlobalSettings.MobilePushInputs = args[0] == "on";
                     Log.Info($"[ECS] driver: W5 shortcuts {args[0]}");
 
                     return true;
@@ -881,12 +880,11 @@ namespace ClassicUO.Game
 
                     return true;
 
-                // mobcache on|off: the Gpu world's mobile frame cache (gpu_mobile_frame_cache, W5)
-                case "mobcache" when args.Length > 0:
-                    Settings.GlobalSettings.GpuMobileFrameCache = args[0] == "on";
-                    Log.Info($"[ECS] driver: mobile frame cache {args[0]}");
+                // T9: switches whose off path is deleted; older session scripts still name them, so they are accepted and ignored
+                case "mobcache":
+                    Log.Info($"[ECS] driver: '{cmd}' has no off path any more (T9), ignored");
 
-                    return true;
+                    return false;
 
                 // answers OK (button 1) on the frontmost server gump, e.g. a staff command's confirmation (as DevBench's gumpok)
                 case "gumpok":
