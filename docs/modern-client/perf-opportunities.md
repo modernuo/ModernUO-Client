@@ -228,14 +228,14 @@ Today the client parses incoming packets in place (`StackDataReader` over fixed 
 - **One component read per mobile** (TryDrawMobileEcs, LegacySpriteSink.DrawMobile): `AnimationState` and `MobileRenderState` are looked up separately. One `e.Data` read, as `ItemSpriteInput.ReadRecord` does, saves one lookup per mobile per frame. Source: t7b2b.
 - **Paperdoll slots look up two dictionaries per slot per frame** (PaperDollGump.cs ~758, `EquipmentSlot.Update`): `World.Items.Get` and `World.Mobiles.Get` for 14 slots. Caching the mobile reference saves about 28 lookups per frame per open paperdoll. Source: perf-7.
 - **`Gump.Prefetch` uploads unrelated finished decodes while it waits** (Gump.cs ~215). Taking only the batch's decodes keeps other uploads within `DrainReady`'s 1 ms budget. Source: perf-7.
-- **`MobileInputs` copied per mobile per frame** (MobileAnimationSystem.cs `UpdateInPlace`, `TryGetComponent(out inp)`). Reading it by reference saves the struct copy. Source: t9-slice2.
-- **Hue inputs rebuilt per mobile per frame** (`SelectOverrideHue` rebuilds a ~20-field input from the profile). Take the profile flags once per frame. Source: t9-slice2.
-- **25 `WornCache` checks per mobile per frame on Legacy** (MobileView's layer loop calls `FindItemByLayer` per layer). Fetch the cache once per mobile; E2 measured 0.07 µs per mobile. Source: t9-slice2.
+- **Done (perf-10): `MobileInputs` copied per mobile per frame** (MobileAnimationSystem.cs `UpdateInPlace`, `TryGetComponent(out inp)`). Reading it by reference saves the struct copy. Source: t9-slice2.
+- **Done (perf-10, the frame-wide half is taken once per frame): Hue inputs rebuilt per mobile per frame** (`SelectOverrideHue` rebuilds a ~20-field input from the profile). Take the profile flags once per frame. Source: t9-slice2.
+- **Done (perf-10, Legacy large scene 40,950 → 10,055 checks per frame): 25 `WornCache` checks per mobile per frame on Legacy** (MobileView's layer loop calls `FindItemByLayer` per layer). Fetch the cache once per mobile; E2 measured 0.07 µs per mobile. Source: t9-slice2.
 - **ItemGump calls `World.Items.Get` per container item per frame** (ItemGump.cs ~188/236, AddToRenderLists and Contains), and ItemGumpFixed per paperdoll slot (PaperdollGump.cs ~866). The perf-8 `EntityRef` would remove these lookups. Source: perf-8.
 - **`Gump.AwaitBatch` busy-waits with Yield** (Gump.cs). `DecodeQueue.WaitPublished` would block instead, as Art does. Source: perf-8.
 - **The `Control.Parent` setter scans the child list on every re-add** (Control.cs:135), which is quadratic for large containers. Source: perf-8.
-- **Disposed-child removal in `Control.Update` is O(n²)** (Control.cs ~291, `Children.RemoveAt(i--)` inside the loop). A full container rebuild disposes n controls. A single compaction pass would make it O(n). Source: perf-9.
-- **`FindControls` allocates on every call** (Control.cs ~503, `OfType().Where().ToArray()`). Source: perf-9.
+- **Done (perf-10, one `RemoveRange` per run): Disposed-child removal in `Control.Update` is O(n²)** (Control.cs ~291, `Children.RemoveAt(i--)` inside the loop). A full container rebuild disposes n controls. A single compaction pass would make it O(n). Source: perf-9.
+- **Dropped (perf-10: no per-frame caller; only constructors, clicks and Save): `FindControls` allocates on every call** (Control.cs ~503, `OfType().Where().ToArray()`). Source: perf-9.
 - **Dev builds only: `Extract.Run` runs every frame whenever `-ecscheck` > 0, even between checks** (WorldEcs.cs ~972). Source: perf-9.
 - **Store each layer's item or serial in `LayerDecision`** (MobileView.cs draw loop): the loop still does one `FindItemByLayer` per layer after a cache hit, about 10–20 lookups per drawn mobile per frame. Source: t9-slice3.
 
