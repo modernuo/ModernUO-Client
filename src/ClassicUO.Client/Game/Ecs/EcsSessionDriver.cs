@@ -732,7 +732,7 @@ namespace ClassicUO.Game
                 // paperdoll: opens the player's own paperdoll (T3a's shots; a double-click on a mounted self would dismount)
                 case "paperdoll":
                     GameActions.OpenPaperdoll(world, player.Serial);
-                    Log.Info($"[ECS] ui paperdoll 0x{player.Serial:X8} mounted={player.IsMounted} read_equipment={(world.State.ReadEquipment ? "on" : "off")}");
+                    Log.Info($"[ECS] ui paperdoll 0x{player.Serial:X8} mounted={player.IsMounted}");
 
                     return true;
 
@@ -744,15 +744,6 @@ namespace ClassicUO.Game
 
                     return true;
                 }
-
-                // readequipment on|off: the equipment readers from the ECS (ecs_read_equipment, T3a); the env override
-                // CUO_ECS_READ_EQUIPMENT wins over it
-                case "readequipment" when args.Length > 0:
-                    Settings.GlobalSettings.EcsReadEquipment = args[0] == "on";
-                    Log.Info($"[ECS] driver: read equipment from the ECS {args[0]} (effective {world.State.ReadEquipment})");
-                    world.State.LogEquipmentSummary();
-
-                    return false;
 
                 // layerrules on|off: the layering rules from data (ecs_layer_rules, T3b; wins over CUO_ECS_LAYER_RULES). Marks
                 // every mobile's equipment dirty so the ECS world's cached slots are rebuilt under the new setting.
@@ -870,6 +861,7 @@ namespace ClassicUO.Game
                 case "mobcache":
                 case "pushinputs":
                 case "readcontents":
+                case "readequipment":
                     Log.Info($"[ECS] driver: '{cmd}' has no off path any more (T9), ignored");
 
                     return false;
