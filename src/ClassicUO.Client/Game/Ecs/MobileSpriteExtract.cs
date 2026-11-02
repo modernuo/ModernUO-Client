@@ -8,6 +8,7 @@ using Microsoft.Xna.Framework;
 using Uo.Pack;
 using Uo.Render;
 using EcsEntity = Friflo.Engine.ECS.Entity;
+using EntityData = Friflo.Engine.ECS.EntityData;
 
 namespace ClassicUO.Game
 {
@@ -134,14 +135,17 @@ namespace ClassicUO.Game
         /// seated sections) into <see cref="Selected"/>, plus the same FrameInfo and lights as <see cref="Emit(EcsEntity, int, int, float)"/>;
         /// no instances. <see cref="GpuSpriteResolve"/> of each record in order gives Emit's instances.
         /// </summary>
-        public void Select(EcsEntity e, int posX, int posY, float depth)
+        public void Select(EcsEntity e, int posX, int posY, float depth) => Select(e, e.Data, posX, posY, depth);
+
+        /// <summary><see cref="Select(EcsEntity, int, int, float)"/> with <paramref name="e"/>'s record already read (perf-11).</summary>
+        public void Select(EcsEntity e, EntityData data, int posX, int posY, float depth)
         {
             _selCount = 0;
             _selectOnly = true;
 
             try
             {
-                Emit(e, posX, posY, depth);
+                Emit(e, data, posX, posY, depth);
             }
             finally
             {
@@ -167,21 +171,24 @@ namespace ClassicUO.Game
         private ILegacySpriteSource _atlas;
 
         /// <summary>Appends the instances of one mobile drawn at screen position (<paramref name="posX"/>, <paramref name="posY"/>) with the scene's base depth.</summary>
-        public void Emit(EcsEntity e, int posX, int posY, float depth)
+        public void Emit(EcsEntity e, int posX, int posY, float depth) => Emit(e, e.Data, posX, posY, depth);
+
+        // perf-11: one record read (the entity's EntityData) for all the components the emission reads
+        private void Emit(EcsEntity e, EntityData data, int posX, int posY, float depth)
         {
             MaterializeView();
-            ref readonly AnimationState s = ref e.GetComponent<AnimationState>();
+            ref readonly AnimationState s = ref data.Get<AnimationState>();
 
             if ((s.Flags & AnimStateFlags.Visible) == 0 || !_hasAnims)
             {
                 return;
             }
 
-            ref readonly MobileRenderState rs = ref e.GetComponent<MobileRenderState>();
-            ref readonly EquipmentSlots eq = ref e.GetComponent<EquipmentSlots>();
-            _objX = e.GetComponent<Position>().X;
+            ref readonly MobileRenderState rs = ref data.Get<MobileRenderState>();
+            ref readonly EquipmentSlots eq = ref data.Get<EquipmentSlots>();
+            _objX = data.Get<Position>().X;
             _fiX = _fiY = _fiW = _fiH = 0;
-            ushort bodyHue = e.GetComponent<Hue>().Value;
+            ushort bodyHue = data.Get<Hue>().Value;
 
             int drawX = posX + rs.OffsetX + 22;
             int drawY = posY - 3 + rs.OffsetY + 22;
@@ -503,14 +510,24 @@ namespace ClassicUO.Game
         /// lights <paramref name="cache"/> recorded when the selection (<see cref="MobileFrameCache.SelectGen"/>), alpha,
         /// override hue, body hue and pack are the same, moved to this frame's position, walking offset and depth.
         /// </summary>
-        public void Emit(EcsEntity e, int posX, int posY, float depth, MobileFrameCache cache) =>
-            Emit(e, in e.GetComponent<AnimationState>(), in e.GetComponent<MobileRenderState>(), posX, posY, depth, cache);
+        public void Emit(EcsEntity e, int posX, int posY, float depth, MobileFrameCache cache)
+        {
+            EntityData data = e.Data;
+            Emit(e, data, in data.Get<AnimationState>(), in data.Get<MobileRenderState>(), posX, posY, depth, cache);
+        }
 
         /// <summary>
         /// <see cref="Emit(EcsEntity, int, int, float, MobileFrameCache)"/> with the entity's <see cref="AnimationState"/> and
         /// <see cref="MobileRenderState"/> already in hand (E5). They must be <paramref name="e"/>'s own, current components.
         /// </summary>
-        public void Emit(EcsEntity e, in AnimationState s, in MobileRenderState rs, int posX, int posY, float depth, MobileFrameCache cache)
+        public void Emit(EcsEntity e, in AnimationState s, in MobileRenderState rs, int posX, int posY, float depth, MobileFrameCache cache) =>
+            Emit(e, e.Data, in s, in rs, posX, posY, depth, cache);
+
+        /// <summary>
+        /// <see cref="Emit(EcsEntity, in AnimationState, in MobileRenderState, int, int, float, MobileFrameCache)"/> with
+        /// <paramref name="e"/>'s record already read (perf-11: the draw reads it once for every component).
+        /// </summary>
+        public void Emit(EcsEntity e, EntityData data, in AnimationState s, in MobileRenderState rs, int posX, int posY, float depth, MobileFrameCache cache)
         {
             if (cache == null || (s.Flags & AnimStateFlags.Visible) == 0 || !_hasAnims)
             {
@@ -519,12 +536,12 @@ namespace ClassicUO.Game
                     cache.EmitValid = false;
                 }
 
-                Emit(e, posX, posY, depth);
+                Emit(e, data, posX, posY, depth);
 
                 return;
             }
 
-            ushort bodyHue = e.GetComponent<Hue>().Value;
+            ushort bodyHue = data.Get<Hue>().Value;
             int baseX = posX + rs.OffsetX, baseY = posY + rs.OffsetY;
 
             if (cache.EmitValid && cache.EmitSelectGen == cache.SelectGen && cache.Alpha == rs.Alpha && cache.OverrideHue == rs.OverrideHue &&
@@ -534,7 +551,7 @@ namespace ClassicUO.Game
                 // a pending view from an earlier emit since Begin aliases cache.Abs (the same cache replayed twice): move it
                 // into _out before Replay mutates Abs, and before `start` is taken
                 MaterializeView();
-                int objX = e.GetComponent<Position>().X;
+                int objX = data.Get<Position>().X;
                 int lightStart = _lightCount;
                 int start = _count;
                 Replay(cache, baseX + _offsetX, baseY + _offsetY, depth, objX, baseX, baseY);
@@ -556,7 +573,7 @@ namespace ClassicUO.Game
 
             try
             {
-                Emit(e, posX, posY, depth);
+                Emit(e, data, posX, posY, depth);
             }
             finally
             {
