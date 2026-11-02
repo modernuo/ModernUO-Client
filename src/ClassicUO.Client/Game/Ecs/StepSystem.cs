@@ -212,7 +212,7 @@ namespace ClassicUO.Game
 
             MountSlotRebuilds++;
             AnimationState a = default;
-            a.Flags = e.GetComponent<MobileInputs>().Flags;
+            a.Flags = EcsRead.Get<MobileInputs>(e).Flags;
 
             if (RebuildSlotsOverride != null)
             {
@@ -237,7 +237,7 @@ namespace ClassicUO.Game
             }
 
             bool have = e.HasComponent<MobileInputs>() && e.HasComponent<EquipmentSlots>();
-            bool ecs = have && MountedFromEcs(in e.GetComponent<MobileInputs>(), in e.GetComponent<EquipmentSlots>());
+            bool ecs = have && MountedFromEcs(in EcsRead.Get<MobileInputs>(e), in EcsRead.Get<EquipmentSlots>(e));
 
             if (check)
             {
@@ -300,8 +300,8 @@ namespace ClassicUO.Game
                 CheckSync(mob, e, "before");
             }
 
-            StepsComponent s = e.GetComponent<StepsComponent>();
-            dir = (byte)(e.GetComponent<Facing>().Value & 7);
+            StepsComponent s = EcsRead.Get<StepsComponent>(e);
+            dir = (byte)(EcsRead.Get<Facing>(e).Value & 7);
 
             if (s.Count == 0)
             {
@@ -322,7 +322,7 @@ namespace ClassicUO.Game
                 world.Writer.EndServerAnimation(mob);
             }
 
-            Position p = e.GetComponent<Position>();
+            Position p = EcsRead.Get<Position>(e);
             StepInput inp;
             inp.Front = front;
             inp.Count = s.Count;
@@ -345,7 +345,7 @@ namespace ClassicUO.Game
             if (d.Interpolate)
             {
                 Interpolated++;
-                ref StepsComponent sw = ref e.GetComponent<StepsComponent>();
+                ref StepsComponent sw = ref EcsRead.Get<StepsComponent>(e);
                 sw.OffsetZ = d.Z;
                 sw.OffsetX = d.X;
                 sw.OffsetY = d.Y;
@@ -424,7 +424,7 @@ namespace ClassicUO.Game
         /// <summary>Differences between the component (and the record's position and facing) and the Mobile; null when equal.</summary>
         internal static string Diff(Mobile m, EcsEntity e)
         {
-            ref readonly StepsComponent s = ref e.GetComponent<StepsComponent>();
+            ref readonly StepsComponent s = ref EcsRead.Get<StepsComponent>(e);
             Mobile.StepQueue q = m.Steps;
 
             if (s.Count != q.Count)
@@ -453,14 +453,14 @@ namespace ClassicUO.Game
                 return $"offset ({s.OffsetX},{s.OffsetY},{s.OffsetZ}) vs {m.Offset}";
             }
 
-            Position p = e.GetComponent<Position>();
+            Position p = EcsRead.Get<Position>(e);
 
             if (p.X != m.X || p.Y != m.Y || p.Z != m.Z)
             {
                 return $"position ({p.X},{p.Y},{p.Z}) vs ({m.X},{m.Y},{m.Z})";
             }
 
-            if ((e.GetComponent<Facing>().Value & 7) != ((byte)m.Direction & 7))
+            if ((EcsRead.Get<Facing>(e).Value & 7) != ((byte)m.Direction & 7))
             {
                 return $"facing {e.GetComponent<Facing>().Value} vs {m.Direction}";
             }

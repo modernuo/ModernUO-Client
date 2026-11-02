@@ -8,7 +8,6 @@ using Microsoft.Xna.Framework;
 using Uo.Pack;
 using Uo.Render;
 using EcsEntity = Friflo.Engine.ECS.Entity;
-using EntityData = Friflo.Engine.ECS.EntityData;
 
 namespace ClassicUO.Game
 {
@@ -135,10 +134,10 @@ namespace ClassicUO.Game
         /// seated sections) into <see cref="Selected"/>, plus the same FrameInfo and lights as <see cref="Emit(EcsEntity, int, int, float)"/>;
         /// no instances. <see cref="GpuSpriteResolve"/> of each record in order gives Emit's instances.
         /// </summary>
-        public void Select(EcsEntity e, int posX, int posY, float depth) => Select(e, e.Data, posX, posY, depth);
+        public void Select(EcsEntity e, int posX, int posY, float depth) => Select(e, EcsRead.Row(e), posX, posY, depth);
 
         /// <summary><see cref="Select(EcsEntity, int, int, float)"/> with <paramref name="e"/>'s record already read (perf-11).</summary>
-        public void Select(EcsEntity e, EntityData data, int posX, int posY, float depth)
+        public void Select(EcsEntity e, EcsRow data, int posX, int posY, float depth)
         {
             _selCount = 0;
             _selectOnly = true;
@@ -171,10 +170,10 @@ namespace ClassicUO.Game
         private ILegacySpriteSource _atlas;
 
         /// <summary>Appends the instances of one mobile drawn at screen position (<paramref name="posX"/>, <paramref name="posY"/>) with the scene's base depth.</summary>
-        public void Emit(EcsEntity e, int posX, int posY, float depth) => Emit(e, e.Data, posX, posY, depth);
+        public void Emit(EcsEntity e, int posX, int posY, float depth) => Emit(e, EcsRead.Row(e), posX, posY, depth);
 
-        // perf-11: one record read (the entity's EntityData) for all the components the emission reads
-        private void Emit(EcsEntity e, EntityData data, int posX, int posY, float depth)
+        // perf-11: one record read (the entity's EcsRow) for all the components the emission reads
+        private void Emit(EcsEntity e, EcsRow data, int posX, int posY, float depth)
         {
             MaterializeView();
             ref readonly AnimationState s = ref data.Get<AnimationState>();
@@ -512,7 +511,7 @@ namespace ClassicUO.Game
         /// </summary>
         public void Emit(EcsEntity e, int posX, int posY, float depth, MobileFrameCache cache)
         {
-            EntityData data = e.Data;
+            EcsRow data = EcsRead.Row(e);
             Emit(e, data, in data.Get<AnimationState>(), in data.Get<MobileRenderState>(), posX, posY, depth, cache);
         }
 
@@ -521,13 +520,13 @@ namespace ClassicUO.Game
         /// <see cref="MobileRenderState"/> already in hand (E5). They must be <paramref name="e"/>'s own, current components.
         /// </summary>
         public void Emit(EcsEntity e, in AnimationState s, in MobileRenderState rs, int posX, int posY, float depth, MobileFrameCache cache) =>
-            Emit(e, e.Data, in s, in rs, posX, posY, depth, cache);
+            Emit(e, EcsRead.Row(e), in s, in rs, posX, posY, depth, cache);
 
         /// <summary>
         /// <see cref="Emit(EcsEntity, in AnimationState, in MobileRenderState, int, int, float, MobileFrameCache)"/> with
         /// <paramref name="e"/>'s record already read (perf-11: the draw reads it once for every component).
         /// </summary>
-        public void Emit(EcsEntity e, EntityData data, in AnimationState s, in MobileRenderState rs, int posX, int posY, float depth, MobileFrameCache cache)
+        public void Emit(EcsEntity e, EcsRow data, in AnimationState s, in MobileRenderState rs, int posX, int posY, float depth, MobileFrameCache cache)
         {
             if (cache == null || (s.Flags & AnimStateFlags.Visible) == 0 || !_hasAnims)
             {

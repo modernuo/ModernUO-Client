@@ -71,7 +71,7 @@ namespace ClassicUO.Game
         public void Update(World world, Mobile m, EcsEntity e)
         {
             bool dirty = TakeDirty(e);
-            EntityData data = e.Data;
+            EcsRow data = EcsRead.Row(e);
             UpdateInPlace(world, m, e, data, dirty, ref data.Get<AnimationState>(), ref data.Get<MobileRenderState>());
         }
 
@@ -102,7 +102,7 @@ namespace ClassicUO.Game
         /// on to the extract without more lookups. Nothing in here changes the entity's archetype, so <paramref name="data"/>
         /// (<paramref name="e"/>'s record, read once by the caller after TakeDirty; perf-11) stays valid throughout.
         /// </summary>
-        public void UpdateInPlace(World world, Mobile m, EcsEntity e, EntityData data, bool dirty, ref AnimationState s, ref MobileRenderState rs)
+        public void UpdateInPlace(World world, Mobile m, EcsEntity e, EcsRow data, bool dirty, ref AnimationState s, ref MobileRenderState rs)
         {
             // W5: the slow-changing inputs come from MobileInputs, pushed at their mutation sites (the mirror gives every
             // mobile one; without it, as in a hand-built entity, they are read from the Mobile)
@@ -240,7 +240,7 @@ namespace ClassicUO.Game
             foreach (EcsEntity e in _dirtyScratch)
             {
                 e.RemoveTag<EquipmentDirty>();
-                Rebuild(e, e.GetComponent<AnimationState>());
+                Rebuild(e, EcsRead.Get<AnimationState>(e));
             }
         }
 
@@ -422,8 +422,8 @@ namespace ClassicUO.Game
         private static void BenchSample(World world, Mobile m, EcsEntity e, in AnimationState s0, in MobileRenderState rs0)
         {
             const int N = 8;
-            MobileInputs inp = e.GetComponent<MobileInputs>();
-            bool mounted = e.GetComponent<EquipmentSlots>().Mounted;
+            MobileInputs inp = EcsRead.Get<MobileInputs>(e);
+            bool mounted = EcsRead.Get<EquipmentSlots>(e).Mounted;
             AnimStateFlags sink = 0;
             _benchFlip = !_benchFlip;
 
@@ -486,7 +486,7 @@ namespace ClassicUO.Game
         [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
         private static uint ClockFromLookup(EcsEntity e)
         {
-            ref MobileInputs i = ref e.GetComponent<MobileInputs>();
+            ref MobileInputs i = ref EcsRead.Get<MobileInputs>(e);
 
             return (uint)i.Body + i.Facing + i.LastStepTime + i.Notoriety;
         }
@@ -589,13 +589,13 @@ namespace ClassicUO.Game
             IReadOnlyDictionary<ushort, Dictionary<ushort, EquipConvData>> equipConversions, bool cv7000)
         {
             Rebuilds++;
-            ref EquipmentSlots eq = ref mobile.GetComponent<EquipmentSlots>();
+            ref EquipmentSlots eq = ref EcsRead.Get<EquipmentSlots>(mobile);
             WornLayers kept = eq.Worn; // T3a: the mirror's state, not derived here
             eq = default;
             eq.Worn = kept;
             eq.Version = ++_equipVersions;
 
-            ushort body = mobile.GetComponent<Graphic>().Value;
+            ushort body = EcsRead.Get<Graphic>(mobile).Value;
             Span<ushort> gfx = stackalloc ushort[N];
             Span<ushort> anim = stackalloc ushort[N];
             Span<ushort> hue = stackalloc ushort[N];
@@ -621,14 +621,14 @@ namespace ClassicUO.Game
                     continue;
                 }
 
-                ushort g = item.GetComponent<Graphic>().Value;
+                ushort g = EcsRead.Get<Graphic>(item).Value;
 
                 if (layer == (int)Layer.Mount)
                 {
                     eq.MountItem = wornSerial;
                     eq.MountGraphic = g;
                     eq.MountAnimId = g < tiles.Length ? tiles[g].AnimID : (ushort)0;
-                    eq.MountHue = item.GetComponent<Hue>().Value;
+                    eq.MountHue = EcsRead.Get<Hue>(item).Value;
 
                     continue;
                 }
@@ -636,8 +636,8 @@ namespace ClassicUO.Game
                 present[layer] = true;
                 gfx[layer] = g;
                 anim[layer] = g < tiles.Length ? tiles[g].AnimID : (ushort)0;
-                hue[layer] = item.GetComponent<Hue>().Value;
-                serial[layer] = item.GetComponent<Serial>().Value;
+                hue[layer] = EcsRead.Get<Hue>(item).Value;
+                serial[layer] = EcsRead.Get<Serial>(item).Value;
             }
 
             // Mobile.IsMounted from the mobile's own equipment list, not the mirror's index: the index is keyed by the item's
