@@ -5219,3 +5219,16 @@ Paired NativeAOT builds (`CuoDevTools=true`, checkers off), all on the quiet mac
   - ItemGump and ItemGumpFixed call `World.Items.Get` per item per frame;
   - `Gump.AwaitBatch` busy-waits with Yield;
   - the `Control.Parent` setter scans the child list, which is quadratic for large containers.
+
+### T9 slice 3 merged: ecs_layer_rules off path deleted; child-list removal plan (coordinator, 2026-11-02)
+
+- Merge 750cc787c: 9a32fdeb0 (test reference fixture), 906653ec1 (deletion, src −1385), 1f8e107e1 (devdocs).
+- Gates: the last `CUO_LAYER_RULES_CHECK` gate bench-000270 PASS; Gpu/Legacy/plans bench-000271/272/273 PASS; shots bench-000274 PASS. Codex: no findings.
+- Unit tests 3,036 passed, 6 skipped.
+- **Follow-up:** restore a small runtime check of the `LayerDecision` cache (the deleted checker also compared cached decisions with fresh ones).
+- **Child-list removal plan** (`cuo-poc-state/handoffs/t9-slice3.md`):
+  - `LinkedObject` stays, because text containers, the effect manager and macros use it. Only the entity child list goes.
+  - About 22 writers and 30 production readers.
+  - Slice A: move the remaining readers to the ECS (funnel walks, destroy cascades, corpses, bank, driver, char-creation preview).
+  - Slice B: a last gate with both checkers, then stop writing the list and delete `FindItemByLayerInList`, `CUO_CONTENTS_CHECK` and `CUO_EQUIP_READ_CHECK`.
+  - Optional: move `LinkedObject` off `BaseGameObject` (−24 B per object, about 2–5 MB per client).
