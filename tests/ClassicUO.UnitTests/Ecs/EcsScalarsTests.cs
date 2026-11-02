@@ -19,6 +19,12 @@ namespace ClassicUO.UnitTests.Ecs
     // builds), so the dispatch tests check the getter against whichever read the switch selects; the suite runs both ways.
     public class EcsScalarsTests
     {
+        [Fact]
+        public void The_EcsOwnsScalars_Setting_Defaults_On()
+        {
+            new ClassicUO.Configuration.Settings().EcsOwnsScalars.Should().BeTrue();
+        }
+
         private const uint MOB = 0x0000_3900, VENDOR = 0x0000_3901, STAT = 0x0000_3902, C = 0x4000_7903, B = 0x4000_7902;
 
         // ---- the old reads (copies of the getters before T4: the field) and the new reads

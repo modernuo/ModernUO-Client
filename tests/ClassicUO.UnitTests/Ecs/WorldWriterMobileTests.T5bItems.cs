@@ -336,16 +336,16 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Fact]
-        public void The_Item_Anim_Switch_Is_Off_By_Default_And_Builds_The_Timers_On_The_Stage()
+        public void The_Item_Anim_Switch_Is_On_By_Default_And_Builds_The_Timers_On_The_Stage()
         {
-            ClassicUO.Configuration.Settings.GlobalSettings.WorldItemAnimSystem.Should().BeFalse();
+            ClassicUO.Configuration.Settings.GlobalSettings.WorldItemAnimSystem.Should().BeTrue();
 
             World world = BuildCorpse(Start.Standing);
             Item corpse = world.Items.Get(CORPSE);
             corpse.LastAnimationChangeTime = long.MaxValue / 2; // not due: the live animation data is not needed
             world.Ecs.Mirror.TryGetEntity(CORPSE, false, out EcsEntity e).Should().BeTrue();
             e.HasComponent<AnimationTimer>().Should().BeFalse();
-            world.ItemAnimSystem.Should().BeFalse();
+            world.ItemAnimSystem.Should().BeTrue();
         }
     }
 }

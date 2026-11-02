@@ -126,13 +126,13 @@ namespace ClassicUO.UnitTests.Ecs
             w.Mobiles.Values.Where(m => !m.IsDestroyed && m.Distance > w.ClientViewRange).Select(m => m.Serial).ToList();
 
         [Fact]
-        public void The_Switch_Is_Off_By_Default_And_Overridable()
+        public void The_Switch_Is_On_By_Default_And_Overridable()
         {
-            Configuration.Settings.GlobalSettings.WorldSweepSystem.Should().BeFalse();
+            Configuration.Settings.GlobalSettings.WorldSweepSystem.Should().BeTrue();
             var w = new World();
-            w.SweepSystemOn.Should().BeFalse();
-            w.SweepSystemOverride = true;
             w.SweepSystemOn.Should().BeTrue();
+            w.SweepSystemOverride = false;
+            w.SweepSystemOn.Should().BeFalse();
         }
 
         [Fact]
