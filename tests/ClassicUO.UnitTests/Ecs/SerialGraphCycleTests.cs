@@ -487,6 +487,132 @@ namespace ClassicUO.UnitTests.Ecs
             world.State.SnapshotDepth.Should().Be(0);
         }
 
+        // ---- T9 slice B4 (Codex audit of B3)
+
+        // C's chain: DEEP, DEEP + 1, ... inside C until the bound refuses one; returns the deepest accepted item
+        private static uint ChainUnderC(World world, out uint next)
+        {
+            uint parent = C;
+            next = DEEP;
+
+            while (world.Writer.PlaceInContainer(next, 0xEED, 1, 1, 1, 0, parent, out _) != null)
+            {
+                parent = next++;
+            }
+
+            return parent;
+        }
+
+        private static void AssertChainRemoved(World world, uint next)
+        {
+            world.Items.Get(B).Should().BeNull();
+            world.Items.Get(C).Should().BeNull();
+
+            for (uint s = DEEP; s < next; s++)
+            {
+                world.Items.Get(s).Should().BeNull($"0x{s:X8} is removed with the mobile");
+            }
+
+            world.State.SnapshotDepth.Should().Be(0);
+        }
+
+        [Fact]
+        public void WearItem_Of_The_Shared_Item_Over_A_Chain_At_The_Bound_Is_Refused()
+        {
+            // P2 #1, the Codex scenario: the dead mobile's chain reaches MaxNestingDepth; the item under its serial would put
+            // it one level deeper (re-pushing B after it makes the cascade reach the chain through it first)
+            World world = DeadWearer();
+            Mobile dead = world.Mobiles.Get(DEAD);
+            ChainUnderC(world, out uint next);
+            world.Writer.DepthRefusals.Should().Be(1);
+
+            world.Writer.WearItem(dead, DEAD, 0x1F05, Layer.Cloak, 0).Should().BeNull("the merged subtree would nest past the bound");
+
+            world.Writer.DepthRefusals.Should().Be(2);
+            world.Writer.CycleRefusals.Should().Be(0);
+            world.Items.Get(DEAD).Should().BeNull("a refused attach creates nothing");
+            world.Writer.Equip(B, 0x1F03, Layer.Robe, DEAD, 0, out _, out _).Should().NotBeNull("B re-pushed");
+            world.Writer.RemoveMobile(dead);
+            AssertChainRemoved(world, next);
+        }
+
+        [Fact]
+        public void WearItem_Of_The_Shared_Item_Over_A_Chain_One_Short_Of_The_Bound_Is_Destroyed_Whole()
+        {
+            World world = DeadWearer();
+            Mobile dead = world.Mobiles.Get(DEAD);
+            uint deepest = ChainUnderC(world, out uint next);
+            world.Writer.RemoveWorldItem(world.Items.Get(deepest), out _);
+
+            world.Writer.WearItem(dead, DEAD, 0x1F05, Layer.Cloak, 0).Should().NotBeNull("the deepest item then sits at the bound");
+            world.Writer.WearItem(dead, DEAD, 0x1F05, Layer.Cloak, 0).Should().NotBeNull("a re-push of the shared item");
+            world.Writer.DepthRefusals.Should().Be(1);
+            world.Writer.Equip(B, 0x1F03, Layer.Robe, DEAD, 0, out _, out _).Should().NotBeNull("B after the shared item");
+
+            world.Writer.RemoveMobile(dead);
+
+            AssertChainRemoved(world, next);
+            world.Items.Get(DEAD).Should().BeNull();
+        }
+
+        [Fact]
+        public void A_Death_Rekey_Onto_The_Item_It_Wears_Over_A_Chain_At_The_Bound_Leaves_That_Item_Unattached()
+        {
+            // the same class at the death rekey: MOB wears the item under DEAD's serial (first) and B, whose chain reaches the
+            // bound; after the rekey the mobile under DEAD would wear the item under its own serial: refused (an orphan)
+            World world = NewWorld();
+            world.GetOrCreateMobile(MOB);
+            world.Writer.Equip(DEAD, 0x1F05, Layer.Cloak, MOB, 0, out _, out _).Should().NotBeNull();
+            world.Writer.Equip(B, 0x1F03, Layer.Robe, MOB, 0, out _, out _);
+            world.Writer.PlaceInContainer(C, 0xEED, 1, 10, 10, 0, B, out _);
+            ChainUnderC(world, out uint next);
+            world.Writer.DepthRefusals.Should().Be(1);
+
+            world.Writer.RekeyDeadMobile(world.Mobiles.Get(MOB)).Should().Be(DEAD);
+
+            world.Writer.DepthRefusals.Should().Be(2);
+            world.State.Contents(DEAD).ToArray().Should().Equal(B);
+            AssertAcyclic(world);
+            world.Writer.RemoveMobile(world.Mobiles.Get(DEAD));
+            AssertChainRemoved(world, next);
+        }
+
+        [Fact]
+        public void PlaceInContainer_Of_A_Swept_Items_Serial_Into_What_Its_Mobile_Wears_Is_Refused()
+        {
+            // P2 #2, the Codex scenario: the ground item under DEAD's serial is swept (its destroyed instance stays in the
+            // items table); MOB, wearing B, dies onto DEAD. 0x25 puts DEAD into B: the destroyed instance removes nothing, so
+            // B stays under DEAD and the new item would close DEAD > B > DEAD
+            World world = NewWorld();
+            world.GetOrCreateMobile(MOB);
+            world.Writer.Equip(B, 0x1F03, Layer.Robe, MOB, 0, out _, out _);
+            world.Writer.UpsertWorldItem(DEAD, 0xEED, 0, 1, 1000, 1000, 0, Direction.North, 0, Flags.None, 0, out _, out WorldWriter.Placement p);
+            world.Writer.PlaceWorldItem(p);
+            Item swept = world.Items.Get(DEAD);
+            world.Writer.SweepItem(swept);
+            swept.IsDestroyed.Should().BeTrue();
+            world.Items.Get(DEAD).Should().BeSameAs(swept, "the sweep leaves it in the table");
+            world.Writer.RekeyDeadMobile(world.Mobiles.Get(MOB)).Should().Be(DEAD);
+
+            world.Writer.PlaceInContainer(DEAD, 0xEED, 1, 1, 1, 0, B, out Entity container).Should().BeNull();
+
+            container.Should().BeNull();
+            world.Writer.CycleRefusals.Should().Be(1);
+            world.Items.Get(B).IsDestroyed.Should().BeFalse("a refused attach removes nothing");
+            world.State.Contents(DEAD).ToArray().Should().Equal(B);
+            AssertAcyclic(world);
+            RunReaders(world, DEAD);
+            RunReaders(world, B);
+
+            // elsewhere it is placed (the destroyed instance is replaced by a new one)
+            world.Writer.UpsertWorldItem(GROUND, 0xE75, 0, 1, 1000, 1000, 0, Direction.North, 0, Flags.None, 0, out _, out WorldWriter.Placement g);
+            world.Writer.PlaceWorldItem(g);
+            Item placed = world.Writer.PlaceInContainer(DEAD, 0xEED, 1, 1, 1, 0, GROUND, out _);
+            placed.Should().NotBeNull();
+            placed.Should().NotBeSameAs(swept);
+            AssertAcyclic(world);
+        }
+
         [Fact]
         public void PlaceCorpseEquipment_Onto_A_Corpse_Inside_The_Item_Is_Refused()
         {

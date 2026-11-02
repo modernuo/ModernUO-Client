@@ -611,8 +611,10 @@ namespace ClassicUO.Game
             bool removeMobile = asItem != null && !asItem.IsDestroyed;
 
             // destroy-vs-reuse: another container's item is destroyed (contents too) and recreated below, unless it is an
-            // equipped item going into a corpse (the corpse's equipment)
-            bool replace = item != null && item.Container != containerSerial && (container.Graphic != 0x2006 || item.Layer == Layer.Invalid);
+            // equipped item going into a corpse (the corpse's equipment). T9 slice B4 (Codex audit of B3, P2 #2): a destroyed
+            // instance still in the items table (a swept ground item) removes nothing (World.RemoveItem skips it), so it is no
+            // replacement, here or below: the check then sees the subtree that survives under its serial in the mirror
+            bool replace = item != null && !item.IsDestroyed && item.Container != containerSerial && (container.Graphic != 0x2006 || item.Layer == Layer.Invalid);
 
             // T9 slice B3 (Codex audit of B2, P2 #1): the refusal is decided before the removals below, against the graph they
             // leave (CheckAttach: a chain from the container back to the item through what the removals take is gone with it),
@@ -640,7 +642,7 @@ namespace ClassicUO.Game
             }
 
             // (read again after the mobile's removal, as before: the item may have gone with it)
-            if (item != null && item.Container != containerSerial && (container.Graphic != 0x2006 || item.Layer == Layer.Invalid))
+            if (item != null && !item.IsDestroyed && item.Container != containerSerial && (container.Graphic != 0x2006 || item.Layer == Layer.Invalid))
             {
                 RemoveForReplacement(item);
             }
@@ -2831,6 +2833,21 @@ namespace ClassicUO.Game
                     }
                 }
 
+                // T9 slice B4 (self-audit of the Codex B3 P2 #1 class): a dying mobile that wears the item under its new serial
+                // becomes the shared case, which puts its whole subtree one level deeper; checked on the subtree before the
+                // re-key moves it (a conservative bound: the item's own contents only get shallower)
+                bool selfTooDeep = false;
+
+                foreach (uint s in children.Serials)
+                {
+                    if (s == serial)
+                    {
+                        selfTooDeep = SubtreeDeeperThan(_world.Ecs.Mirror, oldSerial, oldSerial, WorldState.MaxNestingDepth - 1);
+
+                        break;
+                    }
+                }
+
                 EcsEntity e = _world.Ecs.CommitRekey(mobile, oldSerial, in v);
 
                 // (the children keep their order under the new parent: each is re-stamped in it, attached)
@@ -2845,7 +2862,9 @@ namespace ClassicUO.Game
                         // close a loop; only if the commit wrote none (a destroyed mobile) could an item's record above the
                         // children remain: such a child keeps the Container but is not attached (an orphan)
                         // (a mobile's child to the new mobile: every depth is kept, no subtree walk)
-                        bool refused = RefusedAttach(nameof(RekeyDeadMobile), s, serial, true, keepsDepth: true);
+                        bool refused = s == serial && selfTooDeep
+                            ? Refused(nameof(RekeyDeadMobile), s, serial, AttachCheck.TooDeep)
+                            : RefusedAttach(nameof(RekeyDeadMobile), s, serial, true, keepsDepth: true);
                         _world.Ecs.CommitItem(child, in c, attach: !refused);
                     }
                 }
@@ -3561,13 +3580,27 @@ namespace ClassicUO.Game
         // contents. A chain that reaches it through an unattached link survives the removal: still a loop.
         private AttachCheck CheckAttach(uint child, uint parent, bool parentIsMobile, bool childRemoved, bool keepsDepth)
         {
+            ClassicUO.Ecs.WorldMirror mirror = _world.Ecs.Mirror;
+
             if (parent == child)
             {
                 // the mobile under the item's serial wears it (the shared case); an item is never its own parent
-                return parentIsMobile ? AttachCheck.Ok : AttachCheck.Loop;
-            }
+                if (!parentIsMobile)
+                {
+                    return AttachCheck.Loop;
+                }
 
-            ClassicUO.Ecs.WorldMirror mirror = _world.Ecs.Mirror;
+                // T9 slice B4 (Codex audit of B3, P2 #1): the shared item puts every attached item under the serial one level
+                // deeper (the mobile's cascade reaches them a second time through it), so the merged subtree must keep that
+                // level within the bound. Already the shared case (a re-push) keeps every depth; the death rekey checks the
+                // dying mobile's subtree itself before it re-keys (keepsDepth)
+                if (keepsDepth || (mirror.ParentOf(child, out bool selfLinked) == child && selfLinked))
+                {
+                    return AttachCheck.Ok;
+                }
+
+                return SubtreeDeeperThan(mirror, child, child, WorldState.MaxNestingDepth - 1) ? AttachCheck.TooDeep : AttachCheck.Ok;
+            }
             uint s = parent;
             int depth = 0;
             bool attached = true;
@@ -3662,10 +3695,11 @@ namespace ClassicUO.Game
 
         // a refused attach: the operation writes nothing (the item keeps its values and its place, is not created, and
         // nothing is removed)
-        private bool RefusedAttach(string operation, uint child, uint parent, bool parentIsMobile, bool childRemoved = false, bool keepsDepth = false)
-        {
-            AttachCheck check = CheckAttach(child, parent, parentIsMobile, childRemoved, keepsDepth);
+        private bool RefusedAttach(string operation, uint child, uint parent, bool parentIsMobile, bool childRemoved = false, bool keepsDepth = false) =>
+            Refused(operation, child, parent, CheckAttach(child, parent, parentIsMobile, childRemoved, keepsDepth));
 
+        private bool Refused(string operation, uint child, uint parent, AttachCheck check)
+        {
             if (check == AttachCheck.Ok)
             {
                 return false;
