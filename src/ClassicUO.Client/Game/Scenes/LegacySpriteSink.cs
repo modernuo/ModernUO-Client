@@ -140,8 +140,10 @@ namespace ClassicUO.Game.Scenes
 
             // as GpuWorldRenderer.TryDrawMobileEcs: TakeDirty first (removing the tag moves the entity)
             bool dirty = MobileAnimationSystem.TakeDirty(e);
-            ref AnimationState state = ref e.GetComponent<AnimationState>();
-            ref MobileRenderState render = ref e.GetComponent<MobileRenderState>();
+            // one record read for both components (as ItemSpriteInput.ReadRecord)
+            Friflo.Engine.ECS.EntityData data = e.Data;
+            ref AnimationState state = ref data.Get<AnimationState>();
+            ref MobileRenderState render = ref data.Get<MobileRenderState>();
             ecs.Animation.UpdateInPlace(world, mobile, e, dirty, ref state, ref render);
 
             mobile.DrawAura(batcher, posX, posY, depth);
