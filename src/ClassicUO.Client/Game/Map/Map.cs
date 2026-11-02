@@ -496,6 +496,10 @@ namespace ClassicUO.Game.Map
                 {
                     Client.Game.UO.Arts.BeginFrame((long)(ContentsArt.FrameAllowanceMs * Stopwatch.Frequency / 1000.0));
                 }
+                else
+                {
+                    Client.Game.UO.Arts.EndAllowance();
+                }
 
                 // atlas uploads of art the workers finished, inside the chunk budget (at least one each)
                 Client.Game.UO.Arts.DrainReady(deadline);
