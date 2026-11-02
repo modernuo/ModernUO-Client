@@ -9,7 +9,7 @@ using Flags = ClassicUO.Game.Data.Flags;
 
 namespace ClassicUO.UnitTests.Ecs
 {
-    // W5 (mobile_push_inputs): MobileInputs are pushed from the Mobile's mutation sites instead of sampled every frame.
+    // W5: MobileInputs are pushed from the Mobile's mutation sites instead of sampled every frame.
     // The in-client checks (CUO_MOBILE_INPUT_CHECK every sampled frame, the pushed-vs-fresh comparison in -ecscheck) cover
     // the paths that need the running client (packets, the player's walk, CV_7000 rules); these cover the rules and the
     // pushes a World without a client can drive.

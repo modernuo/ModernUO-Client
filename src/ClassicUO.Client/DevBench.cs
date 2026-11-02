@@ -44,9 +44,7 @@ namespace ClassicUO
     //   plan entries prepdetail:on|off switch FrameStats' world prepare detail buckets (CUO_FRAMESTATS_PREP=1 starts with them on)
     //   plan entries gpuskip:on|off switch the Gpu world prepare's skipping of baked land and statics (gpu_prepare_skip_baked)
     //   plan entries itemcache:on|off switch its ground-item cache (gpu_prepare_item_cache), itemmixed:on|off its mixed tiles (gpu_prepare_item_cache_mixed, E7), fxserve:on|off its tiles holding effects (gpu_prepare_item_cache_effects, E6); effects:N:graphic[:blend[:radius[:z[:f|m|l]]]] spawns N client-side effects (fixed endless, moving, lightning) round the player, effects:0 removes every effect; name:lsreinit is reinit in the large-scale scene
-    //   plan entries mobcache:on|off switch the Gpu world's mobile frame cache (gpu_mobile_frame_cache, W5); CUO_MOBILE_CACHE_CHECK=1 verifies it
-    //   plan entries w5:on|off switch the three W5 shortcuts that still have a switch (mobcache, textskip, pushinputs) together
-    //   plan entries pushinputs:on|off switch reading mobiles' pushed ECS inputs (mobile_push_inputs, W5); CUO_MOBILE_INPUT_CHECK=1 verifies them
+    //   plan entries w5:on|off switch the W5 shortcut that still has a switch (textskip)
     //   plan entries textskip:on|off switch skipping the text layout of entities whose overhead texts all expired (text_skip_expired, W5)
     //   pickscan:CxR hovers a C x R grid of the game view and compares the selection with that skipping off and on;
     //   pickscan:CxR:world_tile_index compares it with the T6b merged walk off and on instead (both renderers; needs the index
@@ -2072,8 +2070,8 @@ namespace ClassicUO
                     if (_plan[_planIndex].StartsWith("w5:"))
                     {
                         var w5s = Configuration.Settings.GlobalSettings;
-                        w5s.GpuMobileFrameCache = w5s.TextSkipExpired = w5s.MobilePushInputs = _plan[_planIndex] == "w5:on";
-                        Log.Info($"[bench] W5 update shortcuts: {w5s.GpuMobileFrameCache}");
+                        w5s.TextSkipExpired = _plan[_planIndex] == "w5:on";
+                        Log.Info($"[bench] W5 update shortcuts: {w5s.TextSkipExpired}");
                         _planIndex++;
                         _stepAt = now + sec;
 
@@ -2084,26 +2082,6 @@ namespace ClassicUO
                     {
                         Configuration.Settings.GlobalSettings.TextSkipExpired = _plan[_planIndex] == "textskip:on";
                         Log.Info($"[bench] overhead text pass skips expired texts: {Configuration.Settings.GlobalSettings.TextSkipExpired}");
-                        _planIndex++;
-                        _stepAt = now + sec;
-
-                        break;
-                    }
-
-                    if (_plan[_planIndex].StartsWith("pushinputs:"))
-                    {
-                        Configuration.Settings.GlobalSettings.MobilePushInputs = _plan[_planIndex] == "pushinputs:on";
-                        Log.Info($"[bench] mobile pushed inputs: {Configuration.Settings.GlobalSettings.MobilePushInputs}");
-                        _planIndex++;
-                        _stepAt = now + sec;
-
-                        break;
-                    }
-
-                    if (_plan[_planIndex].StartsWith("mobcache:"))
-                    {
-                        Configuration.Settings.GlobalSettings.GpuMobileFrameCache = _plan[_planIndex] == "mobcache:on";
-                        Log.Info($"[bench] gpu mobile frame cache: {Configuration.Settings.GlobalSettings.GpuMobileFrameCache}");
                         _planIndex++;
                         _stepAt = now + sec;
 

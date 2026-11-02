@@ -99,10 +99,10 @@ namespace ClassicUO.Game
         /// </summary>
         public void UpdateInPlace(World world, Mobile m, EcsEntity e, bool dirty, ref AnimationState s, ref MobileRenderState rs)
         {
-            // W5 (mobile_push_inputs): the slow-changing inputs come from MobileInputs, pushed at their mutation sites;
-            // off = all of them read from the Mobile every frame
+            // W5: the slow-changing inputs come from MobileInputs, pushed at their mutation sites (the mirror gives every
+            // mobile one; without it, as in a hand-built entity, they are read from the Mobile)
             MobileInputs inp = default;
-            bool push = Configuration.Settings.GlobalSettings.MobilePushInputs && e.TryGetComponent(out inp);
+            bool push = e.TryGetComponent(out inp);
 
             if (InputBench && push)
             {
@@ -132,15 +132,7 @@ namespace ClassicUO.Game
                 }
             }
 
-            if (Configuration.Settings.GlobalSettings.GpuMobileFrameCache)
-            {
-                SelectCached(world, m, ref s, ref eq);
-            }
-            else
-            {
-                m.FrameCache?.Invalidate();
-                Select(m, ref s, ref eq);
-            }
+            SelectCached(world, m, ref s, ref eq);
         }
 
         // W5: Select, or the last frame's result when the sampled inputs are the same (MobileFrameCache)
@@ -746,14 +738,14 @@ namespace ClassicUO.Game
         }
 
         /// <summary>
-        /// Mobile.TryGetSittingInfo. With mobile_push_inputs its inputs come from the selection: Human and Flying from the
+        /// Mobile.TryGetSittingInfo. Its inputs come from the selection: Human and Flying from the
         /// flags; mounted is false here (the branch is reached only without a mount item or with a tiller, where IsMounted
         /// is false); the action is the one just selected for the body, which is what GetGroupForAnimation returns unless
         /// that selection rolled a random action (then the legacy call runs, rolling as before).
         /// </summary>
         private static bool SeatOf(Mobile m, AnimStateFlags f, byte group, bool groupRolled, out AnimationsLoader.SittingInfoData seat)
         {
-            if (Configuration.Settings.GlobalSettings.MobilePushInputs && !groupRolled)
+            if (!groupRolled)
             {
                 bool sits = m.TryGetSittingInfo
                 (

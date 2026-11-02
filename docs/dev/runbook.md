@@ -42,7 +42,7 @@ What `CUO_DEVTOOLS` includes:
 
 - `DevBench` (scripted runs) and the per-phase timings of `FrameStats`.
 - Runtime world-renderer switching and the `-ecsdriver` argument.
-- The checkers `CUO_CONTENTS_CHECK`, `CUO_EQUIP_READ_CHECK`, `CUO_LAYER_RULES_CHECK` and `CUO_FUNNEL_CHECK`, and the `CUO_ECS_READ_CONTENTS`, `CUO_ECS_READ_EQUIPMENT` and `CUO_ECS_LAYER_RULES` overrides of the settings.
+- The checkers `CUO_CONTENTS_CHECK`, `CUO_EQUIP_READ_CHECK`, `CUO_LAYER_RULES_CHECK` and `CUO_FUNNEL_CHECK`, and the `CUO_ECS_LAYER_RULES` override of its setting.
 - `MemLog` (`CUO_MEM_LOG`).
 
 Code guarded by it is tagged `CLEANUP(release)`.
@@ -219,12 +219,8 @@ These `settings.json` keys select ECS and renderer paths. Defaults are from `src
 | Key | Default | Meaning |
 |---|---|---|
 | `world_renderer` | `auto` | World renderer: `auto`, `gpu`, `legacy` |
-| `ecs_read_contents` | `true` | Container contents readers take a parent's children from the ECS instead of the `LinkedObject` child list |
-| `ecs_read_equipment` | `true` | Worn-item-per-layer readers (`FindItemByLayer`, paperdoll, animation hands) read from the ECS |
 | `ecs_layer_rules` | `true` | Worn-layer draw order, covering and gargoyle remaps come from the layer rules data (`layerrules.bin`, else the built-in default) instead of hard-coded code |
 | `gpu_ecs_sprites` | `true` | Gpu renderer: mobile sprites come from the ECS, not from capturing `MobileView.Draw` |
-| `gpu_mobile_frame_cache` | `true` | Reuse a mobile's action selection and sprite instances while inputs are unchanged |
-| `mobile_push_inputs` | `true` | Read mobile selection and hue inputs from the ECS instead of the `Mobile` each frame |
 | `text_skip_expired` | `true` | Skip text layout for mobiles and corpses whose overhead texts all expired |
 | `gpu_prepare_skip_baked` | `true` | Gpu world prepare skips baked land and statics |
 | `gpu_prepare_item_cache`, `gpu_prepare_item_cache_mixed`, `gpu_prepare_item_cache_effects` | `true` | Cache settled ground-item sprites per chunk (and mixed tiles, and tiles with effects) |
@@ -236,10 +232,10 @@ Checkers compare a new path with the old one and log mismatches. Do not measure 
 
 | Variable | Meaning |
 |---|---|
-| `CUO_CONTENTS_CHECK=1` | Dev. Compare ECS container contents with the child list on every read |
-| `CUO_EQUIP_READ_CHECK=1` | Dev. Compare ECS worn layers with the child-list walk at every call |
+| `CUO_CONTENTS_CHECK=1` | Dev. Compare ECS container contents with the still-maintained child list on every read |
+| `CUO_EQUIP_READ_CHECK=1` | Dev. Compare ECS worn layers with the still-maintained child list at every call |
 | `CUO_LAYER_RULES_CHECK=1` | Dev. Compare layer-rule decisions with the hard-coded ones at every decision |
-| `CUO_ECS_READ_CONTENTS=1\|0`, `CUO_ECS_READ_EQUIPMENT=1\|0`, `CUO_ECS_LAYER_RULES=1\|0` | Dev. Override the matching setting for this run |
+| `CUO_ECS_LAYER_RULES=1\|0` | Dev. Override `ecs_layer_rules` for this run |
 | `CUO_MOBILE_UPDATE_CHECK=1\|stats` | Dev. Check the mobile clock and the skipped mobiles against `Mobile.Update` every frame; `stats` only counts and times |
 | `CUO_FUNNEL_CHECK=1` | Dev. Report writes to class A fields made outside the `WorldWriter` funnel |
 | `CUO_ECS_PARITY=N` | Compare ECS mobile sprites with the captured ones every N frames |
@@ -271,7 +267,7 @@ DevBench variables are in the next section.
 | `CUO_BENCH_PICK=1` | Hover-and-click picking test |
 | `CUO_BENCH_UI=1`, `CUO_BENCH_SPOTS="x y;x y"`, `CUO_BENCH_GO="x y"`, `CUO_BENCH_EXIT=1` | UI tour, screenshot spots, go to a spot, walk and quit |
 
-Main plan entries: `name:x y:zoom` (go there and measure), `travel`, `walk`, `say:text`, `vsync:on|off`, `world:gpu|legacy`, `size:WxH`, `shot:name`, `gumps`, `ecsdump:<hex serial>|player|nearest`, and `on|off` entries that switch a setting for the rest of the plan (`gpuskip`, `itemcache`, `mobcache`, `pushinputs`, `textskip`, `uicache`, `w5`).
+Main plan entries: `name:x y:zoom` (go there and measure), `travel`, `walk`, `say:text`, `vsync:on|off`, `world:gpu|legacy`, `size:WxH`, `shot:name`, `gumps`, `ecsdump:<hex serial>|player|nearest`, and `on|off` entries that switch a setting for the rest of the plan (`gpuskip`, `itemcache`, `textskip`, `uicache`, `w5`).
 
 Typical run:
 

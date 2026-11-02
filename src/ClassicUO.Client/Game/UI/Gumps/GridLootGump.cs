@@ -212,7 +212,7 @@ namespace ClassicUO.Game.UI.Gumps
 
             for (int displayGroup = 0; displayGroup < 2; displayGroup++)
             {
-                // T2: the children from the ECS with ecs_read_contents on (WorldState.Children)
+                // T2: the children from the ECS (WorldState.Children)
                 foreach (Item it in World.State.Children(_corpse))
                 {
 

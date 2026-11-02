@@ -1458,64 +1458,17 @@ namespace ClassicUO.Network
                 {
                     Item item = vendor.FindItemByLayer(layer);
 
-                    // T2: the shop's list from the ECS with ecs_read_contents on (the same order: reversed unless 0x2AF8)
-                    if (world.State.ReadContents)
+                    // T2: the shop's list from the ECS (reversed unless 0x2AF8: hardcoded logic in original client that we must match)
+                    bool backwards = item.Graphic != 0x2AF8;
+                    ReadOnlySpan<uint> shopContents = world.State.Contents(item.Serial);
+
+                    for (int k = 0; k < shopContents.Length; k++)
                     {
-                        bool backwards = item.Graphic != 0x2AF8;
-                        ReadOnlySpan<uint> shopContents = world.State.Contents(item.Serial);
+                        Item it = world.Items.Get(shopContents[backwards ? shopContents.Length - 1 - k : k]);
 
-                        for (int k = 0; k < shopContents.Length; k++)
+                        if (it != null)
                         {
-                            Item it = world.Items.Get(shopContents[backwards ? shopContents.Length - 1 - k : k]);
-
-                            if (it != null)
-                            {
-                                gump.AddItem(it.Serial, it.Graphic, it.Hue, it.Amount, it.Price, it.Name, false);
-                            }
-                        }
-
-                        continue;
-                    }
-
-                    LinkedObject first = item.Items;
-
-                    if (first == null)
-                    {
-                        //Log.Warn("buy item not found");
-                        continue;
-                    }
-
-                    bool reverse = item.Graphic != 0x2AF8; //hardcoded logic in original client that we must match
-
-                    if (reverse)
-                    {
-                        while (first?.Next != null)
-                        {
-                            first = first.Next;
-                        }
-                    }
-
-                    while (first != null)
-                    {
-                        Item it = (Item)first;
-
-                        gump.AddItem(
-                            it.Serial,
-                            it.Graphic,
-                            it.Hue,
-                            it.Amount,
-                            it.Price,
-                            it.Name,
-                            false
-                        );
-
-                        if (reverse)
-                        {
-                            first = first.Previous;
-                        }
-                        else
-                        {
-                            first = first.Next;
+                            gump.AddItem(it.Serial, it.Graphic, it.Hue, it.Amount, it.Price, it.Name, false);
                         }
                     }
                 }
@@ -2828,12 +2781,10 @@ namespace ClassicUO.Network
             {
                 byte count = p.ReadUInt8();
 
-                // T2: with ecs_read_contents on, the list is the ECS's contents (after the sort, which re-stamps them)
-                bool ecs = world.State.ReadContents;
-                ReadOnlySpan<uint> shopContents = ecs ? world.State.Contents(container.Serial) : default;
-                LinkedObject first = ecs ? null : container.Items;
+                // T2: the list is the ECS's contents (after the sort, which re-stamps them)
+                ReadOnlySpan<uint> shopContents = world.State.Contents(container.Serial);
 
-                if (ecs ? shopContents.IsEmpty : first == null)
+                if (shopContents.IsEmpty)
                 {
                     return;
                 }
@@ -2843,23 +2794,13 @@ namespace ClassicUO.Network
                 if (container.Graphic == 0x2AF8) //hardcoded logic in original client that we must match
                 {
                     //sort the contents (T1 part 9: through the funnel, which re-stamps the mirror's child order)
-                    first = world.Writer.SortShopContents(container);
-
-                    if (ecs)
-                    {
-                        first = null;
-                        shopContents = world.State.Contents(container.Serial);
-                    }
+                    world.Writer.SortShopContents(container);
+                    shopContents = world.State.Contents(container.Serial);
                 }
                 else
                 {
-                    //skip to last item and read in reverse later
+                    //read in reverse
                     reverse = true;
-
-                    while (first?.Next != null)
-                    {
-                        first = first.Next;
-                    }
                 }
 
                 int at = reverse ? shopContents.Length - 1 : 0;
@@ -2868,24 +2809,12 @@ namespace ClassicUO.Network
                 {
                     Item it;
 
-                    if (ecs)
+                    if (at < 0 || at >= shopContents.Length || (it = world.Items.Get(shopContents[at])) == null)
                     {
-                        if (at < 0 || at >= shopContents.Length || (it = world.Items.Get(shopContents[at])) == null)
-                        {
-                            break;
-                        }
-
-                        at += reverse ? -1 : 1;
+                        break;
                     }
-                    else
-                    {
-                        if (first == null)
-                        {
-                            break;
-                        }
 
-                        it = (Item)first;
-                    }
+                    at += reverse ? -1 : 1;
 
                     world.Writer.SetPrice(it, p.ReadUInt32BE());
                     byte nameLen = p.ReadUInt8();
@@ -2914,20 +2843,6 @@ namespace ClassicUO.Network
                     }
 
                     world.Writer.SetName(it, itName);
-
-                    if (ecs)
-                    {
-                        continue;
-                    }
-
-                    if (reverse)
-                    {
-                        first = first.Previous;
-                    }
-                    else
-                    {
-                        first = first.Next;
-                    }
                 }
             }
         }
