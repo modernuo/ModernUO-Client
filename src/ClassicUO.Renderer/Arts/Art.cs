@@ -14,7 +14,7 @@ namespace ClassicUO.Renderer.Arts
     {
         private readonly SpriteInfo[] _spriteInfos;
         private readonly TextureAtlas _atlas;
-        private readonly PixelPicker _picker = new PixelPicker();
+        private readonly PixelPicker _picker;
         private readonly Rectangle[] _realArtBounds;
         private readonly ArtLoader _artLoader;
         private readonly HuesLoader _huesLoader;
@@ -26,6 +26,7 @@ namespace ClassicUO.Renderer.Arts
             _atlas = new TextureAtlas(device, 4096, 4096, SurfaceFormat.Color);
             _spriteInfos = new SpriteInfo[_artLoader.Count];
             _realArtBounds = new Rectangle[_spriteInfos.Length];
+            _picker = new PixelPicker(_spriteInfos.Length);
             _decoder = new FirstSightDecoder("art", _spriteInfos.Length, DecodeOnWorker, UploadDecoded,
                 idx => DecodeBudget.PooledBytes(_artLoader.PixelCount(idx)));
         }
