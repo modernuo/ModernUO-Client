@@ -336,8 +336,11 @@ namespace ClassicUO.Game.GameObjects
                 charSitting
             );
 
-            // T3a: any worn item, from the ECS (WorldState.HasWornItems)
-            if (World.State.HasWornItems(this))
+            // T3a: any worn item, from the ECS (WorldState.HasWornItems); perf-10: the mobile's worn items validated once for the
+            // loop (WornItems) instead of per FindItemByLayer
+            WornItems worn = World.State.WornView(this);
+
+            if (worn.Any)
             {
                 Span<Layer> layers = stackalloc Layer[PaperdollOrder.N];
 
@@ -345,7 +348,7 @@ namespace ClassicUO.Game.GameObjects
                 LayerTables layerTables = default;
                 LayerSubject layerSubject;
                 // T3b cache: the mobile's whole answer, reused until its equipment, body or flags change (null: evaluate)
-                LayerDecision layerCache = World.State.WorldLayers(this, isGargoyle);
+                LayerDecision layerCache = worn.Layers(isGargoyle);
                 int layerCount;
 
                 if (layerCache != null)
@@ -366,7 +369,7 @@ namespace ClassicUO.Game.GameObjects
                 {
                     Layer layer = layers[i];
 
-                    Item item = FindItemByLayer(layer);
+                    Item item = worn[layer];
 
                     if (item == null)
                     {
@@ -1043,14 +1046,16 @@ namespace ClassicUO.Game.GameObjects
                 }
             }
 
-            // T3a: any worn item, from the ECS (WorldState.HasWornItems)
-            if (isHuman && World.State.HasWornItems(this))
+            // T3a: any worn item, from the ECS (WorldState.HasWornItems); perf-10: validated once for the loop (WornItems)
+            WornItems worn = isHuman ? World.State.WornView(this) : default;
+
+            if (isHuman && worn.Any)
             {
                 // T3b: the covering and the gargoyle remaps from the layering rules data
                 LayerTables layerTables = default;
                 LayerSubject layerSubject;
                 // T3b cache: the covering and the remaps from the mobile's cached answer (null: evaluate)
-                LayerDecision layerCache = World.State.WorldLayers(this, isGargoyle);
+                LayerDecision layerCache = worn.Layers(isGargoyle);
 
                 if (layerCache != null)
                 {
@@ -1064,7 +1069,7 @@ namespace ClassicUO.Game.GameObjects
 
                 for (Layer layer = Layer.Invalid + 1; layer < Layer.Mount; ++layer)
                 {
-                    Item item = FindItemByLayer(layer);
+                    Item item = worn[layer];
 
                     if (item == null || (IsDead && (layer == Layer.Hair || layer == Layer.Beard)))
                     {
