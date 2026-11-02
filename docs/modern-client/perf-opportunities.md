@@ -217,4 +217,10 @@ Today the client parses incoming packets in place (`StackDataReader` over fixed 
 - **Container and paperdoll item art decodes on the main thread when a gump first opens.** Requesting the art in `WorldWriter.PlaceInContainer` while the container is open would remove first-open hitches (about 20–50 µs per sprite). Source: perf-3.
 - **Gpu multi components draw through `Multi.Draw`, so pending art for them decodes on the main thread.** Feeding them through the item extract would fix it. This is rare. Source: perf-3.
 - **Stale entry:** the "request item art at first sight on 0x1A/0xF3" item is already done (2170394b6, 2026-10-26: `travel` art_sync 48–56 → 0). perf-3 added tests and the `CUO_PLACED_ART_SYNC=1` diagnostic.
+- **`ItemGump` decodes art only to get its size** (ItemGump.cs:48). Taking the size from the pack's size table (as `Gump.TryGetSize` does) and decoding at first draw would remove these main-thread decodes everywhere. Source: perf-4.
+- **`Art.Get` ignores finished worker decodes** (Art.cs Get): it decodes again even when the worker's result is ready. Gump lookups already use the worker result. Source: perf-4.
+- **Every container content change rebuilds the whole window** (ContainerGump.cs:502): each 0x25 clears and rebuilds every item control. Adding only the new item would cut the churn and its allocations. Source: perf-4.
+- **Paperdoll slot lookups every frame** (PaperDollGump.cs ~755): about 14 `FindItemByLayer` calls per frame. Cache per equipment change. Source: perf-4.
+- **Missing-art error log every frame** (ClassicUO.Renderer/Arts/Art.cs:205): the placeholder isn't cached, so each such item allocates and logs a string every frame. Caching the placeholder fixes it. Source: t7b2a fix round.
+- **Legacy sink: repeated frame lookups** (LegacySpriteResolve.cs:87, MobileSpriteExtract.Layer): `GetAnimationFrames` runs once per strip and again per layer. Caching the last (body, group, dir, equip) would save about 3–5 lookups per mobile layer. Source: t7b2a.
 

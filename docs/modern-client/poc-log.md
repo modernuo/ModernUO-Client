@@ -5106,3 +5106,20 @@ Paired NativeAOT builds (`CuoDevTools=true`, checkers off), all on the quiet mac
   - Unit tests 2,940 passed, 6 skipped.
 - **Cost:** micro-bench, 201 interleaved rounds. `Gather` is +24 ns per captured item (was +34 before the cut). That is about 1 % of Gpu world_prepare at the large scene zoom 2.5 and negligible elsewhere, within the plan's +3 % budget. Owner question 3. Quiet timing is parked.
 - **Next, T7b part 2:** the Legacy resolve to the FNA atlas; a batcher sink at the `view.Draw` position in RenderLists; picking from the sink; the `legacy_ecs_sprites` switch; the `CUO_LEGACY_ECS_PARITY` checker. See `cuo-poc-state/handoffs/t7b1-extract-split.md`.
+
+### perf-4 merged: container and paperdoll art prefetch (coordinator, 2026-11-02)
+
+- `art_container_prefetch` (default off; `CUO_ART_CONTAINER_PREFETCH`). Branches `bg/perf-container-art` (496cdd056, 6f84ce836) and `bg/perf-container-art-2` (bc8cfe0cd, cf1b107ac); merge e1410c9ce.
+- **Problem:** item controls decode art on the main thread when a container window builds (ItemGump.cs:48). The 0x3C contents arrive in the same frame the window rebuilds, so an async request alone gets no head start.
+- **Fix, with the switch on:**
+  - an item placed into an open container requests its art;
+  - before a window or the paperdoll slots build, up to 128 missing sprites decode on the workers in one batch;
+  - the wait is signaled and bounded by a frame-wide allowance shared with chunk uploads, and is valid only for the frame that granted it.
+- **Codex review, three rounds** (`cuo-poc-state/audits/perf-4/out*.md`):
+  - round 1: a futile blocking wait, deadlines compounding across windows, the cap applied before filtering;
+  - round 2: chunk uploads bypassing the allowance, blocked admission skipping finished uploads, uploads missing from timing;
+  - round 3: expiry by time rather than by frame.
+  
+  All are fixed with tests.
+- Counts bench-000246 PASS; gate bench-000247 PASS. Unit tests after the merge: 2,964 passed, 6 skipped.
+- Timing parked.
