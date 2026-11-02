@@ -108,8 +108,8 @@ namespace ClassicUO.UnitTests.Ecs
         [InlineData(0x0372, 330)]
         public void Gargoyle_Equipment_Is_Redrawn_With_The_Gargoyle_Bodies(int human, int gargoyle)
         {
-            AnimationRules.FixGargoyleEquipment((ushort)human).Should().Be((ushort)gargoyle);
-            AnimationRules.FixGargoyleEquipment((ushort)gargoyle).Should().Be((ushort)gargoyle, "an already remapped body is left alone");
+            LegacyLayerRulesReference.FixGargoyleEquipment((ushort)human).Should().Be((ushort)gargoyle);
+            LegacyLayerRulesReference.FixGargoyleEquipment((ushort)gargoyle).Should().Be((ushort)gargoyle, "an already remapped body is left alone");
         }
 
         [Fact]
@@ -284,7 +284,7 @@ namespace ClassicUO.UnitTests.Ecs
                 Layer.Skirt, Layer.Bracelet, Layer.OneHanded
             })
             {
-                AnimationRules.IsCovered(l, gfx, anim, present, 0x190).Should().BeFalse($"{l} with nothing else worn");
+                LegacyLayerRulesReference.IsCovered(l, gfx, anim, present, 0x190).Should().BeFalse($"{l} with nothing else worn");
             }
         }
 
@@ -299,23 +299,23 @@ namespace ClassicUO.UnitTests.Ecs
             present.Clear();
 
             present[(int)Layer.Shoes] = true;
-            AnimationRules.IsCovered(Layer.Shoes, gfx, anim, present, 0x190).Should().BeFalse();
+            LegacyLayerRulesReference.IsCovered(Layer.Shoes, gfx, anim, present, 0x190).Should().BeFalse();
 
             present[(int)Layer.Pants] = true;
             gfx[(int)Layer.Pants] = 0x152E;
             anim[(int)Layer.Pants] = 0x0513;
-            AnimationRules.IsCovered(Layer.Shoes, gfx, anim, present, 0x190).Should().BeTrue("AnimID 0x513 pants cover the shoes");
+            LegacyLayerRulesReference.IsCovered(Layer.Shoes, gfx, anim, present, 0x190).Should().BeTrue("AnimID 0x513 pants cover the shoes");
 
             anim[(int)Layer.Pants] = 0x0514;
-            AnimationRules.IsCovered(Layer.Shoes, gfx, anim, present, 0x190).Should().BeTrue();
+            LegacyLayerRulesReference.IsCovered(Layer.Shoes, gfx, anim, present, 0x190).Should().BeTrue();
 
             anim[(int)Layer.Pants] = 0x0001;
-            AnimationRules.IsCovered(Layer.Shoes, gfx, anim, present, 0x190).Should().BeFalse("ordinary pants leave the shoes");
+            LegacyLayerRulesReference.IsCovered(Layer.Shoes, gfx, anim, present, 0x190).Should().BeFalse("ordinary pants leave the shoes");
 
             present[(int)Layer.Robe] = true;
             gfx[(int)Layer.Robe] = 0x1F03;
             anim[(int)Layer.Robe] = 0x0504;
-            AnimationRules.IsCovered(Layer.Shoes, gfx, anim, present, 0x190).Should().BeTrue("a floor-length robe (AnimID 0x504)");
+            LegacyLayerRulesReference.IsCovered(Layer.Shoes, gfx, anim, present, 0x190).Should().BeTrue("a floor-length robe (AnimID 0x504)");
         }
 
         [Fact]
@@ -330,15 +330,15 @@ namespace ClassicUO.UnitTests.Ecs
 
             present[(int)Layer.Pants] = true;
             anim[(int)Layer.Pants] = 0x0001;
-            AnimationRules.IsCovered(Layer.Pants, gfx, anim, present, 0x190).Should().BeFalse();
+            LegacyLayerRulesReference.IsCovered(Layer.Pants, gfx, anim, present, 0x190).Should().BeFalse();
 
             present[(int)Layer.Legs] = true;
-            AnimationRules.IsCovered(Layer.Pants, gfx, anim, present, 0x190).Should().BeTrue("leg armour over the pants");
+            LegacyLayerRulesReference.IsCovered(Layer.Pants, gfx, anim, present, 0x190).Should().BeTrue("leg armour over the pants");
 
             present[(int)Layer.Legs] = false;
             present[(int)Layer.Robe] = true;
             anim[(int)Layer.Robe] = 0x0504;
-            AnimationRules.IsCovered(Layer.Pants, gfx, anim, present, 0x190).Should().BeTrue();
+            LegacyLayerRulesReference.IsCovered(Layer.Pants, gfx, anim, present, 0x190).Should().BeTrue();
         }
 
         [Fact]
@@ -353,18 +353,18 @@ namespace ClassicUO.UnitTests.Ecs
 
             present[(int)Layer.Helmet] = true;
             gfx[(int)Layer.Helmet] = 0xA42B;
-            AnimationRules.IsCovered(Layer.Hair, gfx, anim, present, 0x190).Should().BeTrue();
+            LegacyLayerRulesReference.IsCovered(Layer.Hair, gfx, anim, present, 0x190).Should().BeTrue();
             gfx[(int)Layer.Helmet] = 0xA42C;
-            AnimationRules.IsCovered(Layer.Hair, gfx, anim, present, 0x190).Should().BeTrue();
+            LegacyLayerRulesReference.IsCovered(Layer.Hair, gfx, anim, present, 0x190).Should().BeTrue();
             gfx[(int)Layer.Helmet] = 0xA42D;
-            AnimationRules.IsCovered(Layer.Hair, gfx, anim, present, 0x190).Should().BeFalse();
-            AnimationRules.IsCovered(Layer.Helmet, gfx, anim, present, 0x190).Should().BeFalse("no robe, the helmet itself is drawn");
+            LegacyLayerRulesReference.IsCovered(Layer.Hair, gfx, anim, present, 0x190).Should().BeFalse();
+            LegacyLayerRulesReference.IsCovered(Layer.Helmet, gfx, anim, present, 0x190).Should().BeFalse("no robe, the helmet itself is drawn");
 
             present[(int)Layer.Robe] = true;
             gfx[(int)Layer.Robe] = 0x2FB9;
-            AnimationRules.IsCovered(Layer.Helmet, gfx, anim, present, 0x190).Should().BeTrue("a hooded robe hides the helmet layer");
+            LegacyLayerRulesReference.IsCovered(Layer.Helmet, gfx, anim, present, 0x190).Should().BeTrue("a hooded robe hides the helmet layer");
             gfx[(int)Layer.Robe] = 0x1F03;
-            AnimationRules.IsCovered(Layer.Helmet, gfx, anim, present, 0x190).Should().BeFalse("a robe without a hood");
+            LegacyLayerRulesReference.IsCovered(Layer.Helmet, gfx, anim, present, 0x190).Should().BeFalse("a robe without a hood");
         }
 
         [Fact]
@@ -379,13 +379,13 @@ namespace ClassicUO.UnitTests.Ecs
 
             present[(int)Layer.Bracelet] = true;
             gfx[(int)Layer.Bracelet] = 0xB1C0;
-            AnimationRules.IsCovered(Layer.Bracelet, gfx, anim, present, 0x190).Should().BeFalse("no arms");
+            LegacyLayerRulesReference.IsCovered(Layer.Bracelet, gfx, anim, present, 0x190).Should().BeFalse("no arms");
 
             present[(int)Layer.Arms] = true;
-            AnimationRules.IsCovered(Layer.Bracelet, gfx, anim, present, 0x190).Should().BeTrue();
+            LegacyLayerRulesReference.IsCovered(Layer.Bracelet, gfx, anim, present, 0x190).Should().BeTrue();
 
             gfx[(int)Layer.Bracelet] = 0x1086;
-            AnimationRules.IsCovered(Layer.Bracelet, gfx, anim, present, 0x190).Should().BeFalse("an ordinary bracelet");
+            LegacyLayerRulesReference.IsCovered(Layer.Bracelet, gfx, anim, present, 0x190).Should().BeFalse("an ordinary bracelet");
         }
 
         [Fact]
@@ -400,15 +400,15 @@ namespace ClassicUO.UnitTests.Ecs
 
             present[(int)Layer.Necklace] = true;
             anim[(int)Layer.Necklace] = 0x05EC;
-            AnimationRules.IsCovered(Layer.Necklace, gfx, anim, present, 0x190).Should().BeFalse("no robe");
+            LegacyLayerRulesReference.IsCovered(Layer.Necklace, gfx, anim, present, 0x190).Should().BeFalse("no robe");
 
             present[(int)Layer.Robe] = true;
             gfx[(int)Layer.Robe] = 0x1F03;
             anim[(int)Layer.Robe] = 0x01DF;
-            AnimationRules.IsCovered(Layer.Necklace, gfx, anim, present, 0x190).Should().BeTrue();
+            LegacyLayerRulesReference.IsCovered(Layer.Necklace, gfx, anim, present, 0x190).Should().BeTrue();
 
             anim[(int)Layer.Robe] = 0x05F2;
-            AnimationRules.IsCovered(Layer.Necklace, gfx, anim, present, 0x190).Should().BeFalse("robes with an open neck");
+            LegacyLayerRulesReference.IsCovered(Layer.Necklace, gfx, anim, present, 0x190).Should().BeFalse("robes with an open neck");
         }
 
         // ---- action timing
@@ -529,7 +529,7 @@ namespace ClassicUO.UnitTests.Ecs
         {
             Span<Layer> raw = stackalloc Layer[PaperdollOrder.N];
             Span<Layer> order = stackalloc Layer[PaperdollOrder.N];
-            PaperdollOrder.Build(animIds, alt, raw);
+            LegacyLayerRulesReference.Build(animIds, alt, raw);
             int n = PaperdollOrder.Filter(raw, backpack, order);
 
             return order.Slice(0, n).ToArray();
