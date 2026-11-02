@@ -1178,6 +1178,9 @@ namespace ClassicUO.Game
             obj.RemoveFromTile();
         }
 
+        /// <summary>Tests: each object the destroy cascades destroy, in order (before its OPL entry and Destroy).</summary>
+        internal System.Action<uint> RemovalObserver;
+
         public bool RemoveItem(uint serial, bool forceRemove = false)
         {
             Item item = Items.Get(serial);
@@ -1187,9 +1190,13 @@ namespace ClassicUO.Game
                 return false;
             }
 
-            LinkedObject first = item.Items;
-            RemoveItemFromContainer(item);
-            RemoveContentsAndDestroy(item, first, forceRemove);
+            // T9 child-list slice A: the children from the ECS, copied before the item leaves its container (where the list
+            // walk captured its head)
+            using (ContentsSnapshot children = State.SnapshotChildren(item))
+            {
+                RemoveItemFromContainer(item);
+                RemoveContentsAndDestroy(item, children.Serials, forceRemove);
+            }
 
             return true;
         }
@@ -1202,22 +1209,25 @@ namespace ClassicUO.Game
         /// </summary>
         internal void RemoveDetachedItem(Item item, bool forceRemove)
         {
-            RemoveContentsAndDestroy(item, item.Items, forceRemove);
+            using (ContentsSnapshot children = State.SnapshotChildren(item))
+            {
+                RemoveContentsAndDestroy(item, children.Serials, forceRemove);
+            }
         }
 
-        private void RemoveContentsAndDestroy(Item item, LinkedObject first, bool forceRemove)
+        // T9 child-list slice A: each child by serial in child order, its contents first, then the parent (the list walk's
+        // order). The spellbook's detached spell entries are not in the ECS contents; the list walk skipped them as well
+        // (RemoveItem by serial 1-64, which no item has).
+        private void RemoveContentsAndDestroy(Item item, System.ReadOnlySpan<uint> children, bool forceRemove)
         {
             uint serial = item.Serial;
 
-            while (first != null)
+            foreach (uint child in children)
             {
-                LinkedObject next = first.Next;
-
-                RemoveItem(first as Item, forceRemove);
-
-                first = next;
+                RemoveItem(child, forceRemove);
             }
 
+            RemovalObserver?.Invoke(serial);
             OPL.Remove(serial);
             item.Destroy();
 
@@ -1236,17 +1246,15 @@ namespace ClassicUO.Game
                 return false;
             }
 
-            LinkedObject first = mobile.Items;
-
-            while (first != null)
+            using (ContentsSnapshot children = State.SnapshotChildren(mobile))
             {
-                LinkedObject next = first.Next;
-
-                RemoveItem(first as Item, forceRemove);
-
-                first = next;
+                foreach (uint child in children.Serials)
+                {
+                    RemoveItem(child, forceRemove);
+                }
             }
 
+            RemovalObserver?.Invoke(serial);
             OPL.Remove(serial);
             mobile.Destroy();
 

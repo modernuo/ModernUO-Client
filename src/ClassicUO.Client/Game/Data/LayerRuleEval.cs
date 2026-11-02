@@ -415,5 +415,156 @@ namespace ClassicUO.Game.Data
         /// <summary>A worn layer's draw AnimID after the remap rules (0 for a layer not worn or without an AnimID).</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public ushort Remap(Layer layer) => (uint)layer < N ? _remap[(int)layer] : (ushort)0;
+
+#if CUO_DEVTOOLS
+        /// <summary>
+        /// <c>CUO_LAYER_CACHE_CHECK</c>: takes a key without a lookup, for a scratch decision the checker fills with a fresh
+        /// evaluation (never used for <see cref="Lookup"/>).
+        /// </summary>
+        internal void Reset(LayerRules rules, LayerSubject subject)
+        {
+            _rules = rules;
+            _subject = Pack(subject);
+            _version = 0;
+            _look = 0;
+            _seenChanges = 0;
+            _dirValid = 0;
+        }
+
+        /// <summary>
+        /// <c>CUO_LAYER_CACHE_CHECK</c>: the first difference between this answer and <paramref name="other"/> (the subject,
+        /// the order for each direction class, each worn layer's covered flag and remap); null when they are the same.
+        /// Allocates only for a difference.
+        /// </summary>
+        internal string Difference(LayerDecision other)
+        {
+            if (_subject != other._subject)
+            {
+                return $"subject 0x{_subject:X8} | fresh 0x{other._subject:X8}";
+            }
+
+            for (byte d = 0; d <= 8; d++)
+            {
+                ReadOnlySpan<Layer> mine = Order(d), theirs = other.Order(d);
+
+                if (!mine.SequenceEqual(theirs))
+                {
+                    return $"order (direction {d}) [{Fmt(mine)}] | fresh [{Fmt(theirs)}]";
+                }
+            }
+
+            for (int l = (int)Layer.OneHanded; l <= (int)Layer.Legs; l++)
+            {
+                if (IsCovered((Layer)l) != other.IsCovered((Layer)l))
+                {
+                    return $"covered {(Layer)l} {IsCovered((Layer)l)} | fresh {other.IsCovered((Layer)l)}";
+                }
+
+                if (Remap((Layer)l) != other.Remap((Layer)l))
+                {
+                    return $"remap {(Layer)l} 0x{Remap((Layer)l):X4} | fresh 0x{other.Remap((Layer)l):X4}";
+                }
+            }
+
+            return null;
+        }
+
+        private static string Fmt(ReadOnlySpan<Layer> order)
+        {
+            var sb = new System.Text.StringBuilder();
+
+            foreach (Layer l in order)
+            {
+                sb.Append(((byte)l).ToString("X2")).Append(' ');
+            }
+
+            return sb.ToString().TrimEnd();
+        }
+#endif
     }
+
+#if CUO_DEVTOOLS
+    /// <summary>
+    /// <c>CUO_LAYER_CACHE_CHECK</c> (CUO_DEVTOOLS builds only; restores the cache half of the deleted
+    /// <c>CUO_LAYER_RULES_CHECK</c>): on a <see cref="LayerDecision"/> cache hit in <c>WorldState.WorldLayers</c>, the
+    /// cached answer is compared with a fresh evaluation of the rules on the wearer's tables (a scratch decision, no
+    /// allocation): a key input that moved without invalidating shows as "[layers] cache mismatch". <c>=1</c> checks every
+    /// hit, <c>=N</c> every Nth. A summary line every 5 s while the counts change. CLEANUP(release).
+    /// </summary>
+    internal static class LayerCacheCheck
+    {
+        /// <summary>Check every Nth hit (0: off). Tests set it.</summary>
+        public static int Every = ParseEvery(Environment.GetEnvironmentVariable("CUO_LAYER_CACHE_CHECK"));
+
+        public static long Hits, Checks, Mismatches;
+
+        /// <summary>Tests: sees each mismatch report.</summary>
+        internal static Action<string> MismatchObserver;
+
+        private const int MAX_LOGGED = 25;
+        private static readonly LayerDecision _fresh = new LayerDecision();
+        private static long _logged;
+        private static uint _summaryAt;
+        private static long _summaryChecks = -1;
+
+        internal static int ParseEvery(string value) => int.TryParse(value, out int n) && n > 0 ? n : 0;
+
+        public static bool Enabled
+        {
+            [MethodImpl(MethodImplOptions.AggressiveInlining)]
+            get => Every > 0;
+        }
+
+        /// <summary><c>WorldState.WorldLayers</c> on a hit: every Nth, the cached answer against the wearer's tables now.</summary>
+        public static void OnHit(Mobile mobile, LayerDecision cached, LayerRules rules, LayerSubject subject)
+        {
+            if (++Hits % Every != 0)
+            {
+                return;
+            }
+
+            LayerTables t = default;
+            t.Gather(mobile);
+            Check(mobile.Serial, cached, ref t, rules, subject);
+        }
+
+        /// <summary>The comparison (tests call it with tables of their own): true when the cached answer is the fresh one.</summary>
+        public static bool Check(uint serial, LayerDecision cached, ref LayerTables t, LayerRules rules, LayerSubject subject)
+        {
+            Checks++;
+            _fresh.Reset(rules, subject);
+            _fresh.Fill(ref t);
+            string diff = cached.Difference(_fresh);
+
+            if (diff == null)
+            {
+                return true;
+            }
+
+            Mismatches++;
+            string message = $"[layers] cache mismatch 0x{serial:X8}: {diff}";
+            MismatchObserver?.Invoke(message);
+
+            if (_logged++ < MAX_LOGGED)
+            {
+                Log.Warn(message);
+            }
+
+            return false;
+        }
+
+        /// <summary>The 5 s summary while the counts change (called every frame by <c>WorldEcs.Update</c>).</summary>
+        public static void LogSummary()
+        {
+            if (!Enabled || Time.Ticks < _summaryAt || Checks == _summaryChecks)
+            {
+                return;
+            }
+
+            _summaryAt = Time.Ticks + 5000;
+            _summaryChecks = Checks;
+            Log.Info($"[layers] cache checks {Checks} of {Hits} hits (every {Every}) mismatches {Mismatches} | decision hits {LayerDecision.Hits} misses {LayerDecision.Misses}");
+        }
+    }
+#endif
 }
