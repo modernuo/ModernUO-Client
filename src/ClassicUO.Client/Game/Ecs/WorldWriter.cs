@@ -690,6 +690,9 @@ namespace ClassicUO.Game
                 container.PushToBack(item);
             }
 
+            // art_container_prefetch: an open container's new item starts its art decode on the workers (no world state)
+            global::ClassicUO.Game.Map.ContentsArt.RequestContained(item, container);
+
             return item;
         }
 

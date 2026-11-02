@@ -766,6 +766,9 @@ namespace ClassicUO
         private static long _gumpOpenAt, _gumpOpenLast, _gumpOpenWorst, _gumpOpenTicks0;
         private static int _gumpOpenLoads0, _gumpOpenPf0;
         private static long _gumpOpenPfTicks0, _gumpOpenCall;
+        // perf-4: static art (container contents, paperdoll slots) decoded on the main thread / prefetched during an open
+        private static int _gumpOpenArtLoads0, _gumpOpenArtPf0;
+        private static long _gumpOpenArtTicks0, _gumpOpenArtPfTicks0;
         private static string _gumpOpenName;
 
         private static void GumpOpenFrame(GameController game, World world, long now)
@@ -780,7 +783,7 @@ namespace ClassicUO
                 {
                     Log.Info($"[bench-gumpopen] {_gumpOpenName}: worst frame {_gumpOpenWorst * 1000.0 / sec:0.00} ms in 1.5 s, " +
                              $"main-thread gump decodes {Renderer.Gumps.Gump.TotalSyncLoads - _gumpOpenLoads0} " +
-                             $"({(Renderer.Gumps.Gump.TotalSyncTicks - _gumpOpenTicks0) * 1000.0 / sec:0.000} ms), prefetched {Renderer.Gumps.Gump.TotalPrefetched - _gumpOpenPf0} ({(Renderer.Gumps.Gump.TotalPrefetchTicks - _gumpOpenPfTicks0) * 1000.0 / sec:0.000} ms), open call {_gumpOpenCall * 1000.0 / sec:0.000} ms, pack {game.UO.FileManager.Gumps.FromPack}, {TextStats()}, gumps open: {string.Join(",", System.Linq.Enumerable.Select(Game.Managers.UIManager.Gumps, g => g.GetType().Name))}");
+                             $"({(Renderer.Gumps.Gump.TotalSyncTicks - _gumpOpenTicks0) * 1000.0 / sec:0.000} ms), prefetched {Renderer.Gumps.Gump.TotalPrefetched - _gumpOpenPf0} ({(Renderer.Gumps.Gump.TotalPrefetchTicks - _gumpOpenPfTicks0) * 1000.0 / sec:0.000} ms), open call {_gumpOpenCall * 1000.0 / sec:0.000} ms, main-thread art decodes {Renderer.Arts.Art.TotalSyncLoads - _gumpOpenArtLoads0} ({(Renderer.Arts.Art.TotalSyncTicks - _gumpOpenArtTicks0) * 1000.0 / sec:0.000} ms), art prefetched {Renderer.Arts.Art.TotalPrefetched - _gumpOpenArtPf0} ({(Renderer.Arts.Art.TotalPrefetchTicks - _gumpOpenArtPfTicks0) * 1000.0 / sec:0.000} ms, art_container_prefetch {Game.Map.ContentsArt.Enabled}), pack {game.UO.FileManager.Gumps.FromPack}, {TextStats()}, gumps open: {string.Join(",", System.Linq.Enumerable.Select(Game.Managers.UIManager.Gumps, g => g.GetType().Name))}");
                     _gumpOpenName = null;
                 }
             }
@@ -805,6 +808,10 @@ namespace ClassicUO
             _gumpOpenTicks0 = Renderer.Gumps.Gump.TotalSyncTicks;
             _gumpOpenPf0 = Renderer.Gumps.Gump.TotalPrefetched;
             _gumpOpenPfTicks0 = Renderer.Gumps.Gump.TotalPrefetchTicks;
+            _gumpOpenArtLoads0 = Renderer.Arts.Art.TotalSyncLoads;
+            _gumpOpenArtTicks0 = Renderer.Arts.Art.TotalSyncTicks;
+            _gumpOpenArtPf0 = Renderer.Arts.Art.TotalPrefetched;
+            _gumpOpenArtPfTicks0 = Renderer.Arts.Art.TotalPrefetchTicks;
             TextStart();
             long callStart = Stopwatch.GetTimestamp();
 

@@ -184,6 +184,12 @@ namespace ClassicUO.Configuration
         // the off/on gates bench-000104/106 and two Codex audits); the off path and the checker stay for one phase.
         [JsonPropertyName("ecs_read_contents")] public bool EcsReadContents { get; set; } = true;
 
+        // perf-4: the static art of a container's contents and of the paperdoll's equipment slots decodes on the art workers
+        // before the gump builds its item controls (ContentsArt: a request when an item goes into an open container, a
+        // bounded batch wait in ContainerGump/PaperDollGump.UpdateContents) instead of one main-thread decode per sprite.
+        // Read at every use (CUO_ART_CONTAINER_PREFETCH=1|0 overrides it in developer builds). Default off.
+        [JsonPropertyName("art_container_prefetch")] public bool ArtContainerPrefetch { get; set; }
+
         // T5c (ecs-transition-plan.md): the 50 ms range sweep and the world-map pass run as a system over the ECS (Position, with
         // the last step's tile for stepping mobiles; MobileInputs.Notoriety plus the party list), removing through the funnel in
         // table order, instead of the loops' own distance tests. CUO_SWEEP_CHECK=1 compares the two. Read once at startup.
