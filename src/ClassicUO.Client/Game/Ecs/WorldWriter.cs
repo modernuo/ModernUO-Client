@@ -748,6 +748,10 @@ namespace ClassicUO.Game
                 }
 #endif
 
+                // T9 child-list slice A: the children copied while the ECS and the list still agree (before the spell set
+                // below is dropped)
+                using ContentsSnapshot children = _world.State.SnapshotChildren(container);
+
                 // T2: the clear also drops a spellbook's detached spell entries (not world objects: RemoveItem skips them,
                 // the head below drops them); committed first
                 if (!keepEquipped && container is Item book && _world.Ecs.Mirror.Spellbook(book.Serial) != 0)
@@ -758,16 +762,13 @@ namespace ClassicUO.Game
                 // the old loop: each removal by serial in child order (World.RemoveItem: out of the child list, the
                 // contents, OPL, Destroy). The spell entries are no world items (RemoveItem skipped them): the copy of the
                 // ECS contents leaves them out
-                using (ContentsSnapshot children = _world.State.SnapshotContents(container.Serial))
+                foreach (uint serial in children.Serials)
                 {
-                    foreach (uint serial in children.Serials)
-                    {
-                        Item it = _world.Items.Get(serial);
+                    Item it = _world.Items.Get(serial);
 
-                        if (it != null && !(keepEquipped && it.Layer != 0))
-                        {
-                            _world.RemoveItem(serial, true);
-                        }
+                    if (it != null && !(keepEquipped && it.Layer != 0))
+                    {
+                        _world.RemoveItem(serial, true);
                     }
                 }
 
@@ -1101,7 +1102,7 @@ namespace ClassicUO.Game
 #endif
 
                 // the old loop, over a copy of the contents (each removal changes them)
-                using (ContentsSnapshot children = _world.State.SnapshotContents(owner.Serial))
+                using (ContentsSnapshot children = _world.State.SnapshotChildren(owner))
                 {
                     foreach (uint serial in children.Serials)
                     {
@@ -2453,7 +2454,7 @@ namespace ClassicUO.Game
                 // (an item the server put in the book) is no longer attached, committed first. T9 child-list slice A: over
                 // a copy of the ECS contents (each detach changes them); the old spell entries are not world items (the
                 // commit skipped them)
-                using (ContentsSnapshot children = _world.State.SnapshotContents(spellbook.Serial))
+                using (ContentsSnapshot children = _world.State.SnapshotChildren(spellbook))
                 {
                     foreach (uint child in children.Serials)
                     {
@@ -2787,12 +2788,12 @@ namespace ClassicUO.Game
                 // serial (the new mobile's list), so they are detached before the incoming list is attached
                 // T9 child-list slice A: the dying mobile's children from the ECS, copied before anything changes (the
                 // re-key and the re-attach move them to the new serial)
-                using ContentsSnapshot children = _world.State.SnapshotContents(oldSerial);
+                using ContentsSnapshot children = _world.State.SnapshotChildren(mobile);
                 Mobile displaced = _world.Mobiles.Get(serial);
 
                 if (displaced != null && !ReferenceEquals(displaced, mobile))
                 {
-                    using (ContentsSnapshot gone = _world.State.SnapshotContents(serial))
+                    using (ContentsSnapshot gone = _world.State.SnapshotChildren(displaced))
                     {
                         foreach (uint s in gone.Serials)
                         {
@@ -3305,7 +3306,7 @@ namespace ClassicUO.Game
 #endif
 
                 // T9 child-list slice A: over a copy of the ECS contents, in child order (each removal changes them)
-                using (ContentsSnapshot children = _world.State.SnapshotContents(bank.Serial))
+                using (ContentsSnapshot children = _world.State.SnapshotChildren(bank))
                 {
                     foreach (uint serial in children.Serials)
                     {

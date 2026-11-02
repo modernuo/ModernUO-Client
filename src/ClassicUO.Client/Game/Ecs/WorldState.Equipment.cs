@@ -107,7 +107,7 @@ namespace ClassicUO.Game
         /// </summary>
         public Item FindChild(Entity parent, Layer layer)
         {
-            Item found = IsCurrent(parent) ? ChildByLayer(parent, layer) : parent.FindItemByLayerInList(layer);
+            Item found = IsCurrent(parent) && !Shared(parent) ? ChildByLayer(parent, layer) : parent.FindItemByLayerInList(layer);
 #if CUO_DEVTOOLS
             if (EquipCheckEnabled)
             {
