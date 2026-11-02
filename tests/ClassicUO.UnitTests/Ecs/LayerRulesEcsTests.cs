@@ -16,10 +16,10 @@ namespace ClassicUO.UnitTests.Ecs
     [CollectionDefinition(nameof(LayerRulesStateCollection), DisableParallelization = true)]
     public class LayerRulesStateCollection { }
 
-    // T3b: the ECS side of ecs_layer_rules through MobileAnimationSystem.Rebuild and AnimationRules.PaintOrder (what
-    // MobileSpriteExtract draws): the default data gives the hard-coded slot order for every facing; custom direction and
-    // remap rules reach the GPU path; the checker sees the final slot order. LayerRuleEval's switch and rules are static,
-    // so this runs alone.
+    // T3b: the ECS side of the layering rules through MobileAnimationSystem.Rebuild and AnimationRules.PaintOrder (what
+    // MobileSpriteExtract draws): the default data gives the former hard-coded slot order (LegacyLayerRulesReference) for
+    // every facing; custom direction and remap rules reach the GPU path. LayerRuleEval's rules are static, so this runs
+    // alone.
     [Collection(nameof(LayerRulesStateCollection))]
     public class LayerRulesEcsTests : IDisposable
     {
@@ -29,12 +29,6 @@ namespace ClassicUO.UnitTests.Ecs
 
         private readonly StaticTiles[] _tiles = new StaticTiles[0x4000 + 0x100];
         private readonly Dictionary<ushort, Dictionary<ushort, EquipConvData>> _conv = new();
-
-        [Fact]
-        public void The_Switch_Is_On_By_Default()
-        {
-            new ClassicUO.Configuration.Settings().EcsLayerRules.Should().BeTrue();
-        }
 
         private readonly ITestOutputHelper _out;
 
@@ -51,26 +45,13 @@ namespace ClassicUO.UnitTests.Ecs
 
         public void Dispose()
         {
-            LayerRuleEval.Override = null;
             LayerRuleEval.SetRules(null);
             LayerRuleEval.Cv7000Override = null;
-            LayerRuleEval.MismatchObserver = null;
-            SetCheck(false);
-        }
-
-        // CheckEnabled is a static field in CUO_DEVTOOLS client builds and a const otherwise (the test project doesn't see
-        // the symbol): false when the build has no checker
-        private static bool SetCheck(bool on)
-        {
-            var f = typeof(LayerRuleEval).GetField(nameof(LayerRuleEval.CheckEnabled));
-            if (f == null || f.IsLiteral) return false;
-            f.SetValue(null, on);
-            return true;
         }
 
         private void Tile(ushort graphic, ushort animId) => _tiles[graphic] = new StaticTiles(0, 0, 0, 0, animId, 0, 0, 0, "");
 
-        private EquipmentSlots Build(bool data)
+        private EquipmentSlots Build()
         {
             var mirror = new WorldMirror();
             Entity mobile = mirror.UpsertMobile(MOBILE, HUMAN, 0, 10, 10, 0, 0, 0, false);
@@ -81,12 +62,36 @@ namespace ClassicUO.UnitTests.Ecs
                 mirror.UpsertItem(s++, g, 0, 0, 0, 0, 0, 0, 1, MOBILE, (byte)layer, false, attach: true);
             }
 
-            LayerRuleEval.Override = data;
             var sys = new MobileAnimationSystem(mirror);
             var st = new AnimationState { Flags = AnimStateFlags.Human };
             sys.Rebuild(mobile, in st, null, _tiles, _conv, true);
 
             return mobile.GetComponent<EquipmentSlots>();
+        }
+
+        // the outfit Build wears, as the order key (AnimIDs by layer)
+        private static ushort[] Key()
+        {
+            var key = new ushort[PaperdollOrder.N];
+            key[(int)Layer.Shirt] = 0x101;
+            key[(int)Layer.Cloak] = 0x106;
+            key[(int)Layer.Helmet] = 0x107;
+            key[(int)Layer.OneHanded] = 0x263;
+            return key;
+        }
+
+        // the former hard-coded world order for the facing (PaperdollOrder.Build + Filter + ApplyDirectionCloak) on the
+        // drawn layers: nothing in Build's outfit is covered, so all four are drawn
+        private static List<Layer> Reference(byte facing)
+        {
+            ushort[] key = Key();
+            Span<Layer> raw = stackalloc Layer[PaperdollOrder.N];
+            Span<Layer> full = stackalloc Layer[PaperdollOrder.N];
+            LegacyLayerRulesReference.Build(key, false, raw);
+            int n = LegacyLayerRulesReference.ApplyDirectionCloak(full, PaperdollOrder.Filter(raw, false, full), facing);
+            var l = new List<Layer>();
+            for (int i = 0; i < n; i++) if (key[(int)full[i]] != 0) l.Add(full[i]);
+            return l;
         }
 
         private static List<Layer> Paint(in EquipmentSlots eq, byte facing)
@@ -117,18 +122,16 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void Default_Data_Gives_The_Hard_Coded_Slot_Order_For_Every_Facing()
         {
-            EquipmentSlots hard = Build(false);
-            EquipmentSlots data = Build(true);
-            hard.DirOrder.Should().Be(0);
+            EquipmentSlots data = Build();
             data.DirOrder.Should().NotBe(0);
 
             for (byte f = 0; f < 16; f++)
             {
-                Paint(data, f).Should().Equal(Paint(hard, f), $"facing {f}");
+                Paint(data, f).Should().Equal(Reference(f), $"facing {f}");
             }
 
-            Paint(hard, 0).Last().Should().Be(Layer.Cloak);
-            Paint(hard, 3).First().Should().Be(Layer.Cloak);
+            Paint(data, 0).Last().Should().Be(Layer.Cloak);
+            Paint(data, 3).First().Should().Be(Layer.Cloak);
         }
 
         [Fact]
@@ -136,17 +139,13 @@ namespace ClassicUO.UnitTests.Ecs
         {
             LayerRuleEval.SetRules(NorthCloakAtTheBottom());
 
-            EquipmentSlots data = Build(true);
+            EquipmentSlots data = Build();
             List<Layer> north = Paint(data, 0);
             north.First().Should().Be(Layer.Cloak);
-            Paint(data, 1).Should().Equal(Paint(Build(false), 1), "the other facings are unchanged");
+            Paint(data, 1).Should().Equal(Reference(1), "the other facings are unchanged");
 
             // and MobileView's order (LayerRuleEval.BuildInWorld) agrees on the drawn layers
-            var key = new ushort[PaperdollOrder.N];
-            key[(int)Layer.Shirt] = 0x101;
-            key[(int)Layer.Cloak] = 0x106;
-            key[(int)Layer.Helmet] = 0x107;
-            key[(int)Layer.OneHanded] = 0x263;
+            ushort[] key = Key();
             Span<Layer> legacy = stackalloc Layer[PaperdollOrder.N];
             int lc = LayerRuleEval.BuildInWorld(key, LayerRuleEval.Subject(HUMAN, false, false), 0, legacy);
             legacy.Slice(0, lc).ToArray().Where(north.Contains).Should().Equal(north);
@@ -168,35 +167,9 @@ namespace ClassicUO.UnitTests.Ecs
             var sys = new MobileAnimationSystem(mirror);
             var st = new AnimationState { Flags = AnimStateFlags.Human };
 
-            LayerRuleEval.Override = false;
-            sys.Rebuild(mobile, in st, null, _tiles, _conv, true);
-            mobile.GetComponent<EquipmentSlots>().Slots[0].DrawBody.Should().Be(0x1D5, "hard-coded: only a gargoyle draw remaps");
-
-            LayerRuleEval.Override = true;
+            LegacyLayerRulesReference.FixGargoyleEquipment(0x1D5).Should().Be(0x156, "the former hard-coded remap, for a gargoyle draw only");
             sys.Rebuild(mobile, in st, null, _tiles, _conv, true);
             mobile.GetComponent<EquipmentSlots>().Slots[0].DrawBody.Should().Be(0x156, "the data's condition decides");
-        }
-
-        [Fact]
-        public void The_Checker_Compares_The_Final_Ecs_Slot_Order()
-        {
-            var reports = new List<string>();
-            LayerRuleEval.MismatchObserver = reports.Add;
-
-            if (!SetCheck(true))
-            {
-                return; // a release (CuoDevTools=false) client build has no checker
-            }
-
-            Build(true);
-            Build(false);
-            reports.Should().BeEmpty("the default data equals the hard-coded rules");
-
-            // a direction rule changes only the final slot order (raw order, covering and remaps are unchanged)
-            LayerRuleEval.SetRules(NorthCloakAtTheBottom());
-            Build(true);
-            reports.Should().ContainSingle().Which.Should().Contain("ecs slots dir 0");
-            _out.WriteLine($"checker on: {reports[0]}");
         }
     }
 }

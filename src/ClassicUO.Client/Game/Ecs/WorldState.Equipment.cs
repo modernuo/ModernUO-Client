@@ -40,7 +40,7 @@ namespace ClassicUO.Game
         public WornHeld Held;
         public Item[] Items;
 
-        /// <summary>T3b: the cached world layering answer (ecs_layer_rules; null until first used with the switch on).</summary>
+        /// <summary>T3b: the cached world layering answer (null until first used).</summary>
         public LayerDecision Layers;
     }
 
@@ -191,7 +191,7 @@ namespace ClassicUO.Game
         }
 
         /// <summary>
-        /// T3b (ecs_layer_rules): the mobile's cached world layering answer (<see cref="LayerDecision"/>), refilled when its
+        /// T3b: the mobile's cached world layering answer (<see cref="LayerDecision"/>), refilled when its
         /// key moved (the record's WornLayers Version or Look, the subject: body and flags, the rules). Null for an instance
         /// World does not hold for its serial or one without a record (the caller evaluates the rules directly).
         /// </summary>

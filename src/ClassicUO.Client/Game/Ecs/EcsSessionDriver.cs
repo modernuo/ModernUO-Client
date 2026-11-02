@@ -750,24 +750,6 @@ namespace ClassicUO.Game
                     return true;
                 }
 
-                // layerrules on|off: the layering rules from data (ecs_layer_rules, T3b; wins over CUO_ECS_LAYER_RULES). Marks
-                // every mobile's equipment dirty so the ECS world's cached slots are rebuilt under the new setting.
-                case "layerrules" when args.Length > 0:
-                {
-                    LayerRuleEval.Override = args[0] == "on";
-                    int marked = 0;
-
-                    foreach (Mobile m in world.Mobiles.Values)
-                    {
-                        world.Ecs.Mirror.MarkEquipmentDirty(m.Serial);
-                        marked++;
-                    }
-
-                    Log.Info($"[ECS] driver: layer rules from data {args[0]} (rules {LayerRuleEval.Rules.Rules.Length}, {LayerRuleEval.Source}); {marked} mobiles marked");
-
-                    return false;
-                }
-
                 // itemcache on|off: the Gpu world prepare's ground-item cache (gpu_prepare_item_cache)
                 case "itemcache" when args.Length > 0:
                     Settings.GlobalSettings.GpuPrepareItemCache = args[0] == "on";
@@ -867,6 +849,7 @@ namespace ClassicUO.Game
                 case "pushinputs":
                 case "readcontents":
                 case "readequipment":
+                case "layerrules":
                     Log.Info($"[ECS] driver: '{cmd}' has no off path any more (T9), ignored");
 
                     return false;

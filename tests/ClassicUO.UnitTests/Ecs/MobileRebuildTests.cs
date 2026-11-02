@@ -475,7 +475,7 @@ namespace ClassicUO.UnitTests.Ecs
                 }
             }
 
-            PaperdollOrder.Build(key, false, raw);
+            LegacyLayerRulesReference.Build(key, false, raw);
             int n = PaperdollOrder.Filter(raw, false, order);
 
             return order[..n];
