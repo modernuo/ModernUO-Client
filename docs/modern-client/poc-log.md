@@ -5140,3 +5140,10 @@ Paired NativeAOT builds (`CuoDevTools=true`, checkers off), all on the quiet mac
   - Codex re-review: no findings.
 - Timing parked: `measure/t7b2a/job-timing-legacy-PARKED.sh`.
 - **Next, part 2b:** picking from the sink's own rects; the effect extract; then the hot-field caches can go after the default flip (T9).
+
+### perf-5 merged: Art.Get reuses finished decodes; missing art logs once (coordinator, 2026-11-02)
+
+- afcc17a5d and c01ba87ab, merge 9b1ea3763. Always on (no switch), merged under the "better by construction" rule; quiet timing pending (parked).
+- **`Art.Get`:** it now takes a finished worker decode (`FirstSightDecoder.TryTakeReady`) instead of decoding again. The budget and buffer are released once. New dev counter `art_take`. Ready takes are charged to the frame allowance when one is active (Codex P2, fixed).
+- **Missing art:** a per-id bitset, so it logs once and returns the placeholder directly. This removes a per-frame allocation and log string per such item.
+- Counts bench-000250 PASS; gate bench-000251 PASS. Unit tests after the merge: 3,012 passed, 6 skipped.
