@@ -292,8 +292,22 @@ namespace ClassicUO.Game.UI.Controls
 
                     if (c.IsDisposed)
                     {
-                        OnChildRemoved();
-                        Children.RemoveAt(i--);
+                        // perf-10: the run of disposed children from here goes at once. No Update runs between them, so it is
+                        // what one RemoveAt per child did, but a rebuild that disposed n children is one shift, not n.
+                        int end = i + 1;
+
+                        while (end < Children.Count && Children[end].IsDisposed)
+                        {
+                            end++;
+                        }
+
+                        for (int k = i; k < end; k++)
+                        {
+                            OnChildRemoved();
+                        }
+
+                        Children.RemoveRange(i, end - i);
+                        i--;
 
                         continue;
                     }

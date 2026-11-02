@@ -399,6 +399,9 @@ namespace ClassicUO.Game.GameObjects
             {
                 if (this is Mobile mobile)
                 {
+#if CUO_DEVTOOLS
+                    FrameStats.Inc(FrameCounter.FindByLayer);
+#endif
                     return state.EquipCheckEnabled ? state.FindWorn(mobile, layer) : state.WornItem(mobile, layer);
                 }
 
