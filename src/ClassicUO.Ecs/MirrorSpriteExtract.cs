@@ -5,31 +5,31 @@ using Friflo.Engine.ECS;
 
 namespace ClassicUO.Ecs
 {
-    public enum DynamicSpriteKind : byte
+    public enum MirrorSpriteKind : byte
     {
         Item,
         Mobile,
         Player
     }
 
-    public struct DynamicSprite
+    public struct MirrorSprite
     {
         public uint Serial;
         public ushort Graphic, Hue, X, Y;
         public sbyte Z;
         public byte Facing, Flags;
-        public DynamicSpriteKind Kind;
+        public MirrorSpriteKind Kind;
     }
 
     // Read-only system: on-ground items and mobiles within range of a tile, as flat sprite records for the GPU renderer.
     // Zero allocation after warm-up.
-    public sealed class DynamicSpriteExtract
+    public sealed class MirrorSpriteExtract
     {
         private readonly ArchetypeQuery _items, _mobiles;
-        private DynamicSprite[] _buffer = new DynamicSprite[1024];
+        private MirrorSprite[] _buffer = new MirrorSprite[1024];
         private int _count;
 
-        public DynamicSpriteExtract(EntityStore store)
+        public MirrorSpriteExtract(EntityStore store)
         {
             ComponentTypes types = ComponentTypes.Get<Serial, Graphic, Hue, Position, Facing>();
             types.Add(ComponentTypes.Get<Flags>());
@@ -38,13 +38,13 @@ namespace ClassicUO.Ecs
             _mobiles = store.Query().AllComponents(types).AllTags(Tags.Get<MobileTag>());
         }
 
-        public ReadOnlySpan<DynamicSprite> Sprites => new ReadOnlySpan<DynamicSprite>(_buffer, 0, _count);
+        public ReadOnlySpan<MirrorSprite> Sprites => new ReadOnlySpan<MirrorSprite>(_buffer, 0, _count);
 
         public int ItemCount { get; private set; }
 
         public int MobileCount { get; private set; }
 
-        public ReadOnlySpan<DynamicSprite> Run(int centerX, int centerY, int range)
+        public ReadOnlySpan<MirrorSprite> Run(int centerX, int centerY, int range)
         {
             _count = 0;
             ItemCount = Collect(_items, centerX, centerY, range, false);
@@ -73,7 +73,7 @@ namespace ClassicUO.Ecs
                 ReadOnlySpan<Facing> facings = arch.Components<Facing>();
                 ReadOnlySpan<Flags> flags = arch.Components<Flags>();
                 bool isPlayer = mobiles && arch.Tags.Has<PlayerTag>();
-                DynamicSpriteKind kind = isPlayer ? DynamicSpriteKind.Player : mobiles ? DynamicSpriteKind.Mobile : DynamicSpriteKind.Item;
+                MirrorSpriteKind kind = isPlayer ? MirrorSpriteKind.Player : mobiles ? MirrorSpriteKind.Mobile : MirrorSpriteKind.Item;
 
                 if (_count + n > _buffer.Length)
                 {
@@ -89,7 +89,7 @@ namespace ClassicUO.Ecs
                         continue;
                     }
 
-                    ref DynamicSprite s = ref _buffer[_count++];
+                    ref MirrorSprite s = ref _buffer[_count++];
                     s.Serial = serials[i].Value;
                     s.Graphic = graphics[i].Value;
                     s.Hue = hues[i].Value;
