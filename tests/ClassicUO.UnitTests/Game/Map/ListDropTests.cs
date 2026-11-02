@@ -749,5 +749,90 @@ namespace ClassicUO.UnitTests.Game.Map
             Assert.Contains(a, ReaderList(c, 6 << 3 | 6, false, null));
             Assert.DoesNotContain(a, ReaderList(c, 6 << 3 | 6, true, null));
         }
+
+        // tile-index-fix-a: a whole-tile walk of a tile whose index cell is empty follows TNext (merged false) and must see what
+        // the merge and the legacy order see; a tile with dynamics still merges; the shadow walk (dev) bypasses the plain walk
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public void Whole_Tile_Start_Takes_The_List_Walk_Only_On_Tiles_Without_Dynamics(bool dropped)
+        {
+            var s = new Side(dropped, dropped);
+            Chunk c = s.Chunks[0];
+
+            Item NewItem(uint serial)
+            {
+                Item i = s.World.GetOrCreateItem(serial);
+                i.Graphic = Plain;
+                return i;
+            }
+
+            // (0,0) land, static, multi; (1,0) land, static, item, mobile; (2,0) land and an item that leaves;
+            // (3,0) a landless mobile; (4,0) land only; (5,0) land and a mobile that steps away to (1,0)
+            Place(c, NewLand(s.World, 0), 0, 0);
+            Place(c, new Static(s.World) { Graphic = Tall, Z = 0 }, 0, 0);
+            Place(c, new Multi(s.World) { Graphic = Plain, Z = 2 }, 0, 0);
+            Place(c, NewLand(s.World, 0), 1, 0);
+            Place(c, new Static(s.World) { Graphic = Plain, Z = 0 }, 1, 0);
+            Place(c, NewItem(0x4000_0010), 1, 0);
+            Place(c, s.World.GetOrCreateMobile(0x10), 1, 0);
+            Place(c, NewLand(s.World, 0), 2, 0);
+            Item leaves = NewItem(0x4000_0011);
+            Place(c, leaves, 2, 0);
+            leaves.RemoveFromTile();
+            Place(c, s.World.GetOrCreateMobile(0x11), 3, 0);
+            Place(c, NewLand(s.World, 0), 4, 0);
+            Place(c, NewLand(s.World, 0), 5, 0);
+            Mobile steps = s.World.GetOrCreateMobile(0x12);
+            Place(c, steps, 5, 0);
+            steps.Z = 1;
+            Place(c, steps, 1, 0);
+
+            bool[] dynamics = { false, true, false, true, false, false };
+
+            for (int x = 0; x < dynamics.Length; x++)
+            {
+                int cell = x << 3;
+                List<GameObject> legacy = dropped ? c.Shadow.Cell(cell).ToList() : RealList(c, x, 0);
+                Assert.NotEmpty(legacy);
+                Assert.Equal(dynamics[x], c.Dynamic != null && c.Dynamic.CountAt(cell) > 0);
+                Assert.Equal(legacy, MergedList(c, cell));
+
+                var seen = new List<GameObject>();
+                GameObject first = TileWalk.First(c, x, 0);
+                bool merged = false;
+
+                for (GameObject o = TileWalk.Start(first, c, false, true, out TileWalk w, out merged); o != null; o = merged ? w.Next() : o.TNext)
+                {
+                    seen.Add(o);
+                    Assert.True(seen.Count < 100_000);
+                }
+
+                Assert.Equal(dynamics[x], merged);
+                Assert.Equal(legacy, seen);
+
+                if (s_shadowWalk != null)
+                {
+                    s_shadowWalk.SetValue(null, true);
+
+                    try
+                    {
+                        seen.Clear();
+
+                        for (GameObject o = TileWalk.Start(first, c, false, true, out TileWalk w, out merged); o != null; o = merged ? w.Next() : o.TNext)
+                        {
+                            seen.Add(o);
+                        }
+
+                        Assert.True(merged);
+                        Assert.Equal(legacy, seen);
+                    }
+                    finally
+                    {
+                        s_shadowWalk.SetValue(null, false);
+                    }
+                }
+            }
+        }
     }
 }
