@@ -5,12 +5,13 @@ namespace ClassicUO.Game.Scenes
 {
     // CUO_PREP_CHECK=1: verifies the world prepare's shortcuts against the work they skip, logging every 5 s:
     //   positions: a walked object whose screen position was kept (camera generation) is where a recompute would put it;
-    //   item picks: an item the picking rectangle rejected is not hit by the pixel test either.
+    //   item picks: an item the picking rectangle rejected is not hit by the pixel test either;
+    //   static/multi picks: the same for a static or multi component rejected by its art entry's or sprite's size.
     internal static class PrepCheck
     {
         public static readonly bool On = System.Environment.GetEnvironmentVariable("CUO_PREP_CHECK") == "1";
 
-        public static long PositionsKept, PositionsWrong, PicksRejected, PicksWrong;
+        public static long PositionsKept, PositionsWrong, PicksRejected, PicksWrong, StaticPicksRejected, StaticPicksWrong;
         public static string Sample;
         private static long _at;
 
@@ -24,10 +25,11 @@ namespace ClassicUO.Game.Scenes
             }
             else if (now - _at >= Stopwatch.Frequency * 5)
             {
-                Log.Info($"[prep-check] positions kept {PositionsKept}, wrong {PositionsWrong}; item picks rejected {PicksRejected}, wrong {PicksWrong}" +
+                Log.Info($"[prep-check] positions kept {PositionsKept}, wrong {PositionsWrong}; item picks rejected {PicksRejected}, wrong {PicksWrong}; " +
+                         $"static/multi picks rejected {StaticPicksRejected}, wrong {StaticPicksWrong}" +
                          (Sample != null ? $"; first: {Sample}" : ""));
                 _at = now;
-                PositionsKept = PositionsWrong = PicksRejected = PicksWrong = 0;
+                PositionsKept = PositionsWrong = PicksRejected = PicksWrong = StaticPicksRejected = StaticPicksWrong = 0;
                 Sample = null;
             }
         }

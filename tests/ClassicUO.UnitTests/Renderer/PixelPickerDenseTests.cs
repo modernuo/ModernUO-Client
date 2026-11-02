@@ -37,6 +37,47 @@ namespace ClassicUO.UnitTests.Renderer
             }
         }
 
+        // m_Data is a byte array doubled when full (256 KB at first): entries written across several growths read back
+        // exactly as their pixels, through both the flat table and the dictionary, also after Clear refills it
+        [Fact]
+        public void Entries_Survive_Data_Growth()
+        {
+            var rnd = new Random(777);
+            var picker = new PixelPicker(64);
+            var images = new (ulong id, int w, int h, uint[] px)[48];
+
+            for (int round = 0; round < 2; round++)
+            {
+                for (int i = 0; i < images.Length; i++)
+                {
+                    int w = rnd.Next(100, 300), h = rnd.Next(100, 300);
+                    ulong id = i % 2 == 0 ? (ulong)i : 1000UL + (ulong)i;
+                    images[i] = (id, w, h, RandomImage(rnd, w, h));
+                    picker.Set(id, w, h, images[i].px);
+                }
+
+                foreach (var (id, w, h, px) in images)
+                {
+                    picker.GetDimensions(id, out int gw, out int gh);
+                    (gw, gh).Should().Be((w, h));
+
+                    for (int y = 0; y < h; y += 3)
+                    {
+                        for (int x = 0; x < w; x += 3)
+                        {
+                            // the run walk stops on a run's first texel and reports it transparent (so pixel 0, 0 and
+                            // the first texel of every opaque run never hit): a hit is an opaque texel after an opaque one
+                            int i = y * w + x;
+                            bool expected = i > 0 && px[i] != 0 && px[i - 1] != 0;
+                            picker.Get(id, x, y).Should().Be(expected, $"id {id} at {x},{y} round {round}");
+                        }
+                    }
+                }
+
+                picker.Clear();
+            }
+        }
+
         [Fact]
         public void Dense_And_Dictionary_Agree()
         {
