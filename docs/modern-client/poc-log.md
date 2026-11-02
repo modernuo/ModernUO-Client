@@ -4993,3 +4993,8 @@ Base: poc/modern-client 74ed8b7a9. Code commit 80d063cee. Same switch `world_til
 - T9: delete `TNext`/`TPrevious` from dynamics (16 B each) by moving the list links off `GameObject`; then the legacy off path and the shadow go too.
 - Default stays off until the gates pass; then the owner decides whether `world_tile_index` (now "list dropped") goes on by default.
 - Targeting (TargetManager) and the season change still have unit-level coverage only (as in part 2).
+
+### T6b part 3 gates and merge (coordinator, 2026-11-02)
+
+- On 80d063cee: gate off bench-000198, gate on bench-000199, plans bench-000200, shots bench-000201: **all GATE PASS**. Shots off vs on pixel-identical at Britain, the bank, zoomed out and the house in Gpu; differences only from walking NPCs, matching the off vs off2 control; the large scene's moving Balrons as in every phase. One Legacy Britain "on" shot was captured at 960x720 (a capture glitch, not a render difference). Codex (gpt-6.1-sol, medium): no findings. Mutants 17/17. Merged as 1e3174646; unit tests 2,851 + 6 skipped in both variants. `world_tile_index` (now: list dropped) stays default off until the parked timing.
+
