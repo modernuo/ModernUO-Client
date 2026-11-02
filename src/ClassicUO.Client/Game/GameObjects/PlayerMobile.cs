@@ -147,7 +147,7 @@ namespace ClassicUO.Game.GameObjects
 
             if (backpack != null)
             {
-                return FindItemInContainerRecursive(backpack, graphic);
+                return FindItemInContainerRecursive(backpack, graphic, backpack.Serial, 0);
             }
 
             return null;
@@ -159,13 +159,13 @@ namespace ClassicUO.Game.GameObjects
 
             if (backpack != null)
             {
-                return FindItemByClilocInContainerRecursive(backpack, cliloc);
+                return FindItemByClilocInContainerRecursive(backpack, cliloc, backpack.Serial, 0);
             }
 
             return null;
         }
 
-        private Item FindItemInContainerRecursive(Item container, ushort graphic)
+        private Item FindItemInContainerRecursive(Item container, ushort graphic, uint root, int depth)
         {
             Item found = null;
 
@@ -180,9 +180,9 @@ namespace ClassicUO.Game.GameObjects
                         return item;
                     }
 
-                    if (World.State.HasChildren(item))
+                    if (depth < WorldState.MaxNestingDepth && item.Serial != root && World.State.HasChildren(item))
                     {
-                        found = FindItemInContainerRecursive(item, graphic);
+                        found = FindItemInContainerRecursive(item, graphic, root, depth + 1);
 
                         if (found != null && found.Graphic == graphic)
                         {
@@ -195,7 +195,7 @@ namespace ClassicUO.Game.GameObjects
             return found;
         }
 
-        private Item FindItemByClilocInContainerRecursive(Item container, int cliloc)
+        private Item FindItemByClilocInContainerRecursive(Item container, int cliloc, uint root, int depth)
         {
             Item found = null;
 
@@ -211,9 +211,9 @@ namespace ClassicUO.Game.GameObjects
                         return item;
                     }
 
-                    if (World.State.HasChildren(item))
+                    if (depth < WorldState.MaxNestingDepth && item.Serial != root && World.State.HasChildren(item))
                     {
-                        found = FindItemByClilocInContainerRecursive(item, cliloc);
+                        found = FindItemByClilocInContainerRecursive(item, cliloc, root, depth + 1);
 
                         if (found != null && cliloc == World.OPL.GetNameCliloc(found.Serial))
                         {

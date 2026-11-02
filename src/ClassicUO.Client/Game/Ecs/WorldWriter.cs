@@ -140,6 +140,12 @@ namespace ClassicUO.Game
         /// <summary>Tests: the violations seen so far (thrown or logged).</summary>
         internal int Violations { get; private set; }
 
+        /// <summary>
+        /// T9 child-list slice B2: the attaches refused because they would close a loop in the merged serial graph (see
+        /// <see cref="WouldCycle"/>). A server's packet, not a caller bug: no violation.
+        /// </summary>
+        internal int CycleRefusals { get; private set; }
+
         /// <summary>Tests: the placements issued and not yet consumed or cancelled.</summary>
         internal int OutstandingPlacements => _placements.Count;
 
@@ -618,6 +624,16 @@ namespace ClassicUO.Game
                 RemoveForReplacement(item);
             }
 
+            // T9 slice B2: after the old removals (a replaced item's subtree, the container too when it was inside, is gone),
+            // an attach that would still close a loop (equipment moved into a corpse inside it, an item under a dead mobile's
+            // serial) is refused: nothing more is written, and the handler sees no container (it returns, as for a missing one)
+            if (RefusedAttach(nameof(PlaceInContainer), serial, containerSerial, serial == containerSerial ? SelfParentIsMobile(serial) : container is Mobile))
+            {
+                container = null;
+
+                return null;
+            }
+
             item = _world.GetOrCreateItem(serial, out _);
 
             // 2. compute: every read of the previous state is here. CheckGraphicChange ran right after the Graphic write and
@@ -723,7 +739,7 @@ namespace ClassicUO.Game
             {
                 if (!(keepEquipped && it.Layer != 0))
                 {
-                    CancelSubtreePlacements(it);
+                    CancelSubtreePlacements(it, containerSerial);
                 }
             }
 
@@ -761,7 +777,7 @@ namespace ClassicUO.Game
 
                     if (it != null && !(keepEquipped && it.Layer != 0))
                     {
-                        _world.RemoveItem(serial, true);
+                        _world.RemoveItem(serial, true, containerSerial);
                     }
                 }
             }
@@ -816,6 +832,19 @@ namespace ClassicUO.Game
             if (!Admitted(nameof(ReturnHeldItem), serial))
             {
                 return null;
+            }
+
+            // T9 slice B2: the paperdoll branch's attach (a mobile-range container that exists once the item does) is refused
+            // when it would close a loop: before anything is created or written (result None, as a rejected nesting)
+            if (SerialHelper.IsMobile(containerSerial))
+            {
+                bool self = containerSerial == serial;
+                Entity target = self ? null : _world.Get(containerSerial);
+
+                if ((self || target != null) && RefusedAttach(nameof(ReturnHeldItem), serial, containerSerial, self ? SelfParentIsMobile(serial) : target is Mobile))
+                {
+                    return null;
+                }
             }
 
             // 1. resolve, in the old order: the item (found or created), then its container
@@ -965,6 +994,18 @@ namespace ClassicUO.Game
                 return null;
             }
 
+            // T9 slice B2: an attach to the wearer (one exists once the item does) that would close a loop is refused before
+            // anything is created or written: the item keeps its values and its place
+            {
+                bool self = containerSerial == serial;
+                Entity target = self ? null : _world.Get(containerSerial);
+
+                if ((self || target != null) && RefusedAttach(nameof(Equip), serial, containerSerial, self ? SelfParentIsMobile(serial) : target is Mobile))
+                {
+                    return null;
+                }
+            }
+
             // 1. resolve, as the old handler: the item among the items (found or created), the wearer by World.Get (the writes
             // below change neither dictionary, so resolving it first finds what the old lookup after the writes found)
             Item item = _world.GetOrCreateItem(serial, out _);
@@ -1048,7 +1089,7 @@ namespace ClassicUO.Game
             {
                 if (!it.Opened && it.Layer != Layer.Backpack)
                 {
-                    CancelSubtreePlacements(it);
+                    CancelSubtreePlacements(it, ownerSerial);
                 }
             }
 
@@ -1076,7 +1117,7 @@ namespace ClassicUO.Game
 
                         if (it != null && !it.Opened && it.Layer != Layer.Backpack)
                         {
-                            _world.RemoveItem(serial, true);
+                            _world.RemoveItem(serial, true, ownerSerial);
                         }
                     }
                 }
@@ -1117,6 +1158,14 @@ namespace ClassicUO.Game
             }
 
             uint ownerSerial = owner.Serial;
+
+            // T9 slice B2: refused before anything is created or written when the attach would close a loop (the captured
+            // owner: a mobile wears the item under its own serial; an item never wears itself)
+            if (RefusedAttach(nameof(WearItem), serial, ownerSerial, owner is Mobile))
+            {
+                return null;
+            }
+
             Item item = _world.GetOrCreateItem(serial, out _);
 
             // 2. compute: every read of the previous state is here
@@ -2641,6 +2690,13 @@ namespace ClassicUO.Game
             }
 
             uint corpseSerial = corpse.Serial;
+
+            // T9 slice B2: refused before anything is created or written when the attach would close a loop
+            if (RefusedAttach(nameof(PlaceCorpseEquipment), serial, corpseSerial, corpse is Mobile))
+            {
+                return null;
+            }
+
             Item item = _world.GetOrCreateItem(serial);
 
             // compute: every read of the previous state is here
@@ -2773,7 +2829,12 @@ namespace ClassicUO.Game
                     {
                         ItemState c = CurrentState(child);
                         c.Container = serial;
-                        _world.Ecs.CommitItem(child, in c, attach: true);
+
+                        // T9 slice B2: the record under the new serial is now the mobile's (no parent), so no re-attach can
+                        // close a loop; only if the commit wrote none (a destroyed mobile) could an item's record above the
+                        // children remain: such a child keeps the Container but is not attached (an orphan)
+                        bool refused = RefusedAttach(nameof(RekeyDeadMobile), s, serial, true);
+                        _world.Ecs.CommitItem(child, in c, attach: !refused);
                     }
                 }
 
@@ -3269,7 +3330,7 @@ namespace ClassicUO.Game
                 {
                     foreach (uint serial in children.Serials)
                     {
-                        _world.RemoveItem(serial, true);
+                        _world.RemoveItem(serial, true, bank.Serial);
                     }
                 }
             }
@@ -3465,6 +3526,66 @@ namespace ClassicUO.Game
                 : entity is Item item && ReferenceEquals(_world.Items.Get(item.Serial), item);
         }
 
+        // T9 child-list slice B2 (Codex audit of slice B, P1): the mirror keeps one record per serial, so the parent graph the
+        // readers walk is by serial (an item and a mobile under one serial read merged contents) and per-object lists that
+        // were acyclic could close a loop in it (a dead mobile's serial reused by an item equipped onto what the mobile wears).
+        // An attach of child under parent closes a loop when the chain of records above the parent (each record's Container,
+        // attached or not, so the cache's Container chain stays acyclic too) reaches the child's serial. A record that is its
+        // own parent is slice B's shared case (the item a mobile wears under its own serial): a root. A chain longer than
+        // WorldState.MaxNestingDepth is refused too. Attach time only; no allocation.
+        private bool WouldCycle(uint child, uint parent, bool parentIsMobile)
+        {
+            if (parent == child)
+            {
+                // the mobile under the item's serial wears it (the shared case); an item is never its own parent
+                return !parentIsMobile;
+            }
+
+            ClassicUO.Ecs.WorldMirror mirror = _world.Ecs.Mirror;
+            uint s = parent;
+
+            for (int i = 0; i < WorldState.MaxNestingDepth; i++)
+            {
+                uint up = mirror.ParentOf(s);
+
+                if (up == ClassicUO.Ecs.WorldMirror.NO_CONTAINER || up == 0 || up == s)
+                {
+                    return false;
+                }
+
+                if (up == child)
+                {
+                    return true;
+                }
+
+                s = up;
+            }
+
+            return true;
+        }
+
+        // what World.Get(parent) returns once the item under child exists (the operations create it before resolving the
+        // parent): for parent == child the mobile (World.Get looks a mobile-range serial up among the mobiles first), else the
+        // item itself
+        private bool SelfParentIsMobile(uint serial) => SerialHelper.IsMobile(serial) && _world.Mobiles.Get(serial) != null;
+
+        // a refused attach: the operation writes nothing (the item keeps its values and its place, and is not created)
+        private bool RefusedAttach(string operation, uint child, uint parent, bool parentIsMobile)
+        {
+            if (!WouldCycle(child, parent, parentIsMobile))
+            {
+                return false;
+            }
+
+            CycleRefusals++;
+
+#if CUO_DEVTOOLS
+            Log.Warn($"WorldWriter.{operation}: 0x{child:X8} under 0x{parent:X8} would close a loop in the serial graph; refused (nothing written)");
+#endif
+
+            return true;
+        }
+
         // the destroy half of PlaceInContainer's destroy-vs-reuse, its own scope (owning the removed subtree)
         private void RemoveForReplacement(Item item)
         {
@@ -3530,19 +3651,35 @@ namespace ClassicUO.Game
         // a removal's: the placements of the removed item and of everything it contains, at any depth (Codex audit of
         // funnel-2, #3: a removed descendant's late placement is rejected as cancelled, not consumed and dropped). Runs before
         // the removal, while the child lists are intact; nothing to walk when no placement is outstanding (the usual case)
-        private void CancelSubtreePlacements(Entity root)
+        private void CancelSubtreePlacements(Entity root, uint keep = 0xFFFF_FFFF)
         {
             if (_placements.Count == 0)
             {
                 return;
             }
 
-            CancelPlacements(root);
+            CancelSubtreePlacements(root, root.Serial, keep, 0);
+        }
+
+        // T9 slice B2: as the destroy cascade (World.RemoveContentsAndDestroy), the walk does not come back to its root's
+        // serial (a mobile's own children may include the item worn under its serial) or to a clear's kept container, and
+        // stops at WorldState.MaxNestingDepth
+        private void CancelSubtreePlacements(Entity e, uint root, uint keep, int depth)
+        {
+            CancelPlacements(e);
+
+            if (depth >= WorldState.MaxNestingDepth)
+            {
+                return;
+            }
 
             // T9 child-list slice A: the ECS's children (read only: nothing changes during the walk)
-            foreach (Item child in _world.State.Children(root))
+            foreach (Item child in _world.State.Children(e))
             {
-                CancelSubtreePlacements(child);
+                if (child.Serial != keep && (depth == 0 || child.Serial != root))
+                {
+                    CancelSubtreePlacements(child, root, keep, depth + 1);
+                }
             }
         }
 
@@ -3590,11 +3727,26 @@ namespace ClassicUO.Game
         private void CollectSubtree(Entity root)
         {
             _subtree ??= new HashSet<Entity>(ReferenceEqualityComparer.Instance);
-            _subtree.Add(root);
+            CollectSubtree(root, root.Serial, 0);
+        }
 
-            foreach (Item child in _world.State.Children(root))
+        // T9 slice B2: the walk does not come back to its root's serial below the root's own children, and stops at
+        // WorldState.MaxNestingDepth
+        private void CollectSubtree(Entity e, uint root, int depth)
+        {
+            _subtree.Add(e);
+
+            if (depth >= WorldState.MaxNestingDepth)
             {
-                CollectSubtree(child);
+                return;
+            }
+
+            foreach (Item child in _world.State.Children(e))
+            {
+                if (depth == 0 || child.Serial != root)
+                {
+                    CollectSubtree(child, root, depth + 1);
+                }
             }
         }
 #endif

@@ -297,7 +297,12 @@ namespace ClassicUO.Game.GameObjects
             }
         }
 
-        public Item FindItem(ushort graphic, ushort hue = 0xFFFF)
+        public Item FindItem(ushort graphic, ushort hue = 0xFFFF) => FindItem(graphic, hue, Serial, 0);
+
+        // T9 child-list slice B2: the walk does not come back to its root's serial below the root's own children (a mobile's
+        // children may include the item worn under its serial), and stops at WorldState.MaxNestingDepth: should a loop get
+        // into the serial graph (WorldWriter refuses one), it ends
+        private Item FindItem(ushort graphic, ushort hue, uint root, int depth)
         {
             Item item = null;
 
@@ -318,9 +323,9 @@ namespace ClassicUO.Game.GameObjects
                         }
                     }
 
-                    if (SerialHelper.IsValid(it.Container))
+                    if (SerialHelper.IsValid(it.Container) && depth < WorldState.MaxNestingDepth && (depth == 0 || it.Serial != root))
                     {
-                        Item found = it.FindItem(graphic, hue);
+                        Item found = it.FindItem(graphic, hue, root, depth + 1);
 
                         if (found != null && found.Hue < minColor)
                         {
@@ -341,9 +346,9 @@ namespace ClassicUO.Game.GameObjects
                         item = it;
                     }
 
-                    if (SerialHelper.IsValid(it.Container))
+                    if (SerialHelper.IsValid(it.Container) && depth < WorldState.MaxNestingDepth && (depth == 0 || it.Serial != root))
                     {
-                        Item found = it.FindItem(graphic, hue);
+                        Item found = it.FindItem(graphic, hue, root, depth + 1);
 
                         if (found != null)
                         {
@@ -356,7 +361,10 @@ namespace ClassicUO.Game.GameObjects
             return item;
         }
 
-        public Item GetItemByGraphic(ushort graphic, bool deepsearch = false)
+        public Item GetItemByGraphic(ushort graphic, bool deepsearch = false) => GetItemByGraphic(graphic, deepsearch, Serial, 0);
+
+        // T9 child-list slice B2: bounded and not back to its root's serial, as FindItem
+        private Item GetItemByGraphic(ushort graphic, bool deepsearch, uint root, int depth)
         {
             // T2: the children from the ECS (WorldState.Children)
             foreach (Item item in World.State.Children(this))
@@ -367,12 +375,16 @@ namespace ClassicUO.Game.GameObjects
                 }
 
                 // (legacy: the deep search walks this entity's children again, not the item's)
-                if (deepsearch && World.State.HasChildren(item))
+                if (deepsearch && depth < WorldState.MaxNestingDepth && World.State.HasChildren(item))
                 {
                     foreach (Item childItem in World.State.Children(this))
                     {
+                        if (depth != 0 && childItem.Serial == root)
+                        {
+                            continue;
+                        }
 
-                        Item res = childItem.GetItemByGraphic(graphic, deepsearch);
+                        Item res = childItem.GetItemByGraphic(graphic, deepsearch, root, depth + 1);
 
                         if (res != null)
                         {

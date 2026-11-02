@@ -135,12 +135,14 @@ namespace ClassicUO.Game.GameObjects
             get
             {
                 Item item = this;
+                int depth = 0;
 
                 while (SerialHelper.IsItem(item.Container))
                 {
                     item = World.Items.Get(item.Container);
 
-                    if (item == null)
+                    // T9 child-list slice B2: a chain longer than any nesting (a loop: WorldWriter refuses one) has no root
+                    if (item == null || ++depth > WorldState.MaxNestingDepth)
                     {
                         return 0;
                     }
@@ -591,14 +593,25 @@ namespace ClassicUO.Game.GameObjects
             }
         }
 
-        public void GetTotalAmount(ushort graphic, ushort? hue, ref int amount)
+        public void GetTotalAmount(ushort graphic, ushort? hue, ref int amount) => GetTotalAmount(graphic, hue, ref amount, Serial, 0);
+
+        // T9 child-list slice B2: bounded and not back to its root's serial, as Entity.FindItem
+        private void GetTotalAmount(ushort graphic, ushort? hue, ref int amount, uint root, int depth)
         {
             // T2: the children from the ECS (WorldState.Children)
             foreach (Item item in World.State.Children(this))
             {
                 if (item != null)
                 {
-                    item.GetTotalAmount(graphic, hue, ref amount);
+                    if (depth != 0 && item.Serial == root)
+                    {
+                        continue;
+                    }
+
+                    if (depth < WorldState.MaxNestingDepth)
+                    {
+                        item.GetTotalAmount(graphic, hue, ref amount, root, depth + 1);
+                    }
 
                     if (item.Graphic == graphic && (hue == null || item.Hue == hue.Value) && item.Exists)
                     {

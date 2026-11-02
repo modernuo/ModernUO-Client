@@ -1172,7 +1172,15 @@ namespace ClassicUO.Game
         /// <summary>Tests: each object the destroy cascades destroy, in order (before its OPL entry and Destroy).</summary>
         internal System.Action<uint> RemovalObserver;
 
-        public bool RemoveItem(uint serial, bool forceRemove = false)
+        public bool RemoveItem(uint serial, bool forceRemove = false) => RemoveItem(serial, forceRemove, 0xFFFF_FFFF);
+
+        /// <summary>
+        /// <see cref="RemoveItem(uint, bool)"/> for a clear: the cascade never removes <paramref name="keep"/> (the container
+        /// being cleared; T9 slice B2: should a loop in the serial graph lead back to it, it stays).
+        /// </summary>
+        internal bool RemoveItem(uint serial, bool forceRemove, uint keep) => RemoveItem(serial, forceRemove, serial, keep, 0);
+
+        private bool RemoveItem(uint serial, bool forceRemove, uint root, uint keep, int depth)
         {
             Item item = Items.Get(serial);
 
@@ -1185,7 +1193,7 @@ namespace ClassicUO.Game
             using (ContentsSnapshot children = State.SnapshotChildren(item))
             {
                 RemoveItemFromContainer(item);
-                RemoveContentsAndDestroy(item, children.Serials, forceRemove);
+                RemoveContentsAndDestroy(item, children.Serials, forceRemove, root, keep, depth);
             }
 
             return true;
@@ -1201,20 +1209,28 @@ namespace ClassicUO.Game
         {
             using (ContentsSnapshot children = State.SnapshotChildren(item))
             {
-                RemoveContentsAndDestroy(item, children.Serials, forceRemove);
+                RemoveContentsAndDestroy(item, children.Serials, forceRemove, item.Serial, 0xFFFF_FFFF, 0);
             }
         }
 
         // T9 child-list slice A: each child by serial in child order, its contents first, then the parent (the list walk's
         // order). The spellbook's detached spell entries are not in the ECS contents; the list walk skipped them as well
-        // (RemoveItem by serial 1-64, which no item has).
-        private void RemoveContentsAndDestroy(Item item, System.ReadOnlySpan<uint> children, bool forceRemove)
+        // (RemoveItem by serial 1-64, which no item has). T9 slice B2: WorldWriter refuses an attach that would close a loop
+        // in the serial graph; should one exist anyway, the cascade does not come back to its root's serial or to the kept
+        // container, and stops at WorldState.MaxNestingDepth.
+        private void RemoveContentsAndDestroy(Item item, System.ReadOnlySpan<uint> children, bool forceRemove, uint root, uint keep, int depth)
         {
             uint serial = item.Serial;
 
-            foreach (uint child in children)
+            if (depth < WorldState.MaxNestingDepth)
             {
-                RemoveItem(child, forceRemove);
+                foreach (uint child in children)
+                {
+                    if (child != keep && child != root)
+                    {
+                        RemoveItem(child, forceRemove, root, keep, depth + 1);
+                    }
+                }
             }
 
             RemovalObserver?.Invoke(serial);
@@ -1236,11 +1252,12 @@ namespace ClassicUO.Game
                 return false;
             }
 
+            // T9 slice B2: the item a mobile wears under its own serial is its child; below it that serial is a loop
             using (ContentsSnapshot children = State.SnapshotChildren(mobile))
             {
                 foreach (uint child in children.Serials)
                 {
-                    RemoveItem(child, forceRemove);
+                    RemoveItem(child, forceRemove, serial, 0xFFFF_FFFF, 1);
                 }
             }
 

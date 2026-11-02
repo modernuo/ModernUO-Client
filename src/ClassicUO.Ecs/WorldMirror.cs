@@ -723,6 +723,25 @@ namespace ClassicUO.Ecs
             return true;
         }
 
+        /// <summary>
+        /// T9 child-list slice B2: the parent serial a record names (worn or contained, attached or not: the Container the
+        /// record holds); <see cref="NO_CONTAINER"/> for a mobile, an item without one, or no record. Two component probes.
+        /// </summary>
+        public uint ParentOf(uint serial)
+        {
+            if (!_bySerial.TryGetValue(serial, out Entity e))
+            {
+                return NO_CONTAINER;
+            }
+
+            if (e.TryGetComponent(out EquippedOn eq))
+            {
+                return eq.Parent;
+            }
+
+            return e.TryGetComponent(out ContainedIn ci) ? ci.Parent : NO_CONTAINER;
+        }
+
         /// <summary>T2: a spellbook's spell set from 0xBF.1B (bit i = spell i + 1); false when the serial has no record.</summary>
         public bool SetSpellbook(uint serial, ulong spells)
         {
