@@ -126,7 +126,7 @@ namespace ClassicUO.UnitTests.Ecs
             Check(world).Should().BeEmpty();
         }
 
-        public enum Divergence { ItemName, MobileName, ItemHits, MobileHitsMax, Notoriety, ItemLayer, WornLayer, Price, ChildOrder, MissingChild, RemovedChild }
+        public enum Divergence { ItemName, MobileName, ItemHits, MobileHitsMax, Notoriety, ItemLayer, WornLayer, Price }
 
         [Theory]
         [InlineData(Divergence.ItemName, "item 0x40007902 v2")]
@@ -137,14 +137,10 @@ namespace ClassicUO.UnitTests.Ecs
         [InlineData(Divergence.ItemLayer, "item 0x40007901 v2")]
         [InlineData(Divergence.WornLayer, "item 0x40007905")]
         [InlineData(Divergence.Price, "item 0x40007903 v2")]
-        [InlineData(Divergence.ChildOrder, "children of 0x40007900")]
-        [InlineData(Divergence.MissingChild, "children of 0x40007900")]
-        [InlineData(Divergence.RemovedChild, "children of 0x00003900")]
         public void A_Deliberate_Mismatch_Is_Reported(Divergence d, string expected)
         {
             World world = BuildFunnelWorld();
             Check(world).Should().BeEmpty();
-            Item pack = world.Items.Get(PACK);
 
             // each a write that bypasses the funnel (or a mirror write World never made)
             switch (d)
@@ -157,39 +153,11 @@ namespace ClassicUO.UnitTests.Ecs
                 case Divergence.ItemLayer: world.Items.Get(A).Layer = Layer.Talisman; break;
                 case Divergence.WornLayer: world.Items.Get(HELM).Layer = Layer.Earrings; break;
                 case Divergence.Price: world.Ecs.Mirror.SetPrice(C, 99); break;
-
-                case Divergence.ChildOrder:
-                    // the list re-ordered without a stamp: B moved to the back
-                    Item b = world.Items.Get(B);
-                    pack.Remove(b);
-                    pack.PushToBack(b);
-                    break;
-
-                case Divergence.MissingChild:
-                    // an item linked into the pack that the mirror has elsewhere
-                    Item stray = world.GetOrCreateItem(0x4000_7908);
-                    pack.PushToBack(stray);
-                    break;
-
-                case Divergence.RemovedChild:
-                    world.Mobiles.Get(MOB).Remove(world.Items.Get(HELM));
-                    break;
             }
 
             List<string> reported = Check(world);
             reported.Should().NotBeEmpty();
             reported.Should().Contain(s => s.StartsWith(expected, StringComparison.Ordinal), $"the {d} divergence");
-        }
-
-        [Fact]
-        public void The_Spellbooks_Detached_Spell_Items_Are_Not_Compared()
-        {
-            World world = BuildFunnelWorld();
-            Item book = world.Items.Get(A);
-            Item spell = Item.Create(world, 1);
-            book.PushToBack(spell);
-
-            Check(world).Should().BeEmpty();
         }
 
         // ---- the Codex audit of part 9
@@ -223,26 +191,11 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.PlaceInContainer(S4, 0xEED, 1, 10, 20, 0, SHOP, out _);
             Children(world, SHOP).Should().Equal(S1, S2, S3, S4);
 
-            LinkedObject first = world.Writer.SortShopContents(shop);
+            world.Writer.SortShopContents(shop);
 
-            ((Item)first).Serial.Should().Be(S2);
             Children(world, SHOP).Should().Equal(new[] { S2, S4, S3, S1 }, "by X, equal X in arrival order (a stable sort)");
             ByStamp(world, SHOP).Should().Equal(S2, S4, S3, S1);
             Check(world).Should().BeEmpty();
-        }
-
-        [Fact]
-        public void The_Vendor_Sort_Unstamped_Is_A_Mismatch()
-        {
-            World world = BuildFunnelWorld();
-            Item shop = world.Writer.UpsertWorldItem(SHOP, 0x2AF8, 0, 1, 1003, 1000, 0, Direction.North, 0, Flags.None, 0, out _, out WorldWriter.Placement p);
-            world.Writer.PlaceWorldItem(p);
-            world.Writer.PlaceInContainer(S1, 0xEED, 1, 30, 10, 0, SHOP, out _);
-            world.Writer.PlaceInContainer(S2, 0xEED, 1, 10, 10, 0, SHOP, out _);
-
-            shop.SortContents<Item>((x, y) => x.X - y.X);
-
-            Check(world).Should().Contain(s => s.StartsWith("children of 0x40007920", StringComparison.Ordinal));
         }
 
         [Fact]
@@ -255,10 +208,9 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.PlaceInContainer(S1, 0xEED, 1, 30, 10, 0, SHOP, out _);
             world.Writer.PlaceInContainer(S2, 0xEED, 1, 10, 10, 0, SHOP, out _);
             world.Ecs.BeginFold(world.Mobiles.Get(MOB));
-            LinkedObject first = world.Writer.SortShopContents(shop);
+            world.Writer.SortShopContents(shop);
             world.Ecs.EndFold(world.Mobiles.Get(MOB));
 
-            first.Should().BeNull();
             world.Writer.Violations.Should().Be(1);
             Children(world, SHOP).Should().Equal(S1, S2);
             Check(world).Should().BeEmpty();
@@ -277,7 +229,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             Mobile late = world.GetOrCreateMobile(LATE);
 
-            late.Items.Should().BeNull("the legacy orphan behaviour is unchanged");
+            world.State.HasChildren(late).Should().BeFalse("the legacy orphan behaviour is unchanged");
             ((int)world.Ecs.Mirror.GetEquipment(LATE).Count).Should().Be(1, "the mirror has its Container");
             world.Ecs.Mirror.TryGetExtras(ORPHAN, out MirrorExtras x).Should().BeTrue();
             x.ChildStamp.Should().Be(0UL);
@@ -295,7 +247,7 @@ namespace ClassicUO.UnitTests.Ecs
             wearer.Should().BeNull();
             world.Ecs.Mirror.TryGetExtras(SHIRT, out x).Should().BeTrue();
             x.ChildStamp.Should().Be(0UL);
-            world.GetOrCreateMobile(LATE2).Items.Should().BeNull();
+            world.State.HasChildren(world.GetOrCreateMobile(LATE2)).Should().BeFalse();
             Check(world).Should().BeEmpty();
         }
 
@@ -322,14 +274,12 @@ namespace ClassicUO.UnitTests.Ecs
 
             // straight from one container to another, and from one wearer to another (no ground state in between): detached
             Item c = world.Items.Get(C);
-            world.Items.Get(PACK).Remove(c);
             c.Container = CORPSE;
             world.Ecs.Sync(c);
             world.Ecs.Mirror.TryGetExtras(C, out x).Should().BeTrue();
             x.ChildStamp.Should().Be(0UL);
 
             Item helm = world.Items.Get(HELM);
-            world.Mobiles.Get(MOB).Remove(helm);
             helm.Container = VENDOR;
             world.Ecs.Sync(helm);
             world.Ecs.Mirror.TryGetExtras(HELM, out x).Should().BeTrue();
@@ -380,17 +330,8 @@ namespace ClassicUO.UnitTests.Ecs
             world.Ecs.Mirror.ChildStamp.Should().Be(0UL);
         }
 
-        private static List<uint> Children(World world, uint parent)
-        {
-            var list = new List<uint>();
-
-            for (LinkedObject i = world.Get(parent).Items; i != null; i = i.Next)
-            {
-                list.Add(((Item)i).Serial);
-            }
-
-            return list;
-        }
+        // the parent's children as the readers see them (WorldState.Contents, the mirror's cached order)
+        private static List<uint> Children(World world, uint parent) => world.State.Contents(parent).ToArray().ToList();
 
         private static List<uint> ByStamp(World world, uint parent)
         {

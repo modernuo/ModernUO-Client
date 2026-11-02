@@ -723,6 +723,45 @@ namespace ClassicUO.Ecs
             return true;
         }
 
+        /// <summary>
+        /// T9 child-list slice B2: the parent serial a record names (worn or contained, attached or not: the Container the
+        /// record holds); <see cref="NO_CONTAINER"/> for a mobile, an item without one, or no record.
+        /// </summary>
+        public uint ParentOf(uint serial) => ParentOf(serial, out _);
+
+        /// <summary>
+        /// T9 child-list slice B3: <see cref="ParentOf(uint)"/>, and whether the record is attached (in that parent's
+        /// contents, child-order stamp != 0): the destroy cascades follow only attached links.
+        /// </summary>
+        public uint ParentOf(uint serial, out bool attached)
+        {
+            attached = false;
+
+            if (!_bySerial.TryGetValue(serial, out Entity e))
+            {
+                return NO_CONTAINER;
+            }
+
+            uint parent;
+
+            if (e.TryGetComponent(out EquippedOn eq))
+            {
+                parent = eq.Parent;
+            }
+            else if (e.TryGetComponent(out ContainedIn ci))
+            {
+                parent = ci.Parent;
+            }
+            else
+            {
+                return NO_CONTAINER;
+            }
+
+            attached = e.TryGetComponent(out ItemData data) && data.Stamp != 0;
+
+            return parent;
+        }
+
         /// <summary>T2: a spellbook's spell set from 0xBF.1B (bit i = spell i + 1); false when the serial has no record.</summary>
         public bool SetSpellbook(uint serial, ulong spells)
         {
@@ -1286,6 +1325,12 @@ namespace ClassicUO.Ecs
         public Entities GetEquipment(uint parent) => Store.ComponentIndex<EquippedOn, uint>()[parent];
 
         public Entities GetContents(uint parent) => Store.ComponentIndex<ContainedIn, uint>()[parent];
+
+        /// <summary>
+        /// T9 child-list slice B3: whether any record names the serial as its parent (attached or not): two index probes,
+        /// without building (and caching) the serial's <see cref="Contents"/>.
+        /// </summary>
+        public bool IsNamedAsParent(uint parent) => GetContents(parent).Count != 0 || GetEquipment(parent).Count != 0;
 
         private static void WriteCommon(Entity e, ushort graphic, ushort hue, ushort x, ushort y, sbyte z, byte facing, byte flags)
         {

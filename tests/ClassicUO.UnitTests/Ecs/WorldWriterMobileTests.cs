@@ -548,15 +548,7 @@ namespace ClassicUO.UnitTests.Ecs
             World world = Build(Start.Standing);
             Mobile m = world.Mobiles.Get(MOB);
             world.Mobiles.Remove(MOB).Should().BeTrue();
-
-            for (LinkedObject i = m.Items; i != null; i = i.Next)
-            {
-                ((Item)i).Container = DEAD;
-            }
-
-            world.Mobiles[DEAD] = m;
-            m.Serial = DEAD;
-            world.Ecs.OnSerialChanged(MOB, m);
+            LegacyRekeyReference.Rekey(world, m, DEAD);
 
             // an item (a corpse, as after a death) under the same serial
             Item corpse = world.GetOrCreateItem(DEAD);
@@ -1379,17 +1371,24 @@ namespace ClassicUO.UnitTests.Ecs
             $"{e.CachedName} {e.CachedHits}/{e.CachedHitsMax} {e.HitsPercentage}% {e.HitsRequest}" +
             (e is Mobile m ? $" mana {m.CachedMana}/{m.CachedManaMax} stamina {m.CachedStamina}/{m.CachedStaminaMax} renamable {m.IsRenamable} race {m.Race} sa {m.SAPoisoned}" : "");
 
+        // T9 child-list slice B: a world the funnel wrote has no child list: its children are the ECS's (WorldState.Children,
+        // the spell entries included); an old-path world keeps its own list (LegacyLists.Children), the reference
         private static List<uint> ChildSerials(Entity e)
         {
             var list = new List<uint>();
 
-            for (LinkedObject i = e?.Items; i != null; i = i.Next)
+            if (e?.World != null)
             {
-                list.Add(((Entity)i).Serial);
+                foreach (Item it in e.World.State.Children(e))
+                {
+                    list.Add(it.Serial);
+                }
             }
 
             return list;
         }
+
+        private static List<uint> OldChildSerials(Entity e) => LegacyLists.Children(e);
     }
 
     [Collection(nameof(FunnelCheckCollection))]

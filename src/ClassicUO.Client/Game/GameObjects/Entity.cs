@@ -297,7 +297,12 @@ namespace ClassicUO.Game.GameObjects
             }
         }
 
-        public Item FindItem(ushort graphic, ushort hue = 0xFFFF)
+        public Item FindItem(ushort graphic, ushort hue = 0xFFFF) => FindItem(graphic, hue, Serial, 0);
+
+        // T9 child-list slice B2: the walk does not come back to its root's serial below the root's own children (a mobile's
+        // children may include the item worn under its serial), and stops at WorldState.MaxNestingDepth: should a loop get
+        // into the serial graph (WorldWriter refuses one), it ends
+        private Item FindItem(ushort graphic, ushort hue, uint root, int depth)
         {
             Item item = null;
 
@@ -318,9 +323,9 @@ namespace ClassicUO.Game.GameObjects
                         }
                     }
 
-                    if (SerialHelper.IsValid(it.Container))
+                    if (SerialHelper.IsValid(it.Container) && depth < WorldState.MaxNestingDepth && (depth == 0 || it.Serial != root))
                     {
-                        Item found = it.FindItem(graphic, hue);
+                        Item found = it.FindItem(graphic, hue, root, depth + 1);
 
                         if (found != null && found.Hue < minColor)
                         {
@@ -341,9 +346,9 @@ namespace ClassicUO.Game.GameObjects
                         item = it;
                     }
 
-                    if (SerialHelper.IsValid(it.Container))
+                    if (SerialHelper.IsValid(it.Container) && depth < WorldState.MaxNestingDepth && (depth == 0 || it.Serial != root))
                     {
-                        Item found = it.FindItem(graphic, hue);
+                        Item found = it.FindItem(graphic, hue, root, depth + 1);
 
                         if (found != null)
                         {
@@ -356,7 +361,10 @@ namespace ClassicUO.Game.GameObjects
             return item;
         }
 
-        public Item GetItemByGraphic(ushort graphic, bool deepsearch = false)
+        public Item GetItemByGraphic(ushort graphic, bool deepsearch = false) => GetItemByGraphic(graphic, deepsearch, Serial, 0);
+
+        // T9 child-list slice B2: bounded and not back to its root's serial, as FindItem
+        private Item GetItemByGraphic(ushort graphic, bool deepsearch, uint root, int depth)
         {
             // T2: the children from the ECS (WorldState.Children)
             foreach (Item item in World.State.Children(this))
@@ -367,12 +375,16 @@ namespace ClassicUO.Game.GameObjects
                 }
 
                 // (legacy: the deep search walks this entity's children again, not the item's)
-                if (deepsearch && World.State.HasChildren(item))
+                if (deepsearch && depth < WorldState.MaxNestingDepth && World.State.HasChildren(item))
                 {
                     foreach (Item childItem in World.State.Children(this))
                     {
+                        if (depth != 0 && childItem.Serial == root)
+                        {
+                            continue;
+                        }
 
-                        Item res = childItem.GetItemByGraphic(graphic, deepsearch);
+                        Item res = childItem.GetItemByGraphic(graphic, deepsearch, root, depth + 1);
 
                         if (res != null)
                         {
@@ -387,10 +399,9 @@ namespace ClassicUO.Game.GameObjects
 
         /// <summary>
         /// The first item on <paramref name="layer"/> among the entity's children. T3a: for a mobile, the ECS's worn item
-        /// (<see cref="WorldState.WornItem"/>: WornLayers), under <c>CUO_EQUIP_READ_CHECK=1</c> compared with the list
-        /// (<see cref="WorldState.FindWorn"/>). Every equipment reader goes through here: IsMounted, the animation group's
-        /// hands, the abilities, the paperdoll, the layering rules, Legacy's MobileView. An item's (a corpse's laid
-        /// equipment) is its list.
+        /// (<see cref="WorldState.WornItem"/>: WornLayers). Every equipment reader goes through here: IsMounted, the animation
+        /// group's hands, the abilities, the paperdoll, the layering rules, Legacy's MobileView. An item's (a corpse's laid
+        /// equipment) is its first child on the layer in the ECS's child order (<see cref="WorldState.FindChild"/>).
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Item FindItemByLayer(Layer layer)
@@ -402,28 +413,11 @@ namespace ClassicUO.Game.GameObjects
 #if CUO_DEVTOOLS
                     FrameStats.Inc(FrameCounter.FindByLayer);
 #endif
-                    return state.EquipCheckEnabled ? state.FindWorn(mobile, layer) : state.WornItem(mobile, layer);
+                    return state.WornItem(mobile, layer);
                 }
 
                 // T9 child-list slice A: an item's (a corpse's) children from the ECS
                 return state.FindChild(this, layer);
-            }
-
-            return FindItemByLayerInList(layer);
-        }
-
-        /// <summary>The legacy read: the first non-destroyed child on <paramref name="layer"/> in the child list.</summary>
-        [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        internal Item FindItemByLayerInList(Layer layer)
-        {
-            for (LinkedObject i = Items; i != null; i = i.Next)
-            {
-                Item it = (Item) i;
-
-                if (!it.IsDestroyed && it.Layer == layer)
-                {
-                    return it;
-                }
             }
 
             return null;

@@ -558,7 +558,7 @@ namespace ClassicUO.UnitTests.Game.Map
             _world.Mobiles.Remove(m.Serial);
             m.Serial = 0x8000_0100;
             _world.Mobiles[m.Serial] = m;
-            _world.Ecs.OnSerialChanged(0x100, m);
+            ClassicUO.UnitTests.Ecs.LegacyRekeyReference.SerialChanged(_world, 0x100, m);
             Assert.False(TileOrder.CheckIndex(_a, 3, 3).Failed);
 
             // the full death shape: BuildDead's mobile (re-keyed, its worn items moved) is placed on a chunk of this test's, then
@@ -576,7 +576,7 @@ namespace ClassicUO.UnitTests.Game.Map
             dead.Mobiles.Remove(dm.Serial);
             dm.Serial = 0x8000_3001;
             dead.Mobiles[dm.Serial] = dm;
-            dead.Ecs.OnSerialChanged(0x8000_3000, dm);
+            ClassicUO.UnitTests.Ecs.LegacyRekeyReference.SerialChanged(dead, 0x8000_3000, dm);
             TileOrder.IndexCheck r = TileOrder.CheckIndex(chunk, 1, 1);
             Assert.False(r.Failed);
             Assert.Equal(0, r.BadEntries);

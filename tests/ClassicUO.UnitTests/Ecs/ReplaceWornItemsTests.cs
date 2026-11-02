@@ -152,15 +152,7 @@ namespace ClassicUO.UnitTests.Ecs
         {
             Mobile owner = world.Mobiles.Get(MOB);
             world.Mobiles.Remove(owner.Serial).Should().BeTrue();
-
-            for (LinkedObject i = owner.Items; i != null; i = i.Next)
-            {
-                ((Item)i).Container = DEAD;
-            }
-
-            world.Mobiles[DEAD] = owner;
-            owner.Serial = DEAD;
-            world.Ecs.OnSerialChanged(MOB, owner);
+            LegacyRekeyReference.Rekey(world, owner, DEAD);
         }
 
         private sealed class Before
@@ -203,13 +195,17 @@ namespace ClassicUO.UnitTests.Ecs
         private static List<Item> DestroyedItems(World w) =>
             (List<Item>)typeof(World).GetField("_destroyedItems", BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(w);
 
+        // the entity's children as the readers see them (both paths are the funnel's: the ECS)
         private static List<uint> Children(Entity e)
         {
             var list = new List<uint>();
 
-            for (LinkedObject i = e?.Items; i != null; i = i.Next)
+            if (e?.World != null)
             {
-                list.Add(((Entity)i).Serial);
+                foreach (Item it in e.World.State.Children(e))
+                {
+                    list.Add(it.Serial);
+                }
             }
 
             return list;
@@ -335,14 +331,14 @@ namespace ClassicUO.UnitTests.Ecs
             b.Ecs.IsFolding.Should().BeFalse();
         }
 
-        // with ecs_read_equipment on, every layer's read (the WornCache) equals the child list's first item on it
+        // every layer's read (the WornCache) equals the first child on it computed afresh from the mirror's indexes
         private static void AssertReads(World w, string because)
         {
             foreach (Mobile m in w.Mobiles.Values)
             {
                 for (int l = 1; l <= 0x1D; l++)
                 {
-                    w.State.WornItem(m, (Layer)l).Should().BeSameAs(m.FindItemByLayerInList((Layer)l), $"{because}: 0x{m.Serial:X8} layer 0x{l:X2}");
+                    w.State.WornItem(m, (Layer)l).Should().BeSameAs(WornLayersTests.ListFind(m, (Layer)l), $"{because}: 0x{m.Serial:X8} layer 0x{l:X2}");
                 }
             }
         }
@@ -384,7 +380,7 @@ namespace ClassicUO.UnitTests.Ecs
             w.Mobiles.Values.OrderBy(m => m.Serial).SelectMany(m => Enumerable.Range(1, 0x1D).Select(l => w.State.WornItem(m, (Layer)l)?.Serial ?? 0)).ToList();
 
         private static List<uint> ListReads(World w) =>
-            w.Mobiles.Values.OrderBy(m => m.Serial).SelectMany(m => Enumerable.Range(1, 0x1D).Select(l => m.FindItemByLayerInList((Layer)l)?.Serial ?? 0)).ToList();
+            w.Mobiles.Values.OrderBy(m => m.Serial).SelectMany(m => Enumerable.Range(1, 0x1D).Select(l => WornLayersTests.ListFind(m, (Layer)l)?.Serial ?? 0)).ToList();
 
         [Theory]
         [MemberData(nameof(Cases))]
