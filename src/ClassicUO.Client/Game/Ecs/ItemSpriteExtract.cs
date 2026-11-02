@@ -20,7 +20,8 @@ namespace ClassicUO.Game
     /// </summary>
     internal struct ItemSpriteInput
     {
-        // the mirror record (ECS): Serial, Graphic, Hue, Position, Flags, ItemData (amount, layer), the OnGround and Multi tags
+        // the mirror record (ECS): Serial, Graphic, Hue, Position, Flags, ItemData (amount, layer; only when UsesItemData),
+        // the OnGround and Multi tags
         public uint Serial;
         public ushort Graphic, Hue, Amount;
         public ushort X;
@@ -49,6 +50,10 @@ namespace ClassicUO.Game
         public readonly bool IsCoin => Graphic == 0x0EEA || Graphic == 0x0EED || Graphic == 0x0EF0;
 
         public readonly bool Locked => !Movable && TileHeavy;
+
+        /// <summary>Whether the select reads <see cref="Amount"/> or <see cref="Layer"/>: the coin graphic, the stack's second
+        /// copy, the corpse (body, direction, human check). <see cref="ReadRecord"/> fills them only then.</summary>
+        public readonly bool UsesItemData => IsCoin || IsCorpse || !Multi && TileStackable;
 
         /// <summary>Item.DisplayedGraphic.</summary>
         public readonly ushort DisplayedGraphic
@@ -89,49 +94,7 @@ namespace ClassicUO.Game
             }
 
             World world = item.World;
-            ushort y;
-
-            if (item.TryScalarEntity(out EcsEntity e))
-            {
-                i.Serial = e.GetComponent<ClassicUO.Ecs.Serial>().Value;
-                i.Graphic = e.GetComponent<ClassicUO.Ecs.Graphic>().Value;
-                i.Hue = e.GetComponent<ClassicUO.Ecs.Hue>().Value;
-                ref readonly ClassicUO.Ecs.Position p = ref e.GetComponent<ClassicUO.Ecs.Position>();
-                i.X = p.X;
-                y = p.Y;
-                var flags = (Flags)e.GetComponent<ClassicUO.Ecs.Flags>().Value;
-                i.Hidden = (flags & Flags.Hidden) != 0;
-                i.Movable = (flags & Flags.Movable) != 0;
-                ref readonly ClassicUO.Ecs.ItemData d = ref e.GetComponent<ClassicUO.Ecs.ItemData>();
-                i.Amount = d.Amount;
-                i.Layer = d.Layer;
-                Friflo.Engine.ECS.Tags tags = e.Tags;
-                i.OnGround = tags.Has<ClassicUO.Ecs.OnGround>();
-                i.Multi = tags.Has<ClassicUO.Ecs.MultiTag>();
-            }
-            else
-            {
-                i.Serial = item.Serial;
-                i.Graphic = item.Graphic;
-                i.Hue = item.Hue;
-                i.X = item.X;
-                y = item.Y;
-                i.Hidden = item.IsHidden;
-                i.Movable = (item.Flags & Flags.Movable) != 0;
-                i.Amount = item.Amount;
-                i.Layer = (byte)item.Layer;
-                i.OnGround = item.OnGround;
-                i.Multi = item.IsMulti;
-            }
-
-            i.MultiGraphic = item.MultiGraphic;
-            ref StaticTiles tile = ref Client.Game.UO.FileManager.TileData.StaticData[i.Multi ? i.MultiGraphic : i.Graphic];
-            i.TileLight = tile.IsLight;
-            i.TilePartialHue = tile.IsPartialHue;
-            i.TileAnimated = tile.IsAnimated;
-            i.TileContainer = tile.IsContainer;
-            i.TileStackable = tile.IsStackable;
-            i.TileHeavy = tile.Weight > 90;
+            ReadRecord(item, Client.Game.UO.FileManager.TileData.StaticData, ref i, out ushort y);
 
             i.AllowedToDraw = item.AllowedToDraw;
 
@@ -167,6 +130,67 @@ namespace ClassicUO.Game
             i.ReplaceFields = i.TileAnimated && profile.FieldsType == 2;
             i.SelectedContainer = i.TileContainer && SelectedObject.SelectedContainer == item;
             i.PlacementPreview = !SerialHelper.IsValid(i.Serial) && i.Multi && world.TargetManager.TargetingState == CursorTarget.MultiPlacement;
+        }
+
+        /// <summary>The record part of <see cref="Gather"/>: the mirror record (or the GameObject without one) and the tiledata
+        /// row. Split out so the per-item cost can be measured without a running client (GatherCostBench).</summary>
+        /// <remarks>
+        /// Per drawn item per frame, so it reads the record once (<c>Entity.Data</c>: one node lookup for every component) and
+        /// skips what the select does not use: the Serial component is the item's serial (TryScalarEntity found the record
+        /// under it), and ItemData (Amount, Layer) is read only for coins, corpses and stackable art, the only items whose
+        /// sprites depend on it; Amount and Layer stay 0 for the others. GatherCostBench measures it against the field reads.
+        /// </remarks>
+        internal static void ReadRecord(Item item, StaticTiles[] staticData, ref ItemSpriteInput i, out ushort y)
+        {
+            bool record = item.TryScalarEntity(out EcsEntity e);
+            Friflo.Engine.ECS.EntityData data = default;
+
+            if (record)
+            {
+                data = e.Data;
+                i.Serial = item.Serial;
+                i.Graphic = data.Get<ClassicUO.Ecs.Graphic>().Value;
+                i.Hue = data.Get<ClassicUO.Ecs.Hue>().Value;
+                ref readonly ClassicUO.Ecs.Position p = ref data.Get<ClassicUO.Ecs.Position>();
+                i.X = p.X;
+                y = p.Y;
+                var flags = (Flags)data.Get<ClassicUO.Ecs.Flags>().Value;
+                i.Hidden = (flags & Flags.Hidden) != 0;
+                i.Movable = (flags & Flags.Movable) != 0;
+                Friflo.Engine.ECS.Tags tags = data.Tags;
+                i.OnGround = tags.Has<ClassicUO.Ecs.OnGround>();
+                i.Multi = tags.Has<ClassicUO.Ecs.MultiTag>();
+            }
+            else
+            {
+                i.Serial = item.Serial;
+                i.Graphic = item.Graphic;
+                i.Hue = item.Hue;
+                i.X = item.X;
+                y = item.Y;
+                i.Hidden = item.IsHidden;
+                i.Movable = (item.Flags & Flags.Movable) != 0;
+                i.Amount = item.Amount;
+                i.Layer = (byte)item.Layer;
+                i.OnGround = item.OnGround;
+                i.Multi = item.IsMulti;
+            }
+
+            i.MultiGraphic = item.MultiGraphic;
+            ref StaticTiles tile = ref staticData[i.Multi ? i.MultiGraphic : i.Graphic];
+            i.TileLight = tile.IsLight;
+            i.TilePartialHue = tile.IsPartialHue;
+            i.TileAnimated = tile.IsAnimated;
+            i.TileContainer = tile.IsContainer;
+            i.TileStackable = tile.IsStackable;
+            i.TileHeavy = tile.Weight > 90;
+
+            if (record && i.UsesItemData)
+            {
+                ref readonly ClassicUO.Ecs.ItemData d = ref data.Get<ClassicUO.Ecs.ItemData>();
+                i.Amount = d.Amount;
+                i.Layer = d.Layer;
+            }
         }
     }
 
