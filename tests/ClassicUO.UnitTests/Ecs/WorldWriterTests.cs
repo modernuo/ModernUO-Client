@@ -2035,7 +2035,17 @@ namespace ClassicUO.UnitTests.Ecs
 
             foreach (var e in entries)
             {
-                world.Writer.WearItem(obj, e.Serial, e.Graphic, e.Layer, e.Hue).Should().BeSameAs(world.Items.Get(e.Serial));
+                Item worn = world.Writer.WearItem(obj, e.Serial, e.Graphic, e.Layer, e.Hue);
+
+                // T9 child-list slice B2: an item owner's entry naming the item itself is refused (an item never wears itself)
+                if (obj is Item && e.Serial == serial)
+                {
+                    worn.Should().BeNull();
+                }
+                else
+                {
+                    worn.Should().BeSameAs(world.Items.Get(e.Serial));
+                }
             }
         }
 
@@ -2169,11 +2179,14 @@ namespace ClassicUO.UnitTests.Ecs
             AssertSameWorld(oldWorld, newWorld);
 
             // the same packet again: now the handler's own World.Get finds the item, so that item is the captured owner for
-            // the whole list (as before T1; the entry naming it is pushed into itself, as the old loop did). T9 child-list
-            // slice B (owner question): the item's clear before the list now clears the serial's merged contents, so the
-            // mobile's equipment goes too (the old path's item list was empty); the worlds no longer compare equal here
+            // the whole list (as before T1). T9 child-list slice B (owner question): the item's clear before the list now
+            // clears the serial's merged contents, so the mobile's equipment goes too (the old path's item list was empty);
+            // the worlds no longer compare equal here. T9 slice B2: the entry naming the item is refused (the old loop pushed
+            // the item into itself, a loop); the following entry still goes under the item
+            newWorld.Writer.CycleRefusals.Should().Be(0);
             OldWear(oldWorld, dead, entries);
             NewWear(newWorld, dead, entries);
+            newWorld.Writer.CycleRefusals.Should().Be(1);
             newWorld.Writer.InScope.Should().BeFalse();
             newWorld.Items.Get(NEWITEM).Container.Should().Be(dead);
             ChildSerials(newWorld.Items.Get(dead)).Should().NotContain(dead, "an item is never its own child");

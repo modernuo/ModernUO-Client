@@ -14,6 +14,13 @@ namespace ClassicUO.Game
     {
         private readonly World _world;
 
+        /// <summary>
+        /// T9 child-list slice B2: the deepest nesting a recursive walk of the children follows (and the longest parent chain
+        /// <see cref="WorldWriter"/> attaches under). Real containers nest a few levels; the bound only matters if a loop in
+        /// the serial graph ever got in, which the writer refuses.
+        /// </summary>
+        internal const int MaxNestingDepth = 256;
+
         public WorldState(World world)
         {
             _world = world;

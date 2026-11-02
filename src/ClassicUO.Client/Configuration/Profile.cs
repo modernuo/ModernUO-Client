@@ -405,12 +405,15 @@ namespace ClassicUO.Configuration
 
                         if (item != null && !item.IsDestroyed && item.Opened)
                         {
-                            while (SerialHelper.IsItem(item.Container))
+                            // T9 child-list slice B2: bounded (a loop in the Container chain has no top)
+                            int up = 0;
+
+                            while (SerialHelper.IsItem(item.Container) && up++ < Game.WorldState.MaxNestingDepth && world.Items.Get(item.Container) is Item parent)
                             {
-                                item = world.Items.Get(item.Container);
+                                item = parent;
                             }
 
-                            SaveItemsGumpRecursive(item, xml, gumps);
+                            SaveItemsGumpRecursive(item, xml, gumps, item.Serial, 0);
 
                             if (first.List != null)
                             {
@@ -443,7 +446,7 @@ namespace ClassicUO.Configuration
             world.SkillsGroupManager.Save();
         }
 
-        private static void SaveItemsGumpRecursive(Item parent, XmlTextWriter xml, LinkedList<Gump> list)
+        private static void SaveItemsGumpRecursive(Item parent, XmlTextWriter xml, LinkedList<Gump> list, uint root, int depth)
         {
             if (parent != null && !parent.IsDestroyed && parent.Opened)
             {
@@ -452,7 +455,10 @@ namespace ClassicUO.Configuration
                 // T2: the children from the ECS (WorldState.Children)
                 foreach (Item child in parent.World.State.Children(parent))
                 {
-                    SaveItemsGumpRecursive(child, xml, list);
+                    if (depth < Game.WorldState.MaxNestingDepth && child.Serial != root)
+                    {
+                        SaveItemsGumpRecursive(child, xml, list, root, depth + 1);
+                    }
                 }
             }
         }
