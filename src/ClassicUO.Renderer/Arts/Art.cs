@@ -93,20 +93,22 @@ namespace ClassicUO.Renderer.Arts
         /// <summary>A wait slice: nothing finishing within it ends the wait (the workers are busy elsewhere).</summary>
         public const int PrefetchStallMs = 2;
 
-        /// <summary>How long a <see cref="BeginFrame"/> allowance lasts: past one frame, so unused time never carries over.</summary>
-        public const int FrameAllowanceLifetimeMs = 50;
-
         // the frame's main-thread time for prefetch waits and art uploads (Map.UpdateLoading's drain and the prefetches share
         // it); none until BeginFrame, so nothing waits unless a frame granted it
         private readonly FrameAllowance _frameAllowance = new FrameAllowance();
 
         /// <summary>
         /// Once per frame, before the chunk loader's drain (Map.UpdateLoading; only with art_container_prefetch on): the
-        /// main-thread time this frame's art uploads and <see cref="Prefetch"/> waits may take together. It expires after
-        /// <see cref="FrameAllowanceLifetimeMs"/>; while it lasts it also bounds <see cref="DrainReady"/>.
+        /// main-thread time this frame's art uploads and <see cref="Prefetch"/> waits may take together. It ends at the next
+        /// <see cref="AdvanceFrame"/> or <see cref="EndAllowance"/>; while it lasts it also bounds <see cref="DrainReady"/>.
         /// </summary>
-        public void BeginFrame(long allowanceTicks) =>
-            _frameAllowance.Begin(allowanceTicks, Stopwatch.GetTimestamp(), Stopwatch.Frequency * FrameAllowanceLifetimeMs / 1000);
+        public void BeginFrame(long allowanceTicks) => _frameAllowance.Begin(allowanceTicks);
+
+        /// <summary>The game loop's frame boundary (GameController.Update): last frame's allowance is gone.</summary>
+        public void AdvanceFrame() => _frameAllowance.AdvanceFrame();
+
+        /// <summary>art_container_prefetch off, or scene teardown: no allowance until the next <see cref="BeginFrame"/>.</summary>
+        public void EndAllowance() => _frameAllowance.Clear();
 
         /// <summary>True when static art <paramref name="artId"/> is not in the atlas and a worker could decode it.</summary>
         public bool NeedsDecode(uint artId)
@@ -164,7 +166,7 @@ namespace ClassicUO.Renderer.Arts
                 return 0;
             }
 
-            long wait = Math.Min(_frameAllowance.Remaining(t0), Stopwatch.Frequency * timeoutMs / 1000);
+            long wait = Math.Min(_frameAllowance.Remaining, Stopwatch.Frequency * timeoutMs / 1000);
 
             if (wait <= 0)
             {
@@ -294,7 +296,11 @@ namespace ClassicUO.Renderer.Arts
         public int Generation { get; private set; }
 
         /// <summary>Scene teardown: drops finished worker decodes and returns their buffers (see FirstSightDecoder.Cancel).</summary>
-        public void CancelPending() => _decoder.Cancel();
+        public void CancelPending()
+        {
+            _decoder.Cancel();
+            _frameAllowance.Clear();
+        }
 
         public ref readonly SpriteInfo GetLand(uint idx)
             => ref Get((uint)(idx & ~0x4000));

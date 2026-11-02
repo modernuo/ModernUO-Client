@@ -3,27 +3,44 @@ using System;
 namespace ClassicUO.Renderer
 {
     /// <summary>
-    /// A frame's main-thread time for art uploads and prefetch waits (art_container_prefetch; Art.BeginFrame). It lasts
-    /// one frame: an allowance nobody renewed expires, so time left over from an earlier frame is never spent later.
-    /// While it is active it also bounds the chunk loader's upload drain. All times are Stopwatch ticks. Main thread.
+    /// A frame's main-thread time for art uploads and prefetch waits (art_container_prefetch; Art.BeginFrame). It is valid
+    /// only in the frame that granted it: <see cref="AdvanceFrame"/> (the game loop's frame boundary) and <see cref="Clear"/>
+    /// (switch off, scene teardown) end it, so time left from an earlier frame is never spent later. Inactive (none granted
+    /// this frame) is distinct from active but spent: while it is active it also bounds the chunk loader's upload drain,
+    /// and once spent nothing more is uploaded that frame, however long the frame takes. Ticks are Stopwatch ticks. Main thread.
     /// </summary>
     public sealed class FrameAllowance
     {
         private long _left;
-        private long _expires;
+        private bool _active;
 
-        public void Begin(long allowanceTicks, long now, long lifetimeTicks)
+        public void Begin(long allowanceTicks)
         {
             _left = allowanceTicks;
-            _expires = now + lifetimeTicks;
+            _active = true;
         }
 
-        /// <summary>A frame granted an allowance and it has not expired (whether or not any is left).</summary>
-        public bool IsActive(long now) => now < _expires;
+        /// <summary>The frame boundary: an allowance nobody renews this frame is gone.</summary>
+        public void AdvanceFrame() => _active = false;
 
-        public long Remaining(long now) => IsActive(now) ? Math.Max(0, _left) : 0;
+        public void Clear()
+        {
+            _active = false;
+            _left = 0;
+        }
 
-        public void Spend(long ticks) => _left -= ticks;
+        /// <summary>This frame granted an allowance (whether or not any is left).</summary>
+        public bool IsActive => _active;
+
+        public long Remaining => _active ? Math.Max(0, _left) : 0;
+
+        public void Spend(long ticks)
+        {
+            if (_active)
+            {
+                _left -= ticks;
+            }
+        }
 
         /// <summary>
         /// The deadline of an upload drain due by <paramref name="deadline"/>: unchanged when no allowance is active,
@@ -33,7 +50,7 @@ namespace ClassicUO.Renderer
         {
             clamped = deadline;
 
-            if (!IsActive(now))
+            if (!_active)
             {
                 return true;
             }
