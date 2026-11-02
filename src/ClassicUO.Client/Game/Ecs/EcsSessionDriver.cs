@@ -510,6 +510,11 @@ namespace ClassicUO.Game
                     }
 
                     Log.Info($"[ECS] ui contents {arg} 0x{box.Serial:X8} g=0x{box.Graphic:X4} opened={box.Opened} children={cn}:{csb}");
+                    // perf-8: the window's content updates so far (full rebuilds vs reused controls) and its checker
+                    Log.Info($"[ECS] ui container-controls {arg}: window {(UIManager.GetGump<UI.Gumps.ContainerGump>(box.Serial) != null ? "open" : "closed")}, " +
+                             $"updates full {UI.Gumps.ContainerItemControls.FullRebuilds} incremental {UI.Gumps.ContainerItemControls.IncrementalUpdates}, " +
+                             $"controls reused {UI.Gumps.ContainerItemControls.ControlsReused} created {UI.Gumps.ContainerItemControls.ControlsCreated}, " +
+                             $"check {(UI.Gumps.ContainerItemControls.CheckOn ? "on" : "off")} checked {UI.Gumps.ContainerItemControls.Checked} mismatched {UI.Gumps.ContainerItemControls.Mismatched}");
 
                     return false;
 
