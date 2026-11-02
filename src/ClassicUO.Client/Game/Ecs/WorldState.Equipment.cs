@@ -134,8 +134,15 @@ namespace ClassicUO.Game
                 }
             }
 
+#if CUO_DEVTOOLS
+            FrameStats.Inc(FrameCounter.ChildLayerScans);
+#endif
+
             foreach (uint serial in _world.Ecs.Mirror.Contents(parent.Serial))
             {
+#if CUO_DEVTOOLS
+                FrameStats.Inc(FrameCounter.ChildLayerGets);
+#endif
                 Item it = _world.Items.Get(serial);
 
                 // never the parent itself (an item under a mobile's serial, worn by it: see Children)

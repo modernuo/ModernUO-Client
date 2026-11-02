@@ -176,6 +176,10 @@ namespace ClassicUO
         // (WorldState.Worn)
         FindByLayer,
         WornChecks,
+        // perf-11 (CUO_DEVTOOLS only): scans of an item's (a corpse's) contents for its child on a layer (WorldState.ChildByLayer
+        // and the corpse layer table's builds), and the Items.Get lookups those scans make
+        ChildLayerScans,
+        ChildLayerGets,
         Count
     }
 
@@ -227,7 +231,8 @@ namespace ClassicUO
             "gump_sync", "gump_sync_us", "gump_async", "gump_upload_us", "gump_pending",
             "ui_flushes", "ui_draw_calls", "ui_cached", "ui_untouched", "effects",
             "net_avail", "net_bytes", "net_slices", "net_packets",
-            "decode_inflight_kb", "decode_waiting", "find_by_layer", "worn_checks" };
+            "decode_inflight_kb", "decode_waiting", "find_by_layer", "worn_checks",
+            "child_layer_scans", "child_layer_gets" };
 
         private static readonly long[] _start = new long[PHASES];
         private static readonly long[] _acc = new long[PHASES];
