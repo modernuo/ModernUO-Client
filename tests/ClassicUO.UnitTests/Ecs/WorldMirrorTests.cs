@@ -93,7 +93,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void Extract_Returns_Ground_Items_And_Mobiles_In_Range()
         {
             var mirror = new WorldMirror();
-            var extract = new DynamicSpriteExtract(mirror.Store);
+            var extract = new MirrorSpriteExtract(mirror.Store);
 
             mirror.UpsertMobile(MOBILE, 0x190, 0x33, 100, 100, 0, 3, 0, true);
             mirror.UpsertMobile(MOBILE + 1, 0x191, 0, 105, 95, 0, 1, 0, false);
@@ -110,9 +110,9 @@ namespace ClassicUO.UnitTests.Ecs
 
             int players = 0;
 
-            foreach (DynamicSprite s in sprites)
+            foreach (MirrorSprite s in sprites)
             {
-                if (s.Kind == DynamicSpriteKind.Player)
+                if (s.Kind == MirrorSpriteKind.Player)
                 {
                     players++;
                     s.Serial.Should().Be(MOBILE);
