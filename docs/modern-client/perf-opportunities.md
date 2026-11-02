@@ -226,4 +226,6 @@ Today the client parses incoming packets in place (`StackDataReader` over fixed 
 - **Targeted take for gumps** (`Gump.GetGump`, src/ClassicUO.Renderer/Gumps/Gump.cs ~290): it drains the whole ready queue to reach one gump, uploading unrelated sprites outside the frame allowance. A `TryTakeReady` would upload only the needed gump. Source: perf-5.
 - **Mobile pixel check from records** (MobileView.CheckMouseSelection ~1060–1270): once the rect hits, it redoes the texture, layer and equip lookups per layer, although the draw records already hold body, group, direction, frame, flip and position. Source: t7b2b.
 - **One component read per mobile** (TryDrawMobileEcs, LegacySpriteSink.DrawMobile): `AnimationState` and `MobileRenderState` are looked up separately. One `e.Data` read, as `ItemSpriteInput.ReadRecord` does, saves one lookup per mobile per frame. Source: t7b2b.
+- **Paperdoll slots look up two dictionaries per slot per frame** (PaperDollGump.cs ~758, `EquipmentSlot.Update`): `World.Items.Get` and `World.Mobiles.Get` for 14 slots. Caching the mobile reference saves about 28 lookups per frame per open paperdoll. Source: perf-7.
+- **`Gump.Prefetch` uploads unrelated finished decodes while it waits** (Gump.cs ~215). Taking only the batch's decodes keeps other uploads within `DrainReady`'s 1 ms budget. Source: perf-7.
 
