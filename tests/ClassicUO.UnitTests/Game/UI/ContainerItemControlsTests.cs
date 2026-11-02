@@ -95,6 +95,36 @@ namespace ClassicUO.UnitTests.Game.UI
             live.Update(true, chess, minimized, scale);
             live.Last.Should().Equal(Rebuild(world, chess, minimized, scale));
             live.Gump.Children.OfType<ItemGump>().Select(Describe).Should().Equal(live.Last.Where(s => s.Contains("disposed=False")));
+            live.Gump.Children.Should().OnlyHaveUniqueItems();
+            live.Gump.Children.Should().OnlyContain(c => c.Parent == live.Gump);
+        }
+
+        // perf-9: the per-frame stack check (AddToRenderLists, Contains) reads the item through an EntityRef; it must return what
+        // World.Items.Get returns through an amount change, a removal, a new item under the serial and a reused control
+        [Fact]
+        public void An_Item_Controls_Item_Is_What_The_Lookup_Returns()
+        {
+            var world = new World();
+            Bag(world);
+            Put(world, A, 0x0F3F, 5);
+            Put(world, B, 0x1515);
+            var g = new ItemGump(new Gump(world, 0, 0), A, 0x0F3F, 0, 40, 50);
+
+            g.ShownItem().Should().BeSameAs(world.Items.Get(A));
+
+            Put(world, A, 0x0F3F, 1);
+            g.ShownItem().Should().BeSameAs(world.Items.Get(A));
+            g.ShownItem().Amount.Should().Be(1);
+
+            Remove(world, A);
+            g.ShownItem().Should().BeSameAs(world.Items.Get(A));
+
+            Put(world, A, 0x0F3F, 7);
+            g.ShownItem().Should().BeSameAs(world.Items.Get(A));
+            g.ShownItem().Amount.Should().Be(7);
+
+            g.Reset(B, 0x1515, 0, 10, 10);
+            g.ShownItem().Should().BeSameAs(world.Items.Get(B));
         }
 
         [Fact]

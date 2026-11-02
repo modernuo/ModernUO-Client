@@ -183,6 +183,16 @@ namespace ClassicUO.Renderer
         /// </summary>
         public bool HasFinished(uint idx) => IsRequested(idx) && _inFlight.TryGetValue(idx, out var job) && job.Finished;
 
+        /// <summary>Worker publishes so far (DecodeQueue.PublishedCount): read before checking a batch, then
+        /// <see cref="WaitPublishedSince"/>.</summary>
+        public int PublishedCount => _queue.PublishedCount;
+
+        /// <summary>
+        /// Blocks the main thread until a decode finishes after <paramref name="seen"/> or <paramref name="timeoutMs"/> passes;
+        /// finished decodes already waiting for a drain don't end it. True when one finished.
+        /// </summary>
+        public bool WaitPublishedSince(int seen, int timeoutMs) => _queue.WaitPublishedSince(seen, timeoutMs);
+
         /// <summary>Finished decodes uploaded by <see cref="TryTakeReady"/> so far (main thread; never reset).</summary>
         public int TakenReady { get; private set; }
 
