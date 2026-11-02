@@ -150,12 +150,12 @@ namespace ClassicUO.Game.Scenes
             Friflo.Engine.ECS.EntityData data = e.Data;
             ref AnimationState state = ref data.Get<AnimationState>();
             ref MobileRenderState render = ref data.Get<MobileRenderState>();
-            ecs.Animation.UpdateInPlace(world, mobile, e, dirty, ref state, ref render);
+            ecs.Animation.UpdateInPlace(world, mobile, e, data, dirty, ref state, ref render);
 
             mobile.DrawAura(batcher, posX, posY, depth);
             MobileSpriteExtract extract = ecs.MobileExtract;
             extract.BeginSelect(ClientLegacySpriteSource.Instance);
-            extract.Select(e, posX, posY, depth);
+            extract.Select(e, data, posX, posY, depth);
             LegacySpriteResolve.DrawAll(batcher, ClientLegacySpriteSource.Instance, extract.Selected);
             bool mirror = (state.Flags & AnimStateFlags.Mirror) != 0;
 

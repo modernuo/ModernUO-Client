@@ -614,11 +614,11 @@ namespace ClassicUO.Game.Scenes
                 Friflo.Engine.ECS.EntityData data = e.Data;
                 ref ClassicUO.Ecs.AnimationState state = ref data.Get<ClassicUO.Ecs.AnimationState>();
                 ref ClassicUO.Ecs.MobileRenderState render = ref data.Get<ClassicUO.Ecs.MobileRenderState>();
-                ecs.Animation.UpdateInPlace(world, mobile, e, dirty, ref state, ref render);
+                ecs.Animation.UpdateInPlace(world, mobile, e, data, dirty, ref state, ref render);
 
                 mobile.DrawAura(batcher, posX, posY, depth);
                 extract.Begin(_pack, _offsetX, _offsetY);
-                extract.Emit(e, in state, in render, posX, posY, depth, mobile.FrameCache);
+                extract.Emit(e, data, in state, in render, posX, posY, depth, mobile.FrameCache);
                 drawn = true;
 
                 // the view's side effects: picking (unless recorded below), text and health bars read FrameInfo and IsFlipped

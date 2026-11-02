@@ -488,8 +488,9 @@ namespace ClassicUO.Game.Data
     /// <c>CUO_LAYER_CACHE_CHECK</c> (CUO_DEVTOOLS builds only; restores the cache half of the deleted
     /// <c>CUO_LAYER_RULES_CHECK</c>): on a <see cref="LayerDecision"/> cache hit in <c>WorldState.WorldLayers</c>, the
     /// cached answer is compared with a fresh evaluation of the rules on the wearer's tables (a scratch decision, no
-    /// allocation): a key input that moved without invalidating shows as "[layers] cache mismatch". <c>=1</c> checks every
-    /// hit, <c>=N</c> every Nth. A summary line every 5 s while the counts change. CLEANUP(release).
+    /// allocation): a key input that moved without invalidating shows as "[layers] cache mismatch". perf-11: the same for
+    /// a child read served from WorldState's child-by-layer tables (against a scan; hits and checks are counted together).
+    /// <c>=1</c> checks every hit, <c>=N</c> every Nth. A summary line every 5 s while the counts change. CLEANUP(release).
     /// </summary>
     internal static class LayerCacheCheck
     {
@@ -526,6 +527,42 @@ namespace ClassicUO.Game.Data
             LayerTables t = default;
             t.Gather(mobile);
             Check(mobile.Serial, cached, ref t, rules, subject);
+        }
+
+        /// <summary>
+        /// perf-11: <c>WorldState.ChildByLayer</c> served from a child-by-layer table: every Nth, the table's item against a
+        /// scan of the parent's children now (a mismatch is a "[layers] cache mismatch" too, so the gates see it).
+        /// </summary>
+        public static void OnChildHit(WorldState state, Entity parent, Layer layer, Item cached)
+        {
+            if (++Hits % Every != 0)
+            {
+                return;
+            }
+
+            CheckChild(parent.Serial, layer, cached, state.ScanByLayer(parent, layer));
+        }
+
+        /// <summary>The child comparison (tests call it): true when the table's item is the scan's.</summary>
+        public static bool CheckChild(uint serial, Layer layer, Item cached, Item scanned)
+        {
+            Checks++;
+
+            if (ReferenceEquals(cached, scanned))
+            {
+                return true;
+            }
+
+            Mismatches++;
+            string message = $"[layers] cache mismatch 0x{serial:X8}: child on layer {layer}: table 0x{cached?.Serial ?? 0:X8}, scan 0x{scanned?.Serial ?? 0:X8}";
+            MismatchObserver?.Invoke(message);
+
+            if (_logged++ < MAX_LOGGED)
+            {
+                Log.Warn(message);
+            }
+
+            return false;
         }
 
         /// <summary>The comparison (tests call it with tables of their own): true when the cached answer is the fresh one.</summary>
