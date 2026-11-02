@@ -301,7 +301,7 @@ namespace ClassicUO.Ecs
     }
 
     /// <summary>
-    /// E4 (setting world_update_mobile_system): when a mobile's <c>Mobile.Update</c> has something to do. The legacy Mobile
+    /// E4: when a mobile's <c>Mobile.Update</c> has something to do. The legacy Mobile
     /// stays authoritative for the animation timer (interval, repeat state, group, frame) and writes the two due times
     /// here whenever it changes them; <see cref="MobileClockSystem"/> reads only this component to pick the mobiles whose
     /// Update is not a no-op this frame.

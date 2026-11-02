@@ -10,7 +10,7 @@ using EcsEntity = Friflo.Engine.ECS.Entity;
 
 namespace ClassicUO.UnitTests.Ecs
 {
-    // E4 (world_update_mobile_system): the due-time rule, the system that applies it over the clock components, and the
+    // E4: the due-time rule, the system that applies it over the clock components, and the
     // pushes that keep the clock equal to the Mobile. The in-client checker CUO_MOBILE_UPDATE_CHECK covers the paths that
     // need the running client (packets, ProcessAnimation's timers, corpses, the player's walk).
     public class MobileClockTests

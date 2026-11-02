@@ -404,7 +404,7 @@ namespace ClassicUO.Game.GameObjects
         /// <summary>E4: the idle timer's due time (<c>Update</c> runs SetIdleAnimation when it is before the tick).</summary>
         internal long IdleDue => _lastAnimationIdleDelay;
 
-        /// <summary>E4 (world_update_mobile_system): writes the due times and flags of <see cref="MobileClock"/> after a change to one.</summary>
+        /// <summary>E4: writes the due times and flags of <see cref="MobileClock"/> after a change to one.</summary>
         protected void PushClock()
         {
             World?.Ecs.PushClock(this);

@@ -450,8 +450,7 @@ namespace ClassicUO.Game
         }
 
         // 3.-5. steps (T6, still Mobile.Update), the mobile clock and advance (T5b), the range sweep and the world-map pass
-        // (T5c). The legacy mobile loop interleaves them per mobile, and the E4 clock path keeps them in one method, so they
-        // are one stage here.
+        // (T5c). The E4 clock path keeps them in one method, so they are one stage here.
         private void StageMobiles(bool do_delete)
         {
             if (WorldEcs.MobileUpdateCheck)
@@ -465,73 +464,9 @@ namespace ClassicUO.Game
 
             // W5: AddOrUpdate's own early-outs (no recent party/guild packet, the world map closed), asked once per frame;
             // nothing in the loop changes them
-            bool wmap = !Settings.GlobalSettings.WorldUpdateActiveItems || WMapManager.AcceptsLocalUpdates;
+            bool wmap = WMapManager.AcceptsLocalUpdates;
 
-            if (Settings.GlobalSettings.WorldUpdateMobileSystem && Settings.GlobalSettings.WorldUpdateActiveItems)
-            {
-                UpdateMobilesByClock(do_delete, wmap);
-            }
-            else
-            {
-                _mobileClocksSynced = false;
-                Ecs.ClockEnabled = false;
-                Ecs.StepsEnabled = false; // T6c: needs the clock path
-                _destroyedMobiles.Clear();
-
-                foreach (Mobile mob in Mobiles.Values)
-                {
-                    mob.Update();
-
-                    if (do_delete && mob.Distance > ClientViewRange /*CheckToRemove(mob, ClientViewRange)*/)
-                    {
-                        Writer.SweepMobile(mob); // T1 (funnel part 5): the sweep's removal
-                    }
-
-                    if (mob.IsDestroyed)
-                    {
-                        _toRemove.Add(mob.Serial);
-                    }
-                    else if (wmap)
-                    {
-                        if (mob.NotorietyFlag == NotorietyFlag.Ally)
-                        {
-                            WMapManager.AddOrUpdate
-                            (
-                                mob.Serial,
-                                mob.X,
-                                mob.Y,
-                                MathHelper.PercetangeOf(mob.Hits, mob.HitsMax),
-                                MapIndex,
-                                true,
-                                mob.Name
-                            );
-                        }
-                        else if (Party.Leader != 0 && Party.Contains(mob))
-                        {
-                            WMapManager.AddOrUpdate
-                            (
-                                mob.Serial,
-                                mob.X,
-                                mob.Y,
-                                MathHelper.PercetangeOf(mob.Hits, mob.HitsMax),
-                                MapIndex,
-                                false,
-                                mob.Name
-                            );
-                        }
-                    }
-                }
-
-                if (_toRemove.Count != 0)
-                {
-                    for (int i = 0; i < _toRemove.Count; i++)
-                    {
-                        Mobiles.Remove(_toRemove[i]);
-                    }
-
-                    _toRemove.Clear();
-                }
-            }
+            UpdateMobilesByClock(do_delete, wmap);
 
             FrameStats.End(FramePhase.WorldMobiles);
         }
@@ -541,14 +476,7 @@ namespace ClassicUO.Game
         {
             FrameStats.Begin(FramePhase.WorldItems);
 
-            if (Settings.GlobalSettings.WorldUpdateActiveItems)
-            {
-                UpdateActiveItems(do_delete);
-            }
-            else
-            {
-                UpdateAllItems(do_delete);
-            }
+            UpdateActiveItems(do_delete);
 
             FrameStats.End(FramePhase.WorldItems);
         }
@@ -576,7 +504,7 @@ namespace ClassicUO.Game
             FrameStats.Set(FrameCounter.Items, Items.Count);
         }
 
-        // E4 (world_update_mobile_system) ---------------------------------------------------------------------------
+        // E4 (the mobile clock path) ---------------------------------------------------------------------------
         private readonly List<uint> _dueMobiles = new List<uint>();
         private readonly List<Mobile> _destroyedMobiles = new List<Mobile>();
         private bool _mobileClocksSynced;
@@ -584,7 +512,7 @@ namespace ClassicUO.Game
 
         internal void OnMobileDestroyed(Mobile mobile)
         {
-            // only the clock path reads the queue; with it off the legacy loop finds destroyed mobiles itself
+            // the queue is read by the clock path, which is enabled at the first update
             if (Ecs.ClockEnabled)
             {
                 _destroyedMobiles.Add(mobile);
@@ -812,7 +740,7 @@ namespace ClassicUO.Game
             }
         }
 
-        // W5 (world_update_active_items): items whose Update does something this frame (Item.NeedsFrameUpdate)
+        // W5: items whose Update does something this frame (Item.NeedsFrameUpdate)
         private readonly ActiveItemList _activeItems = new ActiveItemList();
         // items destroyed since the last update; World.Update drops them from Items as the full loop did
         private readonly List<Item> _destroyedItems = new List<Item>();
@@ -830,8 +758,7 @@ namespace ClassicUO.Game
             _activeItems.Add(item, ActiveItemsSystemOn);
         }
 
-        // corpses and handle openings keep queuing while the setting is off (WorldEcs, the scene), so the full loop drains the
-        // list each frame: it must not keep destroyed items alive. Turning the setting on rebuilds it from a scan
+        // World.Clear: the list must not keep destroyed items alive; the next update rebuilds it from a scan
         private void ClearActiveItems()
         {
             if (_activeItems.Count == 0)
@@ -848,50 +775,7 @@ namespace ClassicUO.Game
             _destroyedSeen++;
         }
 
-        // world_update_active_items off: every item, every frame (ClassicUO's loop)
-        private void UpdateAllItems(bool do_delete)
-        {
-            _activeItemsValid = false;
-            _destroyedItems.Clear();
-            ClearActiveItems();
-
-            if (do_delete)
-            {
-                PrepareItemSweep(); // T5c
-            }
-
-            foreach (Item item in Items.Values)
-            {
-                item.Update();
-
-                if (do_delete && ItemBeyond(item) /*CheckToRemove(item, ClientViewRange)*/)
-                {
-                    SweepItemBeyond(item);
-                }
-
-                if (item.IsDestroyed)
-                {
-                    _toRemove.Add(item.Serial);
-                }
-            }
-
-            if (_toRemove.Count != 0)
-            {
-                for (int i = 0; i < _toRemove.Count; i++)
-                {
-                    Items.Remove(_toRemove[i]);
-                }
-
-                _toRemove.Clear();
-            }
-
-            if (do_delete)
-            {
-                FinishItemSweep(); // T5c
-            }
-        }
-
-        // W5: the same work as UpdateAllItems. Item.Update is a no-op for every item not in the active list
+        // W5: the work of ClassicUO's every-item loop. Item.Update is a no-op for every item not in the active list
         // (Item.NeedsFrameUpdate), the range removal only runs every 50 ms (do_delete), and destroyed items are known
         // from Entity.Destroy, so the full pass runs only on do_delete frames.
         private void UpdateActiveItems(bool do_delete)
@@ -908,7 +792,7 @@ namespace ClassicUO.Game
 
             if (!_activeItemsValid)
             {
-                // first frame on (or after the setting was off): find every item that needs updates
+                // first update (or the first after World.Clear): find every item that needs updates
                 _activeItemsValid = true;
 
                 foreach (Item item in Items.Values)
