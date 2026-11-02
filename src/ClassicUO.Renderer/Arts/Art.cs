@@ -93,15 +93,20 @@ namespace ClassicUO.Renderer.Arts
         /// <summary>A wait slice: nothing finishing within it ends the wait (the workers are busy elsewhere).</summary>
         public const int PrefetchStallMs = 2;
 
+        /// <summary>How long a <see cref="BeginFrame"/> allowance lasts: past one frame, so unused time never carries over.</summary>
+        public const int FrameAllowanceLifetimeMs = 50;
+
         // the frame's main-thread time for prefetch waits and art uploads (Map.UpdateLoading's drain and the prefetches share
-        // it); 0 until BeginFrame, so nothing waits unless a frame granted it
-        private long _frameAllowance;
+        // it); none until BeginFrame, so nothing waits unless a frame granted it
+        private readonly FrameAllowance _frameAllowance = new FrameAllowance();
 
         /// <summary>
         /// Once per frame, before the chunk loader's drain (Map.UpdateLoading; only with art_container_prefetch on): the
-        /// main-thread time this frame's art uploads and <see cref="Prefetch"/> waits may take together.
+        /// main-thread time this frame's art uploads and <see cref="Prefetch"/> waits may take together. It expires after
+        /// <see cref="FrameAllowanceLifetimeMs"/>; while it lasts it also bounds <see cref="DrainReady"/>.
         /// </summary>
-        public void BeginFrame(long allowanceTicks) => _frameAllowance = allowanceTicks;
+        public void BeginFrame(long allowanceTicks) =>
+            _frameAllowance.Begin(allowanceTicks, Stopwatch.GetTimestamp(), Stopwatch.Frequency * FrameAllowanceLifetimeMs / 1000);
 
         /// <summary>True when static art <paramref name="artId"/> is not in the atlas and a worker could decode it.</summary>
         public bool NeedsDecode(uint artId)
@@ -159,7 +164,7 @@ namespace ClassicUO.Renderer.Arts
                 return 0;
             }
 
-            long wait = Math.Min(_frameAllowance, Stopwatch.Frequency * timeoutMs / 1000);
+            long wait = Math.Min(_frameAllowance.Remaining(t0), Stopwatch.Frequency * timeoutMs / 1000);
 
             if (wait <= 0)
             {
@@ -174,9 +179,11 @@ namespace ClassicUO.Renderer.Arts
                 return 0;
             }
 
+            long drained = _decoder.DrainTicks;
             int pending = _decoder.RequestAndWait(batch.Slice(0, n), t0 + wait, PrefetchStallMs);
             long spent = Stopwatch.GetTimestamp() - t0;
-            _frameAllowance -= spent;
+            _frameAllowance.Spend(spent);
+            FrameUploadTicks += _decoder.DrainTicks - drained;
 
             if (pending == n)
             {
@@ -189,16 +196,26 @@ namespace ClassicUO.Renderer.Arts
             return n - pending;
         }
 
-        /// <summary>Uploads finished worker decodes until <paramref name="deadline"/> (Stopwatch ticks), at least one. Main thread.</summary>
+        /// <summary>
+        /// Uploads finished worker decodes until <paramref name="deadline"/> (Stopwatch ticks), at least one. While a
+        /// <see cref="BeginFrame"/> allowance is active the deadline is also bounded by what is left of it, and nothing is
+        /// uploaded once it is spent. Main thread.
+        /// </summary>
         public void DrainReady(long deadline)
         {
             if (_decoder.HasReady)
             {
                 long t0 = Stopwatch.GetTimestamp();
+
+                if (!_frameAllowance.TryClampDrain(deadline, t0, out deadline))
+                {
+                    return;
+                }
+
                 _decoder.Drain(deadline);
                 long spent = Stopwatch.GetTimestamp() - t0;
                 FrameUploadTicks += spent;
-                _frameAllowance -= spent;
+                _frameAllowance.Spend(spent);
             }
         }
 

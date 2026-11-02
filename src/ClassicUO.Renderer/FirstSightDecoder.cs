@@ -131,37 +131,25 @@ namespace ClassicUO.Renderer
         /// <summary>
         /// Requests the sprites of <paramref name="batch"/> and waits for them, uploading finished decodes, until none is
         /// pending, <paramref name="deadline"/> (Stopwatch ticks; no upload starts after it), or nothing finishes for
-        /// <paramref name="stallMs"/>. It does not wait at all when the batch can't start now: other decodes wait for budget
-        /// room, or the batch doesn't fit the room left (the bytes may be held by owners only this thread drains). The
+        /// <paramref name="stallMs"/>. Finished decodes are uploaded first (within the deadline); after that it does not
+        /// wait when decodes still wait for budget room (the bytes may be held by owners only this thread drains). The
         /// requests stay queued either way. Main thread. Returns how many of the batch are still pending.
         /// </summary>
         public int RequestAndWait(ReadOnlySpan<uint> batch, long deadline, int stallMs)
         {
-            bool blocked = false;
-
-            if (_bytesOf != null)
-            {
-                long bytes = 0;
-
-                foreach (uint idx in batch)
-                {
-                    if (idx < (uint)_state.Length && _state[idx] == StateNone)
-                    {
-                        bytes += _bytesOf(idx);
-                    }
-                }
-
-                var budget = _queue.Budget;
-                long inFlight = budget.InFlightBytes;
-                blocked = budget.Waiting > 0 || (bytes > 0 && budget.CapBytes > 0 && inFlight > 0 && inFlight + bytes > budget.CapBytes);
-            }
-
             foreach (uint idx in batch)
             {
                 Request(idx);
             }
 
-            if (blocked)
+            // the batch's finished decodes may be ready already; uploading them also returns their bytes, which can admit
+            // what waits for room, so admission is judged after this
+            if (_queue.HasReady && Stopwatch.GetTimestamp() < deadline)
+            {
+                Drain(deadline, atLeastOne: false);
+            }
+
+            if (_bytesOf != null && _queue.Budget.Waiting > 0)
             {
                 return CountPending(batch);
             }
@@ -215,8 +203,13 @@ namespace ClassicUO.Renderer
             return n;
         }
 
-        private void Drain(long deadline, bool atLeastOne)
+        /// <summary>Main-thread time spent uploading finished decodes so far (Stopwatch ticks; never reset).</summary>
+        public long DrainTicks { get; private set; }
+
+        /// <summary>As <see cref="Drain(long)"/>; <paramref name="atLeastOne"/> false: no upload starts after the deadline.</summary>
+        public void Drain(long deadline, bool atLeastOne)
         {
+            long t0 = Stopwatch.GetTimestamp();
             bool first = atLeastOne;
 
             while ((first || Stopwatch.GetTimestamp() < deadline) && _queue.TryDequeue(out var job))
@@ -248,6 +241,8 @@ namespace ClassicUO.Renderer
                     _free.Push(job);
                 }
             }
+
+            DrainTicks += Stopwatch.GetTimestamp() - t0;
         }
 
         /// <summary>

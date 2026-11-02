@@ -96,5 +96,96 @@ namespace ClassicUO.UnitTests.Renderer
             pending.Should().Be(2);
             uploads.Should().BeEmpty("Drain's at-least-one upload must not apply to the prefetch wait");
         }
+
+        private static void WaitReady(FirstSightDecoder d, int count)
+        {
+            var sw = Stopwatch.StartNew();
+
+            while (d.ReadyCount < count && sw.ElapsedMilliseconds < 5000)
+            {
+                Thread.Sleep(1);
+            }
+
+            d.ReadyCount.Should().Be(count);
+        }
+
+        // Codex round 2 (6f84ce836), P2: a blocked budget must not skip uploads of batch sprites that already finished
+        [Fact]
+        public void Uploads_Finished_Batch_Sprites_Even_When_Admission_Is_Blocked()
+        {
+            var budget = new DecodeBudget(100, OwnThread);
+            var uploads = new List<uint>();
+            var d = new FirstSightDecoder("art", 8, Fill, j => uploads.Add(j.Index), _ => 16, budget);
+            d.Request(2);
+            d.Request(3);
+            WaitReady(d, 2);
+
+            // another owner's decode waits for room: 32 held by the finished art + 80 > 100
+            var other = new FirstSightDecoder("other", 8, Fill, _ => { }, _ => 80, budget);
+            other.Request(1);
+            budget.Waiting.Should().Be(1);
+
+            int pending = d.RequestAndWait(new uint[] { 2, 3 }, Ms(1000), stallMs: 200);
+
+            pending.Should().Be(0);
+            uploads.Should().BeEquivalentTo(new uint[] { 2, 3 });
+        }
+
+        // ... and admission is reassessed after that drain: releasing the finished art's bytes admits the waiting decode,
+        // and the batch's new sprite fits beside it
+        [Fact]
+        public void Reassesses_Admission_After_Draining()
+        {
+            var budget = new DecodeBudget(100, OwnThread);
+            var uploads = new List<uint>();
+            var d = new FirstSightDecoder("art", 8, Fill, j => uploads.Add(j.Index), _ => 16, budget);
+            d.Request(2);
+            d.Request(3);
+            WaitReady(d, 2);
+            var other = new FirstSightDecoder("other", 8, Fill, _ => { }, _ => 80, budget);
+            other.Request(1);
+            budget.Waiting.Should().Be(1);
+
+            int pending = d.RequestAndWait(new uint[] { 2, 3, 4 }, Ms(5000), stallMs: 1000);
+
+            pending.Should().Be(0);
+            uploads.Should().BeEquivalentTo(new uint[] { 2, 3, 4 });
+        }
+
+        // Codex round 2, P3: the wait's uploads count as upload time (Art adds DrainTicks to FrameUploadTicks)
+        [Fact]
+        public void Counts_The_Upload_Time_Of_The_Wait()
+        {
+            long oneMs = Stopwatch.Frequency / 1000;
+            var d = new FirstSightDecoder("art", 64, Fill, _ =>
+            {
+                long end = Stopwatch.GetTimestamp() + oneMs;
+
+                while (Stopwatch.GetTimestamp() < end)
+                {
+                }
+            }, _ => 16, new DecodeBudget(1L << 20, OwnThread));
+            long before = d.DrainTicks;
+
+            int pending = d.RequestAndWait(new uint[] { 5, 6, 7 }, Ms(5000), stallMs: 1000);
+
+            pending.Should().Be(0);
+            (d.DrainTicks - before).Should().BeGreaterOrEqualTo(3 * oneMs);
+        }
+
+        [Fact]
+        public void Drain_Without_At_Least_One_Starts_Nothing_After_The_Deadline()
+        {
+            var uploads = new List<uint>();
+            var d = new FirstSightDecoder("art", 64, Fill, j => uploads.Add(j.Index), _ => 16, new DecodeBudget(1L << 20, OwnThread));
+            d.Request(5);
+            WaitReady(d, 1);
+
+            d.Drain(Stopwatch.GetTimestamp() - 1, atLeastOne: false);
+            uploads.Should().BeEmpty();
+
+            d.Drain(Stopwatch.GetTimestamp() - 1);
+            uploads.Should().Equal(5u);
+        }
     }
 }
