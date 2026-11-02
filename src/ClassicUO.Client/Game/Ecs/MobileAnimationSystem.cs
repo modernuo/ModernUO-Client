@@ -91,6 +91,9 @@ namespace ClassicUO.Game
             return false;
         }
 
+        // the inputs UpdateInPlace refers to for an entity without MobileInputs (unused: it samples the Mobile then)
+        private static readonly MobileInputs _noInputs;
+
         /// <summary>
         /// E5: <see cref="Update(World, Mobile, EcsEntity)"/> working on the entity's own <see cref="AnimationState"/> and
         /// <see cref="MobileRenderState"/> (<paramref name="s"/>, <paramref name="rs"/>, taken after
@@ -101,8 +104,9 @@ namespace ClassicUO.Game
         {
             // W5: the slow-changing inputs come from MobileInputs, pushed at their mutation sites (the mirror gives every
             // mobile one; without it, as in a hand-built entity, they are read from the Mobile)
-            MobileInputs inp = default;
-            bool push = e.TryGetComponent(out inp);
+            // perf-10: read in place (the component is not copied); nothing below changes the entity's archetype
+            bool push = e.HasComponent<MobileInputs>();
+            ref readonly MobileInputs inp = ref push ? ref e.GetComponent<MobileInputs>() : ref _noInputs;
 
             if (InputBench && push)
             {
@@ -332,36 +336,77 @@ namespace ClassicUO.Game
             return keysChanged;
         }
 
-        private static ushort SelectOverrideHue(World world, Mobile m, Profile profile, in MobileInputs inp)
+        // perf-10: the frame's half of the override-hue input (the profile's flags and hues, the death screen, the player,
+        // the attack target, targeting), taken at the frame's first mobile: nothing draws them while mobiles are updated
+        // (profile, packets and input change them in Update). Keyed on the frame, the clock, the world and the profile.
+        private struct HueFrame
         {
-            bool selected = ReferenceEquals(SelectedObject.Object, m);
-            AnimStateFlags f = inp.Flags;
-            MobileHueBits bits = inp.HueBits;
+            public AnimationRules.OverrideHueInput Shared;
+            public bool Highlight, NoColorOutOfRange, Targeting;
+            public int ViewRange;
+            public uint Player, LastAttack;
+            public uint Frame, Ticks;
+            public World World;
+            public Profile Profile;
+        }
 
-            var input = new AnimationRules.OverrideHueInput
+        private static HueFrame _hueFrame;
+
+        private static ref readonly HueFrame TakeHueFrame(World world, Profile profile)
+        {
+            ref HueFrame h = ref _hueFrame;
+
+            if (h.Frame == Time.Frame && h.Ticks == Time.Ticks && ReferenceEquals(h.World, world) && ReferenceEquals(h.Profile, profile))
             {
-                HighlightSelected = profile.HighlightGameObjects && selected,
-                IsHealthbarTarget = SelectedObject.HealthbarObject == m,
-                OutOfRange = profile.NoColorObjectsOutOfRange && m.Distance > world.ClientViewRange,
+                return ref h;
+            }
+
+            h.Frame = Time.Frame;
+            h.Ticks = Time.Ticks;
+            h.World = world;
+            h.Profile = profile;
+            h.Highlight = profile.HighlightGameObjects;
+            h.NoColorOutOfRange = profile.NoColorObjectsOutOfRange;
+            h.Targeting = world.TargetManager.IsTargeting;
+            h.ViewRange = world.ClientViewRange;
+            h.Player = world.Player.Serial;
+            h.LastAttack = world.TargetManager.LastAttack;
+            h.Shared = new AnimationRules.OverrideHueInput
+            {
                 PlayerDeadGray = world.Player.IsDead && profile.EnableBlackWhiteEffect,
-                Hidden = (f & AnimStateFlags.Hidden) != 0,
-                Dead = (f & AnimStateFlags.Dead) != 0,
-                Human = (f & AnimStateFlags.Human) != 0,
                 PoisonHighlight = profile.HighlightMobilesByPoisoned,
-                Poisoned = (bits & MobileHueBits.Poisoned) != 0,
                 ParalyzeHighlight = profile.HighlightMobilesByParalize,
-                Paralyzed = (bits & MobileHueBits.Paralyzed) != 0,
                 InvulHighlight = profile.HighlightMobilesByInvul,
-                YellowHits = (bits & MobileHueBits.YellowHits) != 0,
-                Invulnerable = (bits & MobileHueBits.Invulnerable) != 0,
-                IsPlayer = m.Serial == world.Player.Serial,
-                IsLastAttack = m.Serial == world.TargetManager.LastAttack,
-                UnderMouseWhileTargeting = world.TargetManager.IsTargeting && selected,
-                NotorietyHue = Notoriety.GetHue((NotorietyFlag)inp.Notoriety),
                 PoisonHue = profile.PoisonHue,
                 ParalyzedHue = profile.ParalyzedHue,
                 InvulnerableHue = profile.InvulnerableHue
             };
+
+            return ref h;
+        }
+
+        private static ushort SelectOverrideHue(World world, Mobile m, Profile profile, in MobileInputs inp)
+        {
+            ref readonly HueFrame h = ref TakeHueFrame(world, profile);
+            bool selected = ReferenceEquals(SelectedObject.Object, m);
+            AnimStateFlags f = inp.Flags;
+            MobileHueBits bits = inp.HueBits;
+
+            AnimationRules.OverrideHueInput input = h.Shared;
+            input.HighlightSelected = h.Highlight && selected;
+            input.IsHealthbarTarget = SelectedObject.HealthbarObject == m;
+            input.OutOfRange = h.NoColorOutOfRange && m.Distance > h.ViewRange;
+            input.Hidden = (f & AnimStateFlags.Hidden) != 0;
+            input.Dead = (f & AnimStateFlags.Dead) != 0;
+            input.Human = (f & AnimStateFlags.Human) != 0;
+            input.Poisoned = (bits & MobileHueBits.Poisoned) != 0;
+            input.Paralyzed = (bits & MobileHueBits.Paralyzed) != 0;
+            input.YellowHits = (bits & MobileHueBits.YellowHits) != 0;
+            input.Invulnerable = (bits & MobileHueBits.Invulnerable) != 0;
+            input.IsPlayer = m.Serial == h.Player;
+            input.IsLastAttack = m.Serial == h.LastAttack;
+            input.UnderMouseWhileTargeting = h.Targeting && selected;
+            input.NotorietyHue = Notoriety.GetHue((NotorietyFlag)inp.Notoriety);
 
             return AnimationRules.OverrideHue(in input);
         }

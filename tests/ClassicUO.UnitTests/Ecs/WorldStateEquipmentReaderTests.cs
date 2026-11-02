@@ -42,11 +42,25 @@ namespace ClassicUO.UnitTests.Ecs
                 }
 
                 world.State.HasWornItems(m).Should().Be(!m.IsEmpty, $"the guard of 0x{m.Serial:X8}");
+                ViewEqualsReads(world, m);
 
                 Item mount = m.FindItemByLayerInList(Layer.Mount);
                 bool listMounted = mount != null && AnimationRules.IsMountedBy(mount.Serial, mount.Graphic, mount.Graphic < _tiles.Length ? _tiles[mount.Graphic].AnimID : (ushort)0);
                 m.IsMounted.Should().Be(listMounted, $"IsMounted of 0x{m.Serial:X8}");
                 MobileAnimationSystem.IsMounted(m, _tiles).Should().Be(listMounted);
+            }
+        }
+
+        // perf-10: MobileView's loops read a WornItems view validated once; it answers as FindItemByLayer and HasWornItems
+        // on every layer (its Layers is WorldLayers on the same cache; the tests load no tile data for the rules' gather)
+        internal static void ViewEqualsReads(World world, Mobile m)
+        {
+            WornItems view = world.State.WornView(m);
+            view.Any.Should().Be(world.State.HasWornItems(m), $"the view's guard of 0x{m.Serial:X8}");
+
+            for (int l = 0; l <= 0x1E; l++)
+            {
+                view[(Layer)l].Should().BeSameAs(m.FindItemByLayer((Layer)l), $"the view's layer {l} of 0x{m.Serial:X8}");
             }
         }
 
@@ -184,6 +198,8 @@ namespace ClassicUO.UnitTests.Ecs
                 world.State.HasWornItems(preview).Should().BeTrue();
                 world.Mobiles.Get(1).FindItemByLayer(Layer.Helmet).Serial.Should().Be(HELM2);
                 world.Mobiles.Get(1).FindItemByLayer(Layer.Shirt).Should().BeNull();
+                ViewEqualsReads(world, preview);
+                ViewEqualsReads(world, world.Mobiles.Get(1));
             });
 
             var bare = new Mobile(world, 1);
@@ -227,6 +243,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             bare.FindItemByLayer(Layer.Shirt).Should().BeSameAs(stale, "not held any more: its own list");
             world.State.HasWornItems(bare).Should().BeTrue();
+            ViewEqualsReads(world, bare);
         }
 
         [Fact]
