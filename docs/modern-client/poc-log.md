@@ -5077,3 +5077,13 @@ Paired NativeAOT builds (`CuoDevTools=true`, checkers off), all on the quiet mac
 - Unit tests after the merge: 2,904 passed, 6 skipped.
 - Still on the Mobile: footstep sounds, `PlayerMobile.Walk`'s walk time and the old animation path (follow-ups).
 - Timing parked: `cuo-poc-state/measure/t6c-mount-inputs/job-timing-mount-PARKED.sh`. The default flip waits for it.
+
+### perf-3 merged: first-sight art request tests and diagnostic (coordinator, 2026-11-02)
+
+- The ground-item art request at placement already existed (2170394b6). perf-3 (09d00ea3c, merge 528ab0a6a) adds 6 tests and the `CUO_PLACED_ART_SYNC=1` diagnostic.
+- Counts bench-000235 (main-thread art decodes, sum per run; placement requests off vs default on):
+  - travel: 751 (Gpu) / 772 (Legacy) → 0.
+  - glide: 180 / 188 → 0.
+  - ltravel: 0 either way.
+- Gate bench-000236 PASS.
+- T7b1 parity race fix confirmed: regate bench-000237 PASS, ls_parity mismatched=0.
