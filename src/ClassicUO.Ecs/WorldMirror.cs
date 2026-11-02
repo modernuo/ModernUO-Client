@@ -165,6 +165,7 @@ namespace ClassicUO.Ecs
             uint oldWearer = 0;
             byte oldWornLayer = 0;
             ulong oldWornStamp = 0;
+            ItemWrites++;
 
             bool created = !_bySerial.TryGetValue(serial, out Entity e) || !e.Tags.Has<ItemTag>();
 
@@ -304,6 +305,8 @@ namespace ClassicUO.Ecs
                 return false;
             }
 
+            ItemWrites++;
+
             if (e.Tags.Has<MobileTag>())
             {
                 MobileCount--;
@@ -379,8 +382,16 @@ namespace ClassicUO.Ecs
         /// <see cref="WornWrites"/> stand still, no wearer's <see cref="WornLayers.Look"/> or Version moved.</summary>
         public ulong EquipChanges;
 
+        /// <summary>
+        /// perf-11: item record writes (every <see cref="UpsertItem"/>, removal, re-stamp, detach and clear): while it and
+        /// <see cref="Epoch"/> stand still, no item's parent, child order, layer or record changed (WorldState's
+        /// child-by-layer tables are valid for them).
+        /// </summary>
+        public ulong ItemWrites;
+
         public void Clear()
         {
+            ItemWrites++;
             _scratch.Clear();
 
             foreach (Entity e in _bySerial.Values)
@@ -434,6 +445,7 @@ namespace ClassicUO.Ecs
                 return false;
             }
 
+            ItemWrites++;
             ref ItemData data = ref e.GetComponent<ItemData>();
             ulong oldStamp = data.Stamp;
             data.Stamp = ++_childStamp;
@@ -473,6 +485,7 @@ namespace ClassicUO.Ecs
                 return false;
             }
 
+            ItemWrites++;
             ref ItemData data = ref e.GetComponent<ItemData>();
 
             if (data.Stamp != 0 && _contents.Count != 0)

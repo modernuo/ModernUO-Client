@@ -134,6 +134,38 @@ namespace ClassicUO.Game
                 }
             }
 
+            // perf-11: CorpseOrder reads ~24 layers of one corpse and the draw then its drawn layers: a scan each made one
+            // Items.Get per child per layer. Inside an operation the GameObject fields can be ahead of or behind the mirror's
+            // count, so the scan answers there.
+            if (_world.Writer.InScope)
+            {
+                return ScanByLayer(parent, layer);
+            }
+
+            LayerTable t = LayerTableOf(parent);
+            Item it = t.First[(byte)layer];
+
+            // a funnel write that missed the count (the checker reports it) still never serves a destroyed or moved item
+            if (it != null && (it.IsDestroyed || it.Layer != layer))
+            {
+                t.Valid = false;
+
+                return ScanByLayer(parent, layer);
+            }
+
+#if CUO_DEVTOOLS
+            if (LayerCacheCheck.Enabled)
+            {
+                LayerCacheCheck.OnChildHit(this, parent, layer, it);
+            }
+#endif
+
+            return it;
+        }
+
+        // the first child on the layer in the ECS's child order (the answer before perf-11's tables; the checker's reference)
+        internal Item ScanByLayer(Entity parent, Layer layer)
+        {
 #if CUO_DEVTOOLS
             FrameStats.Inc(FrameCounter.ChildLayerScans);
 #endif
@@ -153,6 +185,103 @@ namespace ClassicUO.Game
             }
 
             return null;
+        }
+
+        // ---- perf-11: child-by-layer tables. Each holds one parent's first child per layer (the scan's answer for all 256
+        // layers at once), valid while the mirror's epoch and item-write count are what it was built at: every change of a
+        // child's record, parent, order or layer and of the Item object under a serial goes with one of them. A few parents
+        // are kept (the corpses drawn in a frame; replaced round robin), so a quiet scene builds each once.
+
+        // layout-based: 48 B with its Item[256] 24 + 2,048 B; 8 tables about 17 KB per client once built
+        private sealed class LayerTable
+        {
+            public Entity Parent;
+            public uint Serial, Epoch;
+            public ulong Writes;
+            public bool Valid;
+            public readonly Item[] First = new Item[256];
+        }
+
+        internal const int LayerTableCount = 8;
+
+        private readonly LayerTable[] _layerTables = new LayerTable[LayerTableCount];
+        private int _layerTableNext;
+
+        /// <summary>Tests and stats: table builds (a read after a change, or of a parent not held).</summary>
+        public long LayerTableBuilds;
+
+        private LayerTable LayerTableOf(Entity parent)
+        {
+            ClassicUO.Ecs.WorldMirror mirror = _world.Ecs.Mirror;
+            LayerTable t = null;
+
+            for (int i = 0; i < _layerTables.Length; i++)
+            {
+                LayerTable c = _layerTables[i];
+
+                if (c != null && ReferenceEquals(c.Parent, parent))
+                {
+                    t = c;
+
+                    break;
+                }
+            }
+
+            if (t != null && t.Valid && t.Serial == parent.Serial && t.Epoch == mirror.Epoch && t.Writes == mirror.ItemWrites)
+            {
+                return t;
+            }
+
+            if (t == null)
+            {
+                t = _layerTables[_layerTableNext] ??= new LayerTable();
+                _layerTableNext = (_layerTableNext + 1) % _layerTables.Length;
+            }
+
+            BuildLayerTable(t, parent, mirror);
+
+            return t;
+        }
+
+        private void BuildLayerTable(LayerTable t, Entity parent, ClassicUO.Ecs.WorldMirror mirror)
+        {
+            LayerTableBuilds++;
+#if CUO_DEVTOOLS
+            FrameStats.Inc(FrameCounter.ChildLayerScans);
+#endif
+            Array.Clear(t.First);
+            t.Parent = parent;
+            t.Serial = parent.Serial;
+            t.Epoch = mirror.Epoch;
+            t.Writes = mirror.ItemWrites;
+            t.Valid = true;
+
+            foreach (uint serial in mirror.Contents(parent.Serial))
+            {
+#if CUO_DEVTOOLS
+                FrameStats.Inc(FrameCounter.ChildLayerGets);
+#endif
+                Item it = _world.Items.Get(serial);
+
+                if (it != null && !it.IsDestroyed && !ReferenceEquals(it, parent))
+                {
+                    t.First[(byte)it.Layer] ??= it;
+                }
+            }
+        }
+
+        // World.Clear: no parent is left (and the tables keep no Item alive)
+        private void ClearLayerTables()
+        {
+            foreach (LayerTable t in _layerTables)
+            {
+                if (t != null)
+                {
+                    t.Valid = false;
+                    t.Parent = null;
+                    Array.Clear(t.First);
+                }
+            }
         }
 
         /// <summary>
