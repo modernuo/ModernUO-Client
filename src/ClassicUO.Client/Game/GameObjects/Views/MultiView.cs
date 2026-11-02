@@ -157,15 +157,35 @@ namespace ClassicUO.Game.GameObjects
                 position.X += (int)Offset.X;
                 position.Y += (int)(Offset.Y + Offset.Z);
                 SpriteTopLeft(position.X, position.Y, sprites[idx].OrigW, sprites[idx].OrigH, out int left, out int top);
+                int mouseX = SelectedObject.TranslatedMousePositionByViewport.X - left;
+                int mouseY = SelectedObject.TranslatedMousePositionByViewport.Y - top;
 
-                return Client.Game.UO.Arts.PixelCheck(
-                    drawn,
-                    SelectedObject.TranslatedMousePositionByViewport.X - left,
-                    SelectedObject.TranslatedMousePositionByViewport.Y - top
-                );
+                // the picker's mask is the sprite's untrimmed size: a mouse outside it misses without the picker.
+                // CUO_PREP_CHECK=1 counts rejects the picker would have hit
+                if (OutsideSprite(sprites[idx].OrigW, sprites[idx].OrigH, mouseX, mouseY))
+                {
+                    if (Scenes.PrepCheck.On)
+                    {
+                        Scenes.PrepCheck.StaticPicksRejected++;
+
+                        if (Client.Game.UO.Arts.PixelCheck(drawn, mouseX, mouseY))
+                        {
+                            Scenes.PrepCheck.StaticPicksWrong++;
+                            Scenes.PrepCheck.Sample ??= $"multi at {X},{Y},{Z} graphic 0x{drawn:X4} mouse {mouseX},{mouseY} sprite {sprites[idx].OrigW}x{sprites[idx].OrigH}";
+                        }
+                    }
+
+                    return false;
+                }
+
+                return Client.Game.UO.Arts.PixelCheck(drawn, mouseX, mouseY);
             }
 
             return false;
         }
+
+        /// <summary>Outside a <paramref name="width"/> x <paramref name="height"/> mask: the pixel picker's size test.</summary>
+        internal static bool OutsideSprite(int width, int height, int mouseX, int mouseY)
+            => (uint)mouseX >= (uint)width || (uint)mouseY >= (uint)height;
     }
 }
