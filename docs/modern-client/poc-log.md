@@ -5207,3 +5207,15 @@ Paired NativeAOT builds (`CuoDevTools=true`, checkers off), all on the quiet mac
   - `MobileFrameCache.Invalidate`, now used only by tests;
   - the unused return value of `SortShopContents`.
 - Gates bench-000264/265/266/267 PASS. Codex: no findings. Unit tests: 3,024 passed, 6 skipped; 32 fewer, all duplicate switch-off cases or tests of deleted paths.
+
+### perf-8 merged: container control reuse, paperdoll EntityRef, targeted gump prefetch (coordinator, 2026-11-02)
+
+- Merge af8b012e7 (846e5206c, ab8d639ec, 0db484a7a). It conflicted with T9 slice 2 in ContainerGump: the same children loop, now in `ContainerItemControls.AddItems`.
+- **Container windows** reuse the controls of items still shown, fully reset, and fall back to a full rebuild while the mouse is down or a drag is in progress. Deliberate difference: a surviving hovered item keeps its highlight, where the rebuild dropped it for one frame.
+- **Paperdoll** uses a handle-safe `EntityRef`. **`Gump.Prefetch`** takes only its own batch.
+- **Evidence:** gate bench-000269 PASS. `CUO_CONTAINER_CONTROLS_CHECK` compared each incremental update with a full rebuild: 6 checked, 0 mismatched; 95 controls reused. Codex: no findings. Unit tests 3,038 passed, 6 skipped.
+- **Counts job bench-000268 FAILED as a harness problem:** the driver script logged no `[ECS] ui` lines, so the allocation numbers are still owed. Timing parked.
+- **New backlog items:**
+  - ItemGump and ItemGumpFixed call `World.Items.Get` per item per frame;
+  - `Gump.AwaitBatch` busy-waits with Yield;
+  - the `Control.Parent` setter scans the child list, which is quadratic for large containers.
