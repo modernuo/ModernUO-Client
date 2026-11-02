@@ -250,3 +250,7 @@ Today the client parses incoming packets in place (`StackDataReader` over fixed 
 - **Corpse layer tables hold destroyed items until reused** (WorldState.Equipment.cs ~198, Codex P3): bounded by 8 tables; clear on destroy or cache serials. Memory only. Source: perf-11.
 - **Texmaps fill a picker nobody reads** (Texmap.cs:13,54,124 call `_picker.Set` on every load; nothing calls `Get` on it): removing it saves the per-pixel scan on each load and the picker's memory (the array starts at 256 KB). Source: picker-first-pixel.
 - **Animation picks use the dictionary path** (Animation.cs:61,68: a dictionary lookup plus two varint reads before the size check; art and gumps use the flat table): a flat index for animations. Small. Source: picker-first-pixel.
+- **Animation-advance and step systems: up to 7 entity lookups per entity per frame for eligibility** (MobileAnimationAdvanceSystem.TryRun ~372, ItemAnimationAdvanceSystem.TryRun ~118, StepSystem ~208/239): one `EcsRead.Row` after `TakeDirty` makes it one (bench 12.6 vs 16 ns). Source: ecs-read-helper.
+- **`StepSystem.Run` copies the whole `Steps` component by value** (~303): `ref readonly`. Small. Source: ecs-read-helper.
+- **`WorldEcs` per-frame pushes still call `GetComponent`** (~453, ~522, ~570): about 2–4 ns each, if per frame (unconfirmed). Source: ecs-read-helper.
+- **`EcsRow` passed by value to the non-inlined `Emit`/`Select`** (24 B per call): pass `in`. Tiny. Source: ecs-read-helper.
