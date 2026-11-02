@@ -365,6 +365,7 @@ So the data file is keyed by body group (human male/female, elf male/female, gar
 - Switch `world_step_system`.
 - **Checker:** E4's skipped-is-no-op hash, extended to positions, offsets and step queues; `CUO_TILE_ORDER_CHECK`; `CUO_PREP_CHECK` (screen positions).
 - Size: 2–3. Tier: O.
+- **Status (2026-11-01, branch `bg/ecs-t6c-steps`, poc-log "T6c"): built, default off; client gates submitted (bench-000191..194).** `StepSystem` over the `Steps` component runs where ProcessSteps ran in `Mobile.Update` (table order kept). The offset interpolation is the system's; `Mobile.Offset`, the queue and `LastStepTime` stay a write-through cache for the views (hot-field rule). Checker `CUO_STEP_CHECK=1`. The mount inputs are still read from the Mobile.
 
 ### T7: Legacy
 
