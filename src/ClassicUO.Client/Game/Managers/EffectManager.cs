@@ -18,11 +18,18 @@ namespace ClassicUO.Game.Managers
 
         public void Update()
         {
+            bool system = _world.EffectsSystemOn;
+
             for (GameEffect f = (GameEffect) Items; f != null;)
             {
                 GameEffect next = (GameEffect) f.Next;
 
                 f.Update();
+
+                if (system && !f.IsDestroyed)
+                {
+                    EffectSystem.Publish(f);
+                }
 
                 if (!f.IsDestroyed && f.Distance > _world.ClientViewRange)
                 {
@@ -31,6 +38,22 @@ namespace ClassicUO.Game.Managers
 
                 f = next;
             }
+
+            if (system && _world.EffectsCheckOn)
+            {
+                EffectSystem.Check(_world, this);
+            }
+        }
+
+        /// <summary>Appends <paramref name="effect"/> to the list; with <c>ecs_effects</c> on it gets its entity first.</summary>
+        public void Add(GameEffect effect)
+        {
+            if (_world.EffectsSystemOn)
+            {
+                EffectSystem.Register(effect);
+            }
+
+            PushToBack(effect);
         }
 
 
@@ -221,7 +244,7 @@ namespace ClassicUO.Game.Managers
             }
 
 
-            PushToBack(effect);
+            Add(effect);
         }
 
         public new void Clear()
