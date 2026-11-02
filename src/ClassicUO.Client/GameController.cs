@@ -498,6 +498,8 @@ namespace ClassicUO
 
             Time.Ticks = (uint)gameTime.TotalGameTime.TotalMilliseconds;
             Time.Delta = (float)gameTime.ElapsedGameTime.TotalSeconds;
+            // art_container_prefetch: last frame's art upload/prefetch allowance ends here (Map.UpdateLoading grants the next)
+            UO.Arts?.AdvanceFrame();
 
             // the renderer can be switched at runtime (-worldrenderer command, DevBench world:legacy)
             if (_titleShowsLegacy == Settings.GlobalSettings.UseGpuWorldRenderer)
