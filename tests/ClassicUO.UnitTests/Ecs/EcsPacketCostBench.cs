@@ -538,12 +538,11 @@ namespace ClassicUO.UnitTests.Ecs
 
             // T3a: the equipment read, MobileView's per-frame reads of one drawn mobile: the guard (HasWornItems: !IsEmpty off,
             // any WornLayers slot on), then FindItemByLayer for layers 0x01..0x19 (the draw order's layers and the mount), with
-            // the list walk (the control scenes walk it directly: T9 deleted ecs_read_equipment's off path) and WornLayers. Like T2's rows, on three freshly built, identically
-            // prepared scenes: "T3 control" (off), "T3 read" (on), "T3 control2" (off). Each scene's mobiles wear their 5 items
+            // WornLayers (T9 child-list slice B removed the list walk the control scenes measured), on a freshly built scene. The scene's mobiles wear their 5 items
             // through the funnel (0x78: attached, stamped, as in a session), and as many bare mobiles (a monster: the guard only).
             int t3Sink = 0;
 
-            void T3Scene(string kind, bool read)
+            void T3Scene(string kind)
             {
                 Scene f = Build(n);
                 var bare = new Mobile[n];
@@ -567,11 +566,11 @@ namespace ClassicUO.UnitTests.Ecs
                 {
                     Mobile mob = f.Mobiles[i % n];
 
-                    if (read ? f.World.State.HasWornItems(mob) : !mob.IsEmpty)
+                    if (f.World.State.HasWornItems(mob))
                     {
                         for (int l = 1; l <= (int)Layer.Mount; l++)
                         {
-                            if ((read ? mob.FindItemByLayer((Layer)l) : mob.FindItemByLayerInList((Layer)l)) != null)
+                            if (mob.FindItemByLayer((Layer)l) != null)
                             {
                                 t3Sink++;
                             }
@@ -581,16 +580,14 @@ namespace ClassicUO.UnitTests.Ecs
 
                 rows.Add(($"T3 {kind}: MobileView guard of a bare mobile, per mobile", Measure(packets, i =>
                 {
-                    if (read ? f.World.State.HasWornItems(bare[i % n]) : !bare[i % n].IsEmpty)
+                    if (f.World.State.HasWornItems(bare[i % n]))
                     {
                         t3Sink++;
                     }
                 })));
             }
 
-            T3Scene("control", false);
-            T3Scene("read", true);
-            T3Scene("control2", false);
+            T3Scene("read");
             GC.Collect();
 
             // T3b: the layering decision of one drawn mobile, hard-coded (PaperdollOrder.Build + Filter + ApplyDirectionCloak,

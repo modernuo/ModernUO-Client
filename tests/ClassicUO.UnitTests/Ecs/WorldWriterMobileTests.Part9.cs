@@ -180,7 +180,7 @@ namespace ClassicUO.UnitTests.Ecs
             Destroyed9(newWorld).Should().Equal(Destroyed9(oldWorld));
             AssertSameWorld(oldWorld, newWorld);
             bankB.Opened.Should().BeFalse();
-            bankB.Items.Should().BeNull();
+            newWorld.State.HasChildren(bankB).Should().BeFalse();
             newWorld.Items.Get(GOLD).Should().BeNull();
             newWorld.Items.Get(VAULT).Should().BeNull();
             newWorld.Items.Get(COIN9).Should().BeNull("the bank's contents at any depth");

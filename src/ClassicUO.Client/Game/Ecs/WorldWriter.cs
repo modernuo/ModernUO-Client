@@ -140,6 +140,18 @@ namespace ClassicUO.Game
         /// <summary>Tests: the violations seen so far (thrown or logged).</summary>
         internal int Violations { get; private set; }
 
+        /// <summary>
+        /// T9 child-list slice B2: the attaches refused because they would close a loop in the merged serial graph (see
+        /// <see cref="CheckAttach"/>). A server's packet, not a caller bug: no violation.
+        /// </summary>
+        internal int CycleRefusals { get; private set; }
+
+        /// <summary>
+        /// T9 child-list slice B3: the attaches refused because an item would end up more than
+        /// <see cref="WorldState.MaxNestingDepth"/> levels below its root, past what the destroy cascades reach.
+        /// </summary>
+        internal int DepthRefusals { get; private set; }
+
         /// <summary>Tests: the placements issued and not yet consumed or cancelled.</summary>
         internal int OutstandingPlacements => _placements.Count;
 
@@ -406,7 +418,7 @@ namespace ClassicUO.Game
 
             using (Open(item, item))
             {
-                // the links only (the parent's gump and child list, the tile); the Container is written from v below
+                // the parent's gump and the tile; the Container is written from v below
                 if (unlink)
                 {
                     _world.UnlinkFromContainer(item, oldContainer);
@@ -560,8 +572,6 @@ namespace ClassicUO.Game
                     _world.HouseManager.Remove(serial);
                 }
 
-                parent?.Remove(item);
-
                 // by instance: if something replaced the item under its serial meanwhile, the replacement stays
                 if (ReferenceEquals(_world.Items.Get(serial), item))
                 {
@@ -597,15 +607,33 @@ namespace ClassicUO.Game
             }
 
             Item item = _world.Items.Get(serial);
+            Mobile asItem = SerialHelper.IsMobile(serial) ? _world.Mobiles.Get(serial) : null;
+            bool removeMobile = asItem != null && !asItem.IsDestroyed;
+
+            // destroy-vs-reuse: another container's item is destroyed (contents too) and recreated below, unless it is an
+            // equipped item going into a corpse (the corpse's equipment). T9 slice B4 (Codex audit of B3, P2 #2): a destroyed
+            // instance still in the items table (a swept ground item) removes nothing (World.RemoveItem skips it), so it is no
+            // replacement, here or below: the check then sees the subtree that survives under its serial in the mirror
+            bool replace = item != null && !item.IsDestroyed && item.Container != containerSerial && (container.Graphic != 0x2006 || item.Layer == Layer.Invalid);
+
+            // T9 slice B3 (Codex audit of B2, P2 #1): the refusal is decided before the removals below, against the graph they
+            // leave (CheckAttach: a chain from the container back to the item through what the removals take is gone with it),
+            // so a refused attach removes nothing either; the handler sees no container (it returns, as for a missing one).
+            // An item is never inside itself: the self case is refused (before T1 it destroyed the item and recreated it
+            // contained in its own serial; with a mobile-range serial, the mobile was removed first)
+            if (RefusedAttach(nameof(PlaceInContainer), serial, containerSerial, false, childRemoved: removeMobile || replace))
+            {
+                container = null;
+
+                return null;
+            }
 
             if (SerialHelper.IsMobile(serial))
             {
                 // through the removal path (Codex audit of part 4, #2): the placements of the mobile and of everything it
                 // wears or holds are cancelled first, and the removal owns its subtree. World.RemoveMobile did nothing for a
                 // missing or destroyed mobile, so neither does this.
-                Mobile asItem = _world.Mobiles.Get(serial);
-
-                if (asItem != null && !asItem.IsDestroyed)
+                if (removeMobile)
                 {
                     RemoveMobileSubtree(asItem);
                 }
@@ -613,9 +641,8 @@ namespace ClassicUO.Game
                 Log.Warn("AddItemToContainer function adds mobile as Item");
             }
 
-            // destroy-vs-reuse: another container's item is destroyed (contents too) and recreated below, unless it is an
-            // equipped item going into a corpse (the corpse's equipment)
-            if (item != null && item.Container != containerSerial && (container.Graphic != 0x2006 || item.Layer == Layer.Invalid))
+            // (read again after the mobile's removal, as before: the item may have gone with it)
+            if (item != null && !item.IsDestroyed && item.Container != containerSerial && (container.Graphic != 0x2006 || item.Layer == Layer.Invalid))
             {
                 RemoveForReplacement(item);
             }
@@ -680,14 +707,10 @@ namespace ClassicUO.Game
 
                 if (relink)
                 {
-                    // the links only (the old parent's gump and child list, the tile); the Container is written from v
+                    // the old parent's gump and the tile; the Container is written from v
                     _world.UnlinkFromContainer(item, oldContainer);
                     item.Container = v.Container;
                 }
-
-                // at the end of the container's child list, also when it already was there (the re-push; the commit above
-                // took its child-order stamp)
-                container.PushToBack(item);
             }
 
             // art_container_prefetch: an open container's new item starts its art decode on the workers (no world state)
@@ -700,9 +723,9 @@ namespace ClassicUO.Game
         /// 0x3C's bulk clear before its first item and 0x24 (OpenContainer) of a container that is not a corpse
         /// (<c>ClearContainerAndRemoveItems</c> before T1): removes every item in the container with its contents, or, with
         /// <paramref name="keepEquipped"/> (0x3C into a corpse), every item without a Layer, keeping the corpse's equipment in
-        /// its child list in order. A removal: it owns the removed subtrees and writes no value of its own (each removal's Sync
+        /// its child order. A removal: it owns the removed subtrees and writes no value of its own (each removal's Sync
         /// and Destroy run as in <see cref="RemoveWorldItem"/>, not folded: a corpse's removal queues it in the active-items
-        /// list as before). The container itself is not written (its child list only). Cancels the outstanding placements of
+        /// list as before). The container itself is not written. Cancels the outstanding placements of
         /// every removed item and its contents at any depth (the kept equipment and its contents keep theirs).
         /// </summary>
         /// <param name="itemOnly">How the container is found, as each handler found it before T1: 0x24 by
@@ -729,7 +752,7 @@ namespace ClassicUO.Game
             {
                 if (!(keepEquipped && it.Layer != 0))
                 {
-                    CancelSubtreePlacements(it);
+                    CancelSubtreePlacements(it, containerSerial);
                 }
             }
 
@@ -748,18 +771,17 @@ namespace ClassicUO.Game
                 }
 #endif
 
-                // T9 child-list slice A: the children copied while the ECS and the list still agree (before the spell set
-                // below is dropped)
+                // T9 child-list slice A: the children copied before any removal changes them
                 using ContentsSnapshot children = _world.State.SnapshotChildren(container);
 
-                // T2: the clear also drops a spellbook's detached spell entries (not world objects: RemoveItem skips them,
-                // the head below drops them); committed first
+                // T2: the clear also drops a spellbook's detached spell entries (not world objects: RemoveItem skips them);
+                // committed first
                 if (!keepEquipped && container is Item book && _world.Ecs.Mirror.Spellbook(book.Serial) != 0)
                 {
                     _world.Ecs.CommitSpellbook(book, 0);
                 }
 
-                // the old loop: each removal by serial in child order (World.RemoveItem: out of the child list, the
+                // the old loop: each removal by serial in child order (World.RemoveItem: out of its container, the
                 // contents, OPL, Destroy). The spell entries are no world items (RemoveItem skipped them): the copy of the
                 // ECS contents leaves them out
                 foreach (uint serial in children.Serials)
@@ -768,25 +790,9 @@ namespace ClassicUO.Game
 
                     if (it != null && !(keepEquipped && it.Layer != 0))
                     {
-                        _world.RemoveItem(serial, true);
+                        _world.RemoveItem(serial, true, containerSerial);
                     }
                 }
-
-                // the list's head (list upkeep, goes in T9 slice B): the kept equipment's links are untouched and the head
-                // is the first kept one, the first child left with a Layer
-                LinkedObject newFirst = null;
-
-                for (LinkedObject i = keepEquipped ? container.Items : null; i != null; i = i.Next)
-                {
-                    if (((Item)i).Layer != 0)
-                    {
-                        newFirst = i;
-
-                        break;
-                    }
-                }
-
-                container.Items = newFirst;
             }
         }
 
@@ -839,6 +845,19 @@ namespace ClassicUO.Game
             if (!Admitted(nameof(ReturnHeldItem), serial))
             {
                 return null;
+            }
+
+            // T9 slice B2: the paperdoll branch's attach (a mobile-range container that exists once the item does) is refused
+            // when it would close a loop: before anything is created or written (result None, as a rejected nesting)
+            if (SerialHelper.IsMobile(containerSerial))
+            {
+                bool self = containerSerial == serial;
+                Entity target = self ? null : _world.Get(containerSerial);
+
+                if ((self || target != null) && RefusedAttach(nameof(ReturnHeldItem), serial, containerSerial, self ? SelfParentIsMobile(serial) : target is Mobile))
+                {
+                    return null;
+                }
             }
 
             // 1. resolve, in the old order: the item (found or created), then its container
@@ -930,7 +949,6 @@ namespace ClassicUO.Game
                 {
                     case HeldItemReturn.Paperdoll:
                         _world.UnlinkFromContainer(item, oldContainer);
-                        container.PushToBack(item);
                         item.Container = v.Container;
 
                         break;
@@ -989,6 +1007,18 @@ namespace ClassicUO.Game
                 return null;
             }
 
+            // T9 slice B2: an attach to the wearer (one exists once the item does) that would close a loop is refused before
+            // anything is created or written: the item keeps its values and its place
+            {
+                bool self = containerSerial == serial;
+                Entity target = self ? null : _world.Get(containerSerial);
+
+                if ((self || target != null) && RefusedAttach(nameof(Equip), serial, containerSerial, self ? SelfParentIsMobile(serial) : target is Mobile))
+                {
+                    return null;
+                }
+            }
+
             // 1. resolve, as the old handler: the item among the items (found or created), the wearer by World.Get (the writes
             // below change neither dictionary, so resolving it first finds what the old lookup after the writes found)
             Item item = _world.GetOrCreateItem(serial, out _);
@@ -1026,22 +1056,14 @@ namespace ClassicUO.Game
             {
                 if (unlink)
                 {
-                    // the old RemoveItemFromContainer: the links, then its Sync of the detached state
+                    // the old RemoveItemFromContainer: the gump and tile, then its Sync of the detached state
                     _world.UnlinkFromContainer(item, oldContainer);
                     _world.Ecs.CommitItem(item, in detached);
                 }
-                else if (oldContainer != containerSerial)
-                {
-                    // Behaviour fix (Codex audit P2 #2; legacy ClassicUO and the base have the same quirk): a backpack (or an
-                    // item without a graphic) keeps its link, and the new wearer's PushToBack below unlinks it only through its
-                    // neighbours, so as its old parent's first child it stayed that parent's list head (the backpack and the
-                    // old parent's other children lost). It leaves its old parent's list here; the gumps of the old container
-                    // are refreshed by the handler (shownContainer), and the mirror already moves its attachment.
-                    _world.Get(oldContainer)?.Remove(item);
-                }
 
-                // 3. write: the ECS (attached when there is a wearer to link it to; without one an orphan, T1 part 9), then
-                // the cache from v in the old order, then the link
+                // 3. write: the ECS (attached when there is a wearer; without one an orphan, T1 part 9), then the cache from
+                // v in the old order. A backpack (or an item without a graphic) that changes parent moves its attachment
+                // in the mirror; its old container's gumps are refreshed by the handler (shownContainer)
                 _world.Ecs.CommitItem(item, in v, attach: wearer != null);
 
                 item.Graphic = v.Graphic;
@@ -1049,8 +1071,6 @@ namespace ClassicUO.Game
                 item.Container = v.Container;
                 item.Hue = v.Hue;
                 item.Amount = v.Amount;
-
-                wearer?.PushToBack(item);
             }
 
             return item;
@@ -1082,7 +1102,7 @@ namespace ClassicUO.Game
             {
                 if (!it.Opened && it.Layer != Layer.Backpack)
                 {
-                    CancelSubtreePlacements(it);
+                    CancelSubtreePlacements(it, ownerSerial);
                 }
             }
 
@@ -1110,7 +1130,7 @@ namespace ClassicUO.Game
 
                         if (it != null && !it.Opened && it.Layer != Layer.Backpack)
                         {
-                            _world.RemoveItem(serial, true);
+                            _world.RemoveItem(serial, true, ownerSerial);
                         }
                     }
                 }
@@ -1151,6 +1171,14 @@ namespace ClassicUO.Game
             }
 
             uint ownerSerial = owner.Serial;
+
+            // T9 slice B2: refused before anything is created or written when the attach would close a loop (the captured
+            // owner: a mobile wears the item under its own serial; an item never wears itself)
+            if (RefusedAttach(nameof(WearItem), serial, ownerSerial, owner is Mobile))
+            {
+                return null;
+            }
+
             Item item = _world.GetOrCreateItem(serial, out _);
 
             // 2. compute: every read of the previous state is here
@@ -1219,9 +1247,8 @@ namespace ClassicUO.Game
                     item.Layer = v.Layer;
                 }
 
-                // 4. derived state where CheckGraphicChange ran it, then the link
+                // 4. derived state where CheckGraphicChange ran it
                 item.RefreshGraphicState();
-                owner.PushToBack(item);
             }
 
             return item;
@@ -2469,7 +2496,6 @@ namespace ClassicUO.Game
                 _world.Ecs.CommitSpellbook(spellbook, spells0 | ((ulong)spells1 << 32));
 
                 spellbook.Graphic = graphic;
-                spellbook.Clear();
                 _world.Ecs.Sync(spellbook);
 
                 for (int j = 0; j < 2; j++)
@@ -2486,7 +2512,6 @@ namespace ClassicUO.Game
                             spellItem.Graphic = 0x1F2E;
                             spellItem.Amount = cc;
                             spellItem.Container = spellbook;
-                            spellbook.PushToBack(spellItem);
                             _spellEntries.Add(spellItem);
                         }
                     }
@@ -2508,16 +2533,16 @@ namespace ClassicUO.Game
         private readonly List<Item> _sorted = new List<Item>();
 
         /// <summary>
-        /// 0x74 (BuyList) for a shop container with graphic 0x2AF8: the client sorts its child list by X (the original
-        /// client's hard-coded order; <c>SortContents</c>, a stable merge sort). T1 part 9: the new order is computed first
-        /// (stable, by X), each child World holds re-stamped in it (the mirror's child order follows), then the list sorted as
-        /// before. Returns the list's new first child (null for an empty list, or a nested call: rejected, nothing sorted).
+        /// 0x74 (BuyList) for a shop container with graphic 0x2AF8: the client sorts its children by X (the original
+        /// client's hard-coded order; before T9 <c>SortContents</c>, a stable merge sort of the child list). The new order is
+        /// computed (stable, by X) and each child World holds re-stamped in it: the mirror's child order is the sorted order.
+        /// A nested call is rejected (nothing sorted).
         /// </summary>
-        public LinkedObject SortShopContents(Item container)
+        public void SortShopContents(Item container)
         {
             if (container == null || !Admitted(nameof(SortShopContents), container.Serial))
             {
-                return null;
+                return;
             }
 
             using (Open(container, null))
@@ -2538,16 +2563,13 @@ namespace ClassicUO.Game
                     _sorted.Insert(at, it);
                 }
 
-                // 3. the ECS, then the links
+                // 3. the ECS
                 foreach (Item it in _sorted)
                 {
                     _world.Ecs.CommitChildOrder(it);
                 }
 
-                LinkedObject first = container.SortContents<Item>((x, y) => x.X - y.X);
                 _sorted.Clear();
-
-                return first;
             }
         }
 
@@ -2681,6 +2703,13 @@ namespace ClassicUO.Game
             }
 
             uint corpseSerial = corpse.Serial;
+
+            // T9 slice B2: refused before anything is created or written when the attach would close a loop
+            if (RefusedAttach(nameof(PlaceCorpseEquipment), serial, corpseSerial, corpse is Mobile))
+            {
+                return null;
+            }
+
             Item item = _world.GetOrCreateItem(serial);
 
             // compute: every read of the previous state is here
@@ -2710,14 +2739,13 @@ namespace ClassicUO.Game
             // so the two commits are the only ECS writes, as the old two Syncs were
             using (Open(item, null))
             {
-                // the old order: the unlink (gump refresh, list links, tile), the detached state's Sync, then the final one
+                // the old order: the unlink (gump refresh, tile), the detached state's Sync, then the final one
                 _world.UnlinkFromContainer(item, oldContainer);
                 _world.Ecs.CommitItem(item, in detached);
                 _world.Ecs.CommitItem(item, in v, attach: true);
 
                 item.Container = v.Container;
                 item.Layer = v.Layer;
-                corpse.PushToBack(item);
             }
 
             return item;
@@ -2730,7 +2758,7 @@ namespace ClassicUO.Game
         /// while the server's corpse item takes the old serial's place). Before T1: out of the mobiles table under its serial,
         /// each child's Container to the new serial, into the table under the new serial (replacing whatever was there, as
         /// before: an earlier death's re-keyed mobile is not removed), the new Serial, then
-        /// <see cref="WorldEcs.OnSerialChanged"/> (the old entity removed, the new one synced with the mirror bit carried over,
+        /// <c>WorldEcs.OnSerialChanged</c> (removed in T9; the old entity removed, the new one synced with the mirror bit carried over,
         /// then each child synced). Since funnel part 9 the ECS commit takes its values and runs first, as every other
         /// operation's: <see cref="WorldEcs.CommitRekey"/> (the old record removed, the record under the new serial from the
         /// computed <see cref="MobileState"/>, the mirror bit carried over), then each child's <see cref="WorldEcs.CommitItem"/>
@@ -2805,6 +2833,21 @@ namespace ClassicUO.Game
                     }
                 }
 
+                // T9 slice B4 (self-audit of the Codex B3 P2 #1 class): a dying mobile that wears the item under its new serial
+                // becomes the shared case, which puts its whole subtree one level deeper; checked on the subtree before the
+                // re-key moves it (a conservative bound: the item's own contents only get shallower)
+                bool selfTooDeep = false;
+
+                foreach (uint s in children.Serials)
+                {
+                    if (s == serial)
+                    {
+                        selfTooDeep = SubtreeDeeperThan(_world.Ecs.Mirror, oldSerial, oldSerial, WorldState.MaxNestingDepth - 1);
+
+                        break;
+                    }
+                }
+
                 EcsEntity e = _world.Ecs.CommitRekey(mobile, oldSerial, in v);
 
                 // (the children keep their order under the new parent: each is re-stamped in it, attached)
@@ -2814,7 +2857,15 @@ namespace ClassicUO.Game
                     {
                         ItemState c = CurrentState(child);
                         c.Container = serial;
-                        _world.Ecs.CommitItem(child, in c, attach: true);
+
+                        // T9 slice B2: the record under the new serial is now the mobile's (no parent), so no re-attach can
+                        // close a loop; only if the commit wrote none (a destroyed mobile) could an item's record above the
+                        // children remain: such a child keeps the Container but is not attached (an orphan)
+                        // (a mobile's child to the new mobile: every depth is kept, no subtree walk)
+                        bool refused = s == serial && selfTooDeep
+                            ? Refused(nameof(RekeyDeadMobile), s, serial, AttachCheck.TooDeep)
+                            : RefusedAttach(nameof(RekeyDeadMobile), s, serial, true, keepsDepth: true);
+                        _world.Ecs.CommitItem(child, in c, attach: !refused);
                     }
                 }
 
@@ -3310,7 +3361,7 @@ namespace ClassicUO.Game
                 {
                     foreach (uint serial in children.Serials)
                     {
-                        _world.RemoveItem(serial, true);
+                        _world.RemoveItem(serial, true, bank.Serial);
                     }
                 }
             }
@@ -3506,6 +3557,175 @@ namespace ClassicUO.Game
                 : entity is Item item && ReferenceEquals(_world.Items.Get(item.Serial), item);
         }
 
+        // T9 child-list slice B2 (Codex audit of slice B, P1): the mirror keeps one record per serial, so the parent graph the
+        // readers walk is by serial (an item and a mobile under one serial read merged contents) and per-object lists that
+        // were acyclic could close a loop in it (a dead mobile's serial reused by an item equipped onto what the mobile wears).
+        // An attach of child under parent closes a loop when the chain of records above the parent (each record's Container,
+        // attached or not, so the cache's Container chain stays acyclic too) reaches the child's serial. A record that is its
+        // own parent is slice B's shared case (the item a mobile wears under its own serial): a root. A chain longer than
+        // WorldState.MaxNestingDepth is refused too. Attach time only; no allocation.
+        //
+        // T9 slice B3 (Codex audit of B2, P2 #2): the destroy cascades and recursive readers stop at MaxNestingDepth, so an
+        // accepted attach must also keep every attached item within that depth of its root: the parent's depth (the walk's
+        // length; one more when the walk ends at a self-parent record, because the mobile's cascade reaches what it wears a
+        // second time through the item under its serial) + 1 + the moved item's attached subtree height <= MaxNestingDepth.
+        // With that invariant every bounded walk is complete on an accepted graph, and the bounds only matter for a loop forced
+        // in behind the funnel (the alternative, unbounded iterative cascades, would fix the destroy but leave the readers cut
+        // short and need a visited set per cascade).
+        //
+        // T9 slice B3 (P2 #1): childRemoved: the operation removes the child's attached subtree before it attaches
+        // (PlaceInContainer's destroy-vs-reuse or its mobile removal); the check is made before that removal, against the
+        // graph it leaves: a chain from the parent that reaches the child through attached links only is removed with it (the
+        // parent's record is gone: the new item goes under a serial no record holds, as before T1), and the new item has no
+        // contents. A chain that reaches it through an unattached link survives the removal: still a loop.
+        private AttachCheck CheckAttach(uint child, uint parent, bool parentIsMobile, bool childRemoved, bool keepsDepth)
+        {
+            ClassicUO.Ecs.WorldMirror mirror = _world.Ecs.Mirror;
+
+            if (parent == child)
+            {
+                // the mobile under the item's serial wears it (the shared case); an item is never its own parent
+                if (!parentIsMobile)
+                {
+                    return AttachCheck.Loop;
+                }
+
+                // T9 slice B4 (Codex audit of B3, P2 #1): the shared item puts every attached item under the serial one level
+                // deeper (the mobile's cascade reaches them a second time through it), so the merged subtree must keep that
+                // level within the bound. Already the shared case (a re-push) keeps every depth; the death rekey checks the
+                // dying mobile's subtree itself before it re-keys (keepsDepth)
+                if (keepsDepth || (mirror.ParentOf(child, out bool selfLinked) == child && selfLinked))
+                {
+                    return AttachCheck.Ok;
+                }
+
+                return SubtreeDeeperThan(mirror, child, child, WorldState.MaxNestingDepth - 1) ? AttachCheck.TooDeep : AttachCheck.Ok;
+            }
+            uint s = parent;
+            int depth = 0;
+            bool attached = true;
+
+            while (true)
+            {
+                uint up = mirror.ParentOf(s, out bool linked);
+
+                if (up == ClassicUO.Ecs.WorldMirror.NO_CONTAINER || up == 0)
+                {
+                    break;
+                }
+
+                if (up == s)
+                {
+                    depth++;
+
+                    break;
+                }
+
+                if (up == child)
+                {
+                    return childRemoved && attached && linked ? AttachCheck.Ok : AttachCheck.Loop;
+                }
+
+                attached &= linked;
+                s = up;
+
+                if (++depth >= WorldState.MaxNestingDepth)
+                {
+                    return AttachCheck.TooDeep;
+                }
+            }
+
+            // the levels left below the child
+            int budget = WorldState.MaxNestingDepth - depth - 1;
+
+            if (budget < 0)
+            {
+                return AttachCheck.TooDeep;
+            }
+
+            // a removed child is recreated empty; a re-push under its own attached parent (0x25 into the same container) or
+            // the death rekey (a mobile's children to the new mobile) keeps every depth
+            if (childRemoved || keepsDepth || (mirror.ParentOf(child, out bool childLinked) == parent && childLinked))
+            {
+                return AttachCheck.Ok;
+            }
+
+            return SubtreeDeeperThan(mirror, child, child, budget) ? AttachCheck.TooDeep : AttachCheck.Ok;
+        }
+
+        // whether serial's attached subtree reaches more than budget levels below it, walked as the destroy cascade walks it
+        // (an item never lists itself; the walk does not come back to its root). Recursion at most budget + 1 deep; the
+        // contents spans are the mirror's cached arrays (no allocation once each parent's array is large enough). Attach time
+        // only: a move of an item with contents visits each item of its subtree once (a leaf costs two index probes and caches
+        // no contents).
+        private static bool SubtreeDeeperThan(ClassicUO.Ecs.WorldMirror mirror, uint root, uint serial, int budget)
+        {
+            if (!mirror.IsNamedAsParent(serial))
+            {
+                return false;
+            }
+
+            foreach (uint c in mirror.Contents(serial))
+            {
+                if (c == serial || c == root)
+                {
+                    continue;
+                }
+
+                if (budget == 0 || SubtreeDeeperThan(mirror, root, c, budget - 1))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private enum AttachCheck : byte
+        {
+            Ok,
+            Loop,
+            TooDeep
+        }
+
+        // what World.Get(parent) returns once the item under child exists (the operations create it before resolving the
+        // parent): for parent == child the mobile (World.Get looks a mobile-range serial up among the mobiles first), else the
+        // item itself
+        private bool SelfParentIsMobile(uint serial) => SerialHelper.IsMobile(serial) && _world.Mobiles.Get(serial) != null;
+
+        // a refused attach: the operation writes nothing (the item keeps its values and its place, is not created, and
+        // nothing is removed)
+        private bool RefusedAttach(string operation, uint child, uint parent, bool parentIsMobile, bool childRemoved = false, bool keepsDepth = false) =>
+            Refused(operation, child, parent, CheckAttach(child, parent, parentIsMobile, childRemoved, keepsDepth));
+
+        private bool Refused(string operation, uint child, uint parent, AttachCheck check)
+        {
+            if (check == AttachCheck.Ok)
+            {
+                return false;
+            }
+
+            if (check == AttachCheck.Loop)
+            {
+                CycleRefusals++;
+            }
+            else
+            {
+                DepthRefusals++;
+            }
+
+#if CUO_DEVTOOLS
+            Log.Warn
+            (
+                check == AttachCheck.Loop
+                    ? $"WorldWriter.{operation}: 0x{child:X8} under 0x{parent:X8} would close a loop in the serial graph; refused (nothing written)"
+                    : $"WorldWriter.{operation}: 0x{child:X8} under 0x{parent:X8} would nest deeper than {WorldState.MaxNestingDepth} levels; refused (nothing written)"
+            );
+#endif
+
+            return true;
+        }
+
         // the destroy half of PlaceInContainer's destroy-vs-reuse, its own scope (owning the removed subtree)
         private void RemoveForReplacement(Item item)
         {
@@ -3571,19 +3791,35 @@ namespace ClassicUO.Game
         // a removal's: the placements of the removed item and of everything it contains, at any depth (Codex audit of
         // funnel-2, #3: a removed descendant's late placement is rejected as cancelled, not consumed and dropped). Runs before
         // the removal, while the child lists are intact; nothing to walk when no placement is outstanding (the usual case)
-        private void CancelSubtreePlacements(Entity root)
+        private void CancelSubtreePlacements(Entity root, uint keep = 0xFFFF_FFFF)
         {
             if (_placements.Count == 0)
             {
                 return;
             }
 
-            CancelPlacements(root);
+            CancelSubtreePlacements(root, root.Serial, keep, 0);
+        }
+
+        // T9 slice B2: as the destroy cascade (World.RemoveContentsAndDestroy), the walk does not come back to its root's
+        // serial (a mobile's own children may include the item worn under its serial) or to a clear's kept container, and
+        // stops at WorldState.MaxNestingDepth
+        private void CancelSubtreePlacements(Entity e, uint root, uint keep, int depth)
+        {
+            CancelPlacements(e);
+
+            if (depth >= WorldState.MaxNestingDepth)
+            {
+                return;
+            }
 
             // T9 child-list slice A: the ECS's children (read only: nothing changes during the walk)
-            foreach (Item child in _world.State.Children(root))
+            foreach (Item child in _world.State.Children(e))
             {
-                CancelSubtreePlacements(child);
+                if (child.Serial != keep && (depth == 0 || child.Serial != root))
+                {
+                    CancelSubtreePlacements(child, root, keep, depth + 1);
+                }
             }
         }
 
@@ -3624,7 +3860,6 @@ namespace ClassicUO.Game
             }
 
             parent = _world.Get(item.Container);
-            parent?.Remove(item);
             _world.RemoveItem(serial, true);
         }
 
@@ -3632,11 +3867,26 @@ namespace ClassicUO.Game
         private void CollectSubtree(Entity root)
         {
             _subtree ??= new HashSet<Entity>(ReferenceEqualityComparer.Instance);
-            _subtree.Add(root);
+            CollectSubtree(root, root.Serial, 0);
+        }
 
-            foreach (Item child in _world.State.Children(root))
+        // T9 slice B2: the walk does not come back to its root's serial below the root's own children, and stops at
+        // WorldState.MaxNestingDepth
+        private void CollectSubtree(Entity e, uint root, int depth)
+        {
+            _subtree.Add(e);
+
+            if (depth >= WorldState.MaxNestingDepth)
             {
-                CollectSubtree(child);
+                return;
+            }
+
+            foreach (Item child in _world.State.Children(e))
+            {
+                if (depth == 0 || child.Serial != root)
+                {
+                    CollectSubtree(child, root, depth + 1);
+                }
             }
         }
 #endif

@@ -15,9 +15,9 @@ namespace ClassicUO.UnitTests.Ecs
     // T3a: the equipment readers, which read the ECS (T9 deleted ecs_read_equipment's list path). Every reader goes through
     // Entity.FindItemByLayer (IsMounted, IsDrivingBoat, GetAnimGroupInput's hands, UpdateAbilities,
     // PaperdollOrder.GraphicsFromEntity/BuildInWorld, the paperdoll, Legacy's MobileView) plus MobileView's guard
-    // (WorldState.HasWornItems). On a World that holds its objects, every read is the object the still-maintained child list
-    // has, after every kind of change; a change behind the funnel shows the reader takes the ECS; an instance World does not
-    // hold reads its own list. (GraphicsFromEntity, GetAnimGroupInput and
+    // (WorldState.HasWornItems). On a World that holds its objects, every read is the first child on the layer among the
+    // children computed afresh from the mirror's indexes, after every kind of change; a change behind the funnel shows the
+    // reader takes the ECS; an instance World does not hold wears nothing (the preview: its table). (GraphicsFromEntity, GetAnimGroupInput and
     // UpdateAbilities read the tile data, which the tests do not load: they are covered through FindItemByLayer here and by
     // the gate's -ecscheck hands/mount compare and the paperdoll shots.)
     [Collection("PlayerWorld")]
@@ -30,21 +30,22 @@ namespace ClassicUO.UnitTests.Ecs
 
         private static void BothWays(World world, Action check) => check();
 
-        // every mobile World holds: every layer's item is the child list's first item on it (the same object), the guard is
-        // the list's !IsEmpty, and IsMounted and the system's IsMounted are the list's mount test
+        // every mobile World holds: every layer's item is the first child on it computed afresh (the same object), the guard
+        // is whether a child is on a tracked layer, and IsMounted and the system's IsMounted are that mount test
         internal static void AllReadersEqual(World world)
         {
             foreach (Mobile m in world.Mobiles.Values.ToList())
             {
                 for (int l = 0; l <= 0x1E; l++)
                 {
-                    m.FindItemByLayer((Layer)l).Should().BeSameAs(m.FindItemByLayerInList((Layer)l), $"layer {l} of 0x{m.Serial:X8}");
+                    m.FindItemByLayer((Layer)l).Should().BeSameAs(WornLayersTests.ListFind(m, (Layer)l), $"layer {l} of 0x{m.Serial:X8}");
                 }
 
-                world.State.HasWornItems(m).Should().Be(!m.IsEmpty, $"the guard of 0x{m.Serial:X8}");
+                bool worn = WorldStateContentsTests.HeldChildren(world, m.Serial).Any(s => world.Items.Get(s) is { IsDestroyed: false } it && WornLayers.Tracked((byte)it.Layer));
+                world.State.HasWornItems(m).Should().Be(worn, $"the guard of 0x{m.Serial:X8}");
                 ViewEqualsReads(world, m);
 
-                Item mount = m.FindItemByLayerInList(Layer.Mount);
+                Item mount = WornLayersTests.ListFind(m, Layer.Mount);
                 bool listMounted = mount != null && AnimationRules.IsMountedBy(mount.Serial, mount.Graphic, mount.Graphic < _tiles.Length ? _tiles[mount.Graphic].AnimID : (ushort)0);
                 m.IsMounted.Should().Be(listMounted, $"IsMounted of 0x{m.Serial:X8}");
                 MobileAnimationSystem.IsMounted(m, _tiles).Should().Be(listMounted);
@@ -65,7 +66,7 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Theory]
-        [MemberData(nameof(WorldStateCheckTests.Changes), MemberType = typeof(WorldStateCheckTests))]
+        [MemberData(nameof(WorldStateContentsTests.Changes), MemberType = typeof(WorldStateContentsTests))]
         public void Every_Reader_Is_The_Same_Both_Ways_After_Every_Change(WorldStateContentsTests.Change change)
         {
             World world = WorldStateContentsTests.Build();
@@ -164,20 +165,11 @@ namespace ClassicUO.UnitTests.Ecs
             m.FindItemByLayer(Layer.Helmet).Should().BeNull("the ECS's");
             m.FindItemByLayer(Layer.Robe).Should().BeNull();
             m.FindItemByLayer(Layer.Shirt).Serial.Should().Be(SHIRT);
-
-            // the list emptied behind the funnel: the guard follows the ECS
-            for (LinkedObject i = m.Items; i != null;)
-            {
-                LinkedObject next = i.Next;
-                m.Remove(i);
-                i = next;
-            }
-
             world.State.HasWornItems(m).Should().BeTrue("the ECS still records the shirt");
         }
 
         [Fact]
-        public void The_Appearance_Preview_Outside_The_World_Reads_Its_Own_List()
+        public void The_Appearance_Preview_Outside_The_World_Reads_Its_Table()
         {
             // CreateCharAppearanceGump's preview: a detached PlayerMobile (serial 1) with detached clothes; serial 1 is also a
             // real mobile here, wearing a helmet through the funnel
@@ -189,7 +181,8 @@ namespace ClassicUO.UnitTests.Ecs
             Item shirt = Item.Create(world, PREVIEW_SHIRT);
             shirt.Graphic = 0x1517;
             shirt.Layer = Layer.Shirt;
-            preview.PushToBack(shirt);
+            preview.Preview = new PreviewEquipment();
+            preview.Preview.Wear(shirt);
 
             BothWays(world, () =>
             {
@@ -203,11 +196,11 @@ namespace ClassicUO.UnitTests.Ecs
             });
 
             var bare = new Mobile(world, 1);
-            BothWays(world, () => world.State.HasWornItems(bare).Should().BeFalse("its own empty list"));
+            BothWays(world, () => world.State.HasWornItems(bare).Should().BeFalse("not held, no table: nothing worn"));
         }
 
         [Fact]
-        public void A_Replaced_Mobile_Reads_Its_Own_List_Even_After_A_Cached_Read()
+        public void A_Replaced_Mobile_Wears_Nothing_Even_After_A_Cached_Read()
         {
             World world = WorldStateContentsTests.Build();
             Mobile old = world.Mobiles.Get(MOB);
@@ -221,13 +214,13 @@ namespace ClassicUO.UnitTests.Ecs
             BothWays(world, () =>
             {
                 next.FindItemByLayer(Layer.Helmet).Serial.Should().Be(HELM2);
-                old.FindItemByLayer(Layer.Helmet).Should().BeSameAs(WornLayersTests.ListFind(old, Layer.Helmet), "its own list, never the new record");
-                (old.FindItemByLayer(Layer.Helmet)?.Serial ?? 0).Should().NotBe(HELM2);
+                old.FindItemByLayer(Layer.Helmet).Should().BeNull("not held: nothing, never the new record's");
+                world.State.HasWornItems(old).Should().BeFalse();
             });
         }
 
         [Fact]
-        public void A_Bare_Mobile_Removed_Reads_Its_Own_List_After_A_Cached_Read()
+        public void A_Bare_Mobile_Removed_Wears_Nothing_After_A_Cached_Read()
         {
             // a removal that changes no slot (the mobile wore nothing) still ends the verified identity (the mirror's epoch)
             World world = WorldStateContentsTests.Build();
@@ -237,13 +230,14 @@ namespace ClassicUO.UnitTests.Ecs
 
             world.Writer.RemoveMobile(bare);
             world.Ecs.Mirror.WornWrites.Should().Be(writes, "no slot changed");
-            Item stale = Item.Create(world, PREVIEW_SHIRT);
-            stale.Layer = Layer.Shirt;
-            bare.PushToBack(stale);
+            Mobile next = world.GetOrCreateMobile(LATE);
+            world.Writer.Equip(PREVIEW_SHIRT, 0x1517, Layer.Shirt, LATE, 0, out _, out _);
 
-            bare.FindItemByLayer(Layer.Shirt).Should().BeSameAs(stale, "not held any more: its own list");
-            world.State.HasWornItems(bare).Should().BeTrue();
+            next.FindItemByLayer(Layer.Shirt).Serial.Should().Be(PREVIEW_SHIRT);
+            bare.FindItemByLayer(Layer.Shirt).Should().BeNull("not held any more: never the new record's");
+            world.State.HasWornItems(bare).Should().BeFalse();
             ViewEqualsReads(world, bare);
+            ViewEqualsReads(world, next);
         }
 
         [Fact]
@@ -357,8 +351,6 @@ namespace ClassicUO.UnitTests.Ecs
             // the lists: the pack is B's only, A keeps its other children in order
             WorldStateContentsTests.HeldChildren(world, A).Should().Equal(AHELM, ASHIRT);
             WorldStateContentsTests.HeldChildren(world, B).Should().Equal(APACK);
-            world.Items.Get(APACK).Previous.Should().BeNull();
-            world.Items.Get(APACK).Next.Should().BeNull();
 
             // the ECS read and the list read agree, both ways
             BothWays(world, () =>

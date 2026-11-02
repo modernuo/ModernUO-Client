@@ -478,7 +478,7 @@ namespace ClassicUO.UnitTests.Game.Map
                             s.World.Mobiles.Remove(old);
                             m.Serial = s.NextMobile++ | 0x0080_0000;
                             s.World.Mobiles[m.Serial] = m;
-                            s.World.Ecs.OnSerialChanged(old, m);
+                            ClassicUO.UnitTests.Ecs.LegacyRekeyReference.SerialChanged(s.World, old, m);
                         });
                     }
                 }

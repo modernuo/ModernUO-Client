@@ -59,7 +59,7 @@ namespace ClassicUO.UnitTests.Ecs
 
                 if (SerialHelper.IsValid(item.Container))
                 {
-                    world.RemoveItemFromContainer(item);
+                    LegacyLists.RemoveItemFromContainer(world, item);
                 }
             }
 
@@ -141,7 +141,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             Entity cont = world.Get(item.Container);
             cont?.Remove(item);
-            world.RemoveItem(serial, true);
+            LegacyLists.RemoveItem(world, serial, true);
         }
 
         // the starting states: a mobile wearing ITEM, a bag holding ITEM, ITEM on the ground, or no ITEM
@@ -910,7 +910,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             if (item != null && item.Container != containerSerial && (container.Graphic != 0x2006 || item.Layer == Layer.Invalid))
             {
-                world.RemoveItem(item, true);
+                LegacyLists.RemoveItem(world, item, true);
             }
 
             item = world.GetOrCreateItem(serial);
@@ -924,7 +924,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             if (item.Container != containerSerial)
             {
-                world.RemoveItemFromContainer(item);
+                LegacyLists.RemoveItemFromContainer(world, item);
                 item.Container = containerSerial;
             }
 
@@ -980,7 +980,7 @@ namespace ClassicUO.UnitTests.Ecs
 
         private static void AssertSameCorpseBox(World a, World b)
         {
-            ChildSerials(b.Items.Get(CORPSEBOX)).Should().Equal(ChildSerials(a.Items.Get(CORPSEBOX)), "the corpse's child list, in order");
+            ChildSerials(b.Items.Get(CORPSEBOX)).Should().Equal(OldChildSerials(a.Items.Get(CORPSEBOX)), "the corpse's child list, in order");
             Serials(b.Ecs.Mirror.GetContents(CORPSEBOX)).Should().Equal(Serials(a.Ecs.Mirror.GetContents(CORPSEBOX)), "the corpse's contents index, in order");
         }
 
@@ -1126,17 +1126,24 @@ namespace ClassicUO.UnitTests.Ecs
             b.Hue ^= 1;
         }
 
+        // T9 child-list slice B: a world the funnel wrote has no child list: its children are the ECS's (WorldState.Children,
+        // the spell entries included); an old-path world keeps its own list (LegacyLists.Children), the reference
         private static List<uint> ChildSerials(Entity e)
         {
             var list = new List<uint>();
 
-            for (LinkedObject i = e?.Items; i != null; i = i.Next)
+            if (e?.World != null)
             {
-                list.Add(((Entity)i).Serial);
+                foreach (Item it in e.World.State.Children(e))
+                {
+                    list.Add(it.Serial);
+                }
             }
 
             return list;
         }
+
+        private static List<uint> OldChildSerials(Entity e) => LegacyLists.Children(e);
 
         private static List<uint> Serials(Friflo.Engine.ECS.Entities entities) => entities.Select(x => x.GetComponent<Serial>().Value).ToList();
 
@@ -1161,7 +1168,7 @@ namespace ClassicUO.UnitTests.Ecs
                 }
             }
 
-            ChildSerials(b.Mobiles.Get(MOB)).Should().Equal(ChildSerials(a.Mobiles.Get(MOB)), "the wearer's child list, in order");
+            ChildSerials(b.Mobiles.Get(MOB)).Should().Equal(OldChildSerials(a.Mobiles.Get(MOB)), "the wearer's child list, in order");
 
             WorldMirror ma = a.Ecs.Mirror, mb = b.Ecs.Mirror;
             mb.Count.Should().Be(ma.Count);
@@ -1224,9 +1231,17 @@ namespace ClassicUO.UnitTests.Ecs
             y.IsDestroyed.Should().Be(x.IsDestroyed);
             y.InUpdateList.Should().Be(x.InUpdateList);
             y.IsPositionChanged.Should().Be(x.IsPositionChanged);
-            ChildSerials(y).Should().Equal(ChildSerials(x), "the child list, in order");
-            (y.Next == null).Should().Be(x.Next == null);
-            (y.Previous == null).Should().Be(x.Previous == null);
+            if (WorldMirror.IsWearerSerial(y.Serial))
+            {
+                // T9 child-list slice B (owner question): an item under a mobile's serial reads that serial's contents in the
+                // mirror, which also holds what the mobile wears (or wore, if it left the table with its children attached):
+                // the mirror keeps one record per serial and cannot tell the parents apart. Never the item itself
+                ChildSerials(y).Should().Equal(y.World.State.Contents(y.Serial).ToArray().Where(s => s != y.Serial), "the shared serial's merged contents");
+            }
+            else
+            {
+                ChildSerials(y).Should().Equal(OldChildSerials(x), $"the child list of 0x{y.Serial:X8}, in order");
+            }
         }
 
         // ---- T1 funnel-2: the bulk clear (ClearContainerAndRemoveItems: 0x3C before its first item, 0x24)
@@ -1253,7 +1268,7 @@ namespace ClassicUO.UnitTests.Ecs
                 }
                 else
                 {
-                    world.RemoveItem(it, true);
+                    LegacyLists.RemoveItem(world, it, true);
                 }
 
                 first = next;
@@ -1331,7 +1346,7 @@ namespace ClassicUO.UnitTests.Ecs
             if (before != null)
             {
                 ChildSerials(before).Should().Equal(kept, "only the kept equipment stays, in order");
-                ChildSerials(before).Should().Equal(ChildSerials(oldWorld.Get(containerSerial)));
+                ChildSerials(before).Should().Equal(OldChildSerials(oldWorld.Get(containerSerial)));
             }
 
             AssertSameWorld(oldWorld, newWorld);
@@ -1412,7 +1427,9 @@ namespace ClassicUO.UnitTests.Ecs
         {
             // Codex audit of funnel-2, #1: 0x24 found its container with World.Items.Get (the old OpenContainer lookup), 0x3C
             // with World.Get, which prefers a mobile. An item under a live mobile's serial (the unconverted EquipItem path can
-            // make one) is what 0x24 clears; the mobile's equipment stays
+            // make one) is what 0x24 clears. T9 child-list slice B (owner question): the mirror keeps one record per serial
+            // and cannot tell the item's children from the mobile's, so both clears clear the serial's merged contents (the
+            // old paths kept the other parent's children: the mobile's equipment on 0x24, the item's contents on 0x3C)
             static World BuildTwin()
             {
                 World w = Build(Start.Worn); // MOB wears ITEM (> CHILD > GRANDCHILD)
@@ -1433,19 +1450,23 @@ namespace ClassicUO.UnitTests.Ecs
             OldClear(oldWorld, oldWorld.Items.Get(MOB), false);
             newWorld.Writer.ClearContainer(MOB, false, itemOnly: true);
 
+            oldWorld.Items.Get(0x4000_7061).Should().BeNull("the item's contents are cleared");
+            OldChildSerials(oldWorld.Mobiles.Get(MOB)).Should().Equal(new[] { ITEM }, "the old path kept the mobile's equipment");
             newWorld.Items.Get(0x4000_7061).Should().BeNull("the item's contents are cleared");
-            newWorld.Items.Get(MOB).Items.Should().BeNull();
-            ChildSerials(newWorld.Mobiles.Get(MOB)).Should().Equal(new[] { ITEM }, "the mobile's equipment is not touched");
-            newWorld.Items.Get(ITEM).IsDestroyed.Should().BeFalse();
-            AssertSameWorld(oldWorld, newWorld);
+            newWorld.Items.Get(ITEM).Should().BeNull("merged: the mobile's equipment goes too");
+            newWorld.Items.Get(MOB).Should().NotBeNull("the item itself is not its own child");
+            newWorld.State.HasChildren(newWorld.Mobiles.Get(MOB)).Should().BeFalse();
+            newWorld.State.HasChildren(newWorld.Items.Get(MOB)).Should().BeFalse();
 
             // the fixture tells the lookups apart: World.Get (0x3C's) clears the mobile instead, as the old 0x3C did
             World oldMobile = BuildTwin(), newMobile = BuildTwin();
             OldClear(oldMobile, oldMobile.Get(MOB), false);
             newMobile.Writer.ClearContainer(MOB, false, itemOnly: false);
+            oldMobile.Items.Get(ITEM).Should().BeNull("World.Get found the mobile and removed its equipment");
+            oldMobile.Items.Get(0x4000_7061).Should().NotBeNull("the old path kept the item's contents");
             newMobile.Items.Get(ITEM).Should().BeNull("World.Get found the mobile and removed its equipment");
-            newMobile.Items.Get(0x4000_7061).Should().NotBeNull();
-            AssertSameWorld(oldMobile, newMobile);
+            newMobile.Items.Get(0x4000_7061).Should().BeNull("merged: the item's contents go too");
+            newMobile.Items.Get(MOB).Should().NotBeNull();
         }
 
         [Fact]
@@ -1520,19 +1541,19 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 if (SerialHelper.IsMobile(container.Serial))
                 {
-                    world.RemoveItemFromContainer(item);
+                    LegacyLists.RemoveItemFromContainer(world, item);
                     container.PushToBack(item);
                     item.Container = container.Serial;
                     world.Ecs.Sync(item);
                 }
                 else
                 {
-                    world.RemoveItem(item, true);
+                    LegacyLists.RemoveItem(world, item, true);
                 }
             }
             else
             {
-                world.RemoveItemFromContainer(item);
+                LegacyLists.RemoveItemFromContainer(world, item);
                 item.SetInWorldTile(item.X, item.Y, item.Z);
             }
 
@@ -1604,6 +1625,7 @@ namespace ClassicUO.UnitTests.Ecs
             after.Container = MOB;
             m.PushToBack(after);
             world.Ecs.Sync(after);
+            AttachLists(world);
 
             ChildSerials(m).Should().Equal(worn ? new[] { WORN_BEFORE, ITEM, WORN_AFTER } : new[] { WORN_BEFORE, WORN_AFTER });
         }
@@ -1795,7 +1817,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             if (item.Graphic != 0 && item.Layer != Layer.Backpack)
             {
-                world.RemoveItemFromContainer(item);
+                LegacyLists.RemoveItemFromContainer(world, item);
             }
             else if (item.Container != e.Container)
             {
@@ -1975,7 +1997,7 @@ namespace ClassicUO.UnitTests.Ecs
 
                     if (!it.Opened && it.Layer != Layer.Backpack)
                     {
-                        world.RemoveItem(it.Serial, true);
+                        LegacyLists.RemoveItem(world, it.Serial, true);
                     }
 
                     o = next;
@@ -1988,7 +2010,7 @@ namespace ClassicUO.UnitTests.Ecs
                 item.Graphic = e.Graphic;
                 item.FixHue(e.Hue);
                 item.Amount = 1;
-                world.RemoveItemFromContainer(item);
+                LegacyLists.RemoveItemFromContainer(world, item);
                 item.Container = serial;
                 item.Layer = e.Layer;
 
@@ -2013,7 +2035,17 @@ namespace ClassicUO.UnitTests.Ecs
 
             foreach (var e in entries)
             {
-                world.Writer.WearItem(obj, e.Serial, e.Graphic, e.Layer, e.Hue).Should().BeSameAs(world.Items.Get(e.Serial));
+                Item worn = world.Writer.WearItem(obj, e.Serial, e.Graphic, e.Layer, e.Hue);
+
+                // T9 child-list slice B2: an item owner's entry naming the item itself is refused (an item never wears itself)
+                if (obj is Item && e.Serial == serial)
+                {
+                    worn.Should().BeNull();
+                }
+                else
+                {
+                    worn.Should().BeSameAs(world.Items.Get(e.Serial));
+                }
             }
         }
 
@@ -2104,15 +2136,7 @@ namespace ClassicUO.UnitTests.Ecs
         {
             Mobile owner = world.Mobiles.Get(MOB);
             world.Mobiles.Remove(owner.Serial).Should().BeTrue();
-
-            for (LinkedObject i = owner.Items; i != null; i = i.Next)
-            {
-                ((Item)i).Container = DEAD;
-            }
-
-            world.Mobiles[DEAD] = owner;
-            owner.Serial = DEAD;
-            world.Ecs.OnSerialChanged(MOB, owner);
+            LegacyRekeyReference.Rekey(world, owner, DEAD);
         }
 
         private static World BuildDeadOwner(out uint dead)
@@ -2140,19 +2164,32 @@ namespace ClassicUO.UnitTests.Ecs
             foreach (World w in new[] { oldWorld, newWorld })
             {
                 w.Get(dead).Should().BeOfType<Item>("the entry's item now shadows the mobile for World.Get");
-                ChildSerials(w.Mobiles.Get(dead)).Should().EndWith(new[] { dead, NEWITEM });
                 w.Items.Get(NEWITEM).Container.Should().Be(dead);
-                ChildSerials(w.Items.Get(dead)).Should().BeEmpty("the following entry is the mobile's, not the new item's");
             }
+
+            OldChildSerials(oldWorld.Mobiles.Get(dead)).Should().EndWith(new[] { dead, NEWITEM });
+            OldChildSerials(oldWorld.Items.Get(dead)).Should().BeEmpty("the following entry is the mobile's, not the new item's");
+            ChildSerials(newWorld.Mobiles.Get(dead)).Should().EndWith(new[] { dead, NEWITEM });
+
+            // T9 child-list slice B (owner question): the item under the mobile's serial reads the serial's merged contents
+            // (all the mobile wears but itself); the entries were still worn by the captured mobile, as before
+            ChildSerials(newWorld.Items.Get(dead)).Should().Equal(ChildSerials(newWorld.Mobiles.Get(dead)).Where(s => s != dead));
 
             newWorld.Writer.InScope.Should().BeFalse();
             AssertSameWorld(oldWorld, newWorld);
 
             // the same packet again: now the handler's own World.Get finds the item, so that item is the captured owner for
-            // the whole list (as before T1; the entry naming it is pushed into itself, as the old loop did)
+            // the whole list (as before T1). T9 child-list slice B (owner question): the item's clear before the list now
+            // clears the serial's merged contents, so the mobile's equipment goes too (the old path's item list was empty);
+            // the worlds no longer compare equal here. T9 slice B2: the entry naming the item is refused (the old loop pushed
+            // the item into itself, a loop); the following entry still goes under the item
+            newWorld.Writer.CycleRefusals.Should().Be(0);
             OldWear(oldWorld, dead, entries);
             NewWear(newWorld, dead, entries);
-            AssertSameWorld(oldWorld, newWorld);
+            newWorld.Writer.CycleRefusals.Should().Be(1);
+            newWorld.Writer.InScope.Should().BeFalse();
+            newWorld.Items.Get(NEWITEM).Container.Should().Be(dead);
+            ChildSerials(newWorld.Items.Get(dead)).Should().NotContain(dead, "an item is never its own child");
         }
 
         [Fact]

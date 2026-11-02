@@ -21,11 +21,18 @@ namespace ClassicUO.UnitTests.Ecs
         private const uint HELM2 = 0x4000_7960, HELM3 = 0x4000_7961, LATE = 0x0000_3960, ORPHAN = 0x4000_7962, OTHER = 0x0000_3961;
 
         // the legacy walk (Entity.FindItemByLayer before T3a): the first non-destroyed child on the layer
+        // T9 child-list slice B: the first held, non-destroyed child on the layer among the parent's children computed afresh
+        // from the mirror's indexes (WorldStateContentsTests.HeldChildren; the child list is gone)
         internal static Item ListFind(Entity e, Layer layer)
         {
-            for (LinkedObject i = e?.Items; i != null; i = i.Next)
+            if (e?.World == null)
             {
-                Item it = (Item)i;
+                return null;
+            }
+
+            foreach (uint s in WorldStateContentsTests.HeldChildren(e.World, e.Serial))
+            {
+                Item it = e.World.Items.Get(s);
 
                 if (!it.IsDestroyed && it.Layer == layer)
                 {
@@ -46,15 +53,7 @@ namespace ClassicUO.UnitTests.Ecs
                     world.Ecs.Mirror.Worn(m.Serial, (byte)l).Should().Be(it?.Serial ?? 0, $"layer 0x{l:X2} of 0x{m.Serial:X8}");
 
                     // the layer's count of attached items (what spares the rescan) is the list's count of held items on it
-                    int listed = 0;
-
-                    for (LinkedObject i = m.Items; i != null; i = i.Next)
-                    {
-                        if (i is Item c && c.Layer == (Layer)l && ReferenceEquals(world.Items.Get(c.Serial), c))
-                        {
-                            listed++;
-                        }
-                    }
+                    int listed = WorldStateContentsTests.HeldChildren(world, m.Serial).Count(s => world.Items.Get(s).Layer == (Layer)l);
 
                     world.Ecs.Mirror.WornCount(m.Serial, (byte)l).Should().Be(listed, $"count of layer 0x{l:X2} of 0x{m.Serial:X8}");
                 }
