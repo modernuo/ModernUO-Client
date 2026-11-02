@@ -2324,6 +2324,43 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Fact]
+        public void Dev_Write_Scope_Exempts_Inside_Nests_And_Reports_Outside()
+        {
+            var world = new World();
+            Mobile m = world.GetOrCreateMobile(MOB);
+            FunnelCheck.Reset();
+
+            using (FunnelCheck.DevWrite())
+            {
+                m.X = 10;
+
+                using (FunnelCheck.DevWrite())
+                {
+                    m.Y = 11;
+                }
+
+                // still inside the outer scope after the inner one closed
+                m.Z = 12;
+            }
+
+            if (!FunnelCheck.Available)
+            {
+                return; // -p:CuoDevTools=false: the scope is empty and the check is compiled out
+            }
+
+            FunnelCheck.Total.Should().Be(0);
+            FunnelCheck.DevExempt.Should().Be(3);
+            FunnelCheck.Sites.Should().BeEmpty();
+
+            m.X = 13;
+
+            FunnelCheck.Total.Should().Be(1);
+            FunnelCheck.Count(FunnelField.X).Should().Be(1);
+            FunnelCheck.DevExempt.Should().Be(3);
+            FunnelCheck.Sites.Keys.Should().Contain(k => k.Item1 == FunnelField.X && k.Item2.Contains(nameof(Dev_Write_Scope_Exempts_Inside_Nests_And_Reports_Outside)));
+        }
+
+        [Fact]
         public void The_Mutation_Methods_Are_Covered()
         {
             if (!FunnelCheck.Available)

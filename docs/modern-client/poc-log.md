@@ -5050,3 +5050,11 @@ Paired NativeAOT builds (`CuoDevTools=true`, checkers off), all on the quiet mac
   - Shots bench-000223 are within the cross-session control bench-000224.
   - `world_tile_index` stays default off until the parked timing decides.
 - Unit tests after the merge: 2,857 passed, 6 skipped. The first run had 1 failure that passed on rerun. This is a flake; its name was not captured.
+
+### FunnelCheck dev-write scope: AOT-safe teleport exemption (funnel-dev-scope, 2026-11-02)
+
+- **Problem:** `DevBench.LocalTeleport` and `FixTeleportZ` write the player's position directly (`SetInWorldTile`), a known dev-only write. Under NativeAOT, `FunnelCheck` cannot resolve stack frames, so the warning read `[funnel] direct write X at Bootstrap.Main` and the plans-fast gate false-FAILed (bench-000222, AOT; the JIT log bench-000217 names the DevBench callers).
+- **Change (bg/funnel-dev-scope 73cb62e51):** `FunnelCheck.DevWrite()` opens a nesting struct scope (a static depth counter, no allocation). Writes inside it are counted in `DevExempt`, shown as `| dev-exempt N` at the end of the `[funnel] direct writes` summary line, and not reported or counted in `Total`. Both DevBench teleport writes are wrapped. Every other direct write is reported as before. Without CUO_DEVTOOLS the scope is empty.
+- **Gates:** no gate script matched the DevBench caller names; they fail on any `[funnel]` warning, so they need no change and now pass the teleport plans under AOT.
+- Unit tests: 2,856 passed, 6 skipped, in both CuoDevTools variants (new: `Dev_Write_Scope_Exempts_Inside_Nests_And_Reports_Outside`).
+- Correctness: plans-fast (tile-index-fix-a pattern) against an AOT build of the branch, bench-000229 (result pending at the time of writing).
