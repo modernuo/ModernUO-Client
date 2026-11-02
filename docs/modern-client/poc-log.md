@@ -5288,3 +5288,19 @@ Paired NativeAOT builds (`CuoDevTools=true`, checkers off), all on the quiet mac
 - Codex: no P0–P2. Two P3s accepted: `OnChildRemoved` callbacks now all run before the range removal (no override exists), and the hue frame cache can lag one frame after a DevBench range change.
 - Dropped: a non-allocating `FindControls` (no per-frame caller).
 - Tip gates for slice A + perf-10 together (7faac3caf): bench-000287 Gpu, bench-000288 Legacy, queued. Timing parked (`measure/perf-10/job-timing-PARKED.sh`).
+
+### T9 child-list slice B merged: the entity child list is no longer written (coordinator, 2026-11-02)
+
+- Merge e7c9f373c (unit tests 3,027 passed, 6 skipped; release 3,022). Branch chain:
+  - 1ea3b8033: the writer stops writing the list. Deleted: the list upkeep, `FindItemByLayerInList`, `CUO_CONTENTS_CHECK`, `CUO_EQUIP_READ_CHECK`, `WorldEcs.CompareChildren` and `OnSerialChanged`, `WorldState.Shared`/`ListSerials` (−69 checker and list-divergence tests). 1db37ad9d: devdocs.
+  - An item and a mobile under one serial now read the serial's merged ECS contents (the mirror keeps one record per serial; keying by kind would touch every attach and read path). Behaviour changes only in that case.
+  - Codex found a P1 in the merge: indirect loops (rekey, then equip onto the mobile's former item) made `FindItem`, `GetTotalAmount` and the destroy cascades overflow the stack. Fixed over three rounds, each with failing-first tests (27 in `SerialGraphCycleTests`):
+    - 05d2600c2: `WorldWriter` refuses any attach or death rekey that would close a loop; recursive readers and cascades are bounded; clears never remove their own root.
+    - 00fdb3950: a refusal is decided before any removal; an attach that would nest deeper than 256 levels is refused, so every bounded walk reaches every item.
+    - 56336a395: self-parent attaches and the death rekey also check the depth; destroyed cached instances are ignored in 0x25's replacement prediction.
+  - The final Codex pass over the fix chain found no P0–P3 and no change for legitimate traffic (0x3C in any order included).
+- Merge conflicts with perf-10: `Entity.FindItemByLayer` keeps the counter; perf-10's worn-items view now has slice B's semantics, and the public `WornItem`/`HasWornItems` go through it.
+- Gates: slice B plans bench-000291 PASS; shots bench-000293 PASS (bench-000292's Gpu "new" session was disconnected 2 s after login and never teleported; the rerun is clean, base vs new within base vs baseb). B2 bench-000294/295, B3 Gpu bench-000296, B4 bench-000298/299 PASS with 0 attach refusals. Tip gates on e7c9f373c bench-000300/301 PASS.
+- Also: tip gates for slice A + perf-10 (7faac3caf) bench-000287/288 PASS.
+- Timing parked (`measure/t9-childlist-b/job-timing-PARKED.sh`).
+- Next: optional `LinkedObject` off `BaseGameObject` (−24 B per Item/Mobile); T9 for the 7 switches flipped today.
