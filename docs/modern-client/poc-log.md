@@ -5254,3 +5254,15 @@ Paired NativeAOT builds (`CuoDevTools=true`, checkers off), all on the quiet mac
   - removing disposed children in `Control.Update` is O(n²) (`RemoveAt` in the loop);
   - `FindControls` allocates on every call;
   - in dev builds, `Extract.Run` runs every frame whenever `-ecscheck` > 0, even between checks.
+
+### T9 child-list slice A merged (coordinator, 2026-11-02)
+
+- Merge 0bb1d8ba8 (unit tests 3,059 passed, 6 skipped). About 25 production readers of the entity child list now read the ECS:
+  - destroy cascades walk a LIFO snapshot of the ECS children, contents first in child order;
+  - the funnel walks (clear container, clear worn items, spellbook detach, shop sort, death rekey, bank, subtree walks);
+  - corpse `FindItemByLayer`, the held mobile's layer 0, the char-creation preview (`PreviewEquipment` table);
+  - the session driver and DevBench walks.
+- An item and a mobile that share one serial still read their own list; slice B decides that case.
+- New checker `CUO_LAYER_CACHE_CHECK` restores the `LayerDecision` cache check lost with slice 3.
+- Gates: Gpu bench-000279, Legacy bench-000280 (layer-cache, equip and contents mismatches 0), plans bench-000281 PASS; shots bench-000282 PASS (base vs new within base vs baseb). Codex: no findings. Timing parked (`measure/t9-childlist-a/job-timing-PARKED.sh`).
+- Next: slice B stops writing the list and deletes `FindItemByLayerInList`, `CUO_CONTENTS_CHECK` and `CUO_EQUIP_READ_CHECK`.
