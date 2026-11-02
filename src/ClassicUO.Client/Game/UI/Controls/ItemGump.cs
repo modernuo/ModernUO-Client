@@ -46,22 +46,53 @@ namespace ClassicUO.Game.UI.Controls
             {
                 _graphic = value;
 
-                ref readonly var spriteInfo = ref _is_gump
-                    ? ref Client.Game.UO.Gumps.GetGump(value)
-                    : ref Client.Game.UO.Arts.GetArt(value);
-
-                if (spriteInfo.Texture == null)
+                // perf-6: the size without decoding; the art decodes at first draw or hit test (a worker started on it here)
+                if (!TryGetSpriteSize(value, _is_gump, out int width, out int height))
                 {
                     Dispose();
 
                     return;
                 }
 
-                Width = spriteInfo.UV.Width;
-                Height = spriteInfo.UV.Height;
+                // only while something drains finished art (Map.UpdateLoading): otherwise a control disposed before its first
+                // draw would leave its worker result holding a pooled buffer and decode budget until teardown
+                if (!_is_gump && global::ClassicUO.Game.Map.FirstSightArt.On)
+                {
+                    Client.Game.UO.Arts.RequestArt(value);
+                }
+
+                Width = width;
+                Height = height;
 
                 IsPartialHue = !_is_gump && Client.Game.UO.FileManager.TileData.StaticData[value].IsPartialHue;
             }
+        }
+
+        /// <summary>
+        /// The UV size of the sprite <see cref="AddToRenderLists"/> draws for <paramref name="graphic"/> (static art, or a gump
+        /// for chess and backgammon pieces), read from the size tables where possible. False where the lookup would return
+        /// no texture.
+        /// </summary>
+        internal static bool TryGetSpriteSize(ushort graphic, bool isGump, out int width, out int height)
+        {
+            if (!isGump)
+            {
+                return Client.Game.UO.Arts.TryGetArtSize(graphic, out width, out height);
+            }
+
+            // pack gumps only: a MUL/UOP size can be the archive's while a loose Gumps/<id>.gump overrides the image
+            if (Client.Game.UO.FileManager.Gumps.FromPack
+                && Client.Game.UO.Gumps.TryGetSize(graphic, out width, out height) && width > 0 && height > 0)
+            {
+                return true;
+            }
+
+            // MUL/UOP gumps (CUO_PACK_GUMPS=0) and gumps without a size: decode, as before
+            ref readonly var spriteInfo = ref Client.Game.UO.Gumps.GetGump(graphic);
+            width = spriteInfo.UV.Width;
+            height = spriteInfo.UV.Height;
+
+            return spriteInfo.Texture != null;
         }
 
         public ushort Hue { get; set; }

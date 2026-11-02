@@ -177,6 +177,7 @@ namespace ClassicUO.UnitTests.Renderer
 
     // perf-5: art missing from the pack gets the placeholder (Get(0)); the miss is remembered per id, so it is logged
     // once instead of every frame.
+    [Collection("ArtStatics")]
     public class ArtMissingSpriteTests
     {
         [Fact]

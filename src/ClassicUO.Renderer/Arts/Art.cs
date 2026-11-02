@@ -315,6 +315,48 @@ namespace ClassicUO.Renderer.Arts
             _frameAllowance.Clear();
         }
 
+        /// <summary>
+        /// The UV size <see cref="GetArt"/> would return for static art <paramref name="graphic"/>, without decoding it:
+        /// the atlas rect once uploaded, else the pack sprite table's size, else (art missing from the pack) the
+        /// placeholder's. False where GetArt would return no texture. perf-6: controls size themselves from this and
+        /// leave the decode to their first draw or hit test.
+        /// </summary>
+        public bool TryGetArtSize(uint graphic, out int width, out int height) => TryGetSize(graphic + 0x4000, out width, out height);
+
+        private bool TryGetSize(uint idx, out int width, out int height)
+        {
+            if (idx < _spriteInfos.Length)
+            {
+                ref readonly var spriteInfo = ref _spriteInfos[idx];
+
+                if (spriteInfo.Texture != null)
+                {
+                    width = spriteInfo.UV.Width;
+                    height = spriteInfo.UV.Height;
+
+                    return true;
+                }
+
+                if (_artLoader.Exists((int)idx))
+                {
+                    ref readonly var sprite = ref _artLoader.PackSpriteEntries[idx];
+                    width = sprite.OrigW;
+                    height = sprite.OrigH;
+
+                    return true;
+                }
+
+                if (idx > 0)
+                {
+                    return TryGetSize(0, out width, out height); // Get's placeholder for art missing from the pack
+                }
+            }
+
+            width = height = 0;
+
+            return false;
+        }
+
         public ref readonly SpriteInfo GetLand(uint idx)
             => ref Get((uint)(idx & ~0x4000));
 
