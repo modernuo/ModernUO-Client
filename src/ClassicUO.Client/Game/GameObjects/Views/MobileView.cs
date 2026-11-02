@@ -339,18 +339,13 @@ namespace ClassicUO.Game.GameObjects
             // T3a: any worn item, from the ECS (WorldState.HasWornItems)
             if (World.State.HasWornItems(this))
             {
-                // draw order built from the layer algorithm (PaperdollOrder), keyed on
-                // the equipped item graphics; cloak is then repositioned by facing
-                // direction to match the in-world tables. Stack-allocated, no GC churn.
                 Span<Layer> layers = stackalloc Layer[PaperdollOrder.N];
 
-                // T3b: ecs_layer_rules (default off) takes the order, the covering and the gargoyle remaps from the
-                // layering rules data (LayerRuleEval); CUO_LAYER_RULES_CHECK=1 compares both answers
-                bool layerData = LayerRuleEval.On;
+                // T3b: the order, the covering and the gargoyle remaps from the layering rules data (LayerRuleEval)
                 LayerTables layerTables = default;
-                LayerSubject layerSubject = default;
+                LayerSubject layerSubject;
                 // T3b cache: the mobile's whole answer, reused until its equipment, body or flags change (null: evaluate)
-                LayerDecision layerCache = layerData ? World.State.WorldLayers(this, isGargoyle) : null;
+                LayerDecision layerCache = World.State.WorldLayers(this, isGargoyle);
                 int layerCount;
 
                 if (layerCache != null)
@@ -360,20 +355,11 @@ namespace ClassicUO.Game.GameObjects
                     layerCount = cached.Length;
                     layerSubject = layerCache.Subject;
                 }
-                else if (layerData)
+                else
                 {
                     layerTables.Gather(this);
                     layerSubject = LayerRuleEval.Subject(Graphic, IsFemale, isGargoyle);
                     layerCount = LayerRuleEval.BuildInWorld(layerTables.Anim, layerSubject, layerDir, layers);
-                }
-                else
-                {
-                    layerCount = PaperdollOrder.BuildInWorld(this, IsFemale || isGargoyle, layerDir, layers);
-                }
-
-                if (LayerRuleEval.CheckEnabled)
-                {
-                    LayerRuleEval.CheckWorld(this, isGargoyle, layerDir, layerCache);
                 }
 
                 for (int i = 0; i < layerCount; i++)
@@ -394,28 +380,15 @@ namespace ClassicUO.Game.GameObjects
 
                     if (isHuman)
                     {
-                        if (layerCache != null ? layerCache.IsCovered(layer) : layerData ? LayerRuleEval.IsCovered(LayerRuleSet.World, layer, ref layerTables, layerSubject) : IsCovered(this, layer))
+                        if (layerCache != null ? layerCache.IsCovered(layer) : LayerRuleEval.IsCovered(LayerRuleSet.World, layer, ref layerTables, layerSubject))
                         {
                             continue;
                         }
 
                         if (item.ItemData.AnimID != 0)
                         {
-                            graphic = item.ItemData.AnimID;
-
-                            // with ecs_layer_rules the remap rules' conditions decide (the defaults need the gargoyle draw flag)
-                            if (layerCache != null)
-                            {
-                                graphic = layerCache.Remap(layer);
-                            }
-                            else if (layerData)
-                            {
-                                graphic = LayerRuleEval.Remap(graphic, layerSubject);
-                            }
-                            else if (isGargoyle)
-                            {
-                                FixGargoyleEquipments(ref graphic);
-                            }
+                            // the remap rules' conditions decide (the defaults need the gargoyle draw flag)
+                            graphic = layerCache != null ? layerCache.Remap(layer) : LayerRuleEval.Remap(item.ItemData.AnimID, layerSubject);
 
                             if (
                                 Client.Game.UO.FileManager.Animations.EquipConversions.TryGetValue(
@@ -541,39 +514,8 @@ namespace ClassicUO.Game.GameObjects
             );
         }
 
-        private static ushort GetAnimationInfo(Mobile owner, Item item, bool isGargoyle)
-        {
-            if (item.ItemData.AnimID != 0)
-            {
-                var graphic = item.ItemData.AnimID;
-
-                if (isGargoyle)
-                {
-                    FixGargoyleEquipments(ref graphic);
-                }
-
-                if (
-                    Client.Game.UO.FileManager.Animations.EquipConversions.TryGetValue(
-                        owner.Graphic,
-                        out Dictionary<ushort, EquipConvData> map
-                    )
-                )
-                {
-                    if (map.TryGetValue(item.ItemData.AnimID, out EquipConvData data))
-                    {
-                        _equipConvData = data;
-                        graphic = data.Graphic;
-                    }
-                }
-
-                return graphic;
-            }
-
-            return 0xFFFF;
-        }
-
-        /// <summary>T3b: GetAnimationInfo with the gargoyle remap from the layering rules data (ecs_layer_rules).</summary>
-        private static ushort GetAnimationInfoData(Mobile owner, Item item, LayerSubject subject, LayerDecision cache)
+        /// <summary>The hit-test graphic of a worn item: the remap from the layering rules data (T3b), then the equip conversion.</summary>
+        private static ushort GetAnimationInfo(Mobile owner, Item item, LayerSubject subject, LayerDecision cache)
         {
             if (item.ItemData.AnimID != 0)
             {
@@ -599,89 +541,6 @@ namespace ClassicUO.Game.GameObjects
             }
 
             return 0xFFFF;
-        }
-
-        /// <summary>T3b: the hard-coded remaps, for CUO_LAYER_RULES_CHECK.</summary>
-        internal static void FixGargoyleEquipmentsHard(ref ushort graphic) => FixGargoyleEquipments(ref graphic);
-
-        private static void FixGargoyleEquipments(ref ushort graphic)
-        {
-            switch (graphic)
-            {
-                // gargoyle robe
-                case 0x01D5:
-                    graphic = 0x0156;
-
-                    break;
-
-                // gargoyle dead shroud
-                case 0x03CA:
-                    graphic = 0x0223;
-
-                    break;
-
-                // gargoyle spellbook
-                case 0x03D8:
-                    graphic = 329;
-
-                    break;
-
-                // gargoyle necrobook
-                case 0x0372:
-                    graphic = 330;
-
-                    break;
-
-                // gargoyle chivalry book
-                case 0x0374:
-                    graphic = 328;
-
-                    break;
-
-                // gargoyle bushido book
-                case 0x036F:
-                    graphic = 327;
-
-                    break;
-
-                // gargoyle ninjitsu book
-                case 0x036E:
-                    graphic = 328;
-
-                    break;
-
-                // gargoyle masteries book
-                case 0x0426:
-                    graphic = 0x042B;
-
-                    break;
-                //NOTE: gargoyle mysticism book seems ok. Mha!
-
-
-                /* into the mobtypes.txt file of 7.0.90+ client version we have:
-                 *
-                 *   1529 	EQUIPMENT	0		# EQUIP_Shield_Pirate_Male_H
-                 *   1530 	EQUIPMENT	0		# EQUIP_Shield_Pirate_Female_H
-                 *   1531 	EQUIPMENT	10000	# Equip_Shield_Pirate_Male_G
-                 *   1532 	EQUIPMENT	10000	# Equip_Shield_Pirate_Female_G
-                 *
-                 *   This means that graphic 0xA649 [pirate shield] has 4 tiledata infos.
-                 *   Standard client handles it automatically without any issue.
-                 *   Maybe it's hardcoded into the client
-                 */
-
-                // EQUIP_Shield_Pirate_Male_H
-                case 1529:
-                    graphic = 1531;
-
-                    break;
-
-                // EQUIP_Shield_Pirate_Female_H
-                case 1530:
-                    graphic = 1532;
-
-                    break;
-            }
         }
 
         private static bool GetTexture(
@@ -1187,19 +1046,17 @@ namespace ClassicUO.Game.GameObjects
             // T3a: any worn item, from the ECS (WorldState.HasWornItems)
             if (isHuman && World.State.HasWornItems(this))
             {
-                // T3b: ecs_layer_rules (default off): the covering and the gargoyle remaps from the layering rules data
-                bool layerData = LayerRuleEval.On;
+                // T3b: the covering and the gargoyle remaps from the layering rules data
                 LayerTables layerTables = default;
-                LayerSubject layerSubject = default;
+                LayerSubject layerSubject;
                 // T3b cache: the covering and the remaps from the mobile's cached answer (null: evaluate)
-                LayerDecision layerCache = layerData ? World.State.WorldLayers(this, isGargoyle) : null;
+                LayerDecision layerCache = World.State.WorldLayers(this, isGargoyle);
 
                 if (layerCache != null)
                 {
                     layerSubject = layerCache.Subject;
                 }
-
-                if ((layerData && layerCache == null) || LayerRuleEval.CheckEnabled)
+                else
                 {
                     layerTables.Gather(this);
                     layerSubject = LayerRuleEval.Subject(Graphic, IsFemale, isGargoyle);
@@ -1214,24 +1071,12 @@ namespace ClassicUO.Game.GameObjects
                         continue;
                     }
 
-                    if (LayerRuleEval.CheckEnabled)
-                    {
-                        LayerRuleEval.CheckPick(this, layer, ref layerTables, layerSubject, layerCache);
-                    }
-
-                    if (layerCache != null ? layerCache.IsCovered(layer) : layerData ? LayerRuleEval.IsCovered(LayerRuleSet.World, layer, ref layerTables, layerSubject) : IsCovered(this, layer))
+                    if (layerCache != null ? layerCache.IsCovered(layer) : LayerRuleEval.IsCovered(LayerRuleSet.World, layer, ref layerTables, layerSubject))
                     {
                         continue;
                     }
 
-                    if (LayerRuleEval.CheckEnabled)
-                    {
-                        // the resolved hit-test graphic from both helpers (the used one runs last below, so its equip
-                        // conversion is the one left in _equipConvData)
-                        LayerRuleEval.ComparePickGraphic(Serial, layer, GetAnimationInfo(this, item, isGargoyle), GetAnimationInfoData(this, item, layerSubject, layerCache));
-                    }
-
-                    graphic = layerData ? GetAnimationInfoData(this, item, layerSubject, layerCache) : GetAnimationInfo(this, item, isGargoyle);
+                    graphic = GetAnimationInfo(this, item, layerSubject, layerCache);
 
                     if (graphic != 0xFFFF)
                     {
@@ -1278,262 +1123,6 @@ namespace ClassicUO.Game.GameObjects
                             }
                         }
                     }
-                }
-            }
-
-            return false;
-        }
-
-        internal static bool IsCovered(Mobile mobile, Layer layer)
-        {
-            // T3a: any worn item, from the ECS (WorldState.HasWornItems)
-            if (!mobile.World.State.HasWornItems(mobile))
-            {
-                return false;
-            }
-
-            // Explicit per-layer occlusion. The paint order alone is not enough: a layer's
-            // gump can paint outside the bounds of the item meant to cover it (oversized
-            // custom art leaks past the occluder — e.g. chest 0x3DC0 sticking out below
-            // robe 0x3CAC), so layers that an occluder is expected to fully hide are culled
-            // here. Robe graphics are compared raw (item.Graphic); pants/skirt/robe AnimIDs
-            // use the equip AnimID (item.ItemData.AnimID). The exception robe graphics are
-            // open/half robes that leave the chest/arms visible.
-            Item robe = mobile.FindItemByLayer(Layer.Robe);
-            ushort robeGfx = robe?.Graphic ?? 0;
-            ushort robeAnim = robe?.ItemData.AnimID ?? 0;
-
-            bool robeLeavesChestVisible =
-                robeGfx == 0x9985 || robeGfx == 0x9986 || robeGfx == 0xA2CA
-                || robeGfx == 0xA2CB || robeGfx == 0xA412 || robeGfx == 0xB1DE;
-
-            switch (layer)
-            {
-                case Layer.Shoes:
-                {
-                    Item pants = mobile.FindItemByLayer(Layer.Pants);
-                    ushort pantsAnim = pants?.ItemData.AnimID ?? 0;
-
-                    if (robeAnim != 0x504 && pantsAnim != 0x513 && pantsAnim != 0x514)
-                    {
-                        ushort pantsGfx = pants?.Graphic ?? 0;
-
-                        if (pantsGfx < 0xAEB2)
-                        {
-                            if (pantsGfx == 0xAEB1 || pantsGfx == 0x1411)
-                            {
-                                return true;
-                            }
-
-                            if (pantsGfx != 0xAEA2)
-                            {
-                                // plate/studded legs paint under shoes
-                                return mobile.FindItemByLayer(Layer.Legs) != null;
-                            }
-                        }
-                        else
-                        {
-                            if (pantsGfx == 0xAEC0)
-                            {
-                                return true;
-                            }
-
-                            if (pantsGfx != 0xAECF)
-                            {
-                                return mobile.FindItemByLayer(Layer.Legs) != null;
-                            }
-                        }
-                    }
-
-                    return true;
-                }
-
-                case Layer.Pants:
-                {
-                    if (mobile.FindItemByLayer(Layer.Legs) != null || robeAnim == 0x504)
-                    {
-                        return true;
-                    }
-
-                    Item pants = mobile.FindItemByLayer(Layer.Pants);
-                    ushort pantsAnim = pants?.ItemData.AnimID ?? 0;
-
-                    if (pantsAnim != 0x1EB && pantsAnim != 0x1FA && pantsAnim != 0x200)
-                    {
-                        return false;
-                    }
-
-                    Item skirt = mobile.FindItemByLayer(Layer.Skirt);
-
-                    if (skirt != null)
-                    {
-                        ushort skirtAnim = skirt.ItemData.AnimID;
-
-                        if (skirtAnim != 0x1C7 && skirtAnim != 0x1E4)
-                        {
-                            return true;
-                        }
-                    }
-
-                    if (robe == null)
-                    {
-                        return false;
-                    }
-
-                    if (robeAnim < 0x4EC)
-                    {
-                        if (robeAnim > 0x4E7)
-                        {
-                            return false;
-                        }
-
-                        return robeAnim != 0x229;
-                    }
-
-                    return (uint)(robeAnim - 0x5E2) > 3;
-                }
-
-                case Layer.Tunic:
-                {
-                    // tunic AnimID 0x238 is moved on top of the robe (surcoat); hide it
-                    // when a full robe is worn underneath.
-                    Item tunic = mobile.FindItemByLayer(Layer.Tunic);
-
-                    if (tunic != null && tunic.ItemData.AnimID == 0x0238)
-                    {
-                        return robe != null && !robeLeavesChestVisible;
-                    }
-
-                    break;
-                }
-
-                case Layer.Torso:
-                {
-                    if (robeGfx != 0 && !robeLeavesChestVisible)
-                    {
-                        return true;
-                    }
-
-                    Item tunic = mobile.FindItemByLayer(Layer.Tunic);
-
-                    if (tunic != null && tunic.Graphic != 0x1541 && tunic.Graphic != 0x1542)
-                    {
-                        Item torso = mobile.FindItemByLayer(Layer.Torso);
-
-                        if (torso != null && (torso.Graphic == 0x782A || torso.Graphic == 0x782B))
-                        {
-                            return true;
-                        }
-                    }
-
-                    break;
-                }
-
-                case Layer.Arms:
-                    return robeGfx != 0 && !robeLeavesChestVisible;
-
-                case Layer.Necklace:
-                {
-                    if (robe == null)
-                    {
-                        return false;
-                    }
-
-                    // open/half robes that leave a neck item (AnimID 0x5EC) visible
-                    if (robeAnim == 0x5F2 || robeAnim == 0x5F5
-                        || (robeAnim >= 0x4E8 && robeAnim <= 0x4EB)
-                        || (robeAnim >= 0x5E2 && robeAnim <= 0x5E5))
-                    {
-                        return false;
-                    }
-
-                    Item neck = mobile.FindItemByLayer(Layer.Necklace);
-
-                    return neck != null && neck.ItemData.AnimID == 0x5EC;
-                }
-
-                case Layer.Bracelet:
-                {
-                    Item bracelet = mobile.FindItemByLayer(Layer.Bracelet);
-
-                    return bracelet != null
-                        && bracelet.Graphic == 0xB1C0
-                        && mobile.FindItemByLayer(Layer.Arms) != null;
-                }
-
-                case Layer.Hair:
-                {
-                    Item helmet = mobile.FindItemByLayer(Layer.Helmet);
-
-                    if (helmet != null && (uint)(helmet.Graphic - 0xA42B) < 2)
-                    {
-                        return true;
-                    }
-
-                    goto case Layer.Helmet;
-                }
-
-                case Layer.Helmet:
-                    // hair/helmet hidden under a hood-style robe
-                    if (robeGfx < 0x4B9E)
-                    {
-                        if (robeGfx != 0x4B9D)
-                        {
-                            if (robeGfx < 0x2FBA)
-                            {
-                                if (robeGfx != 0x2FB9)
-                                {
-                                    if (robeGfx > 0x2687)
-                                    {
-                                        return false;
-                                    }
-
-                                    if (robeGfx < 0x2683 && (robeGfx < 0x204E || robeGfx > 0x204F))
-                                    {
-                                        return false;
-                                    }
-                                }
-                            }
-                            else if (robeGfx != 0x3173)
-                            {
-                                return false;
-                            }
-
-                            return true;
-                        }
-                    }
-                    else if (robeGfx < 0xA0B0)
-                    {
-                        if (robeGfx < 0xA0AB && robeGfx != 0x7816)
-                        {
-                            return false;
-                        }
-                    }
-                    else if (robeGfx != 0xB2B7)
-                    {
-                        return false;
-                    }
-
-                    // these hoods cover the head on every body except gargoyles
-                    bool isGargoyle = mobile.Graphic == 0x029A || mobile.Graphic == 0x029B
-                        || mobile.Graphic == 0x02B6 || mobile.Graphic == 0x02B7;
-
-                    return !isGargoyle;
-
-                case Layer.Skirt:
-                {
-                    Item skirt = mobile.FindItemByLayer(Layer.Skirt);
-                    ushort skirtAnim = skirt?.ItemData.AnimID ?? 0;
-
-                    if (skirtAnim != 0x1C7 && skirtAnim != 0x1E4)
-                    {
-                        return false;
-                    }
-
-                    Item pants = mobile.FindItemByLayer(Layer.Pants);
-                    ushort pantsAnim = pants?.ItemData.AnimID ?? 0;
-
-                    return pantsAnim == 0x1EB || pantsAnim == 0x1FA || pantsAnim == 0x200;
                 }
             }
 

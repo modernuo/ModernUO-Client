@@ -197,14 +197,6 @@ namespace ClassicUO.Configuration
         // startup (EcsScalars.Owns; CUO_ECS_OWNS_SCALARS=1|0 overrides it in developer builds). Default on since 2026-11-02 (owner, after the quiet-machine per-switch timing bench-000206/207/208: timing-neutral on both renderers); the off path and the checker stay for one phase.
         [JsonPropertyName("ecs_owns_scalars")] public bool EcsOwnsScalars { get; set; } = true;
 
-        // T3b (ecs-transition-plan.md, T3 "Equipment layering as data"): the worn-layer draw order, the covering and the
-        // gargoyle remaps come from the layering rules data (the pack's layerrules.bin, else the built-in default made from the
-        // same source) instead of the hard-coded PaperdollOrder/IsCovered/FixGargoyleEquipments. CUO_LAYER_RULES_CHECK=1
-        // compares the two at every decision. Default on since 2026-11-01 (coordinator, after the gates bench-000147/148 PASS, 120M
-        // [layers] checks with 0 mismatches, and E2 bench-000146/155: cache hit -51..-59 %, mixed -42..-47 % vs the hard-coded path);
-        // the hard-coded path and the checker stay for one phase.
-        [JsonPropertyName("ecs_layer_rules")] public bool EcsLayerRules { get; set; } = true;
-
         // W5: the per-frame overhead text pass skips the text layout of mobiles and corpses whose texts have all expired
         // (expired texts stay in the entity's container; the layout would place nothing). Off = laid out every frame.
         [JsonPropertyName("text_skip_expired")] public bool TextSkipExpired { get; set; } = true;

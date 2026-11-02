@@ -122,29 +122,9 @@ namespace ClassicUO.Game
             }
         }
 
-        // MobileView.FixGargoyleEquipments
-        public static ushort FixGargoyleEquipment(ushort graphic)
-        {
-            switch (graphic)
-            {
-                case 0x01D5: return 0x0156; // robe
-                case 0x03CA: return 0x0223; // dead shroud
-                case 0x03D8: return 329;    // spellbook
-                case 0x0372: return 330;    // necrobook
-                case 0x0374: return 328;    // chivalry book
-                case 0x036F: return 327;    // bushido book
-                case 0x036E: return 328;    // ninjitsu book
-                case 0x0426: return 0x042B; // masteries book
-                case 1529: return 1531;     // pirate shield, male
-                case 1530: return 1532;     // pirate shield, female
-            }
-
-            return graphic;
-        }
-
         /// <summary>
         /// The slots' paint order for a facing (slot indices into <paramref name="order"/>; returns the count): the data's
-        /// interned direction orders when the rebuild made them (ecs_layer_rules), else the hard-coded cloak move. Used by
+        /// interned direction orders (EquipDirOrders), else, only when that table is full, the classic cloak move. Used by
         /// MobileSpriteExtract and the checkers, so they see the same order.
         /// </summary>
         public static int PaintOrder(in EquipmentSlots eq, byte facing, Span<byte> order)
@@ -170,9 +150,9 @@ namespace ClassicUO.Game
         }
 
         /// <summary>
-        /// PaperdollOrder.ApplyDirectionCloak on a slot index list: the cloak goes on top facing north (0), behind facing
-        /// south (3), else just below the helmet. MobileView moves the cloak on the full layer order, where Helmet is always
-        /// listed, and skips empty layers afterwards; the slots hold only drawn layers, so "below the helmet" is
+        /// The classic in-world cloak move on a slot index list (used only when EquipDirOrders is full): the cloak goes on
+        /// top facing north (0), behind facing south (3), else just below the helmet. The full-order move puts it where
+        /// Helmet is listed and skips empty layers afterwards; the slots hold only drawn layers, so "below the helmet" is
         /// <paramref name="helmetAnchor"/>, the number of drawn non-cloak slots before Helmet's place in the full order
         /// (<see cref="CloakAnchor"/>). With no helmet drawn the cloak still goes under the weapons, as in MobileView.
         /// </summary>
@@ -232,7 +212,7 @@ namespace ClassicUO.Game
         /// <summary>
         /// The cloak's "below the helmet" slot for <see cref="ApplyDirectionCloak"/>: how many drawn layers
         /// (<paramref name="slotLayers"/>), not counting the cloak, come before Helmet in <paramref name="fullOrder"/>, the
-        /// full layer order (PaperdollOrder.Build plus Filter, which always lists Helmet).
+        /// full layer order (the data's order plus Filter, which always lists Helmet).
         /// </summary>
         public static byte CloakAnchor(ReadOnlySpan<Layer> fullOrder, ReadOnlySpan<byte> slotLayers)
         {
@@ -389,220 +369,6 @@ namespace ClassicUO.Game
             }
 
             return hue;
-        }
-
-        /// <summary>
-        /// MobileView.IsCovered on per-layer tables (index = Layer): <paramref name="gfx"/> item graphics, <paramref name="anim"/>
-        /// tiledata AnimIDs, <paramref name="present"/> whether the layer has an item.
-        /// </summary>
-        public static bool IsCovered(Layer layer, ReadOnlySpan<ushort> gfx, ReadOnlySpan<ushort> anim, ReadOnlySpan<bool> present, ushort body)
-        {
-            bool hasRobe = present[(int)Layer.Robe];
-            ushort robeGfx = hasRobe ? gfx[(int)Layer.Robe] : (ushort)0;
-            ushort robeAnim = hasRobe ? anim[(int)Layer.Robe] : (ushort)0;
-
-            bool robeLeavesChestVisible =
-                robeGfx == 0x9985 || robeGfx == 0x9986 || robeGfx == 0xA2CA
-                || robeGfx == 0xA2CB || robeGfx == 0xA412 || robeGfx == 0xB1DE;
-
-            switch (layer)
-            {
-                case Layer.Shoes:
-                {
-                    ushort pantsAnim = present[(int)Layer.Pants] ? anim[(int)Layer.Pants] : (ushort)0;
-
-                    if (robeAnim != 0x504 && pantsAnim != 0x513 && pantsAnim != 0x514)
-                    {
-                        ushort pantsGfx = present[(int)Layer.Pants] ? gfx[(int)Layer.Pants] : (ushort)0;
-
-                        if (pantsGfx < 0xAEB2)
-                        {
-                            if (pantsGfx == 0xAEB1 || pantsGfx == 0x1411)
-                            {
-                                return true;
-                            }
-
-                            if (pantsGfx != 0xAEA2)
-                            {
-                                return present[(int)Layer.Legs];
-                            }
-                        }
-                        else
-                        {
-                            if (pantsGfx == 0xAEC0)
-                            {
-                                return true;
-                            }
-
-                            if (pantsGfx != 0xAECF)
-                            {
-                                return present[(int)Layer.Legs];
-                            }
-                        }
-                    }
-
-                    return true;
-                }
-
-                case Layer.Pants:
-                {
-                    if (present[(int)Layer.Legs] || robeAnim == 0x504)
-                    {
-                        return true;
-                    }
-
-                    ushort pantsAnim = present[(int)Layer.Pants] ? anim[(int)Layer.Pants] : (ushort)0;
-
-                    if (pantsAnim != 0x1EB && pantsAnim != 0x1FA && pantsAnim != 0x200)
-                    {
-                        return false;
-                    }
-
-                    if (present[(int)Layer.Skirt])
-                    {
-                        ushort skirtAnim = anim[(int)Layer.Skirt];
-
-                        if (skirtAnim != 0x1C7 && skirtAnim != 0x1E4)
-                        {
-                            return true;
-                        }
-                    }
-
-                    if (!hasRobe)
-                    {
-                        return false;
-                    }
-
-                    if (robeAnim < 0x4EC)
-                    {
-                        if (robeAnim > 0x4E7)
-                        {
-                            return false;
-                        }
-
-                        return robeAnim != 0x229;
-                    }
-
-                    return (uint)(robeAnim - 0x5E2) > 3;
-                }
-
-                case Layer.Tunic:
-                    if (present[(int)Layer.Tunic] && anim[(int)Layer.Tunic] == 0x0238)
-                    {
-                        return hasRobe && !robeLeavesChestVisible;
-                    }
-
-                    break;
-
-                case Layer.Torso:
-                {
-                    if (robeGfx != 0 && !robeLeavesChestVisible)
-                    {
-                        return true;
-                    }
-
-                    if (present[(int)Layer.Tunic] && gfx[(int)Layer.Tunic] != 0x1541 && gfx[(int)Layer.Tunic] != 0x1542)
-                    {
-                        if (present[(int)Layer.Torso] && (gfx[(int)Layer.Torso] == 0x782A || gfx[(int)Layer.Torso] == 0x782B))
-                        {
-                            return true;
-                        }
-                    }
-
-                    break;
-                }
-
-                case Layer.Arms:
-                    return robeGfx != 0 && !robeLeavesChestVisible;
-
-                case Layer.Necklace:
-                {
-                    if (!hasRobe)
-                    {
-                        return false;
-                    }
-
-                    if (robeAnim == 0x5F2 || robeAnim == 0x5F5
-                        || (robeAnim >= 0x4E8 && robeAnim <= 0x4EB)
-                        || (robeAnim >= 0x5E2 && robeAnim <= 0x5E5))
-                    {
-                        return false;
-                    }
-
-                    return present[(int)Layer.Necklace] && anim[(int)Layer.Necklace] == 0x5EC;
-                }
-
-                case Layer.Bracelet:
-                    return present[(int)Layer.Bracelet] && gfx[(int)Layer.Bracelet] == 0xB1C0 && present[(int)Layer.Arms];
-
-                case Layer.Hair:
-                {
-                    if (present[(int)Layer.Helmet] && (uint)(gfx[(int)Layer.Helmet] - 0xA42B) < 2)
-                    {
-                        return true;
-                    }
-
-                    goto case Layer.Helmet;
-                }
-
-                case Layer.Helmet:
-                    if (robeGfx < 0x4B9E)
-                    {
-                        if (robeGfx != 0x4B9D)
-                        {
-                            if (robeGfx < 0x2FBA)
-                            {
-                                if (robeGfx != 0x2FB9)
-                                {
-                                    if (robeGfx > 0x2687)
-                                    {
-                                        return false;
-                                    }
-
-                                    if (robeGfx < 0x2683 && (robeGfx < 0x204E || robeGfx > 0x204F))
-                                    {
-                                        return false;
-                                    }
-                                }
-                            }
-                            else if (robeGfx != 0x3173)
-                            {
-                                return false;
-                            }
-
-                            return true;
-                        }
-                    }
-                    else if (robeGfx < 0xA0B0)
-                    {
-                        if (robeGfx < 0xA0AB && robeGfx != 0x7816)
-                        {
-                            return false;
-                        }
-                    }
-                    else if (robeGfx != 0xB2B7)
-                    {
-                        return false;
-                    }
-
-                    return !(body == 0x029A || body == 0x029B || body == 0x02B6 || body == 0x02B7);
-
-                case Layer.Skirt:
-                {
-                    ushort skirtAnim = present[(int)Layer.Skirt] ? anim[(int)Layer.Skirt] : (ushort)0;
-
-                    if (skirtAnim != 0x1C7 && skirtAnim != 0x1E4)
-                    {
-                        return false;
-                    }
-
-                    ushort pantsAnim = present[(int)Layer.Pants] ? anim[(int)Layer.Pants] : (ushort)0;
-
-                    return pantsAnim == 0x1EB || pantsAnim == 0x1FA || pantsAnim == 0x200;
-                }
-            }
-
-            return false;
         }
     }
 

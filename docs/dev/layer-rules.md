@@ -1,10 +1,10 @@
 # Equipment layering rules as data (`layerrules.bin`)
 
-This page describes `layerrules.bin`, the pack file that holds the equipment layering rules (worn-layer draw order, covering and gargoyle remaps) as data. It covers the binary layout, the JSON form a shard edits, how the converter writes and verifies the file, how the client evaluates it (including the per-mobile cache), and the setting and environment variables that control it. The file is part of the pack format; see [pack-format.md](pack-format.md) for the shared header, versioning and the other files.
+This page describes `layerrules.bin`, the pack file that holds the equipment layering rules (worn-layer draw order, covering and gargoyle remaps) as data. It covers the binary layout, the JSON form a shard edits, how the converter writes and verifies the file, how the client evaluates it (including the per-mobile cache), and how the tests compare the default data with the former hard-coded rules. The file is part of the pack format; see [pack-format.md](pack-format.md) for the shared header, versioning and the other files.
 
 ## What the rules replace
 
-ClassicUO hard-codes four things: the draw order of worn layers (`PaperdollOrder.Build`), the cloak move by facing direction (`ApplyDirectionCloak`), whether a layer is covered by another item (`MobileView.IsCovered`), and the gargoyle AnimID remaps (`FixGargoyleEquipments`, plus the paperdoll's shroud remap). `layerrules.bin` expresses all of them as a table of rules. A shard can replace the file to add rules for custom equipment.
+Upstream ClassicUO hard-codes four things: the draw order of worn layers (`PaperdollOrder.Build`), the cloak move by facing direction (`ApplyDirectionCloak`), whether a layer is covered by another item (`MobileView.IsCovered`), and the gargoyle AnimID remaps (`FixGargoyleEquipments`, plus the paperdoll's shroud remap). `layerrules.bin` expresses all of them as a table of rules. A shard can replace the file to add rules for custom equipment.
 
 ## File layout
 
@@ -122,20 +122,15 @@ Callers: `MobileView` (draw and pick), `PaperDollInteractable`, `MobileAnimation
 
 ### The per-mobile cache
 
-The world draw and pick do not evaluate the rules every frame. Each mobile's `WornCache` holds a `LayerDecision` (`LayerRuleEval.cs`, created at first use with the switch on, 408 bytes per mobile) with the wearer's full world-set answer: the filtered base order, the order after the direction moves (filled lazily for each facing class 0 to 7, and one for 8 and up), the covered flag of every worn layer, and the remapped AnimID of every worn layer.
+The world draw and pick do not evaluate the rules every frame. Each mobile's `WornCache` holds a `LayerDecision` (`LayerRuleEval.cs`, created at first use, 408 bytes per mobile) with the wearer's full world-set answer: the filtered base order, the order after the direction moves (filled lazily for each facing class 0 to 7, and one for 8 and up), the covered flag of every worn layer, and the remapped AnimID of every worn layer.
 
 The cache key is everything the rules read: the rules instance, the wearer's subject (body and its group, and the female, gargoyle-draw and 7.0.0.0 flags), the worn slots' version, and the worn items' `Look` stamp (any write to a worn item's graphic or hue). A lookup that sees no equipment change anywhere in the mirror since the last check is a few compares; after a change somewhere, it re-reads the one `Look` stamp. A miss refills the answer from the rules. The facing only selects the direction class to read. The paperdoll and corpses are not cached.
 
-## Switching it on
+## The hard-coded rules
 
-| Control | Name | Default | Notes |
-|---|---|---|---|
-| Setting | `ecs_layer_rules` (`Settings.GlobalSettings.EcsLayerRules`, `src/ClassicUO.Client/Configuration/Settings.cs`) | on | Key in `settings.json` next to the executable. |
-| Environment | `CUO_ECS_LAYER_RULES` = `1` or `0` | unset | Overrides the setting (builds with `CUO_DEVTOOLS` only). |
-| Runtime command | ECS session driver `layerrules on` or `off` (`EcsSessionDriver.cs`) | none | Overrides both. Marks every mobile's equipment dirty so cached slots rebuild. |
+The client always uses the rules data. T9 removed the `ecs_layer_rules` switch, its `CUO_ECS_LAYER_RULES` override and the `CUO_LAYER_RULES_CHECK` checker, along with the hard-coded code they compared against. The driver still accepts its `layerrules` command but ignores it. An old `settings.json` that still has the key loads as before.
 
-Precedence, highest first: driver override, environment, setting (`LayerRuleEval.On`). With the switch off, the client uses the hard-coded `PaperdollOrder`, `IsCovered` and `FixGargoyleEquipments` code, which stays for now as the reference for the checker.
+The hard-coded code is kept, unchanged, as a test fixture: `tests/ClassicUO.UnitTests/Ecs/LegacyLayerRulesReference.cs` (`Build`, `ApplyDirectionCloak`, `IsCovered`, `FixGargoyleEquipment`, `RemapPaperdoll`). `LayerRulesTests` checks that the default data gives exactly the fixture's answers for every body group, every relevant combination of values and every direction. It also checks that every single-entry mutation of the default file is caught. `AnimationRulesTests`, `AnimationRulesEdgeTests` and `LayerRulesEcsTests` compare against the same fixture. Do not change the fixture to follow a data change: those tests exist to catch the difference.
 
-## The checker: `CUO_LAYER_RULES_CHECK`
+The ECS slots keep one hard-coded fallback. If the table of interned per-facing orders (`EquipDirOrders`) is ever full, `AnimationRules.PaintOrder` moves the cloak by facing with `CloakAnchor`, as the classic client does.
 
-Set `CUO_LAYER_RULES_CHECK=1` to compare the two implementations. It works only in builds with the `CUO_DEVTOOLS` define; other builds ignore it (`CheckEnabled` is a constant false). With it on, every order, cover and remap decision in the world, the paperdoll, corpses and the ECS slot rebuild is computed both ways. A difference logs `[layers] mismatch (...)` as a warning (the first 200 only) and counts in `LayerRuleEval.Mismatches`. While the counters change, a summary line `[layers] checks N mismatches M rules <source> ecs_layer_rules=on|off cache hits H misses X` is logged at most every 5 seconds. The check runs whether the switch is on or off. With the cache in use it also compares each cached answer (order, covered flags, remaps, subject) with a fresh evaluation and reports `(... cache ...)` mismatches.
