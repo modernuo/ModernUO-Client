@@ -130,6 +130,12 @@ namespace ClassicUO.Configuration
         // instead of capturing MobileView.Draw. Off = the capture, the parity yardstick (EcsParity).
         [JsonPropertyName("gpu_ecs_sprites")] public bool GpuEcsSprites { get; set; } = true;
 
+        // T7b (ecs-transition-plan.md, T7): the Legacy world draws mobiles and world items from the ECS extract (select, then
+        // LegacySpriteResolve to the FNA atlas through the Art/Animations loaders) at the render list's view.Draw position,
+        // instead of MobileView/ItemView.Draw. Effects stay on their views. CUO_LEGACY_ECS_PARITY=1 compares the view's
+        // batcher calls with the sink's. Read every frame (dev builds: CUO_LEGACY_ECS_SPRITES=1|0 overrides). Default off.
+        [JsonPropertyName("legacy_ecs_sprites")] public bool LegacyEcsSprites { get; set; }
+
         // W5: World.Update visits only the items that need a per-frame update (corpses, items whose object handles just
         // opened) plus a range sweep every 50 ms, instead of every item every frame. Off = the full per-frame loop.
         [JsonPropertyName("world_update_active_items")] public bool WorldUpdateActiveItems { get; set; } = true;

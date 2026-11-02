@@ -618,6 +618,7 @@ namespace ClassicUO.Game
 
                 case "parity":
                     EcsParity.Summary();
+                    Scenes.LegacyEcsParity.Summary();
 
                     return false;
 
@@ -1000,6 +1001,7 @@ namespace ClassicUO.Game
                     ReleaseMouse();
                     world.Ecs.RunCheck(true);
                     EcsParity.Summary();
+                    Scenes.LegacyEcsParity.Summary();
                     Client.Game.Exit();
 
                     return true;

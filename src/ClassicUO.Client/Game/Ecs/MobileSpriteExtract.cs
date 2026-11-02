@@ -100,6 +100,16 @@ namespace ClassicUO.Game
             BeginCore(offsetX, offsetY);
         }
 
+        /// <summary>T7b Legacy sink: <see cref="Select"/> only. The select reads frame sizes from the loader's pack tables, so
+        /// no PackSet is needed; nothing is resolved to instances.</summary>
+        internal void BeginSelect()
+        {
+            _pack = null;
+            _hasAnims = _anims.PackFrames != null;
+            _tables = default;
+            BeginCore(0, 0);
+        }
+
         private void BeginCore(int offsetX, int offsetY)
         {
             _offsetX = offsetX;
