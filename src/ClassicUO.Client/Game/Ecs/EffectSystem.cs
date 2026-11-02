@@ -92,7 +92,7 @@ namespace ClassicUO.Game
         {
             if (!e.EcsEntity.IsNull)
             {
-                e.Publish(ref e.EcsEntity.GetComponent<EffectState>());
+                e.Publish(ref EcsRead.Get<EffectState>(e.EcsEntity));
             }
         }
 
@@ -103,7 +103,7 @@ namespace ClassicUO.Game
             EffectShadow sh = e.Shadow;
             bool shadowDestroy = sh != null && sh.StepBase(e);
 
-            ref EffectState s = ref e.EcsEntity.GetComponent<EffectState>();
+            ref EffectState s = ref EcsRead.Get<EffectState>(e.EcsEntity);
             long now = Time.Ticks;
             bool destroyed = false;
 
@@ -165,7 +165,7 @@ namespace ClassicUO.Game
             EffectShadow sh = e.Shadow;
             bool shadowDestroy = sh != null && sh.StepLightning(e);
 
-            ref EffectState s = ref e.EcsEntity.GetComponent<EffectState>();
+            ref EffectState s = ref EcsRead.Get<EffectState>(e.EcsEntity);
             long now = Time.Ticks;
             bool destroyed = s.AnimIndex >= 10 || (s.Duration < now && s.Duration >= 0);
 
@@ -226,7 +226,7 @@ namespace ClassicUO.Game
                     continue;
                 }
 
-                ref readonly EffectState s = ref e.EcsEntity.GetComponent<EffectState>();
+                ref readonly EffectState s = ref EcsRead.Get<EffectState>(e.EcsEntity);
 
                 if (s.X != e.X || s.Y != e.Y || s.Z != e.Z)
                 {

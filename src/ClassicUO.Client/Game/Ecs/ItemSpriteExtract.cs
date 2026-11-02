@@ -135,7 +135,7 @@ namespace ClassicUO.Game
         /// <summary>The record part of <see cref="Gather"/>: the mirror record (or the GameObject without one) and the tiledata
         /// row. Split out so the per-item cost can be measured without a running client (GatherCostBench).</summary>
         /// <remarks>
-        /// Per drawn item per frame, so it reads the record once (<c>Entity.Data</c>: one node lookup for every component) and
+        /// Per drawn item per frame, so it reads the record once (<c>EcsRead.Row</c>: one node lookup for every component) and
         /// skips what the select does not use: the Serial component is the item's serial (TryScalarEntity found the record
         /// under it), and ItemData (Amount, Layer) is read only for coins, corpses and stackable art, the only items whose
         /// sprites depend on it; Amount and Layer stay 0 for the others. GatherCostBench measures it against the field reads.
@@ -143,11 +143,11 @@ namespace ClassicUO.Game
         internal static void ReadRecord(Item item, StaticTiles[] staticData, ref ItemSpriteInput i, out ushort y)
         {
             bool record = item.TryScalarEntity(out EcsEntity e);
-            Friflo.Engine.ECS.EntityData data = default;
+            ClassicUO.Ecs.EcsRow data = default;
 
             if (record)
             {
-                data = e.Data;
+                data = ClassicUO.Ecs.EcsRead.Row(e);
                 i.Serial = item.Serial;
                 i.Graphic = data.Get<ClassicUO.Ecs.Graphic>().Value;
                 i.Hue = data.Get<ClassicUO.Ecs.Hue>().Value;

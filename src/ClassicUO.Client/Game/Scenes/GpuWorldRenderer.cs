@@ -611,7 +611,7 @@ namespace ClassicUO.Game.Scenes
                 // TakeDirty comes first: removing the tag moves the entity, which would invalidate the refs.
                 bool dirty = MobileAnimationSystem.TakeDirty(e);
                 // one record read for both components (as ItemSpriteInput.ReadRecord)
-                Friflo.Engine.ECS.EntityData data = e.Data;
+                ClassicUO.Ecs.EcsRow data = ClassicUO.Ecs.EcsRead.Row(e);
                 ref ClassicUO.Ecs.AnimationState state = ref data.Get<ClassicUO.Ecs.AnimationState>();
                 ref ClassicUO.Ecs.MobileRenderState render = ref data.Get<ClassicUO.Ecs.MobileRenderState>();
                 ecs.Animation.UpdateInPlace(world, mobile, e, data, dirty, ref state, ref render);

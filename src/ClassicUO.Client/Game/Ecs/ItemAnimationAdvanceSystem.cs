@@ -119,8 +119,8 @@ namespace ClassicUO.Game
                 return false;
             }
 
-            AnimationTimer t = e.GetComponent<AnimationTimer>();
-            ItemData data = e.GetComponent<ItemData>();
+            AnimationTimer t = EcsRead.Get<AnimationTimer>(e);
+            ItemData data = EcsRead.Get<ItemData>(e);
 
             if (check)
             {
@@ -135,7 +135,7 @@ namespace ClassicUO.Game
             }
 
             Ran++;
-            e.GetComponent<AnimationTimer>() = t;
+            EcsRead.Get<AnimationTimer>(e) = t;
             world.Writer.AdvanceCorpseFrame(item, frame, due, push: false);
 
             return true;
