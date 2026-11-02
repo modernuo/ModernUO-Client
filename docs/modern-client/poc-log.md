@@ -5058,3 +5058,13 @@ Paired NativeAOT builds (`CuoDevTools=true`, checkers off), all on the quiet mac
 - **Gates:** no gate script matched the DevBench caller names; they fail on any `[funnel]` warning, so they need no change and now pass the teleport plans under AOT.
 - Unit tests: 2,856 passed, 6 skipped, in both CuoDevTools variants (new: `Dev_Write_Scope_Exempts_Inside_Nests_And_Reports_Outside`).
 - Correctness: plans-fast (tile-index-fix-a pattern) against an AOT build of the branch, bench-000229 (result pending at the time of writing).
+
+### perf-2 merged: pick bounds and the picker byte[] (coordinator, 2026-11-02)
+
+- fd5d0026b: statics and multis now reject a mouse position outside the art before the pixel pick. cbf1df9b2: `PixelPicker.m_Data` is now a `byte[]`. Merge 596a4da2c.
+- Evidence:
+  - The pick gate bench-000230 re-ran the picker on every reject (`CUO_PREP_CHECK`) in both renderers: about 52M static/multi rejects, 0 wrong.
+  - Codex gpt-6.1-sol medium found nothing (`cuo-poc-state/audits/perf-pick-bounds/out.md`).
+  - Unit tests: 2,866 passed, 6 skipped.
+- Quiet timing is pending (parked).
+- Observation, parked for the owner: `PixelPicker.Get` never hits the first pixel of an opaque run, or pixel 0,0. This is old ClassicUO behaviour and was kept unchanged.
