@@ -23,7 +23,8 @@ namespace ClassicUO.Game
         public int X, Y;
         public sbyte Z;
 
-        // IsMounted, the fast-unmount speed modes, IsFlying (the Mobile's; not step state)
+        // IsMounted, the fast-unmount speed modes, IsFlying: the Mobile's, or with ecs_step_mount_inputs the ECS's
+        // (StepSystem.MountedFromEcs)
         public bool Mounted;
         public bool IsPlayer;
     }
@@ -140,6 +141,26 @@ namespace ClassicUO.Game
         public static long Checks, SyncDiffs, DecisionDiffs, AfterDiffs;
         private static int _logged;
 
+#if CUO_DEVTOOLS
+        // CLEANUP(release): CUO_STEP_MOUNT_CHECK=1: at every step decision the mounted pace from the ECS (ecs_step_mount_inputs'
+        // path) is compared with the Mobile's, whichever of the two the decision uses
+        public static readonly bool StepMountCheck = Environment.GetEnvironmentVariable("CUO_STEP_MOUNT_CHECK") == "1";
+#else
+        public static readonly bool StepMountCheck = false;
+#endif
+
+        public static long MountEcsReads, MountFallbacks, MountSlotRebuilds, MountChecks, MountDiffs;
+        private static int _mountLogged;
+
+        /// <summary>Tests: rebuilds a dirty mobile's <see cref="EquipmentSlots"/> in place of the client's tiledata
+        /// (<c>MobileAnimationSystem.Rebuild</c>'s seam); null in the client.</summary>
+        internal Action<EcsEntity, AnimationState, Mobile> RebuildSlotsOverride;
+
+        /// <summary>Tests: <see cref="StepMountCheck"/> for this instance (null: the environment).</summary>
+        internal bool? MountCheckOverride;
+
+        private bool MountCheck => MountCheckOverride ?? StepMountCheck;
+
         /// <summary>Copies the Mobile's walk queue, <c>LastStepTime</c> and walk offset into <paramref name="s"/>.</summary>
         internal static void CopyFrom(Mobile m, ref StepsComponent s)
         {
@@ -172,6 +193,74 @@ namespace ClassicUO.Game
             || m.SpeedMode == CharacterSpeedType.FastUnmountAndCantRun
             || m.IsFlying;
 
+        /// <summary><see cref="Mounted(Mobile)"/> from the ECS: the slots' mount (IsMounted), the pushed speed mode and the
+        /// pushed Flying bit (IsFlying).</summary>
+        internal static bool MountedFromEcs(in MobileInputs inp, in EquipmentSlots eq) =>
+            eq.Mounted
+            || inp.SpeedMode == (byte)CharacterSpeedType.FastUnmount
+            || inp.SpeedMode == (byte)CharacterSpeedType.FastUnmountAndCantRun
+            || (inp.Flags & AnimStateFlags.Flying) != 0;
+
+        // the slots the drawn path rebuilds lazily (as MobileAnimationAdvanceSystem.TryRun): a mobile not drawn since its
+        // equipment changed is rebuilt here, before any component ref (removing the tag moves the entity)
+        private void FreshenSlots(World world, Mobile mob, EcsEntity e)
+        {
+            if (!e.HasComponent<EquipmentSlots>() || !e.HasComponent<MobileInputs>() || !MobileAnimationSystem.TakeDirty(e))
+            {
+                return;
+            }
+
+            MountSlotRebuilds++;
+            AnimationState a = default;
+            a.Flags = e.GetComponent<MobileInputs>().Flags;
+
+            if (RebuildSlotsOverride != null)
+            {
+                RebuildSlotsOverride(e, a, mob);
+            }
+            else
+            {
+                world.Ecs.Animation.Rebuild(e, in a, mob);
+            }
+        }
+
+        // the mounted pace the decision uses: ecs_step_mount_inputs' (from the ECS; the Mobile's when the components are
+        // missing) or the Mobile's; CUO_STEP_MOUNT_CHECK compares the two
+        private bool MountedInput(World world, Mobile mob, EcsEntity e)
+        {
+            bool fromEcs = world.StepMountInputs;
+            bool check = MountCheck;
+
+            if (!fromEcs && !check)
+            {
+                return Mounted(mob);
+            }
+
+            bool have = e.HasComponent<MobileInputs>() && e.HasComponent<EquipmentSlots>();
+            bool ecs = have && MountedFromEcs(in e.GetComponent<MobileInputs>(), in e.GetComponent<EquipmentSlots>());
+
+            if (check)
+            {
+                CheckMount(mob, e, have, ecs);
+            }
+
+            if (!fromEcs)
+            {
+                return Mounted(mob);
+            }
+
+            if (!have)
+            {
+                MountFallbacks++;
+
+                return Mounted(mob);
+            }
+
+            MountEcsReads++;
+
+            return ecs;
+        }
+
         private static bool IsPlayer(World world, Mobile m) => world.Player != null && m.Serial == world.Player.Serial;
 
         /// <summary>
@@ -193,6 +282,12 @@ namespace ClassicUO.Game
             }
 
             Ran++;
+
+            if (world.StepMountInputs || MountCheck)
+            {
+                FreshenSlots(world, mob, e);
+            }
+
             Run(world, mob, e, ticks, frameDelay, out dir);
 
             return true;
@@ -237,7 +332,7 @@ namespace ClassicUO.Game
             inp.X = p.X;
             inp.Y = p.Y;
             inp.Z = p.Z;
-            inp.Mounted = Mounted(mob);
+            inp.Mounted = MountedInput(world, mob, e);
             inp.IsPlayer = IsPlayer(world, mob);
 
             StepRules.Decide(in inp, ticks, frameDelay, out StepDecision d);
@@ -406,6 +501,7 @@ namespace ClassicUO.Game
             legacy.X = m.X;
             legacy.Y = m.Y;
             legacy.Z = m.Z;
+            legacy.Mounted = Mounted(m);
             StepRules.Decide(in legacy, ticks, frameDelay, out StepDecision ld);
 
             if (!ld.Equals(in d))
@@ -414,6 +510,33 @@ namespace ClassicUO.Game
                 LogDiff($"0x{m.Serial:X8} decision: ecs {d} | mobile {ld}");
             }
         }
+
+        // ---- CUO_STEP_MOUNT_CHECK
+
+        private static void CheckMount(Mobile m, EcsEntity e, bool have, bool ecs)
+        {
+            MountChecks++;
+            bool mobile = Mounted(m);
+
+            if (have && ecs == mobile)
+            {
+                return;
+            }
+
+            MountDiffs++;
+
+            if (_mountLogged++ < 10)
+            {
+                string from = have
+                    ? $"slots {e.GetComponent<EquipmentSlots>().Mounted} (dirty {e.Tags.Has<EquipmentDirty>()}), speed {(CharacterSpeedType)e.GetComponent<MobileInputs>().SpeedMode}, flying {(e.GetComponent<MobileInputs>().Flags & AnimStateFlags.Flying) != 0}"
+                    : "no MobileInputs/EquipmentSlots";
+                Log.Warn($"[step-mount-check] 0x{m.Serial:X8} g=0x{m.Graphic:X4}: ecs {ecs} ({from}) | mobile {mobile} (mounted {m.IsMounted}, speed {m.SpeedMode}, flying {m.IsFlying}) (tick {Time.Ticks})");
+            }
+        }
+
+        /// <summary>The mount-input counters for the periodic log line.</summary>
+        internal static string MountSummary() =>
+            $"[step-mount-check] ecs reads {MountEcsReads}, fallbacks to the Mobile {MountFallbacks}, slot rebuilds {MountSlotRebuilds}; checked {MountChecks}, different {MountDiffs}";
 
         private static void LogDiff(string message)
         {

@@ -170,6 +170,13 @@ namespace ClassicUO.Configuration
         // component and the decision with the Mobile's. Default on since 2026-11-02 (owner, after the quiet-machine per-switch timing bench-000206/207/208: timing-neutral on both renderers); the off path and the checker stay for one phase.
         [JsonPropertyName("world_step_system")] public bool WorldStepSystem { get; set; } = true;
 
+        // T6c follow-up (with world_step_system): the step system's mounted pace (Mobile.IsMounted, the fast-unmount speed
+        // modes, IsFlying) is read from the ECS (EquipmentSlots.Mounted, rebuilt when dirty; MobileInputs.SpeedMode and its
+        // Flying bit, pushed by their operations) instead of from the Mobile. Read once at startup
+        // (CUO_ECS_STEP_MOUNT_INPUTS=1|0 overrides it in developer builds). CUO_STEP_MOUNT_CHECK=1 compares the two at every
+        // step decision. Off = from the Mobile.
+        [JsonPropertyName("ecs_step_mount_inputs")] public bool EcsStepMountInputs { get; set; } = false;
+
         // T2 (ecs-transition-plan.md): the container-contents readers (container, grid loot, trade and spellbook gumps, the
         // shop's lists, FindItem*, the counters, macros) take a parent's children from the ECS (WorldState.Children: the
         // mirror's attached children by child-order stamp, a spellbook's spell entries) instead of the LinkedObject child
