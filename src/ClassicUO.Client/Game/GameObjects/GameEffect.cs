@@ -2,6 +2,7 @@
 
 using System;
 using System.Collections.Generic;
+using ClassicUO.Ecs;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.Managers;
 using ClassicUO.Assets;
@@ -66,6 +67,13 @@ namespace ClassicUO.Game.GameObjects
         public uint IntervalInMs;
         public bool IsEnabled;
         public long NextChangeFrameTime;
+
+        /// <summary>T8 (ecs_effects): this effect's entity (default when the switch is off or the effect is destroyed).</summary>
+        internal Friflo.Engine.ECS.Entity EcsEntity;
+
+        /// <summary>T8 (CUO_EFFECT_CHECK): the legacy animation rules on a copy, compared with the system's step.</summary>
+        internal EffectShadow Shadow;
+
         public GameObject Source;
         protected GameObject Target;
         protected ushort TargetX;
@@ -87,6 +95,13 @@ namespace ClassicUO.Game.GameObjects
 
             if (IsDestroyed)
             {
+                return;
+            }
+
+            if (!EcsEntity.IsNull)
+            {
+                EffectSystem.Animate(this);
+
                 return;
             }
 
@@ -141,8 +156,26 @@ namespace ClassicUO.Game.GameObjects
                 effect.Blend = Blend;
                 effect.SetSource(targetX, targetY, targetZ);
 
-                _manager.PushToBack(effect);
+                _manager.Add(effect);
             }
+        }
+
+        /// <summary>T8: copies position, offset, angle, target and source/target serials to <paramref name="s"/>.</summary>
+        internal void Publish(ref EffectState s)
+        {
+            (ushort tx, ushort ty, sbyte tz) = GetTarget();
+            s.X = X;
+            s.Y = Y;
+            s.Z = Z;
+            s.TargetX = tx;
+            s.TargetY = ty;
+            s.TargetZ = tz;
+            s.OffsetX = OffsetX;
+            s.OffsetY = OffsetY;
+            s.Angle = AngleToTarget;
+            s.SourceSerial = (Source as Entity)?.Serial ?? 0;
+            s.TargetSerial = (Target as Entity)?.Serial ?? 0;
+            s.Flags = (byte)(IsMoving ? s.Flags | EffectState.FLAG_MOVING : s.Flags & ~EffectState.FLAG_MOVING);
         }
 
         public void SetSource(GameObject source)
@@ -179,6 +212,7 @@ namespace ClassicUO.Game.GameObjects
         public override void Destroy()
         {
             _manager?.Remove(this);
+            EffectSystem.Unregister(this);
 
             AnimIndex = 0;
             Source = null;

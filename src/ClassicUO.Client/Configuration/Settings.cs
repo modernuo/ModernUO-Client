@@ -188,6 +188,12 @@ namespace ClassicUO.Configuration
         // Only used with world_update_active_items. Default off.
         [JsonPropertyName("world_active_items_system")] public bool WorldActiveItemsSystem { get; set; }
 
+        // T8 (ecs-transition-plan.md): graphic effects (0x70, 0xC0, 0xC7) are ECS entities (EffectState): the frame and lifetime
+        // advance is EffectSystem's, and effects are placed through DynamicTileIndex (priority +2). CUO_EFFECT_CHECK=1 compares
+        // each effect with a shadow of the legacy rules every frame. Read once at startup (CUO_ECS_EFFECTS=1|0 overrides it in
+        // developer builds). Default off.
+        [JsonPropertyName("ecs_effects")] public bool EcsEffects { get; set; }
+
         // T3a (ecs-transition-plan.md, T3): the equipment readers (Mobile.FindItemByLayer and through it IsMounted, the
         // animation group's hands, the abilities, the paperdoll, PaperdollOrder.BuildInWorld and Legacy's MobileView) take a
         // mobile's worn item per layer from the ECS (WornLayers: the mirror's first attached item per layer by child-order

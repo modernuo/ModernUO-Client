@@ -28,20 +28,10 @@ namespace ClassicUO.Game.GameObjects
         {
             if (!IsDestroyed)
             {
-                if (AnimIndex >= 10 || (Duration < Time.Ticks && Duration >= 0))
-                {
-                    Destroy();
-                }
-                else
-                {
-                    AnimationGraphic = (ushort) (Graphic + AnimIndex);
+                bool destroyed = !EcsEntity.IsNull ? !EffectSystem.AnimateLightning(this) : LegacyDestroyed();
 
-                    if (NextChangeFrameTime < Time.Ticks)
-                    {
-                        AnimIndex++;
-                        NextChangeFrameTime = (long)Time.Ticks + IntervalInMs;
-                    }
-
+                if (!destroyed)
+                {
                     (var x, var y, var z) = GetSource();
 
                     if (X != x || Y != y || Z != z)
@@ -50,6 +40,27 @@ namespace ClassicUO.Game.GameObjects
                     }
                 }
             }
+        }
+
+        // the frame step before T8 (ecs_effects off); true when the effect was destroyed
+        private bool LegacyDestroyed()
+        {
+            if (AnimIndex >= 10 || (Duration < Time.Ticks && Duration >= 0))
+            {
+                Destroy();
+
+                return true;
+            }
+
+            AnimationGraphic = (ushort) (Graphic + AnimIndex);
+
+            if (NextChangeFrameTime < Time.Ticks)
+            {
+                AnimIndex++;
+                NextChangeFrameTime = (long)Time.Ticks + IntervalInMs;
+            }
+
+            return false;
         }
     }
 }
