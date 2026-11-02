@@ -44,8 +44,69 @@ namespace ClassicUO.Game
         public LayerDecision Layers;
     }
 
+    /// <summary>
+    /// perf-10: a mobile's worn items for one draw or hit-test loop (<see cref="WorldState.WornView"/>), its
+    /// <see cref="WornCache"/> validated once instead of at every <c>FindItemByLayer</c>. The same answers as
+    /// <c>FindItemByLayer</c> and <see cref="WorldState.HasWornItems"/> while nothing writes the world between the reads (a
+    /// draw does not), with <c>CUO_EQUIP_READ_CHECK</c> comparing each read as before.
+    /// </summary>
+    internal readonly ref struct WornItems
+    {
+        private readonly WorldState _state;
+        private readonly Mobile _mobile;
+        private readonly WornCache _cache;
+
+        internal WornItems(WorldState state, Mobile mobile, WornCache cache)
+        {
+            _state = state;
+            _mobile = mobile;
+            _cache = cache;
+        }
+
+        /// <summary><see cref="WorldState.HasWornItems"/>.</summary>
+        public bool Any => _state.WornGuard(_mobile, _cache);
+
+        /// <summary><c>FindItemByLayer</c> on the mobile.</summary>
+        public Item this[Layer layer] => _state.WornItem(_mobile, _cache, layer);
+
+        /// <summary><see cref="WorldState.WorldLayers"/>.</summary>
+        public LayerDecision Layers(bool gargoyleDraw) => _state.WorldLayers(_mobile, _cache, gargoyleDraw);
+    }
+
     internal sealed partial class WorldState
     {
+        /// <summary>perf-10: the mobile's worn items for a loop of layer reads, validated once (<see cref="WornItems"/>).</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public WornItems WornView(Mobile mobile) => new WornItems(this, mobile, Worn(mobile));
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal Item WornItem(Mobile mobile, WornCache c, Layer layer)
+        {
+            uint index = (uint)layer - 1;
+            Item found = index >= WornLayers.COUNT || c.Held == WornHeld.NotHeld ? mobile.FindItemByLayerInList(layer) : c.Items?[index];
+#if CUO_DEVTOOLS
+            if (EquipCheckEnabled)
+            {
+                CheckWorn(mobile, layer, found);
+            }
+#endif
+
+            return found;
+        }
+
+        internal bool WornGuard(Mobile mobile, WornCache c)
+        {
+            bool found = c.Held == WornHeld.NotHeld ? !mobile.IsEmpty : c.Items != null;
+#if CUO_DEVTOOLS
+            if (EquipCheckEnabled)
+            {
+                CheckGuard(mobile, found);
+            }
+#endif
+
+            return found;
+        }
+
         /// <summary>
         /// <c>Entity.FindItemByLayer</c> for a mobile under the checker: the ECS's worn item on the layer
         /// (<see cref="WornItem"/>); <c>CUO_EQUIP_READ_CHECK=1</c> compares it with the child list's first item on the
@@ -198,10 +259,10 @@ namespace ClassicUO.Game
         /// key moved (the record's WornLayers Version or Look, the subject: body and flags, the rules). Null for an instance
         /// World does not hold for its serial or one without a record (the caller evaluates the rules directly).
         /// </summary>
-        public LayerDecision WorldLayers(Mobile mobile, bool gargoyleDraw)
-        {
-            WornCache c = Worn(mobile);
+        public LayerDecision WorldLayers(Mobile mobile, bool gargoyleDraw) => WorldLayers(mobile, Worn(mobile), gargoyleDraw);
 
+        internal LayerDecision WorldLayers(Mobile mobile, WornCache c, bool gargoyleDraw)
+        {
             if (c.Held != WornHeld.Record)
             {
                 return null;
