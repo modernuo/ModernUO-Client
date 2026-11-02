@@ -316,9 +316,9 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Fact]
-        public void The_Setting_Defaults_Off()
+        public void The_Setting_Defaults_On()
         {
-            new ClassicUO.Configuration.Settings().EcsEffects.Should().BeFalse();
+            new ClassicUO.Configuration.Settings().EcsEffects.Should().BeTrue();
         }
     }
 }

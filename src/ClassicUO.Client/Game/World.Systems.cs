@@ -28,7 +28,7 @@ namespace ClassicUO.Game
     }
 
     // T5d (ecs-transition-plan.md): the stage runner of World.Update (a refactor: same behaviour with every switch) and the
-    // active item system (world_active_items_system, default off). The system keeps the update list's rules (append when queued,
+    // active item system (world_active_items_system, default on). The system keeps the update list's rules (append when queued,
     // swap-remove when the item no longer needs a frame or left Items) and adds the ItemActive tag on the item's mirror
     // entity as the ECS-side membership. CUO_ACTIVE_ITEMS_CHECK=1 compares tags and list every frame.
     internal sealed partial class World
@@ -57,7 +57,7 @@ namespace ClassicUO.Game
         private const bool s_activeItemsCheck = false;
 #endif
 
-        /// <summary>T5d (<c>world_active_items_system</c>, default off): the update list's membership is the <see cref="ItemActive"/> tag too.</summary>
+        /// <summary>T5d (<c>world_active_items_system</c>, default on): the update list's membership is the <see cref="ItemActive"/> tag too.</summary>
         public bool ActiveItemsSystemOn => ActiveItemsSystemOverride ?? s_activeItemsSystem;
 
         // T5b-items (world_item_anim_system) ---------------------------------------------------------------------------------
@@ -98,7 +98,7 @@ namespace ClassicUO.Game
         /// <summary>Tests: the T8 checker for this World (null: <c>CUO_EFFECT_CHECK=1</c>).</summary>
         internal bool? EffectsCheckOverride;
 
-        /// <summary>T8 (<c>ecs_effects</c>, default off): effects are ECS entities advanced by <see cref="EffectSystem"/>.</summary>
+        /// <summary>T8 (<c>ecs_effects</c>, default on): effects are ECS entities advanced by <see cref="EffectSystem"/>.</summary>
         public bool EffectsSystemOn => EffectsSystemOverride ?? EffectSystem.GlobalOn;
 
         public bool EffectsCheckOn => EffectsCheckOverride ?? EffectSystem.GlobalCheck;
