@@ -476,7 +476,7 @@ namespace ClassicUO.Game
             }
         }
 
-        // ItemView.DrawCorpse: the body, then the worn layers in paint order (PaperdollOrder.BuildInWorld)
+        // ItemView.DrawCorpse: the body, then the worn layers in paint order (LayerRuleEval.CorpseOrder)
         private bool EmitCorpse(in ItemSpriteInput item, bool hasAnims, int posX, int posY, float alpha, float depth)
         {
             if (item.CorpseHidden || !hasAnims)
@@ -504,7 +504,7 @@ namespace ClassicUO.Game
             CorpseLayer(in item, anims, Layer.Invalid, human, item.Hue, flipped, alpha, group, direction, posX, posY, depth);
 
             Span<Layer> layers = stackalloc Layer[PaperdollOrder.N];
-            int layerCount = LayerRuleEval.CorpseOrder(item.CorpseSource, item.Amount, direction, layers); // T3b: from data with ecs_layer_rules
+            int layerCount = LayerRuleEval.CorpseOrder(item.CorpseSource, item.Amount, direction, layers); // T3b: from the layering rules data
 
             for (int i = 0; i < layerCount; i++)
             {

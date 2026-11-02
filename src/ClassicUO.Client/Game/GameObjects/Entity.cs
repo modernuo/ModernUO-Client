@@ -389,7 +389,7 @@ namespace ClassicUO.Game.GameObjects
         /// The first item on <paramref name="layer"/> among the entity's children. T3a: for a mobile, the ECS's worn item
         /// (<see cref="WorldState.WornItem"/>: WornLayers), under <c>CUO_EQUIP_READ_CHECK=1</c> compared with the list
         /// (<see cref="WorldState.FindWorn"/>). Every equipment reader goes through here: IsMounted, the animation group's
-        /// hands, the abilities, the paperdoll, PaperdollOrder.BuildInWorld, Legacy's MobileView. An item's (a corpse's laid
+        /// hands, the abilities, the paperdoll, the layering rules, Legacy's MobileView. An item's (a corpse's laid
         /// equipment) is its list.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

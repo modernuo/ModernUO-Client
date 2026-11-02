@@ -890,9 +890,6 @@ namespace ClassicUO.Game
             // T5c: CUO_SWEEP_CHECK's 5 s summary
             _world.LogSweepSummary();
 
-            // T3b: CUO_LAYER_RULES_CHECK's 5 s summary
-            LayerRuleEval.LogSummary();
-
             // T4: CUO_SCALAR_READS's per-frame read counts (5 s summary)
             ScalarReads.EndFrame();
 
@@ -1315,9 +1312,13 @@ namespace ClassicUO.Game
             ref readonly AnimationState s = ref e.GetComponent<AnimationState>();
             bool gargoyle = AnimationRules.IsGargoyleDrawBody(mobile.Graphic, Client.Game.UO.Version >= Utility.ClientVersion.CV_7000);
 
+            // MobileView's answer from the GameObject side: the layering rules on the wearer's items (T3b)
             Span<Layer> layers = stackalloc Layer[PaperdollOrder.N];
             Span<uint> expected = stackalloc uint[PaperdollOrder.N];
-            int count = PaperdollOrder.BuildInWorld(mobile, mobile.IsFemale || gargoyle, 1, layers);
+            LayerTables tables = default;
+            tables.Gather(mobile);
+            Uo.Pack.LayerSubject subject = LayerRuleEval.Subject(mobile.Graphic, mobile.IsFemale, gargoyle);
+            int count = LayerRuleEval.BuildInWorld(tables.Anim, subject, 1, layers);
             int n = 0;
 
             if (mobile.IsHuman)
@@ -1327,7 +1328,7 @@ namespace ClassicUO.Game
                     Item item = mobile.FindItemByLayer(layers[i]);
 
                     if (item == null || mobile.IsDead && (layers[i] == Layer.Hair || layers[i] == Layer.Beard) ||
-                        Mobile.IsCovered(mobile, layers[i]) || item.ItemData.AnimID == 0)
+                        LayerRuleEval.IsCovered(Uo.Pack.LayerRuleSet.World, layers[i], ref tables, subject) || item.ItemData.AnimID == 0)
                     {
                         continue;
                     }
