@@ -175,12 +175,14 @@ namespace ClassicUO.Ecs
             /// <summary><c>Entity</c>'s fields (<c>store</c> at 0, <c>Id</c> at 8, <c>Revision</c> at 12), read by value
             /// (Unsafe.BitCast) so the entity stays in registers; an accessor would need it by <c>ref</c>. The probe checks
             /// it.</summary>
+#pragma warning disable CS0649 // the layout structs are only reinterpreted, never assigned
             private struct EntityLayout
             {
                 public EntityStore Store;
                 public int Id;
                 public short Revision;
             }
+#pragma warning restore CS0649
 
             [MethodImpl(MethodImplOptions.AggressiveInlining)]
             public static ref EntityNode Node(Entity e) => ref Nodes(Unsafe.BitCast<Entity, EntityLayout>(e).Store)[e.Id];
@@ -209,6 +211,7 @@ namespace ClassicUO.Ecs
 
             /// <summary><c>EntityData</c>'s fields in 4.0.0-preview.2, in order (the probe's reference for the heap map;
             /// same field types in the same order, so the runtime lays both out alike, and the probe checks it).</summary>
+#pragma warning disable CS0649
             private struct DataLayout
             {
                 public object[] HeapMap;
@@ -216,6 +219,7 @@ namespace ClassicUO.Ecs
                 public int Id;
                 public int CompIndex;
             }
+#pragma warning restore CS0649
 
             private static bool Probe()
             {
