@@ -491,6 +491,12 @@ namespace ClassicUO.Game.Map
 
             if (ArtWait)
             {
+                // art_container_prefetch: this frame's shared allowance for art uploads and the windows' prefetch waits
+                if (ContentsArt.Enabled)
+                {
+                    Client.Game.UO.Arts.BeginFrame((long)(ContentsArt.FrameAllowanceMs * Stopwatch.Frequency / 1000.0));
+                }
+
                 // atlas uploads of art the workers finished, inside the chunk budget (at least one each)
                 Client.Game.UO.Arts.DrainReady(deadline);
                 Client.Game.UO.Texmaps.DrainReady(deadline);

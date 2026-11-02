@@ -29,6 +29,9 @@ namespace ClassicUO.Renderer
         private readonly object _publishLock = new object();
         private readonly List<DecodeBudget.Item> _removed = new List<DecodeBudget.Item>();
         private int _epoch;
+        // a main-thread caller blocked in WaitPublished; workers only touch the event while one is (no cost otherwise)
+        private readonly ManualResetEventSlim _published = new ManualResetEventSlim(false);
+        private int _publishWaiter;
 
         /// <param name="returnBuffers">Returns the item's pooled buffers and clears them; must tolerate an item that has none.
         /// Runs on the worker (cancelled publish) or the main thread (cancel), never both for one item.</param>
@@ -77,6 +80,7 @@ namespace ClassicUO.Renderer
                 if (item.Epoch == _epoch)
                 {
                     _ready.Enqueue(item);
+                    SignalPublished();
 
                     return;
                 }
@@ -91,6 +95,34 @@ namespace ClassicUO.Renderer
 
         /// <summary>Main thread.</summary>
         public bool TryDequeue(out T item) => _ready.TryDequeue(out item);
+
+        private void SignalPublished()
+        {
+            if (Volatile.Read(ref _publishWaiter) != 0)
+            {
+                _published.Set();
+            }
+        }
+
+        /// <summary>
+        /// Blocks the main thread until an item is ready or <paramref name="timeoutMs"/> passes (a signaled wait: no spinning
+        /// against the workers). True when an item is ready.
+        /// </summary>
+        public bool WaitPublished(int timeoutMs)
+        {
+            _published.Reset();
+            Interlocked.Exchange(ref _publishWaiter, 1);
+
+            try
+            {
+                // an item published before the flag was visible is seen here; one published after it sets the event
+                return !_ready.IsEmpty || (timeoutMs > 0 && _published.Wait(timeoutMs)) || !_ready.IsEmpty;
+            }
+            finally
+            {
+                Volatile.Write(ref _publishWaiter, 0);
+            }
+        }
 
         /// <summary>Gives the item's bytes back (exactly once per submission; uncounted items: nothing). Main thread.</summary>
         public void Release(T item) => _budget.Release(item);
