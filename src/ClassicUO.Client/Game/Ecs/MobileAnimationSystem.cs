@@ -91,6 +91,9 @@ namespace ClassicUO.Game
             return false;
         }
 
+        // the inputs UpdateInPlace refers to for an entity without MobileInputs (unused: it samples the Mobile then)
+        private static readonly MobileInputs _noInputs;
+
         /// <summary>
         /// E5: <see cref="Update(World, Mobile, EcsEntity)"/> working on the entity's own <see cref="AnimationState"/> and
         /// <see cref="MobileRenderState"/> (<paramref name="s"/>, <paramref name="rs"/>, taken after
@@ -101,8 +104,9 @@ namespace ClassicUO.Game
         {
             // W5: the slow-changing inputs come from MobileInputs, pushed at their mutation sites (the mirror gives every
             // mobile one; without it, as in a hand-built entity, they are read from the Mobile)
-            MobileInputs inp = default;
-            bool push = e.TryGetComponent(out inp);
+            // perf-10: read in place (the component is not copied); nothing below changes the entity's archetype
+            bool push = e.HasComponent<MobileInputs>();
+            ref readonly MobileInputs inp = ref push ? ref e.GetComponent<MobileInputs>() : ref _noInputs;
 
             if (InputBench && push)
             {
