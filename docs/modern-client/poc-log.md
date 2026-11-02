@@ -5038,3 +5038,15 @@ Paired NativeAOT builds (`CuoDevTools=true`, checkers off), all on the quiet mac
 - **Memory:** 12 B per entry, grown by doubling up to the highest id seen: at most ~0.8 MB for art and ~0.8 MB for gumps per client, typically less (only ids seen so far).
 - Unit tests: 2,855 passed, 6 skipped.
 - Timing: paired NativeAOT job, see the handoff `cuo-poc-state/handoffs/perf-1.md` (pending).
+
+### Picker flat table and tile-index fix A merged; timing parked (coordinator, 2026-11-02)
+
+- The machine is busy again (owner), so quiet-machine timing is parked. Scripts and resubmit commands are in `cuo-poc-state/handoffs/parked-timing.txt` and `measure/parked/`. Cancelled before start: bench-000225/226 (fix A timing) and bench-000227 (picker timing).
+- Owner rule (2026-11-02): a fix that is better by construction, with behaviour proven identical by tests, may merge before its quiet timing. The poc-log says "timing pending" until that timing runs.
+- **perf-1, PixelPicker flat table** (6cec191ea, merge 2ec71344f). This is the `Dictionary<ulong,int>` hotspot: the Legacy pick test runs about 2,700 times per frame at Britain zoom 2.5. Memory is at most about 1.6 MB per client. Timing pending.
+- **tile-index fix A** (e67267222, with the test 1f9bd4857; merge 2ee3cd208).
+  - gate-on bench-000221: PASS.
+  - plans-fast bench-000222: false FAIL. DevBench teleport writes, which the gate expects, were attributed to `Bootstrap.Main` under NativeAOT; `bg/funnel-dev-scope` fixes this.
+  - Shots bench-000223 are within the cross-session control bench-000224.
+  - `world_tile_index` stays default off until the parked timing decides.
+- Unit tests after the merge: 2,857 passed, 6 skipped. The first run had 1 failure that passed on rerun. This is a flake; its name was not captured.
