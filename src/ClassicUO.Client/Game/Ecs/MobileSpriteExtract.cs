@@ -240,8 +240,8 @@ namespace ClassicUO.Game
         {
             byte frame = s.Frame;
 
-            // the facing-dependent moves on the slot indices: PaperdollOrder.ApplyDirectionCloak, or with ecs_layer_rules the
-            // data's direction rules (the rebuild's interned per-facing orders)
+            // the facing-dependent moves on the slot indices: the layering rules data's direction rules (the rebuild's
+            // interned per-facing orders; the cloak move with CloakAnchor only when that table is full)
             Span<byte> order = stackalloc byte[EquipmentSlots.MAX];
             n = AnimationRules.PaintOrder(in eq, s.Facing, order);
 

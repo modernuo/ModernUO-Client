@@ -45,10 +45,11 @@ namespace ClassicUO.Game.Data
     }
 
     /// <summary>
-    /// T3b (ecs-transition-plan.md, T3 "Equipment layering as data"): the layering rules from the pack's layerrules.bin
-    /// (or, without one, <see cref="LayerRulesDefault.Create"/>, the same source the converter writes), used instead of
-    /// PaperdollOrder.Build/ApplyDirectionCloak, MobileView.IsCovered and FixGargoyleEquipments with <c>ecs_layer_rules</c> on
-    /// (default off). <c>CUO_LAYER_RULES_CHECK=1</c> (CUO_DEVTOOLS builds) computes both answers at every decision.
+    /// T3b (ecs-transition-plan.md, T3 "Equipment layering as data"): the equipment layering rules from the pack's
+    /// layerrules.bin (or, without one, <see cref="LayerRulesDefault.Create"/>, the same source the converter writes): the
+    /// worn layers' draw order, the covering and the remaps, for MobileView, the paperdoll, corpses and MobileAnimationSystem.
+    /// The hard-coded rules they replaced were deleted with <c>ecs_layer_rules</c> (T9); the unit tests keep a frozen copy
+    /// (LegacyLayerRulesReference) to compare the default data with.
     /// </summary>
     internal static class LayerRuleEval
     {
@@ -88,19 +89,6 @@ namespace ClassicUO.Game.Data
             return LayerRulesDefault.Create();
         }
 
-        // CLEANUP(release): the gate's override of the setting (CUO_ECS_LAYER_RULES=1|0)
-        private static readonly bool? _env = Environment.GetEnvironmentVariable("CUO_ECS_LAYER_RULES") switch
-        {
-            "1" => true,
-            "0" => false,
-            _ => null
-        };
-
-        /// <summary>Tests and the session driver.</summary>
-        internal static bool? Override;
-
-        public static bool On => Override ?? _env ?? Configuration.Settings.GlobalSettings.EcsLayerRules;
-
         /// <summary>Tests: the client version gate (null: the loaded client's).</summary>
         internal static bool? Cv7000Override;
 
@@ -117,7 +105,7 @@ namespace ClassicUO.Game.Data
         /// no covering and no gargoyle remap).</summary>
         public static LayerSubject CorpseSubject(ushort body) => new LayerSubject(Rules.GroupOf(body), 0, body);
 
-        /// <summary>PaperdollOrder.BuildInWorld from data: order, Filter (no backpack), then the direction moves.</summary>
+        /// <summary>The world order: order, Filter (no backpack), then the direction moves.</summary>
         public static int BuildInWorld(ReadOnlySpan<ushort> key, LayerSubject subject, byte direction, Span<Layer> dest)
         {
             LayerRules rules = Rules;
@@ -143,345 +131,25 @@ namespace ClassicUO.Game.Data
         public static ushort Remap(ushort anim, LayerSubject subject) => Rules.Remap(LayerRuleSet.World, anim, subject);
 
         /// <summary>
-        /// ItemView.DrawCorpse / the corpse pick / ItemSpriteExtract: a corpse's worn layers in paint order. With ecs_layer_rules
-        /// the world set's order and direction moves for the corpse's body with no flags (altTorsoTable: false); else
-        /// PaperdollOrder.BuildInWorld. Corpses keep no covering and no remap pass.
+        /// ItemView.DrawCorpse / the corpse pick / ItemSpriteExtract: a corpse's worn layers in paint order, the world set's
+        /// order and direction moves for the corpse's body with no flags. Corpses keep no covering and no remap pass.
         /// </summary>
         public static int CorpseOrder(Entity corpse, ushort body, byte direction, Span<Layer> dest)
         {
-            bool data = On;
-
-            if (!data && !CheckEnabled)
-            {
-                return PaperdollOrder.BuildInWorld(corpse, altTorsoTable: false, direction, dest);
-            }
-
             Span<ushort> key = stackalloc ushort[PaperdollOrder.N];
             PaperdollOrder.GraphicsFromEntity(corpse, key);
-            int count = data ? BuildInWorld(key, CorpseSubject(body), direction, dest) : PaperdollOrder.BuildInWorld(corpse, altTorsoTable: false, direction, dest);
 
-            if (CheckEnabled)
-            {
-                Span<Layer> other = stackalloc Layer[PaperdollOrder.N];
-                int oc = data ? PaperdollOrder.BuildInWorld(corpse, altTorsoTable: false, direction, other) : BuildInWorld(key, CorpseSubject(body), direction, other);
-                ReadOnlySpan<Layer> hard = data ? other.Slice(0, oc) : dest.Slice(0, count);
-                ReadOnlySpan<Layer> fromData = data ? dest.Slice(0, count) : other.Slice(0, oc);
-                CompareOrder("corpse", corpse.Serial, hard, fromData);
-            }
-
-            return count;
+            return BuildInWorld(key, CorpseSubject(body), direction, dest);
         }
 
         /// <summary>PaperDollInteractable.GetAnimID's remap (the gargoyle ghost's shroud) from the paperdoll set.</summary>
         /// The subject is the paperdoll's (female; gargoyle = the ungated gargoyle bodies, as its altTorso).
         public static ushort RemapPaperdoll(ushort anim, ushort body, bool female) =>
             Rules.Remap(LayerRuleSet.Paperdoll, anim, Subject(body, female, body == 0x029A || body == 0x029B || body == 0x02B6 || body == 0x02B7));
-
-        /// <summary>The hard-coded GetAnimID remap, for CUO_LAYER_RULES_CHECK and the tests.</summary>
-        public static ushort RemapPaperdollHard(ushort anim, ushort body, bool cv7000) =>
-            cv7000 && anim == 0x03CA && (body == 0x02B7 || body == 0x02B6) ? (ushort)0x0223 : anim;
-
-        // ---- CUO_LAYER_RULES_CHECK (CUO_DEVTOOLS builds only) -----------------------------------------------------------
-        // Every covered/order decision in the world (MobileView draw and pick, MobileAnimationSystem) and the paperdoll
-        // computes the hard-coded and the data-driven answer and logs "[layers] mismatch ...". CLEANUP(release): with the
-        // hard-coded rules (T9).
-#if CUO_DEVTOOLS
-        public static bool CheckEnabled = Environment.GetEnvironmentVariable("CUO_LAYER_RULES_CHECK") == "1";
-#else
-        public const bool CheckEnabled = false;
-#endif
-
-        public static long Checks, Mismatches;
-        private static long _logged;
-        private static uint _summaryAt;
-        private static long _summaryChecks = -1;
-
-        /// <summary>Tests: sees each mismatch report.</summary>
-        internal static Action<string> MismatchObserver;
-
-        private static void Report(string message)
-        {
-            Mismatches++;
-            MismatchObserver?.Invoke(message);
-
-            if (_logged++ < 200)
-            {
-                Log.Warn(message);
-            }
-        }
-
-        /// <summary>5 s summary, from WorldEcs.Update.</summary>
-        public static void LogSummary()
-        {
-            if (!CheckEnabled || Time.Ticks < _summaryAt || Checks == _summaryChecks)
-            {
-                return;
-            }
-
-            _summaryAt = Time.Ticks + 5000;
-            _summaryChecks = Checks;
-            Log.Info($"[layers] checks {Checks} mismatches {Mismatches} rules {Source} ecs_layer_rules={(On ? "on" : "off")} cache hits {LayerDecision.Hits} misses {LayerDecision.Misses}");
-        }
-
-        private static string Fmt(ReadOnlySpan<Layer> a)
-        {
-            var sb = new System.Text.StringBuilder();
-            foreach (Layer l in a) sb.Append(((byte)l).ToString("X2")).Append(' ');
-            return sb.ToString().TrimEnd();
-        }
-
-        private static void CompareOrder(string where, uint serial, ReadOnlySpan<Layer> hard, ReadOnlySpan<Layer> data)
-        {
-            Checks++;
-
-            if (!hard.SequenceEqual(data))
-            {
-                Report($"[layers] mismatch ({where} order) 0x{serial:X8}: hard [{Fmt(hard)}] | data [{Fmt(data)}]");
-            }
-        }
-
-        private static void CompareCovered(string where, uint serial, Layer layer, bool hard, bool data, ref LayerTables t)
-        {
-            Checks++;
-
-            if (hard != data)
-            {
-                Report($"[layers] mismatch ({where} covered) 0x{serial:X8} layer {layer}: hard {hard} | data {data} | robe 0x{t.Graphic[(int)Layer.Robe]:X4}/0x{t.Anim[(int)Layer.Robe]:X4}");
-            }
-        }
-
-        /// <summary>
-        /// MobileView's draw: the order (BuildInWorld), every layer's IsCovered, and the gargoyle remap; with the T3b cache
-        /// (<paramref name="cache"/>, the answer the draw used) also the cached answer against a fresh evaluation.
-        /// </summary>
-        public static void CheckWorld(Mobile mobile, bool gargoyleDraw, byte direction, LayerDecision cache = null)
-        {
-            LayerTables t = default;
-            t.Gather(mobile);
-            LayerSubject subject = Subject(mobile.Graphic, mobile.IsFemale, gargoyleDraw);
-
-            Span<Layer> hard = stackalloc Layer[PaperdollOrder.N];
-            Span<Layer> data = stackalloc Layer[PaperdollOrder.N];
-            int hc = PaperdollOrder.BuildInWorld(mobile, mobile.IsFemale || gargoyleDraw, direction, hard);
-            int dc = BuildInWorld(t.Anim, subject, direction, data);
-            CompareOrder("world", mobile.Serial, hard.Slice(0, hc), data.Slice(0, dc));
-
-            CheckCovered("world", mobile, LayerRuleSet.World, ref t, subject);
-
-            if (cache != null)
-            {
-                CheckCache("world", mobile.Serial, cache, ref t, subject, direction);
-            }
-
-            for (int l = (int)Layer.OneHanded; l <= (int)Layer.Legs; l++)
-            {
-                ushort anim = t.Anim[l];
-
-                // every worn AnimID: the data's remap conditions decide whom it applies to
-                if (anim != 0)
-                {
-                    ushort h = anim;
-
-                    if (gargoyleDraw)
-                    {
-                        Mobile.FixGargoyleEquipmentsHard(ref h);
-                    }
-
-                    ushort d = Remap(anim, subject);
-                    Checks++;
-
-                    if (h != d)
-                    {
-                        Report($"[layers] mismatch (world remap) 0x{mobile.Serial:X8} anim 0x{anim:X4}: hard 0x{h:X4} | data 0x{d:X4}");
-                    }
-                }
-            }
-        }
-
-        /// <summary>MobileView's pick: one worn layer's IsCovered (and the T3b cache's flag against the fresh data).</summary>
-        public static void CheckPick(Mobile mobile, Layer layer, ref LayerTables t, LayerSubject subject, LayerDecision cache = null)
-        {
-            bool data = IsCovered(LayerRuleSet.World, layer, ref t, subject);
-            CompareCovered("pick", mobile.Serial, layer, Mobile.IsCovered(mobile, layer), data, ref t);
-
-            if (cache != null)
-            {
-                CompareCovered("pick cache", mobile.Serial, layer, data, cache.IsCovered(layer), ref t);
-            }
-        }
-
-        /// <summary>
-        /// T3b cache: the cached answer (order for the facing, the worn layers' covered flags and remaps, the subject) against
-        /// a fresh evaluation of the wearer's tables: a stale entry (a key input that didn't invalidate) shows as
-        /// "(where cache ...)" mismatches.
-        /// </summary>
-        public static void CheckCache(string where, uint serial, LayerDecision cache, ref LayerTables t, LayerSubject subject, byte direction)
-        {
-            Span<Layer> data = stackalloc Layer[PaperdollOrder.N];
-            int dc = BuildInWorld(t.Anim, subject, direction, data);
-            CompareOrder(where + " cache", serial, data.Slice(0, dc), cache.Order(direction));
-            Checks++;
-
-            LayerSubject cs = cache.Subject;
-
-            if (subject.Group != cs.Group || subject.Flags != cs.Flags || subject.Body != cs.Body)
-            {
-                Report($"[layers] mismatch ({where} cache subject) 0x{serial:X8}");
-            }
-
-            for (int l = (int)Layer.OneHanded; l <= (int)Layer.Legs; l++)
-            {
-                if (!t.Present[l])
-                {
-                    continue;
-                }
-
-                CompareCovered(where + " cache", serial, (Layer)l, IsCovered(LayerRuleSet.World, (Layer)l, ref t, subject), cache.IsCovered((Layer)l), ref t);
-                ushort fresh = t.Anim[l] == 0 ? (ushort)0 : Remap(t.Anim[l], subject), got = cache.Remap((Layer)l);
-                Checks++;
-
-                if (fresh != got)
-                {
-                    Report($"[layers] mismatch ({where} cache remap) 0x{serial:X8} layer {(Layer)l} anim 0x{t.Anim[l]:X4}: fresh 0x{fresh:X4} | cached 0x{got:X4}");
-                }
-            }
-        }
-
-        /// <summary>MobileView's pick: the graphic the hit test resolves (remap, then the equip conversion), from both helpers.</summary>
-        public static void ComparePickGraphic(uint serial, Layer layer, ushort hard, ushort data)
-        {
-            Checks++;
-
-            if (hard != data)
-            {
-                Report($"[layers] mismatch (pick graphic) 0x{serial:X8} layer {layer}: hard 0x{hard:X4} | data 0x{data:X4}");
-            }
-        }
-
-        /// <summary>The paperdoll's gump remap (PaperDollInteractable.GetAnimID), both answers.</summary>
-        public static void ComparePaperdollRemap(ushort body, ushort anim, bool female, ushort used)
-        {
-            ushort hard = RemapPaperdollHard(anim, body, Cv7000), data = RemapPaperdoll(anim, body, female);
-            Checks++;
-
-            if (hard != data || used != (On ? data : hard))
-            {
-                Report($"[layers] mismatch (paperdoll remap) body 0x{body:X4} anim 0x{anim:X4}: hard 0x{hard:X4} | data 0x{data:X4} | used 0x{used:X4}");
-            }
-        }
-
-        /// <summary>
-        /// MobileAnimationSystem's rebuilt slots: the final paint order (AnimationRules.PaintOrder, what MobileSpriteExtract
-        /// draws) for every direction class against the hard-coded world order (PaperdollOrder.Build, Filter,
-        /// ApplyDirectionCloak) restricted to the drawn layers.
-        /// </summary>
-        public static void CheckEcsSlots(uint serial, ReadOnlySpan<ushort> key, bool altTorso, in ClassicUO.Ecs.EquipmentSlots eq)
-        {
-            int n = eq.Count;
-            Span<Layer> raw = stackalloc Layer[PaperdollOrder.N];
-            Span<Layer> full = stackalloc Layer[PaperdollOrder.N];
-            Span<byte> slotLayers = stackalloc byte[ClassicUO.Ecs.EquipmentSlots.MAX];
-            Span<Layer> hard = stackalloc Layer[ClassicUO.Ecs.EquipmentSlots.MAX];
-            Span<Layer> got = stackalloc Layer[ClassicUO.Ecs.EquipmentSlots.MAX];
-            Span<byte> order = stackalloc byte[ClassicUO.Ecs.EquipmentSlots.MAX];
-
-            for (int i = 0; i < n; i++)
-            {
-                slotLayers[i] = eq.Slots[i].Layer;
-            }
-
-            PaperdollOrder.Build(key, altTorso, raw);
-
-            for (int c = 0; c < EquipDirOrders.Classes; c++)
-            {
-                byte dir = (byte)c;
-                int fc = PaperdollOrder.ApplyDirectionCloak(full, PaperdollOrder.Filter(raw, includeBackpack: false, full), dir);
-                int hn = 0;
-
-                for (int i = 0; i < fc && hn < n; i++)
-                {
-                    if (slotLayers.Slice(0, n).IndexOf((byte)full[i]) >= 0)
-                    {
-                        hard[hn++] = full[i];
-                    }
-                }
-
-                int gn = AnimationRules.PaintOrder(in eq, dir, order);
-
-                for (int i = 0; i < gn; i++)
-                {
-                    got[i] = (Layer)eq.Slots[order[i]].Layer;
-                }
-
-                CompareOrder($"ecs slots dir {dir}", serial, hard.Slice(0, hn), got.Slice(0, gn));
-            }
-        }
-
-        /// <summary>The paperdoll: its order key (held-item preview included) and every layer's IsCovered.</summary>
-        public static void CheckPaperdoll(Mobile mobile, ReadOnlySpan<ushort> key, bool altTorso, bool gargoyleBody)
-        {
-            LayerTables t = default;
-            t.Gather(mobile);
-            LayerSubject subject = Subject(mobile.Graphic, mobile.IsFemale, gargoyleBody);
-
-            Span<Layer> raw = stackalloc Layer[PaperdollOrder.N];
-            Span<Layer> hard = stackalloc Layer[PaperdollOrder.N];
-            Span<Layer> data = stackalloc Layer[PaperdollOrder.N];
-            PaperdollOrder.Build(key, altTorso, raw);
-            int hc = PaperdollOrder.Filter(raw, includeBackpack: false, hard);
-            int dc = BuildPaperdoll(key, subject, data);
-            CompareOrder("paperdoll", mobile.Serial, hard.Slice(0, hc), data.Slice(0, dc));
-
-            CheckCovered("paperdoll", mobile, LayerRuleSet.Paperdoll, ref t, subject);
-        }
-
-        private static void CheckCovered(string where, Mobile mobile, LayerRuleSet set, ref LayerTables t, LayerSubject subject)
-        {
-            for (int l = (int)Layer.OneHanded; l <= (int)Layer.Legs; l++)
-            {
-                CompareCovered(where, mobile.Serial, (Layer)l, Mobile.IsCovered(mobile, (Layer)l), IsCovered(set, (Layer)l, ref t, subject), ref t);
-            }
-        }
-
-        /// <summary>MobileAnimationSystem's rebuild: its raw order (PaperdollOrder.Build), AnimationRules.IsCovered, FixGargoyleEquipment.</summary>
-        public static void CheckEcs(uint serial, ReadOnlySpan<ushort> key, ReadOnlySpan<bool> present, ReadOnlySpan<ushort> gfx, ReadOnlySpan<ushort> anim, ushort body, bool female, bool gargoyle)
-        {
-            LayerSubject subject = Subject(body, female, gargoyle);
-            Span<Layer> hard = stackalloc Layer[PaperdollOrder.N];
-            Span<byte> data = stackalloc byte[PaperdollOrder.N];
-            PaperdollOrder.Build(key, female || gargoyle, hard);
-            Rules.BuildOrder(LayerRuleSet.World, key, subject, data);
-            CompareOrder("ecs", serial, hard, MemoryMarshal.Cast<byte, Layer>(data));
-
-            LayerTables t = default;
-
-            for (int l = (int)Layer.OneHanded; l <= (int)Layer.Legs; l++)
-            {
-                t.Present[l] = present[l];
-                t.Graphic[l] = present[l] ? gfx[l] : (ushort)0;
-                t.Anim[l] = present[l] ? anim[l] : (ushort)0;
-            }
-
-            for (int l = (int)Layer.OneHanded; l <= (int)Layer.Legs; l++)
-            {
-                CompareCovered("ecs", serial, (Layer)l, AnimationRules.IsCovered((Layer)l, gfx, anim, present, body), IsCovered(LayerRuleSet.World, (Layer)l, ref t, subject), ref t);
-
-                if (present[l] && anim[l] != 0)
-                {
-                    ushort h = gargoyle ? AnimationRules.FixGargoyleEquipment(anim[l]) : anim[l], d = Remap(anim[l], subject);
-                    Checks++;
-
-                    if (h != d)
-                    {
-                        Report($"[layers] mismatch (ecs remap) 0x{serial:X8} anim 0x{anim[l]:X4}: hard 0x{h:X4} | data 0x{d:X4}");
-                    }
-                }
-            }
-        }
     }
 
     /// <summary>
-    /// T3b, ecs_layer_rules: the ECS slots' paint order per facing from the data's direction rules. MobileAnimationSystem's
+    /// T3b: the ECS slots' paint order per facing from the data's direction rules. MobileAnimationSystem's
     /// rebuild applies the world set's DirMove rules to the full layer order for each direction class (0..7, and 8 for any
     /// facing of 8 or more), projects the result onto the drawn slots and interns the 9 permutations here;
     /// <see cref="ClassicUO.Ecs.EquipmentSlots.DirOrder"/> holds the id (0: none, the hard-coded cloak move on the slots).
@@ -587,7 +255,7 @@ namespace ClassicUO.Game.Data
     }
 
     /// <summary>
-    /// T3b cache (ecs_layer_rules): one wearer's full world-set layering answer, reused until an input changes. The answer:
+    /// T3b cache: one wearer's full world-set layering answer, reused until an input changes. The answer:
     /// the filtered order (PaperdollOrder.Filter of BuildOrder) and, filled lazily per direction class (0..7, 8 for any facing
     /// of 8 or more), the order after the DirMove rules; the covered flag of every worn layer; the remapped draw AnimID of
     /// every worn layer. The key is everything the rules read: the worn layers' present / graphic / AnimID through the
@@ -596,7 +264,7 @@ namespace ClassicUO.Game.Data
     /// group; the female, gargoyle-draw and 7.0.0.0 flags); the rules instance (fixed once loaded; tests swap it). The
     /// direction only selects the class. A hit with no equipment mark anywhere since the last check (the mirror-wide
     /// <see cref="ClassicUO.Ecs.WorldMirror.EquipChanges"/>) is a handful of compares; after a mark anywhere, one component
-    /// read of Look. Held by the mobile's <see cref="WornCache.Layers"/>, made at its first use with the switch on.
+    /// read of Look. Held by the mobile's <see cref="WornCache.Layers"/>, made at its first use.
     /// </summary>
     internal sealed class LayerDecision
     {

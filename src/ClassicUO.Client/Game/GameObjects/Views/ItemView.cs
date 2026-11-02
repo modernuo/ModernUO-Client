@@ -218,7 +218,7 @@ namespace ClassicUO.Game.GameObjects
             // equipped item graphics; cloak repositioned by facing direction to match
             // the in-world tables. Stack-allocated, no GC churn.
             Span<Layer> layers = stackalloc Layer[PaperdollOrder.N];
-            int layerCount = LayerRuleEval.CorpseOrder(this, Amount, direction, layers); // T3b: from data with ecs_layer_rules
+            int layerCount = LayerRuleEval.CorpseOrder(this, Amount, direction, layers); // T3b: from the layering rules data
 
             for (int i = 0; i < layerCount; i++)
             {
@@ -640,7 +640,7 @@ namespace ClassicUO.Game.GameObjects
                     || Amount == 0x02E9;
 
                 Span<Layer> layers = stackalloc Layer[PaperdollOrder.N];
-                int layerCount = LayerRuleEval.CorpseOrder(this, Amount, direction, layers); // T3b: from data with ecs_layer_rules
+                int layerCount = LayerRuleEval.CorpseOrder(this, Amount, direction, layers); // T3b: from the layering rules data
 
                 for (int i = -1; i < layerCount; i++)
                 {
