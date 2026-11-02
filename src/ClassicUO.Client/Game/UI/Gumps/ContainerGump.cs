@@ -610,23 +610,19 @@ namespace ClassicUO.Game.UI.Gumps
             int boundWidth = dataBounds.Width;
             int boundHeight = dataBounds.Height + (IsChessboard ? 20 : 0);
 
-            ref readonly var spriteInfo = ref (
-                (IsChessboard || IsBackgammonBoard)
-                    ? ref Client.Game.UO.Gumps.GetGump(
-                        (ushort)(
-                            item.DisplayedGraphic
-                            - Constants.ITEM_GUMP_TEXTURE_OFFSET
-                        )
-                    )
-                    : ref Client.Game.UO.Arts.GetArt(item.DisplayedGraphic)
-            );
+            bool isGump = IsChessboard || IsBackgammonBoard;
 
-            if (spriteInfo.Texture != null)
+            // perf-6: the size without decoding the art
+            if (ItemGump.TryGetSpriteSize(
+                    (ushort)(item.DisplayedGraphic - (isGump ? Constants.ITEM_GUMP_TEXTURE_OFFSET : 0)),
+                    isGump,
+                    out int spriteWidth,
+                    out int spriteHeight))
             {
                 float scale = GetScale();
 
-                boundWidth -= (int)(spriteInfo.UV.Width / scale);
-                boundHeight -= (int)(spriteInfo.UV.Height / scale);
+                boundWidth -= (int)(spriteWidth / scale);
+                boundHeight -= (int)(spriteHeight / scale);
             }
 
             // T1 (funnel part 8): the clamp computed here, written through the funnel (with the item's Sync)
