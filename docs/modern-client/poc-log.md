@@ -5266,3 +5266,25 @@ Paired NativeAOT builds (`CuoDevTools=true`, checkers off), all on the quiet mac
 - New checker `CUO_LAYER_CACHE_CHECK` restores the `LayerDecision` cache check lost with slice 3.
 - Gates: Gpu bench-000279, Legacy bench-000280 (layer-cache, equip and contents mismatches 0), plans bench-000281 PASS; shots bench-000282 PASS (base vs new within base vs baseb). Codex: no findings. Timing parked (`measure/t9-childlist-a/job-timing-PARKED.sh`).
 - Next: slice B stops writing the list and deletes `FindItemByLayerInList`, `CUO_CONTENTS_CHECK` and `CUO_EQUIP_READ_CHECK`.
+
+### perf-10 merged (coordinator, 2026-11-02)
+
+- Merge 7faac3caf (unit tests 3,069 passed, 6 skipped):
+  - 53b646a84: MobileView reads worn items through `WorldState.WornView`, which validates the `WornCache` once per mobile instead of once per layer;
+  - 3c75d44f8: `UpdateInPlace` reads `MobileInputs` by reference;
+  - bf5dd447a: the frame-wide override-hue inputs are taken once per frame (new `Time.Frame`);
+  - fb21f2abe: `Control.Update` removes each run of disposed children with one `RemoveRange` (was O(n²));
+  - 11786413f: dev-only counters `find_by_layer` and `worn_checks`.
+- One merge conflict with slice A in `Entity.FindItemByLayer`: the counter goes in the mobile branch.
+- Gates: Gpu bench-000283, Legacy bench-000284 PASS.
+- Counts, bench-000285 and the rerun bench-000286 (large scene, 1,985 mobiles):
+
+  | Legacy, per frame | Base | perf-10 |
+  |---|---|---|
+  | `FindItemByLayer` on mobiles | 38,050 | 8,440 |
+  | `WornCache` checks | 40,950 | 10,055 |
+
+  Gpu is unchanged. alloc/frame is within run-to-run noise: the first run's Gpu 80 → 735 B did not repeat (900–990 B in both builds on the rerun).
+- Codex: no P0–P2. Two P3s accepted: `OnChildRemoved` callbacks now all run before the range removal (no override exists), and the hue frame cache can lag one frame after a DevBench range change.
+- Dropped: a non-allocating `FindControls` (no per-frame caller).
+- Tip gates for slice A + perf-10 together (7faac3caf): bench-000287 Gpu, bench-000288 Legacy, queued. Timing parked (`measure/perf-10/job-timing-PARKED.sh`).
