@@ -338,7 +338,7 @@ namespace ClassicUO.Renderer.Arts
                 // a worker decoded it already (not drained yet): upload that result instead of decoding it again
                 long drained = _decoder.DrainTicks;
 
-                if (_decoder.TryTakeReady(idx))
+                if (_decoder.TryTakeReady(idx, _frameAllowance))
                 {
                     FrameUploadTicks += _decoder.DrainTicks - drained;
 #if CUO_DEVTOOLS
