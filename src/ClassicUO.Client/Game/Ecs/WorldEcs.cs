@@ -29,7 +29,7 @@ namespace ClassicUO.Game
         {
             _world = world;
             Mirror = new WorldMirror();
-            Extract = new DynamicSpriteExtract(Mirror.Store);
+            Extract = new MirrorSpriteExtract(Mirror.Store);
             Animation = new MobileAnimationSystem(Mirror);
             Clock = new MobileClockSystem(Mirror.Store);
             Sweep = new RangeSweepSystem(Mirror.Store);
@@ -37,7 +37,7 @@ namespace ClassicUO.Game
 
         public WorldMirror Mirror { get; }
 
-        public DynamicSpriteExtract Extract { get; }
+        public MirrorSpriteExtract Extract { get; }
 
         public MobileAnimationSystem Animation { get; }
 
