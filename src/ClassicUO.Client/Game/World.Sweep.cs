@@ -40,7 +40,7 @@ namespace ClassicUO.Game
         private const bool s_sweepCheck = false;
 #endif
 
-        /// <summary>T5c (<c>world_sweep_system</c>, default off): the range sweep and the world-map pass run as a system.</summary>
+        /// <summary>T5c (<c>world_sweep_system</c>, default on): the range sweep and the world-map pass run as a system.</summary>
         public bool SweepSystemOn => SweepSystemOverride ?? s_sweepSystem;
 
         public bool SweepCheckOn => SweepCheckOverride ?? s_sweepCheck;

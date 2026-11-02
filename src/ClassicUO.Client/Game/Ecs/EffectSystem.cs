@@ -28,12 +28,12 @@ namespace ClassicUO.Game
         {
             "1" => true,
             "0" => false,
-            _ => Configuration.Settings.GlobalSettings?.EcsEffects ?? false
+            _ => Configuration.Settings.GlobalSettings?.EcsEffects ?? true
         };
 
         public static readonly bool GlobalCheck = Environment.GetEnvironmentVariable("CUO_EFFECT_CHECK") == "1";
 #else
-        public static readonly bool GlobalOn = Configuration.Settings.GlobalSettings?.EcsEffects ?? false;
+        public static readonly bool GlobalOn = Configuration.Settings.GlobalSettings?.EcsEffects ?? true;
         public const bool GlobalCheck = false;
 #endif
 
