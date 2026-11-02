@@ -379,6 +379,23 @@ namespace ClassicUO.Game.Map
                 return first;
             }
 
+#if CUO_DEVTOOLS
+            if (!DynamicTileIndex.ShadowWalk)
+#endif
+            {
+                // a tile without dynamics (most of them): the merged order is the list itself, so the walk follows TNext and
+                // skips the merge's per-object cost (world_tile_index cost Legacy ~13 ns per walked tile, tile-index-prof)
+                DynamicTileIndex dyn = chunk.Dynamic;
+
+                if (dyn == null || dyn.CountAt(first.TileCell) == 0)
+                {
+                    merged = false;
+                    walk = default;
+
+                    return first;
+                }
+            }
+
             return Begin(chunk, first.TileCell, out walk);
         }
 
