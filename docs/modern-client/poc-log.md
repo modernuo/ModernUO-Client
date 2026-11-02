@@ -5147,3 +5147,20 @@ Paired NativeAOT builds (`CuoDevTools=true`, checkers off), all on the quiet mac
 - **`Art.Get`:** it now takes a finished worker decode (`FirstSightDecoder.TryTakeReady`) instead of decoding again. The budget and buffer are released once. New dev counter `art_take`. Ready takes are charged to the frame allowance when one is active (Codex P2, fixed).
 - **Missing art:** a per-id bitset, so it logs once and returns the placeholder directly. This removes a per-frame allocation and log string per such item.
 - Counts bench-000250 PASS; gate bench-000251 PASS. Unit tests after the merge: 3,012 passed, 6 skipped.
+
+### T7b part 2b merged: picking from records (coordinator, 2026-11-02)
+
+- Merge 4064e5001, commits 828cb4e31 and 1d32c4cf3.
+- `SpritePickTable` records the pick state per drawn object. Picking reads it when `legacy_ecs_sprites` / `gpu_ecs_sprites` is on; unrecorded objects use the old fields. Checker `CUO_PICK_RECORDS_CHECK`.
+- The old field writes stay in all modes: the mirror bit feeds the animation system, FrameInfo has other readers, and art entries are shared with statics.
+- "A decoding direction is pickable" is kept as today: Legacy excludes still-decoding layers, Gpu includes them.
+- **Evidence:**
+  - pickscans bench-000252: pick_records and legacy_ecs_sprites scans 0 different in both renderers. The plain Gpu large-scene scan had 3 differing points, all moving NPCs.
+  - Legacy gate bench-000253 PASS; Gpu gate bench-000254 PASS.
+  - Codex: no findings.
+  - Unit tests after the merge: 3,041 passed, 6 skipped.
+- **Open, for later:** should the Gpu item cache store pick state? Cached items still read the art entry. The Gpu gate's parity runs every frame, so record-based Gpu mobile picks are covered only by the pickscans.
+- **What's left of T7b:**
+  - default flips of `legacy_ecs_sprites`/`gpu_ecs_sprites` (need quiet timing);
+  - the effect extract (deferred by the owner until effect ownership is in the ECS);
+  - removing the views' Draw and the hot caches (T9).
