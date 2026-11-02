@@ -1,5 +1,7 @@
 # Performance Opportunities (backlog)
 
+Costs that were accepted (not opportunities) are listed in [accepted-costs.md](accepted-costs.md) for the final audit.
+
 This is a living list. Add to it whenever work turns up a likely performance win. We tackle these **after** the PoC is proven, measuring each one with the per-phase timing hooks (integration plan step 7b) to see whether it moves FPS.
 
 Format: **what**, where (file:line), why it should help, evidence or estimate, and source.
