@@ -420,8 +420,8 @@ namespace ClassicUO.Game
         // accepting updates) only the checker runs: it compares what the two rules would call
         internal void WorldMapPass(bool issue = true)
         {
-            // the allies come from MobileInputs, which are pushed only with mobile_push_inputs
-            bool system = SweepSystemOn && Configuration.Settings.GlobalSettings.MobilePushInputs;
+            // the allies come from MobileInputs
+            bool system = SweepSystemOn;
             bool check = SweepCheckOn;
 
             if (system || check)

@@ -136,17 +136,6 @@ namespace ClassicUO.Configuration
         // batcher calls with the sink's. Read every frame (dev builds: CUO_LEGACY_ECS_SPRITES=1|0 overrides). Default off.
         [JsonPropertyName("legacy_ecs_sprites")] public bool LegacyEcsSprites { get; set; }
 
-        // W5, with gpu_ecs_sprites: a mobile's action selection and sprite instances are reused while their inputs are
-        // unchanged (MobileFrameCache: the sampled state, equipment, seat tile, hues, alpha); position and depth are
-        // reapplied every frame. Off = selected and extracted every frame.
-        [JsonPropertyName("gpu_mobile_frame_cache")] public bool GpuMobileFrameCache { get; set; } = true;
-
-        // W5, with gpu_ecs_sprites: a mobile's slow-changing selection and override-hue inputs (body flags, sex, dead, war
-        // mode, running, steps, notoriety, status bits, mounted) are read from the ECS, where their mutation sites push
-        // them (MobileInputs, EquipmentSlots.Mounted), instead of from the legacy Mobile every frame. The pushes always
-        // run. Off = sampled from the Mobile every frame.
-        [JsonPropertyName("mobile_push_inputs")] public bool MobilePushInputs { get; set; } = true;
-
         // T5b: a due mobile without queued steps or a handles opening has its idle animation
         // and frame advance computed in the ECS (MobileAnimationAdvanceSystem over AnimationTimer, MobileInputs and
         // EquipmentSlots) instead of Mobile.Update; mobiles with steps or handles still run Mobile.Update until T6. Read once
@@ -172,13 +161,6 @@ namespace ClassicUO.Configuration
         // (CUO_ECS_STEP_MOUNT_INPUTS=1|0 overrides it in developer builds). CUO_STEP_MOUNT_CHECK=1 compares the two at every
         // step decision. Off = from the Mobile.
         [JsonPropertyName("ecs_step_mount_inputs")] public bool EcsStepMountInputs { get; set; } = false;
-
-        // T2 (ecs-transition-plan.md): the container-contents readers (container, grid loot, trade and spellbook gumps, the
-        // shop's lists, FindItem*, the counters, macros) take a parent's children from the ECS (WorldState.Children: the
-        // mirror's attached children by child-order stamp, a spellbook's spell entries) instead of the LinkedObject child
-        // list, which is still maintained. CUO_CONTENTS_CHECK=1 compares the two. Default on since 2026-11-01 (coordinator, after
-        // the off/on gates bench-000104/106 and two Codex audits); the off path and the checker stay for one phase.
-        [JsonPropertyName("ecs_read_contents")] public bool EcsReadContents { get; set; } = true;
 
         // perf-4: the static art of a container's contents and of the paperdoll's equipment slots decodes on the art workers
         // before the gump builds its item controls (ContentsArt: a request when an item goes into an open container, a
@@ -209,14 +191,6 @@ namespace ClassicUO.Configuration
         // each effect with a shadow of the legacy rules every frame. Read once at startup (CUO_ECS_EFFECTS=1|0 overrides it in
         // developer builds). Default on since 2026-11-02 (owner, after the quiet-machine per-switch timing bench-000206/207/208: timing-neutral on both renderers); the off path and the checker stay for one phase.
         [JsonPropertyName("ecs_effects")] public bool EcsEffects { get; set; } = true;
-
-        // T3a (ecs-transition-plan.md, T3): the equipment readers (Mobile.FindItemByLayer and through it IsMounted, the
-        // animation group's hands, the abilities, the paperdoll, PaperdollOrder.BuildInWorld and Legacy's MobileView) take a
-        // mobile's worn item per layer from the ECS (WornLayers: the mirror's first attached item per layer by child-order
-        // stamp) instead of walking the LinkedObject child list, which is still maintained. CUO_EQUIP_READ_CHECK=1 compares
-        // the two at every call. Default on since 2026-11-01 (coordinator, after t3a-fold removed the 0x78 maintenance cost and
-        // the off/on gates bench-000144/145); the off path and the checker stay for one phase.
-        [JsonPropertyName("ecs_read_equipment")] public bool EcsReadEquipment { get; set; } = true;
 
         // T4 (ecs-transition-plan.md, "thin handles"): the cold world-state getters (Name, Hits, HitsMax, Stamina, Mana and
         // their maxima, Price) read the entity's ECS record; the GameObject field becomes a write-only cache. Read once at

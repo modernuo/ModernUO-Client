@@ -94,7 +94,7 @@ namespace ClassicUO.Game
 
             if (mirrored && ecs.Mirror.TryGetEntity(mobile.Serial, out EcsEntity e))
             {
-                extract.Emit(e, mobile.RealScreenPosition.X, mobile.RealScreenPosition.Y, depth, Configuration.Settings.GlobalSettings.GpuMobileFrameCache ? mobile.FrameCache : null);
+                extract.Emit(e, mobile.RealScreenPosition.X, mobile.RealScreenPosition.Y, depth, mobile.FrameCache);
             }
             else
             {

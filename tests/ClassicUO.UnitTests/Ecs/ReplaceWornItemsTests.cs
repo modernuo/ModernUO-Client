@@ -349,7 +349,6 @@ namespace ClassicUO.UnitTests.Ecs
 
         private static void Warm(World w)
         {
-            w.State.ReadEquipmentOverride = true;
             AssertReads(w, "before");
         }
 

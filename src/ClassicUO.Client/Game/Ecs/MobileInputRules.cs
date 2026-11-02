@@ -25,7 +25,7 @@ namespace ClassicUO.Game
     }
 
     /// <summary>
-    /// W5 (setting mobile_push_inputs): computes <see cref="MobileInputs"/>, the selection and override-hue inputs that
+    /// W5: computes <see cref="MobileInputs"/>, the selection and override-hue inputs that
     /// MobileAnimationSystem's sample read from the legacy Mobile every frame, with the Mobile's own rules
     /// (IsFlying, IsPoisoned, IsGargoyle, GetGraphicForAnimation, ProcessSteps' direction, IsWalking's delay).
     /// WorldEcs runs it on every push; the mutation sites are listed in world-prepare-ecs-plan.md (W5).

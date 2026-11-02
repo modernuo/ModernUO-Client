@@ -10,7 +10,7 @@ using Uo.Render;
 namespace ClassicUO.Game
 {
     /// <summary>
-    /// W5 (setting gpu_mobile_frame_cache): what one mobile's <see cref="MobileAnimationSystem"/> selection and
+    /// W5: what one mobile's <see cref="MobileAnimationSystem"/> selection and
     /// <see cref="MobileSpriteExtract"/> emission produced, reused while their inputs stay the same. Most mobiles change
     /// animation frame every 80–100 ms, so at hundreds of frames per second nearly every frame repeats the last one.
     /// <list type="bullet">

@@ -305,7 +305,7 @@ namespace ClassicUO.Game.GameObjects
             {
                 int minColor = 0xFFFF;
 
-                // T2: the children from the ECS with ecs_read_contents on (WorldState.Children)
+                // T2: the children from the ECS (WorldState.Children)
                 foreach (Item it in World.State.Children(this))
                 {
 
@@ -332,7 +332,7 @@ namespace ClassicUO.Game.GameObjects
             }
             else
             {
-                // T2: the children from the ECS with ecs_read_contents on (WorldState.Children)
+                // T2: the children from the ECS (WorldState.Children)
                 foreach (Item it in World.State.Children(this))
                 {
 
@@ -358,7 +358,7 @@ namespace ClassicUO.Game.GameObjects
 
         public Item GetItemByGraphic(ushort graphic, bool deepsearch = false)
         {
-            // T2: the children from the ECS with ecs_read_contents on (WorldState.Children)
+            // T2: the children from the ECS (WorldState.Children)
             foreach (Item item in World.State.Children(this))
             {
                 if (item.Graphic == graphic)
@@ -386,26 +386,18 @@ namespace ClassicUO.Game.GameObjects
         }
 
         /// <summary>
-        /// The first item on <paramref name="layer"/> among the entity's children. T3a: for a mobile with
-        /// <c>ecs_read_equipment</c> on, the ECS's worn item (<see cref="WorldState.FindWorn"/>: WornLayers), and under
-        /// <c>CUO_EQUIP_READ_CHECK=1</c> compared with the list. Every equipment reader goes through here: IsMounted, the
-        /// animation group's hands, the abilities, the paperdoll, PaperdollOrder.BuildInWorld, Legacy's MobileView. An item's
-        /// (a corpse's laid equipment) is its list.
+        /// The first item on <paramref name="layer"/> among the entity's children. T3a: for a mobile, the ECS's worn item
+        /// (<see cref="WorldState.WornItem"/>: WornLayers), under <c>CUO_EQUIP_READ_CHECK=1</c> compared with the list
+        /// (<see cref="WorldState.FindWorn"/>). Every equipment reader goes through here: IsMounted, the animation group's
+        /// hands, the abilities, the paperdoll, PaperdollOrder.BuildInWorld, Legacy's MobileView. An item's (a corpse's laid
+        /// equipment) is its list.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Item FindItemByLayer(Layer layer)
         {
             if (this is Mobile mobile && World?.State is WorldState state)
             {
-                if (state.EquipCheckEnabled)
-                {
-                    return state.FindWorn(mobile, layer);
-                }
-
-                if (state.ReadEquipment)
-                {
-                    return state.WornItem(mobile, layer);
-                }
+                return state.EquipCheckEnabled ? state.FindWorn(mobile, layer) : state.WornItem(mobile, layer);
             }
 
             return FindItemByLayerInList(layer);

@@ -422,7 +422,7 @@ namespace ClassicUO.Game
         }
 
         /// <summary>
-        /// W5 (mobile_push_inputs): recomputes the mobile's <see cref="MobileInputs"/> after a change that doesn't go
+        /// W5: recomputes the mobile's <see cref="MobileInputs"/> after a change that doesn't go
         /// through <see cref="Sync"/> (sex, the dead flag, notoriety, SA poison, the player's war mode, running, the step
         /// queue and the last step time). Ignores mobiles World doesn't hold, as Sync does.
         /// </summary>

@@ -502,7 +502,7 @@ namespace ClassicUO.Game
                     var csb = new System.Text.StringBuilder();
                     int cn = 0;
 
-                    // T2: the reader path (the ECS's contents with ecs_read_contents on)
+                    // T2: the reader path (the ECS's contents)
                     foreach (Item c in world.State.Children(box))
                     {
                         csb.Append($" 0x{c.Serial:X8}:0x{c.Graphic:X4}x{c.Amount}");
@@ -679,8 +679,8 @@ namespace ClassicUO.Game
 
                     return false;
 
-                // close <gump type>: disposes the open gumps of that type (T2's shots: the same containers reopened under the
-                // other ecs_read_contents setting, so both shots show the same items at the same server positions)
+                // close <gump type>: disposes the open gumps of that type (T2's shots: the same containers reopened, so both
+                // shots show the same items at the same server positions)
                 case "close" when args.Length > 0:
                     var toClose = new System.Collections.Generic.List<Gump>();
 
@@ -729,17 +729,10 @@ namespace ClassicUO.Game
                     return true;
                 }
 
-                // readcontents on|off: the container-contents readers from the ECS (ecs_read_contents, T2)
-                case "readcontents" when args.Length > 0:
-                    Settings.GlobalSettings.EcsReadContents = args[0] == "on";
-                    Log.Info($"[ECS] driver: read contents from the ECS {args[0]} (effective {world.State.ReadContents})");
-
-                    return false;
-
                 // paperdoll: opens the player's own paperdoll (T3a's shots; a double-click on a mounted self would dismount)
                 case "paperdoll":
                     GameActions.OpenPaperdoll(world, player.Serial);
-                    Log.Info($"[ECS] ui paperdoll 0x{player.Serial:X8} mounted={player.IsMounted} read_equipment={(world.State.ReadEquipment ? "on" : "off")}");
+                    Log.Info($"[ECS] ui paperdoll 0x{player.Serial:X8} mounted={player.IsMounted}");
 
                     return true;
 
@@ -751,15 +744,6 @@ namespace ClassicUO.Game
 
                     return true;
                 }
-
-                // readequipment on|off: the equipment readers from the ECS (ecs_read_equipment, T3a); the env override
-                // CUO_ECS_READ_EQUIPMENT wins over it
-                case "readequipment" when args.Length > 0:
-                    Settings.GlobalSettings.EcsReadEquipment = args[0] == "on";
-                    Log.Info($"[ECS] driver: read equipment from the ECS {args[0]} (effective {world.State.ReadEquipment})");
-                    world.State.LogEquipmentSummary();
-
-                    return false;
 
                 // layerrules on|off: the layering rules from data (ecs_layer_rules, T3b; wins over CUO_ECS_LAYER_RULES). Marks
                 // every mobile's equipment dirty so the ECS world's cached slots are rebuilt under the new setting.
@@ -866,27 +850,21 @@ namespace ClassicUO.Game
 
                     return true;
 
-                // w5 on|off: the W5 shortcuts that still have a switch (gpu_mobile_frame_cache, text_skip_expired, mobile_push_inputs)
+                // w5 on|off: the W5 shortcut that still has a switch (text_skip_expired)
                 case "w5" when args.Length > 0:
-                    Settings.GlobalSettings.GpuMobileFrameCache =
-                        Settings.GlobalSettings.TextSkipExpired = Settings.GlobalSettings.MobilePushInputs = args[0] == "on";
+                    Settings.GlobalSettings.TextSkipExpired = args[0] == "on";
                     Log.Info($"[ECS] driver: W5 shortcuts {args[0]}");
 
                     return true;
 
-                // pushinputs on|off: mobiles' pushed ECS inputs (mobile_push_inputs, W5)
-                case "pushinputs" when args.Length > 0:
-                    Settings.GlobalSettings.MobilePushInputs = args[0] == "on";
-                    Log.Info($"[ECS] driver: mobile pushed inputs {args[0]}");
+                // T9: switches whose off path is deleted; older session scripts still name them, so they are accepted and ignored
+                case "mobcache":
+                case "pushinputs":
+                case "readcontents":
+                case "readequipment":
+                    Log.Info($"[ECS] driver: '{cmd}' has no off path any more (T9), ignored");
 
-                    return true;
-
-                // mobcache on|off: the Gpu world's mobile frame cache (gpu_mobile_frame_cache, W5)
-                case "mobcache" when args.Length > 0:
-                    Settings.GlobalSettings.GpuMobileFrameCache = args[0] == "on";
-                    Log.Info($"[ECS] driver: mobile frame cache {args[0]}");
-
-                    return true;
+                    return false;
 
                 // answers OK (button 1) on the frontmost server gump, e.g. a staff command's confirmation (as DevBench's gumpok)
                 case "gumpok":
