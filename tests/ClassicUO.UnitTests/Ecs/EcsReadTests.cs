@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Numerics;
 using System.Reflection;
 using System.Runtime.CompilerServices;
 using ClassicUO.Ecs;
@@ -67,7 +68,7 @@ namespace ClassicUO.UnitTests.Ecs
             Assert.True(EcsRead.Supported, EcsRead.Layout.ProbeError);
         }
 
-        // every component type of the mirror has the plain array heap, so no read takes the GetComponent fallback
+        // every component type of the mirror has the plain array heap, so every read after the first is direct
         [Fact]
         public void Every_Mirror_Component_Reads_Directly()
         {
@@ -87,9 +88,18 @@ namespace ClassicUO.UnitTests.Ecs
             var store = new EntityStore();
             Entity e = store.CreateEntity();
             e.AddComponent(default(T));
-            bool same = Unsafe.AreSame(ref EcsRead.Get<T>(e), ref e.GetComponent<T>());
+            bool same = Unsafe.AreSame(ref EcsRead.Get<T>(e), ref e.GetComponent<T>()) &&
+                Unsafe.AreSame(ref EcsRead.Get<T>(e), ref e.GetComponent<T>());
 
-            return same;
+            return same && EcsRead.Slot<T>.Value > 0 && HeapClass<T>(e).StartsWith("StructHeapGen", StringComparison.Ordinal);
+        }
+
+        // the class of the heap Friflo created for T in e's archetype
+        private static string HeapClass<T>(Entity e) where T : struct, IComponent
+        {
+            var map = (object[])typeof(Archetype).GetField("heapMap", BindingFlags.NonPublic | BindingFlags.Instance).GetValue(e.Archetype);
+
+            return map[EntityStore.GetEntitySchema().GetComponentType<T>().StructIndex].GetType().Name;
         }
 
         [Fact]
@@ -263,27 +273,184 @@ namespace ClassicUO.UnitTests.Ecs
             Assert.True(Unsafe.AreSame(ref EcsRead.Get<Spare>(e), ref e.GetComponent<Spare>()));
         }
 
-        // preview.2 stores a component whose only field is a float named Value in an aligned heap (StructAoSFloat), not
-        // a plain array: the helper refuses to read it (the accessor's class check), it never reads the wrong memory
-        private struct Fallen : IComponent
+        // preview.2's other heap kinds (ComponentType<T>.CreateHeap): a struct that is one float, Vector2, Vector4 or
+        // Quaternion field named Value (or value) gets an aligned heap (StructAoSFloat/Vector2/Vector4); with [SoA] or
+        // [AoSoA], one Vector2..4 field gets an SoA or AoSoA heap. EcsRead reads them through Friflo's own calls.
+        private struct AoSFloat : IComponent { public float Value; }
+
+        private struct AoSFloatLower : IComponent { public float value; }
+
+        private struct AoSVector2 : IComponent { public Vector2 Value; }
+
+        private struct AoSVector4 : IComponent { public Vector4 Value; }
+
+        private struct AoSQuaternion : IComponent { public Quaternion Value; }
+
+        [SoA] private struct SoAVector2 : IComponent { public Vector2 Value; }
+
+        [SoA] private struct SoAVector3 : IComponent { public Vector3 Value; }
+
+        [SoA] private struct SoAVector4 : IComponent { public Vector4 Value; }
+
+        [AoSoA] private struct AoSoAVector2 : IComponent { public Vector2 Value; }
+
+        [AoSoA] private struct AoSoAVector3 : IComponent { public Vector3 Value; }
+
+        [AoSoA] private struct AoSoAVector4 : IComponent { public Vector4 Value; }
+
+        // near misses that stay in a plain array: a Vector3 without an attribute, a Value with another field, another name
+        private struct PlainVector3 : IComponent { public Vector3 Value; }
+
+        private struct PlainFloatPair : IComponent { public float Value; public int Other; }
+
+        private struct PlainSpeed : IComponent { public float Speed; }
+
+        [Fact]
+        public void Aligned_Heap_Components_Read_Like_Friflo()
         {
-            public float Value;
+            ReadsLikeFriflo(i => new AoSFloat { Value = i * 1.5f }, false, "StructAoSFloat");
+            ReadsLikeFriflo(i => new AoSFloatLower { value = i * 2.5f }, false, "StructAoSFloat");
+            ReadsLikeFriflo(i => new AoSVector2 { Value = new Vector2(i, -i) }, false, "StructAoSVector2");
+            ReadsLikeFriflo(i => new AoSVector4 { Value = new Vector4(i, 2 * i, 3 * i, 4 * i) }, false, "StructAoSVector4");
+            ReadsLikeFriflo(i => new AoSQuaternion { Value = new Quaternion(i, 0, -i, 1) }, false, "StructAoSVector4");
         }
 
         [Fact]
-        public void A_Component_In_Another_Heap_Kind_Is_Refused()
+        public void SoA_Heap_Components_Read_Like_Friflo()
+        {
+            ReadsLikeFriflo(i => new SoAVector2 { Value = new Vector2(i, -i) }, false, "StructSoAVector2");
+            ReadsLikeFriflo(i => new SoAVector3 { Value = new Vector3(i, -i, 2 * i) }, false, "StructSoAVector3");
+            ReadsLikeFriflo(i => new SoAVector4 { Value = new Vector4(i, -i, 2 * i, 3) }, false, "StructSoAVector4");
+        }
+
+        [Fact]
+        public void AoSoA_Heap_Components_Read_Like_Friflo()
+        {
+            ReadsLikeFriflo(i => new AoSoAVector2 { Value = new Vector2(i, -i) }, false, "StructAoSoAVector2");
+            ReadsLikeFriflo(i => new AoSoAVector3 { Value = new Vector3(i, -i, 2 * i) }, false, "StructAoSoAVector3");
+            ReadsLikeFriflo(i => new AoSoAVector4 { Value = new Vector4(i, -i, 2 * i, 3) }, false, "StructAoSoAVector4");
+        }
+
+        [Fact]
+        public void Near_Miss_Components_Read_Directly()
+        {
+            ReadsLikeFriflo(i => new PlainVector3 { Value = new Vector3(i, -i, 2 * i) }, true, "StructHeapGen");
+            ReadsLikeFriflo(i => new PlainFloatPair { Value = i, Other = -i }, true, "StructHeapGen");
+            ReadsLikeFriflo(i => new PlainSpeed { Speed = i * 0.5f }, true, "StructHeapGen");
+        }
+
+        // Entity, row, Get, TryGet, Has: the same values, refs and exceptions as Friflo, for entities with and without the
+        // component (over several archetypes) and a deleted one, at the type's first read (which sets its slot) and after
+        private static void ReadsLikeFriflo<T>(Func<int, T> make, bool direct, string heapClass) where T : struct, IComponent
         {
             var store = new EntityStore();
-            Entity e = Make(store, 1, false);
-            Entity f = Make(store, 2, false);
-            f.AddComponent(new Fallen { Value = 8 });
+            var with = new List<Entity>();
+            var without = new List<Entity>();
 
-            Assert.Equal(8, f.GetComponent<Fallen>().Value);
-            Assert.Throws<InvalidCastException>(() => EcsRead.Get<Fallen>(f));
-            Assert.Throws<InvalidCastException>(() => EcsRead.Row(f).Get<Fallen>());
-            Assert.Throws<InvalidCastException>(() => EcsRead.TryGet(f, out Fallen _));
-            Assert.False(EcsRead.TryGet(e, out Fallen _));
-            Assert.False(EcsRead.Row(e).TryGet(out Fallen _));
+            for (int i = 1; i <= 300; i++)
+            {
+                Entity e = Make(store, (uint)i, i % 2 == 0);
+
+                if (i % 3 != 0)
+                {
+                    e.AddComponent(make(i));
+                    with.Add(e);
+                }
+                else
+                {
+                    without.Add(e);
+                }
+            }
+
+            Entity gone = with[5];
+            gone.DeleteEntity();
+            with.RemoveAt(5);
+
+            Assert.Equal(0, EcsRead.Slot<T>.Value);
+            Assert.StartsWith(heapClass, HeapClass<T>(with[0]));
+            Assert.Equal(direct, EcsRead.Slot<T>.InPlainArray());
+
+            for (int pass = 0; pass < 2; pass++)
+            {
+                foreach (Entity e in with.Concat(without).Append(gone))
+                {
+                    // the helper's own deleted-entity exception has another message (its type is Friflo's)
+                    bool sameMessage = !direct || !e.IsNull;
+                    Entity x = e;
+
+                    bool got = SameOutcome(() => x.GetComponent<T>(), () => EcsRead.Get<T>(x), sameMessage);
+                    SameOutcome(() => x.Data.Get<T>(), () => EcsRead.Row(x).Get<T>(), true);
+                    SameOutcome(() => (x.TryGetComponent(out T v), v), () => (EcsRead.TryGet(x, out T v), v), sameMessage);
+                    SameOutcome(() => (x.Data.TryGet(out T v), v), () => (EcsRead.Row(x).TryGet(out T v), v), true);
+                    SameOutcome(() => x.Data.Has<T>(), () => EcsRead.Row(x).Has<T>(), true);
+
+                    if (got)
+                    {
+                        Assert.True(Unsafe.AreSame(ref EcsRead.Get<T>(e), ref e.GetComponent<T>()));
+                        Assert.True(Unsafe.AreSame(ref EcsRead.Row(e).Get<T>(), ref e.Data.Get<T>()));
+                    }
+                }
+
+                Assert.Equal(direct ? EntityStore.GetEntitySchema().GetComponentType<T>().StructIndex + 1 : -1, EcsRead.Slot<T>.Value);
+            }
+
+            // a write through the helper's ref is the component's value (kinds whose GetComponent gives a ref)
+            Entity w = with[0];
+
+            if (!heapClass.StartsWith("StructSoA", StringComparison.Ordinal) && !heapClass.StartsWith("StructAoSoA", StringComparison.Ordinal))
+            {
+                T value = make(77);
+                EcsRead.Get<T>(w) = value;
+                Assert.Equal(value, w.GetComponent<T>());
+                EcsRead.Row(w).Get<T>() = make(78);
+                Assert.Equal(make(78), w.GetComponent<T>());
+            }
+            else
+            {
+                Assert.Throws<InvalidOperationException>(() => EcsRead.Get<T>(w));
+            }
+        }
+
+        // both calls throw the same exception type (and message, if asked) or both return the same value; true if they
+        // returned
+        private static bool SameOutcome<R>(Func<R> friflo, Func<R> helper, bool sameMessage)
+        {
+            Exception fe = null, he = null;
+            R fr = default, hr = default;
+
+            try
+            {
+                fr = friflo();
+            }
+            catch (Exception ex)
+            {
+                fe = ex;
+            }
+
+            try
+            {
+                hr = helper();
+            }
+            catch (Exception ex)
+            {
+                he = ex;
+            }
+
+            Assert.Equal(fe?.GetType(), he?.GetType());
+
+            if (fe != null)
+            {
+                if (sameMessage)
+                {
+                    Assert.Equal(fe.Message, he.Message);
+                }
+
+                return false;
+            }
+
+            Assert.Equal(fr, hr);
+
+            return true;
         }
 
         [Fact]
