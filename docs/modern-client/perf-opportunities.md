@@ -231,4 +231,7 @@ Today the client parses incoming packets in place (`StackDataReader` over fixed 
 - **`MobileInputs` copied per mobile per frame** (MobileAnimationSystem.cs `UpdateInPlace`, `TryGetComponent(out inp)`). Reading it by reference saves the struct copy. Source: t9-slice2.
 - **Hue inputs rebuilt per mobile per frame** (`SelectOverrideHue` rebuilds a ~20-field input from the profile). Take the profile flags once per frame. Source: t9-slice2.
 - **25 `WornCache` checks per mobile per frame on Legacy** (MobileView's layer loop calls `FindItemByLayer` per layer). Fetch the cache once per mobile; E2 measured 0.07 µs per mobile. Source: t9-slice2.
+- **ItemGump calls `World.Items.Get` per container item per frame** (ItemGump.cs ~188/236, AddToRenderLists and Contains), and ItemGumpFixed per paperdoll slot (PaperdollGump.cs ~866). The perf-8 `EntityRef` would remove these lookups. Source: perf-8.
+- **`Gump.AwaitBatch` busy-waits with Yield** (Gump.cs). `DecodeQueue.WaitPublished` would block instead, as Art does. Source: perf-8.
+- **The `Control.Parent` setter scans the child list on every re-add** (Control.cs:135), which is quadratic for large containers. Source: perf-8.
 
