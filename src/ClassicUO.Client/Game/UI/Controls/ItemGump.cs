@@ -54,7 +54,9 @@ namespace ClassicUO.Game.UI.Controls
                     return;
                 }
 
-                if (!_is_gump)
+                // only while something drains finished art (Map.UpdateLoading): otherwise a control disposed before its first
+                // draw would leave its worker result holding a pooled buffer and decode budget until teardown
+                if (!_is_gump && global::ClassicUO.Game.Map.FirstSightArt.On)
                 {
                     Client.Game.UO.Arts.RequestArt(value);
                 }
@@ -78,12 +80,14 @@ namespace ClassicUO.Game.UI.Controls
                 return Client.Game.UO.Arts.TryGetArtSize(graphic, out width, out height);
             }
 
-            if (Client.Game.UO.Gumps.TryGetSize(graphic, out width, out height) && width > 0 && height > 0)
+            // pack gumps only: a MUL/UOP size can be the archive's while a loose Gumps/<id>.gump overrides the image
+            if (Client.Game.UO.FileManager.Gumps.FromPack
+                && Client.Game.UO.Gumps.TryGetSize(graphic, out width, out height) && width > 0 && height > 0)
             {
                 return true;
             }
 
-            // a MUL/UOP gump whose size sits inside its compressed data: decode it, as before
+            // MUL/UOP gumps (CUO_PACK_GUMPS=0) and gumps without a size: decode, as before
             ref readonly var spriteInfo = ref Client.Game.UO.Gumps.GetGump(graphic);
             width = spriteInfo.UV.Width;
             height = spriteInfo.UV.Height;
