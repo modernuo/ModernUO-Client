@@ -41,17 +41,16 @@ namespace ClassicUO.Game.UI.Controls
             {
                 _graphic = value;
 
-                ref readonly var artInfo = ref Client.Game.UO.Arts.GetArt(value);
-
-                if (artInfo.Texture == null)
+                // perf-6: the size without decoding; the art decodes at first draw or hit test
+                if (!Client.Game.UO.Arts.TryGetArtSize(value, out int width, out int height))
                 {
                     Dispose();
 
                     return;
                 }
 
-                Width = artInfo.UV.Width;
-                Height = artInfo.UV.Height;
+                Width = width;
+                Height = height;
 
                 IsPartialHue = Client.Game.UO.FileManager.TileData.StaticData[value].IsPartialHue;
             }
