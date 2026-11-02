@@ -395,9 +395,15 @@ namespace ClassicUO.Game.GameObjects
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         public Item FindItemByLayer(Layer layer)
         {
-            if (this is Mobile mobile && World?.State is WorldState state)
+            if (World?.State is WorldState state)
             {
-                return state.EquipCheckEnabled ? state.FindWorn(mobile, layer) : state.WornItem(mobile, layer);
+                if (this is Mobile mobile)
+                {
+                    return state.EquipCheckEnabled ? state.FindWorn(mobile, layer) : state.WornItem(mobile, layer);
+                }
+
+                // T9 child-list slice A: an item's (a corpse's) children from the ECS
+                return state.FindChild(this, layer);
             }
 
             return FindItemByLayerInList(layer);

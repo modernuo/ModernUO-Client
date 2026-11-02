@@ -520,9 +520,9 @@ namespace ClassicUO
                 case 21:
                     if (world.Player.FindItemByLayer(Game.Data.Layer.Robe) == null && world.Player.FindItemByLayer(Game.Data.Layer.Backpack) is { } backpack)
                     {
-                        for (var i = backpack.Items; i != null; i = i.Next)
+                        foreach (Game.GameObjects.Item it in world.State.Children(backpack))
                         {
-                            if (i is Game.GameObjects.Item it && it.ItemData.IsWearable && it.ItemData.Layer == (byte)Game.Data.Layer.Robe)
+                            if (it.ItemData.IsWearable && it.ItemData.Layer == (byte)Game.Data.Layer.Robe)
                             {
                                 GameActions.PickUp(world, it.Serial, 0, 0);
                                 Log.Info($"[bench-ui] equipping 0x{it.Graphic:X4} from the backpack");
@@ -1097,7 +1097,7 @@ namespace ClassicUO
                     break;
 
                 case 8:
-                    if (world.Player.FindItemByLayer(Game.Data.Layer.Backpack) is { } pack && pack.Items is Game.GameObjects.Item first
+                    if (world.Player.FindItemByLayer(Game.Data.Layer.Backpack) is { } pack && world.State.FirstChild(pack) is Game.GameObjects.Item first
                         && !Client.Game.UO.GameCursor.ItemHold.Enabled && GameActions.PickUp(world, first.Serial, 0, 0, 1))
                     {
                         _uiHeld = first.Serial;
@@ -2140,9 +2140,9 @@ namespace ClassicUO
                             {
                                 // eqhue: the player's equipped items (not backpack, hair, beard) get the hues in turn, for
                                 // paperdoll hue checks (bit 15 set = partial hue, as the server sends it)
-                                for (var it = world.Player.Items; it != null; it = it.Next)
+                                foreach (Game.GameObjects.Item item in world.State.Children(world.Player))
                                 {
-                                    if (it is Game.GameObjects.Item item && item.Layer != Game.Data.Layer.Backpack && item.Layer != Game.Data.Layer.Hair && item.Layer != Game.Data.Layer.Beard)
+                                    if (item.Layer != Game.Data.Layer.Backpack && item.Layer != Game.Data.Layer.Hair && item.Layer != Game.Data.Layer.Beard)
                                     {
                                         items.Add(item);
                                     }

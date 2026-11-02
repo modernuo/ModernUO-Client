@@ -674,6 +674,7 @@ namespace ClassicUO.UnitTests.Ecs
             // child order), so with ecs_read_equipment on the ECS would see no bank on the player: sync it and stamp it.
             world.Ecs.Sync(bank);
             world.Ecs.CommitChildOrder(bank);
+            WorldWriterTests.AttachLists(world);
 
             return bank;
         }

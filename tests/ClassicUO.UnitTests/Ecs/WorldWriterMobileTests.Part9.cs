@@ -121,6 +121,7 @@ namespace ClassicUO.UnitTests.Ecs
             loot.Container = BAG;
             world.Items.Get(BAG).PushToBack(loot);
             world.Ecs.Sync(loot);
+            WorldWriterTests.AttachLists(world);
 
             return bank;
         }
@@ -131,6 +132,7 @@ namespace ClassicUO.UnitTests.Ecs
             Item it = world.Writer.UpsertWorldItem(PENDING, 0xEED, 0, 1, 1010, 1010, 0, Direction.North, 0, Flags.None, 0, out _, out WorldWriter.Placement p);
             it.Container = parent;
             world.Get(parent).PushToBack(it);
+            WorldWriterTests.AttachLists(world);
 
             return p;
         }
