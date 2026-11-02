@@ -119,6 +119,9 @@ namespace ClassicUO.Game
         {
             WorldMirror mirror = _world.Ecs.Mirror;
             WornCache c = mobile.EquipCache;
+#if CUO_DEVTOOLS
+            FrameStats.Inc(FrameCounter.WornChecks);
+#endif
 
             if (c != null && c.Epoch == mirror.Epoch && c.Writes == mirror.WornWrites && c.Serial == mobile.Serial)
             {
