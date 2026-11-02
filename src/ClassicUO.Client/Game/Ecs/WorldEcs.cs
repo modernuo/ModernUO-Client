@@ -554,6 +554,7 @@ namespace ClassicUO.Game
         public bool StepsEnabled;
 
         private uint _stepLogAt;
+        private uint _stepMountLogAt;
 
         public static long StepWrites;
 
@@ -919,6 +920,12 @@ namespace ClassicUO.Game
             {
                 _stepLogAt = Time.Ticks + 5000;
                 Log.Info(StepSystem.Summary());
+            }
+
+            if (StepSystem.StepMountCheck && Time.Ticks >= _stepMountLogAt)
+            {
+                _stepMountLogAt = Time.Ticks + 5000;
+                Log.Info(StepSystem.MountSummary());
             }
 
             if ((MobileAnimationSystem.InputCheck || MobileAnimationSystem.InputBench) && Time.Ticks >= _inputLogAt)
@@ -1288,14 +1295,15 @@ namespace ClassicUO.Game
             MobileInputRules.Compute(in src, ref fresh);
 
             if (pushed.Flags != fresh.Flags || pushed.Body != fresh.Body || pushed.Facing != fresh.Facing || pushed.Notoriety != fresh.Notoriety ||
-                pushed.HueBits != fresh.HueBits || pushed.LastStepTime != fresh.LastStepTime || pushed.WalkingDelay != fresh.WalkingDelay)
+                pushed.HueBits != fresh.HueBits || pushed.LastStepTime != fresh.LastStepTime || pushed.WalkingDelay != fresh.WalkingDelay ||
+                pushed.SpeedMode != fresh.SpeedMode)
             {
                 Report
                 (
                     ref mismatches,
                     $"inputs of 0x{mobile.Serial:X8} g=0x{mobile.Graphic:X4}: pushed {pushed.Flags} body 0x{pushed.Body:X4} facing {pushed.Facing} noto {pushed.Notoriety} " +
                     $"hue {pushed.HueBits} step {pushed.LastStepTime} | fresh {fresh.Flags} body 0x{fresh.Body:X4} facing {fresh.Facing} noto {fresh.Notoriety} " +
-                    $"hue {fresh.HueBits} step {fresh.LastStepTime}"
+                    $"hue {fresh.HueBits} step {fresh.LastStepTime}; speed mode {pushed.SpeedMode} | {fresh.SpeedMode}"
                 );
             }
         }
