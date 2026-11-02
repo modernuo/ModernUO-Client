@@ -97,6 +97,8 @@ namespace ClassicUO.Game.Scenes
             r._suppress = sinkDraws;
             batcher.Capture = r;
             bool viewDrawn;
+            var rng = new RngFork();
+            rng.Begin();
 
             try
             {
@@ -116,6 +118,10 @@ namespace ClassicUO.Game.Scenes
             batcher.Capture = r;
             bool sinkDrawn, ecs;
 
+            // the sink runs from the RNG state the view started from (animation group rolls), so both paths see the same
+            // values; only the drawn path's resulting state is kept, so the checker leaves the RNG as without it
+            rng.Second();
+
             try
             {
                 sinkDrawn = LegacySpriteSink.DrawEcs(batcher, obj, depth, false, out ecs);
@@ -130,12 +136,15 @@ namespace ClassicUO.Game.Scenes
             if (!ecs)
             {
                 // no mirror entity: the sink drew the view (a second time, for the record); nothing to compare. The second
-                // draw's lights go again.
+                // draw's lights and RNG rolls go again.
                 _viewPath++;
                 scene?.TruncateLights(lightsView);
+                rng.End(false);
 
                 return viewDrawn;
             }
+
+            rng.End(sinkDraws);
 
             int sinkEnd = r._count;
             _viewDraws += viewEnd;
@@ -192,7 +201,7 @@ namespace ClassicUO.Game.Scenes
                 if (scene != null && EcsParity.LightsFit(lightsBefore, lightsView))
                 {
                     LegacySpriteSink.AddMobileLights(mobile, extract);
-                    problem += CompareLights(scene, lightsBefore, lightsView);
+                    problem = AddProblem(problem, CompareLights(scene, lightsBefore, lightsView));
                 }
             }
             else if (obj is Item item)
@@ -218,7 +227,7 @@ namespace ClassicUO.Game.Scenes
                         scene.AddLight(item, item, items.LightX, items.LightY);
                     }
 
-                    problem += CompareLights(scene, lightsBefore, lightsView);
+                    problem = AddProblem(problem, CompareLights(scene, lightsBefore, lightsView));
                 }
             }
 
@@ -233,6 +242,34 @@ namespace ClassicUO.Game.Scenes
             }
 
             return sinkDrawn;
+        }
+
+        /// <summary>A mismatch description plus one more part; null stays null when the part is null (string concatenation
+        /// would turn null + null into "", a mismatch with no reason: bench-000244).</summary>
+        internal static string AddProblem(string problem, string part) => part == null ? problem : problem + part;
+
+        /// <summary>Runs two paths from one random state and keeps one path's resulting state.</summary>
+        internal struct RngFork
+        {
+            private ClassicUO.Utility.RandomHelper.State _start, _first;
+
+            public void Begin() => _start = ClassicUO.Utility.RandomHelper.Save();
+
+            /// <summary>Between the paths: the second starts from the first's start state.</summary>
+            public void Second()
+            {
+                _first = ClassicUO.Utility.RandomHelper.Save();
+                ClassicUO.Utility.RandomHelper.Restore(in _start);
+            }
+
+            /// <summary>After both: <paramref name="keepSecond"/> = the second path's state stays, else the first's.</summary>
+            public void End(bool keepSecond)
+            {
+                if (!keepSecond)
+                {
+                    ClassicUO.Utility.RandomHelper.Restore(in _first);
+                }
+            }
         }
 
         // the view's lights [before, viewEnd) against the sink's [viewEnd, LightCount), in order; the sink's are removed again

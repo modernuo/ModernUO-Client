@@ -659,6 +659,27 @@ namespace ClassicUO.Game
 
             if (ow == 0 || oh == 0)
             {
+                // Legacy: the view draws Arts.GetArt's placeholder for art the pack lacks, offset by the placeholder's size
+                // (the resolve does that). Its art entry write is discarded (GetEntry of missing art is a scratch entry), so
+                // picking keeps 0, 0 and nothing is stored here. The Gpu path draws nothing.
+                if (_selectOnly)
+                {
+                    var missing = new DynamicSprite
+                    {
+                        Kind = DynamicSpriteKind.Art,
+                        Flags = DynamicSpriteFlags.MissingArt,
+                        Rank = RANK_ITEM,
+                        Id = graphic,
+                        X = x,
+                        Y = y,
+                        Hue = hue,
+                        Depth = depth + 0.5f,
+                        ObjX = objX
+                    };
+
+                    Add(in missing);
+                }
+
                 return;
             }
 

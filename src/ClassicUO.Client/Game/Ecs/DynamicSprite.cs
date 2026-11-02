@@ -31,7 +31,11 @@ namespace ClassicUO.Game
         Equip = 4,
 
         /// <summary>The frame was selected through the corpse alias (GetAnimationFrames' isCorpse).</summary>
-        Corpse = 8
+        Corpse = 8,
+
+        /// <summary>Art the pack has no pixels for (Legacy select only): drawn with Arts.GetArt's placeholder; X/Y are the
+        /// position before the art's draw offset, which comes from the placeholder's size.</summary>
+        MissingArt = 16
     }
 
     /// <summary>
