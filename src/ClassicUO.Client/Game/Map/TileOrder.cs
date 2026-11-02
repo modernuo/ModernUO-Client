@@ -243,6 +243,13 @@ namespace ClassicUO.Game.Map
         public static bool IsReachable(GameObject obj)
         {
             Chunk chunk = obj.TileChunk;
+
+            // T6b part 3: with the list dropped a dynamic is reachable through its tile's index entry (and the shadow list's)
+            if (DynamicTileIndex.ListDropped && DynamicTileIndex.Holds(obj))
+            {
+                return chunk.Dynamic != null && chunk.Dynamic.Contains(obj, obj.TileCell) &&
+                       (chunk.Shadow == null || chunk.Shadow.Contains(obj, obj.TileCell));
+            }
             GameObject head = FindHead(chunk.Tiles[obj.TileCell >> 3, obj.TileCell & 7], out bool cycle);
             GameObject fast = head;
 
@@ -288,7 +295,7 @@ namespace ClassicUO.Game.Map
                     {
                         for (int y = 0; y < 8; y++)
                         {
-                            if (DynamicTileIndex.Maintain)
+                            if (DynamicTileIndex.Maintain || DynamicTileIndex.ListDropped)
                             {
                                 CheckIndexCell(chunk, x, y);
                             }
@@ -357,11 +364,12 @@ namespace ClassicUO.Game.Map
                 }
             }
 
-            if (Time.Ticks >= _nextLog && DynamicTileIndex.Maintain)
+            if (Time.Ticks >= _nextLog && (DynamicTileIndex.Maintain || DynamicTileIndex.ListDropped))
             {
                 Log.Info(
                     $"[tile-order] index: tiles {_indexTiles}, entries {_indexEntries}, merged objects {_indexMerged}, mismatched tiles {_indexBadTiles} " +
-                    $"(order {_indexOrder}, bad entries {_indexBadEntries}, count {_indexCount}); double submissions {_doubleSubmissions}; reader checks {_readerChecks}, mismatches {_readerMismatches}; world_tile_index walk {(DynamicTileIndex.WalkOn ? "on" : "off")}, " +
+                    $"(order {_indexOrder}, bad entries {_indexBadEntries}, count {_indexCount}); double submissions {_doubleSubmissions}; reader checks {_readerChecks}, mismatches {_readerMismatches}; world_tile_index walk {(DynamicTileIndex.IndexWalkOn ? "on" : "off")}, " +
+                    $"list dropped {(DynamicTileIndex.ListDropped ? "yes" : "no")}, shadow list {(DynamicTileIndex.Shadow ? "on" : "off")}, list dynamics {_indexListDynamics}, " +
                     $"pooled arrays {DynamicTileIndex.EntryPool.Pooled}"
                 );
             }
@@ -441,7 +449,7 @@ namespace ClassicUO.Game.Map
             }
         }
 
-        private static long _indexTiles, _indexEntries, _indexMerged, _indexBadTiles, _indexOrder, _indexBadEntries, _indexCount;
+        private static long _indexTiles, _indexEntries, _indexMerged, _indexBadTiles, _indexOrder, _indexBadEntries, _indexCount, _indexListDynamics;
 
         /// <summary>The result of one cell's index check (<see cref="CheckIndex"/>).</summary>
         public struct IndexCheck
@@ -456,8 +464,10 @@ namespace ClassicUO.Game.Map
             /// <summary>The list's dynamic objects and the entries differ in number.</summary>
             public bool CountMismatch;
             public int FirstMismatch;
+            /// <summary>T6b part 3, list dropped: dynamic objects still linked into the tile list (it must hold none).</summary>
+            public int ListDynamics;
 
-            public readonly bool Failed => OrderMismatches != 0 || BadEntries != 0 || CountMismatch;
+            public readonly bool Failed => OrderMismatches != 0 || BadEntries != 0 || CountMismatch || ListDynamics != 0;
         }
 
         /// <summary>T6b: cell (x, y) of <paramref name="chunk"/>: the merged order (<see cref="TileWalk"/>) equals the list, and
@@ -497,10 +507,32 @@ namespace ClassicUO.Game.Map
                 return r;
             }
 
-            int dynamicInList = 0, limit = 1 << 20, pos = 0;
-            GameObject merged = TileWalk.Begin(chunk, cell, out TileWalk walk);
+            // T6b part 3: with the list dropped the legacy order is the shadow list's (every object, by the old insertion
+            // rule), and the tile list itself must hold no dynamics. Without a shadow (not under the checker) only that is checked.
+            List<GameObject> shadow = null;
 
-            for (GameObject o = head; (o != null || merged != null) && pos < limit; pos++)
+            if (DynamicTileIndex.ListDropped)
+            {
+                for (GameObject o = head; o != null; o = o.TNext)
+                {
+                    if (DynamicTileIndex.Holds(o))
+                    {
+                        r.ListDynamics++;
+                    }
+                }
+
+                if (chunk.Shadow == null)
+                {
+                    return r;
+                }
+
+                shadow = chunk.Shadow.Cell(cell) ?? new List<GameObject>();
+            }
+
+            int dynamicInList = 0, limit = 1 << 20, pos = 0;
+            GameObject merged = TileWalk.BeginIndex(chunk, cell, out TileWalk walk);
+
+            for (GameObject o = shadow != null ? (shadow.Count > 0 ? shadow[0] : null) : head; (o != null || merged != null) && pos < limit; pos++)
             {
                 if (merged != null)
                 {
@@ -524,7 +556,7 @@ namespace ClassicUO.Game.Map
                         dynamicInList++;
                     }
 
-                    o = o.TNext;
+                    o = shadow != null ? (pos + 1 < shadow.Count ? shadow[pos + 1] : null) : o.TNext;
                 }
 
                 if (merged != null)
@@ -551,6 +583,7 @@ namespace ClassicUO.Game.Map
             _indexMerged += r.Merged;
             _indexOrder += r.OrderMismatches;
             _indexBadEntries += r.BadEntries;
+            _indexListDynamics += r.ListDynamics;
 
             if (r.CountMismatch)
             {
@@ -572,12 +605,29 @@ namespace ClassicUO.Game.Map
             var sb = new StringBuilder();
             sb.Append("[tile-order] index mismatch at tile ").Append(chunk.X * 8 + x).Append(',').Append(chunk.Y * 8 + y).Append(": entries ")
               .Append(r.Entries).Append(", order mismatches ").Append(r.OrderMismatches).Append(" (first at ").Append(r.FirstMismatch)
-              .Append("), bad entries ").Append(r.BadEntries).Append(", count mismatch ").Append(r.CountMismatch).Append(" | list:");
+              .Append("), bad entries ").Append(r.BadEntries).Append(", count mismatch ").Append(r.CountMismatch)
+              .Append(", list dynamics ").Append(r.ListDynamics).Append(" | list:");
             int i = 0;
 
             for (GameObject o = chunk.Tiles[x, y] == null ? null : FindHead(chunk.Tiles[x, y], out _); o != null && i < 16; o = o.TNext, i++)
             {
                 sb.Append(" #").Append(i).Append(' ').Append(Describe(o));
+            }
+
+            if (chunk.Shadow?.Cell(x << 3 | y) is { } shadowCell)
+            {
+                sb.Append(" | shadow (legacy order):");
+                i = 0;
+
+                foreach (GameObject o in shadowCell)
+                {
+                    if (i >= 16)
+                    {
+                        break;
+                    }
+
+                    sb.Append(" #").Append(i++).Append(' ').Append(Describe(o));
+                }
             }
 
             sb.Append(" | index:");
