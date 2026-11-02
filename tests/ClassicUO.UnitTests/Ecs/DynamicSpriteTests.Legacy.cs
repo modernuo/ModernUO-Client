@@ -550,6 +550,19 @@ namespace ClassicUO.UnitTests.Ecs
             Assert.False(new ClassicUO.Configuration.Settings().LegacyEcsSprites);
         }
 
+        // perf-7: DrawItem's hasAnims is read once per frame (BeginFrame) instead of per item; the pack's animation tables are
+        // set once at load, so the frame's value is the per-item one: a loader before and after its tables are set
+        [Fact]
+        public void Legacy_Sink_Frame_HasAnims_Is_The_Per_Item_Read()
+        {
+            var anims = new AnimationsLoader(new UOFileManager(default, System.IO.Path.GetTempPath(), null));
+            Assert.Equal(anims.PackFrames != null, LegacySpriteSink.HasPackAnims(anims));
+
+            anims.SetTablesForTests(Array.Empty<AnimBodyEntry>(), Array.Empty<AnimDirEntry>(), new AnimFrameEntry[3]);
+            Assert.Equal(anims.PackFrames != null, LegacySpriteSink.HasPackAnims(anims));
+            Assert.True(LegacySpriteSink.HasPackAnims(anims));
+        }
+
         [Fact]
         public void Legacy_Switch_Off_Routes_Nothing_Through_The_Sink()
         {

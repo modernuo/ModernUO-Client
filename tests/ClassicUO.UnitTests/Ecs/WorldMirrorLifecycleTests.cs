@@ -104,6 +104,37 @@ namespace ClassicUO.UnitTests.Ecs
             m.GetComponent<EquipmentSlots>().Version.Should().Be(0, "never built");
         }
 
+        // perf-7: the mobile draw paths (GpuWorldRenderer.TryDrawMobileEcs, LegacySpriteSink.DrawMobile) read AnimationState and
+        // MobileRenderState through one e.Data after TakeDirty; the refs must be the components GetComponent returns, and a
+        // write through them must land in the entity, with the dirty tag set or already taken
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public void One_Data_Read_Gives_The_Same_Mobile_Components_As_GetComponent(bool dirty)
+        {
+            var mirror = new WorldMirror();
+            Entity m = mirror.UpsertMobile(MOBILE, 0x190, 0, 10, 10, 0, 0, 0, false);
+            mirror.UpsertMobile(OTHER, 0x191, 0, 11, 10, 0, 0, 0, false);
+
+            if (!dirty)
+            {
+                m.RemoveTag<EquipmentDirty>();
+            }
+
+            ClassicUO.Game.MobileAnimationSystem.TakeDirty(m).Should().Be(dirty);
+            EntityData data = m.Data;
+            ref AnimationState state = ref data.Get<AnimationState>();
+            ref MobileRenderState render = ref data.Get<MobileRenderState>();
+
+            System.Runtime.CompilerServices.Unsafe.AreSame(ref state, ref m.GetComponent<AnimationState>()).Should().BeTrue();
+            System.Runtime.CompilerServices.Unsafe.AreSame(ref render, ref m.GetComponent<MobileRenderState>()).Should().BeTrue();
+
+            state.ServerGroup = 7;
+            render.Alpha = 0x80;
+            m.GetComponent<AnimationState>().ServerGroup.Should().Be(7);
+            m.GetComponent<MobileRenderState>().Alpha.Should().Be(0x80);
+        }
+
         [Fact]
         public void Serial_Reuse_Gives_A_Fresh_Entity_Without_The_Old_State()
         {

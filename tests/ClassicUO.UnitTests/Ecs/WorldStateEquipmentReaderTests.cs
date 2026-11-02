@@ -136,6 +136,32 @@ namespace ClassicUO.UnitTests.Ecs
             BothWays(world, () => m.IsMounted.Should().BeTrue());
         }
 
+        // perf-7: IsMounted reads the Mount-layer item once; it must equal the old two-walk form (the item, not IsDrivingBoat,
+        // and an animation graphic other than 0xFFFF) for no mount, a tiller and the ethereals (the tests load no tile data), both ways
+        [Fact]
+        public void IsMounted_Equals_The_Two_Walk_Form()
+        {
+            World world = WorldStateContentsTests.Build();
+            Mobile m = world.Mobiles.Get(MOB);
+
+            void Check(string because) => BothWays(world, () =>
+            {
+                Item it = m.FindItemByLayer(Layer.Mount);
+                bool old = it != null && !m.IsDrivingBoat && it.GetGraphicForAnimation() != 0xFFFF;
+                m.IsMounted.Should().Be(old, because);
+            });
+
+            Check("no mount");
+
+            foreach (ushort graphic in new ushort[] { 0x3E96, 0x3E9B, 0x3E9C, 0x3E9D })
+            {
+                world.Writer.Equip(MOUNT, graphic, Layer.Mount, MOB, 0, out _, out _);
+                Check($"mount 0x{graphic:X4}");
+                world.Writer.RemoveWorldItem(world.Items.Get(MOUNT), out _);
+                Check($"after removing 0x{graphic:X4}");
+            }
+        }
+
         private static bool SlotsMounted(World world, Mobile m)
         {
             world.Ecs.Mirror.TryGetEntity(m.Serial, out EcsEntity e).Should().BeTrue();
