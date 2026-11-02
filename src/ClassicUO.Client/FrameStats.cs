@@ -145,6 +145,9 @@ namespace ClassicUO
         ArtPending,
         // ground items and multi components placed on the map whose art was requested from the workers (FirstSightArt)
         ArtObjectRequests,
+        // art lookups that uploaded a finished worker decode instead of decoding again (Art.FrameReadyTakes; 0 without
+        // CUO_DEVTOOLS)
+        ArtReadyTakes,
         // first-sight gumps (Renderer.Gumps.Gump): main-thread decodes and their time, worker decodes uploaded and the upload
         // time, worker decodes still pending
         GumpSyncLoads,
@@ -216,7 +219,7 @@ namespace ClassicUO
             "gpu_skip_active", "gpu_full_tiles", "gpu_walk_tiles", "gpu_edge_tiles", "gpu_pick_tiles",
             "item_cache_builds", "item_cache_tiles", "item_cache_items", "item_cache_fallbacks", "item_cache_walked", "item_cache_fx",
             "chunk_loads", "chunk_load_us", "chunk_alloc", "chunk_gc", "chunk_gc_us", "chunk_reused", "chunk_retired", "chunk_mesh_alloc", "chunk_new", "chunk_mesh_us", "chunk_queue", "region_wait_us", "region_sync", "region_prefetch",
-            "art_sync", "art_sync_us", "art_async", "art_upload_us", "art_pending", "art_obj",
+            "art_sync", "art_sync_us", "art_async", "art_upload_us", "art_pending", "art_obj", "art_take",
             "gump_sync", "gump_sync_us", "gump_async", "gump_upload_us", "gump_pending",
             "ui_flushes", "ui_draw_calls", "ui_cached", "ui_untouched", "effects",
             "net_avail", "net_bytes", "net_slices", "net_packets",
@@ -725,6 +728,10 @@ namespace ClassicUO
             _cur[(int)FrameCounter.ArtPending] = (Client.Game?.UO?.Arts?.PendingDecodes ?? 0) + (Client.Game?.UO?.Texmaps?.PendingDecodes ?? 0);
             _cur[(int)FrameCounter.ArtObjectRequests] = Game.Map.FirstSightArt.FrameObjectRequests;
             Game.Map.FirstSightArt.FrameObjectRequests = 0;
+#if CUO_DEVTOOLS
+            _cur[(int)FrameCounter.ArtReadyTakes] = Renderer.Arts.Art.FrameReadyTakes;
+            Renderer.Arts.Art.FrameReadyTakes = 0;
+#endif
             Renderer.Arts.Art.FrameSyncLoads = Renderer.Arts.Art.FrameAsyncUploads = 0;
             Renderer.Arts.Art.FrameSyncTicks = Renderer.Arts.Art.FrameUploadTicks = 0;
             _cur[(int)FrameCounter.GumpSyncLoads] = Renderer.Gumps.Gump.FrameSyncLoads;
