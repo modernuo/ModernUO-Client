@@ -14,9 +14,9 @@ namespace ClassicUO.Game.Scenes
     /// <see cref="ItemSpriteInput.Gather"/> + <see cref="ItemSpriteExtract.Select"/>, each record through
     /// <see cref="LegacySpriteResolve"/>. What the views did besides drawing comes from the extract's side outputs, as on the
     /// Gpu path (GpuWorldRenderer.TryDrawMobileEcs/EmitItem): the mobile's FrameInfo and mirror bit, the corpse's mirror bit,
-    /// the item art entry's picking offset (written by the select), the aura, and the lights. Legacy picking reads those, so
-    /// it is unchanged. Effects stay on their views (no effect extract yet). A mobile without a mirror entity falls back to
-    /// its view. CUO_LEGACY_ECS_PARITY=1 (<see cref="LegacyEcsParity"/>) compares the view's batcher calls with the sink's.
+    /// the item art entry's picking offset (written by the select), the aura, and the lights. While the switch is on, picking
+    /// reads the same pick state from <see cref="SpritePickTable"/> (2b), which the sink records from the select. Effects stay
+    /// on their views (no effect extract yet). A mobile without a mirror entity falls back to its view. CUO_LEGACY_ECS_PARITY=1 (<see cref="LegacyEcsParity"/>) compares the view's batcher calls with the sink's.
     /// </summary>
     internal static class LegacySpriteSink
     {
@@ -60,6 +60,7 @@ namespace ClassicUO.Game.Scenes
             _route = _on;
 #endif
             _scene = _route ? Client.Game.GetScene<GameScene>() : null;
+            SpritePickTable.BeginDraw();
         }
 
         /// <summary>End of the Legacy world's render-list draw (the render lists are also drawn by UI controls).</summary>
@@ -67,6 +68,7 @@ namespace ClassicUO.Game.Scenes
         {
             _route = false;
             _scene = null;
+            SpritePickTable.Commit();
         }
 
         /// <summary>The render list's draw of one object: the sink for mobiles and items while the switch (or the parity
@@ -117,36 +119,17 @@ namespace ClassicUO.Game.Scenes
             return DrawItem(batcher, (Item)obj, depth, effects);
         }
 
-        // GpuWorldRenderer.TryDrawMobileEcs' entity lookup (E5 cache): false = not mirrored with an AnimationState, or not drawn
+        // E5 (shared with GpuWorldRenderer.TryDrawMobileEcs): false = not mirrored with an AnimationState, or not drawn
         private static bool TryMobileEntity(Mobile mobile, out Friflo.Engine.ECS.Entity e)
         {
-            e = default;
-
             if (mobile.IsDestroyed || !mobile.AllowedToDraw)
             {
+                e = default;
+
                 return false;
             }
 
-            WorldEcs ecs = mobile.World.Ecs;
-            e = mobile.EcsEntity;
-
-            if (mobile.EcsEntitySerial != mobile.Serial || mobile.EcsEntityEpoch != ecs.Mirror.Epoch)
-            {
-                if (!ecs.Mirror.TryGetEntity(mobile.Serial, out e) || !e.HasComponent<AnimationState>())
-                {
-                    mobile.EcsEntity = default;
-                    mobile.EcsEntitySerial = 0;
-
-                    return false;
-                }
-
-                mobile.EcsEntity = e;
-                mobile.EcsEntitySerial = mobile.Serial;
-                mobile.EcsEntityEpoch = ecs.Mirror.Epoch;
-                mobile.EcsEntityHeld = false;
-            }
-
-            return true;
+            return MobileEntityLookup.TryGet(mobile, out e);
         }
 
         private static bool DrawMobile(UltimaBatcher2D batcher, Mobile mobile, Friflo.Engine.ECS.Entity e, float depth, bool effects)
@@ -166,12 +149,19 @@ namespace ClassicUO.Game.Scenes
             extract.BeginSelect(ClientLegacySpriteSource.Instance);
             extract.Select(e, posX, posY, depth);
             LegacySpriteResolve.DrawAll(batcher, ClientLegacySpriteSource.Instance, extract.Selected);
+            bool mirror = (state.Flags & AnimStateFlags.Mirror) != 0;
+
+            if (_on)
+            {
+                // picking reads these (the views' FrameInfo and mirror bit below stay: other readers, the mirror history)
+                SpritePickTable.RecordMobile(mobile, extract.FrameInfo, mirror);
+            }
 
             if (effects)
             {
                 // the view's side effects: picking, text and health bars read FrameInfo and the mirror bit
                 mobile.FrameInfo = extract.FrameInfo;
-                mobile.ViewFlipped = (state.Flags & AnimStateFlags.Mirror) != 0;
+                mobile.ViewFlipped = mirror;
                 AddMobileLights(mobile, extract);
             }
 
@@ -201,6 +191,11 @@ namespace ClassicUO.Game.Scenes
             ItemSpriteInput.Gather(item, out ItemSpriteInput input);
             bool hasAnims = Client.Game.UO.FileManager.Animations.PackFrames != null;
             bool drawn = _items.Select(in input, hasAnims, item.RealScreenPosition.X, item.RealScreenPosition.Y, depth);
+
+            if (_on)
+            {
+                SpritePickTable.RecordItem(item, _items);
+            }
 
             if (effects)
             {

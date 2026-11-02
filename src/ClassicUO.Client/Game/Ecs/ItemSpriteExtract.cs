@@ -248,6 +248,16 @@ namespace ClassicUO.Game
 
         public bool SetsFlipped { get; private set; }
 
+        /// <summary>T7b part 2b: the select drew art <see cref="ArtPickGraphic"/> and stored its draw offset
+        /// (<see cref="ArtPickW"/>, <see cref="ArtPickH"/>) on the art entry; SpritePickTable records it for item picking.</summary>
+        public bool HasArtPick { get; private set; }
+
+        public ushort ArtPickGraphic { get; private set; }
+
+        public int ArtPickW { get; private set; }
+
+        public int ArtPickH { get; private set; }
+
         /// <summary>True when the extract reproduces this item's view: every world item (art items, multis and corpses).</summary>
         public static bool Handles(Item item) => true;
 
@@ -290,6 +300,7 @@ namespace ClassicUO.Game
             _offsetY = offsetY;
             Light = false;
             SetsFlipped = false;
+            HasArtPick = false;
 
             if (item.Destroyed)
             {
@@ -687,6 +698,10 @@ namespace ClassicUO.Game
             ref ArtEntry index = ref arts.GetEntry(graphic + 0x4000);
             index.Width = (short)((ow >> 1) - 22);
             index.Height = (short)(oh - 44);
+            HasArtPick = true;
+            ArtPickGraphic = graphic;
+            ArtPickW = index.Width;
+            ArtPickH = index.Height;
 
             var sprite = new DynamicSprite
             {

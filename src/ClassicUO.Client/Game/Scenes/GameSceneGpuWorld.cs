@@ -439,6 +439,8 @@ namespace ClassicUO.Game.Scenes
 
             captured += _renderLists.CaptureRenderLists(batcher, _maxGroundZ, gpu, _gpuItemRunCount > 0 ? this : null);
             GpuItemCheckEnd();
+            // T7b part 2b: the mobiles and items drawn from the extract are what the next frame's fill picks from
+            SpritePickTable.Commit();
 
             // the multi placement preview is depth-tested against the world, as in Legacy
             if (

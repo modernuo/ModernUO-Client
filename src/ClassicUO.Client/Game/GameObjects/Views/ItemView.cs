@@ -507,19 +507,36 @@ namespace ClassicUO.Game.GameObjects
                 // sprite the pack lacks, and CUO_ART_SYNC=1, keep the old path
                 var packSprites = Client.Game.UO.FileManager.Arts.PackSpriteEntries;
                 uint spriteIdx = graphic + 0x4000u;
-                bool sized = (index.Width | index.Height) != 0;
+
+                // T7b part 2b: the offset the extract stored when it drew this graphic for this item last draw
+                // (legacy_ecs_sprites / gpu_ecs_sprites), else the art entry's
+                bool records = Scenes.SpritePickTable.TryItemArt(this, graphic, in index, out int entryW, out int entryH);
+
+                if (!records)
+                {
+                    entryW = index.Width;
+                    entryH = index.Height;
+                }
+
+                bool sized = (entryW | entryH) != 0;
 
                 if (!sized && global::ClassicUO.Game.Map.Map.ArtWait && spriteIdx < (uint)packSprites.Length && packSprites[spriteIdx].OrigW != 0 && packSprites[spriteIdx].OrigH != 0)
                 {
-                    PickEntryFromSize(packSprites[spriteIdx].OrigW, packSprites[spriteIdx].OrigH, out index.Width, out index.Height);
+                    PickEntryFromSize(packSprites[spriteIdx].OrigW, packSprites[spriteIdx].OrigH, out entryW, out entryH);
                     sized = true;
+
+                    if (!records)
+                    {
+                        index.Width = entryW;
+                        index.Height = entryH;
+                    }
                 }
 
                 Point position = RealScreenPosition;
                 position.X += (int)Offset.X;
                 position.Y += (int)(Offset.Y + Offset.Z);
-                position.X -= index.Width;
-                position.Y -= index.Height;
+                position.X -= entryW;
+                position.Y -= entryH;
 
                 // the drawn art is at most (Width + 23) * 2 by Height + 44 pixels (the view and ItemSpriteExtract store
                 // those offsets when they draw it; 0, 0 = not drawn yet or 44 x 44, unless sized from the pack above), and
@@ -528,7 +545,7 @@ namespace ClassicUO.Game.GameObjects
                 int mouseX = SelectedObject.TranslatedMousePositionByViewport.X - position.X;
                 int mouseY = SelectedObject.TranslatedMousePositionByViewport.Y - position.Y;
 
-                if (sized && OutsidePickBounds(index.Width, index.Height, mouseX, mouseY))
+                if (sized && OutsidePickBounds(entryW, entryH, mouseX, mouseY))
                 {
                     // not under the mouse: its art (the frame drawn now) decodes on a worker if it isn't in the atlas yet
                     // (an item whose graphic changed in place, an atlas reload); an item under the mouse decodes below
@@ -542,7 +559,7 @@ namespace ClassicUO.Game.GameObjects
                             !IsMulti && !IsCoin && Amount > 1 && ItemData.IsStackable && Client.Game.UO.Arts.PixelCheck(graphic, mouseX + 5, mouseY + 5)))
                         {
                             Scenes.PrepCheck.PicksWrong++;
-                            Scenes.PrepCheck.Sample ??= $"item 0x{Serial:X8} graphic 0x{graphic:X4} mouse {mouseX},{mouseY} entry {index.Width},{index.Height}";
+                            Scenes.PrepCheck.Sample ??= $"item 0x{Serial:X8} graphic 0x{graphic:X4} mouse {mouseX},{mouseY} entry {entryW},{entryH}";
                         }
                     }
 
@@ -595,7 +612,20 @@ namespace ClassicUO.Game.GameObjects
                 position.Y += 22;
 
                 byte direction = (byte)((byte)Layer & 0x7F & 7);
-                animations.GetAnimDirection(ref direction, ref IsFlipped);
+
+                // T7b part 2b: the mirror bit from the last draw's records (legacy_ecs_sprites / gpu_ecs_sprites). The pick
+                // doesn't store it back: GetAnimDirection is idempotent for the corpse's fixed direction, so the draw that
+                // recorded it left the same bit. Without a record, the bit on the corpse, advanced as before.
+                if (Scenes.SpritePickTable.TryCorpse(this, out bool flipped))
+                {
+                    animations.GetAnimDirection(ref direction, ref flipped);
+                }
+                else
+                {
+                    animations.GetAnimDirection(ref direction, ref IsFlipped);
+                    flipped = IsFlipped;
+                }
+
                 byte animIndex = AnimIndex;
                 bool ishuman =
                     MathHelper.InRange(Amount, 0x0190, 0x0193)
@@ -694,7 +724,7 @@ namespace ClassicUO.Game.GameObjects
                         int x =
                             position.X
                             - (
-                                IsFlipped
+                                flipped
                                     ? spriteInfo.UV.Width - spriteInfo.Center.X
                                     : spriteInfo.Center.X
                             );
@@ -707,7 +737,7 @@ namespace ClassicUO.Game.GameObjects
                                 direction,
                                 isUOP,
                                 animIndex,
-                                IsFlipped
+                                flipped
                                     ? x
                                         + spriteInfo.UV.Width
                                         - SelectedObject.TranslatedMousePositionByViewport.X
