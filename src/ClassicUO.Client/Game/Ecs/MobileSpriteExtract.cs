@@ -81,6 +81,27 @@ namespace ClassicUO.Game
         public void Begin(PackSet pack, int offsetX, int offsetY)
         {
             _pack = pack;
+            _hasAnims = pack != null && pack.HasAnims;
+
+            if (_hasAnims)
+            {
+                _tables = new GpuSpriteTables(pack);
+            }
+
+            BeginCore(offsetX, offsetY);
+        }
+
+        /// <summary><see cref="Begin(PackSet, int, int)"/> over explicit tables (tests: no pack on disk).</summary>
+        internal void Begin(in GpuSpriteTables tables, int offsetX, int offsetY)
+        {
+            _pack = null;
+            _hasAnims = tables.AnimFrames != null;
+            _tables = tables;
+            BeginCore(offsetX, offsetY);
+        }
+
+        private void BeginCore(int offsetX, int offsetY)
+        {
             _offsetX = offsetX;
             _offsetY = offsetY;
             _count = 0;
@@ -95,13 +116,49 @@ namespace ClassicUO.Game
             _lightCount = 0;
         }
 
+        /// <summary>
+        /// T7b select: the renderer-neutral records of one mobile (shadows, mount, body, equipment in paint order, strips and
+        /// seated sections) into <see cref="Selected"/>, plus the same FrameInfo and lights as <see cref="Emit(EcsEntity, int, int, float)"/>;
+        /// no instances. <see cref="GpuSpriteResolve"/> of each record in order gives Emit's instances.
+        /// </summary>
+        public void Select(EcsEntity e, int posX, int posY, float depth)
+        {
+            _selCount = 0;
+            _selectOnly = true;
+
+            try
+            {
+                Emit(e, posX, posY, depth);
+            }
+            finally
+            {
+                _selectOnly = false;
+            }
+        }
+
+        /// <summary>The last <see cref="Select"/>'s records.</summary>
+        public ReadOnlySpan<DynamicSprite> Selected => new ReadOnlySpan<DynamicSprite>(_sel, 0, _selCount);
+
+        /// <summary>The tables and draw offset of the last Begin (for resolving <see cref="Selected"/>).</summary>
+        internal ref readonly GpuSpriteTables Tables => ref _tables;
+
+        internal int OffsetX => _offsetX;
+
+        internal int OffsetY => _offsetY;
+
+        private DynamicSprite[] _sel = new DynamicSprite[64];
+        private int _selCount;
+        private bool _selectOnly;
+        private bool _hasAnims;
+        private GpuSpriteTables _tables;
+
         /// <summary>Appends the instances of one mobile drawn at screen position (<paramref name="posX"/>, <paramref name="posY"/>) with the scene's base depth.</summary>
         public void Emit(EcsEntity e, int posX, int posY, float depth)
         {
             MaterializeView();
             ref readonly AnimationState s = ref e.GetComponent<AnimationState>();
 
-            if ((s.Flags & AnimStateFlags.Visible) == 0 || _pack == null || !_pack.HasAnims)
+            if ((s.Flags & AnimStateFlags.Visible) == 0 || !_hasAnims)
             {
                 return;
             }
@@ -276,7 +333,12 @@ namespace ClassicUO.Game
             }
 
             uint index = first + frameIndex;
-            ref readonly AnimFrameEntry fe = ref _pack.AnimFrames[index];
+            ref readonly AnimFrameEntry fe = ref _anims.PackFrames[index];
+            _selBody = id;
+            _selGroup = group;
+            _selDir = dir;
+            _selFrame = frameIndex;
+            _selEquip = isEquip;
             int w = fe.Sprite.OrigW, h = fe.Sprite.OrigH;
 
             // no texture: nothing is drawn (the seated body's SKIP path draws nothing either)
@@ -347,16 +409,45 @@ namespace ClassicUO.Game
 
         // GpuWorldRenderer.Emit for an animation frame drawn from source rows [srcY, srcY + srcH) at (px, py). The depth is
         // baseDepth (kind 0) or (baseDepth + 1f) + add (kind 1): the shadow, the seated body and the strips' depth + 1f + i * 2.
+        // T7b: the record of that draw (select), resolved at once to instances unless only selecting. The selection fields
+        // (_selBody…) are the current Layer's.
         private void Write(uint index, int px, int py, int srcY, int srcH, Vector3 hue, bool flip, float baseDepth, byte kind, float add,
             bool sitted = false, Vector3 sitMod = default)
         {
-            int before = _count;
-            WriteFrame(_pack, ref _out, ref _count, index, px + _offsetX, py + _offsetY, srcY, srcH, hue, flip, DepthOf(baseDepth, kind, add), _objX, RANK_MOBILE);
-
-            if (sitted && _count > before)
+            var sprite = new DynamicSprite
             {
-                SitDeform.Split(ref _out, ref _count, before, py + _offsetY, srcH, sitMod, flip);
+                Kind = DynamicSpriteKind.Animation,
+                Flags = (flip ? DynamicSpriteFlags.Flip : 0) | (sitted ? DynamicSpriteFlags.Sitted : 0) | (_selEquip ? DynamicSpriteFlags.Equip : 0),
+                Rank = RANK_MOBILE,
+                Body = _selBody,
+                Group = _selGroup,
+                Dir = _selDir,
+                Frame = _selFrame,
+                Id = index,
+                X = px,
+                Y = py,
+                SrcY = srcY,
+                SrcH = srcH,
+                Hue = hue,
+                Depth = DepthOf(baseDepth, kind, add),
+                ObjX = _objX,
+                SitMod = sitMod
+            };
+
+            if (_selectOnly)
+            {
+                if (_selCount >= _sel.Length)
+                {
+                    Array.Resize(ref _sel, _sel.Length * 2);
+                }
+
+                _sel[_selCount++] = sprite;
+
+                return;
             }
+
+            int before = _count;
+            GpuSpriteResolve.Resolve(in _tables, in sprite, _offsetX, _offsetY, ref _out, ref _count);
 
             if (_record != null)
             {
@@ -374,6 +465,9 @@ namespace ClassicUO.Game
         // the seated body's waist and knee rows for its equipment (MobileView's statics), and whether the mobile is human
         private SitDeform.BodyRows _sitRows;
         private bool _human;
+        private ushort _selBody;
+        private byte _selGroup, _selDir, _selFrame;
+        private bool _selEquip;
 
         internal static float DepthOf(float baseDepth, byte kind, float add) => kind == 0 ? baseDepth : baseDepth + 1f + add;
 
@@ -394,7 +488,7 @@ namespace ClassicUO.Game
         /// </summary>
         public void Emit(EcsEntity e, in AnimationState s, in MobileRenderState rs, int posX, int posY, float depth, MobileFrameCache cache)
         {
-            if (cache == null || (s.Flags & AnimStateFlags.Visible) == 0 || _pack == null || !_pack.HasAnims)
+            if (cache == null || (s.Flags & AnimStateFlags.Visible) == 0 || !_hasAnims)
             {
                 if (cache != null)
                 {
@@ -635,126 +729,6 @@ namespace ClassicUO.Game
             _fiY = fy;
             _fiW = fw;
             _fiH = fh;
-        }
-
-        /// <summary>
-        /// GpuWorldRenderer.Emit for pack animation frame <paramref name="index"/> drawn from source rows [srcY, srcY + srcH)
-        /// at target pixel (px, py) (screen position plus the draw offset), appended to <paramref name="buffer"/>.
-        /// </summary>
-        internal static void WriteFrame(PackSet pack, ref SpriteInstance[] buffer, ref int count, uint index, int px, int py, int srcY, int srcH,
-            Vector3 hue, bool flip, float depth, int objX, int rank)
-        {
-            float alpha = hue.Z > 1f ? hue.Z - 1f : hue.Z;
-
-            if (alpha <= 0f)
-            {
-                return;
-            }
-
-            uint flags = 0;
-            uint hueRow = 0;
-            var hueMode = HueMode.Normal;
-            int type = (int)hue.Y;
-            int row = (int)hue.X;
-
-            switch (type)
-            {
-                case ShaderHueTranslator.SHADER_NONE:
-                    break;
-
-                case ShaderHueTranslator.SHADER_HUED:
-                case ShaderHueTranslator.SHADER_PARTIAL_HUED:
-                case ShaderHueTranslator.SHADER_EFFECT_HUED:
-                    if (row >= 0 && row < pack.HueCount)
-                    {
-                        hueRow = (uint)row;
-                        flags = SpriteInstance.FlagHued | (type == ShaderHueTranslator.SHADER_PARTIAL_HUED ? SpriteInstance.FlagPartial : 0);
-                    }
-
-                    if (type == ShaderHueTranslator.SHADER_EFFECT_HUED)
-                    {
-                        hueMode = HueMode.EffectHued;
-                    }
-
-                    break;
-
-                case ShaderHueTranslator.SHADER_SPECTRAL:
-                    hueMode = HueMode.Spectral;
-
-                    break;
-
-                case ShaderHueTranslator.SHADER_SHADOW:
-                    hueMode = HueMode.Shadow;
-
-                    break;
-
-                default:
-                    return;
-            }
-
-            ref readonly SpriteEntry sp = ref pack.AnimFrames[index].Sprite;
-
-            if (!sp.Present)
-            {
-                return;
-            }
-
-            int page = pack.AnimPageBase + sp.Page;
-            uint palette = 0;
-
-            if (pack.AnimIndexed)
-            {
-                flags |= SpriteInstance.FlagIndexed;
-                palette = pack.FramePalette[index];
-            }
-
-            int rx0 = 0, ry0 = srcY;
-            int rx1 = sp.OrigW, ry1 = srcY + srcH;
-            int ix0 = Math.Max(rx0, sp.TrimX), iy0 = Math.Max(ry0, sp.TrimY);
-            int ix1 = Math.Min(rx1, sp.TrimX + sp.W), iy1 = Math.Min(ry1, sp.TrimY + sp.H);
-
-            if (ix1 <= ix0 || iy1 <= iy0)
-            {
-                return;
-            }
-
-            int w = ix1 - ix0, h = iy1 - iy0;
-            int dx = flip ? rx1 - ix1 : ix0 - rx0;
-            int dy = iy0 - ry0;
-            int x, y;
-
-            if (hueMode == HueMode.Shadow)
-            {
-                int fullH = ry1 - ry0;
-                x = px + dx + (fullH - dy - h) / 2;
-                y = py + (fullH + dy - h) / 2;
-            }
-            else
-            {
-                x = px + dx;
-                y = py + dy;
-            }
-
-            if (count >= buffer.Length)
-            {
-                Array.Resize(ref buffer, buffer.Length * 2);
-            }
-
-            ref SpriteInstance inst = ref buffer[count++];
-            inst.X = x;
-            inst.Y = y;
-            inst.Whf = SpriteInstance.PackWhf(w, h, flags | (flip ? SpriteInstance.FlagMirror : 0));
-            inst.Uv = (uint)(sp.X + (ix0 - sp.TrimX)) | ((uint)(sp.Y + (iy0 - sp.TrimY)) << 16);
-            inst.PageHue = (uint)page | (hueRow << 16);
-            inst.Depth = BakeJob.DepthKeyD((int)MathF.Round(depth * 100f) - 50, objX, rank);
-            inst.Light = 0;
-            inst.Corners = palette;
-            inst.Mode = hueMode;
-
-            if (alpha < 1f)
-            {
-                inst.Alpha = (byte)Math.Clamp((int)(alpha * 255f + 0.5f), 1, 254);
-            }
         }
     }
 }
