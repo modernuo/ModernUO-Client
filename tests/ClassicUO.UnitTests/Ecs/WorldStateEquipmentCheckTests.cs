@@ -11,7 +11,7 @@ namespace ClassicUO.UnitTests.Ecs
 {
     // T3a: CUO_EQUIP_READ_CHECK. Every FindItemByLayer call on a mobile compares the child list's first item on the layer with
     // the ECS's worn item (WornLayers). A world changed only through the funnel checks clean; each deliberate divergence is
-    // reported, with the switch off and on.
+    // reported (T9 deleted ecs_read_equipment's list path; the readers get the ECS's answer).
     public class WorldStateEquipmentCheckTests
     {
         private const uint MOB = 0x0000_3900, SHIRT = 0x4000_7904, HELM = 0x4000_7905, HELM2 = 0x4000_7960, WEAR = 0x4000_790A;
@@ -20,7 +20,6 @@ namespace ClassicUO.UnitTests.Ecs
         {
             World world = WorldStateContentsTests.Build();
             var reports = new List<string>();
-            world.State.ReadEquipmentOverride = read;
             world.State.EquipCheckEnabled = true;
             world.State.EquipMismatchObserver = reports.Add;
 
@@ -39,7 +38,7 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         public static IEnumerable<object[]> Cases() =>
-            new[] { false, true }.SelectMany
+            new[] { true }.SelectMany
             (
                 read => WorldStateCheckTests.Changes().Select(c => new[] { c[0], (object)read })
             );
@@ -70,19 +69,12 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Theory]
-        [InlineData(Divergence.ListReorder, false)]
         [InlineData(Divergence.ListReorder, true)]
-        [InlineData(Divergence.LayerInCacheOnly, false)]
         [InlineData(Divergence.LayerInCacheOnly, true)]
-        [InlineData(Divergence.MirrorOnlyDetach, false)]
         [InlineData(Divergence.MirrorOnlyDetach, true)]
-        [InlineData(Divergence.MirrorOnlyRemove, false)]
         [InlineData(Divergence.MirrorOnlyRemove, true)]
-        [InlineData(Divergence.ListOnlyUnlink, false)]
         [InlineData(Divergence.ListOnlyUnlink, true)]
-        [InlineData(Divergence.MirrorOnlyRestamp, false)]
         [InlineData(Divergence.MirrorOnlyRestamp, true)]
-        [InlineData(Divergence.OtherInstance, false)]
         [InlineData(Divergence.OtherInstance, true)]
         public void A_Divergence_Is_Reported(Divergence divergence, bool read)
         {
@@ -112,17 +104,16 @@ namespace ClassicUO.UnitTests.Ecs
                 return;
             }
 
-            (World world, List<string> reports) = Build(false);
+            (World world, List<string> reports) = Build(true);
             world.State.EquipCheckEnabled = false;
             Diverge(world, Divergence.MirrorOnlyDetach);
 
-            world.Mobiles.Get(MOB).FindItemByLayer(Layer.Helmet).Serial.Should().Be(HELM, "the list");
+            (world.Mobiles.Get(MOB).FindItemByLayer(Layer.Helmet)?.Serial ?? 0).Should().Be(world.Ecs.Mirror.Worn(MOB, (byte)Layer.Helmet), "the ECS");
             reports.Should().BeEmpty();
             world.State.EquipReads.Should().Be(0);
         }
 
         [Theory]
-        [InlineData(false)]
         [InlineData(true)]
         public void A_Guard_Divergence_Is_Reported(bool read)
         {
@@ -148,7 +139,6 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Theory]
-        [InlineData(false)]
         [InlineData(true)]
         public void A_Mobile_Wearing_Only_Untracked_Layers_Checks_Clean(bool read)
         {

@@ -19,7 +19,7 @@ namespace ClassicUO.Game.GameObjects
         /// <summary>W5: the Gpu world's reused selection and sprite instances (MobileFrameCache).</summary>
         internal MobileFrameCache FrameCache;
 
-        /// <summary>T3a: the equipment read cache (WorldState.WornItem), made at the first read with ecs_read_equipment on.</summary>
+        /// <summary>T3a: the equipment read cache (WorldState.WornItem), made at the first read.</summary>
         internal WornCache EquipCache;
 
         //private static readonly QueuedPool<Mobile> _pool = new QueuedPool<Mobile>(

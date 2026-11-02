@@ -192,14 +192,6 @@ namespace ClassicUO.Configuration
         // developer builds). Default on since 2026-11-02 (owner, after the quiet-machine per-switch timing bench-000206/207/208: timing-neutral on both renderers); the off path and the checker stay for one phase.
         [JsonPropertyName("ecs_effects")] public bool EcsEffects { get; set; } = true;
 
-        // T3a (ecs-transition-plan.md, T3): the equipment readers (Mobile.FindItemByLayer and through it IsMounted, the
-        // animation group's hands, the abilities, the paperdoll, PaperdollOrder.BuildInWorld and Legacy's MobileView) take a
-        // mobile's worn item per layer from the ECS (WornLayers: the mirror's first attached item per layer by child-order
-        // stamp) instead of walking the LinkedObject child list, which is still maintained. CUO_EQUIP_READ_CHECK=1 compares
-        // the two at every call. Default on since 2026-11-01 (coordinator, after t3a-fold removed the 0x78 maintenance cost and
-        // the off/on gates bench-000144/145); the off path and the checker stay for one phase.
-        [JsonPropertyName("ecs_read_equipment")] public bool EcsReadEquipment { get; set; } = true;
-
         // T4 (ecs-transition-plan.md, "thin handles"): the cold world-state getters (Name, Hits, HitsMax, Stamina, Mana and
         // their maxima, Price) read the entity's ECS record; the GameObject field becomes a write-only cache. Read once at
         // startup (EcsScalars.Owns; CUO_ECS_OWNS_SCALARS=1|0 overrides it in developer builds). Default on since 2026-11-02 (owner, after the quiet-machine per-switch timing bench-000206/207/208: timing-neutral on both renderers); the off path and the checker stay for one phase.
