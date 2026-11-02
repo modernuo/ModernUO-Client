@@ -95,6 +95,8 @@ namespace ClassicUO.UnitTests.Game.UI
             live.Update(true, chess, minimized, scale);
             live.Last.Should().Equal(Rebuild(world, chess, minimized, scale));
             live.Gump.Children.OfType<ItemGump>().Select(Describe).Should().Equal(live.Last.Where(s => s.Contains("disposed=False")));
+            live.Gump.Children.Should().OnlyHaveUniqueItems();
+            live.Gump.Children.Should().OnlyContain(c => c.Parent == live.Gump);
         }
 
         // perf-9: the per-frame stack check (AddToRenderLists, Contains) reads the item through an EntityRef; it must return what
