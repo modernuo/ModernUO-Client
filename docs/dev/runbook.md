@@ -42,7 +42,7 @@ What `CUO_DEVTOOLS` includes:
 
 - `DevBench` (scripted runs) and the per-phase timings of `FrameStats`.
 - Runtime world-renderer switching and the `-ecsdriver` argument.
-- The checkers `CUO_CONTENTS_CHECK`, `CUO_EQUIP_READ_CHECK` and `CUO_FUNNEL_CHECK`.
+- The checkers `CUO_CONTENTS_CHECK`, `CUO_EQUIP_READ_CHECK`, `CUO_LAYER_CACHE_CHECK` and `CUO_FUNNEL_CHECK`.
 - `MemLog` (`CUO_MEM_LOG`).
 
 Code guarded by it is tagged `CLEANUP(release)`.
@@ -233,6 +233,7 @@ Checkers compare a new path with the old one and log mismatches. Do not measure 
 |---|---|
 | `CUO_CONTENTS_CHECK=1` | Dev. Compare ECS container contents with the still-maintained child list on every read |
 | `CUO_EQUIP_READ_CHECK=1` | Dev. Compare ECS worn layers with the still-maintained child list at every call |
+| `CUO_LAYER_CACHE_CHECK=1\|N` | Dev. Compare cached `LayerDecision` entries with a fresh decision on every hit (`N`: every Nth hit); logs `[layers] cache checks` every 5 s |
 | `CUO_MOBILE_UPDATE_CHECK=1\|stats` | Dev. Check the mobile clock and the skipped mobiles against `Mobile.Update` every frame; `stats` only counts and times |
 | `CUO_FUNNEL_CHECK=1` | Dev. Report writes to class A fields made outside the `WorldWriter` funnel |
 | `CUO_ECS_PARITY=N` | Compare ECS mobile sprites with the captured ones every N frames |
