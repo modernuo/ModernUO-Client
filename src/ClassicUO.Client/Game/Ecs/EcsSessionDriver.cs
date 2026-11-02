@@ -866,19 +866,11 @@ namespace ClassicUO.Game
 
                     return true;
 
-                // w5 on|off: all W5 update shortcuts (world_update_active_items, gpu_mobile_frame_cache, text_skip_expired,
-                // mobile_push_inputs)
+                // w5 on|off: the W5 shortcuts that still have a switch (gpu_mobile_frame_cache, text_skip_expired, mobile_push_inputs)
                 case "w5" when args.Length > 0:
-                    Settings.GlobalSettings.WorldUpdateActiveItems = Settings.GlobalSettings.GpuMobileFrameCache =
+                    Settings.GlobalSettings.GpuMobileFrameCache =
                         Settings.GlobalSettings.TextSkipExpired = Settings.GlobalSettings.MobilePushInputs = args[0] == "on";
                     Log.Info($"[ECS] driver: W5 shortcuts {args[0]}");
-
-                    return true;
-
-                // mobsys on|off: World.Update's mobile loop by the ECS clocks (world_update_mobile_system, E4)
-                case "mobsys" when args.Length > 0:
-                    Settings.GlobalSettings.WorldUpdateMobileSystem = args[0] == "on";
-                    Log.Info($"[ECS] driver: mobile update by clock {args[0]}");
 
                     return true;
 
@@ -893,13 +885,6 @@ namespace ClassicUO.Game
                 case "mobcache" when args.Length > 0:
                     Settings.GlobalSettings.GpuMobileFrameCache = args[0] == "on";
                     Log.Info($"[ECS] driver: mobile frame cache {args[0]}");
-
-                    return true;
-
-                // activeitems on|off: World.Update's active item list (world_update_active_items, W5)
-                case "activeitems" when args.Length > 0:
-                    Settings.GlobalSettings.WorldUpdateActiveItems = args[0] == "on";
-                    Log.Info($"[ECS] driver: active items {args[0]}");
 
                     return true;
 
