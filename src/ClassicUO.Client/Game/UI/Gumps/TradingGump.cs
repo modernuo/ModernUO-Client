@@ -160,7 +160,7 @@ namespace ClassicUO.Game.UI.Gumps
 
             ArtLoader loader = Client.Game.UO.FileManager.Arts;
 
-            // T2: the children from the ECS with ecs_read_contents on (WorldState.Children)
+            // T2: the children from the ECS (WorldState.Children)
             foreach (Item it in World.State.Children(container))
             {
 
@@ -214,7 +214,7 @@ namespace ClassicUO.Game.UI.Gumps
                 v.Dispose();
             }
 
-            // T2: the children from the ECS with ecs_read_contents on (WorldState.Children)
+            // T2: the children from the ECS (WorldState.Children)
             foreach (Item it in World.State.Children(container))
             {
 

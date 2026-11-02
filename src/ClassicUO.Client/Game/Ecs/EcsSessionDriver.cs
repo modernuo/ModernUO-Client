@@ -502,7 +502,7 @@ namespace ClassicUO.Game
                     var csb = new System.Text.StringBuilder();
                     int cn = 0;
 
-                    // T2: the reader path (the ECS's contents with ecs_read_contents on)
+                    // T2: the reader path (the ECS's contents)
                     foreach (Item c in world.State.Children(box))
                     {
                         csb.Append($" 0x{c.Serial:X8}:0x{c.Graphic:X4}x{c.Amount}");
@@ -679,8 +679,8 @@ namespace ClassicUO.Game
 
                     return false;
 
-                // close <gump type>: disposes the open gumps of that type (T2's shots: the same containers reopened under the
-                // other ecs_read_contents setting, so both shots show the same items at the same server positions)
+                // close <gump type>: disposes the open gumps of that type (T2's shots: the same containers reopened, so both
+                // shots show the same items at the same server positions)
                 case "close" when args.Length > 0:
                     var toClose = new System.Collections.Generic.List<Gump>();
 
@@ -728,13 +728,6 @@ namespace ClassicUO.Game
 
                     return true;
                 }
-
-                // readcontents on|off: the container-contents readers from the ECS (ecs_read_contents, T2)
-                case "readcontents" when args.Length > 0:
-                    Settings.GlobalSettings.EcsReadContents = args[0] == "on";
-                    Log.Info($"[ECS] driver: read contents from the ECS {args[0]} (effective {world.State.ReadContents})");
-
-                    return false;
 
                 // paperdoll: opens the player's own paperdoll (T3a's shots; a double-click on a mounted self would dismount)
                 case "paperdoll":
@@ -876,6 +869,7 @@ namespace ClassicUO.Game
                 // T9: switches whose off path is deleted; older session scripts still name them, so they are accepted and ignored
                 case "mobcache":
                 case "pushinputs":
+                case "readcontents":
                     Log.Info($"[ECS] driver: '{cmd}' has no off path any more (T9), ignored");
 
                     return false;

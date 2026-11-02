@@ -162,13 +162,6 @@ namespace ClassicUO.Configuration
         // step decision. Off = from the Mobile.
         [JsonPropertyName("ecs_step_mount_inputs")] public bool EcsStepMountInputs { get; set; } = false;
 
-        // T2 (ecs-transition-plan.md): the container-contents readers (container, grid loot, trade and spellbook gumps, the
-        // shop's lists, FindItem*, the counters, macros) take a parent's children from the ECS (WorldState.Children: the
-        // mirror's attached children by child-order stamp, a spellbook's spell entries) instead of the LinkedObject child
-        // list, which is still maintained. CUO_CONTENTS_CHECK=1 compares the two. Default on since 2026-11-01 (coordinator, after
-        // the off/on gates bench-000104/106 and two Codex audits); the off path and the checker stay for one phase.
-        [JsonPropertyName("ecs_read_contents")] public bool EcsReadContents { get; set; } = true;
-
         // perf-4: the static art of a container's contents and of the paperdoll's equipment slots decodes on the art workers
         // before the gump builds its item controls (ContentsArt: a request when an item goes into an open container, a
         // bounded batch wait in ContainerGump/PaperDollGump.UpdateContents) instead of one main-thread decode per sprite.

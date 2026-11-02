@@ -9,10 +9,10 @@ using Xunit;
 
 namespace ClassicUO.UnitTests.Ecs
 {
-    // T2 step 3: the child-list readers behind ecs_read_contents. Each reader runs with the switch off (the World child list)
-    // and on (the ECS through WorldState.Children) on the same world and must give the same result; on a world whose child
-    // list was changed behind the funnel's back, the switch-on reader follows the ECS and the switch-off reader the list
-    // (so a reader that ignores the switch fails). The gumps (ContainerGump, GridLootGump, TradingGump, SpellbookGump, ItemGump),
+    // T2 step 3: the child-list readers, which read the ECS through WorldState.Children (T9 deleted the list path). With
+    // CUO_CONTENTS_CHECK on (the builder turns it on in CUO_DEVTOOLS builds) every read is also compared with the World child
+    // list, which is still maintained; on a world whose child list was changed behind the funnel's back, the reader follows
+    // the ECS. The gumps (ContainerGump, GridLootGump, TradingGump, SpellbookGump, ItemGump),
     // the shop handlers (0x24's 0x30, 0x74), Profile's gump save and GetTotalAmountOfItem need the UI or the tile data: they
     // walk the same Children/HasChildren, and the gate runs them with the switch on.
     // (not in parallel with the mobile tests: the builders set the static Time.Ticks and RandomHelper seed)
@@ -54,17 +54,7 @@ namespace ClassicUO.UnitTests.Ecs
             return world;
         }
 
-        private static T Both<T>(World world, Func<T> reader)
-        {
-            world.State.ReadContentsOverride = false;
-            T off = reader();
-            world.State.ReadContentsOverride = true;
-            T on = reader();
-            world.State.ReadContentsOverride = null;
-            on.Should().Be(off);
-
-            return on;
-        }
+        private static T Both<T>(World world, Func<T> reader) => reader();
 
         internal static List<object> Walk(World world, Entity parent)
         {
@@ -79,16 +69,6 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Fact]
-        public void The_Switch_Is_On_By_Default()
-        {
-            World world = Build(out _);
-
-            ClassicUO.Configuration.Settings.GlobalSettings.EcsReadContents.Should().BeTrue();
-            new ClassicUO.Configuration.Settings().EcsReadContents.Should().BeTrue();
-            world.State.ReadContents.Should().BeTrue();
-        }
-
-        [Fact]
         public void Children_Are_The_Same_Objects_In_The_Same_Order_Both_Ways()
         {
             World world = Build(out PlayerMobile p);
@@ -96,10 +76,14 @@ namespace ClassicUO.UnitTests.Ecs
             foreach (uint serial in WorldStateContentsTests.Parents(world))
             {
                 Entity parent = world.Get(serial);
-                world.State.ReadContentsOverride = false;
-                List<object> off = Walk(world, parent);
-                bool offAny = world.State.HasChildren(parent);
-                world.State.ReadContentsOverride = true;
+                var off = new List<object>();
+
+                for (LinkedObject i = parent.Items; i != null; i = i.Next)
+                {
+                    off.Add(i);
+                }
+
+                bool offAny = off.Count > 0;
                 List<object> on = Walk(world, parent);
                 bool onAny = world.State.HasChildren(parent);
 
@@ -108,7 +92,6 @@ namespace ClassicUO.UnitTests.Ecs
             }
 
             // the book: its three spell entries (the legacy objects), then the scroll the server put in it
-            world.State.ReadContentsOverride = true;
             Walk(world, world.Items.Get(BOOK)).Cast<Item>().Select(i => (i.Serial, i.Amount)).Should()
                 .Equal(((uint)1, (ushort)1), ((uint)2, (ushort)2), ((uint)5, (ushort)5), (INBOOK, (ushort)3));
             Walk(world, world.Items.Get(PACK)).Cast<Item>().Select(i => i.Serial).Should().Equal(BAG, BAND, BOOK, GOLD1);
@@ -177,7 +160,7 @@ namespace ClassicUO.UnitTests.Ecs
             World world = Build(out PlayerMobile p);
             world.State.CheckEnabled = false;
             Item pack = world.Items.Get(PACK), bag = world.Items.Get(BAG);
-            object offExpected, onExpected;
+            object onExpected;
             Func<object> read;
 
             switch (reader)
@@ -185,49 +168,49 @@ namespace ClassicUO.UnitTests.Ecs
                 case Reader.FindItem:
                     pack.Remove(world.Items.Get(BAND));
                     read = () => p.FindItem(0xE21)?.Serial;
-                    (offExpected, onExpected) = (null, BAND);
+                    onExpected = BAND;
 
                     break;
 
                 case Reader.FindItemHue:
                     bag.Remove(world.Items.Get(GOLD3));
                     read = () => p.FindItem(0xEED, 0x22)?.Serial;
-                    (offExpected, onExpected) = (GOLD2, GOLD3);
+                    onExpected = GOLD3;
 
                     break;
 
                 case Reader.GetItemByGraphic:
                     pack.Remove(world.Items.Get(BAND));
                     read = () => pack.GetItemByGraphic(0xE21)?.Serial;
-                    (offExpected, onExpected) = (null, BAND);
+                    onExpected = BAND;
 
                     break;
 
                 case Reader.GetTotalAmount:
                     bag.Remove(world.Items.Get(ARROWS));
                     read = () => { int n = 0; pack.GetTotalAmount(0xF3F, null, ref n); return n; };
-                    (offExpected, onExpected) = (0, 30);
+                    onExpected = 30;
 
                     break;
 
                 case Reader.SecureTradeBox:
                     p.Remove(world.Items.Get(TRADE));
                     read = () => p.GetSecureTradeBox()?.Serial;
-                    (offExpected, onExpected) = (null, TRADE);
+                    onExpected = TRADE;
 
                     break;
 
                 case Reader.FindItemByGraphic:
                     bag.Remove(world.Items.Get(ARROWS));
                     read = () => p.FindItemByGraphic(0xF3F)?.Serial;
-                    (offExpected, onExpected) = (null, ARROWS);
+                    onExpected = ARROWS;
 
                     break;
 
                 case Reader.FindItemByCliloc:
                     bag.Remove(world.Items.Get(ARROWS));
                     read = () => p.FindItemByCliloc(ARROW_CLILOC)?.Serial;
-                    (offExpected, onExpected) = (null, ARROWS);
+                    onExpected = ARROWS;
 
                     break;
 
@@ -235,28 +218,28 @@ namespace ClassicUO.UnitTests.Ecs
                 case Reader.FindItemByGraphicEmptied:
                     bag.Clear();
                     read = () => p.FindItemByGraphic(0xF3F)?.Serial;
-                    (offExpected, onExpected) = (null, ARROWS);
+                    onExpected = ARROWS;
 
                     break;
 
                 case Reader.FindItemByClilocEmptied:
                     bag.Clear();
                     read = () => p.FindItemByCliloc(ARROW_CLILOC)?.Serial;
-                    (offExpected, onExpected) = (null, ARROWS);
+                    onExpected = ARROWS;
 
                     break;
 
                 case Reader.HasChildren:
                     bag.Clear();
                     read = () => world.State.HasChildren(bag);
-                    (offExpected, onExpected) = (false, true);
+                    onExpected = true;
 
                     break;
 
                 case Reader.SpellEntries:
                     world.Items.Get(BOOK).Clear();
                     read = () => Walk(world, world.Items.Get(BOOK)).Count;
-                    (offExpected, onExpected) = (0, 4);
+                    onExpected = 4;
 
                     break;
 
@@ -265,14 +248,11 @@ namespace ClassicUO.UnitTests.Ecs
                     pack.Remove(band);
                     pack.PushToBack(band);
                     read = () => string.Join(",", Walk(world, pack).Cast<Item>().Select(i => i.Serial));
-                    (offExpected, onExpected) = ($"{BAG},{BOOK},{GOLD1},{BAND}", $"{BAG},{BAND},{BOOK},{GOLD1}");
+                    onExpected = $"{BAG},{BAND},{BOOK},{GOLD1}";
 
                     break;
             }
 
-            world.State.ReadContentsOverride = false;
-            read().Should().Be(offExpected);
-            world.State.ReadContentsOverride = true;
             read().Should().Be(onExpected);
         }
 
@@ -280,7 +260,6 @@ namespace ClassicUO.UnitTests.Ecs
         public void The_Spell_Entries_Go_Stale_With_Their_Set()
         {
             World world = Build(out _);
-            world.State.ReadContentsOverride = true;
             Item book = world.Items.Get(BOOK);
             world.State.SpellEntries(BOOK).Length.Should().Be(3);
 
@@ -308,16 +287,13 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Fact]
-        public void A_Walk_Allocates_Nothing_Both_Ways()
+        public void A_Walk_Allocates_Nothing()
         {
             World world = Build(out PlayerMobile p);
             world.State.CheckEnabled = false;
             Item pack = world.Items.Get(PACK);
 
-            foreach (bool on in new[] { false, true })
             {
-                world.State.ReadContentsOverride = on;
-
                 // After a warm-up, six judged rounds: at most ONE may allocate (Codex audit round 2: the least of three rounds
                 // proved one clean round, not that every round is clean, so an allocation every few hundred walks passed;
                 // an allocation at least once per 600 walks lands in two or more of the six). One noisy round is tolerated because the test host's tiered JIT
@@ -353,8 +329,8 @@ namespace ClassicUO.UnitTests.Ecs
                     }
                 }
 
-                least.Should().Be(0, $"switch {(on ? "on" : "off")}");
-                noisy.Should().HaveCountLessThanOrEqualTo(1, $"switch {(on ? "on" : "off")}: rounds that allocated");
+                least.Should().Be(0);
+                noisy.Should().HaveCountLessThanOrEqualTo(1, "rounds that allocated");
             }
         }
     }
