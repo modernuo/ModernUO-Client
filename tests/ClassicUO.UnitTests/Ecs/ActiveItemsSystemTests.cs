@@ -91,9 +91,9 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Fact]
-        public void The_Setting_Is_Off_By_Default()
+        public void The_Setting_Is_On_By_Default()
         {
-            ClassicUO.Configuration.Settings.GlobalSettings.WorldActiveItemsSystem.Should().BeFalse();
+            ClassicUO.Configuration.Settings.GlobalSettings.WorldActiveItemsSystem.Should().BeTrue();
         }
 
         // corpses (items whose handles just opened open a gump, which needs the client: the in-client checker covers them), destroy, a re-synced record: the list order and the survivors are
