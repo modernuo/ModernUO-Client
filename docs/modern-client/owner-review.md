@@ -159,6 +159,8 @@ All merged and pushed, and each audited by Codex until clean or down to document
   - **In flight:** perf-2 (pick bounds and the picker array), T7b part 1 (extract split into select and resolve), funnel dev scope (AOT-safe exemption for DevBench teleports).
   - **Open questions for you** (added as they come up):
     1. `PixelPicker.Get` never hits the first pixel of an opaque run, or pixel 0,0 (old ClassicUO behaviour, found by perf-2). Fixing it would make one more pixel per run selectable at sprite edges. Should it be fixed, or kept for parity?
+    2. **Friflo ECS component reads cost about 25 ns per entity** (`GetComponent` is a non-inlined call with a cast check and a virtual call in 4.0.0-preview.2). This matters for every per-frame ECS read after T9. A newer Friflo (a local clone has `StructHeap<T>` sealed) or a direct array-access helper cut a probe from 27 to 15 ns per item. Should I upgrade Friflo (vendor review first), or write the helper on our side?
+    3. **T7b part 1 is being merged with a measured cost inside the plan's +3 % budget:** the item `Gather` reads the ECS for about +24 ns per captured item (micro-bench, 201 interleaved rounds). That is about 1 % of Gpu world_prepare at the large scene at zoom 2.5 and negligible at Britain. It is easy to revert if you'd rather wait for the quiet timing.
 
 - **Autonomous run of 2026-11-01/02, status at T6b part 3 start** (all merged and pushed; each phase: Codex review at gpt-6.1-sol medium, findings fixed with a failing-first test, gates off/on with every checker, clean branch appended):
   - **Defaults switched on:** `ecs_read_equipment`, `ecs_layer_rules` (combined gate PASS).
