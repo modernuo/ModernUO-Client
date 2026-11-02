@@ -1192,7 +1192,7 @@ namespace ClassicUO.Game
 
             // T9 child-list slice A: the children from the ECS, copied before the item leaves its container (where the list
             // walk captured its head)
-            using (ContentsSnapshot children = State.SnapshotContents(item.Serial))
+            using (ContentsSnapshot children = State.SnapshotChildren(item))
             {
                 RemoveItemFromContainer(item);
                 RemoveContentsAndDestroy(item, children.Serials, forceRemove);
@@ -1209,7 +1209,7 @@ namespace ClassicUO.Game
         /// </summary>
         internal void RemoveDetachedItem(Item item, bool forceRemove)
         {
-            using (ContentsSnapshot children = State.SnapshotContents(item.Serial))
+            using (ContentsSnapshot children = State.SnapshotChildren(item))
             {
                 RemoveContentsAndDestroy(item, children.Serials, forceRemove);
             }
@@ -1246,7 +1246,7 @@ namespace ClassicUO.Game
                 return false;
             }
 
-            using (ContentsSnapshot children = State.SnapshotContents(serial))
+            using (ContentsSnapshot children = State.SnapshotChildren(mobile))
             {
                 foreach (uint child in children.Serials)
                 {

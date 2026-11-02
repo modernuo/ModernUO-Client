@@ -266,6 +266,11 @@ namespace ClassicUO.Game
                 return default;
             }
 
+            if (Shared(parent))
+            {
+                return new ChildList(_world, default, ListSerials(parent));
+            }
+
             ReadOnlySpan<uint> contents = _world.Ecs.Mirror.Contents(parent.Serial);
             ReadOnlySpan<Item> spells = SpellEntries(parent.Serial);
 #if CUO_DEVTOOLS
@@ -277,6 +282,61 @@ namespace ClassicUO.Game
 #endif
 
             return new ChildList(_world, spells, contents);
+        }
+
+        // T9 child-list slice A: an item and a mobile World holds under one serial (a fixture's or a server's reuse). The ECS
+        // keys contents by serial and records any child of a mobile-range serial as worn, so it cannot tell the item's
+        // children from the mobile's: that parent's walks read its own list (held children only; allocates, rare). Slice B
+        // must decide this case before the list goes.
+        internal bool Shared(Entity parent) => _world.Items.Get(parent.Serial) != null && _world.Mobiles.Get(parent.Serial) != null;
+
+        private uint[] ListSerials(Entity parent)
+        {
+            int n = 0;
+
+            for (LinkedObject i = parent.Items; i != null; i = i.Next)
+            {
+                n++;
+            }
+
+            uint[] serials = new uint[n];
+            n = 0;
+
+            for (LinkedObject i = parent.Items; i != null; i = i.Next)
+            {
+                if (i is Item it && ReferenceEquals(_world.Items.Get(it.Serial), it))
+                {
+                    serials[n++] = it.Serial;
+                }
+            }
+
+            return n == serials.Length ? serials : serials.AsSpan(0, n).ToArray();
+        }
+
+        /// <summary>
+        /// T9 slice A: <see cref="SnapshotContents"/> for an entity World holds; an item and a mobile under one serial copy
+        /// the entity's own list (see <see cref="Shared"/>).
+        /// </summary>
+        public ContentsSnapshot SnapshotChildren(Entity parent)
+        {
+            if (!Shared(parent))
+            {
+                return SnapshotContents(parent.Serial);
+            }
+
+            uint[] list = ListSerials(parent);
+            int start = _snapshotTop;
+            int end = start + list.Length;
+
+            if (end > _snapshots.Length)
+            {
+                Array.Resize(ref _snapshots, Math.Max(end, _snapshots.Length * 2));
+            }
+
+            list.CopyTo(_snapshots, start);
+            _snapshotTop = end;
+
+            return new ContentsSnapshot(this, start, new ReadOnlySpan<uint>(_snapshots, start, list.Length));
         }
 
         // the instance World holds for the entity's serial (the one the ECS's record under that serial stands for)
