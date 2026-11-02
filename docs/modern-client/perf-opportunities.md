@@ -234,4 +234,8 @@ Today the client parses incoming packets in place (`StackDataReader` over fixed 
 - **ItemGump calls `World.Items.Get` per container item per frame** (ItemGump.cs ~188/236, AddToRenderLists and Contains), and ItemGumpFixed per paperdoll slot (PaperdollGump.cs ~866). The perf-8 `EntityRef` would remove these lookups. Source: perf-8.
 - **`Gump.AwaitBatch` busy-waits with Yield** (Gump.cs). `DecodeQueue.WaitPublished` would block instead, as Art does. Source: perf-8.
 - **The `Control.Parent` setter scans the child list on every re-add** (Control.cs:135), which is quadratic for large containers. Source: perf-8.
+- **Disposed-child removal in `Control.Update` is O(n²)** (Control.cs ~291, `Children.RemoveAt(i--)` inside the loop). A full container rebuild disposes n controls. A single compaction pass would make it O(n). Source: perf-9.
+- **`FindControls` allocates on every call** (Control.cs ~503, `OfType().Where().ToArray()`). Source: perf-9.
+- **Dev builds only: `Extract.Run` runs every frame whenever `-ecscheck` > 0, even between checks** (WorldEcs.cs ~972). Source: perf-9.
+- **Store each layer's item or serial in `LayerDecision`** (MobileView.cs draw loop): the loop still does one `FindItemByLayer` per layer after a cache hit, about 10–20 lookups per drawn mobile per frame. Source: t9-slice3.
 
