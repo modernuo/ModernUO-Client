@@ -117,36 +117,17 @@ namespace ClassicUO.Game.Scenes
             return DrawItem(batcher, (Item)obj, depth, effects);
         }
 
-        // GpuWorldRenderer.TryDrawMobileEcs' entity lookup (E5 cache): false = not mirrored with an AnimationState, or not drawn
+        // E5 (shared with GpuWorldRenderer.TryDrawMobileEcs): false = not mirrored with an AnimationState, or not drawn
         private static bool TryMobileEntity(Mobile mobile, out Friflo.Engine.ECS.Entity e)
         {
-            e = default;
-
             if (mobile.IsDestroyed || !mobile.AllowedToDraw)
             {
+                e = default;
+
                 return false;
             }
 
-            WorldEcs ecs = mobile.World.Ecs;
-            e = mobile.EcsEntity;
-
-            if (mobile.EcsEntitySerial != mobile.Serial || mobile.EcsEntityEpoch != ecs.Mirror.Epoch)
-            {
-                if (!ecs.Mirror.TryGetEntity(mobile.Serial, out e) || !e.HasComponent<AnimationState>())
-                {
-                    mobile.EcsEntity = default;
-                    mobile.EcsEntitySerial = 0;
-
-                    return false;
-                }
-
-                mobile.EcsEntity = e;
-                mobile.EcsEntitySerial = mobile.Serial;
-                mobile.EcsEntityEpoch = ecs.Mirror.Epoch;
-                mobile.EcsEntityHeld = false;
-            }
-
-            return true;
+            return MobileEntityLookup.TryGet(mobile, out e);
         }
 
         private static bool DrawMobile(UltimaBatcher2D batcher, Mobile mobile, Friflo.Engine.ECS.Entity e, float depth, bool effects)
