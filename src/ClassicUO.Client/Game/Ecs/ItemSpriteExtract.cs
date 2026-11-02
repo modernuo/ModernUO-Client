@@ -10,26 +10,206 @@ using ClassicUO.Renderer;
 using Microsoft.Xna.Framework;
 using Uo.Pack;
 using Uo.Render;
+using EcsEntity = Friflo.Engine.ECS.Entity;
 
 namespace ClassicUO.Game
 {
+    /// <summary>
+    /// What <see cref="ItemSpriteExtract"/> reads for one world item. <see cref="Gather"/> fills it from the item's mirror record
+    /// (through the cached handle) and, for what has no ECS state yet, from the GameObject and the scene.
+    /// </summary>
+    internal struct ItemSpriteInput
+    {
+        // the mirror record (ECS): Serial, Graphic, Hue, Position, Flags, ItemData (amount, layer), the OnGround and Multi tags
+        public uint Serial;
+        public ushort Graphic, Hue, Amount;
+        public ushort X;
+        public byte Layer;
+        public bool OnGround, Multi, Hidden, Movable;
+
+        // tiledata of the item's graphic (the multi's graphic for a multi)
+        public bool TileLight, TilePartialHue, TileAnimated, TileContainer, TileStackable, TileHeavy;
+
+        // still only on the GameObject (T7b part 2): drawability, the render list's alpha, the render offset, the multi's
+        // graphic, the corpse animation (frame, second death, the mirror history) and the destroyed state
+        public bool Destroyed, AllowedToDraw, UsedLayer, Flipped;
+        public byte AlphaHue, AnimIndex;
+        public Vector3 Offset;
+        public ushort MultiGraphic, AnimGraphic;
+
+        // the scene: selection, profile options, targeting, the player
+        public bool Selected, SelectedContainer, HighlightSelected, OutOfRange, PlayerDeadGray, ReplaceFields, PlacementPreview;
+        public bool CorpseHidden, CorpseLootSelected;
+
+        /// <summary>A corpse's GameObject, for its worn children (FindItemByLayer, LayerRuleEval.CorpseOrder); null otherwise.</summary>
+        public Entity CorpseSource;
+
+        public readonly bool IsCorpse => Graphic == 0x2006;
+
+        public readonly bool IsCoin => Graphic == 0x0EEA || Graphic == 0x0EED || Graphic == 0x0EF0;
+
+        public readonly bool Locked => !Movable && TileHeavy;
+
+        /// <summary>Item.DisplayedGraphic.</summary>
+        public readonly ushort DisplayedGraphic
+        {
+            get
+            {
+                if (IsCoin)
+                {
+                    if (Amount > 5)
+                    {
+                        return (ushort)(Graphic + 2);
+                    }
+
+                    if (Amount > 1)
+                    {
+                        return (ushort)(Graphic + 1);
+                    }
+                }
+                else if (Multi)
+                {
+                    return MultiGraphic;
+                }
+
+                return Graphic;
+            }
+        }
+
+        /// <summary>The input for <paramref name="item"/>: its mirror record when it has one (every server item; not the
+        /// house placement preview), else the GameObject's cached fields.</summary>
+        public static void Gather(Item item, out ItemSpriteInput i)
+        {
+            i = default;
+            i.Destroyed = item.IsDestroyed;
+
+            if (i.Destroyed)
+            {
+                return;
+            }
+
+            World world = item.World;
+            ushort y;
+
+            if (item.TryScalarEntity(out EcsEntity e))
+            {
+                i.Serial = e.GetComponent<ClassicUO.Ecs.Serial>().Value;
+                i.Graphic = e.GetComponent<ClassicUO.Ecs.Graphic>().Value;
+                i.Hue = e.GetComponent<ClassicUO.Ecs.Hue>().Value;
+                ref readonly ClassicUO.Ecs.Position p = ref e.GetComponent<ClassicUO.Ecs.Position>();
+                i.X = p.X;
+                y = p.Y;
+                var flags = (Flags)e.GetComponent<ClassicUO.Ecs.Flags>().Value;
+                i.Hidden = (flags & Flags.Hidden) != 0;
+                i.Movable = (flags & Flags.Movable) != 0;
+                ref readonly ClassicUO.Ecs.ItemData d = ref e.GetComponent<ClassicUO.Ecs.ItemData>();
+                i.Amount = d.Amount;
+                i.Layer = d.Layer;
+                Friflo.Engine.ECS.Tags tags = e.Tags;
+                i.OnGround = tags.Has<ClassicUO.Ecs.OnGround>();
+                i.Multi = tags.Has<ClassicUO.Ecs.MultiTag>();
+            }
+            else
+            {
+                i.Serial = item.Serial;
+                i.Graphic = item.Graphic;
+                i.Hue = item.Hue;
+                i.X = item.X;
+                y = item.Y;
+                i.Hidden = item.IsHidden;
+                i.Movable = (item.Flags & Flags.Movable) != 0;
+                i.Amount = item.Amount;
+                i.Layer = (byte)item.Layer;
+                i.OnGround = item.OnGround;
+                i.Multi = item.IsMulti;
+            }
+
+            i.MultiGraphic = item.MultiGraphic;
+            ref StaticTiles tile = ref Client.Game.UO.FileManager.TileData.StaticData[i.Multi ? i.MultiGraphic : i.Graphic];
+            i.TileLight = tile.IsLight;
+            i.TilePartialHue = tile.IsPartialHue;
+            i.TileAnimated = tile.IsAnimated;
+            i.TileContainer = tile.IsContainer;
+            i.TileStackable = tile.IsStackable;
+            i.TileHeavy = tile.Weight > 90;
+
+            i.AllowedToDraw = item.AllowedToDraw;
+
+            if (!i.AllowedToDraw)
+            {
+                return;
+            }
+
+            i.AlphaHue = item.AlphaHue;
+            i.Offset = item.Offset;
+            i.AnimIndex = item.AnimIndex;
+            i.UsedLayer = item.UsedLayer;
+            i.Flipped = item.ViewFlipped;
+
+            // GameObject.Distance for an item
+            int distance = world.Player == null ? ushort.MaxValue : Math.Max(Math.Abs(i.X - world.RangeSize.X), Math.Abs(y - world.RangeSize.Y));
+            Profile profile = ProfileManager.CurrentProfile;
+            i.Selected = ReferenceEquals(SelectedObject.Object, item);
+            i.HighlightSelected = profile.HighlightGameObjects && i.Selected;
+            i.OutOfRange = profile.NoColorObjectsOutOfRange && distance > world.ClientViewRange;
+            i.PlayerDeadGray = world.Player.IsDead && profile.EnableBlackWhiteEffect;
+
+            if (i.IsCorpse)
+            {
+                i.CorpseHidden = world.CorpseManager.Exists(i.Serial, 0);
+                i.CorpseLootSelected = profile.GridLootType > 0 && SelectedObject.CorpseObject == item;
+                i.AnimGraphic = item.GetGraphicForAnimation();
+                i.CorpseSource = item;
+
+                return;
+            }
+
+            i.ReplaceFields = i.TileAnimated && profile.FieldsType == 2;
+            i.SelectedContainer = i.TileContainer && SelectedObject.SelectedContainer == item;
+            i.PlacementPreview = !SerialHelper.IsValid(i.Serial) && i.Multi && world.TargetManager.TargetingState == CursorTarget.MultiPlacement;
+        }
+    }
+
     /// <summary>
     /// W3 for world items (ItemView.Draw): the <see cref="SpriteInstance"/>s the Gpu world's view capture produces —
     /// for art items and multis the stack's second copy, the animated-art frame, the per-frame hue rules (selection,
     /// container highlight, field replacement, out of range, dead gray, hidden, the multi placement preview) from the pack's
     /// art table; for corpses the body and the worn layers in paint order from the pack's animation tables (DrawCorpse) —
-    /// with no atlas and no batcher. Like <see cref="MobileAnimationSystem"/> it samples the Item until the ECS
-    /// owns the world update (W5). Side effects of the view kept: the light request and the art entry's draw offset that
-    /// picking reads (ArtEntry.Width/Height), and a corpse's mirror bit (GetAnimDirection history; corpse picking reads it).
+    /// with no atlas and no batcher. Side effects of the view kept: the light request and the art entry's draw offset that
+    /// picking reads (ArtEntry.Width/Height), and a corpse's mirror bit (GetAnimDirection history, <see cref="Flipped"/>; the
+    /// caller stores it, corpse picking reads it).
+    /// T7b: split into select (<see cref="DynamicSprite"/> records, renderer-neutral, from <see cref="ItemSpriteInput"/> and
+    /// the pack-backed loaders) and the Gpu resolve (<see cref="GpuSpriteResolve"/>); <see cref="Emit"/> does both.
     /// </summary>
     internal sealed class ItemSpriteExtract
     {
         private const int RANK_ITEM = 6;
 
+        private readonly ArtLoader _artsOverride;
+        private readonly AnimationsLoader _animsOverride;
         private SpriteInstance[] _out = new SpriteInstance[8];
         private int _count;
+        private DynamicSprite[] _sel = new DynamicSprite[8];
+        private int _selCount;
+        private bool _selectOnly;
+        private GpuSpriteTables _tables;
+        private int _offsetX, _offsetY;
+
+        public ItemSpriteExtract() { }
+
+        /// <summary>Tests: the loaders the select reads instead of the client's.</summary>
+        internal ItemSpriteExtract(ArtLoader arts, AnimationsLoader anims)
+        {
+            _artsOverride = arts;
+            _animsOverride = anims;
+        }
+
+        private ArtLoader Arts => _artsOverride ?? Client.Game.UO.FileManager.Arts;
 
         public ReadOnlySpan<SpriteInstance> Instances => new ReadOnlySpan<SpriteInstance>(_out, 0, _count);
+
+        /// <summary>The last <see cref="Select"/>'s records.</summary>
+        public ReadOnlySpan<DynamicSprite> Selected => new ReadOnlySpan<DynamicSprite>(_sel, 0, _selCount);
 
         /// <summary>The view would add a light for this item at (LightX, LightY) (GameScene.AddLight(item, item, …)).</summary>
         public bool Light { get; private set; }
@@ -38,23 +218,63 @@ namespace ClassicUO.Game
 
         public int LightY { get; private set; }
 
+        /// <summary>A corpse's mirror bit after GetAnimDirection; the caller stores it in Item.ViewFlipped when
+        /// <see cref="SetsFlipped"/>.</summary>
+        public bool Flipped { get; private set; }
+
+        public bool SetsFlipped { get; private set; }
+
         /// <summary>True when the extract reproduces this item's view: every world item (art items, multis and corpses).</summary>
         public static bool Handles(Item item) => true;
 
-        /// <summary>ItemView.Draw for one item at screen position (<paramref name="posX"/>, <paramref name="posY"/>). False = not drawn.</summary>
-        public bool Emit(Item item, PackSet pack, int offsetX, int offsetY, int posX, int posY, float depth)
+        /// <summary>ItemView.Draw for one item at screen position (<paramref name="posX"/>, <paramref name="posY"/>): select, then
+        /// the Gpu resolve into <see cref="Instances"/>. False = not drawn.</summary>
+        public bool Emit(in ItemSpriteInput item, PackSet pack, int offsetX, int offsetY, int posX, int posY, float depth)
         {
             _count = 0;
-            Light = false;
 
-            if (item.IsDestroyed)
+            if (pack != null)
+            {
+                _tables = new GpuSpriteTables(pack);
+            }
+
+            return Run(in item, pack != null && pack.HasAnims, offsetX, offsetY, posX, posY, depth, false);
+        }
+
+        /// <summary><see cref="Emit(in ItemSpriteInput, PackSet, int, int, int, int, float)"/> over explicit tables (tests).</summary>
+        internal bool Emit(in ItemSpriteInput item, in GpuSpriteTables tables, int offsetX, int offsetY, int posX, int posY, float depth)
+        {
+            _count = 0;
+            _tables = tables;
+
+            return Run(in item, tables.AnimFrames != null, offsetX, offsetY, posX, posY, depth, false);
+        }
+
+        /// <summary>T7b select: the records of <see cref="Emit"/> into <see cref="Selected"/> (with the same light, mirror bit
+        /// and picking offset side effects), no instances. <paramref name="hasAnims"/>: the pack has animations (corpses).</summary>
+        public bool Select(in ItemSpriteInput item, bool hasAnims, int posX, int posY, float depth)
+        {
+            _selCount = 0;
+
+            return Run(in item, hasAnims, 0, 0, posX, posY, depth, true);
+        }
+
+        private bool Run(in ItemSpriteInput item, bool hasAnims, int offsetX, int offsetY, int posX, int posY, float depth, bool selectOnly)
+        {
+            _selectOnly = selectOnly;
+            _offsetX = offsetX;
+            _offsetY = offsetY;
+            Light = false;
+            SetsFlipped = false;
+
+            if (item.Destroyed)
             {
                 return false;
             }
 
             ushort displayed = item.DisplayedGraphic;
 
-            if (item.ItemData.IsLight || displayed >= 0x3E02 && displayed <= 0x3E0B || displayed >= 0x3914 && displayed <= 0x3929)
+            if (item.TileLight || displayed >= 0x3E02 && displayed <= 0x3E0B || displayed >= 0x3914 && displayed <= 0x3929)
             {
                 Light = true;
                 LightX = posX + 22;
@@ -69,32 +289,28 @@ namespace ClassicUO.Game
             posX += (int)item.Offset.X;
             posY += (int)(item.Offset.Y + item.Offset.Z);
             float alpha = item.AlphaHue / 255f;
-            Profile profile = ProfileManager.CurrentProfile;
-            World world = item.World;
 
             if (item.IsCorpse)
             {
-                return EmitCorpse(item, pack, offsetX, offsetY, posX, posY - 3, ShaderHueTranslator.GetHueVector(0, false, alpha).Z, depth, profile);
+                return EmitCorpse(in item, hasAnims, posX, posY - 3, ShaderHueTranslator.GetHueVector(0, false, alpha).Z, depth);
             }
-
-            bool selected = ReferenceEquals(SelectedObject.Object, item);
 
             var hueInput = new HueInput
             {
                 Hue = item.Hue,
                 Graphic = displayed,
                 RawGraphic = item.Graphic,
-                Partial = item.ItemData.IsPartialHue,
+                Partial = item.TilePartialHue,
                 OnGround = item.OnGround,
-                ReplaceFields = item.ItemData.IsAnimated && profile.FieldsType == 2,
-                SelectedContainer = item.ItemData.IsContainer && SelectedObject.SelectedContainer == item,
-                HighlightSelected = profile.HighlightGameObjects && selected,
-                OutOfRange = profile.NoColorObjectsOutOfRange && item.Distance > world.ClientViewRange,
-                PlayerDeadGray = world.Player.IsDead && profile.EnableBlackWhiteEffect,
-                Selected = selected,
-                Locked = item.IsLocked,
-                Multi = item.IsMulti,
-                Hidden = item.IsHidden
+                ReplaceFields = item.ReplaceFields,
+                SelectedContainer = item.SelectedContainer,
+                HighlightSelected = item.HighlightSelected,
+                OutOfRange = item.OutOfRange,
+                PlayerDeadGray = item.PlayerDeadGray,
+                Selected = item.Selected,
+                Locked = item.Locked,
+                Multi = item.Multi,
+                Hidden = item.Hidden
             };
 
             ChooseHue(in hueInput, out ushort graphic, out ushort hue, out bool partial);
@@ -102,20 +318,37 @@ namespace ClassicUO.Game
             Vector3 hueVec = ShaderHueTranslator.GetHueVector(hue, partial, alpha);
             int objX = item.X;
 
-            if (!item.IsMulti && !item.IsCoin && item.Amount > 1 && item.ItemData.IsStackable)
+            if (!item.Multi && !item.IsCoin && item.Amount > 1 && item.TileStackable)
             {
-                Art(pack, graphic, posX - 5, posY - 5, hueVec, depth, objX, offsetX, offsetY);
+                Art(graphic, posX - 5, posY - 5, hueVec, depth, objX);
             }
 
             // the house placement preview (a local multi item without a serial) is drawn half transparent
-            if (!SerialHelper.IsValid(item.Serial) && item.IsMulti && world.TargetManager.TargetingState == CursorTarget.MultiPlacement)
+            if (item.PlacementPreview)
             {
                 hueVec.Z = 0.5f;
             }
 
-            Art(pack, graphic, posX, posY, hueVec, depth, objX, offsetX, offsetY);
+            Art(graphic, posX, posY, hueVec, depth, objX);
 
             return true;
+        }
+
+        private void Add(in DynamicSprite sprite)
+        {
+            if (_selectOnly)
+            {
+                if (_selCount >= _sel.Length)
+                {
+                    Array.Resize(ref _sel, _sel.Length * 2);
+                }
+
+                _sel[_selCount++] = sprite;
+
+                return;
+            }
+
+            GpuSpriteResolve.Resolve(in _tables, in sprite, _offsetX, _offsetY, ref _out, ref _count);
         }
 
         /// <summary>What ItemView.Draw's art hue choice reads from the item, the profile and the selection.</summary>
@@ -209,11 +442,9 @@ namespace ClassicUO.Game
         }
 
         // ItemView.DrawCorpse: the body, then the worn layers in paint order (PaperdollOrder.BuildInWorld)
-        private bool EmitCorpse(Item item, PackSet pack, int offsetX, int offsetY, int posX, int posY, float alpha, float depth, Profile profile)
+        private bool EmitCorpse(in ItemSpriteInput item, bool hasAnims, int posX, int posY, float alpha, float depth)
         {
-            World world = item.World;
-
-            if (world.CorpseManager.Exists(item.Serial, 0) || pack == null || !pack.HasAnims)
+            if (item.CorpseHidden || !hasAnims)
             {
                 return false;
             }
@@ -221,28 +452,28 @@ namespace ClassicUO.Game
             posX += 22;
             posY += 22;
 
-            byte direction = (byte)((byte)item.Layer & 0x7F & 7);
-            bool flipped = item.ViewFlipped;
+            byte direction = (byte)(item.Layer & 0x7F & 7);
+            bool flipped = item.Flipped;
             var animations = Client.Game.UO.Animations;
             animations.GetAnimDirection(ref direction, ref flipped);
-            item.ViewFlipped = flipped;
+            Flipped = flipped;
+            SetsFlipped = true;
 
-            ushort graphic = item.GetGraphicForAnimation();
+            ushort graphic = item.AnimGraphic;
             ushort converted = graphic;
             animations.ConvertBodyIfNeeded(ref converted, isCorpse: true);
-            AnimationsLoader anims = Client.Game.UO.FileManager.Animations;
+            AnimationsLoader anims = _animsOverride ?? Client.Game.UO.FileManager.Animations;
             byte group = anims.GetDeathAction(converted, animations.GetAnimFlags(converted), animations.GetAnimType(converted), item.UsedLayer);
             bool human = IsHumanCorpse(item.Amount);
-            int x = posX + offsetX, y = posY + offsetY;
 
-            CorpseLayer(item, pack, anims, Layer.Invalid, item.AnimIndex, human, item.Hue, flipped, alpha, group, direction, x, y, depth, profile);
+            CorpseLayer(in item, anims, Layer.Invalid, human, item.Hue, flipped, alpha, group, direction, posX, posY, depth);
 
             Span<Layer> layers = stackalloc Layer[PaperdollOrder.N];
-            int layerCount = LayerRuleEval.CorpseOrder(item, item.Amount, direction, layers); // T3b: from data with ecs_layer_rules
+            int layerCount = LayerRuleEval.CorpseOrder(item.CorpseSource, item.Amount, direction, layers); // T3b: from data with ecs_layer_rules
 
             for (int i = 0; i < layerCount; i++)
             {
-                CorpseLayer(item, pack, anims, layers[i], item.AnimIndex, human, 0, flipped, alpha, group, direction, x, y, depth, profile);
+                CorpseLayer(in item, anims, layers[i], human, 0, flipped, alpha, group, direction, posX, posY, depth);
             }
 
             return true;
@@ -254,21 +485,22 @@ namespace ClassicUO.Game
             body == 0x03DB || body == 0x03DF || body == 0x03E2 || body == 0x02E8 || body == 0x02E9;
 
         // ItemView.DrawLayer: one layer's frame at target pixel (x, y) (screen position + draw offset), in strips
-        private void CorpseLayer(Item owner, PackSet pack, AnimationsLoader anims, Layer layer, byte animIndex, bool human, ushort color,
-            bool flipped, float alpha, byte group, byte dir, int x, int y, float depth, Profile profile)
+        private void CorpseLayer(in ItemSpriteInput owner, AnimationsLoader anims, Layer layer, bool human, ushort color,
+            bool flipped, float alpha, byte group, byte dir, int x, int y, float depth)
         {
             bool partial = false;
             bool hasConv = false;
             ushort convColor = 0;
             ushort graphic;
+            byte animIndex = owner.AnimIndex;
 
             if (layer == Layer.Invalid)
             {
-                graphic = owner.GetGraphicForAnimation();
+                graphic = owner.AnimGraphic;
             }
             else if (human)
             {
-                Item equip = owner.FindItemByLayer(layer);
+                Item equip = owner.CorpseSource.FindItemByLayer(layer);
 
                 if (equip == null)
                 {
@@ -293,8 +525,9 @@ namespace ClassicUO.Game
                 return;
             }
 
-            if (!MobileSpriteExtract.TryGetFrames(anims, graphic, group, dir, layer != Layer.Invalid, layer == Layer.Invalid,
-                    out uint first, out int count, out ushort fileHue))
+            bool isEquip = layer != Layer.Invalid;
+
+            if (!MobileSpriteExtract.TryGetFrames(anims, graphic, group, dir, isEquip, !isEquip, out uint first, out int count, out ushort fileHue))
             {
                 return;
             }
@@ -310,7 +543,7 @@ namespace ClassicUO.Game
             }
 
             uint index = first + animIndex;
-            ref readonly AnimFrameEntry fe = ref pack.AnimFrames[index];
+            ref readonly AnimFrameEntry fe = ref anims.PackFrames[index];
             int w = fe.Sprite.OrigW, h = fe.Sprite.OrigH;
 
             // no texture
@@ -329,23 +562,22 @@ namespace ClassicUO.Game
             }
 
             Vector3 hueVec;
-            World world = owner.World;
 
-            if (profile.NoColorObjectsOutOfRange && owner.Distance > world.ClientViewRange)
+            if (owner.OutOfRange)
             {
                 hueVec = ShaderHueTranslator.GetHueVector(Constants.OUT_RANGE_COLOR + 1, false, 1);
             }
-            else if (world.Player.IsDead && profile.EnableBlackWhiteEffect)
+            else if (owner.PlayerDeadGray)
             {
                 hueVec = ShaderHueTranslator.GetHueVector(Constants.DEAD_RANGE_COLOR + 1, false, 1);
             }
             else
             {
-                if (profile.GridLootType > 0 && SelectedObject.CorpseObject == owner)
+                if (owner.CorpseLootSelected)
                 {
                     color = 0x0034;
                 }
-                else if (profile.HighlightGameObjects && ReferenceEquals(SelectedObject.Object, owner))
+                else if (owner.HighlightSelected)
                 {
                     color = Constants.HIGHLIGHT_CURRENT_OBJECT_HUE;
                 }
@@ -357,29 +589,48 @@ namespace ClassicUO.Game
             int value = Math.Max(1, h + fe.CenterY);
             int strips = Math.Max(h / value + 1, 2);
             int srcY = 0, srcH = Math.Min(value, h), remains = h - srcH;
+            var sprite = new DynamicSprite
+            {
+                Kind = DynamicSpriteKind.Animation,
+                Flags = (flipped ? DynamicSpriteFlags.Flip : 0) | (isEquip ? DynamicSpriteFlags.Equip : DynamicSpriteFlags.Corpse),
+                Rank = RANK_ITEM,
+                Body = graphic,
+                Group = group,
+                Dir = dir,
+                Frame = animIndex,
+                Id = index,
+                X = x,
+                Hue = hueVec,
+                ObjX = owner.X
+            };
 
             for (int i = 0; i < strips; i++)
             {
-                MobileSpriteExtract.WriteFrame(pack, ref _out, ref _count, index, x, y + srcY, srcY, srcH, hueVec, flipped, depth + 1f + i * 2, owner.X, RANK_ITEM);
+                sprite.Y = y + srcY;
+                sprite.SrcY = srcY;
+                sprite.SrcH = srcH;
+                sprite.Depth = depth + 1f + i * 2;
+                Add(in sprite);
                 srcY += srcH;
                 srcH = remains;
                 remains -= srcH;
             }
         }
 
-        // View.DrawStaticAnimated (no shadow, not wet) + GpuWorldRenderer.Emit for a whole art sprite
-        private void Art(PackSet pack, ushort graphic, int x, int y, Vector3 hue, float depth, int objX, int offsetX, int offsetY)
+        // View.DrawStaticAnimated (no shadow, not wet): the art graphic's record at (x, y) less the art entry's draw offset
+        private void Art(ushort graphic, int x, int y, Vector3 hue, float depth, int objX)
         {
-            var arts = Client.Game.UO.FileManager.Arts;
+            ArtLoader arts = Arts;
             graphic = (ushort)(graphic + arts.GetEntry(graphic + 0x4000).AnimOffset);
             uint idx = (uint)graphic + 0x4000;
+            SpriteEntry[] sprites = arts.PackSpriteEntries;
 
-            if (idx >= pack.Sprites.Length)
+            if (idx >= sprites.Length)
             {
                 return;
             }
 
-            ref readonly SpriteEntry sp = ref pack.Sprites[idx];
+            ref readonly SpriteEntry sp = ref sprites[idx];
             int ow = sp.OrigW, oh = sp.OrigH;
 
             if (ow == 0 || oh == 0)
@@ -391,82 +642,21 @@ namespace ClassicUO.Game
             ref ArtEntry index = ref arts.GetEntry(graphic + 0x4000);
             index.Width = (short)((ow >> 1) - 22);
             index.Height = (short)(oh - 44);
-            x -= index.Width;
-            y -= index.Height;
 
-            float alpha = hue.Z > 1f ? hue.Z - 1f : hue.Z;
-
-            if (alpha <= 0f || !sp.Present)
+            var sprite = new DynamicSprite
             {
-                return;
-            }
+                Kind = DynamicSpriteKind.Art,
+                Rank = RANK_ITEM,
+                Id = graphic,
+                X = x - index.Width,
+                Y = y - index.Height,
+                SrcH = oh,
+                Hue = hue,
+                Depth = depth + 0.5f,
+                ObjX = objX
+            };
 
-            uint flags = 0;
-            uint hueRow = 0;
-            var hueMode = HueMode.Normal;
-            int type = (int)hue.Y;
-            int row = (int)hue.X;
-
-            switch (type)
-            {
-                case ShaderHueTranslator.SHADER_NONE:
-                    break;
-
-                case ShaderHueTranslator.SHADER_HUED:
-                case ShaderHueTranslator.SHADER_PARTIAL_HUED:
-                case ShaderHueTranslator.SHADER_EFFECT_HUED:
-                    if (row >= 0 && row < pack.HueCount)
-                    {
-                        hueRow = (uint)row;
-                        flags = SpriteInstance.FlagHued | (type == ShaderHueTranslator.SHADER_PARTIAL_HUED ? SpriteInstance.FlagPartial : 0);
-                    }
-
-                    if (type == ShaderHueTranslator.SHADER_EFFECT_HUED)
-                    {
-                        hueMode = HueMode.EffectHued;
-                    }
-
-                    break;
-
-                case ShaderHueTranslator.SHADER_SPECTRAL:
-                    hueMode = HueMode.Spectral;
-
-                    break;
-
-                case ShaderHueTranslator.SHADER_SHADOW:
-                    hueMode = HueMode.Shadow;
-
-                    break;
-
-                default:
-                    return;
-            }
-
-            if (_count >= _out.Length)
-            {
-                Array.Resize(ref _out, _out.Length * 2);
-            }
-
-            ref SpriteInstance inst = ref _out[_count++];
-            inst.X = x + offsetX + sp.TrimX;
-            inst.Y = y + offsetY + sp.TrimY;
-            inst.Whf = SpriteInstance.PackWhf(sp.W, sp.H, flags);
-            inst.Uv = (uint)sp.X | ((uint)sp.Y << 16);
-            inst.PageHue = (uint)sp.Page | (hueRow << 16);
-            inst.Depth = BakeJob.DepthKeyD((int)MathF.Round((depth + 0.5f) * 100f) - 50, objX, RANK_ITEM);
-            inst.Light = 0;
-            inst.Corners = 0;
-            inst.Mode = hueMode;
-
-            if (hue.Z > 1f)
-            {
-                inst.SetLightBits(SpriteInstance.LightCot);
-            }
-
-            if (alpha < 1f)
-            {
-                inst.Alpha = (byte)Math.Clamp((int)(alpha * 255f + 0.5f), 1, 254);
-            }
+            Add(in sprite);
         }
     }
 }
