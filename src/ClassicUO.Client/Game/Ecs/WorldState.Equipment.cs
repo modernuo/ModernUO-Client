@@ -80,10 +80,66 @@ namespace ClassicUO.Game
 
             if (index >= WornLayers.COUNT || c.Held == WornHeld.NotHeld)
             {
-                return mobile.FindItemByLayerInList(layer);
+                return NotWorn(mobile, layer, c.Held);
             }
 
             return c.Items?[index];
+        }
+
+        // T9 child-list slice A: the reads WornLayers does not answer. The character creation's preview: its table. Another
+        // instance World does not hold (a replaced or destroyed mobile): its own list still (slice B: nothing). A held
+        // mobile's untracked layer: its first child on the layer in the ECS's child order.
+        private Item NotWorn(Mobile mobile, Layer layer, WornHeld held)
+        {
+            if (held == WornHeld.NotHeld)
+            {
+                return mobile.Preview != null ? mobile.Preview.Get(layer) : mobile.FindItemByLayerInList(layer);
+            }
+
+            return ChildByLayer(mobile, layer);
+        }
+
+        /// <summary>
+        /// T9 child-list slice A: <c>Entity.FindItemByLayer</c> for an item (a corpse's equipment, CorpseOrder, ItemView):
+        /// its first non-destroyed child on <paramref name="layer"/> in the ECS's child order (the spell entries first, as
+        /// <see cref="Children"/>). An instance World does not hold for its serial reads its own list (no record of its own;
+        /// slice B: nothing). <c>CUO_EQUIP_READ_CHECK=1</c> compares every call with the list's first match.
+        /// </summary>
+        public Item FindChild(Entity parent, Layer layer)
+        {
+            Item found = IsCurrent(parent) && !Shared(parent) ? ChildByLayer(parent, layer) : parent.FindItemByLayerInList(layer);
+#if CUO_DEVTOOLS
+            if (EquipCheckEnabled)
+            {
+                EquipReads++;
+                CompareChild("FindItemByLayer child", parent, layer, found);
+            }
+#endif
+
+            return found;
+        }
+
+        private Item ChildByLayer(Entity parent, Layer layer)
+        {
+            foreach (Item entry in SpellEntries(parent.Serial))
+            {
+                if (!entry.IsDestroyed && entry.Layer == layer)
+                {
+                    return entry;
+                }
+            }
+
+            foreach (uint serial in _world.Ecs.Mirror.Contents(parent.Serial))
+            {
+                Item it = _world.Items.Get(serial);
+
+                if (it != null && !it.IsDestroyed && it.Layer == layer)
+                {
+                    return it;
+                }
+            }
+
+            return null;
         }
 
         /// <summary>
@@ -108,7 +164,13 @@ namespace ClassicUO.Game
         {
             WornCache c = Worn(mobile);
 
-            return c.Held == WornHeld.NotHeld ? !mobile.IsEmpty : c.Items != null;
+            if (c.Held != WornHeld.NotHeld)
+            {
+                return c.Items != null;
+            }
+
+            // T9 child-list slice A: the preview's table; another instance World does not hold: its list still (slice B: none)
+            return mobile.Preview != null ? mobile.Preview.Any : !mobile.IsEmpty;
         }
 
         // the mobile's cache, current: valid while the mirror's epoch (no record removed: every change of the table's instance
@@ -210,6 +272,13 @@ namespace ClassicUO.Game
 
             if (d.Lookup(rules, subject, c.Version, _world.Ecs.Mirror, c.Entity))
             {
+#if CUO_DEVTOOLS
+                if (LayerCacheCheck.Enabled)
+                {
+                    LayerCacheCheck.OnHit(mobile, d, rules, subject);
+                }
+#endif
+
                 return d;
             }
 
@@ -276,7 +345,13 @@ namespace ClassicUO.Game
         private void CheckWorn(Mobile mobile, Layer layer, Item found)
         {
             EquipReads++;
-            Item list = mobile.FindItemByLayerInList(layer);
+            CompareChild("FindItemByLayer", mobile, layer, found);
+        }
+
+        // the list's first non-destroyed child on the layer against the answer given
+        private void CompareChild(string where, Entity parent, Layer layer, Item found)
+        {
+            Item list = parent.FindItemByLayerInList(layer);
             Item ecs = found;
             uint ls = list?.Serial ?? 0, es = ecs?.Serial ?? 0;
 
@@ -284,7 +359,7 @@ namespace ClassicUO.Game
             if (ls != es || !ReferenceEquals(list, ecs))
             {
                 string same = ls == es ? " (same serial, another instance)" : "";
-                ReportEquip($"[equip] mismatch (FindItemByLayer) 0x{mobile.Serial:X8} layer {layer} (0x{(byte)layer:X2}): World 0x{ls:X8} | ECS 0x{es:X8}{same}");
+                ReportEquip($"[equip] mismatch ({where}) 0x{parent.Serial:X8} layer {layer} (0x{(byte)layer:X2}): World 0x{ls:X8} | ECS 0x{es:X8}{same}");
             }
         }
 

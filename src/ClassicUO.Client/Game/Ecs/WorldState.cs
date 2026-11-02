@@ -266,6 +266,11 @@ namespace ClassicUO.Game
                 return default;
             }
 
+            if (Shared(parent))
+            {
+                return new ChildList(_world, default, ListSerials(parent));
+            }
+
             ReadOnlySpan<uint> contents = _world.Ecs.Mirror.Contents(parent.Serial);
             ReadOnlySpan<Item> spells = SpellEntries(parent.Serial);
 #if CUO_DEVTOOLS
@@ -279,12 +284,111 @@ namespace ClassicUO.Game
             return new ChildList(_world, spells, contents);
         }
 
+        // T9 child-list slice A: an item and a mobile World holds under one serial (a fixture's or a server's reuse). The ECS
+        // keys contents by serial and records any child of a mobile-range serial as worn, so it cannot tell the item's
+        // children from the mobile's: that parent's walks read its own list (held children only; allocates, rare). Slice B
+        // must decide this case before the list goes.
+        internal bool Shared(Entity parent) => _world.Items.Get(parent.Serial) != null && _world.Mobiles.Get(parent.Serial) != null;
+
+        private uint[] ListSerials(Entity parent)
+        {
+            int n = 0;
+
+            for (LinkedObject i = parent.Items; i != null; i = i.Next)
+            {
+                n++;
+            }
+
+            uint[] serials = new uint[n];
+            n = 0;
+
+            for (LinkedObject i = parent.Items; i != null; i = i.Next)
+            {
+                if (i is Item it && ReferenceEquals(_world.Items.Get(it.Serial), it))
+                {
+                    serials[n++] = it.Serial;
+                }
+            }
+
+            return n == serials.Length ? serials : serials.AsSpan(0, n).ToArray();
+        }
+
+        /// <summary>
+        /// T9 slice A: <see cref="SnapshotContents"/> for an entity World holds; an item and a mobile under one serial copy
+        /// the entity's own list (see <see cref="Shared"/>).
+        /// </summary>
+        public ContentsSnapshot SnapshotChildren(Entity parent)
+        {
+            if (!Shared(parent))
+            {
+                return SnapshotContents(parent.Serial);
+            }
+
+            uint[] list = ListSerials(parent);
+            int start = _snapshotTop;
+            int end = start + list.Length;
+
+            if (end > _snapshots.Length)
+            {
+                Array.Resize(ref _snapshots, Math.Max(end, _snapshots.Length * 2));
+            }
+
+            list.CopyTo(_snapshots, start);
+            _snapshotTop = end;
+
+            return new ContentsSnapshot(this, start, new ReadOnlySpan<uint>(_snapshots, start, list.Length));
+        }
+
         // the instance World holds for the entity's serial (the one the ECS's record under that serial stands for)
         private bool IsCurrent(Entity e) =>
             e is Mobile ? ReferenceEquals(_world.Mobiles.Get(e.Serial), e) : ReferenceEquals(_world.Items.Get(e.Serial), e);
 
         /// <summary>T2: <c>!parent.IsEmpty</c>, from the ECS.</summary>
         public bool HasChildren(Entity parent) => !Children(parent).IsEmpty;
+
+        /// <summary>T9 child-list slice A: the parent's first child (<c>parent.Items</c>), from the ECS; null when none.</summary>
+        public Item FirstChild(Entity parent)
+        {
+            foreach (Item it in Children(parent))
+            {
+                return it;
+            }
+
+            return null;
+        }
+
+        // ---- T9 child-list slice A: walks that change the contents they walk (the destroy cascades, the funnel's clears,
+        // the re-key) copy the parent's Contents here first; each removal or detach changes the mirror's span. A stack, so
+        // nested walks (a cascade's recursion, a removal inside a clear) each keep their own copy; a span handed out stays
+        // valid when a nested copy grows the array (it keeps the old one). No allocation once the stack has grown.
+        private uint[] _snapshots = new uint[64];
+        private int _snapshotTop;
+
+        /// <summary>
+        /// T9 slice A: a copy of <see cref="Contents"/> (checked like it under <c>CUO_CONTENTS_CHECK</c>), for a walk that
+        /// changes the parent's contents. Dispose it (a <c>using</c>) in reverse order of taking.
+        /// </summary>
+        public ContentsSnapshot SnapshotContents(uint parent)
+        {
+            ReadOnlySpan<uint> contents = Contents(parent);
+            int start = _snapshotTop;
+            int end = start + contents.Length;
+
+            if (end > _snapshots.Length)
+            {
+                Array.Resize(ref _snapshots, Math.Max(end, _snapshots.Length * 2));
+            }
+
+            contents.CopyTo(_snapshots.AsSpan(start));
+            _snapshotTop = end;
+
+            return new ContentsSnapshot(this, start, new ReadOnlySpan<uint>(_snapshots, start, contents.Length));
+        }
+
+        internal void ReleaseSnapshot(int start) => _snapshotTop = start;
+
+        /// <summary>Tests: the snapshot stack's depth (0 when every snapshot was released).</summary>
+        internal int SnapshotDepth => _snapshotTop;
 
         // ---- the spellbook's entries: 0xBF.1B's spells as the detached items FillSpellbook creates (graphic 0x1F2E, serial and
         // amount = the spell number). The spell set is ECS state (SpellbookContent); the entries are its materialisation,
@@ -396,6 +500,24 @@ namespace ClassicUO.Game
             _spellEntries.Clear();
             _spellEntries.TrimExcess();
         }
+    }
+
+    /// <summary>T9 slice A: a parent's child serials copied before a walk that changes them (<see cref="WorldState.SnapshotContents"/>).</summary>
+    internal readonly ref struct ContentsSnapshot
+    {
+        private readonly WorldState _state;
+        private readonly int _start;
+
+        public ContentsSnapshot(WorldState state, int start, ReadOnlySpan<uint> serials)
+        {
+            _state = state;
+            _start = start;
+            Serials = serials;
+        }
+
+        public ReadOnlySpan<uint> Serials { get; }
+
+        public void Dispose() => _state?.ReleaseSnapshot(_start);
     }
 
     /// <summary>

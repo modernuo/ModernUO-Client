@@ -228,9 +228,9 @@ namespace ClassicUO.Game
                     {
                         ushort useGraphic = Convert.ToUInt16(args[1], 16);
 
-                        for (LinkedObject ui = backpack.Items; ui != null; ui = ui.Next)
+                        foreach (Item packItem in world.State.Children(backpack))
                         {
-                            if (ui is Item packItem && packItem.Graphic == useGraphic)
+                            if (packItem.Graphic == useGraphic)
                             {
                                 useSerial = packItem.Serial;
 
@@ -538,9 +538,8 @@ namespace ClassicUO.Game
 
                 // worn: the player's worn items by layer
                 case "worn":
-                    for (LinkedObject wi = player.Items; wi != null; wi = wi.Next)
+                    foreach (Item w in world.State.Children(player))
                     {
-                        Item w = (Item)wi;
                         Log.Info($"[ECS] ui worn {w.Layer}: 0x{w.Serial:X8} g=0x{w.Graphic:X4}");
                     }
 
@@ -1000,10 +999,8 @@ namespace ClassicUO.Game
 
         private static uint FindWorn(PlayerMobile player)
         {
-            for (LinkedObject i = player.Items; i != null; i = i.Next)
+            foreach (Item it in player.World.State.Children(player))
             {
-                Item it = (Item)i;
-
                 switch (it.Layer)
                 {
                     case Layer.Backpack:
@@ -1028,9 +1025,14 @@ namespace ClassicUO.Game
         // T1 part 9: the first child of that graphic (a container's direct children)
         private static uint FindChild(Item container, ushort graphic)
         {
-            for (LinkedObject i = container?.Items; i != null; i = i.Next)
+            if (container == null)
             {
-                if (i is Item it && it.Graphic == graphic)
+                return 0;
+            }
+
+            foreach (Item it in container.World.State.Children(container))
+            {
+                if (it.Graphic == graphic)
                 {
                     return it.Serial;
                 }
@@ -1117,11 +1119,11 @@ namespace ClassicUO.Game
                 return 0;
             }
 
-            for (LinkedObject i = backpack.Items; i != null; i = i.Next)
-            {
-                Item it = (Item)i;
+            WorldState state = backpack.World.State;
 
-                if (it.IsEmpty && !it.ItemData.IsContainer)
+            foreach (Item it in state.Children(backpack))
+            {
+                if (!state.HasChildren(it) && !it.ItemData.IsContainer)
                 {
                     return it.Serial;
                 }

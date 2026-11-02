@@ -899,6 +899,10 @@ namespace ClassicUO.Game
 
             // T3a: CUO_EQUIP_READ_CHECK's 5 s summary
             _world.State.LogEquipmentChecks();
+#if CUO_DEVTOOLS
+            // CUO_LAYER_CACHE_CHECK's 5 s summary
+            Data.LayerCacheCheck.LogSummary();
+#endif
 
             // T5c: CUO_SWEEP_CHECK's 5 s summary
             _world.LogSweepSummary();

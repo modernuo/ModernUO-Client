@@ -408,7 +408,8 @@ namespace ClassicUO.Game.GameObjects
 
             if (bank != null && bank.Opened)
             {
-                if (!bank.IsEmpty)
+                // T9 child-list slice A: the ECS's contents
+                if (World.State.HasChildren(bank))
                 {
                     // T1 (funnel part 9): the removals; a rejected call removes nothing and leaves the bank open
                     if (!World.Writer.RemoveBankContents(this, bank))
