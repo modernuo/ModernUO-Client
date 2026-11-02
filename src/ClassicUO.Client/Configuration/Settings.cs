@@ -147,13 +147,7 @@ namespace ClassicUO.Configuration
         // run. Off = sampled from the Mobile every frame.
         [JsonPropertyName("mobile_push_inputs")] public bool MobilePushInputs { get; set; } = true;
 
-        // E4: World.Update updates only the mobiles whose per-mobile clock is
-        // due (queued steps, frame or idle timer expired, handles opening), picked from the ECS (MobileClock) instead of
-        // calling Mobile.Update on every mobile every frame. Off = the full per-frame loop. Default on since 2026-10-31
-        // (owner); the off path and CUO_MOBILE_UPDATE_CHECK stay for one phase.
-        [JsonPropertyName("world_update_mobile_system")] public bool WorldUpdateMobileSystem { get; set; } = true;
-
-        // T5b (needs world_update_mobile_system): a due mobile without queued steps or a handles opening has its idle animation
+        // T5b: a due mobile without queued steps or a handles opening has its idle animation
         // and frame advance computed in the ECS (MobileAnimationAdvanceSystem over AnimationTimer, MobileInputs and
         // EquipmentSlots) instead of Mobile.Update; mobiles with steps or handles still run Mobile.Update until T6. Read once
         // at startup (CUO_WORLD_ANIM_SYSTEM=1|0 overrides it in developer builds). CUO_ANIM_ADVANCE_CHECK=1 compares every
@@ -166,7 +160,7 @@ namespace ClassicUO.Configuration
         // builds). CUO_ANIM_ADVANCE_CHECK=1 compares every advance with the legacy one. Default on since 2026-11-02 (owner, after the quiet-machine per-switch timing bench-000206/207/208: timing-neutral on both renderers); the off path and the checker stay for one phase.
         [JsonPropertyName("world_item_anim_system")] public bool WorldItemAnimSystem { get; set; } = true;
 
-        // T6c (needs world_update_mobile_system): a due mobile's step processing (Mobile.ProcessSteps: the walk offset, the
+        // T6c: a due mobile's step processing (Mobile.ProcessSteps: the walk offset, the
         // step completion through the funnel, the player's walker bookkeeping) runs as StepSystem over its Steps component.
         // Read once at startup (CUO_WORLD_STEP_SYSTEM=1|0 overrides it in developer builds). CUO_STEP_CHECK=1 compares the
         // component and the decision with the Mobile's. Default on since 2026-11-02 (owner, after the quiet-machine per-switch timing bench-000206/207/208: timing-neutral on both renderers); the off path and the checker stay for one phase.

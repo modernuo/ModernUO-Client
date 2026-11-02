@@ -498,9 +498,9 @@ namespace ClassicUO.Game
         internal long ClockWrites;
 
         /// <summary>
-        /// E4: the clock is kept only while the mobile system runs (World.Update sets this each frame from
-        /// <c>world_update_mobile_system</c>). With it off there is no component, no write,
-        /// no lookup and no destroyed queue; turning it on builds every clock from the Mobiles (<see cref="ResyncClocks"/>).
+        /// E4: the clock is kept once the mobile clock path runs (World.Update sets this at its first update; tests set it
+        /// themselves). Before that there is no component, no write, no lookup and no destroyed queue; turning it on builds
+        /// every clock from the Mobiles (<see cref="ResyncClocks"/>).
         /// </summary>
         public bool ClockEnabled;
 
