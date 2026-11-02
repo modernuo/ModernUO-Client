@@ -42,7 +42,7 @@ What `CUO_DEVTOOLS` includes:
 
 - `DevBench` (scripted runs) and the per-phase timings of `FrameStats`.
 - Runtime world-renderer switching and the `-ecsdriver` argument.
-- The checkers `CUO_CONTENTS_CHECK`, `CUO_EQUIP_READ_CHECK`, `CUO_LAYER_RULES_CHECK` and `CUO_FUNNEL_CHECK`, and the `CUO_ECS_LAYER_RULES` override of its setting.
+- The checkers `CUO_CONTENTS_CHECK`, `CUO_EQUIP_READ_CHECK` and `CUO_FUNNEL_CHECK`.
 - `MemLog` (`CUO_MEM_LOG`).
 
 Code guarded by it is tagged `CLEANUP(release)`.
@@ -219,7 +219,6 @@ These `settings.json` keys select ECS and renderer paths. Defaults are from `src
 | Key | Default | Meaning |
 |---|---|---|
 | `world_renderer` | `auto` | World renderer: `auto`, `gpu`, `legacy` |
-| `ecs_layer_rules` | `true` | Worn-layer draw order, covering and gargoyle remaps come from the layer rules data (`layerrules.bin`, else the built-in default) instead of hard-coded code |
 | `gpu_ecs_sprites` | `true` | Gpu renderer: mobile sprites come from the ECS, not from capturing `MobileView.Draw` |
 | `text_skip_expired` | `true` | Skip text layout for mobiles and corpses whose overhead texts all expired |
 | `gpu_prepare_skip_baked` | `true` | Gpu world prepare skips baked land and statics |
@@ -234,8 +233,6 @@ Checkers compare a new path with the old one and log mismatches. Do not measure 
 |---|---|
 | `CUO_CONTENTS_CHECK=1` | Dev. Compare ECS container contents with the still-maintained child list on every read |
 | `CUO_EQUIP_READ_CHECK=1` | Dev. Compare ECS worn layers with the still-maintained child list at every call |
-| `CUO_LAYER_RULES_CHECK=1` | Dev. Compare layer-rule decisions with the hard-coded ones at every decision |
-| `CUO_ECS_LAYER_RULES=1\|0` | Dev. Override `ecs_layer_rules` for this run |
 | `CUO_MOBILE_UPDATE_CHECK=1\|stats` | Dev. Check the mobile clock and the skipped mobiles against `Mobile.Update` every frame; `stats` only counts and times |
 | `CUO_FUNNEL_CHECK=1` | Dev. Report writes to class A fields made outside the `WorldWriter` funnel |
 | `CUO_ECS_PARITY=N` | Compare ECS mobile sprites with the captured ones every N frames |
