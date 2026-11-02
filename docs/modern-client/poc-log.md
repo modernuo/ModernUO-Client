@@ -5087,3 +5087,22 @@ Paired NativeAOT builds (`CuoDevTools=true`, checkers off), all on the quiet mac
   - ltravel: 0 either way.
 - Gate bench-000236 PASS.
 - T7b1 parity race fix confirmed: regate bench-000237 PASS, ls_parity mismatched=0.
+
+### T7b part 1 merged: extract split into select and resolve (coordinator, 2026-11-02)
+
+- `bg/ecs-t7b1` (merge 7abed2796) is three branches assembled:
+  - the split d3f6f52c6, with the rename `ClassicUO.Ecs.DynamicSprite` → `MirrorSprite` in f1b415b6f;
+  - the parity race fix bd82607b3 (EcsParity's loader policy now applies at load; it used to apply at the first Gpu frame, so first-sight animation decodes raced the view capture);
+  - the cheaper `ItemSpriteInput.ReadRecord` bd65bf5c5.
+- **Design:**
+  - `DynamicSprite` is a renderer-neutral struct (about 64 B).
+  - `GpuSpriteResolve` maps it to `SpriteInstance`, with the code moved unchanged.
+  - `ItemSpriteExtract.Emit` reads the ECS record instead of `Item`.
+  - Still read from the GameObject (input for part 2): AllowedToDraw, AlphaHue, Offset, MultiGraphic; corpse animation fields and worn children; scene state. Effects have no Gpu extract.
+- **Evidence:**
+  - Gate bench-000238 PASS, ls_parity mismatched=0.
+  - Shots bench-000239 are within the control.
+  - Codex: no findings.
+  - Unit tests 2,940 passed, 6 skipped.
+- **Cost:** micro-bench, 201 interleaved rounds. `Gather` is +24 ns per captured item (was +34 before the cut). That is about 1 % of Gpu world_prepare at the large scene zoom 2.5 and negligible elsewhere, within the plan's +3 % budget. Owner question 3. Quiet timing is parked.
+- **Next, T7b part 2:** the Legacy resolve to the FNA atlas; a batcher sink at the `view.Draw` position in RenderLists; picking from the sink; the `legacy_ecs_sprites` switch; the `CUO_LEGACY_ECS_PARITY` checker. See `cuo-poc-state/handoffs/t7b1-extract-split.md`.
