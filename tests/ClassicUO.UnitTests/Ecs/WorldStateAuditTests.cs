@@ -21,14 +21,7 @@ namespace ClassicUO.UnitTests.Ecs
     {
         private const uint MOB = 0x0000_3900, DEAD = 0x8000_3900, NEWSHIRT = 0x4000_7960, BANK = 0x4000_7A20, BANKBOOK = 0x4000_7A21, PLATE = 0x4000_7A22;
 
-        private static void BothWays(World world, Action check)
-        {
-            world.State.ReadContentsOverride = false;
-            check();
-            world.State.ReadContentsOverride = true;
-            check();
-            world.State.ReadContentsOverride = null;
-        }
+        private static void BothWays(World world, Action check) => check();
 
         private static Item FirstSpellEntry(World world)
         {
@@ -88,19 +81,15 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void A_Replaced_Instance_Is_A_Leaf_With_The_Switch_On()
         {
-            // an object World no longer holds for its serial does not read the current one's contents: on, a leaf; off, its
-            // own list (the legacy read)
+            // an object World no longer holds for its serial does not read the current one's contents: a leaf
             World world = R.Build(out _);
             Item stale = Item.Create(world, R.BAG);
             Item own = Item.Create(world, 0x4000_7A31);
             stale.PushToBack(own);
             world.Items.Get(R.BAG).Items.Should().NotBeNull();
 
-            world.State.ReadContentsOverride = true;
             R.Walk(world, stale).Should().BeEmpty();
             world.State.HasChildren(stale).Should().BeFalse();
-            world.State.ReadContentsOverride = false;
-            R.Walk(world, stale).Should().Equal(own);
             world.State.Mismatches.Should().Be(0);
         }
 
@@ -273,45 +262,15 @@ namespace ClassicUO.UnitTests.Ecs
             string prefix = $"(read) children of 0x{parent:X8}";
             int n = 0;
 
-            foreach (bool on in new[] { false, true })
-            {
-                world.State.ReadContentsOverride = on;
+            R.Walk(world, e);
+            reports.Should().HaveCount(++n, "Children");
+            reports[^1].Should().Contain(prefix);
 
-                R.Walk(world, e);
-                reports.Should().HaveCount(++n, $"Children, switch {(on ? "on" : "off")}");
-                reports[^1].Should().Contain(prefix);
-
-                world.State.HasChildren(e);
-                reports.Should().HaveCount(++n, $"HasChildren, switch {(on ? "on" : "off")}");
-                reports[^1].Should().Contain(prefix);
-            }
+            world.State.HasChildren(e);
+            reports.Should().HaveCount(++n, "HasChildren");
+            reports[^1].Should().Contain(prefix);
 
             world.State.Mismatches.Should().Be(n);
-        }
-
-        [Fact]
-        public void The_Off_Walk_Reads_The_Next_Link_After_The_Body()
-        {
-            // the old loops (for (i = Items; i != null; i = i.Next)) read the next link after the body: a child pushed to the
-            // back while the last one is visited is visited too (a read ahead would stop)
-            World world = R.Build(out _);
-            world.State.CheckEnabled = false;
-            world.State.ReadContentsOverride = false;
-            Item pack = world.Items.Get(R.PACK);
-            Item late = Item.Create(world, 0x4000_7A30);
-            var seen = new List<uint>();
-
-            foreach (Item it in world.State.Children(pack))
-            {
-                seen.Add(it.Serial);
-
-                if (it.Next == null && it != late)
-                {
-                    pack.PushToBack(late);
-                }
-            }
-
-            seen.Should().HaveCount(5).And.EndWith(0x4000_7A30u);
         }
     }
 }

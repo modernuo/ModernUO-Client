@@ -618,7 +618,7 @@ namespace ClassicUO.Game.Scenes
 
                 mobile.DrawAura(batcher, posX, posY, depth);
                 extract.Begin(_pack, _offsetX, _offsetY);
-                extract.Emit(e, in state, in render, posX, posY, depth, Configuration.Settings.GlobalSettings.GpuMobileFrameCache ? mobile.FrameCache : null);
+                extract.Emit(e, in state, in render, posX, posY, depth, mobile.FrameCache);
                 drawn = true;
 
                 // the view's side effects: picking (unless recorded below), text and health bars read FrameInfo and IsFlipped

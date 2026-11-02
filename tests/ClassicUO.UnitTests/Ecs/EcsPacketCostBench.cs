@@ -538,7 +538,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             // T3a: the equipment read, MobileView's per-frame reads of one drawn mobile: the guard (HasWornItems: !IsEmpty off,
             // any WornLayers slot on), then FindItemByLayer for layers 0x01..0x19 (the draw order's layers and the mount), with
-            // ecs_read_equipment off (the list walk) and on (WornLayers). Like T2's rows, on three freshly built, identically
+            // the list walk (the control scenes walk it directly: T9 deleted ecs_read_equipment's off path) and WornLayers. Like T2's rows, on three freshly built, identically
             // prepared scenes: "T3 control" (off), "T3 read" (on), "T3 control2" (off). Each scene's mobiles wear their 5 items
             // through the funnel (0x78: attached, stamped, as in a session), and as many bare mobiles (a monster: the guard only).
             int t3Sink = 0;
@@ -563,17 +563,15 @@ namespace ClassicUO.UnitTests.Ecs
                     f.World.Ecs.Sync(bare[m]);
                 }
 
-                f.World.State.ReadEquipmentOverride = read;
-
                 rows.Add(($"T3 {kind}: MobileView reads (guard + FindItemByLayer 0x01-0x19), per mobile", Measure(packets, i =>
                 {
                     Mobile mob = f.Mobiles[i % n];
 
-                    if (f.World.State.HasWornItems(mob))
+                    if (read ? f.World.State.HasWornItems(mob) : !mob.IsEmpty)
                     {
                         for (int l = 1; l <= (int)Layer.Mount; l++)
                         {
-                            if (mob.FindItemByLayer((Layer)l) != null)
+                            if ((read ? mob.FindItemByLayer((Layer)l) : mob.FindItemByLayerInList((Layer)l)) != null)
                             {
                                 t3Sink++;
                             }
@@ -583,7 +581,7 @@ namespace ClassicUO.UnitTests.Ecs
 
                 rows.Add(($"T3 {kind}: MobileView guard of a bare mobile, per mobile", Measure(packets, i =>
                 {
-                    if (f.World.State.HasWornItems(bare[i % n]))
+                    if (read ? f.World.State.HasWornItems(bare[i % n]) : !bare[i % n].IsEmpty)
                     {
                         t3Sink++;
                     }

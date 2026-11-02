@@ -551,7 +551,7 @@ namespace ClassicUO.Game.UI.Gumps
                 IsVisible = true;
             }
 
-            // T2: the children from the ECS with ecs_read_contents on (WorldState.Children)
+            // T2: the children from the ECS (WorldState.Children)
             foreach (Item item in World.State.Children(container))
             {
 
@@ -703,7 +703,7 @@ namespace ClassicUO.Game.UI.Gumps
                     UIManager.SavePosition(item, Location);
                 }
 
-                // T2: the children from the ECS with ecs_read_contents on (WorldState.Children)
+                // T2: the children from the ECS (WorldState.Children)
                 foreach (Item child in World.State.Children(item))
                 {
 

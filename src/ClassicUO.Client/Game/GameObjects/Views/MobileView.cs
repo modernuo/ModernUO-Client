@@ -336,7 +336,7 @@ namespace ClassicUO.Game.GameObjects
                 charSitting
             );
 
-            // T3a: any worn item, from the ECS with ecs_read_equipment on (WorldState.HasWornItems)
+            // T3a: any worn item, from the ECS (WorldState.HasWornItems)
             if (World.State.HasWornItems(this))
             {
                 // draw order built from the layer algorithm (PaperdollOrder), keyed on
@@ -1184,7 +1184,7 @@ namespace ClassicUO.Game.GameObjects
                 }
             }
 
-            // T3a: any worn item, from the ECS with ecs_read_equipment on (WorldState.HasWornItems)
+            // T3a: any worn item, from the ECS (WorldState.HasWornItems)
             if (isHuman && World.State.HasWornItems(this))
             {
                 // T3b: ecs_layer_rules (default off): the covering and the gargoyle remaps from the layering rules data
@@ -1286,7 +1286,7 @@ namespace ClassicUO.Game.GameObjects
 
         internal static bool IsCovered(Mobile mobile, Layer layer)
         {
-            // T3a: any worn item, from the ECS with ecs_read_equipment on (WorldState.HasWornItems)
+            // T3a: any worn item, from the ECS (WorldState.HasWornItems)
             if (!mobile.World.State.HasWornItems(mobile))
             {
                 return false;

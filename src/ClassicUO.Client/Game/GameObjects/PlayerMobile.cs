@@ -171,7 +171,7 @@ namespace ClassicUO.Game.GameObjects
 
             if (container != null)
             {
-                // T2: the children from the ECS with ecs_read_contents on (WorldState.Children)
+                // T2: the children from the ECS (WorldState.Children)
                 foreach (Item item in World.State.Children(container))
                 {
 
@@ -201,7 +201,7 @@ namespace ClassicUO.Game.GameObjects
 
             if (container != null)
             {
-                // T2: the children from the ECS with ecs_read_contents on (WorldState.Children)
+                // T2: the children from the ECS (WorldState.Children)
                 foreach (Item item in World.State.Children(container))
                 {
 
@@ -247,7 +247,7 @@ namespace ClassicUO.Game.GameObjects
         {
             int _amount = 0;
 
-            // T2: the children from the ECS with ecs_read_contents on (WorldState.Children)
+            // T2: the children from the ECS (WorldState.Children)
             foreach (Item item in World.State.Children(World.Player))
             {
                 if (item.Layer < Layer.OneHanded || item.Layer > Layer.Legs)

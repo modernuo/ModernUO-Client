@@ -12,8 +12,8 @@ using EcsEntity = Friflo.Engine.ECS.Entity;
 namespace ClassicUO.Game
 {
     // T3a (ecs-transition-plan.md, T3): a mobile's worn equipment by layer, owned by the ECS (WornLayers on the mobile's mirror
-    // record: the first attached item per layer by child-order stamp). Entity.FindItemByLayer reads it for a mobile with
-    // ecs_read_equipment on; the LinkedObject child list is still maintained (dual) until T9.
+    // record: the first attached item per layer by child-order stamp). Entity.FindItemByLayer reads it for a mobile; the
+    // LinkedObject child list is still maintained (dual) until T9.
     /// <summary>T3a: whether World holds a mobile instance for its serial, as its <see cref="WornCache"/> last verified.</summary>
     internal enum WornHeld : byte
     {
@@ -27,7 +27,7 @@ namespace ClassicUO.Game
     }
 
     /// <summary>
-    /// T3a: a mobile's equipment read cache (<c>Mobile.EquipCache</c>, made at its first read with ecs_read_equipment on): the
+    /// T3a: a mobile's equipment read cache (<c>Mobile.EquipCache</c>, made at its first read): the
     /// verified record, and the Item objects of its WornLayers serials (null when nothing is worn), valid for the mirror
     /// epoch, slot-write count and WornLayers version it was filled at.
     /// </summary>
@@ -46,32 +46,14 @@ namespace ClassicUO.Game
 
     internal sealed partial class WorldState
     {
-        /// <summary>Tests: the switch for this World (null: the setting).</summary>
-        internal bool? ReadEquipmentOverride;
-
-#if CUO_DEVTOOLS
-        // CLEANUP(release): the gate's override of the setting (CUO_ECS_READ_EQUIPMENT=1|0)
-        private static readonly bool? _envReadEquipment = Environment.GetEnvironmentVariable("CUO_ECS_READ_EQUIPMENT") switch
-        {
-            "1" => true,
-            "0" => false,
-            _ => null
-        };
-#else
-        private static readonly bool? _envReadEquipment = null;
-#endif
-
-        /// <summary>T3a (<c>ecs_read_equipment</c>, default off): the equipment readers take a mobile's worn items from the ECS.</summary>
-        public bool ReadEquipment => ReadEquipmentOverride ?? _envReadEquipment ?? Configuration.Settings.GlobalSettings.EcsReadEquipment;
-
         /// <summary>
-        /// <c>Entity.FindItemByLayer</c> for a mobile under the checker: with <see cref="ReadEquipment"/> the ECS's worn item
-        /// on the layer (<see cref="WornItem"/>), else the child list's first item on it; <c>CUO_EQUIP_READ_CHECK=1</c>
-        /// compares the two at every call.
+        /// <c>Entity.FindItemByLayer</c> for a mobile under the checker: the ECS's worn item on the layer
+        /// (<see cref="WornItem"/>); <c>CUO_EQUIP_READ_CHECK=1</c> compares it with the child list's first item on the
+        /// layer at every call.
         /// </summary>
         public Item FindWorn(Mobile mobile, Layer layer)
         {
-            Item found = ReadEquipment ? WornItem(mobile, layer) : mobile.FindItemByLayerInList(layer);
+            Item found = WornItem(mobile, layer);
 #if CUO_DEVTOOLS
             if (EquipCheckEnabled)
             {
@@ -105,13 +87,12 @@ namespace ClassicUO.Game
         }
 
         /// <summary>
-        /// MobileView's <c>!IsEmpty</c> guard before its equipment reads: with <see cref="ReadEquipment"/> whether the ECS
-        /// records any worn item on a tracked layer (the layers the view reads; a mobile World does not hold: its list), else
-        /// whether the child list has any child.
+        /// MobileView's <c>!IsEmpty</c> guard before its equipment reads: whether the ECS records any worn item on a tracked
+        /// layer (the layers the view reads; a mobile World does not hold: its list).
         /// </summary>
         public bool HasWornItems(Mobile mobile)
         {
-            bool found = ReadEquipment ? WornGuard(mobile) : !mobile.IsEmpty;
+            bool found = WornGuard(mobile);
 #if CUO_DEVTOOLS
             if (EquipCheckEnabled)
             {
@@ -296,14 +277,14 @@ namespace ClassicUO.Game
         {
             EquipReads++;
             Item list = mobile.FindItemByLayerInList(layer);
-            Item ecs = ReadEquipment ? found : WornItem(mobile, layer);
+            Item ecs = found;
             uint ls = list?.Serial ?? 0, es = ecs?.Serial ?? 0;
 
             // Codex audit P3 (#5): the same object, not only the same serial (a stale instance under a serial is a divergence)
             if (ls != es || !ReferenceEquals(list, ecs))
             {
                 string same = ls == es ? " (same serial, another instance)" : "";
-                ReportEquip($"[equip] mismatch (FindItemByLayer) 0x{mobile.Serial:X8} layer {layer} (0x{(byte)layer:X2}): World 0x{ls:X8} | ECS 0x{es:X8}{same} | read_equipment={(ReadEquipment ? "on" : "off")}");
+                ReportEquip($"[equip] mismatch (FindItemByLayer) 0x{mobile.Serial:X8} layer {layer} (0x{(byte)layer:X2}): World 0x{ls:X8} | ECS 0x{es:X8}{same}");
             }
         }
 
@@ -313,12 +294,12 @@ namespace ClassicUO.Game
         private void CheckGuard(Mobile mobile, bool found)
         {
             EquipReads++;
-            bool ecs = ReadEquipment ? found : WornGuard(mobile);
+            bool ecs = found;
             bool list = ListGuard(mobile);
 
             if (ecs != list)
             {
-                ReportEquip($"[equip] mismatch (HasWornItems) 0x{mobile.Serial:X8}: World {list} | ECS {ecs} | read_equipment={(ReadEquipment ? "on" : "off")}");
+                ReportEquip($"[equip] mismatch (HasWornItems) 0x{mobile.Serial:X8}: World {list} | ECS {ecs}");
             }
         }
 
@@ -368,7 +349,7 @@ namespace ClassicUO.Game
         {
             WorldMirror m = _world.Ecs.Mirror;
             (int caches, int withItems, long cacheBytes) = ReadCacheMemory();
-            Log.Info($"[equip] checks reads={EquipReads} mismatches={EquipMismatches} | read_equipment={(ReadEquipment ? "on" : "off")} mobiles={m.MobileCount} worn bytes={m.WornLayersBytes} writes={m.WornWrites} rescans={m.WornRescans} 0x78 batches written={m.WornBatchWrites} unchanged={m.WornBatchUnchanged} | read caches={caches} with items={withItems} bytes={cacheBytes} refreshes={CacheRefreshes} fills={CacheFills}");
+            Log.Info($"[equip] checks reads={EquipReads} mismatches={EquipMismatches} | mobiles={m.MobileCount} worn bytes={m.WornLayersBytes} writes={m.WornWrites} rescans={m.WornRescans} 0x78 batches written={m.WornBatchWrites} unchanged={m.WornBatchUnchanged} | read caches={caches} with items={withItems} bytes={cacheBytes} refreshes={CacheRefreshes} fills={CacheFills}");
         }
 #else
         public const bool EquipCheckAvailable = false;

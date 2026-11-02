@@ -12,11 +12,12 @@ using EcsEntity = Friflo.Engine.ECS.Entity;
 
 namespace ClassicUO.UnitTests.Ecs
 {
-    // T3a: the equipment readers behind ecs_read_equipment. Every reader goes through Entity.FindItemByLayer (IsMounted,
-    // IsDrivingBoat, GetAnimGroupInput's hands, UpdateAbilities, PaperdollOrder.GraphicsFromEntity/BuildInWorld, the paperdoll,
-    // Legacy's MobileView) plus MobileView's guard (WorldState.HasWornItems). On a World that holds its objects, every read is
-    // the same object with the switch off and on, after every kind of change; a change behind the funnel shows which source
-    // a reader takes; an instance World does not hold reads its own list. (GraphicsFromEntity, GetAnimGroupInput and
+    // T3a: the equipment readers, which read the ECS (T9 deleted ecs_read_equipment's list path). Every reader goes through
+    // Entity.FindItemByLayer (IsMounted, IsDrivingBoat, GetAnimGroupInput's hands, UpdateAbilities,
+    // PaperdollOrder.GraphicsFromEntity/BuildInWorld, the paperdoll, Legacy's MobileView) plus MobileView's guard
+    // (WorldState.HasWornItems). On a World that holds its objects, every read is the object the still-maintained child list
+    // has, after every kind of change; a change behind the funnel shows the reader takes the ECS; an instance World does not
+    // hold reads its own list. (GraphicsFromEntity, GetAnimGroupInput and
     // UpdateAbilities read the tile data, which the tests do not load: they are covered through FindItemByLayer here and by
     // the gate's -ecscheck hands/mount compare and the paperdoll shots.)
     [Collection("PlayerWorld")]
@@ -27,55 +28,25 @@ namespace ClassicUO.UnitTests.Ecs
 
         private static readonly StaticTiles[] _tiles = new StaticTiles[0x10000];
 
-        private static void BothWays(World world, Action check)
-        {
-            bool? before = world.State.ReadEquipmentOverride;
+        private static void BothWays(World world, Action check) => check();
 
-            foreach (bool read in new[] { false, true })
-            {
-                world.State.ReadEquipmentOverride = read;
-                check();
-            }
-
-            world.State.ReadEquipmentOverride = before;
-        }
-
-        // every mobile World holds: every layer's item (the same object), the guard, IsMounted, IsDrivingBoat, the
-        // system's IsMounted, with the switch off and on
+        // every mobile World holds: every layer's item is the child list's first item on it (the same object), the guard is
+        // the list's !IsEmpty, and IsMounted and the system's IsMounted are the list's mount test
         internal static void AllReadersEqual(World world)
         {
             foreach (Mobile m in world.Mobiles.Values.ToList())
             {
-                var off = new List<object>();
-                var on = new List<object>();
-
-                foreach (bool read in new[] { false, true })
+                for (int l = 0; l <= 0x1E; l++)
                 {
-                    world.State.ReadEquipmentOverride = read;
-                    List<object> got = read ? on : off;
-
-                    for (int l = 0; l <= 0x1E; l++)
-                    {
-                        got.Add(m.FindItemByLayer((Layer)l));
-                    }
-
-                    got.Add(world.State.HasWornItems(m));
-                    got.Add(m.IsMounted);
-                    got.Add(m.IsDrivingBoat);
-                    got.Add(MobileAnimationSystem.IsMounted(m, _tiles));
+                    m.FindItemByLayer((Layer)l).Should().BeSameAs(m.FindItemByLayerInList((Layer)l), $"layer {l} of 0x{m.Serial:X8}");
                 }
 
-                world.State.ReadEquipmentOverride = null;
+                world.State.HasWornItems(m).Should().Be(!m.IsEmpty, $"the guard of 0x{m.Serial:X8}");
 
-                for (int i = 0; i < off.Count; i++)
-                {
-                    on[i].Should().BeSameAs(off[i] is bool ? on[i] : off[i], $"reader {i} of 0x{m.Serial:X8}");
-
-                    if (off[i] is bool b)
-                    {
-                        on[i].Should().Be(b, $"reader {i} of 0x{m.Serial:X8}");
-                    }
-                }
+                Item mount = m.FindItemByLayerInList(Layer.Mount);
+                bool listMounted = mount != null && AnimationRules.IsMountedBy(mount.Serial, mount.Graphic, mount.Graphic < _tiles.Length ? _tiles[mount.Graphic].AnimID : (ushort)0);
+                m.IsMounted.Should().Be(listMounted, $"IsMounted of 0x{m.Serial:X8}");
+                MobileAnimationSystem.IsMounted(m, _tiles).Should().Be(listMounted);
             }
         }
 
@@ -89,12 +60,6 @@ namespace ClassicUO.UnitTests.Ecs
             WorldStateContentsTests.Apply(world, change);
 
             AllReadersEqual(world);
-        }
-
-        [Fact]
-        public void The_Switch_Is_On_By_Default()
-        {
-            new ClassicUO.Configuration.Settings().EcsReadEquipment.Should().BeTrue();
         }
 
         [Fact]
@@ -182,16 +147,11 @@ namespace ClassicUO.UnitTests.Ecs
             world.Ecs.Mirror.DetachChild(HELM);
             world.Ecs.Mirror.Remove(WEAR);
 
-            world.State.ReadEquipmentOverride = false;
-            m.FindItemByLayer(Layer.Helmet).Serial.Should().Be(HELM);
-            m.FindItemByLayer(Layer.Robe).Serial.Should().Be(WEAR);
-
-            world.State.ReadEquipmentOverride = true;
             m.FindItemByLayer(Layer.Helmet).Should().BeNull("the ECS's");
             m.FindItemByLayer(Layer.Robe).Should().BeNull();
             m.FindItemByLayer(Layer.Shirt).Serial.Should().Be(SHIRT);
 
-            // the list emptied behind the funnel: the guard follows the ECS with the switch on, the list with it off
+            // the list emptied behind the funnel: the guard follows the ECS
             for (LinkedObject i = m.Items; i != null;)
             {
                 LinkedObject next = i.Next;
@@ -200,8 +160,6 @@ namespace ClassicUO.UnitTests.Ecs
             }
 
             world.State.HasWornItems(m).Should().BeTrue("the ECS still records the shirt");
-            world.State.ReadEquipmentOverride = false;
-            world.State.HasWornItems(m).Should().BeFalse("the list is empty");
         }
 
         [Fact]
@@ -237,7 +195,6 @@ namespace ClassicUO.UnitTests.Ecs
         {
             World world = WorldStateContentsTests.Build();
             Mobile old = world.Mobiles.Get(MOB);
-            world.State.ReadEquipmentOverride = true;
             old.FindItemByLayer(Layer.Helmet).Serial.Should().Be(HELM, "a first read caches the verified record");
 
             world.Writer.RemoveMobile(old);
@@ -259,7 +216,6 @@ namespace ClassicUO.UnitTests.Ecs
             // a removal that changes no slot (the mobile wore nothing) still ends the verified identity (the mirror's epoch)
             World world = WorldStateContentsTests.Build();
             Mobile bare = world.GetOrCreateMobile(LATE);
-            world.State.ReadEquipmentOverride = true;
             bare.FindItemByLayer(Layer.Shirt).Should().BeNull();
             long writes = world.Ecs.Mirror.WornWrites;
 
@@ -279,7 +235,6 @@ namespace ClassicUO.UnitTests.Ecs
             World world = WorldStateContentsTests.Build();
             Mobile m = world.Mobiles.Get(MOB);
             world.GetOrCreateMobile(LATE);
-            world.State.ReadEquipmentOverride = true;
             m.FindItemByLayer(Layer.Helmet).Serial.Should().Be(HELM);
             long fills = world.State.CacheFills, refreshes = world.State.CacheRefreshes;
 
@@ -323,9 +278,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             if (warm)
             {
-                world.State.ReadEquipmentOverride = true;
                 displaced.FindItemByLayer(Layer.Helmet).Serial.Should().Be(HELM);
-                world.State.ReadEquipmentOverride = null;
             }
 
             world.GetOrCreateMobile(MOB);
@@ -428,10 +381,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             world.Ecs.Mirror.Worn(MOB, 0).Should().Be(0);
             world.Ecs.Mirror.Worn(MOB, 0x1E).Should().Be(0);
-            world.State.ReadEquipmentOverride = false;
-            world.State.HasWornItems(only).Should().BeTrue("off: !IsEmpty");
-            world.State.ReadEquipmentOverride = true;
-            world.State.HasWornItems(only).Should().BeFalse("on: no worn item on a tracked layer");
+            world.State.HasWornItems(only).Should().BeFalse("no worn item on a tracked layer");
         }
 
         [Fact]
@@ -441,7 +391,6 @@ namespace ClassicUO.UnitTests.Ecs
             // attached children (a slot write, no epoch change): the read finds its items
             World world = WorldStateContentsTests.Build();
             Mobile m = world.Mobiles.Get(MOB);
-            world.State.ReadEquipmentOverride = true;
             m.FindItemByLayer(Layer.Helmet).Serial.Should().Be(HELM);
 
             world.Ecs.Mirror.Remove(MOB);
@@ -462,7 +411,6 @@ namespace ClassicUO.UnitTests.Ecs
             // the same with no children: the creation writes no slot; the first equip then must not keep the cached NoRecord
             World world = WorldStateContentsTests.Build();
             Mobile late = world.GetOrCreateMobile(LATE);
-            world.State.ReadEquipmentOverride = true;
             world.Ecs.Mirror.Remove(LATE);
             late.FindItemByLayer(Layer.Shirt).Should().BeNull();
 
@@ -478,7 +426,6 @@ namespace ClassicUO.UnitTests.Ecs
             // Codex audit P3 (#6): a version whose low 32 bits equal the cached one must not pass for it
             World world = WorldStateContentsTests.Build();
             Mobile m = world.Mobiles.Get(MOB);
-            world.State.ReadEquipmentOverride = true;
             m.FindItemByLayer(Layer.Helmet).Serial.Should().Be(HELM);
             world.Ecs.Mirror.TryGetEntity(MOB, out EcsEntity e).Should().BeTrue();
             ulong cached = e.GetComponent<EquipmentSlots>().Worn.Version;

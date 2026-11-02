@@ -16,10 +16,10 @@ namespace ClassicUO.Game.GameObjects
 {
     internal partial class Mobile : Entity
     {
-        /// <summary>W5: the Gpu world's reused selection and sprite instances (gpu_mobile_frame_cache).</summary>
+        /// <summary>W5: the Gpu world's reused selection and sprite instances (MobileFrameCache).</summary>
         internal MobileFrameCache FrameCache;
 
-        /// <summary>T3a: the equipment read cache (WorldState.WornItem), made at the first read with ecs_read_equipment on.</summary>
+        /// <summary>T3a: the equipment read cache (WorldState.WornItem), made at the first read.</summary>
         internal WornCache EquipCache;
 
         //private static readonly QueuedPool<Mobile> _pool = new QueuedPool<Mobile>(
@@ -355,7 +355,7 @@ namespace ClassicUO.Game.GameObjects
 
         public Item GetSecureTradeBox()
         {
-            // T2: the children from the ECS with ecs_read_contents on (WorldState.Children)
+            // T2: the children from the ECS (WorldState.Children)
             foreach (Item it in World.State.Children(this))
             {
                 if (it.Graphic == 0x1E5E && it.Layer == 0)
@@ -1225,7 +1225,7 @@ namespace ClassicUO.Game.GameObjects
             );
         }
 
-        /// <summary>W5 (mobile_push_inputs): <see cref="TryGetSittingInfo(out AnimationsLoader.SittingInfoData)"/> with the
+        /// <summary>W5: <see cref="TryGetSittingInfo(out AnimationsLoader.SittingInfoData)"/> with the
         /// human, mounted, flying and action inputs already known from the ECS: the seat test without its equipment walks.</summary>
         internal bool TryGetSittingInfo(bool human, bool mounted, bool flying, byte group, out AnimationsLoader.SittingInfoData data)
         {

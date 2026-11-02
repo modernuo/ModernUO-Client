@@ -439,7 +439,6 @@ namespace ClassicUO.UnitTests.Ecs
             Scene on = Build(true), off = Build(false);
             FillMap(on, party);
             FillMap(off, party);
-            Configuration.Settings.GlobalSettings.MobilePushInputs.Should().BeTrue();
 
             on.World.WorldMapPass();
             off.World.WorldMapPass();
