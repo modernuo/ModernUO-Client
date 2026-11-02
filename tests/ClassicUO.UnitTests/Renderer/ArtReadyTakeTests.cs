@@ -265,6 +265,83 @@ namespace ClassicUO.UnitTests.Renderer
 
             (ClassicUO.Renderer.Gumps.Gump.FrameUploadTicks - before).Should().BeGreaterThanOrEqualTo(uploadTicks);
         }
+
+        // perf-8: Gump.Prefetch's wait takes only its batch's finished decodes; another window's finished decodes stay for
+        // DrainReady (the old wait drained the whole ready queue)
+        [Fact]
+        public void Prefetch_Wait_Takes_Only_The_Batch()
+        {
+            var (d, started, uploads) = Make();
+            d.Request(3);
+            d.Request(5);
+            d.Request(6);
+            d.Request(9);
+
+            foreach (IThreadPoolWorkItem w in started)
+            {
+                w.Execute();
+            }
+
+            ClassicUO.Renderer.Gumps.Gump.AwaitBatch(d, new uint[] { 6, 5 }, long.MaxValue);
+
+            uploads.Should().Equal(new uint[] { 6, 5 }, "only the batch's gumps");
+            d.IsRequested(3).Should().BeTrue("3 and 9 wait for the normal drain");
+            d.IsRequested(9).Should().BeTrue();
+
+            d.Drain(long.MaxValue);
+
+            uploads.Should().Equal(new uint[] { 6, 5, 3, 9 }, "the drain uploads the others once");
+            d.Pending.Should().Be(0);
+        }
+
+        [Fact]
+        public void Prefetch_Wait_Stops_At_A_Failed_Decode_And_Leaves_It_To_The_Drain()
+        {
+            var started = new List<IThreadPoolWorkItem>();
+            var uploads = new List<uint>();
+            var d = new FirstSightDecoder("gump", 64, job => job.Index != 7 && Fill(job), j => uploads.Add(j.Index), null,
+                new DecodeBudget(1L << 20, started.Add));
+            d.Request(5);
+            d.Request(7);
+
+            foreach (IThreadPoolWorkItem w in started)
+            {
+                w.Execute();
+            }
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            ClassicUO.Renderer.Gumps.Gump.AwaitBatch(d, new uint[] { 5, 7 },
+                System.Diagnostics.Stopwatch.GetTimestamp() + System.Diagnostics.Stopwatch.Frequency * 10);
+
+            sw.ElapsedMilliseconds.Should().BeLessThan(5000, "a finished failed decode is not waited for");
+            uploads.Should().Equal(5u);
+            d.IsRequested(7).Should().BeTrue();
+
+            d.Drain(long.MaxValue);
+            d.IsFailed(7).Should().BeTrue();
+            d.Pending.Should().Be(0);
+        }
+
+        [Fact]
+        public void Prefetch_Wait_Gives_Up_At_The_Deadline_And_Takes_What_Finishes()
+        {
+            var (d, started, uploads) = Make();
+            d.Request(5);
+            d.Request(6);
+            started[0].Execute(); // 6 still running
+
+            ClassicUO.Renderer.Gumps.Gump.AwaitBatch(d, new uint[] { 5, 6 },
+                System.Diagnostics.Stopwatch.GetTimestamp() + System.Diagnostics.Stopwatch.Frequency / 100);
+
+            uploads.Should().Equal(5u);
+            d.IsRequested(6).Should().BeTrue();
+            d.HasFinished(6).Should().BeFalse();
+
+            started[1].Execute();
+            d.HasFinished(6).Should().BeTrue();
+            ClassicUO.Renderer.Gumps.Gump.TakeReady(d, 6).Should().BeTrue();
+            d.HasFinished(6).Should().BeFalse("taken");
+        }
     }
 
     // perf-5: art missing from the pack gets the placeholder (Get(0)); the miss is remembered per id, so it is logged
