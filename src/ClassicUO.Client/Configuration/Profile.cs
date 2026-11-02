@@ -449,7 +449,7 @@ namespace ClassicUO.Configuration
             {
                 SaveItemsGump(parent, xml, list);
 
-                // T2: the children from the ECS with ecs_read_contents on (WorldState.Children)
+                // T2: the children from the ECS (WorldState.Children)
                 foreach (Item child in parent.World.State.Children(parent))
                 {
                     SaveItemsGumpRecursive(child, xml, list);

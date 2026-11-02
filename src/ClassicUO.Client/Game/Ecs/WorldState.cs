@@ -213,7 +213,7 @@ namespace ClassicUO.Game
         public void LogSummary()
         {
             ClassicUO.Ecs.WorldMirror m = _world.Ecs.Mirror;
-            Log.Info($"[contents] checks reads={ContentsReads} gumps={GumpChecks} mismatches={Mismatches} | read_contents={(ReadContents ? "on" : "off")} cached parents={m.CachedContentsParents} builds={m.ContentsBuilds} invalidations={m.ContentsInvalidations} cache bytes={m.ContentsCacheBytes} | spell books={SpellEntryBooks} bytes={SpellEntriesBytes}");
+            Log.Info($"[contents] checks reads={ContentsReads} gumps={GumpChecks} mismatches={Mismatches} | cached parents={m.CachedContentsParents} builds={m.ContentsBuilds} invalidations={m.ContentsInvalidations} cache bytes={m.ContentsCacheBytes} | spell books={SpellEntryBooks} bytes={SpellEntriesBytes}");
         }
 #else
         // release builds: no checker (the tests skip what needs it)
@@ -242,32 +242,14 @@ namespace ClassicUO.Game
         public void CheckOpenContainers() { }
 #endif
 
-        // ---- T2 readers (ecs_read_contents): the child-list readers (container, grid loot, trade and spellbook gumps, the
-        // shop's lists, FindItem*, the counters, macros) walk Children(parent), which is the ECS enumeration when the switch
-        // is on and the World child list when it is off. The child list is still maintained (dual) until T9.
-
-        /// <summary>Tests: the switch for this World (null: the setting).</summary>
-        internal bool? ReadContentsOverride;
-
-#if CUO_DEVTOOLS
-        // CLEANUP(release): the gate's override of the setting (CUO_ECS_READ_CONTENTS=1|0)
-        private static readonly bool? _envReadContents = Environment.GetEnvironmentVariable("CUO_ECS_READ_CONTENTS") switch
-        {
-            "1" => true,
-            "0" => false,
-            _ => null
-        };
-#else
-        private static readonly bool? _envReadContents = null;
-#endif
-
-        /// <summary>T2 (<c>ecs_read_contents</c>, default off): the readers take container contents from the ECS.</summary>
-        public bool ReadContents => ReadContentsOverride ?? _envReadContents ?? Configuration.Settings.GlobalSettings.EcsReadContents;
+        // ---- T2 readers: the child-list readers (container, grid loot, trade and spellbook gumps, the shop's lists, FindItem*,
+        // the counters, macros) walk Children(parent), the ECS enumeration. The child list is still maintained (dual) until T9
+        // removes its container half; CUO_CONTENTS_CHECK compares the two.
 
         /// <summary>
-        /// T2: the parent's children, in child order: with <see cref="ReadContents"/> the ECS's (a spellbook's spell entries,
-        /// then <see cref="Contents"/>), else the World child list. Under <c>CUO_CONTENTS_CHECK</c> each call compares the
-        /// two. A reader must not change the parent's contents while it walks them (no reader does).
+        /// T2: the parent's children, in child order, from the ECS (a spellbook's spell entries, then <see cref="Contents"/>).
+        /// Under <c>CUO_CONTENTS_CHECK</c> each call compares them with the World child list. A reader must not change the
+        /// parent's contents while it walks them (no reader does).
         /// </summary>
         public ChildList Children(Entity parent)
         {
@@ -278,43 +260,30 @@ namespace ClassicUO.Game
 
             // Codex audit P1: the ECS keys contents by serial, so an instance that is not the entity World holds for its
             // serial (a spellbook's detached spell entry, serial 1-64, which can be a real mobile's; a destroyed or replaced
-            // object) must not read that entity's contents: with the switch on it is a leaf, with it off its own list
-            // (the legacy read; a spell entry's is empty), unchecked
+            // object) must not read that entity's contents: it is a leaf, unchecked
             if (!IsCurrent(parent))
             {
-                return ReadContents ? default : new ChildList(parent.Items);
+                return default;
             }
 
-            if (ReadContents)
-            {
-                ReadOnlySpan<uint> contents = _world.Ecs.Mirror.Contents(parent.Serial);
-                ReadOnlySpan<Item> spells = SpellEntries(parent.Serial);
-#if CUO_DEVTOOLS
-                if (CheckEnabled)
-                {
-                    ContentsReads++;
-                    Compare(parent, spells, contents, "read");
-                }
-#endif
-
-                return new ChildList(_world, spells, contents);
-            }
+            ReadOnlySpan<uint> contents = _world.Ecs.Mirror.Contents(parent.Serial);
+            ReadOnlySpan<Item> spells = SpellEntries(parent.Serial);
 #if CUO_DEVTOOLS
             if (CheckEnabled)
             {
                 ContentsReads++;
-                Compare(parent, SpellEntries(parent.Serial), _world.Ecs.Mirror.Contents(parent.Serial), "read");
+                Compare(parent, spells, contents, "read");
             }
 #endif
 
-            return new ChildList(parent.Items);
+            return new ChildList(_world, spells, contents);
         }
 
         // the instance World holds for the entity's serial (the one the ECS's record under that serial stands for)
         private bool IsCurrent(Entity e) =>
             e is Mobile ? ReferenceEquals(_world.Mobiles.Get(e.Serial), e) : ReferenceEquals(_world.Items.Get(e.Serial), e);
 
-        /// <summary>T2: <c>!parent.IsEmpty</c>, from the ECS when <see cref="ReadContents"/> is on.</summary>
+        /// <summary>T2: <c>!parent.IsEmpty</c>, from the ECS.</summary>
         public bool HasChildren(Entity parent) => !Children(parent).IsEmpty;
 
         // ---- the spellbook's entries: 0xBF.1B's spells as the detached items FillSpellbook creates (graphic 0x1F2E, serial and
@@ -430,37 +399,23 @@ namespace ClassicUO.Game
     }
 
     /// <summary>
-    /// T2: a parent's children for a foreach (<see cref="WorldState.Children"/>): the ECS's (spell entries, then the contents'
-    /// serials looked up in World) or the World child list (walked as the old loops did: the next link is read after the
-    /// body). No allocation.
+    /// T2: a parent's children for a foreach (<see cref="WorldState.Children"/>): the ECS's spell entries, then the contents'
+    /// serials looked up in World. No allocation.
     /// </summary>
     internal readonly ref struct ChildList
     {
         private readonly World _world;
         private readonly ReadOnlySpan<Item> _spells;
         private readonly ReadOnlySpan<uint> _contents;
-        private readonly LinkedObject _head;
-        private readonly bool _ecs;
 
         public ChildList(World world, ReadOnlySpan<Item> spells, ReadOnlySpan<uint> contents)
         {
             _world = world;
             _spells = spells;
             _contents = contents;
-            _head = null;
-            _ecs = true;
         }
 
-        public ChildList(LinkedObject head)
-        {
-            _world = null;
-            _spells = default;
-            _contents = default;
-            _head = head;
-            _ecs = false;
-        }
-
-        public bool IsEmpty => _ecs ? _spells.IsEmpty && _contents.IsEmpty : _head == null;
+        public bool IsEmpty => _spells.IsEmpty && _contents.IsEmpty;
 
         public Enumerator GetEnumerator() => new Enumerator(this);
 
@@ -469,22 +424,14 @@ namespace ClassicUO.Game
             private readonly World _world;
             private readonly ReadOnlySpan<Item> _spells;
             private readonly ReadOnlySpan<uint> _contents;
-            private readonly LinkedObject _head;
-            private readonly bool _ecs;
             private int _index;
-            private LinkedObject _node;
-            private bool _started;
 
             public Enumerator(ChildList list)
             {
                 _world = list._world;
                 _spells = list._spells;
                 _contents = list._contents;
-                _head = list._head;
-                _ecs = list._ecs;
                 _index = 0;
-                _node = null;
-                _started = false;
                 Current = null;
             }
 
@@ -492,15 +439,6 @@ namespace ClassicUO.Game
 
             public bool MoveNext()
             {
-                if (!_ecs)
-                {
-                    _node = _started ? _node?.Next : _head;
-                    _started = true;
-                    Current = (Item)_node;
-
-                    return _node != null;
-                }
-
                 if (_index < _spells.Length)
                 {
                     Current = _spells[_index++];

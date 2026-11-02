@@ -2477,7 +2477,7 @@ namespace ClassicUO.Game
                     }
                 }
 
-                // T2: the entries, for the readers of the ECS's contents (ecs_read_contents), with the set they stand for
+                // T2: the entries, for the readers of the ECS contents, with the set they stand for
                 _world.State.SetSpellEntries(spellbook.Serial, spells0 | ((ulong)spells1 << 32), _spellEntries);
                 _spellEntries.Clear();
             }

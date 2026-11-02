@@ -359,7 +359,7 @@ namespace ClassicUO.Game.GameObjects
 
         public Item GetSecureTradeBox()
         {
-            // T2: the children from the ECS with ecs_read_contents on (WorldState.Children)
+            // T2: the children from the ECS (WorldState.Children)
             foreach (Item it in World.State.Children(this))
             {
                 if (it.Graphic == 0x1E5E && it.Layer == 0)

@@ -199,7 +199,7 @@ namespace ClassicUO.Game.UI.Gumps
             // and its arrival triggers a rebuild that fills the right "Abilities" page.
             World.OPL.Contains(LocalSerial);
 
-            // T2: the children from the ECS with ecs_read_contents on (WorldState.Children: the spell entries of 0xBF.1B's
+            // T2: the children from the ECS (WorldState.Children: the spell entries of 0xBF.1B's
             // set, then the items in the book)
             foreach (Item spell in World.State.Children(item))
             {

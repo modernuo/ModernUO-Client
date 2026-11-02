@@ -305,7 +305,7 @@ namespace ClassicUO.Game.GameObjects
             {
                 int minColor = 0xFFFF;
 
-                // T2: the children from the ECS with ecs_read_contents on (WorldState.Children)
+                // T2: the children from the ECS (WorldState.Children)
                 foreach (Item it in World.State.Children(this))
                 {
 
@@ -332,7 +332,7 @@ namespace ClassicUO.Game.GameObjects
             }
             else
             {
-                // T2: the children from the ECS with ecs_read_contents on (WorldState.Children)
+                // T2: the children from the ECS (WorldState.Children)
                 foreach (Item it in World.State.Children(this))
                 {
 
@@ -358,7 +358,7 @@ namespace ClassicUO.Game.GameObjects
 
         public Item GetItemByGraphic(ushort graphic, bool deepsearch = false)
         {
-            // T2: the children from the ECS with ecs_read_contents on (WorldState.Children)
+            // T2: the children from the ECS (WorldState.Children)
             foreach (Item item in World.State.Children(this))
             {
                 if (item.Graphic == graphic)
