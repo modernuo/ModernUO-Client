@@ -55,6 +55,9 @@ namespace ClassicUO.Game.Map
         // W4 (GameSceneGpuItemCache): the chunk's settled ground items' sprite instances; GpuItemsDirty = re-extract
         /// <summary>T6b: the items and mobiles per tile, sorted by key (null until the first one when maintained).</summary>
         public DynamicTileIndex Dynamic;
+        /// <summary>T6b part 3: the legacy list order of every object per tile, kept only under CUO_TILE_ORDER_CHECK with the
+        /// list dropped (<see cref="DynamicTileIndex.Shadow"/>); null otherwise.</summary>
+        internal ShadowTileList Shadow;
         public Scenes.GpuItemCache GpuItems;
         public bool GpuItemsDirty = true;
         // tiles holding a mobile, and a mobile the walk's max Z stops at (rebuilt with the masks); a mobile on a cached
@@ -366,9 +369,24 @@ namespace ClassicUO.Game.Map
             obj.TileSeq = ++TileOrder.NextSeq;
 
             // T6b: the dynamic index files the object by the key just stamped (at the same point in update order)
-            if (DynamicTileIndex.Maintain && DynamicTileIndex.Holds(obj))
+            if (DynamicTileIndex.Shadow)
+            {
+                // CUO_TILE_ORDER_CHECK with the list dropped: the legacy list order, every object (ShadowTileList)
+                (Shadow ??= new ShadowTileList()).Add(obj, obj.TileCell, priorityZ, state);
+            }
+
+            if ((DynamicTileIndex.Maintain || DynamicTileIndex.ListDropped) && DynamicTileIndex.Holds(obj))
             {
                 (Dynamic ??= new DynamicTileIndex()).Add(obj, obj.TileCell);
+
+                if (DynamicTileIndex.ListDropped)
+                {
+                    // T6b part 3: the dynamics live only in the index; the list (and its anchor) keeps land, statics, multis
+                    obj.TPrevious = null;
+                    obj.TNext = null;
+
+                    return;
+                }
             }
 
             if (Tiles[x, y] == null)
@@ -455,6 +473,12 @@ namespace ClassicUO.Game.Map
             uint now = Time.Ticks;
             bool retired = false;
 
+            if (DynamicTileIndex.ListDropped && Dynamic != null && Dynamic.Count > 0)
+            {
+                // T6b part 3: the list no longer reaches the items, mobiles and effects; tear down in the merged order
+                retired = TearDownMerged(recycler, now);
+            }
+
             for (int i = 0; i < 8; i++)
             {
                 for (int j = 0; j < 8; j++)
@@ -528,6 +552,7 @@ namespace ClassicUO.Game.Map
 
             IsDestroyed = true;
             Dynamic?.Clear();
+            Shadow?.Clear();
             GpuItems?.Reset();
             Array.Clear(GpuMobiles);
 
@@ -547,6 +572,68 @@ namespace ClassicUO.Game.Map
             Destroy();
         }
 
+        private static List<GameObject> s_teardown = new List<GameObject>();
+
+        /// <summary>
+        /// T6b part 3 (list dropped): Destroy's and ClearForReload's per-object teardown, tile by tile in the merged order (the
+        /// legacy list order: the list's land, statics and multis with the index's items, mobiles and effects), each object as the
+        /// list loop below treats it: destroyed (the player excepted, which only leaves), unlinked, off the chunk, and land and
+        /// statics retired to <paramref name="recycler"/> (null: no recycling, ClearForReload). Leaves every Tiles[x, y] null.
+        /// </summary>
+        private bool TearDownMerged(MapObjectRecycler recycler, uint now)
+        {
+            bool retired = false;
+            List<GameObject> objects = s_teardown ?? new List<GameObject>();
+            s_teardown = null; // re-entered (an object's Destroy tearing down another chunk): that call gets its own list
+
+            for (int i = 0; i < 8; i++)
+            {
+                for (int j = 0; j < 8; j++)
+                {
+                    int cell = i << 3 | j;
+
+                    if (Tiles[i, j] == null && Dynamic.CountAt(cell) == 0)
+                    {
+                        continue;
+                    }
+
+                    objects.Clear();
+
+                    for (GameObject o = TileWalk.BeginIndex(this, cell, out TileWalk walk); o != null; o = walk.Next())
+                    {
+                        objects.Add(o);
+                    }
+
+                    foreach (GameObject o in objects)
+                    {
+                        bool recycle = recycler != null && (o is Land || o is Static) && !o.IsDestroyed;
+
+                        if (!ReferenceEquals(o, _world.Player))
+                        {
+                            o.Destroy();
+                        }
+
+                        o.TPrevious = null;
+                        o.TNext = null;
+                        o.TileChunk = null;
+
+                        if (recycle)
+                        {
+                            recycler.Retire(o, now);
+                            retired = true;
+                        }
+                    }
+
+                    Tiles[i, j] = null;
+                }
+            }
+
+            objects.Clear();
+            s_teardown = objects;
+
+            return retired;
+        }
+
         /// <summary>
         /// Clears the chunk's tile objects for an in-place reload (UltimaLive block
         /// update) and marks the mesh dirty so it rebuilds — WITHOUT destroying or
@@ -560,6 +647,12 @@ namespace ClassicUO.Game.Map
         /// </summary>
         public void ClearForReload()
         {
+            if (DynamicTileIndex.ListDropped && Dynamic != null && Dynamic.Count > 0)
+            {
+                // T6b part 3: the list no longer reaches the dynamics (no recycling here, as below)
+                TearDownMerged(null, 0);
+            }
+
             for (int i = 0; i < 8; i++)
             {
                 for (int j = 0; j < 8; j++)
@@ -587,15 +680,16 @@ namespace ClassicUO.Game.Map
 
             Mesh.SoftClear();
             Dynamic?.Clear();
+            Shadow?.Clear();
             GpuItems?.Reset();
             Array.Clear(GpuMobiles);
         }
 
         public bool HasNoExternalData()
         {
-            // T6b part 2: dynamics (items, mobiles) are external data. They are also in the list today, so the list walk below
-            // finds them either way; once the list stops holding them this is the only place that sees them.
-            if (DynamicTileIndex.WalkOn && Dynamic != null && Dynamic.Count > 0)
+            // T6b part 2: dynamics (items, mobiles, effects) are external data. With the list kept the list walk below finds them
+            // too; with it dropped (part 3) this is the only place that sees them.
+            if (DynamicTileIndex.Merged && Dynamic != null && Dynamic.Count > 0)
             {
                 return false;
             }

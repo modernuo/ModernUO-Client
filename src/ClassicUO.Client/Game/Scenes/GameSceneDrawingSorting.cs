@@ -836,7 +836,7 @@ namespace ClassicUO.Game.Scenes
             // T6b (world_tile_index): a whole tile's walk reads the list's land, statics, multis and effects merged by key with
             // the tile's DynamicTileIndex array; the one-object walks (single: the callers pass stopAt = obj.TNext, which is
             // null for a tile's last object, so stopAt cannot mark them) start at obj and need no merge
-            obj = TileWalk.Start(obj, chunk, single, DynamicTileIndex.WalkOn, out TileWalk tileWalk, out bool merged);
+            obj = TileWalk.Start(obj, chunk, single, DynamicTileIndex.Merged, out TileWalk tileWalk, out bool merged);
 
             // stopAt: the walk ends there, not at the tile's end (the Gpu prepare's item cache serves a tile's items and
             // walks its mobiles one by one: stopAt = mobile.TNext, GameSceneGpuItemCache)

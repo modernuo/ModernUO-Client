@@ -814,6 +814,20 @@ namespace ClassicUO.Game.Map
             return anchor is Land ? anchor : chunk.GetHeadObject(cellX, cellY);
         }
 
+        /// <summary>
+        /// <see cref="ScanStart"/> for the tile readers: false when the tile is empty; else <paramref name="from"/> is the land
+        /// anchor, or null for "from the tile's head". T6b part 3: with the list dropped, a landless tile's list head is not the
+        /// tile's head (dynamics sorted before it live in the index), and a tile with only dynamics has no anchor at all, so the
+        /// reader is opened at its head instead of at a list object.
+        /// </summary>
+        internal static bool ScanFrom(Chunk chunk, int cellX, int cellY, out GameObject from)
+        {
+            GameObject anchor = chunk.Tiles[cellX, cellY];
+            from = anchor as Land;
+
+            return anchor != null || chunk.Dynamic != null && chunk.Dynamic.CountAt(cellX << 3 | cellY) > 0;
+        }
+
         /// <summary>GetMapZ's scan: the land's Z and the highest other Z on tile (cellX, cellY), from <see cref="ScanStart"/>.</summary>
         internal static void ScanMapZ(Chunk chunk, int cellX, int cellY, out sbyte groundZ, out sbyte staticZ)
         {
@@ -835,10 +849,10 @@ namespace ClassicUO.Game.Map
         internal static void ScanMapZ(Chunk chunk, int cellX, int cellY, bool merged, out sbyte groundZ, out sbyte staticZ)
         {
             groundZ = staticZ = 0;
-            GameObject start = ScanStart(chunk, cellX, cellY);
+            bool any = ScanFrom(chunk, cellX, cellY, out GameObject start);
             TileReader reader = default;
 
-            for (GameObject obj = start == null ? null : TileReader.Open(chunk, cellX << 3 | cellY, merged, start, out reader); obj != null; obj = reader.Next())
+            for (GameObject obj = !any ? null : TileReader.Open(chunk, cellX << 3 | cellY, merged, start, out reader); obj != null; obj = reader.Next())
             {
                 if (obj is Land)
                 {
@@ -923,10 +937,10 @@ namespace ClassicUO.Game.Map
 
         internal static GameObject FindNearRoof(Chunk chunk, int cellX, int cellY, int z, StaticTiles[] tiles, bool merged)
         {
-            GameObject start = ScanStart(chunk, cellX, cellY);
+            bool any = ScanFrom(chunk, cellX, cellY, out GameObject start);
             TileReader reader = default;
 
-            for (GameObject obj = start == null ? null : TileReader.Open(chunk, cellX << 3 | cellY, merged, start, out reader); obj != null; obj = reader.Next())
+            for (GameObject obj = !any ? null : TileReader.Open(chunk, cellX << 3 | cellY, merged, start, out reader); obj != null; obj = reader.Next())
             {
                 if (!(obj is Static) && !(obj is Multi))
                 {
