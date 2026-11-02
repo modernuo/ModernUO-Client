@@ -18,7 +18,7 @@ namespace ClassicUO.Renderer.Gumps
     {
         private readonly TextureAtlas _atlas;
         private readonly SpriteInfo[] _spriteInfos;
-        private readonly PixelPicker _picker = new PixelPicker();
+        private readonly PixelPicker _picker;
         private readonly GumpsLoader _gumpsLoader;
         private readonly FirstSightDecoder _decoder;
 
@@ -39,6 +39,7 @@ namespace ClassicUO.Renderer.Gumps
             _gumpsLoader = gumpsLoader;
             _atlas = new TextureAtlas(device, 4096, 4096, SurfaceFormat.Color);
             _spriteInfos = new SpriteInfo[gumpsLoader.Count];
+            _picker = new PixelPicker(_spriteInfos.Length);
             _decoder = new FirstSightDecoder("gump", _spriteInfos.Length, DecodeOnWorker, UploadDecoded);
         }
 
