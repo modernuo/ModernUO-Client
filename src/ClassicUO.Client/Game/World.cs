@@ -646,6 +646,29 @@ namespace ClassicUO.Game
         /// <summary>T6c: Mobile.Update runs it instead of ProcessSteps while <see cref="WorldEcs.StepsEnabled"/>.</summary>
         internal readonly global::ClassicUO.Game.StepSystem StepSystem = new global::ClassicUO.Game.StepSystem();
 
+#if CUO_DEVTOOLS
+        // CLEANUP(release): the gate's override of the setting (CUO_ECS_STEP_MOUNT_INPUTS=1|0)
+        private static readonly bool? _envStepMountInputs = System.Environment.GetEnvironmentVariable("CUO_ECS_STEP_MOUNT_INPUTS") switch
+        {
+            "1" => true,
+            "0" => false,
+            _ => null
+        };
+#else
+        private static readonly bool? _envStepMountInputs = null;
+#endif
+
+        private static class StepMountInputsSwitch
+        {
+            public static readonly bool On = _envStepMountInputs ?? Settings.GlobalSettings.EcsStepMountInputs;
+        }
+
+        /// <summary>Tests: the switch for this World (null: the setting).</summary>
+        internal bool? StepMountInputsOverride;
+
+        /// <summary>T6c follow-up (<c>ecs_step_mount_inputs</c>): the step system takes the mounted pace from the ECS.</summary>
+        internal bool StepMountInputs => StepMountInputsOverride ?? StepMountInputsSwitch.On;
+
         private readonly List<Mobile> _dueObjects = new List<Mobile>();
         private static readonly System.Comparison<Mobile> s_byOrdinal = (a, b) => a.Ordinal.CompareTo(b.Ordinal);
 

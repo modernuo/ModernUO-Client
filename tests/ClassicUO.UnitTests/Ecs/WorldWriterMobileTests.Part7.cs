@@ -80,7 +80,7 @@ namespace ClassicUO.UnitTests.Ecs
             foreach (uint serial in new[] { MOB, OTHER })
             {
                 Mobile a = oldWorld.Mobiles.Get(serial), b = newWorld.Mobiles.Get(serial);
-                Pair(() => a.SpeedMode = CharacterSpeedType.FastUnmount, () => newWorld.Writer.SetSpeedMode(b, CharacterSpeedType.FastUnmount));
+                Pair(() => { a.SpeedMode = CharacterSpeedType.FastUnmount; oldWorld.Ecs.PushInputs(a); }, () => newWorld.Writer.SetSpeedMode(b, CharacterSpeedType.FastUnmount));
                 Pair(() => a.IsDead = true, () => newWorld.Writer.SetDead(b, true));
                 AssertSameWorld(oldWorld, newWorld);
                 Pair(() => a.IsDead = false, () => newWorld.Writer.SetDead(b, false));
@@ -123,7 +123,7 @@ namespace ClassicUO.UnitTests.Ecs
                 AssertSameWorld(oldWorld, newWorld);
             }
 
-            Pair(() => a.SpeedMode = CharacterSpeedType.CantRun, () => newWorld.Writer.SetSpeedMode(b, CharacterSpeedType.CantRun));
+            Pair(() => { a.SpeedMode = CharacterSpeedType.CantRun; oldWorld.Ecs.PushInputs(a); }, () => newWorld.Writer.SetSpeedMode(b, CharacterSpeedType.CantRun));
             Pair(() => a.Name = "Avatar", () => newWorld.Writer.SetName(b, "Avatar"));
             AssertSameWorld(oldWorld, newWorld);
             newWorld.Writer.Violations.Should().Be(0);

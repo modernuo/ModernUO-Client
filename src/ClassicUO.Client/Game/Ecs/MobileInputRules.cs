@@ -21,6 +21,7 @@ namespace ClassicUO.Game
         public bool HasSteps, StepRun;
         public byte StepDirection;
         public uint LastStepTime;
+        public byte SpeedMode;
     }
 
     /// <summary>
@@ -104,6 +105,7 @@ namespace ClassicUO.Game
             o.HueBits = hue;
             o.LastStepTime = src.LastStepTime;
             o.WalkingDelay = (uint)(src.PlayerType ? Constants.PLAYER_WALKING_DELAY : Constants.WALKING_DELAY);
+            o.SpeedMode = src.SpeedMode;
             o.Pushes++;
         }
 
@@ -124,7 +126,8 @@ namespace ClassicUO.Game
                 Notoriety = m.NotorietyFlag,
                 Direction = (byte)m.Direction,
                 HasSteps = m.Steps.Count != 0,
-                LastStepTime = m.LastStepTime
+                LastStepTime = m.LastStepTime,
+                SpeedMode = (byte)m.SpeedMode
             };
 
             if (src.HasSteps)
