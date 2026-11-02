@@ -280,6 +280,25 @@ namespace ClassicUO.Renderer.Gumps
             _picker.SetTrimmed(idx, width, height, 0, 0, width, height, pixels);
         }
 
+        /// <summary>
+        /// GetGump's take of gump <paramref name="idx"/>'s finished worker decode (FirstSightDecoder.TryTakeReady): only that
+        /// one is uploaded; other finished decodes wait for <see cref="DrainReady"/>'s per-frame budget. Gumps have no frame
+        /// allowance; the upload time is charged to <see cref="FrameUploadTicks"/>, as DrainReady does. Main thread.
+        /// </summary>
+        public static bool TakeReady(FirstSightDecoder decoder, uint idx)
+        {
+            long drained = decoder.DrainTicks;
+
+            if (!decoder.TryTakeReady(idx))
+            {
+                return false;
+            }
+
+            FrameUploadTicks += decoder.DrainTicks - drained;
+
+            return true;
+        }
+
         public ref readonly SpriteInfo GetGump(uint idx)
         {
             if (idx >= _spriteInfos.Length)
@@ -290,11 +309,8 @@ namespace ClassicUO.Renderer.Gumps
             if (spriteInfo.Texture == null && _decoder.IsRequested(idx))
             {
                 // a worker is on it (a prefetch that timed out, a request): take its result if it has finished instead
-                // of decoding the same gump again (Drain uploads one finished job per call)
-                while (spriteInfo.Texture == null && _decoder.IsRequested(idx) && _decoder.HasReady)
-                {
-                    _decoder.Drain(0);
-                }
+                // of decoding the same gump again
+                TakeReady(_decoder, idx);
             }
 
             if (spriteInfo.Texture == null)

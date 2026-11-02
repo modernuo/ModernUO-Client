@@ -175,6 +175,98 @@ namespace ClassicUO.UnitTests.Renderer
         }
     }
 
+    // perf-7: Gump.GetGump takes only the gump it needs (Gump.TakeReady over FirstSightDecoder.TryTakeReady) instead of
+    // draining the whole ready queue to reach it; the other finished decodes stay for DrainReady and are uploaded once there.
+    public class GumpReadyTakeTests
+    {
+        private static bool Fill(FirstSightDecoder.Job job)
+        {
+            job.Width = 2;
+            job.Height = 2;
+            job.Pixels = ArrayPool<uint>.Shared.Rent(4);
+
+            return true;
+        }
+
+        // as Gump's decoder: no byte counting (bytesOf null); the test runs each decode when it wants it finished
+        private static (FirstSightDecoder Decoder, List<IThreadPoolWorkItem> Started, List<uint> Uploads) Make(Action<uint> onUpload = null)
+        {
+            var started = new List<IThreadPoolWorkItem>();
+            var uploads = new List<uint>();
+            var d = new FirstSightDecoder("gump", 64, Fill, j =>
+            {
+                uploads.Add(j.Index);
+                onUpload?.Invoke(j.Index);
+            }, null, new DecodeBudget(1L << 20, started.Add));
+
+            return (d, started, uploads);
+        }
+
+        [Fact]
+        public void GetGump_Takes_Only_Its_Gump_And_The_Others_Are_Drained_Later()
+        {
+            var (d, started, uploads) = Make();
+            d.Request(3);
+            d.Request(5);
+            d.Request(6);
+
+            foreach (IThreadPoolWorkItem w in started)
+            {
+                w.Execute();
+            }
+
+            // the needed gump (5) is behind 3 in the ready queue: the old loop uploaded 3 to reach it
+            ClassicUO.Renderer.Gumps.Gump.TakeReady(d, 5).Should().BeTrue();
+
+            uploads.Should().Equal(new uint[] { 5 }, "only the gump GetGump needs");
+            d.IsRequested(5).Should().BeFalse();
+            d.IsRequested(3).Should().BeTrue("3 and 6 wait for the normal drain");
+            d.IsRequested(6).Should().BeTrue();
+            d.HasReady.Should().BeTrue();
+
+            d.Drain(long.MaxValue);
+
+            uploads.Should().Equal(new uint[] { 5, 3, 6 }, "the drain uploads the others once, and not 5 again");
+            d.Pending.Should().Be(0);
+            d.Completed.Should().Be(3);
+            d.HasReady.Should().BeFalse();
+        }
+
+        [Fact]
+        public void GetGump_Does_Not_Take_Or_Drain_When_Its_Gump_Is_Not_Finished()
+        {
+            var (d, started, uploads) = Make();
+            d.Request(3);
+            d.Request(5);
+            started[0].Execute(); // 3 finished, 5 still running
+
+            ClassicUO.Renderer.Gumps.Gump.TakeReady(d, 5).Should().BeFalse("GetGump decodes 5 on the spot, as before");
+            uploads.Should().BeEmpty("3 is not uploaded by GetGump");
+            d.IsRequested(3).Should().BeTrue();
+
+            d.Drain(long.MaxValue);
+            uploads.Should().Equal(3u);
+        }
+
+        [Fact]
+        public void A_Take_Charges_The_Gump_Upload_Time()
+        {
+            long uploadTicks = System.Diagnostics.Stopwatch.Frequency / 500; // 2 ms
+            var (d, started, _) = Make(_ =>
+            {
+                long end = System.Diagnostics.Stopwatch.GetTimestamp() + uploadTicks;
+                while (System.Diagnostics.Stopwatch.GetTimestamp() < end) { }
+            });
+            d.Request(5);
+            started[0].Execute();
+            long before = ClassicUO.Renderer.Gumps.Gump.FrameUploadTicks;
+
+            ClassicUO.Renderer.Gumps.Gump.TakeReady(d, 5).Should().BeTrue();
+
+            (ClassicUO.Renderer.Gumps.Gump.FrameUploadTicks - before).Should().BeGreaterThanOrEqualTo(uploadTicks);
+        }
+    }
+
     // perf-5: art missing from the pack gets the placeholder (Get(0)); the miss is remembered per id, so it is logged
     // once instead of every frame.
     [Collection("ArtStatics")]
