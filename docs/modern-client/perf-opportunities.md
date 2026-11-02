@@ -206,3 +206,8 @@ Today the client parses incoming packets in place (`StackDataReader` over fixed 
 - a long soak run, and the gate scripts on all clients.
 
 **Smaller, low priority:** an audit of the handlers that allocate strings (names, speech, cliloc arguments) with per-handler byte counts from the E2 bench, caching where the text repeats.
+
+## Found during tile-index profiling (2026-11-02)
+
+- **`TileWalk.First` / `Chunk.GetHeadObject` walk the `TPrevious` chain from the anchor to the list head for every tile** (DynamicTileIndex.cs `First`; Chunk.cs:240). This is 7–8 % of the Legacy britain_z samples even with `world_tile_index` off. A per-tile head, or keeping the anchor at the head, could remove most of it. Source: tile-index-prof (bench-000212). Not measured.
+- **`Dictionary<UInt64,Int32>.FindValue` is 1.8 % of the Legacy britain_z samples in both arms.** The caller isn't traced yet; it may be a per-frame lookup that an array could replace. Source: tile-index-prof (bench-000212).

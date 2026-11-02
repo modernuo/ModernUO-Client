@@ -5008,3 +5008,25 @@ Paired NativeAOT builds (`CuoDevTools=true`, checkers off), all on the quiet mac
 - **Tip off to all switches on:** Gpu is neutral, except brwalk world_prepare p95, +40 %. On Legacy, world_prepare p50 is +57–75 % at Britain, bank and brwalk, and frame p50 is +27 % (bank) and +34 % (Britain) at zoom 2.5. The large scene is +8 %.
 - **Isolation (bench-000208):** `world_tile_index` alone gives Legacy world_prepare +44–45 % at every spot and frame +24 % at Britain zoom 2.5, plus Gpu brwalk world_prepare p95 +29 %. The other 7 switches (`ecs_owns_scalars`, `world_anim_system`, `world_item_anim_system`, `world_sweep_system`, `world_active_items_system`, `world_step_system`, `ecs_effects`) are within spread on both renderers.
 - **Consequence:** the 7 switches have met the timing condition for a default flip. `world_tile_index` has not: the Legacy prepare walk with the merged dynamic index needs profiling first. Expected suspects are the per-tile merge in the Legacy `AddTileToRenderList` walk and the item cache.
+
+### Seven ECS switches on by default (coordinator, 2026-11-02)
+
+- Merged `bg/ecs-flip-7` (a6a56e3da, merge 179a773e9). These now default to on: `ecs_owns_scalars`, `world_anim_system`, `world_item_anim_system`, `world_sweep_system`, `world_active_items_system`, `world_step_system`, `ecs_effects`. They were timing-neutral in the quiet-machine series (bench-000206/207/208). `world_tile_index` stays off until its regression is fixed and re-timed.
+- Gates, with every checker on: off (the 7 forced off) bench-000215 PASS; on (new defaults) bench-000216 PASS; plans bench-000217 PASS.
+- Shots bench-000218: Britain and zoom-out are identical or within the A/A controls. Bank and house differ only by NPCs, plus a faint hatching on Legacy stretched terrain. The large scene differs by 74 %.
+  - The cross-session A/A control bench-000220 (both sessions off) shows the same hatching (0.53 %) and the same large-scene difference (72–74 %). Off and on run as separate sessions, so both are session differences (light, NPC positions), not the flip.
+  - Its FAIL line is a harness artefact: the bench driver masks the test password in kept logs with `line.replace(pw, '***')`, which also overwrote part of a counter value. The driver should mask whole tokens only.
+- Unit tests: 2,854 passed, 6 skipped, in both CuoDevTools variants.
+
+### world_tile_index regression: cause and fix (tile-index-prof, 2026-11-02)
+
+- **Cause:** with the switch on, every whole-tile walk went through the dynamic-index merge, even for tiles with no dynamics (most tiles). That costs about 13 ns per walked tile, on both renderers.
+  - Evidence: prep_detail bench-000211, where all the growth is in walk_land and walk_static; and the sampled profile bench-000212, where `TileWalk.Next`, `IsInstanceOfClass` from `SkipDynamic`/`Holds`, and `BeginIndex` are new hot functions.
+  - Gpu pays the same per-tile cost but walks far fewer tiles. Its walking p95 regression comes from mask-rebuild re-walks, as the owner suspected.
+- **Fix A (708a3e259):** `TileWalk.Start` takes the plain list walk when the tile's index cell is empty.
+  - Legacy world_prepare: +44–45 % → +3–6 % vs off (bench-000213).
+  - Gpu brwalk world_prepare p95: +36 % → +6 % (bench-000214).
+  - These runs shared the machine with builds; quiet re-timing is pending.
+  - Codex gpt-6.1-sol medium: no findings (`cuo-poc-state/audits/tile-index-fix-a/out.md`).
+  - Change B (skip `SkipDynamic` type checks) showed no gain (bench-000219) and is not taken.
+- Scripts and results: `cuo-poc-state/measure/tile-index-prof/`.
