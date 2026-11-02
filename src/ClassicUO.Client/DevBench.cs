@@ -53,7 +53,7 @@ namespace ClassicUO
     //   pickscan:CxR hovers a C x R grid of the game view and compares the selection with that skipping off and on;
     //   pickscan:CxR:world_tile_index compares it with the T6b merged walk off and on instead (both renderers; needs the index
     //   maintained: CUO_WORLD_TILE_INDEX=0|1 or CUO_TILE_ORDER_CHECK); pickscan:CxR:legacy_ecs_sprites compares the T7b Legacy
-    //   sink off and on (Legacy only); cot:on|off
+    //   sink off and on (Legacy only); legacysprites:on|off|setting overrides legacy_ecs_sprites; cot:on|off
     //   switches the circle of transparency
     //   name:reinit drops the GPU world pass every 2 s (recreated next frame, as on a facet change); name:reinitrt also drops
     //   the world render target (as at login). Each plan entry logs the world settle counters (WorldSettleGate) when it ends.
@@ -1948,6 +1948,18 @@ namespace ClassicUO
                         _scanSame = _scanDiff = _scanEmpty = 0;
                         Log.Info($"[bench-scan] {_plan[_planIndex]} at {world.Player.X},{world.Player.Y},{world.Player.Z} zoom {gs.Camera.Zoom:0.0}");
                         _planIndex++;
+
+                        break;
+                    }
+
+                    if (_plan[_planIndex].StartsWith("legacysprites:"))
+                    {
+                        // T7b: the Legacy sink (legacy_ecs_sprites) on, off, or back to the setting, for shots of both in one session
+                        string v = _plan[_planIndex].Substring(14);
+                        Game.Scenes.LegacySpriteSink.Override = v == "on" ? true : v == "off" ? false : null;
+                        Log.Info($"[bench] legacy_ecs_sprites override {v}");
+                        _planIndex++;
+                        _stepAt = now + sec;
 
                         break;
                     }
