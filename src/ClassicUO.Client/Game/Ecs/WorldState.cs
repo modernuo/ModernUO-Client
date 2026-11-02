@@ -286,6 +286,50 @@ namespace ClassicUO.Game
         /// <summary>T2: <c>!parent.IsEmpty</c>, from the ECS.</summary>
         public bool HasChildren(Entity parent) => !Children(parent).IsEmpty;
 
+        /// <summary>T9 child-list slice A: the parent's first child (<c>parent.Items</c>), from the ECS; null when none.</summary>
+        public Item FirstChild(Entity parent)
+        {
+            foreach (Item it in Children(parent))
+            {
+                return it;
+            }
+
+            return null;
+        }
+
+        // ---- T9 child-list slice A: walks that change the contents they walk (the destroy cascades, the funnel's clears,
+        // the re-key) copy the parent's Contents here first; each removal or detach changes the mirror's span. A stack, so
+        // nested walks (a cascade's recursion, a removal inside a clear) each keep their own copy; a span handed out stays
+        // valid when a nested copy grows the array (it keeps the old one). No allocation once the stack has grown.
+        private uint[] _snapshots = new uint[64];
+        private int _snapshotTop;
+
+        /// <summary>
+        /// T9 slice A: a copy of <see cref="Contents"/> (checked like it under <c>CUO_CONTENTS_CHECK</c>), for a walk that
+        /// changes the parent's contents. Dispose it (a <c>using</c>) in reverse order of taking.
+        /// </summary>
+        public ContentsSnapshot SnapshotContents(uint parent)
+        {
+            ReadOnlySpan<uint> contents = Contents(parent);
+            int start = _snapshotTop;
+            int end = start + contents.Length;
+
+            if (end > _snapshots.Length)
+            {
+                Array.Resize(ref _snapshots, Math.Max(end, _snapshots.Length * 2));
+            }
+
+            contents.CopyTo(_snapshots.AsSpan(start));
+            _snapshotTop = end;
+
+            return new ContentsSnapshot(this, start, new ReadOnlySpan<uint>(_snapshots, start, contents.Length));
+        }
+
+        internal void ReleaseSnapshot(int start) => _snapshotTop = start;
+
+        /// <summary>Tests: the snapshot stack's depth (0 when every snapshot was released).</summary>
+        internal int SnapshotDepth => _snapshotTop;
+
         // ---- the spellbook's entries: 0xBF.1B's spells as the detached items FillSpellbook creates (graphic 0x1F2E, serial and
         // amount = the spell number). The spell set is ECS state (SpellbookContent); the entries are its materialisation,
         // handed over by FillSpellbook with the set they stand for, and valid only while the mirror's set is that set (a
@@ -396,6 +440,24 @@ namespace ClassicUO.Game
             _spellEntries.Clear();
             _spellEntries.TrimExcess();
         }
+    }
+
+    /// <summary>T9 slice A: a parent's child serials copied before a walk that changes them (<see cref="WorldState.SnapshotContents"/>).</summary>
+    internal readonly ref struct ContentsSnapshot
+    {
+        private readonly WorldState _state;
+        private readonly int _start;
+
+        public ContentsSnapshot(WorldState state, int start, ReadOnlySpan<uint> serials)
+        {
+            _state = state;
+            _start = start;
+            Serials = serials;
+        }
+
+        public ReadOnlySpan<uint> Serials { get; }
+
+        public void Dispose() => _state?.ReleaseSnapshot(_start);
     }
 
     /// <summary>
