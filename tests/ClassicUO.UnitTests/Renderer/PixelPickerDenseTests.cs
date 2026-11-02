@@ -65,10 +65,8 @@ namespace ClassicUO.UnitTests.Renderer
                     {
                         for (int x = 0; x < w; x += 3)
                         {
-                            // the run walk stops on a run's first texel and reports it transparent (so pixel 0, 0 and
-                            // the first texel of every opaque run never hit): a hit is an opaque texel after an opaque one
                             int i = y * w + x;
-                            bool expected = i > 0 && px[i] != 0 && px[i - 1] != 0;
+                            bool expected = px[i] != 0;
                             picker.Get(id, x, y).Should().Be(expected, $"id {id} at {x},{y} round {round}");
                         }
                     }
