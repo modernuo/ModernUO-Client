@@ -350,18 +350,28 @@ namespace ClassicUO.Game.Scenes
                 result += DrawMeshLayer(batcher, chunk.Mesh.Statics);
             batcher.ResetWorldOffset();
 
-            // Draw excluded statics + animations + effects
-            result += DrawRenderList(batcher, _statics, maxGroundZ) +
-                   DrawRenderList(batcher, _animations, maxGroundZ) +
-                   DrawRenderList(batcher, _effects, maxGroundZ);
+            // Draw excluded statics + animations + effects. T7b (legacy_ecs_sprites): mobiles and items through the sink, at
+            // the same list position (LegacySpriteSink); effects stay on their views
+            LegacySpriteSink.BeginFrame();
 
-            if (_transparentObjects.Count > 0 || _gumpSprites.Count > 0 || _gumpTexts.Count > 0)
+            try
             {
-                //batcher.SetStencil(DepthStencilState.DepthRead);
-                result += DrawRenderList(batcher, _transparentObjects, maxGroundZ);
-                result += DrawRenderListWithAtlas(batcher, _gumpSprites);
-                result += DrawRenderListNoAtlas(batcher, _gumpTexts);
-                //batcher.SetStencil(null);
+                result += DrawWorldRenderList(batcher, _statics, maxGroundZ) +
+                       DrawWorldRenderList(batcher, _animations, maxGroundZ) +
+                       DrawRenderList(batcher, _effects, maxGroundZ);
+
+                if (_transparentObjects.Count > 0 || _gumpSprites.Count > 0 || _gumpTexts.Count > 0)
+                {
+                    //batcher.SetStencil(DepthStencilState.DepthRead);
+                    result += DrawWorldRenderList(batcher, _transparentObjects, maxGroundZ);
+                    result += DrawRenderListWithAtlas(batcher, _gumpSprites);
+                    result += DrawRenderListNoAtlas(batcher, _gumpTexts);
+                    //batcher.SetStencil(null);
+                }
+            }
+            finally
+            {
+                LegacySpriteSink.EndFrame();
             }
 
             return result;
@@ -606,6 +616,27 @@ namespace ClassicUO.Game.Scenes
                     {
                         done++;
                     }
+                }
+            }
+
+            return done;
+        }
+
+        // the Legacy world's lists: DrawRenderList with mobiles and items through LegacySpriteSink while it routes them
+        private static int DrawWorldRenderList(UltimaBatcher2D batcher, List<GameObject> renderList, sbyte maxGroundZ)
+        {
+            if (!LegacySpriteSink.Routes)
+            {
+                return DrawRenderList(batcher, renderList, maxGroundZ);
+            }
+
+            int done = 0;
+
+            foreach (var obj in renderList)
+            {
+                if (obj.Z <= maxGroundZ && LegacySpriteSink.Draw(batcher, obj, obj.CalculateDepthZ()))
+                {
+                    done++;
                 }
             }
 

@@ -17,7 +17,7 @@ namespace ClassicUO.UnitTests.Ecs
     // extract wrote before the split, bit for bit (golden: the pre-split WriteFrame and art code below, verbatim but for the
     // tables argument), and Emit must equal resolve(select). In the client, CUO_ECS_PARITY diffs the extract against the
     // view capture and the shots job compares base and new frames.
-    public class DynamicSpriteTests
+    public partial class DynamicSpriteTests
     {
         private const int HUE_COUNT = 3000;
         private const int ANIM_PAGE_BASE = 40;
