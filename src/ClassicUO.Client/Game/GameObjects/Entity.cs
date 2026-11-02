@@ -259,13 +259,6 @@ namespace ClassicUO.Game.GameObjects
 
                 UIManager.Add(new NameOverheadGump(World, this));
             }
-
-
-            // kept for world_update_active_items off (the old per-frame loop); idempotent with the setters
-            if (_hitsMax > 0 && !Configuration.Settings.GlobalSettings.WorldUpdateActiveItems)
-            {
-                RefreshHitsPercentage();
-            }
         }
 
         /// <summary>The per-frame rule Entity.Update applied: for HitsMax &gt; 0, the clamped percentage of Hits.</summary>
