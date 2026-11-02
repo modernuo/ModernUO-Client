@@ -257,6 +257,7 @@ namespace ClassicUO.Game
         {
             _spellEntries.Clear();
             _spellEntries.TrimExcess();
+            ClearLayerTables();
         }
     }
 
