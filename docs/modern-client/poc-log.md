@@ -5323,7 +5323,7 @@ Paired NativeAOT builds (`CuoDevTools=true`, checkers off), all on the quiet mac
 
 ### PixelPicker first pixel fixed (coordinator, 2026-11-02)
 
-- Owner decision (owner-review question 1): fix it. Merge on `bg/picker-first-pixel` (6f20f3acd).
+- Owner decision (owner-review question 1): fix it. Merge c387aa40e (6f20f3acd).
 - Root cause: `PixelPicker.Get`'s run walk was `while (current < target)`, so a target on a run boundary never read the run starting there. Pixel 0,0 and the first pixel of every opaque run never hit; this was inherited from ClassicUO. It is now `<=`; every other pixel takes the same path.
 - Visible change: one more pickable pixel per opaque run at sprite edges; 1-px vertical lines can be picked.
 - Tests: 36 new cases, every pixel of 39 images across all picker sources, both run writers; all failed before the fix. Unit tests 3,076 passed, 6 skipped. Gates Gpu bench-000305, Legacy bench-000306 PASS.
