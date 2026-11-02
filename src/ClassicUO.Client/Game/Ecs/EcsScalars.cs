@@ -23,7 +23,7 @@ namespace ClassicUO.Game
     /// </summary>
     internal static class EcsScalars
     {
-        /// <summary>The switch, read once (the first entity read after the settings load); default off.</summary>
+        /// <summary>The switch, read once (the first entity read after the settings load); default on.</summary>
         public static readonly bool Owns = Initial();
 
         private static bool Initial()
@@ -36,7 +36,7 @@ namespace ClassicUO.Game
                 case "0": return false;
             }
 #endif
-            return Configuration.Settings.GlobalSettings?.EcsOwnsScalars ?? false;
+            return Configuration.Settings.GlobalSettings?.EcsOwnsScalars ?? true;
         }
 
         // The record reads. An absent optional component is the GameObject default (null, 0), as the funnel adds each only

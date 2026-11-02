@@ -333,12 +333,21 @@ namespace ClassicUO.UnitTests.Game.Map
         [Fact]
         public void Effects_Are_Held_Only_With_The_T8_Switch()
         {
-            FixedEffect fx = NewEffect();
-            Assert.False(DynamicTileIndex.Holds(fx));
-            DynamicTileIndex.EffectsHeld = true;
-            Assert.True(DynamicTileIndex.Holds(fx));
-            Assert.True(DynamicTileIndex.Holds(NewItem(Plain, 0)));
-            Assert.False(DynamicTileIndex.Holds(NewStatic(Plain, 0)));
+            bool held = DynamicTileIndex.EffectsHeld;
+            try
+            {
+                FixedEffect fx = NewEffect();
+                DynamicTileIndex.EffectsHeld = false;
+                Assert.False(DynamicTileIndex.Holds(fx));
+                DynamicTileIndex.EffectsHeld = true;
+                Assert.True(DynamicTileIndex.Holds(fx));
+                Assert.True(DynamicTileIndex.Holds(NewItem(Plain, 0)));
+                Assert.False(DynamicTileIndex.Holds(NewStatic(Plain, 0)));
+            }
+            finally
+            {
+                DynamicTileIndex.EffectsHeld = held;
+            }
         }
 
         [Theory]
