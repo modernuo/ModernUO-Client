@@ -360,7 +360,7 @@ namespace ClassicUO.Game.Scenes
             ulong walk = 0, full = 0, mobiles = 0, mobileStops = 0, effects = 0;
             int minZ = int.MaxValue, maxZ = int.MinValue, halfW = 22, height = 44;
             int mobileCount = 0;
-            bool mergedWalk = DynamicTileIndex.WalkOn;
+            bool mergedWalk = DynamicTileIndex.Merged;
 
             for (int x = 0; x < 8; x++)
             {

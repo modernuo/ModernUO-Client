@@ -775,7 +775,8 @@ namespace ClassicUO.Game.Scenes
                                 GpuExpectCachedTile(chunk, x << 3 | y);
                             }
 
-                            var firstObj = chunk.GetHeadObject(x, y);
+                            // T6b part 3: a tile holding only dynamics has no list head once the list drops them
+                            var firstObj = ClassicUO.Game.Map.TileWalk.First(chunk, x, y);
                             if (firstObj == null || firstObj.IsDestroyed)
                                 continue;
 
@@ -1094,6 +1095,8 @@ namespace ClassicUO.Game.Scenes
                     int cellX = gobj.X % 8;
                     int cellY = gobj.Y % 8;
 
+                    // the tile's anchor: its land, or on a landless tile a list object. T6b part 3 (list dropped): never an item,
+                    // mobile or effect, so a tile holding only dynamics has none and the selected object's own position is used
                     GameObject o = _world.Map.GetChunk(gobj.X, gobj.Y)?.Tiles[cellX, cellY];
 
                     if (o != null)
