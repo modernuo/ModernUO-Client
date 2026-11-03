@@ -20,6 +20,10 @@ namespace ModernUO.Studio.Panels
         private int _maxZ = 127;
         private List<MultiInfo> _order;
         private (int, bool, int) _orderFor;
+        private readonly List<int> _rows = new();
+        private readonly Dictionary<int, Composite> _composites = new();
+        private float _thumb = 96f;
+        private bool _fitPending;
 
         public MultiBrowser(StudioContext context) : base(context, false)
         {
@@ -35,6 +39,7 @@ namespace ModernUO.Studio.Panels
             _selected = -1;
             _components = null;
             _order = null;
+            _composites.Clear();
         }
 
         public override void SelectById(int id)
@@ -44,6 +49,8 @@ namespace ModernUO.Studio.Panels
                 _selected = id;
                 _components = Context.Assets.Files.Multis.GetMultis((uint)id);
                 _pan = Vector2.Zero;
+                _maxZ = 127;
+                _fitPending = true;
             }
         }
 
@@ -63,27 +70,48 @@ namespace ModernUO.Studio.Panels
                 Rebuild(multis);
             }
 
-            if (ImGui.BeginChild("list", new Vector2(200f, 0), ImGuiChildFlags.Borders))
+            if (ImGui.BeginChild("list", new Vector2(_thumb + 170f, 0), ImGuiChildFlags.Borders))
             {
                 ImGui.SetNextItemWidth(-1f);
-                ImGui.InputTextWithHint("##filter", "multi id", ref _filter, 16);
-                bool byId = Widgets.TryParseId(_filter, out int filterId);
 
-                foreach (var (id, count) in _multis)
+                if (ImGui.InputTextWithHint("##filter", "multi id", ref _filter, 16))
                 {
-                    if (byId && _filter.Length > 0 && id != filterId)
+                    FilterRows();
+                }
+
+                ImGui.SetNextItemWidth(-1f);
+                ImGui.SliderFloat("##thumb", ref _thumb, 48f, 240f, "thumb %.0f px");
+
+                if (ImGui.BeginChild("rows"))
+                {
+                    var draw = ImGui.GetWindowDrawList();
+                    ImGuiListClipper clipper = new();
+                    clipper.Begin(_rows.Count, Widgets.ThumbRowHeight(_thumb));
+
+                    while (clipper.Step())
                     {
-                        continue;
+                        for (int r = clipper.DisplayStart; r < clipper.DisplayEnd; r++)
+                        {
+                            var (id, count) = _multis[_rows[r]];
+                            var composite = GetComposite(multis, id);
+                            string size = composite == null ? $"{count} parts" : $"{composite.Tiles.X} x {composite.Tiles.Y}, {count} parts";
+
+                            if (Widgets.ThumbRow(id, id == _selected, _thumb, $"0x{id:X4}", size, out Vector2 thumbMin))
+                            {
+                                SelectById(id);
+                            }
+
+                            if (composite != null)
+                            {
+                                DrawComposite(draw, composite, thumbMin + new Vector2(2, 2), thumbMin + new Vector2(_thumb - 2, _thumb - 2));
+                            }
+                        }
                     }
 
-                    if (ImGui.Selectable($"0x{id:X4}  ({count})", id == _selected))
-                    {
-                        _selected = id;
-                        _components = multis.GetMultis((uint)id);
-                        _pan = Vector2.Zero;
-                        _maxZ = 127;
-                    }
+                    clipper.End();
                 }
+
+                ImGui.EndChild();
             }
 
             ImGui.EndChild();
@@ -118,6 +146,122 @@ namespace ModernUO.Studio.Panels
                     _multis.Add((id, list.Count));
                 }
             }
+
+            FilterRows();
+        }
+
+        private void FilterRows()
+        {
+            _rows.Clear();
+            bool byId = Widgets.TryParseId(_filter, out int filterId);
+
+            for (int i = 0; i < _multis.Count; i++)
+            {
+                if (!byId || _multis[i].Id == filterId)
+                {
+                    _rows.Add(i);
+                }
+            }
+        }
+
+        /// <summary>A multi's visible components in draw order and their pixel bounds, from the sprite index (no decode).</summary>
+        private sealed class Composite
+        {
+            public MultiInfo[] Order;
+            public Vector2 Min, Max;
+            public Point Tiles;
+        }
+
+        private struct Point
+        {
+            public int X, Y;
+        }
+
+        private Composite GetComposite(MultiLoader multis, int id)
+        {
+            if (_composites.TryGetValue(id, out var composite))
+            {
+                return composite;
+            }
+
+            var list = multis.GetMultis((uint)id);
+            var sprites = Context.Assets.Files.Arts.PackSpriteEntries;
+            var order = list.Where(c => c.IsVisible).OrderBy(c => c.X + c.Y).ThenBy(c => c.Z).ToArray();
+
+            if (order.Length == 0)
+            {
+                _composites[id] = null;
+
+                return null;
+            }
+
+            var min = new Vector2(float.MaxValue);
+            var max = new Vector2(float.MinValue);
+            int minX = int.MaxValue, maxX = int.MinValue, minY = int.MaxValue, maxY = int.MinValue;
+
+            foreach (var c in order)
+            {
+                int index = c.ID + ArtLoader.MAX_LAND_DATA_INDEX_COUNT;
+                int w = index < sprites.Length ? sprites[index].OrigW : 44;
+                int h = index < sprites.Length ? sprites[index].OrigH : 44;
+                Vector2 p = ComponentPos(c, w, h);
+                min = Vector2.Min(min, p);
+                max = Vector2.Max(max, p + new Vector2(w, h));
+                minX = Math.Min(minX, c.X);
+                maxX = Math.Max(maxX, c.X);
+                minY = Math.Min(minY, c.Y);
+                maxY = Math.Max(maxY, c.Y);
+            }
+
+            composite = new Composite
+            {
+                Order = order,
+                Min = min,
+                Max = max,
+                Tiles = new Point { X = maxX - minX + 1, Y = maxY - minY + 1 }
+            };
+            _composites[id] = composite;
+
+            return composite;
+        }
+
+        // (sx, sy) is the top corner of the component's 44x44 tile diamond; a static's bottom centre sits on its bottom
+        // corner, 44 px lower
+        private static Vector2 ComponentPos(in MultiInfo c, float w, float h)
+        {
+            float sx = (c.X - c.Y) * 22f;
+            float sy = (c.X + c.Y) * 22f - c.Z * 4f;
+
+            return new Vector2(sx - w * 0.5f, sy + 44f - h);
+        }
+
+        /// <summary>The whole multi scaled to fit [min, max]; components still decoding fill in on later frames.</summary>
+        private void DrawComposite(ImDrawListPtr draw, Composite composite, Vector2 min, Vector2 max)
+        {
+            Vector2 size = composite.Max - composite.Min;
+            Vector2 box = max - min;
+            float scale = MathF.Min(1f, MathF.Min(box.X / MathF.Max(1f, size.X), box.Y / MathF.Max(1f, size.Y)));
+            Vector2 origin = min + (box - size * scale) * 0.5f - composite.Min * scale;
+            var art = Context.Assets.Arts;
+
+            draw.PushClipRect(min, max, true);
+
+            foreach (var c in composite.Order)
+            {
+                if (!art.RequestArt(c.ID))
+                {
+                    continue;
+                }
+
+                SpriteInfo sprite = art.GetArt(c.ID);
+
+                if (sprite.Texture != null)
+                {
+                    Widgets.DrawSpriteAt(draw, Context.Renderer, sprite, origin + ComponentPos(c, sprite.UV.Width, sprite.UV.Height) * scale, scale);
+                }
+            }
+
+            draw.PopClipRect();
         }
 
         private void DrawMulti()
@@ -131,10 +275,9 @@ namespace ModernUO.Studio.Panels
             ImGui.SliderInt("max z", ref _maxZ, -128, 127);
             ImGui.SameLine();
 
-            if (ImGui.Button("Reset view"))
+            if (ImGui.Button("Fit"))
             {
-                _pan = Vector2.Zero;
-                _zoom = 1f;
+                _fitPending = true;
             }
 
             float tableHeight = 180f;
@@ -152,6 +295,15 @@ namespace ModernUO.Studio.Panels
             if (ImGui.IsItemHovered() && ImGui.GetIO().MouseWheel != 0)
             {
                 _zoom = Math.Clamp(_zoom * (ImGui.GetIO().MouseWheel > 0 ? 1.25f : 0.8f), 0.25f, 8f);
+            }
+
+            // a newly selected multi opens zoomed to fit and centred on its bounds
+            if (_fitPending && GetComposite(Context.Assets.Files.Multis, _selected) is { } fit)
+            {
+                _fitPending = false;
+                Vector2 extent = Vector2.Max(fit.Max - fit.Min, Vector2.One);
+                _zoom = Math.Clamp(MathF.Min(size.X / extent.X, size.Y / extent.Y) * 0.9f, 0.25f, 2f);
+                _pan = -(fit.Min + fit.Max) * 0.5f * _zoom;
             }
 
             Widgets.Checker(draw, min, min + size, 16f);
@@ -186,12 +338,7 @@ namespace ModernUO.Studio.Panels
                     continue;
                 }
 
-                // (sx, sy) is the top corner of the component's 44x44 tile diamond; a static's bottom centre sits on its
-                // bottom corner, 44 px lower
-                float sx = (c.X - c.Y) * 22f;
-                float sy = (c.X + c.Y) * 22f - c.Z * 4f;
-                var pos = new Vector2(sx - sprite.UV.Width * 0.5f, sy + 44f - sprite.UV.Height);
-                Widgets.DrawSpriteAt(draw, Context.Renderer, sprite, origin + pos * _zoom, _zoom);
+                Widgets.DrawSpriteAt(draw, Context.Renderer, sprite, origin + ComponentPos(c, sprite.UV.Width, sprite.UV.Height) * _zoom, _zoom);
             }
 
             draw.PopClipRect();

@@ -23,6 +23,8 @@ namespace ModernUO.Studio.Panels
         private int _frame;
         private float _zoom = 2f;
         private bool _showCenter = true;
+        private float _thumb = 64f;
+        private short[] _thumbActions; // per body: the action its thumbnail shows (-1 none, -2 not looked up yet)
 
         public AnimationBrowser(StudioContext context) : base(context, false)
         {
@@ -36,6 +38,7 @@ namespace ModernUO.Studio.Panels
         {
             _dirty = true;
             _body = -1;
+            _thumbActions = null;
         }
 
         protected override void DrawContent()
@@ -49,7 +52,7 @@ namespace ModernUO.Studio.Panels
                 return;
             }
 
-            if (ImGui.BeginChild("bodies", new Vector2(220f, 0), ImGuiChildFlags.Borders))
+            if (ImGui.BeginChild("bodies", new Vector2(_thumb + 200f, 0), ImGuiChildFlags.Borders))
             {
                 ImGui.SetNextItemWidth(-1f);
                 _dirty |= ImGui.InputTextWithHint("##filter", "body id or type", ref _filter, 32);
@@ -60,11 +63,16 @@ namespace ModernUO.Studio.Panels
                 }
 
                 ImGui.TextDisabled($"{_bodies.Count} bodies");
+                ImGui.SameLine();
+                ImGui.SetNextItemWidth(-1f);
+                ImGui.SliderFloat("##thumb", ref _thumb, 32f, 160f, "thumb %.0f px");
 
                 if (ImGui.BeginChild("list"))
                 {
+                    // only the visible rows ask for frames: a body never scrolled to is never decoded
+                    var draw = ImGui.GetWindowDrawList();
                     ImGuiListClipper clipper = new();
-                    clipper.Begin(_bodies.Count);
+                    clipper.Begin(_bodies.Count, Widgets.ThumbRowHeight(_thumb));
 
                     while (clipper.Step())
                     {
@@ -72,12 +80,14 @@ namespace ModernUO.Studio.Panels
                         {
                             int id = _bodies[r];
                             ref readonly var body = ref loader.GetBody((ushort)id);
-                            string alias = body.ActionCount == 0 && body.AliasBody != 0xFFFF ? $" -> 0x{body.AliasBody:X}" : "";
+                            string alias = body.ActionCount == 0 && body.AliasBody != 0xFFFF ? $"drawn as 0x{body.AliasBody:X}" : $"{body.ActionCount} actions";
 
-                            if (ImGui.Selectable($"0x{id:X4}  {body.Type}{alias}", id == _body))
+                            if (Widgets.ThumbRow(id, id == _body, _thumb, $"0x{id:X4}  {body.Type}", alias, out Vector2 thumbMin))
                             {
                                 SelectBody(loader, id);
                             }
+
+                            DrawThumbnail(draw, loader, id, thumbMin, thumbMin + new Vector2(_thumb, _thumb));
                         }
                     }
 
@@ -128,6 +138,65 @@ namespace ModernUO.Studio.Panels
 
                 _bodies.Add(id);
             }
+        }
+
+        /// <summary>Frame 0 of the body's first action, facing the view's direction.</summary>
+        private void DrawThumbnail(ImDrawListPtr draw, AnimationsLoader loader, int id, Vector2 min, Vector2 max)
+        {
+            int action = ThumbAction(loader, id);
+
+            if (action < 0)
+            {
+                return;
+            }
+
+            byte dir = (byte)_direction;
+            bool mirror = false;
+            Context.Assets.Animations.GetAnimDirection(ref dir, ref mirror);
+            Span<SpriteInfo> frames = Context.Assets.Animations.GetAnimationFrames((ushort)id, (byte)action, dir, out _, out _);
+
+            if (frames.IsEmpty)
+            {
+                return;
+            }
+
+            if (frames[0].Texture == null)
+            {
+                Widgets.Pending(draw, min, max);
+
+                return;
+            }
+
+            Widgets.DrawSprite(draw, Context.Renderer, frames[0], min + new Vector2(2, 2), max - new Vector2(2, 2), 2f, mirror);
+        }
+
+        private int ThumbAction(AnimationsLoader loader, int id)
+        {
+            if (_thumbActions == null || _thumbActions.Length != loader.BodyCount)
+            {
+                _thumbActions = new short[loader.BodyCount];
+                Array.Fill(_thumbActions, (short)-2);
+            }
+
+            if (_thumbActions[id] == -2)
+            {
+                // an alias body (Body.def) has no actions of its own: GetAnimationFrames draws the alias, so look there
+                ref readonly var body = ref loader.GetBody((ushort)id);
+                ushort source = body.ActionCount == 0 && body.AliasBody != 0xFFFF ? body.AliasBody : (ushort)id;
+                _thumbActions[id] = -1;
+
+                for (int a = 0; a < AnimationsLoader.MAX_ACTIONS; a++)
+                {
+                    if (loader.HasAction(source, a))
+                    {
+                        _thumbActions[id] = (short)a;
+
+                        break;
+                    }
+                }
+            }
+
+            return _thumbActions[id];
         }
 
         public override void SelectById(int id)
