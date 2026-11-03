@@ -34,6 +34,15 @@ The map draws with the client's GPU world renderer (`poc/Uo.Render`) on FNA3D's 
 | Map | A facet drawn by the client's GPU world renderer: drag or arrow keys to pan, wheel or +/- to zoom about the cursor, go to x y, facet switch, max z, roof hiding, tile grid; click picks a tile |
 | Tile Inspector | The picked tile's land and statics (highest first) with z, height and hue, each linked to its art and tiledata; hovering a static highlights it on the map |
 | Radar | A top-down overview of the facet from radarcol.bin, built on a worker; the map's view is outlined, and clicking or dragging moves the map |
+| Changes | Every map edit since the pack was opened, newest first, each linked to its tile; undo, redo, and Save as New Pack |
+
+## Editing the map
+
+The map's tool palette: Select (V), Place static (A, the static last picked in Art, on the ground or on top of the stack), Raise (R) and Lower (L) land by a step, Flatten (F, to the first tile's height), Paint land (P, the land tile last picked in Art) and Erase statics (X), with a brush of 1 to 17 tiles square (`[` and `]`). In the editing tools the left button paints and the middle button pans. The tile inspector edits the picked tile directly: land and static z up and down (Shift for 5), delete a static, paint the land with the Art brush.
+
+Each stroke or inspector action is one change: Ctrl+Z and Ctrl+Y (or Ctrl+Shift+Z) undo and redo from any panel, and the Edit menu names what they will undo. Edits stay in memory and are drawn live: the renderer reads edited regions from memory (`ChunkStore.RegionOverride` in `poc/Uo.Render`) and re-bakes the touched chunks (`ChunkStore.InvalidateBlocks`).
+
+The open pack is never written. File > Save as New Pack (Ctrl+Shift+S) makes a new pack folder: every file is hard-linked from the open pack (copied where links are not possible), the edited regions are rewritten (`RegionFile`, compressed like the converter's) and the manifest gets their new sizes and hashes. A folder under a published packs root is refused. `-selftest <dir>` with `-goto "x y"` runs the round trip (edit, undo, redo, save, read back) and logs `[selftest]` lines.
 
 View > Layout switches between the Browse workspace (browsers as tabs) and the Map workspace (the map in the centre, the tile inspector and radar on the right, art, tiledata, hues and multis as palettes on the left).
 
@@ -41,6 +50,6 @@ View > Layout switches between the Browse workspace (browsers as tabs) and the M
 
 1. Shell and asset viewers (done).
 2. Map viewer (done): Uo.Render used directly on FNA's SDL_GPU device; the client's `GpuWorldRenderer` stays in the client, since its job is the game objects Studio does not have.
-3. Map editing (CentrED): edits as operations with undo and redo; land draw, altitude raise/lower/smooth, static add/move/delete, random static brushes, area fill and copy; a new pack is written for the changed regions (published packs stay immutable).
+3. Map editing (CentrED). Done: the change set with undo and redo, place and erase statics, raise, lower and flatten land, paint land, inspector edits, and saving as a new pack. Next: moving statics by drag, random static brushes, smoothing, area select with copy and paste, and the radar redrawing edited regions.
 4. Asset editing (UO Fiddler): import PNG art and gumps, tiledata, hue and multi editing, all written through `poc/Uo.Pack` into a new pack, with a pack diff view.
 5. Collaboration: the edit operations over the network to a shared map server (possibly inside ModernUO), with accounts and region locks.
