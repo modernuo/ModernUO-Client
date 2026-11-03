@@ -235,6 +235,63 @@ public sealed unsafe class ChunkStore
         _workers.Enqueue(job, high: false);
     }
 
+    /// <summary>
+    /// An editor's regions (main thread): the logical bytes (<see cref="RegionFile.Build"/>) of a region it has edited, or
+    /// null to read the file. Null (the default, and the client) reads every region from the pack.
+    /// After an edit the host calls <see cref="InvalidateBlocks"/> so the touched chunks re-bake from the new bytes.
+    /// </summary>
+    public Func<int, int, byte[]> RegionOverride;
+
+    /// <summary>
+    /// Re-bakes the chunks of blocks [bx0, bx1] x [by0, by1] (and their neighbours, whose stretched land samples across
+    /// block edges) from their regions as they are now: the regions are dropped and read again, from
+    /// <see cref="RegionOverride"/> first. Bakes in flight for those chunks are discarded when they finish.
+    /// </summary>
+    public void InvalidateBlocks(int bx0, int by0, int bx1, int by1)
+    {
+        bx0--; by0--; bx1++; by1++;
+
+        for (int i = _activeCount - 1; i >= 0; i--)
+        {
+            int slot = _active[i];
+
+            if (_bx[slot] < bx0 || _bx[slot] > bx1 || _by[slot] < by0 || _by[slot] > by1 || _key[slot] < 0)
+            {
+                continue;
+            }
+
+            var st = _state[slot];
+            if (st == State.Ready && _count[slot] > 0) Alloc.Free(_first[slot], _count[slot]);
+            if (st == State.Baked) ReturnJob(_job[slot]);
+            _job[slot] = null;
+            FreeSlot(slot);
+        }
+
+        int rb = _pack.RegionBlocks;
+        int rx0 = Math.Max(0, bx0) / rb, rx1 = Math.Max(0, bx1) / rb, ry0 = Math.Max(0, by0) / rb, ry1 = Math.Max(0, by1) / rb;
+
+        for (int i = _regionCount - 1; i >= 0; i--)
+        {
+            var r = _regionList[i];
+
+            if (r.Rx < rx0 || r.Rx > rx1 || r.Ry < ry0 || r.Ry > ry1)
+            {
+                continue;
+            }
+
+            _regions.Remove(r.Ry * 4096 + r.Rx);
+            _regionList[i] = _regionList[--_regionCount];
+            _regionList[_regionCount] = null;
+
+            // a region a bake still reads (or a load still writes) is orphaned, as on a facet change, never pooled
+            if (r.Loaded && r.Pins == 0)
+            {
+                r.Data = null;
+                _regionPool.Push(r);
+            }
+        }
+    }
+
     Region GetRegion(int rx, int ry, long frame)
     {
         int rb = _pack.RegionBlocks;
@@ -245,6 +302,15 @@ public sealed unsafe class ChunkStore
         reg.Rx = rx; reg.Ry = ry; reg.Loaded = false; reg.Pins = 0; reg.Data = null; reg.LastUsed = frame;
         _regions[key] = reg;
         _regionList[_regionCount++] = reg;
+
+        if (RegionOverride?.Invoke(rx, ry) is { } edited)
+        {
+            reg.Load(edited);
+            reg.Loaded = true;
+
+            return reg;
+        }
+
         var job = _regionJobPool.Count > 0 ? _regionJobPool.Pop() : new RegionJob();
         job.Region = reg;
         job.Path = RegionPath(rx, ry);

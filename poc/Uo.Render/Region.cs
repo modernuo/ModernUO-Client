@@ -21,13 +21,18 @@ public sealed class Region
         if (!File.Exists(path)) { Data = null; BlocksW = BlocksH = 0; return; }
         // Kind 1 (v1): Brotli payload after the FileHeader. Decompressed here, on the worker, into the logical
         // Kind-0 file so block offsets stay file-relative.
-        var bytes = RegionFile.Decompress(File.ReadAllBytes(path));
-        var fh = MemoryMarshal.Read<FileHeader>(bytes);
-        if (fh.Magic != PackConst.MagicRegion) throw new InvalidDataException($"{path}: bad magic");
-        var rh = MemoryMarshal.Read<RegionHeader>(bytes.AsSpan(Unsafe.SizeOf<FileHeader>()));
+        Load(RegionFile.Decompress(File.ReadAllBytes(path)), path);
+    }
+
+    /// <summary>Takes a region's logical (Kind-0 layout) bytes: a file's, or an editor's from <see cref="RegionFile.Build"/>.</summary>
+    public void Load(byte[] logical, string source = "region")
+    {
+        var fh = MemoryMarshal.Read<FileHeader>(logical);
+        if (fh.Magic != PackConst.MagicRegion) throw new InvalidDataException($"{source}: bad magic");
+        var rh = MemoryMarshal.Read<RegionHeader>(logical.AsSpan(Unsafe.SizeOf<FileHeader>()));
         BlocksW = rh.BlocksW;
         BlocksH = rh.BlocksH;
-        Data = bytes;
+        Data = logical;
     }
 
     /// <summary>Byte offset of the block record, or 0 if empty. bx/by are region-local.</summary>

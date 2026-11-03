@@ -273,6 +273,16 @@ public static class RegionFile
         fs.Commit();
     }
 
+    /// <summary>A region's logical (uncompressed, Kind=0 layout) bytes, as <see cref="Decompress"/> returns them: for an editor
+    /// that keeps an edited region in memory.</summary>
+    public static byte[] Build(in RegionHeader header, ReadOnlySpan<BlockData> blocks)
+    {
+        using var ms = new MemoryStream();
+        WriteRaw(ms, in header, blocks);
+
+        return ms.ToArray();
+    }
+
     private static void WriteRaw(Stream fs, in RegionHeader header, ReadOnlySpan<BlockData> blocks)
     {
         StructIo.WriteHeader(fs, PackConst.MagicRegion);
