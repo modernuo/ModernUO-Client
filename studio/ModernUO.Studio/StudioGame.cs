@@ -22,7 +22,7 @@ namespace ModernUO.Studio
         private readonly string _startupPack;
         private ImGuiRenderer _renderer;
         private ImGuiPlatform _platform;
-        private Texture2D _logo;
+        private Texture2D _logo20, _logo40;
         private StudioContext _context;
         private StartPanel _start;
         private IntPtr _iniPath;
@@ -381,18 +381,23 @@ namespace ModernUO.Studio
             }
         }
 
-        // ModernUO's logo (Branding/logo-512.png, from modernuo.com), then the name in two weights
+        // ModernUO's logo (Branding/, from modernuo.com), then the name in two weights
         private void DrawMark()
         {
             var draw = ImGui.GetWindowDrawList();
             var p = ImGui.GetCursorScreenPos();
             float h = ImGui.GetWindowHeight();
             const float size = 20f;
-            var min = new System.Numerics.Vector2(p.X + 2f, ImGui.GetWindowPos().Y + (h - size) * 0.5f);
 
-            if (_logo != null)
+            // the pre-rendered image for this display density, drawn 1:1 on whole pixels: scaled or between pixels it blurs
+            float scale = MathF.Max(1f, _settings.UiScale);
+            Texture2D logo = scale >= 1.5f && _logo40 != null ? _logo40 : _logo20;
+            float drawn = logo == _logo40 ? 40f / scale : 20f;
+            var min = new System.Numerics.Vector2(MathF.Round(p.X + 2f), MathF.Round(ImGui.GetWindowPos().Y + (h - drawn) * 0.5f));
+
+            if (logo != null)
             {
-                draw.AddImage(_renderer.Bind(_logo, linear: true), min, min + new System.Numerics.Vector2(size, size));
+                draw.AddImage(_renderer.Bind(logo, linear: true), min, min + new System.Numerics.Vector2(drawn, drawn));
             }
 
             ImGui.Dummy(new System.Numerics.Vector2(size + 4f, 0f));
@@ -405,31 +410,82 @@ namespace ModernUO.Studio
             ImGui.SameLine(0f, 20f);
         }
 
-        /// <summary>The logo for the top bar and as the window icon (the exe icon is Branding/muostudio.ico).</summary>
-        private unsafe void LoadLogo()
+        private Texture2D LoadPng(string resource)
         {
-            using var stream = typeof(StudioGame).Assembly.GetManifestResourceStream("logo-512.png");
+            using var stream = typeof(StudioGame).Assembly.GetManifestResourceStream(resource);
 
-            if (stream == null)
+            return stream == null ? null : Texture2D.FromStream(GraphicsDevice, stream);
+        }
+
+        /// <summary>
+        /// The logo for the top bar, and the window icon: 32 px with 16 to 64 px alternates, so the system picks the size
+        /// it shows instead of shrinking one large image (the exe icon is Branding/muostudio.ico).
+        /// </summary>
+        private void LoadLogo()
+        {
+            _logo20 = LoadPng("logo-20.png");
+            _logo40 = LoadPng("logo-40.png");
+
+            IntPtr icon = IntPtr.Zero;
+            var alternates = new List<IntPtr>();
+            // SDL reads the pixels when the icon is set: each array stays pinned until then
+            var pinned = new List<System.Runtime.InteropServices.GCHandle>();
+
+            try
             {
-                return;
-            }
-
-            _logo = Texture2D.FromStream(GraphicsDevice, stream);
-
-            // SDL keeps its own copy of the icon; ABGR8888 is R, G, B, A in memory, the layout of XNA's Color
-            var pixels = new Color[_logo.Width * _logo.Height];
-            _logo.GetData(pixels);
-
-            fixed (Color* ptr = pixels)
-            {
-                IntPtr surface = SDL3.SDL.SDL_CreateSurfaceFrom(_logo.Width, _logo.Height, SDL3.SDL.SDL_PixelFormat.SDL_PIXELFORMAT_ABGR8888,
-                    (IntPtr)ptr, _logo.Width * 4);
-
-                if (surface != IntPtr.Zero)
+                foreach (int size in new[] { 32, 16, 24, 48, 64 })
                 {
-                    SDL3.SDL.SDL_SetWindowIcon(Window.Handle, surface);
-                    SDL3.SDL.SDL_DestroySurface(surface);
+                    using var texture = LoadPng($"logo-{size}.png");
+
+                    if (texture == null)
+                    {
+                        continue;
+                    }
+
+                    // ABGR8888 is R, G, B, A in memory, the layout of XNA's Color
+                    var pixels = new Color[texture.Width * texture.Height];
+                    texture.GetData(pixels);
+                    var handle = System.Runtime.InteropServices.GCHandle.Alloc(pixels, System.Runtime.InteropServices.GCHandleType.Pinned);
+                    pinned.Add(handle);
+                    IntPtr surface = SDL3.SDL.SDL_CreateSurfaceFrom(texture.Width, texture.Height, SDL3.SDL.SDL_PixelFormat.SDL_PIXELFORMAT_ABGR8888,
+                        handle.AddrOfPinnedObject(), texture.Width * 4);
+
+                    if (surface == IntPtr.Zero)
+                    {
+                        continue;
+                    }
+
+                    if (icon == IntPtr.Zero)
+                    {
+                        icon = surface;
+                    }
+                    else
+                    {
+                        alternates.Add(surface);
+                        SDL3.SDL.SDL_AddSurfaceAlternateImage(icon, surface);
+                    }
+                }
+
+                if (icon != IntPtr.Zero)
+                {
+                    SDL3.SDL.SDL_SetWindowIcon(Window.Handle, icon);
+                }
+            }
+            finally
+            {
+                foreach (IntPtr alternate in alternates)
+                {
+                    SDL3.SDL.SDL_DestroySurface(alternate);
+                }
+
+                if (icon != IntPtr.Zero)
+                {
+                    SDL3.SDL.SDL_DestroySurface(icon);
+                }
+
+                foreach (var handle in pinned)
+                {
+                    handle.Free();
                 }
             }
         }

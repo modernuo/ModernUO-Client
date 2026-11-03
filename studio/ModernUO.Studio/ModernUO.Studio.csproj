@@ -35,7 +35,8 @@
        Licences are next to the fonts in Fonts/. -->
   <ItemGroup>
     <EmbeddedResource Include="Fonts\*.ttf" LogicalName="%(Filename)%(Extension)" />
-    <EmbeddedResource Include="Branding\logo-512.png" LogicalName="logo-512.png" />
+    <!-- the logo pre-rendered (bicubic) at the sizes it is drawn at: a GPU-scaled 512 px image looks choppy at 20 px -->
+    <EmbeddedResource Include="Branding\logo-*.png" Exclude="Branding\logo-512.png" LogicalName="%(Filename)%(Extension)" />
     <None Include="Fonts\*.txt" />
   </ItemGroup>
 
