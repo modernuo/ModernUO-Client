@@ -26,6 +26,7 @@ namespace ModernUO.Studio.Panels
 
         public override string Title => "Sounds###sounds";
         public override string MenuName => "Sounds & Music";
+        public override string Icon => Icons.Volume;
 
         private SoundsLoader Loader => Context.Assets.Files.Sounds;
         private bool Music => Mode != ModeSounds;
@@ -241,7 +242,7 @@ namespace ModernUO.Studio.Panels
             if (!Music)
             {
                 // one button that plays or stops; "###play" keeps its id while the label changes
-                if (ImGui.Button(Context.IsSoundPlaying ? "Stop###play" : "Play###play"))
+                if (Ui.Button(Context.IsSoundPlaying ? $"{Icons.Stop}  Stop###play" : $"{Icons.Play}  Play###play", ButtonKind.Primary))
                 {
                     if (Context.IsSoundPlaying)
                     {
@@ -256,7 +257,7 @@ namespace ModernUO.Studio.Panels
                 ImGui.SameLine();
             }
 
-            if (ImGui.Button(Music ? "Export MP3" : "Export WAV"))
+            if (Ui.Button(Music ? $"{Icons.Download}  Export MP3" : $"{Icons.Download}  Export WAV"))
             {
                 Export(id);
             }

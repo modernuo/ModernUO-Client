@@ -18,6 +18,7 @@ namespace ModernUO.Studio.Panels
 
         public override string Title => "Tile###tile";
         public override string MenuName => "Tile Inspector";
+        public override string Icon => Icons.Crosshair;
         public override string MenuGroup => "Map";
         protected override Vector2 DefaultSize => new(360, 600);
 
@@ -42,14 +43,14 @@ namespace ModernUO.Studio.Panels
                 Context.ShowOnMap(tile.Facet, tile.X, tile.Y);
             }
 
-            if (ImGui.SmallButton("Copy \"x y z\""))
+            if (Ui.Button($"{Icons.Copy}  Copy x y z"))
             {
                 ImGui.SetClipboardText($"{tile.X} {tile.Y} {tile.LandZ}");
             }
 
             ImGui.SameLine();
 
-            if (ImGui.SmallButton("Centre map"))
+            if (Ui.Button($"{Icons.Locate}  Centre map"))
             {
                 Context.ShowOnMap(tile.Facet, tile.X, tile.Y);
             }

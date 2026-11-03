@@ -15,6 +15,7 @@ namespace ModernUO.Studio.Panels
 
         public override string Title => "Cliloc###cliloc";
         public override string MenuName => "Cliloc";
+        public override string Icon => Icons.Languages;
 
         private ClassicUO.Assets.ClilocLoader Clilocs => Context.Assets.Files.Clilocs;
 
@@ -66,14 +67,14 @@ namespace ModernUO.Studio.Panels
 
         protected override void DrawActions(int index)
         {
-            if (ImGui.Button("Copy number"))
+            if (Ui.Button($"{Icons.Copy}  Copy number"))
             {
                 ImGui.SetClipboardText(Table.IdAt(index).ToString());
             }
 
             ImGui.SameLine();
 
-            if (ImGui.Button("Copy text"))
+            if (Ui.Button($"{Icons.Clipboard}  Copy text"))
             {
                 ImGui.SetClipboardText(NameOf(index));
             }

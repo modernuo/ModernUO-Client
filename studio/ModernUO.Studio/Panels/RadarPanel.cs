@@ -29,6 +29,7 @@ namespace ModernUO.Studio.Panels
 
         public override string Title => "Radar###radar";
         public override string MenuName => "Radar";
+        public override string Icon => Icons.Radar;
         public override string MenuGroup => "Map";
         protected override Vector2 DefaultSize => new(360, 300);
         protected override ImGuiWindowFlags WindowFlags => ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse;

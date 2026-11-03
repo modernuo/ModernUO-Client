@@ -18,6 +18,7 @@ namespace ModernUO.Studio.Panels
 
         public override string Title => "Texmaps###texmaps";
         public override string MenuName => "Texmaps";
+        public override string Icon => Icons.BrickWall;
 
         private TexmapsLoader Loader => Context.Assets.Files.Texmaps;
 
@@ -81,7 +82,7 @@ namespace ModernUO.Studio.Panels
 
         protected override void DrawActions(int id)
         {
-            if (ImGui.Button("Export PNG"))
+            if (Ui.Button($"{Icons.Download}  Export PNG"))
             {
                 Export(id);
             }

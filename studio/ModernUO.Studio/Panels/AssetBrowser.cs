@@ -226,44 +226,44 @@ namespace ModernUO.Studio.Panels
                 // a narrow docked palette: the inspector moves under the collection
                 float collectionHeight = MathF.Max(120f, avail.Y * 0.55f);
 
-                if (ImGui.BeginChild("collection", new Vector2(0, collectionHeight), ImGuiChildFlags.Borders))
+                if (Ui.BeginCard("collection", new Vector2(0, collectionHeight), padded: false, sunken: true))
                 {
                     DrawCollection();
                 }
 
-                ImGui.EndChild();
+                Ui.EndCard();
 
-                if (ImGui.BeginChild("inspector", Vector2.Zero, ImGuiChildFlags.Borders))
+                if (Ui.BeginCard("inspector", Vector2.Zero))
                 {
                     DrawInspector();
                 }
 
-                ImGui.EndChild();
+                Ui.EndCard();
 
                 return;
             }
 
-            if (ImGui.BeginChild("collection", new Vector2(avail.X - _inspectorWidth - 6f, 0), ImGuiChildFlags.Borders))
+            if (Ui.BeginCard("collection", new Vector2(avail.X - _inspectorWidth - 8f, 0), padded: false, sunken: true))
             {
                 DrawCollection();
             }
 
-            ImGui.EndChild();
+            Ui.EndCard();
             ImGui.SameLine(0, 0);
             DrawSplitter(avail.X);
             ImGui.SameLine(0, 0);
 
-            if (ImGui.BeginChild("inspector", Vector2.Zero, ImGuiChildFlags.Borders))
+            if (Ui.BeginCard("inspector", Vector2.Zero))
             {
                 DrawInspector();
             }
 
-            ImGui.EndChild();
+            Ui.EndCard();
         }
 
         private void DrawSplitter(float total)
         {
-            ImGui.InvisibleButton("##split", new Vector2(6f, MathF.Max(1f, ImGui.GetContentRegionAvail().Y)));
+            ImGui.InvisibleButton("##split", new Vector2(8f, MathF.Max(1f, ImGui.GetContentRegionAvail().Y)));
 
             if (ImGui.IsItemActive())
             {
@@ -282,41 +282,34 @@ namespace ModernUO.Studio.Panels
 
             if (modes != null)
             {
-                for (int i = 0; i < modes.Length; i++)
+                int mode = _mode;
+
+                if (Ui.Segmented("modes", ref mode, modes))
                 {
-                    if (ImGui.RadioButton(modes[i], _mode == i) && _mode != i)
-                    {
-                        SetMode(i);
-                    }
-
-                    ImGui.SameLine();
+                    SetMode(mode);
                 }
+
+                Ui.Gap();
             }
 
-            if (_focusSearch)
-            {
-                _focusSearch = false;
-                ImGui.SetKeyboardFocusHere();
-            }
-
-            ImGui.SetNextItemWidth(220f);
-            _dirty |= ImGui.InputTextWithHint("##search", SearchHint, ref _filter, 256);
+            _dirty |= Ui.Search("##search", ref _filter, SearchHint, 240f, _focusSearch);
+            _focusSearch = false;
 
             DrawFilters();
 
             if (HasGrid)
             {
-                ImGui.SameLine();
+                Ui.Gap();
 
-                if (ImGui.RadioButton("Grid", !_listView))
+                if (Ui.IconButton("grid", Icons.Grid, "Grid", !_listView))
                 {
                     _listView = false;
                     _scrollToSelection = true;
                 }
 
-                ImGui.SameLine();
+                ImGui.SameLine(0f, 2f);
 
-                if (ImGui.RadioButton("List", _listView))
+                if (Ui.IconButton("list", Icons.List, "List", _listView))
                 {
                     _listView = true;
                     _scrollToSelection = true;
@@ -325,15 +318,23 @@ namespace ModernUO.Studio.Panels
 
             if (HasThumbnails)
             {
-                ImGui.SameLine();
-                ImGui.SetNextItemWidth(130f);
-                ImGui.SliderFloat("##size", ref _cell, 24f, 256f, "size %.0f px");
+                Ui.Gap();
+                ImGui.SetNextItemWidth(110f);
+                ImGui.SliderFloat("##size", ref _cell, 24f, 256f, $"{Icons.ZoomIn}  %.0f");
+
+                if (ImGui.IsItemHovered())
+                {
+                    Ui.Tooltip("Thumbnail size");
+                }
             }
 
-            ImGui.SameLine();
-            ImGui.TextDisabled($"{_items.Count} entries");
+            // the count sits on the toolbar's right edge
+            string count = $"{_items.Count:N0} entries";
+            ImGui.SameLine(0f, 12f);
+            ImGui.SetCursorPosX(ImGui.GetCursorPosX() + MathF.Max(0f, ImGui.GetContentRegionAvail().X - ImGui.CalcTextSize(count).X));
+            ImGui.AlignTextToFramePadding();
+            ImGui.TextColored(Theme.TextMuted, count);
         }
-
         private void HandleKeys()
         {
             if (!ImGui.IsWindowFocused(ImGuiFocusedFlags.RootAndChildWindows))
@@ -436,7 +437,7 @@ namespace ModernUO.Studio.Panels
         {
             if (_items.Count == 0)
             {
-                ImGui.TextDisabled(string.IsNullOrWhiteSpace(_filter) ? "Nothing here." : "No matches.");
+                EmptyState(Icons.Search, string.IsNullOrWhiteSpace(_filter) ? "Nothing here" : "No matches", string.IsNullOrWhiteSpace(_filter) ? "This section of the pack is empty." : "Try another id or name.");
 
                 return;
             }
@@ -519,14 +520,13 @@ namespace ModernUO.Studio.Panels
             bool clicked = ImGui.InvisibleButton("cell", new Vector2(_cell, _cell));
             bool hovered = ImGui.IsItemHovered();
 
-            draw.AddRectFilled(min, max, item == Selected ? Widgets.Col(0.26f, 0.42f, 0.66f, 0.55f) : Widgets.Col(0.12f, 0.12f, 0.13f));
-            DrawThumbnail(draw, item, min + new Vector2(2, 2), max - new Vector2(2, 2));
+            Ui.CellBackground(draw, min, max, item == Selected, hovered, ImGui.GetItemID());
+            DrawThumbnail(draw, item, min + new Vector2(4, 4), max - new Vector2(4, 4));
 
             if (hovered)
             {
-                draw.AddRect(min, max, Widgets.Col(0.9f, 0.9f, 0.9f, 0.8f));
                 string name = NameOf(item);
-                ImGui.SetTooltip(string.IsNullOrEmpty(name) ? FormatId(item) : $"{FormatId(item)}\n{name}");
+                Ui.Tooltip(string.IsNullOrEmpty(name) ? FormatId(item) : $"{name}\n{FormatId(item)}");
             }
 
             if (clicked)
@@ -632,7 +632,7 @@ namespace ModernUO.Studio.Panels
 
                     if (HasThumbnails)
                     {
-                        draw.AddRectFilled(pos, pos + new Vector2(thumb, thumb), Widgets.Col(0.12f, 0.12f, 0.13f));
+                        draw.AddRectFilled(pos, pos + new Vector2(thumb, thumb), Theme.U32(Theme.Panel), 4f);
                         DrawThumbnail(draw, item, pos + new Vector2(1, 1), pos + new Vector2(thumb - 1, thumb - 1));
                         ImGui.TableNextColumn();
                     }
@@ -642,7 +642,7 @@ namespace ModernUO.Studio.Panels
                         ImGui.SameLine();
                     }
 
-                    ImGui.TextUnformatted(FormatId(item));
+                    Ui.MonoText(FormatId(item), Theme.TextSecondary);
                     ImGui.TableNextColumn();
                     ImGui.TextUnformatted(NameOf(item) ?? "");
 
@@ -670,7 +670,7 @@ namespace ModernUO.Studio.Panels
         {
             if (Selected < 0 || Selected >= SlotCount || !Exists(Selected))
             {
-                ImGui.TextDisabled("Select an entry.");
+                EmptyState(Icons.Navigation, "Nothing selected", "Pick an entry to inspect it.");
 
                 return;
             }
@@ -704,11 +704,31 @@ namespace ModernUO.Studio.Panels
             }
         }
 
+        /// <summary>Zoom out and in buttons around the zoom factor (whole steps).</summary>
+        protected static void ZoomStepper(ref float zoom, float min, float max)
+        {
+            if (Ui.IconButton("zoomout", Icons.ZoomOut, "Zoom out", enabled: zoom > min))
+            {
+                zoom = MathF.Max(min, zoom - 1f);
+            }
+
+            ImGui.SameLine(0f, 2f);
+            ImGui.AlignTextToFramePadding();
+            ImGui.PushFont(Theme.Mono, 0f);
+            ImGui.TextColored(Theme.TextSecondary, $"{zoom,2:0}x");
+            ImGui.PopFont();
+            ImGui.SameLine(0f, 2f);
+
+            if (Ui.IconButton("zoomin", Icons.ZoomIn, "Zoom in", enabled: zoom < max))
+            {
+                zoom = MathF.Min(max, zoom + 1f);
+            }
+        }
+
         /// <summary>A zoomable sprite preview on a checkerboard.</summary>
         protected void SpritePreview(in ClassicUO.Renderer.SpriteInfo sprite, ref float zoom, float height = 260f, bool mirror = false)
         {
-            ImGui.SetNextItemWidth(160f);
-            ImGui.SliderFloat("zoom", ref zoom, 1f, 8f, "%.0fx");
+            ZoomStepper(ref zoom, 1f, 8f);
 
             var draw = ImGui.GetWindowDrawList();
             Vector2 min = ImGui.GetCursorScreenPos();

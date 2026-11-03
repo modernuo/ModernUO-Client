@@ -27,6 +27,7 @@ namespace ModernUO.Studio.Panels
 
         public override string Title => "Art###art";
         public override string MenuName => "Art";
+        public override string Icon => Icons.Image;
 
         private bool Land => Mode == ModeLand;
         private ArtLoader Loader => Context.Assets.Files.Arts;
@@ -140,7 +141,7 @@ namespace ModernUO.Studio.Panels
 
             ImGui.SetNextItemWidth(120f);
 
-            if (ImGui.InputInt("hue", ref _hue))
+            if (ImGui.InputInt("hue", ref _hue, 0, 0))
             {
                 _hue = Math.Clamp(_hue, 0, 0xFFFF);
                 _huedFor = -1;
@@ -148,7 +149,7 @@ namespace ModernUO.Studio.Panels
 
             ImGui.SameLine();
 
-            if (ImGui.Checkbox("partial", ref _partialHue))
+            if (Ui.Toggle("partial", ref _partialHue))
             {
                 _huedFor = -1;
             }
@@ -229,14 +230,14 @@ namespace ModernUO.Studio.Panels
 
         protected override void DrawActions(int id)
         {
-            if (ImGui.Button("Export PNG"))
+            if (Ui.Button($"{Icons.Download}  Export PNG"))
             {
                 Export(id);
             }
 
             ImGui.SameLine();
 
-            if (ImGui.Button("Tiledata"))
+            if (Ui.Button($"{Icons.Table}  Tiledata"))
             {
                 Context.ShowTileData(id, Land);
             }

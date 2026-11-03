@@ -16,6 +16,7 @@ namespace ModernUO.Studio.Panels
 
         public override string Title => "Log###log";
         public override string MenuName => "Log";
+        public override string Icon => Icons.ScrollText;
         public override string MenuGroup => "Tools";
         public override bool NeedsPack => false;
         protected override Vector2 DefaultSize => new(800, 200);
@@ -28,29 +29,35 @@ namespace ModernUO.Studio.Panels
                 StudioLog.CopyTo(_entries);
             }
 
-            if (ImGui.SmallButton("Clear"))
+            if (Ui.Button($"{Icons.X}  Clear", ButtonKind.Ghost))
             {
                 StudioLog.Clear();
             }
 
             ImGui.SameLine();
-            ImGui.Checkbox("auto-scroll", ref _autoScroll);
+            Ui.Toggle("Follow", ref _autoScroll, "Keep the newest line in view");
 
-            if (ImGui.BeginChild("lines", Vector2.Zero, ImGuiChildFlags.None, ImGuiWindowFlags.HorizontalScrollbar))
+            if (Ui.BeginCard("lines", Vector2.Zero, flags: ImGuiWindowFlags.HorizontalScrollbar, sunken: true))
             {
+                ImGui.PushFont(Theme.Mono, Theme.SmallSize + 0.5f);
+
                 foreach (var e in _entries)
                 {
-                    var color = e.Level switch
+                    var (icon, color) = e.Level switch
                     {
-                        StudioLogLevel.Error => Widgets.Bad,
-                        StudioLogLevel.Warning => Widgets.Warn,
-                        _ => new Vector4(0.85f, 0.85f, 0.85f, 1f)
+                        StudioLogLevel.Error => (Icons.Alert, Theme.Red),
+                        StudioLogLevel.Warning => (Icons.Warning, Theme.Amber),
+                        _ => (Icons.ChevronRight, Theme.TextMuted)
                     };
 
-                    ImGui.TextColored(Widgets.Dim, e.Time.ToString("HH:mm:ss"));
+                    ImGui.TextColored(Theme.TextMuted, e.Time.ToString("HH:mm:ss"));
                     ImGui.SameLine();
-                    ImGui.TextColored(color, e.Text);
+                    ImGui.TextColored(color, icon);
+                    ImGui.SameLine();
+                    ImGui.TextColored(e.Level == StudioLogLevel.Info ? Theme.TextSecondary : color, e.Text);
                 }
+
+                ImGui.PopFont();
 
                 if (_autoScroll && ImGui.GetScrollY() >= ImGui.GetScrollMaxY() - 4f)
                 {
@@ -58,7 +65,6 @@ namespace ModernUO.Studio.Panels
                 }
             }
 
-            ImGui.EndChild();
-        }
+            Ui.EndCard();        }
     }
 }

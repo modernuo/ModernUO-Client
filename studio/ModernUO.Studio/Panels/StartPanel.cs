@@ -22,6 +22,7 @@ namespace ModernUO.Studio.Panels
 
         public override string Title => "Start###start";
         public override string MenuName => "Start";
+        public override string Icon => Icons.Sparkles;
         public override string MenuGroup => "Tools";
         public override bool NeedsPack => false;
         protected override Vector2 DefaultSize => new(640, 420);
@@ -53,60 +54,84 @@ namespace ModernUO.Studio.Panels
                 Context.OpenPack(_path);
             }
 
-            ImGui.TextUnformatted("ModernUO Studio");
-            ImGui.TextColored(Widgets.Dim, "Asset browsers for ModernUO packs. Studio reads packs made by Uo.Converter; it never opens MUL or UOP files.");
-            ImGui.Spacing();
+            // a centred column, like a welcome page: never wider than reads comfortably
+            float column = MathF.Min(640f, ImGui.GetContentRegionAvail().X);
+            float indent = MathF.Max(0f, (ImGui.GetContentRegionAvail().X - column) * 0.5f);
+            ImGui.Dummy(new Vector2(0f, 24f));
+            ImGui.Indent(indent);
+
+            ImGui.PushFont(Theme.Strong, 30f);
+            ImGui.TextColored(Theme.Gold, "ModernUO");
+            ImGui.SameLine(0f, 10f);
+            ImGui.TextUnformatted("Studio");
+            ImGui.PopFont();
+            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + column);
+            Ui.Muted("Browse and edit the assets and maps of a ModernUO pack. Studio reads packs made by Uo.Converter and never opens MUL or UOP files.");
+            ImGui.PopTextWrapPos();
+            ImGui.Dummy(new Vector2(0f, 12f));
 
             if (Context.Assets != null)
             {
-                ImGui.TextColored(Widgets.Good, $"Open: {Context.Assets.Root}");
-                ImGui.Spacing();
+                Ui.Chip($"{Icons.CircleCheck}  Open: {Context.Assets.Root}", Theme.Green);
+                ImGui.Dummy(new Vector2(0f, 4f));
             }
 
-            ImGui.SetNextItemWidth(-160f);
-            bool enter = ImGui.InputTextWithHint("##path", "pack folder (holds manifest.json)", ref _path, 1024, ImGuiInputTextFlags.EnterReturnsTrue);
-            ImGui.SameLine();
-
-            if (ImGui.Button("Browse..."))
+            if (Ui.BeginCard("open", new Vector2(column, 0f), autoHeight: true))
             {
-                Browse();
+                Ui.SectionLabel("Open a pack");
+                ImGui.SetNextItemWidth(column - 230f);
+                bool enter = ImGui.InputTextWithHint("##path", "pack folder (the one with manifest.json)", ref _path, 1024, ImGuiInputTextFlags.EnterReturnsTrue);
+                ImGui.SameLine();
+
+                if (Ui.Button($"{Icons.FolderOpen}  Browse"))
+                {
+                    Browse();
+                }
+
+                ImGui.SameLine();
+
+                if ((Ui.Button($"{Icons.ArrowRight}  Open", ButtonKind.Primary) || enter) && !string.IsNullOrWhiteSpace(_path))
+                {
+                    Context.OpenPack(_path.Trim().Trim('"'));
+                }
             }
 
-            ImGui.SameLine();
-
-            if ((ImGui.Button("Open") || enter) && !string.IsNullOrWhiteSpace(_path))
-            {
-                Context.OpenPack(_path.Trim().Trim('"'));
-            }
-
-            ImGui.Spacing();
-            ImGui.SeparatorText("Recent packs");
+            Ui.EndCard();
+            ImGui.Dummy(new Vector2(0f, 8f));
+            Ui.SectionLabel("Recent");
 
             if (Context.Settings.RecentPacks.Count == 0)
             {
-                ImGui.TextDisabled("None yet.");
+                Ui.Muted("Packs you open appear here.");
             }
 
             string open = null;
+            var draw = ImGui.GetWindowDrawList();
 
             foreach (string recent in Context.Settings.RecentPacks)
             {
                 bool exists = File.Exists(Path.Combine(recent, "manifest.json"));
+                Vector2 min = ImGui.GetCursorScreenPos();
+                var size = new Vector2(column, 50f);
+                ImGui.PushID(recent);
 
-                if (!exists)
-                {
-                    ImGui.BeginDisabled();
-                }
-
-                if (ImGui.Selectable(recent))
+                if (ImGui.InvisibleButton("recent", size) && exists)
                 {
                     open = recent;
                 }
 
-                if (!exists)
-                {
-                    ImGui.EndDisabled();
-                }
+                bool hovered = ImGui.IsItemHovered();
+                float t = Ui.Animate(ImGui.GetItemID(), hovered && exists ? 1f : 0f);
+                draw.AddRectFilled(min, min + size, Theme.U32(Theme.Mix(Theme.Surface, Theme.Raised, t)), Theme.Rounding);
+                draw.AddText(min + new Vector2(14f, 15f), Theme.U32(exists ? Theme.Gold : Theme.TextMuted), Icons.Package);
+
+                string name = Path.GetFileName(recent.TrimEnd('\\', '/'));
+                ImGui.PushFont(Theme.Strong, 0f);
+                draw.AddText(min + new Vector2(44f, 7f), Theme.U32(exists ? Theme.Text : Theme.TextMuted), name);
+                ImGui.PopFont();
+                draw.AddText(min + new Vector2(44f, 26f), Theme.U32(Theme.TextMuted), exists ? recent : $"{recent}  (missing)");
+                ImGui.PopID();
+                ImGui.Dummy(new Vector2(0f, 2f));
             }
 
             if (open != null)
@@ -115,9 +140,25 @@ namespace ModernUO.Studio.Panels
                 Context.OpenPack(open);
             }
 
-            ImGui.Spacing();
-            ImGui.SeparatorText("Make a pack");
-            ImGui.TextColored(Widgets.Dim, "dotnet run -c Release --project poc/Uo.Converter -- --uo <uo-install> --out <pack>");
-        }
+            ImGui.Dummy(new Vector2(0f, 8f));
+            Ui.SectionLabel("Make a pack");
+            ImGui.PushTextWrapPos(ImGui.GetCursorPosX() + column);
+            Ui.Muted("Convert a UO install with the converter, then open the output folder here:");
+            ImGui.PopTextWrapPos();
+            const string command = "dotnet run -c Release --project poc/Uo.Converter -- --uo <uo-install> --out <pack>";
+
+            if (Ui.BeginCard("cmd", new Vector2(column, 0f), sunken: true, autoHeight: true))
+            {
+                Ui.MonoText(command, Theme.TextSecondary);
+                ImGui.SameLine(column - 48f);
+
+                if (Ui.IconButton("copycmd", Icons.Copy, "Copy the command"))
+                {
+                    ImGui.SetClipboardText(command);
+                }
+            }
+
+            Ui.EndCard();
+            ImGui.Unindent(indent);        }
     }
 }

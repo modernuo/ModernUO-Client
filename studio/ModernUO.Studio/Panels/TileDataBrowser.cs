@@ -21,6 +21,7 @@ namespace ModernUO.Studio.Panels
 
         public override string Title => "TileData###tiledata";
         public override string MenuName => "TileData";
+        public override string Icon => Icons.Table;
 
         private bool Land => Mode == ModeLand;
         private TileDataLoader Tiles => Context.Assets.Files.TileData;
@@ -174,7 +175,7 @@ namespace ModernUO.Studio.Panels
 
         protected override void DrawActions(int id)
         {
-            if (ImGui.Button("Show art"))
+            if (Ui.Button($"{Icons.Image}  Show art"))
             {
                 Context.ShowArt(id, Land);
             }

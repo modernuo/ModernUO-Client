@@ -37,6 +37,7 @@ namespace ModernUO.Studio.Panels
 
         public override string Title => "Map###map";
         public override string MenuName => "Map";
+        public override string Icon => Icons.Map;
         public override string MenuGroup => "Map";
         protected override Vector2 DefaultSize => new(1200, 800);
         protected override ImGuiWindowFlags WindowFlags => ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse;
@@ -46,6 +47,9 @@ namespace ModernUO.Studio.Panels
         public double CenterY => _centerY;
         public float Zoom => _zoom;
         public Vector2 CanvasSize => _canvasSize;
+
+        /// <summary>The map was on screen last frame.</summary>
+        public bool Visible { get; private set; }
 
         public override void OnPackChanged()
         {
@@ -248,7 +252,7 @@ namespace ModernUO.Studio.Panels
             ImGui.SetNextItemWidth(130f);
             bool go = ImGui.InputTextWithHint("##goto", "x y (1496 1628)", ref _goto, 32, ImGuiInputTextFlags.EnterReturnsTrue);
             ImGui.SameLine();
-            go |= ImGui.Button("Go");
+            go |= Ui.IconButton("go", Icons.ArrowRight, "Go to the tile");
 
             if (go && TryParseCoordinates(_goto, out int gx, out int gy))
             {
@@ -256,15 +260,31 @@ namespace ModernUO.Studio.Panels
             }
 
             ImGui.SameLine();
-            ImGui.SetNextItemWidth(120f);
-            ImGui.SliderFloat("##zoom", ref _zoom, MinZoom, MaxZoom, "zoom %.2fx", ImGuiSliderFlags.Logarithmic);
-            ImGui.SameLine();
+            Ui.Gap();
+
+            if (Ui.IconButton("zoomout", Icons.ZoomOut, "Zoom out (-)", enabled: _zoom > MinZoom))
+            {
+                _zoom = Math.Clamp(_zoom * 0.8f, MinZoom, MaxZoom);
+            }
+
+            ImGui.SameLine(0f, 2f);
+            ImGui.AlignTextToFramePadding();
+            ImGui.PushFont(Theme.Mono, 0f);
+            ImGui.TextColored(Theme.TextSecondary, $"{_zoom * 100f,4:0}%");
+            ImGui.PopFont();
+            ImGui.SameLine(0f, 2f);
+
+            if (Ui.IconButton("zoomin", Icons.ZoomIn, "Zoom in (+)", enabled: _zoom < MaxZoom))
+            {
+                _zoom = Math.Clamp(_zoom * 1.25f, MinZoom, MaxZoom);
+            }
+            Ui.Gap();
             ImGui.SetNextItemWidth(140f);
             ImGui.SliderInt("##maxz", ref _maxZ, -128, 127, _maxZ >= 127 ? "max z: all" : "max z %d");
-            ImGui.SameLine();
-            ImGui.Checkbox("Hide roofs", ref _hideRoofs);
-            ImGui.SameLine();
-            ImGui.Checkbox("Grid", ref _grid);
+            Ui.Gap();
+            Ui.Toggle("Roofs off", ref _hideRoofs, "Hide roofs, as the client does indoors");
+            Ui.Gap();
+            Ui.Toggle("Grid", ref _grid, "Outline every tile (zoom 50% or more)");
         }
 
         private static bool TryParseCoordinates(string text, out int x, out int y)
@@ -404,8 +424,13 @@ namespace ModernUO.Studio.Panels
         {
             var world = Context.MapWorld;
 
-            if (!_wantRender || world == null || !IsOpen)
+            // the map tab was drawn this frame (not hidden behind another tab): the status bar reads it next frame
+            Visible = _wantRender && world != null && IsOpen;
+
+            if (!Visible)
             {
+                _wantRender = false;
+
                 return;
             }
 

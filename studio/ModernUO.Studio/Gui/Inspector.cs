@@ -6,17 +6,27 @@ namespace ModernUO.Studio.Gui
     /// <summary>The pieces every inspector is built from (studio/UX.md, "The inspector shape").</summary>
     internal static class Inspector
     {
-        public static readonly Vector4 LinkColor = new(0.45f, 0.68f, 1f, 1f);
+        public static Vector4 LinkColor => Theme.Blue;
 
         /// <summary>Ids are shown hex first: 0x1F03 (7939).</summary>
         public static string Id(int id) => $"0x{id:X4} ({id})";
 
-        /// <summary>Kind, id (right-click copies) and name.</summary>
+        /// <summary>Kind (small, muted), the name as the title, and the id in monospace (right-click copies).</summary>
         public static void Header(string kind, int id, string name, string idText = null)
         {
-            ImGui.TextColored(Widgets.Dim, kind);
-            ImGui.SameLine();
-            ImGui.TextUnformatted(idText ?? Id(id));
+            Ui.SectionLabel(kind);
+
+            if (!string.IsNullOrEmpty(name))
+            {
+                ImGui.PushFont(Theme.Strong, Theme.TitleSize);
+                ImGui.PushTextWrapPos(0f);
+                ImGui.TextUnformatted(name);
+                ImGui.PopTextWrapPos();
+                ImGui.PopFont();
+            }
+
+            string text = idText ?? Id(id);
+            Ui.MonoText(text, string.IsNullOrEmpty(name) ? Theme.Text : Theme.Gold);
 
             if (ImGui.IsItemClicked(ImGuiMouseButton.Right))
             {
@@ -26,30 +36,29 @@ namespace ModernUO.Studio.Gui
 
             if (ImGui.IsItemHovered())
             {
-                ImGui.SetTooltip("Right-click to copy");
-            }
-
-            if (!string.IsNullOrEmpty(name))
-            {
-                ImGui.TextWrapped(name);
+                Ui.Tooltip("Right-click to copy");
             }
         }
 
         public static void Section(string title)
         {
-            ImGui.Spacing();
-            ImGui.SeparatorText(title);
+            ImGui.Dummy(new Vector2(0f, 6f));
+            Ui.SectionLabel(title);
         }
 
         /// <summary>Starts a two-column key/value table; pair with <see cref="EndProperties"/>.</summary>
         public static bool BeginProperties(string id = "props")
         {
-            if (!ImGui.BeginTable(id, 2, ImGuiTableFlags.SizingFixedFit | ImGuiTableFlags.RowBg))
+            ImGui.PushStyleVar(ImGuiStyleVar.CellPadding, new Vector2(0f, 4f));
+
+            if (!ImGui.BeginTable(id, 2, ImGuiTableFlags.SizingFixedFit))
             {
+                ImGui.PopStyleVar();
+
                 return false;
             }
 
-            ImGui.TableSetupColumn("key", ImGuiTableColumnFlags.WidthFixed, 90f);
+            ImGui.TableSetupColumn("key", ImGuiTableColumnFlags.WidthFixed, 100f);
             ImGui.TableSetupColumn("value", ImGuiTableColumnFlags.WidthStretch);
 
             return true;
@@ -59,9 +68,11 @@ namespace ModernUO.Studio.Gui
         {
             ImGui.TableNextRow();
             ImGui.TableNextColumn();
-            ImGui.TextColored(Widgets.Dim, key);
+            ImGui.TextColored(Theme.TextSecondary, key);
             ImGui.TableNextColumn();
-            ImGui.TextWrapped(value ?? "");
+            ImGui.PushTextWrapPos(0f);
+            ImGui.TextUnformatted(value ?? "");
+            ImGui.PopTextWrapPos();
         }
 
         /// <summary>A property whose value is a link; true when clicked.</summary>
@@ -69,13 +80,17 @@ namespace ModernUO.Studio.Gui
         {
             ImGui.TableNextRow();
             ImGui.TableNextColumn();
-            ImGui.TextColored(Widgets.Dim, key);
+            ImGui.TextColored(Theme.TextSecondary, key);
             ImGui.TableNextColumn();
 
             return Link(value);
         }
 
-        public static void EndProperties() => ImGui.EndTable();
+        public static void EndProperties()
+        {
+            ImGui.EndTable();
+            ImGui.PopStyleVar();
+        }
 
         /// <summary>
         /// A labelled list of links ("Used in 3 multis"), scrolling past a few rows. <paramref name="open"/> runs for the
@@ -85,12 +100,12 @@ namespace ModernUO.Studio.Gui
         {
             if (ids.Count == 0)
             {
-                ImGui.TextColored(Widgets.Dim, $"{label}: none");
+                ImGui.TextColored(Theme.TextMuted, $"{label}: none");
 
                 return;
             }
 
-            ImGui.TextColored(Widgets.Dim, $"{label} ({ids.Count})");
+            ImGui.TextColored(Theme.TextSecondary, $"{label}  ·  {ids.Count}");
             float rows = MathF.Min(ids.Count, 8);
 
             if (ImGui.BeginChild(label, new Vector2(0, rows * ImGui.GetTextLineHeightWithSpacing() + 4f)))
@@ -118,7 +133,7 @@ namespace ModernUO.Studio.Gui
             ImGui.EndChild();
         }
 
-        /// <summary>Accent-coloured text that behaves as a link; true when clicked.</summary>
+        /// <summary>muo-blue text that behaves as a link; true when clicked.</summary>
         public static bool Link(string text)
         {
             ImGui.TextColored(LinkColor, text);
@@ -128,7 +143,7 @@ namespace ModernUO.Studio.Gui
                 ImGui.SetMouseCursor(ImGuiMouseCursor.Hand);
                 var min = ImGui.GetItemRectMin();
                 var max = ImGui.GetItemRectMax();
-                ImGui.GetWindowDrawList().AddLine(new Vector2(min.X, max.Y), max, ImGui.ColorConvertFloat4ToU32(LinkColor));
+                ImGui.GetWindowDrawList().AddLine(new Vector2(min.X, max.Y), max, Theme.U32(LinkColor, 0.6f));
             }
 
             return ImGui.IsItemClicked(ImGuiMouseButton.Left);

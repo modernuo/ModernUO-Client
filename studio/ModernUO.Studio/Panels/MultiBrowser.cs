@@ -36,6 +36,7 @@ namespace ModernUO.Studio.Panels
 
         public override string Title => "Multis###multis";
         public override string MenuName => "Multis";
+        public override string Icon => Icons.House;
 
         private MultiLoader Loader => Context.Assets.Files.Multis;
 
@@ -174,13 +175,13 @@ namespace ModernUO.Studio.Panels
         protected override void DrawPreview(int id)
         {
             var composite = GetComposite(id);
-            ImGui.Checkbox("hide invisible", ref _hideInvisible);
+            Ui.Toggle("hide invisible", ref _hideInvisible);
             ImGui.SameLine();
             ImGui.SetNextItemWidth(160f);
             ImGui.SliderInt("max z", ref _maxZ, -128, 127);
             ImGui.SameLine();
 
-            if (ImGui.Button("Fit"))
+            if (Ui.IconButton("fit", Icons.Maximize, "Fit the multi"))
             {
                 _fitPending = true;
             }
@@ -256,7 +257,7 @@ namespace ModernUO.Studio.Panels
 
         protected override void DrawActions(int id)
         {
-            if (ImGui.Button("Copy component list"))
+            if (Ui.Button($"{Icons.Clipboard}  Copy component list"))
             {
                 var c = GetComposite(id);
                 ImGui.SetClipboardText(string.Join("\n", c.All.Select(m => $"0x{m.ID:X4} {m.X} {m.Y} {m.Z} {(m.IsVisible ? 1 : 0)}")));

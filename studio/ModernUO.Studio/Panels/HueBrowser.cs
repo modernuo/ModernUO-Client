@@ -23,6 +23,7 @@ namespace ModernUO.Studio.Panels
 
         public override string Title => "Hues###hues";
         public override string MenuName => "Hues";
+        public override string Icon => Icons.Palette;
 
         private Uo.Pack.HueEntry[] Entries => Context.Assets.HueEntries;
         private uint[] Lut => Context.Assets.Files.Hues.PackHues;
@@ -95,13 +96,13 @@ namespace ModernUO.Studio.Panels
                 ImGui.SetTooltip($"shade {shade}\n15-bit 0x{c:X4}  R{(c >> 10) & 31} G{(c >> 5) & 31} B{c & 31}");
             }
 
-            ImGui.Checkbox("gump", ref _previewGump);
+            Ui.Toggle("gump", ref _previewGump);
             ImGui.SameLine();
             ImGui.SetNextItemWidth(110f);
-            ImGui.InputInt(_previewGump ? "gump id" : "static id", ref _previewArt);
+            ImGui.InputInt(_previewGump ? "gump id" : "static id", ref _previewArt, 0, 0);
             _previewArt = Math.Clamp(_previewArt, 0, 0xFFFF);
             ImGui.SameLine();
-            ImGui.Checkbox("partial", ref _partial);
+            Ui.Toggle("partial", ref _partial);
 
             UpdatePreview(item + 1);
 
@@ -131,14 +132,14 @@ namespace ModernUO.Studio.Panels
 
         protected override void DrawActions(int item)
         {
-            if (ImGui.Button("Copy hue id"))
+            if (Ui.Button($"{Icons.Copy}  Copy hue id"))
             {
                 ImGui.SetClipboardText((item + 1).ToString());
             }
 
             ImGui.SameLine();
 
-            if (ImGui.Button(_previewGump ? "Open gump" : "Open static"))
+            if (Ui.Button(_previewGump ? $"{Icons.ExternalLink}  Open gump" : $"{Icons.ExternalLink}  Open static"))
             {
                 if (_previewGump)
                 {

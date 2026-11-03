@@ -28,6 +28,7 @@ namespace ModernUO.Studio.Panels
 
         public override string Title => "Animations###anims";
         public override string MenuName => "Animations";
+        public override string Icon => Icons.Person;
 
         private AnimationsLoader Loader => Context.Assets.Files.Animations;
         private ClassicUO.Renderer.Animations.Animations Atlas => Context.Assets.Animations;
@@ -182,7 +183,7 @@ namespace ModernUO.Studio.Panels
 
             ImGui.SameLine();
 
-            if (ImGui.Button(_playing ? "Pause" : "Play"))
+            if (Ui.IconButton("play", _playing ? Icons.Pause : Icons.Play, _playing ? "Pause" : "Play", _playing))
             {
                 _playing = !_playing;
             }
@@ -193,7 +194,7 @@ namespace ModernUO.Studio.Panels
             ImGui.SetNextItemWidth(110f);
             ImGui.SliderFloat("zoom", ref _zoom, 1f, 6f, "%.0fx");
             ImGui.SameLine();
-            ImGui.Checkbox("feet", ref _showCenter);
+            Ui.Toggle("feet", ref _showCenter);
 
             Span<SpriteInfo> frames = Frames(id, _action, out bool mirror);
 
@@ -326,14 +327,14 @@ namespace ModernUO.Studio.Panels
 
         protected override void DrawActions(int id)
         {
-            if (ImGui.Button("Export frame PNG"))
+            if (Ui.Button($"{Icons.FileImage}  Export frame"))
             {
                 Export(id, _frame, _frame);
             }
 
             ImGui.SameLine();
 
-            if (ImGui.Button("Export direction"))
+            if (Ui.Button($"{Icons.Images}  Export direction"))
             {
                 Export(id, 0, int.MaxValue);
             }

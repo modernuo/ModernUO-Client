@@ -6,10 +6,10 @@ namespace ModernUO.Studio.Gui
 {
     internal static class Widgets
     {
-        public static readonly Vector4 Dim = new(0.6f, 0.6f, 0.6f, 1f);
-        public static readonly Vector4 Warn = new(1f, 0.75f, 0.3f, 1f);
-        public static readonly Vector4 Bad = new(1f, 0.4f, 0.4f, 1f);
-        public static readonly Vector4 Good = new(0.5f, 0.9f, 0.5f, 1f);
+        public static readonly Vector4 Dim = Theme.TextSecondary;
+        public static readonly Vector4 Warn = Theme.Amber;
+        public static readonly Vector4 Bad = Theme.Red;
+        public static readonly Vector4 Good = Theme.Green;
 
         public static uint Col(float r, float g, float b, float a = 1f) => ImGui.ColorConvertFloat4ToU32(new Vector4(r, g, b, a));
 
@@ -66,7 +66,8 @@ namespace ModernUO.Studio.Gui
         /// <summary>A checkerboard behind transparent pixels.</summary>
         public static void Checker(ImDrawListPtr draw, Vector2 min, Vector2 max, float cell = 8f)
         {
-            uint a = Col(0.16f, 0.16f, 0.17f), b = Col(0.21f, 0.21f, 0.22f);
+            // a quiet checkerboard: transparency shows without competing with the art
+            uint a = Col(0.105f, 0.105f, 0.105f), b = Col(0.13f, 0.13f, 0.13f);
             draw.AddRectFilled(min, max, a);
             draw.PushClipRect(min, max, true);
 
@@ -86,7 +87,9 @@ namespace ModernUO.Studio.Gui
         {
             Vector2 c = (min + max) * 0.5f;
             float t = (float)ImGui.GetTime() * 4f;
-            draw.AddCircle(c, MathF.Min(max.X - min.X, max.Y - min.Y) * 0.15f, Col(0.5f, 0.5f, 0.5f, 0.5f + 0.5f * MathF.Sin(t)), 12, 2f);
+            float r = MathF.Min(max.X - min.X, max.Y - min.Y) * 0.14f;
+            draw.PathArcTo(c, r, t, t + MathF.PI * 1.3f, 16);
+            draw.PathStroke(Theme.U32(Theme.Gold, 0.7f), ImDrawFlags.None, 2f);
         }
 
         /// <summary>Parses "1234", "0x4D2" or "4D2h"; false for anything else.</summary>
@@ -116,7 +119,7 @@ namespace ModernUO.Studio.Gui
         public static void HelpMarker(string text)
         {
             ImGui.SameLine();
-            ImGui.TextDisabled("(?)");
+            ImGui.TextColored(Theme.TextMuted, Icons.Info);
 
             if (ImGui.BeginItemTooltip())
             {

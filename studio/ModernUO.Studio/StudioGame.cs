@@ -2,6 +2,7 @@ using System.Runtime.InteropServices;
 using Hexa.NET.ImGui;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
+using ModernUO.Studio.Assets;
 using ModernUO.Studio.Gui;
 using ModernUO.Studio.Panels;
 
@@ -21,6 +22,7 @@ namespace ModernUO.Studio
         private readonly string _startupPack;
         private ImGuiRenderer _renderer;
         private ImGuiPlatform _platform;
+        private Texture2D _logo;
         private StudioContext _context;
         private StartPanel _start;
         private IntPtr _iniPath;
@@ -101,10 +103,11 @@ namespace ModernUO.Studio
                 io.IniFilename = (byte*)_iniPath;
             }
 
-            StudioTheme.Apply(_settings.UiScale);
-            StudioTheme.LoadFont(17f * _settings.UiScale);
+            Theme.Apply(_settings.UiScale);
+            Theme.LoadFonts(_settings.UiScale);
 
             _renderer = new ImGuiRenderer(GraphicsDevice);
+            LoadLogo();
             _platform = new ImGuiPlatform(Window.Handle);
             _context = new StudioContext(GraphicsDevice, _renderer, _settings);
 
@@ -194,6 +197,9 @@ namespace ModernUO.Studio
 
         private void DrawUi()
         {
+            // the bars first: they take their strips of the viewport before the dock space fills the rest
+            DrawTopBar();
+            DrawStatusBar();
             uint dock = ImGui.DockSpaceOverViewport();
 
             if (_buildLayout)
@@ -224,8 +230,6 @@ namespace ModernUO.Studio
                     map.CenterOn(map.Facet < 0 ? _context.Assets.Manifest.Facets[0].Index : map.Facet, gx, gy, select: true);
                 }
             }
-
-            DrawMainMenu();
 
             foreach (var panel in _context.Panels)
             {
@@ -313,21 +317,132 @@ namespace ModernUO.Studio
             ImGuiP.DockBuilderFinish(dock);
         }
 
-        private void DrawMainMenu()
+        /// <summary>The top bar: the ModernUO mark, the menus, the workspace switch and the open pack.</summary>
+        private void DrawTopBar()
         {
-            if (!ImGui.BeginMainMenuBar())
+            ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new System.Numerics.Vector2(10f, 10f));
+            ImGui.PushStyleColor(ImGuiCol.MenuBarBg, Theme.Base);
+            bool open = ImGui.BeginMainMenuBar();
+            ImGui.PopStyleColor();
+            ImGui.PopStyleVar();
+
+            if (!open)
             {
                 return;
             }
 
+            DrawMark();
+
+            ImGui.PushStyleVar(ImGuiStyleVar.ItemSpacing, new System.Numerics.Vector2(10f, 8f));
+            DrawMenus();
+            ImGui.PopStyleVar();
+
+            // the workspace switch, centred on the bar
+            int workspace = (int)Layout;
+            string[] spaces = { $"{Icons.Images}  Browse", $"{Icons.Map}  Map" };
+            float width = 0f;
+
+            foreach (string s in spaces)
+            {
+                width = MathF.Max(width, ImGui.CalcTextSize(s).X + 24f);
+            }
+
+            // the bar is taller than a control: controls on it get the normal frame padding and are centred vertically
+            ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new System.Numerics.Vector2(10f, 5f));
+            float barHeight = ImGui.GetWindowHeight();
+            ImGui.SameLine((ImGui.GetWindowWidth() - width * spaces.Length) * 0.5f);
+            ImGui.SetCursorPosY((barHeight - Ui.Height) * 0.5f);
+
+            if (Ui.Segmented("workspace", ref workspace, spaces))
+            {
+                ResetLayout((StudioLayout)workspace);
+            }
+
+            if (_context.Assets != null)
+            {
+                string name = $"{Icons.Package}  {Path.GetFileName(_context.Assets.Root.TrimEnd('\\', '/'))}";
+                float right = ImGui.GetWindowWidth() - ImGui.CalcTextSize(name).X - 36f;
+                ImGui.SameLine(right);
+                ImGui.SetCursorPosY((barHeight - Ui.Height) * 0.5f);
+                Ui.Chip(name, Theme.Gold);
+
+                if (ImGui.IsItemHovered())
+                {
+                    Ui.Tooltip($"{_context.Assets.Root}\nconverted from client {_context.Assets.Manifest.SourceClientVersion}");
+                }
+            }
+
+            ImGui.PopStyleVar();
+            ImGui.EndMainMenuBar();
+
+            if (ImGui.IsKeyChordPressed((int)(ImGuiKey.ModCtrl | ImGuiKey.O)))
+            {
+                _start.Browse();
+            }
+        }
+
+        // ModernUO's logo (Branding/logo-512.png, from modernuo.com), then the name in two weights
+        private void DrawMark()
+        {
+            var draw = ImGui.GetWindowDrawList();
+            var p = ImGui.GetCursorScreenPos();
+            float h = ImGui.GetWindowHeight();
+            const float size = 20f;
+            var min = new System.Numerics.Vector2(p.X + 2f, ImGui.GetWindowPos().Y + (h - size) * 0.5f);
+
+            if (_logo != null)
+            {
+                draw.AddImage(_renderer.Bind(_logo, linear: true), min, min + new System.Numerics.Vector2(size, size));
+            }
+
+            ImGui.Dummy(new System.Numerics.Vector2(size + 4f, 0f));
+            ImGui.SameLine(0f, 6f);
+            ImGui.PushFont(Theme.Strong, 0f);
+            ImGui.TextUnformatted("ModernUO");
+            ImGui.PopFont();
+            ImGui.SameLine(0f, 4f);
+            ImGui.TextColored(Theme.TextSecondary, "Studio");
+            ImGui.SameLine(0f, 20f);
+        }
+
+        /// <summary>The logo for the top bar and as the window icon (the exe icon is Branding/muostudio.ico).</summary>
+        private unsafe void LoadLogo()
+        {
+            using var stream = typeof(StudioGame).Assembly.GetManifestResourceStream("logo-512.png");
+
+            if (stream == null)
+            {
+                return;
+            }
+
+            _logo = Texture2D.FromStream(GraphicsDevice, stream);
+
+            // SDL keeps its own copy of the icon; ABGR8888 is R, G, B, A in memory, the layout of XNA's Color
+            var pixels = new Color[_logo.Width * _logo.Height];
+            _logo.GetData(pixels);
+
+            fixed (Color* ptr = pixels)
+            {
+                IntPtr surface = SDL3.SDL.SDL_CreateSurfaceFrom(_logo.Width, _logo.Height, SDL3.SDL.SDL_PixelFormat.SDL_PIXELFORMAT_ABGR8888,
+                    (IntPtr)ptr, _logo.Width * 4);
+
+                if (surface != IntPtr.Zero)
+                {
+                    SDL3.SDL.SDL_SetWindowIcon(Window.Handle, surface);
+                    SDL3.SDL.SDL_DestroySurface(surface);
+                }
+            }
+        }
+        private void DrawMenus()
+        {
             if (ImGui.BeginMenu("File"))
             {
-                if (ImGui.MenuItem("Open Pack...", "Ctrl+O"))
+                if (ImGui.MenuItem($"{Icons.FolderOpen}  Open Pack...", "Ctrl+O"))
                 {
                     _start.Browse();
                 }
 
-                if (ImGui.BeginMenu("Recent", _settings.RecentPacks.Count > 0))
+                if (ImGui.BeginMenu($"{Icons.Refresh}  Recent", _settings.RecentPacks.Count > 0))
                 {
                     string open = null;
 
@@ -347,14 +462,14 @@ namespace ModernUO.Studio
                     }
                 }
 
-                if (ImGui.MenuItem("Close Pack", (string)null, false, _context.Assets != null))
+                if (ImGui.MenuItem($"{Icons.X}  Close Pack", (string)null, false, _context.Assets != null))
                 {
                     _context.ClosePack();
                 }
 
                 ImGui.Separator();
 
-                if (ImGui.MenuItem("Open Export Folder"))
+                if (ImGui.MenuItem($"{Icons.ExternalLink}  Open Export Folder"))
                 {
                     OpenFolder(_settings.ResolveExportDirectory());
                 }
@@ -382,30 +497,25 @@ namespace ModernUO.Studio
                             continue;
                         }
 
-                        bool open = panel.IsOpen;
+                        bool panelOpen = panel.IsOpen;
 
-                        if (ImGui.MenuItem(panel.MenuName, (string)null, ref open))
+                        if (ImGui.MenuItem($"{panel.Icon ?? " "}  {panel.MenuName}", (string)null, ref panelOpen))
                         {
-                            panel.IsOpen = open;
+                            panel.IsOpen = panelOpen;
                         }
                     }
                 }
 
                 ImGui.Separator();
 
-                if (ImGui.BeginMenu("Layout"))
+                if (ImGui.MenuItem($"{Icons.Images}  Browse workspace"))
                 {
-                    if (ImGui.MenuItem("Browse"))
-                    {
-                        ResetLayout(StudioLayout.Browse);
-                    }
+                    ResetLayout(StudioLayout.Browse);
+                }
 
-                    if (ImGui.MenuItem("Map"))
-                    {
-                        ResetLayout(StudioLayout.Map);
-                    }
-
-                    ImGui.EndMenu();
+                if (ImGui.MenuItem($"{Icons.Map}  Map workspace"))
+                {
+                    ResetLayout(StudioLayout.Map);
                 }
 
                 ImGui.EndMenu();
@@ -413,28 +523,67 @@ namespace ModernUO.Studio
 
             if (ImGui.BeginMenu("Help"))
             {
-                ImGui.MenuItem("About", (string)null, ref _showAbout);
+                ImGui.MenuItem($"{Icons.Info}  About", (string)null, ref _showAbout);
+                ImGui.Separator();
                 ImGui.MenuItem("ImGui Demo", (string)null, ref _showDemo);
                 ImGui.MenuItem("ImGui Metrics", (string)null, ref _showMetrics);
                 ImGui.EndMenu();
             }
-
-            string status = _context.Assets == null ? "no pack" : _context.Assets.Root;
-            string fps = $"{ImGui.GetIO().Framerate:0} fps";
-            float right = ImGui.CalcTextSize(status).X + ImGui.CalcTextSize(fps).X + 40f;
-            ImGui.SameLine(ImGui.GetWindowWidth() - right);
-            ImGui.TextDisabled(status);
-            ImGui.SameLine();
-            ImGui.TextDisabled(fps);
-
-            ImGui.EndMainMenuBar();
-
-            if (ImGui.IsKeyChordPressed((int)(ImGuiKey.ModCtrl | ImGuiKey.O)))
-            {
-                _start.Browse();
-            }
         }
 
+        /// <summary>The status bar: what Studio is doing, the selection, and the frame rate.</summary>
+        private void DrawStatusBar()
+        {
+            var flags = ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoSavedSettings | ImGuiWindowFlags.MenuBar;
+            ImGui.PushStyleColor(ImGuiCol.MenuBarBg, Theme.Base);
+            ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new System.Numerics.Vector2(10f, 4f));
+            bool open = ImGuiP.BeginViewportSideBar("##status", ImGui.GetMainViewport(), ImGuiDir.Down, ImGui.GetFrameHeight(), flags);
+            ImGui.PopStyleVar();
+            ImGui.PopStyleColor();
+
+            if (open && ImGui.BeginMenuBar())
+            {
+                var assets = _context.Assets;
+                var map = _context.Get<MapPanel>();
+                int pending = assets == null ? 0 : (assets.Arts?.PendingDecodes ?? 0) + (assets.Gumps?.PendingDecodes ?? 0)
+                    + (assets.Texmaps?.PendingDecodes ?? 0) + (assets.Animations?.PendingDirections ?? 0);
+                bool streaming = map is { Visible: true } && _context.MapWorld is { VisibleReady: false };
+
+                (System.Numerics.Vector4 color, string text) state = assets == null ? (Theme.TextMuted, "No pack")
+                    : streaming ? (Theme.Gold, "Streaming the map")
+                    : pending > 0 ? (Theme.Gold, $"Decoding {pending}")
+                    : (Theme.Green, "Ready");
+
+                var draw = ImGui.GetWindowDrawList();
+                var p = ImGui.GetCursorScreenPos();
+                draw.AddCircleFilled(p + new System.Numerics.Vector2(5f, ImGui.GetFrameHeight() * 0.5f), 3.5f, Theme.U32(state.color), 12);
+                ImGui.Dummy(new System.Numerics.Vector2(10f, 0f));
+                ImGui.TextColored(Theme.TextSecondary, state.text);
+
+                if (assets != null)
+                {
+                    ImGui.TextColored(Theme.TextMuted, "·");
+                    ImGui.TextColored(Theme.TextMuted, $"client {assets.Manifest.SourceClientVersion}");
+                }
+
+                var tile = _context.SelectedTile;
+
+                if (tile != null)
+                {
+                    ImGui.TextColored(Theme.TextMuted, "·");
+                    ImGui.TextColored(Theme.TextMuted, $"{Icons.Crosshair} {MapData.FacetName(tile.Facet)} {tile.X}, {tile.Y}, {tile.LandZ}");
+                }
+
+                string fps = $"{ImGui.GetIO().Framerate:0} fps";
+                ImGui.SameLine(ImGui.GetWindowWidth() - ImGui.CalcTextSize(fps).X - 16f);
+                ImGui.PushFont(Theme.Mono, Theme.SmallSize);
+                ImGui.TextColored(Theme.TextMuted, fps);
+                ImGui.PopFont();
+                ImGui.EndMenuBar();
+            }
+
+            ImGui.End();
+        }
         private void ResetLayout(StudioLayout layout)
         {
             foreach (var panel in _context.Panels)
