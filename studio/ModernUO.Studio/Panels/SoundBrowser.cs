@@ -175,19 +175,6 @@ namespace ModernUO.Studio.Panels
                 draw.AddLine(new Vector2(min.X + x, mid - h), new Vector2(min.X + x, mid + h), color);
             }
 
-            if (ImGui.Button(Context.IsSoundPlaying ? "Stop" : "Play"))
-            {
-                if (Context.IsSoundPlaying)
-                {
-                    Context.StopSound();
-                }
-                else
-                {
-                    Play(id);
-                }
-            }
-
-            ImGui.SameLine();
             ImGui.TextColored(Widgets.Dim, "Enter or double-click plays.");
         }
 
@@ -251,13 +238,21 @@ namespace ModernUO.Studio.Panels
 
         protected override void DrawActions(int id)
         {
-            if (!Music && ImGui.Button("Play"))
-            {
-                Play(id);
-            }
-
             if (!Music)
             {
+                // one button that plays or stops; "###play" keeps its id while the label changes
+                if (ImGui.Button(Context.IsSoundPlaying ? "Stop###play" : "Play###play"))
+                {
+                    if (Context.IsSoundPlaying)
+                    {
+                        Context.StopSound();
+                    }
+                    else
+                    {
+                        Play(id);
+                    }
+                }
+
                 ImGui.SameLine();
             }
 
