@@ -4,7 +4,7 @@ Asset and map tooling for ModernUO packs: the UO Fiddler and CentrED jobs, on th
 
 Studio is its own executable (`muostudio`). It references the client's libraries (`ClassicUO.Assets` for the pack, `ClassicUO.Renderer` for the atlases) and never the game client (`ClassicUO.Client`), so the folder can move to its own repository with those libraries as dependencies. It reads only packs made by `poc/Uo.Converter`; it never opens MUL or UOP files.
 
-The UI is Dear ImGui (Hexa.NET.ImGui, docking branch) drawn through FNA on the same FNA3D device the client uses (SDL_GPU on Vulkan where available).
+The UI is Dear ImGui (Hexa.NET.ImGui, docking branch) drawn through FNA on the same FNA3D device the client uses (SDL_GPU on Vulkan where available), with Studio's own theme and widgets in the ModernUO brand (see [UX.md](UX.md), "Visual language"). The fonts are embedded from `ModernUO.Studio/Fonts/`: Inter 4.1 and JetBrains Mono 2.304 (SIL Open Font License 1.1) and Lucide 1.67.0 icons (ISC), each with its licence file. The ModernUO logo in `ModernUO.Studio/Branding/` (from modernuo.com/branding) is the exe icon (`muostudio.ico`, 16 to 256 px), the window icon and the top bar mark.
 
 ## Build and run
 

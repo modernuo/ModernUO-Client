@@ -84,10 +84,15 @@ Every inspector has the same sections, in this order, and leaves out the ones th
 
 ## Visual language
 
-- Dark, neutral greys with one blue accent for selection and focus; colour is used for state (changed, error, warning), not for decoration.
-- Lucide icons (ISC licence), merged into the UI font, for toolbar buttons and the tree of kinds; every icon button has a tooltip and a menu equivalent.
-- A monospace font for ids, offsets and hex values, so columns of ids line up.
-- Compact spacing, aimed at large screens and many visible items; one UI scale setting for high-DPI screens.
+Studio uses the ModernUO brand from modernuo.com, as a modern pro tool rather than stock ImGui. Every colour, font and size is a token in `Gui/Theme.cs`; panels never pick their own.
+
+- **Colour.** Warm near-black neutrals (`#141414` base, `#1a1a1a` panel, `#212121` surface, `#2a2a2a` raised, hairline borders). **muo-gold `#d5bf74` is the one accent**: selection, focus, primary buttons, the active tab's overline. muo-blue `#748ad5` is for links and information, green `#77d574` for success, red for errors, amber for warnings, purple for special states. Colour marks state, never decoration.
+- **Type.** Inter (regular and semibold) for text, JetBrains Mono for ids, coordinates, hashes and the log. Section labels are small, semibold, uppercase and muted; inspector titles are the item's name in semibold, with the id in gold monospace under it.
+- **Icons.** Lucide (ISC licence), merged into every UI font, on tabs, menus and toolbar buttons; every icon button has a tooltip and a menu equivalent.
+- **Widgets.** Studio's own (`Gui/Ui.cs`), drawn on ImGui's draw lists: segmented controls instead of radio buttons, switches instead of checkboxes, pill search fields with a magnifier and a clear button, icon buttons with soft hover backgrounds, gold primary buttons, chips, cards with 8 px rounding, and short hover and selection fades. Stock ImGui widgets appear only where Studio has no counterpart yet (combos, sliders, tables), restyled by the theme.
+- **Chrome.** A top bar with the ModernUO mark, the menus, the workspace switch in the middle and the open pack on the right; a status bar with Studio's state, the selection and the frame rate. Dock tabs carry an icon, have no window menu or dock close button, and show a close button only on the hovered selected tab.
+- **Layout.** An 8 px spacing grid; collections sit on a sunken card, inspectors on a raised one; empty states centre an icon, a title and what to do.
+- Fonts, icons and their licences are embedded from `Fonts/`, so Studio looks the same on every machine; one UI scale setting covers high-DPI screens.
 
 ## Decisions
 
@@ -96,6 +101,7 @@ Every inspector has the same sections, in this order, and leaves out the ones th
 | Window model | One main window with docked panels. ImGui multi-viewports (tear-off OS windows) may come later; they need platform-window support in the SDL3 backend. |
 | Hue scope | Per panel, with one shared hue widget. |
 | Icon font | Lucide (ISC licence). |
+| Look | Modern pro tool in the ModernUO brand: muo-gold accent, muo-blue links, Inter and JetBrains Mono (from modernuo.com, replacing the blue accent first proposed). |
 | Id display | Hex first, decimal next to it; a setting for decimal first. |
 | Grid or list | Grid by default where a picture exists; the choice is remembered per browser. |
 
