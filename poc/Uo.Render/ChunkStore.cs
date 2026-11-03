@@ -32,6 +32,10 @@ public sealed unsafe class ChunkStore
     readonly byte[] _pageCount = new byte[MaxSlots];
     readonly long[] _lastNeeded = new long[MaxSlots];
     readonly BakeJob[] _job = new BakeJob[MaxSlots];
+    // Re-bakes in place (InvalidateBlocks): a ready chunk keeps drawing its old instances while a new bake runs, and the
+    // upload swaps them, so an edited chunk never disappears. _rebake = wanted, _rebakeJob = in flight, _rebakeDone = baked.
+    readonly BakeJob[] _rebakeJob = new BakeJob[MaxSlots];
+    readonly bool[] _rebake = new bool[MaxSlots], _rebakeDone = new bool[MaxSlots];
     // CPU mirror of the instance buffer at the same offsets, with each instance's object key: override lookup,
     // translucent sort keys, debug rects. The allocator is first-fit, so only the low part is used; the mirror starts at
     // 512k instances (19 MB; the 4K bench path, zoom 0.5 included, peaks below that) and doubles past it if ever needed.
@@ -186,11 +190,16 @@ public sealed unsafe class ChunkStore
                 _lastNeeded[slot] = frame;
                 _lastNeededTicks[slot] = _nowTicks;
                 if (_state[slot] == State.WaitRegions && BakesInFlight < MaxBakesInFlight) TryDispatch(slot, frame);
+                else if (_rebake[slot] && _state[slot] == State.Ready && _rebakeJob[slot] == null && BakesInFlight < MaxBakesInFlight) TryDispatch(slot, frame, rebake: true);
             }
     }
 
     void FreeSlot(int slot)
     {
+        // a re-bake in flight is discarded when it finishes (OnBaked no longer finds it)
+        _rebakeJob[slot] = null;
+        _rebake[slot] = false;
+        _rebakeDone[slot] = false;
         _map.Remove(_key[slot]);
         _state[slot] = State.Free;
         int pos = _activePos[slot];
@@ -200,7 +209,7 @@ public sealed unsafe class ChunkStore
         _freeSlots[_freeCount++] = slot;
     }
 
-    void TryDispatch(int slot, long frame)
+    void TryDispatch(int slot, long frame, bool rebake = false)
     {
         int rb = _pack.RegionBlocks;
         int bx = _bx[slot], by = _by[slot];
@@ -229,8 +238,20 @@ public sealed unsafe class ChunkStore
                 job.Regions[(dy + 1) * 3 + dx + 1] = reg;
             }
         job.Slot = slot; job.Bx = bx; job.By = by;
-        _job[slot] = job;
-        _state[slot] = State.Baking;
+
+        if (rebake)
+        {
+            // the chunk stays Ready (drawn) until the new bake is uploaded
+            _rebakeJob[slot] = job;
+            _rebake[slot] = false;
+            _rebakeDone[slot] = false;
+        }
+        else
+        {
+            _job[slot] = job;
+            _state[slot] = State.Baking;
+        }
+
         BakesInFlight++;
         _workers.Enqueue(job, high: false);
     }
@@ -261,7 +282,18 @@ public sealed unsafe class ChunkStore
             }
 
             var st = _state[slot];
-            if (st == State.Ready && _count[slot] > 0) Alloc.Free(_first[slot], _count[slot]);
+
+            if (st == State.Ready)
+            {
+                // keep drawing it; a bake from the edited regions replaces it (a re-bake already in flight read the old
+                // regions: its result is dropped)
+                _rebake[slot] = true;
+                _rebakeJob[slot] = null;
+                _rebakeDone[slot] = false;
+
+                continue;
+            }
+
             if (st == State.Baked) ReturnJob(_job[slot]);
             _job[slot] = null;
             FreeSlot(slot);
@@ -396,6 +428,16 @@ public sealed unsafe class ChunkStore
         for (int i = 0; i < 9; i++) if (job.Regions[i] != null) job.Regions[i].Pins--;
         Array.Clear(job.Regions);
         int slot = job.Slot;
+
+        if (_rebakeJob[slot] == job)
+        {
+            if (_state[slot] != State.Ready) { _rebakeJob[slot] = null; ReturnJob(job); return; }
+            _rebakeDone[slot] = true;
+            _uploadQueue[(_uqHead + _uqCount) % MaxSlots] = slot;
+            _uqCount++;
+            return;
+        }
+
         if (_state[slot] != State.Baking || _job[slot] != job) { ReturnJob(job); return; }
         _state[slot] = State.Baked;
         _uploadQueue[(_uqHead + _uqCount) % MaxSlots] = slot;
@@ -413,8 +455,9 @@ public sealed unsafe class ChunkStore
         while (_uqCount > 0 && uploaded < maxChunks && UploadCount < UploadSrc.Length)
         {
             int slot = _uploadQueue[_uqHead];
-            if (_state[slot] != State.Baked) { _uqHead = (_uqHead + 1) % MaxSlots; _uqCount--; continue; }
-            var job = _job[slot];
+            bool rebake = _state[slot] == State.Ready && _rebakeDone[slot] && _rebakeJob[slot] != null;
+            if (_state[slot] != State.Baked && !rebake) { _uqHead = (_uqHead + 1) % MaxSlots; _uqCount--; continue; }
+            var job = rebake ? _rebakeJob[slot] : _job[slot];
             int n = job.Count;
             uint bytes = (uint)(n * stride);
             if (offset + bytes > capacity) break;
@@ -432,6 +475,15 @@ public sealed unsafe class ChunkStore
                 offset += bytes;
             }
             _uqHead = (_uqHead + 1) % MaxSlots; _uqCount--;
+
+            if (rebake)
+            {
+                // the new instances are in place: the old range goes (draws recorded from now on use the new one)
+                if (_count[slot] > 0) Alloc.Free(_first[slot], _count[slot]);
+                _rebakeJob[slot] = null;
+                _rebakeDone[slot] = false;
+            }
+
             _first[slot] = first;
             _count[slot] = n;
             _minX[slot] = job.MinX; _minY[slot] = job.MinY; _maxX[slot] = job.MaxX; _maxY[slot] = job.MaxY;
