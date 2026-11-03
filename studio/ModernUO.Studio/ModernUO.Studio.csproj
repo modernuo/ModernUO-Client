@@ -34,7 +34,18 @@
     <ProjectReference Include="..\..\src\ClassicUO.Assets\ClassicUO.Assets.csproj" />
     <ProjectReference Include="..\..\src\ClassicUO.Renderer\ClassicUO.Renderer.csproj" />
     <ProjectReference Include="..\..\src\ClassicUO.Utility\ClassicUO.Utility.csproj" />
+    <ProjectReference Include="..\..\poc\Uo.Render\Uo.Render.csproj" />
   </ItemGroup>
+
+  <!-- Uo.Render binds SDL3 through SDL3-CS's SDL3.Core assembly while FNA compiles SDL3.Legacy.cs into FNA.dll; both
+       declare SDL3.SDL. SDL3.Core gets an extern alias (sdl3core) so plain SDL3.SDL keeps meaning FNA's (as in the client). -->
+  <Target Name="AliasSdl3Core" AfterTargets="FindReferenceAssembliesForReferences" BeforeTargets="CoreCompile">
+    <ItemGroup>
+      <ReferencePathWithRefAssemblies Condition="'%(Filename)' == 'SDL3.Core'">
+        <Aliases>sdl3core</Aliases>
+      </ReferencePathWithRefAssemblies>
+    </ItemGroup>
+  </Target>
 
   <ItemGroup>
     <DataFiles_x64 Include="$(ProjectDir)..\..\external\x64\*.*" />

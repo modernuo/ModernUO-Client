@@ -8,6 +8,12 @@ using ModernUO.Studio.Panels;
 namespace ModernUO.Studio
 {
     /// <summary>The Studio window: an FNA game whose whole frame is a docking Dear ImGui UI.</summary>
+    internal enum StudioLayout
+    {
+        Browse,
+        Map
+    }
+
     internal sealed class StudioGame : Game
     {
         private readonly GraphicsDeviceManager _graphics;
@@ -27,6 +33,18 @@ namespace ModernUO.Studio
 
         /// <summary>-focus: the View menu name (or its start) of a panel to bring to the front at startup.</summary>
         public string Focus { get; init; }
+
+        /// <summary>-layout browse|map: the workspace to build when there is no saved layout (or with -resetlayout).</summary>
+        public StudioLayout Layout { get; set; } = StudioLayout.Browse;
+
+        /// <summary>The window brought to the front once a new layout has docked.</summary>
+        private string _focusAfterLayout;
+
+        /// <summary>-frames: the frames drawn before -screenshot saves (worker builds such as the radar need longer).</summary>
+        public int ScreenshotFrames { get; init; } = 90;
+
+        /// <summary>-goto "x y": the map centres on and picks this tile at startup.</summary>
+        public string GoTo { get; init; }
 
         /// <summary>-select: an id the focused panel selects at startup.</summary>
         public string Select { get; init; }
@@ -101,6 +119,9 @@ namespace ModernUO.Studio
             _context.Add(new TexmapBrowser(_context));
             _context.Add(new SoundBrowser(_context));
             _context.Add(new ClilocBrowser(_context));
+            _context.Add(new MapPanel(_context));
+            _context.Add(new TileInspectorPanel(_context));
+            _context.Add(new RadarPanel(_context));
             _context.Add(new PackInfoPanel(_context));
             _context.Add(new LogPanel(_context));
 
@@ -137,6 +158,10 @@ namespace ModernUO.Studio
             DrawUi();
 
             ImGui.Render();
+
+            // the map's world pass submits its own command buffer before FNA's draws that sample its target (as the client)
+            _context.RenderWorld();
+
             GraphicsDevice.SetRenderTarget(null);
             GraphicsDevice.Clear(new Color(27, 28, 31));
             _renderer.Render(ImGui.GetDrawData());
@@ -144,7 +169,7 @@ namespace ModernUO.Studio
             // the warm-up covers the first-run dock layout and the worker decodes of what the browsers show first
             _frames++;
 
-            if (_screenshot != null && _frames == 90)
+            if (_screenshot != null && _frames == ScreenshotFrames)
             {
                 SaveScreenshot(_screenshot, width, height);
                 Exit();
@@ -174,7 +199,7 @@ namespace ModernUO.Studio
             if (_buildLayout)
             {
                 _buildLayout = false;
-                BuildDefaultLayout(dock);
+                BuildLayout(dock, Layout);
             }
 
             // -focus: keep asking for the panel until the layout has settled (the first frames dock the windows)
@@ -189,11 +214,29 @@ namespace ModernUO.Studio
                 }
             }
 
+            if (GoTo != null && _frames == 1 && _context.Assets != null)
+            {
+                var parts = GoTo.Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries);
+                var map = _context.Get<MapPanel>();
+
+                if (map != null && parts.Length >= 2 && Widgets.TryParseId(parts[0], out int gx) && Widgets.TryParseId(parts[1], out int gy))
+                {
+                    map.CenterOn(map.Facet < 0 ? _context.Assets.Manifest.Facets[0].Index : map.Facet, gx, gy, select: true);
+                }
+            }
+
             DrawMainMenu();
 
             foreach (var panel in _context.Panels)
             {
                 panel.Draw();
+            }
+
+            // a new layout docks its windows this frame; the front tab is chosen on the next one
+            if (_focusAfterLayout != null && _frames > 0)
+            {
+                ImGui.SetWindowFocus(_focusAfterLayout);
+                _focusAfterLayout = null;
             }
 
             if (_showDemo)
@@ -212,8 +255,18 @@ namespace ModernUO.Studio
             }
         }
 
-        // first run (no studio_layout.ini): browsers as tabs in the middle, the log under them
-        private static unsafe void BuildDefaultLayout(uint dock)
+        private static readonly string[] _browserWindows =
+        {
+            "Start###start", "Art###art", "Gumps###gumps", "Hues###hues", "TileData###tiledata", "Animations###anims", "Multis###multis",
+            "Texmaps###texmaps", "Sounds###sounds", "Cliloc###cliloc", "Pack Info###packinfo"
+        };
+
+        /// <summary>
+        /// The workspaces of studio/UX.md. Browse: the browsers as tabs in the middle, the map among them, the log under
+        /// them. Map: the map in the middle, the tile inspector and radar on the right, the art, tiledata and hue browsers
+        /// as palettes on the left, the log under the map.
+        /// </summary>
+        private unsafe void BuildLayout(uint dock, StudioLayout layout)
         {
             ImGuiP.DockBuilderRemoveNode(dock);
             ImGuiP.DockBuilderAddNode(dock, ImGuiDockNodeFlags.PassthruCentralNode | (ImGuiDockNodeFlags)ImGuiDockNodeFlagsPrivate.Space);
@@ -221,14 +274,42 @@ namespace ModernUO.Studio
 
             uint main = dock, bottom;
             ImGuiP.DockBuilderSplitNode(main, ImGuiDir.Down, 0.2f, &bottom, &main);
+            ImGuiP.DockBuilderDockWindow("Log###log", bottom);
 
-            foreach (string window in new[] { "Start###start", "Art###art", "Gumps###gumps", "Hues###hues", "TileData###tiledata",
-                         "Animations###anims", "Multis###multis", "Texmaps###texmaps", "Sounds###sounds", "Cliloc###cliloc", "Pack Info###packinfo" })
+            if (layout == StudioLayout.Map)
             {
-                ImGuiP.DockBuilderDockWindow(window, main);
+                uint right, rightBottom, left;
+                ImGuiP.DockBuilderSplitNode(main, ImGuiDir.Right, 0.24f, &right, &main);
+                ImGuiP.DockBuilderSplitNode(right, ImGuiDir.Down, 0.42f, &rightBottom, &right);
+                ImGuiP.DockBuilderSplitNode(main, ImGuiDir.Left, 0.28f, &left, &main);
+
+                foreach (string window in _browserWindows)
+                {
+                    bool palette = window is "Art###art" or "TileData###tiledata" or "Hues###hues" or "Multis###multis";
+                    ImGuiP.DockBuilderDockWindow(window, palette ? left : main);
+                }
+
+                ImGuiP.DockBuilderDockWindow("Map###map", main);
+                ImGuiP.DockBuilderDockWindow("Tile###tile", right);
+                ImGuiP.DockBuilderDockWindow("Radar###radar", rightBottom);
+                _focusAfterLayout = "Map###map";
+            }
+            else
+            {
+                uint right;
+                ImGuiP.DockBuilderSplitNode(main, ImGuiDir.Right, 0.22f, &right, &main);
+
+                foreach (string window in _browserWindows)
+                {
+                    ImGuiP.DockBuilderDockWindow(window, main);
+                }
+
+                ImGuiP.DockBuilderDockWindow("Map###map", main);
+                ImGuiP.DockBuilderDockWindow("Tile###tile", right);
+                ImGuiP.DockBuilderDockWindow("Radar###radar", right);
+                _focusAfterLayout = "Start###start";
             }
 
-            ImGuiP.DockBuilderDockWindow("Log###log", bottom);
             ImGuiP.DockBuilderFinish(dock);
         }
 
@@ -290,7 +371,7 @@ namespace ModernUO.Studio
 
             if (ImGui.BeginMenu("View"))
             {
-                foreach (string group in new[] { "Assets", "Tools" })
+                foreach (string group in new[] { "Assets", "Map", "Tools" })
                 {
                     ImGui.SeparatorText(group);
 
@@ -312,14 +393,19 @@ namespace ModernUO.Studio
 
                 ImGui.Separator();
 
-                if (ImGui.MenuItem("Reset Layout"))
+                if (ImGui.BeginMenu("Layout"))
                 {
-                    foreach (var panel in _context.Panels)
+                    if (ImGui.MenuItem("Browse"))
                     {
-                        panel.IsOpen = true;
+                        ResetLayout(StudioLayout.Browse);
                     }
 
-                    _buildLayout = true;
+                    if (ImGui.MenuItem("Map"))
+                    {
+                        ResetLayout(StudioLayout.Map);
+                    }
+
+                    ImGui.EndMenu();
                 }
 
                 ImGui.EndMenu();
@@ -347,6 +433,17 @@ namespace ModernUO.Studio
             {
                 _start.Browse();
             }
+        }
+
+        private void ResetLayout(StudioLayout layout)
+        {
+            foreach (var panel in _context.Panels)
+            {
+                panel.IsOpen = true;
+            }
+
+            Layout = layout;
+            _buildLayout = true;
         }
 
         private void DrawAbout()
@@ -379,6 +476,7 @@ namespace ModernUO.Studio
 
         protected override void UnloadContent()
         {
+            _context.Get<MapPanel>()?.SaveOnExit();
             var bounds = Window.ClientBounds;
             _settings.WindowWidth = bounds.Width;
             _settings.WindowHeight = bounds.Height;

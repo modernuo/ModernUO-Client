@@ -12,6 +12,12 @@ namespace ModernUO.Studio
         public int WindowHeight { get; set; } = 900;
         public float UiScale { get; set; } = 1f;
 
+        /// <summary>Where the map was last looked at (facet, tile and zoom); -1 = not yet.</summary>
+        public int MapFacet { get; set; } = -1;
+        public int MapX { get; set; } = -1;
+        public int MapY { get; set; } = -1;
+        public float MapZoom { get; set; } = 1f;
+
         private static string FilePath => Path.Combine(AppContext.BaseDirectory, "studio.json");
 
         public static StudioSettings Load()

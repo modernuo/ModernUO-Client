@@ -64,10 +64,11 @@ namespace ModernUO.Studio.Assets
             var f = Files;
 
             // the order of UOFileManager.Load, without the loaders that read only MUL files (skills, professions, speech,
-            // string dictionary) or are not browsed yet (maps, multimaps)
+            // string dictionary) or are not used yet (multimaps)
             Run("anims", f.Animations.Load);
             Run("animdata", f.AnimData.Load);
             Run("art", f.Arts.Load);
+            Run("maps", f.Maps.Load);
             Run("cliloc", () => f.Clilocs.Load("ENU"));
             Run("gumps", f.Gumps.Load);
             Run("fonts", f.Fonts.Load);

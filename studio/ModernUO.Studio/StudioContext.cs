@@ -86,6 +86,8 @@ namespace ModernUO.Studio
                 panel.OnPackChanged();
             }
 
+            ResetMap();
+
             try
             {
                 Assets.Dispose();
@@ -138,6 +140,63 @@ namespace ModernUO.Studio
         public void ShowHue(int hue) => Get<HueBrowser>()?.Select(hue);
 
         public void ShowGump(int id) => Get<GumpBrowser>()?.Select(id);
+
+        // ---- the map
+
+        private MapWorld _mapWorld;
+        private string _mapError;
+
+        /// <summary>The GPU world pass for the open pack, created on first use; null with <see cref="MapError"/> when it can't run.</summary>
+        public MapWorld MapWorld
+        {
+            get
+            {
+                if (_mapWorld == null && _mapError == null && Assets != null)
+                {
+                    _mapWorld = MapWorld.TryCreate(Device, Assets, out _mapError);
+
+                    if (_mapError != null)
+                    {
+                        StudioLog.Error($"Map: {_mapError}");
+                    }
+                }
+
+                return _mapWorld;
+            }
+        }
+
+        public string MapError => _mapError;
+
+        /// <summary>The tile the map selected (the Tile inspector shows it); null before the first pick.</summary>
+        public MapTile SelectedTile { get; private set; }
+
+        /// <summary>The selected tile's static the Tile inspector is hovering (the map highlights it); -1 for none.</summary>
+        public int HoveredStatic { get; set; } = -1;
+
+        public void SelectTile(int facet, int x, int y)
+        {
+            var tile = new MapTile();
+
+            if (Assets != null && MapData.TryGetTile(Assets, facet, x, y, tile))
+            {
+                SelectedTile = tile;
+                HoveredStatic = -1;
+            }
+        }
+
+        public void ShowOnMap(int facet, int x, int y) => Get<MapPanel>()?.CenterOn(facet, x, y, select: true);
+
+        private void ResetMap()
+        {
+            _mapWorld?.Dispose();
+            _mapWorld = null;
+            _mapError = null;
+            SelectedTile = null;
+            HoveredStatic = -1;
+        }
+
+        /// <summary>After ImGui built the frame, before FNA draws it: the map's world pass draws into its target.</summary>
+        public void RenderWorld() => Get<MapPanel>()?.RenderWorld();
 
         public void ShowTexmap(int id) => Get<TexmapBrowser>()?.SelectItem(id);
 

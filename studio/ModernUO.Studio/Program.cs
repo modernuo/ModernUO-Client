@@ -12,6 +12,9 @@ namespace ModernUO.Studio
             Log.Start(LogTypes.All);
 
             string pack = null, screenshot = null, focus = null, select = null;
+            var layout = StudioLayout.Browse;
+            int frames = 90;
+            string goTo = null;
 
             for (int i = 0; i < args.Length; i++)
             {
@@ -31,11 +34,24 @@ namespace ModernUO.Studio
                 {
                     select = args[++i];
                 }
+                else if (args[i] is "-frames" or "--frames" && i + 1 < args.Length && int.TryParse(args[i + 1], out int n))
+                {
+                    frames = Math.Max(2, n);
+                    i++;
+                }
+                else if (args[i] is "-goto" or "--goto" && i + 1 < args.Length)
+                {
+                    goTo = args[++i];
+                }
+                else if (args[i] is "-layout" or "--layout" && i + 1 < args.Length)
+                {
+                    layout = string.Equals(args[++i], "map", StringComparison.OrdinalIgnoreCase) ? StudioLayout.Map : StudioLayout.Browse;
+                }
             }
 
             var settings = StudioSettings.Load();
 
-            using var game = new StudioGame(settings, pack, screenshot) { Focus = focus, Select = select };
+            using var game = new StudioGame(settings, pack, screenshot) { Focus = focus, Select = select, Layout = layout, ScreenshotFrames = frames, GoTo = goTo };
             game.Run();
 
             Log.Stop();
