@@ -65,7 +65,26 @@ namespace ModernUO.Studio.Panels
             (MapTool.Erase, Icons.Eraser, "Erase statics (X)")
         };
 
-        /// <summary>The tool palette and the active tool's options.</summary>
+        /// <summary>The tool palette and the active tool's options, in a pill sized to its contents.</summary>
+        private void DrawToolsOverlay()
+        {
+            ImGui.PushStyleColor(ImGuiCol.ChildBg, Theme.Panel with { W = 0.92f });
+            ImGui.PushStyleColor(ImGuiCol.Border, Theme.Hairline);
+            ImGui.PushStyleVar(ImGuiStyleVar.ChildRounding, Theme.Rounding + 2f);
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding, new Vector2(4f, 4f));
+
+            if (ImGui.BeginChild("tools", Vector2.Zero,
+                ImGuiChildFlags.AutoResizeX | ImGuiChildFlags.AutoResizeY | ImGuiChildFlags.AlwaysUseWindowPadding | ImGuiChildFlags.Borders,
+                ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoSavedSettings))
+            {
+                DrawTools();
+            }
+
+            ImGui.EndChild();
+            ImGui.PopStyleVar(2);
+            ImGui.PopStyleColor(2);
+        }
+
         private void DrawTools()
         {
             foreach (var (tool, icon, tip) in _tools)
@@ -93,11 +112,12 @@ namespace ModernUO.Studio.Panels
                 edits.Redo();
             }
 
-            Ui.Gap(16f);
-
+            // each tool's options continue the row; Select has none, so the row ends at redo (a dangling SameLine would
+            // put the map canvas on this line)
             switch (_tool)
             {
                 case MapTool.Draw:
+                    Ui.Gap(16f);
                     DrawBrushChip();
 
                     if (Art is { HasBrush: true, BrushIsLand: false })
@@ -114,6 +134,7 @@ namespace ModernUO.Studio.Panels
                     break;
 
                 case MapTool.Terrain:
+                    Ui.Gap(16f);
                     int op = (int)_terrain;
 
                     if (Ui.Segmented("terrain", ref op, $"{Icons.ChevronsUp}  Raise", $"{Icons.ChevronsDown}  Lower", $"{Icons.Equal}  Flatten"))
@@ -133,6 +154,7 @@ namespace ModernUO.Studio.Panels
                     break;
 
                 case MapTool.Erase:
+                    Ui.Gap(16f);
                     Stepper("brush", ref _brush, 0, 8, v => v == 0 ? "1 tile" : $"{v * 2 + 1}x{v * 2 + 1}", "Brush size ([ and ])");
 
                     break;

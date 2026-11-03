@@ -185,7 +185,6 @@ namespace ModernUO.Studio.Panels
             }
 
             DrawToolbar();
-            DrawTools();
 
             Vector2 min = ImGui.GetCursorScreenPos();
             Vector2 avail = ImGui.GetContentRegionAvail();
@@ -237,6 +236,13 @@ namespace ModernUO.Studio.Panels
             }
 
             draw.PopClipRect();
+
+            // the tools float over the map's corner instead of taking a row from it; the canvas button was read above,
+            // and the overlay is its own child window, so clicks on it never reach the map
+            Vector2 below = ImGui.GetCursorScreenPos();
+            ImGui.SetCursorScreenPos(min + new Vector2(8f, 8f));
+            DrawToolsOverlay();
+            ImGui.SetCursorScreenPos(below);
             DrawStatusLine(world);
 
             _wantRender = true;
