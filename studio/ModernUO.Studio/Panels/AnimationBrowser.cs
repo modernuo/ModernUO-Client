@@ -2,28 +2,24 @@ using System.Numerics;
 using ClassicUO.Assets;
 using ClassicUO.Renderer;
 using Hexa.NET.ImGui;
+using ModernUO.Studio.Assets;
 using ModernUO.Studio.Gui;
 
 namespace ModernUO.Studio.Panels
 {
     /// <summary>Mobile and equipment animations (anim/): every body in the pack's resolved body set, per action and direction.</summary>
-    internal sealed class AnimationBrowser : Panel
+    internal sealed class AnimationBrowser : AssetBrowser
     {
         private static readonly string[] _directions = { "N", "NE", "E", "SE", "S", "SW", "W", "NW" };
 
-        private readonly List<int> _bodies = new();
-        private string _filter = "";
-        private bool _dirty = true;
-        private int _body = -1;
         private int _action;
-        private int _direction = 3; // SE: the classic paperdoll-ish facing
+        private int _direction = 3; // SE: the facing UO shows mobiles in most often
         private bool _playing = true;
         private float _fps = 10f;
         private double _frameTime;
         private int _frame;
         private float _zoom = 2f;
         private bool _showCenter = true;
-        private float _thumb = 64f;
         private short[] _thumbActions; // per body: the action its thumbnail shows (-1 none, -2 not looked up yet)
 
         public AnimationBrowser(StudioContext context) : base(context, false)
@@ -32,128 +28,106 @@ namespace ModernUO.Studio.Panels
 
         public override string Title => "Animations###anims";
         public override string MenuName => "Animations";
-        protected override Vector2 DefaultSize => new(900, 640);
+
+        private AnimationsLoader Loader => Context.Assets.Files.Animations;
+        private ClassicUO.Renderer.Animations.Animations Atlas => Context.Assets.Animations;
+
+        protected override string Kind => "Body";
+        protected override string SearchHint => "body id (400, 0x190) or type";
+        protected override float DefaultCell => 88f;
+        protected override float DefaultInspectorWidth => 480f;
+        protected override Parts InspectorParts => Parts.All;
+
+        protected override int SlotCount => Context.Assets?.Animations == null || Loader.PackBodies == null ? 0 : Loader.BodyCount;
+
+        protected override bool Exists(int id)
+        {
+            ref readonly var body = ref Loader.GetBody((ushort)id);
+
+            return body.ActionCount != 0 || body.AliasBody != 0xFFFF;
+        }
+
+        protected override string NameOf(int id) => Loader.GetBody((ushort)id).Type.ToString();
+
+        protected override string DetailOf(int id)
+        {
+            ref readonly var body = ref Loader.GetBody((ushort)id);
+
+            return body.ActionCount == 0 && body.AliasBody != 0xFFFF ? $"drawn as 0x{body.AliasBody:X}" : $"{body.ActionCount} actions";
+        }
 
         public override void OnPackChanged()
         {
-            _dirty = true;
-            _body = -1;
+            base.OnPackChanged();
             _thumbActions = null;
         }
 
-        protected override void DrawContent()
+        protected override void OnSelected(int id)
         {
-            var loader = Context.Assets.Files.Animations;
+            _frame = 0;
 
-            if (Context.Assets.Animations == null || loader.PackBodies == null)
+            if (!Loader.HasAction((ushort)SourceBody(id), _action))
             {
-                ImGui.TextDisabled("anim/ did not load (see Pack Info).");
+                _action = Math.Max(0, (int)ThumbAction(id));
+            }
+        }
 
-                return;
+        /// <summary>An alias body (Body.def) has no actions of its own: GetAnimationFrames draws the alias.</summary>
+        private int SourceBody(int id)
+        {
+            ref readonly var body = ref Loader.GetBody((ushort)id);
+
+            return body.ActionCount == 0 && body.AliasBody != 0xFFFF ? body.AliasBody : id;
+        }
+
+        private short ThumbAction(int id)
+        {
+            if (_thumbActions == null || _thumbActions.Length != Loader.BodyCount)
+            {
+                _thumbActions = new short[Loader.BodyCount];
+                Array.Fill(_thumbActions, (short)-2);
             }
 
-            if (ImGui.BeginChild("bodies", new Vector2(_thumb + 200f, 0), ImGuiChildFlags.Borders))
+            if (_thumbActions[id] == -2)
             {
-                ImGui.SetNextItemWidth(-1f);
-                _dirty |= ImGui.InputTextWithHint("##filter", "body id or type", ref _filter, 32);
+                int source = SourceBody(id);
+                _thumbActions[id] = -1;
 
-                if (_dirty)
+                for (int a = 0; a < AnimationsLoader.MAX_ACTIONS; a++)
                 {
-                    Rebuild(loader);
-                }
-
-                ImGui.TextDisabled($"{_bodies.Count} bodies");
-                ImGui.SameLine();
-                ImGui.SetNextItemWidth(-1f);
-                ImGui.SliderFloat("##thumb", ref _thumb, 32f, 160f, "thumb %.0f px");
-
-                if (ImGui.BeginChild("list"))
-                {
-                    // only the visible rows ask for frames: a body never scrolled to is never decoded
-                    var draw = ImGui.GetWindowDrawList();
-                    ImGuiListClipper clipper = new();
-                    clipper.Begin(_bodies.Count, Widgets.ThumbRowHeight(_thumb));
-
-                    while (clipper.Step())
+                    if (Loader.HasAction((ushort)source, a))
                     {
-                        for (int r = clipper.DisplayStart; r < clipper.DisplayEnd; r++)
-                        {
-                            int id = _bodies[r];
-                            ref readonly var body = ref loader.GetBody((ushort)id);
-                            string alias = body.ActionCount == 0 && body.AliasBody != 0xFFFF ? $"drawn as 0x{body.AliasBody:X}" : $"{body.ActionCount} actions";
+                        _thumbActions[id] = (short)a;
 
-                            if (Widgets.ThumbRow(id, id == _body, _thumb, $"0x{id:X4}  {body.Type}", alias, out Vector2 thumbMin))
-                            {
-                                SelectBody(loader, id);
-                            }
-
-                            DrawThumbnail(draw, loader, id, thumbMin, thumbMin + new Vector2(_thumb, _thumb));
-                        }
+                        break;
                     }
-
-                    clipper.End();
-                }
-
-                ImGui.EndChild();
-            }
-
-            ImGui.EndChild();
-            ImGui.SameLine();
-
-            if (ImGui.BeginChild("view", Vector2.Zero, ImGuiChildFlags.Borders))
-            {
-                if (_body >= 0)
-                {
-                    DrawView(loader);
-                }
-                else
-                {
-                    ImGui.TextDisabled("Select a body.");
                 }
             }
 
-            ImGui.EndChild();
+            return _thumbActions[id];
         }
 
-        private void Rebuild(AnimationsLoader loader)
+        private Span<SpriteInfo> Frames(int id, int action, out bool mirror)
         {
-            _dirty = false;
-            _bodies.Clear();
-            string filter = _filter.Trim();
-            bool byId = Widgets.TryParseId(filter, out int filterId);
+            byte dir = (byte)_direction;
+            mirror = false;
+            // stored directions are 0..4; 5..7 draw mirrored (the client's GetAnimDirection)
+            Atlas.GetAnimDirection(ref dir, ref mirror);
 
-            for (int id = 0; id < loader.BodyCount; id++)
-            {
-                ref readonly var body = ref loader.GetBody((ushort)id);
-
-                if (body.ActionCount == 0 && body.AliasBody == 0xFFFF)
-                {
-                    continue;
-                }
-
-                if (filter.Length > 0 && !(byId && id == filterId) && !body.Type.ToString().Contains(filter, StringComparison.OrdinalIgnoreCase))
-                {
-                    continue;
-                }
-
-                _bodies.Add(id);
-            }
+            return Atlas.GetAnimationFrames((ushort)id, (byte)action, dir, out _, out _);
         }
 
-        /// <summary>Frame 0 of the body's first action, facing the view's direction.</summary>
-        private void DrawThumbnail(ImDrawListPtr draw, AnimationsLoader loader, int id, Vector2 min, Vector2 max)
+        /// <summary>Frame 0 of the body's first action, facing the preview's direction.</summary>
+        protected override void DrawThumbnail(ImDrawListPtr draw, int id, Vector2 min, Vector2 max)
         {
-            int action = ThumbAction(loader, id);
+            int action = ThumbAction(id);
 
             if (action < 0)
             {
                 return;
             }
 
-            byte dir = (byte)_direction;
-            bool mirror = false;
-            Context.Assets.Animations.GetAnimDirection(ref dir, ref mirror);
-            Span<SpriteInfo> frames = Context.Assets.Animations.GetAnimationFrames((ushort)id, (byte)action, dir, out _, out _);
+            Span<SpriteInfo> frames = Frames(id, action, out bool mirror);
 
             if (frames.IsEmpty)
             {
@@ -167,87 +141,19 @@ namespace ModernUO.Studio.Panels
                 return;
             }
 
-            Widgets.DrawSprite(draw, Context.Renderer, frames[0], min + new Vector2(2, 2), max - new Vector2(2, 2), 2f, mirror);
+            Widgets.DrawSprite(draw, Context.Renderer, frames[0], min, max, 2f, mirror);
         }
 
-        private int ThumbAction(AnimationsLoader loader, int id)
+        protected override void DrawPreview(int id)
         {
-            if (_thumbActions == null || _thumbActions.Length != loader.BodyCount)
-            {
-                _thumbActions = new short[loader.BodyCount];
-                Array.Fill(_thumbActions, (short)-2);
-            }
-
-            if (_thumbActions[id] == -2)
-            {
-                // an alias body (Body.def) has no actions of its own: GetAnimationFrames draws the alias, so look there
-                ref readonly var body = ref loader.GetBody((ushort)id);
-                ushort source = body.ActionCount == 0 && body.AliasBody != 0xFFFF ? body.AliasBody : (ushort)id;
-                _thumbActions[id] = -1;
-
-                for (int a = 0; a < AnimationsLoader.MAX_ACTIONS; a++)
-                {
-                    if (loader.HasAction(source, a))
-                    {
-                        _thumbActions[id] = (short)a;
-
-                        break;
-                    }
-                }
-            }
-
-            return _thumbActions[id];
-        }
-
-        public override void SelectById(int id)
-        {
-            if (Context.Assets?.Animations != null && id < Context.Assets.Files.Animations.BodyCount)
-            {
-                SelectBody(Context.Assets.Files.Animations, id);
-            }
-        }
-
-        private void SelectBody(AnimationsLoader loader, int id)
-        {
-            _body = id;
-            _frame = 0;
-
-            if (!loader.HasAction((ushort)id, _action))
-            {
-                _action = 0;
-
-                for (int a = 0; a < AnimationsLoader.MAX_ACTIONS; a++)
-                {
-                    if (loader.HasAction((ushort)id, a))
-                    {
-                        _action = a;
-
-                        break;
-                    }
-                }
-            }
-        }
-
-        private void DrawView(AnimationsLoader loader)
-        {
-            ushort body = (ushort)_body;
-            ref readonly var entry = ref loader.GetBody(body);
-            Widgets.CopyableId("Body", _body);
-            ImGui.SameLine();
-            ImGui.TextColored(Widgets.Dim, $"{entry.Type}, {entry.ActionCount} actions, flags 0x{entry.Flags:X}");
-
-            if (entry.AliasBody != 0xFFFF)
-            {
-                ImGui.TextColored(Widgets.Dim, $"Drawn as body 0x{entry.AliasBody:X4} with hue {entry.AliasHue} (Body.def)");
-            }
-
-            ImGui.SetNextItemWidth(200f);
+            ushort source = (ushort)SourceBody(id);
+            ImGui.SetNextItemWidth(90f);
 
             if (ImGui.BeginCombo("action", $"{_action}"))
             {
                 for (int a = 0; a < AnimationsLoader.MAX_ACTIONS; a++)
                 {
-                    if (loader.HasAction(body, a) && ImGui.Selectable($"{a}", a == _action))
+                    if (Loader.HasAction(source, a) && ImGui.Selectable($"{a}", a == _action))
                     {
                         _action = a;
                         _frame = 0;
@@ -258,40 +164,38 @@ namespace ModernUO.Studio.Panels
             }
 
             ImGui.SameLine();
+            ImGui.SetNextItemWidth(70f);
 
-            for (int d = 0; d < 8; d++)
+            if (ImGui.BeginCombo("facing", _directions[_direction]))
             {
-                if (d > 0)
+                for (int d = 0; d < 8; d++)
                 {
-                    ImGui.SameLine();
+                    if (ImGui.Selectable(_directions[d], d == _direction))
+                    {
+                        _direction = d;
+                        _frame = 0;
+                    }
                 }
 
-                if (ImGui.RadioButton(_directions[d], _direction == d))
-                {
-                    _direction = d;
-                    _frame = 0;
-                }
+                ImGui.EndCombo();
             }
 
-            // stored directions are 0..4; 5..7 draw mirrored (the client's GetAnimDirection)
-            byte dir = (byte)_direction;
-            bool mirror = false;
-            Context.Assets.Animations.GetAnimDirection(ref dir, ref mirror);
-            Span<SpriteInfo> frames = Context.Assets.Animations.GetAnimationFrames(body, (byte)_action, dir, out _, out _);
+            ImGui.SameLine();
 
             if (ImGui.Button(_playing ? "Pause" : "Play"))
             {
                 _playing = !_playing;
             }
 
-            ImGui.SameLine();
-            ImGui.SetNextItemWidth(120f);
+            ImGui.SetNextItemWidth(110f);
             ImGui.SliderFloat("fps", ref _fps, 1f, 30f, "%.0f");
             ImGui.SameLine();
-            ImGui.SetNextItemWidth(120f);
+            ImGui.SetNextItemWidth(110f);
             ImGui.SliderFloat("zoom", ref _zoom, 1f, 6f, "%.0fx");
             ImGui.SameLine();
-            ImGui.Checkbox("centre", ref _showCenter);
+            ImGui.Checkbox("feet", ref _showCenter);
+
+            Span<SpriteInfo> frames = Frames(id, _action, out bool mirror);
 
             if (frames.IsEmpty)
             {
@@ -317,13 +221,13 @@ namespace ModernUO.Studio.Panels
 
             var draw = ImGui.GetWindowDrawList();
             Vector2 min = ImGui.GetCursorScreenPos();
-            var size = new Vector2(ImGui.GetContentRegionAvail().X, MathF.Max(200f, ImGui.GetContentRegionAvail().Y - 90f));
+            var size = new Vector2(MathF.Max(1f, ImGui.GetContentRegionAvail().X), 300f);
             ImGui.Dummy(size);
             Widgets.Checker(draw, min, min + size);
 
             ref SpriteInfo frame = ref frames[_frame];
             // the frame's anchor is the mobile's feet: a point a little below the middle of the view
-            var anchor = new Vector2(MathF.Floor(min.X + size.X * 0.5f), MathF.Floor(min.Y + size.Y * 0.75f));
+            var anchor = new Vector2(MathF.Floor(min.X + size.X * 0.5f), MathF.Floor(min.Y + size.Y * 0.8f));
 
             if (frame.Texture != null)
             {
@@ -344,8 +248,8 @@ namespace ModernUO.Studio.Panels
                 draw.AddLine(anchor - new Vector2(0, 6), anchor + new Vector2(0, 6), Widgets.Col(1f, 0.3f, 0.3f));
             }
 
-            // a strip of every frame of this direction
-            if (ImGui.BeginChild("strip", new Vector2(0, 80f), ImGuiChildFlags.None, ImGuiWindowFlags.HorizontalScrollbar))
+            // every frame of this direction
+            if (ImGui.BeginChild("strip", new Vector2(0, 76f), ImGuiChildFlags.None, ImGuiWindowFlags.HorizontalScrollbar))
             {
                 var stripDraw = ImGui.GetWindowDrawList();
 
@@ -358,18 +262,116 @@ namespace ModernUO.Studio.Panels
 
                     Vector2 p = ImGui.GetCursorScreenPos();
 
-                    if (ImGui.InvisibleButton($"f{i}", new Vector2(64f, 64f)))
+                    if (ImGui.InvisibleButton($"f{i}", new Vector2(56f, 56f)))
                     {
                         _frame = i;
                         _playing = false;
                     }
 
-                    stripDraw.AddRectFilled(p, p + new Vector2(64f, 64f), i == _frame ? Widgets.Col(0.26f, 0.42f, 0.66f, 0.55f) : Widgets.Col(0.12f, 0.12f, 0.13f));
-                    Widgets.DrawSprite(stripDraw, Context.Renderer, frames[i], p, p + new Vector2(64f, 64f), 1f, mirror);
+                    stripDraw.AddRectFilled(p, p + new Vector2(56f, 56f), i == _frame ? Widgets.Col(0.26f, 0.42f, 0.66f, 0.55f) : Widgets.Col(0.12f, 0.12f, 0.13f));
+                    Widgets.DrawSprite(stripDraw, Context.Renderer, frames[i], p, p + new Vector2(56f, 56f), 1f, mirror);
                 }
             }
 
             ImGui.EndChild();
+        }
+
+        protected override void DrawProperties(int id)
+        {
+            ref readonly var body = ref Loader.GetBody((ushort)id);
+
+            if (Inspector.BeginProperties())
+            {
+                Inspector.Property("Type", body.Type.ToString());
+                Inspector.Property("Actions", body.ActionCount.ToString());
+                Inspector.Property("Flags", $"0x{body.Flags:X}");
+
+                if (body.SourceBody != id && body.ActionCount != 0)
+                {
+                    Inspector.Property("Imported from", Inspector.Id(body.SourceBody));
+                }
+
+                Inspector.EndProperties();
+            }
+        }
+
+        protected override void DrawRelations(int id)
+        {
+            ref readonly var body = ref Loader.GetBody((ushort)id);
+
+            if (body.AliasBody == 0xFFFF && body.CorpseBody == 0xFFFF)
+            {
+                ImGui.TextColored(Widgets.Dim, "Drawn as itself.");
+
+                return;
+            }
+
+            if (!Inspector.BeginProperties("rel"))
+            {
+                return;
+            }
+
+            if (body.AliasBody != 0xFFFF && Inspector.PropertyLink("Drawn as", $"body {Inspector.Id(body.AliasBody)}, hue {body.AliasHue}"))
+            {
+                SelectItem(body.AliasBody);
+            }
+
+            if (body.CorpseBody != 0xFFFF && Inspector.PropertyLink("Corpse", $"body {Inspector.Id(body.CorpseBody)}"))
+            {
+                SelectItem(body.CorpseBody);
+            }
+
+            Inspector.EndProperties();
+        }
+
+        protected override void DrawActions(int id)
+        {
+            if (ImGui.Button("Export frame PNG"))
+            {
+                Export(id, _frame, _frame);
+            }
+
+            ImGui.SameLine();
+
+            if (ImGui.Button("Export direction"))
+            {
+                Export(id, 0, int.MaxValue);
+            }
+        }
+
+        /// <summary>Frames [first, last] of the current action and direction as PNGs (mirrored directions are exported unmirrored).</summary>
+        private void Export(int id, int first, int last)
+        {
+            byte dir = (byte)_direction;
+            bool mirror = false;
+            Atlas.GetAnimDirection(ref dir, ref mirror);
+            ushort body = Loader.ResolveBody((ushort)id, false, out _);
+
+            // stored client direction d is UO direction d + 3 (Animations.LoadDirection)
+            if (!Loader.TryGetDirection(body, _action, dir + 3, out var entry))
+            {
+                return;
+            }
+
+            string dirName = Path.Combine(Context.Settings.ResolveExportDirectory(), $"body_0x{id:X4}");
+            int count = 0;
+
+            for (int i = first; i < entry.FrameCount && i <= last; i++)
+            {
+                uint index = entry.FirstFrame + (uint)i;
+                ref readonly var frame = ref Loader.GetFrame(index);
+
+                if (frame.Sprite.OrigW == 0 || frame.Sprite.OrigH == 0)
+                {
+                    continue;
+                }
+
+                uint[] pixels = Loader.DecodeFrame(index);
+                Images.SavePng(Context.Device, Path.Combine(dirName, $"action{_action}_dir{dir}_frame{i}.png"), pixels, frame.Sprite.OrigW, frame.Sprite.OrigH);
+                count++;
+            }
+
+            StudioLog.Info($"Exported {count} frame(s) to {dirName}");
         }
     }
 }

@@ -1,4 +1,4 @@
-﻿using System.Runtime.InteropServices;
+using System.Runtime.InteropServices;
 using Hexa.NET.ImGui;
 using Microsoft.Xna.Framework;
 using Microsoft.Xna.Framework.Graphics;
@@ -70,7 +70,8 @@ namespace ModernUO.Studio
         {
             ImGui.CreateContext();
             var io = ImGui.GetIO();
-            io.ConfigFlags |= ImGuiConfigFlags.DockingEnable | ImGuiConfigFlags.NavEnableKeyboard;
+            // no keyboard nav: the browsers own the arrow keys (selection), and ImGui's nav would move focus with them too
+            io.ConfigFlags |= ImGuiConfigFlags.DockingEnable;
             io.ConfigWindowsMoveFromTitleBarOnly = true;
 
             string ini = Path.Combine(AppContext.BaseDirectory, "studio_layout.ini");

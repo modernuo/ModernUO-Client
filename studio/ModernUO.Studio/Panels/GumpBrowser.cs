@@ -1,3 +1,4 @@
+using System.Numerics;
 using ClassicUO.Assets;
 using ClassicUO.Renderer;
 using Hexa.NET.ImGui;
@@ -7,7 +8,7 @@ using ModernUO.Studio.Gui;
 namespace ModernUO.Studio.Panels
 {
     /// <summary>Gump images (gumps/gumps.bin), with hue preview and PNG export.</summary>
-    internal sealed class GumpBrowser : SpriteGridBrowser
+    internal sealed class GumpBrowser : AssetBrowser
     {
         private float _zoom = 1f;
         private int _hue;
@@ -24,15 +25,30 @@ namespace ModernUO.Studio.Panels
 
         private GumpsLoader Loader => Context.Assets.Files.Gumps;
 
+        protected override string Kind => "Gump";
+        protected override float DefaultCell => 80f;
+        protected override string SearchHint => "gump id (0x7D0, 2000)";
+
         protected override int SlotCount => Context.Assets?.Gumps == null ? 0 : Loader.Count;
 
         protected override bool Exists(int id) => Loader.PixelCount((uint)id) > 0;
 
-        protected override bool Request(int id) => Context.Assets.Gumps.Request((uint)id);
+        protected override string DetailOf(int id) => Loader.TryGetSize((uint)id, out int w, out int h) ? $"{w} x {h}" : null;
 
-        protected override SpriteInfo Get(int id) => Context.Assets.Gumps.GetGump((uint)id);
+        protected override void DrawThumbnail(ImDrawListPtr draw, int id, Vector2 min, Vector2 max)
+        {
+            if (Context.Assets.Gumps.Request((uint)id))
+            {
+                // gumps are large: shrink to fit, never enlarge past 2x
+                Widgets.DrawSprite(draw, Context.Renderer, Context.Assets.Gumps.GetGump((uint)id), min, max, 2f);
+            }
+            else
+            {
+                Widgets.Pending(draw, min, max);
+            }
+        }
 
-        public void Select(int id) => SelectId(id);
+        public void Select(int id) => SelectItem(id);
 
         protected override void OnSelected(int id) => _huedFor = -1;
 
@@ -51,16 +67,9 @@ namespace ModernUO.Studio.Panels
             }
         }
 
-        protected override void DrawDetails(int id)
+        protected override void DrawPreview(int id)
         {
-            Widgets.CopyableId("Gump", id);
-
-            if (Loader.TryGetSize((uint)id, out int w, out int h))
-            {
-                ImGui.TextUnformatted($"Size: {w} x {h}");
-            }
-
-            var sprite = Request(id) ? Get(id) : SpriteInfo.Empty;
+            var sprite = Context.Assets.Gumps.Request((uint)id) ? Context.Assets.Gumps.GetGump((uint)id) : SpriteInfo.Empty;
 
             if (_hue != 0)
             {
@@ -68,7 +77,7 @@ namespace ModernUO.Studio.Panels
                 sprite = _hued.Sprite;
             }
 
-            Preview(Context, sprite, ref _zoom, 320f);
+            SpritePreview(sprite, ref _zoom, 320f);
 
             ImGui.SetNextItemWidth(120f);
 
@@ -84,7 +93,29 @@ namespace ModernUO.Studio.Panels
             {
                 _huedFor = -1;
             }
+        }
 
+        protected override void DrawProperties(int id)
+        {
+            if (Inspector.BeginProperties())
+            {
+                if (Loader.TryGetSize((uint)id, out int w, out int h))
+                {
+                    Inspector.Property("Size", $"{w} x {h}");
+                }
+
+                // paperdoll gumps of wearables: 50000 + anim id (male), 60000 + anim id (female)
+                if (id >= 50000 && id < 70000)
+                {
+                    Inspector.Property("Paperdoll", $"{(id < 60000 ? "male" : "female")}, animation 0x{id % 10000:X4}");
+                }
+
+                Inspector.EndProperties();
+            }
+        }
+
+        protected override void DrawActions(int id)
+        {
             if (ImGui.Button("Export PNG"))
             {
                 Export(id);

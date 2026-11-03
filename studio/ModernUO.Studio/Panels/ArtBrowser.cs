@@ -8,11 +8,12 @@ using ModernUO.Studio.Gui;
 namespace ModernUO.Studio.Panels
 {
     /// <summary>Land and static art (art/sprites.bin), with their tiledata, a hue preview and PNG export.</summary>
-    internal sealed class ArtBrowser : SpriteGridBrowser
+    internal sealed class ArtBrowser : AssetBrowser
     {
         private const int LandCount = ArtLoader.MAX_LAND_DATA_INDEX_COUNT;
+        private const int ModeStatics = 0, ModeLand = 1;
+        private static readonly string[] _modes = { "Statics", "Land" };
 
-        private bool _land;
         private float _zoom = 2f;
         private int _hue;
         private bool _partialHue;
@@ -27,55 +28,66 @@ namespace ModernUO.Studio.Panels
         public override string Title => "Art###art";
         public override string MenuName => "Art";
 
+        private bool Land => Mode == ModeLand;
         private ArtLoader Loader => Context.Assets.Files.Arts;
         private ClassicUO.Renderer.Arts.Art Atlas => Context.Assets.Arts;
+        private TileDataLoader Tiles => Context.Assets.Files.TileData;
 
-        protected override int SlotCount => Context.Assets?.Arts == null ? 0 : _land ? LandCount : Math.Max(0, Loader.Count - LandCount);
+        protected override string Kind => Land ? "Land tile" : "Static";
+        protected override string[] Modes => _modes;
+        protected override Parts InspectorParts => Parts.All;
 
-        protected override bool Exists(int id) => Loader.Exists(_land ? id : id + LandCount);
+        protected override int SlotCount => Context.Assets?.Arts == null ? 0 : Land ? LandCount : Math.Max(0, Loader.Count - LandCount);
 
-        protected override bool Request(int id) => _land ? Atlas.RequestLand((uint)id) : Atlas.RequestArt((uint)id);
-
-        protected override SpriteInfo Get(int id) => _land ? Atlas.GetLand((uint)id) : Atlas.GetArt((uint)id);
+        protected override bool Exists(int id) => Loader.Exists(Land ? id : id + LandCount);
 
         protected override string NameOf(int id)
         {
-            var tiles = Context.Assets.Files.TileData;
-
-            if (_land)
+            if (Land)
             {
-                return id < tiles.LandData.Length ? tiles.LandData[id].Name : null;
+                return Tiles.LandData != null && id < Tiles.LandData.Length ? Tiles.LandData[id].Name : null;
             }
 
-            return id < tiles.StaticData.Length ? tiles.StaticData[id].Name : null;
+            return Tiles.StaticData != null && id < Tiles.StaticData.Length ? Tiles.StaticData[id].Name : null;
         }
 
-        protected override bool PassesFilter(int id)
+        protected override string DetailOf(int id)
         {
-            if (_flagFilter < 0)
-            {
-                return true;
-            }
+            ref readonly var e = ref Loader.PackSpriteEntries[Land ? id : id + LandCount];
 
-            var tiles = Context.Assets.Files.TileData;
-            ulong flag = 1UL << _flagFilter;
-            ulong flags = _land
-                ? id < tiles.LandData.Length ? (ulong)tiles.LandData[id].Flags : 0
-                : id < tiles.StaticData.Length ? (ulong)tiles.StaticData[id].Flags : 0;
-
-            return (flags & flag) != 0;
+            return $"{e.OrigW} x {e.OrigH}";
         }
 
-        public void Select(int id, bool land)
+        protected override bool PassesFilter(int id) => _flagFilter < 0 || (Flags(id) & (1UL << _flagFilter)) != 0;
+
+        private ulong Flags(int id)
         {
-            if (_land != land)
+            if (Land)
             {
-                _land = land;
-                Invalidate();
+                return Tiles.LandData != null && id < Tiles.LandData.Length ? (ulong)Tiles.LandData[id].Flags : 0;
             }
 
-            SelectId(id);
+            return Tiles.StaticData != null && id < Tiles.StaticData.Length ? (ulong)Tiles.StaticData[id].Flags : 0;
         }
+
+        private bool RequestSprite(int id) => Land ? Atlas.RequestLand((uint)id) : Atlas.RequestArt((uint)id);
+
+        private SpriteInfo GetSprite(int id) => Land ? Atlas.GetLand((uint)id) : Atlas.GetArt((uint)id);
+
+        protected override void DrawThumbnail(ImDrawListPtr draw, int id, Vector2 min, Vector2 max)
+        {
+            if (RequestSprite(id))
+            {
+                Widgets.DrawSprite(draw, Context.Renderer, GetSprite(id), min, max, MathF.Max(1f, (max.X - min.X) / 44f));
+            }
+            else
+            {
+                Widgets.Pending(draw, min, max);
+            }
+        }
+
+        /// <summary>Selects a static (or, with <paramref name="land"/>, a land tile).</summary>
+        public void Select(int id, bool land) => SelectItem(id, land ? ModeLand : ModeStatics);
 
         public override void OnPackChanged()
         {
@@ -86,26 +98,12 @@ namespace ModernUO.Studio.Panels
 
         protected override void OnSelected(int id) => _huedFor = -1;
 
-        protected override void DrawToolbarExtras()
+        protected override void OnModeChanged() => _huedFor = -1;
+
+        protected override void OnActivated(int id) => Context.ShowTileData(id, Land);
+
+        protected override void DrawFilters()
         {
-            ImGui.SameLine();
-
-            if (ImGui.RadioButton("Statics", !_land) && _land)
-            {
-                _land = false;
-                Invalidate();
-                OnPackChanged();
-            }
-
-            ImGui.SameLine();
-
-            if (ImGui.RadioButton("Land", _land) && !_land)
-            {
-                _land = true;
-                Invalidate();
-                OnPackChanged();
-            }
-
             ImGui.SameLine();
             ImGui.SetNextItemWidth(150f);
 
@@ -119,7 +117,7 @@ namespace ModernUO.Studio.Panels
         {
             if (ImGui.MenuItem("Show tiledata"))
             {
-                Context.ShowTileData(id, _land);
+                Context.ShowTileData(id, Land);
             }
 
             if (ImGui.MenuItem("Export PNG"))
@@ -128,24 +126,17 @@ namespace ModernUO.Studio.Panels
             }
         }
 
-        protected override void DrawDetails(int id)
+        protected override void DrawPreview(int id)
         {
-            ImGui.TextUnformatted(_land ? "Land tile" : "Static");
-            Widgets.CopyableId("Id", id);
-
-            int artIndex = _land ? id : id + LandCount;
-            ref readonly var entry = ref Loader.PackSpriteEntries[artIndex];
-            ImGui.TextUnformatted($"Size: {entry.OrigW} x {entry.OrigH}");
-
-            var sprite = Request(id) ? Get(id) : SpriteInfo.Empty;
+            var sprite = RequestSprite(id) ? GetSprite(id) : SpriteInfo.Empty;
 
             if (_hue != 0)
             {
-                UpdateHued(id, artIndex);
+                UpdateHued(id);
                 sprite = _hued.Sprite;
             }
 
-            Preview(Context, sprite, ref _zoom);
+            SpritePreview(sprite, ref _zoom);
 
             ImGui.SetNextItemWidth(120f);
 
@@ -162,18 +153,82 @@ namespace ModernUO.Studio.Panels
                 _huedFor = -1;
             }
 
-            Widgets.HelpMarker("Preview the tile with a hue applied on the CPU. Partial hue recolours only grey pixels, as the client does for tiles with the PartialHue flag. Hue ids are 1-based.");
+            Widgets.HelpMarker("A hue applied on the CPU. Partial hue recolours only grey pixels, as the client does for tiles with the PartialHue flag. Hue ids are 1-based.");
 
             if (_hue != 0)
             {
                 ImGui.SameLine();
 
-                if (ImGui.SmallButton("show hue"))
+                if (Inspector.Link("show hue"))
                 {
                     Context.ShowHue(_hue);
                 }
             }
+        }
 
+        protected override void DrawProperties(int id)
+        {
+            ref readonly var entry = ref Loader.PackSpriteEntries[Land ? id : id + LandCount];
+
+            if (!Inspector.BeginProperties())
+            {
+                return;
+            }
+
+            Inspector.Property("Size", $"{entry.OrigW} x {entry.OrigH}");
+            TileDataBrowser.DrawProperties(Context, id, Land);
+            Inspector.EndProperties();
+        }
+
+        protected override void DrawRelations(int id)
+        {
+            if (Land)
+            {
+                if (Tiles.LandData != null && id < Tiles.LandData.Length && Context.Assets.Files.Texmaps.Exists(Tiles.LandData[id].TexID)
+                    && Inspector.BeginProperties("rel"))
+                {
+                    int tex = Tiles.LandData[id].TexID;
+
+                    if (Inspector.PropertyLink("Texmap", Inspector.Id(tex)))
+                    {
+                        Context.ShowTexmap(tex);
+                    }
+
+                    Inspector.EndProperties();
+                }
+
+                return;
+            }
+
+            if (Tiles.StaticData != null && id < Tiles.StaticData.Length)
+            {
+                ref var s = ref Tiles.StaticData[id];
+
+                if (s.IsWearable && s.AnimID != 0 && Inspector.BeginProperties("rel"))
+                {
+                    if (Inspector.PropertyLink("Animation", $"body {Inspector.Id(s.AnimID)}"))
+                    {
+                        Context.ShowBody(s.AnimID);
+                    }
+
+                    // paperdoll gumps: male at 50000 + anim, female at 60000 + anim
+                    foreach (int gump in new[] { 50000 + s.AnimID, 60000 + s.AnimID })
+                    {
+                        if (Context.Assets.Files.Gumps.PixelCount((uint)gump) > 0 && Inspector.PropertyLink(gump < 60000 ? "Gump (male)" : "Gump (female)", Inspector.Id(gump)))
+                        {
+                            Context.ShowGump(gump);
+                        }
+                    }
+
+                    Inspector.EndProperties();
+                }
+            }
+
+            Inspector.LinkList("Used in multis", Context.Assets.Relations.MultisUsing(id), m => $"multi {Inspector.Id(m)}", m => Context.ShowMulti(m));
+        }
+
+        protected override void DrawActions(int id)
+        {
             if (ImGui.Button("Export PNG"))
             {
                 Export(id);
@@ -183,14 +238,11 @@ namespace ModernUO.Studio.Panels
 
             if (ImGui.Button("Tiledata"))
             {
-                Context.ShowTileData(id, _land);
+                Context.ShowTileData(id, Land);
             }
-
-            ImGui.Separator();
-            TileDataBrowser.DrawFields(Context, id, _land);
         }
 
-        private void UpdateHued(int id, int artIndex)
+        private void UpdateHued(int id)
         {
             _hued ??= new CpuImage(Context.Device, Context.Renderer);
 
@@ -200,7 +252,7 @@ namespace ModernUO.Studio.Panels
             }
 
             _huedFor = id;
-            var info = Loader.GetArt((uint)artIndex);
+            var info = Loader.GetArt((uint)(Land ? id : id + LandCount));
 
             if (info.Pixels.IsEmpty)
             {
@@ -209,16 +261,14 @@ namespace ModernUO.Studio.Panels
                 return;
             }
 
-            bool partial = _partialHue || (!_land && id < Context.Assets.Files.TileData.StaticData.Length
-                && Context.Assets.Files.TileData.StaticData[id].IsPartialHue);
+            bool partial = _partialHue || (!Land && Tiles.StaticData != null && id < Tiles.StaticData.Length && Tiles.StaticData[id].IsPartialHue);
             Images.ApplyHue(info.Pixels, Context.Assets.Files.Hues.PackHues, _hue, partial);
             _hued.Set(info.Pixels, info.Width, info.Height);
         }
 
         private void Export(int id)
         {
-            int artIndex = _land ? id : id + LandCount;
-            var info = Loader.GetArt((uint)artIndex);
+            var info = Loader.GetArt((uint)(Land ? id : id + LandCount));
 
             if (info.Pixels.IsEmpty)
             {
@@ -230,7 +280,7 @@ namespace ModernUO.Studio.Panels
                 Images.ApplyHue(info.Pixels, Context.Assets.Files.Hues.PackHues, _hue, _partialHue);
             }
 
-            string name = _land ? $"land_0x{id:X4}" : $"static_0x{id:X4}";
+            string name = Land ? $"land_0x{id:X4}" : $"static_0x{id:X4}";
 
             if (_hue != 0)
             {

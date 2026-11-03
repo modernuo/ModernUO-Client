@@ -1,20 +1,19 @@
 using System.Numerics;
 using ClassicUO.Assets;
+using ClassicUO.Renderer;
 using Hexa.NET.ImGui;
 using ModernUO.Studio.Gui;
 
 namespace ModernUO.Studio.Panels
 {
     /// <summary>tiledata.bin as a table: every land and static entry with its flags, filterable by name, id and flag.</summary>
-    internal sealed class TileDataBrowser : Panel
+    internal sealed class TileDataBrowser : AssetBrowser
     {
-        private readonly List<int> _rows = new();
-        private bool _land;
-        private string _filter = "";
+        private const int ModeStatics = 0, ModeLand = 1;
+        private static readonly string[] _modes = { "Statics", "Land" };
+
         private int _flagFilter = -1;
-        private bool _dirty = true;
-        private int _selected = -1;
-        private bool _scrollToSelection;
+        private float _zoom = 2f;
 
         public TileDataBrowser(StudioContext context) : base(context, false)
         {
@@ -22,78 +21,30 @@ namespace ModernUO.Studio.Panels
 
         public override string Title => "TileData###tiledata";
         public override string MenuName => "TileData";
-        protected override Vector2 DefaultSize => new(1000, 600);
 
-        public override void OnPackChanged()
+        private bool Land => Mode == ModeLand;
+        private TileDataLoader Tiles => Context.Assets.Files.TileData;
+
+        protected override string Kind => Land ? "Land tile" : "Static";
+        protected override string[] Modes => _modes;
+        protected override bool HasGrid => false;
+        protected override bool HasThumbnails => true;
+        protected override float DefaultCell => 48f;
+        protected override Parts InspectorParts => Parts.All;
+
+        protected override int SlotCount => Context.Assets == null || Tiles.StaticData == null ? 0 : Land ? Tiles.LandData.Length : Tiles.StaticData.Length;
+
+        protected override string NameOf(int id) => Land ? Tiles.LandData[id].Name : Tiles.StaticData[id].Name;
+
+        private ulong Flags(int id) => Land ? (ulong)Tiles.LandData[id].Flags : (ulong)Tiles.StaticData[id].Flags;
+
+        protected override bool PassesFilter(int id) => _flagFilter < 0 || (Flags(id) & (1UL << _flagFilter)) != 0;
+
+        protected override int ExtraColumns => Land ? 2 : 8;
+
+        protected override void SetupExtraColumns()
         {
-            _dirty = true;
-            _selected = -1;
-        }
-
-        public void Select(int id, bool land)
-        {
-            Focus();
-            _land = land;
-            _filter = "";
-            _dirty = true;
-            _selected = id;
-            _scrollToSelection = true;
-        }
-
-        protected override void DrawContent()
-        {
-            var tiles = Context.Assets.Files.TileData;
-
-            if (tiles.StaticData == null)
-            {
-                ImGui.TextDisabled("tiledata.bin did not load (see Pack Info).");
-
-                return;
-            }
-
-            if (ImGui.RadioButton("Statics", !_land))
-            {
-                _land = false;
-                _dirty = true;
-            }
-
-            ImGui.SameLine();
-
-            if (ImGui.RadioButton("Land", _land))
-            {
-                _land = true;
-                _dirty = true;
-            }
-
-            ImGui.SameLine();
-            ImGui.SetNextItemWidth(220f);
-            _dirty |= ImGui.InputTextWithHint("##filter", "id or name", ref _filter, 128);
-            ImGui.SameLine();
-            ImGui.SetNextItemWidth(160f);
-            _dirty |= TileFlags.Combo("##flag", ref _flagFilter);
-
-            if (_dirty)
-            {
-                Rebuild(tiles);
-            }
-
-            ImGui.SameLine();
-            ImGui.TextDisabled($"{_rows.Count} entries");
-
-            var flags = ImGuiTableFlags.RowBg | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.ScrollY | ImGuiTableFlags.Resizable
-                | ImGuiTableFlags.SizingFixedFit;
-            int columns = _land ? 4 : 10;
-
-            if (!ImGui.BeginTable("tiles", columns, flags))
-            {
-                return;
-            }
-
-            ImGui.TableSetupScrollFreeze(0, 1);
-            ImGui.TableSetupColumn("Id", ImGuiTableColumnFlags.WidthFixed, 70f);
-            ImGui.TableSetupColumn("Name", ImGuiTableColumnFlags.WidthFixed, 200f);
-
-            if (_land)
+            if (Land)
             {
                 ImGui.TableSetupColumn("TexId", ImGuiTableColumnFlags.WidthFixed, 60f);
             }
@@ -109,107 +60,128 @@ namespace ModernUO.Studio.Panels
             }
 
             ImGui.TableSetupColumn("Flags", ImGuiTableColumnFlags.WidthStretch);
-            ImGui.TableHeadersRow();
-
-            int selectedRow = _selected >= 0 ? _rows.BinarySearch(_selected) : -1;
-
-            if (_scrollToSelection && selectedRow >= 0)
-            {
-                _scrollToSelection = false;
-                ImGui.SetScrollY(selectedRow * ImGui.GetTextLineHeightWithSpacing() - ImGui.GetWindowHeight() * 0.4f);
-            }
-
-            ImGuiListClipper clipper = new();
-            clipper.Begin(_rows.Count);
-
-            while (clipper.Step())
-            {
-                for (int r = clipper.DisplayStart; r < clipper.DisplayEnd; r++)
-                {
-                    int id = _rows[r];
-                    ImGui.TableNextRow();
-                    ImGui.TableNextColumn();
-
-                    if (ImGui.Selectable($"0x{id:X4}##{id}", id == _selected, ImGuiSelectableFlags.SpanAllColumns))
-                    {
-                        _selected = id;
-                    }
-
-                    if (ImGui.IsItemHovered() && ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))
-                    {
-                        Context.ShowArt(id, _land);
-                    }
-
-                    if (_land)
-                    {
-                        ref var t = ref tiles.LandData[id];
-                        ImGui.TableNextColumn();
-                        ImGui.TextUnformatted(t.Name ?? "");
-                        ImGui.TableNextColumn();
-                        ImGui.TextUnformatted($"0x{t.TexID:X4}");
-                        ImGui.TableNextColumn();
-                        ImGui.TextUnformatted(TileFlags.Describe((ulong)t.Flags));
-                    }
-                    else
-                    {
-                        ref var t = ref tiles.StaticData[id];
-                        ImGui.TableNextColumn();
-                        ImGui.TextUnformatted(t.Name ?? "");
-                        ImGui.TableNextColumn();
-                        ImGui.TextUnformatted(t.Weight.ToString());
-                        ImGui.TableNextColumn();
-                        ImGui.TextUnformatted(t.Height.ToString());
-                        ImGui.TableNextColumn();
-                        ImGui.TextUnformatted(t.Layer.ToString());
-                        ImGui.TableNextColumn();
-                        ImGui.TextUnformatted(t.Count.ToString());
-                        ImGui.TableNextColumn();
-                        ImGui.TextUnformatted(t.AnimID == 0 ? "" : $"0x{t.AnimID:X4}");
-                        ImGui.TableNextColumn();
-                        ImGui.TextUnformatted(t.Hue == 0 ? "" : t.Hue.ToString());
-                        ImGui.TableNextColumn();
-                        ImGui.TextUnformatted(t.LightIndex == 0 ? "" : t.LightIndex.ToString());
-                        ImGui.TableNextColumn();
-                        ImGui.TextUnformatted(TileFlags.Describe((ulong)t.Flags));
-                    }
-                }
-            }
-
-            clipper.End();
-            ImGui.EndTable();
         }
 
-        private void Rebuild(TileDataLoader tiles)
+        protected override void DrawExtraColumns(int id)
         {
-            _dirty = false;
-            _rows.Clear();
-
-            string filter = _filter.Trim();
-            bool byId = Widgets.TryParseId(filter, out int filterId);
-            int count = _land ? tiles.LandData.Length : tiles.StaticData.Length;
-            ulong flag = _flagFilter < 0 ? 0 : 1UL << _flagFilter;
-
-            for (int id = 0; id < count; id++)
+            if (Land)
             {
-                string name = _land ? tiles.LandData[id].Name : tiles.StaticData[id].Name;
-                ulong flags = _land ? (ulong)tiles.LandData[id].Flags : (ulong)tiles.StaticData[id].Flags;
+                ref var t = ref Tiles.LandData[id];
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted($"0x{t.TexID:X4}");
+                ImGui.TableNextColumn();
+                ImGui.TextUnformatted(TileFlags.Describe((ulong)t.Flags));
 
-                if (flag != 0 && (flags & flag) == 0)
-                {
-                    continue;
-                }
+                return;
+            }
 
-                if (filter.Length > 0 && !(byId && id == filterId) && !(name != null && name.Contains(filter, StringComparison.OrdinalIgnoreCase)))
-                {
-                    continue;
-                }
+            ref var s = ref Tiles.StaticData[id];
+            Cell(s.Weight.ToString());
+            Cell(s.Height.ToString());
+            Cell(s.Layer.ToString());
+            Cell(s.Count.ToString());
+            Cell(s.AnimID == 0 ? "" : $"0x{s.AnimID:X4}");
+            Cell(s.Hue == 0 ? "" : s.Hue.ToString());
+            Cell(s.LightIndex == 0 ? "" : s.LightIndex.ToString());
+            Cell(TileFlags.Describe((ulong)s.Flags));
+        }
 
-                _rows.Add(id);
+        private static void Cell(string text)
+        {
+            ImGui.TableNextColumn();
+            ImGui.TextUnformatted(text);
+        }
+
+        private bool TryGetArt(int id, out SpriteInfo sprite)
+        {
+            sprite = SpriteInfo.Empty;
+            var art = Context.Assets.Arts;
+
+            if (art == null || !Context.Assets.Files.Arts.Exists(Land ? id : id + ArtLoader.MAX_LAND_DATA_INDEX_COUNT))
+            {
+                return false;
+            }
+
+            if (!(Land ? art.RequestLand((uint)id) : art.RequestArt((uint)id)))
+            {
+                return false;
+            }
+
+            sprite = Land ? art.GetLand((uint)id) : art.GetArt((uint)id);
+
+            return true;
+        }
+
+        protected override void DrawThumbnail(ImDrawListPtr draw, int id, Vector2 min, Vector2 max)
+        {
+            if (TryGetArt(id, out var sprite))
+            {
+                Widgets.DrawSprite(draw, Context.Renderer, sprite, min, max, 1f);
             }
         }
 
-        /// <summary>The tiledata fields of one entry, for the art browser's details.</summary>
-        public static void DrawFields(StudioContext context, int id, bool land)
+        public void Select(int id, bool land) => SelectItem(id, land ? ModeLand : ModeStatics);
+
+        protected override void OnActivated(int id) => Context.ShowArt(id, Land);
+
+        protected override void DrawFilters()
+        {
+            ImGui.SameLine();
+            ImGui.SetNextItemWidth(160f);
+
+            if (TileFlags.Combo("##flag", ref _flagFilter))
+            {
+                Invalidate();
+            }
+        }
+
+        protected override void DrawContextMenu(int id)
+        {
+            if (ImGui.MenuItem("Show art"))
+            {
+                Context.ShowArt(id, Land);
+            }
+        }
+
+        protected override void DrawPreview(int id)
+        {
+            if (TryGetArt(id, out var sprite))
+            {
+                SpritePreview(sprite, ref _zoom, 160f);
+            }
+            else
+            {
+                ImGui.TextColored(Widgets.Dim, "No art for this entry.");
+            }
+        }
+
+        protected override void DrawProperties(int id)
+        {
+            if (Inspector.BeginProperties())
+            {
+                DrawProperties(Context, id, Land);
+                Inspector.EndProperties();
+            }
+        }
+
+        protected override void DrawRelations(int id)
+        {
+            if (Inspector.Link(Land ? $"land art {Inspector.Id(id)}" : $"static art {Inspector.Id(id)}"))
+            {
+                Context.ShowArt(id, Land);
+            }
+        }
+
+        protected override void DrawActions(int id)
+        {
+            if (ImGui.Button("Show art"))
+            {
+                Context.ShowArt(id, Land);
+            }
+        }
+
+        /// <summary>The tiledata rows of one entry, inside an open <see cref="Inspector.BeginProperties"/> table (also used by Art).</summary>
+        public static void DrawProperties(StudioContext context, int id, bool land)
         {
             var tiles = context.Assets.Files.TileData;
 
@@ -217,64 +189,38 @@ namespace ModernUO.Studio.Panels
             {
                 if (tiles.LandData == null || id >= tiles.LandData.Length)
                 {
-                    ImGui.TextDisabled("No tiledata entry.");
+                    Inspector.Property("Tiledata", "none");
 
                     return;
                 }
 
                 ref var t = ref tiles.LandData[id];
-                Field("Name", t.Name);
-                Field("Texmap", $"0x{t.TexID:X4}");
-                FlagList((ulong)t.Flags);
+                Inspector.Property("Name", t.Name);
+                Inspector.Property("Texmap", $"0x{t.TexID:X4}");
+                Inspector.Property("Flags", FlagLines((ulong)t.Flags));
 
                 return;
             }
 
             if (tiles.StaticData == null || id >= tiles.StaticData.Length)
             {
-                ImGui.TextDisabled("No tiledata entry.");
+                Inspector.Property("Tiledata", "none");
 
                 return;
             }
 
             ref var s = ref tiles.StaticData[id];
-            Field("Name", s.Name);
-            Field("Weight", s.Weight.ToString());
-            Field("Height", s.Height.ToString());
-            Field("Layer", s.Layer.ToString());
-            Field("Count", s.Count.ToString());
-            Field("Anim", $"0x{s.AnimID:X4}");
-            Field("Hue", s.Hue.ToString());
-            Field("Light", s.LightIndex.ToString());
-            FlagList((ulong)s.Flags);
+            Inspector.Property("Name", s.Name);
+            Inspector.Property("Weight", s.Weight.ToString());
+            Inspector.Property("Height", s.Height.ToString());
+            Inspector.Property("Layer", s.Layer.ToString());
+            Inspector.Property("Count", s.Count.ToString());
+            Inspector.Property("Anim", $"0x{s.AnimID:X4}");
+            Inspector.Property("Hue", s.Hue.ToString());
+            Inspector.Property("Light", s.LightIndex.ToString());
+            Inspector.Property("Flags", FlagLines((ulong)s.Flags));
         }
 
-        private static void Field(string name, string value)
-        {
-            ImGui.TextColored(Widgets.Dim, name);
-            ImGui.SameLine(80f);
-            ImGui.TextUnformatted(value ?? "");
-        }
-
-        private static void FlagList(ulong flags)
-        {
-            ImGui.TextColored(Widgets.Dim, "Flags");
-
-            if (flags == 0)
-            {
-                ImGui.SameLine(80f);
-                ImGui.TextUnformatted("None");
-
-                return;
-            }
-
-            for (int bit = 0; bit < 64; bit++)
-            {
-                if ((flags & (1UL << bit)) != 0)
-                {
-                    ImGui.BulletText(TileFlags.Names[bit]);
-                }
-            }
-        }
+        private static string FlagLines(ulong flags) => flags == 0 ? "None" : TileFlags.Describe(flags).Replace(", ", "\n");
     }
 }

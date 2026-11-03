@@ -1,17 +1,13 @@
-using System.Numerics;
 using System.Text;
 using Hexa.NET.ImGui;
 using ModernUO.Studio.Gui;
 
 namespace ModernUO.Studio.Panels
 {
-    /// <summary>The cliloc string tables (text/cliloc.bin): search by number or text.</summary>
-    internal sealed class ClilocBrowser : Panel
+    /// <summary>The cliloc string tables (text/cliloc.bin): search by number or text. Items are table indexes.</summary>
+    internal sealed class ClilocBrowser : AssetBrowser
     {
-        private readonly List<int> _rows = new();
-        private string _filter = "";
-        private bool _dirty = true;
-        private bool _english = true;
+        private static readonly string[] _englishModes = { "Language", "English" };
 
         public ClilocBrowser(StudioContext context) : base(context, false)
         {
@@ -19,98 +15,67 @@ namespace ModernUO.Studio.Panels
 
         public override string Title => "Cliloc###cliloc";
         public override string MenuName => "Cliloc";
-        protected override Vector2 DefaultSize => new(900, 560);
 
-        public override void OnPackChanged() => _dirty = true;
+        private ClassicUO.Assets.ClilocLoader Clilocs => Context.Assets.Files.Clilocs;
 
-        protected override void DrawContent()
+        // with English as the language the English strings are the language table and EnglishTable stays empty
+        private bool HasBoth => Clilocs.LanguageTable != null && Clilocs.EnglishTable != null && !ReferenceEquals(Clilocs.LanguageTable, Clilocs.EnglishTable);
+
+        private Uo.Pack.ClilocTable Table => HasBoth && Mode == 1 ? Clilocs.EnglishTable : Clilocs.LanguageTable ?? Clilocs.EnglishTable;
+
+        protected override string Kind => $"Cliloc ({Clilocs.Language})";
+        protected override string[] Modes => Context.Assets != null && HasBoth ? _englishModes : null;
+        protected override bool HasGrid => false;
+        protected override string SearchHint => "number (500000) or text";
+        protected override float DefaultInspectorWidth => 420f;
+        protected override Parts InspectorParts => Parts.Properties | Parts.Actions;
+
+        protected override int SlotCount => Context.Assets == null || Table == null ? 0 : Table.Count;
+
+        protected override int IdOf(int index) => Table.IdAt(index);
+
+        protected override string FormatId(int index) => Table.IdAt(index).ToString();
+
+        protected override string CopyTextOf(int index) => Table.IdAt(index).ToString();
+
+        /// <summary>Selects by cliloc number, not by table index.</summary>
+        public override void SelectById(int number)
         {
-            var clilocs = Context.Assets.Files.Clilocs;
-            // with English as the language the English strings are the language table and EnglishTable stays empty
-            var table = _english ? clilocs.EnglishTable ?? clilocs.LanguageTable : clilocs.LanguageTable;
+            int index = Table?.IndexOf(number) ?? -1;
 
-            if (table == null)
+            if (index >= 0)
             {
-                ImGui.TextDisabled("text/cliloc.bin did not load (see Pack Info).");
-
-                return;
+                SelectItem(index);
             }
+        }
 
-            ImGui.SetNextItemWidth(300f);
-            _dirty |= ImGui.InputTextWithHint("##filter", "number or text", ref _filter, 256);
+        protected override string NameOf(int index) => Encoding.UTF8.GetString(Table.Utf8At(index));
 
-            if (clilocs.LanguageTable != null && clilocs.EnglishTable != null && !ReferenceEquals(clilocs.LanguageTable, clilocs.EnglishTable))
+        protected override void DrawProperties(int index)
+        {
+            string text = NameOf(index);
+
+            if (Inspector.BeginProperties())
             {
-                ImGui.SameLine();
-                _dirty |= ImGui.Checkbox("English", ref _english);
+                Inspector.Property("Number", Table.IdAt(index).ToString());
+                Inspector.Property("Length", $"{text.Length} characters");
+                Inspector.Property("Arguments", text.Contains('~') ? "yes (~1_NAME~ style)" : "none");
+                Inspector.EndProperties();
             }
+        }
 
-            if (_dirty)
+        protected override void DrawActions(int index)
+        {
+            if (ImGui.Button("Copy number"))
             {
-                Rebuild(table);
+                ImGui.SetClipboardText(Table.IdAt(index).ToString());
             }
 
             ImGui.SameLine();
-            ImGui.TextDisabled($"{_rows.Count} of {table.Count} strings ({clilocs.Language})");
 
-            if (!ImGui.BeginTable("cliloc", 2, ImGuiTableFlags.RowBg | ImGuiTableFlags.ScrollY | ImGuiTableFlags.BordersInnerV | ImGuiTableFlags.Resizable))
+            if (ImGui.Button("Copy text"))
             {
-                return;
-            }
-
-            ImGui.TableSetupScrollFreeze(0, 1);
-            ImGui.TableSetupColumn("Number", ImGuiTableColumnFlags.WidthFixed, 90f);
-            ImGui.TableSetupColumn("Text", ImGuiTableColumnFlags.WidthStretch);
-            ImGui.TableHeadersRow();
-
-            ImGuiListClipper clipper = new();
-            clipper.Begin(_rows.Count);
-
-            while (clipper.Step())
-            {
-                for (int r = clipper.DisplayStart; r < clipper.DisplayEnd; r++)
-                {
-                    int index = _rows[r];
-                    int number = table.IdAt(index);
-                    string text = Encoding.UTF8.GetString(table.Utf8At(index));
-                    ImGui.TableNextRow();
-                    ImGui.TableNextColumn();
-
-                    if (ImGui.Selectable($"{number}##{index}", false, ImGuiSelectableFlags.SpanAllColumns))
-                    {
-                        ImGui.SetClipboardText(number.ToString());
-                        StudioLog.Info($"Copied cliloc {number}");
-                    }
-
-                    ImGui.TableNextColumn();
-                    ImGui.TextUnformatted(text);
-                }
-            }
-
-            clipper.End();
-            ImGui.EndTable();
-        }
-
-        private void Rebuild(Uo.Pack.ClilocTable table)
-        {
-            _dirty = false;
-            _rows.Clear();
-            string filter = _filter.Trim();
-            bool byNumber = int.TryParse(filter, out int number);
-
-            for (int i = 0; i < table.Count; i++)
-            {
-                if (filter.Length > 0)
-                {
-                    bool match = byNumber && table.IdAt(i).ToString().StartsWith(filter, StringComparison.Ordinal);
-
-                    if (!match && !Encoding.UTF8.GetString(table.Utf8At(i)).Contains(filter, StringComparison.OrdinalIgnoreCase))
-                    {
-                        continue;
-                    }
-                }
-
-                _rows.Add(i);
+                ImGui.SetClipboardText(NameOf(index));
             }
         }
     }

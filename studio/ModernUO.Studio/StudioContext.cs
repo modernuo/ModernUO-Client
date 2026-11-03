@@ -138,5 +138,11 @@ namespace ModernUO.Studio
         public void ShowHue(int hue) => Get<HueBrowser>()?.Select(hue);
 
         public void ShowGump(int id) => Get<GumpBrowser>()?.Select(id);
+
+        public void ShowTexmap(int id) => Get<TexmapBrowser>()?.SelectItem(id);
+
+        public void ShowBody(int id) => Get<AnimationBrowser>()?.SelectItem(id);
+
+        public void ShowMulti(int id) => Get<MultiBrowser>()?.SelectItem(id);
     }
 }

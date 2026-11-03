@@ -89,34 +89,6 @@ namespace ModernUO.Studio.Gui
             draw.AddCircle(c, MathF.Min(max.X - min.X, max.Y - min.Y) * 0.15f, Col(0.5f, 0.5f, 0.5f, 0.5f + 0.5f * MathF.Sin(t)), 12, 2f);
         }
 
-        /// <summary>
-        /// A selectable list row with a square thumbnail box on the left and two lines of text beside it. Returns true when
-        /// clicked; the caller draws the thumbnail into [thumbMin, thumbMin + size].
-        /// </summary>
-        public static bool ThumbRow(int id, bool selected, float size, string line1, string line2, out Vector2 thumbMin)
-        {
-            Vector2 pos = ImGui.GetCursorScreenPos();
-            bool clicked = ImGui.Selectable($"##row{id}", selected, ImGuiSelectableFlags.None, new Vector2(0, size));
-            var draw = ImGui.GetWindowDrawList();
-            thumbMin = pos;
-            draw.AddRectFilled(pos, pos + new Vector2(size, size), Col(0.12f, 0.12f, 0.13f));
-
-            float x = pos.X + size + 8f;
-            float lineHeight = ImGui.GetTextLineHeight();
-            float y = pos.Y + MathF.Max(0f, (size - lineHeight * 2f - 2f) * 0.5f);
-            draw.AddText(new Vector2(x, y), Col(0.9f, 0.9f, 0.9f), line1);
-
-            if (!string.IsNullOrEmpty(line2))
-            {
-                draw.AddText(new Vector2(x, y + lineHeight + 2f), Col(0.6f, 0.6f, 0.6f), line2);
-            }
-
-            return clicked;
-        }
-
-        /// <summary>The clipper row height of <see cref="ThumbRow"/>.</summary>
-        public static float ThumbRowHeight(float size) => size + ImGui.GetStyle().ItemSpacing.Y;
-
         /// <summary>Parses "1234", "0x4D2" or "4D2h"; false for anything else.</summary>
         public static bool TryParseId(string text, out int id)
         {

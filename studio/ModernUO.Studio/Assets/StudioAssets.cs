@@ -21,7 +21,10 @@ namespace ModernUO.Studio.Assets
             Root = root;
             Pack = pack;
             Files = files;
+            Relations = new RelationIndex(this);
         }
+
+        public RelationIndex Relations { get; }
 
         public string Root { get; }
         public PackAssets Pack { get; }
