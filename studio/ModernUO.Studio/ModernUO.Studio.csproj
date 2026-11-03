@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- ModernUO Studio: the asset and map tooling exe. It references the client's libraries (ClassicUO.Assets for the pack,
+       ClassicUO.Renderer for the atlases and the batcher) and never the game client, so it can move to its own repo. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <LangVersion>Preview</LangVersion>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <AssemblyName>muostudio</AssemblyName>
+    <RootNamespace>ModernUO.Studio</RootNamespace>
+    <PlatformTarget>x64</PlatformTarget>
+    <IsAotCompatible>true</IsAotCompatible>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)'=='Release'">
+    <OutputPath>$(ProjectDir)..\..\bin\Studio\Release\</OutputPath>
+    <Optimize>true</Optimize>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)'=='Debug'">
+    <OutputPath>$(ProjectDir)..\..\bin\Studio\Debug\</OutputPath>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Hexa.NET.ImGui" Version="2.2.9" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\..\external\FNA\FNA.Core.csproj" />
+    <ProjectReference Include="..\..\src\ClassicUO.Assets\ClassicUO.Assets.csproj" />
+    <ProjectReference Include="..\..\src\ClassicUO.Renderer\ClassicUO.Renderer.csproj" />
+    <ProjectReference Include="..\..\src\ClassicUO.Utility\ClassicUO.Utility.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <DataFiles_x64 Include="$(ProjectDir)..\..\external\x64\*.*" />
+    <DataFiles_lib64 Include="$(ProjectDir)..\..\external\lib64\*.*" />
+    <DataFiles_osx Include="$(ProjectDir)..\..\external\osx\*.*" />
+  </ItemGroup>
+
+  <Target Name="CopyExternalDeps_build" AfterTargets="Build">
+    <Copy SourceFiles="@(DataFiles_x64)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" Condition="$([MSBuild]::IsOSPlatform('Windows'))" />
+    <Copy SourceFiles="@(DataFiles_lib64)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" Condition="$([MSBuild]::IsOSPlatform('Linux'))" />
+    <Copy SourceFiles="@(DataFiles_osx)" DestinationFolder="$(OutputPath)" SkipUnchangedFiles="true" Condition="$([MSBuild]::IsOSPlatform('OSX'))" />
+  </Target>
+
+</Project>
