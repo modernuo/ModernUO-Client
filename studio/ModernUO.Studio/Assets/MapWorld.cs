@@ -50,6 +50,9 @@ namespace ModernUO.Studio.Assets
         public RenderTarget2D Target => _target;
         public bool VisibleReady => _world.VisibleReady;
         public int Chunks => _world.ChunkCount;
+
+        /// <summary>Chunks in view that are not drawable this frame: what a re-bake must never raise (smoke tests).</summary>
+        public int MissingVisible => _world.Chunks.MissingVisible;
         public long Instances => _world.Instances;
 
         /// <summary>Null with <paramref name="error"/> when FNA3D is not on the SDL_GPU driver or the pack has no maps.</summary>
@@ -162,7 +165,8 @@ namespace ModernUO.Studio.Assets
 
         public void HighlightLand(int x, int y, ushort hue) => _world.SetLandOverride(x, y, -1, false, hue);
 
-        public void HighlightStatic(int x, int y, int z, ushort graphic, ushort hue) => _world.SetStaticOverride(x, y, z, graphic, -1, false, hue);
+        /// <summary>Tints a static this frame; <paramref name="alpha"/> below 255 also makes it translucent (a preview).</summary>
+        public void HighlightStatic(int x, int y, int z, ushort graphic, ushort hue, int alpha = -1) => _world.SetStaticOverride(x, y, z, graphic, alpha, false, hue);
 
         /// <summary>
         /// Streams around the camera and draws into the target. Call after ImGui built its frame and before FNA submits the

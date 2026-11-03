@@ -48,6 +48,63 @@ namespace ModernUO.Studio
         /// <summary>-selftest &lt;dir&gt;: with -goto, the scripted editing round trip at that tile (SelfTest), saving under dir.</summary>
         public string SelfTestDir { get; init; }
 
+        /// <summary>-hover "x y", -brush, -tool: a held cursor, a brush and a tool for previews in smoke tests.</summary>
+        public string Hover { get; init; }
+        public string Brush { get; init; }
+        public string Tool { get; init; }
+
+        private int _rebakeMissing = -1;
+
+        private static bool TryParsePair(string text, out int a, out int b)
+        {
+            a = b = 0;
+            var parts = text.Split(new[] { ' ', ',' }, StringSplitOptions.RemoveEmptyEntries);
+
+            return parts.Length >= 2 && Widgets.TryParseId(parts[0], out a) && Widgets.TryParseId(parts[1], out b);
+        }
+
+        /// <summary>
+        /// -selftest: once the map has streamed (frame 120), edit a 3 x 3 patch and watch the next 40 frames: an edited
+        /// chunk re-bakes in place (ChunkStore.InvalidateBlocks), so no chunk in view may go missing.
+        /// </summary>
+        private void WatchRebake()
+        {
+            var world = _context.MapWorld;
+            var map = _context.Get<MapPanel>();
+
+            if (SelfTestDir == null || world == null || map == null || GoTo == null || !TryParsePair(GoTo, out int x, out int y))
+            {
+                return;
+            }
+
+            if (_frames == 120)
+            {
+                var tx = _context.Assets.Edits.Begin("Self test re-bake", map.Facet);
+
+                for (int dy = -1; dy <= 1; dy++)
+                {
+                    for (int dx = -1; dx <= 1; dx++)
+                    {
+                        if (tx.TryGet(x + 4 + dx, y + 4 + dy, out var land, out _))
+                        {
+                            tx.SetLand(x + 4 + dx, y + 4 + dy, land.TileId, (sbyte)(land.Z + 5));
+                        }
+                    }
+                }
+
+                tx.Commit();
+                _rebakeMissing = 0;
+            }
+            else if (_frames > 120 && _frames <= 160)
+            {
+                _rebakeMissing = Math.Max(_rebakeMissing, world.MissingVisible);
+            }
+            else if (_frames == 161)
+            {
+                StudioLog.Info($"[selftest] {(_rebakeMissing == 0 ? "PASS" : "FAIL")} no chunk in view went missing while re-baking (max {_rebakeMissing})");
+            }
+        }
+
         /// <summary>-goto "x y": the map centres on and picks this tile at startup.</summary>
         public string GoTo { get; init; }
 
@@ -237,8 +294,31 @@ namespace ModernUO.Studio
                     {
                         SelfTest.Run(_context, map.Facet, gx, gy, SelfTestDir);
                     }
+
+                    if (Hover != null && TryParsePair(Hover, out int hx, out int hy))
+                    {
+                        map.DebugHover = (hx, hy);
+                    }
+                }
+
+                // -brush 0x1F03 (a static) or land:0x0003; -tool select|draw|terrain|erase
+                if (Brush != null)
+                {
+                    bool land = Brush.StartsWith("land:", StringComparison.OrdinalIgnoreCase);
+
+                    if (Widgets.TryParseId(land ? Brush[5..] : Brush, out int brush))
+                    {
+                        _context.Get<ArtBrowser>()?.SetBrush(brush, land);
+                    }
+                }
+
+                if (Tool != null && Enum.TryParse(Tool, true, out MapTool tool))
+                {
+                    map?.SetTool(tool);
                 }
             }
+
+            WatchRebake();
 
             foreach (var panel in _context.Panels)
             {

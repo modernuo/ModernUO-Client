@@ -15,6 +15,7 @@ namespace ModernUO.Studio
             var layout = StudioLayout.Browse;
             int frames = 90;
             string goTo = null, selfTest = null;
+            var debug = new Dictionary<string, string>();
 
             for (int i = 0; i < args.Length; i++)
             {
@@ -43,6 +44,10 @@ namespace ModernUO.Studio
                 {
                     selfTest = args[++i];
                 }
+                else if (args[i] is "-hover" or "-brush" or "-tool" && i + 1 < args.Length)
+                {
+                    debug[args[i][1..]] = args[++i];
+                }
                 else if (args[i] is "-goto" or "--goto" && i + 1 < args.Length)
                 {
                     goTo = args[++i];
@@ -55,7 +60,8 @@ namespace ModernUO.Studio
 
             var settings = StudioSettings.Load();
 
-            using var game = new StudioGame(settings, pack, screenshot) { Focus = focus, Select = select, Layout = layout, ScreenshotFrames = frames, GoTo = goTo, SelfTestDir = selfTest };
+            using var game = new StudioGame(settings, pack, screenshot) { Focus = focus, Select = select, Layout = layout, ScreenshotFrames = frames, GoTo = goTo, SelfTestDir = selfTest,
+                Hover = debug.GetValueOrDefault("hover"), Brush = debug.GetValueOrDefault("brush"), Tool = debug.GetValueOrDefault("tool") };
             game.Run();
 
             Log.Stop();

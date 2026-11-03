@@ -102,11 +102,17 @@ namespace ModernUO.Studio.Panels
         public int BrushStatic { get; private set; } = -1;
         public int BrushLand { get; private set; } = -1;
 
-        protected override void OnSelected(int id)
-        {
-            _huedFor = -1;
+        /// <summary>The kind picked last: the map's Draw tool places that static or paints that land.</summary>
+        public bool BrushIsLand { get; private set; }
 
-            if (Land)
+        public bool HasBrush => BrushIsLand ? BrushLand >= 0 : BrushStatic >= 0;
+
+        /// <summary>Sets the brush without selecting in the browser (the map's Alt+click picker).</summary>
+        public void SetBrush(int id, bool land)
+        {
+            BrushIsLand = land;
+
+            if (land)
             {
                 BrushLand = id;
             }
@@ -114,6 +120,15 @@ namespace ModernUO.Studio.Panels
             {
                 BrushStatic = id;
             }
+        }
+
+        protected override void OnSelected(int id)
+        {
+            _huedFor = -1;
+            SetBrush(id, Land);
+
+            // picking art is picking the map's brush: the map switches to Draw
+            Context.Get<MapPanel>()?.UseDrawTool();
         }
 
         protected override void OnModeChanged() => _huedFor = -1;

@@ -47,6 +47,7 @@ namespace ModernUO.Studio.Assets
         private readonly List<MapChange> _undo = new();
         private readonly List<MapChange> _redo = new();
         private Transaction _open;
+        private Transaction _preview;
 
         public MapEdits(StudioAssets assets)
         {
@@ -112,10 +113,46 @@ namespace ModernUO.Studio.Assets
         /// <summary>Starts one undoable change; edits through it are applied at once and recorded by <see cref="Transaction.Commit"/>.</summary>
         public Transaction Begin(string label, int facet)
         {
+            CancelPreview();
             _open?.Commit();
             _open = new Transaction(this, label, facet);
 
             return _open;
+        }
+
+        /// <summary>
+        /// A tool's preview under the cursor: applied (and drawn) like an edit but not recorded. <see cref="Transaction.Rollback"/>
+        /// takes it back; <see cref="Transaction.Commit"/> records it after all (a click). Any other edit, undo or redo
+        /// takes the preview back first, so it never mixes with recorded changes.
+        /// </summary>
+        public Transaction BeginPreview(string label, int facet)
+        {
+            CancelPreview();
+            _open?.Commit();
+            _preview = new Transaction(this, label, facet);
+
+            return _preview;
+        }
+
+        /// <summary>The preview becomes the open change (a click on it): it is recorded by its Commit, not taken back.</summary>
+        public Transaction PromotePreview()
+        {
+            var tx = _preview;
+            _preview = null;
+
+            if (tx != null)
+            {
+                _open?.Commit();
+                _open = tx;
+            }
+
+            return tx;
+        }
+
+        public void CancelPreview()
+        {
+            _preview?.Rollback();
+            _preview = null;
         }
 
         internal sealed class Transaction
@@ -136,6 +173,37 @@ namespace ModernUO.Studio.Assets
             public string Label { get; set; }
             public int Facet { get; }
             public int TileCount => _tiles.Count;
+            public bool IsDone => _done;
+            public IReadOnlyCollection<(int X, int Y)> Tiles => _tiles;
+
+            /// <summary>Puts every block it touched back as it was and records nothing (a preview the cursor left).</summary>
+            public void Rollback()
+            {
+                if (_done)
+                {
+                    return;
+                }
+
+                _done = true;
+
+                if (_edits._open == this)
+                {
+                    _edits._open = null;
+                }
+
+                if (_edits._preview == this)
+                {
+                    _edits._preview = null;
+                }
+
+                foreach (var (key, block) in _before)
+                {
+                    if (_edits.EnsureBlock(Facet, key.Bx, key.By, out _, out int index))
+                    {
+                        _edits.Store(Facet, key.Bx, key.By, index, block);
+                    }
+                }
+            }
 
             /// <summary>The tile's land cell and statics, to change in place with <see cref="SetLand"/> and <see cref="SetStatics"/>.</summary>
             public bool TryGet(int x, int y, out LandCell land, out StaticCell[] statics)
@@ -225,6 +293,11 @@ namespace ModernUO.Studio.Assets
                     _edits._open = null;
                 }
 
+                if (_edits._preview == this)
+                {
+                    _edits._preview = null;
+                }
+
                 if (_before.Count == 0)
                 {
                     return null;
@@ -242,6 +315,8 @@ namespace ModernUO.Studio.Assets
 
         public void Undo()
         {
+            CancelPreview();
+
             if (_undo.Count == 0)
             {
                 return;
@@ -256,6 +331,8 @@ namespace ModernUO.Studio.Assets
 
         public void Redo()
         {
+            CancelPreview();
+
             if (_redo.Count == 0)
             {
                 return;
