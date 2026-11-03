@@ -32,17 +32,36 @@ namespace ModernUO.Studio.Assets
             tile.X = x;
             tile.Y = y;
 
-            if (x < 0 || y < 0 || !assets.Files.Maps.TryGetBlock(facet, x >> 3, y >> 3, out MapBlockData block))
+            if (x < 0 || y < 0)
             {
                 return false;
             }
 
             int cx = x & 7, cy = y & 7;
-            LandCell land = block.Land[cy * 8 + cx];
+            ReadOnlySpan<LandCell> lands;
+            ReadOnlySpan<StaticCell> statics;
+
+            // edited blocks first (MapEdits), then the pack
+            if (assets.Edits.TryGetBlock(facet, x >> 3, y >> 3, out var editedLand, out var editedStatics))
+            {
+                lands = editedLand;
+                statics = editedStatics;
+            }
+            else if (assets.Files.Maps.TryGetBlock(facet, x >> 3, y >> 3, out MapBlockData block))
+            {
+                lands = block.Land;
+                statics = block.Statics;
+            }
+            else
+            {
+                return false;
+            }
+
+            LandCell land = lands[cy * 8 + cx];
             tile.Land = land.TileId;
             tile.LandZ = land.Z;
 
-            foreach (StaticCell s in block.Statics)
+            foreach (StaticCell s in statics)
             {
                 if (s.X == cx && s.Y == cy)
                 {
@@ -60,7 +79,19 @@ namespace ModernUO.Studio.Assets
         {
             z = 0;
 
-            return x >= 0 && y >= 0 && assets.Files.Maps.TryGetLandZ(facet, x, y, out z);
+            if (x < 0 || y < 0)
+            {
+                return false;
+            }
+
+            if (assets.Edits.TryGetBlock(facet, x >> 3, y >> 3, out var land, out _))
+            {
+                z = land[(y & 7) * 8 + (x & 7)].Z;
+
+                return true;
+            }
+
+            return assets.Files.Maps.TryGetLandZ(facet, x, y, out z);
         }
 
         /// <summary>

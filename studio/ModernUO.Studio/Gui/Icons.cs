@@ -72,5 +72,26 @@ namespace ModernUO.Studio.Gui
         public const string CircleCheck = "";
         public const string Trees = "";
         public const string Waves = "";
+
+        // map editing
+        public const string Pointer = "";
+        public const string Paintbrush = "";
+        public const string Trash = "";
+        public const string Undo = "";
+        public const string Redo = "";
+        public const string ArrowUp = "";
+        public const string ArrowDown = "";
+        public const string ArrowUpLeft = "";
+        public const string ArrowUpRight = "";
+        public const string ArrowDownLeft = "";
+        public const string ArrowDownRight = "";
+        public const string Equal = "";
+        public const string Save = "";
+        public const string History = "";
+        public const string Stamp = "";
+        public const string ChevronUp = "";
+        public const string ChevronsUp = "";
+        public const string ChevronsDown = "";
+        public const string Eraser = "";
     }
 }

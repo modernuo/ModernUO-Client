@@ -95,9 +95,26 @@ namespace ModernUO.Studio.Panels
             base.OnPackChanged();
             _hued?.Clear();
             _huedFor = -1;
+            BrushStatic = BrushLand = -1;
         }
 
-        protected override void OnSelected(int id) => _huedFor = -1;
+        /// <summary>The static and the land tile last picked here: the map's Place and Paint brushes (-1 = none yet).</summary>
+        public int BrushStatic { get; private set; } = -1;
+        public int BrushLand { get; private set; } = -1;
+
+        protected override void OnSelected(int id)
+        {
+            _huedFor = -1;
+
+            if (Land)
+            {
+                BrushLand = id;
+            }
+            else
+            {
+                BrushStatic = id;
+            }
+        }
 
         protected override void OnModeChanged() => _huedFor = -1;
 

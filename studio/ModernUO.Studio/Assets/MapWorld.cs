@@ -144,6 +144,22 @@ namespace ModernUO.Studio.Assets
             return true;
         }
 
+        /// <summary>
+        /// Draws <paramref name="edits"/> live: the renderer reads edited regions from memory (ChunkStore.RegionOverride)
+        /// and re-bakes the blocks each edit, undo or redo touches.
+        /// </summary>
+        public void AttachEdits(MapEdits edits)
+        {
+            _world.Chunks.RegionOverride = (rx, ry) => edits.RegionBytes(_pack.Facet, rx, ry);
+            edits.BlocksChanged += (facet, bx0, by0, bx1, by1) =>
+            {
+                if (facet == _pack.Facet)
+                {
+                    _world.Chunks.InvalidateBlocks(bx0, by0, bx1, by1);
+                }
+            };
+        }
+
         public void HighlightLand(int x, int y, ushort hue) => _world.SetLandOverride(x, y, -1, false, hue);
 
         public void HighlightStatic(int x, int y, int z, ushort graphic, ushort hue) => _world.SetStaticOverride(x, y, z, graphic, -1, false, hue);

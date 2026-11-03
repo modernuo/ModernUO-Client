@@ -45,6 +45,9 @@ namespace ModernUO.Studio
         /// <summary>-frames: the frames drawn before -screenshot saves (worker builds such as the radar need longer).</summary>
         public int ScreenshotFrames { get; init; } = 90;
 
+        /// <summary>-selftest &lt;dir&gt;: with -goto, the scripted editing round trip at that tile (SelfTest), saving under dir.</summary>
+        public string SelfTestDir { get; init; }
+
         /// <summary>-goto "x y": the map centres on and picks this tile at startup.</summary>
         public string GoTo { get; init; }
 
@@ -125,6 +128,7 @@ namespace ModernUO.Studio
             _context.Add(new MapPanel(_context));
             _context.Add(new TileInspectorPanel(_context));
             _context.Add(new RadarPanel(_context));
+            _context.Add(new ChangesPanel(_context));
             _context.Add(new PackInfoPanel(_context));
             _context.Add(new LogPanel(_context));
 
@@ -228,6 +232,11 @@ namespace ModernUO.Studio
                 if (map != null && parts.Length >= 2 && Widgets.TryParseId(parts[0], out int gx) && Widgets.TryParseId(parts[1], out int gy))
                 {
                     map.CenterOn(map.Facet < 0 ? _context.Assets.Manifest.Facets[0].Index : map.Facet, gx, gy, select: true);
+
+                    if (SelfTestDir != null)
+                    {
+                        SelfTest.Run(_context, map.Facet, gx, gy, SelfTestDir);
+                    }
                 }
             }
 
@@ -296,6 +305,7 @@ namespace ModernUO.Studio
                 ImGuiP.DockBuilderDockWindow("Map###map", main);
                 ImGuiP.DockBuilderDockWindow("Tile###tile", right);
                 ImGuiP.DockBuilderDockWindow("Radar###radar", rightBottom);
+                ImGuiP.DockBuilderDockWindow("Changes###changes", rightBottom);
                 _focusAfterLayout = "Map###map";
             }
             else
@@ -311,6 +321,7 @@ namespace ModernUO.Studio
                 ImGuiP.DockBuilderDockWindow("Map###map", main);
                 ImGuiP.DockBuilderDockWindow("Tile###tile", right);
                 ImGuiP.DockBuilderDockWindow("Radar###radar", right);
+                ImGuiP.DockBuilderDockWindow("Changes###changes", right);
                 _focusAfterLayout = "Start###start";
             }
 
@@ -378,6 +389,27 @@ namespace ModernUO.Studio
             if (ImGui.IsKeyChordPressed((int)(ImGuiKey.ModCtrl | ImGuiKey.O)))
             {
                 _start.Browse();
+            }
+
+            // the change set is global: undo and redo work from any panel, but not while typing in a field
+            var history = _context.Assets?.Edits;
+
+            if (history != null && !ImGui.GetIO().WantTextInput)
+            {
+                if (ImGui.IsKeyChordPressed((int)(ImGuiKey.ModCtrl | ImGuiKey.Z)))
+                {
+                    history.Undo();
+                }
+
+                if (ImGui.IsKeyChordPressed((int)(ImGuiKey.ModCtrl | ImGuiKey.Y)) || ImGui.IsKeyChordPressed((int)(ImGuiKey.ModCtrl | ImGuiKey.ModShift | ImGuiKey.Z)))
+                {
+                    history.Redo();
+                }
+
+                if (ImGui.IsKeyChordPressed((int)(ImGuiKey.ModCtrl | ImGuiKey.ModShift | ImGuiKey.S)))
+                {
+                    _context.Get<ChangesPanel>()?.RequestSave();
+                }
             }
         }
 
@@ -518,6 +550,13 @@ namespace ModernUO.Studio
                     }
                 }
 
+                if (ImGui.MenuItem($"{Icons.Save}  Save as New Pack...", "Ctrl+Shift+S", false, _context.Assets?.Edits.Dirty > 0))
+                {
+                    _context.Get<ChangesPanel>()?.RequestSave();
+                }
+
+                ImGui.Separator();
+
                 if (ImGui.MenuItem($"{Icons.X}  Close Pack", (string)null, false, _context.Assets != null))
                 {
                     _context.ClosePack();
@@ -535,6 +574,23 @@ namespace ModernUO.Studio
                 if (ImGui.MenuItem("Exit"))
                 {
                     Exit();
+                }
+
+                ImGui.EndMenu();
+            }
+
+            if (ImGui.BeginMenu("Edit"))
+            {
+                var edits = _context.Assets?.Edits;
+
+                if (ImGui.MenuItem(edits?.CanUndo == true ? $"{Icons.Undo}  Undo {edits.NextUndo.Label}" : $"{Icons.Undo}  Undo", "Ctrl+Z", false, edits?.CanUndo == true))
+                {
+                    edits.Undo();
+                }
+
+                if (ImGui.MenuItem(edits?.CanRedo == true ? $"{Icons.Redo}  Redo {edits.NextRedo.Label}" : $"{Icons.Redo}  Redo", "Ctrl+Y", false, edits?.CanRedo == true))
+                {
+                    edits.Redo();
                 }
 
                 ImGui.EndMenu();
@@ -620,6 +676,12 @@ namespace ModernUO.Studio
                 {
                     ImGui.TextColored(Theme.TextMuted, "·");
                     ImGui.TextColored(Theme.TextMuted, $"client {assets.Manifest.SourceClientVersion}");
+
+                    if (assets.Edits.Dirty > 0)
+                    {
+                        ImGui.TextColored(Theme.TextMuted, "·");
+                        ImGui.TextColored(Theme.Gold, $"{Icons.Save} {assets.Edits.Dirty} unsaved change{(assets.Edits.Dirty == 1 ? "" : "s")}");
+                    }
                 }
 
                 var tile = _context.SelectedTile;

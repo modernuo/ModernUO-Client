@@ -6,6 +6,17 @@ using Uo.Render;
 
 namespace ModernUO.Studio.Panels
 {
+    internal enum MapTool
+    {
+        Select,
+        Place,
+        Raise,
+        Lower,
+        Flatten,
+        Paint,
+        Erase
+    }
+
     /// <summary>
     /// The map document (studio/UX.md, "Workspaces and documents"): a facet drawn by the client's GPU world renderer, with
     /// a free camera, go-to, z filters, a tile grid and tile picking for the Tile inspector.
@@ -29,6 +40,15 @@ namespace ModernUO.Studio.Panels
         private bool _wantRender;
         private bool _dragged;
         private bool _leftDown;
+
+        // editing (studio/UX.md, "Editing model"): a stroke is one undoable change
+        private MapTool _tool = MapTool.Select;
+        private int _brush;
+        private int _amount = 1;
+        private bool _stackOnTop;
+        private MapEdits.Transaction _stroke;
+        private readonly HashSet<(int X, int Y)> _strokeTiles = new();
+        private sbyte _flattenZ;
         private Microsoft.Xna.Framework.Graphics.RenderTarget2D _boundTarget;
 
         public MapPanel(StudioContext context) : base(context, true)
@@ -181,6 +201,7 @@ namespace ModernUO.Studio.Panels
             }
 
             DrawToolbar();
+            DrawTools();
 
             Vector2 min = ImGui.GetCursorScreenPos();
             Vector2 avail = ImGui.GetContentRegionAvail();
@@ -214,7 +235,14 @@ namespace ModernUO.Studio.Panels
 
             if (_hovering)
             {
-                Diamond(draw, min, _hoverX, _hoverY, _hoverZ, Widgets.Col(1f, 1f, 1f, 0.9f), 1.5f);
+                if (_tool == MapTool.Select)
+                {
+                    Diamond(draw, min, _hoverX, _hoverY, _hoverZ, Widgets.Col(1f, 1f, 1f, 0.9f), 1.5f);
+                }
+                else
+                {
+                    DrawBrush(draw, min);
+                }
             }
 
             var selected = Context.SelectedTile;
@@ -301,6 +329,8 @@ namespace ModernUO.Studio.Panels
             bool hovered = ImGui.IsItemHovered();
             Vector2 mouse = io.MousePos - min;
 
+            bool editing = _tool != MapTool.Select;
+
             if (ImGui.IsItemClicked(ImGuiMouseButton.Left))
             {
                 _leftDown = true;
@@ -312,8 +342,10 @@ namespace ModernUO.Studio.Panels
                 _dragged = false;
             }
 
-            // drag with the left or middle button pans; a left click without a drag picks the tile
-            if (ImGui.IsItemActive() && (ImGui.IsMouseDragging(ImGuiMouseButton.Left, 3f) || ImGui.IsMouseDragging(ImGuiMouseButton.Middle, 3f)))
+            // the middle button always pans; the left button pans in Select and paints strokes in the editing tools
+            bool panLeft = !editing && ImGui.IsMouseDragging(ImGuiMouseButton.Left, 3f);
+
+            if (ImGui.IsItemActive() && (panLeft || ImGui.IsMouseDragging(ImGuiMouseButton.Middle, 3f)))
             {
                 _dragged = true;
                 _centerX -= io.MouseDelta.X / _zoom;
@@ -332,17 +364,39 @@ namespace ModernUO.Studio.Panels
 
             _hovering = hovered && PickTile(mouse, out _hoverX, out _hoverY, out _hoverZ);
 
+            if (editing && _leftDown && ImGui.IsMouseDown(ImGuiMouseButton.Left) && _hovering)
+            {
+                Stroke(_hoverX, _hoverY, _hoverZ);
+            }
+
             if (_leftDown && ImGui.IsMouseReleased(ImGuiMouseButton.Left))
             {
                 _leftDown = false;
 
-                if (_hovering && !_dragged)
+                if (editing)
+                {
+                    EndStroke();
+                }
+                else if (_hovering && !_dragged)
                 {
                     Context.SelectTile(_facet, _hoverX, _hoverY);
                     Context.Get<TileInspectorPanel>()?.Show();
                 }
             }
 
+            if (ImGui.IsWindowFocused() && !io.WantTextInput && !io.KeyCtrl)
+            {
+                // tool keys, as in most editors: V select, A place, R raise, L lower, F flatten, P paint, X erase; [ ] brush
+                if (ImGui.IsKeyPressed(ImGuiKey.V)) _tool = MapTool.Select;
+                if (ImGui.IsKeyPressed(ImGuiKey.A)) _tool = MapTool.Place;
+                if (ImGui.IsKeyPressed(ImGuiKey.R)) _tool = MapTool.Raise;
+                if (ImGui.IsKeyPressed(ImGuiKey.L)) _tool = MapTool.Lower;
+                if (ImGui.IsKeyPressed(ImGuiKey.F)) _tool = MapTool.Flatten;
+                if (ImGui.IsKeyPressed(ImGuiKey.P)) _tool = MapTool.Paint;
+                if (ImGui.IsKeyPressed(ImGuiKey.X)) _tool = MapTool.Erase;
+                if (ImGui.IsKeyPressed(ImGuiKey.LeftBracket)) _brush = Math.Max(0, _brush - 1);
+                if (ImGui.IsKeyPressed(ImGuiKey.RightBracket)) _brush = Math.Min(8, _brush + 1);
+            }
             if (ImGui.IsWindowFocused() && !io.WantTextInput)
             {
                 float step = 44f * 4f / _zoom;
@@ -377,6 +431,234 @@ namespace ModernUO.Studio.Panels
             }
         }
 
+        private static readonly (MapTool Tool, string Icon, string Tip)[] _tools =
+        {
+            (MapTool.Select, Icons.Pointer, "Select (V): click picks a tile, drag pans"),
+            (MapTool.Place, Icons.Stamp, "Place static (A): the static picked in Art, on the ground or on top of the stack"),
+            (MapTool.Raise, Icons.ChevronsUp, "Raise land (R)"),
+            (MapTool.Lower, Icons.ChevronsDown, "Lower land (L)"),
+            (MapTool.Flatten, Icons.Equal, "Flatten (F): to the height of the first tile of the stroke"),
+            (MapTool.Paint, Icons.Paintbrush, "Paint land (P): the land tile picked in Art"),
+            (MapTool.Erase, Icons.Eraser, "Erase statics (X)")
+        };
+
+        /// <summary>The tool palette and the active tool's options.</summary>
+        private void DrawTools()
+        {
+            foreach (var (tool, icon, tip) in _tools)
+            {
+                if (Ui.IconButton($"tool{tool}", icon, tip, _tool == tool))
+                {
+                    _tool = tool;
+                }
+
+                ImGui.SameLine(0f, 2f);
+            }
+
+            var edits = Context.Assets.Edits;
+            Ui.Gap(16f);
+
+            if (Ui.IconButton("undo", Icons.Undo, edits.CanUndo ? $"Undo {edits.NextUndo.Label} (Ctrl+Z)" : "Nothing to undo", enabled: edits.CanUndo))
+            {
+                edits.Undo();
+            }
+
+            ImGui.SameLine(0f, 2f);
+
+            if (Ui.IconButton("redo", Icons.Redo, edits.CanRedo ? $"Redo {edits.NextRedo.Label} (Ctrl+Y)" : "Nothing to redo", enabled: edits.CanRedo))
+            {
+                edits.Redo();
+            }
+
+            if (_tool == MapTool.Select)
+            {
+                return;
+            }
+
+            Ui.Gap(16f);
+
+            if (_tool != MapTool.Place)
+            {
+                Stepper("brush", ref _brush, 0, 8, v => v == 0 ? "1 tile" : $"{v * 2 + 1}x{v * 2 + 1}", "Brush size ([ and ])");
+            }
+
+            if (_tool is MapTool.Raise or MapTool.Lower)
+            {
+                Ui.Gap();
+                Stepper("amount", ref _amount, 1, 20, v => $"{v} z", "Height step per tile");
+            }
+
+            if (_tool == MapTool.Place)
+            {
+                Ui.Toggle("On top", ref _stackOnTop, "Place on top of the tile's statics instead of on the ground");
+            }
+
+            if (_tool is MapTool.Place or MapTool.Paint)
+            {
+                // the brush is whatever the Art browser last picked
+                var art = Context.Get<ArtBrowser>();
+                int id = _tool == MapTool.Place ? art?.BrushStatic ?? -1 : art?.BrushLand ?? -1;
+                Ui.Gap();
+
+                if (id < 0)
+                {
+                    ImGui.AlignTextToFramePadding();
+                    ImGui.TextColored(Theme.Amber, _tool == MapTool.Place ? "Pick a static in Art" : "Pick a land tile in Art (Land)");
+                }
+                else
+                {
+                    var names = Context.Assets.Files.TileData;
+                    string name = _tool == MapTool.Place
+                        ? id < names.StaticData.Length ? names.StaticData[id].Name : ""
+                        : id < names.LandData.Length ? names.LandData[id].Name : "";
+                    Ui.Chip($"{Icons.Image}  0x{id:X4} {name}", Theme.Gold);
+                }
+            }
+        }
+
+        private static void Stepper(string id, ref int value, int min, int max, Func<int, string> text, string tooltip)
+        {
+            if (Ui.IconButton(id + "-", Icons.Minus, tooltip, enabled: value > min))
+            {
+                value--;
+            }
+
+            ImGui.SameLine(0f, 2f);
+            ImGui.AlignTextToFramePadding();
+            ImGui.PushFont(Theme.Mono, 0f);
+            ImGui.TextColored(Theme.TextSecondary, text(value));
+            ImGui.PopFont();
+            ImGui.SameLine(0f, 2f);
+
+            if (Ui.IconButton(id + "+", Icons.Plus, tooltip, enabled: value < max))
+            {
+                value++;
+            }
+        }
+
+        private IEnumerable<(int X, int Y)> BrushTiles(int x, int y)
+        {
+            int r = _tool == MapTool.Place ? 0 : _brush;
+
+            for (int dy = -r; dy <= r; dy++)
+            {
+                for (int dx = -r; dx <= r; dx++)
+                {
+                    yield return (x + dx, y + dy);
+                }
+            }
+        }
+
+        private void DrawBrush(ImDrawListPtr draw, Vector2 min)
+        {
+            var color = _tool switch
+            {
+                MapTool.Erase => Theme.Red,
+                MapTool.Raise or MapTool.Lower or MapTool.Flatten => Theme.Blue,
+                _ => Theme.Gold
+            };
+
+            foreach (var (x, y) in BrushTiles(_hoverX, _hoverY))
+            {
+                if (MapData.TryGetLandZ(Context.Assets, _facet, x, y, out sbyte z))
+                {
+                    Diamond(draw, min, x, y, z, Theme.U32(color, 0.85f), 1.5f);
+                }
+            }
+        }
+
+        /// <summary>Applies the tool under the cursor; each tile changes once per stroke, and a stroke is one change.</summary>
+        private void Stroke(int x, int y, sbyte z)
+        {
+            var edits = Context.Assets.Edits;
+            var art = Context.Get<ArtBrowser>();
+            int brushStatic = art?.BrushStatic ?? -1, brushLand = art?.BrushLand ?? -1;
+
+            if ((_tool == MapTool.Place && brushStatic < 0) || (_tool == MapTool.Paint && brushLand < 0))
+            {
+                return;
+            }
+
+            if (_stroke == null)
+            {
+                string label = _tool switch
+                {
+                    MapTool.Place => $"Place 0x{brushStatic:X4}",
+                    MapTool.Raise => $"Raise land by {_amount}",
+                    MapTool.Lower => $"Lower land by {_amount}",
+                    MapTool.Flatten => $"Flatten to z {z}",
+                    MapTool.Paint => $"Paint land 0x{brushLand:X4}",
+                    _ => "Erase statics"
+                };
+
+                _stroke = edits.Begin(label, _facet);
+                _strokeTiles.Clear();
+                _flattenZ = z;
+            }
+
+            var tiles = Context.Assets.Files.TileData;
+
+            foreach (var (tx, ty) in BrushTiles(x, y))
+            {
+                if (!_strokeTiles.Add((tx, ty)) || !_stroke.TryGet(tx, ty, out var land, out var statics))
+                {
+                    continue;
+                }
+
+                switch (_tool)
+                {
+                    case MapTool.Raise:
+                    case MapTool.Lower:
+                        int step = _tool == MapTool.Raise ? _amount : -_amount;
+                        _stroke.SetLand(tx, ty, land.TileId, (sbyte)Math.Clamp(land.Z + step, -128, 127));
+
+                        break;
+
+                    case MapTool.Flatten:
+                        _stroke.SetLand(tx, ty, land.TileId, _flattenZ);
+
+                        break;
+
+                    case MapTool.Paint:
+                        _stroke.SetLand(tx, ty, (ushort)brushLand, land.Z);
+
+                        break;
+
+                    case MapTool.Erase:
+                        if (statics.Length > 0)
+                        {
+                            _stroke.SetStatics(tx, ty, Array.Empty<Uo.Pack.StaticCell>());
+                        }
+
+                        break;
+
+                    case MapTool.Place:
+                        int placeZ = land.Z;
+
+                        if (_stackOnTop && statics.Length > 0)
+                        {
+                            placeZ = statics.Max(s => s.Z + (s.Graphic < tiles.StaticData.Length ? tiles.StaticData[s.Graphic].Height : 0));
+                        }
+
+                        var placed = new Uo.Pack.StaticCell { Graphic = (ushort)brushStatic, Z = (sbyte)Math.Clamp(placeZ, -128, 127) };
+                        _stroke.SetStatics(tx, ty, statics.Append(placed));
+
+                        break;
+                }
+            }
+        }
+
+        private void EndStroke()
+        {
+            var change = _stroke?.Commit();
+            _stroke = null;
+            _strokeTiles.Clear();
+
+            if (change != null)
+            {
+                StudioLog.Info($"{change.Label}: {change.Tiles} tile(s)");
+            }
+        }
         private void Diamond(ImDrawListPtr draw, Vector2 min, int x, int y, int z, uint color, float thickness)
         {
             Vector2 c = min + TileToScreen(x, y, z);

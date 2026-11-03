@@ -22,9 +22,13 @@ namespace ModernUO.Studio.Assets
             Pack = pack;
             Files = files;
             Relations = new RelationIndex(this);
+            Edits = new MapEdits(this);
         }
 
         public RelationIndex Relations { get; }
+
+        /// <summary>The map edits made since the pack was opened (in memory until saved as a new pack).</summary>
+        public MapEdits Edits { get; }
 
         public string Root { get; }
         public PackAssets Pack { get; }

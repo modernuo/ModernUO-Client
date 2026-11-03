@@ -58,6 +58,17 @@ namespace ModernUO.Studio
 
             ClosePack();
             Assets = assets;
+
+            // after an edit, undo or redo the picked tile shows its new content
+            assets.Edits.Changed += () =>
+            {
+                if (SelectedTile is { } t)
+                {
+                    int hovered = HoveredStatic;
+                    SelectTile(t.Facet, t.X, t.Y);
+                    HoveredStatic = hovered < SelectedTile.Statics.Count ? hovered : -1;
+                }
+            };
             Settings.AddRecent(root);
             Settings.Save();
 
@@ -154,6 +165,7 @@ namespace ModernUO.Studio
                 if (_mapWorld == null && _mapError == null && Assets != null)
                 {
                     _mapWorld = MapWorld.TryCreate(Device, Assets, out _mapError);
+                    _mapWorld?.AttachEdits(Assets.Edits);
 
                     if (_mapError != null)
                     {
