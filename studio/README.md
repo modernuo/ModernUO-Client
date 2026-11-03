@@ -9,11 +9,13 @@ The UI is Dear ImGui (Hexa.NET.ImGui, docking branch) drawn through FNA on the s
 ## Build and run
 
 ```
-dotnet build studio/ModernUO.Studio -c Release
+dotnet build studio/ModernUO.Studio -c Release -p:DxcSpirv=<dxc>
 bin/Studio/Release/net10.0/muostudio -pack <pack>
 ```
 
-`-pack <dir>` opens a pack at startup; otherwise use File > Open Pack or the Start panel. `-screenshot <file.png>` saves a frame after a short warm-up and exits (smoke tests). `studio.json` (recent packs, window size) and `studio_layout.ini` (the docking layout) are written next to the executable. Exports go to `export/` next to it unless `ExportDirectory` is set in `studio.json`.
+The map draws with the client's GPU world renderer (`poc/Uo.Render`) on FNA3D's SDL_GPU device, which is Vulkan on Windows and Linux. Its shaders are compiled at build time; the SPIR-V (Vulkan) ones need the official DXC release from `github.com/microsoft/DirectXShaderCompiler` (the Windows SDK's `dxc` has no SPIR-V back end). `-p:DxcSpirv=<dxc>` points at that release's `bin/x64/dxc.exe`; without it the build warns, the asset browsers still work and the Map panel says what is missing.
+
+`-pack <dir>` opens a pack at startup; otherwise use File > Open Pack or the Start panel. For smoke tests: `-screenshot <file.png>` saves a frame and exits, after `-frames <n>` frames (default 90); `-layout browse|map` picks the workspace built when there is no saved layout; `-focus <panel>` and `-select <id>` bring a panel forward with an item selected; `-goto "x y"` centres the map on a tile and picks it. `studio.json` (recent packs, window size) and `studio_layout.ini` (the docking layout) are written next to the executable. Exports go to `export/` next to it unless `ExportDirectory` is set in `studio.json`.
 
 ## What is there
 
@@ -29,11 +31,16 @@ bin/Studio/Release/net10.0/muostudio -pack <pack>
 | Sounds & Music | Play and export sounds as WAV; export music as the stored MP3 |
 | Cliloc | Search the string tables by number or text |
 | Pack Info | Manifest, facets, files and how each section loaded |
+| Map | A facet drawn by the client's GPU world renderer: drag or arrow keys to pan, wheel or +/- to zoom about the cursor, go to x y, facet switch, max z, roof hiding, tile grid; click picks a tile |
+| Tile Inspector | The picked tile's land and statics (highest first) with z, height and hue, each linked to its art and tiledata; hovering a static highlights it on the map |
+| Radar | A top-down overview of the facet from radarcol.bin, built on a worker; the map's view is outlined, and clicking or dragging moves the map |
+
+View > Layout switches between the Browse workspace (browsers as tabs) and the Map workspace (the map in the centre, the tile inspector and radar on the right, art, tiledata, hues and multis as palettes on the left).
 
 ## Roadmap
 
-1. Shell and asset viewers (this milestone).
-2. Map viewer: move `GpuWorldRenderer`'s Uo.Render glue out of `ClassicUO.Client` into a library, then a facet view with free camera, radar overview, go-to, tile and static inspector, z and layer filters.
+1. Shell and asset viewers (done).
+2. Map viewer (done): Uo.Render used directly on FNA's SDL_GPU device; the client's `GpuWorldRenderer` stays in the client, since its job is the game objects Studio does not have.
 3. Map editing (CentrED): edits as operations with undo and redo; land draw, altitude raise/lower/smooth, static add/move/delete, random static brushes, area fill and copy; a new pack is written for the changed regions (published packs stay immutable).
 4. Asset editing (UO Fiddler): import PNG art and gumps, tiledata, hue and multi editing, all written through `poc/Uo.Pack` into a new pack, with a pack diff view.
 5. Collaboration: the edit operations over the network to a shared map server (possibly inside ModernUO), with accounts and region locks.
