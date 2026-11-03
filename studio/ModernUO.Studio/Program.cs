@@ -44,7 +44,7 @@ namespace ModernUO.Studio
                 {
                     selfTest = args[++i];
                 }
-                else if (args[i] is "-hover" or "-brush" or "-tool" && i + 1 < args.Length)
+                else if (args[i] is "-hover" or "-brush" or "-tool" or "-resize" && i + 1 < args.Length)
                 {
                     debug[args[i][1..]] = args[++i];
                 }
@@ -61,7 +61,8 @@ namespace ModernUO.Studio
             var settings = StudioSettings.Load();
 
             using var game = new StudioGame(settings, pack, screenshot) { Focus = focus, Select = select, Layout = layout, ScreenshotFrames = frames, GoTo = goTo, SelfTestDir = selfTest,
-                Hover = debug.GetValueOrDefault("hover"), Brush = debug.GetValueOrDefault("brush"), Tool = debug.GetValueOrDefault("tool") };
+                Hover = debug.GetValueOrDefault("hover"), Brush = debug.GetValueOrDefault("brush"), Tool = debug.GetValueOrDefault("tool"),
+                Resize = debug.GetValueOrDefault("resize") };
             game.Run();
 
             Log.Stop();

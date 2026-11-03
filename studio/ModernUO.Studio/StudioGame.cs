@@ -108,6 +108,9 @@ namespace ModernUO.Studio
         /// <summary>-goto "x y": the map centres on and picks this tile at startup.</summary>
         public string GoTo { get; init; }
 
+        /// <summary>-resize WxH: resize the window at frame 40 and log the sizes (smoke tests).</summary>
+        public string Resize { get; init; }
+
         /// <summary>-select: an id the focused panel selects at startup.</summary>
         public string Select { get; init; }
 
@@ -130,6 +133,24 @@ namespace ModernUO.Studio
             Window.AllowUserResizing = true;
             Window.Title = "ModernUO Studio";
             Window.ClientSizeChanged += OnClientSizeChanged;
+        }
+
+        /// <summary>
+        /// The backbuffer follows the window: checked every frame, not only on ClientSizeChanged, which does not arrive for
+        /// every resize (a maximize, a resize from the code, a DPI change). A backbuffer smaller or larger than the window is
+        /// stretched onto it, so the UI looks scaled and the mouse and the clipping miss.
+        /// </summary>
+        private void MatchBackbufferToWindow()
+        {
+            var bounds = Window.ClientBounds;
+            var pp = GraphicsDevice.PresentationParameters;
+
+            if (bounds.Width > 0 && bounds.Height > 0 && (pp.BackBufferWidth != bounds.Width || pp.BackBufferHeight != bounds.Height))
+            {
+                _graphics.PreferredBackBufferWidth = bounds.Width;
+                _graphics.PreferredBackBufferHeight = bounds.Height;
+                _graphics.ApplyChanges();
+            }
         }
 
         private void OnClientSizeChanged(object sender, EventArgs e)
@@ -207,12 +228,27 @@ namespace ModernUO.Studio
 
         protected override void Update(GameTime gameTime)
         {
+            MatchBackbufferToWindow();
             _context.Assets?.Update(2.0);
             base.Update(gameTime);
         }
 
         protected override void Draw(GameTime gameTime)
         {
+            // -resize WxH: the window is resized mid-run (smoke tests of the layout after a resize)
+            if (Resize != null && _frames == 40)
+            {
+                var size = Resize.Split('x');
+                SDL3.SDL.SDL_SetWindowSize(Window.Handle, int.Parse(size[0]), int.Parse(size[1]));
+            }
+
+            if (Resize != null && _frames % 30 == 0)
+            {
+                var vp = GraphicsDevice.Viewport;
+                var pp = GraphicsDevice.PresentationParameters;
+                StudioLog.Info($"[resize] frame {_frames}: window {Window.ClientBounds.Width}x{Window.ClientBounds.Height}, backbuffer {pp.BackBufferWidth}x{pp.BackBufferHeight}, viewport {vp.X},{vp.Y} {vp.Width}x{vp.Height}, imgui display {ImGui.GetIO().DisplaySize}, main viewport {ImGui.GetMainViewport().Size}, scale {ImGui.GetIO().DisplayFramebufferScale}");
+            }
+
             int width = GraphicsDevice.PresentationParameters.BackBufferWidth;
             int height = GraphicsDevice.PresentationParameters.BackBufferHeight;
 
@@ -227,6 +263,10 @@ namespace ModernUO.Studio
             _context.RenderWorld();
 
             GraphicsDevice.SetRenderTarget(null);
+
+            // after a window resize FNA3D's viewport can be left at the old backbuffer size while FNA's cached copy is
+            // already the new one: send it every frame, or the UI draws scaled and the scissor rects miss it
+            GraphicsDevice.Viewport = new Viewport(0, 0, width, height);
             GraphicsDevice.Clear(new Color(27, 28, 31));
             _renderer.Render(ImGui.GetDrawData());
 
@@ -256,12 +296,53 @@ namespace ModernUO.Studio
             StudioLog.Info($"Screenshot saved: {path}");
         }
 
+        private uint _dock;
+        private System.Numerics.Vector2 _dockSize;
+
+        /// <summary>
+        /// ImGui gives a resize of the dock space to its central node alone, so shrinking the window squeezes the map
+        /// while the side panels keep their widths. Scaling every node's reference size by the change keeps the layout's
+        /// proportions instead.
+        /// </summary>
+        private unsafe void ScaleDockToViewport()
+        {
+            System.Numerics.Vector2 size = ImGui.GetMainViewport().WorkSize;
+            System.Numerics.Vector2 old = _dockSize;
+            _dockSize = size;
+
+            if (_dock == 0 || old.X <= 0f || old.Y <= 0f || size.X <= 0f || size.Y <= 0f || old == size)
+            {
+                return;
+            }
+
+            var root = ImGuiP.DockBuilderGetNode(_dock);
+
+            if (!root.IsNull)
+            {
+                ScaleDockNode(root.Handle, size / old);
+            }
+        }
+
+        private static unsafe void ScaleDockNode(ImGuiDockNode* node, System.Numerics.Vector2 scale)
+        {
+            if (node == null)
+            {
+                return;
+            }
+
+            node->SizeRef *= scale;
+            ScaleDockNode(node->ChildNodes_0, scale);
+            ScaleDockNode(node->ChildNodes_1, scale);
+        }
+
         private void DrawUi()
         {
             // the bars first: they take their strips of the viewport before the dock space fills the rest
             DrawTopBar();
             DrawStatusBar();
+            ScaleDockToViewport();
             uint dock = ImGui.DockSpaceOverViewport();
+            _dock = dock;
 
             if (_buildLayout)
             {
