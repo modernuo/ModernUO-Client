@@ -25,7 +25,9 @@ namespace ClassicUO.Game.UI.Gumps
         private readonly NiceButton _buttonPrev,
             _buttonNext,
             _setlootbag;
-        private readonly Item _corpse;
+        // gump-handles: the corpse by serial, resolved at each use (the T9 end state lets an Item handle die and be
+        // re-created; a stale reference would keep showing the dead one)
+        private EntityRef _corpse;
 
         private int _currentPage = 1;
         private readonly Label _currentPageLabel;
@@ -35,9 +37,7 @@ namespace ClassicUO.Game.UI.Gumps
 
         public GridLootGump(World world, uint local) : base(world, local, 0)
         {
-            _corpse = World.Items.Get(local);
-
-            if (_corpse == null)
+            if (Corpse() == null)
             {
                 Dispose();
 
@@ -129,7 +129,7 @@ namespace ClassicUO.Game.UI.Gumps
 
             Add(
                 _corpseNameLabel = new Label(
-                    GetCorpseName(),
+                    GetCorpseName(Corpse()),
                     true,
                     0x0481,
                     align: TEXT_ALIGN_TYPE.TS_CENTER,
@@ -213,7 +213,7 @@ namespace ClassicUO.Game.UI.Gumps
             for (int displayGroup = 0; displayGroup < 2; displayGroup++)
             {
                 // T2: the children from the ECS (WorldState.Children)
-                foreach (Item it in World.State.Children(_corpse))
+                foreach (Item it in World.State.Children(Corpse()))
                 {
 
                     if (!ItemBelongsToGroup(it, displayGroup) || !it.IsLootable)
@@ -298,12 +298,9 @@ namespace ClassicUO.Game.UI.Gumps
 
         public override void Dispose()
         {
-            if (_corpse != null)
+            if (SelectedObject.CorpseObject is { } selected && selected.Serial == LocalSerial)
             {
-                if (_corpse == SelectedObject.CorpseObject)
-                {
-                    SelectedObject.CorpseObject = null;
-                }
+                SelectedObject.CorpseObject = null;
             }
 
             _lastX = X;
@@ -344,7 +341,9 @@ namespace ClassicUO.Game.UI.Gumps
 
         public override void Update()
         {
-            if (_corpse == null || _corpse.IsDestroyed || _corpse.OnGround && _corpse.Distance > 3)
+            Item corpse = Corpse();
+
+            if (corpse == null || corpse.IsDestroyed || corpse.OnGround && corpse.Distance > 3)
             {
                 Dispose();
 
@@ -380,13 +379,12 @@ namespace ClassicUO.Game.UI.Gumps
             _currentPageLabel.X = Width / 2 - 5;
             _currentPageLabel.Y = Height - 20;
 
-            _corpseNameLabel.Text = GetCorpseName();
+            _corpseNameLabel.Text = GetCorpseName(corpse);
 
             WantUpdateSize = true;
 
             if (
-                _corpse != null
-                && !_corpse.IsDestroyed
+                !corpse.IsDestroyed
                 && UIManager.MouseOverControl != null
                 && (
                     UIManager.MouseOverControl == this
@@ -394,22 +392,24 @@ namespace ClassicUO.Game.UI.Gumps
                 )
             )
             {
-                SelectedObject.Object = _corpse;
-                SelectedObject.CorpseObject = _corpse;
+                SelectedObject.Object = corpse;
+                SelectedObject.CorpseObject = corpse;
             }
         }
 
         protected override void OnMouseExit(int x, int y)
         {
-            if (_corpse != null && !_corpse.IsDestroyed)
+            if (Corpse() is { IsDestroyed: false })
             {
                 SelectedObject.CorpseObject = null;
             }
         }
 
-        private string GetCorpseName()
+        private Item Corpse() => _corpse.Item(World, LocalSerial);
+
+        private static string GetCorpseName(Item corpse)
         {
-            return _corpse.Name?.Length > 0 ? _corpse.Name : "a corpse";
+            return corpse.Name?.Length > 0 ? corpse.Name : "a corpse";
         }
 
         private class GridLootItem : Control
@@ -471,7 +471,7 @@ namespace ClassicUO.Game.UI.Gumps
                 {
                     if (e.Button == MouseButtonType.Left)
                     {
-                        GameActions.GrabItem(_gump.World, item, (ushort)amount.Value);
+                        GameActions.GrabItem(_gump.World, LocalSerial, (ushort)amount.Value);
                     }
                 };
 

@@ -662,6 +662,49 @@ namespace ClassicUO.Game
 
                     return false;
 
+                // gridloot <0-2>: the profile's grid loot type (gump-handles: 1 opens a corpse in a GridLootGump)
+                case "gridloot" when args.Length > 0 && ProfileManager.CurrentProfile is { } lootProfile:
+                    lootProfile.GridLootType = Convert.ToInt32(args[0]);
+
+                    return false;
+
+                // inspect self|near <graphic>: opens an InspectorGump on that entity, as the inspect target does.
+                // inspect log: each open inspector's entity, looked up by its serial (gone = removed from the world).
+                // inspect dump: presses each open inspector's Dump button (a removed entity prints "gone" to the journal)
+                case "inspect" when args.Length > 0:
+                    if (args[0] == "log" || args[0] == "dump")
+                    {
+                        foreach (Gump g in UIManager.Gumps)
+                        {
+                            if (g is InspectorGump inspector && !inspector.IsDisposed)
+                            {
+                                Entity shown = inspector.InspectedEntity();
+                                Log.Info($"[ECS] ui inspect {(shown == null ? "gone" : $"0x{shown.Serial:X8} 0x{shown.Graphic:X4} destroyed {shown.IsDestroyed}")}");
+
+                                if (args[0] == "dump")
+                                {
+                                    inspector.OnButtonClick(0);
+                                }
+                            }
+                        }
+
+                        return false;
+                    }
+
+                    uint inspectSerial = args[0] == "self" ? player.Serial : args[0] == "near" && args.Length > 1 ? FindNear(world, player, Convert.ToUInt16(args[1], 16)) : 0;
+
+                    if (world.Get(inspectSerial) is { } inspected)
+                    {
+                        UIManager.Add(new InspectorGump(world, inspected));
+                        Log.Info($"[ECS] ui inspect open 0x{inspectSerial:X8}");
+                    }
+                    else
+                    {
+                        Log.Info($"[ECS] ui inspect {arg}: no entity");
+                    }
+
+                    return true;
+
                 // equip: logs the player's worn items (to check that a scenario cleaned up after itself)
                 case "equip":
                     for (Layer l = Layer.OneHanded; l <= Layer.Bank; l++)

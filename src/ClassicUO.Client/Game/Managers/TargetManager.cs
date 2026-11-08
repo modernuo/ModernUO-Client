@@ -283,6 +283,13 @@ namespace ClassicUO.Game.Managers
 
                                 if (showCriminalQuery && UIManager.GetGump<QuestionGump>() == null)
                                 {
+                                    // gump-handles: the question can stay open for a while, so the closure keeps the serial
+                                    // and the mobile's values now, and sends the live mobile's values if World still has it
+                                    // (it held the Mobile itself, which kept its last values once destroyed)
+                                    ushort graphic = mobile.Graphic;
+                                    ushort x = mobile.X, y = mobile.Y;
+                                    sbyte z = mobile.Z;
+
                                     QuestionGump messageBox = new QuestionGump
                                     (
                                         _world,
@@ -291,11 +298,19 @@ namespace ClassicUO.Game.Managers
                                         {
                                             if (s)
                                             {
-                                                NetClient.Socket.Send_TargetObject(entity,
-                                                                                   entity.Graphic,
-                                                                                   entity.X,
-                                                                                   entity.Y,
-                                                                                   entity.Z,
+                                                if (_world.Mobiles.Get(serial) is { IsDestroyed: false } live)
+                                                {
+                                                    graphic = live.Graphic;
+                                                    x = live.X;
+                                                    y = live.Y;
+                                                    z = live.Z;
+                                                }
+
+                                                NetClient.Socket.Send_TargetObject(serial,
+                                                                                   graphic,
+                                                                                   x,
+                                                                                   y,
+                                                                                   z,
                                                                                    _targetCursorId,
                                                                                    (byte)TargetingType);
 
