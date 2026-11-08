@@ -140,13 +140,13 @@ namespace ClassicUO.UnitTests.Ecs
 
         // `frames` updates 25 ms apart; `each` runs before every update on both worlds (a target that moves, dies, ...);
         // `accepted`: a known, documented difference the endpoint checker must report (and nothing else)
-        private void Run(int frames, Action<World, int> each = null, string accepted = null)
+        private void Run(int frames, Action<World, int> each = null, string accepted = null, int step = 25)
         {
             Snap(_new).Should().NotBeEmpty("the scenario created effects");
 
             for (int i = 0; i < frames; i++)
             {
-                Time.Ticks = T0 + (uint)(i * 25);
+                Time.Ticks = T0 + (uint)(i * step);
 
                 if (each != null)
                 {
@@ -943,10 +943,17 @@ namespace ClassicUO.UnitTests.Ecs
             AddMobile(_old, CASTER, 1003, 1003);
             AddMobile(_old, TARGET, 1012, 1008);
             Create(_old, GraphicEffectType.Moving, CASTER, TARGET, 0x36D4, 0, 0, 0, 0, speed: 1, duration: 0);
-            _bare.Player.X = 990;
-            _bare.Effects.Update();
-            _old.Effects.Update();
-            Snap(_bare).Should().Be(Snap(_old), "the record still holds the player at 1000,1000");
+            // (beyond the target, so the screen offsets change sign and the tile truncation differs)
+            _bare.Player.X = 1020;
+            _bare.Player.Y = 1015;
+
+            for (int i = 0; i < 15; i++)
+            {
+                Time.Ticks = T0 + (uint)(i * 25);
+                _bare.Effects.Update();
+                _old.Effects.Update();
+                Snap(_bare).Should().Be(Snap(_old), $"the record still holds the player at 1000,1000 (frame {i})");
+            }
         }
 
         [Fact]
@@ -972,6 +979,68 @@ namespace ClassicUO.UnitTests.Ecs
             var fx = (GameEffect)_mot.Effects.Items;
             (fx.UsesMotion, fx.MotionCheck, fx.EndpointCheck).Should().Be((true, true, false));
             fx.Source.Should().BeSameAs(_mot.Mobiles.Get(CASTER));
+        }
+
+        [Fact]
+        public void A_Moving_Effect_Exactly_22_Pixels_From_Its_Target_Arrives()
+        {
+            foreach (World w in Worlds)
+            {
+                // one tile east and one north: the screen distance is exactly 22 after the +22 start offset; the second is
+                // on its target's tile
+                Create(w, GraphicEffectType.Moving, 0, 0, 0x36D4, 1001, 1001, 1002, 1000, speed: 1, duration: 0, explodes: true);
+                Create(w, GraphicEffectType.Moving, 0, 0, 0x36E4, 1003, 1003, 1003, 1003, speed: 1, duration: 0, explodes: true);
+            }
+
+            Run(20);
+        }
+
+        [Fact]
+        public void A_Target_Gone_Then_The_Source_Gone_Explodes_At_The_Targets_Last_Position()
+        {
+            bool exploded = false;
+
+            foreach (World w in Worlds)
+            {
+                // on the player's tile the first step keeps the effect on its source's tile (it still has its source when the
+                // source dies); the target, a tile south-east and 6 up, is about 30 px away: not reached in one update, but
+                // within 22 px of the effect's tile
+                AddMobile(w, CASTER, 1000, 1000);
+                AddMobile(w, TARGET, 1001, 1001).SetInWorldTile(1001, 1001, 6);
+                Create(w, GraphicEffectType.Moving, CASTER, TARGET, 0x36D4, 0, 0, 0, 0, speed: 3, duration: 0, explodes: true);
+            }
+
+            // the target goes first (its last coordinates are copied into the effect's target), then the source: the legacy
+            // update runs UpdateOffset on the destroyed effect, which arrives there and explodes
+            Run(20, (w, i) =>
+            {
+                if (i == 0)
+                {
+                    w.Mobiles.Get(TARGET).Destroy();
+                }
+                else if (i == 1)
+                {
+                    w.Mobiles.Get(CASTER).Destroy();
+                }
+                else if (ReferenceEquals(w, _old))
+                {
+                    exploded |= Snap(w).Contains("|g36CB");
+                }
+            });
+
+            exploded.Should().BeTrue("the destroyed effect's last update exploded at the copied target");
+        }
+
+        [Fact]
+        public void Drag_Effects_Move_On_The_Frame_Their_Move_Time_Comes()
+        {
+            foreach (World w in Worlds)
+            {
+                AddMobile(w, CASTER, 1003, 1003);
+                Create(w, GraphicEffectType.DragEffect, CASTER, 0, 0xEED, 0, 0, 1007, 1001, speed: 2, duration: 15);
+            }
+
+            Run(40, step: 10); // 10 ms frames: Time.Ticks lands on the move time
         }
 
         [Fact]
