@@ -543,6 +543,10 @@ namespace ClassicUO.Game
                         Log.Info($"[ECS] ui worn {w.Layer}: 0x{w.Serial:X8} g=0x{w.Graphic:X4}");
                     }
 
+                    // perf-12: the paperdoll slots' prepared worn items against their own lookups
+                    Log.Info($"[ECS] ui paperdoll-slots: check {(UI.Gumps.PaperDollGump.SlotsCheckOn ? "on" : "off")} " +
+                             $"checked {UI.Gumps.PaperDollGump.SlotsChecked} mismatched {UI.Gumps.PaperDollGump.SlotsMismatched}");
+
                     return false;
 
                 // buy <name text, _ for a space> <amount>: the vendor's buy-list entry whose name contains the text (after "vendor buy" opened the

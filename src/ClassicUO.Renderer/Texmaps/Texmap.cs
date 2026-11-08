@@ -10,7 +10,6 @@ namespace ClassicUO.Renderer.Texmaps
     {
         private readonly TextureAtlas _atlas;
         private readonly SpriteInfo[] _spriteInfos;
-        private readonly PixelPicker _picker = new PixelPicker();
         private readonly TexmapsLoader _texmapsLoader;
         private readonly FirstSightDecoder _decoder;
 
@@ -50,8 +49,6 @@ namespace ClassicUO.Renderer.Texmaps
                         texmapInfo.Height,
                         out spriteInfo.UV
                     );
-
-                    _picker.Set(idx, texmapInfo.Width, texmapInfo.Height, texmapInfo.Pixels);
                 }
 
                 Arts.Art.FrameSyncTicks += Stopwatch.GetTimestamp() - t0;
@@ -121,7 +118,6 @@ namespace ClassicUO.Renderer.Texmaps
 
             var pixels = job.Pixels.AsSpan(0, job.Width * job.Height);
             spriteInfo.Texture = _atlas.AddSprite(pixels, job.Width, job.Height, out spriteInfo.UV);
-            _picker.Set(job.Index, job.Width, job.Height, pixels);
             Arts.Art.FrameAsyncUploads++;
         }
     }
