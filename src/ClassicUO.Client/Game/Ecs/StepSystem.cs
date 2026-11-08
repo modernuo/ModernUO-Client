@@ -206,10 +206,11 @@ namespace ClassicUO.Game
             || (inp.Flags & AnimStateFlags.Flying) != 0;
 
         // the slots the drawn path rebuilds lazily (as MobileAnimationAdvanceSystem.TryRun): a mobile not drawn since its
-        // equipment changed is rebuilt here, before any component ref (removing the tag moves the entity)
-        private void FreshenSlots(World world, Mobile mob, EcsEntity e)
+        // equipment changed is rebuilt here, before any component ref (removing the tag moves the entity: Run reads the row
+        // again)
+        private void FreshenSlots(World world, Mobile mob, EcsEntity e, in EcsRow row)
         {
-            if (!e.HasComponent<EquipmentSlots>() || !e.HasComponent<MobileInputs>() || !MobileAnimationSystem.TakeDirty(e))
+            if (!row.Has<EquipmentSlots>() || !row.Has<MobileInputs>() || !MobileAnimationSystem.TakeDirty(e, in row))
             {
                 return;
             }
@@ -230,7 +231,7 @@ namespace ClassicUO.Game
 
         // the mounted pace the decision uses: ecs_step_mount_inputs' (from the ECS; the Mobile's when the components are
         // missing) or the Mobile's; CUO_STEP_MOUNT_CHECK compares the two
-        private bool MountedInput(World world, Mobile mob, EcsEntity e)
+        private bool MountedInput(World world, Mobile mob, EcsEntity e, in EcsRow row)
         {
             bool fromEcs = world.StepMountInputs;
             bool check = MountCheck;
@@ -240,8 +241,8 @@ namespace ClassicUO.Game
                 return Mounted(mob);
             }
 
-            bool have = e.HasComponent<MobileInputs>() && e.HasComponent<EquipmentSlots>();
-            bool ecs = have && MountedFromEcs(in EcsRead.Get<MobileInputs>(e), in EcsRead.Get<EquipmentSlots>(e));
+            bool have = row.Has<MobileInputs>() && row.Has<EquipmentSlots>();
+            bool ecs = have && MountedFromEcs(in row.Get<MobileInputs>(), in row.Get<EquipmentSlots>());
 
             if (check)
             {
@@ -277,8 +278,17 @@ namespace ClassicUO.Game
             dir = 0;
 
             if (!world.Ecs.StepsEnabled || mob.IsDestroyed || !ReferenceEquals(world.Mobiles.Get(mob.Serial), mob) ||
-                !world.Ecs.Mirror.TryGetEntity(mob.Serial, out EcsEntity e) || !e.HasComponent<StepsComponent>() ||
-                !e.HasComponent<Position>() || !e.HasComponent<Facing>())
+                !world.Ecs.Mirror.TryGetEntity(mob.Serial, out EcsEntity e))
+            {
+                Declined++;
+
+                return false;
+            }
+
+            // one record read for the eligibility and the slot freshening (perf backlog: was up to 7 entity lookups)
+            EcsRow row = EcsRead.Row(e);
+
+            if (row.IsNull || !row.Has<StepsComponent>() || !row.Has<Position>() || !row.Has<Facing>())
             {
                 Declined++;
 
@@ -289,7 +299,7 @@ namespace ClassicUO.Game
 
             if (world.StepMountInputs || MountCheck)
             {
-                FreshenSlots(world, mob, e);
+                FreshenSlots(world, mob, e, in row);
             }
 
             Run(world, mob, e, ticks, frameDelay, out dir);
@@ -304,8 +314,10 @@ namespace ClassicUO.Game
                 CheckSync(mob, e, "before");
             }
 
-            StepsComponent s = EcsRead.Get<StepsComponent>(e);
-            dir = (byte)(EcsRead.Get<Facing>(e).Value & 7);
+            // read after FreshenSlots (its tag removal moves the entity)
+            EcsRow row = EcsRead.Row(e);
+            ref readonly StepsComponent s = ref row.Get<StepsComponent>();
+            dir = (byte)(row.Get<Facing>().Value & 7);
 
             if (s.Count == 0)
             {
@@ -320,23 +332,26 @@ namespace ClassicUO.Game
                 dir &= 7;
             }
 
-            if (mob.AnimationFromServer)
-            {
-                // a step ends the server's animation through the funnel (as ProcessSteps)
-                world.Writer.EndServerAnimation(mob);
-            }
-
-            Position p = EcsRead.Get<Position>(e);
+            // the step state before EndServerAnimation, whose commit may move the entity (the ref and the row go stale)
             StepInput inp;
             inp.Front = front;
             inp.Count = s.Count;
             inp.LastStepTime = s.LastStepTime;
             inp.OffsetX = s.OffsetX;
             inp.OffsetY = s.OffsetY;
+
+            if (mob.AnimationFromServer)
+            {
+                // a step ends the server's animation through the funnel (as ProcessSteps)
+                world.Writer.EndServerAnimation(mob);
+                row = EcsRead.Row(e);
+            }
+
+            ref readonly Position p = ref row.Get<Position>();
             inp.X = p.X;
             inp.Y = p.Y;
             inp.Z = p.Z;
-            inp.Mounted = MountedInput(world, mob, e);
+            inp.Mounted = MountedInput(world, mob, e, in row);
             inp.IsPlayer = IsPlayer(world, mob);
 
             StepRules.Decide(in inp, ticks, frameDelay, out StepDecision d);
@@ -349,7 +364,7 @@ namespace ClassicUO.Game
             if (d.Interpolate)
             {
                 Interpolated++;
-                ref StepsComponent sw = ref EcsRead.Get<StepsComponent>(e);
+                ref StepsComponent sw = ref row.Get<StepsComponent>();
                 sw.OffsetZ = d.Z;
                 sw.OffsetX = d.X;
                 sw.OffsetY = d.Y;

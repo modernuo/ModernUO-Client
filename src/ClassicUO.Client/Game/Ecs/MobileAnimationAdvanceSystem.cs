@@ -373,9 +373,18 @@ namespace ClassicUO.Game
         /// the client's).</summary>
         internal bool TryRun<TAnims>(World world, Mobile mob, in TAnims source, bool check) where TAnims : struct, IAnimationAdvanceSource
         {
-            if (mob.IsDestroyed || !world.Ecs.Mirror.TryGetEntity(mob.Serial, out EcsEntity e) ||
-                !EcsRead.TryGet(e, out MobileClock clock) || clock.Flags != MobileClockFlags.None ||
-                !e.HasComponent<AnimationTimer>() || !e.HasComponent<MobileInputs>() || !e.HasComponent<EquipmentSlots>())
+            if (mob.IsDestroyed || !world.Ecs.Mirror.TryGetEntity(mob.Serial, out EcsEntity e))
+            {
+                Declined++;
+
+                return false;
+            }
+
+            // one record read for the eligibility, the tag and the components (perf backlog: was up to 7 entity lookups)
+            EcsRow row = EcsRead.Row(e);
+
+            if (row.IsNull || !row.TryGet(out MobileClock clock) || clock.Flags != MobileClockFlags.None ||
+                !row.Has<AnimationTimer>() || !row.Has<MobileInputs>() || !row.Has<EquipmentSlots>())
             {
                 Declined++;
 
@@ -383,18 +392,19 @@ namespace ClassicUO.Game
             }
 
             // the slots the drawn path rebuilds lazily: a mobile not drawn since its equipment changed is rebuilt here (the
-            // tag removal moves the entity, so before any component ref)
-            if (MobileAnimationSystem.TakeDirty(e))
+            // tag removal moves the entity, so before any component ref, and the row is read again)
+            if (MobileAnimationSystem.TakeDirty(e, in row))
             {
                 AnimationState s = default;
                 s.Flags = EcsRead.Get<MobileInputs>(e).Flags;
                 world.Ecs.Animation.Rebuild(e, in s, mob);
+                row = EcsRead.Row(e);
             }
 
             Ran++;
-            AnimationTimer t = EcsRead.Get<AnimationTimer>(e);
-            MobileInputs inp = EcsRead.Get<MobileInputs>(e);
-            EquipmentSlots eq = EcsRead.Get<EquipmentSlots>(e);
+            AnimationTimer t = row.Get<AnimationTimer>();
+            MobileInputs inp = row.Get<MobileInputs>();
+            EquipmentSlots eq = row.Get<EquipmentSlots>();
 
 #if CUO_DEVTOOLS
             if (check)

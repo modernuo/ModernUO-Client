@@ -92,6 +92,22 @@ namespace ClassicUO.Game
             return false;
         }
 
+        /// <summary><see cref="TakeDirty(EcsEntity)"/> with the tags read from <paramref name="row"/>, <paramref name="e"/>'s
+        /// record already read by the caller: no entity lookup when the tag is clear. After a true return the row and every
+        /// ref taken from it are stale (the entity moved): read the row again.</summary>
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.AggressiveInlining)]
+        public static bool TakeDirty(EcsEntity e, in EcsRow row)
+        {
+            if (row.Tags.Has<EquipmentDirty>())
+            {
+                e.RemoveTag<EquipmentDirty>();
+
+                return true;
+            }
+
+            return false;
+        }
+
         // the inputs UpdateInPlace refers to for an entity without MobileInputs (unused: it samples the Mobile then)
         private static readonly MobileInputs _noInputs;
 
