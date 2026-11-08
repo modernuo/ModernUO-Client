@@ -245,8 +245,11 @@ namespace ClassicUO
 
         private static readonly long[] _start = new long[PHASES];
         private static readonly long[] _acc = new long[PHASES];
-        private static readonly long[] _allocStart = new long[PHASES];
-        private static readonly long[] _allocAcc = new long[PHASES];
+#if CUO_DEVTOOLS
+        // only with the allocation probe on (null otherwise)
+        private static readonly long[] _allocStart = AllocPhases ? new long[PHASES] : null;
+        private static readonly long[] _allocAcc = AllocPhases ? new long[PHASES] : null;
+#endif
         private static readonly int[] _cur = new int[COUNTERS];
         private static readonly float[][] _phase = CreateArrays<float>(PHASES);
         private static readonly int[][] _counter = CreateArrays<int>(COUNTERS);
@@ -284,11 +287,12 @@ namespace ClassicUO
             if (On)
             {
                 _start[(int)phase] = Stopwatch.GetTimestamp();
-
+#if CUO_DEVTOOLS
                 if (AllocPhases)
                 {
                     _allocStart[(int)phase] = GC.GetAllocatedBytesForCurrentThread();
                 }
+#endif
             }
         }
 
@@ -298,11 +302,12 @@ namespace ClassicUO
             if (On)
             {
                 _acc[(int)phase] += Stopwatch.GetTimestamp() - _start[(int)phase];
-
+#if CUO_DEVTOOLS
                 if (AllocPhases)
                 {
                     _allocAcc[(int)phase] += GC.GetAllocatedBytesForCurrentThread() - _allocStart[(int)phase];
                 }
+#endif
             }
         }
 
@@ -464,7 +469,12 @@ namespace ClassicUO
                 _gc2 = GC.CollectionCount(2);
                 _pauseStart = GC.GetTotalPauseDuration();
                 Array.Clear(_bucketEntries);
-                Array.Clear(_allocAcc);
+#if CUO_DEVTOOLS
+                if (AllocPhases)
+                {
+                    Array.Clear(_allocAcc);
+                }
+#endif
                 Array.Clear(_acc);
                 ClearFrameCounters();
                 UltimaBatcher2D.ResetFrameCounters();
@@ -836,7 +846,7 @@ namespace ClassicUO
             }
 
             json.Append("}");
-
+#if CUO_DEVTOOLS
             if (AllocPhases)
             {
                 json.Append(",\"alloc_phases\":{");
@@ -853,6 +863,7 @@ namespace ClassicUO
 
                 json.Append("}");
             }
+#endif
 
             // frame-time tail: the worst frame, hitch counts, and the phases that dominated the worst frame
             var frames = _phase[(int)FramePhase.Frame];
