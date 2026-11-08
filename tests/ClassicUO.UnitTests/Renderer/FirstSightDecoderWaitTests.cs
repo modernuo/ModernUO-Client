@@ -104,6 +104,22 @@ namespace ClassicUO.UnitTests.Renderer
         [Fact]
         public void Waits_Above_Normal_Priority_And_Restores_It()
         {
+            // the kill switch (CUO_DECODE_WAIT_BOOST=0) must not decide this test: boost explicitly, restore after
+            bool boost = DecodeQueue<FirstSightDecoder.Job>.BoostWaits;
+            DecodeQueue<FirstSightDecoder.Job>.BoostWaits = true;
+
+            try
+            {
+                WaitAboveNormal();
+            }
+            finally
+            {
+                DecodeQueue<FirstSightDecoder.Job>.BoostWaits = boost;
+            }
+        }
+
+        private void WaitAboveNormal()
+        {
             var started = new ConcurrentQueue<IThreadPoolWorkItem>();
             var uploads = new List<uint>();
             var d = new FirstSightDecoder("art", 8, Fill, j => uploads.Add(j.Index), _ => 16, new DecodeBudget(0, started.Enqueue));
