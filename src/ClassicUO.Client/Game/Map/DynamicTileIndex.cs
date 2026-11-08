@@ -123,6 +123,11 @@ namespace ClassicUO.Game.Map
 
         public int CountAt(int cell) => _counts[cell];
 
+        /// <summary>Bit c set: tile c holds at least one entry. The whole-tile walks test it once per tile (a register test, see
+        /// <see cref="TileWalk.MergeCells"/>) instead of reading the cell's count, so a tile without dynamics walks exactly as
+        /// with the switch off.</summary>
+        public ulong Cells { get; private set; }
+
         public ReadOnlySpan<Entry> Cell(int cell) => _cells[cell] == null ? default : new ReadOnlySpan<Entry>(_cells[cell], 0, _counts[cell]);
 
         internal Entry[] RawCell(int cell, out int count)
@@ -132,11 +137,17 @@ namespace ClassicUO.Game.Map
             return _cells[cell];
         }
 
+        /// <summary><see cref="TileOrder.Key"/> of a held object (<see cref="Holds"/>): never Land or a Multi, so its rank is 2 and
+        /// the rank's type tests are skipped on every placement and removal (CUO_TILE_ORDER_CHECK compares every stored key
+        /// with TileOrder.Key).</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static TileOrderKey KeyOf(GameObject obj) => new TileOrderKey(obj.PriorityZ, 2, obj.TileSeq);
+
         /// <summary>Files <paramref name="obj"/> under <paramref name="cell"/> by the key AddGameObject just stamped: after every
         /// lower or equal key, so equal priorities keep insertion order (rank 2, oldest first).</summary>
         public void Add(GameObject obj, int cell)
         {
-            var key = TileOrder.Key(obj);
+            var key = KeyOf(obj);
             Entry[] arr = _cells[cell];
             int n = _counts[cell];
 
@@ -167,6 +178,7 @@ namespace ClassicUO.Game.Map
 
             arr[pos] = new Entry { Key = key, Obj = obj };
             _counts[cell] = n + 1;
+            Cells |= 1UL << cell;
             Count++;
         }
 
@@ -182,7 +194,7 @@ namespace ClassicUO.Game.Map
             }
 
             // the key fields are still the insertion's (AddGameObject restamps only after RemoveFromTile)
-            var key = TileOrder.Key(obj);
+            var key = KeyOf(obj);
             int lo = 0, hi = n - 1, pos = -1;
 
             while (lo <= hi)
@@ -242,6 +254,7 @@ namespace ClassicUO.Game.Map
             {
                 EntryPool.Return(arr, 0);
                 _cells[cell] = null;
+                Cells &= ~(1UL << cell);
             }
 
             _counts[cell] = n;
@@ -284,6 +297,7 @@ namespace ClassicUO.Game.Map
             }
 
             Count = 0;
+            Cells = 0;
         }
 
         /// <summary>
@@ -355,7 +369,6 @@ namespace ClassicUO.Game.Map
     internal struct TileWalk
     {
         private GameObject _s;
-        private TileOrderKey _sKey;
         private DynamicTileIndex.Entry[] _d;
         private int _di, _dn;
 #if CUO_DEVTOOLS
@@ -363,15 +376,51 @@ namespace ClassicUO.Game.Map
         private List<GameObject> _sh;
 #endif
 
-        /// <summary>Where a render-list walk starts. A whole-tile walk (<paramref name="single"/> false) with the walk on starts
-        /// the merged order at the tile's head (<paramref name="merged"/> true: continue with <see cref="Next"/>); a
-        /// single-object walk (<paramref name="single"/>: one object submitted, the Gpu item cache and mobile calls) starts at
-        /// <paramref name="first"/> itself. Whole-tile vs single is explicit: the object's TNext is null for the tile's last
-        /// object, so it cannot tell the two apart (Codex P2: a tail mobile's call restarted at the tile head).</summary>
+        /// <summary>
+        /// The tiles of <paramref name="chunk"/> whose whole-tile walk takes the merged order (bit = cell): none with
+        /// <paramref name="walkOn"/> false, the index's occupied cells (<see cref="DynamicTileIndex.Cells"/>) with it on. A tile
+        /// without dynamics merges to its list, so it walks TNext exactly as with the switch off. The whole-tile walks (the
+        /// render walk's chunk loop, the Gpu mask build, the item cache) read it once per chunk, so the per-tile decision is a
+        /// test of a register (tile-index-2: fix A's per-tile Start call and count lookup were the switch's remaining cost per
+        /// walked tile). Dev builds with <see cref="DynamicTileIndex.ShadowWalk"/>: every cell (the shadow list's order).
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static ulong MergeCells(Chunk chunk, bool walkOn)
+        {
+            if (!walkOn)
+            {
+                return 0;
+            }
+
+#if CUO_DEVTOOLS
+            if (DynamicTileIndex.ShadowWalk)
+            {
+                return ulong.MaxValue;
+            }
+#endif
+            DynamicTileIndex dyn = chunk.Dynamic;
+
+            return dyn == null ? 0 : dyn.Cells;
+        }
+
+        /// <summary>Where a render-list walk starts. A whole-tile walk (<paramref name="single"/> false) with the walk on and
+        /// dynamics on the tile starts the merged order at the tile's head (<paramref name="merged"/> true: continue with
+        /// <see cref="Next"/>); otherwise the walk starts at <paramref name="first"/> and follows TNext. A single-object walk
+        /// (one object submitted, the Gpu item cache and mobile calls) never merges: the object's TNext is null for the tile's
+        /// last object, so it cannot tell the two apart (Codex P2: a tail mobile's call restarted at the tile head). The render
+        /// walk takes the same decision from its caller's <see cref="MergeCells"/> and starts with <see cref="StartTile"/>.</summary>
         public static GameObject Start(GameObject first, Chunk chunk, bool single, bool walkOn, out TileWalk walk, out bool merged)
         {
-            merged = walkOn && !single;
+            merged = !single && (MergeCells(chunk, walkOn) >> first.TileCell & 1) != 0;
 
+            return StartTile(first, chunk, merged, out walk);
+        }
+
+        /// <summary>A walk from <paramref name="first"/>: the merged order of its tile from the tile's head when
+        /// <paramref name="merged"/>, else <paramref name="first"/> itself (continue with TNext).</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static GameObject StartTile(GameObject first, Chunk chunk, bool merged, out TileWalk walk)
+        {
             if (!merged)
             {
                 walk = default;
@@ -379,24 +428,25 @@ namespace ClassicUO.Game.Map
                 return first;
             }
 
-#if CUO_DEVTOOLS
-            if (!DynamicTileIndex.ShadowWalk)
-#endif
+            return Begin(chunk, first.TileCell, out walk);
+        }
+
+        /// <summary>A whole-tile walk of (<paramref name="chunk"/>, <paramref name="cell"/>) by the chunk's
+        /// <see cref="MergeCells"/>: the merged order (<paramref name="merged"/> true, continue with <see cref="Next"/>) or the
+        /// list from its head (continue with TNext).</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static GameObject Open(Chunk chunk, int cell, ulong mergeCells, out TileWalk walk, out bool merged)
+        {
+            merged = (mergeCells >> cell & 1) != 0;
+
+            if (merged)
             {
-                // a tile without dynamics (most of them): the merged order is the list itself, so the walk follows TNext and
-                // skips the merge's per-object cost (world_tile_index cost Legacy ~13 ns per walked tile, tile-index-prof)
-                DynamicTileIndex dyn = chunk.Dynamic;
-
-                if (dyn == null || dyn.CountAt(first.TileCell) == 0)
-                {
-                    merged = false;
-                    walk = default;
-
-                    return first;
-                }
+                return Begin(chunk, cell, out walk);
             }
 
-            return Begin(chunk, first.TileCell, out walk);
+            walk = default;
+
+            return chunk.GetHeadObject(cell >> 3, cell & 7);
         }
 
         /// <summary>The first object of (<paramref name="chunk"/>, <paramref name="cell"/>) in merged order, or null. Dev builds
@@ -449,11 +499,6 @@ namespace ClassicUO.Game.Map
                 walk._d = chunk.Dynamic.RawCell(cell, out walk._dn);
             }
 
-            if (walk._s != null && walk._dn > 0)
-            {
-                walk._sKey = TileOrder.Key(walk._s);
-            }
-
             return walk.Next();
         }
 
@@ -468,6 +513,24 @@ namespace ClassicUO.Game.Map
             return o;
         }
 
+        /// <summary>
+        /// Whether the index entry <paramref name="key"/> comes before the list object <paramref name="s"/>. A list object's key
+        /// priority is its stored PriorityZ (<see cref="TileOrder.Key"/>), so only an equal priority needs the rank (type tests)
+        /// and the stamp: the merge no longer builds a full key for every list object it passes (tile-index-2).
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static bool Before(in TileOrderKey key, GameObject s)
+        {
+            short p = s.PriorityZ;
+
+            if (key.Priority != p)
+            {
+                return key.Priority < p;
+            }
+
+            return key.CompareTo(TileOrder.Key(s)) < 0;
+        }
+
         public GameObject Next()
         {
 #if CUO_DEVTOOLS
@@ -477,21 +540,16 @@ namespace ClassicUO.Game.Map
             }
 #endif
 
-            if (_di < _dn && (_s == null || _d[_di].Key.CompareTo(_sKey) < 0))
+            GameObject s = _s;
+
+            if (_di < _dn && (s == null || Before(in _d[_di].Key, s)))
             {
                 return _d[_di++].Obj;
             }
 
-            GameObject s = _s;
-
             if (s != null)
             {
                 _s = SkipDynamic(s.TNext);
-
-                if (_s != null && _di < _dn)
-                {
-                    _sKey = TileOrder.Key(_s);
-                }
             }
 
             return s;
