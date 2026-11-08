@@ -5499,3 +5499,27 @@ Base poc/modern-client 8b1f355cd. Branch `bg/gump-handles`. This is wave 1D of t
   - `handles-check.sh`: after the corpse is removed, no GridLootGump is open, and the inspector reads gone and prints it.
 - Gate job: bench-000330 (w5items, corpses, uistate_handles; every checker). Result pending.
 - Perf and memory: no change. No per-frame path changed.
+
+## Decode waits overshooting their stall slice under load (decode-stall, 2026-11-07)
+
+Branch `bg/decode-stall`, base poc/modern-client 6bb65da7a, fix 374634d50.
+
+- **Question.** Under load, `FirstSightDecoderWaitTests.Gives_Up_When_Nothing_Finishes_Within_A_Stall_Slice` measured 1.2 to 3.5 s for a 2 ms stall slice (see "Flaky decode tests" above). Is the wait itself broken?
+- **Cause.** The wait code is right: one slice, a signaled `ManualResetEventSlim`, the deadline rechecked on every pass, no lock held, no thread-pool continuation. The time is lost after the wait ends. When the machine has more runnable threads than cores at the waiter's priority or above, a thread whose wait has ended goes to the back of the ready queue and waits for its next quantum. That happens to any blocking call. A harness (scratch `decode-stall/harness`, a console app on the Renderer project) timed a 2 ms wait each way with 40 busy-loop processes at normal priority on the 24-thread machine:
+
+  | 2 ms wait under load, process at Normal, 1 ms timer | p50 | p90 | max |
+  |---|---|---|---|
+  | `ManualResetEventSlim.Wait(2)` | 600 ms | 616 ms | 628 ms |
+  | `RequestAndWait(stall 2 ms)`, two runs | 496 / 381 ms | 514 / 451 ms | 517 / 499 ms |
+  | spin-poll for 2 ms (no block) | 2.0 ms | 2.0 ms | 46 ms |
+  | `Wait(2)` at AboveNormal thread priority | 3.8 ms | 5.8 ms | 6.9 ms |
+  | 100 µs of pure CPU work | 0.10 ms | 0.10 ms | 36 ms |
+
+  A running thread keeps the CPU (spin, work); one that blocks loses it for hundreds of ms. The seconds in the test runs come from agentnice: the test process runs at BelowNormal, below every normal-priority thread, so a woken thread waits until the busy loops yield or Windows' starvation boost (about every 4 s) picks it. With the process at BelowNormal, even the fixed wait measured p50 27 ms and p90 6.3 s (max 21 s). That is a property of the test environment, not of the client, which runs at Normal.
+- **Unloaded.** Without the client's 1 ms timer resolution (SDL3 calls `timeBeginPeriod(1)` at init; the harness and the unit tests don't), every 2 ms wait takes 15.7 ms (p50), whichever way it waits. In the client the slice is about 2 ms.
+- **Fix (374634d50).** `DecodeQueue.WaitPublished` and `WaitPublishedSince` (behind `Art.Prefetch`'s `RequestAndWait` and `Gump.AwaitBatch`) raise the calling thread to `AboveNormal` while it is blocked and restore its priority afterwards. The timeout or the worker's signal then preempts the normal-priority load at once. A caller already at AboveNormal or above is left alone. `CUO_DECODE_WAIT_BOOST=0` waits at the caller's own priority. What gets decoded or uploaded is unchanged; only the priority during the block changes, so the decode workers lose nothing (the main thread is blocked meanwhile).
+- **Result** (same load, process at Normal, interleaved): `RequestAndWait` with a 2 ms slice, boost off p50 496 / 381 ms (39 waits each; 39 and 38 of them over 100 ms); boost on p50 3.97 / 3.38 ms, p90 7.1 / 5.5 ms, max 9.0 / 32.1 ms (39 and 99 waits, one over 10 ms). Two pairs, noisy machine (other agents' builds besides the 40 loops).
+- **Tests** (FirstSightDecoderWaitTests, 2 new): `Waits_Above_Normal_Priority_And_Restores_It` (a caller thread at Normal blocks in `RequestAndWait`; the test sees it at AboveNormal while blocked, publishes the decode by hand, and the caller returns with 0 pending and Normal priority; fails with `CUO_DECODE_WAIT_BOOST=0`) and `A_Caller_Already_Above_Normal_Keeps_Its_Priority` (Highest stays Highest). No wall-clock assertion: the suite runs at BelowNormal, where no in-process change bounds a wait.
+- **Limits.** Against processes at AboveNormal or higher, or when the client itself runs below normal, the boost does not help. Code outside the waits (drain, upload, the rest of the frame) still competes at Normal. The client's other blocking calls (Present, the frame limiter's sleep) have the same wake-up delay under such load; this change only covers the decode waits.
+- **Cost.** Two `SetThreadPriority` calls per blocking wait (a few µs), only while a prefetch waits. No memory.
+- **Verification.** Client builds 0 errors in both variants. Unit tests (default variant) 3,110 passed, 6 skipped; decode classes (85 tests) pass with `-p:CuoDevTools=false`. Gate job bench-000335 (NativeAOT, Gpu world, every checker; ls_parity, w5items, uistate with its container and paperdoll prefetches). Result pending. No timing job: on a quiet machine a woken thread runs at once at either priority.
