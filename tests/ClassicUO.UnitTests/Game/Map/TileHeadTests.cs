@@ -310,6 +310,50 @@ namespace ClassicUO.UnitTests.Game.Map
             RunRandom(seed, 1500, maintain, dropped, effects);
         }
 
+        [Theory]
+        [InlineData(false, false)]
+        [InlineData(false, true)]
+        [InlineData(true, false)]
+        [InlineData(true, true)]
+        public void Teardown_Leaves_No_Head_When_The_Player_Heads_A_Tile(bool dropped, bool reload)
+        {
+            // the player is unlinked by the teardown without RemoveFromTile (it is not destroyed), so only the teardown's own
+            // clear drops it as a head
+            DynamicTileIndex.Maintain = true;
+            DynamicTileIndex.ListDropped = dropped;
+            DynamicTileIndex.Shadow = false;
+            var world = new World();
+            var player = (PlayerMobile)System.Runtime.CompilerServices.RuntimeHelpers.GetUninitializedObject(typeof(PlayerMobile));
+            typeof(BaseGameObject).GetField("<World>k__BackingField", BindingFlags.Instance | BindingFlags.NonPublic).SetValue(player, world);
+            player.PendingBlock = -1;
+            typeof(World).GetProperty(nameof(World.Player)).SetValue(world, player);
+            Chunk chunk = Chunk.Create(world, 0, 0);
+            Land land = NewLand(world, 5);
+            chunk.AddGameObject(land, 3, 3);
+            player.Z = -20;
+            chunk.AddGameObject(player, 3, 3);
+            chunk.AddGameObject(player, 4, 4); // alone on a tile too, after a move
+            chunk.AddGameObject(player, 3, 3);
+            Assert.Same(dropped ? land : player, chunk.GetHeadObject(3, 3));
+
+            if (reload)
+            {
+                chunk.ClearForReload();
+            }
+            else
+            {
+                chunk.Destroy();
+                Assert.Same(chunk, Chunk.Create(world, 0, 0)); // the pooled chunk comes back
+            }
+
+            Assert.Null(player.TileChunk);
+
+            for (int cell = 0; cell < 64; cell++)
+            {
+                Assert.Null(chunk.HeadAt(cell));
+            }
+        }
+
         [Fact]
         public void The_Checker_Flags_A_Stale_Head()
         {
