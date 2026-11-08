@@ -463,6 +463,119 @@ namespace ClassicUO.UnitTests.Ecs
             EffectSystem.EndpointsUnbound.Should().BeGreaterThan(unbound, "the endpoints could not be bound");
         }
 
+        private const uint OTHER = 0x0000_0400;
+
+        // Friflo's handle revision is 16 bits: deletes and creates the stale handle's id (the store reuses the last freed id
+        // first) until the next entity created there gets the stale handle's id and revision
+        private static void WrapTo(World w, Friflo.Engine.ECS.Entity stale)
+        {
+            for (int k = 0; k < 70_000; k++)
+            {
+                Friflo.Engine.ECS.Entity t = w.Ecs.Mirror.Store.CreateEntity();
+                bool last = t.Id == stale.Id && ((t.Revision + 1) & 0xFFFF) == (stale.Revision & 0xFFFF);
+                t.DeleteEntity();
+
+                if (last)
+                {
+                    return;
+                }
+            }
+
+            throw new InvalidOperationException("the stale handle's id was not reused");
+        }
+
+        // Codex audit (ecs-effects-own) P3: a record removed without a hook, its id then reused until the revision wraps, and a
+        // record of another mobile (or an item under the same serial) created there: the stale handle is valid again. The read
+        // must still find the endpoint gone (the record is not its object's: other serial, other kind), so the moving effect
+        // lands where its target last was.
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void A_Stale_Endpoint_Handle_Whose_Revision_Wrapped_Does_Not_Follow_The_New_Record(bool itemUnderTheSerial)
+        {
+            uint newcomer = itemUnderTheSerial ? TARGET : OTHER;
+
+            foreach (World w in Worlds)
+            {
+                AddMobile(w, TARGET, 1012, 1009);
+                Create(w, GraphicEffectType.Moving, 0, TARGET, 0x36D4, 1001, 1001, 0, 0, speed: 1, duration: 0, explodes: true);
+            }
+
+            Run(60, (w, i) =>
+            {
+                if (i == 3)
+                {
+                    w.Ecs.Mirror.TryGetEntity(TARGET, out var stale).Should().BeTrue();
+                    w.Ecs.Mirror.Remove(TARGET); // no hook sees it
+
+                    if (ReferenceEquals(w, _own))
+                    {
+                        WrapTo(w, stale);
+                    }
+
+                    if (itemUnderTheSerial)
+                    {
+                        AddItem(w, TARGET, 1003, 1012);
+                    }
+                    else
+                    {
+                        AddMobile(w, OTHER, 1003, 1012);
+                    }
+
+                    if (ReferenceEquals(w, _own))
+                    {
+                        w.Ecs.Mirror.TryGetEntity(newcomer, out var rec).Should().BeTrue();
+                        (rec.Id, rec.Revision).Should().Be((stale.Id, stale.Revision), "the new record has the stale handle's id and revision");
+                    }
+                }
+            }, accepted: "target destroyed: ECS True | object False");
+        }
+
+        // P3, the re-key: an endpoint found gone after an unhooked removal must not come back when a record that wrapped onto its
+        // old handle is re-keyed by a death
+        [Fact]
+        public void A_Gone_Endpoint_Is_Not_Revived_By_A_Rekey_Of_A_Record_On_Its_Old_Handle()
+        {
+            const uint DEAD = OTHER | 0x8000_0000;
+            Friflo.Engine.ECS.Entity stale = default;
+
+            foreach (World w in Worlds)
+            {
+                AddMobile(w, TARGET, 1012, 1009);
+                Create(w, GraphicEffectType.Moving, 0, TARGET, 0x36D4, 1001, 1001, 0, 0, speed: 1, duration: 0, explodes: true);
+            }
+
+            Run(60, (w, i) =>
+            {
+                if (i == 3)
+                {
+                    if (ReferenceEquals(w, _own))
+                    {
+                        w.Ecs.Mirror.TryGetEntity(TARGET, out stale).Should().BeTrue();
+                    }
+
+                    w.Ecs.Mirror.Remove(TARGET); // no hook sees it: the next update finds the endpoint gone
+                }
+                else if (i == 4)
+                {
+                    if (ReferenceEquals(w, _own))
+                    {
+                        WrapTo(w, stale);
+                    }
+
+                    AddMobile(w, OTHER, 1003, 1012);
+                }
+                else if (i == 5)
+                {
+                    w.Writer.RekeyDeadMobile(w.Mobiles.Get(OTHER)).Should().Be(DEAD);
+                }
+                else if (i > 5 && i < 20)
+                {
+                    w.Mobiles.Get(DEAD).SetInWorldTile((ushort)(1003 + i), 1012, 0);
+                }
+            }, accepted: "target destroyed: ECS True | object False");
+        }
+
         [Fact]
         public void A_Target_Destroyed_And_Its_Serial_Reused_Keeps_The_Last_Position()
         {

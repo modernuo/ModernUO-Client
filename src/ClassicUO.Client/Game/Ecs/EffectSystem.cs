@@ -294,7 +294,15 @@ namespace ClassicUO.Game
         private static bool Same(EcsEntity a, EcsEntity b) => a.Id == b.Id && a.Revision == b.Revision;
 
         // false when the endpoint is not an object or is gone; a removal the hooks did not see (Mirror.Clear, a record
-        // replaced by one of the other kind) marks it gone here, keeping the last resolved position
+        // replaced by one of the other kind) marks it gone here, keeping the last resolved position and letting go of the
+        // record.
+        // Codex audit (ecs-effects-own) P3: Friflo's handle revision is 16 bits, so after an unseen removal the id reused
+        // 65,536 times makes the stale handle valid for whatever record sits there now. The record must also carry the
+        // endpoint's serial and kind (one component read on the row already fetched). What is left: a record of the same
+        // serial and kind on exactly that id and revision, i.e. 65,536 deletes of one id between two updates of the effect
+        // (sources and moving targets are read every update), with the serial reused by the same kind meanwhile. Not
+        // reachable from a server that is not hostile; a per-record generation token would close it but widens every mirror
+        // record (Serial, streamed by the per-frame sweep, clock and extract) for this alone.
         private static bool Live(ref EffectState s, byte end, byte gone, EcsEntity entity)
         {
             if ((s.Ends & end) == 0 || (s.Ends & gone) != 0)
@@ -302,10 +310,23 @@ namespace ClassicUO.Game
                 return false;
             }
 
-            if (EcsRead.Row(entity).IsNull)
+            bool source = end == EffectState.END_SOURCE;
+            EcsRow row = EcsRead.Row(entity);
+
+            if (row.IsNull || !row.TryGet(out ClassicUO.Ecs.Serial serial) || serial.Value != (source ? s.SourceSerial : s.TargetSerial) ||
+                row.Tags.Has<MobileTag>() != ((s.Ends & (source ? EffectState.END_SOURCE_MOBILE : EffectState.END_TARGET_MOBILE)) != 0))
             {
                 EndpointsUnhooked++;
                 s.Ends |= gone;
+
+                if (source)
+                {
+                    s.SourceEntity = default;
+                }
+                else
+                {
+                    s.TargetEntity = default;
+                }
 
                 return false;
             }
@@ -550,15 +571,12 @@ namespace ClassicUO.Game
         /// <summary>
         /// WorldEcs.CommitRekey, after the dying mobile's record was written under <paramref name="serial"/>: the endpoints
         /// <see cref="OnRecordRemoving"/> marked gone on the old record follow the mobile to the new one (the object was
-        /// never destroyed, so the old reference kept following it).
+        /// never destroyed, so the old reference kept following it). With no new record (a destroyed mobile) they stay gone
+        /// and let go of the old one: a gone endpoint holds a record only between these two calls, so no later re-key can
+        /// match a stale handle (Codex audit P3: a 16-bit revision can wrap onto a live record).
         /// </summary>
         public static void OnRecordRekeyed(World world, EcsEntity old, EcsEntity record, uint serial)
         {
-            if (record.IsNull)
-            {
-                return;
-            }
-
             for (GameEffect f = (GameEffect)world.Effects.Items; f != null; f = (GameEffect)f.Next)
             {
                 if (!f.UsesEndpoints || f.EcsEntity.IsNull)
@@ -570,16 +588,24 @@ namespace ClassicUO.Game
 
                 if ((s.Ends & EffectState.END_SOURCE_GONE) != 0 && Same(s.SourceEntity, old))
                 {
-                    s.Ends &= unchecked((byte)~EffectState.END_SOURCE_GONE);
                     s.SourceEntity = record;
-                    s.SourceSerial = serial;
+
+                    if (!record.IsNull)
+                    {
+                        s.Ends &= unchecked((byte)~EffectState.END_SOURCE_GONE);
+                        s.SourceSerial = serial;
+                    }
                 }
 
                 if ((s.Ends & EffectState.END_TARGET_GONE) != 0 && Same(s.TargetEntity, old))
                 {
-                    s.Ends &= unchecked((byte)~EffectState.END_TARGET_GONE);
                     s.TargetEntity = record;
-                    s.TargetSerial = serial;
+
+                    if (!record.IsNull)
+                    {
+                        s.Ends &= unchecked((byte)~EffectState.END_TARGET_GONE);
+                        s.TargetSerial = serial;
+                    }
                 }
             }
         }

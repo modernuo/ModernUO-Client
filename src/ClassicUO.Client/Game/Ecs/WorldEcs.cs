@@ -823,6 +823,11 @@ namespace ClassicUO.Game
 
             if (mobile.IsDestroyed)
             {
+                if (effects)
+                {
+                    EffectSystem.OnRecordRekeyed(_world, old, default, 0);
+                }
+
                 return default;
             }
 
