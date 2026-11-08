@@ -1,5 +1,6 @@
 using System;
 using System.Buffers;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading;
@@ -95,6 +96,87 @@ namespace ClassicUO.UnitTests.Renderer
 
             pending.Should().Be(2);
             uploads.Should().BeEmpty("Drain's at-least-one upload must not apply to the prefetch wait");
+        }
+
+        // decode-stall: under load a normal-priority thread whose wait ends queues behind the machine's other runnable
+        // threads (a 2 ms slice measured a 600 ms median). The wait runs above normal priority so its timeout or the
+        // worker's signal preempts them, and the caller's priority is restored afterwards (DecodeQueue.BoostWaits).
+        [Fact]
+        public void Waits_Above_Normal_Priority_And_Restores_It()
+        {
+            // the kill switch (CUO_DECODE_WAIT_BOOST=0) must not decide this test: boost explicitly, restore after
+            bool boost = DecodeQueue<FirstSightDecoder.Job>.BoostWaits;
+            DecodeQueue<FirstSightDecoder.Job>.BoostWaits = true;
+
+            try
+            {
+                WaitAboveNormal();
+            }
+            finally
+            {
+                DecodeQueue<FirstSightDecoder.Job>.BoostWaits = boost;
+            }
+        }
+
+        private void WaitAboveNormal()
+        {
+            var started = new ConcurrentQueue<IThreadPoolWorkItem>();
+            var uploads = new List<uint>();
+            var d = new FirstSightDecoder("art", 8, Fill, j => uploads.Add(j.Index), _ => 16, new DecodeBudget(0, started.Enqueue));
+            int pending = -1;
+            var after = ThreadPriority.Lowest;
+            var main = new Thread(() =>
+            {
+                pending = d.RequestAndWait(new uint[] { 2 }, Ms(GuardMs), stallMs: GuardMs);
+                after = Thread.CurrentThread.Priority;
+            }) { IsBackground = true, Priority = ThreadPriority.Normal };
+            main.Start();
+
+            AwaitBlocked(main);
+            main.Priority.Should().Be(ThreadPriority.AboveNormal, "the blocked wait runs above normal priority");
+
+            // the worker's publish ends the wait
+            started.TryDequeue(out var item).Should().BeTrue();
+            item.Execute();
+            main.Join(DecodeWait.HangGuard).Should().BeTrue();
+
+            pending.Should().Be(0);
+            uploads.Should().Equal(2u);
+            after.Should().Be(ThreadPriority.Normal, "the caller's priority is restored");
+        }
+
+        [Fact]
+        public void A_Caller_Already_Above_Normal_Keeps_Its_Priority()
+        {
+            var started = new ConcurrentQueue<IThreadPoolWorkItem>();
+            var d = new FirstSightDecoder("art", 8, Fill, _ => { }, _ => 16, new DecodeBudget(0, started.Enqueue));
+            var after = ThreadPriority.Lowest;
+            var main = new Thread(() =>
+            {
+                d.RequestAndWait(new uint[] { 2 }, Ms(GuardMs), stallMs: GuardMs);
+                after = Thread.CurrentThread.Priority;
+            }) { IsBackground = true, Priority = ThreadPriority.Highest };
+            main.Start();
+
+            AwaitBlocked(main);
+            main.Priority.Should().Be(ThreadPriority.Highest);
+
+            started.TryDequeue(out var item).Should().BeTrue();
+            item.Execute();
+            main.Join(DecodeWait.HangGuard).Should().BeTrue();
+            after.Should().Be(ThreadPriority.Highest);
+        }
+
+        // blocked in the wait (ManualResetEventSlim spins briefly before it blocks)
+        private static void AwaitBlocked(Thread t)
+        {
+            var sw = Stopwatch.StartNew();
+
+            while ((t.ThreadState & System.Threading.ThreadState.WaitSleepJoin) == 0)
+            {
+                sw.Elapsed.Should().BeLessThan(DecodeWait.HangGuard, "the wait never blocks");
+                Thread.Sleep(1);
+            }
         }
 
         private static void WaitReady(FirstSightDecoder d, int count)
