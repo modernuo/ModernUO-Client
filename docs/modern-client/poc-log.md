@@ -5853,3 +5853,46 @@ Base `poc/modern-client` 3695805e2. Three backlog items from perf-opportunities.
 - **Verification.** Dev suite: 3352 pass, 6 skipped. `-p:CuoDevTools=false` suite: 3346 pass, 6 skipped (both at 2b00a9d24). Dev and release client builds OK. The gates are in `measure/perf-14/`, copied from ecs-wave1c's gate (which descends from linked-object-2's): textflood walks the effect list both ways, plus e6fx, e6fx_ends, and smallfields, which sets gargoyle bodies and races. Jobs: bench-000372 (Gpu, small fields on, uistate), bench-000373 (Legacy, on), bench-000374 (Gpu, off). The allocation job `job-alloc.sh` (bench-000375) compares base and branch on both renderers with small fields off and on, in scene `alloc-fxdrop.txt`: two 400-effect bursts, 150 sustained moving effects, pick/drop cycles to the backpack and the ground, and running into new chunks. Results to follow. Timing is parked: `job-timing-PARKED.sh`.
 - **Costs.** None expected: one pointer field per EffectManager and no new allocation. The trace lines are constant strings, except the audio device lines, which run only on a rare SDL event.
 - **Codex audit** (no P0/P1/P3). One P2, which predates this branch but sits in code it touched, is fixed in 88e887964. Before the fix, the world map's `LoadMap` task read the player's race off the game thread: once per static before this branch, once per region after 2b00a9d24. Three problems followed. With `ecs_small_fields` on, that is an unsynchronized ECS read. During logout, `Player` could go null between the helper's two reads. A race change between regions could leave a mixed-race cached image. `ChangeMap` now reads the race on the game thread and passes it to `LoadMap`. The race is also part of the cache key and file name: `map<i>_<hash>.png` keeps its old name, so existing caches stay valid, and a gargoyle's image is `map<i>_<hash>_gargoyle.png`. `PlayerIsGargoyle` reads `Player` once. A race change while the map gump is open shows up the next time the map is (re)built, on a map change or reopen; it didn't refresh before either. Adding a refresh would mean polling the race every frame for a rare event. Codex's other note, that the audio Trace lines build their strings even when Trace is filtered, is not addressed. `Log` has no public level check, and the event is rare. The driver gained `open worldmap` (c49f4a341, CUO_DEVTOOLS). There are 2 new tests in `PlayerStateTests`: `PlayerIsGargoyle` through `SetRace` and logout, and the cache names. Suites at c49f4a341: dev 3354 pass + 6 skipped, release (`CuoDevTools=false`) 3348 pass + 6 skipped. Gate bench-000379 (`job-gate-gpu-2.sh`, bin2) runs the Gpu gate and then `worldmap.txt`, which opens the map as a human and as a gargoyle and checks both cache files. bench-000372..375 test 2b00a9d24, before this fix.
+## perf-alloc-sites: the two pre-ECS allocation sources (2026-11-08, `bg/perf-alloc-sites-2`)
+
+Base `poc/modern-client` 3695805e2. Method: the runtime's EventPipe AllocationTick (GC verbose, type + managed stack; no client
+instrumentation) on a dev JIT build, analysed with `cuo-poc-state/measure/perf-alloc-sites/alloctick` (bench-000371: base,
+scene `alloc-sites.txt`, one Legacy and one Gpu run). AllocationTick samples about every 100 KB, so the byte counts below are
+sampled, but the shares hold.
+
+**ls_walk** (Felucca large-scale walk, ~2,000 mobiles, ~25,000 items). Main thread, 15 s window, sampled 28.8 MB on Legacy and
+29.3 MB on Gpu (~1.9 MB/s), all of it driven by what the server sends when new objects come into range, on both renderers:
+
+| Site | Legacy | Gpu |
+|---|---|---|
+| Text bitmaps: `FontsLoader.GeneratePixelsUnicode` (FontsLoader.cs:2201 at base) via `RenderedText.CreateTexture`, from `DisplayClilocString` name labels (and their journal lines) for new mobiles | 11.4 MB | 11.1 MB |
+| New `Item`s: `World.GetOrCreateItem` / `WorldWriter.UpsertWorldItem` / `WearItem` | 4.2 MB | 4.4 MB |
+| Property lists: `PacketHandlers.MegaCliloc` (list + growth, Split arrays, strings, `ItemProperty`) | 6.6 MB | ~5 MB |
+| Gpu only: `GpuItemCache.Add` growth (`Array.Resize`), `MobileSpriteExtract.Emit` arrays | - | 1.5 MB |
+| DevBench driver closure (every frame) | 0.32 MB | 0.54 MB |
+
+The ~750 KB "single frames" of ls_walk are one burst per step (every 200-400 ms): ~6 text bitmaps plus 2-3 new Items in one
+frame, never one big object. The text bitmap is only measured: the glyph atlas draws RenderedText, so the uint[] per string
+was garbage at once.
+
+**The Legacy one-shot** (676,744 B in one frame, 20-30 s after login in town, NativeAOT runs) did not occur in the JIT trace
+(Legacy town max 47,520 B; no main-thread burst in the town windows). Not found yet; `job-spike-trace.sh` repeats the trace
+three times on Legacy over a longer town scene.
+
+**The 40 B/frame floor** in every FrameStats window is the DevBench driver: `EcsSessionDriver.Update`'s lambda captured the
+method's parameters, so its closure (32 B) was allocated at every Update. Dev builds only; it inflated every alloc/frame reading.
+
+Fixes (one commit each):
+- `3ecc7ad81` DevBench driver: the closure moves into its own method, allocated only when a script line runs.
+- `97ea6a92e` `FontsLoader.ReusePixelBuffer` (set by `RenderedText.CreateTexture` only): text bitmaps go into one reused buffer
+  (Unicode and ASCII). **Memory: at most 1 MB per client** (grows in powers of two to the largest bitmap up to 256K pixels;
+  bigger bitmaps get their own array as before). Test `FontPixelReuseTests` (same pixels as a fresh array after a bigger bitmap;
+  a mutant without the clear fails it).
+- `e35cbacd9` MegaCliloc: one static line list (main thread) and the `#` argument parsed from spans (`ParseArgCliloc`, same
+  result as the Split; `MegaClilocArgTests`, 14 cases). No memory held beyond the list's capacity (a few KB).
+
+Verification: dev and `-p:CuoDevTools=false` builds; ClassicUO.UnitTests 3363 passed / 6 skipped (dev) and 3357 / 6 (`-p:CuoDevTools=false`), Uo.Converter.Tests 130 / 1. Jobs submitted (results to follow): allocations base vs fix, NativeAOT, interleaved, scenes alloc-sites and alloc-tour, bench-000383 (Legacy) and bench-000384 (Gpu); gates (the ecs-wave1c gate incl. ls_parity and textflood, dev JIT build) bench-000380 (Legacy) and bench-000381 (Gpu); one-shot trace bench-000382. Timing is parked: `measure/perf-alloc-sites-2/job-timing-PARKED.sh`.
+
+Perf opportunities (not done here): pool `Item`s for objects entering range (4 MB per 15 s in ls_walk); measure-only text
+layout so RenderedText does not rasterize at all; `GpuItemCache` arrays from a pool or presized per chunk; MegaCliloc's
+`CapitalizeAllWords` string per property line.
