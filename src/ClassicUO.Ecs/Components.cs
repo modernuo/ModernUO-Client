@@ -602,6 +602,7 @@ namespace ClassicUO.Ecs
             Component<MobileClock>(aot);
             Component<AnimationTimer>(aot); // T5b
             Component<Steps>(aot); // T6c
+            Component<ItemOffset>(aot); // ecs_item_offset
 
             // -ecscheck v2 (T1 funnel part 9)
             Component<EntityName>(aot);
