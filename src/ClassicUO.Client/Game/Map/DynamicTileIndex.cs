@@ -9,11 +9,11 @@ namespace ClassicUO.Game.Map
 {
     /// <summary>
     /// T6b (ecs-transition-plan.md, <c>world_tile_index</c>): a chunk's per-tile sorted arrays of the dynamic objects on it
-    /// (items and mobiles; T8 adds effects through <see cref="Holds"/>), each entry the T6a key stored at insertion and the
+    /// (items, mobiles and effects, see <see cref="Holds"/>), each entry the T6a key stored at insertion and the
     /// object (no entity id: a death re-key or a record replacement changes the serial/record under a placed object, and the
     /// object's validated ECS handle already reaches the record). <see cref="Chunk.AddGameObject"/> (every placement: AddToTile, SetInWorldTile, moves,
     /// Map.Park's deferred add) and <see cref="GameObject.RemoveFromTile"/> maintain it; Chunk.Destroy/ClearForReload clear
-    /// it. With the walk switch off (and the index maintained for a checker or effects) the tile's linked list still holds
+    /// it. With the walk switch off the tile's linked list still holds
     /// everything. With it on (T6b part 3, <see cref="ListDropped"/>) the list keeps only land, statics and multi components and
     /// the dynamics live only here: the walks read the list merged by key with this array (<see cref="TileWalk"/>), and
     /// CUO_TILE_ORDER_CHECK compares that merged order with the legacy order kept in a dev-only <see cref="ShadowTileList"/>.
@@ -27,8 +27,7 @@ namespace ClassicUO.Game.Map
         }
 
 #if CUO_DEVTOOLS
-        // CLEANUP(release): the gate's override of the setting (CUO_WORLD_TILE_INDEX=1|0); =0 keeps the index maintained with
-        // the walk off (pickscan's world_tile_index mode toggles the walk at runtime, so it needs the index either way)
+        // CLEANUP(release): the gate's override of the setting (CUO_WORLD_TILE_INDEX=1|0)
         private static readonly string s_env = Environment.GetEnvironmentVariable("CUO_WORLD_TILE_INDEX");
 
         /// <summary>The walks read the merged order (<see cref="TileWalk"/>). Dev builds: pickscan toggles it at runtime.</summary>
@@ -39,9 +38,9 @@ namespace ClassicUO.Game.Map
             _ => Configuration.Settings.GlobalSettings?.WorldTileIndex ?? false
         };
 
-        /// <summary>Placements keep the index (the walk switch, an explicit CUO_WORLD_TILE_INDEX, or CUO_TILE_ORDER_CHECK).
-        /// Read once: an index started late would miss the objects already placed. Tests set it.</summary>
-        public static bool Maintain = ShouldMaintain(WalkOn, s_env == "0", TileOrder.Check, EffectSystem.GlobalOn);
+        /// <summary>Placements keep the index: always, since effects (T8) live in it. Tests set it off to exercise chunks without
+        /// an index.</summary>
+        public static bool Maintain = true;
 
         /// <summary>T6b part 3, dev builds: the walks read the shadow list (<see cref="ShadowTileList"/>, the legacy order) instead of
         /// the merged order: what "walk off" means once the list no longer holds the dynamics (<see cref="SetWalk"/>; pickscan's
@@ -75,13 +74,13 @@ namespace ClassicUO.Game.Map
         public static bool IndexWalkOn => (WalkOn || ListDropped) && !ShadowWalk;
 #else
         public static readonly bool WalkOn = Configuration.Settings.GlobalSettings?.WorldTileIndex ?? false;
-        public static bool Maintain = ShouldMaintain(WalkOn, false, false, EffectSystem.GlobalOn);
+        public static bool Maintain = true;
         public static bool IndexWalkOn => WalkOn || ListDropped;
 #endif
 
         /// <summary>
         /// T6b part 3: with the walk switch on, the tile lists stop holding the dynamics (<see cref="Holds"/>): items, mobiles and
-        /// (with ecs_effects) effects live only in the index; the list keeps land, statics and multi components. Read once at
+        /// effects live only in the index; the list keeps land, statics and multi components. Read once at
         /// startup like <see cref="Maintain"/> (an object linked under one value and unlinked under the other would corrupt the
         /// list); tests set it before they build a world. Implies <see cref="Maintain"/>. Off (the default): nothing changes.
         /// </summary>
@@ -101,19 +100,10 @@ namespace ClassicUO.Game.Map
             get => WalkOn || ListDropped;
         }
 
-        /// <summary>Whether placements keep the index: the walk, an explicit CUO_WORLD_TILE_INDEX=0, the order checker, or held
-        /// effects (ecs_effects holds them in the index even with the walk off).</summary>
-        internal static bool ShouldMaintain(bool walkOn, bool envOff, bool orderCheck, bool effectsOn) => walkOn || envOff || orderCheck || effectsOn;
-
-        /// <summary>Kept in the index (and skipped in the list by <see cref="TileWalk"/>). The extension point for T8: add
-        /// GameEffect here, and the walks, the checker and the item cache's merged loops follow.</summary>
+        /// <summary>Kept in the index (and skipped in the list by <see cref="TileWalk"/>): items, mobiles and, since T8, effects
+        /// (priority +2, T6a's key).</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public static bool Holds(GameObject obj) => obj is Item || obj is Mobile || EffectsHeld && obj is GameEffect;
-
-        /// <summary>T8 (<c>ecs_effects</c>): effects are kept in the index too (priority +2, T6a's key). Read once like
-        /// <see cref="Maintain"/>: an effect placed under one value and removed under the other would leave its entry behind;
-        /// tests set it before they build a world.</summary>
-        public static bool EffectsHeld = EffectSystem.GlobalOn;
+        public static bool Holds(GameObject obj) => obj is Item || obj is Mobile || obj is GameEffect;
 
         private readonly Entry[][] _cells = new Entry[64][];
         private readonly int[] _counts = new int[64];

@@ -215,19 +215,13 @@ namespace ClassicUO.Configuration
         // (CUO_ECS_ACTIVE_ITEMS_SOURCE=1|0 overrides it in developer builds). Default off.
         [JsonPropertyName("ecs_active_items_source")] public bool EcsActiveItemsSource { get; set; }
 
-        // T8 (ecs-transition-plan.md): graphic effects (0x70, 0xC0, 0xC7) are ECS entities (EffectState): the frame and lifetime
-        // advance is EffectSystem's, and effects are placed through DynamicTileIndex (priority +2). CUO_EFFECT_CHECK=1 compares
-        // each effect with a shadow of the legacy rules every frame. Read once at startup (CUO_ECS_EFFECTS=1|0 overrides it in
-        // developer builds). Default on since 2026-11-02 (owner, after the quiet-machine per-switch timing bench-000206/207/208: timing-neutral on both renderers); the off path and the checker stay for one phase.
-        [JsonPropertyName("ecs_effects")] public bool EcsEffects { get; set; } = true;
-
-        // T8 ownership (ecs-transition-plan.md): with ecs_effects on, an effect references its source and target by mirror record
+        // T8 ownership (ecs-transition-plan.md): an effect (an ECS entity since T8) references its source and target by mirror record
         // and serial (not by GameObject) and reads their position and offset from the ECS each update; the death re-key moves the
         // reference, a removed record leaves the last position. CUO_EFFECT_ENDPOINT_CHECK=1 compares every read with the old
         // object reference. Read once at startup (CUO_ECS_EFFECT_ENDPOINTS=1|0 overrides it in developer builds). Default off.
         [JsonPropertyName("ecs_effect_endpoints")] public bool EcsEffectEndpoints { get; set; }
 
-        // T8 ownership phase 2 (ecs-transition-plan.md): with ecs_effects and ecs_effect_endpoints on, the kinds' motion (a moving
+        // T8 ownership phase 2 (ecs-transition-plan.md): with ecs_effect_endpoints on, the kinds' motion (a moving
         // effect's path and explosion, a fixed effect following its source and the source's offset, the drag offset, lightning
         // following its source) is computed by EffectSystem from EffectState, each endpoint resolved once per update; the
         // effect's fields become a write-through cache for the views. CUO_EFFECT_MOTION_CHECK=1 replays the legacy per-object
@@ -235,10 +229,10 @@ namespace ClassicUO.Configuration
         // builds). Default off.
         [JsonPropertyName("ecs_effect_motion")] public bool EcsEffectMotion { get; set; }
 
-        // T7b part 3 (ecs-transition-plan.md): with ecs_effects on, both world renderers draw graphic effects (fixed, moving,
+        // T7b part 3 (ecs-transition-plan.md): both world renderers draw graphic effects (fixed, moving,
         // explosion, drag) from the renderer-neutral effect extract over EffectState (EffectSpriteExtract) at the effect's
         // render-list position, instead of GameEffectView.Draw; lightning stays on its view. Its own switch, not
-        // legacy_ecs_sprites/gpu_ecs_sprites: it needs ecs_effects (the state) and flips with the effect work. CUO_EFFECT_SPRITE_CHECK=1
+        // legacy_ecs_sprites/gpu_ecs_sprites: it flips with the effect work. CUO_EFFECT_SPRITE_CHECK=1
         // compares the view's draw with the extract's for every effect, every frame. Read every frame (dev builds:
         // CUO_ECS_EFFECT_SPRITES=1|0, DevBench effectsprites:on|off). Default off.
         [JsonPropertyName("ecs_effect_sprites")] public bool EcsEffectSprites { get; set; }

@@ -12,7 +12,7 @@ using Position = ClassicUO.Ecs.Position;
 namespace ClassicUO.Game
 {
     /// <summary>
-    /// T8 (<c>ecs_effects</c>): graphic effects as ECS entities. With the switch on every effect created through
+    /// T8: graphic effects as ECS entities. Every effect created through
     /// <c>EffectManager</c> gets an entity with an <see cref="EffectState"/> (no serial, not in the mirror's serial index). The
     /// state owns the animation and lifetime (frame, next change time, duration), which <see cref="Animate"/> and
     /// <see cref="AnimateLightning"/> advance with the legacy rules (the object's <c>AnimIndex</c>, <c>AnimationGraphic</c> and
@@ -20,19 +20,12 @@ namespace ClassicUO.Game
     /// to it after each update. The visiting order is <c>EffectManager.Update</c>'s list order and no random number is drawn.
     /// The motion rules of the kinds (moving's path, fixed's source following, drag's offset) stay on the objects: they read
     /// source and target objects, which the ECS does not own yet. Tile placement is the object's own
-    /// (<c>SetInWorldTile</c>); with the switch on the objects are kept in <see cref="DynamicTileIndex"/> too.
+    /// (<c>SetInWorldTile</c>); the objects are kept in <see cref="DynamicTileIndex"/>.
     /// </summary>
     internal static partial class EffectSystem
     {
 #if CUO_DEVTOOLS
-        // CLEANUP(release): the gate's override of the setting (CUO_ECS_EFFECTS=1|0) and the checker
-        public static readonly bool GlobalOn = Environment.GetEnvironmentVariable("CUO_ECS_EFFECTS") switch
-        {
-            "1" => true,
-            "0" => false,
-            _ => Configuration.Settings.GlobalSettings?.EcsEffects ?? true
-        };
-
+        // CLEANUP(release): the checker
         public static readonly bool GlobalCheck = Environment.GetEnvironmentVariable("CUO_EFFECT_CHECK") == "1";
 
         // CLEANUP(release): the gate's override of ecs_effect_endpoints (CUO_ECS_EFFECT_ENDPOINTS=1|0) and its checker
@@ -55,7 +48,6 @@ namespace ClassicUO.Game
 
         public static readonly bool GlobalMotionCheck = Environment.GetEnvironmentVariable("CUO_EFFECT_MOTION_CHECK") == "1";
 #else
-        public static readonly bool GlobalOn = Configuration.Settings.GlobalSettings?.EcsEffects ?? true;
         public const bool GlobalCheck = false;
         public static readonly bool GlobalEndpoints = Configuration.Settings.GlobalSettings?.EcsEffectEndpoints ?? false;
         public const bool GlobalEndpointCheck = false;
@@ -63,8 +55,8 @@ namespace ClassicUO.Game
         public const bool GlobalMotionCheck = false;
 #endif
 
-        /// <summary>Checker counts (all worlds): frames compared, effects compared, mismatches, shadow animation steps.</summary>
-        public static long Frames, Compared, Mismatches, ShadowSteps;
+        /// <summary>Checker counts (all worlds): frames compared, effects compared, mismatches.</summary>
+        public static long Frames, Compared, Mismatches;
 
         /// <summary>Tests: sees each mismatch report.</summary>
         internal static Action<string> Observer;
@@ -111,11 +103,6 @@ namespace ClassicUO.Game
             e.Publish(ref s);
             e.EcsEntity = e.World.Ecs.Mirror.Store.CreateEntity(s);
             DropObjects(e);
-
-            if (e.World.EffectsCheckOn)
-            {
-                e.Shadow = new EffectShadow { AnimIndex = s.AnimIndex, AnimGraphic = s.AnimGraphic, Next = s.NextChange };
-            }
         }
 
         public static void Unregister(GameEffect e)
@@ -140,9 +127,6 @@ namespace ClassicUO.Game
         /// tests). Destroys the effect when its duration ran out.</summary>
         public static void Animate(GameEffect e)
         {
-            EffectShadow sh = e.Shadow;
-            bool shadowDestroy = sh != null && sh.StepBase(e);
-
             ref EffectState s = ref EcsRead.Get<EffectState>(e.EcsEntity);
             long now = Time.Ticks;
             bool destroyed = false;
@@ -182,11 +166,6 @@ namespace ClassicUO.Game
                 s.AnimGraphic = s.Graphic;
             }
 
-            if (sh != null)
-            {
-                sh.Compare(e, destroyed, shadowDestroy, in s);
-            }
-
             if (destroyed)
             {
                 e.Destroy();
@@ -202,9 +181,6 @@ namespace ClassicUO.Game
         /// <summary>LightningEffect's frame step on the state. False when the effect was destroyed.</summary>
         public static bool AnimateLightning(GameEffect e)
         {
-            EffectShadow sh = e.Shadow;
-            bool shadowDestroy = sh != null && sh.StepLightning(e);
-
             ref EffectState s = ref EcsRead.Get<EffectState>(e.EcsEntity);
             long now = Time.Ticks;
             bool destroyed = s.AnimIndex >= 10 || (s.Duration < now && s.Duration >= 0);
@@ -218,11 +194,6 @@ namespace ClassicUO.Game
                     s.AnimIndex++;
                     s.NextChange = now + s.Interval;
                 }
-            }
-
-            if (sh != null)
-            {
-                sh.Compare(e, destroyed, shadowDestroy, in s);
             }
 
             if (destroyed)
@@ -700,7 +671,7 @@ namespace ClassicUO.Game
         /// <summary>
         /// CUO_EFFECT_CHECK, end of the effects stage: each live effect has an entity whose state equals the object (position,
         /// offset, angle, frame, graphic, duration), the object's tile is the chunk and cell of its position, and the entities
-        /// are the list's effects. (The animation step is compared with the legacy rules inside Animate.)
+        /// are the list's effects.
         /// </summary>
         public static void Check(World world, EffectManager manager)
         {
@@ -763,7 +734,7 @@ namespace ClassicUO.Game
             if (Time.Ticks >= s_nextLog)
             {
                 s_nextLog = Time.Ticks + 5000;
-                Log.Info($"[effect-check] {Frames} frames, {Compared} effects compared, {ShadowSteps} shadow steps, {Mismatches} mismatches");
+                Log.Info($"[effect-check] {Frames} frames, {Compared} effects compared, {Mismatches} mismatches");
             }
         }
 
@@ -775,94 +746,6 @@ namespace ClassicUO.Game
             if (Mismatches <= 10)
             {
                 Log.Warn($"[effect-check] mismatch: {text}");
-            }
-        }
-    }
-
-    /// <summary>The legacy animation rules on a private copy of the three fields they write (CUO_EFFECT_CHECK).</summary>
-    internal sealed class EffectShadow
-    {
-        public byte AnimIndex;
-        public ushort AnimGraphic;
-        public long Next;
-
-        /// <summary>GameEffect.Update's block before T8, verbatim on the copy. True when it would destroy the effect.</summary>
-        public bool StepBase(GameEffect e)
-        {
-            EffectSystem.ShadowSteps++;
-
-            if (e.IsEnabled)
-            {
-                if (e.Duration < Time.Ticks && e.Duration >= 0)
-                {
-                    return true;
-                }
-
-                if (Next < Time.Ticks)
-                {
-                    if (e.AnimDataFrame.FrameCount != 0)
-                    {
-                        unsafe
-                        {
-                            AnimGraphic = (ushort)(e.Graphic + e.AnimDataFrame.FrameData[AnimIndex]);
-                        }
-
-                        AnimIndex++;
-
-                        if (AnimIndex >= e.AnimDataFrame.FrameCount)
-                        {
-                            AnimIndex = 0;
-                        }
-                    }
-                    else
-                    {
-                        AnimGraphic = e.Graphic;
-                    }
-
-                    Next = (long)Time.Ticks + e.IntervalInMs;
-                }
-            }
-            else
-            {
-                AnimGraphic = e.Graphic;
-            }
-
-            return false;
-        }
-
-        /// <summary>LightningEffect.Update's frame block before T8, verbatim on the copy.</summary>
-        public bool StepLightning(GameEffect e)
-        {
-            EffectSystem.ShadowSteps++;
-
-            if (AnimIndex >= 10 || (e.Duration < Time.Ticks && e.Duration >= 0))
-            {
-                return true;
-            }
-
-            AnimGraphic = (ushort)(e.Graphic + AnimIndex);
-
-            if (Next < Time.Ticks)
-            {
-                AnimIndex++;
-                Next = (long)Time.Ticks + e.IntervalInMs;
-            }
-
-            return false;
-        }
-
-        public void Compare(GameEffect e, bool destroyed, bool shadowDestroyed, in EffectState s)
-        {
-            if (destroyed != shadowDestroyed)
-            {
-                EffectSystem.Mismatch($"effect 0x{e.Graphic:X4}: ECS {(destroyed ? "destroys" : "keeps")} it, legacy rules {(shadowDestroyed ? "destroy" : "keep")} it");
-
-                return;
-            }
-
-            if (!destroyed && (s.AnimIndex != AnimIndex || s.AnimGraphic != AnimGraphic || s.NextChange != Next))
-            {
-                EffectSystem.Mismatch($"effect 0x{e.Graphic:X4} frame ECS (g=0x{s.AnimGraphic:X4} i={s.AnimIndex} next={s.NextChange}) | legacy (g=0x{AnimGraphic:X4} i={AnimIndex} next={Next})");
             }
         }
     }

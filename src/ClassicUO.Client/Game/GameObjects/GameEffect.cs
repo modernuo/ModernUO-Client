@@ -71,11 +71,9 @@ namespace ClassicUO.Game.GameObjects
         public bool IsEnabled;
         public long NextChangeFrameTime;
 
-        /// <summary>T8 (ecs_effects): this effect's entity (default when the switch is off or the effect is destroyed).</summary>
+        /// <summary>T8: this effect's entity, created when it joins the manager's list (default before that and once the effect
+        /// is destroyed).</summary>
         internal Friflo.Engine.ECS.Entity EcsEntity;
-
-        /// <summary>T8 (CUO_EFFECT_CHECK): the legacy animation rules on a copy, compared with the system's step.</summary>
-        internal EffectShadow Shadow;
 
         /// <summary>T8 ownership (ecs_effect_endpoints): source and target are the state's references, read from the ECS; the
         /// object references below are kept only for the off path and the checker (CUO_EFFECT_ENDPOINT_CHECK).</summary>
@@ -124,47 +122,7 @@ namespace ClassicUO.Game.GameObjects
                 return;
             }
 
-            if (!EcsEntity.IsNull)
-            {
-                EffectSystem.Animate(this);
-
-                return;
-            }
-
-            if (IsEnabled)
-            {
-                if (Duration < Time.Ticks && Duration >= 0)
-                {
-                    Destroy();
-                }
-                else if (NextChangeFrameTime < Time.Ticks)
-                {
-                    if (AnimDataFrame.FrameCount != 0)
-                    {
-                        unsafe
-                        {
-                            AnimationGraphic = (ushort) (Graphic + AnimDataFrame.FrameData[AnimIndex]);
-                        }
-
-                        AnimIndex++;
-
-                        if (AnimIndex >= AnimDataFrame.FrameCount)
-                        {
-                            AnimIndex = 0;
-                        }
-                    }
-                    else
-                    {
-                        AnimationGraphic = Graphic;
-                    }
-
-                    NextChangeFrameTime = (long)Time.Ticks + IntervalInMs;
-                }
-            }
-            else
-            {
-                AnimationGraphic = Graphic;
-            }
+            EffectSystem.Animate(this);
         }
 
         protected (ushort x, ushort y, sbyte z) GetSource()

@@ -97,14 +97,8 @@ namespace ClassicUO.Game
             item.Update();
         }
 
-        /// <summary>Tests: the T8 switch for this World (null: <c>ecs_effects</c>, read once at startup).</summary>
-        internal bool? EffectsSystemOverride;
-
         /// <summary>Tests: the T8 checker for this World (null: <c>CUO_EFFECT_CHECK=1</c>).</summary>
         internal bool? EffectsCheckOverride;
-
-        /// <summary>T8 (<c>ecs_effects</c>, default on): effects are ECS entities advanced by <see cref="EffectSystem"/>.</summary>
-        public bool EffectsSystemOn => EffectsSystemOverride ?? EffectSystem.GlobalOn;
 
         public bool EffectsCheckOn => EffectsCheckOverride ?? EffectSystem.GlobalCheck;
 
@@ -114,9 +108,9 @@ namespace ClassicUO.Game
         /// <summary>Tests: the endpoint checker for this World (null: <c>CUO_EFFECT_ENDPOINT_CHECK=1</c>).</summary>
         internal bool? EffectEndpointsCheckOverride;
 
-        /// <summary>T8 ownership (<c>ecs_effect_endpoints</c>, default off; needs <c>ecs_effects</c>): effects reference their source
-        /// and target by mirror record and serial, and read their positions from the ECS. Decided per effect when it registers.</summary>
-        public bool EffectEndpointsOn => EffectsSystemOn && (EffectEndpointsOverride ?? EffectSystem.GlobalEndpoints);
+        /// <summary>T8 ownership (<c>ecs_effect_endpoints</c>, default off): effects reference their source and target by mirror
+        /// record and serial, and read their positions from the ECS. Decided per effect when it registers.</summary>
+        public bool EffectEndpointsOn => EffectEndpointsOverride ?? EffectSystem.GlobalEndpoints;
 
         public bool EffectEndpointsCheckOn => EffectEndpointsCheckOverride ?? EffectSystem.GlobalEndpointCheck;
 
@@ -126,8 +120,8 @@ namespace ClassicUO.Game
         /// <summary>Tests: the motion checker for this World (null: <c>CUO_EFFECT_MOTION_CHECK=1</c>).</summary>
         internal bool? EffectMotionCheckOverride;
 
-        /// <summary>T8 ownership phase 2 (<c>ecs_effect_motion</c>, default off; needs <c>ecs_effects</c> and
-        /// <c>ecs_effect_endpoints</c>): the kinds' motion is <see cref="EffectSystem"/>'s motion step over the effect's state.
+        /// <summary>T8 ownership phase 2 (<c>ecs_effect_motion</c>, default off; needs <c>ecs_effect_endpoints</c>): the kinds'
+        /// motion is <see cref="EffectSystem"/>'s motion step over the effect's state.
         /// Decided per effect when it registers.</summary>
         public bool EffectMotionOn => EffectEndpointsOn && (EffectMotionOverride ?? EffectSystem.GlobalMotion);
 
