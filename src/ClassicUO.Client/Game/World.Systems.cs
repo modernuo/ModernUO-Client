@@ -81,9 +81,14 @@ namespace ClassicUO.Game
 
         private readonly ItemAnimationAdvanceSystem _itemAnimAdvance = new ItemAnimationAdvanceSystem();
 
+        /// <summary>Tests: sees each item the active item stage visits, in order, before its update (null in the client).</summary>
+        internal Action<Item> ActiveVisitObserver;
+
         /// <summary>T5b-items: the per-item step of the active item stage: the ECS advance for a corpse, else <c>Item.Update</c>.</summary>
         private void UpdateActiveItem(Item item, bool itemAnim)
         {
+            ActiveVisitObserver?.Invoke(item);
+
             if (itemAnim && _itemAnimAdvance.TryRun(this, item))
             {
                 return;
@@ -152,16 +157,18 @@ namespace ClassicUO.Game
             _activeSeen.Clear();
             int withEntity = 0;
 
-            for (int i = 0; i < _activeItems.Count; i++)
+            int count = ActiveItemCount;
+
+            for (int i = 0; i < count; i++)
             {
-                Item item = _activeItems[i];
+                Item item = ActiveItemAt(i);
 
                 if (!_activeSeen.Add(item))
                 {
                     ActiveMismatch($"item 0x{item.Serial:X8} listed twice");
                 }
 
-                if (!item.InUpdateList)
+                if (!IsItemListed(item))
                 {
                     ActiveMismatch($"item 0x{item.Serial:X8} listed without its flag");
                 }
@@ -187,13 +194,13 @@ namespace ClassicUO.Game
 
             if (tagged != (on ? withEntity : 0))
             {
-                ActiveMismatch($"{tagged} tagged entities, expected {(on ? withEntity : 0)} (list {_activeItems.Count})");
+                ActiveMismatch($"{tagged} tagged entities, expected {(on ? withEntity : 0)} (list {count})");
             }
 
             if (Time.Ticks >= _activeCheckNextLog)
             {
                 _activeCheckNextLog = Time.Ticks + 5000;
-                Log.Info($"[active-items-check] {ActiveItemsChecks} checks, {ActiveItemsMismatches} mismatches; list {_activeItems.Count}, tagged {tagged} | world_active_items_system={(on ? "on" : "off")}");
+                Log.Info($"[active-items-check] {ActiveItemsChecks} checks, {ActiveItemsMismatches} mismatches; list {count}, tagged {tagged} | world_active_items_system={(on ? "on" : "off")}");
             }
         }
 
@@ -207,6 +214,187 @@ namespace ClassicUO.Game
             }
 
             ActiveItemsObserver?.Invoke(text);
+        }
+
+        // T9 (ecs_active_items_source) ----------------------------------------------------------------------------------------
+#if CUO_DEVTOOLS
+        // CLEANUP(release): the gate's override of the setting (CUO_ECS_ACTIVE_ITEMS_SOURCE=1|0) and the checker
+        private static readonly bool s_activeItemsSource = Environment.GetEnvironmentVariable("CUO_ECS_ACTIVE_ITEMS_SOURCE") switch
+        {
+            "1" => true,
+            "0" => false,
+            _ => Configuration.Settings.GlobalSettings.EcsActiveItemsSource
+        };
+
+        private static readonly bool s_activeItemsSourceCheck = Environment.GetEnvironmentVariable("CUO_ACTIVE_ITEMS_SOURCE_CHECK") == "1";
+#else
+        private static readonly bool s_activeItemsSource = Configuration.Settings.GlobalSettings.EcsActiveItemsSource;
+        private const bool s_activeItemsSourceCheck = false;
+#endif
+
+        /// <summary>Tests: the switch for this World (null: the setting, read once at startup). Set before the first item is listed.</summary>
+        internal bool? ActiveItemsSourceOverride;
+
+        /// <summary>Tests: the checker for this World (null: <c>CUO_ACTIVE_ITEMS_SOURCE_CHECK=1</c>). Set before the first item is listed.</summary>
+        internal bool? ActiveItemsSourceCheckOverride;
+
+        /// <summary>T9 (<c>ecs_active_items_source</c>, default off): the update list's membership and order are the
+        /// <see cref="ActiveItemEntry"/> entities (<see cref="ActiveItemStore"/>), not <see cref="ActiveItemList"/>.</summary>
+        public bool ActiveItemsSourceOn => ActiveItemsSourceOverride ?? s_activeItemsSource;
+
+        public bool ActiveItemsSourceCheckOn => ActiveItemsSourceCheckOverride ?? s_activeItemsSourceCheck;
+
+        /// <summary>Source checker counts: comparisons, mismatches found.</summary>
+        public long ActiveSourceChecks, ActiveSourceMismatches;
+
+        /// <summary>Tests: sees each source checker mismatch report.</summary>
+        internal Action<string> ActiveSourceObserver;
+
+        private uint _activeSourceNextLog;
+
+        /// <summary>The active item stage: the ECS's visiting order is rebuilt from the entries' slots (the store is the source
+        /// with the switch on, the checker's shadow with it off).</summary>
+        private void RebuildActiveOrder()
+        {
+            if (!ActiveStore.Rebuild(out string error))
+            {
+                ActiveSourceMismatch($"entry slots broken: {error}");
+            }
+        }
+
+        // CUO_ACTIVE_ITEMS_SOURCE_CHECK: the other path follows every add and removal of the switch's path with its own rules
+        private void ShadowAdd(Item item)
+        {
+            if (ActiveItemsSourceOn)
+            {
+                _activeItems.Add(item, false);
+            }
+            else
+            {
+                ActiveStore.Add(item, false);
+            }
+        }
+
+        private Item ShadowAt(int index) => ActiveItemsSourceOn ? _activeItems[index] : ActiveStore[index];
+
+        // the visit removed `item` from position `index`: the shadow must hold it there too (same order), and removes it there
+        private void ShadowRemoveAt(int index, Item item)
+        {
+            bool source = ActiveItemsSourceOn;
+            int count = source ? _activeItems.Count : ActiveStore.Count;
+            int at = index;
+
+            if (index >= count || !ReferenceEquals(ShadowAt(index), item))
+            {
+                ActiveSourceMismatch($"visit removed 0x{item.Serial:X8} at {index}; the {(source ? "list" : "ECS")} holds {(index < count ? $"0x{ShadowAt(index).Serial:X8}" : "nothing")} there");
+                at = -1;
+
+                for (int i = 0; i < count; i++)
+                {
+                    if (ReferenceEquals(ShadowAt(i), item))
+                    {
+                        at = i;
+
+                        break;
+                    }
+                }
+
+                if (at < 0)
+                {
+                    return;
+                }
+            }
+
+            if (source)
+            {
+                _activeItems.SwapRemoveAt(at, false);
+            }
+            else
+            {
+                ActiveStore.SwapRemoveAt(at, false);
+            }
+        }
+
+        /// <summary>
+        /// CUO_ACTIVE_ITEMS_SOURCE_CHECK=1, before and after the active item visit: the list and the ECS (its order rebuilt from
+        /// the entry slots before the visit) hold the same items in the same order; every entry names its item, serial and
+        /// slot, the entity count equals the order's length, and each listed item's flag and entry handle are set.
+        /// </summary>
+        private void CheckActiveItemsSource(string when)
+        {
+            ActiveSourceChecks++;
+            ActiveItemStore store = ActiveStore;
+            int listCount = _activeItems.Count, ecsCount = store.Count;
+
+            if (listCount != ecsCount)
+            {
+                ActiveSourceMismatch($"{when}: list holds {listCount} items, ECS {ecsCount}");
+            }
+
+            if (store.EntityCount != ecsCount)
+            {
+                ActiveSourceMismatch($"{when}: {store.EntityCount} entry entities, ECS order {ecsCount}");
+            }
+
+            int n = Math.Min(listCount, ecsCount);
+
+            for (int i = 0; i < n; i++)
+            {
+                Item a = _activeItems[i], b = store[i];
+
+                if (!ReferenceEquals(a, b))
+                {
+                    ActiveSourceMismatch($"{when}: position {i}: list 0x{a.Serial:X8}, ECS 0x{b.Serial:X8}");
+
+                    break;
+                }
+            }
+
+            for (int i = 0; i < ecsCount; i++)
+            {
+                Item item = store[i];
+                EcsEntity e = store.EntryOf(item);
+
+                if (e.IsNull || !e.HasComponent<ActiveItemEntry>())
+                {
+                    ActiveSourceMismatch($"{when}: 0x{item.Serial:X8} in the ECS order without its entry");
+
+                    continue;
+                }
+
+                ref ActiveItemEntry entry = ref e.GetComponent<ActiveItemEntry>();
+
+                if (!ReferenceEquals(entry.Item, item) || entry.Slot != i || entry.Serial != item.Serial)
+                {
+                    ActiveSourceMismatch($"{when}: position {i} 0x{item.Serial:X8}: entry names 0x{entry.Serial:X8} slot {entry.Slot}");
+                }
+            }
+
+            for (int i = 0; i < listCount; i++)
+            {
+                if (!_activeItems[i].InUpdateList)
+                {
+                    ActiveSourceMismatch($"{when}: 0x{_activeItems[i].Serial:X8} in the list without its flag");
+                }
+            }
+
+            if (Time.Ticks >= _activeSourceNextLog)
+            {
+                _activeSourceNextLog = Time.Ticks + 5000;
+                Log.Info($"[active-items-source-check] {ActiveSourceChecks} checks, {ActiveSourceMismatches} mismatches; list {listCount}, ECS {ecsCount} | ecs_active_items_source={(ActiveItemsSourceOn ? "on" : "off")}");
+            }
+        }
+
+        private void ActiveSourceMismatch(string text)
+        {
+            ActiveSourceMismatches++;
+
+            if (ActiveSourceMismatches <= 10)
+            {
+                Log.Warn($"[active-items-source-check] {text}");
+            }
+
+            ActiveSourceObserver?.Invoke(text);
         }
     }
 }

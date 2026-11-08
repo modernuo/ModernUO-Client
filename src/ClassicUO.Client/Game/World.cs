@@ -773,17 +773,31 @@ namespace ClassicUO.Game
             }
         }
 
-        // W5: items whose Update does something this frame (Item.NeedsFrameUpdate)
+        // W5: items whose Update does something this frame (Item.NeedsFrameUpdate). T9: with ecs_active_items_source the source
+        // is _activeStore (ActiveItemEntry entities) and this list is only CUO_ACTIVE_ITEMS_SOURCE_CHECK's shadow; off, the
+        // roles swap. Read and change membership through the members below, never one of the two directly.
         private readonly ActiveItemList _activeItems = new ActiveItemList();
+        private ActiveItemStore _activeStore;
         // items destroyed since the last update; World.Update drops them from Items as the full loop did
         private readonly List<Item> _destroyedItems = new List<Item>();
         private bool _activeItemsValid;
 
-        /// <summary>Items in the per-frame update list (corpses, items whose handles just opened).</summary>
-        public int ActiveItemCount => _activeItems.Count;
+        private ActiveItemStore ActiveStore => _activeStore ??= new ActiveItemStore(Ecs.Mirror.Store);
 
-        /// <summary>T1 tests: the per-frame update list in order.</summary>
-        internal IReadOnlyList<Item> ActiveItems => _activeItems.Items;
+        /// <summary>Items in the per-frame update list (corpses, items whose handles just opened).</summary>
+        public int ActiveItemCount => ActiveItemsSourceOn ? ActiveStore.Count : _activeItems.Count;
+
+        /// <summary>The per-frame update list in visiting order (tests; readers index it with <see cref="ActiveItemAt"/>).</summary>
+        internal IReadOnlyList<Item> ActiveItems => ActiveItemsSourceOn ? ActiveStore : _activeItems.Items;
+
+        /// <summary>The item in visiting position <paramref name="index"/> (0 to <see cref="ActiveItemCount"/> - 1).</summary>
+        internal Item ActiveItemAt(int index) => ActiveItemsSourceOn ? ActiveStore[index] : _activeItems[index];
+
+        /// <summary>Whether <paramref name="item"/> is in the per-frame update list (O(1)).</summary>
+        internal bool IsItemListed(Item item) => ActiveItemsSourceOn ? item.ActiveEntryId != 0 : item.InUpdateList;
+
+        /// <summary>T9: the item's <see cref="ClassicUO.Ecs.ActiveItemEntry"/> entity (null when it has none; tests and the checker).</summary>
+        internal Friflo.Engine.ECS.Entity ActiveItemEntryOf(Item item) => ActiveStore.EntryOf(item);
 
         /// <summary>perf-13: the active list holds every item that needs updates (false from World.Clear until the next
         /// update's first pass rebuilds it).</summary>
@@ -792,18 +806,35 @@ namespace ClassicUO.Game
         /// <summary>W5: <paramref name="item"/> needs <see cref="Item.Update"/> from now on (a corpse, or handles opened).</summary>
         public void QueueItemUpdate(Item item)
         {
-            _activeItems.Add(item, ActiveItemsSystemOn);
+            if (ActiveItemsSourceOn)
+            {
+                ActiveStore.Add(item, ActiveItemsSystemOn);
+            }
+            else
+            {
+                _activeItems.Add(item, ActiveItemsSystemOn);
+            }
+
+            if (ActiveItemsSourceCheckOn)
+            {
+                ShadowAdd(item);
+            }
         }
 
         // World.Clear: the list must not keep destroyed items alive; the next update rebuilds it from a scan
         private void ClearActiveItems()
         {
-            if (_activeItems.Count == 0)
+            bool source = ActiveItemsSourceOn;
+
+            if (_activeItems.Count != 0)
             {
-                return;
+                _activeItems.Clear(!source && ActiveItemsSystemOn);
             }
 
-            _activeItems.Clear(ActiveItemsSystemOn);
+            if (_activeStore != null && _activeStore.Count != 0)
+            {
+                _activeStore.Clear(source && ActiveItemsSystemOn);
+            }
         }
 
         internal void OnItemDestroyed(Item item)
@@ -857,17 +888,48 @@ namespace ClassicUO.Game
                 }
             }
 
-            for (int i = 0; i < _activeItems.Count; i++)
+            bool source = ActiveItemsSourceOn, sourceCheck = ActiveItemsSourceCheckOn, tag = ActiveItemsSystemOn;
+
+            if (source || sourceCheck)
             {
-                Item item = _activeItems[i];
+                // T9: the visiting order is the ECS's, rebuilt from the ActiveItemEntry slots
+                RebuildActiveOrder();
+            }
+
+            if (sourceCheck)
+            {
+                CheckActiveItemsSource("before the visit");
+            }
+
+            for (int i = 0; i < (source ? _activeStore.Count : _activeItems.Count); i++)
+            {
+                Item item = source ? _activeStore[i] : _activeItems[i];
 
                 UpdateActiveItem(item, itemAnim);
 
                 if (!item.NeedsFrameUpdate || !ReferenceEquals(Items.Get(item.Serial), item))
                 {
-                    _activeItems.SwapRemoveAt(i, ActiveItemsSystemOn);
+                    if (source)
+                    {
+                        _activeStore.SwapRemoveAt(i, tag);
+                    }
+                    else
+                    {
+                        _activeItems.SwapRemoveAt(i, tag);
+                    }
+
+                    if (sourceCheck)
+                    {
+                        ShadowRemoveAt(i, item);
+                    }
+
                     i--;
                 }
+            }
+
+            if (sourceCheck)
+            {
+                CheckActiveItemsSource("after the visit");
             }
 
             if (do_delete)
@@ -885,7 +947,7 @@ namespace ClassicUO.Game
                     {
                         _toRemove.Add(item.Serial);
                     }
-                    else if (!item.InUpdateList && item.NeedsFrameUpdate)
+                    else if (!IsItemListed(item) && item.NeedsFrameUpdate)
                     {
                         // a corpse the change hooks missed: update it from now on
                         QueueItemUpdate(item);
@@ -984,7 +1046,7 @@ namespace ClassicUO.Game
                         _checkHandles++;
                     }
 
-                    if (!item.InUpdateList && _activeItemsValid)
+                    if (!IsItemListed(item) && _activeItemsValid)
                     {
                         _checkUnlisted++;
 
@@ -1006,7 +1068,7 @@ namespace ClassicUO.Game
             if (Time.Ticks >= _checkNextLog)
             {
                 _checkNextLog = Time.Ticks + 5000;
-                Log.Info($"[w5-check] {_checkFrames} frames, {_checkItems} item checks: {_checkUnlisted} needing an update but unlisted, {MissedActiveItems} caught by the sweep; {_checkCorpses} corpse and {_checkHandles} handle updates seen; {_checkHits} hits checks, {_checkHitsWrong} wrong; {_destroyedSeen} items destroyed, {_checkDestroyedLeft} left in Items after the update; active list {_activeItems.Count}; text layouts skipped {_checkTextSkips}, {_checkTextMoved} would have moved a text");
+                Log.Info($"[w5-check] {_checkFrames} frames, {_checkItems} item checks: {_checkUnlisted} needing an update but unlisted, {MissedActiveItems} caught by the sweep; {_checkCorpses} corpse and {_checkHandles} handle updates seen; {_checkHits} hits checks, {_checkHitsWrong} wrong; {_destroyedSeen} items destroyed, {_checkDestroyedLeft} left in Items after the update; active list {ActiveItemCount}; text layouts skipped {_checkTextSkips}, {_checkTextMoved} would have moved a text");
             }
         }
 

@@ -193,6 +193,13 @@ namespace ClassicUO.Configuration
         // Default on since 2026-11-02 (owner, after the quiet-machine per-switch timing bench-000206/207/208: timing-neutral on both renderers); the off path and the checker stay for one phase.
         [JsonPropertyName("world_active_items_system")] public bool WorldActiveItemsSystem { get; set; } = true;
 
+        // T9 (ecs-transition-plan.md §T5d): the ECS is the source of the per-frame item update list: one ActiveItemEntry entity per
+        // listed item holds the item and its visiting slot (append, swap-remove), and the active item stage visits the order
+        // rebuilt from those entities each frame. Off: World's ActiveItemList holds membership and order. CUO_ACTIVE_ITEMS_SOURCE_CHECK=1
+        // keeps the list as a shadow and compares membership and order every frame. Read once at startup
+        // (CUO_ECS_ACTIVE_ITEMS_SOURCE=1|0 overrides it in developer builds). Default off.
+        [JsonPropertyName("ecs_active_items_source")] public bool EcsActiveItemsSource { get; set; }
+
         // T8 (ecs-transition-plan.md): graphic effects (0x70, 0xC0, 0xC7) are ECS entities (EffectState): the frame and lifetime
         // advance is EffectSystem's, and effects are placed through DynamicTileIndex (priority +2). CUO_EFFECT_CHECK=1 compares
         // each effect with a shadow of the legacy rules every frame. Read once at startup (CUO_ECS_EFFECTS=1|0 overrides it in
