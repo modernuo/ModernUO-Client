@@ -1221,7 +1221,8 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void BodyState_Equals_The_Old_CheckGraphicChange()
         {
-            var world = new World();
+            // the oracle and the fixture write only the caches: read them whatever CUO_ECS_SMALL_FIELDS says (Codex audit P2)
+            var world = new World { SmallFieldsOverride = false };
 
             for (int g = 0; g <= 0x500; g++)
             {

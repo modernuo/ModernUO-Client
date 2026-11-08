@@ -858,6 +858,13 @@ namespace ClassicUO.Game
             // the cold fields (part 9) go with the mobile, as its mirror bit does
             Mirror.TryGetExtras(oldSerial, out MirrorExtras extras);
 
+            // Codex audit (ecs-wave1c) P2: with no mobile record under the old serial (none, or a shared-serial item's) the
+            // traits come from the caches, which WorldWriter keeps paired with the record (ecs_small_fields)
+            if (!Mirror.TryGetEntity(oldSerial, true, out _))
+            {
+                extras.MobileTraits = mobile.CachedTraits;
+            }
+
             // T8 ownership: effects on the old record are gone with it, then follow the mobile to the new record
             bool effects = _world.Effects?.Items != null && Mirror.TryGetEntity(oldSerial, out old);
 

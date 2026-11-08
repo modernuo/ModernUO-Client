@@ -333,6 +333,41 @@ namespace ClassicUO.UnitTests.Ecs
             AssertSmallFields(world, "re-keyed");
         }
 
+        // Codex audit (ecs-wave1c) P2: with no mobile record under the old serial (none, or an item's record under the
+        // mobile's own serial) the re-key carries the traits from the caches, not the item record's defaults
+        [Theory]
+        [InlineData(false, false)]
+        [InlineData(true, false)]
+        [InlineData(false, true)]
+        [InlineData(true, true)]
+        public void The_Death_Rekey_Carries_The_Traits_Without_A_Mobile_Source_Record(bool on, bool itemRecord)
+        {
+            World world = BuildSmall(on);
+            Mobile m = world.Mobiles.Get(MOB);
+            world.Writer.SetMobileStatus(m, true, true, true);
+            world.Writer.SetRace(m, RaceType.GARGOYLE);
+            world.Writer.SetSpeedMode(m, CharacterSpeedType.CantRun);
+            MobileTraits before = MobileRecord(world, MOB);
+
+            world.Ecs.Mirror.Remove(MOB);
+
+            if (itemRecord)
+            {
+                world.Ecs.Mirror.UpsertItem(MOB, 0xA22, 0, 1, 1, 0, 0, 0, 1, WorldMirror.NO_CONTAINER, 0, false);
+                world.Ecs.Mirror.TryGetEntity(MOB, false, out _).Should().BeTrue();
+            }
+            else
+            {
+                world.Ecs.Mirror.TryGetEntity(MOB, out _).Should().BeFalse();
+            }
+
+            uint dead = world.Writer.RekeyDeadMobile(m);
+            dead.Should().Be(MOB | 0x8000_0000);
+            MobileRecord(world, dead).Should().Be(before);
+            (m.Race, m.IsFemale, m.IsRenamable, m.SpeedMode).Should().Be((RaceType.GARGOYLE, true, true, CharacterSpeedType.CantRun));
+            AssertSmallFields(world, "re-keyed without a mobile source record");
+        }
+
         [Fact]
         public void The_Mirror_Adds_The_Traits_Only_For_A_Non_Default_Value()
         {
