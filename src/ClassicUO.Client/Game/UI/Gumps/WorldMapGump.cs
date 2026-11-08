@@ -540,13 +540,8 @@ namespace ClassicUO.Game.UI.Gumps
 
             MapImage image = _mapImages.Take();
 
-            if (image != null)
+            if (image != null && ReplaceMapTexture(ref _mapTexture, image, CreateMapTexture))
             {
-                using (image)
-                {
-                    UploadMapTexture(image);
-                }
-
                 GameActions.Print(World, ResGumps.WorldMapLoaded, 0x48);
             }
 
@@ -1510,29 +1505,64 @@ namespace ClassicUO.Game.UI.Gumps
             }
         }
 
-        /// <summary>Replaces the map texture with the decoded image (game thread).</summary>
-        private unsafe void UploadMapTexture(MapImage image)
+        /// <summary>
+        /// Replaces <paramref name="current"/> with a texture made from <paramref name="image"/> (game thread). The old
+        /// texture is disposed first and the image always; an upload failure (a graphics allocation error, say) is logged
+        /// and leaves <paramref name="current"/> null, so Draw skips the map. True when the new texture is in place.
+        /// </summary>
+        internal static bool ReplaceMapTexture<TImage, TTexture>(ref TTexture current, TImage image, Func<TImage, TTexture> create)
+            where TImage : IDisposable
+            where TTexture : class, IDisposable
         {
-            _mapTexture?.Dispose();
-            _mapTexture = null;
+            using (image)
+            {
+                current?.Dispose();
+                current = null;
 
+                try
+                {
+                    current = create(image);
+                }
+                catch (Exception ex)
+                {
+                    Log.Error($"error uploading worldmap texture: {ex}");
+                }
+
+                return current != null;
+            }
+        }
+
+        /// <summary>Creates and fills the map texture (game thread); disposes it itself if the upload throws.</summary>
+        private static unsafe Texture2D CreateMapTexture(MapImage image)
+        {
             if (!image.DangerousTryGetSinglePixelMemory(out Memory<Rgba32> pixels))
             {
                 Log.Error("worldmap image is not contiguous");
 
-                return;
+                return null;
             }
 
             var texture = new Texture2D(Client.Game.GraphicsDevice, image.Width, image.Height);
 
-            using (System.Buffers.MemoryHandle pin = pixels.Pin())
+            try
             {
-                texture.SetDataPointerEXT(0, null, (IntPtr)pin.Pointer, pixels.Length * sizeof(Rgba32));
+                using (System.Buffers.MemoryHandle pin = pixels.Pin())
+                {
+                    texture.SetDataPointerEXT(0, null, (IntPtr)pin.Pointer, pixels.Length * sizeof(Rgba32));
+                }
+
+                ClassicUO.Renderer.TextureUploads.Changed();
+            }
+            catch
+            {
+                texture.Dispose();
+
+                throw;
             }
 
-            ClassicUO.Renderer.TextureUploads.Changed();
-            _mapTexture = texture;
             Log.Info($"[worldmap] texture {image.Width}x{image.Height} uploaded");
+
+            return texture;
         }
 
         internal class ZonesFileZoneData

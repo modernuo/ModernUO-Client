@@ -150,6 +150,49 @@ namespace ClassicUO.UnitTests.Game
             FakeImage.Live.Should().Be(before);
         }
 
+        private sealed class FakeTexture : IDisposable
+        {
+            public int DisposeCount;
+
+            public void Dispose() => DisposeCount++;
+        }
+
+        [Fact]
+        public void ReplaceMapTexture_Swaps_The_Texture_And_Frees_The_Image()
+        {
+            var old = new FakeTexture();
+            var made = new FakeTexture();
+            FakeTexture current = old;
+            var image = new FakeImage();
+
+            WorldMapGump.ReplaceMapTexture(ref current, image, _ => made).Should().BeTrue();
+
+            current.Should().BeSameAs(made);
+            old.DisposeCount.Should().Be(1);
+            made.DisposeCount.Should().Be(0);
+            image.DisposeCount.Should().Be(1);
+        }
+
+        [Fact]
+        public void ReplaceMapTexture_A_Failed_Upload_Is_Logged_And_Leaves_No_Texture()
+        {
+            var old = new FakeTexture();
+            FakeTexture current = old;
+            var image = new FakeImage();
+
+            WorldMapGump.ReplaceMapTexture<FakeImage, FakeTexture>(ref current, image, _ => throw new InvalidOperationException("upload failed"))
+                .Should().BeFalse("the caller prints 'loaded' only on success");
+
+            current.Should().BeNull("Draw skips a null texture");
+            old.DisposeCount.Should().Be(1);
+            image.DisposeCount.Should().Be(1);
+
+            var image2 = new FakeImage();
+            WorldMapGump.ReplaceMapTexture<FakeImage, FakeTexture>(ref current, image2, _ => null).Should().BeFalse();
+            current.Should().BeNull();
+            image2.DisposeCount.Should().Be(1);
+        }
+
         [Fact]
         public void DecodeMapImage_Reads_A_Cached_Png_As_Rgba_And_Returns_Null_For_A_Bad_File()
         {
