@@ -807,11 +807,16 @@ namespace ClassicUO.Game
                 }
 
                 LegacySpriteResolve.Draw(batcher, in d);
+                record &= d.Mode != SpriteCaptureMode.Sitted && !d.Rotated;
 
                 if (record)
                 {
                     ref MobileFrameCache.LegacyEntry entry = ref cache.LegacyEntries[k++];
-                    entry.Draw = d;
+                    entry.Texture = d.Texture;
+                    entry.Source = d.Source;
+                    entry.Hue = d.Hue;
+                    entry.Flip = d.Flip;
+                    entry.Mode = d.Mode;
                     entry.X = sprite.X - baseX;
                     entry.Y = sprite.Y - baseY;
                     entry.Kind = _selKind[i];
@@ -856,11 +861,17 @@ namespace ClassicUO.Game
         private static LegacyDraw LegacyReplayed(MobileFrameCache cache, int i, int baseX, int baseY, float depth)
         {
             ref readonly MobileFrameCache.LegacyEntry entry = ref cache.LegacyEntries[i];
-            LegacyDraw d = entry.Draw;
-            d.Position = new Vector2(baseX + entry.X, baseY + entry.Y);
-            d.Depth = DepthOf(depth, entry.Kind, entry.Add);
 
-            return d;
+            return new LegacyDraw
+            {
+                Texture = entry.Texture,
+                Position = new Vector2(baseX + entry.X, baseY + entry.Y),
+                Source = entry.Source,
+                Hue = entry.Hue,
+                Depth = DepthOf(depth, entry.Kind, entry.Add),
+                Flip = entry.Flip,
+                Mode = entry.Mode
+            };
         }
 
         private void ApplyLegacyEffects(MobileFrameCache cache, int baseX, int baseY)

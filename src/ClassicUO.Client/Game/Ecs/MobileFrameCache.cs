@@ -3,7 +3,9 @@
 using System;
 using ClassicUO.Ecs;
 using ClassicUO.Game.Map;
+using ClassicUO.Renderer;
 using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
 using Uo.Pack;
 using Uo.Render;
 
@@ -99,21 +101,26 @@ namespace ClassicUO.Game
         public MobileSpriteExtract.LightRequest[] LegacyLights = Array.Empty<MobileSpriteExtract.LightRequest>();
         public int LegacyLightCount;
 
-        /// <summary>One Legacy batcher call; <see cref="LegacyDraw.Position"/> is (origin + X, origin + Y) and
-        /// <see cref="LegacyDraw.Depth"/> MobileSpriteExtract.DepthOf(baseDepth, Kind, Add) at replay.</summary>
+        /// <summary>One Legacy batcher call (a shadow or strip draw: seated mobiles are not recorded), about 56 bytes; at
+        /// replay its position is (origin + X, origin + Y) and its depth MobileSpriteExtract.DepthOf(baseDepth, Kind, Add).</summary>
         public struct LegacyEntry
         {
-            public LegacyDraw Draw;
+            public Texture2D Texture;
+            public Rectangle Source;
+            public Vector3 Hue;
             public int X, Y;
             public float Add;
             public byte Kind;
+            public bool Flip;
+            public SpriteCaptureMode Mode;
         }
 
+        // sized to the record count (rounded up to 4): one array per drawn mobile, grown only when its layers grow
         public void EnsureLegacyCapacity(int n)
         {
             if (LegacyEntries.Length < n)
             {
-                Array.Resize(ref LegacyEntries, Math.Max(n, Math.Max(8, LegacyEntries.Length * 2)));
+                Array.Resize(ref LegacyEntries, (n + 3) & ~3);
             }
         }
 
