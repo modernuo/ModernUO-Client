@@ -740,6 +740,49 @@ namespace ClassicUO.Game
 
                     return true;
 
+                // open status|skills|buffs|combatbook: the player-stat gumps, which read World.PlayerState (player-state gate)
+                case "open" when args.Length > 0:
+                    switch (args[0])
+                    {
+                        case "status": GameActions.OpenStatusBar(world); break;
+                        case "skills": GameActions.OpenSkills(world); break;
+                        case "buffs":
+                            if (UIManager.GetGump<BuffGump>() == null)
+                            {
+                                UIManager.Add(new BuffGump(world, 100, 100));
+                            }
+
+                            break;
+                        case "combatbook": GameActions.OpenAbilitiesBook(world); break;
+                    }
+
+                    Log.Info($"[ECS] ui open {args[0]}");
+
+                    return true;
+
+                // playerstate: World.PlayerState's status, skill, buff and ability values (player-state gate)
+                case "playerstate":
+                {
+                    PlayerState ps = world.PlayerState;
+                    int skillsSet = 0, skillSum = 0;
+
+                    foreach (Skill sk in ps.Skills)
+                    {
+                        if (sk.BaseFixed != 0)
+                        {
+                            skillsSet++;
+                            skillSum += sk.BaseFixed;
+                        }
+                    }
+
+                    Log.Info($"[ECS] playerstate str {ps.Strength} dex {ps.Dexterity} int {ps.Intelligence} gold {ps.Gold} weight {ps.Weight}/{ps.WeightMax} " +
+                             $"followers {ps.Followers}/{ps.FollowersMax} cap {ps.StatsCap} luck {ps.Luck} res {ps.PhysicalResistance},{ps.FireResistance},{ps.ColdResistance},{ps.PoisonResistance},{ps.EnergyResistance} " +
+                             $"dmg {ps.DamageMin}-{ps.DamageMax} tithing {ps.TithingPoints} locks {ps.StrLock},{ps.DexLock},{ps.IntLock} " +
+                             $"skills {ps.Skills.Length} set {skillsSet} sum {skillSum} buffs {ps.BuffIcons.Count} abilities {ps.PrimaryAbility},{ps.SecondaryAbility}");
+
+                    return false;
+                }
+
                 // renderer gpu|legacy: switches the world renderer for this session (T3a's shots of Legacy's MobileView)
                 case "renderer" when args.Length > 0:
                 {
