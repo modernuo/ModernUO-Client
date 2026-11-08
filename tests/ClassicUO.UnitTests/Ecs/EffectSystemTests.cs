@@ -20,16 +20,17 @@ namespace ClassicUO.UnitTests.Ecs
         private const uint PLAYER = 0x0000_0100, TARGET = 0x0000_0200, CASTER = 0x0000_0300;
         private const uint T0 = 1_000_000;
 
-        private readonly World _old, _new;
+        private readonly World _old, _new, _own;
         private readonly List<string> _mismatches = new List<string>();
         private readonly Action<string> _savedObserver;
-        private readonly long _comparedBefore, _shadowBefore;
+        private readonly long _comparedBefore, _shadowBefore, _endpointReadsBefore;
 
         public EffectSystemTests()
         {
             _old = WorldWriterMobileTests.BuildPlayer(out _, PLAYER);
             _new = WorldWriterMobileTests.BuildPlayer(out _, PLAYER);
-            foreach (World w in new[] { _old, _new })
+            _own = WorldWriterMobileTests.BuildPlayer(out _, PLAYER);
+            foreach (World w in new[] { _old, _new, _own })
             {
                 w.RangeSize.X = 1000; // Distance is measured from the range centre
                 w.RangeSize.Y = 1000;
@@ -38,17 +39,25 @@ namespace ClassicUO.UnitTests.Ecs
             _old.EffectsSystemOverride = false;
             _new.EffectsSystemOverride = true;
             _new.EffectsCheckOverride = true;
+            _new.EffectEndpointsOverride = false;
+
+            // T8 ownership: the third world references sources and targets by record (ecs_effect_endpoints) with the checker
+            _own.EffectsSystemOverride = true;
+            _own.EffectsCheckOverride = true;
+            _own.EffectEndpointsOverride = true;
+            _own.EffectEndpointsCheckOverride = true;
             _savedObserver = EffectSystem.Observer;
             EffectSystem.Observer = _mismatches.Add;
             _comparedBefore = EffectSystem.Compared;
             _shadowBefore = EffectSystem.ShadowSteps;
+            _endpointReadsBefore = EffectSystem.EndpointReads;
             Time.Ticks = T0;
             Time.Delta = 0.025f;
         }
 
         public void Dispose() => EffectSystem.Observer = _savedObserver;
 
-        private IEnumerable<World> Worlds => new[] { _old, _new };
+        private IEnumerable<World> Worlds => new[] { _old, _new, _own };
 
         private static Mobile AddMobile(World w, uint serial, int x, int y)
         {
@@ -104,8 +113,9 @@ namespace ClassicUO.UnitTests.Ecs
             return sb.ToString();
         }
 
-        // `frames` updates 25 ms apart; `each` runs before every update on both worlds (a target that moves, dies, ...)
-        private void Run(int frames, Action<World, int> each = null)
+        // `frames` updates 25 ms apart; `each` runs before every update on both worlds (a target that moves, dies, ...);
+        // `accepted`: a known, documented difference the endpoint checker must report (and nothing else)
+        private void Run(int frames, Action<World, int> each = null, string accepted = null)
         {
             Snap(_new).Should().NotBeEmpty("the scenario created effects");
 
@@ -123,9 +133,17 @@ namespace ClassicUO.UnitTests.Ecs
 
                 _old.Effects.Update();
                 _new.Effects.Update();
+                _own.Effects.Update();
                 Snap(_new).Should().Be(Snap(_old), $"after frame {i}");
+                Snap(_own).Should().Be(Snap(_old), $"endpoints from the ECS, after frame {i}");
                 CountEntities(_new).Should().Be(Snap(_new).Count(c => c == '\n'), $"entities equal the live effects after frame {i}");
+                CountEntities(_own).Should().Be(Snap(_own).Count(c => c == '\n'), $"endpoint world: entities equal the live effects after frame {i}");
                 CountEntities(_old).Should().Be(0, "the old world has no effect entities");
+            }
+
+            if (accepted != null)
+            {
+                _mismatches.RemoveAll(m => m.Contains(accepted)).Should().BeGreaterThan(0, "the checker reports the accepted difference");
             }
 
             _mismatches.Should().BeEmpty();
@@ -313,6 +331,380 @@ namespace ClassicUO.UnitTests.Ecs
             EffectSystem.Check(_new, _new.Effects);
             _mismatches.Should().Contain(m => m.Contains("frame"));
             _mismatches.Clear();
+        }
+
+        // ---- T8 ownership (ecs_effect_endpoints)
+
+        private const uint ITEM = 0x4000_0500;
+
+        private static Item AddItem(World w, uint serial, int x, int y)
+        {
+            Item it = w.GetOrCreateItem(serial);
+            it.Graphic = 0x0EED;
+            it.SetInWorldTile((ushort)x, (ushort)y, 0);
+            w.Ecs.Sync(it);
+
+            return it;
+        }
+
+        private static ref EffectState State(GameEffect e) => ref e.EcsEntity.GetComponent<EffectState>();
+
+        [Fact]
+        public void Endpoints_Follow_A_Death_Rekeyed_Mobile_And_Not_A_New_Mobile_Under_Its_Old_Serial()
+        {
+            const uint DEAD = TARGET | 0x8000_0000;
+
+            foreach (World w in Worlds)
+            {
+                AddMobile(w, CASTER, 1003, 1003);
+                AddMobile(w, TARGET, 1012, 1008);
+                Create(w, GraphicEffectType.Moving, CASTER, TARGET, 0x36D4, 0, 0, 0, 0, speed: 1, duration: 0, explodes: true);
+                Create(w, GraphicEffectType.FixedFrom, TARGET, 0, 0x3709, 0, 0, 0, 0, duration: 600);
+                Create(w, GraphicEffectType.Lightning, TARGET, 0, 0, 0, 0, 0, 0);
+            }
+
+            Run(70, (w, i) =>
+            {
+                if (i == 3)
+                {
+                    w.Writer.RekeyDeadMobile(w.Mobiles.Get(TARGET)).Should().Be(DEAD);
+                }
+                else if (i == 5)
+                {
+                    AddMobile(w, TARGET, 1020, 1020); // the serial comes back as another mobile: not the effects' endpoint
+                }
+                else if (i > 5 && i < 14)
+                {
+                    Mobile d = w.Mobiles.Get(DEAD);
+                    d.SetInWorldTile((ushort)(1012 + i / 4), 1008, 0); // AddToTile syncs the record
+                }
+                else if (i == 40)
+                {
+                    w.Mobiles.Get(DEAD).Destroy();
+                }
+            });
+
+            (EffectSystem.EndpointReads - _endpointReadsBefore).Should().BeGreaterThan(0, "the endpoint checker compared reads");
+        }
+
+        // Codex audit (ecs-effects-own) P2: a second death under the same serial displaces the first dying mobile from
+        // serial | 0x80000000, and the second mobile is written into that record. The displaced mobile's endpoints end at its
+        // last position and let go of the record (a moving effect to it lands there, as legacy, whose orphaned object stays
+        // put; the checker reports the gone target, the accepted difference), also when the record is re-keyed once more; the
+        // second mobile's effects follow it.
+        [Fact]
+        public void A_Second_Death_Under_The_Same_Serial_Ends_The_Displaced_Mobiles_Endpoints()
+        {
+            const uint DEAD = TARGET | 0x8000_0000;
+
+            foreach (World w in Worlds)
+            {
+                AddMobile(w, CASTER, 1001, 1001);
+                AddMobile(w, TARGET, 1014, 1010);
+                Create(w, GraphicEffectType.Moving, CASTER, TARGET, 0x36D4, 0, 0, 0, 0, speed: 1, duration: 0);
+            }
+
+            GameEffect toFirst = (GameEffect)_own.Effects.Items;
+
+            Run(60, (w, i) =>
+            {
+                if (i == 2)
+                {
+                    w.Writer.RekeyDeadMobile(w.Mobiles.Get(TARGET)).Should().Be(DEAD);
+                }
+                else if (i == 3)
+                {
+                    AddMobile(w, TARGET, 1003, 1012);
+                    Create(w, GraphicEffectType.FixedFrom, TARGET, 0, 0x3709, 0, 0, 0, 0, duration: 1000);
+                }
+                else if (i == 5)
+                {
+                    w.Writer.RekeyDeadMobile(w.Mobiles.Get(TARGET)).Should().Be(DEAD);
+                }
+                else if (i == 12)
+                {
+                    // the second mobile's record is re-keyed again (a death packet for the dead serial): the old record's
+                    // endpoints move to the new one, the displaced mobile's must not come back
+                    w.Writer.RekeyDeadMobile(w.Mobiles.Get(DEAD)).Should().Be(DEAD);
+                }
+                else if (i > 5 && i < 20)
+                {
+                    // the second dying mobile moves: its fixed effect follows it, the first one's moving effect must not
+                    w.Mobiles.Get(DEAD).SetInWorldTile((ushort)(1003 + i), 1012, 0);
+                }
+            }, accepted: "target destroyed: ECS True | object False");
+
+            toFirst.IsDestroyed.Should().BeFalse("the moving effect was still on its way when the scenario ended");
+            ref EffectState s = ref State(toFirst);
+            (s.Ends & EffectState.END_TARGET_GONE).Should().Be(EffectState.END_TARGET_GONE, "the displaced mobile's endpoint is gone");
+            (s.TargetX, s.TargetY).Should().Be(((ushort)1014, (ushort)1010));
+            s.TargetEntity.IsNull.Should().BeTrue("a gone endpoint lets go of a record that lives on as another mobile's");
+        }
+
+        // Codex audit (ecs-effects-own) P2: a mobile and an item share a serial and the mirror holds the item's record, so the
+        // mobile World resolves cannot be bound. Such an endpoint is a ground point at the object's position when the effect
+        // registered, not (0,0,0): a moving effect still heads for it, a fixed effect stays where its source was.
+        [Fact]
+        public void An_Unbound_Endpoint_Is_A_Ground_Point_At_The_Objects_Position()
+        {
+            long unbound = EffectSystem.EndpointsUnbound;
+
+            foreach (World w in Worlds)
+            {
+                AddMobile(w, TARGET, 1012, 1009);
+                AddMobile(w, CASTER, 1004, 1006);
+                AddItem(w, TARGET, 1002, 1003); // the item's record replaces the mobile's under the shared serial
+                AddItem(w, CASTER, 1003, 1002);
+                Create(w, GraphicEffectType.Moving, 0, TARGET, 0x36D4, 1001, 1001, 0, 0, speed: 1, duration: 0, explodes: true);
+                Create(w, GraphicEffectType.FixedFrom, CASTER, 0, 0x3709, 0, 0, 0, 0, duration: 400);
+            }
+
+            Run(60);
+            EffectSystem.EndpointsUnbound.Should().BeGreaterThan(unbound, "the endpoints could not be bound");
+        }
+
+        private const uint OTHER = 0x0000_0400;
+
+        // Friflo's handle revision is 16 bits: deletes and creates the stale handle's id (the store reuses the last freed id
+        // first) until the next entity created there gets the stale handle's id and revision
+        private static void WrapTo(World w, Friflo.Engine.ECS.Entity stale)
+        {
+            for (int k = 0; k < 70_000; k++)
+            {
+                Friflo.Engine.ECS.Entity t = w.Ecs.Mirror.Store.CreateEntity();
+                bool last = t.Id == stale.Id && ((t.Revision + 1) & 0xFFFF) == (stale.Revision & 0xFFFF);
+                t.DeleteEntity();
+
+                if (last)
+                {
+                    return;
+                }
+            }
+
+            throw new InvalidOperationException("the stale handle's id was not reused");
+        }
+
+        // Codex audit (ecs-effects-own) P3: a record removed without a hook, its id then reused until the revision wraps, and a
+        // record of another mobile (or an item under the same serial) created there: the stale handle is valid again. The read
+        // must still find the endpoint gone (the record is not its object's: other serial, other kind), so the moving effect
+        // lands where its target last was.
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void A_Stale_Endpoint_Handle_Whose_Revision_Wrapped_Does_Not_Follow_The_New_Record(bool itemUnderTheSerial)
+        {
+            uint newcomer = itemUnderTheSerial ? TARGET : OTHER;
+
+            foreach (World w in Worlds)
+            {
+                AddMobile(w, TARGET, 1012, 1009);
+                Create(w, GraphicEffectType.Moving, 0, TARGET, 0x36D4, 1001, 1001, 0, 0, speed: 1, duration: 0, explodes: true);
+            }
+
+            Run(60, (w, i) =>
+            {
+                if (i == 3)
+                {
+                    w.Ecs.Mirror.TryGetEntity(TARGET, out var stale).Should().BeTrue();
+                    w.Ecs.Mirror.Remove(TARGET); // no hook sees it
+
+                    if (ReferenceEquals(w, _own))
+                    {
+                        WrapTo(w, stale);
+                    }
+
+                    if (itemUnderTheSerial)
+                    {
+                        AddItem(w, TARGET, 1003, 1012);
+                    }
+                    else
+                    {
+                        AddMobile(w, OTHER, 1003, 1012);
+                    }
+
+                    if (ReferenceEquals(w, _own))
+                    {
+                        w.Ecs.Mirror.TryGetEntity(newcomer, out var rec).Should().BeTrue();
+                        (rec.Id, rec.Revision).Should().Be((stale.Id, stale.Revision), "the new record has the stale handle's id and revision");
+                    }
+                }
+            }, accepted: "target destroyed: ECS True | object False");
+        }
+
+        // P3, the re-key: an endpoint found gone after an unhooked removal must not come back when a record that wrapped onto its
+        // old handle is re-keyed by a death
+        [Fact]
+        public void A_Gone_Endpoint_Is_Not_Revived_By_A_Rekey_Of_A_Record_On_Its_Old_Handle()
+        {
+            const uint DEAD = OTHER | 0x8000_0000;
+            Friflo.Engine.ECS.Entity stale = default;
+
+            foreach (World w in Worlds)
+            {
+                AddMobile(w, TARGET, 1012, 1009);
+                Create(w, GraphicEffectType.Moving, 0, TARGET, 0x36D4, 1001, 1001, 0, 0, speed: 1, duration: 0, explodes: true);
+            }
+
+            Run(60, (w, i) =>
+            {
+                if (i == 3)
+                {
+                    if (ReferenceEquals(w, _own))
+                    {
+                        w.Ecs.Mirror.TryGetEntity(TARGET, out stale).Should().BeTrue();
+                    }
+
+                    w.Ecs.Mirror.Remove(TARGET); // no hook sees it: the next update finds the endpoint gone
+                }
+                else if (i == 4)
+                {
+                    if (ReferenceEquals(w, _own))
+                    {
+                        WrapTo(w, stale);
+                    }
+
+                    AddMobile(w, OTHER, 1003, 1012);
+                }
+                else if (i == 5)
+                {
+                    w.Writer.RekeyDeadMobile(w.Mobiles.Get(OTHER)).Should().Be(DEAD);
+                }
+                else if (i > 5 && i < 20)
+                {
+                    w.Mobiles.Get(DEAD).SetInWorldTile((ushort)(1003 + i), 1012, 0);
+                }
+            }, accepted: "target destroyed: ECS True | object False");
+        }
+
+        [Fact]
+        public void A_Target_Destroyed_And_Its_Serial_Reused_Keeps_The_Last_Position()
+        {
+            foreach (World w in Worlds)
+            {
+                AddMobile(w, TARGET, 1012, 1009);
+                Create(w, GraphicEffectType.Moving, 0, TARGET, 0x36D4, 1001, 1001, 0, 0, speed: 1, duration: 0, explodes: true);
+            }
+
+            Run(60, (w, i) =>
+            {
+                if (i == 4)
+                {
+                    Mobile t = w.Mobiles.Get(TARGET);
+                    t.SetInWorldTile(1013, 1010, 0);
+                    w.RemoveMobile(TARGET);
+                    t.Destroy();
+                    AddMobile(w, TARGET, 1002, 1012);
+                }
+            });
+        }
+
+        [Fact]
+        public void A_Fixed_Effect_Takes_Its_Source_Offset_From_The_Steps_Or_The_Item()
+        {
+            foreach (World w in Worlds)
+            {
+                w.Ecs.ClockEnabled = true;
+                w.Ecs.StepsEnabled = true;
+                AddMobile(w, CASTER, 1004, 1002);
+                AddItem(w, ITEM, 1005, 1003);
+                Create(w, GraphicEffectType.FixedFrom, CASTER, 0, 0x3709, 0, 0, 0, 0, duration: 400);
+                Create(w, GraphicEffectType.FixedFrom, ITEM, 0, 0x373A, 0, 0, 0, 0, duration: 400);
+            }
+
+            Run(20, (w, i) =>
+            {
+                Mobile m = w.Mobiles.Get(CASTER);
+                m.Offset = new Microsoft.Xna.Framework.Vector3(i, -i, i / 2);
+                w.Ecs.PushSteps(m);
+                w.Items.Get(ITEM).Offset = new Microsoft.Xna.Framework.Vector3(2 * i, i, 0);
+            });
+
+            // the mobile's offset is read from its Steps: a component that differs from the object moves the effect, and the
+            // checker reports it
+            Mobile caster = _own.Mobiles.Get(CASTER);
+            _own.Ecs.Mirror.TryGetEntity(CASTER, out var rec).Should().BeTrue();
+            rec.GetComponent<ClassicUO.Ecs.Steps>().OffsetX = 77;
+            _own.Effects.Update();
+            ((GameEffect)_own.Effects.Items).OffsetX.Should().Be(77);
+            caster.OffsetX.Should().NotBe(77);
+            _mismatches.Should().Contain(m => m.Contains("source offset"));
+            _mismatches.Clear();
+        }
+
+        [Fact]
+        public void The_Endpoint_Checker_Flags_A_Position_The_ECS_Did_Not_Get()
+        {
+            AddMobile(_own, CASTER, 1003, 1003);
+            AddMobile(_own, TARGET, 1012, 1008);
+            Create(_own, GraphicEffectType.Moving, CASTER, TARGET, 0x36D4, 0, 0, 0, 0, speed: 1, duration: 0);
+            _own.Effects.Update();
+            _mismatches.Should().BeEmpty();
+
+            // a move written to the object only (outside the funnel): the effect follows the record, the checker reports it
+            _own.Mobiles.Get(TARGET).X = 1014;
+            _own.Effects.Update();
+            _mismatches.Should().Contain(m => m.Contains("target ECS (1012,1008,0) | object (1014,1008,0)"));
+            _mismatches.Clear();
+        }
+
+        [Fact]
+        public void Without_The_Checker_An_Effect_Holds_No_Objects_And_An_Unseen_Removal_Leaves_The_Last_Position()
+        {
+            _own.EffectEndpointsCheckOverride = false;
+            AddMobile(_own, CASTER, 1003, 1003);
+            AddMobile(_own, TARGET, 1012, 1008);
+            Create(_own, GraphicEffectType.Moving, CASTER, TARGET, 0x36D4, 0, 0, 0, 0, speed: 1, duration: 0);
+            Create(_own, GraphicEffectType.FixedXYZ, 0, 0, 0x3779, 1001, 1001, 0, 0, duration: 400);
+            Create(_own, GraphicEffectType.FixedFrom, CASTER, 0, 0x3709, 0, 0, 0, 0, duration: 400);
+
+            var fx = (GameEffect)_own.Effects.Items;
+            var follower = (GameEffect)fx.Next.Next;
+            fx.UsesEndpoints.Should().BeTrue();
+            fx.EndpointCheck.Should().BeFalse();
+            fx.Source.Should().BeNull("the effect references its source by record only");
+            fx.Target.Should().BeNull();
+            fx.SourceObject.Should().BeSameAs(_own.Mobiles.Get(CASTER), "the views find the object World holds");
+            fx.IsMoving.Should().BeTrue();
+
+            ref EffectState s = ref State(fx);
+            (s.Ends & (EffectState.END_SOURCE | EffectState.END_TARGET | EffectState.END_SOURCE_MOBILE | EffectState.END_TARGET_MOBILE))
+                .Should().Be(EffectState.END_SOURCE | EffectState.END_TARGET | EffectState.END_SOURCE_MOBILE | EffectState.END_TARGET_MOBILE);
+            (s.SourceSerial, s.TargetSerial).Should().Be((CASTER, TARGET));
+            var ground = (GameEffect)fx.Next;
+            (State(ground).Ends).Should().Be(0, "a fixed effect at a point has no endpoint objects");
+            ground.SourceObject.Should().BeNull();
+
+            // the mirror alone loses the target's record (no hook saw it): the target is gone where it last was
+            long unhooked = EffectSystem.EndpointsUnhooked;
+            _own.Ecs.Mirror.Remove(TARGET);
+            _own.Effects.Update();
+            s = ref State(fx);
+            (s.Ends & EffectState.END_TARGET_GONE).Should().Be(EffectState.END_TARGET_GONE);
+            (s.TargetX, s.TargetY).Should().Be(((ushort)1012, (ushort)1008));
+            EffectSystem.EndpointsUnhooked.Should().BeGreaterThan(unhooked);
+
+            // and the source's record: the effect that follows it ends as when its source is destroyed
+            _own.Ecs.Mirror.Remove(CASTER);
+            _own.Effects.Update();
+            follower.IsDestroyed.Should().BeTrue();
+        }
+
+        [Fact]
+        public void With_The_Switch_Off_Effects_Keep_Their_Objects()
+        {
+            AddMobile(_new, CASTER, 1003, 1003);
+            Create(_new, GraphicEffectType.FixedFrom, CASTER, 0, 0x3709, 0, 0, 0, 0, duration: 400);
+            var fx = (GameEffect)_new.Effects.Items;
+            fx.UsesEndpoints.Should().BeFalse();
+            fx.Source.Should().BeSameAs(_new.Mobiles.Get(CASTER));
+            State(fx).Ends.Should().Be(0);
+            State(fx).SourceSerial.Should().Be(CASTER, "the off path publishes the object's serial");
+        }
+
+        [Fact]
+        public void The_Endpoint_Setting_Defaults_Off()
+        {
+            new ClassicUO.Configuration.Settings().EcsEffectEndpoints.Should().BeFalse();
         }
 
         [Fact]

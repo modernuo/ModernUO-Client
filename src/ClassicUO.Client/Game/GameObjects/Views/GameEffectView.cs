@@ -117,9 +117,11 @@ namespace ClassicUO.Game.GameObjects
 
             Vector3 hueVec = ShaderHueTranslator.GetHueVector(hue, data.IsPartialHue, data.IsTranslucent ? .5f : 1f, effect: true);
 
-            if (Source != null)
+            GameObject source = SourceObject;
+
+            if (source != null)
             {
-                depth = Source.CalculateDepthZ() + 1f;
+                depth = source.CalculateDepthZ() + 1f;
             }
 
             switch (Blend)
@@ -245,9 +247,9 @@ namespace ClassicUO.Game.GameObjects
             //Engine.DebugInfo.EffectsRendered++;
 
 
-            if (data.IsLight && Source != null)
+            if (data.IsLight && source != null)
             {
-                Client.Game.GetScene<GameScene>().AddLight(Source, Source, posX + 22, posY + 22);
+                Client.Game.GetScene<GameScene>().AddLight(source, source, posX + 22, posY + 22);
             }
 
             return true;

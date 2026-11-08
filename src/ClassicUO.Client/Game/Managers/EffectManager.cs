@@ -43,6 +43,11 @@ namespace ClassicUO.Game.Managers
             {
                 EffectSystem.Check(_world, this);
             }
+
+            if (system && _world.EffectEndpointsCheckOn)
+            {
+                EffectSystem.CheckEndpoints(this);
+            }
         }
 
         /// <summary>Appends <paramref name="effect"/> to the list; with <c>ecs_effects</c> on it gets its entity first.</summary>

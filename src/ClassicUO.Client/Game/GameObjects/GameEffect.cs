@@ -55,7 +55,7 @@ namespace ClassicUO.Game.GameObjects
             Duration = duration > 0 ? Time.Ticks + duration : -1;
         }
 
-        public bool IsMoving => Target != null || TargetX != 0 && TargetY != 0;
+        public bool IsMoving => (UsesEndpoints && !EcsEntity.IsNull ? EffectSystem.HasTarget(this) : Target != null) || TargetX != 0 && TargetY != 0;
 
         public bool CanCreateExplosionEffect;
         public ushort AnimationGraphic = 0xFFFF;
@@ -74,11 +74,21 @@ namespace ClassicUO.Game.GameObjects
         /// <summary>T8 (CUO_EFFECT_CHECK): the legacy animation rules on a copy, compared with the system's step.</summary>
         internal EffectShadow Shadow;
 
+        /// <summary>T8 ownership (ecs_effect_endpoints): source and target are the state's references, read from the ECS; the
+        /// object references below are kept only for the off path and the checker (CUO_EFFECT_ENDPOINT_CHECK).</summary>
+        internal bool UsesEndpoints;
+
+        /// <summary>CUO_EFFECT_ENDPOINT_CHECK when the effect registered: the objects are kept and every read is compared.</summary>
+        internal bool EndpointCheck;
+
         public GameObject Source;
-        protected GameObject Target;
-        protected ushort TargetX;
-        protected ushort TargetY;
-        protected sbyte TargetZ;
+        internal GameObject Target;
+        internal ushort TargetX;
+        internal ushort TargetY;
+        internal sbyte TargetZ;
+
+        /// <summary>The source object for the views (depth, light) and the client-side target cursor.</summary>
+        internal GameObject SourceObject => UsesEndpoints && !EcsEntity.IsNull ? EffectSystem.SourceObjectOf(this) : Source;
 
 
         public override void Update()
@@ -86,7 +96,7 @@ namespace ClassicUO.Game.GameObjects
             base.Update();
 
 
-            if (Source != null && Source.IsDestroyed)
+            if (UsesEndpoints && !EcsEntity.IsNull ? EffectSystem.SourceGone(this) : Source != null && Source.IsDestroyed)
             {
                 Destroy();
 
@@ -143,7 +153,31 @@ namespace ClassicUO.Game.GameObjects
 
         protected (ushort x, ushort y, sbyte z) GetSource()
         {
+            return UsesEndpoints && !EcsEntity.IsNull ? EffectSystem.SourceOf(this) : LegacySource();
+        }
+
+        internal (ushort x, ushort y, sbyte z) LegacySource()
+        {
             return Source == null ? (X, Y, Z) : (Source.X, Source.Y, Source.Z);
+        }
+
+        /// <summary>FixedEffect: the source's offset, when the source is an object (else the effect keeps its own).</summary>
+        protected bool TryGetSourceOffset(out Microsoft.Xna.Framework.Vector3 offset)
+        {
+            if (UsesEndpoints && !EcsEntity.IsNull)
+            {
+                return EffectSystem.SourceOffsetOf(this, out offset);
+            }
+
+            offset = Source?.Offset ?? default;
+
+            return Source != null;
+        }
+
+        /// <summary>MovingEffect: the target object was destroyed (its last coordinates stay the target).</summary>
+        protected bool TargetGone()
+        {
+            return UsesEndpoints && !EcsEntity.IsNull ? EffectSystem.TargetGone(this) : Target != null && Target.IsDestroyed;
         }
 
         protected void CreateExplosionEffect()
@@ -173,8 +207,14 @@ namespace ClassicUO.Game.GameObjects
             s.OffsetX = OffsetX;
             s.OffsetY = OffsetY;
             s.Angle = AngleToTarget;
-            s.SourceSerial = (Source as Entity)?.Serial ?? 0;
-            s.TargetSerial = (Target as Entity)?.Serial ?? 0;
+
+            // with endpoints the serials are the references themselves (the re-key moves them)
+            if (!UsesEndpoints)
+            {
+                s.SourceSerial = (Source as Entity)?.Serial ?? 0;
+                s.TargetSerial = (Target as Entity)?.Serial ?? 0;
+            }
+
             s.Flags = (byte)(IsMoving ? s.Flags | EffectState.FLAG_MOVING : s.Flags & ~EffectState.FLAG_MOVING);
         }
 
@@ -188,10 +228,20 @@ namespace ClassicUO.Game.GameObjects
         {
             Source = null;
 
+            if (UsesEndpoints && !EcsEntity.IsNull)
+            {
+                EffectSystem.DropSource(this);
+            }
+
             SetInWorldTile(x, y,z);
         }
 
         protected (ushort x, ushort y, sbyte z) GetTarget()
+        {
+            return UsesEndpoints && !EcsEntity.IsNull ? EffectSystem.TargetOf(this) : LegacyTarget();
+        }
+
+        internal (ushort x, ushort y, sbyte z) LegacyTarget()
         {
             return Target == null ? (TargetX, TargetY, TargetZ) : (Target.X, Target.Y, Target.Z);
         }
@@ -204,6 +254,11 @@ namespace ClassicUO.Game.GameObjects
         public void SetTarget(ushort x, ushort y, sbyte z)
         {
             Target = null;
+
+            if (UsesEndpoints && !EcsEntity.IsNull)
+            {
+                EffectSystem.DropTarget(this);
+            }
             TargetX = x;
             TargetY = y;
             TargetZ = z;

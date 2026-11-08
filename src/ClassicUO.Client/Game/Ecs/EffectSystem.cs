@@ -6,6 +6,8 @@ using ClassicUO.Game.GameObjects;
 using ClassicUO.Game.Managers;
 using ClassicUO.Utility.Logging;
 using Friflo.Engine.ECS;
+using EcsEntity = Friflo.Engine.ECS.Entity;
+using Position = ClassicUO.Ecs.Position;
 
 namespace ClassicUO.Game
 {
@@ -32,9 +34,21 @@ namespace ClassicUO.Game
         };
 
         public static readonly bool GlobalCheck = Environment.GetEnvironmentVariable("CUO_EFFECT_CHECK") == "1";
+
+        // CLEANUP(release): the gate's override of ecs_effect_endpoints (CUO_ECS_EFFECT_ENDPOINTS=1|0) and its checker
+        public static readonly bool GlobalEndpoints = Environment.GetEnvironmentVariable("CUO_ECS_EFFECT_ENDPOINTS") switch
+        {
+            "1" => true,
+            "0" => false,
+            _ => Configuration.Settings.GlobalSettings?.EcsEffectEndpoints ?? false
+        };
+
+        public static readonly bool GlobalEndpointCheck = Environment.GetEnvironmentVariable("CUO_EFFECT_ENDPOINT_CHECK") == "1";
 #else
         public static readonly bool GlobalOn = Configuration.Settings.GlobalSettings?.EcsEffects ?? true;
         public const bool GlobalCheck = false;
+        public static readonly bool GlobalEndpoints = Configuration.Settings.GlobalSettings?.EcsEffectEndpoints ?? false;
+        public const bool GlobalEndpointCheck = false;
 #endif
 
         /// <summary>Checker counts (all worlds): frames compared, effects compared, mismatches, shadow animation steps.</summary>
@@ -69,8 +83,15 @@ namespace ClassicUO.Game
             s.NextChange = e.NextChangeFrameTime;
             s.Flags = (byte)((e.IsEnabled ? EffectState.FLAG_ENABLED : 0) | (e.CanCreateExplosionEffect ? EffectState.FLAG_EXPLODES : 0) |
                              (e is MovingEffect m && m.FixedDir ? EffectState.FLAG_FIXED_DIR : 0));
+
+            if (e.World.EffectEndpointsOn)
+            {
+                BindEndpoints(e, ref s);
+            }
+
             e.Publish(ref s);
             e.EcsEntity = e.World.Ecs.Mirror.Store.CreateEntity(s);
+            DropObjects(e);
 
             if (e.World.EffectsCheckOn)
             {
@@ -197,6 +218,458 @@ namespace ClassicUO.Game
             e.NextChangeFrameTime = s.NextChange;
 
             return true;
+        }
+
+        // ---- T8 ownership (ecs_effect_endpoints): source and target as references in the state
+
+        /// <summary>Endpoint checker counts (all worlds): reads compared, mismatches; endpoints that could not be bound to a
+        /// record (an object without one: it is treated as a ground point), records removed without the hook.</summary>
+        public static long EndpointReads, EndpointMismatches, EndpointsUnbound, EndpointsUnhooked;
+
+        private static uint s_nextEndpointLog;
+
+        /// <summary>
+        /// Register: the constructor's source and target objects become references to their mirror records (T4's checked
+        /// lookup: World holds the instance and the record is of its kind). An object without a record is treated as a ground
+        /// point at its current position. The objects are kept only for the checker.
+        /// </summary>
+        private static void BindEndpoints(GameEffect e, ref EffectState s)
+        {
+            s.Ends = 0;
+
+            if (e.Source is GameObjects.Entity src && src.TryScalarEntity(out EcsEntity se))
+            {
+                ref readonly Position p = ref EcsRead.Get<Position>(se);
+                s.Ends |= (byte)(EffectState.END_SOURCE | (src is Mobile ? EffectState.END_SOURCE_MOBILE : 0));
+                s.SourceEntity = se;
+                s.SourceSerial = src.Serial;
+                s.SourceX = p.X;
+                s.SourceY = p.Y;
+                s.SourceZ = p.Z;
+            }
+            else if (e.Source != null)
+            {
+                // a ground point on both of the checker's paths too (counted, not compared): SetSource(GameObject) already put
+                // the effect at the object's position
+                e.Source = null;
+                EndpointsUnbound++;
+            }
+
+            if (e.Target is GameObjects.Entity trg && trg.TryScalarEntity(out EcsEntity te))
+            {
+                ref readonly Position p = ref EcsRead.Get<Position>(te);
+                s.Ends |= (byte)(EffectState.END_TARGET | (trg is Mobile ? EffectState.END_TARGET_MOBILE : 0));
+                s.TargetEntity = te;
+                s.TargetSerial = trg.Serial;
+                s.TargetX = p.X;
+                s.TargetY = p.Y;
+                s.TargetZ = p.Z;
+            }
+            else if (e.Target != null)
+            {
+                // Codex audit (ecs-effects-own) P2: the target becomes a ground point at the object's position; without this
+                // the effect's own target coordinates (0,0,0 when a target object was given) would be read once the object is
+                // dropped. The object goes now, so the checker's two paths agree on the ground point (counted, not compared).
+                e.TargetX = e.Target.X;
+                e.TargetY = e.Target.Y;
+                e.TargetZ = e.Target.Z;
+                e.Target = null;
+                EndpointsUnbound++;
+            }
+
+            e.UsesEndpoints = true;
+            e.EndpointCheck = e.World.EffectEndpointsCheckOn;
+        }
+
+        /// <summary>After Register created the entity: without the checker the effect no longer holds its endpoint objects.</summary>
+        private static void DropObjects(GameEffect e)
+        {
+            if (e.UsesEndpoints && !e.EndpointCheck)
+            {
+                e.Source = null;
+                e.Target = null;
+            }
+        }
+
+        private static bool Same(EcsEntity a, EcsEntity b) => a.Id == b.Id && a.Revision == b.Revision;
+
+        // false when the endpoint is not an object or is gone; a removal the hooks did not see (Mirror.Clear, a record
+        // replaced by one of the other kind) marks it gone here, keeping the last resolved position and letting go of the
+        // record.
+        // Codex audit (ecs-effects-own) P3: Friflo's handle revision is 16 bits, so after an unseen removal the id reused
+        // 65,536 times makes the stale handle valid for whatever record sits there now. The record must also carry the
+        // endpoint's serial and kind (one component read on the row already fetched). What is left: a record of the same
+        // serial and kind on exactly that id and revision, i.e. 65,536 deletes of one id between two updates of the effect
+        // (sources and moving targets are read every update), with the serial reused by the same kind meanwhile. Not
+        // reachable from a server that is not hostile; a per-record generation token would close it but widens every mirror
+        // record (Serial, streamed by the per-frame sweep, clock and extract) for this alone.
+        // Codex re-review P3 (accepted, same bound): OnRecordRemoving/OnRecordRekeyed match by handle only, so a wrapped
+        // handle that is removed or rekeyed before the next read of the effect moves the endpoint to the other record
+        // without this serial/kind check.
+        private static bool Live(ref EffectState s, byte end, byte gone, EcsEntity entity)
+        {
+            if ((s.Ends & end) == 0 || (s.Ends & gone) != 0)
+            {
+                return false;
+            }
+
+            bool source = end == EffectState.END_SOURCE;
+            EcsRow row = EcsRead.Row(entity);
+
+            if (row.IsNull || !row.TryGet(out ClassicUO.Ecs.Serial serial) || serial.Value != (source ? s.SourceSerial : s.TargetSerial) ||
+                row.Tags.Has<MobileTag>() != ((s.Ends & (source ? EffectState.END_SOURCE_MOBILE : EffectState.END_TARGET_MOBILE)) != 0))
+            {
+                EndpointsUnhooked++;
+                s.Ends |= gone;
+
+                if (source)
+                {
+                    s.SourceEntity = default;
+                }
+                else
+                {
+                    s.TargetEntity = default;
+                }
+
+                return false;
+            }
+
+            return true;
+        }
+
+        /// <summary>The source's position: its record's while it lives, the last resolved one once it is gone, the effect's own
+        /// for a ground point.</summary>
+        public static (ushort x, ushort y, sbyte z) SourceOf(GameEffect e)
+        {
+            ref EffectState s = ref EcsRead.Get<EffectState>(e.EcsEntity);
+            (ushort x, ushort y, sbyte z) r;
+
+            if ((s.Ends & EffectState.END_SOURCE) == 0)
+            {
+                r = (e.X, e.Y, e.Z);
+            }
+            else
+            {
+                if (Live(ref s, EffectState.END_SOURCE, EffectState.END_SOURCE_GONE, s.SourceEntity))
+                {
+                    ref readonly Position p = ref EcsRead.Get<Position>(s.SourceEntity);
+                    s.SourceX = p.X;
+                    s.SourceY = p.Y;
+                    s.SourceZ = p.Z;
+                }
+
+                r = (s.SourceX, s.SourceY, s.SourceZ);
+            }
+
+            if (e.EndpointCheck)
+            {
+                CompareEndpoint(e, "source", r, e.LegacySource());
+            }
+
+            return r;
+        }
+
+        /// <summary>The target's position: as <see cref="SourceOf"/>; a ground target is the effect's target coordinates.</summary>
+        public static (ushort x, ushort y, sbyte z) TargetOf(GameEffect e)
+        {
+            ref EffectState s = ref EcsRead.Get<EffectState>(e.EcsEntity);
+            (ushort x, ushort y, sbyte z) r;
+
+            if ((s.Ends & EffectState.END_TARGET) == 0)
+            {
+                r = (e.TargetX, e.TargetY, e.TargetZ);
+            }
+            else
+            {
+                if (Live(ref s, EffectState.END_TARGET, EffectState.END_TARGET_GONE, s.TargetEntity))
+                {
+                    ref readonly Position p = ref EcsRead.Get<Position>(s.TargetEntity);
+                    s.TargetX = p.X;
+                    s.TargetY = p.Y;
+                    s.TargetZ = p.Z;
+                }
+
+                r = (s.TargetX, s.TargetY, s.TargetZ);
+            }
+
+            if (e.EndpointCheck)
+            {
+                CompareEndpoint(e, "target", r, e.LegacyTarget());
+            }
+
+            return r;
+        }
+
+        /// <summary>The source is an object whose record is gone (the legacy <c>Source.IsDestroyed</c>).</summary>
+        public static bool SourceGone(GameEffect e)
+        {
+            ref EffectState s = ref EcsRead.Get<EffectState>(e.EcsEntity);
+            bool gone = (s.Ends & EffectState.END_SOURCE) != 0 && !Live(ref s, EffectState.END_SOURCE, EffectState.END_SOURCE_GONE, s.SourceEntity);
+
+            if (e.EndpointCheck)
+            {
+                CompareFlag(e, "source destroyed", gone, e.Source != null && e.Source.IsDestroyed);
+            }
+
+            return gone;
+        }
+
+        /// <summary>The target is an object whose record is gone (the legacy <c>Target.IsDestroyed</c>).</summary>
+        public static bool TargetGone(GameEffect e)
+        {
+            ref EffectState s = ref EcsRead.Get<EffectState>(e.EcsEntity);
+            bool gone = (s.Ends & EffectState.END_TARGET) != 0 && !Live(ref s, EffectState.END_TARGET, EffectState.END_TARGET_GONE, s.TargetEntity);
+
+            if (e.EndpointCheck)
+            {
+                CompareFlag(e, "target destroyed", gone, e.Target != null && e.Target.IsDestroyed);
+            }
+
+            return gone;
+        }
+
+        /// <summary>The target is an object, live or gone (the legacy <c>Target != null</c>).</summary>
+        public static bool HasTarget(GameEffect e)
+        {
+            bool has = (EcsRead.Get<EffectState>(e.EcsEntity).Ends & EffectState.END_TARGET) != 0;
+
+            if (e.EndpointCheck)
+            {
+                CompareFlag(e, "has target", has, e.Target != null);
+            }
+
+            return has;
+        }
+
+        /// <summary>
+        /// The source object's offset (FixedEffect follows it). A mobile's comes from its <see cref="Steps"/> while the step
+        /// system keeps them; an item's (a boat passenger's) offset is not ECS state yet, so it is read from the object World
+        /// holds under the serial. False for a ground source.
+        /// </summary>
+        public static bool SourceOffsetOf(GameEffect e, out Microsoft.Xna.Framework.Vector3 offset)
+        {
+            ref EffectState s = ref EcsRead.Get<EffectState>(e.EcsEntity);
+            bool has = (s.Ends & EffectState.END_SOURCE) != 0;
+            offset = default;
+
+            if (has)
+            {
+                if ((s.Ends & EffectState.END_SOURCE_MOBILE) != 0 && e.World.Ecs.StepsEnabled &&
+                    Live(ref s, EffectState.END_SOURCE, EffectState.END_SOURCE_GONE, s.SourceEntity) &&
+                    EcsRead.TryGet(s.SourceEntity, out Steps st))
+                {
+                    offset = new Microsoft.Xna.Framework.Vector3(st.OffsetX, st.OffsetY, st.OffsetZ);
+                }
+                else
+                {
+                    offset = SourceObjectOf(e)?.Offset ?? default;
+                }
+            }
+
+            if (e.EndpointCheck)
+            {
+                CompareFlag(e, "source offset", has, e.Source != null);
+
+                if (e.Source != null && !e.Source.IsDestroyed && offset != e.Source.Offset)
+                {
+                    EndpointMismatch($"effect 0x{e.Graphic:X4} source offset ECS {offset} | object {e.Source.Offset}");
+                }
+            }
+
+            return has;
+        }
+
+        /// <summary>The object World holds for the live source (views: depth and light; the client-side target cursor); null
+        /// for a ground source or a gone one.</summary>
+        public static GameObject SourceObjectOf(GameEffect e)
+        {
+            ref EffectState s = ref EcsRead.Get<EffectState>(e.EcsEntity);
+            GameObject obj = null;
+
+            if (Live(ref s, EffectState.END_SOURCE, EffectState.END_SOURCE_GONE, s.SourceEntity))
+            {
+                obj = (s.Ends & EffectState.END_SOURCE_MOBILE) != 0 ? e.World.Mobiles.Get(s.SourceSerial) : e.World.Items.Get(s.SourceSerial);
+            }
+
+            if (e.EndpointCheck)
+            {
+                EndpointReads++;
+                GameObject legacy = e.Source != null && !e.Source.IsDestroyed ? e.Source : null;
+
+                if (!ReferenceEquals(obj, legacy))
+                {
+                    EndpointMismatch($"effect 0x{e.Graphic:X4} source object ECS 0x{s.SourceSerial:X8} {(obj == null ? "none" : obj.GetType().Name)} | object {(legacy == null ? "none" : legacy.GetType().Name)}");
+                }
+            }
+
+            return obj;
+        }
+
+        /// <summary>SetSource(x, y, z) after Register (a moving effect's source becomes its own position).</summary>
+        public static void DropSource(GameEffect e)
+        {
+            ref EffectState s = ref EcsRead.Get<EffectState>(e.EcsEntity);
+            s.Ends &= unchecked((byte)~(EffectState.END_SOURCE | EffectState.END_SOURCE_GONE | EffectState.END_SOURCE_MOBILE));
+            s.SourceEntity = default;
+            s.SourceSerial = 0;
+        }
+
+        /// <summary>SetTarget(x, y, z) after Register.</summary>
+        public static void DropTarget(GameEffect e)
+        {
+            ref EffectState s = ref EcsRead.Get<EffectState>(e.EcsEntity);
+            s.Ends &= unchecked((byte)~(EffectState.END_TARGET | EffectState.END_TARGET_GONE | EffectState.END_TARGET_MOBILE));
+            s.TargetEntity = default;
+            s.TargetSerial = 0;
+        }
+
+        /// <summary>
+        /// WorldEcs, before a record is removed (an object destroyed, the old record of the death re-key): every endpoint on it
+        /// is gone and keeps the record's position (the destroyed object kept its coordinates). A walk of the live effects.
+        /// Outside the re-key (<paramref name="rekey"/> false) a gone endpoint lets go of the record: the record may live on as
+        /// another object's (a displaced dying mobile's record is written for the next one), and only
+        /// <see cref="OnRecordRekeyed"/> matches gone endpoints by their record.
+        /// </summary>
+        public static void OnRecordRemoving(World world, EcsEntity record, bool rekey = false)
+        {
+            for (GameEffect f = (GameEffect)world.Effects.Items; f != null; f = (GameEffect)f.Next)
+            {
+                if (!f.UsesEndpoints || f.EcsEntity.IsNull)
+                {
+                    continue;
+                }
+
+                ref EffectState s = ref EcsRead.Get<EffectState>(f.EcsEntity);
+
+                if ((s.Ends & (EffectState.END_SOURCE | EffectState.END_SOURCE_GONE)) == EffectState.END_SOURCE && Same(s.SourceEntity, record))
+                {
+                    ref readonly Position p = ref EcsRead.Get<Position>(record);
+                    s.Ends |= EffectState.END_SOURCE_GONE;
+                    s.SourceX = p.X;
+                    s.SourceY = p.Y;
+                    s.SourceZ = p.Z;
+
+                    if (!rekey)
+                    {
+                        s.SourceEntity = default;
+                    }
+                }
+
+                if ((s.Ends & (EffectState.END_TARGET | EffectState.END_TARGET_GONE)) == EffectState.END_TARGET && Same(s.TargetEntity, record))
+                {
+                    ref readonly Position p = ref EcsRead.Get<Position>(record);
+                    s.Ends |= EffectState.END_TARGET_GONE;
+                    s.TargetX = p.X;
+                    s.TargetY = p.Y;
+                    s.TargetZ = p.Z;
+
+                    if (!rekey)
+                    {
+                        s.TargetEntity = default;
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// WorldEcs.CommitRekey, after the dying mobile's record was written under <paramref name="serial"/>: the endpoints
+        /// <see cref="OnRecordRemoving"/> marked gone on the old record follow the mobile to the new one (the object was
+        /// never destroyed, so the old reference kept following it). With no new record (a destroyed mobile) they stay gone
+        /// and let go of the old one: a gone endpoint holds a record only between these two calls, so no later re-key can
+        /// match a stale handle (Codex audit P3: a 16-bit revision can wrap onto a live record).
+        /// </summary>
+        public static void OnRecordRekeyed(World world, EcsEntity old, EcsEntity record, uint serial)
+        {
+            for (GameEffect f = (GameEffect)world.Effects.Items; f != null; f = (GameEffect)f.Next)
+            {
+                if (!f.UsesEndpoints || f.EcsEntity.IsNull)
+                {
+                    continue;
+                }
+
+                ref EffectState s = ref EcsRead.Get<EffectState>(f.EcsEntity);
+
+                if ((s.Ends & EffectState.END_SOURCE_GONE) != 0 && Same(s.SourceEntity, old))
+                {
+                    s.SourceEntity = record;
+
+                    if (!record.IsNull)
+                    {
+                        s.Ends &= unchecked((byte)~EffectState.END_SOURCE_GONE);
+                        s.SourceSerial = serial;
+                    }
+                }
+
+                if ((s.Ends & EffectState.END_TARGET_GONE) != 0 && Same(s.TargetEntity, old))
+                {
+                    s.TargetEntity = record;
+
+                    if (!record.IsNull)
+                    {
+                        s.Ends &= unchecked((byte)~EffectState.END_TARGET_GONE);
+                        s.TargetSerial = serial;
+                    }
+                }
+            }
+        }
+
+        private static void CompareEndpoint(GameEffect e, string what, (ushort x, ushort y, sbyte z) ecs, (ushort x, ushort y, sbyte z) legacy)
+        {
+            EndpointReads++;
+
+            if (ecs != legacy)
+            {
+                EndpointMismatch($"effect 0x{e.Graphic:X4} {what} ECS ({ecs.x},{ecs.y},{ecs.z}) | object ({legacy.x},{legacy.y},{legacy.z})");
+            }
+        }
+
+        private static void CompareFlag(GameEffect e, string what, bool ecs, bool legacy)
+        {
+            EndpointReads++;
+
+            if (ecs != legacy)
+            {
+                EndpointMismatch($"effect 0x{e.Graphic:X4} {what}: ECS {ecs} | object {legacy}");
+            }
+        }
+
+        /// <summary>CUO_EFFECT_ENDPOINT_CHECK, end of the effects stage: the serials equal the objects', and the 5 s summary.</summary>
+        public static void CheckEndpoints(EffectManager manager)
+        {
+            for (GameEffect e = (GameEffect)manager.Items; e != null; e = (GameEffect)e.Next)
+            {
+                if (e.IsDestroyed || !e.UsesEndpoints || !e.EndpointCheck || e.EcsEntity.IsNull)
+                {
+                    continue;
+                }
+
+                ref readonly EffectState s = ref EcsRead.Get<EffectState>(e.EcsEntity);
+                uint src = (e.Source as GameObjects.Entity)?.Serial ?? 0;
+                uint trg = (e.Target as GameObjects.Entity)?.Serial ?? 0;
+                EndpointReads++;
+
+                if (s.SourceSerial != src || s.TargetSerial != trg)
+                {
+                    EndpointMismatch($"effect 0x{e.Graphic:X4} serials ECS 0x{s.SourceSerial:X8} -> 0x{s.TargetSerial:X8} | object 0x{src:X8} -> 0x{trg:X8}");
+                }
+            }
+
+            if (Time.Ticks >= s_nextEndpointLog)
+            {
+                s_nextEndpointLog = Time.Ticks + 5000;
+                Log.Info($"[effect-endpoint-check] {EndpointReads} reads compared, {EndpointMismatches} mismatches, {EndpointsUnbound} unbound, {EndpointsUnhooked} unhooked removals");
+            }
+        }
+
+        internal static void EndpointMismatch(string text)
+        {
+            EndpointMismatches++;
+            Observer?.Invoke(text);
+
+            if (EndpointMismatches <= 10)
+            {
+                Log.Warn($"[effect-endpoint-check] mismatch: {text}");
+            }
         }
 
         /// <summary>

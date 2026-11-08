@@ -111,9 +111,11 @@ namespace ClassicUO.Game.GameObjects
 
             ref var data = ref Client.Game.UO.FileManager.TileData.StaticData[Graphic];
 
-            if (data.IsLight && Source != null)
+            GameObject source;
+
+            if (data.IsLight && (source = SourceObject) != null)
             {
-                Client.Game.GetScene<GameScene>().AddLight(Source, Source, posX + 22, posY + 22);
+                Client.Game.GetScene<GameScene>().AddLight(source, source, posX + 22, posY + 22);
             }
 
             return true;

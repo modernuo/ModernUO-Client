@@ -14,7 +14,7 @@ namespace ClassicUO.Game
     /// clean up there.
     /// <para><c>effects:N:graphic[:blend[:radius[:z[:kind]]]]</c> spawns N effects on random tiles within <c>radius</c> (default
     /// 12) of the player at the player's Z (or <c>z</c>); graphic is hex, blend a <see cref="GraphicEffectBlendMode"/> number,
-    /// kind <c>f</c> fixed and endless (default), <c>m</c> moving to another random tile at speed 1, <c>l</c> lightning.
+    /// kind <c>f</c> fixed and endless (default), <c>m</c> moving to another random tile at speed 1, <c>l</c> lightning, <c>e</c> on mobiles and ground items (sources and targets: ecs_effect_endpoints).
     /// <c>effects:0</c> destroys every effect the world holds.</para>
     /// </summary>
     internal static class BenchEffects
@@ -84,6 +84,18 @@ namespace ClassicUO.Game
             string kind = p.Length > 6 ? p[6] : "f";
             var rnd = new Random(12345 + _spawns++);
 
+            if (kind == "e")
+            {
+                SpawnOnEntities(world, n, graphic, blend, radius, rnd);
+
+                if (!sustaining)
+                {
+                    Log.Info($"[bench] {entry}: spawned {n} on entities");
+                }
+
+                return;
+            }
+
             for (int i = 0; i < n; i++)
             {
                 int x = world.Player.X + rnd.Next(-radius, radius + 1);
@@ -101,6 +113,59 @@ namespace ClassicUO.Game
             if (!sustaining)
             {
                 Log.Info($"[bench] {entry}: spawned {n}");
+            }
+        }
+
+        // kind e (ecs_effect_endpoints gates): effects whose source or target is a mobile (the player included) or a ground item
+        // within radius, in turn: a fixed effect following an entity, a moving effect between two entities, a moving effect from
+        // the player to an entity, lightning on an entity
+        private static void SpawnOnEntities(World world, int n, ushort graphic, GraphicEffectBlendMode blend, int radius, Random rnd)
+        {
+            var near = new System.Collections.Generic.List<Entity> { world.Player };
+
+            foreach (Mobile m in world.Mobiles.Values)
+            {
+                if (!ReferenceEquals(m, world.Player) && !m.IsDestroyed && Math.Max(Math.Abs(m.X - world.Player.X), Math.Abs(m.Y - world.Player.Y)) <= radius)
+                {
+                    near.Add(m);
+                }
+            }
+
+            foreach (Item it in world.Items.Values)
+            {
+                if (it.OnGround && !it.IsDestroyed && !it.IsMulti && Math.Max(Math.Abs(it.X - world.Player.X), Math.Abs(it.Y - world.Player.Y)) <= radius)
+                {
+                    near.Add(it);
+                }
+            }
+
+            for (int i = 0; i < n; i++)
+            {
+                Entity a = near[rnd.Next(near.Count)];
+                Entity b = near[rnd.Next(near.Count)];
+
+                switch (i & 3)
+                {
+                    case 0:
+                        world.SpawnEffect(GraphicEffectType.FixedFrom, a.Serial, 0, graphic, 0, a.X, a.Y, a.Z, 0, 0, 0, 10, 0, false, false, false, blend);
+
+                        break;
+
+                    case 1:
+                        world.SpawnEffect(GraphicEffectType.Moving, a.Serial, b.Serial, graphic, 0, a.X, a.Y, a.Z, b.X, b.Y, b.Z, 1, 0, false, true, false, blend);
+
+                        break;
+
+                    case 2:
+                        world.SpawnEffect(GraphicEffectType.Moving, world.Player.Serial, a.Serial, graphic, 0, 0, 0, 0, a.X, a.Y, a.Z, 1, 0, false, false, false, blend);
+
+                        break;
+
+                    default:
+                        world.SpawnEffect(GraphicEffectType.Lightning, a.Serial, 0, 0, 0, a.X, a.Y, a.Z, 0, 0, 0, 0, 0, false, false, false, blend);
+
+                        break;
+                }
             }
         }
     }
