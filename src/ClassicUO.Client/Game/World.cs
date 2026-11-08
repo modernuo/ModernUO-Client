@@ -785,6 +785,10 @@ namespace ClassicUO.Game
         /// <summary>T1 tests: the per-frame update list in order.</summary>
         internal IReadOnlyList<Item> ActiveItems => _activeItems.Items;
 
+        /// <summary>perf-13: the active list holds every item that needs updates (false from World.Clear until the next
+        /// update's first pass rebuilds it).</summary>
+        internal bool ActiveItemsListed => _activeItemsValid;
+
         /// <summary>W5: <paramref name="item"/> needs <see cref="Item.Update"/> from now on (a corpse, or handles opened).</summary>
         public void QueueItemUpdate(Item item)
         {
