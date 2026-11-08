@@ -85,6 +85,11 @@ public sealed unsafe class WorldRenderer : IDisposable
     // the translucent list grows on demand up to Renderer.TranslucentLimit (the frame table follows before the frame)
     uint[] _trans;
     ulong[] _transSort;
+    static readonly Comparison<ulong> TransKeyOrder = static (a, b) => a.CompareTo(b);
+
+    /// <summary>The translucent list's ascending key sort, with a cached comparison: Span&lt;ulong&gt;.Sort() without one
+    /// makes a comparison delegate per call in NativeAOT (48 B every frame that has two or more translucent entries).</summary>
+    public static void SortTransKeys(Span<ulong> keys) => keys.Sort(TransKeyOrder);
     TransRun[] _transRuns;
     int _transCount;
 
@@ -585,7 +590,7 @@ public sealed unsafe class WorldRenderer : IDisposable
         }
 
         // back to front: ascending depth key; equal keys (a mobile's layers) in reverse emission order, body first
-        if (_transCount > 1) _transSort.AsSpan(0, _transCount).Sort();
+        if (_transCount > 1) SortTransKeys(_transSort.AsSpan(0, _transCount));
         for (int i = 0; i < _transCount; i++) _trans[i] = uint.MaxValue - (uint)_transSort[i];
         TranslucentCount = _transCount;
         // effect blends with their own pipeline: split the sorted list into runs of one blend (only on frames that have one)
