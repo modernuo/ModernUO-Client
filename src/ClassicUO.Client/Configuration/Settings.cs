@@ -199,6 +199,12 @@ namespace ClassicUO.Configuration
         // developer builds). Default on since 2026-11-02 (owner, after the quiet-machine per-switch timing bench-000206/207/208: timing-neutral on both renderers); the off path and the checker stay for one phase.
         [JsonPropertyName("ecs_effects")] public bool EcsEffects { get; set; } = true;
 
+        // T8 ownership (ecs-transition-plan.md): with ecs_effects on, an effect references its source and target by mirror record
+        // and serial (not by GameObject) and reads their position and offset from the ECS each update; the death re-key moves the
+        // reference, a removed record leaves the last position. CUO_EFFECT_ENDPOINT_CHECK=1 compares every read with the old
+        // object reference. Read once at startup (CUO_ECS_EFFECT_ENDPOINTS=1|0 overrides it in developer builds). Default off.
+        [JsonPropertyName("ecs_effect_endpoints")] public bool EcsEffectEndpoints { get; set; }
+
         // T4 (ecs-transition-plan.md, "thin handles"): the cold world-state getters (Name, Hits, HitsMax, Stamina, Mana and
         // their maxima, Price) read the entity's ECS record; the GameObject field becomes a write-only cache. Read once at
         // startup (EcsScalars.Owns; CUO_ECS_OWNS_SCALARS=1|0 overrides it in developer builds). Default on since 2026-11-02 (owner, after the quiet-machine per-switch timing bench-000206/207/208: timing-neutral on both renderers); the off path and the checker stay for one phase.

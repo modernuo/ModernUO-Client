@@ -741,6 +741,12 @@ namespace ClassicUO.Game
                 return;
             }
 
+            // T8 ownership: effects whose source or target is this record keep its last position
+            if (_world.Effects?.Items != null && Mirror.TryGetEntity(entity.Serial, out EcsEntity record))
+            {
+                EffectSystem.OnRecordRemoving(_world, record);
+            }
+
             Mirror.Remove(entity.Serial);
 
             // Codex audit P2 (#3): a book's spell entries go with its record
@@ -775,17 +781,45 @@ namespace ClassicUO.Game
 
             // the cold fields (part 9) go with the mobile, as its mirror bit does
             Mirror.TryGetExtras(oldSerial, out MirrorExtras extras);
+
+            // T8 ownership: effects on the old record are gone with it, then follow the mobile to the new record
+            bool effects = _world.Effects?.Items != null && Mirror.TryGetEntity(oldSerial, out old);
+
+            if (effects)
+            {
+                EffectSystem.OnRecordRemoving(_world, old, rekey: true);
+            }
+
             Mirror.Remove(oldSerial);
 
             if (mobile.IsDestroyed)
             {
+                if (effects)
+                {
+                    EffectSystem.OnRecordRekeyed(_world, old, default, 0);
+                }
+
                 return default;
+            }
+
+            // Codex audit (ecs-effects-own) P2: an earlier death's mobile still under the new serial is displaced, and the
+            // upsert below writes this mobile into its record (as OnSerialChanged did). Effects on the displaced mobile end at
+            // its last position and let go of the record, so they do not follow this mobile (legacy kept following the
+            // orphaned object, which stays where it was)
+            if (_world.Effects?.Items != null && Mirror.TryGetEntity(v.Serial, out EcsEntity displaced))
+            {
+                EffectSystem.OnRecordRemoving(_world, displaced);
             }
 
             MobileCommitObserver?.Invoke(mobile, v);
             MobileMirrorWrites++;
             EcsEntity e = Mirror.UpsertMobile(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.IsPlayer);
             Mirror.CarryMobileExtras(in extras, v.Serial);
+
+            if (effects)
+            {
+                EffectSystem.OnRecordRekeyed(_world, old, e, v.Serial);
+            }
 
             if (keep != 0 && e.HasComponent<AnimationState>())
             {

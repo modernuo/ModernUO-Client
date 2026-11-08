@@ -520,11 +520,25 @@ namespace ClassicUO.Ecs
     /// animation and lifetime state (frame, next change time, duration) that <c>EffectSystem</c> advances; position, offset,
     /// angle and target are published by the effect's own update (the kinds' motion rules stay on the object). The entity has no
     /// serial and is not in the mirror's serial index.
+    /// <para>
+    /// With <c>ecs_effect_endpoints</c> the source and target are referenced here, not as objects: <see cref="Ends"/> says
+    /// which of them is a world entity (else a ground point), <see cref="SourceEntity"/>/<see cref="TargetEntity"/> are their
+    /// mirror records and <see cref="SourceSerial"/>/<see cref="TargetSerial"/> their serials (the death re-key moves both to
+    /// the new record). <see cref="SourceX"/>.. and <see cref="TargetX"/>.. hold the endpoint's last resolved position, which
+    /// stays when its record is removed (the object kept its coordinates when it was destroyed).
+    /// </para>
     /// </summary>
     public struct EffectState : IComponent
     {
         public const byte KIND_FIXED = 0, KIND_MOVING = 1, KIND_DRAG = 2, KIND_LIGHTNING = 3;
         public const byte FLAG_ENABLED = 1, FLAG_EXPLODES = 2, FLAG_FIXED_DIR = 4, FLAG_MOVING = 8;
+
+        public const byte END_SOURCE = 1, END_TARGET = 2, END_SOURCE_GONE = 4, END_TARGET_GONE = 8, END_SOURCE_MOBILE = 16, END_TARGET_MOBILE = 32;
+
+        public byte Ends;
+        public ushort SourceX, SourceY;
+        public sbyte SourceZ;
+        public Entity SourceEntity, TargetEntity;
 
         public byte Kind;
         public byte Blend;

@@ -73,11 +73,9 @@ namespace ClassicUO.Game.GameObjects
 
         private void UpdateOffset()
         {
-            if (Target != null && Target.IsDestroyed)
+            if (TargetGone())
             {
-                TargetX = Target.X;
-                TargetY = Target.Y;
-                TargetZ = Target.Z;
+                (TargetX, TargetY, TargetZ) = GetTarget();
             }
 
             int playerX = World.Player.X;
