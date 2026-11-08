@@ -629,9 +629,14 @@ namespace ClassicUO.Game
             return f;
         }
 
-        // E4 checker (CUO_MOBILE_UPDATE_CHECK=1; "stats" only logs the counts)
+#if CUO_DEVTOOLS
+        // CLEANUP(release): E4 checker (CUO_MOBILE_UPDATE_CHECK=1; "stats" only logs the counts)
         public static readonly bool MobileUpdateCheck = Environment.GetEnvironmentVariable("CUO_MOBILE_UPDATE_CHECK") == "1";
         public static readonly bool MobileUpdateStats = MobileUpdateCheck || Environment.GetEnvironmentVariable("CUO_MOBILE_UPDATE_CHECK") == "stats";
+#else
+        public const bool MobileUpdateCheck = false;
+        public const bool MobileUpdateStats = false;
+#endif
         public static long ClockFrames, ClockDue, ClockScanned, ClockCollectTicks, ClockUpdateTicks;
         public static long ClockChecks, ClockDiffs, SkippedChecks, SkippedDiffs;
         private int _clockLogged;

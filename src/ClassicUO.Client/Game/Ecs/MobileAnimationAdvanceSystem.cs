@@ -350,8 +350,12 @@ namespace ClassicUO.Game
     /// </summary>
     internal sealed class MobileAnimationAdvanceSystem
     {
-        // CUO_ANIM_ADVANCE_CHECK=1: each advance is compared with the legacy one on a shadow timer (see Check)
+#if CUO_DEVTOOLS
+        // CLEANUP(release): CUO_ANIM_ADVANCE_CHECK=1: each advance is compared with the legacy one on a shadow timer (see Check)
         public static readonly bool AdvanceCheck = Environment.GetEnvironmentVariable("CUO_ANIM_ADVANCE_CHECK") == "1";
+#else
+        public const bool AdvanceCheck = false;
+#endif
 
         public static long Ran, Declined;
         public static long Checks, Diffs, SyncChecks, SyncDiffs, RandomDiffs;
@@ -392,10 +396,12 @@ namespace ClassicUO.Game
             MobileInputs inp = EcsRead.Get<MobileInputs>(e);
             EquipmentSlots eq = EcsRead.Get<EquipmentSlots>(e);
 
+#if CUO_DEVTOOLS
             if (check)
             {
                 Check(mob, in t, in inp, in eq, in source);
             }
+#endif
 
             AnimAdvanceOutcome outcome = AnimationAdvanceRules.Step(ref t, in inp, in eq, mob.Serial, in source, out int frame, out long due);
             world.Writer.AdvanceAnimationFromEcs(mob, in t, outcome == AnimAdvanceOutcome.Remove, frame, due);
@@ -405,6 +411,7 @@ namespace ClassicUO.Game
 
         // ---- the checker -------------------------------------------------------------------------------------------------
 
+#if CUO_DEVTOOLS
         /// <summary>
         /// CUO_ANIM_ADVANCE_CHECK: the component must equal the Mobile's fields (a missed push otherwise); the legacy advance
         /// (the legacy idle planner and inputs read from the Mobile, the legacy selection input, the Mobile's direction, the
@@ -566,6 +573,7 @@ namespace ClassicUO.Game
             t.AnimDue = Time.Ticks;
             t.IdleDue = Time.Ticks + (30000 + RandomHelper.GetValue(0, 30000));
         }
+#endif
 
         internal static bool Same(in AnimationTimer a, in AnimationTimer b) =>
             a.Frame == b.Frame && a.FrameCount == b.FrameCount && a.Interval == b.Interval && a.RepeatMode == b.RepeatMode &&

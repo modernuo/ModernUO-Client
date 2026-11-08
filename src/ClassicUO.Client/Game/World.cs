@@ -663,9 +663,13 @@ namespace ClassicUO.Game
             }
 
             _mobileUpdateStamp++;
-            WorldEcs.ClockFrames++;
-            WorldEcs.ClockDue += _dueMobiles.Count;
-            WorldEcs.ClockScanned += Ecs.Clock.Scanned;
+
+            if (WorldEcs.MobileUpdateStats)
+            {
+                WorldEcs.ClockFrames++;
+                WorldEcs.ClockDue += _dueMobiles.Count;
+                WorldEcs.ClockScanned += Ecs.Clock.Scanned;
+            }
 
             // the due list follows archetype order, which equipment tags reshuffle; the legacy loop's order decides tile lists,
             // picking ties and which footstep wins, so the due mobiles run in Mobiles.Values order

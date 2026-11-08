@@ -91,8 +91,13 @@ namespace ClassicUO.Game
     /// </summary>
     internal sealed class ItemAnimationAdvanceSystem
     {
-        // CUO_ANIM_ADVANCE_CHECK=1: each advance is compared with the legacy one on a shadow (see Check)
+        // CUO_ANIM_ADVANCE_CHECK=1: each advance is compared with the legacy one on a shadow (see Check); the unit tests pass
+        // the check flag themselves, so Check stays compiled in release
+#if CUO_DEVTOOLS
         public static readonly bool AdvanceCheck = MobileAnimationAdvanceSystem.AdvanceCheck;
+#else
+        public const bool AdvanceCheck = false;
+#endif
 
         public static long Ran, Declined, NotDue;
         public static long Checks, Diffs, SyncChecks, SyncDiffs, RandomDiffs;

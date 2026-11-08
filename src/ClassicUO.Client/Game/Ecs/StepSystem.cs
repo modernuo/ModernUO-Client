@@ -133,9 +133,13 @@ namespace ClassicUO.Game
     /// </summary>
     internal sealed class StepSystem
     {
-        // CUO_STEP_CHECK=1: before each run the component equals the Mobile's step state, the decision from the component
-        // equals the decision from the Mobile's fields, and after it the component equals the Mobile again
+#if CUO_DEVTOOLS
+        // CLEANUP(release): CUO_STEP_CHECK=1: before each run the component equals the Mobile's step state, the decision from
+        // the component equals the decision from the Mobile's fields, and after it the component equals the Mobile again
         public static readonly bool StepCheck = Environment.GetEnvironmentVariable("CUO_STEP_CHECK") == "1";
+#else
+        public const bool StepCheck = false;
+#endif
 
         public static long Ran, Declined, Interpolated, Completed, Turns;
         public static long Checks, SyncDiffs, DecisionDiffs, AfterDiffs;
@@ -146,7 +150,7 @@ namespace ClassicUO.Game
         // path) is compared with the Mobile's, whichever of the two the decision uses
         public static readonly bool StepMountCheck = Environment.GetEnvironmentVariable("CUO_STEP_MOUNT_CHECK") == "1";
 #else
-        public static readonly bool StepMountCheck = false;
+        public const bool StepMountCheck = false;
 #endif
 
         public static long MountEcsReads, MountFallbacks, MountSlotRebuilds, MountChecks, MountDiffs;
