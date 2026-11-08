@@ -366,6 +366,7 @@ So the data file is keyed by body group (human male/female, elf male/female, gar
 - **Checker:** E4's skipped-is-no-op hash, extended to positions, offsets and step queues; `CUO_TILE_ORDER_CHECK`; `CUO_PREP_CHECK` (screen positions).
 - Size: 2–3. Tier: O.
 - **Status (2026-11-01, branch `bg/ecs-t6c-steps`, poc-log "T6c"): built, default off; client gates submitted (bench-000191..194).** `StepSystem` over the `Steps` component runs where ProcessSteps ran in `Mobile.Update` (table order kept). The offset interpolation is the system's; `Mobile.Offset`, the queue and `LastStepTime` stay a write-through cache for the views (hot-field rule). Checker `CUO_STEP_CHECK=1`. The mount inputs are still read from the Mobile.
+- **Boats (2026-11-07, branch `bg/ecs-boat-steps`, poc-log "ecs_boat_steps"): built, default off; client gates submitted.** A boat's queued steps, step clock and the passengers 0xF6 lists are the `BoatSteps` component on the boat's record (was `BoatMovingManager`'s dictionaries), filled by the WorldWriter operations `QueueBoatStep`, `SetBoatPassenger`, `DropBoatSteps` and `SetBoatStepTime`; `BoatStepSystem` advances the boats once per frame where the manager's Update ran, through the existing boat operations. Switch `ecs_boat_steps`, checker `CUO_BOAT_CHECK=1` (the dictionaries in shadow). The old path and the checker stay until the switch has been default on for a phase (T9).
 
 ### T7: Legacy
 
