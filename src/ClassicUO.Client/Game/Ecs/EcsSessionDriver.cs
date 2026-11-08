@@ -650,6 +650,39 @@ namespace ClassicUO.Game
 
                 // season <spring|summer|fall|winter|desolation>: as the server's season packet (World.ChangeSeason). E12: map
                 // statics drawn in another season's graphic replace their baked sprite, so the world pass queues overrides
+                // war on|off: the war mode request (0x72), as the war-mode toggle sends it; the server answers with 0x72
+                case "war" when args.Length > 0:
+                    GameActions.RequestWarMode(player, args[0] == "on");
+                    Log.Info($"[ECS] driver: war {args[0]}");
+
+                    return true;
+
+                // small: ecs_small_fields, the player's small fields and counts over every held object, read through the
+                // getters (with CUO_SMALL_FIELDS_CHECK each read is compared with the record)
+                case "small":
+                    int lights = 0, damageable = 0, usedLayer = 0, multis = 0, female = 0, renamable = 0, fast = 0;
+                    int[] races = new int[4];
+
+                    foreach (Item si in world.Items.Values)
+                    {
+                        lights += si.LightID != 0 ? 1 : 0;
+                        damageable += si.IsDamageable ? 1 : 0;
+                        usedLayer += si.UsedLayer ? 1 : 0;
+                        multis += si.IsMulti ? 1 : 0;
+                    }
+
+                    foreach (Mobile sm in world.Mobiles.Values)
+                    {
+                        races[(int)sm.Race & 3]++;
+                        female += sm.IsFemale ? 1 : 0;
+                        renamable += sm.IsRenamable ? 1 : 0;
+                        fast += sm.SpeedMode != CharacterSpeedType.Normal ? 1 : 0;
+                    }
+
+                    Log.Info($"[ECS] small player race {player.Race} female {player.IsFemale} renamable {player.IsRenamable} speed {player.SpeedMode} war {player.InWarMode} body 0x{player.Graphic:X4}; items {world.Items.Count} lights {lights} damageable {damageable} usedlayer {usedLayer} multis {multis}; mobiles {world.Mobiles.Count} races {races[0]}/{races[1]}/{races[2]}/{races[3]} female {female} renamable {renamable} speedmode {fast}; {SmallFields.Summary(world)}");
+
+                    return false;
+
                 case "season" when args.Length > 0:
                     world.ChangeSeason(Enum.Parse<Season>(args[0], true), 0);
                     Log.Info($"[ECS] driver: season {args[0]}");
