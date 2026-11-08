@@ -79,7 +79,6 @@ namespace ClassicUO.Game.Managers
             }
 
             _timePacket = Time.Ticks;
-            Console.WriteLine("CURRENT PACKET TIME: {0}", _timePacket);
         }
 
         private void LegacyAddStep(Item item, byte speed, Direction movingDir, ushort x, ushort y, sbyte z, bool write)
