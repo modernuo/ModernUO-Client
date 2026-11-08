@@ -609,8 +609,15 @@ namespace ClassicUO.Game.GameObjects
             return CanBeDrawn(data, g, playerIsGargoyle);
         }
 
-        /// <summary>The only player input of <see cref="CanBeDrawn(World, ushort)"/>.</summary>
-        public static bool PlayerIsGargoyle(World world) => world.Player != null && world.Player.Race == RaceType.GARGOYLE;
+        /// <summary>The only player input of <see cref="CanBeDrawn(World, ushort)"/>. Game thread only (with
+        /// <c>ecs_small_fields</c> the race is an unsynchronized ECS read); the player is read once, so a logout between two
+        /// reads cannot see it go null.</summary>
+        public static bool PlayerIsGargoyle(World world)
+        {
+            PlayerMobile player = world.Player;
+
+            return player != null && player.Race == RaceType.GARGOYLE;
+        }
 
         /// <summary>Unit tests only: the static tile data <see cref="CanBeDrawn(World, ushort)"/> reads when there is no
         /// running client (per thread, so parallel tests don't see it).</summary>

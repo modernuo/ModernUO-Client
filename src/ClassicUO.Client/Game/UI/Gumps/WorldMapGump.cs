@@ -547,10 +547,13 @@ namespace ClassicUO.Game.UI.Gumps
             _map = new Map.FacetView(index); // no Map (its slot array is not needed here)
 
 
+            // read on the game thread: LoadMap runs on a task, and the race is ECS storage with ecs_small_fields
+            bool gargoyle = GameObject.PlayerIsGargoyle(World);
+
             if (_loadingTask is { Status: TaskStatus.Running })
-                _loadingTask = _loadingTask.ContinueWith(_ => LoadMap(index));
+                _loadingTask = _loadingTask.ContinueWith(_ => LoadMap(index, gargoyle));
             else
-                _loadingTask = Task.Run(() => LoadMap(index));
+                _loadingTask = Task.Run(() => LoadMap(index, gargoyle));
         }
 
         #endregion
@@ -1091,7 +1094,12 @@ namespace ClassicUO.Game.UI.Gumps
 
         #region Loading
 
-        private unsafe void LoadMap(int mapIndex)
+        /// <summary>The cached world map image of a facet. Gargoyle-only statics are drawn for a gargoyle player, so the
+        /// image depends on the race too; the non-gargoyle name is the one used before the race was part of it.</summary>
+        internal static string MapCacheFileName(int mapIndex, string facetHash, bool playerIsGargoyle) =>
+            playerIsGargoyle ? $"map{mapIndex}_{facetHash}_gargoyle.png" : $"map{mapIndex}_{facetHash}.png";
+
+        private unsafe void LoadMap(int mapIndex, bool gargoyle)
         {
             if (mapIndex < 0 || mapIndex > MapLoader.MAPS_COUNT)
             {
@@ -1116,12 +1124,12 @@ namespace ClassicUO.Game.UI.Gumps
 
                 _mapTexture?.Dispose();
 
-                var mapKey = $"{mapIndex}";
+                var mapKey = gargoyle ? $"{mapIndex}_gargoyle" : $"{mapIndex}";
 
                 if (!_mapCache.TryGetValue(mapKey, out var fileMapPath))
                 {
                     var hash = Client.Game.UO.FileManager.Maps.GetFacetHash(mapIndex);
-                    fileMapPath = Path.Combine(_mapsCachePath, $"map{mapIndex}_{hash}.png");
+                    fileMapPath = Path.Combine(_mapsCachePath, MapCacheFileName(mapIndex, hash, gargoyle));
                     _mapCache[mapKey] = fileMapPath;
                 }
 
@@ -1159,9 +1167,6 @@ namespace ClassicUO.Game.UI.Gumps
                                 {
                                     continue;
                                 }
-
-                                // once per region: this runs on the loading task, and the race may change while it does
-                                bool gargoyle = GameObject.PlayerIsGargoyle(World);
 
                                 for (int lx = 0; lx < region.BlocksW; ++lx)
                                 {
