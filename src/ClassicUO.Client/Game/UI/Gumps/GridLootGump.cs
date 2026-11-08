@@ -44,12 +44,12 @@ namespace ClassicUO.Game.UI.Gumps
                 return;
             }
 
-            if (World.Player.ManualOpenedCorpses.Contains(LocalSerial))
+            if (World.PlayerState.ManualOpenedCorpses.Contains(LocalSerial))
             {
-                World.Player.ManualOpenedCorpses.Remove(LocalSerial);
+                World.PlayerState.ManualOpenedCorpses.Remove(LocalSerial);
             }
             else if (
-                World.Player.AutoOpenedCorpses.Contains(LocalSerial)
+                World.PlayerState.AutoOpenedCorpses.Contains(LocalSerial)
                 && ProfileManager.CurrentProfile != null
                 && ProfileManager.CurrentProfile.SkipEmptyCorpse
             )

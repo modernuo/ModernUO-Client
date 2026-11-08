@@ -5896,3 +5896,19 @@ Verification: dev and `-p:CuoDevTools=false` builds; ClassicUO.UnitTests 3363 pa
 Perf opportunities (not done here): pool `Item`s for objects entering range (4 MB per 15 s in ls_walk); measure-only text
 layout so RenderedText does not rasterize at all; `GpuItemCache` arrays from a pool or presized per chunk; MegaCliloc's
 `CapitalizeAllWords` string per property line.
+## player-state-2: the opened-corpse sets in PlayerState; a corpsewalk scene that runs the item loop (2026-11-08, `bg/player-state-2`)
+
+Base poc/modern-client 3695805e2. Code commit b990a5d99. Coordinator decision from the player-state review.
+
+**What moved.** `AutoOpenedCorpses` and `ManualOpenedCorpses` (`HashSet<uint>`) from `PlayerMobile` to `World.PlayerState`, like player-state's D fields. Readers and writers: `PlayerMobile.ShouldAutoOpen`/`AutoOpenCorpse`, `GameActions.OpenCorpse`, `ContainerGump` and `GridLootGump` (corpse gump: manual open vs skip-empty). The auto-open rule, its `World.Items` order (perf-13-steps) and the early-outs are unchanged.
+- **Lifetime: unchanged by construction**, as for player-state: a fresh store at `CreatePlayer` (0x1B, relog), an empty one at `World.Clear` (logout); death, map change, 0x20/0x78 keep it. So no switch and no checker: there is no second path to compare, only the place the same set lives. Detached preview `PlayerMobile`s (char creation, race change) no longer get their own unused sets.
+- One side effect: the two corpse gumps read `world.PlayerState`, which is never null, instead of `world.Player`; a corpse gump built while no player exists no longer throws.
+- D fields are outside the write-site budget; budget unchanged (no regen).
+
+**Tests.** `PlayerStateTests`' fill/fresh helpers now include both sets, so relog, logout, map change, death and the detached preview cover them. `PlayerStepOpenTests` (+7): logout and re-login reopen corpses opened before (both active-list sources), a relog without logout starts empty, and a corpse reusing an opened serial is not reopened (old loop with the same set agrees) until the next login (4 cases: list built or not, source on or off). Full suite dev 3,355 passed + 6 skipped; `-p:CuoDevTools=false` 3,349 passed + 6 skipped. Both client variants build.
+
+**corpsewalk gate scene** (`cuo-poc-state/measure/player-state-2/corpsewalk2.txt`). The old corpsewalk (perf-13-steps, ecs-active-items) enabled auto-open before the kills, so each corpse was opened alone as it fell (`item loops 0`; bench-000356/358/359 failed on that). The new scene uses frozen horses (`[add Horse set Frozen true`, so they don't wander) killed side by side: batch 1 (three corpses two tiles north) with auto-open off until all lie, then on and one step; batch 2 (three corpses seven tiles east) walked into, so all three enter range 3 on the same step. Both make the >=2 every-item loop run. Gate `socheck ... corpses` requires `item loops` > 0; ends in `quit`.
+
+**Client jobs (submitted, not awaited; dev JIT Release builds):** bench-000376 gate Gpu and bench-000377 gate Legacy (corpsewalk2, corpses, w5items, corpsewalk2 with `ecs_active_items_source` on, uistate with the partner; every checker incl. `CUO_STEP_OPEN_CHECK`, `CUO_W5_CHECK`, `CUO_ACTIVE_ITEMS_SOURCE_CHECK`, the effect and small-field checkers). Pass: `GATE PASS`. bench-000378 allocation: base 3695805e2 vs branch, both renderers, checkers off, `alloc-corpses.txt` (stand among six corpses, walk across them with auto-open on; two interleaved rounds) and wave 1C's `alloc-small.txt`. Expected: equal alloc/frame and GC counts. Timing: none prepared (a field moved one indirection; parked anyway).
+
+**Memory and cost.** Two empty `HashSet<uint>` per `PlayerState` (per login, plus one at each logout and in char creation) instead of per `PlayerMobile`; previews no longer allocate them. One more load (`World.PlayerState`) per corpse rule call. Negligible; not measured (timing parked).
