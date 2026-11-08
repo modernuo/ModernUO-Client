@@ -8,10 +8,10 @@ using System.Collections.Generic;
 namespace ClassicUO.Game
 {
     /// <summary>
-    /// The player's session data (status packet stats, resistances, skills, buffs, weapon abilities, stat locks), owned
-    /// by the World rather than by the <c>PlayerMobile</c> handle (ecs-transition-plan Q4: a typed store, not ECS
-    /// components). <see cref="World.CreatePlayer"/> installs a fresh one with each new player object (0x1B), and
-    /// <see cref="World.Clear"/> drops it, which is the lifetime these fields had on <c>PlayerMobile</c>; a re-created
+    /// The player's session data (status packet stats, resistances, skills, buffs, weapon abilities, stat locks,
+    /// opened corpses), owned by the World rather than by the <c>PlayerMobile</c> handle (ecs-transition-plan Q4: a
+    /// typed store, not ECS components). <see cref="World.CreatePlayer"/> installs a fresh one with each new player
+    /// object (0x1B), and <see cref="World.Clear"/> drops it, which is the lifetime these fields had on <c>PlayerMobile</c>; a re-created
     /// player handle that does not go through <c>CreatePlayer</c> keeps it.
     /// </summary>
     internal sealed class PlayerState
@@ -36,6 +36,14 @@ namespace ClassicUO.Game
 
         public Skill[] Skills { get; }
         public IReadOnlyDictionary<BuffIconType, BuffIcon> BuffIcons => _buffIcons;
+
+        /// <summary>
+        /// Corpses auto-open has opened (<c>PlayerMobile.OpenCorpsesInRange</c>). A serial reused by a new corpse stays in
+        /// the set until logout, as it did on PlayerMobile.
+        /// </summary>
+        public readonly HashSet<uint> AutoOpenedCorpses = new HashSet<uint>();
+        /// <summary>Corpses opened by the player (<c>GameActions.OpenCorpse</c>) whose gump has not opened yet.</summary>
+        public readonly HashSet<uint> ManualOpenedCorpses = new HashSet<uint>();
 
         public readonly Ability[] Abilities = [Ability.Invalid, Ability.Invalid];
         public ref Ability PrimaryAbility => ref Abilities[0];
