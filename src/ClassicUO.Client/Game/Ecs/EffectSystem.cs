@@ -249,6 +249,9 @@ namespace ClassicUO.Game
             }
             else if (e.Source != null)
             {
+                // a ground point on both of the checker's paths too (counted, not compared): SetSource(GameObject) already put
+                // the effect at the object's position
+                e.Source = null;
                 EndpointsUnbound++;
             }
 
@@ -264,6 +267,13 @@ namespace ClassicUO.Game
             }
             else if (e.Target != null)
             {
+                // Codex audit (ecs-effects-own) P2: the target becomes a ground point at the object's position; without this
+                // the effect's own target coordinates (0,0,0 when a target object was given) would be read once the object is
+                // dropped. The object goes now, so the checker's two paths agree on the ground point (counted, not compared).
+                e.TargetX = e.Target.X;
+                e.TargetY = e.Target.Y;
+                e.TargetZ = e.Target.Z;
+                e.Target = null;
                 EndpointsUnbound++;
             }
 

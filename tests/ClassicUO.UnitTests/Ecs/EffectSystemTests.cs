@@ -441,6 +441,28 @@ namespace ClassicUO.UnitTests.Ecs
             s.TargetEntity.IsNull.Should().BeTrue("a gone endpoint lets go of a record that lives on as another mobile's");
         }
 
+        // Codex audit (ecs-effects-own) P2: a mobile and an item share a serial and the mirror holds the item's record, so the
+        // mobile World resolves cannot be bound. Such an endpoint is a ground point at the object's position when the effect
+        // registered, not (0,0,0): a moving effect still heads for it, a fixed effect stays where its source was.
+        [Fact]
+        public void An_Unbound_Endpoint_Is_A_Ground_Point_At_The_Objects_Position()
+        {
+            long unbound = EffectSystem.EndpointsUnbound;
+
+            foreach (World w in Worlds)
+            {
+                AddMobile(w, TARGET, 1012, 1009);
+                AddMobile(w, CASTER, 1004, 1006);
+                AddItem(w, TARGET, 1002, 1003); // the item's record replaces the mobile's under the shared serial
+                AddItem(w, CASTER, 1003, 1002);
+                Create(w, GraphicEffectType.Moving, 0, TARGET, 0x36D4, 1001, 1001, 0, 0, speed: 1, duration: 0, explodes: true);
+                Create(w, GraphicEffectType.FixedFrom, CASTER, 0, 0x3709, 0, 0, 0, 0, duration: 400);
+            }
+
+            Run(60);
+            EffectSystem.EndpointsUnbound.Should().BeGreaterThan(unbound, "the endpoints could not be bound");
+        }
+
         [Fact]
         public void A_Target_Destroyed_And_Its_Serial_Reused_Keeps_The_Last_Position()
         {
