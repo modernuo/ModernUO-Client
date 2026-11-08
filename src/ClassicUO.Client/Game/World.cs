@@ -31,11 +31,6 @@ namespace ClassicUO.Game
 
         public World()
         {
-            if (WorldEcs.MobileUpdateCheck)
-            {
-                Mobiles.EnableShadow();
-            }
-
             WMapManager = new WorldMapEntityManager(this);
             CorpseManager = new CorpseManager(this);
             Party = new PartyManager(this);
@@ -453,13 +448,6 @@ namespace ClassicUO.Game
         // (T5c). The E4 clock path keeps them in one method, so they are one stage here.
         private void StageMobiles(bool do_delete)
         {
-            if (WorldEcs.MobileUpdateCheck)
-            {
-                // E10: the table against its shadow dictionary every frame, whichever mobile loop runs
-                WorldEcs.TableChecks++;
-                WorldEcs.TableDiffs += Mobiles.VerifyAgainstShadow();
-            }
-
             FrameStats.Begin(FramePhase.WorldMobiles);
 
             // W5: AddOrUpdate's own early-outs (no recent party/guild packet, the world map closed), asked once per frame;
@@ -663,9 +651,13 @@ namespace ClassicUO.Game
             }
 
             _mobileUpdateStamp++;
-            WorldEcs.ClockFrames++;
-            WorldEcs.ClockDue += _dueMobiles.Count;
-            WorldEcs.ClockScanned += Ecs.Clock.Scanned;
+
+            if (WorldEcs.MobileUpdateStats)
+            {
+                WorldEcs.ClockFrames++;
+                WorldEcs.ClockDue += _dueMobiles.Count;
+                WorldEcs.ClockScanned += Ecs.Clock.Scanned;
+            }
 
             // the due list follows archetype order, which equipment tags reshuffle; the legacy loop's order decides tile lists,
             // picking ties and which footstep wins, so the due mobiles run in Mobiles.Values order
@@ -682,11 +674,6 @@ namespace ClassicUO.Game
             }
 
             SortInMobilesOrder(_dueObjects);
-
-            if (check)
-            {
-                Ecs.CheckOrder(Mobiles.Values, _dueObjects);
-            }
 
             for (int i = 0; i < _dueObjects.Count; i++)
             {

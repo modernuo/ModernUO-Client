@@ -343,6 +343,41 @@ namespace ClassicUO.UnitTests.Ecs
             Describe(m).Should().Be(before);
         }
 
+        // ecs-hygiene: TryRun reads the eligibility from one record row; a mobile whose record lacks a component is declined
+        [Fact]
+        public void A_Mobile_Without_The_Timer_Component_Is_Declined_And_Unchanged()
+        {
+            World world = BuildT5b(T5bStart.Standing, out _);
+            Mobile m = world.Mobiles.Get(MOB);
+            FakeAdvanceSource src = T5bDataOf(T5bData.People);
+            world.Ecs.Mirror.TryGetEntity(MOB, out EcsEntity e).Should().BeTrue();
+            e.RemoveComponent<AnimationTimer>();
+            string before = Describe(m);
+            long declined = MobileAnimationAdvanceSystem.Declined;
+            Time.Ticks += 70_000;
+
+            new MobileAnimationAdvanceSystem().TryRun(world, m, in src, false).Should().BeFalse();
+            Describe(m).Should().Be(before);
+            (MobileAnimationAdvanceSystem.Declined - declined).Should().BeGreaterThan(0);
+        }
+
+        // the row overload of TakeDirty: the tag read from the record, removed only when set
+        [Fact]
+        public void TakeDirty_From_A_Row_Removes_Only_A_Set_Tag()
+        {
+            var store = new Friflo.Engine.ECS.EntityStore();
+            EcsEntity e = store.CreateEntity();
+            e.AddComponent(new MobileInputs());
+
+            MobileAnimationSystem.TakeDirty(e, EcsRead.Row(e)).Should().BeFalse();
+            e.Tags.Has<EquipmentDirty>().Should().BeFalse();
+
+            e.AddTag<EquipmentDirty>();
+            MobileAnimationSystem.TakeDirty(e, EcsRead.Row(e)).Should().BeTrue();
+            e.Tags.Has<EquipmentDirty>().Should().BeFalse();
+            MobileAnimationSystem.TakeDirty(e, EcsRead.Row(e)).Should().BeFalse();
+        }
+
         [Fact]
         public void The_Selection_Input_Comes_From_The_Pushed_Inputs_And_The_Slots()
         {

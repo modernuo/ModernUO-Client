@@ -28,6 +28,11 @@ namespace ClassicUO.UnitTests.Renderer
 
         private static long Ms(int ms) => Stopwatch.GetTimestamp() + Stopwatch.Frequency * ms / 1000;
 
+        // Deadlines and stall slices that only a hang reaches. A loaded machine can leave a below-normal thread without CPU
+        // for seconds (a 2 ms stall slice measured 1.8 s), so a wait that should succeed gets these, and a wait that
+        // should end early is told apart from one that runs out by the deadline or slice it did not reach.
+        private static readonly int GuardMs = (int)DecodeWait.HangGuard.TotalMilliseconds;
+
         [Fact]
         public void Does_Not_Wait_When_The_Budget_Cannot_Admit_The_Batch()
         {
@@ -38,10 +43,11 @@ namespace ClassicUO.UnitTests.Renderer
             var uploads = new List<uint>();
             var d = new FirstSightDecoder("art", 8, Fill, j => uploads.Add(j.Index), _ => 80, budget);
 
+            // nothing ever publishes here, so a wait would last a whole stall slice (the guard) before giving up
             var sw = Stopwatch.StartNew();
-            int pending = d.RequestAndWait(new uint[] { 2, 3 }, Ms(1000), stallMs: 200);
+            int pending = d.RequestAndWait(new uint[] { 2, 3 }, Ms(2 * GuardMs), stallMs: GuardMs);
 
-            sw.ElapsedMilliseconds.Should().BeLessThan(100, "a batch that can't start must not block the main thread");
+            sw.ElapsedMilliseconds.Should().BeLessThan(GuardMs, "a batch that can't start must not block the main thread");
             pending.Should().Be(2);
             d.IsRequested(2).Should().BeTrue("the requests stay queued");
             d.IsRequested(3).Should().BeTrue();
@@ -55,10 +61,11 @@ namespace ClassicUO.UnitTests.Renderer
             var budget = new DecodeBudget(0, _ => { });
             var d = new FirstSightDecoder("art", 8, Fill, _ => { }, _ => 16, budget);
 
-            var sw = Stopwatch.StartNew();
-            int pending = d.RequestAndWait(new uint[] { 2, 3 }, Ms(2000), stallMs: 2);
+            // returning before the deadline means the stall slice ended the wait (at the deadline, now >= deadline)
+            long deadline = Ms(GuardMs);
+            int pending = d.RequestAndWait(new uint[] { 2, 3 }, deadline, stallMs: 2);
 
-            sw.ElapsedMilliseconds.Should().BeLessThan(500, "one stall slice without progress ends the wait");
+            Stopwatch.GetTimestamp().Should().BeLessThan(deadline, "one stall slice without progress ends the wait");
             pending.Should().Be(2);
         }
 
@@ -69,7 +76,7 @@ namespace ClassicUO.UnitTests.Renderer
             var d = new FirstSightDecoder("art", 64, Fill, j => uploads.Add(j.Index), _ => 16, new DecodeBudget(1L << 20, OwnThread));
             var batch = new uint[] { 5, 6, 7, 8 };
 
-            int pending = d.RequestAndWait(batch, Ms(5000), stallMs: 1000);
+            int pending = d.RequestAndWait(batch, Ms(GuardMs), stallMs: GuardMs);
 
             pending.Should().Be(0);
             uploads.Should().BeEquivalentTo(batch);
@@ -82,14 +89,7 @@ namespace ClassicUO.UnitTests.Renderer
             var d = new FirstSightDecoder("art", 64, Fill, j => uploads.Add(j.Index), _ => 16, new DecodeBudget(1L << 20, OwnThread));
             d.Request(5);
             d.Request(6);
-            var sw = Stopwatch.StartNew();
-
-            while (d.ReadyCount < 2 && sw.ElapsedMilliseconds < 5000)
-            {
-                Thread.Sleep(1);
-            }
-
-            d.ReadyCount.Should().Be(2);
+            WaitReady(d, 2);
 
             int pending = d.RequestAndWait(new uint[] { 5, 6 }, Stopwatch.GetTimestamp() - 1, stallMs: 2);
 
@@ -99,13 +99,7 @@ namespace ClassicUO.UnitTests.Renderer
 
         private static void WaitReady(FirstSightDecoder d, int count)
         {
-            var sw = Stopwatch.StartNew();
-
-            while (d.ReadyCount < count && sw.ElapsedMilliseconds < 5000)
-            {
-                Thread.Sleep(1);
-            }
-
+            DecodeWait.Until(d, () => d.ReadyCount >= count, drain: false);
             d.ReadyCount.Should().Be(count);
         }
 
@@ -125,7 +119,7 @@ namespace ClassicUO.UnitTests.Renderer
             other.Request(1);
             budget.Waiting.Should().Be(1);
 
-            int pending = d.RequestAndWait(new uint[] { 2, 3 }, Ms(1000), stallMs: 200);
+            int pending = d.RequestAndWait(new uint[] { 2, 3 }, Ms(GuardMs), stallMs: GuardMs);
 
             pending.Should().Be(0);
             uploads.Should().BeEquivalentTo(new uint[] { 2, 3 });
@@ -146,7 +140,7 @@ namespace ClassicUO.UnitTests.Renderer
             other.Request(1);
             budget.Waiting.Should().Be(1);
 
-            int pending = d.RequestAndWait(new uint[] { 2, 3, 4 }, Ms(5000), stallMs: 1000);
+            int pending = d.RequestAndWait(new uint[] { 2, 3, 4 }, Ms(GuardMs), stallMs: GuardMs);
 
             pending.Should().Be(0);
             uploads.Should().BeEquivalentTo(new uint[] { 2, 3, 4 });
@@ -167,7 +161,7 @@ namespace ClassicUO.UnitTests.Renderer
             }, _ => 16, new DecodeBudget(1L << 20, OwnThread));
             long before = d.DrainTicks;
 
-            int pending = d.RequestAndWait(new uint[] { 5, 6, 7 }, Ms(5000), stallMs: 1000);
+            int pending = d.RequestAndWait(new uint[] { 5, 6, 7 }, Ms(GuardMs), stallMs: GuardMs);
 
             pending.Should().Be(0);
             (d.DrainTicks - before).Should().BeGreaterOrEqualTo(3 * oneMs);

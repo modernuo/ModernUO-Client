@@ -357,7 +357,8 @@ namespace ClassicUO.UnitTests.Game
                 times[times.Count / 2].Should().BeLessThan(10.0, $"calls took {string.Join(", ", times.Select(t => t.ToString("F2")))} ms");
 
                 // wait for the workers, then everything is ready without a single decode on this thread
-                var deadline = DateTime.UtcNow.AddSeconds(30);
+                // only a hang guard: the decodes run on the thread pool, which a loaded machine can hold up for seconds
+                var deadline = DateTime.UtcNow.AddMinutes(2);
 
                 foreach (var (bx, by) in blocks)
                 {
@@ -424,6 +425,8 @@ namespace ClassicUO.UnitTests.Game
             try
             {
                 // prefetch 40 regions (more than the 24 cached) in bursts, as a long glide would, and check z through both
+                var deadline = DateTime.UtcNow.AddMinutes(2); // hang guard only
+
                 for (int r = 0; r < 40; r++)
                 {
                     int x = (r % 8) * 512 + 37, y = (r / 8) * 512 + 11;
@@ -431,6 +434,7 @@ namespace ClassicUO.UnitTests.Game
 
                     while (!pre.TryGetLandZ(0, x, y, out _))
                     {
+                        DateTime.UtcNow.Should().BeBefore(deadline);
                         Thread.Sleep(1);
                     }
 
