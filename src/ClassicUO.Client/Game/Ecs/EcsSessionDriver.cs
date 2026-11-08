@@ -846,7 +846,7 @@ namespace ClassicUO.Game
 
                     return true;
 
-                // open status|skills|buffs|combatbook: the player-stat gumps, which read World.PlayerState (player-state gate)
+                // open status|skills|buffs|combatbook|worldmap: the player-stat gumps, which read World.PlayerState (player-state gate)
                 case "open" when args.Length > 0:
                     switch (args[0])
                     {
@@ -860,6 +860,8 @@ namespace ClassicUO.Game
 
                             break;
                         case "combatbook": GameActions.OpenAbilitiesBook(world); break;
+                        // perf-14: the world map builds its image on a task with the race read on the game thread
+                        case "worldmap": GameActions.OpenWorldMap(world); break;
                     }
 
                     Log.Info($"[ECS] ui open {args[0]}");
