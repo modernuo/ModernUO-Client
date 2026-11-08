@@ -111,11 +111,11 @@ namespace ClassicUO.UnitTests.Ecs
         {
             var list = new System.Collections.Generic.List<uint>();
 
-            for (LinkedObject i = e?.Items; i != null; i = i.Next)
+            for (ChildNode i = e?.Items; i != null; i = i.NextNode)
             {
-                if (!((Entity)i).IsDestroyed)
+                if (!i.Owner.IsDestroyed)
                 {
-                    list.Add(((Entity)i).Serial);
+                    list.Add(i.Owner.Serial);
                 }
             }
 

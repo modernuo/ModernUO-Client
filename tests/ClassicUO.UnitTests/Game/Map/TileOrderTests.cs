@@ -552,9 +552,8 @@ namespace ClassicUO.UnitTests.Game.Map
             Add(a);
             Add(b);
 
-            // a stale container link, like a GameEffect's EffectManager sibling: the old "o == obj" branch followed it into
-            // another tile's list
-            a.Next = other;
+            // linked-object (2026-11-07): a Static has no container links any more, so the stale-link case (the old "o == obj"
+            // branch followed one into another tile's list) cannot be set up; the plain reinsert stays
             Add(a);
             Assert.Equal(new GameObject[] { b, a }, List());
             Assert.Equal(new GameObject[] { other }, List(4, 4));

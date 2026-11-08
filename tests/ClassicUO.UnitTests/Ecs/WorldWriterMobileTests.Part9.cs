@@ -28,9 +28,9 @@ namespace ClassicUO.UnitTests.Ecs
             Mobile m = world.Mobiles.Get(from);
             var children = new List<Item>();
 
-            for (LinkedObject i = m.Items; i != null; i = i.Next)
+            for (ChildNode i = m.Items; i != null; i = i.NextNode)
             {
-                children.Add((Item)i);
+                children.Add((Item)i.Owner);
             }
 
             var mobileCommits = new List<uint>();
@@ -146,12 +146,12 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 if (!bank.IsEmpty)
                 {
-                    Item first = (Item)bank.Items;
+                    ChildNode first = bank.Items;
 
                     while (first != null)
                     {
-                        Item next = (Item)first.Next;
-                        p.World.RemoveItem(first, true);
+                        ChildNode next = first.NextNode;
+                        p.World.RemoveItem((Item)first.Owner, true);
                         first = next;
                     }
 
