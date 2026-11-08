@@ -5672,3 +5672,13 @@ Base `poc/modern-client` b4ed3120c. Code commits 37ef1c18b (the move) and 9c8516
 - **Driver.** New `overhead` command (dev builds): the player's text container (size, limit, links walked both ways, texts oldest first) and the effect list walked both ways.
 - **Gates** (`measure/linked-object/`, dev JIT Release build): Gpu bench-000350 and Legacy bench-000351 (build 9c8516649): textflood (new: 8 says over the overhead limit, 12 client effects added and removed; checks 5 texts linked 5/5 ending lo-4..lo-8 and the effect list consistent both ways), e6fx, e6fx_ends, coldbars, w5items, corpses, ls_parity, Gpu also uistate with the partner; every checker plus the effect endpoint and motion checkers. Results: pending.
 - **Timing:** parked (`measure/linked-object/job-timing-PARKED.sh`, needs `build.sh` for aot and aot-base); expected neutral.
+
+## linked-object-2: the textflood gate failure was the scene (2026-11-08, `bg/linked-object-2`)
+
+From `bg/linked-object` e2aeffac9 (code 9c8516649; base b4ed3120c). No code change.
+
+- **Symptom.** Gates bench-000350 (Gpu) and bench-000351 (Legacy) failed textflood: `the script did not end before the driver timeout`, `the driver script never reached quit`, `run_parity rc 2`. The client ran on until the 300 s driver timeout, frames advancing and checkers clean.
+- **Root cause: `measure/linked-object/textflood.txt` has no final `quit`.** The driver ran every line: after `wait 12`, gate_textflood.log has the sixth `overhead` (`size 5 max 5 linked 5/5 effects 0/0: | lo-4 .. lo-8`), `check` (0 mismatches) and `journal 10` (lo-1..lo-8). Then the script ended and the client idled in world. Every other gate scene ends with `quit` (e6fx, e6fx_ends, coldbars). The texts still listed after they expire are expected: expired TextObjects stay in the TextContainer (TextRenderer skips them on `Time < Ticks`, as on the base) until a new text pushes them out or `Clear()` runs.
+- **Fix** (`measure/linked-object-2/`): textflood.txt with `quit` added; a copy of gate-body.sh pointed there, and olcheck also requires the sixth overhead line to read `size 5 max 5 linked 5/5` and a journal line with lo-8.
+- **Tests.** Unit suite 3,174 passed + 6 skipped (CuoDevTools=true); 3,169 passed + 6 skipped (CuoDevTools=false; the run bg/linked-object left unfinished). Both client variants build (0 errors).
+- **Gates** (dev JIT Release build of e2aeffac9): Gpu bench-000354, Legacy bench-000355. Results: pending.
