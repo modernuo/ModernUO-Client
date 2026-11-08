@@ -56,7 +56,8 @@ namespace ClassicUO.Game.Scenes
 
         public static void BeginFrame()
         {
-            Active = Interval > 0 && ++_frame % Interval == 0;
+            // a T9 golden capture's frame records the batcher's calls itself
+            Active = Interval > 0 && ++_frame % Interval == 0 && !GoldenCapture.Armed;
 
             if (Active)
             {

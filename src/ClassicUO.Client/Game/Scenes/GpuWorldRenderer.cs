@@ -278,6 +278,9 @@ namespace ClassicUO.Game.Scenes
             CaptureFallbacks = 0;
             UpdateWaterWobble();
             EcsParity.BeginFrame();
+#if CUO_DEVTOOLS
+            GoldenCapture.BeginGpu();
+#endif
             SpritePickTable.BeginDraw();
             _ecsMobiles = Configuration.Settings.GlobalSettings.GpuEcsSprites && _pack != null && _pack.HasAnims;
             _scene = Client.Game.GetScene<GameScene>();
@@ -413,6 +416,12 @@ namespace ClassicUO.Game.Scenes
         /// </summary>
         public bool DrawEffect(UltimaBatcher2D batcher, GameEffect effect, float depth)
         {
+#if CUO_DEVTOOLS
+            if (GoldenCapture.Recording && !Probe)
+            {
+                GoldenCapture.Mark(effect, _dynamicCount);
+            }
+#endif
             if (EffectSpriteExtract.Handles(effect))
             {
 #if CUO_DEVTOOLS
@@ -512,6 +521,12 @@ namespace ClassicUO.Game.Scenes
             {
                 ProbeViews.Add((obj, obj.FrameInfo, obj.ViewFlipped));
             }
+#if CUO_DEVTOOLS
+            else if (GoldenCapture.Recording)
+            {
+                GoldenCapture.Mark(obj, _dynamicCount);
+            }
+#endif
 
             if (_ecsMobiles && obj is Mobile m && !shadowOnly && TryDrawMobileEcs(batcher, m, depth, out bool ecsDrawn))
             {
@@ -1042,6 +1057,9 @@ namespace ClassicUO.Game.Scenes
             }
 
             _world.Prepare(in camera);
+#if CUO_DEVTOOLS
+            GoldenCapture.EndGpu(DynamicInstances);
+#endif
 
             // Ties at equal depth go to the first instance drawn; ClassicUO's painter order gives them to the last one.
             int n = Math.Min(_dynamicCount, _world.DynamicBuffer.Length);
