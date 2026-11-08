@@ -64,6 +64,8 @@ namespace ClassicUO.Game.Scenes
         private uint _timeToPlaceMultiInHouseCustomization;
         private readonly UseItemQueue _useItemQueue;
         private bool _useObjectHandles;
+        // the player's race for NameOverHeadManager.IsAllowed, read once per render-list pass (an ECS lookup per item with ecs_small_fields)
+        private bool _handlesPlayerIsGargoyle;
         private AnimatedStaticsManager _animatedStaticsManager;
 
         private readonly World _world;
@@ -678,6 +680,7 @@ namespace ClassicUO.Game.Scenes
             int maxY = _maxTile.Y;
             Map.Map map = _world.Map;
             bool use_handles = _useObjectHandles;
+            _handlesPlayerIsGargoyle = use_handles && GameObject.PlayerIsGargoyle(_world);
             GpuItemCacheBegin(use_handles);
             (var minChunkX, var minChunkY) = (minX >> 3, minY >> 3);
             (var maxChunkX, var maxChunkY) = (maxX >> 3, maxY >> 3);

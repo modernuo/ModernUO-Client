@@ -44,7 +44,11 @@ namespace ClassicUO.Game.Managers
             set => ProfileManager.CurrentProfile.NameOverheadToggled = value;
         }
 
-        public bool IsAllowed(Entity entity)
+        /// <summary>The render-list walk calls this per object while name overheads are on, so the player's race (an ECS
+        /// lookup with <c>ecs_small_fields</c>) is read once per frame by the caller: <see cref="GameObject.PlayerIsGargoyle"/>.</summary>
+        public bool IsAllowed(Entity entity, bool playerIsGargoyle) => IsAllowed(entity, TypeAllowed, playerIsGargoyle);
+
+        internal static bool IsAllowed(Entity entity, NameOverheadTypeAllowed allowed, bool playerIsGargoyle)
         {
             if (entity == null)
             {
@@ -56,26 +60,26 @@ namespace ClassicUO.Game.Managers
                 if (entity is Item item)
                 {
                     if (item.IsCorpse)
-                        return TypeAllowed.HasFlag(NameOverheadTypeAllowed.Corpses);
+                        return allowed.HasFlag(NameOverheadTypeAllowed.Corpses);
 
-                    if (!GameObject.CanBeDrawn(entity.World, item.DisplayedGraphic))
+                    if (!GameObject.CanBeDrawn(item.DisplayedGraphic, playerIsGargoyle))
                         return false;
                 }
 
-                return TypeAllowed.HasFlag(NameOverheadTypeAllowed.Items);
+                return allowed.HasFlag(NameOverheadTypeAllowed.Items);
             }
 
             if (SerialHelper.IsMobile(entity.Serial) && entity is Mobile mobile)
             {
                 return mobile.NotorietyFlag switch
                 {
-                    NotorietyFlag.Innocent => TypeAllowed.HasFlag(NameOverheadTypeAllowed.Innocent),
-                    NotorietyFlag.Ally => TypeAllowed.HasFlag(NameOverheadTypeAllowed.Ally),
-                    NotorietyFlag.Gray => TypeAllowed.HasFlag(NameOverheadTypeAllowed.Gray),
-                    NotorietyFlag.Criminal => TypeAllowed.HasFlag(NameOverheadTypeAllowed.Criminal),
-                    NotorietyFlag.Enemy => TypeAllowed.HasFlag(NameOverheadTypeAllowed.Enemy),
-                    NotorietyFlag.Murderer => TypeAllowed.HasFlag(NameOverheadTypeAllowed.Murderer),
-                    NotorietyFlag.Invulnerable => TypeAllowed.HasFlag(NameOverheadTypeAllowed.Invulnerable),
+                    NotorietyFlag.Innocent => allowed.HasFlag(NameOverheadTypeAllowed.Innocent),
+                    NotorietyFlag.Ally => allowed.HasFlag(NameOverheadTypeAllowed.Ally),
+                    NotorietyFlag.Gray => allowed.HasFlag(NameOverheadTypeAllowed.Gray),
+                    NotorietyFlag.Criminal => allowed.HasFlag(NameOverheadTypeAllowed.Criminal),
+                    NotorietyFlag.Enemy => allowed.HasFlag(NameOverheadTypeAllowed.Enemy),
+                    NotorietyFlag.Murderer => allowed.HasFlag(NameOverheadTypeAllowed.Murderer),
+                    NotorietyFlag.Invulnerable => allowed.HasFlag(NameOverheadTypeAllowed.Invulnerable),
                     _ => true
                 };
             }
