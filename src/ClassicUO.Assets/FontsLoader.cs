@@ -177,9 +177,13 @@ namespace ClassicUO.Assets
         private const int MAX_REUSED_PIXELS = 256 * 1024;
         private uint[] _reusedPixels;
 
+        // Only the thread that created the loader (the game thread) gets the reused buffer: text is also made off it
+        // (WorldMapGump's map load prints to the journal from a task), and that thread gets its own array as before.
+        private readonly int _reuseThreadId = Environment.CurrentManagedThreadId;
+
         private uint[] RentPixels(int count)
         {
-            if (!ReusePixelBuffer || count > MAX_REUSED_PIXELS)
+            if (!ReusePixelBuffer || count > MAX_REUSED_PIXELS || Environment.CurrentManagedThreadId != _reuseThreadId)
             {
                 return new uint[count];
             }
