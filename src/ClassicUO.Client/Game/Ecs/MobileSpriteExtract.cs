@@ -897,6 +897,8 @@ namespace ClassicUO.Game
         private void CheckLegacyReplay(ILegacySpriteSource src, EcsEntity e, in EcsRow data, MobileFrameCache cache, int posX, int posY,
             float depth, int baseX, int baseY)
         {
+            // the replay's lights are already in _lights; the fresh select appends its own, so start it from none
+            _lightCount = 0;
             Select(e, data, posX, posY, depth);
             CheckLegacyReplays++;
             string problem = null;
