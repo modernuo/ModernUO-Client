@@ -122,6 +122,13 @@ namespace ClassicUO.Game
                 return;
             }
 
+            RunScript(world, player);
+        }
+
+        // The lambda lives here, not in Update: a closure over Update's parameters is allocated at Update's entry,
+        // which put 32 B on every frame's FrameStats alloc/frame even while the script was waiting.
+        private void RunScript(World world, PlayerMobile player)
+        {
             Step(line => Execute(world, player, line));
         }
 
