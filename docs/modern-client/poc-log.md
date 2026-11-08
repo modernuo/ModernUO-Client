@@ -5731,3 +5731,12 @@ Base `bg/ecs-boat-steps` 4fbfdab5e. Code commits 00b5431f0 (order) and 665c7b384
 - **Mutants** 10/10 killed (reverse order, keys never removed, sorted order, Park no-op, gone boat always dropped, restore keeps the parked clock, ClearSteps ignores parked, frame or QueueBoatStep not restoring, ClearEntities keeping parked passengers; the last survived round 1 and got the "list cleared while gone" case).
 - **Verification.** Unit tests 3,171 + 6 skipped (dev), 3,166 + 6 (CuoDevTools=false); the client builds in both variants. Write budget unchanged. Gates submitted, not awaited: bench-000348 (Gpu), bench-000349 (Legacy), `measure/ecs-boat-steps-2/` (copy of the ecs-boat-steps gate body; binary = dev JIT publish of 665c7b384). No timing (machine busy).
 - **Cost.** Per frame with the switch on: a key snapshot and one Items/record lookup per boat that ever queued a step (was one query walk); no allocation. Memory as above.
+
+## small fixes: boat console write, test timer resolution, devtools-only Mobile members (2026-11-08, `bg/small-fixes-1108`)
+
+Base `poc/modern-client` 963fce379. Code commits 305d984a3 and 4fd2fd418.
+
+- **Boat packet console write** (305d984a3): `BoatMovingManager.AddStep` printed `CURRENT PACKET TIME` on every smooth-boat 0xF6 packet (synchronous console write plus a string format per packet). Removed; `_timePacket` still feeds `QueueBoatStep`. Other leftover debug `Console.WriteLine`s are listed in the agent report (PacketHandlers `=== DENY ===` / `ITEM DROP OK` / `CLEAR HOLD`, MainScene load/unload, GameController audio device events, Plugin `>>> ADDRESS`, AnchorManager matrix dump, PluginHost reflection cmd); not removed.
+- **Unit test timer resolution** (4fd2fd418): the client's 1 ms system timer comes from SDL's native init (no C# `timeBeginPeriod` helper exists in the repo), so the test host ran at the 15.6 ms default tick. A `[ModuleInitializer]` in `TestEnvironment.cs` calls winmm `timeBeginPeriod(1)` on Windows only. DecodeBudgetTests (18), FirstSightDecoderTests (6), ChunkLoadingTests (9): 3 of 3 runs passed each.
+- **DevTools-only Mobile members:** already done on the base (bfa0ddd80 guards `PlanIdleAnimationLive`; `UpdateStamp` and every use in World.cs and WorldEcs.CheckSkipped are under `#if CUO_DEVTOOLS` with `CLEANUP(release)`). No commit.
+- **Verification.** Client builds in both variants. Unit tests 3,274 + 6 skipped (dev), 3,268 + 6 (`-p:CuoDevTools=false`). Write-site budget unchanged.

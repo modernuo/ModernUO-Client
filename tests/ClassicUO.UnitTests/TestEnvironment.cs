@@ -1,5 +1,7 @@
+using System;
 using System.IO;
 using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using Xunit;
 
 namespace ClassicUO.UnitTests
@@ -28,6 +30,21 @@ namespace ClassicUO.UnitTests
             ClassicUO.Ecs.EcsSchema.Register();
             Friflo.Engine.ECS.EntityStore.GetEntitySchema();
         }
+
+        // The client gets a 1 ms system timer from SDL's native init; the test host does not, so on Windows every short
+        // Thread.Sleep or timed wait rounds up to the 15.6 ms default tick and the timing-sensitive tests (DecodeBudgetTests,
+        // FirstSightDecoderTests, ChunkLoadingTests) go flaky under load. The period lasts until the process exits.
+        [ModuleInitializer]
+        internal static void RaiseTimerResolution()
+        {
+            if (OperatingSystem.IsWindows())
+            {
+                _ = TimeBeginPeriod(1);
+            }
+        }
+
+        [DllImport("winmm.dll", EntryPoint = "timeBeginPeriod")]
+        private static extern uint TimeBeginPeriod(uint uPeriod);
     }
 
     // MusicStream and Mp3Decoder tests: the static OpenMemoryOverride hook and the global LiveInputAllocations count are
