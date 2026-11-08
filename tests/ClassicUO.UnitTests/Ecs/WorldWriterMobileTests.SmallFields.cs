@@ -130,6 +130,17 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.PlaceInContainer(BODY, 0x2006, 1, 10, 10, 0, BAG, out _).Should().NotBeNull();
             AssertSmallFields(world, "corpse in a bag");
 
+            // PlaceInContainer clears the bit: a running corpse with a layer put in a corpse keeps its instance and record
+            // (no replacement), and its stripped direction has no running bit
+            Upsert(world, 0x4000_7A08, 0x2006, 0x02, 0);
+            Upsert(world, 0x4000_7A07, 0x2006, 0x82, 0);
+            world.Items.Get(0x4000_7A07).UsedLayer.Should().BeTrue();
+            ItemRecord(world, 0x4000_7A07).Bits.Should().HaveFlag(ItemTraitBits.UsedLayer);
+            world.Writer.PlaceInContainer(0x4000_7A07, 0x2006, 1, 10, 10, 0, 0x4000_7A08, out _).Should().NotBeNull();
+            world.Items.Get(0x4000_7A07).UsedLayer.Should().BeFalse();
+            ItemRecord(world, 0x4000_7A07).Bits.Should().NotHaveFlag(ItemTraitBits.UsedLayer);
+            AssertSmallFields(world, "running corpse in a corpse");
+
             // ReturnHeldItem and WearItem with the corpse graphic: the death bit comes from the item's running direction
             Upsert(world, 0x4000_7A05, 0xE77, 0x82, 0);
             Upsert(world, 0x4000_7A06, 0xE77, 0x82, 0);
