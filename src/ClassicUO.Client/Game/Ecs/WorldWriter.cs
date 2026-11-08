@@ -2261,6 +2261,7 @@ namespace ClassicUO.Game
                 boat.OffsetX = 0;
                 boat.OffsetY = 0;
                 boat.OffsetZ = 0;
+                ItemOffsets.Push(_world, boat, Microsoft.Xna.Framework.Vector3.Zero);
 
                 if (boat.IsPlaced)
                 {
@@ -2312,6 +2313,7 @@ namespace ClassicUO.Game
                 entity.OffsetX = 0;
                 entity.OffsetY = 0;
                 entity.OffsetZ = 0;
+                ItemOffsets.Push(_world, entity, Microsoft.Xna.Framework.Vector3.Zero);
 
                 if (entity.IsPlaced)
                 {
@@ -2342,7 +2344,7 @@ namespace ClassicUO.Game
         /// <summary>
         /// <c>BoatMovingManager.ClearSteps</c> (0xD8's and 0xBF.1D's custom-house regeneration, a multi's (re)load through
         /// <see cref="ClearBoatSteps"/>): the offset of the boat or of one object on it
-        /// back to zero. Nothing reaches the ECS (the offset is not a record field, and an item has no inputs).
+        /// back to zero: a mobile's Steps (T6c) and, with <c>ecs_item_offset</c>, an item's <c>ItemOffset</c> (<see cref="ItemOffsets"/>).
         /// Rejections as <see cref="SetHits"/>.
         /// </summary>
         public void ResetBoatOffset(Entity entity)
@@ -2357,6 +2359,7 @@ namespace ClassicUO.Game
                 entity.OffsetX = 0;
                 entity.OffsetY = 0;
                 entity.OffsetZ = 0;
+                ItemOffsets.Push(_world, entity, Microsoft.Xna.Framework.Vector3.Zero);
             }
 
             _world.Ecs.PushSteps(entity); // T6c
@@ -2412,6 +2415,7 @@ namespace ClassicUO.Game
                 boat.OffsetZ = z;
                 boat.OffsetX = x;
                 boat.OffsetY = y;
+                ItemOffsets.Push(_world, boat, new Microsoft.Xna.Framework.Vector3(x, y, z));
             }
         }
 
@@ -2438,7 +2442,8 @@ namespace ClassicUO.Game
 
         /// <summary>
         /// <c>BoatMovingManager.UpdateEntitiesInside</c> while a boat step is under way: an item or mobile on the boat takes
-        /// the boat's offset <paramref name="offset"/>. Rejections as <see cref="MoveBoatPassenger"/>.
+        /// the boat's offset <paramref name="offset"/> (an item's <c>ItemOffset</c> too with <c>ecs_item_offset</c>, as every boat
+        /// operation that writes an item's offset). Rejections as <see cref="MoveBoatPassenger"/>.
         /// </summary>
         public void FollowBoat(Entity passenger, Microsoft.Xna.Framework.Vector3 offset)
         {
@@ -2450,6 +2455,7 @@ namespace ClassicUO.Game
             using (Open(passenger, null))
             {
                 passenger.Offset = offset;
+                ItemOffsets.Push(_world, passenger, offset);
             }
 
             _world.Ecs.PushSteps(passenger); // T6c

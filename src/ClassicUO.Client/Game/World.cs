@@ -585,6 +585,29 @@ namespace ClassicUO.Game
         /// <summary>T6c follow-up (<c>ecs_step_mount_inputs</c>): the step system takes the mounted pace from the ECS.</summary>
         internal bool StepMountInputs => StepMountInputsOverride ?? StepMountInputsSwitch.On;
 
+#if CUO_DEVTOOLS
+        // CLEANUP(release): the gate's override of the setting (CUO_ECS_ITEM_OFFSET=1|0)
+        private static readonly bool? _envItemOffset = System.Environment.GetEnvironmentVariable("CUO_ECS_ITEM_OFFSET") switch
+        {
+            "1" => true,
+            "0" => false,
+            _ => null
+        };
+#else
+        private static readonly bool? _envItemOffset = null;
+#endif
+
+        private static class ItemOffsetSwitch
+        {
+            public static readonly bool On = _envItemOffset ?? Settings.GlobalSettings.EcsItemOffset;
+        }
+
+        /// <summary>Tests: the switch for this World (null: the setting).</summary>
+        internal bool? ItemOffsetOverride;
+
+        /// <summary><c>ecs_item_offset</c>: an item's boat offset is the ECS <c>ItemOffset</c> component (<see cref="ItemOffsets"/>).</summary>
+        internal bool ItemOffsetOn => ItemOffsetOverride ?? ItemOffsetSwitch.On;
+
         private readonly List<Mobile> _dueObjects = new List<Mobile>();
         private static readonly System.Comparison<Mobile> s_byOrdinal = (a, b) => a.Ordinal.CompareTo(b.Ordinal);
 

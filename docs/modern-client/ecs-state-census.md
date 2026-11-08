@@ -51,7 +51,7 @@ Classes:
 | `Graphic` | **A** hot | also read by `Land`/`Static`/`Multi`/effects (map objects, not ECS) |
 | `Hue` | **A** hot | same |
 | `X`, `Y`, `Z` | **A** hot | for a contained item `X`/`Y` are the container grid position, not a map position (T2) |
-| `Offset` | **A** hot | interpolation offset of a walking mobile or moving boat part; B once steps are a system (T6c) |
+| `Offset` | **A** hot | interpolation offset of a walking mobile or moving boat part; B once steps are a system (T6c); an item's (the boat's, a deck item's) is the `ItemOffset` component with `ecs_item_offset` (2026-11-07); a boat's multi components keep the field (not world objects) |
 | `PriorityZ` | E | tile order key, stored at insertion (`Chunk.AddGameObject`) |
 | `TNext`, `TPrevious`, `TileChunk`, `PendingBlock` | E | tile list links, the chunk, the parked block (`Map.Park`) |
 | `InRecycler`, `Incarnation` | E | `MapObjectRecycler` |
