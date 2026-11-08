@@ -442,6 +442,7 @@ Candidates as of 2026-10-31: E4's legacy mobile loop and its shadow dictionary (
   - the `gpu_ecs_sprites` capture path for dynamics;
   - `legacy_ecs_sprites` off, then the bodies of `MobileView.Draw`, `ItemView.Draw` and `GameEffectView.Draw` and the batcher capture hook for dynamics;
   - the effect views after T8.
+- **Done (2026-11-08, `bg/t9-delete-2`, poc-log "T9: ecs_effects deleted"):** the off path, setting and dev override of `ecs_effects` (on by default since 2026-11-02, gated and Codex-audited). Every effect is an ECS entity and always held in `DynamicTileIndex` (the index is always maintained). `CUO_EFFECT_CHECK` keeps its state-against-object sync check; its legacy-rules shadow is deleted (the unit tests keep a copy as their reference). `GameEffectView`'s draw stays: `ecs_effect_sprites` and `legacy_ecs_sprites` are still default off, so "the effect views after T8" waits for those.
 - Checkers that compare against deleted code (`CUO_ANIM_SYNC`'s view capture, `CUO_LEGACY_ECS_PARITY`, `CUO_CONTENTS_CHECK`, `CUO_EQUIP_READ_CHECK`). Before deleting them, save golden captures and screenshots so parity can still be checked against references (the owner's "saved reference shots" rule).
 - Everything marked `CLEANUP(release)` that these phases touch (release-cleanup.md).
 
