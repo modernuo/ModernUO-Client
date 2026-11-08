@@ -122,11 +122,43 @@ namespace ClassicUO.Renderer
             try
             {
                 // an item published before the flag was visible is seen here; one published after it sets the event
-                return !_ready.IsEmpty || (timeoutMs > 0 && _published.Wait(timeoutMs)) || !_ready.IsEmpty;
+                return !_ready.IsEmpty || (timeoutMs > 0 && WaitSignal(timeoutMs)) || !_ready.IsEmpty;
             }
             finally
             {
                 Volatile.Write(ref _publishWaiter, 0);
+            }
+        }
+
+        /// <summary>
+        /// The main thread blocks above normal priority (CUO_DECODE_WAIT_BOOST=0: at its own). When the machine has more
+        /// runnable normal-priority threads than cores (other clients, builds), a thread at normal priority whose wait ends
+        /// queues behind them for its next quantum: RequestAndWait with a 2 ms stall slice measured a 380-500 ms median
+        /// under load, and a kernel event or Thread.Sleep the same. Above normal, the timeout or the worker's Set preempts
+        /// them at once (median 3.4-4 ms). The thread is blocked meanwhile, so the raised priority costs the workers nothing.
+        /// No help when the whole process runs below normal (agentnice'd tests): the thread stays below the load.
+        /// </summary>
+        public static bool BoostWaits = Environment.GetEnvironmentVariable("CUO_DECODE_WAIT_BOOST") != "0";
+
+        private bool WaitSignal(int timeoutMs)
+        {
+            var thread = Thread.CurrentThread;
+            var priority = thread.Priority;
+
+            if (!BoostWaits || priority >= ThreadPriority.AboveNormal)
+            {
+                return _published.Wait(timeoutMs);
+            }
+
+            thread.Priority = ThreadPriority.AboveNormal;
+
+            try
+            {
+                return _published.Wait(timeoutMs);
+            }
+            finally
+            {
+                thread.Priority = priority;
             }
         }
 
@@ -145,7 +177,7 @@ namespace ClassicUO.Renderer
 
             try
             {
-                return PublishedCount != seen || (timeoutMs > 0 && _published.Wait(timeoutMs)) || PublishedCount != seen;
+                return PublishedCount != seen || (timeoutMs > 0 && WaitSignal(timeoutMs)) || PublishedCount != seen;
             }
             finally
             {
