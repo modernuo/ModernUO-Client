@@ -4,12 +4,12 @@ using ClassicUO.Assets;
 using ClassicUO.Configuration;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.Managers;
+using ClassicUO.Game.Map;
 using ClassicUO.Game.UI.Gumps;
 using ClassicUO.Network;
 using ClassicUO.Utility;
 using ClassicUO.Utility.Logging;
 using System.Collections.Generic;
-using System.Linq;
 
 namespace ClassicUO.Game.GameObjects
 {
@@ -274,14 +274,87 @@ namespace ClassicUO.Game.GameObjects
                     return;
                 }
 
-                foreach (Item item in World.Items.Values)
+                OpenCorpsesInRange(ProfileManager.CurrentProfile.AutoOpenCorpseRange);
+            }
+        }
+
+        /// <summary>Tests: receives the serials <see cref="OpenCorpsesInRange"/> opens instead of the queued double clicks.</summary>
+        internal List<uint> CorpseOpenSink;
+
+        /// <summary>
+        /// perf-13: opens every corpse within <paramref name="range"/> not opened yet, in <c>World.Items</c> order, as the
+        /// every-item loop did. Every live corpse is in the active item list (<see cref="Item.NeedsFrameUpdate"/>; the mirror
+        /// hooks queue it, World.Update's first pass and sweep catch any other), so the candidates are counted there: none
+        /// (every step but the first near new corpses) costs O(corpses); one is opened directly; two or more take the
+        /// every-item loop, which alone knows the dictionary's order (which gump opens first). Before the list's first build
+        /// after World.Clear the loop runs. CUO_STEP_OPEN_CHECK compares the decision with the loop's.
+        /// </summary>
+        internal void OpenCorpsesInRange(int range)
+        {
+            int found = 0;
+            Item single = null;
+
+            if (World.ActiveItemsListed)
+            {
+                IReadOnlyList<Item> active = World.ActiveItems;
+
+                for (int i = 0; i < active.Count; i++)
                 {
-                    if (!item.IsDestroyed && item.IsCorpse && item.Distance <= ProfileManager.CurrentProfile.AutoOpenCorpseRange && !AutoOpenedCorpses.Contains(item.Serial))
+                    Item item = active[i];
+
+                    if (ShouldAutoOpen(item, range) && ReferenceEquals(World.Items.Get(item.Serial), item))
                     {
-                        AutoOpenedCorpses.Add(item.Serial);
-                        GameActions.DoubleClickQueued(item.Serial);
+                        single = item;
+
+                        if (++found > 1)
+                        {
+                            break;
+                        }
                     }
                 }
+            }
+            else
+            {
+                found = 2;
+            }
+
+#if CUO_DEVTOOLS
+            if (StepOpenCheck.On)
+            {
+                StepOpenCheck.Corpses(this, range, found, single);
+            }
+#endif
+
+            if (found == 1)
+            {
+                AutoOpenCorpse(single);
+            }
+            else if (found > 1)
+            {
+                foreach (Item item in World.Items.Values)
+                {
+                    if (ShouldAutoOpen(item, range))
+                    {
+                        AutoOpenCorpse(item);
+                    }
+                }
+            }
+        }
+
+        internal bool ShouldAutoOpen(Item item, int range) =>
+            !item.IsDestroyed && item.IsCorpse && item.Distance <= range && !AutoOpenedCorpses.Contains(item.Serial);
+
+        private void AutoOpenCorpse(Item item)
+        {
+            AutoOpenedCorpses.Add(item.Serial);
+
+            if (CorpseOpenSink != null)
+            {
+                CorpseOpenSink.Add(item.Serial);
+            }
+            else
+            {
+                GameActions.DoubleClickQueued(item.Serial);
             }
         }
 
@@ -299,12 +372,68 @@ namespace ClassicUO.Game.GameObjects
                 int x = X, y = Y, z = Z;
                 Pathfinder.GetNewXY((byte) Direction, ref x, ref y);
 
-                if (World.Items.Values.Any(s => s.ItemData.IsDoor && s.X == x && s.Y == y && s.Z - 15 <= z && s.Z + 15 >= z))
+                bool door = DoorAhead(World, x, y, z, Client.Game.UO.FileManager.TileData.StaticData);
+
+#if CUO_DEVTOOLS
+                if (StepOpenCheck.On)
+                {
+                    StepOpenCheck.Door(World, x, y, z, door);
+                }
+#endif
+
+                if (door)
                 {
                     GameActions.OpenDoor();
                 }
             }
         }
+
+        /// <summary>
+        /// perf-13: whether an item with the door flag stands on tile (<paramref name="x"/>, <paramref name="y"/>) within 15
+        /// of <paramref name="z"/>: the rule the every-item LINQ scan applied, read from that tile's objects (the tile list or
+        /// the dynamic tile index, <see cref="TileReader"/>). A world item's place is its tile; the scan also matched items in
+        /// containers or worn whose container X/Y equalled the tile, which are not doors in front of the player. When the
+        /// tile's chunk is not loaded (its items parked) the scan runs. <paramref name="data"/> is the tile data (Item.ItemData's).
+        /// CUO_STEP_OPEN_CHECK compares the answer with the scan's.
+        /// </summary>
+        internal static bool DoorAhead(World world, int x, int y, int z, StaticTiles[] data)
+        {
+            Chunk chunk = world.Map?.PeekChunk(x, y);
+
+            if (chunk == null || chunk.IsDestroyed)
+            {
+                return DoorScan(world, x, y, z, data);
+            }
+
+            for (GameObject obj = TileReader.Open(chunk, (x & 7) << 3 | (y & 7), DynamicTileIndex.WalkOn, null, out TileReader reader);
+                 obj != null;
+                 obj = reader.Next())
+            {
+                if (obj is Item item && IsDoorAt(item, x, y, z, data) && ReferenceEquals(world.Items.Get(item.Serial), item))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>The every-item scan <see cref="DoorAhead"/> replaced (its fallback and the checker's reference).</summary>
+        internal static bool DoorScan(World world, int x, int y, int z, StaticTiles[] data)
+        {
+            foreach (Item item in world.Items.Values)
+            {
+                if (IsDoorAt(item, x, y, z, data))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsDoorAt(Item item, int x, int y, int z, StaticTiles[] data) =>
+            data[item.IsMulti ? item.MultiGraphic : item.Graphic].IsDoor && item.X == x && item.Y == y && item.Z - 15 <= z && item.Z + 15 >= z;
 
         public override void Destroy()
         {
