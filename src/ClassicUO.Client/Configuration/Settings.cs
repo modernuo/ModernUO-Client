@@ -162,6 +162,13 @@ namespace ClassicUO.Configuration
         // step decision. Off = from the Mobile.
         [JsonPropertyName("ecs_step_mount_inputs")] public bool EcsStepMountInputs { get; set; } = false;
 
+        // An item's sub-tile draw offset while a boat carries it (the boat and the items on its deck) is ECS-owned: the boat
+        // operations of WorldWriter write the ItemOffset component with the GameObject's Offset, and the item extract's
+        // Gather and the item pick read the component. Read once at startup (CUO_ECS_ITEM_OFFSET=1|0 overrides it in
+        // developer builds). CUO_ITEM_OFFSET_CHECK=1 compares the component with the Item's Offset at every read. Off = the
+        // component is not written and the readers read the Item. Default off.
+        [JsonPropertyName("ecs_item_offset")] public bool EcsItemOffset { get; set; }
+
         // perf-4: the static art of a container's contents and of the paperdoll's equipment slots decodes on the art workers
         // before the gump builds its item controls (ContentsArt: a request when an item goes into an open container, a
         // bounded batch wait in ContainerGump/PaperDollGump.UpdateContents) instead of one main-thread decode per sprite.

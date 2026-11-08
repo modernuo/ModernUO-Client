@@ -31,8 +31,8 @@ namespace ClassicUO.Game
         // tiledata of the item's graphic (the multi's graphic for a multi)
         public bool TileLight, TilePartialHue, TileAnimated, TileContainer, TileStackable, TileHeavy;
 
-        // still only on the GameObject (T7b part 2): drawability, the render list's alpha, the render offset, the multi's
-        // graphic, the corpse animation (frame, second death, the mirror history) and the destroyed state
+        // still only on the GameObject (T7b part 2): drawability, the render list's alpha, the render offset (the ItemOffset
+        // component with ecs_item_offset), the multi's graphic, the corpse animation (frame, second death, the mirror history) and the destroyed state
         public bool Destroyed, AllowedToDraw, UsedLayer, Flipped;
         public byte AlphaHue, AnimIndex;
         public Vector3 Offset;
@@ -104,7 +104,7 @@ namespace ClassicUO.Game
             }
 
             i.AlphaHue = item.AlphaHue;
-            i.Offset = item.Offset;
+            i.Offset = ItemOffsets.Read(item); // ecs_item_offset: the ItemOffset component
             i.AnimIndex = item.AnimIndex;
             i.UsedLayer = item.UsedLayer;
             i.Flipped = item.ViewFlipped;

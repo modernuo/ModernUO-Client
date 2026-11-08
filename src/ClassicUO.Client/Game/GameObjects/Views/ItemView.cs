@@ -533,8 +533,10 @@ namespace ClassicUO.Game.GameObjects
                 }
 
                 Point position = RealScreenPosition;
-                position.X += (int)Offset.X;
-                position.Y += (int)(Offset.Y + Offset.Z);
+                // ecs_item_offset: the ItemOffset component (CUO_ITEM_OFFSET_CHECK compares it with Offset)
+                Vector3 offset = ItemOffsets.Read(this);
+                position.X += (int)offset.X;
+                position.Y += (int)(offset.Y + offset.Z);
                 position.X -= entryW;
                 position.Y -= entryH;
 

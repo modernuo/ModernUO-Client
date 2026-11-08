@@ -12,6 +12,16 @@ namespace ClassicUO.Ecs
         public uint Value;
     }
 
+    /// <summary>
+    /// ecs_item_offset: an item's sub-tile draw offset while boat movement carries it (the boat itself and the items on its
+    /// deck), the GameObject's <c>Offset</c>. Added at the item's first non-zero offset and kept, so a boat step does not move
+    /// the entity between archetypes; absent means zero. A mobile's offset is in <see cref="Steps"/>.
+    /// </summary>
+    public struct ItemOffset : IComponent
+    {
+        public float X, Y, Z;
+    }
+
     // Item id (items) or body id (mobiles).
     public struct Graphic : IComponent
     {

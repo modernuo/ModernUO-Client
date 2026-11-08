@@ -246,6 +246,8 @@ namespace ClassicUO.Game.Managers
 
         public void Update()
         {
+            ItemOffsets.LogSummary(_world);
+
             foreach (Deque<BoatStep> deques in _steps.Values)
             {
                 while (deques.Count != 0)
