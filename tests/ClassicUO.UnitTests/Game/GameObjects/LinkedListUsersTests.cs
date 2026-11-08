@@ -152,6 +152,30 @@ namespace ClassicUO.UnitTests.Game.GameObjects
             return list;
         }
 
+        // walks from the tail pointer (perf-14): the result must equal the forward walk, and Last must be the real tail
+        private static List<GameEffect> EffectsBackward(EffectManager em)
+        {
+            var list = new List<GameEffect>();
+
+            for (GameEffect e = em.Last; e != null; e = e.Previous)
+            {
+                Assert.Same(list.Count == 0 ? null : list[0], e.Next);
+                list.Insert(0, e);
+            }
+
+            Assert.Same(list.Count == 0 ? null : list[0], em.Items);
+
+            return list;
+        }
+
+        private static void AssertBothWays(List<GameEffect> expected, EffectManager em)
+        {
+            Assert.Equal(expected, Effects(em));
+            Assert.Equal(expected, EffectsBackward(em));
+            Assert.Same(expected.Count == 0 ? null : expected[^1], em.Last);
+            Assert.Equal(expected.Count == 0, em.IsEmpty);
+        }
+
         [Theory]
         [InlineData(0)]
         [InlineData(2)]
@@ -169,19 +193,114 @@ namespace ClassicUO.UnitTests.Game.GameObjects
                 em.Add(f);
             }
 
-            Assert.Equal(all, Effects(em));
+            AssertBothWays(all, em);
 
             all[victim].Destroy();
 
             Assert.Null(all[victim].Next);
             Assert.Null(all[victim].Previous);
             all.RemoveAt(victim);
-            Assert.Equal(all, Effects(em));
+            AssertBothWays(all, em);
 
             var late = new FixedEffect(world, em, 0x3779, 0, 1000, 1);
             em.Add(late);
             all.Add(late);
-            Assert.Equal(all, Effects(em));
+            AssertBothWays(all, em);
+        }
+
+        [Fact]
+        public void EffectManager_Many_Adds_Walk_Both_Ways()
+        {
+            var world = new World();
+            var em = new EffectManager(world);
+            var all = new List<GameEffect>();
+
+            AssertBothWays(all, em);
+
+            for (int i = 0; i < 500; i++)
+            {
+                var f = new FixedEffect(world, em, (ushort)(0x3709 + (i & 0xFF)), 0, 1000, 1);
+                all.Add(f);
+                em.Add(f);
+            }
+
+            AssertBothWays(all, em);
+
+            // remove head, a middle one and the tail, in that order, checking the tail pointer after each
+            foreach (int victim in new[] { 0, 250, all.Count - 1 })
+            {
+                int index = victim < all.Count ? victim : all.Count - 1;
+                all[index].Destroy();
+                all.RemoveAt(index);
+                AssertBothWays(all, em);
+            }
+
+            for (int i = 0; i < 3; i++)
+            {
+                var f = new FixedEffect(world, em, 0x3779, 0, 1000, 1);
+                all.Add(f);
+                em.Add(f);
+            }
+
+            AssertBothWays(all, em);
+        }
+
+        [Fact]
+        public void EffectManager_Removing_The_Only_Effect_Empties_Both_Ends()
+        {
+            var world = new World();
+            var em = new EffectManager(world);
+            var a = new FixedEffect(world, em, 0x3709, 0, 1000, 1);
+            em.Add(a);
+            AssertBothWays(new List<GameEffect> { a }, em);
+
+            a.Destroy();
+            AssertBothWays(new List<GameEffect>(), em);
+
+            var b = new FixedEffect(world, em, 0x370A, 0, 1000, 1);
+            em.Add(b);
+            AssertBothWays(new List<GameEffect> { b }, em);
+        }
+
+        [Fact]
+        public void EffectManager_Removing_Every_Effect_From_The_Tail_Keeps_The_Tail()
+        {
+            var world = new World();
+            var em = new EffectManager(world);
+            var all = new List<GameEffect>();
+
+            for (int i = 0; i < 6; i++)
+            {
+                var f = new FixedEffect(world, em, (ushort)(0x3709 + i), 0, 1000, 1);
+                all.Add(f);
+                em.Add(f);
+            }
+
+            while (all.Count > 0)
+            {
+                em.Remove(all[^1]);
+                all.RemoveAt(all.Count - 1);
+                AssertBothWays(all, em);
+            }
+        }
+
+        [Fact]
+        public void EffectManager_Readding_A_Linked_Effect_Moves_It_To_The_Back()
+        {
+            var world = new World();
+            var em = new EffectManager(world);
+            var a = new FixedEffect(world, em, 0x3709, 0, 1000, 1);
+            var b = new FixedEffect(world, em, 0x370A, 0, 1000, 1);
+            var c = new FixedEffect(world, em, 0x370B, 0, 1000, 1);
+            em.Add(a);
+            em.Add(b);
+            em.Add(c);
+
+            em.Add(a);
+            AssertBothWays(new List<GameEffect> { b, c, a }, em);
+
+            em.Add(a);
+            AssertBothWays(new List<GameEffect> { b, c, a }, em);
         }
 
         [Fact]
@@ -195,7 +314,7 @@ namespace ClassicUO.UnitTests.Game.GameObjects
 
             b.Destroy();
 
-            Assert.Equal(new GameEffect[] { a }, Effects(em));
+            AssertBothWays(new List<GameEffect> { a }, em);
         }
 
         [Fact]
@@ -215,6 +334,7 @@ namespace ClassicUO.UnitTests.Game.GameObjects
             em.Clear();
 
             Assert.True(em.IsEmpty);
+            Assert.Null(em.Last);
 
             foreach (GameEffect f in all)
             {
@@ -222,6 +342,10 @@ namespace ClassicUO.UnitTests.Game.GameObjects
                 Assert.Null(f.Next);
                 Assert.Null(f.Previous);
             }
+
+            var late = new FixedEffect(world, em, 0x3779, 0, 1000, 1);
+            em.Add(late);
+            AssertBothWays(new List<GameEffect> { late }, em);
         }
 
         private sealed class Node : LinkedObject

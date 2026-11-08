@@ -152,6 +152,33 @@ namespace ClassicUO.UnitTests.Game
             AssertFresh(world.PlayerState, 0);
         }
 
+        // perf-14: CanBeDrawn's race input, read once per batch (chunk load, multi build, map gumps); no player (logout) is false
+        [Fact]
+        public void PlayerIsGargoyle_Follows_The_Race_And_Is_False_Without_A_Player()
+        {
+            World world = Login();
+            GameObject.PlayerIsGargoyle(world).Should().BeFalse();
+
+            world.Writer.SetRace(world.Player, RaceType.GARGOYLE);
+            GameObject.PlayerIsGargoyle(world).Should().BeTrue();
+
+            world.Writer.SetRace(world.Player, RaceType.ELF);
+            GameObject.PlayerIsGargoyle(world).Should().BeFalse();
+
+            world.Writer.SetRace(world.Player, RaceType.GARGOYLE);
+            world.Clear();
+            GameObject.PlayerIsGargoyle(world).Should().BeFalse();
+        }
+
+        // perf-14: the world map image depends on the race (gargoyle-only statics), so a gargoyle's image is cached apart;
+        // the other name is unchanged, so existing caches stay valid
+        [Fact]
+        public void WorldMap_Cache_Name_Separates_The_Gargoyle_Image()
+        {
+            ClassicUO.Game.UI.Gumps.WorldMapGump.MapCacheFileName(1, "abc", false).Should().Be("map1_abc.png");
+            ClassicUO.Game.UI.Gumps.WorldMapGump.MapCacheFileName(1, "abc", true).Should().Be("map1_abc_gargoyle.png");
+        }
+
         [Fact]
         public void Map_Change_Keeps_The_Player_And_Its_Store()
         {

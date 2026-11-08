@@ -484,30 +484,6 @@ namespace ClassicUO.Game.Managers
 
                 controlMatrix = newMatrix;
             }
-
-            private void printMatrix()
-            {
-                Console.WriteLine();
-                Console.WriteLine();
-                Console.WriteLine();
-
-                for (int y = 0; y < controlMatrix.GetLength(1); y++)
-                {
-                    for (int x = 0; x < controlMatrix.GetLength(0); x++)
-                    {
-                        if (controlMatrix[x, y] != null)
-                        {
-                            Console.Write(" " + controlMatrix[x, y].LocalSerial + " ");
-                        }
-                        else
-                        {
-                            Console.Write(" ---------- ");
-                        }
-                    }
-
-                    Console.WriteLine();
-                }
-            }
         }
     }
 }

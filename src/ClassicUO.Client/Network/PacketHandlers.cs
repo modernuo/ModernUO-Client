@@ -1691,7 +1691,7 @@ namespace ClassicUO.Network
                         )
                         {
                             // Server should send an UpdateContainedItem after this packet.
-                            Console.WriteLine("=== DENY === ADD TO CONTAINER");
+                            Log.Trace("Drop denied: held item returned to container");
 
                             AddItemToContainer(
                                 world,
@@ -1731,7 +1731,7 @@ namespace ClassicUO.Network
                             switch (returned)
                             {
                                 case WorldWriter.HeldItemReturn.Paperdoll:
-                                    Console.WriteLine("=== DENY === ADD TO PAPERDOLL");
+                                    Log.Trace("Drop denied: held item returned to paperdoll");
 
                                     UIManager
                                         .GetGump<PaperDollGump>(item.Container)
@@ -1740,12 +1740,12 @@ namespace ClassicUO.Network
                                     break;
 
                                 case WorldWriter.HeldItemReturn.Removed:
-                                    Console.WriteLine("=== DENY === SOMETHING WRONG");
+                                    Log.Trace("Drop denied: held item's container is an item; removed until the server resends it");
 
                                     break;
 
                                 case WorldWriter.HeldItemReturn.Terrain:
-                                    Console.WriteLine("=== DENY === ADD TO TERRAIN");
+                                    Log.Trace("Drop denied: held item returned to the ground");
 
                                     break;
                             }
@@ -1809,8 +1809,6 @@ namespace ClassicUO.Network
 
             Client.Game.UO.GameCursor.ItemHold.Enabled = false;
             Client.Game.UO.GameCursor.ItemHold.Dropped = false;
-
-            Console.WriteLine("PACKET - ITEM DROP OK!");
         }
 
         private static void DeathScreen(World world, ref StackDataReader p)
@@ -6063,7 +6061,6 @@ namespace ClassicUO.Network
             {
                 if (Client.Game.UO.GameCursor.ItemHold.Dropped)
                 {
-                    Console.WriteLine("ADD ITEM TO CONTAINER -- CLEAR HOLD");
                     Client.Game.UO.GameCursor.ItemHold.Clear();
                 }
         
