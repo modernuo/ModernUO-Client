@@ -446,7 +446,7 @@ namespace ClassicUO.Game.Map
 
             walk = default;
 
-            return chunk.GetHeadObject(cell >> 3, cell & 7);
+            return chunk.HeadAt(cell);
         }
 
         /// <summary>The first object of (<paramref name="chunk"/>, <paramref name="cell"/>) in merged order, or null. Dev builds
@@ -492,7 +492,7 @@ namespace ClassicUO.Game.Map
         public static GameObject BeginIndex(Chunk chunk, int cell, out TileWalk walk)
         {
             walk = default;
-            walk._s = SkipDynamic(chunk.GetHeadObject(cell >> 3, cell & 7));
+            walk._s = SkipDynamic(chunk.HeadAt(cell));
 
             if (chunk.Dynamic != null)
             {
@@ -613,7 +613,7 @@ namespace ClassicUO.Game.Map
 
             if (!reader._merged)
             {
-                reader._cur = from ?? chunk.GetHeadObject(cell >> 3, cell & 7);
+                reader._cur = from ?? chunk.HeadAt(cell);
 
                 return reader._cur;
             }
