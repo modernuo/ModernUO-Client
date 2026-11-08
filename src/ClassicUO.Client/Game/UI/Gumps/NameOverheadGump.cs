@@ -159,10 +159,11 @@ namespace ClassicUO.Game.UI.Gumps
             return t;
         }
 
-        // the width fit (a measure and, for a long name, a new cut string) runs again only when the name changes
+        // the width fit (a measure and, for a long name, a new cut string) runs again only when the name's text changes: a
+        // name or status packet can hand over a new string with the same text
         private void FitName(string t, bool html)
         {
-            if (ReferenceEquals(t, _fitSource) && html == _fitHtml)
+            if (string.Equals(t, _fitSource, StringComparison.Ordinal) && html == _fitHtml)
             {
                 return;
             }
