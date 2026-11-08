@@ -21,7 +21,7 @@ Columns: what costs, how much (measured or estimated, with the scene), what it b
 |---|---|---|---|
 | T4 (thin handles) | About +32 B per Item (the 16-byte Friflo handle plus fields): about 0.8 MB per client at 25k items | Handle-based ECS access | Shrinks once T9 deletes the cached fields |
 | T6b (tile index) | `TNext`/`TPrevious` 16 B per item, mobile and effect, now always null | — (left over) | Move the links to a list-node base for Land/Static/Multi, or a side table |
-| T9 child-list slice B | `LinkedObject` fields on Item/Mobile unused: 24 B per object, about 2–5 MB per client | — (left over) | Move `LinkedObject` off `BaseGameObject` (backlog) |
+| T9 child-list slice B | `LinkedObject` fields on Item/Mobile unused: 24 B per object, about 2–5 MB per client | — (left over) | **Revisited (linked-object, eb0f70ed0):** `LinkedObject` moved off `BaseGameObject`; about 1.5 MB per client saved (estimated) |
 | EcsRead (02c0ef387) | Depends on Friflo 4.0.0-preview.2 internals (a field offset, `[UnsafeAccessor]` names) until the upgrade; the fallback branch costs +0.25 ns per row read at 25k entities; a thread-static scratch copy per special heap type per thread (none today) | Faster ECS reads | Delete or thin the helper at the Friflo upgrade |
 | perf-11 | Corpse layer tables: 8 × `Item[256]`, about 17 KB per client; can keep destroyed corpse items alive until reused | Corpse layer reads without a scan (about 500 scans → 0 per frame in the corpse scene) | Cache serials instead of Items, or clear on destroy |
 
@@ -36,3 +36,9 @@ For pools, caches, prefill and atlases with their MB cost, see [memory-footprint
 | ecs-effects-own (endpoints, default off) | ~40 B per live effect (< 0.05 MB); with the switch on ~10–15 ns per endpoint read, ~25 ns per drawn effect with a source, a walk of live effects per object destroy, ~1–2 ns Serial+kind check | effects reference ECS records, not objects | phase 2 folds reads into one step per effect |
 | ecs-item-offset (default off) | 12 B per item that ever rode a moving boat; ~4–5 ns per drawn item with the switch on | item offset owned by the ECS | read from the row Gather already holds |
 | decode-stall (b-merge pending push) | two `SetThreadPriority` calls per blocking decode wait | 2 ms wait under load ~500 ms → ~4 ms p50 | — |
+
+## 2026-11-08
+
+| Change | Cost | Buys | Revisit |
+|---|---|---|---|
+| ecs-active-items (3d5bc9a90; `ecs_active_items_source`, default off) | item handle table and free list: 64 entries each to start, grown to the peak listed count (a few KB); one extra array read per entry in `Rebuild` when the switch is on | entries hold int handles, so removed items are not kept reachable | quiet timing parked |

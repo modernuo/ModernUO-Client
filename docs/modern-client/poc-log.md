@@ -5801,3 +5801,27 @@ Branch `bg/ecs-active-items-2` from `bg/ecs-active-items` a209719f6. Codex audit
 **Addendum (Codex re-review of 6583a0f6e, d68389eae).** Re-review: no P0/P1/P3; the original P2 is fixed for the paths the store owns. New narrow P2: an entry deleted outside the store (only the checker corruption test does that), then a rebuild, left its item in the handle table with a stale `ActiveEntryId`; once the count reached 0, `World.Clear` skipped the store and the orphan stayed reachable across logout. Fixes: (1) `World.Clear` clears an existing store whatever its count; (2) `Rebuild` reclaims handles that no live entry names, but only when the handles in use and the entries differ, so there is no per-frame cost otherwise; it uses a stamp array sized to the table and allocates nothing else. The handle is freed and the item unlisted (`ActiveEntryId` 0, tag off when the mirror applies); `Store.Clear` also unlists any orphans left in the table. New tests: last-slot removal and a table grown past 64 entries (4 switch/checker states); direct deletion, then rebuild, zero count and `World.Clear`, with a weak reference; `World.Clear` at count 0 resets the table. Mutants for (1) and (2) killed. Dev suite 3,286 passed / 6 skipped; `-p:CuoDevTools=false` 3,280 / 6; both client variants build.
 
 Gate bench-000356 (Gpu, on 6583a0f6e) ended GATE FAIL on one coverage check only: `corpsewalk_off` saw no step-open "item loop" (no check with two corpses in range at once; 8 corpses to open, 0 different). Every correctness check was clean, and the `corpsewalk` run with the switch on had 1 item loop, so this looks like scene timing. bench-000357 was cancelled before it started. Resubmitted on d68389eae: Gpu bench-000358, Legacy bench-000359. Allocation check (owner rule 2026-11-08) bench-000360 (`job-alloc.sh`): base db2bdcb6b vs the branch, switch off and on, both renderers, checkers off, corpses-timing scene; FrameStats `alloc_per_frame` and gc0/1/2 per window.
+
+## alloc-regress-1108: cumulative allocation check (2026-11-08)
+
+The owner's 2026-11-08 rule applied to everything merged since the last checked base. Four NativeAOT builds (CuoDevTools on, checkers and parity off): **B** 34fec0e52, **A** f2955b82a, **tip** eb0f70ed0, and **tipon** (the tip with all 8 default-off switches on: `ecs_effect_endpoints`, `ecs_effect_motion`, `ecs_effect_sprites`, `ecs_item_offset`, `ecs_boat_steps`, `ecs_step_mount_inputs`, `world_tile_index`, `legacy_ecs_sprites`). One tour scene (town idle and walk, gumps, effects, corpses, large-scale idle and walk), both renderers, two interleaved rounds each (`job-alloc-tour-*.sh`; bench-000361/362 among them). Scripts, scenes and the full table: `cuo-poc-state/measure/alloc-regress-1108/` (`table.txt`).
+
+**Verdict: no per-frame allocation regression.** Main-thread average per frame, median over rounds (B / A / tip / tipon):
+
+| Scene | Gpu | Legacy |
+|---|---|---|
+| town_idle | 41 / 42 / 41 / 42 | 41 / 42 / 44 / 41 |
+| town_walk | 52 / 54 / 51 / 49 | 52 / 51 / 45 / **92** |
+| gumps | 42 / 41 / 41 / 41 | 41 / 40 / 40 / 41 |
+| effects | 93 / 93 / 93 / 94 | 47 / 45 / 45 / 45 |
+| corpses | 93 / 89 / 99 / 89 | 46 / 43 / 45 / 40 |
+| ls_idle | 92 / 91 / 90 / 91 | 54 / 57 / 53 / 53 |
+| ls_walk | 9036 / 5502 / 1281 / 4620 | 11852 / 17775 / 10056 / 11519 |
+
+The p50 is 40 or 88 B per frame in every steady scene and arm; gen0 is 0 per 1000 frames there, and gen1/gen2 0.
+
+**ls_walk** allocates about 11–14 MB per FrameStats window on the main thread in every arm, base B included (p95 up to about 14 KB per frame, one Legacy window 33 KB; single frames 0.73–1.7 MB, gen0 up to 1.3 per 1000 frames). It is time-driven (about 2.4 MB/s, so the per-frame average follows the frame rate) and pre-existing, likely chunk or map loading while walking. Added to the backlog.
+
+**Legacy town_walk, tipon 92 against tip 45 B per frame.** Both tipon rounds' first window hold one 676,744 B frame. The same frame shows up once per Legacy run in other arms too (tip round 1, A round 2; B round 2 has an 845,200 B one), so it is likely a pre-existing one-shot about 20–30 s after login, not a switch. Under follow-up as alloc-regress-1108b (per-switch job bench-000370).
+
+**Timing signal, not a result** (parked for a quiet machine): Legacy ls_walk in round 1 ran 210–245 fps on B against 114–150 on A, 120–149 on the tip and 103–133 on tipon; round 2 did not repeat it, and Gpu shows the opposite. First item for quiet timing (`job-timing-cumulative-PARKED.sh`).
