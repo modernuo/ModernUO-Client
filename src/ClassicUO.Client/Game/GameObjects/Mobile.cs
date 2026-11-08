@@ -116,8 +116,11 @@ namespace ClassicUO.Game.GameObjects
 
         private long _lastAnimationIdleDelay;
 
+#if CUO_DEVTOOLS
+        // CLEANUP(release): only CUO_MOBILE_UPDATE_CHECK (WorldEcs.CheckSkipped) reads it
         /// <summary>E4: the frame number of World.UpdateMobilesByClock that last updated this mobile (checker).</summary>
         internal int UpdateStamp;
+#endif
 
         /// <summary>E10: this mobile's slot in <see cref="MobileTable"/> (its position in <c>World.Mobiles.Values</c>'s enumeration order), kept by the table on add and remove.</summary>
         internal int Ordinal;

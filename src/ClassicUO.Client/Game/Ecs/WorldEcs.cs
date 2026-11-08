@@ -679,6 +679,8 @@ namespace ClassicUO.Game
             }
         }
 
+#if CUO_DEVTOOLS
+        // CLEANUP(release): CUO_MOBILE_UPDATE_CHECK
         /// <summary>
         /// E4 checker, after the system's updates: every mobile it skipped is updated the legacy way and must not change.
         /// (Mobiles the system updated carry this frame's stamp; they ran the legacy Update, so they are equal by construction.)
@@ -704,6 +706,7 @@ namespace ClassicUO.Game
                 }
             }
         }
+#endif
 
         private void LogClockDiff(string message)
         {
