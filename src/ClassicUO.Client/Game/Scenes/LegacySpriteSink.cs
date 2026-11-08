@@ -63,6 +63,7 @@ namespace ClassicUO.Game.Scenes
             _scene = _route ? Client.Game.GetScene<GameScene>() : null;
             // the pack's animation tables are loaded once at startup: read per frame, not per item
             _hasAnims = _route && HasPackAnims(Client.Game.UO.FileManager.Animations);
+            ItemSpriteInput.BeginFrame();
             SpritePickTable.BeginDraw();
         }
 
