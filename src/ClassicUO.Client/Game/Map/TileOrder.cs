@@ -126,8 +126,11 @@ namespace ClassicUO.Game.Map
             public bool AnchorMissed;
             /// <summary>Objects (not effects) whose X/Y is not this tile: moved without being re-added.</summary>
             public int Misplaced;
+            /// <summary>tile-head: the chunk's stored head (<see cref="Chunk.GetHeadObject"/>) is not the head found by TPrevious
+            /// from the anchor (null for an empty list).</summary>
+            public bool HeadWrong;
 
-            public readonly bool Failed => OutOfOrder != 0 || Cycle || BrokenLinks != 0 || Foreign != 0 || AnchorMissed || Misplaced != 0;
+            public readonly bool Failed => OutOfOrder != 0 || Cycle || BrokenLinks != 0 || Foreign != 0 || AnchorMissed || Misplaced != 0 || HeadWrong;
         }
 
         /// <summary>The head of a tile list from any node, by TPrevious, with Floyd cycle detection; null on a cycle.</summary>
@@ -186,6 +189,7 @@ namespace ClassicUO.Game.Map
                 return r;
             }
 
+            r.HeadWrong = !ReferenceEquals(chunk.GetHeadObject(x, y), head);
             byte cell = (byte)((x << 3) | y);
             int tileX = chunk.X * 8 + x, tileY = chunk.Y * 8 + y;
             bool anchorSeen = false;
@@ -270,7 +274,7 @@ namespace ClassicUO.Game.Map
         // ---- CUO_TILE_ORDER_CHECK ----
 
         private const int MaxReports = 25;
-        private static long _checks, _tiles, _objects, _outOfOrder, _badTiles, _cycles, _brokenLinks, _foreign, _ownedChecked, _unreachable, _anchorMissed, _misplaced;
+        private static long _checks, _tiles, _objects, _outOfOrder, _badTiles, _cycles, _brokenLinks, _foreign, _ownedChecked, _unreachable, _anchorMissed, _misplaced, _headWrong;
         // objects seen per rank, and preview multis (rank 2): shows which insertion rules the runs exercised
         private static readonly long[] _ranks = new long[3];
         private static long _previews;
@@ -302,6 +306,14 @@ namespace ClassicUO.Game.Map
 
                             if (chunk.Tiles[x, y] == null)
                             {
+                                // an empty list has no head either
+                                if (chunk.GetHeadObject(x, y) != null)
+                                {
+                                    _headWrong++;
+                                    _badTiles++;
+                                    Report(chunk, x, y, new TileCheck { FirstDescent = -1, HeadWrong = true });
+                                }
+
                                 continue;
                             }
 
@@ -316,6 +328,11 @@ namespace ClassicUO.Game.Map
                             if (r.AnchorMissed)
                             {
                                 _anchorMissed++;
+                            }
+
+                            if (r.HeadWrong)
+                            {
+                                _headWrong++;
                             }
 
                             if (r.Cycle)
@@ -379,7 +396,7 @@ namespace ClassicUO.Game.Map
                 _nextLog = Time.Ticks + 5000;
                 Log.Info(
                     $"[tile-order] tiles {_tiles}, objects {_objects}, out of order {_outOfOrder}, cycles {_cycles}, broken links {_brokenLinks}, foreign {_foreign}, anchor missed {_anchorMissed}, misplaced {_misplaced}, " +
-                    $"unreachable {_unreachable} of {_ownedChecked} owned; failed tiles {_badTiles}; checks {_checks}; land {_ranks[0]}, multi {_ranks[1]}, " +
+                    $"unreachable {_unreachable} of {_ownedChecked} owned; failed tiles {_badTiles}; head wrong {_headWrong}; checks {_checks}; land {_ranks[0]}, multi {_ranks[1]}, " +
                     $"other {_ranks[2]} (preview multis {_previews}), every {CheckInterval} frames, seq {NextSeq}"
                 );
             }
@@ -687,7 +704,7 @@ namespace ClassicUO.Game.Map
             sb.Append("[tile-order] tile ").Append(chunk.X * 8 + x).Append(',').Append(chunk.Y * 8 + y).Append(": ").Append(r.Objects)
               .Append(" objects, out of order ").Append(r.OutOfOrder).Append(", cycle ").Append(r.Cycle).Append(", broken links ")
               .Append(r.BrokenLinks).Append(", foreign ").Append(r.Foreign).Append(", anchor missed ").Append(r.AnchorMissed)
-              .Append(", misplaced ").Append(r.Misplaced);
+              .Append(", misplaced ").Append(r.Misplaced).Append(", head wrong ").Append(r.HeadWrong);
 
             if (!r.Cycle)
             {

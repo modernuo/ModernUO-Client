@@ -819,7 +819,7 @@ namespace ClassicUO.Game.Scenes
             bool skipBaked = false,
             bool forcePosition = false,
             GameObject stopAt = null,
-            bool single = false
+            bool mergeTile = false
         )
         {
             var profile = ProfileManager.CurrentProfile;
@@ -833,10 +833,12 @@ namespace ClassicUO.Game.Scenes
             bool detail = FrameStats.Detail;
             bool prepCheck = PrepCheck.On;
 
-            // T6b (world_tile_index): a whole tile's walk reads the list's land, statics, multis and effects merged by key with
-            // the tile's DynamicTileIndex array; the one-object walks (single: the callers pass stopAt = obj.TNext, which is
-            // null for a tile's last object, so stopAt cannot mark them) start at obj and need no merge
-            obj = TileWalk.Start(obj, chunk, single, DynamicTileIndex.Merged, out TileWalk tileWalk, out bool merged);
+            // T6b (world_tile_index): a whole tile's walk with dynamics on the tile (mergeTile: the caller's bit of
+            // TileWalk.MergeCells) reads the list's land, statics and multis merged by key with the tile's DynamicTileIndex
+            // array; every other walk follows TNext from obj, as with the switch off. The one-object walks (the callers pass
+            // stopAt = obj.TNext, which is null for a tile's last object) never merge.
+            bool merged = mergeTile;
+            obj = TileWalk.StartTile(obj, chunk, merged, out TileWalk tileWalk);
 
             // stopAt: the walk ends there, not at the tile's end (the Gpu prepare's item cache serves a tile's items and
             // walks its mobiles one by one: stopAt = mobile.TNext, GameSceneGpuItemCache)
