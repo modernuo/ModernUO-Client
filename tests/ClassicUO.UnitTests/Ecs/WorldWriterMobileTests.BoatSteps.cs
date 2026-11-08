@@ -441,6 +441,126 @@ namespace ClassicUO.UnitTests.Ecs
             boat.Offset.Should().Be(Vector3.Zero);
         }
 
+        // ---- the Codex audit of ecs_boat_steps (P2 1): the boats step in the old manager's order, its dictionary's insertion
+        // order (a removed boat's slot is reused by the next new boat, the last freed first), not the archetype query's. The
+        // order shows when one boat carries another: a boat whose completion moves a passenger boat onto that boat's queued
+        // destination makes the passenger's step a turn in place in the same frame only if it runs first.
+
+        private const uint CARRIER_A = 0x4000_7410, CARRIED_B = 0x4000_7411, GONE_X1 = 0x4000_7412, GONE_X2 = 0x4000_7413, CARRIER_Z = 0x4000_7414;
+
+        private static readonly uint[] OrderSerials = { CARRIER_A, CARRIED_B, GONE_X1, GONE_X2, CARRIER_Z };
+
+        private static void AddBoat(World w, uint serial, ushort x)
+        {
+            Item b = w.GetOrCreateItem(serial);
+            b.Graphic = 0x3E4E;
+            b.SetInWorldTile(x, 1000, 0);
+            b.PendingBlock = 7;
+            w.Ecs.Sync(b);
+            b.UpdateRealScreenPositionOnly(0, 0);
+        }
+
+        private static IEnumerable<(uint ticks, string what, Action<World> act)> OrderScript()
+        {
+            Action<World> frame = null;
+
+            // three boats queue (slots X1, B, X2); X1 and X2 are removed under way, so the frame frees X1's slot, then X2's
+            yield return (100, "X1, B, X2 queue", w =>
+            {
+                w.BoatMovingManager.AddStep(GONE_X1, 3, Direction.East, Direction.East, 1041, 1000, 0);
+                w.BoatMovingManager.AddStep(CARRIED_B, 3, Direction.East, Direction.East, 1021, 1000, 0);
+                w.BoatMovingManager.AddStep(GONE_X2, 3, Direction.East, Direction.East, 1051, 1000, 0);
+            });
+            yield return (150, "X1 and X2 removed", w =>
+            {
+                w.Writer.RemoveWorldItem(w.Items.Get(GONE_X1), out _);
+                w.Writer.RemoveWorldItem(w.Items.Get(GONE_X2), out _);
+            });
+            yield return (200, "frame (X1, X2 dropped)", frame);
+            yield return (600, "frame (B done)", frame);
+
+            // A takes the last freed slot (X2's, after B): B runs first, so A's completion leaves B's step queued
+            yield return (700, "A queues, carrying B", w =>
+            {
+                w.BoatMovingManager.AddStep(CARRIER_A, 3, Direction.East, Direction.East, 1031, 1000, 0);
+                w.BoatMovingManager.PushItemToList(CARRIER_A, CARRIED_B, 9, 0, 0);
+            });
+            yield return (900, "B queues", w => w.BoatMovingManager.AddStep(CARRIED_B, 3, Direction.East, Direction.East, 1022, 1000, 0));
+            yield return (1200, "frame (A done, B mid-step)", frame);
+            yield return (1300, "frame (B's turn)", frame);
+
+            // Z takes X1's slot, before B: Z's completion puts B on its destination before B's own decision
+            yield return (1400, "Z queues, carrying B", w =>
+            {
+                w.BoatMovingManager.AddStep(CARRIER_Z, 3, Direction.East, Direction.East, 1061, 1000, 0);
+                w.BoatMovingManager.PushItemToList(CARRIER_Z, CARRIED_B, 38, 0, 0);
+            });
+            yield return (1600, "B queues", w => w.BoatMovingManager.AddStep(CARRIED_B, 3, Direction.East, Direction.East, 1023, 1000, 0));
+            yield return (1900, "frame (Z done, B mid-step)", frame);
+            yield return (2000, "frame", frame);
+
+            // X1 comes back under its serial and queues: no slot is free, so it goes last
+            yield return (2100, "X1 back, carrying B", w =>
+            {
+                AddBoat(w, GONE_X1, 1040);
+                w.BoatMovingManager.AddStep(GONE_X1, 3, Direction.East, Direction.East, 1041, 1000, 0);
+                w.BoatMovingManager.PushItemToList(GONE_X1, CARRIED_B, 17, 0, 0);
+            });
+            yield return (2300, "B queues", w => w.BoatMovingManager.AddStep(CARRIED_B, 3, Direction.East, Direction.East, 1024, 1000, 0));
+            yield return (2600, "frame (X1 done, B mid-step)", frame);
+            yield return (2900, "frame", frame);
+        }
+
+        [Theory]
+        [InlineData(false, false)]
+        [InlineData(true, false)]
+        [InlineData(false, true)]
+        [InlineData(true, true)]
+        public void The_Boats_Step_In_The_Old_Managers_Order(bool check, bool itemOffset)
+        {
+            BoatStepSystem.CheckOverride = check;
+            BoatStepSystem.ResetCounters();
+
+            try
+            {
+                World reference = BuildTwoBoats(false, itemOffset), world = BuildTwoBoats(true, itemOffset);
+
+                foreach (World w in new[] { reference, world })
+                {
+                    AddBoat(w, GONE_X1, 1040);
+                    AddBoat(w, CARRIED_B, 1020);
+                    AddBoat(w, GONE_X2, 1050);
+                    AddBoat(w, CARRIER_A, 1030);
+                    AddBoat(w, CARRIER_Z, 1060);
+                }
+
+                foreach ((uint ticks, string what, Action<World> act) in OrderScript())
+                {
+                    Time.Ticks = NOW + ticks;
+                    Pair(() => (act ?? (w => w.BoatMovingManager.Update()))(reference), () => (act ?? (w => w.BoatMovingManager.Update()))(world));
+                    Time.Ticks = NOW;
+
+                    AssertSameWorld(reference, world);
+
+                    foreach (uint serial in OrderSerials)
+                    {
+                        BoatState(world, serial).Should().Be(BoatState(reference, serial), $"0x{serial:X8} after '{what}' at {ticks}");
+                    }
+
+                    world.Writer.InScope.Should().BeFalse();
+                }
+
+                world.Items.Get(CARRIED_B).X.Should().Be(1024, "every step of B was taken");
+                world.Writer.Violations.Should().Be(0);
+                (BoatStepSystem.DecisionDiffs, BoatStepSystem.StateDiffs).Should().Be((0L, 0L));
+            }
+            finally
+            {
+                BoatStepSystem.CheckOverride = null;
+                BoatStepSystem.ResetCounters();
+            }
+        }
+
         [Fact]
         public void The_Ring_Holds_What_AddStep_Can_Queue()
         {

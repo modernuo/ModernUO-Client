@@ -149,10 +149,11 @@ namespace ClassicUO.Game
     /// <summary>
     /// <c>ecs_boat_steps</c>: <c>BoatMovingManager.Update</c> as a system over the boats' <see cref="BoatSteps"/> and their
     /// records' <see cref="Position"/>. Once per frame (GameScene.Update, where the manager's Update ran): every boat with a
-    /// queued step decides its front step with <see cref="BoatStepRules.Decide"/> and writes through the same boat operations
-    /// as before (<c>InterpolateBoat</c>, <c>FollowBoatComponents</c>, <c>FollowBoat</c>, <c>CompleteBoatStep</c>,
-    /// <c>MoveBoatPassenger</c>, <c>SetBoatStepTime</c>) with the same values; the system itself only advances the ring.
-    /// The boats are collected first (the operations can move a boat's record between archetypes: ItemOffset, OnGround).
+    /// queued step, in the old manager's order, decides its front step with <see cref="BoatStepRules.Decide"/> and writes
+    /// through the same boat operations as before (<c>InterpolateBoat</c>, <c>FollowBoatComponents</c>, <c>FollowBoat</c>,
+    /// <c>CompleteBoatStep</c>, <c>MoveBoatPassenger</c>, <c>SetBoatStepTime</c>) with the same values; the system itself
+    /// only advances the ring. The boats are collected first (the operations can move a boat's record between archetypes:
+    /// ItemOffset, OnGround).
     /// CUO_BOAT_CHECK=1 keeps the manager's dictionaries in shadow: at every decision the shadow's front step and decision
     /// from the Item's fields are compared with the component's, and after every boat its queue, step clock and passenger
     /// list.
@@ -186,8 +187,13 @@ namespace ClassicUO.Game
         }
 
         private readonly World _world;
-        private readonly List<uint> _due = new List<uint>();
-        private ArchetypeQuery<BoatSteps> _query;
+
+        // the boats in the old manager's order (Codex audit P2): its _steps dictionary's keys, added at a boat's first queued
+        // step and removed when a frame finds the boat's Item gone. One boat's step can move another (a boat listed as a
+        // passenger), so the order is part of the result. The same Dictionary with the same adds and removals enumerates in
+        // the same order: insertion order, a freed slot reused by the next add (the last freed first).
+        private readonly Dictionary<uint, bool> _order = new Dictionary<uint, bool>();
+        private readonly List<uint> _due = new List<uint>(), _stepped = new List<uint>(), _gone = new List<uint>();
 
         public BoatStepSystem(World world)
         {
@@ -197,38 +203,57 @@ namespace ClassicUO.Game
         /// <summary>The boat's record when it carries a <see cref="BoatSteps"/>.</summary>
         internal static bool TryBoatSteps(Item boat, out EcsEntity e) => boat.TryScalarEntity(out e) && e.HasComponent<BoatSteps>();
 
-        /// <summary>One frame of every boat with a queued step; <paramref name="shadow"/> (the checker) follows each step.</summary>
+        /// <summary>A step is queued on <paramref name="serial"/> (<c>WorldWriter.QueueBoatStep</c>): the boat joins the
+        /// stepping order unless it is in it (the old <c>AddStep</c>'s <c>_steps[serial]</c>).</summary>
+        internal void Track(uint serial) => _order.TryAdd(serial, false);
+
+        /// <summary>One frame of every boat with a queued step, in the old manager's order; <paramref name="shadow"/> (the
+        /// checker) follows each step.</summary>
         public void Run(BoatMovingManager shadow)
         {
             Frames++;
-            _query ??= _world.Ecs.Mirror.Store.Query<BoatSteps>();
             _due.Clear();
+            _stepped.Clear();
 
-            foreach (EcsEntity e in _query.Entities)
+            // collected first: the operations can move a boat's record between archetypes, and the removals wait for the end
+            foreach (uint serial in _order.Keys)
             {
-                if (EcsRead.Get<BoatSteps>(e).Count != 0 && EcsRead.TryGet(e, out Serial serial))
-                {
-                    _due.Add(serial.Value);
-                }
+                _due.Add(serial);
             }
 
             for (int i = 0; i < _due.Count; i++)
             {
-                Item item = _world.Items.Get(_due[i]);
+                uint serial = _due[i];
+                Item item = _world.Items.Get(serial);
 
-                // a record outlives its Item only inside a removal; the manager dropped such a boat's steps
                 if (item == null || item.IsDestroyed)
+                {
+                    _gone.Add(serial);
+
+                    continue;
+                }
+
+                if (!TryBoatSteps(item, out EcsEntity e) || e.GetComponent<BoatSteps>().Count == 0)
                 {
                     continue;
                 }
 
+                _stepped.Add(serial);
                 Boats++;
                 Step(item, shadow);
             }
 
+            // the old Update's _toRemove, in its order
+            for (int i = 0; i < _gone.Count; i++)
+            {
+                _order.Remove(_gone[i]);
+            }
+
+            _gone.Clear();
+
             if (shadow != null)
             {
-                shadow.ShadowFrameEnd(_due);
+                shadow.ShadowFrameEnd(_stepped);
             }
         }
 

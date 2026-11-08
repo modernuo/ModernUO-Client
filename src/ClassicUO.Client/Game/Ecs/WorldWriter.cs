@@ -2362,7 +2362,15 @@ namespace ClassicUO.Game
                 return;
             }
 
-            if (!_world.BoatStepsOn || !boat.TryScalarEntity(out EcsEntity e))
+            if (!_world.BoatStepsOn)
+            {
+                return;
+            }
+
+            // the stepping order is the old AddStep's, which keyed the boat before it looked at anything else
+            _world.BoatMovingManager.Steps.Track(boat.Serial);
+
+            if (!boat.TryScalarEntity(out EcsEntity e))
             {
                 return;
             }

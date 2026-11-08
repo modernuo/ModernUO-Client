@@ -27,12 +27,16 @@ namespace ClassicUO.Game.Managers
 
         private uint _timePacket;
         private readonly World _world;
-        private BoatStepSystem _system;
+        private readonly BoatStepSystem _system;
 
         public BoatMovingManager(World world)
         {
             _world = world;
+            _system = new BoatStepSystem(world);
         }
+
+        /// <summary><c>ecs_boat_steps</c>: the step system (its boat order is kept by <c>WorldWriter.QueueBoatStep</c>).</summary>
+        internal BoatStepSystem Steps => _system;
 
         private bool On => _world.BoatStepsOn;
 
@@ -325,7 +329,6 @@ namespace ClassicUO.Game.Managers
 
             if (On)
             {
-                _system ??= new BoatStepSystem(_world);
                 _system.Run(BoatStepSystem.Check ? this : null);
 
                 return;
