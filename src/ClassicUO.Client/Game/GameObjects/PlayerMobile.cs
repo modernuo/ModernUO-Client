@@ -4,12 +4,12 @@ using ClassicUO.Assets;
 using ClassicUO.Configuration;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.Managers;
+using ClassicUO.Game.Map;
 using ClassicUO.Game.UI.Gumps;
 using ClassicUO.Network;
 using ClassicUO.Utility;
 using ClassicUO.Utility.Logging;
 using System.Collections.Generic;
-using System.Linq;
 
 namespace ClassicUO.Game.GameObjects
 {
@@ -299,12 +299,68 @@ namespace ClassicUO.Game.GameObjects
                 int x = X, y = Y, z = Z;
                 Pathfinder.GetNewXY((byte) Direction, ref x, ref y);
 
-                if (World.Items.Values.Any(s => s.ItemData.IsDoor && s.X == x && s.Y == y && s.Z - 15 <= z && s.Z + 15 >= z))
+                bool door = DoorAhead(World, x, y, z, Client.Game.UO.FileManager.TileData.StaticData);
+
+#if CUO_DEVTOOLS
+                if (StepOpenCheck.On)
+                {
+                    StepOpenCheck.Door(World, x, y, z, door);
+                }
+#endif
+
+                if (door)
                 {
                     GameActions.OpenDoor();
                 }
             }
         }
+
+        /// <summary>
+        /// perf-13: whether an item with the door flag stands on tile (<paramref name="x"/>, <paramref name="y"/>) within 15
+        /// of <paramref name="z"/>: the rule the every-item LINQ scan applied, read from that tile's objects (the tile list or
+        /// the dynamic tile index, <see cref="TileReader"/>). A world item's place is its tile; the scan also matched items in
+        /// containers or worn whose container X/Y equalled the tile, which are not doors in front of the player. When the
+        /// tile's chunk is not loaded (its items parked) the scan runs. <paramref name="data"/> is the tile data (Item.ItemData's).
+        /// CUO_STEP_OPEN_CHECK compares the answer with the scan's.
+        /// </summary>
+        internal static bool DoorAhead(World world, int x, int y, int z, StaticTiles[] data)
+        {
+            Chunk chunk = world.Map?.PeekChunk(x, y);
+
+            if (chunk == null || chunk.IsDestroyed)
+            {
+                return DoorScan(world, x, y, z, data);
+            }
+
+            for (GameObject obj = TileReader.Open(chunk, (x & 7) << 3 | (y & 7), DynamicTileIndex.WalkOn, null, out TileReader reader);
+                 obj != null;
+                 obj = reader.Next())
+            {
+                if (obj is Item item && IsDoorAt(item, x, y, z, data) && ReferenceEquals(world.Items.Get(item.Serial), item))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        /// <summary>The every-item scan <see cref="DoorAhead"/> replaced (its fallback and the checker's reference).</summary>
+        internal static bool DoorScan(World world, int x, int y, int z, StaticTiles[] data)
+        {
+            foreach (Item item in world.Items.Values)
+            {
+                if (IsDoorAt(item, x, y, z, data))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsDoorAt(Item item, int x, int y, int z, StaticTiles[] data) =>
+            data[item.IsMulti ? item.MultiGraphic : item.Graphic].IsDoor && item.X == x && item.Y == y && item.Z - 15 <= z && item.Z + 15 >= z;
 
         public override void Destroy()
         {

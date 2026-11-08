@@ -669,7 +669,7 @@ namespace ClassicUO.Game
                     return false;
 
                 // autoopen doors|corpses on|off [range]: the profile's auto-open doors / corpses (perf-13's step rules); range is
-                // the corpse range.
+                // the corpse range. stepopen: logs CUO_STEP_OPEN_CHECK's summary
                 case "autoopen" when args.Length > 1 && ProfileManager.CurrentProfile is { } openProfile:
                     if (args[0] == "doors")
                     {
@@ -686,6 +686,11 @@ namespace ClassicUO.Game
                     }
 
                     Log.Info($"[ECS] driver: autoopen doors {openProfile.AutoOpenDoors}, corpses {openProfile.AutoOpenCorpses} range {openProfile.AutoOpenCorpseRange} options {openProfile.CorpseOpenOptions}");
+
+                    return false;
+
+                case "stepopen":
+                    Log.Info(StepOpenCheck.On ? StepOpenCheck.Summary() : "[step-open-check] off");
 
                     return false;
 
