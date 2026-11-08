@@ -298,6 +298,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void UpsertWorldItem_Equals_The_Old_Path(Start start, int packet)
         {
             World oldWorld = Build(start), newWorld = Build(start);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             Packet p = Packets[packet];
 
             Item a = OldUpsert(oldWorld, p);
@@ -322,6 +323,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void A_Sequence_Of_Packets_Stays_Identical()
         {
             World oldWorld = Build(Start.InBag), newWorld = Build(Start.InBag);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
 
             foreach (Packet p in Packets)
             {
@@ -340,6 +342,7 @@ namespace ClassicUO.UnitTests.Ecs
             // 0x1A's new-corpse SingleClick sends a packet and plugin send hooks run synchronously: they must see the item
             // written (and its mirror record) but not yet placed, as before the funnel
             World oldWorld = Build(start), newWorld = Build(start);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             Packet p = Packets[3];
             string seenOld = null, seenNew = null;
 
@@ -552,6 +555,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void Release_A_Bad_Placement_Or_Removal_Takes_The_Pre_T1_Path()
         {
             World oldWorld = Build(Start.InBag), newWorld = Build(Start.InBag), other = Build(Start.InBag);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = false;
             Packet p0 = Packets[0];
 
@@ -603,6 +607,7 @@ namespace ClassicUO.UnitTests.Ecs
         {
             const uint OTHER = 0x4000_7600;
             World oldWorld = Build(Start.InBag), newWorld = Build(Start.InBag);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = throws;
 
             // an outstanding placement of another item, for the nested Place (placed after the outer operation)
@@ -798,6 +803,7 @@ namespace ClassicUO.UnitTests.Ecs
             // finds the item among the items on the second packet
             const uint MSERIAL = 0x0000_3333;
             World oldWorld = Build(Start.None), newWorld = Build(Start.None);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             var p = new Packet { Serial = MSERIAL, Graphic = 0x1515, Count = 1, X = 1050, Y = 1050, Direction = Direction.North, Type = 3 };
 
             OldUpsert(oldWorld, p);
@@ -820,6 +826,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void RemoveWorldItem_Equals_The_Old_Path(Start start)
         {
             World oldWorld = Build(start), newWorld = Build(start);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             Entity expectedParent = newWorld.Get(newWorld.Items.Get(ITEM).Container);
 
             OldRemove(oldWorld, ITEM);
@@ -989,6 +996,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void PlaceInContainer_Equals_The_Old_Path(Start start, int packet)
         {
             World oldWorld = BuildWithCorpse(start), newWorld = BuildWithCorpse(start);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             ContainerPacket p = ContainerPackets[packet];
 
             // a worn item's direction with the running bit, so a corpse graphic exercises UsedLayer
@@ -1037,6 +1045,7 @@ namespace ClassicUO.UnitTests.Ecs
         {
             // the bag holds a sibling, then ITEM; a second item after ITEM, then ITEM again: ITEM moves to the end
             World oldWorld = Build(Start.InBag), newWorld = Build(Start.InBag);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             const uint OTHER = 0x4000_7030;
 
             OldAddToContainer(oldWorld, OTHER, 0xEED, 1, 1, 1, 0, BAG);
@@ -1052,6 +1061,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void PlaceInContainer_A_Sequence_Of_Packets_Stays_Identical()
         {
             World oldWorld = BuildWithCorpse(Start.Worn), newWorld = BuildWithCorpse(Start.Worn);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
 
             foreach (ContainerPacket p in ContainerPackets)
             {
@@ -1102,6 +1112,7 @@ namespace ClassicUO.UnitTests.Ecs
             // equipment's contents. Codex audit round 4, #5: the replacement item (serial MOB) is compared directly, cache and
             // mirror (AssertSameWorld now visits every item either World holds), and the removed instances are destroyed.
             World oldWorld = BuildWithCorpse(Start.Worn), newWorld = BuildWithCorpse(Start.Worn);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             var removedOld = new Entity[] { oldWorld.Mobiles.Get(MOB), oldWorld.Items.Get(ITEM), oldWorld.Items.Get(CHILD), oldWorld.Items.Get(GRANDCHILD) };
             var removedNew = new Entity[] { newWorld.Mobiles.Get(MOB), newWorld.Items.Get(ITEM), newWorld.Items.Get(CHILD), newWorld.Items.Get(GRANDCHILD) };
 
@@ -1149,6 +1160,9 @@ namespace ClassicUO.UnitTests.Ecs
 
         private static void AssertSameWorld(World a, World b, bool equipmentIndexOrder = true)
         {
+            // ecs_small_fields: the old path writes the GameObject only, so its World reads its fields (the new World reads
+            // the record with the switch on: the record must hold what the old path wrote)
+            a.SmallFieldsOverride = false;
             a.Items.Count.Should().Be(b.Items.Count);
             b.Mobiles.Count.Should().Be(a.Mobiles.Count);
             (b.Mobiles.Get(MOB) == null).Should().Be(a.Mobiles.Get(MOB) == null, "the mobile exists in both or neither");
@@ -1334,6 +1348,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void ClearContainer_Equals_The_Old_Path(Start start, uint containerSerial, bool keepEquipped)
         {
             World oldWorld = BuildClear(start), newWorld = BuildClear(start);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             Entity before = newWorld.Get(containerSerial);
             List<uint> kept = before == null ? new List<uint>() : ChildSerials(before).Where(s => keepEquipped && newWorld.Items.Get(s).Layer != 0).ToList();
 
@@ -1445,6 +1460,7 @@ namespace ClassicUO.UnitTests.Ecs
             }
 
             World oldWorld = BuildTwin(), newWorld = BuildTwin();
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
 
             // OpenContainer before T1: `Item it = world.Items.Get(serial); ... ClearContainerAndRemoveItems(world, it)`
             OldClear(oldWorld, oldWorld.Items.Get(MOB), false);
@@ -1635,6 +1651,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void ReturnHeldItem_Equals_The_Old_Path(Start start, int packet, bool crowded)
         {
             World oldWorld = Build(start), newWorld = Build(start);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             HeldPacket h = HeldPackets[packet];
 
             foreach (World w in new[] { oldWorld, newWorld })
@@ -1911,6 +1928,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void Equip_Equals_The_Old_Path(Start start, int packet, bool crowded, bool packLayer)
         {
             World oldWorld = BuildEquip(start, crowded, packLayer), newWorld = BuildEquip(start, crowded, packLayer);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             EquipPacket e = EquipPackets[packet];
 
             Item a = OldEquip(oldWorld, e, out Entity oldEntity, out uint oldShown);
@@ -2110,6 +2128,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void WearItem_Equals_The_Old_Path(Start start, uint owner, int list, bool crowded)
         {
             World oldWorld = BuildWear(start, crowded), newWorld = BuildWear(start, crowded);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             var entries = WearLists[list];
 
             if (owner == DEAD)
@@ -2156,6 +2175,7 @@ namespace ClassicUO.UnitTests.Ecs
             // so a lookup per entry would put the following entry inside that item; the old loop used the obj it captured
             // before the list, and the handler now passes that instance to every entry
             World oldWorld = BuildDeadOwner(out uint dead), newWorld = BuildDeadOwner(out _);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             var entries = new[] { (dead, (ushort)0x1515, Layer.Shirt, (ushort)0), (NEWITEM, (ushort)0x1F03, Layer.Robe, (ushort)0) };
 
             OldWear(oldWorld, dead, entries);

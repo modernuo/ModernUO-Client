@@ -91,6 +91,7 @@ namespace ClassicUO.UnitTests.Ecs
             Item corpse = world.Items.Get(CORPSE);
             corpse.Amount = body;
             corpse.Layer = (Layer)layer;
+            world.Ecs.CommitItemBit(corpse, ClassicUO.Ecs.ItemTraitBits.UsedLayer, usedLayer); // ecs_small_fields: the fixture's record
             corpse.UsedLayer = usedLayer;
             corpse.AnimIndex = start; // 99 is what CheckGraphicChange sets (the first step lands on the last frame)
             corpse.LastAnimationChangeTime = 0;
@@ -122,6 +123,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void The_Ecs_Corpse_Advance_Equals_The_Legacy_ProcessAnimation(int layer, bool usedLayer, ushort body, byte start)
         {
             World oldWorld = BuildT5bItem(layer, usedLayer, body, start), newWorld = BuildT5bItem(layer, usedLayer, body, start);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = true;
             Item a = oldWorld.Items.Get(CORPSE), b = newWorld.Items.Get(CORPSE);
             var src = new FakeCorpseSource { Max = 1000 };

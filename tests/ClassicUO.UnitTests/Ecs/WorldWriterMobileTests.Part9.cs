@@ -169,6 +169,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void CloseBank_Equals_The_Old_Removals()
         {
             World oldWorld = BuildPlayer(out TestPlayer a), newWorld = BuildPlayer(out TestPlayer b);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = true;
             OpenBank9(oldWorld, a);
             Item bankB = OpenBank9(newWorld, b);
@@ -237,6 +238,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void CloseBank_From_A_Position_Callback_Joins_The_Operation_On_The_Player()
         {
             World oldWorld = BuildPlayer(out TestPlayer a), newWorld = BuildPlayer(out TestPlayer b);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = true;
             OpenBank9(oldWorld, a);
             OpenBank9(newWorld, b);
@@ -263,6 +265,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void RemovePickedUpItem_Equals_The_Old_Removal_And_Rejects_What_This_World_Does_Not_Hold()
         {
             World oldWorld = BuildPlayer(out TestPlayer a), newWorld = BuildPlayer(out TestPlayer b);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = true;
             OpenBank9(oldWorld, a);
             OpenBank9(newWorld, b);
@@ -330,6 +333,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void ClearForMapChange_Equals_The_Old_Removals()
         {
             World oldWorld = BuildPlayer(out TestPlayer a), newWorld = BuildPlayer(out TestPlayer b);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = true;
             OpenBank9(oldWorld, a);
             OpenBank9(newWorld, b);
@@ -379,6 +383,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void ClearForLogin_Equals_The_Old_Removals_And_The_Clears_Do_Not_Nest()
         {
             World oldWorld = BuildPlayer(out TestPlayer a), newWorld = BuildPlayer(out TestPlayer b);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = true;
             OpenBank9(oldWorld, a);
             OpenBank9(newWorld, b);

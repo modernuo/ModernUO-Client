@@ -89,11 +89,11 @@ Classes:
 | `Container` | **A** cold | serial of the parent item or mobile, `0xFFFF_FFFF` on the ground |
 | `Layer` | **A** cold | for a corpse it is the death direction (`ProcessAnimation`) |
 | `Price` | **A** cold | vendor list |
-| `IsDamageable` | **A** cold | |
-| `LightID` | **A** hot | the lights rule reads it (`CUO_ECS_PARITY`) |
-| `UsedLayer` | **A** cold | corpse flag (running flag of the death direction) |
-| `IsMulti` (`_isMulti`) | **A** cold | multi flag; the setter resets `MultiInfo`, `MultiDistanceBonus` |
-| `DisplayedGraphic` (`_displayedGraphic`) | A cold | display override; **no world writer exists** (section 3: the only setters are on `ItemHold`, which has its own field) |
+| `IsDamageable` | **A** cold | wave 1C: the record's `ItemTraits` (`ecs_small_fields`) |
+| `LightID` | **A** hot | the lights rule reads it (`CUO_ECS_PARITY`); wave 1C: `ItemTraits` (`ecs_small_fields`) |
+| `UsedLayer` | **A** cold | corpse flag (running flag of the death direction); wave 1C: `ItemTraits` (`ecs_small_fields`) |
+| `IsMulti` (`_isMulti`) | **A** cold | multi flag; the setter resets `MultiInfo`, `MultiDistanceBonus`. The record's `MultiTag` (every item commit); the getter stays a write-through cache: `ItemData` reads it per drawn item per frame (wave 1C) |
+| `DisplayedGraphic` | B | wave 1C: a computed getter (coin stack and multi graphic from `Graphic`, `Amount`, `IsMulti`), no field and no setter; 15 readers |
 | `MultiGraphic`, `MultiDistanceBonus`, `MultiInfo` | B | derived by `LoadMulti` from `Graphic` and the multi data; `WantUpdateMulti` is the lazy-load flag |
 | `WantUpdateMulti` | E | lazy-load flag for `LoadMulti` |
 | `Opened` | D | the container gump is open |
@@ -106,15 +106,15 @@ Classes:
 
 | Member | Class | Notes |
 |---|---|---|
-| `Race`, `IsFemale` | **A** cold | `IsFemale` is a pushed input (`MobileInputs`); both are also set by `CheckGraphicChange` |
+| `Race`, `IsFemale` | **A** cold | `IsFemale` is a pushed input (`MobileInputs`); both are also set by `CheckGraphicChange`; wave 1C: the record's `MobileTraits` (`ecs_small_fields`) |
 | `IsRunning` | **A** hot | pushed input; written by the step system and the move packets |
 | `NotorietyFlag` | **A** hot | pushed input (hue override); 69 reads |
 | `IsDead` (`_isDead`) | **A** hot | pushed input; the getter also derives from `Graphic` |
-| `InWarMode` | **A** | virtual: `Mobile` derives it from `Flags.WarMode` and ignores the setter; `PlayerMobile` stores `_inWarMode`; pushed input |
+| `InWarMode` | **A** | virtual: `Mobile` derives it from `Flags.WarMode` and ignores the setter; `PlayerMobile` stores `_inWarMode`; pushed input; wave 1C: the player's is the `MobileTraits` WarMode bit (`ecs_small_fields`) |
 | `_isSA_Poisoned` (`SetSAPoison`, `SAPoisoned`) | **A** cold | pushed input |
 | `Stamina`, `StaminaMax`, `Mana`, `ManaMax` | **A** cold | status packets |
-| `IsRenamable` | **A** cold | |
-| `SpeedMode` | **A** cold | player only in practice (0xBF.26) |
+| `IsRenamable` | **A** cold | wave 1C: `MobileTraits` (`ecs_small_fields`) |
+| `SpeedMode` | **A** cold | player only in practice (0xBF.26); wave 1C: `MobileTraits` (`ecs_small_fields`) |
 | `Steps` | **A** hot | `Deque<Step>` of the walk queue; mutated by `EnqueueStep`, `ClearSteps`, `ProcessSteps` and the `Steps.*` calls of section 4; becomes the `Steps` component (T6c) |
 | `AnimationFrameCount`, `AnimationFromServer` | **A** hot | animation timer fields |
 | `_animationGroup`, `_animationInterval`, `_animationRepeat`, `_animationRepeateMode`, `_animationRepeatModeCount`, `_isAnimationForwardDirection` | **A** hot | animation timer fields, private; written only inside `Mobile` (section 5) |

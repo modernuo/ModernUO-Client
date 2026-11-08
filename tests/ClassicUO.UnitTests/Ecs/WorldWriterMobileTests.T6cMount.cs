@@ -99,6 +99,7 @@ namespace ClassicUO.UnitTests.Ecs
             try
             {
                 World oldWorld = BuildMount(sc, false, false), newWorld = BuildMount(sc, true, ecsMount);
+                oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
                 newWorld.Writer.ThrowOnViolation = true;
                 Mobile a = oldWorld.Mobiles.Get(MOB), b = newWorld.Mobiles.Get(MOB);
                 long diffs0 = StepSystem.MountDiffs, reads0 = StepSystem.MountEcsReads, checks0 = StepSystem.MountChecks;
@@ -238,6 +239,7 @@ namespace ClassicUO.UnitTests.Ecs
             try
             {
                 World oldWorld = BuildSteps(StepScenario.OneStep, false), newWorld = BuildSteps(StepScenario.OneStep, true);
+                oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
                 newWorld.StepMountInputsOverride = ecsMount;
                 newWorld.StepSystem.MountCheckOverride = true;
                 SlotsSeam(newWorld);

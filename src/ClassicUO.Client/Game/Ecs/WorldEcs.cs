@@ -87,6 +87,7 @@ namespace ClassicUO.Game
 
                 MobileMirrorWrites++;
                 uint epochBefore = Mirror.Epoch;
+                int countBefore = Mirror.Count;
                 EcsEntity e = Mirror.UpsertMobile
                 (
                     mobile.Serial,
@@ -99,7 +100,7 @@ namespace ClassicUO.Game
                     (byte)mobile.Flags,
                     ReferenceEquals(mobile, _world.Player)
                 );
-                RestoreScalars(mobile, epochBefore);
+                RestoreScalars(mobile, epochBefore, countBefore);
 
                 // W5: graphic, flags and direction reach the mirror only here, so the pushed inputs follow them here
                 WriteInputs(mobile, e);
@@ -170,8 +171,9 @@ namespace ClassicUO.Game
             CommitObserver?.Invoke(item, v);
             ItemMirrorWrites++;
             uint epochBefore = Mirror.Epoch;
+            int countBefore = Mirror.Count;
             Mirror.UpsertItem(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.Amount, v.Container, (byte)v.Layer, v.IsMulti, attach);
-            RestoreScalars(item, epochBefore);
+            RestoreScalars(item, epochBefore, countBefore);
 
             // W5: corpses animate in World.Update (SyncItem does the same)
             if (v.Graphic == 0x2006)
@@ -206,8 +208,9 @@ namespace ClassicUO.Game
             MobileCommitObserver?.Invoke(mobile, v);
             MobileMirrorWrites++;
             uint epochBefore = Mirror.Epoch;
+            int countBefore = Mirror.Count;
             EcsEntity e = Mirror.UpsertMobile(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.IsPlayer);
-            RestoreScalars(mobile, epochBefore);
+            RestoreScalars(mobile, epochBefore, countBefore);
 
             return e;
         }
@@ -257,8 +260,16 @@ namespace ClassicUO.Game
         /// After every record upsert: the corpse timer push and the ItemActive tag follow the record; when the upsert replaced a
         /// record of the other kind under this serial (the epoch moved), the hot notoriety the Mobile keeps is written to it.
         /// </summary>
-        private void RestoreScalars(Entity entity, uint epochBefore)
+        private void RestoreScalars(Entity entity, uint epochBefore, int countBefore)
         {
+            // ecs_small_fields: a record the upsert created (or that replaced the other kind's) starts from the instance's
+            // small fields. While the Item and Mobile keep them as caches they hold the values the funnel last wrote: a mobile
+            // re-held after being detached (the detached player) or a record re-created keeps them, as the GameObject does
+            if (Mirror.Count != countBefore || Mirror.Epoch != epochBefore)
+            {
+                SeedTraits(entity);
+            }
+
             if (ItemAnimTimerEnabled && entity is Item corpse)
             {
                 PushItemTimer(corpse);
@@ -340,6 +351,67 @@ namespace ClassicUO.Game
             }
         }
 
+        // ---- ecs_small_fields (wave 1C): the small cold fields, committed by their operations from their values before the
+        // cache writes, as the fields above. Ignore an entity World does not hold (the detached player, a preview).
+
+        internal void CommitLightId(Item item, byte lightId)
+        {
+            if (HoldsEntity(item) && Mirror.SetLightId(item.Serial, lightId))
+            {
+                ExtrasWrites++;
+            }
+        }
+
+        internal void CommitItemBit(Item item, ItemTraitBits bit, bool on)
+        {
+            if (HoldsEntity(item) && Mirror.SetItemBit(item.Serial, bit, on))
+            {
+                ExtrasWrites++;
+            }
+        }
+
+        internal void CommitRace(Mobile mobile, RaceType race)
+        {
+            if (HoldsEntity(mobile) && Mirror.SetRace(mobile.Serial, (byte)race))
+            {
+                ExtrasWrites++;
+            }
+        }
+
+        internal void CommitSpeedMode(Mobile mobile, CharacterSpeedType mode)
+        {
+            if (HoldsEntity(mobile) && Mirror.SetSpeedMode(mobile.Serial, (byte)mode))
+            {
+                ExtrasWrites++;
+            }
+        }
+
+        internal void CommitMobileBit(Mobile mobile, MobileTraitBits bit, bool on)
+        {
+            if (HoldsEntity(mobile) && Mirror.SetMobileBit(mobile.Serial, bit, on))
+            {
+                ExtrasWrites++;
+            }
+        }
+
+        /// <summary>Tests: the records <see cref="SeedTraits"/> wrote.</summary>
+        internal long TraitSeeds;
+
+        private void SeedTraits(Entity entity)
+        {
+            bool written = entity switch
+            {
+                Item item => Mirror.SetItemTraits(item.Serial, item.CachedTraits),
+                Mobile mobile => Mirror.SetMobileTraits(mobile.Serial, mobile.CachedTraits),
+                _ => false
+            };
+
+            if (written)
+            {
+                TraitSeeds++;
+            }
+        }
+
         /// <summary>
         /// T1 part 9: the item went to the back of its parent's child list in a re-order that writes no record (the vendor
         /// sort's re-stamp; an operation that also commits the item stamps with <see cref="CommitItem"/>'s attach).
@@ -391,6 +463,7 @@ namespace ClassicUO.Game
 
             ItemMirrorWrites++;
             uint epochBefore = Mirror.Epoch;
+            int countBefore = Mirror.Count;
             Mirror.UpsertItem
             (
                 item.Serial,
@@ -406,7 +479,7 @@ namespace ClassicUO.Game
                 (byte)item.Layer,
                 item.IsMulti
             );
-            RestoreScalars(item, epochBefore);
+            RestoreScalars(item, epochBefore, countBefore);
 
             // W5: corpses animate in World.Update; every item change reaches the mirror here
             if (item.IsCorpse)
@@ -785,6 +858,13 @@ namespace ClassicUO.Game
             // the cold fields (part 9) go with the mobile, as its mirror bit does
             Mirror.TryGetExtras(oldSerial, out MirrorExtras extras);
 
+            // Codex audit (ecs-wave1c) P2: with no mobile record under the old serial (none, or a shared-serial item's) the
+            // traits come from the caches, which WorldWriter keeps paired with the record (ecs_small_fields)
+            if (!Mirror.TryGetEntity(oldSerial, true, out _))
+            {
+                extras.MobileTraits = mobile.CachedTraits;
+            }
+
             // T8 ownership: effects on the old record are gone with it, then follow the mobile to the new record
             bool effects = _world.Effects?.Items != null && Mirror.TryGetEntity(oldSerial, out old);
 
@@ -873,6 +953,9 @@ namespace ClassicUO.Game
 
             // T4: CUO_SCALAR_READS's per-frame read counts (5 s summary)
             ScalarReads.EndFrame();
+
+            // ecs_small_fields: CUO_SMALL_FIELDS_CHECK's 5 s summary
+            SmallFields.LogSummary(_world);
 
             if (MobileAnimationSystem.CacheCheck && Time.Ticks >= _cacheLogAt)
             {

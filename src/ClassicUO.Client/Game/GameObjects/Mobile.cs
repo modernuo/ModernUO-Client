@@ -237,7 +237,12 @@ namespace ClassicUO.Game.GameObjects
         private long _lastStepSoundTime;
         public byte AnimationFrameCount { get => _animationFrameCount; set { FunnelCheck.Write(this, FunnelField.AnimationFrameCount); _animationFrameCount = value; } }
         public bool AnimationFromServer { get => _animationFromServer; set { FunnelCheck.Write(this, FunnelField.AnimationFromServer); _animationFromServer = value; } }
-        public bool IsRenamable { get => _isRenamable; set { FunnelCheck.Write(this, FunnelField.IsRenamable); _isRenamable = value; } }
+        // ecs_small_fields: the record's MobileTraits with the switch on (SmallFields; CUO_SMALL_FIELDS_CHECK compares)
+        public bool IsRenamable
+        {
+            get => SmallFields.Routed(World) ? SmallFields.MobileBit(this, SmallField.IsRenamable, ClassicUO.Ecs.MobileTraitBits.Renamable, _isRenamable) : _isRenamable;
+            set { FunnelCheck.Write(this, FunnelField.IsRenamable); _isRenamable = value; }
+        }
         public long LastStepSoundTime { get => _lastStepSoundTime; set { FunnelCheck.Write(this, FunnelField.LastStepSoundTime); _lastStepSoundTime = value; } }
 
         // W5: these are inputs of the mobile's animation and override hue; every write is pushed to the ECS (MobileInputs)
@@ -246,7 +251,7 @@ namespace ClassicUO.Game.GameObjects
 
         public bool IsFemale
         {
-            get => _isFemale;
+            get => SmallFields.Routed(World) ? SmallFields.MobileBit(this, SmallField.IsFemale, ClassicUO.Ecs.MobileTraitBits.Female, _isFemale) : _isFemale;
             set
             {
                 FunnelCheck.Write(this, FunnelField.IsFemale);
@@ -293,8 +298,34 @@ namespace ClassicUO.Game.GameObjects
         private RaceType _race;
         private CharacterSpeedType _speedMode = CharacterSpeedType.Normal;
         private int _stepSoundOffset;
-        public RaceType Race { get => _race; set { FunnelCheck.Write(this, FunnelField.Race); _race = value; } }
-        public CharacterSpeedType SpeedMode { get => _speedMode; set { FunnelCheck.Write(this, FunnelField.SpeedMode); _speedMode = value; } }
+        public RaceType Race
+        {
+            get => SmallFields.Routed(World) ? SmallFields.Race(this) : _race;
+            set { FunnelCheck.Write(this, FunnelField.Race); _race = value; }
+        }
+
+        public CharacterSpeedType SpeedMode
+        {
+            get => SmallFields.Routed(World) ? SmallFields.SpeedMode(this) : _speedMode;
+            set { FunnelCheck.Write(this, FunnelField.SpeedMode); _speedMode = value; }
+        }
+
+        // ecs_small_fields: the cache behind the getters (the checker's other side, and the seed of a record created later)
+        internal RaceType CachedRace => _race;
+
+        internal CharacterSpeedType CachedSpeedMode => _speedMode;
+
+        /// <summary>The player's own war mode (PlayerMobile); any other mobile's is its WarMode flag, not a field.</summary>
+        internal virtual bool CachedWarMode => false;
+
+        internal ClassicUO.Ecs.MobileTraits CachedTraits => new ClassicUO.Ecs.MobileTraits
+        {
+            Race = (byte)_race,
+            SpeedMode = (byte)_speedMode,
+            Bits = (_isFemale ? ClassicUO.Ecs.MobileTraitBits.Female : 0)
+                | (_isRenamable ? ClassicUO.Ecs.MobileTraitBits.Renamable : 0)
+                | (CachedWarMode ? ClassicUO.Ecs.MobileTraitBits.WarMode : 0)
+        };
         public ushort Stamina
         {
             get

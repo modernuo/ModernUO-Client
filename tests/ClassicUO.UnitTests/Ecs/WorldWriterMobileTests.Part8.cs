@@ -205,6 +205,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void The_Idle_Animation_Equals_The_Old_Path(IdleStart start, IdleData data)
         {
             World oldWorld = BuildIdle(start), newWorld = BuildIdle(start);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = true;
             Mobile a = oldWorld.Mobiles.Get(MOB), b = newWorld.Mobiles.Get(MOB);
             FakeIdleData animations = IdleDataOf(data);
@@ -256,6 +257,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void StepSound_Equals_The_Old_Writes(Start start)
         {
             World oldWorld = Build(start), newWorld = Build(start);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = true;
             Mobile a = oldWorld.Mobiles.Get(MOB), b = newWorld.Mobiles.Get(MOB);
             long clocks = newWorld.Ecs.ClockWrites;
@@ -355,6 +357,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void The_Corpse_Frame_Advance_Equals_The_Old_Path(Start start)
         {
             World oldWorld = BuildCorpse(start), newWorld = BuildCorpse(start);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = true;
             Item a = oldWorld.Items.Get(CORPSE), b = newWorld.Items.Get(CORPSE);
             long clocks = newWorld.Ecs.ClockWrites;
@@ -427,6 +430,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void EndServerAnimation_Equals_The_Old_SetAnimation(AnimPacket kind)
         {
             World oldWorld = Build(Start.Walking), newWorld = Build(Start.Walking);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = true;
             Mobile a = oldWorld.Mobiles.Get(MOB), b = newWorld.Mobiles.Get(MOB);
             Pair(() => OldAnimate(a, kind), () => OldAnimate(b, kind));
@@ -520,6 +524,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void The_Players_Walk_Steps_And_Turn_Equal_The_Old_Path()
         {
             World oldWorld = BuildPlayer(out TestPlayer a), newWorld = BuildPlayer(out TestPlayer b);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             b.Funnel = true; // the new World's callbacks walk through the converted Walk path
             newWorld.Writer.ThrowOnViolation = true;
             Pair(() => OldAnimate(a, AnimPacket.NewCharacterAnimation), () => OldAnimate(b, AnimPacket.NewCharacterAnimation));
@@ -596,6 +601,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void A_Walk_From_A_Position_Callback_Joins_The_Operation_And_Equals_The_Old_Path(CallbackOperation op, bool throws)
         {
             World oldWorld = BuildPlayer(out TestPlayer a), newWorld = BuildPlayer(out TestPlayer b);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             b.Funnel = true;
             newWorld.Writer.ThrowOnViolation = throws;
 
@@ -895,6 +901,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void ClearWorld_Equals_The_Old_Removals(Start start)
         {
             World oldWorld = BuildCorpse(start), newWorld = BuildCorpse(start);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = true;
 
             // an item worn by the mobile and a pending placement (its handler never placed it)
@@ -984,6 +991,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void ClampContainerPosition_Equals_The_Old_Clamp(int ix, int iy, int bx, int by, int bw, int bh)
         {
             World oldWorld = BuildCorpse(Start.Standing), newWorld = BuildCorpse(Start.Standing);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = true;
             Item a = oldWorld.Items.Get(CLOOT), b = newWorld.Items.Get(CLOOT);
 
