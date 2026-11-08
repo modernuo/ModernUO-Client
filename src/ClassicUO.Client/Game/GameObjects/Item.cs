@@ -65,8 +65,14 @@ namespace ClassicUO.Game.GameObjects
 
         private bool _isMulti;
 
-        /// <summary>W5: listed in World's per-frame item update list (World.QueueItemUpdate).</summary>
+        /// <summary>W5: listed in World's <c>ActiveItemList</c> (the list is the source with <c>ecs_active_items_source</c> off, the
+        /// checker's shadow with it on). Read membership through <c>World.IsItemListed</c>.</summary>
         internal bool InUpdateList;
+
+        /// <summary>T9 (<c>ecs_active_items_source</c>): the id of this item's <see cref="ClassicUO.Ecs.ActiveItemEntry"/> entity while it
+        /// is listed, 0 otherwise (the O(1) membership test; an id, not an Entity, to keep Item 12 bytes smaller). Read membership
+        /// through <c>World.IsItemListed</c>.</summary>
+        internal int ActiveEntryId;
 
         /// <summary>
         /// W5: whether <see cref="Update"/> does anything this frame. Item.Update is a no-op unless the item is a corpse
