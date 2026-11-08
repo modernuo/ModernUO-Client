@@ -685,40 +685,6 @@ namespace ClassicUO.Game
             }
         }
 
-        public static long TableChecks, TableDiffs, OrderChecks, OrderDiffs;
-
-        /// <summary>
-        /// E4 checker: the due mobiles are about to run in <paramref name="due"/>'s order; it must be a subsequence of a fresh
-        /// enumeration of <paramref name="mobiles"/> (the order the legacy loop ran them in).
-        /// </summary>
-        public void CheckOrder(IEnumerable<Mobile> mobiles, List<Mobile> due)
-        {
-            var position = new Dictionary<Mobile, int>(due.Count, ReferenceEqualityComparer.Instance as IEqualityComparer<Mobile>);
-            int i = 0;
-
-            foreach (Mobile m in mobiles)
-            {
-                position[m] = i++;
-            }
-
-            int last = -1;
-
-            foreach (Mobile m in due)
-            {
-                OrderChecks++;
-
-                if (!position.TryGetValue(m, out int p) || p <= last)
-                {
-                    OrderDiffs++;
-                    LogClockDiff($"due update order: 0x{m.Serial:X8} at enumeration position {(position.TryGetValue(m, out int q) ? q : -1)} runs after position {last}");
-                }
-                else
-                {
-                    last = p;
-                }
-            }
-        }
-
         /// <summary>
         /// E4 checker, after the system's updates: every mobile it skipped is updated the legacy way and must not change.
         /// (Mobiles the system updated carry this frame's stamp; they ran the legacy Update, so they are equal by construction.)
@@ -881,7 +847,7 @@ namespace ClassicUO.Game
             {
                 _clockLogAt = Time.Ticks + 5000;
                 long f = Math.Max(1, ClockFrames);
-                Log.Info($"[mobile-update-check] frames {ClockFrames}: due {ClockDue / (double)f:F1} of {ClockScanned / (double)f:F0} mobiles per frame; clocks checked {ClockChecks}, {ClockDiffs} different; skipped updates checked {SkippedChecks}, {SkippedDiffs} changed state; due-update order checked {OrderChecks}, {OrderDiffs} out of order, table checks {TableChecks}, table-vs-dictionary differences {TableDiffs}; clock pushes {ClockPushes}; per frame: scan {ClockCollectTicks * 1000.0 / Stopwatch.Frequency / f:F4} ms, due updates {ClockUpdateTicks * 1000.0 / Stopwatch.Frequency / f:F4} ms");
+                Log.Info($"[mobile-update-check] frames {ClockFrames}: due {ClockDue / (double)f:F1} of {ClockScanned / (double)f:F0} mobiles per frame; clocks checked {ClockChecks}, {ClockDiffs} different; skipped updates checked {SkippedChecks}, {SkippedDiffs} changed state; clock pushes {ClockPushes}; per frame: scan {ClockCollectTicks * 1000.0 / Stopwatch.Frequency / f:F4} ms, due updates {ClockUpdateTicks * 1000.0 / Stopwatch.Frequency / f:F4} ms");
             }
 
             if (MobileAnimationAdvanceSystem.AdvanceCheck && Time.Ticks >= _animAdvanceLogAt)

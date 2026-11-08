@@ -14,10 +14,8 @@ namespace ClassicUO.Game.GameObjects
     /// <see cref="Mobile.Ordinal"/>, so sorting any set of mobiles by it gives the enumeration order with no walk of the
     /// table (E4 used to read <c>Dictionary._version</c> through <c>UnsafeAccessor</c> and re-walk it after each insert).
     /// <para>
-    /// The legacy mobile loop, tile lists, picking ties and footstep sounds depend on that order, so it must not drift from the
-    /// dictionary's: <c>MobileTableTests</c> run random operations against a real dictionary, and with
-    /// <c>CUO_MOBILE_UPDATE_CHECK</c> a shadow dictionary receives every operation and is compared every frame
-    /// (<see cref="VerifyAgainstShadow"/>).
+    /// The due-mobile update order, tile lists, picking ties and footstep sounds depend on that order, so it must not drift
+    /// from the dictionary's: <c>MobileTableTests</c> run random operations against a real dictionary.
     /// </para>
     /// Single-threaded, like the world. Removing, overwriting and clearing during enumeration are allowed (as with the dictionary); inserting a new key
     /// invalidates active enumerators (they throw <see cref="InvalidOperationException"/> on the next step).
@@ -28,22 +26,7 @@ namespace ClassicUO.Game.GameObjects
         private Mobile[] _slots = new Mobile[64];
         private int _count; // slots ever used since the last Clear (the dictionary's _count)
         private readonly Stack<int> _free = new Stack<int>();
-        private Dictionary<uint, Mobile> _shadow;
         private int _version; // bumped by every insert of a new key (the dictionary's enumerators threw on those, and only those)
-
-        /// <summary>
-        /// Keeps a real dictionary beside the table, fed every operation, for <see cref="VerifyAgainstShadow"/>. Only on an
-        /// empty table (the shadow's order comes from seeing every operation).
-        /// </summary>
-        public void EnableShadow()
-        {
-            if (_byKey.Count != 0)
-            {
-                throw new InvalidOperationException("the shadow must see every operation");
-            }
-
-            _shadow ??= new Dictionary<uint, Mobile>();
-        }
 
         public int Count => _byKey.Count;
 
@@ -89,11 +72,6 @@ namespace ClassicUO.Game.GameObjects
                     CheckUnowned(value);
                     Insert(serial, value);
                 }
-
-                if (_shadow != null)
-                {
-                    _shadow[serial] = value;
-                }
             }
         }
 
@@ -107,11 +85,6 @@ namespace ClassicUO.Game.GameObjects
 
             CheckUnowned(mobile);
             Insert(mobile.Serial, mobile);
-
-            if (_shadow != null)
-            {
-                _shadow[mobile.Serial] = mobile;
-            }
 
             return true;
         }
@@ -127,7 +100,6 @@ namespace ClassicUO.Game.GameObjects
             m.OwnerTable = null;
             _slots[slot] = null;
             _free.Push(slot);
-            _shadow?.Remove(serial);
 
             return true;
         }
@@ -146,7 +118,6 @@ namespace ClassicUO.Game.GameObjects
             Array.Clear(_slots, 0, _count);
             _count = 0;
             _free.Clear();
-            _shadow?.Clear();
         }
 
         // Ordinal is the mobile's storage address, so a mobile may sit in one table under one key only: a second key or a
@@ -182,52 +153,6 @@ namespace ClassicUO.Game.GameObjects
             mobile.Ordinal = slot;
             _slots[slot] = mobile;
             _byKey[serial] = mobile;
-        }
-
-        /// <summary>
-        /// Checker: the table's enumeration against the shadow dictionary's (same mobiles, same order) and every
-        /// <see cref="Mobile.Ordinal"/> against the slot. Returns the number of differences (0 = identical).
-        /// </summary>
-        public int VerifyAgainstShadow()
-        {
-            if (_shadow == null)
-            {
-                return 0;
-            }
-
-            int diffs = _shadow.Count == _byKey.Count ? 0 : 1;
-
-            foreach (KeyValuePair<uint, Mobile> kv in _shadow)
-            {
-                if (!_byKey.TryGetValue(kv.Key, out Mobile have) || !ReferenceEquals(have, kv.Value) || !ReferenceEquals(have.OwnerTable, this))
-                {
-                    diffs++;
-                }
-            }
-
-            IEnumerator<Mobile> expected = _shadow.Values.GetEnumerator();
-
-            for (int i = 0; i < _count; i++)
-            {
-                Mobile m = _slots[i];
-
-                if (m == null)
-                {
-                    continue;
-                }
-
-                if (m.Ordinal != i || !expected.MoveNext() || !ReferenceEquals(expected.Current, m))
-                {
-                    diffs++;
-                }
-            }
-
-            if (expected.MoveNext())
-            {
-                diffs++;
-            }
-
-            return diffs;
         }
 
         /// <summary>The mobiles in slot order (the old dictionary's enumeration order).</summary>

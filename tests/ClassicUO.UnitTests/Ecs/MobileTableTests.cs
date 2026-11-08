@@ -403,40 +403,5 @@ namespace ClassicUO.UnitTests.Ecs
             };
             dup.Should().NotThrow();
         }
-
-        [Fact]
-        public void The_Shadow_Dictionary_Agrees_And_Notices_A_Corrupted_Order()
-        {
-            var world = new World();
-            var table = new MobileTable();
-            table.EnableShadow();
-            var rng = new System.Random(7);
-
-            for (int i = 0; i < 2000; i++)
-            {
-                uint s = (uint)rng.Next(1, 200);
-
-                if (rng.Next(3) == 0)
-                {
-                    table.Remove(s);
-                }
-                else
-                {
-                    table.Add(Mobile.Create(world, s));
-                }
-
-                table.VerifyAgainstShadow().Should().Be(0);
-            }
-
-            // a mobile whose ordinal is wrong (what a missed update of the slot would look like) is reported
-            foreach (Mobile m in table.Values)
-            {
-                m.Ordinal += 1;
-
-                break;
-            }
-
-            table.VerifyAgainstShadow().Should().BeGreaterThan(0);
-        }
     }
 }
