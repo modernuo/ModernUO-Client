@@ -38,7 +38,27 @@ namespace ClassicUO.UnitTests.Ecs
             other.PendingBlock = 7;
             other.UpdateRealScreenPositionOnly(0, 0);
 
+            // boat 1 is a multi: its components follow its offset mid-step and are regenerated at each step's end
+            AddBoatHouse(world);
+
             return world;
+        }
+
+        private static string HouseState(World w)
+        {
+            if (!w.HouseManager.TryGetHouse(BOAT, out House house))
+            {
+                return "none";
+            }
+
+            var sb = new System.Text.StringBuilder();
+
+            foreach (Multi c in house.Components)
+            {
+                sb.Append($"{c.X},{c.Y},{c.Z} {c.Offset}; ");
+            }
+
+            return sb.ToString();
         }
 
         private static readonly uint[] BoatSerials = { BOAT, BOAT2, MOB, BAG, OTHER, DECKCOIN };
@@ -187,6 +207,7 @@ namespace ClassicUO.UnitTests.Ecs
                         BoatState(world, serial).Should().Be(BoatState(reference, serial), $"0x{serial:X8} after '{what}' at {ticks}");
                     }
 
+                    HouseState(world).Should().Be(HouseState(reference), $"boat 1's components after '{what}' at {ticks}");
                     world.Writer.InScope.Should().BeFalse();
                 }
 
@@ -317,6 +338,7 @@ namespace ClassicUO.UnitTests.Ecs
         [InlineData("front step")]
         [InlineData("clock")]
         [InlineData("passenger")]
+        [InlineData("passenger dropped")]
         [InlineData("queue")]
         public void The_Boat_Checker_Reports_A_Component_That_Left_The_Shadow(string corrupt)
         {
@@ -342,6 +364,7 @@ namespace ClassicUO.UnitTests.Ecs
                     case "front step": BoatStepRules.Front(ref s).X = 1005; break;
                     case "clock": s.LastStepTime -= 50; break;
                     case "passenger": s.Passengers[0].Y = 7; break;
+                    case "passenger dropped": s.PassengerCount = 0; break;
                     case "queue": BoatStepRules.PushBack(ref s, new BoatStepEntry { X = 1002, Y = 1000, TimeDiff = 500 }); break;
                 }
 
@@ -393,6 +416,29 @@ namespace ClassicUO.UnitTests.Ecs
                 BoatStepSystem.ResetCounters();
                 Time.Ticks = NOW;
             }
+        }
+
+        // the step is done in the frame whose delay reaches its time exactly (delay >= TimeDiff), on both paths
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void A_Boat_Step_Completes_When_Its_Time_Is_Reached_Exactly(bool boatSteps)
+        {
+            World world = BuildTwoBoats(boatSteps, false);
+            Item boat = world.Items.Get(BOAT);
+            Time.Ticks = NOW + 100;
+            world.BoatMovingManager.AddStep(BOAT, 3, Direction.East, Direction.East, 1001, 1000, 0);
+
+            Time.Ticks = NOW + 599;
+            world.BoatMovingManager.Update();
+            boat.X.Should().Be(1000, "1 ms short of the step's 500 ms");
+            boat.Offset.Should().NotBe(Vector3.Zero);
+
+            Time.Ticks = NOW + 600;
+            world.BoatMovingManager.Update();
+            Time.Ticks = NOW;
+            boat.X.Should().Be(1001, "the step's time is reached");
+            boat.Offset.Should().Be(Vector3.Zero);
         }
 
         [Fact]
