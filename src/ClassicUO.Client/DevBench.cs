@@ -50,7 +50,8 @@ namespace ClassicUO
     //   pickscan:CxR:world_tile_index compares it with the T6b merged walk off and on instead (both renderers; needs the index
     //   maintained: CUO_WORLD_TILE_INDEX=0|1 or CUO_TILE_ORDER_CHECK); pickscan:CxR:legacy_ecs_sprites compares the T7b Legacy
     //   sink off and on (Legacy only); pickscan:CxR:pick_records compares picking from the T7b extract's records
-    //   (SpritePickTable) off and on (both renderers); legacysprites:on|off|setting overrides legacy_ecs_sprites; cot:on|off
+    //   (SpritePickTable) off and on (both renderers); legacysprites:on|off|setting overrides legacy_ecs_sprites;
+    //   effectsprites:on|off|setting overrides ecs_effect_sprites (T7b part 3, both renderers); cot:on|off
     //   switches the circle of transparency
     //   name:reinit drops the GPU world pass every 2 s (recreated next frame, as on a facet change); name:reinitrt also drops
     //   the world render target (as at login). Each plan entry logs the world settle counters (WorldSettleGate) when it ends.
@@ -1982,6 +1983,18 @@ namespace ClassicUO
                         string v = _plan[_planIndex].Substring(14);
                         Game.Scenes.LegacySpriteSink.Override = v == "on" ? true : v == "off" ? false : null;
                         Log.Info($"[bench] legacy_ecs_sprites override {v}");
+                        _planIndex++;
+                        _stepAt = now + sec;
+
+                        break;
+                    }
+
+                    if (_plan[_planIndex].StartsWith("effectsprites:"))
+                    {
+                        // T7b part 3: effects from the effect extract (ecs_effect_sprites) on, off, or back to the setting, both renderers
+                        string v = _plan[_planIndex].Substring(14);
+                        Game.Scenes.EffectSpriteSink.Override = v == "on" ? true : v == "off" ? false : null;
+                        Log.Info($"[bench] ecs_effect_sprites override {v}");
                         _planIndex++;
                         _stepAt = now + sec;
 

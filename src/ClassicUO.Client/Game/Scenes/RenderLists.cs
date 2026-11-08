@@ -351,14 +351,15 @@ namespace ClassicUO.Game.Scenes
             batcher.ResetWorldOffset();
 
             // Draw excluded statics + animations + effects. T7b (legacy_ecs_sprites): mobiles and items through the sink, at
-            // the same list position (LegacySpriteSink); effects stay on their views
+            // the same list position (LegacySpriteSink); T7b part 3 (ecs_effect_sprites): effects through EffectSpriteSink
             LegacySpriteSink.BeginFrame();
+            EffectSpriteSink.BeginFrame();
 
             try
             {
                 result += DrawWorldRenderList(batcher, _statics, maxGroundZ) +
                        DrawWorldRenderList(batcher, _animations, maxGroundZ) +
-                       DrawRenderList(batcher, _effects, maxGroundZ);
+                       DrawEffectRenderList(batcher, _effects, maxGroundZ);
 
                 if (_transparentObjects.Count > 0 || _gumpSprites.Count > 0 || _gumpTexts.Count > 0)
                 {
@@ -464,7 +465,7 @@ namespace ClassicUO.Game.Scenes
 
             foreach (var obj in _effects)
             {
-                if (obj.Z <= maxGroundZ && obj is GameEffect effect && GpuWorldRenderer.CanCapture(effect) && gpu.DrawObject(batcher, obj, obj.CalculateDepthZ()))
+                if (obj.Z <= maxGroundZ && obj is GameEffect effect && GpuWorldRenderer.CanCapture(effect) && gpu.DrawEffect(batcher, effect, obj.CalculateDepthZ()))
                 {
                     result++;
                 }
@@ -491,7 +492,7 @@ namespace ClassicUO.Game.Scenes
 
                 float depth = obj.CalculateDepthZ();
                 bool drawn = obj is GameEffect effect && GpuWorldRenderer.CanCapture(effect)
-                    ? gpu.DrawObject(batcher, obj, depth)
+                    ? gpu.DrawEffect(batcher, effect, depth)
                     : obj.Draw(batcher, obj.RealScreenPosition.X, obj.RealScreenPosition.Y, depth);
 
                 if (drawn)
@@ -616,6 +617,22 @@ namespace ClassicUO.Game.Scenes
                     {
                         done++;
                     }
+                }
+            }
+
+            return done;
+        }
+
+        // the Legacy world's effect list: DrawRenderList with effects through EffectSpriteSink (the view while it is off)
+        private static int DrawEffectRenderList(UltimaBatcher2D batcher, List<GameObject> renderList, sbyte maxGroundZ)
+        {
+            int done = 0;
+
+            foreach (var obj in renderList)
+            {
+                if (obj.Z <= maxGroundZ && EffectSpriteSink.DrawLegacy(batcher, obj, obj.CalculateDepthZ()))
+                {
+                    done++;
                 }
             }
 
