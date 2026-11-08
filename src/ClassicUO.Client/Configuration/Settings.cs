@@ -190,12 +190,6 @@ namespace ClassicUO.Configuration
         // Read at every use (CUO_ART_CONTAINER_PREFETCH=1|0 overrides it in developer builds). Default off.
         [JsonPropertyName("art_container_prefetch")] public bool ArtContainerPrefetch { get; set; }
 
-        // T5c (ecs-transition-plan.md): the 50 ms range sweep and the world-map pass run as a system over the ECS (Position, with
-        // the last step's tile for stepping mobiles; MobileInputs.Notoriety plus the party list), removing through the funnel in
-        // table order, instead of the loops' own distance tests. CUO_SWEEP_CHECK=1 compares the two. Read once at startup.
-        // Default on since 2026-11-02 (owner, after the quiet-machine per-switch timing bench-000206/207/208: timing-neutral on both renderers); the off path and the checker stay for one phase.
-        [JsonPropertyName("world_sweep_system")] public bool WorldSweepSystem { get; set; } = true;
-
         // T6b (ecs-transition-plan.md, T6): items and mobiles are also filed per tile in Chunk.Dynamic (DynamicTileIndex, sorted by
         // T6a's key stored at insertion), and the world walks of both renderers (AddTileToRenderList, the Gpu prepare's mobile
         // list, the item cache's served runs) read the tile list's other objects merged with it. CUO_TILE_ORDER_CHECK compares the

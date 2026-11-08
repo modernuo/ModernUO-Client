@@ -948,9 +948,6 @@ namespace ClassicUO.Game
             Data.LayerCacheCheck.LogSummary();
 #endif
 
-            // T5c: CUO_SWEEP_CHECK's 5 s summary
-            _world.LogSweepSummary();
-
             // T4: CUO_SCALAR_READS's per-frame read counts (5 s summary)
             ScalarReads.EndFrame();
 

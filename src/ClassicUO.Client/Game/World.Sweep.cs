@@ -2,69 +2,23 @@
 
 using System;
 using System.Collections.Generic;
-using System.Text;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
 using ClassicUO.Game.Managers;
-using ClassicUO.Utility.Logging;
 using MathHelper = ClassicUO.Utility.MathHelper;
 
 namespace ClassicUO.Game
 {
     // T5c (ecs-transition-plan.md): the 50 ms range sweep and the world-map pass as a system over the ECS (RangeSweepSystem).
     // The sweep decides from Position (the last step's tile for stepping mobiles) and removes through the funnel in table
-    // order; the world-map pass takes its allies from MobileInputs.Notoriety plus the party list. world_sweep_system picks the
-    // path; CUO_SWEEP_CHECK=1 (CUO_DEVTOOLS builds) compares the system's selection and the removals and map calls actually
-    // made with the legacy rule over every object in the same frame. The system serves the E4 mobile loop (the legacy mobile
-    // loop interleaves the sweep with Mobile.Update and keeps its own code) and both item loops.
+    // order; the world-map pass takes its allies from MobileInputs.Notoriety plus the party list. It serves the mobile loop
+    // and the item loop. T9: the legacy rule (world_sweep_system off) and its checker (CUO_SWEEP_CHECK) are deleted.
     internal sealed partial class World
     {
-        /// <summary>Tests: the switch for this World (null: the setting, read once at startup).</summary>
-        internal bool? SweepSystemOverride;
-
-        /// <summary>Tests: the checker for this World (null: <c>CUO_SWEEP_CHECK=1</c>).</summary>
-        internal bool? SweepCheckOverride;
-
-#if CUO_DEVTOOLS
-        // CLEANUP(release): the gate's override of the setting (CUO_WORLD_SWEEP_SYSTEM=1|0)
-        private static readonly bool s_sweepSystem = Environment.GetEnvironmentVariable("CUO_WORLD_SWEEP_SYSTEM") switch
-        {
-            "1" => true,
-            "0" => false,
-            _ => Configuration.Settings.GlobalSettings.WorldSweepSystem
-        };
-
-        private static readonly bool s_sweepCheck = Environment.GetEnvironmentVariable("CUO_SWEEP_CHECK") == "1";
-#else
-        private static readonly bool s_sweepSystem = Configuration.Settings.GlobalSettings.WorldSweepSystem;
-        private const bool s_sweepCheck = false;
-#endif
-
-        /// <summary>T5c (<c>world_sweep_system</c>, default on): the range sweep and the world-map pass run as a system.</summary>
-        public bool SweepSystemOn => SweepSystemOverride ?? s_sweepSystem;
-
-        public bool SweepCheckOn => SweepCheckOverride ?? s_sweepCheck;
-
-        /// <summary>Checker counts: comparisons made, mismatches found, removals and map calls seen.</summary>
-        public long SweepChecks, SweepMismatches, SweepRemovedMobiles, SweepRemovedItems, SweepMapCalls;
-
-        /// <summary>Tests: sees each mismatch report.</summary>
-        internal Action<string> SweepObserver;
-
         private readonly List<uint> _sweepBeyond = new List<uint>();
         private readonly List<uint> _sweepStepping = new List<uint>();
         private readonly List<Mobile> _sweepMobiles = new List<Mobile>();
         private readonly HashSet<Item> _sweepItemSet = new HashSet<Item>();
-        private bool _sweepItemsBySystem;
-
-        // checker
-        private readonly List<uint> _expected = new List<uint>();
-        private readonly List<uint> _actual = new List<uint>();
-        private readonly List<uint> _selected = new List<uint>();
-        private readonly List<uint> _checkRemovals = new List<uint>();
-        private readonly List<string> _houseExpected = new List<string>();
-        private readonly List<string> _houseActual = new List<string>();
-        private bool _recordItems;
 
         // ---- mobiles ------------------------------------------------------------------------------------------------
 
@@ -132,101 +86,22 @@ namespace ClassicUO.Game
             return _sweepMobiles;
         }
 
-        // the E4 loop's range pass
+        // the mobile loop's range pass: the system's selection, removed through the funnel in table order
         internal void SweepMobiles()
         {
-            bool system = SweepSystemOn;
-            bool check = SweepCheckOn;
-
-            if (!system && !check)
-            {
-                foreach (Mobile mob in Mobiles.Values)
-                {
-                    if (mob.Distance > ClientViewRange)
-                    {
-                        Writer.SweepMobile(mob); // T1 (funnel part 5): the sweep's removal
-                    }
-                }
-
-                return;
-            }
-
             List<Mobile> selected = SelectSweptMobiles();
 
-            _expected.Clear();
-            _selected.Clear();
-            _actual.Clear();
-
-            if (check)
+            for (int i = 0; i < selected.Count; i++)
             {
-                foreach (Mobile mob in Mobiles.Values)
-                {
-                    if (!mob.IsDestroyed && mob.Distance > ClientViewRange)
-                    {
-                        _expected.Add(mob.Serial);
-                    }
-                }
-
-                for (int i = 0; i < selected.Count; i++)
-                {
-                    _selected.Add(selected[i].Serial);
-                }
-
-                CompareSweep("mobiles selected", _expected, _selected);
-            }
-
-            if (system)
-            {
-                for (int i = 0; i < selected.Count; i++)
-                {
-                    Mobile mob = selected[i];
-
-                    if (check && !mob.IsDestroyed)
-                    {
-                        _actual.Add(mob.Serial);
-                    }
-
-                    Writer.SweepMobile(mob);
-                }
-            }
-            else
-            {
-                foreach (Mobile mob in Mobiles.Values)
-                {
-                    if (mob.Distance > ClientViewRange)
-                    {
-                        if (!mob.IsDestroyed)
-                        {
-                            _actual.Add(mob.Serial);
-                        }
-
-                        Writer.SweepMobile(mob);
-                    }
-                }
-            }
-
-            if (check)
-            {
-                SweepRemovedMobiles += _actual.Count;
-                CompareSweep("mobiles removed", _expected, _actual);
+                Writer.SweepMobile(selected[i]);
             }
         }
 
         // ---- items --------------------------------------------------------------------------------------------------
 
-        // called before an item loop's range removals: selects from the ECS and, with the checker, compares it with the legacy rule
+        // called before the item loop's range removals: the system's selection of ground items beyond the range
         internal void PrepareItemSweep()
         {
-            bool system = SweepSystemOn;
-            bool check = SweepCheckOn;
-            _sweepItemsBySystem = system;
-            _recordItems = check;
-
-            if (!system && !check)
-            {
-                return;
-            }
-
             _sweepBeyond.Clear();
             _sweepItemSet.Clear();
             Ecs.Sweep.CollectItems(RangeSize.X, RangeSize.Y, ClientViewRange, _sweepBeyond);
@@ -238,59 +113,7 @@ namespace ClassicUO.Game
                     _sweepItemSet.Add(item);
                 }
             }
-
-            _actual.Clear();
-
-            if (!check)
-            {
-                return;
-            }
-
-            // both lists in table order, destroyed items left out; the expected removals also go through the house rule
-            _expected.Clear();
-            _selected.Clear();
-            _checkRemovals.Clear();
-            _houseExpected.Clear();
-            _houseActual.Clear();
-
-            foreach (Item item in Items.Values)
-            {
-                // a destroyed item the table still holds is only decided when it is a multi: the legacy loop still runs the
-                // house check for it (TryToRemove), while the funnel's removal of a destroyed item does nothing
-                if (item.IsDestroyed && !item.IsMulti)
-                {
-                    continue;
-                }
-
-                if (item.OnGround && item.Distance > ClientViewRange)
-                {
-                    _expected.Add(item.Serial);
-                    bool houseGone = item.IsMulti && !HouseManager.IsHouseInRange(item.Serial, ClientViewRange);
-
-                    if (item.IsMulti)
-                    {
-                        _houseExpected.Add(HouseLine(item.Serial, houseGone));
-                    }
-
-                    if (!item.IsMulti || houseGone)
-                    {
-                        if (!item.IsDestroyed)
-                        {
-                            _checkRemovals.Add(item.Serial);
-                        }
-                    }
-                }
-
-                if (_sweepItemSet.Contains(item) || DestroyedHeldMultiBeyond(item))
-                {
-                    _selected.Add(item.Serial);
-                }
-            }
-
-            CompareSweep("items selected", _expected, _selected);
         }
-
-        private static string HouseLine(uint serial, bool removed) => $"{serial:X8} house {(removed ? "removed" : "kept")}";
 
         // a multi that was destroyed but is still in the Items table has no ECS entity, so the system cannot select it; the
         // legacy loop still runs its range and house check (HouseManager.TryToRemove), and so does the system path
@@ -299,56 +122,23 @@ namespace ClassicUO.Game
             return item.IsDestroyed && item.IsMulti && item.OnGround && item.Distance > ClientViewRange;
         }
 
-        // the loops' range test: the system's selection, else the legacy rule
+        // the item loop's range test: the system's selection
         internal bool ItemBeyond(Item item)
         {
-            return _sweepItemsBySystem ? _sweepItemSet.Contains(item) || DestroyedHeldMultiBeyond(item) : item.OnGround && item.Distance > ClientViewRange;
+            return _sweepItemSet.Contains(item) || DestroyedHeldMultiBeyond(item);
         }
 
-        // the loops' removal of an out-of-range item (a multi only once its house is out of range too)
+        // the item loop's removal of an out-of-range item (a multi only once its house is out of range too)
         internal void SweepItemBeyond(Item item)
         {
-            if (item.IsMulti)
+            if (!item.IsMulti || HouseManager.TryToRemove(item, ClientViewRange))
             {
-                bool removed = HouseManager.TryToRemove(item, ClientViewRange);
-
-                if (_recordItems)
-                {
-                    _houseActual.Add(HouseLine(item.Serial, removed));
-                }
-
-                if (removed)
-                {
-                    RecordItemSweep(item);
-                    Writer.SweepItem(item); // T1 (funnel part 5): the sweep's removal
-                }
-            }
-            else
-            {
-                RecordItemSweep(item);
                 Writer.SweepItem(item); // T1 (funnel part 5): the sweep's removal
-            }
-        }
-
-        private void RecordItemSweep(Item item)
-        {
-            if (_recordItems && !item.IsDestroyed)
-            {
-                _actual.Add(item.Serial);
             }
         }
 
         internal void FinishItemSweep()
         {
-            if (_recordItems)
-            {
-                SweepRemovedItems += _actual.Count;
-                CompareSweep("items removed", _checkRemovals, _actual);
-                CompareLines("house cleanup", _houseExpected, _houseActual);
-                _recordItems = false;
-            }
-
-            _sweepItemsBySystem = false;
             _sweepItemSet.Clear();
         }
 
@@ -357,8 +147,6 @@ namespace ClassicUO.Game
         private readonly List<WMapPick> _picks = new List<WMapPick>();
         private readonly HashSet<uint> _allySet = new HashSet<uint>();
         private readonly List<uint> _allies = new List<uint>();
-        private readonly List<string> _legacyCalls = new List<string>();
-        private readonly List<string> _systemCalls = new List<string>();
 
         private void SelectWorldMap()
         {
@@ -407,7 +195,7 @@ namespace ClassicUO.Game
             return $"{mob.Serial:X8} {mob.X},{mob.Y} hp {MathHelper.PercetangeOf(mob.Hits, mob.HitsMax)} map {map} guild {guild} name {mob.Name}";
         }
 
-        /// <summary>Tests: sees each world-map call the pass makes (in the checker's text form).</summary>
+        /// <summary>Tests: sees each world-map call the pass makes (as text).</summary>
         internal Action<string> MapCallObserver;
 
         private void MapCall(Mobile mob, bool guild)
@@ -416,173 +204,14 @@ namespace ClassicUO.Game
             WMapManager.AddOrUpdate(mob.Serial, mob.X, mob.Y, MathHelper.PercetangeOf(mob.Hits, mob.HitsMax), MapIndex, guild, mob.Name);
         }
 
-        // the E4 loop's world-map pass: the legacy rule over every mobile, or the system's picks. Without issue (the map is not
-        // accepting updates) only the checker runs: it compares what the two rules would call
-        internal void WorldMapPass(bool issue = true)
+        // the mobile loop's world-map pass: the system's picks (allies from MobileInputs, then the party list) in table order
+        internal void WorldMapPass()
         {
-            // the allies come from MobileInputs
-            bool system = SweepSystemOn;
-            bool check = SweepCheckOn;
+            SelectWorldMap();
 
-            if (system || check)
+            for (int i = 0; i < _picks.Count; i++)
             {
-                SelectWorldMap();
-            }
-
-            if (check)
-            {
-                _legacyCalls.Clear();
-                _systemCalls.Clear();
-
-                foreach (Mobile mob in Mobiles.Values)
-                {
-                    if (mob.IsDestroyed)
-                    {
-                        continue;
-                    }
-
-                    if (mob.NotorietyFlag == NotorietyFlag.Ally)
-                    {
-                        _legacyCalls.Add(Call(mob, MapIndex, true));
-                    }
-                    else if (Party.Leader != 0 && Party.Contains(mob))
-                    {
-                        _legacyCalls.Add(Call(mob, MapIndex, false));
-                    }
-                }
-
-                for (int i = 0; i < _picks.Count; i++)
-                {
-                    _systemCalls.Add(Call(_picks[i].Mobile, MapIndex, _picks[i].Guild));
-                }
-
-                SweepMapCalls += _systemCalls.Count;
-                CompareLines("world map calls", _legacyCalls, _systemCalls);
-            }
-
-            if (!issue)
-            {
-                return;
-            }
-
-            if (system)
-            {
-                for (int i = 0; i < _picks.Count; i++)
-                {
-                    MapCall(_picks[i].Mobile, _picks[i].Guild);
-                }
-
-                return;
-            }
-
-            foreach (Mobile mob in Mobiles.Values)
-            {
-                if (mob.IsDestroyed)
-                {
-                    continue;
-                }
-
-                if (mob.NotorietyFlag == NotorietyFlag.Ally)
-                {
-                    MapCall(mob, true);
-                }
-                else if (Party.Leader != 0 && Party.Contains(mob))
-                {
-                    MapCall(mob, false);
-                }
-            }
-        }
-
-        // ---- the checker --------------------------------------------------------------------------------------------
-
-        private void CompareSweep(string what, List<uint> expected, List<uint> actual)
-        {
-            SweepChecks++;
-            bool same = expected.Count == actual.Count;
-
-            for (int i = 0; same && i < expected.Count; i++)
-            {
-                same = expected[i] == actual[i];
-            }
-
-            if (!same)
-            {
-                var sb = new StringBuilder();
-                sb.Append("[sweep] mismatch (").Append(what).Append(") legacy ").Append(expected.Count).Append(": ");
-                AppendSerials(sb, expected);
-                sb.Append(" | system ").Append(actual.Count).Append(": ");
-                AppendSerials(sb, actual);
-                ReportSweepMismatch(sb.ToString());
-            }
-        }
-
-        private static void AppendSerials(StringBuilder sb, List<uint> list)
-        {
-            for (int i = 0; i < list.Count && i < 12; i++)
-            {
-                sb.Append(i == 0 ? "" : " ").Append(list[i].ToString("X8"));
-            }
-
-            if (list.Count > 12)
-            {
-                sb.Append(" ...");
-            }
-        }
-
-        private void CompareLines(string what, List<string> expected, List<string> actual)
-        {
-            SweepChecks++;
-            bool same = expected.Count == actual.Count;
-
-            for (int i = 0; same && i < expected.Count; i++)
-            {
-                same = expected[i] == actual[i];
-            }
-
-            if (!same)
-            {
-                var sb = new StringBuilder();
-                sb.Append("[sweep] mismatch (").Append(what).Append(") legacy ").Append(expected.Count).Append(", system ").Append(actual.Count);
-
-                for (int i = 0; i < Math.Max(expected.Count, actual.Count) && i < 6; i++)
-                {
-                    string a = i < expected.Count ? expected[i] : "-";
-                    string b = i < actual.Count ? actual[i] : "-";
-
-                    if (a != b)
-                    {
-                        sb.Append(" | #").Append(i).Append(" legacy ").Append(a).Append(" system ").Append(b);
-                    }
-                }
-
-                ReportSweepMismatch(sb.ToString());
-            }
-        }
-
-        private int _sweepLogged;
-        private uint _sweepLogAt;
-        private long _sweepLoggedChecks = -1;
-
-        private void ReportSweepMismatch(string message)
-        {
-            SweepMismatches++;
-            SweepObserver?.Invoke(message);
-
-            if (_sweepLogged < 25)
-            {
-                _sweepLogged++;
-                Log.Warn(message);
-            }
-        }
-
-        /// <summary>The checker's 5 s summary (called each frame from the ECS update).</summary>
-        internal void LogSweepSummary()
-        {
-            if (SweepCheckOn && Time.Ticks >= _sweepLogAt && SweepChecks != _sweepLoggedChecks)
-            {
-                _sweepLogAt = Time.Ticks + 5000;
-                _sweepLoggedChecks = SweepChecks;
-                Log.Info($"[sweep] checks {SweepChecks}, mismatches {SweepMismatches} | removed mobiles {SweepRemovedMobiles}, items {SweepRemovedItems}; world map calls {SweepMapCalls} | world_sweep_system={(SweepSystemOn ? "on" : "off")}");
+                MapCall(_picks[i].Mobile, _picks[i].Guild);
             }
         }
     }

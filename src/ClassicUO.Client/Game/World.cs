@@ -800,7 +800,7 @@ namespace ClassicUO.Game
 
             if (do_delete)
             {
-                SweepMobiles(); // T5c: the range sweep, by the system or the legacy rule
+                SweepMobiles(); // T5c: the range sweep
             }
 
             for (int i = 0; i < _destroyedMobiles.Count; i++)
@@ -816,9 +816,9 @@ namespace ClassicUO.Game
 
             _destroyedMobiles.Clear();
 
-            if (wmap || SweepCheckOn)
+            if (wmap)
             {
-                WorldMapPass(wmap); // T5c: the world-map pass, by the system or the legacy rule
+                WorldMapPass(); // T5c: the world-map pass
             }
         }
 
