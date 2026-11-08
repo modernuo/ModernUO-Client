@@ -622,6 +622,29 @@ namespace ClassicUO.Game
         /// <summary><c>ecs_item_offset</c>: an item's boat offset is the ECS <c>ItemOffset</c> component (<see cref="ItemOffsets"/>).</summary>
         internal bool ItemOffsetOn => ItemOffsetOverride ?? ItemOffsetSwitch.On;
 
+#if CUO_DEVTOOLS
+        // CLEANUP(release): the gate's override of the setting (CUO_ECS_BOAT_STEPS=1|0)
+        private static readonly bool? _envBoatSteps = System.Environment.GetEnvironmentVariable("CUO_ECS_BOAT_STEPS") switch
+        {
+            "1" => true,
+            "0" => false,
+            _ => null
+        };
+#else
+        private static readonly bool? _envBoatSteps = null;
+#endif
+
+        private static class BoatStepsSwitch
+        {
+            public static readonly bool On = _envBoatSteps ?? Settings.GlobalSettings.EcsBoatSteps;
+        }
+
+        /// <summary>Tests: the switch for this World (null: the setting).</summary>
+        internal bool? BoatStepsOverride;
+
+        /// <summary><c>ecs_boat_steps</c>: a boat's motion state is the ECS <c>BoatSteps</c> component (<see cref="BoatStepSystem"/>).</summary>
+        internal bool BoatStepsOn => BoatStepsOverride ?? BoatStepsSwitch.On;
+
         private readonly List<Mobile> _dueObjects = new List<Mobile>();
         private static readonly System.Comparison<Mobile> s_byOrdinal = (a, b) => a.Ordinal.CompareTo(b.Ordinal);
 

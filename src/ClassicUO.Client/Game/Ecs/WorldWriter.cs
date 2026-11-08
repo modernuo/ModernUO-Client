@@ -2325,8 +2325,9 @@ namespace ClassicUO.Game
         }
 
         /// <summary>
-        /// The boat's step clock (<c>BoatMovingManager</c>: a first step queued, a step done): <c>LastStepTime</c>. Nothing
-        /// reaches the ECS (an item's LastStepTime is not a record field). Rejections as <see cref="CompleteBoatStep"/>.
+        /// The boat's step clock (<c>BoatMovingManager</c>: a first step queued, a step done): <c>LastStepTime</c>, and with
+        /// <c>ecs_boat_steps</c> the <c>BoatSteps</c> component's (the step system's input). Rejections as
+        /// <see cref="CompleteBoatStep"/>.
         /// </summary>
         public void SetBoatStepTime(Item boat, uint time)
         {
@@ -2338,6 +2339,130 @@ namespace ClassicUO.Game
             using (Open(boat, null))
             {
                 boat.LastStepTime = time;
+
+                if (_world.BoatStepsOn && BoatStepSystem.TryBoatSteps(boat, out EcsEntity e))
+                {
+                    e.GetComponent<ClassicUO.Ecs.BoatSteps>().LastStepTime = time;
+                }
+            }
+        }
+
+        /// <summary>
+        /// <c>ecs_boat_steps</c>: 0xF6 with smooth boat movement (<c>BoatMovingManager.AddStep</c>) queues a step on the boat's
+        /// <c>BoatSteps</c> (added at the first): the queue is trimmed to 5, a first step starts the step clock (as
+        /// <see cref="SetBoatStepTime"/>), the step takes the speed's time (a first step, or no move request or step before:
+        /// <paramref name="timePacket"/> 0) or the time since the last packet, and the passenger list is dropped (the packet's
+        /// list follows: <see cref="SetBoatPassenger"/>). Nothing with the switch off or without a record. Rejections as
+        /// <see cref="CompleteBoatStep"/>.
+        /// </summary>
+        public void QueueBoatStep(Item boat, byte speed, Direction movingDir, ushort x, ushort y, sbyte z, uint timePacket)
+        {
+            if (boat == null || !Admitted(nameof(QueueBoatStep), boat.Serial) || !Accepted(boat, nameof(QueueBoatStep)))
+            {
+                return;
+            }
+
+            if (!_world.BoatStepsOn || !boat.TryScalarEntity(out EcsEntity e))
+            {
+                return;
+            }
+
+            using (Open(boat, null))
+            {
+                if (!e.HasComponent<ClassicUO.Ecs.BoatSteps>())
+                {
+                    e.AddComponent(new ClassicUO.Ecs.BoatSteps());
+                }
+
+                ref ClassicUO.Ecs.BoatSteps s = ref e.GetComponent<ClassicUO.Ecs.BoatSteps>();
+                bool empty = s.Count == 0;
+
+                while (s.Count > 5)
+                {
+                    BoatStepRules.PopFront(ref s);
+                }
+
+                if (empty)
+                {
+                    // SetBoatStepTime's writes
+                    boat.LastStepTime = Time.Ticks;
+                    s.LastStepTime = Time.Ticks;
+                }
+
+                BoatStepRules.PushBack
+                (
+                    ref s,
+                    new ClassicUO.Ecs.BoatStepEntry
+                    {
+                        TimeDiff = timePacket == 0 || empty ? BoatStepRules.Velocity(speed) : (int)(Time.Ticks - timePacket),
+                        Speed = speed,
+                        X = x,
+                        Y = y,
+                        Z = z,
+                        Direction = (byte)movingDir
+                    }
+                );
+
+                s.PassengerCount = 0;
+            }
+        }
+
+        /// <summary>
+        /// <c>ecs_boat_steps</c>: one object of 0xF6's list (<c>BoatMovingManager.PushItemToList</c>): its offset from the boat
+        /// is updated if it is listed already, else it is appended (in packet order). Nothing with the switch off or without a
+        /// record. Rejections as <see cref="CompleteBoatStep"/>.
+        /// </summary>
+        public void SetBoatPassenger(Item boat, uint passenger, int x, int y, int z)
+        {
+            if (boat == null || !Admitted(nameof(SetBoatPassenger), boat.Serial) || !Accepted(boat, nameof(SetBoatPassenger)))
+            {
+                return;
+            }
+
+            if (!_world.BoatStepsOn || !boat.TryScalarEntity(out EcsEntity e))
+            {
+                return;
+            }
+
+            using (Open(boat, null))
+            {
+                if (!e.HasComponent<ClassicUO.Ecs.BoatSteps>())
+                {
+                    e.AddComponent(new ClassicUO.Ecs.BoatSteps());
+                }
+
+                BoatStepRules.SetPassenger(ref e.GetComponent<ClassicUO.Ecs.BoatSteps>(), passenger, x, y, z);
+            }
+        }
+
+        /// <summary>
+        /// <c>ecs_boat_steps</c>: the boat's passenger list dropped (<c>BoatMovingManager.ClearEntities</c>); with
+        /// <paramref name="steps"/> its queued steps too (the end of <c>BoatMovingManager.ClearSteps</c>, after the offsets'
+        /// <see cref="ResetBoatOffset"/>). Nothing with the switch off, without a record or a component. Rejections as
+        /// <see cref="CompleteBoatStep"/>.
+        /// </summary>
+        public void DropBoatSteps(Item boat, bool steps)
+        {
+            if (boat == null || !Admitted(nameof(DropBoatSteps), boat.Serial) || !Accepted(boat, nameof(DropBoatSteps)))
+            {
+                return;
+            }
+
+            if (!_world.BoatStepsOn || !BoatStepSystem.TryBoatSteps(boat, out EcsEntity e))
+            {
+                return;
+            }
+
+            using (Open(boat, null))
+            {
+                ref ClassicUO.Ecs.BoatSteps s = ref e.GetComponent<ClassicUO.Ecs.BoatSteps>();
+                s.PassengerCount = 0;
+
+                if (steps)
+                {
+                    s.Head = 0;
+                    s.Count = 0;
+                }
             }
         }
 

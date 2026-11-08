@@ -169,6 +169,14 @@ namespace ClassicUO.Configuration
         // component is not written and the readers read the Item. Default off.
         [JsonPropertyName("ecs_item_offset")] public bool EcsItemOffset { get; set; }
 
+        // A boat's motion state (its queued smooth-movement steps, the step clock, the objects 0xF6 listed on its deck) is the
+        // ECS BoatSteps component on the boat's record instead of BoatMovingManager's dictionaries: WorldWriter's boat
+        // operations fill it from 0xF6, and BoatStepSystem advances the boats each frame through the same boat operations.
+        // Read once at startup (CUO_ECS_BOAT_STEPS=1|0 overrides it in developer builds). CUO_BOAT_CHECK=1 keeps the old
+        // dictionaries in shadow and compares their decisions, queues and passengers with the component's every frame.
+        // Off = BoatMovingManager's dictionaries. Default off.
+        [JsonPropertyName("ecs_boat_steps")] public bool EcsBoatSteps { get; set; }
+
         // perf-4: the static art of a container's contents and of the paperdoll's equipment slots decodes on the art workers
         // before the gump builds its item controls (ContentsArt: a request when an item goes into an open container, a
         // bounded batch wait in ContainerGump/PaperDollGump.UpdateContents) instead of one main-thread decode per sprite.
