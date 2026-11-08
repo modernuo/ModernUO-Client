@@ -81,6 +81,19 @@ namespace ClassicUO.Game.GameObjects
         /// <summary>CUO_EFFECT_ENDPOINT_CHECK when the effect registered: the objects are kept and every read is compared.</summary>
         internal bool EndpointCheck;
 
+        /// <summary>T8 ownership phase 2 (ecs_effect_motion, decided when the effect registers): the kind's motion is
+        /// <see cref="EffectSystem"/>'s motion step over the state; position, offset, angle and target here are written from
+        /// it for the views.</summary>
+        internal bool UsesMotion;
+
+        /// <summary>CUO_EFFECT_MOTION_CHECK when the effect registered: the legacy motion is replayed beside every step.</summary>
+        internal bool MotionCheck;
+
+        internal EffectManager Manager => _manager;
+
+        /// <summary>The motion step's <c>IsPositionChanged = true</c> (MovingEffect.UpdateOffset sets it every update).</summary>
+        internal void MarkPositionChanged() => IsPositionChanged = true;
+
         public GameObject Source;
         internal GameObject Target;
         internal ushort TargetX;
@@ -185,13 +198,18 @@ namespace ClassicUO.Game.GameObjects
             if (CanCreateExplosionEffect)
             {
                 (var targetX, var targetY, var targetZ) = GetTarget();
-
-                FixedEffect effect = new FixedEffect(World, _manager, 0x36CB, Hue, 400, 0);
-                effect.Blend = Blend;
-                effect.SetSource(targetX, targetY, targetZ);
-
-                _manager.Add(effect);
+                CreateExplosionAt(targetX, targetY, targetZ);
             }
+        }
+
+        /// <summary>The explosion at the target (the motion step passes the target it resolved).</summary>
+        internal void CreateExplosionAt(ushort targetX, ushort targetY, sbyte targetZ)
+        {
+            FixedEffect effect = new FixedEffect(World, _manager, 0x36CB, Hue, 400, 0);
+            effect.Blend = Blend;
+            effect.SetSource(targetX, targetY, targetZ);
+
+            _manager.Add(effect);
         }
 
         /// <summary>T8: copies position, offset, angle, target and source/target serials to <paramref name="s"/>.</summary>
@@ -206,6 +224,7 @@ namespace ClassicUO.Game.GameObjects
             s.TargetZ = tz;
             s.OffsetX = OffsetX;
             s.OffsetY = OffsetY;
+            s.OffsetZ = Offset.Z;
             s.Angle = AngleToTarget;
 
             // with endpoints the serials are the references themselves (the re-key moves them)

@@ -115,6 +115,19 @@ namespace ClassicUO.Game
 
         public bool EffectEndpointsCheckOn => EffectEndpointsCheckOverride ?? EffectSystem.GlobalEndpointCheck;
 
+        /// <summary>Tests: the motion switch for this World (null: <c>ecs_effect_motion</c>, read once at startup).</summary>
+        internal bool? EffectMotionOverride;
+
+        /// <summary>Tests: the motion checker for this World (null: <c>CUO_EFFECT_MOTION_CHECK=1</c>).</summary>
+        internal bool? EffectMotionCheckOverride;
+
+        /// <summary>T8 ownership phase 2 (<c>ecs_effect_motion</c>, default off; needs <c>ecs_effects</c> and
+        /// <c>ecs_effect_endpoints</c>): the kinds' motion is <see cref="EffectSystem"/>'s motion step over the effect's state.
+        /// Decided per effect when it registers.</summary>
+        public bool EffectMotionOn => EffectEndpointsOn && (EffectMotionOverride ?? EffectSystem.GlobalMotion);
+
+        public bool EffectMotionCheckOn => EffectMotionCheckOverride ?? EffectSystem.GlobalMotionCheck;
+
         public bool ActiveItemsCheckOn => ActiveItemsCheckOverride ?? s_activeItemsCheck;
 
         /// <summary>Checker counts: frames compared, mismatches found.</summary>
