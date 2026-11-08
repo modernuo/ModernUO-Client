@@ -5842,3 +5842,47 @@ Base `poc/modern-client` eb0f70ed0; `bg/ecs-wave1c-2` merged 3d5bc9a90 (active i
 - **Gates** (dev JIT Release build of 3685f1403, `measure/ecs-wave1c/`: every checker, effect endpoint/motion, `CUO_ECS_SMALL_FIELDS=1` + `CUO_SMALL_FIELDS_CHECK=1`; scene `smallfields.txt`: war mode toggles, `[SpeedBoost` + a run, bodies 606/666, `[set Race`, ground lights in the dark, two corpses, a boat deleted at the end; plus textflood, e6fx, e6fx_ends, coldbars, w5items, corpses, ls_parity, Gpu uistate): submitted as bench-000366 (Gpu, switch on), bench-000367 (legacy, switch on), bench-000368 (switch off, checker on: smallfields, corpses, w5items); results to follow. The scene's server side was checked against ModernUO: `[SpeedBoost` sends 0xBF.26 value 1 (`FastUnmount`), `[set Race` sets the race's body and a full 0x11, bodies 606/666 are the female elf and male gargoyle.
 - **Allocations** (`job-alloc.sh`, base 3d5bc9a90 vs the branch off and on, both renderers, checkers off, scene `alloc-small.txt`): submitted as bench-000369; results to follow. Timing is parked: `job-timing-PARKED.sh` (3 interleaved rounds, TC=0).
 - **Memory and cost.** `MobileTraits` 3 bytes on nearly every human mobile's record (race), `ItemTraits` 2 bytes on lights, damageable items and corpses: under 0.1 MB per client at the large scene; the components move a mobile's record to another archetype once, at its first body. Switch on: an ECS read (the handle check plus `TryGetComponent`, about 10-25 ns per T4's E2) instead of a field load; the per-frame readers are the corpse extract and frame advance (UsedLayer, per corpse), the light pass (LightID, per light item) and `CanBeDrawn`'s player race (per static at chunk load, per effect created). Switch off: one extra test of the switch and the checker per getter call.
+
+## perf-alloc-sites: the two pre-ECS allocation sources (2026-11-08, `bg/perf-alloc-sites-2`)
+
+Base `poc/modern-client` 3695805e2. Method: the runtime's EventPipe AllocationTick (GC verbose, type + managed stack; no client
+instrumentation) on a dev JIT build, analysed with `cuo-poc-state/measure/perf-alloc-sites/alloctick` (bench-000371: base,
+scene `alloc-sites.txt`, one Legacy and one Gpu run). AllocationTick samples about every 100 KB, so the byte counts below are
+sampled, but the shares hold.
+
+**ls_walk** (Felucca large-scale walk, ~2,000 mobiles, ~25,000 items). Main thread, 15 s window, sampled 28.8 MB on Legacy and
+29.3 MB on Gpu (~1.9 MB/s), all of it driven by what the server sends when new objects come into range, on both renderers:
+
+| Site | Legacy | Gpu |
+|---|---|---|
+| Text bitmaps: `FontsLoader.GeneratePixelsUnicode` (FontsLoader.cs:2201 at base) via `RenderedText.CreateTexture`, from `DisplayClilocString` name labels (and their journal lines) for new mobiles | 11.4 MB | 11.1 MB |
+| New `Item`s: `World.GetOrCreateItem` / `WorldWriter.UpsertWorldItem` / `WearItem` | 4.2 MB | 4.4 MB |
+| Property lists: `PacketHandlers.MegaCliloc` (list + growth, Split arrays, strings, `ItemProperty`) | 6.6 MB | ~5 MB |
+| Gpu only: `GpuItemCache.Add` growth (`Array.Resize`), `MobileSpriteExtract.Emit` arrays | - | 1.5 MB |
+| DevBench driver closure (every frame) | 0.32 MB | 0.54 MB |
+
+The ~750 KB "single frames" of ls_walk are one burst per step (every 200-400 ms): ~6 text bitmaps plus 2-3 new Items in one
+frame, never one big object. The text bitmap is only measured: the glyph atlas draws RenderedText, so the uint[] per string
+was garbage at once.
+
+**The Legacy one-shot** (676,744 B in one frame, 20-30 s after login in town, NativeAOT runs) did not occur in the JIT trace
+(Legacy town max 47,520 B; no main-thread burst in the town windows). Not found yet; `job-spike-trace.sh` repeats the trace
+three times on Legacy over a longer town scene.
+
+**The 40 B/frame floor** in every FrameStats window is the DevBench driver: `EcsSessionDriver.Update`'s lambda captured the
+method's parameters, so its closure (32 B) was allocated at every Update. Dev builds only; it inflated every alloc/frame reading.
+
+Fixes (one commit each):
+- `3ecc7ad81` DevBench driver: the closure moves into its own method, allocated only when a script line runs.
+- `97ea6a92e` `FontsLoader.ReusePixelBuffer` (set by `RenderedText.CreateTexture` only): text bitmaps go into one reused buffer
+  (Unicode and ASCII). **Memory: at most 1 MB per client** (grows in powers of two to the largest bitmap up to 256K pixels;
+  bigger bitmaps get their own array as before). Test `FontPixelReuseTests` (same pixels as a fresh array after a bigger bitmap;
+  a mutant without the clear fails it).
+- `e35cbacd9` MegaCliloc: one static line list (main thread) and the `#` argument parsed from spans (`ParseArgCliloc`, same
+  result as the Split; `MegaClilocArgTests`, 14 cases). No memory held beyond the list's capacity (a few KB).
+
+Verification: dev and `-p:CuoDevTools=false` builds; ClassicUO.UnitTests 3363 passed / 6 skipped (dev) and 3357 / 6 (`-p:CuoDevTools=false`), Uo.Converter.Tests 130 / 1. Jobs submitted (results to follow): allocations base vs fix, NativeAOT, interleaved, scenes alloc-sites and alloc-tour, bench-000383 (Legacy) and bench-000384 (Gpu); gates (the ecs-wave1c gate incl. ls_parity and textflood, dev JIT build) bench-000380 (Legacy) and bench-000381 (Gpu); one-shot trace bench-000382. Timing is parked: `measure/perf-alloc-sites-2/job-timing-PARKED.sh`.
+
+Perf opportunities (not done here): pool `Item`s for objects entering range (4 MB per 15 s in ls_walk); measure-only text
+layout so RenderedText does not rasterize at all; `GpuItemCache` arrays from a pool or presized per chunk; MegaCliloc's
+`CapitalizeAllWords` string per property line.
