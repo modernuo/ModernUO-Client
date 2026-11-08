@@ -22,7 +22,7 @@ namespace ClassicUO.Game
     /// source and target objects, which the ECS does not own yet. Tile placement is the object's own
     /// (<c>SetInWorldTile</c>); with the switch on the objects are kept in <see cref="DynamicTileIndex"/> too.
     /// </summary>
-    internal static class EffectSystem
+    internal static partial class EffectSystem
     {
 #if CUO_DEVTOOLS
         // CLEANUP(release): the gate's override of the setting (CUO_ECS_EFFECTS=1|0) and the checker
@@ -44,11 +44,23 @@ namespace ClassicUO.Game
         };
 
         public static readonly bool GlobalEndpointCheck = Environment.GetEnvironmentVariable("CUO_EFFECT_ENDPOINT_CHECK") == "1";
+
+        // CLEANUP(release): the gate's override of ecs_effect_motion (CUO_ECS_EFFECT_MOTION=1|0) and its checker
+        public static readonly bool GlobalMotion = Environment.GetEnvironmentVariable("CUO_ECS_EFFECT_MOTION") switch
+        {
+            "1" => true,
+            "0" => false,
+            _ => Configuration.Settings.GlobalSettings?.EcsEffectMotion ?? false
+        };
+
+        public static readonly bool GlobalMotionCheck = Environment.GetEnvironmentVariable("CUO_EFFECT_MOTION_CHECK") == "1";
 #else
         public static readonly bool GlobalOn = Configuration.Settings.GlobalSettings?.EcsEffects ?? true;
         public const bool GlobalCheck = false;
         public static readonly bool GlobalEndpoints = Configuration.Settings.GlobalSettings?.EcsEffectEndpoints ?? false;
         public const bool GlobalEndpointCheck = false;
+        public static readonly bool GlobalMotion = Configuration.Settings.GlobalSettings?.EcsEffectMotion ?? false;
+        public const bool GlobalMotionCheck = false;
 #endif
 
         /// <summary>Checker counts (all worlds): frames compared, effects compared, mismatches, shadow animation steps.</summary>
@@ -87,6 +99,13 @@ namespace ClassicUO.Game
             if (e.World.EffectEndpointsOn)
             {
                 BindEndpoints(e, ref s);
+                e.UsesMotion = e.World.EffectMotionOn;
+                e.MotionCheck = e.UsesMotion && e.World.EffectMotionCheckOn;
+            }
+
+            if (e is DragEffect drag)
+            {
+                s.MoveTime = drag.LastMoveTime;
             }
 
             e.Publish(ref s);
@@ -281,10 +300,11 @@ namespace ClassicUO.Game
             e.EndpointCheck = e.World.EffectEndpointsCheckOn;
         }
 
-        /// <summary>After Register created the entity: without the checker the effect no longer holds its endpoint objects.</summary>
+        /// <summary>After Register created the entity: without the checkers the effect no longer holds its endpoint objects (the
+        /// motion checker's legacy replay reads them too).</summary>
         private static void DropObjects(GameEffect e)
         {
-            if (e.UsesEndpoints && !e.EndpointCheck)
+            if (e.UsesEndpoints && !e.EndpointCheck && !e.MotionCheck)
             {
                 e.Source = null;
                 e.Target = null;
@@ -306,15 +326,20 @@ namespace ClassicUO.Game
         // Codex re-review P3 (accepted, same bound): OnRecordRemoving/OnRecordRekeyed match by handle only, so a wrapped
         // handle that is removed or rekeyed before the next read of the effect moves the endpoint to the other record
         // without this serial/kind check.
-        private static bool Live(ref EffectState s, byte end, byte gone, EcsEntity entity)
+        private static bool Live(ref EffectState s, byte end, byte gone, EcsEntity entity) => Live(ref s, end, gone, entity, out _);
+
+        // the motion step reads the position from the row the test fetched (one node lookup per endpoint)
+        private static bool Live(ref EffectState s, byte end, byte gone, EcsEntity entity, out EcsRow row)
         {
+            row = default;
+
             if ((s.Ends & end) == 0 || (s.Ends & gone) != 0)
             {
                 return false;
             }
 
             bool source = end == EffectState.END_SOURCE;
-            EcsRow row = EcsRead.Row(entity);
+            row = EcsRead.Row(entity);
 
             if (row.IsNull || !row.TryGet(out ClassicUO.Ecs.Serial serial) || serial.Value != (source ? s.SourceSerial : s.TargetSerial) ||
                 row.Tags.Has<MobileTag>() != ((s.Ends & (source ? EffectState.END_SOURCE_MOBILE : EffectState.END_TARGET_MOBILE)) != 0))

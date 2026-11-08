@@ -26,6 +26,13 @@ namespace ClassicUO.Game.GameObjects
 
         public override void Update()
         {
+            if (UsesMotion && !EcsEntity.IsNull)
+            {
+                EffectSystem.StepLightning(this);
+
+                return;
+            }
+
             if (!IsDestroyed)
             {
                 bool destroyed = !EcsEntity.IsNull ? !EffectSystem.AnimateLightning(this) : LegacyDestroyed();
