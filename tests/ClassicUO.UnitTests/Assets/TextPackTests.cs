@@ -387,6 +387,32 @@ namespace ClassicUO.UnitTests.Assets
             t.Materialized.Should().Be(t.Count);
         }
 
+        // NameOverheadGump keys its cached item fallback name on Revision: a reload or a language change must bump it
+        [Fact]
+        public void Cliloc_Revision_Bumps_On_Every_Publish()
+        {
+            var dir = TextPackDir();
+
+            if (dir == null)
+            {
+                return;
+            }
+
+            using var assets = PackAssets.Open(dir);
+            var (_, packFm) = Managers(assets);
+            var clilocs = packFm.Clilocs;
+            int r0 = clilocs.Revision;
+
+            clilocs.Load("enu");
+            clilocs.Revision.Should().Be(r0 + 1);
+
+            clilocs.Reload();
+            clilocs.Revision.Should().Be(r0 + 2);
+
+            clilocs.ClearResources();
+            clilocs.Revision.Should().Be(r0 + 3);
+        }
+
         // ------------------------------------------------------------------ speech
 
         [Fact]
