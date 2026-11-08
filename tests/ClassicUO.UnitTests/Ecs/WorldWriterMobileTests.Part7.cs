@@ -61,6 +61,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void The_Name_Price_Speed_And_Dead_Writers_Equal_The_Old_Path(Start start)
         {
             World oldWorld = Build(start), newWorld = Build(start);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = true;
 
             foreach ((uint serial, string name) in new[] { (MOB, "Iolo"), (BAG, "a bag"), (OTHER, ""), (MOB, null), (BAG, "a bag of holding") })
@@ -115,6 +116,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void The_Players_War_Mode_And_Speed_Mode_Equal_The_Old_Path()
         {
             World oldWorld = BuildPlayer(out TestPlayer a), newWorld = BuildPlayer(out TestPlayer b);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             b.Funnel = true; // the new World's callbacks walk through the converted Walk path
             newWorld.Writer.ThrowOnViolation = true;
 
@@ -159,6 +161,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void CorpseEquipment_Equals_The_Old_Path(Start start)
         {
             World oldWorld = BuildCorpse(start), newWorld = BuildCorpse(start);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = true;
             Entity oldCorpse = oldWorld.Get(CORPSE), newCorpse = newWorld.Get(CORPSE);
 
@@ -353,6 +356,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void RekeyDeadMobile_Equals_The_Old_Path(Start start, RekeyStart rk)
         {
             World oldWorld = BuildRekey(start, rk), newWorld = BuildRekey(start, rk);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = true;
             uint from = rk == RekeyStart.AlreadyDead ? DEAD : MOB;
             Mobile a = oldWorld.Mobiles.Get(from), b = newWorld.Mobiles.Get(from);
@@ -541,6 +545,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void The_Frame_Advance_Equals_The_Old_Path(AdvanceStart start, int frames)
         {
             World oldWorld = BuildAdvance(start), newWorld = BuildAdvance(start);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = true;
             uint serial = start == AdvanceStart.Dead ? DEAD : MOB;
             Mobile a = oldWorld.Mobiles.Get(serial), b = newWorld.Mobiles.Get(serial);
@@ -587,6 +592,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void InterpolateStep_Equals_The_Old_Walk_Offset(Start start)
         {
             World oldWorld = Build(start), newWorld = Build(start);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = true;
             Mobile a = oldWorld.Mobiles.Get(MOB), b = newWorld.Mobiles.Get(MOB);
             long clocks = newWorld.Ecs.ClockWrites;
@@ -625,6 +631,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void The_Boat_Offsets_With_A_House_Equal_The_Old_Path()
         {
             World oldWorld = BuildBoat(Start.Standing), newWorld = BuildBoat(Start.Standing);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = true;
             House oldHouse = AddBoatHouse(oldWorld), newHouse = AddBoatHouse(newWorld);
             var old = new OldBoat(oldWorld);
@@ -668,6 +675,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void JumpBoat_Equals_The_Old_Jump_And_Rejects_Another_Worlds()
         {
             World oldWorld = BuildBoat(Start.Standing), newWorld = BuildBoat(Start.Standing);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = true;
             Item a = oldWorld.Items.Get(BOAT), b = newWorld.Items.Get(BOAT);
 

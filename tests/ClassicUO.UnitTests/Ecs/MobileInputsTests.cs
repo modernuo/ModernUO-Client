@@ -221,7 +221,8 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void Mobile_Setters_And_Step_Queue_Push_Their_Inputs()
         {
-            var world = new World();
+            // the setters' own pushes write the GameObject only (no funnel commit): ecs_small_fields reads the fields
+            var world = new World { SmallFieldsOverride = false };
             Mobile m = world.GetOrCreateMobile(SERIAL);
             m.Graphic = 0x190;
             world.Ecs.Sync(m);
@@ -278,7 +279,8 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void A_Replaced_Mobile_Does_Not_Push_Into_Its_Successors_Entity()
         {
-            var world = new World();
+            // the setters' own pushes write the GameObject only (no funnel commit): ecs_small_fields reads the fields
+            var world = new World { SmallFieldsOverride = false };
             Mobile old = world.GetOrCreateMobile(SERIAL);
             old.Graphic = 0x190;
             old.IsFemale = true;

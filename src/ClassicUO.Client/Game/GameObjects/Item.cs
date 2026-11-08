@@ -169,9 +169,18 @@ namespace ClassicUO.Game.GameObjects
         public ushort Amount { get { ScalarReads.Count(ScalarField.Amount); return _amount; } set { FunnelCheck.Write(this, FunnelField.Amount); _amount = value; } }
         public uint Container { get { ScalarReads.Count(ScalarField.Container); return _container; } set { FunnelCheck.Write(this, FunnelField.Container); _container = value; } }
 
-        public bool IsDamageable { get => _isDamageable; set { FunnelCheck.Write(this, FunnelField.IsDamageable); _isDamageable = value; } }
+        // ecs_small_fields: the record's ItemTraits with the switch on (SmallFields; CUO_SMALL_FIELDS_CHECK compares)
+        public bool IsDamageable
+        {
+            get => SmallFields.Routed(World) ? SmallFields.ItemBit(this, SmallField.IsDamageable, ClassicUO.Ecs.ItemTraitBits.Damageable, _isDamageable) : _isDamageable;
+            set { FunnelCheck.Write(this, FunnelField.IsDamageable); _isDamageable = value; }
+        }
         public Layer Layer { get { ScalarReads.Count(ScalarField.Layer); return _layer; } set { FunnelCheck.Write(this, FunnelField.Layer); _layer = value; } }
-        public byte LightID { get => _lightID; set { FunnelCheck.Write(this, FunnelField.LightID); _lightID = value; } }
+        public byte LightID
+        {
+            get => SmallFields.Routed(World) ? SmallFields.LightId(this) : _lightID;
+            set { FunnelCheck.Write(this, FunnelField.LightID); _lightID = value; }
+        }
 
         public Rectangle? MultiInfo;
         public bool Opened;
@@ -186,7 +195,20 @@ namespace ClassicUO.Game.GameObjects
                 return TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Price(e) : 0;
             }
         }
-        public bool UsedLayer { get => _usedLayer; set { FunnelCheck.Write(this, FunnelField.UsedLayer); _usedLayer = value; } }
+        public bool UsedLayer
+        {
+            get => SmallFields.Routed(World) ? SmallFields.ItemBit(this, SmallField.UsedLayer, ClassicUO.Ecs.ItemTraitBits.UsedLayer, _usedLayer) : _usedLayer;
+            set { FunnelCheck.Write(this, FunnelField.UsedLayer); _usedLayer = value; }
+        }
+
+        // ecs_small_fields: the cache behind the getters (the checker's other side, and the seed of a record created later)
+        internal byte CachedLightId => _lightID;
+
+        internal ClassicUO.Ecs.ItemTraits CachedTraits => new ClassicUO.Ecs.ItemTraits
+        {
+            LightId = _lightID,
+            Bits = (_isDamageable ? ClassicUO.Ecs.ItemTraitBits.Damageable : 0) | (_usedLayer ? ClassicUO.Ecs.ItemTraitBits.UsedLayer : 0)
+        };
         public bool WantUpdateMulti = true;
 
         public static Item Create(World world, uint serial)

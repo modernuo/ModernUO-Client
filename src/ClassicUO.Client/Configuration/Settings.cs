@@ -177,6 +177,13 @@ namespace ClassicUO.Configuration
         // Off = BoatMovingManager's dictionaries. Default off.
         [JsonPropertyName("ecs_boat_steps")] public bool EcsBoatSteps { get; set; }
 
+        // Wave 1C: the small cold fields (Item LightID, IsDamageable, UsedLayer; Mobile Race, SpeedMode, IsFemale, IsRenamable;
+        // the player's InWarMode) are read from the ECS record (ItemTraits, MobileTraits), which WorldWriter's operations write
+        // whatever the switch. Read once at startup (CUO_ECS_SMALL_FIELDS=1|0 overrides it in developer builds).
+        // CUO_SMALL_FIELDS_CHECK=1 compares the record with the GameObject's field at every read. Off = the GameObject's
+        // fields. Default off.
+        [JsonPropertyName("ecs_small_fields")] public bool EcsSmallFields { get; set; }
+
         // perf-4: the static art of a container's contents and of the paperdoll's equipment slots decodes on the art workers
         // before the gump builds its item controls (ContentsArt: a request when an item goes into an open container, a
         // bounded batch wait in ContainerGump/PaperDollGump.UpdateContents) instead of one main-thread decode per sprite.

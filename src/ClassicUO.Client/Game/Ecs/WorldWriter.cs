@@ -426,6 +426,12 @@ namespace ClassicUO.Game
 
                 // 3. write: the ECS, then the cache, from v (the old path's order of the cache writes)
                 _world.Ecs.CommitItem(item, in v);
+                _world.Ecs.CommitLightId(item, (byte)direction); // ecs_small_fields
+
+                if (!multi)
+                {
+                    _world.Ecs.CommitItemBit(item, ClassicUO.Ecs.ItemTraitBits.Damageable, type == 3);
+                }
 
                 if (unlink)
                 {
@@ -463,6 +469,7 @@ namespace ClassicUO.Game
                 if (corpse)
                 {
                     item.AnimIndex = 99;
+                    _world.Ecs.CommitItemBit(item, ClassicUO.Ecs.ItemTraitBits.UsedLayer, usedLayer); // ecs_small_fields
                     item.UsedLayer = usedLayer;
                     // T5b-items (Codex P2): the commit pushed the timer before these writes
                     _world.Ecs.PushItemTimer(item);
@@ -688,6 +695,7 @@ namespace ClassicUO.Game
                 if (corpse)
                 {
                     item.AnimIndex = 99;
+                    _world.Ecs.CommitItemBit(item, ClassicUO.Ecs.ItemTraitBits.UsedLayer, usedLayer); // ecs_small_fields
                     item.UsedLayer = usedLayer;
                     // T5b-items (Codex P2): the commit pushed the timer before these writes
                     _world.Ecs.PushItemTimer(item);
@@ -934,6 +942,7 @@ namespace ClassicUO.Game
                 if (corpse)
                 {
                     item.AnimIndex = 99;
+                    _world.Ecs.CommitItemBit(item, ClassicUO.Ecs.ItemTraitBits.UsedLayer, usedLayer); // ecs_small_fields
                     item.UsedLayer = usedLayer;
                     // T5b-items (Codex P2): the commit pushed the timer before these writes
                     _world.Ecs.PushItemTimer(item);
@@ -1235,6 +1244,7 @@ namespace ClassicUO.Game
                 if (corpse)
                 {
                     item.AnimIndex = 99;
+                    _world.Ecs.CommitItemBit(item, ClassicUO.Ecs.ItemTraitBits.UsedLayer, usedLayer); // ecs_small_fields
                     item.UsedLayer = usedLayer;
                     // T5b-items (Codex P2): the commit pushed the timer before these writes
                     _world.Ecs.PushItemTimer(item);
@@ -1443,6 +1453,8 @@ namespace ClassicUO.Game
 
                     if (body)
                     {
+                        _world.Ecs.CommitMobileBit(mobile, ClassicUO.Ecs.MobileTraitBits.Female, isFemale); // ecs_small_fields
+                        _world.Ecs.CommitRace(mobile, race);
                         mobile.IsFemale = isFemale;
                         mobile.Race = race;
                     }
@@ -1609,6 +1621,8 @@ namespace ClassicUO.Game
 
                 if (body)
                 {
+                    _world.Ecs.CommitMobileBit(mobile, ClassicUO.Ecs.MobileTraitBits.Female, isFemale); // ecs_small_fields
+                    _world.Ecs.CommitRace(mobile, race);
                     mobile.IsFemale = isFemale;
                     mobile.Race = race;
                 }
@@ -1712,6 +1726,8 @@ namespace ClassicUO.Game
 
                 if (body)
                 {
+                    _world.Ecs.CommitMobileBit(mobile, ClassicUO.Ecs.MobileTraitBits.Female, isFemale); // ecs_small_fields
+                    _world.Ecs.CommitRace(mobile, race);
                     mobile.IsFemale = isFemale;
                     mobile.Race = race;
                 }
@@ -2091,10 +2107,12 @@ namespace ClassicUO.Game
 
             using (Open(mobile, detached ? null : mobile))
             {
+                _world.Ecs.CommitMobileBit(mobile, ClassicUO.Ecs.MobileTraitBits.Renamable, renamable); // ecs_small_fields
                 mobile.IsRenamable = renamable;
 
                 if (setFemale)
                 {
+                    _world.Ecs.CommitMobileBit(mobile, ClassicUO.Ecs.MobileTraitBits.Female, female);
                     mobile.IsFemale = female;
                     _world.Ecs.CommitMobileInputs(mobile);
                 }
@@ -2136,7 +2154,8 @@ namespace ClassicUO.Game
         }
 
         /// <summary>
-        /// 0x11 (CharacterStatus, ML and later) for the player: the race. Nothing reaches the ECS (the race is not an input).
+        /// 0x11 (CharacterStatus, ML and later) for the player: the race, committed to the record's <c>MobileTraits</c>
+        /// (ecs_small_fields; not an input, so no inputs commit).
         /// Rejections as <see cref="SetMobileStatus"/>.
         /// </summary>
         public void SetRace(Mobile mobile, RaceType race)
@@ -2148,6 +2167,7 @@ namespace ClassicUO.Game
 
             using (Open(mobile, null))
             {
+                _world.Ecs.CommitRace(mobile, race); // ecs_small_fields
                 mobile.Race = race;
             }
         }
@@ -2775,6 +2795,7 @@ namespace ClassicUO.Game
 
             using (Open(mobile, detached ? null : mobile))
             {
+                _world.Ecs.CommitSpeedMode(mobile, mode); // ecs_small_fields
                 mobile.SpeedMode = mode;
                 _world.Ecs.CommitMobileInputs(mobile);
             }
@@ -2797,6 +2818,12 @@ namespace ClassicUO.Game
 
             using (Open(mobile, detached ? null : mobile))
             {
+                // ecs_small_fields: only the player keeps a war mode of its own (any other mobile's is its WarMode flag)
+                if (mobile is PlayerMobile)
+                {
+                    _world.Ecs.CommitMobileBit(mobile, ClassicUO.Ecs.MobileTraitBits.WarMode, warMode);
+                }
+
                 mobile.InWarMode = warMode;
                 _world.Ecs.CommitMobileInputs(mobile);
             }
