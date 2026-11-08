@@ -92,6 +92,7 @@ namespace ClassicUO.Game.UI.Gumps
         private int _mapLoading;
         private uint _mapLoadingTime;
         private Task _loadingTask;
+        private readonly PendingNotices _mapLoadedNotices = new PendingNotices();
 
         public WorldMapGump(World world) : base
         (
@@ -535,10 +536,25 @@ namespace ClassicUO.Game.UI.Gumps
                 return;
             }
 
+            for (int n = _mapLoadedNotices.Take(); n > 0; n--)
+            {
+                GameActions.Print(World, ResGumps.WorldMapLoaded, 0x48);
+            }
+
             if (_map.Index != World.MapIndex && !_freeView)
                 ChangeMap(World.MapIndex);
 
             World.WMapManager.RequestServerPartyGuildInfo();
+        }
+
+        /// <summary>Completions a background task posts for the game thread to act on (the gump's Update takes them).</summary>
+        internal sealed class PendingNotices
+        {
+            private int _count;
+
+            public void Post() => Interlocked.Increment(ref _count);
+
+            public int Take() => Interlocked.Exchange(ref _count, 0);
         }
 
         public void ChangeMap(int index)
@@ -1319,7 +1335,8 @@ namespace ClassicUO.Game.UI.Gumps
                     _mapTexture = Texture2D.FromStream(Client.Game.GraphicsDevice, stream);
                 }
 
-                GameActions.Print(World, ResGumps.WorldMapLoaded, 0x48);
+                // LoadMap runs on a task: the journal and RenderedText are game-thread only, so Update prints it
+                _mapLoadedNotices.Post();
             }
             catch (ThreadInterruptedException)
             {
