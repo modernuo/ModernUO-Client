@@ -303,6 +303,9 @@ namespace ClassicUO.Game
         // (sources and moving targets are read every update), with the serial reused by the same kind meanwhile. Not
         // reachable from a server that is not hostile; a per-record generation token would close it but widens every mirror
         // record (Serial, streamed by the per-frame sweep, clock and extract) for this alone.
+        // Codex re-review P3 (accepted, same bound): OnRecordRemoving/OnRecordRekeyed match by handle only, so a wrapped
+        // handle that is removed or rekeyed before the next read of the effect moves the endpoint to the other record
+        // without this serial/kind check.
         private static bool Live(ref EffectState s, byte end, byte gone, EcsEntity entity)
         {
             if ((s.Ends & end) == 0 || (s.Ends & gone) != 0)
