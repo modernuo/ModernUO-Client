@@ -254,8 +254,8 @@ namespace ClassicUO.Game
             Mirror.TryGetEntity(entity.Serial, entity is Mobile, out _);
 
         /// <summary>
-        /// T4: an upsert replaced a record of the other kind under this serial (the epoch moved): the new record starts without
-        /// the cold fields, so the instance's cached values are written to it (the getters read the record).
+        /// After every record upsert: the corpse timer push and the ItemActive tag follow the record; when the upsert replaced a
+        /// record of the other kind under this serial (the epoch moved), the hot notoriety the Mobile keeps is written to it.
         /// </summary>
         private void RestoreScalars(Entity entity, uint epochBefore)
         {
@@ -277,19 +277,13 @@ namespace ClassicUO.Game
                 return;
             }
 
-            uint s = entity.Serial;
-            Mirror.SetName(s, entity.CachedName);
-            Mirror.SetVitals(s, entity.CachedHits, entity.CachedHitsMax);
-
+            // T9 (cold-caches; owner decision 2026-11-07): the replaced record's cold values (name, hits, pools, price) are
+            // lost, as the record is their only copy. Only a misconfigured server sends an item and a mobile under one serial
+            // (a death re-key moves the mobile to serial | 0x80000000, outside the item range); the values come back with the
+            // server's next status or name packet for the new kind.
             if (entity is Mobile m)
             {
-                Mirror.SetStamina(s, m.CachedStaminaMax, m.CachedStamina);
-                Mirror.SetMana(s, m.CachedManaMax, m.CachedMana);
-                Mirror.SetNotoriety(s, (byte)m.NotorietyFlag);
-            }
-            else if (entity is Item i)
-            {
-                Mirror.SetPrice(s, i.CachedPrice);
+                Mirror.SetNotoriety(entity.Serial, (byte)m.NotorietyFlag);
             }
         }
 
@@ -685,6 +679,8 @@ namespace ClassicUO.Game
             }
         }
 
+#if CUO_DEVTOOLS
+        // CLEANUP(release): CUO_MOBILE_UPDATE_CHECK
         /// <summary>
         /// E4 checker, after the system's updates: every mobile it skipped is updated the legacy way and must not change.
         /// (Mobiles the system updated carry this frame's stamp; they ran the legacy Update, so they are equal by construction.)
@@ -710,6 +706,7 @@ namespace ClassicUO.Game
                 }
             }
         }
+#endif
 
         private void LogClockDiff(string message)
         {
@@ -1070,8 +1067,8 @@ namespace ClassicUO.Game
             }
         }
 
-        // -ecscheck v2 (T1 funnel part 9): every item's Layer, its name, hits and price. T4: the caches (the fields the funnel
-        // writes), not the getters, so with ecs_owns_scalars on (the getters read the record) a difference is a stale cache.
+        // -ecscheck v2 (T1 funnel part 9): every item's Layer and, T9, its health-bar percentage. The name, hits and price are
+        // record-only since T9 (no cache to compare).
         private void CompareItemExtras(Item item, ref int mismatches)
         {
             if (!Mirror.TryGetExtras(item.Serial, out MirrorExtras x))
@@ -1079,19 +1076,18 @@ namespace ClassicUO.Game
                 return; // CompareItem reported it missing
             }
 
-            if (x.ItemLayer != (byte)item.Layer || !string.Equals(x.Name, item.CachedName, StringComparison.Ordinal) || x.Hits != item.CachedHits ||
-                x.HitsMax != item.CachedHitsMax || x.Price != item.CachedPrice)
+            if (x.ItemLayer != (byte)item.Layer || StalePercentage(item, in x))
             {
                 Report
                 (
                     ref mismatches,
-                    $"item 0x{item.Serial:X8} v2{StaleTag}: World layer={(byte)item.Layer} name={Quote(item.CachedName)} hits={item.CachedHits}/{item.CachedHitsMax} price={item.CachedPrice} | " +
-                    $"ECS layer={x.ItemLayer} name={Quote(x.Name)} hits={x.Hits}/{x.HitsMax} price={x.Price}"
+                    $"item 0x{item.Serial:X8} v2: World layer={(byte)item.Layer} hits%={item.HitsPercentage} | " +
+                    $"ECS layer={x.ItemLayer} hits={x.Hits}/{x.HitsMax}"
                 );
             }
         }
 
-        // -ecscheck v2: a mobile's name, hits and notoriety; T4: its stamina and mana. The caches, as above.
+        // -ecscheck v2: a mobile's notoriety (the hot cache) and, T9, its health-bar percentage
         private void CompareMobileExtras(Mobile mobile, ref int mismatches)
         {
             if (!Mirror.TryGetExtras(mobile.Serial, out MirrorExtras x))
@@ -1099,22 +1095,20 @@ namespace ClassicUO.Game
                 return;
             }
 
-            if (!string.Equals(x.Name, mobile.CachedName, StringComparison.Ordinal) || x.Hits != mobile.CachedHits || x.HitsMax != mobile.CachedHitsMax ||
-                x.Notoriety != (byte)mobile.NotorietyFlag || x.Stamina != mobile.CachedStamina || x.StaminaMax != mobile.CachedStaminaMax ||
-                x.Mana != mobile.CachedMana || x.ManaMax != mobile.CachedManaMax)
+            if (x.Notoriety != (byte)mobile.NotorietyFlag || StalePercentage(mobile, in x))
             {
                 Report
                 (
                     ref mismatches,
-                    $"mobile 0x{mobile.Serial:X8} v2{StaleTag}: World name={Quote(mobile.CachedName)} hits={mobile.CachedHits}/{mobile.CachedHitsMax} noto={(byte)mobile.NotorietyFlag} " +
-                    $"stam={mobile.CachedStamina}/{mobile.CachedStaminaMax} mana={mobile.CachedMana}/{mobile.CachedManaMax} | " +
-                    $"ECS name={Quote(x.Name)} hits={x.Hits}/{x.HitsMax} noto={x.Notoriety} stam={x.Stamina}/{x.StaminaMax} mana={x.Mana}/{x.ManaMax}"
+                    $"mobile 0x{mobile.Serial:X8} v2: World noto={(byte)mobile.NotorietyFlag} hits%={mobile.HitsPercentage} | " +
+                    $"ECS noto={x.Notoriety} hits={x.Hits}/{x.HitsMax}"
                 );
             }
         }
 
-        // T4: with ecs_owns_scalars on the ECS is the reference, so a difference is a stale write-only cache
-        private static string StaleTag => EcsScalars.Owns ? " stale cache" : "";
+        // T9: the funnel's hits operations set HitsPercentage from the values they commit; with HitsMax 0 it keeps the old one
+        private static bool StalePercentage(Entity entity, in MirrorExtras x) =>
+            x.HitsMax > 0 && entity.HitsPercentage != Entity.HitsPercent(x.Hits, x.HitsMax);
 
         private static string Quote(string s) => s == null ? "null" : $"\"{s}\"";
 

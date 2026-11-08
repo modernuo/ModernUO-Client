@@ -740,11 +740,11 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
                     break;
 
                 case Buttons.Next:
-                    _character.Name = _nameTextBox.Text;
+                    string name = _nameTextBox.Text;
 
-                    if (ValidateCharacter(_character))
+                    if (ValidateCharacter(name))
                     {
-                        charCreationGump.SetCharacter(_character);
+                        charCreationGump.SetCharacter(_character, name);
                     }
 
                     break;
@@ -758,9 +758,9 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
             base.OnButtonClick(buttonID);
         }
 
-        private bool ValidateCharacter(PlayerMobile character)
+        private bool ValidateCharacter(string name)
         {
-            int invalid = Validate(character.Name);
+            int invalid = Validate(name);
             if (invalid > 0)
             {
                 UIManager.GetGump<CharCreationGump>()?.ShowMessage(Client.Game.UO.FileManager.Clilocs.GetString(invalid));
@@ -768,7 +768,7 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
                 return false;
             }
             
-            Log.Trace($"Creating character '{character.Name}'");
+            Log.Trace($"Creating character '{name}'");
 
             return true;
         }

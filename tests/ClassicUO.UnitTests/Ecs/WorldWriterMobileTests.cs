@@ -1368,8 +1368,8 @@ namespace ClassicUO.UnitTests.Ecs
         // the caches the operations write (T4: with ecs_owns_scalars on the getters read the record, which the old paths never
         // wrote; the records are compared by -ecscheck v2 and EcsScalarsTests)
         internal static string StatusOf(Entity e) =>
-            $"{e.CachedName} {e.CachedHits}/{e.CachedHitsMax} {e.HitsPercentage}% {e.HitsRequest}" +
-            (e is Mobile m ? $" mana {m.CachedMana}/{m.CachedManaMax} stamina {m.CachedStamina}/{m.CachedStaminaMax} renamable {m.IsRenamable} race {m.Race} sa {m.SAPoisoned}" : "");
+            $"{e.Name} {e.Hits}/{e.HitsMax} {e.HitsPercentage}% {e.HitsRequest}" +
+            (e is Mobile m ? $" mana {m.Mana}/{m.ManaMax} stamina {m.Stamina}/{m.StaminaMax} renamable {m.IsRenamable} race {m.Race} sa {m.SAPoisoned}" : "");
 
         // T9 child-list slice B: a world the funnel wrote has no child list: its children are the ECS's (WorldState.Children,
         // the spell entries included); an old-path world keeps its own list (LegacyLists.Children), the reference

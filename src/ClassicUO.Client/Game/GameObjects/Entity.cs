@@ -45,8 +45,8 @@ namespace ClassicUO.Game.GameObjects
         /// T4 (ecs_owns_scalars): this entity's mirror record, when World holds this instance (not destroyed, the instance
         /// under its serial in <c>World.Items</c>/<c>World.Mobiles</c>) and the mirror has a record for its serial. False for
         /// a destroyed or stale instance (a reused serial's old object), a detached one (the character-creation preview, a
-        /// player not in World yet) and a serial without a record: the getters then return their cache, which the funnel
-        /// still writes. A miss is not cached (a later record creation does not bump the epoch).
+        /// player not in World yet) and a serial without a record: the getters then return the defaults (null, 0; T9 removed
+        /// the caches). A miss is not cached (a later record creation does not bump the epoch).
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
         internal bool TryScalarEntity(out Friflo.Engine.ECS.Entity e)
@@ -89,23 +89,17 @@ namespace ClassicUO.Game.GameObjects
         public bool ExecuteAnimation { get => _executeAnimation; set { FunnelCheck.Write(this, FunnelField.ExecuteAnimation); _executeAnimation = value; } }
         internal long LastAnimationChangeTime { get => _lastAnimationChangeTime; set { FunnelCheck.Write(this, FunnelField.LastAnimationChangeTime); _lastAnimationChangeTime = value; } }
         public Flags Flags { get { ScalarReads.Count(ScalarField.Flags); return _flags; } set { FunnelCheck.Write(this, FunnelField.Flags); _flags = value; } }
-        private ushort _hits, _hitsMax;
         public byte HitsPercentage;
 
-        // W5: the percentage (and its cached text) is recomputed when Hits or HitsMax change, not every frame
+        // T9 (cold-caches): Hits, HitsMax and Name live only in the mirror record; WorldWriter's hits operations commit them and
+        // set HitsPercentage from the values they write (RefreshHitsPercentage)
         public ushort Hits
         {
             get
             {
                 ScalarReads.Count(ScalarField.Hits);
 
-                return EcsScalars.Owns && TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Hits(e) : _hits;
-            }
-            set
-            {
-                FunnelCheck.Write(this, FunnelField.Hits);
-                _hits = value;
-                RefreshHitsPercentage();
+                return TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Hits(e) : (ushort)0;
             }
         }
 
@@ -115,18 +109,11 @@ namespace ClassicUO.Game.GameObjects
             {
                 ScalarReads.Count(ScalarField.HitsMax);
 
-                return EcsScalars.Owns && TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.HitsMax(e) : _hitsMax;
-            }
-            set
-            {
-                FunnelCheck.Write(this, FunnelField.HitsMax);
-                _hitsMax = value;
-                RefreshHitsPercentage();
+                return TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.HitsMax(e) : (ushort)0;
             }
         }
         public bool IsClicked;
         private uint _lastStepTime, _serial;
-        private string _name;
         public uint LastStepTime { get => _lastStepTime; set { FunnelCheck.Write(this, FunnelField.LastStepTime); _lastStepTime = value; } }
         public string Name
         {
@@ -134,15 +121,10 @@ namespace ClassicUO.Game.GameObjects
             {
                 ScalarReads.Count(ScalarField.Name);
 
-                return EcsScalars.Owns && TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Name(e) : _name;
+                return TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Name(e) : null;
             }
-            set { FunnelCheck.Write(this, FunnelField.Name); _name = value; }
         }
 
-        // T4: the caches the funnel writes (write-only for the getters with ecs_owns_scalars on); -ecscheck v2 compares them
-        internal string CachedName => _name;
-        internal ushort CachedHits => _hits;
-        internal ushort CachedHitsMax => _hitsMax;
         public uint Serial { get => _serial; set { FunnelCheck.WriteSerial(this, value); _serial = value; } }
         public HitsRequestStatus HitsRequest;
 
@@ -269,11 +251,15 @@ namespace ClassicUO.Game.GameObjects
             return (byte)(perc > 100 ? 100 : perc < 0 ? 0 : perc);
         }
 
-        private void RefreshHitsPercentage()
+        /// <summary>
+        /// T9 (cold-caches): the funnel's hits operations (0xA1, 0x2D, 0x11) call this with the values they commit, so the
+        /// percentage and its text change with the hits and are never read back from the record. HitsMax 0 keeps the old one.
+        /// </summary>
+        internal void RefreshHitsPercentage(ushort hits, ushort hitsMax)
         {
-            if (_hitsMax > 0)
+            if (hitsMax > 0)
             {
-                UpdateHits(HitsPercent(_hits, _hitsMax));
+                UpdateHits(HitsPercent(hits, hitsMax));
             }
         }
 

@@ -176,7 +176,6 @@ namespace ClassicUO.Game.GameObjects
         public Rectangle? MultiInfo;
         public bool Opened;
 
-        private uint _price;
         private bool _usedLayer;
         public uint Price
         {
@@ -184,13 +183,9 @@ namespace ClassicUO.Game.GameObjects
             {
                 ScalarReads.Count(ScalarField.Price);
 
-                return EcsScalars.Owns && TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Price(e) : _price;
+                return TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Price(e) : 0;
             }
-            set { FunnelCheck.Write(this, FunnelField.Price); _price = value; }
         }
-
-        /// <summary>T4: the Price cache the funnel writes (-ecscheck v2 compares it).</summary>
-        internal uint CachedPrice => _price;
         public bool UsedLayer { get => _usedLayer; set { FunnelCheck.Write(this, FunnelField.UsedLayer); _usedLayer = value; } }
         public bool WantUpdateMulti = true;
 
