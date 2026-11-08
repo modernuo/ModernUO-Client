@@ -167,6 +167,39 @@ namespace ClassicUO.Assets
 
         public bool IsUsingHTML { get; set; }
 
+        // Set by a caller that reads FontInfo.Data only until its next Generate call (RenderedText: the glyph atlas
+        // draws the text, the bitmap is only measured and RLE-copied into the hit map). The bitmap then goes into one
+        // reused buffer, whose length can exceed Width * Height, instead of a new array per string; new labels and
+        // journal lines in a crowded area allocated ~0.7 MB/s here.
+        public bool ReusePixelBuffer { get; set; }
+
+        // Bigger bitmaps (long HTML gump text) get their own array, so the kept buffer stays at most 1 MB.
+        private const int MAX_REUSED_PIXELS = 256 * 1024;
+        private uint[] _reusedPixels;
+
+        // Only the thread that created the loader (the game thread) gets the reused buffer: text is also made off it
+        // (WorldMapGump's map load prints to the journal from a task), and that thread gets its own array as before.
+        private readonly int _reuseThreadId = Environment.CurrentManagedThreadId;
+
+        private uint[] RentPixels(int count)
+        {
+            if (!ReusePixelBuffer || count > MAX_REUSED_PIXELS || Environment.CurrentManagedThreadId != _reuseThreadId)
+            {
+                return new uint[count];
+            }
+
+            if (_reusedPixels == null || _reusedPixels.Length < count)
+            {
+                _reusedPixels = new uint[Math.Min(MAX_REUSED_PIXELS, (int)System.Numerics.BitOperations.RoundUpToPowerOf2((uint)Math.Max(count, 4096)))];
+            }
+            else
+            {
+                Array.Clear(_reusedPixels, 0, count);
+            }
+
+            return _reusedPixels;
+        }
+
         public override void Load()
         {
             long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
@@ -1100,7 +1133,7 @@ namespace ClassicUO.Assets
             }
 
             int blocksize = height * width;
-            uint[] pData = new uint[blocksize]; // System.Buffers.ArrayPool<uint>.Shared.Rent(blocksize);
+            uint[] pData = RentPixels(blocksize);
 
             try
             {
@@ -2198,7 +2231,7 @@ namespace ClassicUO.Assets
 
             height += _htmlStatus.Margins.Y + _htmlStatus.Margins.Height + 4;
             int blocksize = height * width;
-            uint[] pData = new uint[blocksize]; // System.Buffers.ArrayPool<uint>.Shared.Rent(blocksize);
+            uint[] pData = RentPixels(blocksize);
 
             try
             {
@@ -2638,7 +2671,7 @@ namespace ClassicUO.Assets
                                                     }
 
                                                     if (
-                                                        testBlock < pData.Length
+                                                        testBlock < blocksize
                                                         && pData[testBlock] != 0
                                                         && pData[testBlock] != blackColor
                                                     )
