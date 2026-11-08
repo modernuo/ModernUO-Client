@@ -46,36 +46,18 @@ namespace ClassicUO.Game
         private const bool s_activeItemsCheck = false;
 #endif
 
-        // T5b-items (world_item_anim_system) ---------------------------------------------------------------------------------
-#if CUO_DEVTOOLS
-        // CLEANUP(release): the gate's override of the setting (CUO_WORLD_ITEM_ANIM_SYSTEM=1|0)
-        private static readonly bool s_itemAnimSystem = Environment.GetEnvironmentVariable("CUO_WORLD_ITEM_ANIM_SYSTEM") switch
-        {
-            "1" => true,
-            "0" => false,
-            _ => Configuration.Settings.GlobalSettings.WorldItemAnimSystem
-        };
-#else
-        private static readonly bool s_itemAnimSystem = Configuration.Settings.GlobalSettings.WorldItemAnimSystem;
-#endif
-
-        /// <summary>Tests: the switch for this World (null: the setting, read once at startup).</summary>
-        internal bool? ItemAnimSystemOverride;
-
-        /// <summary>T5b-items: due corpses in the active item list advance in the ECS (<see cref="ItemAnimationAdvanceSystem"/>).</summary>
-        internal bool ItemAnimSystem => ItemAnimSystemOverride ?? s_itemAnimSystem;
-
+        // T5b-items: a due corpse in the active item list advances in the ECS (T9 deleted world_item_anim_system's off path)
         private readonly ItemAnimationAdvanceSystem _itemAnimAdvance = new ItemAnimationAdvanceSystem();
 
         /// <summary>Tests: sees each item the active item stage visits, in order, before its update (null in the client).</summary>
         internal Action<Item> ActiveVisitObserver;
 
         /// <summary>T5b-items: the per-item step of the active item stage: the ECS advance for a corpse, else <c>Item.Update</c>.</summary>
-        private void UpdateActiveItem(Item item, bool itemAnim)
+        private void UpdateActiveItem(Item item)
         {
             ActiveVisitObserver?.Invoke(item);
 
-            if (itemAnim && _itemAnimAdvance.TryRun(this, item))
+            if (_itemAnimAdvance.TryRun(this, item))
             {
                 return;
             }

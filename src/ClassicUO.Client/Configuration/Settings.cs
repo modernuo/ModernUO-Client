@@ -143,12 +143,6 @@ namespace ClassicUO.Configuration
         // advance with the legacy one. Default on since 2026-11-02 (owner, after the quiet-machine per-switch timing bench-000206/207/208: timing-neutral on both renderers); the off path and the checker stay for one phase.
         [JsonPropertyName("world_anim_system")] public bool WorldAnimSystem { get; set; } = true;
 
-        // T5b-items: a due corpse's frame advance (Item.ProcessAnimation) is computed in the
-        // ECS (ItemAnimationAdvanceSystem over AnimationTimer and ItemData). Separate from world_anim_system so the two halves
-        // are gated and rolled back apart. Read once at startup (CUO_WORLD_ITEM_ANIM_SYSTEM=1|0 overrides it in developer
-        // builds). CUO_ANIM_ADVANCE_CHECK=1 compares every advance with the legacy one. Default on since 2026-11-02 (owner, after the quiet-machine per-switch timing bench-000206/207/208: timing-neutral on both renderers); the off path and the checker stay for one phase.
-        [JsonPropertyName("world_item_anim_system")] public bool WorldItemAnimSystem { get; set; } = true;
-
         // T6c: a due mobile's step processing (Mobile.ProcessSteps: the walk offset, the
         // step completion through the funnel, the player's walker bookkeeping) runs as StepSystem over its Steps component.
         // Read once at startup (CUO_WORLD_STEP_SYSTEM=1|0 overrides it in developer builds). CUO_STEP_CHECK=1 compares the

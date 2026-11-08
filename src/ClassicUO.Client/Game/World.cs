@@ -925,19 +925,14 @@ namespace ClassicUO.Game
                 }
             }
 
-            bool itemAnim = ItemAnimSystem;
-
-            if (itemAnim != Ecs.ItemAnimTimerEnabled)
+            if (!Ecs.ItemAnimTimerEnabled)
             {
-                // T5b-items: the corpse timers are written with the item records from now on (or no longer): rebuild them all
-                Ecs.ItemAnimTimerEnabled = itemAnim;
+                // T5b-items: the corpse timers are written with the item records from the first update on: build them all
+                Ecs.ItemAnimTimerEnabled = true;
 
-                if (itemAnim)
+                foreach (Item corpse in Items.Values)
                 {
-                    foreach (Item corpse in Items.Values)
-                    {
-                        Ecs.PushItemTimer(corpse);
-                    }
+                    Ecs.PushItemTimer(corpse);
                 }
             }
 
@@ -958,7 +953,7 @@ namespace ClassicUO.Game
             {
                 Item item = source ? _activeStore[i] : _activeItems[i];
 
-                UpdateActiveItem(item, itemAnim);
+                UpdateActiveItem(item);
 
                 if (!item.NeedsFrameUpdate || !ReferenceEquals(Items.Get(item.Serial), item))
                 {
