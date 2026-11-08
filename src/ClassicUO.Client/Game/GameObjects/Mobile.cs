@@ -685,9 +685,12 @@ namespace ClassicUO.Game.GameObjects
             World.Writer.IdleAnimation(this, in plan);
         }
 
+#if CUO_DEVTOOLS
+        // CLEANUP(release): only CUO_ANIM_ADVANCE_CHECK's shadow step calls it
         /// <summary>T5b checker: <see cref="PlanIdleAnimation"/> over the client's animation data (draws, writes nothing).</summary>
         internal void PlanIdleAnimationLive(out IdlePlan plan) =>
             PlanIdleAnimation(new LiveIdleAnimationData(Client.Game.UO.Animations), out plan);
+#endif
 
         /// <summary>T1 (funnel part 8): the animation data <see cref="PlanIdleAnimation"/> reads (tests pass their own).</summary>
         internal interface IIdleAnimationData
