@@ -46,9 +46,6 @@ namespace ClassicUO.Game.GameObjects
         //private int _lastDir = -1, _lastDelta, _lastStepTime;
 
 
-        public readonly HashSet<uint> AutoOpenedCorpses = new HashSet<uint>();
-        public readonly HashSet<uint> ManualOpenedCorpses = new HashSet<uint>();
-
         // Tracks the last direction actually sent to the server via a walk packet.
         private Direction _serverDirection;
         private bool _serverDirectionInitialized;
@@ -345,11 +342,11 @@ namespace ClassicUO.Game.GameObjects
         }
 
         internal bool ShouldAutoOpen(Item item, int range) =>
-            !item.IsDestroyed && item.IsCorpse && item.Distance <= range && !AutoOpenedCorpses.Contains(item.Serial);
+            !item.IsDestroyed && item.IsCorpse && item.Distance <= range && !World.PlayerState.AutoOpenedCorpses.Contains(item.Serial);
 
         private void AutoOpenCorpse(Item item)
         {
-            AutoOpenedCorpses.Add(item.Serial);
+            World.PlayerState.AutoOpenedCorpses.Add(item.Serial);
 
             if (CorpseOpenSink != null)
             {

@@ -79,6 +79,8 @@ namespace ClassicUO.UnitTests.Game
             s.Skills[1].ValueFixed = 500;
             s.PrimaryAbility = Ability.ArmorIgnore;
             s.AddBuff(BuffIconType.Bless, 0x754C, 30, "bless");
+            s.AutoOpenedCorpses.Add(0x4000_0001);
+            s.ManualOpenedCorpses.Add(0x4000_0002);
         }
 
         private static void AssertFilled(PlayerState s)
@@ -92,6 +94,8 @@ namespace ClassicUO.UnitTests.Game
             s.Skills[1].ValueFixed.Should().Be(500);
             s.PrimaryAbility.Should().Be(Ability.ArmorIgnore);
             s.BuffIcons.Should().ContainKey(BuffIconType.Bless);
+            s.AutoOpenedCorpses.Should().Equal(0x4000_0001u);
+            s.ManualOpenedCorpses.Should().Equal(0x4000_0002u);
         }
 
         private static void AssertFresh(PlayerState s, int skills)
@@ -105,6 +109,8 @@ namespace ClassicUO.UnitTests.Game
             s.StrLock.Should().Be(Lock.Up);
             s.Abilities.Should().Equal(Ability.Invalid, Ability.Invalid);
             s.BuffIcons.Should().BeEmpty();
+            s.AutoOpenedCorpses.Should().BeEmpty();
+            s.ManualOpenedCorpses.Should().BeEmpty();
 
             foreach (Skill skill in s.Skills)
             {

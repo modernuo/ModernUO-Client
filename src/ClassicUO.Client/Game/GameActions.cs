@@ -224,7 +224,7 @@ namespace ClassicUO.Game
                 return false;
             }
 
-            world.Player.ManualOpenedCorpses.Add(serial);
+            world.PlayerState.ManualOpenedCorpses.Add(serial);
             DoubleClick(world, serial);
 
             return true;
