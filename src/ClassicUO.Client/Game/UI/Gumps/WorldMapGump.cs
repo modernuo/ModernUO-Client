@@ -31,6 +31,7 @@ using System.Threading.Tasks;
 using System.Xml;
 using static ClassicUO.Game.UI.Gumps.WorldMapGump;
 using SpriteFont = ClassicUO.Renderer.SpriteFont;
+using MapImage = SixLabors.ImageSharp.Image<SixLabors.ImageSharp.PixelFormats.Rgba32>;
 
 namespace ClassicUO.Game.UI.Gumps
 {
@@ -55,7 +56,8 @@ namespace ClassicUO.Game.UI.Gumps
         private static readonly float[] _zooms = new float[10] { 0.125f, 0.25f, 0.5f, 0.75f, 1f, 1.5f, 2f, 4f, 6f, 8f };
         private static readonly Color _semiTransparentWhiteForGrid = new Color(255, 255, 255, 56);
         private static Point _last_position = new Point(100, 100);
-        private static Texture2D _mapTexture;
+        // game thread only: created and disposed in Update/ChangeMap/Dispose, never by the load task
+        private Texture2D _mapTexture;
         private Map.FacetView _map;
 
         private Point _center, _lastScroll, _mouseCenter, _scroll;
@@ -92,7 +94,7 @@ namespace ClassicUO.Game.UI.Gumps
         private int _mapLoading;
         private uint _mapLoadingTime;
         private Task _loadingTask;
-        private readonly PendingNotices _mapLoadedNotices = new PendingNotices();
+        private readonly MapImageHandover<MapImage> _mapImages = new MapImageHandover<MapImage>();
 
         public WorldMapGump(World world) : base
         (
@@ -536,7 +538,9 @@ namespace ClassicUO.Game.UI.Gumps
                 return;
             }
 
-            for (int n = _mapLoadedNotices.Take(); n > 0; n--)
+            MapImage image = _mapImages.Take();
+
+            if (image != null && ReplaceMapTexture(ref _mapTexture, image, CreateMapTexture))
             {
                 GameActions.Print(World, ResGumps.WorldMapLoaded, 0x48);
             }
@@ -547,14 +551,99 @@ namespace ClassicUO.Game.UI.Gumps
             World.WMapManager.RequestServerPartyGuildInfo();
         }
 
-        /// <summary>Completions a background task posts for the game thread to act on (the gump's Update takes them).</summary>
-        internal sealed class PendingNotices
+        /// <summary>
+        /// Hands the image a load task decoded to the game thread, which owns the texture (GPU resources are created and
+        /// disposed only there). Loads are numbered on the game thread by <see cref="Request"/>; only the latest request's
+        /// image is kept. An older one, one posted after <see cref="Close"/>, and one replaced before it was taken are
+        /// disposed, so a superseded load or one that ends after the gump closed leaks nothing.
+        /// </summary>
+        internal sealed class MapImageHandover<T> where T : class, IDisposable
         {
-            private int _count;
+            private readonly object _lock = new object();
+            private T _pending;
+            private int _latest;
+            private bool _closed;
 
-            public void Post() => Interlocked.Increment(ref _count);
+            /// <summary>Starts a new load (game thread); drops the image of an older one that was not taken yet.</summary>
+            public int Request()
+            {
+                T dropped;
+                int load;
 
-            public int Take() => Interlocked.Exchange(ref _count, 0);
+                lock (_lock)
+                {
+                    dropped = _pending;
+                    _pending = null;
+                    load = ++_latest;
+                }
+
+                dropped?.Dispose();
+
+                return load;
+            }
+
+            /// <summary>Whether a load is still wanted: lets the task skip decoding a superseded or abandoned image.</summary>
+            public bool IsCurrent(int load)
+            {
+                lock (_lock)
+                {
+                    return !_closed && load == _latest;
+                }
+            }
+
+            /// <summary>Posts a load's image (any thread). Returns false when it was dropped (and disposed).</summary>
+            public bool Post(int load, T image)
+            {
+                T dropped;
+                bool kept;
+
+                lock (_lock)
+                {
+                    kept = !_closed && load == _latest;
+                    dropped = kept ? _pending : image;
+
+                    if (kept)
+                    {
+                        _pending = image;
+                    }
+                }
+
+                dropped?.Dispose();
+
+                return kept;
+            }
+
+            /// <summary>The posted image, or null (game thread). The caller owns and disposes it.</summary>
+            public T Take()
+            {
+                if (Volatile.Read(ref _pending) == null)
+                {
+                    return null;
+                }
+
+                lock (_lock)
+                {
+                    T image = _pending;
+                    _pending = null;
+
+                    return image;
+                }
+            }
+
+            /// <summary>The gump closed: drops a pending image and every later post.</summary>
+            public void Close()
+            {
+                T dropped;
+
+                lock (_lock)
+                {
+                    _closed = true;
+                    dropped = _pending;
+                    _pending = null;
+                }
+
+                dropped?.Dispose();
+            }
         }
 
         public void ChangeMap(int index)
@@ -562,14 +651,18 @@ namespace ClassicUO.Game.UI.Gumps
             Client.Game.UO.FileManager.Maps.LoadMap(index);
             _map = new Map.FacetView(index); // no Map (its slot array is not needed here)
 
+            // the old facet's image is wrong for the new one; Update uploads the new image when the task posts it
+            _mapTexture?.Dispose();
+            _mapTexture = null;
 
             // read on the game thread: LoadMap runs on a task, and the race is ECS storage with ecs_small_fields
             bool gargoyle = GameObject.PlayerIsGargoyle(World);
+            int load = _mapImages.Request();
 
-            if (_loadingTask is { Status: TaskStatus.Running })
-                _loadingTask = _loadingTask.ContinueWith(_ => LoadMap(index, gargoyle));
-            else
-                _loadingTask = Task.Run(() => LoadMap(index, gargoyle));
+            // loads run one after another; a superseded one skips its decode (MapImageHandover.IsCurrent)
+            _loadingTask = _loadingTask == null
+                ? Task.Run(() => LoadMap(index, gargoyle, load))
+                : _loadingTask.ContinueWith(_ => LoadMap(index, gargoyle, load), TaskScheduler.Default);
         }
 
         #endregion
@@ -723,6 +816,11 @@ namespace ClassicUO.Game.UI.Gumps
             World.WMapManager.SetEnable(false);
 
             Client.Game.UO.GameCursor.IsDraggingCursorForced = false;
+
+            // a load still running finds the handover closed and drops its image
+            _mapImages.Close();
+            _mapTexture?.Dispose();
+            _mapTexture = null;
 
             base.Dispose();
         }
@@ -1115,14 +1213,15 @@ namespace ClassicUO.Game.UI.Gumps
         internal static string MapCacheFileName(int mapIndex, string facetHash, bool playerIsGargoyle) =>
             playerIsGargoyle ? $"map{mapIndex}_{facetHash}_gargoyle.png" : $"map{mapIndex}_{facetHash}.png";
 
-        private unsafe void LoadMap(int mapIndex, bool gargoyle)
+        private unsafe void LoadMap(int mapIndex, bool gargoyle, int load)
         {
             if (mapIndex < 0 || mapIndex > MapLoader.MAPS_COUNT)
             {
                 return;
             }
 
-            if (!World.InGame)
+            // superseded by a later ChangeMap, or the gump closed: don't build or decode an image nobody will show
+            if (!World.InGame || !_mapImages.IsCurrent(load))
             {
                 return;
             }
@@ -1138,7 +1237,15 @@ namespace ClassicUO.Game.UI.Gumps
                 int fixedWidth = Client.Game.UO.FileManager.Maps.MapBlocksSize[mapIndex, 0];
                 int fixedHeight = Client.Game.UO.FileManager.Maps.MapBlocksSize[mapIndex, 1];
 
-                _mapTexture?.Dispose();
+                // one load at a time across gumps: a map closed mid-build and opened again starts a second gump whose
+                // task would build and write the same cache file (and both touch the static _mapCache)
+                _mapBuildGate.Wait();
+                using var buildGate = new GateRelease(_mapBuildGate);
+
+                if (!_mapImages.IsCurrent(load))
+                {
+                    return;
+                }
 
                 var mapKey = gargoyle ? $"{mapIndex}_gargoyle" : $"{mapIndex}";
 
@@ -1329,19 +1436,133 @@ namespace ClassicUO.Game.UI.Gumps
                     }
                 }
 
-                if (File.Exists(fileMapPath))
+                if (File.Exists(fileMapPath) && _mapImages.IsCurrent(load))
                 {
-                    using var stream = File.OpenRead(fileMapPath);
-                    _mapTexture = Texture2D.FromStream(Client.Game.GraphicsDevice, stream);
-                }
+                    // decoded here, uploaded by Update: FNA3D/SDL_GPU textures are created and disposed on the game thread
+                    MapImage image = DecodeMapImage(fileMapPath);
 
-                // LoadMap runs on a task: the journal and RenderedText are game-thread only, so Update prints it
-                _mapLoadedNotices.Post();
+                    if (image != null)
+                    {
+                        // logged before Post: once posted, Update may upload it before this task logs again
+                        Log.Info($"[worldmap] map {mapIndex} decoded {image.Width}x{image.Height}, load {load}");
+
+                        if (!_mapImages.Post(load, image))
+                        {
+                            Log.Info($"[worldmap] load {load} dropped (superseded or the gump closed)");
+                        }
+                    }
+                }
             }
             catch (ThreadInterruptedException)
             {
                 _mapLoading = 0;
             }
+            catch (Exception ex)
+            {
+                // a faulted task is never observed: log it, the next ChangeMap's load still runs (ContinueWith)
+                Log.Error($"error loading worldmap: {ex}");
+            }
+        }
+
+        private static readonly SemaphoreSlim _mapBuildGate = new SemaphoreSlim(1, 1);
+
+        private readonly struct GateRelease : IDisposable
+        {
+            private readonly SemaphoreSlim _gate;
+
+            public GateRelease(SemaphoreSlim gate) => _gate = gate;
+
+            public void Dispose() => _gate.Release();
+        }
+
+        // unpooled: the decoded facet image (up to ~118 MB for Felucca) is native memory freed as soon as it is uploaded
+        private static readonly SixLabors.ImageSharp.Formats.DecoderOptions _mapDecodeOptions = CreateMapDecodeOptions();
+
+        private static SixLabors.ImageSharp.Formats.DecoderOptions CreateMapDecodeOptions()
+        {
+            var configuration = SixLabors.ImageSharp.Configuration.Default.Clone();
+            configuration.PreferContiguousImageBuffers = true;
+            configuration.MemoryAllocator = SixLabors.ImageSharp.Memory.MemoryAllocator.Create(
+                new SixLabors.ImageSharp.Memory.MemoryAllocatorOptions { MaximumPoolSizeMegabytes = 0 });
+
+            return new SixLabors.ImageSharp.Formats.DecoderOptions { Configuration = configuration };
+        }
+
+        /// <summary>Decodes a cached world map PNG to RGBA (any thread; no GPU work). Null when it can't be read.</summary>
+        internal static MapImage DecodeMapImage(string path)
+        {
+            try
+            {
+                using var stream = File.OpenRead(path);
+
+                return SixLabors.ImageSharp.Image.Load<Rgba32>(_mapDecodeOptions, stream);
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"error decoding worldmap {path}: {ex}");
+
+                return null;
+            }
+        }
+
+        /// <summary>
+        /// Replaces <paramref name="current"/> with a texture made from <paramref name="image"/> (game thread). The old
+        /// texture is disposed first and the image always; an upload failure (a graphics allocation error, say) is logged
+        /// and leaves <paramref name="current"/> null, so Draw skips the map. True when the new texture is in place.
+        /// </summary>
+        internal static bool ReplaceMapTexture<TImage, TTexture>(ref TTexture current, TImage image, Func<TImage, TTexture> create)
+            where TImage : IDisposable
+            where TTexture : class, IDisposable
+        {
+            using (image)
+            {
+                current?.Dispose();
+                current = null;
+
+                try
+                {
+                    current = create(image);
+                }
+                catch (Exception ex)
+                {
+                    Log.Error($"error uploading worldmap texture: {ex}");
+                }
+
+                return current != null;
+            }
+        }
+
+        /// <summary>Creates and fills the map texture (game thread); disposes it itself if the upload throws.</summary>
+        private static unsafe Texture2D CreateMapTexture(MapImage image)
+        {
+            if (!image.DangerousTryGetSinglePixelMemory(out Memory<Rgba32> pixels))
+            {
+                Log.Error("worldmap image is not contiguous");
+
+                return null;
+            }
+
+            var texture = new Texture2D(Client.Game.GraphicsDevice, image.Width, image.Height);
+
+            try
+            {
+                using (System.Buffers.MemoryHandle pin = pixels.Pin())
+                {
+                    texture.SetDataPointerEXT(0, null, (IntPtr)pin.Pointer, pixels.Length * sizeof(Rgba32));
+                }
+
+                ClassicUO.Renderer.TextureUploads.Changed();
+            }
+            catch
+            {
+                texture.Dispose();
+
+                throw;
+            }
+
+            Log.Info($"[worldmap] texture {image.Width}x{image.Height} uploaded");
+
+            return texture;
         }
 
         internal class ZonesFileZoneData
