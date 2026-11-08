@@ -259,7 +259,7 @@ namespace ClassicUO.Game
         /// with the switch on, the checker's shadow with it off).</summary>
         private void RebuildActiveOrder()
         {
-            if (!ActiveStore.Rebuild(out string error))
+            if (!ActiveStore.Rebuild(ActiveItemsSourceOn && ActiveItemsSystemOn, out string error))
             {
                 ActiveSourceMismatch($"entry slots broken: {error}");
             }

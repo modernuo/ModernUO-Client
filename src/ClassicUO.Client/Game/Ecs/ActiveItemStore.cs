@@ -33,6 +33,8 @@ namespace ClassicUO.Game
         private int[] _freeHandles = new int[64];
         private int _freeCount;
         private int _handleEnd;
+        private int[] _handleMarks = Array.Empty<int>();
+        private int _markStamp;
         private readonly List<EcsEntity> _scratch = new List<EcsEntity>();
 
         public ActiveItemStore(EntityStore store)
@@ -113,24 +115,96 @@ namespace ClassicUO.Game
 
             foreach (EcsEntity e in _scratch)
             {
-                Item item = ItemOf(e.GetComponent<ActiveItemEntry>().Handle);
-                e.DeleteEntity();
-                item.ActiveEntryId = 0;
+                int handle = e.GetComponent<ActiveItemEntry>().Handle;
+                Item item = ItemOf(handle);
 
-                if (mirrorTag)
+                if (item != null)
                 {
-                    ActiveItemList.SetTag(item, false);
+                    _items[handle] = null; // the free list is reset below
                 }
+
+                e.DeleteEntity();
+                Unlist(item, mirrorTag);
             }
 
             _scratch.Clear();
+
+            // what is left names items whose entries were deleted outside the store (only the checker's tests do that)
+            for (int h = 0; h < _handleEnd; h++)
+            {
+                Unlist(_items[h], mirrorTag);
+            }
+
             Array.Clear(_order, 0, _count);
             _count = 0;
-            // also drops the items of entries deleted outside the store (only the checker's tests do that)
             Array.Clear(_items, 0, _handleEnd);
             _handleEnd = 0;
             _freeCount = 0;
         }
+
+        private static void Unlist(Item item, bool mirrorTag)
+        {
+            if (item == null)
+            {
+                return;
+            }
+
+            item.ActiveEntryId = 0;
+
+            if (mirrorTag)
+            {
+                ActiveItemList.SetTag(item, false);
+            }
+        }
+
+        /// <summary>
+        /// Frees the handles no live entry names (their entries were deleted outside the store; only the checker's tests do
+        /// that) and unlists their items, so neither the table nor a stale <see cref="Item.ActiveEntryId"/> outlives the entry.
+        /// Runs only when the handles in use and the entries differ; the marks array grows with the table, no other allocation.
+        /// </summary>
+        private void ReclaimOrphans(bool mirrorTag)
+        {
+            if (_handleMarks.Length < _items.Length)
+            {
+                _handleMarks = new int[_items.Length];
+                _markStamp = 0;
+            }
+
+            if (++_markStamp == int.MaxValue)
+            {
+                Array.Clear(_handleMarks);
+                _markStamp = 1;
+            }
+
+            foreach (var (entries, _) in _query.Chunks)
+            {
+                Span<ActiveItemEntry> span = entries.Span;
+
+                for (int i = 0; i < span.Length; i++)
+                {
+                    int h = span[i].Handle;
+
+                    if ((uint)h < (uint)_handleEnd)
+                    {
+                        _handleMarks[h] = _markStamp;
+                    }
+                }
+            }
+
+            for (int h = 0; h < _handleEnd; h++)
+            {
+                Item item = _items[h];
+
+                if (item != null && _handleMarks[h] != _markStamp)
+                {
+                    FreeHandle(h);
+                    Unlist(item, mirrorTag);
+                }
+            }
+        }
+
+        /// <summary>Tests: handles in use and the table's used range.</summary>
+        public (int InUse, int End) Handles => (_handleEnd - _freeCount, _handleEnd);
 
         /// <summary>The item an entry names (null for a handle the store does not hold).</summary>
         public Item ItemOf(int handle) => (uint)handle < (uint)_handleEnd ? _items[handle] : null;
@@ -170,12 +244,17 @@ namespace ClassicUO.Game
         /// <summary>
         /// Rebuilds the visiting order from the entities: each entry's item goes to its slot. False when the slots are not
         /// 0..n-1 once each (the order then holds the entries in query order, and <paramref name="error"/> says why); the rules
-        /// above never leave them so.
+        /// above never leave them so. Handles no live entry names are reclaimed first (<see cref="ReclaimOrphans"/>).
         /// </summary>
-        public bool Rebuild(out string error)
+        public bool Rebuild(bool mirrorTag, out string error)
         {
             error = null;
             int n = _query.Count;
+
+            if (_handleEnd - _freeCount != n)
+            {
+                ReclaimOrphans(mirrorTag);
+            }
             Grow(n);
             Array.Clear(_order, 0, Math.Max(_count, n));
             _count = n;

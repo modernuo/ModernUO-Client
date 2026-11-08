@@ -505,6 +505,120 @@ namespace ClassicUO.UnitTests.Ecs
             return refs.ToArray();
         }
 
+        // the last slot's removal (no entry moves), and a table grown past its first size, with every item removed by the visit
+        [Theory]
+        [InlineData(false, false)]
+        [InlineData(false, true)]
+        [InlineData(true, false)]
+        [InlineData(true, true)]
+        public void Last_Slot_Removals_And_A_Grown_Table_Keep_No_Item_Reachable(bool source, bool check)
+        {
+            Scene s = Build(source, check);
+            WeakReference last = RemoveLastSlot(s);
+            Collect();
+            last.IsAlive.Should().BeFalse($"source {source} check {check}: the last slot's item");
+
+            WeakReference[] grown = GrowAndRemoveAll(s);
+            Collect();
+            grown.Count(w => w.IsAlive).Should().Be(0, $"source {source} check {check}: the grown table's items");
+            s.Mismatches.Should().BeEmpty();
+            GC.KeepAlive(s.World);
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static WeakReference RemoveLastSlot(Scene s)
+        {
+            AddItem(s, 0x4000_0001, CORPSE);
+            AddItem(s, 0x4000_0002, CORPSE);
+            Item c = AddItem(s, 0x4000_0003, CORPSE);
+            s.World.RemoveItem(c.Serial);
+            s.World.Update();
+            Active(s.World).Should().Equal(0x4000_0001u, 0x4000_0002u);
+
+            return new WeakReference(c);
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static WeakReference[] GrowAndRemoveAll(Scene s)
+        {
+            var refs = new List<WeakReference>();
+            var serials = new List<uint>();
+
+            for (uint i = 0; i < 150; i++)
+            {
+                Item item = AddItem(s, 0x4000_1000 + i, CORPSE);
+                refs.Add(new WeakReference(item));
+                serials.Add(item.Serial);
+            }
+
+            s.World.Update();
+            s.World.ActiveItemCount.Should().Be(152);
+
+            foreach (uint serial in serials)
+            {
+                s.World.RemoveItem(serial);
+            }
+
+            s.World.Update();
+            Active(s.World).Should().Equal(0x4000_0001u, 0x4000_0002u);
+
+            return refs.ToArray();
+        }
+
+        // Codex re-review P2: an entry deleted outside the store (only the checker's corruption test does that). The rebuild
+        // frees its handle and unlists its item; the other entries leave, so the count is 0; World.Clear still clears the
+        // store, and the item is collectable.
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void An_Entry_Deleted_Outside_The_Store_Leaves_No_Handle_Or_Membership(bool check)
+        {
+            Scene s = Build(true, check);
+            WeakReference orphan = DeleteOutsideThenEmpty(s);
+            s.World.ActiveItemCount.Should().Be(0);
+
+            s.World.Clear();
+            s.World.ActiveItemHandles.Should().Be((0, 0));
+            Collect();
+            orphan.IsAlive.Should().BeFalse($"check {check}");
+            GC.KeepAlive(s.World);
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static WeakReference DeleteOutsideThenEmpty(Scene s)
+        {
+            // a plain item, not a corpse: the stage's scan does not list it again once it is unlisted
+            Item a = AddItem(s, 0x4000_0001, PLAIN);
+            s.World.QueueItemUpdate(a);
+            Item b = AddItem(s, 0x4000_0002, CORPSE);
+            s.World.IsItemListed(a).Should().BeTrue();
+            s.World.ActiveItemEntryOf(a).DeleteEntity();
+            s.World.RemoveItem(b.Serial);
+
+            s.World.Update();
+
+            a.ActiveEntryId.Should().Be(0, "the rebuild unlists the item of a deleted entry");
+            s.World.ActiveItemHandles.InUse.Should().Be(Entries(s.World));
+
+            return new WeakReference(a);
+        }
+
+        // World.Clear resets the store whatever its count: here every item has left by the visit (count 0, handles freed)
+        [Fact]
+        public void World_Clear_Resets_The_Store_With_A_Zero_Count()
+        {
+            Scene s = Build(true);
+            Item a = AddItem(s, 0x4000_0001, CORPSE);
+            s.World.RemoveItem(a.Serial);
+            s.World.Update();
+            s.World.ActiveItemCount.Should().Be(0);
+            s.World.ActiveItemHandles.End.Should().BeGreaterThan(0);
+
+            s.World.Clear();
+
+            s.World.ActiveItemHandles.Should().Be((0, 0));
+        }
+
         // an entry outlives its item's mirror record: a destroyed item stays listed (and its slot holds) until the visit
         [Fact]
         public void A_Destroyed_Item_Keeps_Its_Slot_Until_The_Visit()

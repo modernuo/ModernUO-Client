@@ -799,6 +799,9 @@ namespace ClassicUO.Game
         /// <summary>T9: the item's <see cref="ClassicUO.Ecs.ActiveItemEntry"/> entity (null when it has none; tests and the checker).</summary>
         internal Friflo.Engine.ECS.Entity ActiveItemEntryOf(Item item) => ActiveStore.EntryOf(item);
 
+        /// <summary>T9 tests: the store's item table (handles in use, used range; 0 and 0 when the world has no store).</summary>
+        internal (int InUse, int End) ActiveItemHandles => _activeStore?.Handles ?? (0, 0);
+
         /// <summary>perf-13: the active list holds every item that needs updates (false from World.Clear until the next
         /// update's first pass rebuilds it).</summary>
         internal bool ActiveItemsListed => _activeItemsValid;
@@ -831,7 +834,8 @@ namespace ClassicUO.Game
                 _activeItems.Clear(!source && ActiveItemsSystemOn);
             }
 
-            if (_activeStore != null && _activeStore.Count != 0)
+            // whatever its count: the item table may still name items whose entries were deleted outside the store
+            if (_activeStore != null)
             {
                 _activeStore.Clear(source && ActiveItemsSystemOn);
             }
