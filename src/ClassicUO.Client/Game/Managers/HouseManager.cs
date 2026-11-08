@@ -16,7 +16,9 @@ namespace ClassicUO.Game.Managers
             _world = world;
         }
 
-        public IReadOnlyCollection<House> Houses => _houses.Values;
+        // The concrete collection, so foreach uses its struct enumerator: through IReadOnlyCollection it boxed one per
+        // walk, and the world map walks the houses every frame.
+        public Dictionary<uint, House>.ValueCollection Houses => _houses.Values;
 
         public void Add(uint serial, House revision)
         {
