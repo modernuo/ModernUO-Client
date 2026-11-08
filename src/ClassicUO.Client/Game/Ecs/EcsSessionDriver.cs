@@ -668,6 +668,27 @@ namespace ClassicUO.Game
 
                     return false;
 
+                // autoopen doors|corpses on|off [range]: the profile's auto-open doors / corpses (perf-13's step rules); range is
+                // the corpse range.
+                case "autoopen" when args.Length > 1 && ProfileManager.CurrentProfile is { } openProfile:
+                    if (args[0] == "doors")
+                    {
+                        openProfile.AutoOpenDoors = args[1] == "on";
+                    }
+                    else
+                    {
+                        openProfile.AutoOpenCorpses = args[1] == "on";
+
+                        if (args.Length > 2)
+                        {
+                            openProfile.AutoOpenCorpseRange = Convert.ToInt32(args[2]);
+                        }
+                    }
+
+                    Log.Info($"[ECS] driver: autoopen doors {openProfile.AutoOpenDoors}, corpses {openProfile.AutoOpenCorpses} range {openProfile.AutoOpenCorpseRange} options {openProfile.CorpseOpenOptions}");
+
+                    return false;
+
                 // inspect self|near <graphic>: opens an InspectorGump on that entity, as the inspect target does.
                 // inspect log: each open inspector's entity, looked up by its serial (gone = removed from the world).
                 // inspect dump: presses each open inspector's Dump button (a removed entity prints "gone" to the journal)
