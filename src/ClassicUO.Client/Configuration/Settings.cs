@@ -213,11 +213,6 @@ namespace ClassicUO.Configuration
         // builds). Default off.
         [JsonPropertyName("ecs_effect_motion")] public bool EcsEffectMotion { get; set; }
 
-        // T4 (ecs-transition-plan.md, "thin handles"): the cold world-state getters (Name, Hits, HitsMax, Stamina, Mana and
-        // their maxima, Price) read the entity's ECS record; the GameObject field becomes a write-only cache. Read once at
-        // startup (EcsScalars.Owns; CUO_ECS_OWNS_SCALARS=1|0 overrides it in developer builds). Default on since 2026-11-02 (owner, after the quiet-machine per-switch timing bench-000206/207/208: timing-neutral on both renderers); the off path and the checker stay for one phase.
-        [JsonPropertyName("ecs_owns_scalars")] public bool EcsOwnsScalars { get; set; } = true;
-
         // W5: the per-frame overhead text pass skips the text layout of mobiles and corpses whose texts have all expired
         // (expired texts stay in the entity's container; the layout would place nothing). Off = laid out every frame.
         [JsonPropertyName("text_skip_expired")] public bool TextSkipExpired { get; set; } = true;

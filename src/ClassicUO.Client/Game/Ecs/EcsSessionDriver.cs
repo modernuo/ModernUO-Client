@@ -926,6 +926,31 @@ namespace ClassicUO.Game
 
                     return true;
 
+                // healthbars: a health bar gump (classic and custom, alternating) for the player and each mobile within 4 tiles,
+                // with the hits it draws and the percentage the overhead line draws (cold-caches gate)
+                case "healthbars":
+                {
+                    bool custom = false;
+
+                    foreach (Mobile hb in world.Mobiles.Values)
+                    {
+                        if (hb.IsDestroyed || Math.Max(Math.Abs(hb.X - player.X), Math.Abs(hb.Y - player.Y)) > 4)
+                        {
+                            continue;
+                        }
+
+                        if (UIManager.GetGump<BaseHealthBarGump>(hb.Serial) == null)
+                        {
+                            UIManager.Add(custom ? new HealthBarGumpCustom(world, hb) { X = 100, Y = 100 } : new HealthBarGump(world, hb) { X = 100, Y = 100 });
+                            custom = !custom;
+                        }
+
+                        Log.Info($"[ECS] healthbar 0x{hb.Serial:X8} hits {hb.Hits}/{hb.HitsMax} = {hb.HitsPercentage}% stam {hb.Stamina}/{hb.StaminaMax} mana {hb.Mana}/{hb.ManaMax} {hb.Name}");
+                    }
+
+                    return true;
+                }
+
                 // w5 on|off: the W5 shortcut that still has a switch (text_skip_expired)
                 case "w5" when args.Length > 0:
                     Settings.GlobalSettings.TextSkipExpired = args[0] == "on";

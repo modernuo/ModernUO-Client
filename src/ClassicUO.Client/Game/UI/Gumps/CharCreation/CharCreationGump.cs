@@ -15,6 +15,8 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
     internal class CharCreationGump : Gump
     {
         private PlayerMobile _character;
+        // T9 (cold-caches): the preview mobile is not in World, so it has no record to hold a name
+        private string _characterName;
         // the new character's stats and skills (the PlayerMobile constructor made them before PlayerState moved to the World)
         private PlayerState _characterState;
         private int _cityIndex;
@@ -33,7 +35,7 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
 
         internal static int _skillsCount => Client.Game.UO.Version >= ClientVersion.CV_70160 ? 4 : 3;
 
-        public void SetCharacter(PlayerMobile character)
+        public void SetCharacter(PlayerMobile character, string name)
         {
             if (!ReferenceEquals(_character, character))
             {
@@ -41,6 +43,7 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
             }
 
             _character = character;
+            _characterName = name;
             SetStep(CharCreationStep.ChooseProfession);
         }
 
@@ -116,7 +119,7 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
 
         public void CreateCharacter(byte profession)
         {
-            _loginScene.CreateCharacter(_character, _characterState, _cityIndex, profession);
+            _loginScene.CreateCharacter(_character, _characterName, _characterState, _cityIndex, profession);
         }
 
         public void StepBack(int steps = 1)

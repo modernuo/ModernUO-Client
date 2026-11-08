@@ -22,17 +22,17 @@ namespace ClassicUO.UnitTests.Ecs
 
         // funnel part 7: the other cache-only and input fields the small writers touch
         internal static string MiscOf(Entity e) =>
-            e is Item i ? $"price {i.CachedPrice}" : // the cache (T4: StatusOf)
+            e is Item i ? $"price {i.Price}" :
             e is Mobile m ? $"speed {m.SpeedMode} dead {m.IsDead} war {m.InWarMode}" : "";
 
         // ---- the old handler code (pre-T1), one write each as the handlers made it
 
-        internal static void OldSetName(Entity e, string name) => e.Name = name;
+        internal static void OldSetName(Entity e, string name) => OldScalarWrites.Name(e, name);
 
         internal static void OldShopEntry(Item it, uint price, string name)
         {
-            it.Price = price;
-            it.Name = name;
+            OldScalarWrites.Price(it, price);
+            OldScalarWrites.Name(it, name);
         }
 
         internal static void NewShopEntry(World world, Item it, uint price, string name)
@@ -125,7 +125,7 @@ namespace ClassicUO.UnitTests.Ecs
             }
 
             Pair(() => { a.SpeedMode = CharacterSpeedType.CantRun; oldWorld.Ecs.PushInputs(a); }, () => newWorld.Writer.SetSpeedMode(b, CharacterSpeedType.CantRun));
-            Pair(() => a.Name = "Avatar", () => newWorld.Writer.SetName(b, "Avatar"));
+            Pair(() => OldScalarWrites.Name(a, "Avatar"), () => newWorld.Writer.SetName(b, "Avatar"));
             AssertSameWorld(oldWorld, newWorld);
             newWorld.Writer.Violations.Should().Be(0);
         }
@@ -270,7 +270,8 @@ namespace ClassicUO.UnitTests.Ecs
 
                 world.Writer.Violations.Should().Be(0);
                 MiscOf(player).Should().Be("speed FastUnmount dead True war True");
-                player.Name.Should().Be("ghost");
+                // T9: the detached player has no record, so the name is accepted but not kept (a misconfigured server's case)
+                player.Name.Should().BeNull();
             }
         }
 
@@ -999,7 +1000,8 @@ namespace ClassicUO.UnitTests.Ecs
             world.Writer.RemoveDeadMobile(m, f0, d0);
             m.IsDestroyed.Should().BeTrue();
 
-            (m.Name, bag.Name, bag.Price, m.SpeedMode, m.IsDead, bag.Container).Should().Be(("m", "bag", 5u, CharacterSpeedType.CantRun, true, 0x4000_7302u));
+            // the removed mobile has no record left, so its name reads null (T9: no cache)
+            (m.Name, bag.Name, bag.Price, m.SpeedMode, m.IsDead, bag.Container).Should().Be(((string)null, "bag", 5u, CharacterSpeedType.CantRun, true, 0x4000_7302u));
             FunnelCheck.Total.Should().Be(0, "0x98 and the other name writers, 0x74's price, 0xBF.26, 0x72, 0xBF.19's dead flag, 0x89, 0xAF's re-key, the frame advance and the corpse animation's end");
         }
 

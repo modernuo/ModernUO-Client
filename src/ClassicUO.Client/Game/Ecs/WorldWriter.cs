@@ -2015,16 +2015,16 @@ namespace ClassicUO.Game
             }
         }
 
-        // ---- funnel part 6, group 4: status and hits. Hits, HitsMax, the mana, the stamina, the name, IsRenamable and the race
-        // are cache-only (no mirror record field and no MobileInputs reads them; HitsPercentage and its text are the setters'
-        // own derived state), so these operations are admission, the held check, the scope and the writes in the handler's
-        // order. IsFemale and the SA poison are inputs, the flags a record field: those operations commit.
+        // ---- funnel part 6, group 4: status and hits. Hits, HitsMax, the mana, the stamina and the name live only in the
+        // mirror record (T4, T9): these operations commit them, and the hits operations set HitsPercentage (and its text) from
+        // the values they commit. IsRenamable and the race are cache-only. IsFemale and the SA poison are inputs, the flags a
+        // record field: those operations commit.
 
         /// <summary>
-        /// 0xA1 (UpdateHitpoints) and 0x2D (MobileAttributes): the hits of an item or a mobile (<c>World.Get</c>'s), HitsMax then
-        /// Hits as the handlers wrote them (each setter refreshes HitsPercentage, so the order is kept), then a pending hits
-        /// request is marked received. Nothing reaches the ECS. An entity this World does not hold is a violation, rejected
-        /// (no pre-T1 path), except the detached <c>World.Player</c>, written as before T1.
+        /// 0xA1 (UpdateHitpoints) and 0x2D (MobileAttributes): the hits of an item or a mobile (<c>World.Get</c>'s), committed
+        /// to the record, HitsPercentage from the same values, then a pending hits request is marked received. An entity this
+        /// World does not hold is a violation, rejected (no pre-T1 path), except the detached <c>World.Player</c>: it has no
+        /// record, so only its percentage changes (T9; a detached player follows a misconfigured server's 0x25 for it).
         /// </summary>
         public void SetHits(Entity entity, ushort hitsMax, ushort hits)
         {
@@ -2036,8 +2036,7 @@ namespace ClassicUO.Game
             using (Open(entity, null))
             {
                 _world.Ecs.CommitVitals(entity, hits, hitsMax);
-                entity.HitsMax = hitsMax;
-                entity.Hits = hits;
+                entity.RefreshHitsPercentage(hits, hitsMax);
 
                 if (entity.HitsRequest == HitsRequestStatus.Pending)
                 {
@@ -2047,9 +2046,10 @@ namespace ClassicUO.Game
         }
 
         /// <summary>
-        /// 0x11 (CharacterStatus): the name, then Hits then HitsMax (0x11's order), then a pending hits request is marked
-        /// received. Nothing reaches the ECS. The handler reads the old name before this (the window title) and runs the
-        /// rest of the packet after it. Rejections as <see cref="SetHits"/>.
+        /// 0x11 (CharacterStatus): the name and the hits, committed to the record, HitsPercentage from the same values (with
+        /// HitsMax 0, from the new hits and the previous maximum), then
+        /// a pending hits request is marked received. The handler reads the old name before this (the window title) and runs
+        /// the rest of the packet after it. Rejections as <see cref="SetHits"/>.
         /// </summary>
         public void SetStatus(Entity entity, string name, ushort hits, ushort hitsMax)
         {
@@ -2058,13 +2058,15 @@ namespace ClassicUO.Game
                 return;
             }
 
+            // 0x11 writes Hits before HitsMax: with HitsMax 0 the percentage is the new hits of the previous maximum (the old
+            // setters' refresh order), so the previous maximum is read before the commit
+            ushort previousMax = hitsMax > 0 ? hitsMax : entity.HitsMax;
+
             using (Open(entity, null))
             {
                 _world.Ecs.CommitName(entity, name);
                 _world.Ecs.CommitVitals(entity, hits, hitsMax);
-                entity.Name = name;
-                entity.Hits = hits;
-                entity.HitsMax = hitsMax;
+                entity.RefreshHitsPercentage(hits, previousMax);
 
                 if (entity.HitsRequest == HitsRequestStatus.Pending)
                 {
@@ -2100,8 +2102,8 @@ namespace ClassicUO.Game
         }
 
         /// <summary>
-        /// 0xA2 (UpdateMana), 0x2D (MobileAttributes) and the player's 0x11: ManaMax and Mana, committed to the record first
-        /// (T4). Rejections as <see cref="SetMobileStatus"/>.
+        /// 0xA2 (UpdateMana), 0x2D (MobileAttributes) and the player's 0x11: ManaMax and Mana, committed to the record (T4;
+        /// record-only since T9). Rejections as <see cref="SetMobileStatus"/>.
         /// </summary>
         public void SetMana(Mobile mobile, ushort manaMax, ushort mana)
         {
@@ -2113,14 +2115,12 @@ namespace ClassicUO.Game
             using (Open(mobile, null))
             {
                 _world.Ecs.CommitMana(mobile, manaMax, mana);
-                mobile.ManaMax = manaMax;
-                mobile.Mana = mana;
             }
         }
 
         /// <summary>
         /// 0xA3 (UpdateStamina), 0x2D (MobileAttributes) and the player's 0x11: StaminaMax and Stamina, committed to the record
-        /// first (T4). Rejections as <see cref="SetMobileStatus"/>.
+        /// (T4; record-only since T9). Rejections as <see cref="SetMobileStatus"/>.
         /// </summary>
         public void SetStamina(Mobile mobile, ushort staminaMax, ushort stamina)
         {
@@ -2132,8 +2132,6 @@ namespace ClassicUO.Game
             using (Open(mobile, null))
             {
                 _world.Ecs.CommitStamina(mobile, staminaMax, stamina);
-                mobile.StaminaMax = staminaMax;
-                mobile.Stamina = stamina;
             }
         }
 
@@ -2586,9 +2584,9 @@ namespace ClassicUO.Game
         /// <summary>
         /// The name writers: 0x98 (UpdateName), the speech handlers' name of an unnamed speaker (0x1C, 0xAE), 0xC1/0xCC
         /// (DisplayClilocString) for an unnamed speaker, 0xD6 (MegaCliloc) for an item, 0xBF.10's item name and 0x74's shop
-        /// entries (BuyList). Cache-only. The handlers keep their reads (the empty-name checks) and run everything else as
-        /// before. An entity this World does not hold is a violation, rejected (no pre-T1 path: the handlers pass what they
-        /// just looked up), except the detached <c>World.Player</c>, written as before T1.
+        /// entries (BuyList). Committed to the record (record-only since T9). The handlers keep their reads (the empty-name
+        /// checks) and run everything else as before. An entity this World does not hold is a violation, rejected (no pre-T1
+        /// path: the handlers pass what they just looked up); the detached <c>World.Player</c> is accepted but has no record.
         /// </summary>
         public void SetName(Entity entity, string name)
         {
@@ -2600,12 +2598,11 @@ namespace ClassicUO.Game
             using (Open(entity, null))
             {
                 _world.Ecs.CommitName(entity, name);
-                entity.Name = name;
             }
         }
 
         /// <summary>
-        /// 0x74 (BuyList): a shop entry's price. Cache-only. Rejections as <see cref="SetName"/>.
+        /// 0x74 (BuyList): a shop entry's price, committed to the record (record-only since T9). Rejections as <see cref="SetName"/>.
         /// </summary>
         public void SetPrice(Item item, uint price)
         {
@@ -2617,7 +2614,6 @@ namespace ClassicUO.Game
             using (Open(item, null))
             {
                 _world.Ecs.CommitPrice(item, price);
-                item.Price = price;
             }
         }
 

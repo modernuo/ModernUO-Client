@@ -70,8 +70,8 @@ namespace ClassicUO.UnitTests.Ecs
                 return;
             }
 
-            entity.HitsMax = hitsMax;
-            entity.Hits = hits;
+            OldScalarWrites.HitsMax(entity, hitsMax);
+            OldScalarWrites.Hits(entity, hits);
 
             if (entity.HitsRequest == HitsRequestStatus.Pending)
             {
@@ -102,13 +102,13 @@ namespace ClassicUO.UnitTests.Ecs
 
             if (stamina)
             {
-                mobile.StaminaMax = max;
-                mobile.Stamina = value;
+                OldScalarWrites.StaminaMax(mobile, max);
+                OldScalarWrites.Stamina(mobile, value);
             }
             else
             {
-                mobile.ManaMax = max;
-                mobile.Mana = value;
+                OldScalarWrites.ManaMax(mobile, max);
+                OldScalarWrites.Mana(mobile, value);
             }
         }
 
@@ -146,8 +146,8 @@ namespace ClassicUO.UnitTests.Ecs
                 return;
             }
 
-            entity.HitsMax = a.HitsMax;
-            entity.Hits = a.Hits;
+            OldScalarWrites.HitsMax(entity, a.HitsMax);
+            OldScalarWrites.Hits(entity, a.Hits);
 
             if (entity.HitsRequest == HitsRequestStatus.Pending)
             {
@@ -161,10 +161,10 @@ namespace ClassicUO.UnitTests.Ecs
                     return;
                 }
 
-                mobile.ManaMax = a.ManaMax;
-                mobile.Mana = a.Mana;
-                mobile.StaminaMax = a.StaminaMax;
-                mobile.Stamina = a.Stamina;
+                OldScalarWrites.ManaMax(mobile, a.ManaMax);
+                OldScalarWrites.Mana(mobile, a.Mana);
+                OldScalarWrites.StaminaMax(mobile, a.StaminaMax);
+                OldScalarWrites.Stamina(mobile, a.Stamina);
             }
         }
 
@@ -214,9 +214,9 @@ namespace ClassicUO.UnitTests.Ecs
                 return;
             }
 
-            entity.Name = s.Name;
-            entity.Hits = s.Hits;
-            entity.HitsMax = s.HitsMax;
+            OldScalarWrites.Name(entity, s.Name);
+            OldScalarWrites.Hits(entity, s.Hits);
+            OldScalarWrites.HitsMax(entity, s.HitsMax);
 
             if (entity.HitsRequest == HitsRequestStatus.Pending)
             {
@@ -238,10 +238,10 @@ namespace ClassicUO.UnitTests.Ecs
 
                     if (mobile == world.Player)
                     {
-                        world.Player.Stamina = s.Stamina;
-                        world.Player.StaminaMax = s.StaminaMax;
-                        world.Player.Mana = s.Mana;
-                        world.Player.ManaMax = s.ManaMax;
+                        OldScalarWrites.Stamina(world.Player, s.Stamina);
+                        OldScalarWrites.StaminaMax(world.Player, s.StaminaMax);
+                        OldScalarWrites.Mana(world.Player, s.Mana);
+                        OldScalarWrites.ManaMax(world.Player, s.ManaMax);
 
                         if (s.Type >= 5)
                         {
@@ -390,16 +390,16 @@ namespace ClassicUO.UnitTests.Ecs
                     continue;
                 }
 
-                e.Name = "start";
-                e.HitsMax = 100;
-                e.Hits = 77;
+                OldScalarWrites.Name(e, "start");
+                OldScalarWrites.HitsMax(e, 100);
+                OldScalarWrites.Hits(e, 77);
 
                 if (e is Mobile m)
                 {
-                    m.ManaMax = 50;
-                    m.Mana = 20;
-                    m.StaminaMax = 60;
-                    m.Stamina = 30;
+                    OldScalarWrites.ManaMax(m, 50);
+                    OldScalarWrites.Mana(m, 20);
+                    OldScalarWrites.StaminaMax(m, 60);
+                    OldScalarWrites.Stamina(m, 30);
                 }
 
                 if (status == StatusStart.Pending)
@@ -408,7 +408,7 @@ namespace ClassicUO.UnitTests.Ecs
                 }
                 else if (status == StatusStart.ZeroMax)
                 {
-                    e.HitsMax = 0;
+                    OldScalarWrites.HitsMax(e, 0);
                 }
             }
 
@@ -617,7 +617,9 @@ namespace ClassicUO.UnitTests.Ecs
                 world.Writer.SetHealthbar(player, Flags.YellowBar, true, true);
 
                 world.Writer.Violations.Should().Be(0);
-                StatusOf(player).Should().Be("ghost 4/5 80% None mana 8/9 stamina 6/7 renamable True race ELF sa True");
+                // T9: the detached player has no record, so the cold values are not kept (a misconfigured server's case); the
+                // percentage, the hot fields and the inputs are written as before
+                StatusOf(player).Should().Be(" 0/0 80% None mana 0/0 stamina 0/0 renamable True race ELF sa True");
                 (player.IsFemale, player.Flags).Should().Be((true, Flags.YellowBar));
 
                 // any other instance World does not hold is still rejected

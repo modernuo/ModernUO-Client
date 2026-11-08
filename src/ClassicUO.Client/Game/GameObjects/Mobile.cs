@@ -116,8 +116,11 @@ namespace ClassicUO.Game.GameObjects
 
         private long _lastAnimationIdleDelay;
 
+#if CUO_DEVTOOLS
+        // CLEANUP(release): only CUO_MOBILE_UPDATE_CHECK (WorldEcs.CheckSkipped) reads it
         /// <summary>E4: the frame number of World.UpdateMobilesByClock that last updated this mobile (checker).</summary>
         internal int UpdateStamp;
+#endif
 
         /// <summary>E10: this mobile's slot in <see cref="MobileTable"/> (its position in <c>World.Mobiles.Values</c>'s enumeration order), kept by the table on add and remove.</summary>
         internal int Ordinal;
@@ -289,7 +292,6 @@ namespace ClassicUO.Game.GameObjects
 
         private RaceType _race;
         private CharacterSpeedType _speedMode = CharacterSpeedType.Normal;
-        private ushort _stamina, _staminaMax, _mana, _manaMax;
         private int _stepSoundOffset;
         public RaceType Race { get => _race; set { FunnelCheck.Write(this, FunnelField.Race); _race = value; } }
         public CharacterSpeedType SpeedMode { get => _speedMode; set { FunnelCheck.Write(this, FunnelField.SpeedMode); _speedMode = value; } }
@@ -299,12 +301,9 @@ namespace ClassicUO.Game.GameObjects
             {
                 ScalarReads.Count(ScalarField.Stamina);
 
-                return EcsScalars.Owns && TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Stamina(e) : _stamina;
+                return TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Stamina(e) : (ushort)0;
             }
-            set { FunnelCheck.Write(this, FunnelField.Stamina); _stamina = value; }
         }
-
-        internal ushort CachedStamina => _stamina;
 
         public ushort StaminaMax
         {
@@ -312,12 +311,9 @@ namespace ClassicUO.Game.GameObjects
             {
                 ScalarReads.Count(ScalarField.StaminaMax);
 
-                return EcsScalars.Owns && TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.StaminaMax(e) : _staminaMax;
+                return TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.StaminaMax(e) : (ushort)0;
             }
-            set { FunnelCheck.Write(this, FunnelField.StaminaMax); _staminaMax = value; }
         }
-
-        internal ushort CachedStaminaMax => _staminaMax;
 
         public ushort Mana
         {
@@ -325,12 +321,9 @@ namespace ClassicUO.Game.GameObjects
             {
                 ScalarReads.Count(ScalarField.Mana);
 
-                return EcsScalars.Owns && TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Mana(e) : _mana;
+                return TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Mana(e) : (ushort)0;
             }
-            set { FunnelCheck.Write(this, FunnelField.Mana); _mana = value; }
         }
-
-        internal ushort CachedMana => _mana;
 
         public ushort ManaMax
         {
@@ -338,12 +331,9 @@ namespace ClassicUO.Game.GameObjects
             {
                 ScalarReads.Count(ScalarField.ManaMax);
 
-                return EcsScalars.Owns && TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.ManaMax(e) : _manaMax;
+                return TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.ManaMax(e) : (ushort)0;
             }
-            set { FunnelCheck.Write(this, FunnelField.ManaMax); _manaMax = value; }
         }
-
-        internal ushort CachedManaMax => _manaMax;
 
         public int StepSoundOffset { get => _stepSoundOffset; set { FunnelCheck.Write(this, FunnelField.StepSoundOffset); _stepSoundOffset = value; } }
         public string Title = string.Empty;
@@ -698,9 +688,12 @@ namespace ClassicUO.Game.GameObjects
             World.Writer.IdleAnimation(this, in plan);
         }
 
+#if CUO_DEVTOOLS
+        // CLEANUP(release): only CUO_ANIM_ADVANCE_CHECK's shadow step calls it
         /// <summary>T5b checker: <see cref="PlanIdleAnimation"/> over the client's animation data (draws, writes nothing).</summary>
         internal void PlanIdleAnimationLive(out IdlePlan plan) =>
             PlanIdleAnimation(new LiveIdleAnimationData(Client.Game.UO.Animations), out plan);
+#endif
 
         /// <summary>T1 (funnel part 8): the animation data <see cref="PlanIdleAnimation"/> reads (tests pass their own).</summary>
         internal interface IIdleAnimationData

@@ -510,7 +510,10 @@ namespace ClassicUO.Game
         private readonly List<uint> _dueMobiles = new List<uint>();
         private readonly List<Mobile> _destroyedMobiles = new List<Mobile>();
         private bool _mobileClocksSynced;
+#if CUO_DEVTOOLS
+        // CLEANUP(release): CUO_MOBILE_UPDATE_CHECK's frame stamp (Mobile.UpdateStamp)
         private int _mobileUpdateStamp;
+#endif
 
         internal void OnMobileDestroyed(Mobile mobile)
         {
@@ -687,7 +690,9 @@ namespace ClassicUO.Game
                 t0 = System.Diagnostics.Stopwatch.GetTimestamp();
             }
 
+#if CUO_DEVTOOLS
             _mobileUpdateStamp++;
+#endif
 
             if (WorldEcs.MobileUpdateStats)
             {
@@ -716,7 +721,9 @@ namespace ClassicUO.Game
             {
                 Mobile mob = _dueObjects[i];
 
+#if CUO_DEVTOOLS
                 mob.UpdateStamp = _mobileUpdateStamp;
+#endif
 
                 // T5b: a mobile without steps or a handles opening advances in the ECS; the others (and every mobile with the
                 // switch off) run Mobile.Update, in the same table order, so the random draws keep their sequence
@@ -735,10 +742,12 @@ namespace ClassicUO.Game
                 WorldEcs.ClockUpdateTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
             }
 
+#if CUO_DEVTOOLS
             if (check)
             {
                 Ecs.CheckSkipped(Mobiles.Values, _mobileUpdateStamp);
             }
+#endif
 
             if (do_delete)
             {
