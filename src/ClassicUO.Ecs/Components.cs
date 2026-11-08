@@ -22,6 +22,50 @@ namespace ClassicUO.Ecs
         public float X, Y, Z;
     }
 
+    /// <summary>ecs_boat_steps: one queued boat step (0xF6 with smooth boat movement): the destination, the moving direction,
+    /// the server's speed and the time the step takes (ms; <c>BoatStepRules.Decide</c> interpolates over it).</summary>
+    public struct BoatStepEntry
+    {
+        public int TimeDiff;
+        public ushort X, Y;
+        public sbyte Z;
+        public byte Speed;
+        public byte Direction;
+    }
+
+    [InlineArray(BoatSteps.CAPACITY)]
+    public struct BoatStepRing
+    {
+        private BoatStepEntry _e;
+    }
+
+    /// <summary>ecs_boat_steps: an object on a moving boat, as 0xF6 lists it: its serial and the boat's position minus its own.</summary>
+    public struct BoatPassenger
+    {
+        public uint Serial;
+        public int X, Y, Z;
+    }
+
+    /// <summary>
+    /// ecs_boat_steps: a boat's motion state, on the boat's record (was <c>BoatMovingManager</c>'s dictionaries): the queued
+    /// steps (a ring; the front step is <c>Ring[Head]</c>), the time the current step started (the boat's
+    /// <c>LastStepTime</c>) and the objects the last 0xF6 listed on its deck, in packet order (the order the passengers
+    /// are re-added to their tiles). Added at the boat's first queued step and kept, so steps move no entity between
+    /// archetypes; the passenger array is reused (grown, never shrunk). Written by WorldWriter's boat operations and by
+    /// <c>BoatStepSystem</c>'s ring advance.
+    /// </summary>
+    public struct BoatSteps : IComponent
+    {
+        // BoatMovingManager.AddStep trims the queue to 5 before it adds one
+        public const int CAPACITY = 6;
+
+        public BoatStepRing Ring;
+        public byte Head, Count;
+        public uint LastStepTime;
+        public BoatPassenger[] Passengers;
+        public int PassengerCount;
+    }
+
     // Item id (items) or body id (mobiles).
     public struct Graphic : IComponent
     {
@@ -623,6 +667,7 @@ namespace ClassicUO.Ecs
             Component<AnimationTimer>(aot); // T5b
             Component<Steps>(aot); // T6c
             Component<ItemOffset>(aot); // ecs_item_offset
+            Component<BoatSteps>(aot); // ecs_boat_steps
 
             // -ecscheck v2 (T1 funnel part 9)
             Component<EntityName>(aot);
