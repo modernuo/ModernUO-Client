@@ -39,6 +39,9 @@ namespace ClassicUO.Game.GameObjects
 
         public byte Alpha;
         public TextObject DLeft, DRight;
+
+        /// <summary>Links in the owner's <see cref="TextContainer"/>.</summary>
+        public TextObject Next, Previous;
         public ushort Hue;
         public bool IsDestroyed;
         public bool IsTextGump;

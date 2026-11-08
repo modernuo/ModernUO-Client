@@ -18,8 +18,7 @@ namespace ClassicUO.UnitTests.Game.GameObjects.Effect
             em.Clear();
             world.Clear();
 
-            Assert.Null(em.Next);
-            Assert.Null(em.Previous);
+            Assert.True(em.IsEmpty);
             Assert.Null(em.Items);
         }
 
@@ -38,8 +37,7 @@ namespace ClassicUO.UnitTests.Game.GameObjects.Effect
             em.Clear();
             world.Clear();
 
-            Assert.Null(em.Next);
-            Assert.Null(em.Previous);
+            Assert.True(em.IsEmpty);
             Assert.Null(em.Items);
         }
     }

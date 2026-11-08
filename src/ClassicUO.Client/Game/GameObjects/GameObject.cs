@@ -11,7 +11,7 @@ using System.Runtime.CompilerServices;
 
 namespace ClassicUO.Game.GameObjects
 {
-    internal abstract class BaseGameObject : LinkedObject
+    internal abstract class BaseGameObject
     {
         protected BaseGameObject(World world) => World = world;
 
@@ -516,10 +516,6 @@ namespace ClassicUO.Game.GameObjects
                 return;
             }
 
-            Next = null;
-            Previous = null;
-
-            Clear();
             RemoveFromTile();
             TextContainer?.Clear();
             _averageOverTime = null;
@@ -549,8 +545,7 @@ namespace ClassicUO.Game.GameObjects
         /// </summary>
         public virtual void ResetForReuse()
         {
-            // LinkedObject, BaseGameObject
-            Previous = Next = Items = null;
+            // BaseGameObject
             RealScreenPosition = Point.Zero;
             // GameObject
             IsDestroyed = false;
