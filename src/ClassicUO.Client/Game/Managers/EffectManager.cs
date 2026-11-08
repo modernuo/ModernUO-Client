@@ -15,6 +15,12 @@ namespace ClassicUO.Game.Managers
         /// <summary>The oldest effect; newer ones follow through <see cref="GameEffect.Next"/>.</summary>
         public GameEffect Items;
 
+        // the newest effect, so an add is O(1) instead of a walk of the whole list (bursts were O(n²))
+        private GameEffect _last;
+
+        /// <summary>The newest effect; older ones precede it through <see cref="GameEffect.Previous"/>.</summary>
+        public GameEffect Last => _last;
+
         public bool IsEmpty => Items == null;
 
         public EffectManager(World world)
@@ -296,6 +302,7 @@ namespace ClassicUO.Game.Managers
             }
 
             Items = null;
+            _last = null;
         }
 
         private void PushToBack(GameEffect item)
@@ -313,17 +320,11 @@ namespace ClassicUO.Game.Managers
             }
             else
             {
-                GameEffect last = Items;
-
-                while (last.Next != null)
-                {
-                    last = last.Next;
-                }
-
-                last.Next = item;
-                item.Next = null;
-                item.Previous = last;
+                _last.Next = item;
+                item.Previous = _last;
             }
+
+            _last = item;
         }
 
         /// <summary>Unlinks <paramref name="item"/> (GameEffect.Destroy); an effect that is not linked is left as it is.</summary>
@@ -332,6 +333,11 @@ namespace ClassicUO.Game.Managers
             if (item == null)
             {
                 return;
+            }
+
+            if (item == _last)
+            {
+                _last = item.Previous;
             }
 
             if (item == Items)

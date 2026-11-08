@@ -825,12 +825,12 @@ namespace ClassicUO
             switch ((SDL_EventType)sdlEvent->type)
             {
                 case SDL_EventType.SDL_EVENT_AUDIO_DEVICE_ADDED:
-                    Console.WriteLine("AUDIO ADDED: {0}", sdlEvent->adevice.which);
+                    Log.Trace($"Audio device added: {sdlEvent->adevice.which}");
 
                     break;
 
                 case SDL_EventType.SDL_EVENT_AUDIO_DEVICE_REMOVED:
-                    Console.WriteLine("AUDIO REMOVED: {0}", sdlEvent->adevice.which);
+                    Log.Trace($"Audio device removed: {sdlEvent->adevice.which}");
 
                     break;
 

@@ -56,13 +56,11 @@ namespace ClassicUO.Game.Scenes
 
         public override void Load()
         {
-            Console.WriteLine("MainScene loaded");
             base.Load();
         }
 
         public override void Unload()
         {
-            Console.WriteLine("MainScene unloaded");
             base.Unload();
         }
     }

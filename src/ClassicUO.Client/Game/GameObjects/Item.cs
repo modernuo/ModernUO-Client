@@ -287,6 +287,8 @@ namespace ClassicUO.Game.GameObjects
             // unit tests (no running client): an empty multi
             var multis = Client.Game != null ? Client.Game.UO.FileManager.Multis.GetMultis(Graphic) : NoMultis;
 
+            bool gargoyle = PlayerIsGargoyle(World);
+
             for (var i = 0; i < multis.Count; ++i)
             {
                 var block = multis[i];
@@ -313,7 +315,7 @@ namespace ClassicUO.Game.GameObjects
 
                 if (block.IsVisible)
                 {
-                    Multi m = Multi.Create(World, block.ID);
+                    Multi m = Multi.Create(World, block.ID, gargoyle);
                     m.MultiOffsetX = block.X;
                     m.MultiOffsetY = block.Y;
                     m.MultiOffsetZ = block.Z;

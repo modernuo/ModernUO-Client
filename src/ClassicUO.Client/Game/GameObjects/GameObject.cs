@@ -593,7 +593,30 @@ namespace ClassicUO.Game.GameObjects
             if (data == null)
                 return true;
 
-            return CanBeDrawn(data, g, world.Player != null && world.Player.Race == RaceType.GARGOYLE);
+            return CanBeDrawn(data, g, PlayerIsGargoyle(world));
+        }
+
+        /// <summary><see cref="CanBeDrawn(World, ushort)"/> with the player's race already read: a caller that tests many
+        /// graphics in one synchronous pass (a chunk's statics, a multi's components) reads it once, since with
+        /// <c>ecs_small_fields</c> each <see cref="Mobile.Race"/> read is an ECS lookup.</summary>
+        public static bool CanBeDrawn(ushort g, bool playerIsGargoyle)
+        {
+            ClassicUO.Assets.StaticTiles[] data = Client.Game != null ? Client.Game.UO.FileManager.TileData.StaticData : TestStaticData;
+
+            if (data == null)
+                return true;
+
+            return CanBeDrawn(data, g, playerIsGargoyle);
+        }
+
+        /// <summary>The only player input of <see cref="CanBeDrawn(World, ushort)"/>. Game thread only (with
+        /// <c>ecs_small_fields</c> the race is an unsynchronized ECS read); the player is read once, so a logout between two
+        /// reads cannot see it go null.</summary>
+        public static bool PlayerIsGargoyle(World world)
+        {
+            PlayerMobile player = world.Player;
+
+            return player != null && player.Race == RaceType.GARGOYLE;
         }
 
         /// <summary>Unit tests only: the static tile data <see cref="CanBeDrawn(World, ushort)"/> reads when there is no

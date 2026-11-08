@@ -227,11 +227,13 @@ namespace ClassicUO.Game.Map
                 }
             }
 
+            bool gargoyle = GameObject.PlayerIsGargoyle(_world);
+
             foreach (ref readonly var sb in block.Statics)
             {
                 int pos = (sb.Y << 3) + sb.X;
 
-                Static staticObject = Static.Create(_world, sb.Graphic, sb.Hue, pos, recycler.TakeStatic(now));
+                Static staticObject = Static.Create(_world, sb.Graphic, sb.Hue, pos, gargoyle, recycler.TakeStatic(now));
                 staticObject.X = (ushort)(bx + sb.X);
                 staticObject.Y = (ushort)(by + sb.Y);
                 staticObject.Z = sb.Z;
