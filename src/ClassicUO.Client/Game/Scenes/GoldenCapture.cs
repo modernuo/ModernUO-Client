@@ -62,10 +62,10 @@ namespace ClassicUO.Game.Scenes
         {
             public uint Ref;
             public bool Mapped;
-            public Point Offset;
+            public Point SrcOffset;
             public Rectangle Source;
             public Vector2 Position;
-            public Vector3 Hue, Mod;
+            public Vector3 HueVec, Mod;
             public bool Flip, Rotated;
             public SpriteCaptureMode Mode;
             public float Depth, Rotation;
@@ -200,7 +200,7 @@ namespace ClassicUO.Game.Scenes
                     mark = Objects(w, mark, i, i == 0);
                     ref LegacyCall c = ref _rec._calls[i];
                     w.Write(string.Create(CultureInfo.InvariantCulture,
-                        $"L {(c.Mapped ? c.Ref.ToString("X8") : "-")} {c.Offset.X} {c.Offset.Y} {c.Source.Width} {c.Source.Height} {F(c.Position.X)} {F(c.Position.Y)} {F(c.Hue.X)} {F(c.Hue.Y)} {F(c.Hue.Z)} {(c.Flip ? 1 : 0)} {(int)c.Mode} {F(c.Depth)} {(c.Rotated ? F(c.Rotation) : "-")} {F(c.Mod.X)} {F(c.Mod.Y)} {F(c.Mod.Z)}\n"));
+                        $"L {(c.Mapped ? c.Ref.ToString("X8") : "-")} {c.SrcOffset.X} {c.SrcOffset.Y} {c.Source.Width} {c.Source.Height} {F(c.Position.X)} {F(c.Position.Y)} {F(c.HueVec.X)} {F(c.HueVec.Y)} {F(c.HueVec.Z)} {(c.Flip ? 1 : 0)} {(int)c.Mode} {F(c.Depth)} {(c.Rotated ? F(c.Rotation) : "-")} {F(c.Mod.X)} {F(c.Mod.Y)} {F(c.Mod.Z)}\n"));
                 }
 
                 Objects(w, mark, int.MaxValue, n == 0);
@@ -405,10 +405,10 @@ namespace ClassicUO.Game.Scenes
 
             ref LegacyCall c = ref _calls[_count++];
             c.Mapped = PackSpriteMap.TryFind(texture, source, out c.Ref, out Point origin);
-            c.Offset = c.Mapped ? new Point(source.X - origin.X, source.Y - origin.Y) : Point.Zero;
+            c.SrcOffset = c.Mapped ? new Point(source.X - origin.X, source.Y - origin.Y) : Point.Zero;
             c.Source = source;
             c.Position = position;
-            c.Hue = hue;
+            c.HueVec = hue;
             c.Mod = mod;
             c.Flip = flip;
             c.Mode = mode;
