@@ -983,6 +983,46 @@ namespace ClassicUO.Game
 
                     return true;
 
+                // overhead: the player's overhead texts, oldest first, walked both ways (linked-object: TextContainer's own list),
+                // and the effect list's length both ways
+                case "overhead":
+                {
+                    TextContainer tc = player.TextContainer;
+                    int fwd = 0, back = 0;
+                    TextObject last = null;
+                    var sb = new System.Text.StringBuilder();
+
+                    for (TextObject t = tc?.Items; t != null; t = t.Next)
+                    {
+                        fwd++;
+                        last = t;
+                        sb.Append(" | ").Append(t.RenderedText?.Text);
+                    }
+
+                    for (TextObject t = last; t != null; t = t.Previous)
+                    {
+                        back++;
+                    }
+
+                    int fxFwd = 0, fxBack = 0;
+                    GameEffect lastFx = null;
+
+                    for (GameEffect f = world.Effects.Items; f != null; f = f.Next)
+                    {
+                        fxFwd++;
+                        lastFx = f;
+                    }
+
+                    for (GameEffect f = lastFx; f != null; f = f.Previous)
+                    {
+                        fxBack++;
+                    }
+
+                    Log.Info($"[ECS] overhead size {tc?.Size ?? 0} max {tc?.MaxSize ?? 0} linked {fwd}/{back} effects {fxFwd}/{fxBack}:{sb}");
+
+                    return false;
+                }
+
                 // journal [n]: the last n (default 6) journal lines, e.g. a staff command's server answer ([Global Count)
                 case "journal":
                     int jn = Math.Min(args.Length > 0 ? int.Parse(args[0]) : 6, JournalManager.Entries.Count);
