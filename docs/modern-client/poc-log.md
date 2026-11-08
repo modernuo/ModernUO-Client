@@ -5723,3 +5723,15 @@ Base poc/modern-client db2bdcb6b. Setting `ecs_active_items_source`, **default o
 **Costs.** Item +4 bytes (`ActiveEntryId`; may fit in padding). With the switch on: an entity create/delete per add/removal (rare: corpses, opened handles) and a per-frame query count plus an O(listed) scatter. No pool or cache. Timing parked (`job-timing-PARKED.sh`, after `build.sh <head>`).
 
 **Gates submitted (not awaited):** Gpu bench-000352, Legacy bench-000353 (`job-gate-gpu.sh`/`job-gate-legacy.sh`: w5items, w5push, corpses, corpsewalk with the switch on, corpses and corpsewalk with it off; every checker incl. `CUO_ANIM_ADVANCE_CHECK`, `CUO_ACTIVE_ITEMS_CHECK`, `CUO_W5_CHECK`, `CUO_STEP_OPEN_CHECK`). Pass: `GATE PASS`.
+
+## 2026-11-08: T9 active items, P2 fix: entries no longer keep destroyed items reachable (ecs-active-items-2)
+
+Branch `bg/ecs-active-items-2` from `bg/ecs-active-items` a209719f6. Codex audit P2: `ActiveItemEntry` held its `Item` as an `object`. Friflo 4.0.0-preview.2's `DeleteEntity` moves the last entity's components into the freed slot and leaves the vacated tail uncleared, so a stale component copy kept a moved item reachable after it was destroyed; `World.Clear` left every entry's item in the backing array. Nulling the field before the delete would only have covered the deleted-is-last case.
+
+**Fix.** The component keeps no reference: `ActiveItemEntry.Handle` (int) indexes an item table in `ActiveItemStore` (with a free list). Add takes a handle, a removal nulls its slot and frees it, `Clear` empties the table (which also covers entries deleted outside the store, a checker-test case). `Rebuild` and the source checker resolve the handle: O(1), no allocation. Stale tail copies now hold only ints. While finding the test's roots, `CheckActiveItemsSystem` (`CUO_ACTIVE_ITEMS_CHECK`) turned out to keep the last check's items in its scratch set until the next check; it now empties the set after each check.
+
+**Tests.** `Removed_Items_Are_Not_Kept_Reachable_By_Their_Entries` (switch off/on x `CUO_ACTIVE_ITEMS_SOURCE_CHECK` off/on): items removed by the visit, including the one moved from the last slot, and items removed by `World.Clear` must be collectable (weak references, items created in non-inlined helpers). Mutants: the original object-reference store, `Clear` without emptying the table, and a freed handle that keeps its item: all killed (in the three states that have entries). Dev suite 3,279 passed, 6 skipped; `-p:CuoDevTools=false` suite 3,273 passed, 6 skipped; both client variants build; write-site budget unchanged.
+
+**Costs.** Item table and free list: 64 entries each to start, grown to the peak listed count (a few KB). One extra array read per entry in `Rebuild`. No measured cost; timing parked.
+
+**Gates submitted (not awaited):** Gpu bench-000356, Legacy bench-000357 (`measure/ecs-active-items-2/job-gate-*.sh`, ecs-active-items' gate body on this branch's binary). Pass: `GATE PASS`.
