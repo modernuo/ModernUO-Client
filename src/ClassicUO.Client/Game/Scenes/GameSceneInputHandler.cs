@@ -1,4 +1,4 @@
-// SPDX-License-Identifier: BSD-2-Clause
+﻿// SPDX-License-Identifier: BSD-2-Clause
 
 using System;
 using System.Linq;
@@ -592,9 +592,9 @@ namespace ClassicUO.Game.Scenes
                             {
                                 obj = ov.Owner;
                             }
-                            else if (obj is GameEffect eff && eff.Source != null)
+                            else if (obj is GameEffect eff && eff.SourceObject != null)
                             {
-                                obj = eff.Source;
+                                obj = eff.SourceObject;
                             }
 
                             switch (obj)
