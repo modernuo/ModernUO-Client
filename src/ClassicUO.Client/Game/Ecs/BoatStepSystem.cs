@@ -234,6 +234,9 @@ namespace ClassicUO.Game
 
         /// <summary>The boat's record is being removed (<c>WorldEcs.OnDestroyed</c>): its queued steps, passengers and clock
         /// wait under its serial (see <see cref="_order"/>).</summary>
+        // Codex re-review P3 (accepted): a boat with an empty queue but listed passengers keeps no parked state, where the old
+        // manager kept _items[serial]. Every smooth 0xF6 resends the full passenger list before the next step uses it, so only
+        // CUO_BOAT_CHECK can see the difference (a passenger-state mismatch on the next frame).
         internal void Park(uint serial, in BoatSteps steps)
         {
             ref BoatSteps slot = ref CollectionsMarshal.GetValueRefOrNullRef(_order, serial);
