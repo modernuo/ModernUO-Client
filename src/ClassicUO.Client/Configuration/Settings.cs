@@ -213,6 +213,14 @@ namespace ClassicUO.Configuration
         // builds). Default off.
         [JsonPropertyName("ecs_effect_motion")] public bool EcsEffectMotion { get; set; }
 
+        // T7b part 3 (ecs-transition-plan.md): with ecs_effects on, both world renderers draw graphic effects (fixed, moving,
+        // explosion, drag) from the renderer-neutral effect extract over EffectState (EffectSpriteExtract) at the effect's
+        // render-list position, instead of GameEffectView.Draw; lightning stays on its view. Its own switch, not
+        // legacy_ecs_sprites/gpu_ecs_sprites: it needs ecs_effects (the state) and flips with the effect work. CUO_EFFECT_SPRITE_CHECK=1
+        // compares the view's draw with the extract's for every effect, every frame. Read every frame (dev builds:
+        // CUO_ECS_EFFECT_SPRITES=1|0, DevBench effectsprites:on|off). Default off.
+        [JsonPropertyName("ecs_effect_sprites")] public bool EcsEffectSprites { get; set; }
+
         // T4 (ecs-transition-plan.md, "thin handles"): the cold world-state getters (Name, Hits, HitsMax, Stamina, Mana and
         // their maxima, Price) read the entity's ECS record; the GameObject field becomes a write-only cache. Read once at
         // startup (EcsScalars.Owns; CUO_ECS_OWNS_SCALARS=1|0 overrides it in developer builds). Default on since 2026-11-02 (owner, after the quiet-machine per-switch timing bench-000206/207/208: timing-neutral on both renderers); the off path and the checker stay for one phase.

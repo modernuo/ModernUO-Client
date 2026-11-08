@@ -21,13 +21,19 @@ namespace ClassicUO.Game
         /// <summary>Sitted: DrawCharacterSitted's section fractions.</summary>
         public Vector3 SitMod;
 
+        /// <summary>T7b part 3: the rectangle draw with a rotation (View.DrawStaticRotated; the batcher's DrawRotated capture).</summary>
+        public bool Rotated;
+
+        public float Rotation;
+
         public readonly bool Same(in LegacyDraw o) =>
             ReferenceEquals(Texture, o.Texture) && Position == o.Position && Source == o.Source && Hue == o.Hue && Depth == o.Depth &&
-            Flip == o.Flip && Mode == o.Mode && (Mode != SpriteCaptureMode.Sitted || SitMod == o.SitMod);
+            Flip == o.Flip && Mode == o.Mode && (Mode != SpriteCaptureMode.Sitted || SitMod == o.SitMod) && Rotated == o.Rotated &&
+            Rotation == o.Rotation;
 
         public override readonly string ToString() =>
             $"{Mode} tex#{(Texture == null ? 0 : System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode(Texture))} at {Position.X},{Position.Y} src {Source} hue {Hue} depth {Depth} flip {Flip}" +
-            (Mode == SpriteCaptureMode.Sitted ? $" mod {SitMod}" : "");
+            (Mode == SpriteCaptureMode.Sitted ? $" mod {SitMod}" : "") + (Rotated ? $" rotated {Rotation}" : "");
     }
 
     /// <summary>The FNA atlas sprites a <see cref="DynamicSprite"/> names: the client's pack-backed Art and Animations, or a
@@ -130,6 +136,45 @@ namespace ClassicUO.Game
             }
 
             return true;
+        }
+
+        /// <summary>T7b part 3: the effect sprite's batcher call (GameEffectView's View.DrawStaticRotated or DragEffect's
+        /// View.DrawStatic). False: the atlas has no texture for the art (the view draws nothing either).</summary>
+        public static bool ResolveEffect(ILegacySpriteSource src, in EffectSprite e, out LegacyDraw d)
+        {
+            d = default;
+            ref readonly SpriteInfo art = ref src.Art(e.Sprite.Id);
+
+            if (art.Texture == null)
+            {
+                return false;
+            }
+
+            d.Texture = art.Texture;
+            d.Position = new Vector2(e.Sprite.X, e.Sprite.Y);
+            d.Source = art.UV;
+            d.Hue = e.Sprite.Hue;
+            d.Depth = e.Sprite.Depth;
+            d.Mode = SpriteCaptureMode.Normal;
+            d.Rotated = e.Rotated;
+            d.Rotation = e.Rotated ? e.Rotation : 0f;
+
+            return true;
+        }
+
+        /// <summary>The effect's batcher call as its view makes it: the rotated rectangle draw (DrawStaticRotated) or the
+        /// position draw with a unit scale (DrawStatic, not wet).</summary>
+        public static void DrawEffect(UltimaBatcher2D batcher, in LegacyDraw d)
+        {
+            if (d.Rotated)
+            {
+                batcher.Draw(d.Texture, new Rectangle((int)d.Position.X, (int)d.Position.Y, d.Source.Width, d.Source.Height), d.Source, d.Hue, d.Rotation,
+                    Vector2.Zero, SpriteEffects.None, d.Depth);
+            }
+            else
+            {
+                batcher.Draw(d.Texture, d.Position, d.Source, d.Hue, 0f, Vector2.Zero, Vector2.One, SpriteEffects.None, d.Depth);
+            }
         }
 
         // View.DrawStaticAnimated's draw offset of an art sprite. For the placeholder it also writes it to the art entry, but

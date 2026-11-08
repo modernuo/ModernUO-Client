@@ -87,6 +87,18 @@ namespace ClassicUO.Game.GameObjects
         );
 
 
+        /// <summary>The blend state <see cref="Draw"/> sets around its draw for <paramref name="blend"/>; null = none set
+        /// (Normal, ScreenRed). T7b part 3: the Legacy effect sink sets the same one.</summary>
+        internal static BlendState BlendStateOf(GraphicEffectBlendMode blend) => blend switch
+        {
+            GraphicEffectBlendMode.Multiply => _multiplyBlendState.Value,
+            GraphicEffectBlendMode.Screen or GraphicEffectBlendMode.ScreenMore => _screenBlendState.Value,
+            GraphicEffectBlendMode.ScreenLess => _screenLessBlendState.Value,
+            GraphicEffectBlendMode.NormalHalfTransparent => _normalHalfBlendState.Value,
+            GraphicEffectBlendMode.ShadowBlue => _shadowBlueBlendState.Value,
+            _ => null
+        };
+
         public override bool Draw(UltimaBatcher2D batcher, int posX, int posY, float depth)
         {
             if (IsDestroyed || !AllowedToDraw)
