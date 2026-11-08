@@ -23,7 +23,7 @@ namespace ClassicUO.UnitTests.Game.Map
         private readonly World _world = new World();
         private readonly Chunk _a;
         private readonly StaticTiles[] _savedStaticData;
-        private readonly bool _savedMaintain;
+        private readonly bool _savedMaintain, _savedDropped, _savedShadow;
         private uint _nextSerial = 0x4000_0100, _nextMobile = 0x100;
 
         public TileReaderTests()
@@ -34,7 +34,12 @@ namespace ClassicUO.UnitTests.Game.Map
             _savedStaticData = Chunk.StaticTileData;
             Chunk.StaticTileData = data;
             _savedMaintain = DynamicTileIndex.Maintain;
+            _savedDropped = DynamicTileIndex.ListDropped;
+            _savedShadow = DynamicTileIndex.Shadow;
             DynamicTileIndex.Maintain = true;
+            // the list and the merged walk are compared, so the list keeps the dynamics (world_tile_index's list-kept mode)
+            DynamicTileIndex.ListDropped = false;
+            DynamicTileIndex.Shadow = false;
             _a = new Chunk(_world) { X = 0, Y = 0 };
             ChairTable.Table[Chair] = new AnimationsLoader.SittingInfoData(Chair, 1, 2, 3, 4, 5, 6, false);
             ChairTable.Table[Chair + 1] = new AnimationsLoader.SittingInfoData(Chair + 1, 1, 2, 3, 4, 5, 6, false);
@@ -44,6 +49,8 @@ namespace ClassicUO.UnitTests.Game.Map
         {
             Chunk.StaticTileData = _savedStaticData;
             DynamicTileIndex.Maintain = _savedMaintain;
+            DynamicTileIndex.ListDropped = _savedDropped;
+            DynamicTileIndex.Shadow = _savedShadow;
             ChairTable.Table.Remove(Chair);
             ChairTable.Table.Remove((ushort)(Chair + 1));
         }
