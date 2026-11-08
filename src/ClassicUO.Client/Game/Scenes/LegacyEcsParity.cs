@@ -297,7 +297,8 @@ namespace ClassicUO.Game.Scenes
             return $" lights view={view} sink={sink}";
         }
 
-        private bool Record(Texture2D texture, Vector2 position, Rectangle source, Vector3 hue, bool flip, float depth, SpriteCaptureMode mode, Vector3 mod)
+        private bool Record(Texture2D texture, Vector2 position, Rectangle source, Vector3 hue, bool flip, float depth, SpriteCaptureMode mode, Vector3 mod,
+            bool rotated = false, float rotation = 0f)
         {
             if (source.Width <= 0 || source.Height <= 0)
             {
@@ -311,7 +312,8 @@ namespace ClassicUO.Game.Scenes
 
             _buf[_count++] = new LegacyDraw
             {
-                Texture = texture, Position = position, Source = source, Hue = hue, Depth = depth, Flip = flip, Mode = mode, SitMod = mod
+                Texture = texture, Position = position, Source = source, Hue = hue, Depth = depth, Flip = flip, Mode = mode, SitMod = mod,
+                Rotated = rotated, Rotation = rotation
             };
 
             return _suppress;
@@ -321,7 +323,7 @@ namespace ClassicUO.Game.Scenes
             Record(texture, position, source, hue, flip, depth, mode, default);
 
         bool ISpriteCapture.DrawRotated(Texture2D texture, Vector2 position, Rectangle source, Vector3 hue, float rotation, float depth) =>
-            Record(texture, position, source, hue, false, depth, SpriteCaptureMode.Normal, new Vector3(rotation, 0, 0));
+            Record(texture, position, source, hue, false, depth, SpriteCaptureMode.Normal, default, true, rotation);
 
         bool ISpriteCapture.DrawSitted(Texture2D texture, Vector2 position, Rectangle source, Vector3 mod, Vector3 hue, bool flip, float depth) =>
             Record(texture, position, source, hue, flip, depth, SpriteCaptureMode.Sitted, mod);

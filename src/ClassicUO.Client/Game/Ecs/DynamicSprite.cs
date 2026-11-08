@@ -179,7 +179,7 @@ namespace ClassicUO.Game
         }
 
         // GpuWorldRenderer.Emit's hue translation; false = a hue type the world pass doesn't draw
-        private static bool HueBits(in GpuSpriteTables t, Vector3 hue, out uint flags, out uint hueRow, out HueMode hueMode)
+        internal static bool HueBits(in GpuSpriteTables t, Vector3 hue, out uint flags, out uint hueRow, out HueMode hueMode)
         {
             flags = 0;
             hueRow = 0;
