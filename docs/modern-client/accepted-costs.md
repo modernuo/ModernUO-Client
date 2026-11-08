@@ -26,3 +26,13 @@ Columns: what costs, how much (measured or estimated, with the scene), what it b
 | perf-11 | Corpse layer tables: 8 × `Item[256]`, about 17 KB per client; can keep destroyed corpse items alive until reused | Corpse layer reads without a scan (about 500 scans → 0 per frame in the corpse scene) | Cache serials instead of Items, or clear on destroy |
 
 For pools, caches, prefill and atlases with their MB cost, see [memory-footprint.md](memory-footprint.md).
+
+## 2026-11-07
+
+| Change | Cost | Buys | Revisit |
+|---|---|---|---|
+| tile-head (1150d9b3a) | ~544 B per chunk (`_heads`, 64 refs), ≤ ~0.3 MB per client with the 300-chunk pool | O(1) tile-list head; the `TPrevious` walk was 7–8 % of Legacy britain_z samples | quiet timing parked (`measure/tile-head/`) |
+| tile-index-2 (8b1f355cd) | 8 B per chunk index (occupied-cell mask); one OR/AND-NOT per placement | one bit test per walked tile instead of a call + loads | quiet timing parked (`measure/tile-index-2/`) |
+| ecs-effects-own (endpoints, default off) | ~40 B per live effect (< 0.05 MB); with the switch on ~10–15 ns per endpoint read, ~25 ns per drawn effect with a source, a walk of live effects per object destroy, ~1–2 ns Serial+kind check | effects reference ECS records, not objects | phase 2 folds reads into one step per effect |
+| ecs-item-offset (default off) | 12 B per item that ever rode a moving boat; ~4–5 ns per drawn item with the switch on | item offset owned by the ECS | read from the row Gather already holds |
+| decode-stall (b-merge pending push) | two `SetThreadPriority` calls per blocking decode wait | 2 ms wait under load ~500 ms → ~4 ms p50 | — |

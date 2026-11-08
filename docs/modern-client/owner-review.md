@@ -153,6 +153,49 @@ All merged and pushed, and each audited by Codex until clean or down to document
 
 ## In progress
 
+- **Autonomous run of 2026-11-07** (you away; machine busy, so timing and T9 deletion stay parked). Goals: top performance and finishing the ECS conversion where it makes sense.
+  - **Your answers at the start (2026-11-07):**
+    - timing stays parked until you say the machine is quiet;
+    - T9 for the 7 flipped switches is parked: keeping their old paths costs nothing measurable (`cuo-poc-state/surveys/retained-paths-cost-2026-11-07.md`);
+    - `world_tile_index` work now;
+    - effect ownership, then motion under its own switch `ecs_effect_motion`, with item `Offset` in the ECS first;
+    - `LinkedObject` after the effects work;
+    - the cold scalar caches go, and the shared-serial case accepts the loss of cold values until the next packet.
+  - **Merged and pushed:**
+    - tile-index-2: a per-chunk occupied-cell mask; fix A for the Gpu mask build and item cache.
+    - tile-head: the tile list head is stored per cell, so walks no longer follow `TPrevious`.
+    - ecs-hygiene: checkers out of release builds; one `EcsRead.Row` per system eligibility.
+    - flaky-decode-tests: the decode tests wait on publish signals; the Friflo schema race fixed in the tests.
+    - perf-12-ui: paperdoll per-frame lookups cut from 15 to 0 `FindItemByLayer` and from 15 to 1 worn check; the unread texmap picker removed.
+    - gump-handles: grid loot, the inspector and the criminal-question target hold serials.
+    - ecs-item-offset: `ItemOffset` component (`ecs_item_offset`, default off).
+    - ecs-effects-own: effect endpoints by ECS record (`ecs_effect_endpoints`, default off).
+    - player-state: `World.PlayerState`.
+    - decode-stall: decode waits raise thread priority while blocked.
+  - **Each was audited by Codex.** Real findings were fixed with failing-first tests. Findings that only a misconfigured server can trigger were documented in code under your shared-serial rule.
+  - **Timing parked:** every perf branch has `job-*-PARKED.sh` under `cuo-poc-state/measure/<branch>/`, with the NativeAOT builds kept.
+  - **Surveys** (in `cuo-poc-state/surveys/`):
+    - serial-scheme flexibility (a proposal only);
+    - ServUO damageable items (item serials, hits via 0x11/0xA1; our client already accepts them);
+    - the remaining ECS roadmap (waves 1–3).
+  - **Accepted by me; please confirm:**
+    1. The shared-serial loss rule now also covers an item's boat `ItemOffset`: it reads zero until the next boat write (b412884bd).
+    2. Effects:
+       - On a double death under one serial, the displaced mobile's effects end; the old path kept following its object. The mirror record is updated in place, for parity.
+       - Friflo's 16-bit handle revision wrap is documented as a bound (it needs 65,536 deletes of one id between two effect updates) instead of a per-record generation token.
+    3. Gump-handles behaviour changes:
+       - grid loot stays open when its corpse is re-sent under the same serial;
+       - the inspector's Dump on a removed entity says "gone";
+       - the criminal-question target sends the mobile's position at question time if the mobile was removed.
+    4. Player state:
+       - logout still empties the store;
+       - the auto/manual opened-corpse sets move to `PlayerState` later.
+  - **Questions for you:**
+    1. **Main thread priority.** On a loaded machine, a blocked thread waits for its next quantum when it wakes: a 2 ms wait took about 500 ms with 40 busy loops. decode-stall raises priority only during decode waits, which gives about 4 ms at p50. Should the main thread run above normal all the time? That would also cover Present, vsync and the frame limiter, which matters with 3–4 clients. My recommendation: measure a client under load first, then raise priority only around the frame limiter's sleep and Present, so several instances stay fair to each other.
+    2. **OPL** as a per-entity ECS component, or keep the plain store the plan chose (Q4)? My recommendation: keep the store unless plugins or prediction need it.
+    3. **The index kept for effects while `world_tile_index` is off** costs about 0.5–1.5 MB and an insert per placement. My recommendation: leave it, since turning the switch on removes the duplicate.
+  - **Biggest blocker:** quiet-machine timing (wave 0) now gates the rest of T9: the tile-index flip, the sprite switch flips, the hot caches and deleting the views' Draw.
+
 - **Autonomous run of 2026-11-02** (you away; the machine is busy, so timing is parked). For you when you're back:
   - **Parked timing** (resubmit when quiet; list in `cuo-poc-state/handoffs/parked-timing.txt`): fix A off/on, which decides whether `world_tile_index` goes on by default; the picker flat table; the pick-bounds follow-ups; T7b part 1.
   - **Merged with timing pending:** PixelPicker flat table (2ec71344f), tile-index fix A (2ee3cd208), the pick bounds and picker byte[] (596a4da2c). Also merged: the funnel dev-write scope (8e2c942e0).
