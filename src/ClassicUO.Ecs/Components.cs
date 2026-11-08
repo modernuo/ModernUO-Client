@@ -525,8 +525,12 @@ namespace ClassicUO.Ecs
     /// </summary>
     public struct ActiveItemEntry : IComponent
     {
-        /// <summary>The <c>Item</c> (ClassicUO.Ecs does not know the client's types).</summary>
-        public object Item;
+        /// <summary>
+        /// The item's index in the store's item table (ClassicUO.Ecs does not know the client's types). Not an object reference:
+        /// Friflo's DeleteEntity moves the last entity's components into the freed slot and leaves the vacated tail uncleared,
+        /// so a reference here would keep destroyed items reachable.
+        /// </summary>
+        public int Handle;
 
         public uint Serial;
         public int Slot;

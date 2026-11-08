@@ -444,6 +444,67 @@ namespace ClassicUO.UnitTests.Ecs
             }
         }
 
+        // Codex audit P2: an entry must not keep its item reachable once it is gone. Friflo's DeleteEntity moves the last
+        // entity's components into the freed slot and leaves the vacated tail uncleared, so an object reference in
+        // ActiveItemEntry stayed in the component array: here c is moved into a's slot when a leaves, then leaves itself, and
+        // World.Clear deletes the rest. Every destroyed item must be collectable, with the switch and the checker on and off.
+        [Theory]
+        [InlineData(false, false)]
+        [InlineData(false, true)]
+        [InlineData(true, false)]
+        [InlineData(true, true)]
+        public void Removed_Items_Are_Not_Kept_Reachable_By_Their_Entries(bool source, bool check)
+        {
+            Scene s = Build(source, check);
+            WeakReference[] removed = AddAndRemoveViaSwap(s);
+            Collect();
+            removed.Select(w => w.IsAlive).Should().Equal(new[] { false, false }, $"source {source} check {check}: a and c removed by the visit");
+
+            WeakReference[] cleared = AddAndClear(s);
+            Collect();
+            cleared.Select(w => w.IsAlive).Should().Equal(new[] { false, false, false, false }, $"source {source} check {check}: removed by World.Clear");
+            s.Mismatches.Should().BeEmpty();
+            GC.KeepAlive(s.World);
+        }
+
+        private static void Collect()
+        {
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static WeakReference[] AddAndRemoveViaSwap(Scene s)
+        {
+            Item a = AddItem(s, 0x4000_0001, CORPSE);
+            AddItem(s, 0x4000_0002, CORPSE);
+            Item c = AddItem(s, 0x4000_0003, CORPSE);
+            s.World.RemoveItem(a.Serial);
+            s.World.Update(); // a leaves; c (the last entry) moves into its slot
+            s.World.RemoveItem(c.Serial);
+            s.World.Update();
+            Active(s.World).Should().Equal(0x4000_0002u);
+
+            return new[] { new WeakReference(a), new WeakReference(c) };
+        }
+
+        [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+        private static WeakReference[] AddAndClear(Scene s)
+        {
+            var refs = new List<WeakReference>();
+
+            for (uint i = 0; i < 4; i++)
+            {
+                refs.Add(new WeakReference(AddItem(s, 0x4000_0010 + i, CORPSE)));
+            }
+
+            s.World.Clear();
+            Entries(s.World).Should().Be(0);
+
+            return refs.ToArray();
+        }
+
         // an entry outlives its item's mirror record: a destroyed item stays listed (and its slot holds) until the visit
         [Fact]
         public void A_Destroyed_Item_Keeps_Its_Slot_Until_The_Visit()

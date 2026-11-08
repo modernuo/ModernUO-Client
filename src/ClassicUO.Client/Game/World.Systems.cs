@@ -189,6 +189,9 @@ namespace ClassicUO.Game
                 }
             }
 
+            // the set is scratch: emptied now so the items it saw, destroyed later, are not kept reachable until the next check
+            _activeSeen.Clear();
+
             _activeTagQuery ??= Ecs.Mirror.Store.Query().AllTags(Tags.Get<ItemActive>());
             int tagged = _activeTagQuery.Count;
 
@@ -364,7 +367,7 @@ namespace ClassicUO.Game
 
                 ref ActiveItemEntry entry = ref e.GetComponent<ActiveItemEntry>();
 
-                if (!ReferenceEquals(entry.Item, item) || entry.Slot != i || entry.Serial != item.Serial)
+                if (!ReferenceEquals(store.ItemOf(entry.Handle), item) || entry.Slot != i || entry.Serial != item.Serial)
                 {
                     ActiveSourceMismatch($"{when}: position {i} 0x{item.Serial:X8}: entry names 0x{entry.Serial:X8} slot {entry.Slot}");
                 }

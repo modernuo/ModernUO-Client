@@ -17,6 +17,11 @@ namespace ClassicUO.Game
     /// moves the last slot's item into the freed one. The visiting order is rebuilt from the entities by <see cref="Rebuild"/>
     /// (a scatter by slot into a reused array, no sort, no allocation) at the start of every active item stage; adds and
     /// removals keep that array in step until the next rebuild, so readers between rebuilds see the same order.
+    /// <para>
+    /// The entry names its item by <see cref="ActiveItemEntry.Handle"/>, an index into <see cref="_items"/>, not by reference:
+    /// Friflo's DeleteEntity leaves the moved-from component tail uncleared, so a reference in the component would keep
+    /// destroyed items reachable. The table's slot is nulled when the entry goes.
+    /// </para>
     /// </summary>
     internal sealed class ActiveItemStore : IReadOnlyList<Item>
     {
@@ -24,6 +29,10 @@ namespace ClassicUO.Game
         private readonly ArchetypeQuery<ActiveItemEntry> _query;
         private Item[] _order = new Item[64];
         private int _count;
+        private Item[] _items = new Item[64];
+        private int[] _freeHandles = new int[64];
+        private int _freeCount;
+        private int _handleEnd;
         private readonly List<EcsEntity> _scratch = new List<EcsEntity>();
 
         public ActiveItemStore(EntityStore store)
@@ -52,7 +61,9 @@ namespace ClassicUO.Game
             }
 
             int slot = _count;
-            item.ActiveEntryId = _store.CreateEntity(new ActiveItemEntry { Item = item, Serial = item.Serial, Slot = slot }).Id;
+            int handle = TakeHandle();
+            _items[handle] = item;
+            item.ActiveEntryId = _store.CreateEntity(new ActiveItemEntry { Handle = handle, Serial = item.Serial, Slot = slot }).Id;
             Grow(slot + 1);
             _order[slot] = item;
             _count = slot + 1;
@@ -80,7 +91,9 @@ namespace ClassicUO.Game
 
             _order[last] = null;
             _count = last;
-            EntryOf(item).DeleteEntity();
+            EcsEntity entry = EntryOf(item);
+            FreeHandle(entry.GetComponent<ActiveItemEntry>().Handle);
+            entry.DeleteEntity();
             item.ActiveEntryId = 0;
 
             if (mirrorTag)
@@ -100,7 +113,7 @@ namespace ClassicUO.Game
 
             foreach (EcsEntity e in _scratch)
             {
-                Item item = (Item)e.GetComponent<ActiveItemEntry>().Item;
+                Item item = ItemOf(e.GetComponent<ActiveItemEntry>().Handle);
                 e.DeleteEntity();
                 item.ActiveEntryId = 0;
 
@@ -113,6 +126,45 @@ namespace ClassicUO.Game
             _scratch.Clear();
             Array.Clear(_order, 0, _count);
             _count = 0;
+            // also drops the items of entries deleted outside the store (only the checker's tests do that)
+            Array.Clear(_items, 0, _handleEnd);
+            _handleEnd = 0;
+            _freeCount = 0;
+        }
+
+        /// <summary>The item an entry names (null for a handle the store does not hold).</summary>
+        public Item ItemOf(int handle) => (uint)handle < (uint)_handleEnd ? _items[handle] : null;
+
+        private int TakeHandle()
+        {
+            if (_freeCount > 0)
+            {
+                return _freeHandles[--_freeCount];
+            }
+
+            if (_handleEnd == _items.Length)
+            {
+                Array.Resize(ref _items, _items.Length * 2);
+            }
+
+            return _handleEnd++;
+        }
+
+        private void FreeHandle(int handle)
+        {
+            if ((uint)handle >= (uint)_handleEnd || _items[handle] == null)
+            {
+                return;
+            }
+
+            _items[handle] = null;
+
+            if (_freeCount == _freeHandles.Length)
+            {
+                Array.Resize(ref _freeHandles, _freeHandles.Length * 2);
+            }
+
+            _freeHandles[_freeCount++] = handle;
         }
 
         /// <summary>
@@ -146,7 +198,7 @@ namespace ClassicUO.Game
                         continue;
                     }
 
-                    _order[slot] = (Item)entry.Item;
+                    _order[slot] = ItemOf(entry.Handle);
                 }
             }
 
@@ -162,7 +214,7 @@ namespace ClassicUO.Game
                     for (int i = 0; i < span.Length; i++)
                     {
                         span[i].Slot = k;
-                        _order[k++] = (Item)span[i].Item;
+                        _order[k++] = ItemOf(span[i].Handle);
                     }
                 }
             }
