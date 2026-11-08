@@ -193,6 +193,31 @@ namespace ClassicUO.UnitTests.Game.Map
             return list;
         }
 
+        /// <summary>The whole-tile walk the render, mask-build and item-cache loops take (<see cref="TileWalk.MergeCells"/>,
+        /// <see cref="TileWalk.Open"/>).</summary>
+        private static List<GameObject> OpenedList(Chunk chunk, int cell)
+        {
+            var list = new List<GameObject>();
+            ulong mergeCells = TileWalk.MergeCells(chunk, DynamicTileIndex.Merged);
+
+            for (GameObject o = TileWalk.Open(chunk, cell, mergeCells, out TileWalk w, out bool m); o != null; o = m ? w.Next() : o.TNext)
+            {
+                list.Add(o);
+                Assert.True(list.Count < 100_000);
+            }
+
+            return list;
+        }
+
+        /// <summary><see cref="DynamicTileIndex.Cells"/> has the cell's bit exactly when the cell holds entries.</summary>
+        private static void AssertCellsMask(Chunk chunk, int cell)
+        {
+            DynamicTileIndex dyn = chunk.Dynamic;
+            bool occupied = dyn != null && dyn.CountAt(cell) > 0;
+            bool bit = dyn != null && (dyn.Cells >> cell & 1) != 0;
+            Assert.Equal(occupied, bit);
+        }
+
         private static List<int> Ids(Side s, IEnumerable<GameObject> objects) => objects.Select(o => s.Id[o]).ToList();
 
         /// <summary>Every tile, walk and reader of the dropped side equals the legacy side's list, and the checkers pass.</summary>
@@ -216,6 +241,9 @@ namespace ClassicUO.UnitTests.Game.Map
                         List<GameObject> legacyList = RealList(lc, x, y);
                         List<int> expected = Ids(legacy, legacyList);
                         Assert.False(TileOrder.CheckIndex(lc, x, y).Failed);
+                        // the whole-tile walks by the chunk's merge mask with the switch off: the list from its head
+                        AssertCellsMask(lc, cell);
+                        Assert.Equal(expected, Ids(legacy, OpenedList(lc, cell)));
                         ClassicUO.Game.Map.Map.ScanMapZ(lc, x, y, false, out sbyte g0, out sbyte s0);
                         var roofs = new List<int>();
 
@@ -243,6 +271,10 @@ namespace ClassicUO.UnitTests.Game.Map
                         // the anchor is never a dynamic: a tile holding only dynamics has none
                         Assert.True(dc.Tiles[x, y] == null || !DynamicTileIndex.Holds(dc.Tiles[x, y]));
                         Assert.Equal(expected, Ids(dropped, MergedList(dc, cell)));
+                        // the whole-tile walks by the chunk's merge mask (GameScene's chunk loop, the Gpu mask build, the item
+                        // cache): the mask is exactly the index's occupied cells, and the walk it picks is the legacy order
+                        AssertCellsMask(dc, cell);
+                        Assert.Equal(expected, Ids(dropped, OpenedList(dc, cell)));
 
                         if (dropped.Shadow)
                         {
@@ -720,6 +752,57 @@ namespace ClassicUO.UnitTests.Game.Map
             Assert.False(SetWalk(false));
             Assert.False(ShadowWalk());
             Assert.True(DynamicTileIndex.IndexWalkOn);
+        }
+
+        // tile-index-2: the merge compares an index entry with a list object by the stored PriorityZ first and builds the list
+        // object's full key (rank by type, stamp) only on equal priorities; the answer must be the full key comparison's
+        [Fact]
+        public void The_Priority_First_Merge_Comparison_Equals_The_Full_Key_Comparison()
+        {
+            var s = new Side(true, false);
+            var rnd = new Random(2602);
+            var objects = new List<GameObject>
+            {
+                NewLand(s.World, 0),
+                new Static(s.World) { Graphic = Plain },
+                new Multi(s.World) { Graphic = Plain },
+                new Multi(s.World) { Graphic = Plain, State = CUSTOM_HOUSE_MULTI_OBJECT_FLAGS.CHMOF_PREVIEW },
+                new Multi(s.World) { Graphic = Plain, State = CUSTOM_HOUSE_MULTI_OBJECT_FLAGS.CHMOF_PREVIEW | CUSTOM_HOUSE_MULTI_OBJECT_FLAGS.CHMOF_GENERIC_INTERNAL }
+            };
+            int ties = 0, differ = 0;
+
+            for (int i = 0; i < 20_000; i++)
+            {
+                GameObject o = objects[rnd.Next(objects.Count)];
+                o.PriorityZ = (short)rnd.Next(-3, 4);
+                o.TileSeq = (ulong)rnd.Next(1, 6);
+                var key = new TileOrderKey((short)rnd.Next(-3, 4), (byte)rnd.Next(0, 3), (ulong)rnd.Next(1, 6));
+                bool full = key.CompareTo(TileOrder.Key(o)) < 0;
+
+                Assert.Equal(full, TileWalk.Before(in key, o));
+
+                if (key.Priority == o.PriorityZ)
+                {
+                    ties++;
+                }
+                else
+                {
+                    differ++;
+                }
+            }
+
+            Assert.True(ties > 1000 && differ > 1000);
+
+            // the index files held objects by their rank-2 key without the rank's type tests
+            Item item = s.World.GetOrCreateItem(0x4000_0201);
+            Mobile mobile = s.World.GetOrCreateMobile(0x201);
+
+            foreach (GameObject d in new GameObject[] { item, mobile })
+            {
+                d.PriorityZ = 5;
+                d.TileSeq = 77;
+                Assert.Equal(0, DynamicTileIndex.KeyOf(d).CompareTo(TileOrder.Key(d)));
+            }
         }
 
         private static List<GameObject> Walk(Chunk c, int cell)

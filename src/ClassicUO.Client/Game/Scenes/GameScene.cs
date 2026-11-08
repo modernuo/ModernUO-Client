@@ -689,6 +689,7 @@ namespace ClassicUO.Game.Scenes
             // Stopwatch.GetTimestamp a P/Invoke with a GC poll after it)
             bool chunkStamps = FrameStats.On && (_gpuWorld != null || FrameStats.Detail);
             int nTiles = 0;
+            bool mergedWalk = ClassicUO.Game.Map.DynamicTileIndex.Merged;
 
             for (var chunkX = minChunkX; chunkX <= maxChunkX; chunkX++)
             {
@@ -736,6 +737,9 @@ namespace ClassicUO.Game.Scenes
                         }
                     }
 
+                    // T6b (world_tile_index): the tiles whose walk merges the dynamic index (none with the switch off)
+                    ulong mergeCells = ClassicUO.Game.Map.TileWalk.MergeCells(chunk, mergedWalk);
+
                     for (var x = 0; x < 8; x++)
                     {
                         for (var y = 0; y < 8; y++)
@@ -763,7 +767,7 @@ namespace ClassicUO.Game.Scenes
                                     if (!mobile.IsDestroyed)
                                     {
                                         nTiles++;
-                                        AddTileToRenderList(mobile, use_handles, GPU_WALK_MAX_Z, chunk, true, _gpuSkipEnabled, mobile.TNext, true);
+                                        AddTileToRenderList(mobile, use_handles, GPU_WALK_MAX_Z, chunk, true, _gpuSkipEnabled, mobile.TNext);
                                     }
                                 }
 
@@ -787,7 +791,9 @@ namespace ClassicUO.Game.Scenes
                                 GPU_WALK_MAX_Z,
                                 chunk,
                                 !full,
-                                _gpuSkipEnabled
+                                _gpuSkipEnabled,
+                                null,
+                                (mergeCells & bit) != 0
                             );
                         }
                     }

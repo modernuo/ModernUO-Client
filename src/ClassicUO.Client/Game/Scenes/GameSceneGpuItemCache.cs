@@ -341,7 +341,7 @@ namespace ClassicUO.Game.Scenes
             bool transient = false;
             bool mixed = _gpuItemKeyMixed;
             bool fx = _gpuItemKeyEffects;
-            bool mergedWalk = DynamicTileIndex.Merged;
+            ulong mergeCells = TileWalk.MergeCells(chunk, DynamicTileIndex.Merged);
             ulong walk = chunk.GpuWalkMask;
 
             for (int b = 0; b < 64; b++)
@@ -354,14 +354,11 @@ namespace ClassicUO.Game.Scenes
                     continue;
                 }
 
-                GameObject head = chunk.GetHeadObject(b >> 3, b & 7);
                 int reason = 0;
                 bool any = false, alone = false;
 
                 // T6b (world_tile_index): the served run is built in the merged order the walk reads
-                TileWalk tileWalk = default;
-
-                for (GameObject obj = mergedWalk ? TileWalk.Begin(chunk, b, out tileWalk) : head; obj != null; obj = mergedWalk ? tileWalk.Next() : obj.TNext)
+                for (GameObject obj = TileWalk.Open(chunk, b, mergeCells, out TileWalk tileWalk, out bool mergedWalk); obj != null; obj = mergedWalk ? tileWalk.Next() : obj.TNext)
                 {
                     // mobiles are walked on their own (GpuServeCachedTile's callers), E6: effects too
                     if (IsGpuBaked(obj) || obj is Mobile || fx && obj is GameEffect)
@@ -401,7 +398,7 @@ namespace ClassicUO.Game.Scenes
                     continue;
                 }
 
-                for (GameObject obj = mergedWalk ? TileWalk.Begin(chunk, b, out tileWalk) : head; obj != null; obj = mergedWalk ? tileWalk.Next() : obj.TNext)
+                for (GameObject obj = TileWalk.Open(chunk, b, mergeCells, out TileWalk tileWalk, out bool mergedWalk); obj != null; obj = mergedWalk ? tileWalk.Next() : obj.TNext)
                 {
                     if (IsGpuBaked(obj) || obj is Mobile || fx && obj is GameEffect)
                     {
@@ -669,10 +666,7 @@ namespace ClassicUO.Game.Scenes
                 // and walked-alone items in their order (a corpse and a mobile share the animations list, a fading item, a
                 // fading mobile and a fading effect the transparent one)
                 // T6b (world_tile_index): the merged order, as the full walk would read it
-                bool mergedWalk = DynamicTileIndex.Merged;
-                TileWalk tileWalk = default;
-
-                for (GameObject obj = mergedWalk ? TileWalk.Begin(chunk, b, out tileWalk) : chunk.GetHeadObject(b >> 3, b & 7);
+                for (GameObject obj = TileWalk.Open(chunk, b, TileWalk.MergeCells(chunk, DynamicTileIndex.Merged), out TileWalk tileWalk, out bool mergedWalk);
                      obj != null;
                      obj = mergedWalk ? tileWalk.Next() : obj.TNext)
                 {
@@ -680,7 +674,7 @@ namespace ClassicUO.Game.Scenes
                     {
                         if (!obj.IsDestroyed)
                         {
-                            AddTileToRenderList(obj, false, GPU_WALK_MAX_Z, chunk, true, true, obj.TNext, true);
+                            AddTileToRenderList(obj, false, GPU_WALK_MAX_Z, chunk, true, true, obj.TNext);
                         }
 
                         continue;
@@ -691,7 +685,7 @@ namespace ClassicUO.Game.Scenes
                         if (!obj.IsDestroyed)
                         {
                             FrameStats.Inc(FrameCounter.ItemCacheFx);
-                            AddTileToRenderList(obj, false, GPU_WALK_MAX_Z, chunk, true, true, obj.TNext, true);
+                            AddTileToRenderList(obj, false, GPU_WALK_MAX_Z, chunk, true, true, obj.TNext);
                         }
 
                         continue;
@@ -707,7 +701,7 @@ namespace ClassicUO.Game.Scenes
                             s = entry;
                         }
 
-                        AddTileToRenderList(obj, false, GPU_WALK_MAX_Z, chunk, true, true, obj.TNext, true);
+                        AddTileToRenderList(obj, false, GPU_WALK_MAX_Z, chunk, true, true, obj.TNext);
                     }
                 }
 
@@ -728,7 +722,7 @@ namespace ClassicUO.Game.Scenes
 
                 Item item = walked.Item;
                 // object handles never show while the cache serves (GpuItemCacheBegin)
-                AddTileToRenderList(item, false, GPU_WALK_MAX_Z, chunk, true, true, item.TNext, true);
+                AddTileToRenderList(item, false, GPU_WALK_MAX_Z, chunk, true, true, item.TNext);
             }
 
             GpuQueueCachedEntries(cache, s, e);

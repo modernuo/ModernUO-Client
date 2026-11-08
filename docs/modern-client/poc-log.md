@@ -5348,3 +5348,31 @@ Paired NativeAOT builds (`CuoDevTools=true`, checkers off), all on the quiet mac
   Item Gather over the old field reads: 30–40 → 16–22 ns per item. The "25 ns per `GetComponent`" in owner question 2 was measured inside a larger record read; a single read in a tight loop is 6–9 ns.
 - Friflo main (13 commits past preview.2) reverts preview.2's SoA storage: `StructHeap<T>` is sealed again, with no virtual call. A stable release may make the helper mostly unnecessary. See [ecs-friflo.md](../dev/ecs-friflo.md).
 - Gates: Gpu bench-000307, Legacy bench-000308 (branch); tip gates bench-000309/310 on 02c0ef387 (first NativeAOT run of the fallback) PASS. Timing parked (`measure/ecs-read-helper/job-timing-PARKED.sh`, build the base first).
+
+### world_tile_index: per-chunk merge mask and priority-first merge (tile-index-2, 2026-11-07)
+
+Base poc/modern-client f2955b82a (fix A). Branch `bg/tile-index-2`, code commit 672213292. Switch `world_tile_index` still default off. Scripts and binaries: `cuo-poc-state/measure/tile-index-2/`.
+
+**Where fix A's remaining cost was (by construction, from the code and the bench-000211/212 profiles).**
+- Every whole-tile render walk (both renderers, ~4,600 tiles a frame at Britain, ~25,600 at zoom 2.5) called `TileWalk.Start`, which is not inlined (its own symbol in bench-000212): a call, the 40-byte walk struct written through an out parameter, the chunk's `Dynamic` load and null test, the object's `TileCell`, the cell's count. That per-tile work is the same order as the +3–6 % Legacy world_prepare left after fix A.
+- The Gpu mask build (`RebuildGpuMask`, every tile of a re-masked chunk: the walking p95) and the item cache's three loops never got fix A: every tile went through `Begin` → `BeginIndex` (second head walk, `SkipDynamic`'s type tests per list object) → `Next` per object.
+- On tiles that do merge, `Next` built a full `TileOrderKey` for every list object it passed while index entries remained (`Rank`: type tests).
+- Index upkeep on moves: `Add`/`Remove` built the key with `Rank`'s type tests although a held object's rank is always 2.
+
+**Change.**
+- `DynamicTileIndex.Cells`: a 64-bit mask of occupied cells, kept by `Add` (set), `Remove` (clear at 0) and `Clear`. `TileWalk.MergeCells(chunk, walkOn)` reads it once per chunk (0 with the switch off; every cell under the dev shadow walk).
+- GameScene's chunk loop passes the tile's bit as `AddTileToRenderList(..., mergeTile)`, which replaces `single` (the five one-object callers pass nothing and never merge, so the Codex P2 case stays closed). Per tile that is one test of a register; tiles without dynamics walk TNext exactly as with the switch off, and the switch-off path runs the same instructions (mask 0).
+- `RebuildGpuMask` and the item cache open each tile with `TileWalk.Open(chunk, cell, mergeCells, ...)`: the list from its head unless the tile has dynamics.
+- `TileWalk.Before`: an entry against a list object compares the stored `PriorityZ` first and builds the list object's full key only on equal priorities. `TileWalk` no longer stores a key (16 B smaller to zero).
+- `DynamicTileIndex.KeyOf`: Add/Remove use the rank-2 key directly (CUO_TILE_ORDER_CHECK still compares every stored key with `TileOrder.Key`).
+- `SkipDynamic` (change B) left as it was.
+
+**Tests.** ListDropTests' random-operations test (4 seeds × 700 steps, both sides) now also checks, after every step and for every tile, that `Cells` has a cell's bit exactly when the cell holds entries and that `Open` with `MergeCells` gives the legacy order: with the switch off on the legacy side (the list) and on the dropped side (the merge). New `The_Priority_First_Merge_Comparison_Equals_The_Full_Key_Comparison` (20,000 random entry keys against land, static and three multi kinds with random PriorityZ/stamp, >1,000 ties and >1,000 non-ties; plus `KeyOf` = `TileOrder.Key` for an item and a mobile). The fix-A test (`Whole_Tile_Start_Takes_The_List_Walk_Only_On_Tiles_Without_Dynamics`) now runs through `MergeCells`. Unit tests: dev 3,093 passed, 6 skipped; `CuoDevTools=false` 3,088 passed, 6 skipped. Both client builds. Write-site budget unchanged.
+**Mutants (unit tests only):** tie branch skipped (`Before` = priority only): killed (9 tests); `Cells` not cleared on removal: killed (6); `MergeCells` always 0: killed (6). `<=` for the unequal-priority test is equivalent (inside `!=`).
+
+**Memory.** 8 B per chunk index (the mask). No pool or cache.
+
+**Timing: parked** (busy machine). `job-timing-{g,l}{1,2,3}-PARKED.sh`: base (f2955b82a) and head, each with the switch off and on, one round per job (4 arms interleaved). The baseline for the decision is today's default (switch off, index maintained because `ecs_effects` holds effects), arm `boff`. Attribution job (prep_detail buckets and a sampled Legacy profile, not a timing claim): see the jobs line below.
+
+**Upkeep in the default build (coordinator's note).** With `ecs_effects` on, `ShouldMaintain` keeps the index with the walk off, so the default build already pays the sorted insert/remove per placement while nothing but the checkers reads it (T8's Codex P2 made it maintained as a stated requirement). This branch makes that upkeep cheaper (`KeyOf`) but does not remove it. Turning `world_tile_index` on removes the duplicate store (the list stops holding dynamics); alternatively `effectsOn` could leave `ShouldMaintain` (owner question).
+- **Client jobs (submitted, not awaited; NativeAOT `aot/` = 672213292, `aot-base/` = f2955b82a):** gate-on bench-000311 (every checker incl. `CUO_TILE_ORDER_CHECK=1`, walk on), plans-fast bench-000312 (tile-order checker off, so the mask path runs without a shadow; Gpu pickscan), shots bench-000313 and the cross-session control bench-000314, attribution bench-000315 (prep_detail buckets boff/bon/non, both renderers, plus a sampled Legacy britain_z profile of bon vs non). Results: pending (the coordinator reads them).
