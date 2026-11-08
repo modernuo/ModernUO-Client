@@ -205,6 +205,14 @@ namespace ClassicUO.Configuration
         // object reference. Read once at startup (CUO_ECS_EFFECT_ENDPOINTS=1|0 overrides it in developer builds). Default off.
         [JsonPropertyName("ecs_effect_endpoints")] public bool EcsEffectEndpoints { get; set; }
 
+        // T8 ownership phase 2 (ecs-transition-plan.md): with ecs_effects and ecs_effect_endpoints on, the kinds' motion (a moving
+        // effect's path and explosion, a fixed effect following its source and the source's offset, the drag offset, lightning
+        // following its source) is computed by EffectSystem from EffectState, each endpoint resolved once per update; the
+        // effect's fields become a write-through cache for the views. CUO_EFFECT_MOTION_CHECK=1 replays the legacy per-object
+        // motion beside every step and compares. Read once at startup (CUO_ECS_EFFECT_MOTION=1|0 overrides it in developer
+        // builds). Default off.
+        [JsonPropertyName("ecs_effect_motion")] public bool EcsEffectMotion { get; set; }
+
         // T4 (ecs-transition-plan.md, "thin handles"): the cold world-state getters (Name, Hits, HitsMax, Stamina, Mana and
         // their maxima, Price) read the entity's ECS record; the GameObject field becomes a write-only cache. Read once at
         // startup (EcsScalars.Owns; CUO_ECS_OWNS_SCALARS=1|0 overrides it in developer builds). Default on since 2026-11-02 (owner, after the quiet-machine per-switch timing bench-000206/207/208: timing-neutral on both renderers); the off path and the checker stay for one phase.

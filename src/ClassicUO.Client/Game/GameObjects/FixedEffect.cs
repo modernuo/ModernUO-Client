@@ -57,6 +57,13 @@ namespace ClassicUO.Game.GameObjects
 
         public override void Update()
         {
+            if (UsesMotion && !EcsEntity.IsNull)
+            {
+                EffectSystem.StepFixed(this);
+
+                return;
+            }
+
             base.Update();
 
             if (!IsDestroyed)

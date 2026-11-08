@@ -16,9 +16,27 @@ namespace ClassicUO.Game.Managers
             _world = world;
         }
 
+        // ecs_effect_motion: the player's position for this pass (MovingEffect's path is relative to it), resolved at the
+        // first moving step of the pass
+        private bool _playerResolved;
+        private int _playerX, _playerY, _playerZ;
+
+        /// <summary>The player's position from its mirror record (the object's without one), once per pass.</summary>
+        internal (int x, int y, int z) MotionPlayer()
+        {
+            if (!_playerResolved)
+            {
+                (_playerX, _playerY, _playerZ) = EffectSystem.PlayerPosition(_world);
+                _playerResolved = true;
+            }
+
+            return (_playerX, _playerY, _playerZ);
+        }
+
         public void Update()
         {
             bool system = _world.EffectsSystemOn;
+            _playerResolved = false;
 
             for (GameEffect f = (GameEffect) Items; f != null;)
             {
@@ -26,7 +44,8 @@ namespace ClassicUO.Game.Managers
 
                 f.Update();
 
-                if (system && !f.IsDestroyed)
+                // with ecs_effect_motion the step wrote the state itself (and resolved the endpoints once)
+                if (system && !f.IsDestroyed && !f.UsesMotion)
                 {
                     EffectSystem.Publish(f);
                 }
@@ -47,6 +66,11 @@ namespace ClassicUO.Game.Managers
             if (system && _world.EffectEndpointsCheckOn)
             {
                 EffectSystem.CheckEndpoints(this);
+            }
+
+            if (system && _world.EffectMotionCheckOn)
+            {
+                EffectSystem.LogMotionCheck();
             }
         }
 

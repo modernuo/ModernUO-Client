@@ -66,12 +66,24 @@ namespace ClassicUO.Game.GameObjects
 
         public override void Update()
         {
+            if (UsesMotion && !EcsEntity.IsNull)
+            {
+                if (!EffectSystem.StepMoving(this))
+                {
+                    // destroyed by its source before it moved: the legacy update still runs UpdateOffset on the destroyed
+                    // object, whose state is gone, so it runs here on the object's fields (the motion step's cache) as before
+                    UpdateOffset();
+                }
+
+                return;
+            }
+
             base.Update();
             UpdateOffset();
         }
 
 
-        private void UpdateOffset()
+        internal void UpdateOffset()
         {
             if (TargetGone())
             {
@@ -164,7 +176,7 @@ namespace ClassicUO.Game.GameObjects
             Destroy();
         }
 
-        private static void TileOffsetOnMonitorToXY(ref int ofsX, ref int ofsY, out int x, out int y)
+        internal static void TileOffsetOnMonitorToXY(ref int ofsX, ref int ofsY, out int x, out int y)
         {
             y = 0;
 

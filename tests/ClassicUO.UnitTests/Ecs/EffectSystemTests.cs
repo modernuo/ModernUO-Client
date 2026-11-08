@@ -20,17 +20,19 @@ namespace ClassicUO.UnitTests.Ecs
         private const uint PLAYER = 0x0000_0100, TARGET = 0x0000_0200, CASTER = 0x0000_0300;
         private const uint T0 = 1_000_000;
 
-        private readonly World _old, _new, _own;
+        private readonly World _old, _new, _own, _mot, _bare;
         private readonly List<string> _mismatches = new List<string>();
         private readonly Action<string> _savedObserver;
-        private readonly long _comparedBefore, _shadowBefore, _endpointReadsBefore;
+        private readonly long _comparedBefore, _shadowBefore, _endpointReadsBefore, _motionComparedBefore, _motionStepsBefore;
 
         public EffectSystemTests()
         {
             _old = WorldWriterMobileTests.BuildPlayer(out _, PLAYER);
             _new = WorldWriterMobileTests.BuildPlayer(out _, PLAYER);
             _own = WorldWriterMobileTests.BuildPlayer(out _, PLAYER);
-            foreach (World w in new[] { _old, _new, _own })
+            _mot = WorldWriterMobileTests.BuildPlayer(out _, PLAYER);
+            _bare = WorldWriterMobileTests.BuildPlayer(out _, PLAYER);
+            foreach (World w in new[] { _old, _new, _own, _mot, _bare })
             {
                 w.RangeSize.X = 1000; // Distance is measured from the range centre
                 w.RangeSize.Y = 1000;
@@ -46,18 +48,41 @@ namespace ClassicUO.UnitTests.Ecs
             _own.EffectsCheckOverride = true;
             _own.EffectEndpointsOverride = true;
             _own.EffectEndpointsCheckOverride = true;
+            _own.EffectMotionOverride = false;
+
+            // T8 ownership phase 2: the motion step (ecs_effect_motion) with every checker and item offsets from the ECS, and
+            // without any checker (the effects hold no objects; item offsets from the objects)
+            _mot.EffectsSystemOverride = true;
+            _mot.EffectsCheckOverride = true;
+            _mot.EffectEndpointsOverride = true;
+            _mot.EffectEndpointsCheckOverride = true;
+            _mot.EffectMotionOverride = true;
+            _mot.EffectMotionCheckOverride = true;
+            _mot.ItemOffsetOverride = true;
+            _bare.EffectsSystemOverride = true;
+            _bare.EffectsCheckOverride = false;
+            _bare.EffectEndpointsOverride = true;
+            _bare.EffectEndpointsCheckOverride = false;
+            _bare.EffectMotionOverride = true;
+            _bare.EffectMotionCheckOverride = false;
+            _bare.ItemOffsetOverride = false;
             _savedObserver = EffectSystem.Observer;
             EffectSystem.Observer = _mismatches.Add;
             _comparedBefore = EffectSystem.Compared;
             _shadowBefore = EffectSystem.ShadowSteps;
             _endpointReadsBefore = EffectSystem.EndpointReads;
+            _motionComparedBefore = EffectSystem.MotionCompared;
+            _motionStepsBefore = EffectSystem.MotionSteps;
             Time.Ticks = T0;
             Time.Delta = 0.025f;
         }
 
         public void Dispose() => EffectSystem.Observer = _savedObserver;
 
-        private IEnumerable<World> Worlds => new[] { _old, _new, _own };
+        private IEnumerable<World> Worlds => new[] { _old, _new, _own, _mot, _bare };
+
+        // the worlds whose effects reference their endpoints by record
+        private bool ByRecord(World w) => ReferenceEquals(w, _own) || ReferenceEquals(w, _mot) || ReferenceEquals(w, _bare);
 
         private static Mobile AddMobile(World w, uint serial, int x, int y)
         {
@@ -115,13 +140,13 @@ namespace ClassicUO.UnitTests.Ecs
 
         // `frames` updates 25 ms apart; `each` runs before every update on both worlds (a target that moves, dies, ...);
         // `accepted`: a known, documented difference the endpoint checker must report (and nothing else)
-        private void Run(int frames, Action<World, int> each = null, string accepted = null)
+        private void Run(int frames, Action<World, int> each = null, string accepted = null, int step = 25)
         {
             Snap(_new).Should().NotBeEmpty("the scenario created effects");
 
             for (int i = 0; i < frames; i++)
             {
-                Time.Ticks = T0 + (uint)(i * 25);
+                Time.Ticks = T0 + (uint)(i * step);
 
                 if (each != null)
                 {
@@ -134,11 +159,22 @@ namespace ClassicUO.UnitTests.Ecs
                 _old.Effects.Update();
                 _new.Effects.Update();
                 _own.Effects.Update();
-                Snap(_new).Should().Be(Snap(_old), $"after frame {i}");
-                Snap(_own).Should().Be(Snap(_old), $"endpoints from the ECS, after frame {i}");
-                CountEntities(_new).Should().Be(Snap(_new).Count(c => c == '\n'), $"entities equal the live effects after frame {i}");
-                CountEntities(_own).Should().Be(Snap(_own).Count(c => c == '\n'), $"endpoint world: entities equal the live effects after frame {i}");
+                _mot.Effects.Update();
+                _bare.Effects.Update();
+                string old = Snap(_old);
+                Snap(_new).Should().Be(old, $"after frame {i}");
+                Snap(_own).Should().Be(old, $"endpoints from the ECS, after frame {i}");
+                Snap(_mot).Should().Be(old, $"motion from the ECS, after frame {i}");
+                Snap(_bare).Should().Be(old, $"motion from the ECS without checkers, after frame {i}");
+
+                foreach (World w in new[] { _new, _own, _mot, _bare })
+                {
+                    CountEntities(w).Should().Be(Snap(w).Count(c => c == '\n'), $"entities equal the live effects after frame {i}");
+                }
+
                 CountEntities(_old).Should().Be(0, "the old world has no effect entities");
+                StateEqualsObjects(_mot, i);
+                StateEqualsObjects(_bare, i);
             }
 
             if (accepted != null)
@@ -148,6 +184,27 @@ namespace ClassicUO.UnitTests.Ecs
 
             _mismatches.Should().BeEmpty();
             (EffectSystem.Compared - _comparedBefore).Should().BeGreaterThan(0, "the checker ran");
+            (EffectSystem.MotionSteps - _motionStepsBefore).Should().BeGreaterThan(0, "the motion step ran");
+            (EffectSystem.MotionCompared - _motionComparedBefore).Should().BeGreaterThan(0, "the motion checker compared");
+        }
+
+        // the motion worlds: every live effect uses the motion step, and its state is what its object shows (the object is
+        // the state's write-through cache)
+        private static void StateEqualsObjects(World w, int frame)
+        {
+            for (GameEffect f = (GameEffect)w.Effects.Items; f != null; f = (GameEffect)f.Next)
+            {
+                f.UsesMotion.Should().BeTrue();
+                ref readonly EffectState s = ref f.EcsEntity.GetComponent<EffectState>();
+                (s.X, s.Y, s.Z).Should().Be((f.X, f.Y, f.Z), $"position after frame {frame}");
+                new Microsoft.Xna.Framework.Vector3(s.OffsetX, s.OffsetY, s.OffsetZ).Should().Be(f.Offset, $"offset after frame {frame}");
+                s.Angle.Should().Be(f.AngleToTarget);
+
+                if (f is DragEffect d)
+                {
+                    s.MoveTime.Should().Be(d.LastMoveTime);
+                }
+            }
         }
 
         private static int CountEntities(World w) => w.Ecs.Mirror.Store.Query<EffectState>().Count;
@@ -508,7 +565,7 @@ namespace ClassicUO.UnitTests.Ecs
                     w.Ecs.Mirror.TryGetEntity(TARGET, out var stale).Should().BeTrue();
                     w.Ecs.Mirror.Remove(TARGET); // no hook sees it
 
-                    if (ReferenceEquals(w, _own))
+                    if (ByRecord(w))
                     {
                         WrapTo(w, stale);
                     }
@@ -522,7 +579,7 @@ namespace ClassicUO.UnitTests.Ecs
                         AddMobile(w, OTHER, 1003, 1012);
                     }
 
-                    if (ReferenceEquals(w, _own))
+                    if (ByRecord(w))
                     {
                         w.Ecs.Mirror.TryGetEntity(newcomer, out var rec).Should().BeTrue();
                         (rec.Id, rec.Revision).Should().Be((stale.Id, stale.Revision), "the new record has the stale handle's id and revision");
@@ -537,7 +594,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void A_Gone_Endpoint_Is_Not_Revived_By_A_Rekey_Of_A_Record_On_Its_Old_Handle()
         {
             const uint DEAD = OTHER | 0x8000_0000;
-            Friflo.Engine.ECS.Entity stale = default;
+            var stale = new Dictionary<World, Friflo.Engine.ECS.Entity>();
 
             foreach (World w in Worlds)
             {
@@ -549,18 +606,19 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 if (i == 3)
                 {
-                    if (ReferenceEquals(w, _own))
+                    if (ByRecord(w))
                     {
-                        w.Ecs.Mirror.TryGetEntity(TARGET, out stale).Should().BeTrue();
+                        w.Ecs.Mirror.TryGetEntity(TARGET, out var rec).Should().BeTrue();
+                        stale[w] = rec;
                     }
 
                     w.Ecs.Mirror.Remove(TARGET); // no hook sees it: the next update finds the endpoint gone
                 }
                 else if (i == 4)
                 {
-                    if (ReferenceEquals(w, _own))
+                    if (ByRecord(w))
                     {
-                        WrapTo(w, stale);
+                        WrapTo(w, stale[w]);
                     }
 
                     AddMobile(w, OTHER, 1003, 1012);
@@ -616,7 +674,9 @@ namespace ClassicUO.UnitTests.Ecs
                 Mobile m = w.Mobiles.Get(CASTER);
                 m.Offset = new Microsoft.Xna.Framework.Vector3(i, -i, i / 2);
                 w.Ecs.PushSteps(m);
-                w.Items.Get(ITEM).Offset = new Microsoft.Xna.Framework.Vector3(2 * i, i, 0);
+                Item it = w.Items.Get(ITEM);
+                it.Offset = new Microsoft.Xna.Framework.Vector3(2 * i, i, i % 3);
+                ItemOffsets.Push(w, it, it.Offset); // the boat operations' ECS write (ecs_item_offset: the motion world)
             });
 
             // the mobile's offset is read from its Steps: a component that differs from the object moves the effect, and the
@@ -628,6 +688,21 @@ namespace ClassicUO.UnitTests.Ecs
             ((GameEffect)_own.Effects.Items).OffsetX.Should().Be(77);
             caster.OffsetX.Should().NotBe(77);
             _mismatches.Should().Contain(m => m.Contains("source offset"));
+            _mismatches.Clear();
+
+            // the motion step reads the same: the mobile's Steps, and the item's ItemOffset component (ecs_item_offset); the
+            // motion checker's legacy replay reads the objects and reports both
+            _mot.Ecs.Mirror.TryGetEntity(CASTER, out rec).Should().BeTrue();
+            rec.GetComponent<ClassicUO.Ecs.Steps>().OffsetX = 77;
+            _mot.Ecs.Mirror.TryGetEntity(ITEM, out var itemRec).Should().BeTrue();
+            itemRec.GetComponent<ClassicUO.Ecs.ItemOffset>().Y = -5;
+            _mot.Effects.Update();
+            var fixedOnMobile = (GameEffect)_mot.Effects.Items;
+            fixedOnMobile.OffsetX.Should().Be(77);
+            ((GameEffect)fixedOnMobile.Next).OffsetY.Should().Be(-5);
+            _mot.Items.Get(ITEM).OffsetY.Should().NotBe(-5);
+            _mismatches.Count(m => m.Contains("offset ECS (77,")).Should().Be(1, "the motion checker reports the mobile's");
+            _mismatches.Count(m => m.Contains(",-5,")).Should().Be(1, "and the item's");
             _mismatches.Clear();
         }
 
@@ -705,6 +780,273 @@ namespace ClassicUO.UnitTests.Ecs
         public void The_Endpoint_Setting_Defaults_Off()
         {
             new ClassicUO.Configuration.Settings().EcsEffectEndpoints.Should().BeFalse();
+        }
+
+        // ---- T8 ownership phase 2 (ecs_effect_motion): every scenario above also runs in _mot and _bare
+
+        [Fact]
+        public void A_Moving_Effect_Follows_The_Player_Moving_Under_It()
+        {
+            foreach (World w in Worlds)
+            {
+                AddMobile(w, CASTER, 1003, 1003);
+                AddMobile(w, TARGET, 1012, 1001);
+                Create(w, GraphicEffectType.Moving, CASTER, TARGET, 0x36D4, 0, 0, 0, 0, speed: 1, duration: 0, explodes: true);
+                Create(w, GraphicEffectType.Moving, 0, 0, 0x36E4, 1009, 1009, 995, 1002, speed: 2, duration: 0, explodes: true);
+            }
+
+            // the path is computed relative to the player (screen space, truncated to tiles): the player walks across it,
+            // onto negative offsets too
+            Run(70, (w, i) =>
+            {
+                if (i % 3 == 0)
+                {
+                    w.Player.SetInWorldTile((ushort)(1000 + i / 3 - 8), (ushort)(1000 + (i % 2) * 3), (sbyte)(i % 5));
+                }
+            });
+        }
+
+        [Fact]
+        public void A_Moving_Effect_Whose_Source_Dies_Before_It_Leaves_Ends_As_Before()
+        {
+            foreach (World w in Worlds)
+            {
+                AddMobile(w, CASTER, 1003, 1003);
+                AddMobile(w, TARGET, 1010, 1009);
+                AddMobile(w, OTHER, 1004, 1001);
+
+                // two from the caster (one explodes), one from a source that moves away before the effect leaves it
+                Create(w, GraphicEffectType.Moving, CASTER, TARGET, 0x36D4, 0, 0, 0, 0, speed: 1, duration: 0, explodes: true);
+                Create(w, GraphicEffectType.Moving, CASTER, 0, 0x36E4, 0, 0, 1008, 1003, speed: 1, duration: 0);
+                Create(w, GraphicEffectType.Moving, OTHER, TARGET, 0x36F4, 0, 0, 0, 0, speed: 1, duration: 0, explodes: true);
+            }
+
+            Run(60, (w, i) =>
+            {
+                if (i == 0)
+                {
+                    w.Mobiles.Get(CASTER).Destroy(); // the legacy update still runs UpdateOffset on the destroyed effects
+                }
+                else if (i < 6)
+                {
+                    w.Mobiles.Get(OTHER).SetInWorldTile((ushort)(1004 - i), (ushort)(1001 + i), 0);
+                }
+            });
+        }
+
+        [Fact]
+        public void Drag_And_Lightning_Follow_Or_End_With_Their_Source()
+        {
+            foreach (World w in Worlds)
+            {
+                AddMobile(w, CASTER, 1003, 1003);
+                AddMobile(w, TARGET, 1006, 1004);
+                AddItem(w, ITEM, 1002, 1005);
+                Create(w, GraphicEffectType.DragEffect, CASTER, TARGET, 0xEED, 0, 0, 0, 0, speed: 2, duration: 30);
+                Create(w, GraphicEffectType.DragEffect, ITEM, 0, 0xEEF, 0, 0, 1004, 1006, speed: 1, duration: 30);
+                Create(w, GraphicEffectType.Lightning, CASTER, 0, 0, 0, 0, 0, 0);
+                Create(w, GraphicEffectType.Lightning, TARGET, 0, 0, 0, 0, 0, 0);
+                Create(w, GraphicEffectType.FixedFrom, ITEM, 0, 0x373A, 0, 0, 0, 0, duration: 300);
+            }
+
+            Run(60, (w, i) =>
+            {
+                if (i < 8)
+                {
+                    w.Mobiles.Get(TARGET).SetInWorldTile((ushort)(1006 + i), 1004, 0);
+                    w.Items.Get(ITEM).SetInWorldTile(1002, (ushort)(1005 + i / 2), (sbyte)i);
+                }
+                else if (i == 9)
+                {
+                    w.Mobiles.Get(CASTER).Destroy(); // the drag effect ends, the lightning stays where the caster was
+                }
+                else if (i == 30)
+                {
+                    w.Items.Get(ITEM).Destroy();
+                }
+            });
+        }
+
+        [Fact]
+        public void An_Explosion_Lands_Where_The_Target_Is_On_The_Arrival_Frame()
+        {
+            foreach (World w in Worlds)
+            {
+                AddMobile(w, TARGET, 1006, 1003);
+                Create(w, GraphicEffectType.Moving, 0, TARGET, 0x36D4, 1001, 1001, 0, 0, speed: 3, duration: 0, explodes: true);
+            }
+
+            bool exploded = false;
+
+            Run(40, (w, i) =>
+            {
+                exploded |= ReferenceEquals(w, _bare) && Snap(w).Contains("|g36CB");
+                Mobile t = w.Mobiles.Get(TARGET);
+
+                if (t != null && i % 2 == 1 && i < 20)
+                {
+                    // toward the effect's source, climbing: it arrives while the target moves
+                    t.SetInWorldTile((ushort)(t.X + (i < 6 ? 1 : -1)), t.Y, (sbyte)(t.Z + 2));
+                }
+            });
+
+            exploded.Should().BeTrue("the explosion's fixed effect ran in the motion worlds too");
+        }
+
+        [Fact]
+        public void The_Motion_Checker_Replays_The_Legacy_Motion_And_Flags_A_State_The_Object_Does_Not_Show()
+        {
+            AddMobile(_mot, TARGET, 1012, 1008);
+            Create(_mot, GraphicEffectType.Moving, 0, TARGET, 0x36D4, 1001, 1001, 0, 0, speed: 1, duration: 0);
+            Create(_mot, GraphicEffectType.DragEffect, 0, 0, 0xEED, 1002, 1002, 1004, 1006, speed: 1, duration: 300);
+            long compared = EffectSystem.MotionCompared;
+            _mot.Effects.Update();
+            _mismatches.Should().BeEmpty();
+            EffectSystem.MotionCompared.Should().Be(compared + 2);
+
+            // a state that drifted from its object (written around the step): the step moves the state, the replay the object
+            var moving = (GameEffect)_mot.Effects.Items;
+            State(moving).OffsetX += 3;
+            Time.Ticks += 25;
+            _mot.Effects.Update();
+            _mismatches.Should().ContainSingle(m => m.Contains("offset ECS")).Which.Should().Contain("0x36D4");
+            _mismatches.Clear();
+
+            // the drag effect's next move time
+            var drag = (DragEffect)moving.Next;
+            drag.LastMoveTime = 0;
+            State(drag).MoveTime = Time.Ticks + 1000;
+            _mot.Effects.Update();
+            _mismatches.Should().Contain(m => m.Contains("0x0EED offset ECS"));
+            _mismatches.Clear();
+
+            // a target the record and the object disagree on
+            _mot.Mobiles.Get(TARGET).X = 1016;
+            _mot.Effects.Update();
+            _mismatches.Should().Contain(m => m.Contains("target ECS (1012,1008,0) | legacy (1016,1008,0)"));
+            _mismatches.Clear();
+        }
+
+        [Fact]
+        public void Without_The_Checkers_The_Motion_Step_Holds_No_Objects_And_Reads_The_Player_From_The_ECS()
+        {
+            AddMobile(_bare, CASTER, 1003, 1003);
+            AddMobile(_bare, TARGET, 1012, 1008);
+            Create(_bare, GraphicEffectType.Moving, CASTER, TARGET, 0x36D4, 0, 0, 0, 0, speed: 1, duration: 0);
+            var fx = (GameEffect)_bare.Effects.Items;
+            fx.UsesMotion.Should().BeTrue();
+            fx.MotionCheck.Should().BeFalse();
+            fx.Source.Should().BeNull();
+            fx.Target.Should().BeNull();
+
+            // the player's object moved outside the funnel: the path still uses the record's position
+            AddMobile(_old, CASTER, 1003, 1003);
+            AddMobile(_old, TARGET, 1012, 1008);
+            Create(_old, GraphicEffectType.Moving, CASTER, TARGET, 0x36D4, 0, 0, 0, 0, speed: 1, duration: 0);
+            // (beyond the target, so the screen offsets change sign and the tile truncation differs)
+            _bare.Player.X = 1020;
+            _bare.Player.Y = 1015;
+
+            for (int i = 0; i < 15; i++)
+            {
+                Time.Ticks = T0 + (uint)(i * 25);
+                _bare.Effects.Update();
+                _old.Effects.Update();
+                Snap(_bare).Should().Be(Snap(_old), $"the record still holds the player at 1000,1000 (frame {i})");
+            }
+        }
+
+        [Fact]
+        public void The_Motion_Switch_Needs_The_Endpoints()
+        {
+            _new.EffectMotionOverride = true; // ecs_effects on, endpoints off
+            _new.EffectMotionOn.Should().BeFalse();
+            Create(_new, GraphicEffectType.FixedXYZ, 0, 0, 0x3779, 1001, 1001, 0, 0, duration: 10);
+            ((GameEffect)_new.Effects.Items).UsesMotion.Should().BeFalse();
+
+            _old.EffectEndpointsOverride = true;
+            _old.EffectMotionOverride = true; // ecs_effects off
+            _old.EffectMotionOn.Should().BeFalse();
+            _own.EffectMotionOn.Should().BeFalse();
+            _mot.EffectMotionOn.Should().BeTrue();
+            Create(_own, GraphicEffectType.FixedXYZ, 0, 0, 0x3779, 1001, 1001, 0, 0, duration: 10);
+            ((GameEffect)_own.Effects.Items).UsesMotion.Should().BeFalse("ecs_effect_motion is off in the endpoint world");
+
+            // the motion checker alone keeps the objects its legacy replay reads
+            _mot.EffectEndpointsCheckOverride = false;
+            AddMobile(_mot, CASTER, 1003, 1003);
+            Create(_mot, GraphicEffectType.FixedFrom, CASTER, 0, 0x3709, 0, 0, 0, 0, duration: 400);
+            var fx = (GameEffect)_mot.Effects.Items;
+            (fx.UsesMotion, fx.MotionCheck, fx.EndpointCheck).Should().Be((true, true, false));
+            fx.Source.Should().BeSameAs(_mot.Mobiles.Get(CASTER));
+        }
+
+        [Fact]
+        public void A_Moving_Effect_Exactly_22_Pixels_From_Its_Target_Arrives()
+        {
+            foreach (World w in Worlds)
+            {
+                // one tile east and one north: the screen distance is exactly 22 after the +22 start offset; the second is
+                // on its target's tile
+                Create(w, GraphicEffectType.Moving, 0, 0, 0x36D4, 1001, 1001, 1002, 1000, speed: 1, duration: 0, explodes: true);
+                Create(w, GraphicEffectType.Moving, 0, 0, 0x36E4, 1003, 1003, 1003, 1003, speed: 1, duration: 0, explodes: true);
+            }
+
+            Run(20);
+        }
+
+        [Fact]
+        public void A_Target_Gone_Then_The_Source_Gone_Explodes_At_The_Targets_Last_Position()
+        {
+            bool exploded = false;
+
+            foreach (World w in Worlds)
+            {
+                // on the player's tile the first step keeps the effect on its source's tile (it still has its source when the
+                // source dies); the target, a tile south-east and 6 up, is about 30 px away: not reached in one update, but
+                // within 22 px of the effect's tile
+                AddMobile(w, CASTER, 1000, 1000);
+                AddMobile(w, TARGET, 1001, 1001).SetInWorldTile(1001, 1001, 6);
+                Create(w, GraphicEffectType.Moving, CASTER, TARGET, 0x36D4, 0, 0, 0, 0, speed: 3, duration: 0, explodes: true);
+            }
+
+            // the target goes first (its last coordinates are copied into the effect's target), then the source: the legacy
+            // update runs UpdateOffset on the destroyed effect, which arrives there and explodes
+            Run(20, (w, i) =>
+            {
+                if (i == 0)
+                {
+                    w.Mobiles.Get(TARGET).Destroy();
+                }
+                else if (i == 1)
+                {
+                    w.Mobiles.Get(CASTER).Destroy();
+                }
+                else if (ReferenceEquals(w, _old))
+                {
+                    exploded |= Snap(w).Contains("|g36CB");
+                }
+            });
+
+            exploded.Should().BeTrue("the destroyed effect's last update exploded at the copied target");
+        }
+
+        [Fact]
+        public void Drag_Effects_Move_On_The_Frame_Their_Move_Time_Comes()
+        {
+            foreach (World w in Worlds)
+            {
+                AddMobile(w, CASTER, 1003, 1003);
+                Create(w, GraphicEffectType.DragEffect, CASTER, 0, 0xEED, 0, 0, 1007, 1001, speed: 2, duration: 15);
+            }
+
+            Run(40, step: 10); // 10 ms frames: Time.Ticks lands on the move time
+        }
+
+        [Fact]
+        public void The_Motion_Setting_Defaults_Off()
+        {
+            new ClassicUO.Configuration.Settings().EcsEffectMotion.Should().BeFalse();
         }
 
         [Fact]
