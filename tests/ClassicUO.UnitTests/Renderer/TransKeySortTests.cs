@@ -8,8 +8,11 @@ namespace ClassicUO.UnitTests.Renderer
 {
     public class TransKeySortTests
     {
-        [Fact]
-        public void Sorts_Ascending_Like_The_Default_Sort()
+        // both paths: the cached-comparison sort NativeAOT uses and the default sort JIT uses
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public void Sorts_Ascending_Like_The_Default_Sort(bool cachedComparison)
         {
             var rnd = new Random(1234);
 
@@ -26,14 +29,16 @@ namespace ClassicUO.UnitTests.Renderer
                 var expected = (ulong[])keys.Clone();
                 Array.Sort(expected);
 
-                WorldRenderer.SortTransKeys(keys);
+                WorldRenderer.SortTransKeys(keys, cachedComparison);
 
                 Assert.Equal(expected, keys);
             }
         }
 
-        [Fact]
-        public void Does_Not_Allocate()
+        [Theory]
+        [InlineData(true)]
+        [InlineData(false)]
+        public void Does_Not_Allocate(bool cachedComparison)
         {
             var keys = new ulong[64];
             var rnd = new Random(7);
@@ -43,14 +48,24 @@ namespace ClassicUO.UnitTests.Renderer
                 keys[i] = (ulong)rnd.NextInt64();
             }
 
-            WorldRenderer.SortTransKeys(keys);
+            WorldRenderer.SortTransKeys(keys, cachedComparison);
             Array.Reverse(keys);
 
             long before = GC.GetAllocatedBytesForCurrentThread();
-            WorldRenderer.SortTransKeys(keys);
+            WorldRenderer.SortTransKeys(keys, cachedComparison);
             long after = GC.GetAllocatedBytesForCurrentThread();
 
             Assert.Equal(0, after - before);
+        }
+
+        [Fact]
+        public void Default_Overload_Sorts()
+        {
+            var keys = new ulong[] { 5, ulong.MaxValue, 0, 3, 3 };
+
+            WorldRenderer.SortTransKeys(keys);
+
+            Assert.Equal(new ulong[] { 0, 3, 3, 5, ulong.MaxValue }, keys);
         }
     }
 }
