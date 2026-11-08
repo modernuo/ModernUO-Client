@@ -394,7 +394,7 @@ namespace ClassicUO.Game.Scenes
             }
         }
 
-        public void CreateCharacter(PlayerMobile character, int cityIndex, byte profession)
+        public void CreateCharacter(PlayerMobile character, PlayerState stats, int cityIndex, byte profession)
         {
             int i = 0;
 
@@ -409,6 +409,7 @@ namespace ClassicUO.Game.Scenes
             LastCharacterManager.Save(Account, _world.ServerName, character.Name);
 
             NetClient.Socket.Send_CreateCharacter(character,
+                                                  stats,
                                                   cityIndex,
                                                   NetClient.Socket.LocalIP,
                                                   ServerIndex,

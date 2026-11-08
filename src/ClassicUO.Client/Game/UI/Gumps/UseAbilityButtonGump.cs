@@ -33,7 +33,7 @@ namespace ClassicUO.Game.UI.Gumps
         private void BuildGump()
         {
             Clear();
-            Index = ((byte)World.Player.Abilities[IsPrimary ? 0 : 1] & 0x7F);
+            Index = ((byte)World.PlayerState.Abilities[IsPrimary ? 0 : 1] & 0x7F);
 
             ref readonly AbilityDefinition def = ref AbilityData.Abilities[Index - 1];
 
@@ -86,7 +86,7 @@ namespace ClassicUO.Game.UI.Gumps
                 return false;
             }
 
-            byte index = (byte) World.Player.Abilities[IsPrimary ? 0 : 1];
+            byte index = (byte) World.PlayerState.Abilities[IsPrimary ? 0 : 1];
 
             if ((index & 0x80) != 0)
             {

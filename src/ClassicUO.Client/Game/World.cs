@@ -71,6 +71,13 @@ namespace ClassicUO.Game
 
         public PlayerMobile Player { get; private set; }
 
+        /// <summary>
+        /// The player's session data (stats, skills, buffs, abilities), held here rather than on <see cref="Player"/>
+        /// (ecs-transition-plan Q4). Replaced with a fresh store by <see cref="CreatePlayer"/> and emptied by
+        /// <see cref="Clear"/>, the lifetime the fields had on the PlayerMobile.
+        /// </summary>
+        public PlayerState PlayerState { get; private set; } = new PlayerState();
+
         public HouseCustomizationManager CustomHouseManager;
 
         public WorldMapEntityManager WMapManager { get; }
@@ -280,12 +287,19 @@ namespace ClassicUO.Game
                 ProfileManager.Load(ServerName, LoginScene.Account, lastChar);
             }
 
+            CreatePlayer(serial, Client.Game.UO.FileManager.Skills.Skills);
+        }
+
+        /// <summary>The player object and a fresh <see cref="PlayerState"/> with these skills (tests pass their own list).</summary>
+        internal void CreatePlayer(uint serial, IReadOnlyList<SkillEntry> skills)
+        {
             if (Player != null)
             {
                 Clear();
             }
 
             Player = new PlayerMobile(this, serial);
+            PlayerState = new PlayerState(skills);
             Mobiles.Add(Player);
             Ecs.Sync(Player);
 
@@ -1513,6 +1527,7 @@ namespace ClassicUO.Game
             _destroyedMobiles.Clear();
             Player?.Destroy();
             Player = null;
+            PlayerState = new PlayerState();
             Map?.Destroy();
             Map = null;
             Light.Overall = Light.RealOverall = 0;
@@ -1556,6 +1571,7 @@ namespace ClassicUO.Game
                 Map = null;
                 Player.Destroy();
                 Player = null;
+                PlayerState = new PlayerState();
             }
 
             foreach (Item item in Items.Values)

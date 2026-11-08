@@ -17,18 +17,18 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
     internal class CreateCharTradeGump : Gump
     {
         private readonly HSliderBar[] _attributeSliders;
-        private readonly PlayerMobile _character;
+        private readonly PlayerState _stats;
         private readonly Combobox[] _skillsCombobox;
         private readonly HSliderBar[] _skillSliders;
         private readonly List<SkillEntry> _skillList;
 
 
 
-        public CreateCharTradeGump(World world, PlayerMobile character, ProfessionInfo profession) : base(world, 0, 0)
+        public CreateCharTradeGump(World world, PlayerMobile character, PlayerState stats, ProfessionInfo profession) : base(world, 0, 0)
         {
-            _character = character;
+            _stats = stats;
 
-            foreach (Skill skill in _character.Skills)
+            foreach (Skill skill in _stats.Skills)
             {
                 skill.ValueFixed = 0;
                 skill.BaseFixed = 0;
@@ -287,7 +287,7 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
                         {
                             if (_skillsCombobox[i].SelectedIndex != -1)
                             {
-                                Skill skill = _character.Skills[_skillList[_skillsCombobox[i].SelectedIndex].Index];
+                                Skill skill = _stats.Skills[_skillList[_skillsCombobox[i].SelectedIndex].Index];
                                 skill.ValueFixed = (ushort) _skillSliders[i].Value;
                                 skill.BaseFixed = 0;
                                 skill.CapFixed = 0;
@@ -295,9 +295,9 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
                             }
                         }
 
-                        _character.Strength = (ushort) _attributeSliders[0].Value;
-                        _character.Intelligence = (ushort) _attributeSliders[1].Value;
-                        _character.Dexterity = (ushort) _attributeSliders[2].Value;
+                        _stats.Strength = (ushort) _attributeSliders[0].Value;
+                        _stats.Intelligence = (ushort) _attributeSliders[1].Value;
+                        _stats.Dexterity = (ushort) _attributeSliders[2].Value;
 
                         charCreationGump.SetAttributes(true);
                     }

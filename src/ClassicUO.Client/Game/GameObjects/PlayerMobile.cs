@@ -15,23 +15,12 @@ namespace ClassicUO.Game.GameObjects
 {
     internal class PlayerMobile : Mobile
     {
-        private readonly Dictionary<BuffIconType, BuffIcon> _buffIcons = new Dictionary<BuffIconType, BuffIcon>();
-
         public PlayerMobile(World world, uint serial) : base(world, serial)
         {
-            Skills = new Skill[Client.Game.UO.FileManager.Skills.SkillsCount];
-
-            for (int i = 0; i < Skills.Length; i++)
-            {
-                SkillEntry skill = Client.Game.UO.FileManager.Skills.Skills[i];
-                Skills[i] = new Skill(skill.Name, skill.Index, skill.HasAction);
-            }
-
             Walker = new WalkerManager(this);
             Pathfinder = new Pathfinder(world);
         }
 
-        public Skill[] Skills { get; }
         private bool _inWarMode;
 
         public override bool InWarMode
@@ -44,17 +33,11 @@ namespace ClassicUO.Game.GameObjects
                 PushInputs();
             }
         }
-        public IReadOnlyDictionary<BuffIconType, BuffIcon> BuffIcons => _buffIcons;
-
-        public ref Ability PrimaryAbility => ref Abilities[0];
-        public ref Ability SecondaryAbility => ref Abilities[1];
         protected override bool IsWalking => LastStepTime > Time.Ticks - Constants.PLAYER_WALKING_DELAY;
 
         internal WalkerManager Walker { get; }
         public Pathfinder Pathfinder { get; }
 
-
-        public readonly Ability[] Abilities = [Ability.Invalid, Ability.Invalid];
 
         //private bool _lastRun, _lastMount;
         //private int _lastDir = -1, _lastDelta, _lastStepTime;
@@ -76,57 +59,6 @@ namespace ClassicUO.Game.GameObjects
             _serverDirection = Direction;
         }
 
-        public short ColdResistance;
-        public short DamageIncrease;
-        public short DamageMax;
-        public short DamageMin;
-        public long DeathScreenTimer;
-        public short DefenseChanceIncrease;
-        public Lock DexLock;
-        public ushort Dexterity;
-        public short DexterityIncrease;
-        public short EnergyResistance;
-        public short EnhancePotions;
-        public short FasterCasting;
-        public short FasterCastRecovery;
-        public short FireResistance;
-        public byte Followers;
-        public byte FollowersMax;
-        public uint Gold;
-        public short HitChanceIncrease;
-        public short HitPointsIncrease;
-        public short HitPointsRegeneration;
-        public ushort Intelligence;
-        public short IntelligenceIncrease;
-        public Lock IntLock;
-        public short LowerManaCost;
-        public short LowerReagentCost;
-        public ushort Luck;
-        public short ManaIncrease;
-        public short ManaRegeneration;
-        public short MaxColdResistence;
-        public short MaxDefenseChanceIncrease;
-        public short MaxEnergyResistence;
-        public short MaxFireResistence;
-        public short MaxHitPointsIncrease;
-        public short MaxManaIncrease;
-        public short MaxPhysicResistence;
-        public short MaxPoisonResistence;
-        public short MaxStaminaIncrease;
-        public short PhysicalResistance;
-        public short PoisonResistance;
-        public short ReflectPhysicalDamage;
-        public short SpellDamageIncrease;
-        public short StaminaIncrease;
-        public short StaminaRegeneration;
-        public short StatsCap;
-        public ushort Strength;
-        public short StrengthIncrease;
-        public Lock StrLock;
-        public short SwingSpeedIncrease;
-        public uint TithingPoints;
-        public ushort Weight;
-        public ushort WeightMax;
 
         public Item FindBandage()
         {
@@ -268,22 +200,6 @@ namespace ClassicUO.Game.GameObjects
             return _amount;
         }
 
-        public void AddBuff(BuffIconType type, ushort graphic, uint time, string text)
-        {
-            _buffIcons[type] = new BuffIcon(type, graphic, time, text);
-        }
-
-
-        public bool IsBuffIconExists(BuffIconType graphic)
-        {
-            return _buffIcons.ContainsKey(graphic);
-        }
-
-        public void RemoveBuff(BuffIconType graphic)
-        {
-            _buffIcons.Remove(graphic);
-        }
-
         /// <summary>
         /// The neighbouring graphic (previous first, then next) that shares <paramref name="animId"/>, or 0 when
         /// neither does. Both lookups are bounds-checked: graphic 0xFFFF has no next entry in a 0x10000-entry table,
@@ -306,7 +222,8 @@ namespace ClassicUO.Game.GameObjects
 
         public void UpdateAbilities()
         {
-            AbilityData.DefaultItemAbilities.Set(Abilities);
+            Ability[] abilities = World.PlayerState.Abilities;
+            AbilityData.DefaultItemAbilities.Set(abilities);
             
             if ((FindItemByLayer(Layer.OneHanded) ?? FindItemByLayer(Layer.TwoHanded)) is { Graphic: > 0 } weapon)
             {
@@ -316,9 +233,9 @@ namespace ClassicUO.Game.GameObjects
                     weapon.ItemData.AnimID
                 );
 
-                if (AbilityData.GraphicToAbilitiesMap.TryGetValue(weapon.Graphic, out var abilities) || AbilityData.GraphicToAbilitiesMap.TryGetValue(animGraphic, out abilities))
+                if (AbilityData.GraphicToAbilitiesMap.TryGetValue(weapon.Graphic, out var weaponAbilities) || AbilityData.GraphicToAbilitiesMap.TryGetValue(animGraphic, out weaponAbilities))
                 {
-                    abilities.Set(Abilities);
+                    weaponAbilities.Set(abilities);
                 }
                 else
                 {
@@ -395,8 +312,6 @@ namespace ClassicUO.Game.GameObjects
             {
                 return;
             }
-
-            DeathScreenTimer = 0;
 
             Log.Warn("PlayerMobile disposed!");
             base.Destroy();

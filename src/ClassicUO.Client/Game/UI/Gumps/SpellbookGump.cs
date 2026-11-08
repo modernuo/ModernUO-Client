@@ -313,7 +313,7 @@ namespace ClassicUO.Game.UI.Gumps
                     if (page == 1 && _spellBookType == SpellBookType.Chivalry)
                     {
                         Label label = new Label(
-                            ResGumps.TithingPointsAvailable + World.Player.TithingPoints,
+                            ResGumps.TithingPointsAvailable + World.PlayerState.TithingPoints,
                             false,
                             0x0288,
                             font: 6
