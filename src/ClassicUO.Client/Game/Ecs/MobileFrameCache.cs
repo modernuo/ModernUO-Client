@@ -81,6 +81,42 @@ namespace ClassicUO.Game
         public MobileSpriteExtract.LightRequest[] Lights = new MobileSpriteExtract.LightRequest[2];
         public int LightCount;
 
+        /// <summary>
+        /// legacy_ecs_sprites (LegacySpriteSink): the Legacy batcher calls the last select resolved to, relative to the draw
+        /// origin (position + walking offset), with the recipe of their depth, plus FrameInfo and the lights. Recorded only
+        /// when the selection is cacheable, the mobile is not seated and every layer and record had its atlas texture (the
+        /// atlas only gains textures, so a recorded texture and rect stay valid). Replayed while the selection
+        /// (<see cref="SelectGen"/>), alpha, override hue, body hue and the sprite source are the same.
+        /// </summary>
+        public bool LegacyValid;
+        public uint LegacySelectGen;
+        public byte LegacyAlpha;
+        public ushort LegacyOverrideHue, LegacyBodyHue;
+        public ILegacySpriteSource LegacySource;
+        public LegacyEntry[] LegacyEntries = Array.Empty<LegacyEntry>();
+        public int LegacyCount;
+        public Rectangle LegacyFrameInfo;
+        public MobileSpriteExtract.LightRequest[] LegacyLights = Array.Empty<MobileSpriteExtract.LightRequest>();
+        public int LegacyLightCount;
+
+        /// <summary>One Legacy batcher call; <see cref="LegacyDraw.Position"/> is (origin + X, origin + Y) and
+        /// <see cref="LegacyDraw.Depth"/> MobileSpriteExtract.DepthOf(baseDepth, Kind, Add) at replay.</summary>
+        public struct LegacyEntry
+        {
+            public LegacyDraw Draw;
+            public int X, Y;
+            public float Add;
+            public byte Kind;
+        }
+
+        public void EnsureLegacyCapacity(int n)
+        {
+            if (LegacyEntries.Length < n)
+            {
+                Array.Resize(ref LegacyEntries, Math.Max(n, Math.Max(8, LegacyEntries.Length * 2)));
+            }
+        }
+
         public void EnsureCapacity(int n)
         {
             if (Entries.Length < n)
@@ -94,9 +130,10 @@ namespace ClassicUO.Game
             SelectValid = false;
             EmitValid = false;
             AbsValid = false;
+            LegacyValid = false;
         }
 
         // hit counters for FrameStats / the check log
-        public static long SelectHits, SelectMisses, EmitHits, EmitMisses;
+        public static long SelectHits, SelectMisses, EmitHits, EmitMisses, LegacyHits, LegacyMisses;
     }
 }

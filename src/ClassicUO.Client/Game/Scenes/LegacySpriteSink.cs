@@ -154,9 +154,8 @@ namespace ClassicUO.Game.Scenes
 
             mobile.DrawAura(batcher, posX, posY, depth);
             MobileSpriteExtract extract = ecs.MobileExtract;
-            extract.BeginSelect(ClientLegacySpriteSource.Instance);
-            extract.Select(e, data, posX, posY, depth);
-            LegacySpriteResolve.DrawAll(batcher, ClientLegacySpriteSource.Instance, extract.Selected);
+            // the select and resolve, or their calls replayed from the mobile's MobileFrameCache (as the Gpu path's Emit)
+            extract.DrawLegacy(batcher, ClientLegacySpriteSource.Instance, e, data, in state, in render, posX, posY, depth, mobile.FrameCache);
             bool mirror = (state.Flags & AnimStateFlags.Mirror) != 0;
 
             if (_on)

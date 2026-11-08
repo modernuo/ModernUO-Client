@@ -141,6 +141,7 @@ namespace ClassicUO.Game
         {
             _selCount = 0;
             _selectOnly = true;
+            _atlasMiss = false;
 
             try
             {
@@ -163,7 +164,14 @@ namespace ClassicUO.Game
         internal int OffsetY => _offsetY;
 
         private DynamicSprite[] _sel = new DynamicSprite[64];
+
+        // the depth recipe of each selected record (MobileFrameCache's Legacy replay applies it to the frame's base depth)
+        private byte[] _selKind = new byte[64];
+        private float[] _selAdd = new float[64];
         private int _selCount;
+
+        // the last Select skipped a layer whose atlas frame had no texture yet: its result must not be replayed later
+        private bool _atlasMiss;
         private bool _selectOnly;
         private bool _hasAnims;
         private GpuSpriteTables _tables;
@@ -373,6 +381,8 @@ namespace ClassicUO.Game
 
                 if (frameIndex >= atlasFrames.Length || atlasFrames[frameIndex].Texture == null)
                 {
+                    _atlasMiss = true;
+
                     return;
                 }
             }
@@ -469,8 +479,12 @@ namespace ClassicUO.Game
                 if (_selCount >= _sel.Length)
                 {
                     Array.Resize(ref _sel, _sel.Length * 2);
+                    Array.Resize(ref _selKind, _sel.Length);
+                    Array.Resize(ref _selAdd, _sel.Length);
                 }
 
+                _selKind[_selCount] = kind;
+                _selAdd[_selCount] = add;
                 _sel[_selCount++] = sprite;
 
                 return;
@@ -713,6 +727,236 @@ namespace ClassicUO.Game
             cache.AbsDy = dy;
             cache.AbsDepth = depth;
             cache.AbsObjX = objX;
+        }
+
+        /// <summary>
+        /// legacy_ecs_sprites: the Legacy batcher calls of <see cref="Select(EcsEntity, in EcsRow, int, int, float)"/> resolved
+        /// through <paramref name="src"/> and drawn, or the calls <paramref name="cache"/> recorded for the same selection,
+        /// alpha, override hue, body hue and source, moved to this frame's draw origin and base depth (as the Gpu path's
+        /// <see cref="Emit(EcsEntity, in EcsRow, in AnimationState, in MobileRenderState, int, int, float, MobileFrameCache)"/>).
+        /// A replay skips the layer walk, the frame lookups of the select and of the resolve, and the records. FrameInfo and
+        /// <see cref="Lights"/> are set either way; <see cref="Selected"/> is empty after a replay. The state must be
+        /// <paramref name="e"/>'s current components (after MobileAnimationSystem.UpdateInPlace). CUO_MOBILE_CACHE_CHECK=1
+        /// compares every replay with a fresh select and resolve.
+        /// </summary>
+        internal void DrawLegacy(UltimaBatcher2D batcher, ILegacySpriteSource src, EcsEntity e, in EcsRow data, in AnimationState s,
+            in MobileRenderState rs, int posX, int posY, float depth, MobileFrameCache cache)
+        {
+            BeginSelect(src);
+
+            if (cache == null || (s.Flags & AnimStateFlags.Visible) == 0 || !_hasAnims)
+            {
+                if (cache != null)
+                {
+                    cache.LegacyValid = false;
+                }
+
+                Select(e, data, posX, posY, depth);
+                LegacySpriteResolve.DrawAll(batcher, src, Selected);
+
+                return;
+            }
+
+            ushort bodyHue = data.Get<Hue>().Value;
+            int baseX = posX + rs.OffsetX, baseY = posY + rs.OffsetY;
+
+            if (cache.LegacyValid && cache.LegacySelectGen == cache.SelectGen && cache.LegacyAlpha == rs.Alpha &&
+                cache.LegacyOverrideHue == rs.OverrideHue && cache.LegacyBodyHue == bodyHue && ReferenceEquals(cache.LegacySource, src))
+            {
+                MobileFrameCache.LegacyHits++;
+                _selCount = 0;
+
+
+                for (int i = 0; i < cache.LegacyCount; i++)
+                {
+                    LegacySpriteResolve.Draw(batcher, LegacyReplayed(cache, i, baseX, baseY, depth));
+                }
+
+                ApplyLegacyEffects(cache, baseX, baseY);
+
+                if (MobileAnimationSystem.CacheCheck)
+                {
+                    CheckLegacyReplay(src, e, in data, cache, posX, posY, depth, baseX, baseY);
+                }
+
+                return;
+            }
+
+            MobileFrameCache.LegacyMisses++;
+            Select(e, data, posX, posY, depth);
+
+            // a seated mobile's equipment reads the body rows the last seated human body left (MobileView's statics): not replayed
+            bool record = cache.SelectValid && !_atlasMiss && (s.Flags & AnimStateFlags.CharSitting) == 0;
+
+            if (record)
+            {
+                cache.EnsureLegacyCapacity(_selCount);
+            }
+
+            int k = 0;
+
+            for (int i = 0; i < _selCount; i++)
+            {
+                ref readonly DynamicSprite sprite = ref _sel[i];
+
+                if (!LegacySpriteResolve.Resolve(src, in sprite, out LegacyDraw d))
+                {
+                    record = false;
+
+                    continue;
+                }
+
+                LegacySpriteResolve.Draw(batcher, in d);
+
+                if (record)
+                {
+                    ref MobileFrameCache.LegacyEntry entry = ref cache.LegacyEntries[k++];
+                    entry.Draw = d;
+                    entry.X = sprite.X - baseX;
+                    entry.Y = sprite.Y - baseY;
+                    entry.Kind = _selKind[i];
+                    entry.Add = _selAdd[i];
+                }
+            }
+
+            if (!record)
+            {
+                cache.LegacyValid = false;
+
+                return;
+            }
+
+            cache.LegacyCount = k;
+            cache.LegacyFrameInfo = FrameInfo;
+
+            if (cache.LegacyLights.Length < _lightCount)
+            {
+                Array.Resize(ref cache.LegacyLights, _lightCount);
+            }
+
+            for (int i = 0; i < _lightCount; i++)
+            {
+                LightRequest l = _lights[i];
+                l.X -= baseX;
+                l.Y -= baseY;
+                cache.LegacyLights[i] = l;
+            }
+
+            cache.LegacyLightCount = _lightCount;
+            cache.LegacySelectGen = cache.SelectGen;
+            cache.LegacyAlpha = rs.Alpha;
+            cache.LegacyOverrideHue = rs.OverrideHue;
+            cache.LegacyBodyHue = bodyHue;
+            cache.LegacySource = src;
+            cache.LegacyValid = true;
+        }
+
+        // entry i of the cache's Legacy calls at draw origin (baseX, baseY) and base depth: what the select + resolve give
+        // there (integer positions; the depth is DepthOf's expression)
+        private static LegacyDraw LegacyReplayed(MobileFrameCache cache, int i, int baseX, int baseY, float depth)
+        {
+            ref readonly MobileFrameCache.LegacyEntry entry = ref cache.LegacyEntries[i];
+            LegacyDraw d = entry.Draw;
+            d.Position = new Vector2(baseX + entry.X, baseY + entry.Y);
+            d.Depth = DepthOf(depth, entry.Kind, entry.Add);
+
+            return d;
+        }
+
+        private void ApplyLegacyEffects(MobileFrameCache cache, int baseX, int baseY)
+        {
+            Rectangle fi = cache.LegacyFrameInfo;
+            _fiX = fi.X;
+            _fiY = fi.Y;
+            _fiW = fi.Width;
+            _fiH = fi.Height;
+            _lightCount = 0;
+
+            for (int i = 0; i < cache.LegacyLightCount; i++)
+            {
+                LightRequest l = cache.LegacyLights[i];
+                AddLight(l.Item, l.X + baseX, l.Y + baseY);
+            }
+        }
+
+        public static long CheckLegacyReplays, CheckLegacyReplayDiffs;
+
+        // CUO_MOBILE_CACHE_CHECK: the replayed Legacy calls, FrameInfo and lights against a fresh select and resolve (not drawn);
+        // the replay's FrameInfo and lights stand afterwards
+        private void CheckLegacyReplay(ILegacySpriteSource src, EcsEntity e, in EcsRow data, MobileFrameCache cache, int posX, int posY,
+            float depth, int baseX, int baseY)
+        {
+            Select(e, data, posX, posY, depth);
+            CheckLegacyReplays++;
+            string problem = null;
+
+            if (FrameInfo != cache.LegacyFrameInfo)
+            {
+                problem = $" frameinfo {cache.LegacyFrameInfo} vs {FrameInfo}";
+            }
+
+            if (_lightCount != cache.LegacyLightCount)
+            {
+                problem += $" lights {cache.LegacyLightCount} vs {_lightCount}";
+            }
+            else
+            {
+                for (int i = 0; i < _lightCount; i++)
+                {
+                    LightRequest l = cache.LegacyLights[i];
+
+                    if (l.Item != _lights[i].Item || l.X + baseX != _lights[i].X || l.Y + baseY != _lights[i].Y)
+                    {
+                        problem += $" light {i}";
+
+                        break;
+                    }
+                }
+            }
+
+            int k = 0;
+
+            for (int i = 0; i < _selCount; i++)
+            {
+                if (!LegacySpriteResolve.Resolve(src, in _sel[i], out LegacyDraw d))
+                {
+                    continue;
+                }
+
+                if (k >= cache.LegacyCount)
+                {
+                    k++;
+
+                    continue;
+                }
+
+                LegacyDraw replayed = LegacyReplayed(cache, k, baseX, baseY, depth);
+
+                if (problem == null && !replayed.Same(in d))
+                {
+                    problem = $" call {k}: replayed {replayed} | fresh {d}";
+                }
+
+                k++;
+            }
+
+            if (k != cache.LegacyCount)
+            {
+                problem += $" calls {cache.LegacyCount} vs {k}";
+            }
+
+            if (problem != null)
+            {
+                CheckLegacyReplayDiffs++;
+
+                if (_checkLogged++ < 20)
+                {
+                    ClassicUO.Utility.Logging.Log.Warn($"[mobile-cache-check] legacy replay differs 0x{e.GetComponent<Serial>().Value:X8}:{problem}");
+                }
+            }
+
+            _selCount = 0;
+            ApplyLegacyEffects(cache, baseX, baseY);
         }
 
         public static long CheckReplays, CheckReplayDiffs;
