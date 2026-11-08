@@ -16,8 +16,12 @@ using System;
 
 namespace ClassicUO.Game.UI.Gumps
 {
-    internal class NameOverheadGump : Gump
+    internal class NameOverheadGump : Gump, IGumpDeferredDraw
     {
+        // GumpCommand.Deferred args: the name text and the hp bar draw at the gump layer flush, as the closures they replace
+        private const int DRAW_TEXT = 0;
+        private const int DRAW_HP_BAR = 1;
+
         private AlphaBlendControl _background;
         private Point _lockedPosition,
             _lastLeftMousePositionDown;
@@ -26,6 +30,15 @@ namespace ClassicUO.Game.UI.Gumps
         private readonly RenderedText _renderedText;
         private Texture2D _borderColor = SolidColorTextureCache.GetTexture(Color.Black);
         private bool _showHpBar;
+        private int _hpBarWidth,
+            _hpBarFilled;
+        private Color _hpBarColor;
+        private string _fallbackName,
+            _fitSource;
+        private ushort _fallbackGraphic,
+            _fallbackAmount;
+        private bool _fitHtml;
+        private int _fallbackClilocRevision;
 
         public NameOverheadGump(World world, uint serial) : base(world, serial, 0)
         {
@@ -72,24 +85,7 @@ namespace ClassicUO.Game.UI.Gumps
             {
                 if (!World.OPL.TryGetNameAndData(item, out string t, out _))
                 {
-                    if (!item.IsCorpse && item.Amount > 1)
-                    {
-                        t = item.Amount.ToString() + ' ';
-                    }
-
-                    if (string.IsNullOrEmpty(item.ItemData.Name))
-                    {
-                        t += Client.Game.UO.FileManager.Clilocs.GetString(1020000 + item.Graphic, true, t);
-                    }
-                    else
-                    {
-                        t += StringHelper.CapitalizeAllWords(
-                            StringHelper.GetPluralAdjustedString(
-                                item.ItemData.Name,
-                                item.Amount > 1
-                            )
-                        );
-                    }
+                    t = FallbackItemName(item);
                 }
 
                 if (string.IsNullOrEmpty(t))
@@ -97,30 +93,7 @@ namespace ClassicUO.Game.UI.Gumps
                     return false;
                 }
 
-                Client.Game.UO.FileManager.Fonts.SetUseHTML(true);
-                Client.Game.UO.FileManager.Fonts.RecalculateWidthByInfo = true;
-
-                int width = Client.Game.UO.FileManager.Fonts.GetWidthUnicode(_renderedText.Font, t);
-
-                if (width > Constants.OBJECT_HANDLES_GUMP_WIDTH)
-                {
-                    t = Client.Game.UO.FileManager.Fonts.GetTextByWidthUnicode(
-                        _renderedText.Font,
-                        t.AsSpan(),
-                        Constants.OBJECT_HANDLES_GUMP_WIDTH,
-                        true,
-                        TEXT_ALIGN_TYPE.TS_CENTER,
-                        (ushort)FontStyle.BlackBorder
-                    );
-
-                    width = Constants.OBJECT_HANDLES_GUMP_WIDTH;
-                }
-
-                _renderedText.MaxWidth = width;
-                _renderedText.Text = t;
-
-                Client.Game.UO.FileManager.Fonts.RecalculateWidthByInfo = false;
-                Client.Game.UO.FileManager.Fonts.SetUseHTML(false);
+                FitName(t, true);
 
                 Width = _background.Width = Constants.OBJECT_HANDLES_GUMP_WIDTH + 4;
                 _showHpBar = false;
@@ -133,27 +106,7 @@ namespace ClassicUO.Game.UI.Gumps
 
             if (!string.IsNullOrEmpty(entity.Name))
             {
-                string t = entity.Name;
-
-                int width = Client.Game.UO.FileManager.Fonts.GetWidthUnicode(_renderedText.Font, t);
-
-                if (width > Constants.OBJECT_HANDLES_GUMP_WIDTH)
-                {
-                    t = Client.Game.UO.FileManager.Fonts.GetTextByWidthUnicode(
-                        _renderedText.Font,
-                        t.AsSpan(),
-                        Constants.OBJECT_HANDLES_GUMP_WIDTH,
-                        true,
-                        TEXT_ALIGN_TYPE.TS_CENTER,
-                        (ushort)FontStyle.BlackBorder
-                    );
-
-                    width = Constants.OBJECT_HANDLES_GUMP_WIDTH;
-                }
-
-                _renderedText.MaxWidth = width;
-
-                _renderedText.Text = t;
+                FitName(entity.Name, false);
 
                 Width = _background.Width = Constants.OBJECT_HANDLES_GUMP_WIDTH + 4;
                 _showHpBar = entity is Mobile && ProfileManager.CurrentProfile.NameOverheadShowHpBar;
@@ -166,6 +119,90 @@ namespace ClassicUO.Game.UI.Gumps
             }
 
             return false;
+        }
+
+        // SetName runs every frame the gump is queued: the name an item without properties gets is built again only when its
+        // graphic or amount changes, or cliloc is reloaded (Options, "Reload Our Assets", or a language change)
+        private string FallbackItemName(Item item)
+        {
+            ushort graphic = item.Graphic;
+            ushort amount = item.Amount;
+            var clilocs = Client.Game.UO.FileManager.Clilocs;
+            int revision = clilocs.Revision;
+
+            if (_fallbackName != null && _fallbackGraphic == graphic && _fallbackAmount == amount && _fallbackClilocRevision == revision)
+            {
+                return _fallbackName;
+            }
+
+            string t = null;
+
+            if (!item.IsCorpse && amount > 1)
+            {
+                t = amount.ToString() + ' ';
+            }
+
+            if (string.IsNullOrEmpty(item.ItemData.Name))
+            {
+                t += clilocs.GetString(1020000 + graphic, true, t);
+            }
+            else
+            {
+                t += StringHelper.CapitalizeAllWords(StringHelper.GetPluralAdjustedString(item.ItemData.Name, amount > 1));
+            }
+
+            _fallbackName = t;
+            _fallbackGraphic = graphic;
+            _fallbackAmount = amount;
+            _fallbackClilocRevision = revision;
+
+            return t;
+        }
+
+        // the width fit (a measure and, for a long name, a new cut string) runs again only when the name's text changes: a
+        // name or status packet can hand over a new string with the same text
+        private void FitName(string t, bool html)
+        {
+            if (string.Equals(t, _fitSource, StringComparison.Ordinal) && html == _fitHtml)
+            {
+                return;
+            }
+
+            _fitSource = t;
+            _fitHtml = html;
+
+            var fonts = Client.Game.UO.FileManager.Fonts;
+
+            if (html)
+            {
+                fonts.SetUseHTML(true);
+                fonts.RecalculateWidthByInfo = true;
+            }
+
+            int width = fonts.GetWidthUnicode(_renderedText.Font, t);
+
+            if (width > Constants.OBJECT_HANDLES_GUMP_WIDTH)
+            {
+                t = fonts.GetTextByWidthUnicode(
+                    _renderedText.Font,
+                    t.AsSpan(),
+                    Constants.OBJECT_HANDLES_GUMP_WIDTH,
+                    true,
+                    TEXT_ALIGN_TYPE.TS_CENTER,
+                    (ushort)FontStyle.BlackBorder
+                );
+
+                width = Constants.OBJECT_HANDLES_GUMP_WIDTH;
+            }
+
+            _renderedText.MaxWidth = width;
+            _renderedText.Text = t;
+
+            if (html)
+            {
+                fonts.RecalculateWidthByInfo = false;
+                fonts.SetUseHTML(false);
+            }
         }
 
         private void BuildGump()
@@ -650,56 +687,48 @@ namespace ClassicUO.Game.UI.Gumps
 
             X = x;
             Y = y;
-            renderLists.AddGumpNoAtlas(
-                batcher =>
-                {
-                    batcher.DrawRectangle(_borderColor, x - 1, y - 1, Width + 1, Height + 1, hueVector, layerDepth);
-                    return true;
-                }
-            );
+            renderLists.AddGumpNoAtlas(GumpCommand.Outline(_borderColor, x - 1, y - 1, Width + 1, Height + 1, hueVector, layerDepth));
 
             base.AddToRenderLists(renderLists, x, y, ref layerDepthRef);
 
             int renderedTextOffset = Math.Max(0, Width - _renderedText.Width - 4) >> 1;
-            renderLists.AddGumpNoAtlas(batcher =>
-                {
-                    return _renderedText.Draw(
-                        batcher,
-                        Width,
-                        Height,
-                        x + 2 + renderedTextOffset,
-                        y + 2,
-                        Width,
-                        Height,
-                        0,
-                        0,
-                        layerDepth + CHILD_LAYER_INCREMENT * 2
-                    );
-                }
-            );
+            renderLists.AddGumpNoAtlas(GumpCommand.Deferred(this, x + 2 + renderedTextOffset, y + 2, layerDepth + CHILD_LAYER_INCREMENT * 2, DRAW_TEXT));
 
             if (_showHpBar && World.Get(LocalSerial) is Mobile mob)
             {
-                int barX = x;
-                int barY = y + Height - Constants.OBJECT_HANDLES_HP_BAR_HEIGHT;
-                int barWidth = Width;
-                int barHeight = Constants.OBJECT_HANDLES_HP_BAR_HEIGHT;
-                int filledWidth = barWidth * mob.HitsPercentage / 100;
-                Color hpColor = mob.HitsPercentage >= 80 ? Color.Green
-                              : mob.HitsPercentage >= 50 ? Color.YellowGreen
-                              : mob.HitsPercentage >= 30 ? Color.Yellow
-                              : Color.Red;
-                float barDepth = layerDepth + CHILD_LAYER_INCREMENT * 3;
+                _hpBarWidth = Width;
+                _hpBarFilled = _hpBarWidth * mob.HitsPercentage / 100;
+                _hpBarColor = HpBarColor(mob.HitsPercentage);
 
-                renderLists.AddGumpNoAtlas(batcher =>
-                {
-                    batcher.Draw(SolidColorTextureCache.GetTexture(Color.Black),
-                        new Rectangle(barX, barY, barWidth, barHeight), hueVector, barDepth);
-                    if (filledWidth > 0)
-                        batcher.Draw(SolidColorTextureCache.GetTexture(hpColor),
-                            new Rectangle(barX, barY, filledWidth, barHeight), hueVector, barDepth + CHILD_LAYER_INCREMENT);
-                    return true;
-                });
+                renderLists.AddGumpNoAtlas(
+                    GumpCommand.Deferred(this, x, y + Height - Constants.OBJECT_HANDLES_HP_BAR_HEIGHT, layerDepth + CHILD_LAYER_INCREMENT * 3, DRAW_HP_BAR)
+                );
+            }
+
+            return true;
+        }
+
+        internal static Color HpBarColor(byte hitsPercentage) =>
+            hitsPercentage >= 80 ? Color.Green
+            : hitsPercentage >= 50 ? Color.YellowGreen
+            : hitsPercentage >= 30 ? Color.Yellow
+            : Color.Red;
+
+        bool IGumpDeferredDraw.DrawDeferred(UltimaBatcher2D batcher, int x, int y, float layerDepth, int arg)
+        {
+            if (arg == DRAW_TEXT)
+            {
+                return _renderedText.Draw(batcher, Width, Height, x, y, Width, Height, 0, 0, layerDepth);
+            }
+
+            Vector3 hueVector = ShaderHueTranslator.GetHueVector(0);
+            int barHeight = Constants.OBJECT_HANDLES_HP_BAR_HEIGHT;
+
+            batcher.Draw(SolidColorTextureCache.GetTexture(Color.Black), new Rectangle(x, y, _hpBarWidth, barHeight), hueVector, layerDepth);
+
+            if (_hpBarFilled > 0)
+            {
+                batcher.Draw(SolidColorTextureCache.GetTexture(_hpBarColor), new Rectangle(x, y, _hpBarFilled, barHeight), hueVector, layerDepth + CHILD_LAYER_INCREMENT);
             }
 
             return true;

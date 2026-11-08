@@ -7,6 +7,7 @@ using System;
 using System.Collections.Generic;
 using System.Diagnostics.CodeAnalysis;
 using System.IO;
+using System.Threading;
 using Uo.Pack;
 
 namespace ClassicUO.Assets
@@ -34,6 +35,11 @@ namespace ClassicUO.Assets
         }
 
         private volatile State _state = new State();
+        private int _revision;
+
+        /// <summary>Bumps every time a new set of strings is published (a load, a reload, a language change, a clear):
+        /// callers that cache a string built from cliloc key it on this.</summary>
+        public int Revision => Volatile.Read(ref _revision);
 
         public ClilocLoader(UOFileManager fileManager) : base(fileManager)
         {
@@ -198,6 +204,7 @@ namespace ClassicUO.Assets
             }
 
             _state = state;
+            Interlocked.Increment(ref _revision);
             Log.Trace($"Cliloc loaded in {System.Diagnostics.Stopwatch.GetElapsedTime(t0).TotalMilliseconds:0.0} ms, {(GC.GetAllocatedBytesForCurrentThread() - a0) / 1024} KB allocated ({(state.FromPack ? "pack" : "MUL")}, '{state.Language}': {state.Lang.Count} strings{(state.Enu != null ? $" over {state.Enu.Count} English" : "")}{(state.PackOverrides != null ? $", {state.PackOverrides.Count} packed overrides" : "")}{(state.Ours != null ? $", {state.Ours.Count} from {ClilocOverrides.FileName}" : "")})");
         }
 
@@ -492,6 +499,7 @@ namespace ClassicUO.Assets
         public override void ClearResources()
         {
             _state = new State();
+            Interlocked.Increment(ref _revision);
         }
 
         /// <summary>
