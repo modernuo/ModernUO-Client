@@ -816,7 +816,7 @@ namespace ClassicUO.Game
 
             if (effects)
             {
-                EffectSystem.OnRecordRemoving(_world, old);
+                EffectSystem.OnRecordRemoving(_world, old, rekey: true);
             }
 
             Mirror.Remove(oldSerial);
@@ -824,6 +824,15 @@ namespace ClassicUO.Game
             if (mobile.IsDestroyed)
             {
                 return default;
+            }
+
+            // Codex audit (ecs-effects-own) P2: an earlier death's mobile still under the new serial is displaced, and the
+            // upsert below writes this mobile into its record (as OnSerialChanged did). Effects on the displaced mobile end at
+            // its last position and let go of the record, so they do not follow this mobile (legacy kept following the
+            // orphaned object, which stays where it was)
+            if (_world.Effects?.Items != null && Mirror.TryGetEntity(v.Serial, out EcsEntity displaced))
+            {
+                EffectSystem.OnRecordRemoving(_world, displaced);
             }
 
             MobileCommitObserver?.Invoke(mobile, v);

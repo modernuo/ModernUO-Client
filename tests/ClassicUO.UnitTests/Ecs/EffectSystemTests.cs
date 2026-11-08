@@ -113,8 +113,9 @@ namespace ClassicUO.UnitTests.Ecs
             return sb.ToString();
         }
 
-        // `frames` updates 25 ms apart; `each` runs before every update on both worlds (a target that moves, dies, ...)
-        private void Run(int frames, Action<World, int> each = null)
+        // `frames` updates 25 ms apart; `each` runs before every update on both worlds (a target that moves, dies, ...);
+        // `accepted`: a known, documented difference the endpoint checker must report (and nothing else)
+        private void Run(int frames, Action<World, int> each = null, string accepted = null)
         {
             Snap(_new).Should().NotBeEmpty("the scenario created effects");
 
@@ -138,6 +139,11 @@ namespace ClassicUO.UnitTests.Ecs
                 CountEntities(_new).Should().Be(Snap(_new).Count(c => c == '\n'), $"entities equal the live effects after frame {i}");
                 CountEntities(_own).Should().Be(Snap(_own).Count(c => c == '\n'), $"endpoint world: entities equal the live effects after frame {i}");
                 CountEntities(_old).Should().Be(0, "the old world has no effect entities");
+            }
+
+            if (accepted != null)
+            {
+                _mismatches.RemoveAll(m => m.Contains(accepted)).Should().BeGreaterThan(0, "the checker reports the accepted difference");
             }
 
             _mismatches.Should().BeEmpty();
@@ -379,6 +385,60 @@ namespace ClassicUO.UnitTests.Ecs
             });
 
             (EffectSystem.EndpointReads - _endpointReadsBefore).Should().BeGreaterThan(0, "the endpoint checker compared reads");
+        }
+
+        // Codex audit (ecs-effects-own) P2: a second death under the same serial displaces the first dying mobile from
+        // serial | 0x80000000, and the second mobile is written into that record. The displaced mobile's endpoints end at its
+        // last position and let go of the record (a moving effect to it lands there, as legacy, whose orphaned object stays
+        // put; the checker reports the gone target, the accepted difference), also when the record is re-keyed once more; the
+        // second mobile's effects follow it.
+        [Fact]
+        public void A_Second_Death_Under_The_Same_Serial_Ends_The_Displaced_Mobiles_Endpoints()
+        {
+            const uint DEAD = TARGET | 0x8000_0000;
+
+            foreach (World w in Worlds)
+            {
+                AddMobile(w, CASTER, 1001, 1001);
+                AddMobile(w, TARGET, 1014, 1010);
+                Create(w, GraphicEffectType.Moving, CASTER, TARGET, 0x36D4, 0, 0, 0, 0, speed: 1, duration: 0);
+            }
+
+            GameEffect toFirst = (GameEffect)_own.Effects.Items;
+
+            Run(60, (w, i) =>
+            {
+                if (i == 2)
+                {
+                    w.Writer.RekeyDeadMobile(w.Mobiles.Get(TARGET)).Should().Be(DEAD);
+                }
+                else if (i == 3)
+                {
+                    AddMobile(w, TARGET, 1003, 1012);
+                    Create(w, GraphicEffectType.FixedFrom, TARGET, 0, 0x3709, 0, 0, 0, 0, duration: 1000);
+                }
+                else if (i == 5)
+                {
+                    w.Writer.RekeyDeadMobile(w.Mobiles.Get(TARGET)).Should().Be(DEAD);
+                }
+                else if (i == 12)
+                {
+                    // the second mobile's record is re-keyed again (a death packet for the dead serial): the old record's
+                    // endpoints move to the new one, the displaced mobile's must not come back
+                    w.Writer.RekeyDeadMobile(w.Mobiles.Get(DEAD)).Should().Be(DEAD);
+                }
+                else if (i > 5 && i < 20)
+                {
+                    // the second dying mobile moves: its fixed effect follows it, the first one's moving effect must not
+                    w.Mobiles.Get(DEAD).SetInWorldTile((ushort)(1003 + i), 1012, 0);
+                }
+            }, accepted: "target destroyed: ECS True | object False");
+
+            toFirst.IsDestroyed.Should().BeFalse("the moving effect was still on its way when the scenario ended");
+            ref EffectState s = ref State(toFirst);
+            (s.Ends & EffectState.END_TARGET_GONE).Should().Be(EffectState.END_TARGET_GONE, "the displaced mobile's endpoint is gone");
+            (s.TargetX, s.TargetY).Should().Be(((ushort)1014, (ushort)1010));
+            s.TargetEntity.IsNull.Should().BeTrue("a gone endpoint lets go of a record that lives on as another mobile's");
         }
 
         [Fact]

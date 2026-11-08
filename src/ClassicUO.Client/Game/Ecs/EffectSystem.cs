@@ -492,8 +492,11 @@ namespace ClassicUO.Game
         /// <summary>
         /// WorldEcs, before a record is removed (an object destroyed, the old record of the death re-key): every endpoint on it
         /// is gone and keeps the record's position (the destroyed object kept its coordinates). A walk of the live effects.
+        /// Outside the re-key (<paramref name="rekey"/> false) a gone endpoint lets go of the record: the record may live on as
+        /// another object's (a displaced dying mobile's record is written for the next one), and only
+        /// <see cref="OnRecordRekeyed"/> matches gone endpoints by their record.
         /// </summary>
-        public static void OnRecordRemoving(World world, EcsEntity record)
+        public static void OnRecordRemoving(World world, EcsEntity record, bool rekey = false)
         {
             for (GameEffect f = (GameEffect)world.Effects.Items; f != null; f = (GameEffect)f.Next)
             {
@@ -511,6 +514,11 @@ namespace ClassicUO.Game
                     s.SourceX = p.X;
                     s.SourceY = p.Y;
                     s.SourceZ = p.Z;
+
+                    if (!rekey)
+                    {
+                        s.SourceEntity = default;
+                    }
                 }
 
                 if ((s.Ends & (EffectState.END_TARGET | EffectState.END_TARGET_GONE)) == EffectState.END_TARGET && Same(s.TargetEntity, record))
@@ -520,6 +528,11 @@ namespace ClassicUO.Game
                     s.TargetX = p.X;
                     s.TargetY = p.Y;
                     s.TargetZ = p.Z;
+
+                    if (!rekey)
+                    {
+                        s.TargetEntity = default;
+                    }
                 }
             }
         }
