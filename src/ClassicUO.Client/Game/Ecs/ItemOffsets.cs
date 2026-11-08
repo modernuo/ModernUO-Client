@@ -84,6 +84,10 @@ namespace ClassicUO.Game
             return ReadEcs(item);
         }
 
+        // Codex audit P2 (accepted, owner's shared-serial rule of 2026-11-07): a record replaced by a mobile under the same
+        // serial and then re-created starts without ItemOffset, so an item still riding a boat reads zero until the next
+        // boat write. Only a misconfigured server sends an item and a mobile under one serial; the record is not reseeded
+        // from the object, as the cold scalars are not.
         private static Vector3 ReadEcs(Item item)
         {
             Vector3 v;
