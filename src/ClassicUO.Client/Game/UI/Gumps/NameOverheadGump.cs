@@ -38,6 +38,7 @@ namespace ClassicUO.Game.UI.Gumps
         private ushort _fallbackGraphic,
             _fallbackAmount;
         private bool _fitHtml;
+        private int _fallbackClilocRevision;
 
         public NameOverheadGump(World world, uint serial) : base(world, serial, 0)
         {
@@ -121,13 +122,15 @@ namespace ClassicUO.Game.UI.Gumps
         }
 
         // SetName runs every frame the gump is queued: the name an item without properties gets is built again only when its
-        // graphic or amount changes
+        // graphic or amount changes, or cliloc is reloaded (Options, "Reload Our Assets", or a language change)
         private string FallbackItemName(Item item)
         {
             ushort graphic = item.Graphic;
             ushort amount = item.Amount;
+            var clilocs = Client.Game.UO.FileManager.Clilocs;
+            int revision = clilocs.Revision;
 
-            if (_fallbackName != null && _fallbackGraphic == graphic && _fallbackAmount == amount)
+            if (_fallbackName != null && _fallbackGraphic == graphic && _fallbackAmount == amount && _fallbackClilocRevision == revision)
             {
                 return _fallbackName;
             }
@@ -141,7 +144,7 @@ namespace ClassicUO.Game.UI.Gumps
 
             if (string.IsNullOrEmpty(item.ItemData.Name))
             {
-                t += Client.Game.UO.FileManager.Clilocs.GetString(1020000 + graphic, true, t);
+                t += clilocs.GetString(1020000 + graphic, true, t);
             }
             else
             {
@@ -151,6 +154,7 @@ namespace ClassicUO.Game.UI.Gumps
             _fallbackName = t;
             _fallbackGraphic = graphic;
             _fallbackAmount = amount;
+            _fallbackClilocRevision = revision;
 
             return t;
         }
