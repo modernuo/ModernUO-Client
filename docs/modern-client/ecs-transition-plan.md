@@ -418,6 +418,7 @@ So the data file is keyed by body group (human male/female, elf male/female, gar
 - Lightning stays an FNA overlay.
 - Size: 4–6. Tier: S+C draft, O review.
 - **Before effect motion moves to the ECS (phase 2):** an item's boat offset is ECS-owned (owner, 2026-11-07; branch `bg/ecs-item-offset`, poc-log "ecs_item_offset"): the `ItemOffset` component, written by the boat operations, switch `ecs_item_offset`, checker `CUO_ITEM_OFFSET_CHECK`. Phase 2 reads it for an effect whose source or target is an item on a boat (`FixedEffect` copies its source's `Offset` today).
+- **Phase 2 (2026-11-07, branch `bg/ecs-effect-motion`, poc-log "T8 ownership phase 2"): built, default off.** The kinds' motion runs as `EffectSystem` steps over `EffectState` (switch `ecs_effect_motion`, needs `ecs_effects` and `ecs_effect_endpoints`; checker `CUO_EFFECT_MOTION_CHECK` replays the legacy motion at every update; item sources' offsets from `ItemOffset`). The effect's fields are a write-through cache for the views until phase 3 moves the extract.
 
 ### T9: deletion (after each switch has been on by default for one phase)
 
