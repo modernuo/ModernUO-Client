@@ -249,7 +249,6 @@ namespace ClassicUO.Game.Managers
                     TextObject next = first.DRight;
 
                     first.Destroy();
-                    first.Clear();
 
                     first = next;
                 }
@@ -269,7 +268,6 @@ namespace ClassicUO.Game.Managers
                     TextObject next = first.DRight;
 
                     first.Destroy();
-                    first.Clear();
 
                     first = next;
                 }

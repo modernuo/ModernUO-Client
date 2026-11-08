@@ -322,8 +322,7 @@ namespace ClassicUO.Game.UI.Gumps
             }
 
             // T1 (funnel part 8, Codex audit P2 #2): nothing is linked to the detached preview mobile (its hair and beard are
-            // held by the gump), so there is nothing to remove from the World; the list is cleared as before
-            fakeMobile.Clear();
+            // held by the gump), so there is nothing to remove from the World
             fakeMobile.Race = selectedRace;
             fakeMobile.IsFemale = isFemale;
 

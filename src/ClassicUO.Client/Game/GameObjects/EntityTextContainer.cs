@@ -7,13 +7,19 @@ using Microsoft.Xna.Framework;
 
 namespace ClassicUO.Game.GameObjects
 {
-    internal class TextContainer : LinkedObject
+    // Not a LinkedObject: the list links live on TextObject, so world objects carry no list fields (owner item 5, 2026-11-07).
+    internal class TextContainer
     {
         public int Size,
             MaxSize = 5;
 
         /// <summary>W5: bumped when a text is added or the container cleared (GameObject.TextAllExpired caches on it).</summary>
         public uint Version;
+
+        /// <summary>The oldest text; newer ones follow through <see cref="TextObject.Next"/>.</summary>
+        public TextObject Items;
+
+        public bool IsEmpty => Items == null;
 
         public void Add(TextObject obj)
         {
@@ -22,7 +28,7 @@ namespace ClassicUO.Game.GameObjects
 
             if (Size >= MaxSize)
             {
-                ((TextObject)Items)?.Destroy();
+                Items?.Destroy();
                 Remove(Items);
             }
             else
@@ -31,15 +37,15 @@ namespace ClassicUO.Game.GameObjects
             }
         }
 
-        public new void Clear()
+        public void Clear()
         {
             Version++;
-            TextObject item = (TextObject)Items;
+            TextObject item = Items;
             Items = null;
 
             while (item != null)
             {
-                TextObject next = (TextObject)item.Next;
+                TextObject next = item.Next;
                 item.Next = null;
                 item.Destroy();
                 Remove(item);
@@ -48,6 +54,67 @@ namespace ClassicUO.Game.GameObjects
             }
 
             Size = 0;
+        }
+
+        private void PushToBack(TextObject item)
+        {
+            if (item == null)
+            {
+                return;
+            }
+
+            Remove(item);
+
+            if (Items == null)
+            {
+                Items = item;
+            }
+            else
+            {
+                TextObject last = Items;
+
+                while (last.Next != null)
+                {
+                    last = last.Next;
+                }
+
+                last.Next = item;
+                item.Next = null;
+                item.Previous = last;
+            }
+        }
+
+        private void Remove(TextObject item)
+        {
+            if (item == null)
+            {
+                return;
+            }
+
+            if (item == Items)
+            {
+                Items = Items.Next;
+
+                if (Items != null)
+                {
+                    Items.Previous = null;
+                }
+            }
+            else
+            {
+                if (item.Previous != null)
+                {
+                    item.Previous.Next = item.Next;
+                }
+
+                if (item.Next != null)
+                {
+                    item.Next.Previous = item.Previous;
+                }
+            }
+
+            item.Next = null;
+            item.Previous = null;
         }
     }
 

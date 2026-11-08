@@ -14,6 +14,9 @@ namespace ClassicUO.Game.GameObjects
     {
         private readonly EffectManager _manager;
 
+        /// <summary>Links in <see cref="EffectManager"/>'s list.</summary>
+        public GameEffect Next, Previous;
+
         protected GameEffect(World world, EffectManager manager, ushort graphic, ushort hue, int duration, byte speed) : base(world)
         {
             _manager = manager;

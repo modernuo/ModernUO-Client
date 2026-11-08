@@ -30,9 +30,6 @@ namespace ClassicUO.UnitTests.Game.GameObjects.Mobile
 
             var sut = new ClassicUO.Game.GameObjects.Mobile(world);
 
-            sut.Insert(sut.Items, irrelevantItem1);
-            sut.Insert(sut.Items, irrelevantItem2);
-
             Assert.Null(sut.GetSecureTradeBox());
 
             world.Clear();

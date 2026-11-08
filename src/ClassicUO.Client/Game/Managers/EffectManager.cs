@@ -7,9 +7,15 @@ using ClassicUO.Utility.Logging;
 
 namespace ClassicUO.Game.Managers
 {
-    internal sealed class EffectManager : LinkedObject
+    // Not a LinkedObject: the list links live on GameEffect, so world objects carry no list fields (owner item 5, 2026-11-07).
+    internal sealed class EffectManager
     {
         private readonly World _world;
+
+        /// <summary>The oldest effect; newer ones follow through <see cref="GameEffect.Next"/>.</summary>
+        public GameEffect Items;
+
+        public bool IsEmpty => Items == null;
 
         public EffectManager(World world)
         {
@@ -38,9 +44,9 @@ namespace ClassicUO.Game.Managers
             bool system = _world.EffectsSystemOn;
             _playerResolved = false;
 
-            for (GameEffect f = (GameEffect) Items; f != null;)
+            for (GameEffect f = Items; f != null;)
             {
-                GameEffect next = (GameEffect) f.Next;
+                GameEffect next = f.Next;
 
                 f.Update();
 
@@ -276,20 +282,82 @@ namespace ClassicUO.Game.Managers
             Add(effect);
         }
 
-        public new void Clear()
+        public void Clear()
         {
-            GameEffect first = (GameEffect) Items;
+            GameEffect first = Items;
 
             while (first != null)
             {
-                LinkedObject n = first.Next;
+                GameEffect n = first.Next;
 
                 first.Destroy();
 
-                first = (GameEffect) n;
+                first = n;
             }
 
             Items = null;
+        }
+
+        private void PushToBack(GameEffect item)
+        {
+            if (item == null)
+            {
+                return;
+            }
+
+            Remove(item);
+
+            if (Items == null)
+            {
+                Items = item;
+            }
+            else
+            {
+                GameEffect last = Items;
+
+                while (last.Next != null)
+                {
+                    last = last.Next;
+                }
+
+                last.Next = item;
+                item.Next = null;
+                item.Previous = last;
+            }
+        }
+
+        /// <summary>Unlinks <paramref name="item"/> (GameEffect.Destroy); an effect that is not linked is left as it is.</summary>
+        public void Remove(GameEffect item)
+        {
+            if (item == null)
+            {
+                return;
+            }
+
+            if (item == Items)
+            {
+                Items = Items.Next;
+
+                if (Items != null)
+                {
+                    Items.Previous = null;
+                }
+            }
+            else
+            {
+                if (item.Previous != null)
+                {
+                    item.Previous.Next = item.Next;
+                }
+
+                if (item.Next != null)
+                {
+                    item.Next.Previous = item.Previous;
+                }
+            }
+
+            item.Next = null;
+            item.Previous = null;
         }
     }
 }

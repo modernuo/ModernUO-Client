@@ -171,9 +171,9 @@ namespace ClassicUO.UnitTests.Ecs
 
             foreach (Entity parent in parents)
             {
-                for (LinkedObject i = parent.Items; i != null; i = i.Next)
+                for (ChildNode i = parent.Items; i != null; i = i.NextNode)
                 {
-                    if (i is Item child && ReferenceEquals(world.Items.Get(child.Serial), child) && child.Container == parent.Serial)
+                    if (i.Owner is Item child && ReferenceEquals(world.Items.Get(child.Serial), child) && child.Container == parent.Serial)
                     {
                         // a child linked without its hook Sync: its record does not have the parent yet
                         if (world.Ecs.Mirror.Contents(parent.Serial).IndexOf(child.Serial) < 0)
@@ -1254,13 +1254,13 @@ namespace ClassicUO.UnitTests.Ecs
                 return;
             }
 
-            LinkedObject first = container.Items;
-            LinkedObject newFirst = null;
+            ChildNode first = container.Items;
+            ChildNode newFirst = null;
 
             while (first != null)
             {
-                LinkedObject next = first.Next;
-                Item it = (Item)first;
+                ChildNode next = first.NextNode;
+                Item it = (Item)first.Owner;
 
                 if (removeUnequippedOnly && it.Layer != 0)
                 {
@@ -1988,12 +1988,12 @@ namespace ClassicUO.UnitTests.Ecs
 
             if (!obj.IsEmpty)
             {
-                LinkedObject o = obj.Items;
+                ChildNode o = obj.Items;
 
                 while (o != null)
                 {
-                    LinkedObject next = o.Next;
-                    Item it = (Item)o;
+                    ChildNode next = o.NextNode;
+                    Item it = (Item)o.Owner;
 
                     if (!it.Opened && it.Layer != Layer.Backpack)
                     {

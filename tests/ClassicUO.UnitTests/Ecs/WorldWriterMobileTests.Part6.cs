@@ -1218,9 +1218,9 @@ namespace ClassicUO.UnitTests.Ecs
                 return sb.ToString();
             }
 
-            for (LinkedObject i = book.Items; i != null; i = i.Next)
+            for (ChildNode i = book.Items; i != null; i = i.NextNode)
             {
-                var it = (Item)i;
+                var it = (Item)i.Owner;
                 sb.Append($" {it.Serial}/{it.Graphic:X4}/{it.Amount}/{it.Container:X8}/{it.World == book.World}");
             }
 
