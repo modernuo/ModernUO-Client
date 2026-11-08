@@ -492,23 +492,15 @@ namespace ClassicUO.UnitTests.Renderer
             q.ReadyCount.Should().Be(1, "the empty job still reaches the owner's bookkeeping");
         }
 
-        // ---- real thread pool ----
+        // ---- real worker threads: the test's own (DecodeTestWorkers), and the thread pool for the default start ----
 
-        private static void DrainUntil(FirstSightDecoder d, Func<bool> done)
-        {
-            var sw = Stopwatch.StartNew();
-
-            while (!done() && sw.ElapsedMilliseconds < 10000)
-            {
-                d.Drain(long.MaxValue);
-                Thread.Sleep(1);
-            }
-        }
+        private static void DrainUntil(FirstSightDecoder d, Func<bool> done) => DecodeWait.Until(d, done, drain: true);
 
         [Fact]
         public void Decoder_Keeps_In_Flight_Bytes_Under_The_Cap_And_Uploads_Everything()
         {
-            var budget = new DecodeBudget(10 * 64);
+            using var workers = new DecodeTestWorkers(4);
+            var budget = workers.Budget(10 * 64);
             int uploads = 0;
             long peakSeen = 0;
             FirstSightDecoder d = null;
@@ -540,7 +532,8 @@ namespace ClassicUO.UnitTests.Renderer
         [Fact]
         public void Failed_Decodes_Release_Their_Bytes()
         {
-            var budget = new DecodeBudget(128);
+            using var workers = new DecodeTestWorkers(4);
+            var budget = workers.Budget(128);
             int uploads = 0;
             var d = new FirstSightDecoder("test", 50, job => job.Index % 2 == 0 ? false : throw new InvalidOperationException("boom"),
                 job => uploads++, idx => 64, budget);
@@ -561,7 +554,9 @@ namespace ClassicUO.UnitTests.Renderer
         [Fact]
         public void Cancel_On_The_Thread_Pool_Settles_Without_A_Drain()
         {
-            // the earlier version of this test drained after the cancel, which hid stranded charges: here nothing drains
+            // the earlier version of this test drained after the cancel, which hid stranded charges: here nothing drains.
+            // The default start (the thread pool): the pool may be slow to run the two admitted items under load, so the
+            // wait is on the decoder's publish signal (a cancelled worker releases its bytes before it publishes)
             var budget = new DecodeBudget(128);
             int decodes = 0;
             var d = new FirstSightDecoder("test", 50, job =>
@@ -579,13 +574,7 @@ namespace ClassicUO.UnitTests.Renderer
             d.Cancel();
             budget.Waiting.Should().Be(0, "every waiting request was taken out");
 
-            var sw = Stopwatch.StartNew();
-
-            while (budget.InFlightBytes != 0 && sw.ElapsedMilliseconds < 10000)
-            {
-                Thread.Sleep(1);
-            }
-
+            DecodeWait.Until(d, () => budget.InFlightBytes == 0, drain: false);
             budget.InFlightBytes.Should().Be(0, "the running workers released their bytes themselves");
             decodes.Should().BeLessOrEqualTo(2);
         }

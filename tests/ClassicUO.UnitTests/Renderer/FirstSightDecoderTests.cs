@@ -5,7 +5,6 @@ using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Threading;
-using System.Threading.Tasks;
 using ClassicUO.Assets;
 using ClassicUO.Renderer;
 using FluentAssertions;
@@ -35,14 +34,25 @@ namespace ClassicUO.UnitTests.Renderer
             return true;
         }
 
-        private static void WaitReady(FirstSightDecoder d, int count, Func<int> uploaded)
-        {
-            var sw = Stopwatch.StartNew();
+        private static void WaitReady(FirstSightDecoder d, int count, Func<int> uploaded) =>
+            DecodeWait.Until(d, () => uploaded() >= count, drain: true);
 
-            while (uploaded() < count && sw.ElapsedMilliseconds < 10000)
+        // the thread pool replaced by a list the test runs by hand, on its own thread: no scheduling involved
+        private sealed class ManualStarter
+        {
+            private readonly List<IThreadPoolWorkItem> _started = new List<IThreadPoolWorkItem>();
+            private int _run;
+
+            public int Count => _started.Count;
+
+            public void Start(IThreadPoolWorkItem item) => _started.Add(item);
+
+            public void RunAll()
             {
-                d.Drain(long.MaxValue);
-                Thread.Sleep(1);
+                while (_run < _started.Count)
+                {
+                    _started[_run++].Execute();
+                }
             }
         }
 
@@ -52,6 +62,7 @@ namespace ClassicUO.UnitTests.Renderer
             var uploads = new List<uint>();
             int decodes = 0;
             int mainThread = Environment.CurrentManagedThreadId;
+            using var workers = new DecodeTestWorkers(4);
             FirstSightDecoder d = null;
             d = new FirstSightDecoder("test", 64, job =>
             {
@@ -69,7 +80,7 @@ namespace ClassicUO.UnitTests.Renderer
                 }
 
                 uploads.Add(job.Index);
-            });
+            }, budget: workers.Budget());
 
             for (int round = 0; round < 3; round++)
             {
@@ -102,21 +113,18 @@ namespace ClassicUO.UnitTests.Renderer
         [Fact]
         public void Drain_Past_Its_Deadline_Uploads_One()
         {
+            // the decodes run by hand, so all 8 are ready before the first drain whatever the machine does; the deadline
+            // (0) has passed for every drain below
             int uploads = 0;
-            var d = new FirstSightDecoder("test", 16, FillPattern, _ => uploads++);
+            var starter = new ManualStarter();
+            var d = new FirstSightDecoder("test", 16, FillPattern, _ => uploads++, budget: new DecodeBudget(0, starter.Start));
 
             for (uint i = 0; i < 8; i++)
             {
                 d.Request(i);
             }
 
-            var sw = Stopwatch.StartNew();
-
-            while (d.ReadyCount < 8 && sw.ElapsedMilliseconds < 10000)
-            {
-                Thread.Sleep(1);
-            }
-
+            starter.RunAll();
             d.ReadyCount.Should().Be(8);
 
             // each drain whose deadline has passed still uploads exactly one, so the queue always moves
@@ -136,6 +144,7 @@ namespace ClassicUO.UnitTests.Renderer
         {
             var seen = new List<uint>();
             int decodes = 0;
+            var starter = new ManualStarter();
             var d = new FirstSightDecoder("test", 8, job =>
             {
                 Interlocked.Increment(ref decodes);
@@ -151,12 +160,20 @@ namespace ClassicUO.UnitTests.Renderer
             {
                 job.Pixels.Should().NotBeNull("only decoded sprites reach the upload");
                 seen.Add(job.Index);
-            });
+            }, budget: new DecodeBudget(0, starter.Start));
 
             d.Request(2);
             d.Request(3);
             d.Request(5);
-            WaitUntil(() => d.Pending == 0, () => d.Drain(long.MaxValue)); // no exception escapes Drain
+            starter.RunAll(); // the decode's exception stays in the worker
+            d.ReadyCount.Should().Be(3);
+
+            for (int i = 0; i < 3; i++)
+            {
+                d.Drain(long.MaxValue); // no exception escapes Drain
+            }
+
+            d.Pending.Should().Be(0);
 
             seen.Should().Equal(2u);
             d.IsFailed(3).Should().BeTrue();
@@ -167,21 +184,9 @@ namespace ClassicUO.UnitTests.Renderer
             d.Request(3);
             d.Request(5);
             d.Pending.Should().Be(0);
-            Thread.Sleep(20);
+            starter.Count.Should().Be(3, "nothing was started again");
+            starter.RunAll();
             decodes.Should().Be(3);
-        }
-
-        private static void WaitUntil(Func<bool> done, Action step)
-        {
-            var sw = Stopwatch.StartNew();
-
-            while (!done() && sw.ElapsedMilliseconds < 10000)
-            {
-                step();
-                Thread.Sleep(1);
-            }
-
-            done().Should().BeTrue();
         }
 
         [Fact]
@@ -189,6 +194,7 @@ namespace ClassicUO.UnitTests.Renderer
         {
             int uploads = 0;
             using var gate = new ManualResetEventSlim(false);
+            using var workers = new DecodeTestWorkers(4); // two block on the gate, the others decode 0..7
             var d = new FirstSightDecoder("test", 16, job =>
             {
                 if (job.Index >= 8)
@@ -197,14 +203,14 @@ namespace ClassicUO.UnitTests.Renderer
                 }
 
                 return FillPattern(job);
-            }, _ => uploads++);
+            }, _ => uploads++, budget: workers.Budget());
 
             for (uint i = 0; i < 10; i++)
             {
                 d.Request(i);
             }
 
-            WaitUntil(() => d.ReadyCount == 8, () => { });
+            DecodeWait.Until(d, () => d.ReadyCount == 8, drain: false);
 
             // logout: finished decodes are dropped (buffers returned) without an upload
             d.Cancel();
@@ -215,7 +221,7 @@ namespace ClassicUO.UnitTests.Renderer
             // the two running workers finish after the cancel: they return their buffers themselves, and the next drain
             // only clears their state
             gate.Set();
-            WaitUntil(() => d.ReadyCount == 2, () => { });
+            DecodeWait.Until(d, () => d.ReadyCount == 2, drain: false);
             d.Drain(long.MaxValue);
             d.Drain(long.MaxValue);
             uploads.Should().Be(0);
@@ -225,7 +231,7 @@ namespace ClassicUO.UnitTests.Renderer
 
             // and the decoder works normally afterwards
             d.Request(3);
-            WaitUntil(() => uploads == 1, () => d.Drain(long.MaxValue));
+            DecodeWait.Until(d, () => uploads == 1, drain: true);
         }
 
         [Fact]
@@ -237,7 +243,8 @@ namespace ClassicUO.UnitTests.Renderer
             int uploads = 0;
             using var atBoundary = new ManualResetEventSlim(false);
             using var release = new ManualResetEventSlim(false);
-            var d = new FirstSightDecoder("test", 4, FillPattern, _ => uploads++);
+            using var workers = new DecodeTestWorkers(1);
+            var d = new FirstSightDecoder("test", 4, FillPattern, _ => uploads++, budget: workers.Budget());
             d.BeforePublishForTests = () =>
             {
                 atBoundary.Set();
@@ -245,13 +252,22 @@ namespace ClassicUO.UnitTests.Renderer
             };
 
             d.Request(1);
-            atBoundary.Wait(10000).Should().BeTrue();
+            atBoundary.Wait(DecodeWait.HangGuard).Should().BeTrue();
 
-            var cancel = Task.Run(d.Cancel); // logout while the worker is publishing
-            Thread.Sleep(50);
-            cancel.IsCompleted.Should().BeFalse("Cancel waits for the publish step");
+            // logout while the worker is publishing, on a thread of its own (a pool task may not start in time under load)
+            using var cancelDone = new ManualResetEventSlim(false);
+            var cancel = new Thread(() =>
+            {
+                d.Cancel();
+                cancelDone.Set();
+            }) { IsBackground = true };
+            cancel.Start();
+
+            // Cancel cannot finish while the worker holds the publish step, whether its thread has got there yet or not; a
+            // pause cut short by the scheduler only weakens this check, it cannot fail it
+            cancelDone.Wait(50).Should().BeFalse("Cancel waits for the publish step");
             release.Set();
-            cancel.Wait(10000).Should().BeTrue();
+            cancelDone.Wait(DecodeWait.HangGuard).Should().BeTrue();
 
             d.ReadyCount.Should().Be(0, "the published job was drained, buffer returned, by Cancel");
             d.Pending.Should().Be(0);
@@ -259,7 +275,7 @@ namespace ClassicUO.UnitTests.Renderer
 
             d.BeforePublishForTests = null;
             d.Request(1);
-            WaitUntil(() => uploads == 1, () => d.Drain(long.MaxValue));
+            DecodeWait.Until(d, () => uploads == 1, drain: true);
         }
 
         [Fact]
@@ -288,6 +304,8 @@ namespace ClassicUO.UnitTests.Renderer
 
             var shared = new PackPages(Path.Combine(PackDir, "art"), 3 << 20);
             var results = new (uint[] Pixels, (int, int, int, int) Bounds)[ids.Count];
+            int done = 0; // uploads (main thread)
+            using var workers = new DecodeTestWorkers(4);
             var d = new FirstSightDecoder("art", sprites.Length, job =>
             {
                 ref readonly var e = ref sprites[job.Index];
@@ -304,16 +322,17 @@ namespace ClassicUO.UnitTests.Renderer
             {
                 int k = ids.IndexOf((int)job.Index);
                 results[k] = (job.Pixels.AsSpan(0, job.Width * job.Height).ToArray(), (job.Bounds.X, job.Bounds.Y, job.Bounds.Width, job.Bounds.Height));
-            });
+                done++;
+            }, budget: workers.Budget());
 
             foreach (int i in ids)
             {
                 d.Request((uint)i);
             }
 
-            int done = 0;
-            WaitReady(d, ids.Count, () => done = results.Count(r => r.Pixels != null));
+            WaitReady(d, ids.Count, () => done);
             done.Should().Be(ids.Count);
+            results.Should().OnlyContain(r => r.Pixels != null);
 
             for (int k = 0; k < ids.Count; k++)
             {
