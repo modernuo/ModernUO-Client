@@ -137,7 +137,7 @@ namespace ClassicUO.Game
         public void Select(EcsEntity e, int posX, int posY, float depth) => Select(e, EcsRead.Row(e), posX, posY, depth);
 
         /// <summary><see cref="Select(EcsEntity, int, int, float)"/> with <paramref name="e"/>'s record already read (perf-11).</summary>
-        public void Select(EcsEntity e, EcsRow data, int posX, int posY, float depth)
+        public void Select(EcsEntity e, in EcsRow data, int posX, int posY, float depth)
         {
             _selCount = 0;
             _selectOnly = true;
@@ -173,7 +173,7 @@ namespace ClassicUO.Game
         public void Emit(EcsEntity e, int posX, int posY, float depth) => Emit(e, EcsRead.Row(e), posX, posY, depth);
 
         // perf-11: one record read (the entity's EcsRow) for all the components the emission reads
-        private void Emit(EcsEntity e, EcsRow data, int posX, int posY, float depth)
+        private void Emit(EcsEntity e, in EcsRow data, int posX, int posY, float depth)
         {
             MaterializeView();
             ref readonly AnimationState s = ref data.Get<AnimationState>();
@@ -526,7 +526,7 @@ namespace ClassicUO.Game
         /// <see cref="Emit(EcsEntity, in AnimationState, in MobileRenderState, int, int, float, MobileFrameCache)"/> with
         /// <paramref name="e"/>'s record already read (perf-11: the draw reads it once for every component).
         /// </summary>
-        public void Emit(EcsEntity e, EcsRow data, in AnimationState s, in MobileRenderState rs, int posX, int posY, float depth, MobileFrameCache cache)
+        public void Emit(EcsEntity e, in EcsRow data, in AnimationState s, in MobileRenderState rs, int posX, int posY, float depth, MobileFrameCache cache)
         {
             if (cache == null || (s.Flags & AnimStateFlags.Visible) == 0 || !_hasAnims)
             {

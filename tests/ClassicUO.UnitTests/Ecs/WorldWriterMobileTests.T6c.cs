@@ -377,6 +377,21 @@ namespace ClassicUO.UnitTests.Ecs
             StepSystem.Declined.Should().BeGreaterOrEqualTo(declined + 2);
         }
 
+        // ecs-hygiene: the eligibility comes from one record row; a record without Facing is declined and nothing moves
+        [Fact]
+        public void The_Step_System_Declines_A_Record_Without_Facing()
+        {
+            World world = BuildSteps(StepScenario.Walking, true);
+            Mobile m = world.Mobiles.Get(MOB);
+            world.Ecs.Mirror.TryGetEntity(m.Serial, out EcsEntity e).Should().BeTrue();
+            e.HasComponent<StepsComponent>().Should().BeTrue();
+            e.RemoveComponent<Facing>();
+            int steps = m.Steps.Count;
+
+            world.StepSystem.TryRun(world, m, Time.Ticks, FRAME_DELAY, out _).Should().BeFalse();
+            m.Steps.Count.Should().Be(steps);
+        }
+
         [Fact]
         public void The_Component_Copies_The_Queue_In_Order_And_The_Diff_Sees_Every_Field()
         {

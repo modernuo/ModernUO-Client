@@ -350,8 +350,12 @@ namespace ClassicUO.Game
     /// </summary>
     internal sealed class MobileAnimationAdvanceSystem
     {
-        // CUO_ANIM_ADVANCE_CHECK=1: each advance is compared with the legacy one on a shadow timer (see Check)
+#if CUO_DEVTOOLS
+        // CLEANUP(release): CUO_ANIM_ADVANCE_CHECK=1: each advance is compared with the legacy one on a shadow timer (see Check)
         public static readonly bool AdvanceCheck = Environment.GetEnvironmentVariable("CUO_ANIM_ADVANCE_CHECK") == "1";
+#else
+        public const bool AdvanceCheck = false;
+#endif
 
         public static long Ran, Declined;
         public static long Checks, Diffs, SyncChecks, SyncDiffs, RandomDiffs;
@@ -369,9 +373,18 @@ namespace ClassicUO.Game
         /// the client's).</summary>
         internal bool TryRun<TAnims>(World world, Mobile mob, in TAnims source, bool check) where TAnims : struct, IAnimationAdvanceSource
         {
-            if (mob.IsDestroyed || !world.Ecs.Mirror.TryGetEntity(mob.Serial, out EcsEntity e) ||
-                !EcsRead.TryGet(e, out MobileClock clock) || clock.Flags != MobileClockFlags.None ||
-                !e.HasComponent<AnimationTimer>() || !e.HasComponent<MobileInputs>() || !e.HasComponent<EquipmentSlots>())
+            if (mob.IsDestroyed || !world.Ecs.Mirror.TryGetEntity(mob.Serial, out EcsEntity e))
+            {
+                Declined++;
+
+                return false;
+            }
+
+            // one record read for the eligibility, the tag and the components (perf backlog: was up to 7 entity lookups)
+            EcsRow row = EcsRead.Row(e);
+
+            if (row.IsNull || !row.TryGet(out MobileClock clock) || clock.Flags != MobileClockFlags.None ||
+                !row.Has<AnimationTimer>() || !row.Has<MobileInputs>() || !row.Has<EquipmentSlots>())
             {
                 Declined++;
 
@@ -379,23 +392,26 @@ namespace ClassicUO.Game
             }
 
             // the slots the drawn path rebuilds lazily: a mobile not drawn since its equipment changed is rebuilt here (the
-            // tag removal moves the entity, so before any component ref)
-            if (MobileAnimationSystem.TakeDirty(e))
+            // tag removal moves the entity, so before any component ref, and the row is read again)
+            if (MobileAnimationSystem.TakeDirty(e, in row))
             {
                 AnimationState s = default;
                 s.Flags = EcsRead.Get<MobileInputs>(e).Flags;
                 world.Ecs.Animation.Rebuild(e, in s, mob);
+                row = EcsRead.Row(e);
             }
 
             Ran++;
-            AnimationTimer t = EcsRead.Get<AnimationTimer>(e);
-            MobileInputs inp = EcsRead.Get<MobileInputs>(e);
-            EquipmentSlots eq = EcsRead.Get<EquipmentSlots>(e);
+            AnimationTimer t = row.Get<AnimationTimer>();
+            MobileInputs inp = row.Get<MobileInputs>();
+            EquipmentSlots eq = row.Get<EquipmentSlots>();
 
+#if CUO_DEVTOOLS
             if (check)
             {
                 Check(mob, in t, in inp, in eq, in source);
             }
+#endif
 
             AnimAdvanceOutcome outcome = AnimationAdvanceRules.Step(ref t, in inp, in eq, mob.Serial, in source, out int frame, out long due);
             world.Writer.AdvanceAnimationFromEcs(mob, in t, outcome == AnimAdvanceOutcome.Remove, frame, due);
@@ -405,6 +421,7 @@ namespace ClassicUO.Game
 
         // ---- the checker -------------------------------------------------------------------------------------------------
 
+#if CUO_DEVTOOLS
         /// <summary>
         /// CUO_ANIM_ADVANCE_CHECK: the component must equal the Mobile's fields (a missed push otherwise); the legacy advance
         /// (the legacy idle planner and inputs read from the Mobile, the legacy selection input, the Mobile's direction, the
@@ -566,6 +583,7 @@ namespace ClassicUO.Game
             t.AnimDue = Time.Ticks;
             t.IdleDue = Time.Ticks + (30000 + RandomHelper.GetValue(0, 30000));
         }
+#endif
 
         internal static bool Same(in AnimationTimer a, in AnimationTimer b) =>
             a.Frame == b.Frame && a.FrameCount == b.FrameCount && a.Interval == b.Interval && a.RepeatMode == b.RepeatMode &&

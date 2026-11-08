@@ -91,8 +91,13 @@ namespace ClassicUO.Game
     /// </summary>
     internal sealed class ItemAnimationAdvanceSystem
     {
-        // CUO_ANIM_ADVANCE_CHECK=1: each advance is compared with the legacy one on a shadow (see Check)
+        // CUO_ANIM_ADVANCE_CHECK=1: each advance is compared with the legacy one on a shadow (see Check); the unit tests pass
+        // the check flag themselves, so Check stays compiled in release
+#if CUO_DEVTOOLS
         public static readonly bool AdvanceCheck = MobileAnimationAdvanceSystem.AdvanceCheck;
+#else
+        public const bool AdvanceCheck = false;
+#endif
 
         public static long Ran, Declined, NotDue;
         public static long Checks, Diffs, SyncChecks, SyncDiffs, RandomDiffs;
@@ -111,16 +116,25 @@ namespace ClassicUO.Game
             where TSource : struct, ICorpseAnimationSource
         {
             if (item.IsDestroyed || !item.IsCorpse || item.ObjectHandlesStatus == ObjectHandlesStatus.OPEN ||
-                !world.Ecs.Mirror.TryGetEntity(item.Serial, false, out EcsEntity e) || !e.HasComponent<AnimationTimer>() ||
-                !e.HasComponent<ItemData>() || !ReferenceEquals(world.Items.Get(item.Serial), item))
+                !world.Ecs.Mirror.TryGetEntity(item.Serial, false, out EcsEntity e))
             {
                 Declined++;
 
                 return false;
             }
 
-            AnimationTimer t = EcsRead.Get<AnimationTimer>(e);
-            ItemData data = EcsRead.Get<ItemData>(e);
+            // one record read for the eligibility, the reads and the write-back (nothing below changes the archetype)
+            EcsRow row = EcsRead.Row(e);
+
+            if (row.IsNull || !row.Has<AnimationTimer>() || !row.Has<ItemData>() || !ReferenceEquals(world.Items.Get(item.Serial), item))
+            {
+                Declined++;
+
+                return false;
+            }
+
+            AnimationTimer t = row.Get<AnimationTimer>();
+            ItemData data = row.Get<ItemData>();
 
             if (check)
             {
@@ -135,7 +149,7 @@ namespace ClassicUO.Game
             }
 
             Ran++;
-            EcsRead.Get<AnimationTimer>(e) = t;
+            row.Get<AnimationTimer>() = t;
             world.Writer.AdvanceCorpseFrame(item, frame, due, push: false);
 
             return true;
