@@ -789,20 +789,30 @@ namespace ClassicUO.Game
 
             Client.Game.UO.FileManager.Fonts.RecalculateWidthByInfo = RecalculateWidthByInfo;
 
+            // fi.Data is read only below (the hit map copies it), so the loader may hand back its reused buffer.
+            Client.Game.UO.FileManager.Fonts.ReusePixelBuffer = true;
+
             FontsLoader.FontInfo fi;
-            if (IsUnicode)
+            try
             {
-                fi = Client.Game.UO.FileManager.Fonts.GenerateUnicode(
-                    Font, Text, Hue, Cell, MaxWidth, Align,
-                    (ushort)FontStyle, SaveHitMap, MaxHeight
-                );
+                if (IsUnicode)
+                {
+                    fi = Client.Game.UO.FileManager.Fonts.GenerateUnicode(
+                        Font, Text, Hue, Cell, MaxWidth, Align,
+                        (ushort)FontStyle, SaveHitMap, MaxHeight
+                    );
+                }
+                else
+                {
+                    fi = Client.Game.UO.FileManager.Fonts.GenerateASCII(
+                        Font, Text, Hue, MaxWidth, Align,
+                        (ushort)FontStyle, SaveHitMap, MaxHeight
+                    );
+                }
             }
-            else
+            finally
             {
-                fi = Client.Game.UO.FileManager.Fonts.GenerateASCII(
-                    Font, Text, Hue, MaxWidth, Align,
-                    (ushort)FontStyle, SaveHitMap, MaxHeight
-                );
+                Client.Game.UO.FileManager.Fonts.ReusePixelBuffer = false;
             }
 
             if (SaveHitMap)
