@@ -274,14 +274,87 @@ namespace ClassicUO.Game.GameObjects
                     return;
                 }
 
-                foreach (Item item in World.Items.Values)
+                OpenCorpsesInRange(ProfileManager.CurrentProfile.AutoOpenCorpseRange);
+            }
+        }
+
+        /// <summary>Tests: receives the serials <see cref="OpenCorpsesInRange"/> opens instead of the queued double clicks.</summary>
+        internal List<uint> CorpseOpenSink;
+
+        /// <summary>
+        /// perf-13: opens every corpse within <paramref name="range"/> not opened yet, in <c>World.Items</c> order, as the
+        /// every-item loop did. Every live corpse is in the active item list (<see cref="Item.NeedsFrameUpdate"/>; the mirror
+        /// hooks queue it, World.Update's first pass and sweep catch any other), so the candidates are counted there: none
+        /// (every step but the first near new corpses) costs O(corpses); one is opened directly; two or more take the
+        /// every-item loop, which alone knows the dictionary's order (which gump opens first). Before the list's first build
+        /// after World.Clear the loop runs. CUO_STEP_OPEN_CHECK compares the decision with the loop's.
+        /// </summary>
+        internal void OpenCorpsesInRange(int range)
+        {
+            int found = 0;
+            Item single = null;
+
+            if (World.ActiveItemsListed)
+            {
+                IReadOnlyList<Item> active = World.ActiveItems;
+
+                for (int i = 0; i < active.Count; i++)
                 {
-                    if (!item.IsDestroyed && item.IsCorpse && item.Distance <= ProfileManager.CurrentProfile.AutoOpenCorpseRange && !AutoOpenedCorpses.Contains(item.Serial))
+                    Item item = active[i];
+
+                    if (ShouldAutoOpen(item, range) && ReferenceEquals(World.Items.Get(item.Serial), item))
                     {
-                        AutoOpenedCorpses.Add(item.Serial);
-                        GameActions.DoubleClickQueued(item.Serial);
+                        single = item;
+
+                        if (++found > 1)
+                        {
+                            break;
+                        }
                     }
                 }
+            }
+            else
+            {
+                found = 2;
+            }
+
+#if CUO_DEVTOOLS
+            if (StepOpenCheck.On)
+            {
+                StepOpenCheck.Corpses(this, range, found, single);
+            }
+#endif
+
+            if (found == 1)
+            {
+                AutoOpenCorpse(single);
+            }
+            else if (found > 1)
+            {
+                foreach (Item item in World.Items.Values)
+                {
+                    if (ShouldAutoOpen(item, range))
+                    {
+                        AutoOpenCorpse(item);
+                    }
+                }
+            }
+        }
+
+        internal bool ShouldAutoOpen(Item item, int range) =>
+            !item.IsDestroyed && item.IsCorpse && item.Distance <= range && !AutoOpenedCorpses.Contains(item.Serial);
+
+        private void AutoOpenCorpse(Item item)
+        {
+            AutoOpenedCorpses.Add(item.Serial);
+
+            if (CorpseOpenSink != null)
+            {
+                CorpseOpenSink.Add(item.Serial);
+            }
+            else
+            {
+                GameActions.DoubleClickQueued(item.Serial);
             }
         }
 
