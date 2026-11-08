@@ -272,6 +272,8 @@ namespace ClassicUO.Game
         private DynamicSprite[] _sel = new DynamicSprite[8];
         private int _selCount;
         private bool _selectOnly;
+        private UltimaBatcher2D _batcher;
+        private ILegacySpriteSource _legacySrc;
         private GpuSpriteTables _tables;
         private int _offsetX, _offsetY;
 
@@ -345,8 +347,31 @@ namespace ClassicUO.Game
         public bool Select(in ItemSpriteInput item, bool hasAnims, int posX, int posY, float depth)
         {
             _selCount = 0;
+            _batcher = null;
 
             return Run(in item, hasAnims, 0, 0, posX, posY, depth, true);
+        }
+
+        /// <summary>
+        /// legacy_ecs_sprites: <see cref="Select"/> with each record drawn on <paramref name="batcher"/> as it is made, in the
+        /// order <see cref="LegacySpriteResolve.DrawAll"/> would draw <see cref="Selected"/> (the same batcher calls), with the
+        /// same side effects. An art record is drawn straight from its fields, without building a <see cref="DynamicSprite"/>
+        /// or a <see cref="LegacyDraw"/>; <see cref="Selected"/> stays empty.
+        /// </summary>
+        public bool SelectDraw(UltimaBatcher2D batcher, ILegacySpriteSource src, in ItemSpriteInput item, bool hasAnims, int posX, int posY, float depth)
+        {
+            _selCount = 0;
+            _batcher = batcher;
+            _legacySrc = src;
+
+            try
+            {
+                return Run(in item, hasAnims, 0, 0, posX, posY, depth, true);
+            }
+            finally
+            {
+                _batcher = null;
+            }
         }
 
         private bool Run(in ItemSpriteInput item, bool hasAnims, int offsetX, int offsetY, int posX, int posY, float depth, bool selectOnly)
@@ -427,6 +452,16 @@ namespace ClassicUO.Game
 
         private void Add(in DynamicSprite sprite)
         {
+            if (_batcher != null)
+            {
+                if (LegacySpriteResolve.Resolve(_legacySrc, in sprite, out LegacyDraw d))
+                {
+                    LegacySpriteResolve.Draw(_batcher, in d);
+                }
+
+                return;
+            }
+
             if (_selectOnly)
             {
                 if (_selCount >= _sel.Length)
@@ -708,6 +743,22 @@ namespace ClassicUO.Game
             }
         }
 
+        // SelectDraw's art draw (LegacySpriteResolve.Resolve + Draw of the art record): the client's source is called
+        // through its sealed type, so the per-item draw makes no interface call
+        private void DrawArt(ushort graphic, int x, int y, bool missing, Vector3 hue, float depth)
+        {
+            ILegacySpriteSource src = _legacySrc;
+
+            if (src is ClientLegacySpriteSource client)
+            {
+                LegacySpriteResolve.DrawArt(_batcher, in client.Art(graphic), x, y, missing, hue, depth);
+            }
+            else
+            {
+                LegacySpriteResolve.DrawArt(_batcher, in src.Art(graphic), x, y, missing, hue, depth);
+            }
+        }
+
         // View.DrawStaticAnimated (no shadow, not wet): the art graphic's record at (x, y) less the art entry's draw offset
         private void Art(ushort graphic, int x, int y, Vector3 hue, float depth, int objX)
         {
@@ -729,7 +780,11 @@ namespace ClassicUO.Game
                 // Legacy: the view draws Arts.GetArt's placeholder for art the pack lacks, offset by the placeholder's size
                 // (the resolve does that). Its art entry write is discarded (GetEntry of missing art is a scratch entry), so
                 // picking keeps 0, 0 and nothing is stored here. The Gpu path draws nothing.
-                if (_selectOnly)
+                if (_batcher != null)
+                {
+                    DrawArt(graphic, x, y, true, hue, depth + 0.5f);
+                }
+                else if (_selectOnly)
                 {
                     var missing = new DynamicSprite
                     {
@@ -758,6 +813,13 @@ namespace ClassicUO.Game
             ArtPickGraphic = graphic;
             ArtPickW = index.Width;
             ArtPickH = index.Height;
+
+            if (_batcher != null)
+            {
+                DrawArt(graphic, x - index.Width, y - index.Height, false, hue, depth + 0.5f);
+
+                return;
+            }
 
             var sprite = new DynamicSprite
             {

@@ -197,7 +197,10 @@ namespace ClassicUO.Game.Scenes
         private static bool DrawItem(UltimaBatcher2D batcher, Item item, float depth, bool effects)
         {
             ItemSpriteInput.Gather(item, out ItemSpriteInput input);
-            bool drawn = _items.Select(in input, _hasAnims, item.RealScreenPosition.X, item.RealScreenPosition.Y, depth);
+            // the records are drawn as the select makes them (the batcher calls of a select + DrawAll); the side effects below
+            // do not touch the batcher
+            bool drawn = _items.SelectDraw(batcher, ClientLegacySpriteSource.Instance, in input, _hasAnims, item.RealScreenPosition.X,
+                item.RealScreenPosition.Y, depth);
 
             if (_on)
             {
@@ -216,8 +219,6 @@ namespace ClassicUO.Game.Scenes
                     _scene?.AddLight(item, item, _items.LightX, _items.LightY);
                 }
             }
-
-            LegacySpriteResolve.DrawAll(batcher, ClientLegacySpriteSource.Instance, _items.Selected);
 
             return drawn;
         }
