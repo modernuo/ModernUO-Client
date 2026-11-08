@@ -118,7 +118,7 @@ namespace ClassicUO.Game
         /// on to the extract without more lookups. Nothing in here changes the entity's archetype, so <paramref name="data"/>
         /// (<paramref name="e"/>'s record, read once by the caller after TakeDirty; perf-11) stays valid throughout.
         /// </summary>
-        public void UpdateInPlace(World world, Mobile m, EcsEntity e, EcsRow data, bool dirty, ref AnimationState s, ref MobileRenderState rs)
+        public void UpdateInPlace(World world, Mobile m, EcsEntity e, in EcsRow data, bool dirty, ref AnimationState s, ref MobileRenderState rs)
         {
             // W5: the slow-changing inputs come from MobileInputs, pushed at their mutation sites (the mirror gives every
             // mobile one; without it, as in a hand-built entity, they are read from the Mobile)
