@@ -963,7 +963,7 @@ A handle that outlives its entity must read as destroyed (plan section 4; the ep
 | `Mobile.FrameCache`, `EcsEntity`, `EcsEntitySerial`, `EcsEntityEpoch` | the Gpu instances and the cached ECS handle | the mobile's life | E: handles |
 | `MobileTable._slots`, `_byKey`, `_shadow` | every `Mobile` | until removed | E10 (`World.Mobiles` is a `MobileTable` on this base) |
 | `WalkerManager._player` | the `PlayerMobile` | the session | |
-| `GridLootGump._corpse` (`Item`), `InspectorGump._obj` (`GameObject`) | the object the gump shows | the gump's life | can outlive the corpse; the gump closes on `Destroy` of an opened `Item` |
+| `InspectorGump._obj` (`GameObject`) | the land, static or detached preview the gump shows | the gump's life | gump-handles: a world entity is held by serial (`EntityRef`) and looked up at Dump; `GridLootGump` holds its corpse by serial too |
 | `CharCreationGump._character`, `CreateCharAppearanceGump._character`, `CreateCharTradeGump._character`, `RaceChangeGump` (`fakeMobile`, `hair`, `beard`, and the nested `playerMobile`, `hair`, `beard`) | detached preview objects | the gump's life | section 3 |
 | `Pathfinder.PathObject.Object` | the tile object of a path node | one search | |
 | `ItemHold` | copies of the dragged item's fields (`Graphic`, `Hue`, `Amount`, `Flags`, `Layer`, `X`, `Y`, `Z`, `Container`) | one drag | **a snapshot, not a reference**; read back into a new `Item` by `PacketHandlers.cs:1643-1650` |
