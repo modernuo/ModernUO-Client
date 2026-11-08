@@ -5376,3 +5376,58 @@ Base poc/modern-client f2955b82a (fix A). Branch `bg/tile-index-2`, code commit 
 
 **Upkeep in the default build (coordinator's note).** With `ecs_effects` on, `ShouldMaintain` keeps the index with the walk off, so the default build already pays the sorted insert/remove per placement while nothing but the checkers reads it (T8's Codex P2 made it maintained as a stated requirement). This branch makes that upkeep cheaper (`KeyOf`) but does not remove it. Turning `world_tile_index` on removes the duplicate store (the list stops holding dynamics); alternatively `effectsOn` could leave `ShouldMaintain` (owner question).
 - **Client jobs (submitted, not awaited; NativeAOT `aot/` = 672213292, `aot-base/` = f2955b82a):** gate-on bench-000311 (every checker incl. `CUO_TILE_ORDER_CHECK=1`, walk on), plans-fast bench-000312 (tile-order checker off, so the mask path runs without a shadow; Gpu pickscan), shots bench-000313 and the cross-session control bench-000314, attribution bench-000315 (prep_detail buckets boff/bon/non, both renderers, plus a sampled Legacy britain_z profile of bon vs non). Results: pending (the coordinator reads them).
+
+### Tile-list head in O(1) (tile-head, 2026-11-07)
+
+Base `bg/tile-index-2` b2acab250 (code 672213292, not merged yet). Branch `bg/tile-head`, code commits 23ad73a76 (change) and 405513eac (one more test). Scripts and binaries: `cuo-poc-state/measure/tile-head/`. Backlog item: "`TileWalk.First` / `Chunk.GetHeadObject` walk the `TPrevious` chain" (7–8 % of the Legacy britain_z samples, bench-000212).
+
+**Change.**
+- `Chunk._heads` (`GameObject[64]`, by cell x * 8 + y) holds the first object of each cell's list. `GetHeadObject(x, y)` and the new `HeadAt(cell)` return it, so nothing on the walk or insert paths follows `TPrevious` any more: `TileWalk.First`, `Open`, `BeginIndex`, `TileReader`, GameScene's chunk loops, the Gpu mask build, the item cache, ChunkMesh, `Map.ScanStart`, and `AddGameObject`'s own insertion scan.
+- The head is kept wherever the list's first node can change:
+  - `AddGameObject`: an empty tile (the object becomes the head), or an insertion in front of the old head.
+  - `ReleaseAnchor` (called by `RemoveFromTile`, the only way out of a list): the head leaves, so its `TNext` becomes the head.
+  - The teardowns (`Destroy`, `ClearForReload`, `TearDownMerged`): cleared tile by tile, together with the anchor. The player leaves without `RemoveFromTile`, so only this clear drops it as a head.
+  - With the list dropped, dynamics are never linked, so they are never the head (the index's `First` fallback is unchanged).
+- `Tiles[x, y]` keeps its meaning as the anchor (the land, if the tile has land). `ScanFrom`, the minimap, multi placement and the checker read it as the anchor, so nothing else changes.
+- Order is unchanged by construction: the insertion scan starts at the same node as before, as long as the stored head equals the head found by the `TPrevious` walk, and the tests and checker check exactly that.
+- `CUO_TILE_ORDER_CHECK`: `TileOrder.CheckTile` sets `HeadWrong` when the stored head is not `FindHead(anchor)`. `CheckFrame` also flags a head on an empty tile. The summary line gains `head wrong N;`, and the tile-head gate scripts require `head wrong 0;`.
+
+**Tests.**
+- `TileHeadTests` (new):
+  - Six random-operation theories, 1,500 steps each. They cover the switch off without the index, off with the index maintained (today's default, `ecs_effects`), and on (list dropped), each with and without effects held. Operations: placing land, statics, three multi kinds, items, corpses, mobiles and effects on land, landless and crowded cells; moves across chunks; removals (land and statics too); double placement; in-place reloads; and Destroy with the chunk taken back from the pool. After every step, for every cell of both chunks, the test checks:
+    - the stored head is `FindHead(anchor)` (both null on an empty list);
+    - the list read from the stored head equals an independent copy of the legacy insertion rule (`ShadowTileList`, without dynamics when the list is dropped);
+    - `CheckTile` passes.
+    - Each run also asserts that it covered more than 20 front insertions, more than 20 head removals and more than 3 teardowns, with pool reuse.
+  - Four teardown cases with the player heading a tile.
+  - A checker test (a stale head is flagged).
+- Unit tests (busy machine):
+  - Dev build on 23ad73a76: 3,092 passed, 6 skipped, 1 failed. The failure was the timing-sensitive `FirstSightDecoderTests.Worker_Art_Decodes_Match_The_Main_Thread_Decode`, which passed on re-run.
+  - Dev `Game.Map` filter with the final tests: 118 passed.
+  - `CuoDevTools=false` on 405513eac: 3,096 passed, 6 skipped, 3 failed. All three are renderer decode timing tests (`FirstSightDecoderWaitTests`, `DecodeBudgetTests`, `FirstSightDecoderTests`). The run took 27 minutes under load.
+  - An earlier `CuoDevTools=false` run also had `EcsReadTests` failures: 'same key already added' in a static dictionary, which looks like a parallel-registration race. They passed alone and in the next full run.
+  - None of these tests touch the tile code.
+  - Both client builds pass.
+  - The write-site budget is unchanged (`TNext`/`TPrevious` are not class A).
+- **Mutants (unit tests, `Game.Map` filter): 8 written, 7 killed, 1 equivalent.**
+  - Killed: no head update on a front insertion (23 tests fail); no head on an empty tile (62); `ReleaseAnchor` keeps the head (21); `Destroy` keeps the heads (killed by the player test); `ClearForReload` keeps the heads (player test); insertion scans from the anchor instead of the head (17); the checker never flags a head (1).
+  - Equivalent: `TearDownMerged` keeps the heads. With the list dropped, the list holds only land, statics and multis, and each leaves through `Destroy` → `RemoveFromTile`, which already moves the head. The player is never in the list in that mode. The line stays as a guard.
+
+**Memory.** 64 references plus an array header, about 536 B per chunk, plus an 8 B field: about 544 B per chunk (pooled or in use). With the 300-chunk pool and a few hundred chunks in use, that is about 0.3 MB per client at most. This is the same size as `Tiles`. No other pool or cache.
+
+**Expected gain (not measured: the machine is busy).**
+- On tiles whose head is the anchor (most land tiles), the old loop cost one `TPrevious` load and test on the anchor, plus a call where the JIT did not inline it.
+- On tiles where objects sort below the land (statics under the ground, and every landless tile's interior anchor), it walked the chain.
+- Now it is one array load by cell, with no 2-D index computation. The first touch of the head object moves into the walk, which reads it anyway, so the cache-miss share of the 7–8 % will partly stay.
+- Timing is parked.
+
+**Client jobs (submitted, not awaited; NativeAOT `aot/` = 23ad73a76, `aot-base/` = a copy of tile-index-2's `aot` = 672213292).**
+- bench-000319, gate-on: `world_tile_index` on, every checker including `CUO_TILE_ORDER_CHECK`.
+- bench-000320, gate-off: the same with the switch off.
+- bench-000321 and bench-000322, plans-on and plans-off: every checker including tile-order; Gpu pickscan; travel, ltravel, glide and the large scene for chunk loads, evictions and pool reuse.
+- bench-000323, shots: base vs new, switch off and on, both renderers.
+- bench-000324, shots-aa: the control, new_off vs new_offb.
+- bench-000325, detail: attribution only. prep_detail buckets for boff/noff on Legacy and Gpu and bon/non on Legacy, plus a sampled Legacy britain_z profile of boff vs noff.
+- Results are pending; the coordinator reads them.
+
+**Parked (quiet machine).** `job-timing-{g,l}{1,2,3}-PARKED.sh`: arms boff, noff, bon and non, interleaved, with the order alternating per round. Decision pairs: boff:noff (the default path) and bon:non.

@@ -25,6 +25,11 @@ namespace ClassicUO.Game.Map
         public World Owner => _world;
 
         public GameObject[,] Tiles { get; } = new GameObject[8, 8];
+
+        // tile-head: the first object of each cell's list (index x * 8 + y), kept by AddGameObject, ReleaseAnchor and the
+        // teardowns, so the whole-tile walks start without following TPrevious from the anchor. CUO_TILE_ORDER_CHECK compares
+        // it with the head found by TPrevious (TileOrder.CheckTile, HeadWrong).
+        private readonly GameObject[] _heads = new GameObject[64];
         public bool IsDestroyed;
 
         /// <summary>Held by its World's <see cref="ChunkPool"/> (set and cleared by the pool): a second Destroy while pooled is a no-op,
@@ -237,17 +242,11 @@ namespace ClassicUO.Game.Map
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public GameObject GetHeadObject(int x, int y)
-        {
-            GameObject obj = Tiles[x, y];
+        public GameObject GetHeadObject(int x, int y) => _heads[(x << 3) | y];
 
-            while (obj?.TPrevious != null)
-            {
-                obj = obj.TPrevious;
-            }
-
-            return obj;
-        }
+        /// <summary><see cref="GetHeadObject"/> by cell (x * 8 + y).</summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public GameObject HeadAt(int cell) => _heads[cell];
 
         /// <summary>The static tiledata AddGameObject's priority reads: the loaded array (Client's FileManager setup assigns
         /// it once after TileDataLoader.Load, which is the only place that array is replaced); unit tests set their own.</summary>
@@ -389,9 +388,12 @@ namespace ClassicUO.Game.Map
                 }
             }
 
+            int cell = obj.TileCell;
+
             if (Tiles[x, y] == null)
             {
                 Tiles[x, y] = obj;
+                _heads[cell] = obj;
                 obj.TPrevious = null;
                 obj.TNext = null;
 
@@ -402,13 +404,7 @@ namespace ClassicUO.Game.Map
             // Tiles[x, y] is never obj here: RemoveFromTile above moved the anchor off it (ReleaseAnchor). The old code had an
             // "o == obj" branch for a stale anchor that followed the LinkedObject container links (Previous/Next), which on a
             // landless tile could put obj into another tile's list (T6a audit).
-            GameObject o = Tiles[x, y];
-
-            while (o?.TPrevious != null)
-            {
-                o = o.TPrevious;
-            }
-
+            GameObject o = _heads[cell];
             GameObject found = null;
             GameObject start = o;
 
@@ -442,6 +438,7 @@ namespace ClassicUO.Game.Map
                 obj.TNext = start;
                 start.TPrevious = obj;
                 obj.TPrevious = null;
+                _heads[cell] = obj;
             }
         }
 
@@ -458,6 +455,14 @@ namespace ClassicUO.Game.Map
             if (ReferenceEquals(anchor, obj))
             {
                 anchor = obj.TPrevious ?? obj.TNext;
+            }
+
+            // the head leaves: its successor becomes the head (null when it was alone); RemoveFromTile unlinks it next
+            ref GameObject head = ref _heads[obj.TileCell];
+
+            if (ReferenceEquals(head, obj))
+            {
+                head = obj.TNext;
             }
         }
 
@@ -518,6 +523,7 @@ namespace ClassicUO.Game.Map
                     }
 
                     Tiles[i, j] = null;
+                    _heads[i << 3 | j] = null;
                 }
             }
 
@@ -625,6 +631,7 @@ namespace ClassicUO.Game.Map
                     }
 
                     Tiles[i, j] = null;
+                    _heads[cell] = null;
                 }
             }
 
@@ -675,6 +682,7 @@ namespace ClassicUO.Game.Map
                     }
 
                     Tiles[i, j] = null;
+                    _heads[i << 3 | j] = null;
                 }
             }
 
