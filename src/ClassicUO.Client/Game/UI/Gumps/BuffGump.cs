@@ -100,9 +100,9 @@ namespace ClassicUO.Game.UI.Gumps
 
             if (World.Player != null)
             {
-                foreach (var k in World.Player.BuffIcons)
+                foreach (var k in World.PlayerState.BuffIcons)
                 {
-                    _box.Add(new BuffControlEntry(World.Player.BuffIcons[k.Key]));
+                    _box.Add(new BuffControlEntry(World.PlayerState.BuffIcons[k.Key]));
                 }
             }
 

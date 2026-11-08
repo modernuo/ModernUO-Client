@@ -645,19 +645,19 @@ namespace ClassicUO.Network
                         ushort manaMax = p.ReadUInt16BE();
                         world.Writer.SetStamina(world.Player, staminaMax, stamina);
                         world.Writer.SetMana(world.Player, manaMax, mana);
-                        world.Player.Gold = p.ReadUInt32BE();
-                        world.Player.PhysicalResistance = (short)p.ReadUInt16BE();
-                        world.Player.Weight = p.ReadUInt16BE();
+                        world.PlayerState.Gold = p.ReadUInt32BE();
+                        world.PlayerState.PhysicalResistance = (short)p.ReadUInt16BE();
+                        world.PlayerState.Weight = p.ReadUInt16BE();
 
                         if (
-                            world.Player.Strength != 0
+                            world.PlayerState.Strength != 0
                             && ProfileManager.CurrentProfile != null
                             && ProfileManager.CurrentProfile.ShowStatsChangedMessage
                         )
                         {
-                            ushort currentStr = world.Player.Strength;
-                            ushort currentDex = world.Player.Dexterity;
-                            ushort currentInt = world.Player.Intelligence;
+                            ushort currentStr = world.PlayerState.Strength;
+                            ushort currentDex = world.PlayerState.Dexterity;
+                            ushort currentInt = world.PlayerState.Intelligence;
 
                             int deltaStr = str - currentStr;
                             int deltaDex = dex - currentDex;
@@ -715,13 +715,13 @@ namespace ClassicUO.Network
                             }
                         }
 
-                        world.Player.Strength = str;
-                        world.Player.Dexterity = dex;
-                        world.Player.Intelligence = intell;
+                        world.PlayerState.Strength = str;
+                        world.PlayerState.Dexterity = dex;
+                        world.PlayerState.Intelligence = intell;
 
                         if (type >= 5) //ML
                         {
-                            world.Player.WeightMax = p.ReadUInt16BE();
+                            world.PlayerState.WeightMax = p.ReadUInt16BE();
                             byte race = p.ReadUInt8();
 
                             if (race == 0)
@@ -735,66 +735,66 @@ namespace ClassicUO.Network
                         {
                             if (Client.Game.UO.Version >= Utility.ClientVersion.CV_500A)
                             {
-                                world.Player.WeightMax = (ushort)(
-                                    7 * (world.Player.Strength >> 1) + 40
+                                world.PlayerState.WeightMax = (ushort)(
+                                    7 * (world.PlayerState.Strength >> 1) + 40
                                 );
                             }
                             else
                             {
-                                world.Player.WeightMax = (ushort)(world.Player.Strength * 4 + 25);
+                                world.PlayerState.WeightMax = (ushort)(world.PlayerState.Strength * 4 + 25);
                             }
                         }
 
                         if (type >= 3) //Renaissance
                         {
-                            world.Player.StatsCap = (short)p.ReadUInt16BE();
-                            world.Player.Followers = p.ReadUInt8();
-                            world.Player.FollowersMax = p.ReadUInt8();
+                            world.PlayerState.StatsCap = (short)p.ReadUInt16BE();
+                            world.PlayerState.Followers = p.ReadUInt8();
+                            world.PlayerState.FollowersMax = p.ReadUInt8();
                         }
 
                         if (type >= 4) //AOS
                         {
-                            world.Player.FireResistance = (short)p.ReadUInt16BE();
-                            world.Player.ColdResistance = (short)p.ReadUInt16BE();
-                            world.Player.PoisonResistance = (short)p.ReadUInt16BE();
-                            world.Player.EnergyResistance = (short)p.ReadUInt16BE();
-                            world.Player.Luck = p.ReadUInt16BE();
-                            world.Player.DamageMin = (short)p.ReadUInt16BE();
-                            world.Player.DamageMax = (short)p.ReadUInt16BE();
-                            world.Player.TithingPoints = p.ReadUInt32BE();
+                            world.PlayerState.FireResistance = (short)p.ReadUInt16BE();
+                            world.PlayerState.ColdResistance = (short)p.ReadUInt16BE();
+                            world.PlayerState.PoisonResistance = (short)p.ReadUInt16BE();
+                            world.PlayerState.EnergyResistance = (short)p.ReadUInt16BE();
+                            world.PlayerState.Luck = p.ReadUInt16BE();
+                            world.PlayerState.DamageMin = (short)p.ReadUInt16BE();
+                            world.PlayerState.DamageMax = (short)p.ReadUInt16BE();
+                            world.PlayerState.TithingPoints = p.ReadUInt32BE();
                         }
 
                         if (type >= 6)
                         {
-                            world.Player.MaxPhysicResistence =
+                            world.PlayerState.MaxPhysicResistence =
                                 p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16BE();
-                            world.Player.MaxFireResistence =
+                            world.PlayerState.MaxFireResistence =
                                 p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16BE();
-                            world.Player.MaxColdResistence =
+                            world.PlayerState.MaxColdResistence =
                                 p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16BE();
-                            world.Player.MaxPoisonResistence =
+                            world.PlayerState.MaxPoisonResistence =
                                 p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16BE();
-                            world.Player.MaxEnergyResistence =
+                            world.PlayerState.MaxEnergyResistence =
                                 p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16BE();
-                            world.Player.DefenseChanceIncrease =
+                            world.PlayerState.DefenseChanceIncrease =
                                 p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16BE();
-                            world.Player.MaxDefenseChanceIncrease =
+                            world.PlayerState.MaxDefenseChanceIncrease =
                                 p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16BE();
-                            world.Player.HitChanceIncrease =
+                            world.PlayerState.HitChanceIncrease =
                                 p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16BE();
-                            world.Player.SwingSpeedIncrease =
+                            world.PlayerState.SwingSpeedIncrease =
                                 p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16BE();
-                            world.Player.DamageIncrease =
+                            world.PlayerState.DamageIncrease =
                                 p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16BE();
-                            world.Player.LowerReagentCost =
+                            world.PlayerState.LowerReagentCost =
                                 p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16BE();
-                            world.Player.SpellDamageIncrease =
+                            world.PlayerState.SpellDamageIncrease =
                                 p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16BE();
-                            world.Player.FasterCastRecovery =
+                            world.PlayerState.FasterCastRecovery =
                                 p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16BE();
-                            world.Player.FasterCasting =
+                            world.PlayerState.FasterCasting =
                                 p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16BE();
-                            world.Player.LowerManaCost =
+                            world.PlayerState.LowerManaCost =
                                 p.Position + 2 > p.Length ? (short)0 : (short)p.ReadUInt16BE();
                         }
                     }
@@ -1826,7 +1826,7 @@ namespace ClassicUO.Network
 
                 if (ProfileManager.CurrentProfile.EnableDeathScreen)
                 {
-                    world.Player.DeathScreenTimer = Time.Ticks + Constants.DEATH_SCREEN_TIMER;
+                    world.PlayerState.DeathScreenTimer = Time.Ticks + Constants.DEATH_SCREEN_TIMER;
                 }
 
                 GameActions.RequestWarMode(world.Player, false);
@@ -2082,9 +2082,9 @@ namespace ClassicUO.Network
                         cap = p.ReadUInt16BE();
                     }
 
-                    if (id < world.Player.Skills.Length)
+                    if (id < world.PlayerState.Skills.Length)
                     {
-                        Skill skill = world.Player.Skills[id];
+                        Skill skill = world.PlayerState.Skills[id];
 
                         if (skill != null)
                         {
@@ -4477,9 +4477,9 @@ namespace ClassicUO.Network
                                 byte updategump = p.ReadUInt8();
                                 byte state = p.ReadUInt8();
 
-                                world.Player.StrLock = (Lock)((state >> 4) & 3);
-                                world.Player.DexLock = (Lock)((state >> 2) & 3);
-                                world.Player.IntLock = (Lock)(state & 3);
+                                world.PlayerState.StrLock = (Lock)((state >> 4) & 3);
+                                world.PlayerState.DexLock = (Lock)((state >> 2) & 3);
+                                world.PlayerState.IntLock = (Lock)(state & 3);
 
                                 StatusGumpBase.GetStatusGump()?.RequestUpdateContents();
                             }
@@ -4643,7 +4643,7 @@ namespace ClassicUO.Network
 
                     for (int i = 0; i < 2; i++)
                     {
-                        world.Player.Abilities[i] &= (Ability)0x7F;
+                        world.PlayerState.Abilities[i] &= (Ability)0x7F;
                     }
 
                     break;
@@ -4989,7 +4989,7 @@ namespace ClassicUO.Network
                             str = "<basefont color=#40a4fe>" + str + "</basefont>";
                         break;
                     case 1061170:
-                        if (int.TryParse(argument, out var strength) && world.Player.Strength < strength)
+                        if (int.TryParse(argument, out var strength) && world.PlayerState.Strength < strength)
                             str = "<basefont color=#FF0000>" + str + "</basefont>";
                         break;
                     case 1062613:
@@ -5519,7 +5519,7 @@ namespace ClassicUO.Network
 
                 if (count == 0)
                 {
-                    world.Player.RemoveBuff(ic);
+                    world.PlayerState.RemoveBuff(ic);
                     gump?.RequestUpdateContents();
                 }
                 else
@@ -5586,8 +5586,8 @@ namespace ClassicUO.Network
                         }
 
                         string text = $"<left>{title}{description}{wtf}</left>";
-                        bool alreadyExists = world.Player.IsBuffIconExists(ic);
-                        world.Player.AddBuff(ic, BuffTable.Table[iconID], timer, text);
+                        bool alreadyExists = world.PlayerState.IsBuffIconExists(ic);
+                        world.PlayerState.AddBuff(ic, BuffTable.Table[iconID], timer, text);
 
                         if (!alreadyExists)
                         {

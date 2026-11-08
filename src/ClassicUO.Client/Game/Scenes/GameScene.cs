@@ -1588,7 +1588,7 @@ namespace ClassicUO.Game.Scenes
             {
                 if (_world.InGame)
                 {
-                    if (_world.Player.IsDead && _world.Player.DeathScreenTimer > Time.Ticks)
+                    if (_world.Player.IsDead && _world.PlayerState.DeathScreenTimer > Time.Ticks)
                     {
                         batcher.Begin();
                         _youAreDeadText.Draw(

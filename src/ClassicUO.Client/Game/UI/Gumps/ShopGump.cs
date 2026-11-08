@@ -184,7 +184,7 @@ namespace ClassicUO.Game.UI.Gumps
 
             if (isBuyGump)
             {
-                _playerGoldLabel = new Label(World.Player.Gold.ToString(), true, 0x0386, 0, 1)
+                _playerGoldLabel = new Label(World.PlayerState.Gold.ToString(), true, 0x0386, 0, 1)
                 {
                     X = _totalLabel.X + 120,
                     Y = _totalLabel.Y
@@ -450,7 +450,7 @@ namespace ClassicUO.Game.UI.Gumps
 
             if (_playerGoldLabel != null)
             {
-                _playerGoldLabel.Text = World.Player.Gold.ToString();
+                _playerGoldLabel.Text = World.PlayerState.Gold.ToString();
             }
 
             base.Update();
