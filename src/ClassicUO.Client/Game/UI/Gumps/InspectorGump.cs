@@ -33,6 +33,8 @@ namespace ClassicUO.Game.UI.Gumps
             Y = 100;
             _incarnation = obj.Incarnation;
 
+            // Codex P3 (accepted, shared-serial rule): an item and a mobile under one serial make World.Get return the
+            // mobile, so the item is held directly here like a detached preview. Only a misconfigured server sends that.
             if (obj is Entity ent && ReferenceEquals(world.Get(ent.Serial), ent))
             {
                 _serial = ent.Serial;
