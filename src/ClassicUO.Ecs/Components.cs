@@ -469,7 +469,7 @@ namespace ClassicUO.Ecs
     }
 
     /// <summary>
-    /// T6c (world_step_system): a mobile's walk queue and the step state <c>StepSystem</c> reads: a fixed ring of up to
+    /// T6c: a mobile's walk queue and the step state <c>StepSystem</c> reads: a fixed ring of up to
     /// <see cref="CAPACITY"/> steps (<c>Constants.MAX_STEP_COUNT</c> - 1 + 3; the front step is <c>Ring[Head]</c>), the time the
     /// current step started (<c>Mobile.LastStepTime</c>) and the interpolated walk offset (<c>Mobile.Offset</c>). While the
     /// system runs, the clock push writes it from the Mobile after every queue change and step completion (the same push

@@ -136,13 +136,7 @@ namespace ClassicUO.Configuration
         // batcher calls with the sink's. Read every frame (dev builds: CUO_LEGACY_ECS_SPRITES=1|0 overrides). Default off.
         [JsonPropertyName("legacy_ecs_sprites")] public bool LegacyEcsSprites { get; set; }
 
-        // T6c: a due mobile's step processing (Mobile.ProcessSteps: the walk offset, the
-        // step completion through the funnel, the player's walker bookkeeping) runs as StepSystem over its Steps component.
-        // Read once at startup (CUO_WORLD_STEP_SYSTEM=1|0 overrides it in developer builds). CUO_STEP_CHECK=1 compares the
-        // component and the decision with the Mobile's. Default on since 2026-11-02 (owner, after the quiet-machine per-switch timing bench-000206/207/208: timing-neutral on both renderers); the off path and the checker stay for one phase.
-        [JsonPropertyName("world_step_system")] public bool WorldStepSystem { get; set; } = true;
-
-        // T6c follow-up (with world_step_system): the step system's mounted pace (Mobile.IsMounted, the fast-unmount speed
+        // T6c follow-up: the step system's mounted pace (Mobile.IsMounted, the fast-unmount speed
         // modes, IsFlying) is read from the ECS (EquipmentSlots.Mounted, rebuilt when dirty; MobileInputs.SpeedMode and its
         // Flying bit, pushed by their operations) instead of from the Mobile. Read once at startup
         // (CUO_ECS_STEP_MOUNT_INPUTS=1|0 overrides it in developer builds). CUO_STEP_MOUNT_CHECK=1 compares the two at every

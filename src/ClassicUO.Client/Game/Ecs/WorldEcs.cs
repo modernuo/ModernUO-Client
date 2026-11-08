@@ -615,8 +615,8 @@ namespace ClassicUO.Game
         }
 
         /// <summary>
-        /// T6c: the <see cref="Steps"/> component is kept with the clock (World.Update sets this each frame from
-        /// <c>world_step_system</c>; turning it on goes through <see cref="ResyncClocks"/>, which writes every queue).
+        /// T6c: the <see cref="Steps"/> component is kept with the clock (World.Update sets this at its first mobile update;
+        /// turning it on goes through <see cref="ResyncClocks"/>, which writes every queue).
         /// </summary>
         public bool StepsEnabled;
 

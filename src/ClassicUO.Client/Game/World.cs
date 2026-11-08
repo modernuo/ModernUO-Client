@@ -527,30 +527,7 @@ namespace ClassicUO.Game
         // T5b: due mobiles without steps advance in the ECS (T9 deleted world_anim_system's off path)
         private readonly MobileAnimationAdvanceSystem _animAdvance = new MobileAnimationAdvanceSystem();
 
-        // T6c (world_step_system) -------------------------------------------------------------------------------------------
-#if CUO_DEVTOOLS
-        // CLEANUP(release): the gate's override of the setting (CUO_WORLD_STEP_SYSTEM=1|0)
-        private static readonly bool? _envStepSystem = System.Environment.GetEnvironmentVariable("CUO_WORLD_STEP_SYSTEM") switch
-        {
-            "1" => true,
-            "0" => false,
-            _ => null
-        };
-#else
-        private static readonly bool? _envStepSystem = null;
-#endif
-
-        // read once, at the first world update (the settings are loaded by then)
-        private static class StepSystemSwitch
-        {
-            public static readonly bool On = _envStepSystem ?? Settings.GlobalSettings.WorldStepSystem;
-        }
-
-        /// <summary>Tests: the switch for this World (null: the setting).</summary>
-        internal bool? StepSystemOverride;
-
-        /// <summary>T6c: due mobiles process their steps in the ECS (<c>StepSystem</c>).</summary>
-        internal bool StepSystemOn => StepSystemOverride ?? StepSystemSwitch.On;
+        // T6c: due mobiles process their steps in the ECS (T9 deleted world_step_system's off path)
 
         /// <summary>T6c: Mobile.Update runs it instead of ProcessSteps while <see cref="WorldEcs.StepsEnabled"/>.</summary>
         internal readonly global::ClassicUO.Game.StepSystem StepSystem = new global::ClassicUO.Game.StepSystem();
@@ -681,12 +658,10 @@ namespace ClassicUO.Game
                 _mobileClocksSynced = false;
             }
 
-            bool stepSystem = StepSystemOn;
-
-            if (stepSystem != Ecs.StepsEnabled)
+            if (!Ecs.StepsEnabled)
             {
-                // T6c: the step components are written with the clocks from now on (or no longer): rebuild them all
-                Ecs.StepsEnabled = stepSystem;
+                // T6c: the step components are written with the clocks from the first update on: build them all
+                Ecs.StepsEnabled = true;
                 _mobileClocksSynced = false;
             }
 
