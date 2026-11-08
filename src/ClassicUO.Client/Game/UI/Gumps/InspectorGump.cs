@@ -18,16 +18,31 @@ namespace ClassicUO.Game.UI.Gumps
     {
         private const int WIDTH = 500;
         private const int HEIGHT = 400;
+        // a land or static, or an entity World does not hold (a detached preview); null for a world entity
         private readonly GameObject _obj;
         // a land or static can be reused for another cell once its chunk is evicted (MapObjectRecycler)
         private readonly uint _incarnation;
+        // gump-handles: a world entity is held by serial and resolved at the dump (the T9 end state lets an Item/Mobile
+        // handle die and be re-created)
+        private readonly uint _serial;
+        private EntityRef _entity;
 
         public InspectorGump(World world, GameObject obj) : base(world, 0, 0)
         {
             X = 200;
             Y = 100;
-            _obj = obj;
             _incarnation = obj.Incarnation;
+
+            // Codex P3 (accepted, shared-serial rule): an item and a mobile under one serial make World.Get return the
+            // mobile, so the item is held directly here like a detached preview. Only a misconfigured server sends that.
+            if (obj is Entity ent && ReferenceEquals(world.Get(ent.Serial), ent))
+            {
+                _serial = ent.Serial;
+            }
+            else
+            {
+                _obj = obj;
+            }
             CanMove = true;
             AcceptMouseInput = false;
             CanCloseWithRightClick = true;
@@ -191,15 +206,33 @@ namespace ClassicUO.Game.UI.Gumps
             //databox.ReArrangeChildren();
         }
 
+        /// <summary>The world entity shown, looked up by its serial (null when the gump shows a map object).</summary>
+        internal Entity InspectedEntity() => _obj == null ? _entity.Entity(World, _serial) : null;
+
         public override void OnButtonClick(int buttonID)
         {
             if (buttonID == 0) // dump
             {
-                if (_obj.Incarnation != _incarnation || _obj.InRecycler)
+                GameObject obj = _obj;
+
+                if (obj == null)
+                {
+                    Entity ent = InspectedEntity();
+
+                    if (ent == null || ent.IsDestroyed)
+                    {
+                        GameActions.Print(World, "The inspected object is gone (it was removed from the world).");
+
+                        return;
+                    }
+
+                    obj = ent;
+                }
+                else if (obj.Incarnation != _incarnation || obj.InRecycler)
                 {
                     if (Map.MapObjectRecycler.Check)
                     {
-                        Map.MapObjectRecycler.Touched(_obj, Map.MapObjectRecycler.Site.Inspector);
+                        Map.MapObjectRecycler.Touched(obj, Map.MapObjectRecycler.Site.Inspector);
                     }
 
                     GameActions.Print(World, "The inspected object is gone (its map chunk was unloaded).");
@@ -207,7 +240,7 @@ namespace ClassicUO.Game.UI.Gumps
                     return;
                 }
 
-                Dictionary<string, string> dict = GetGameObjectProperties(_obj);
+                Dictionary<string, string> dict = GetGameObjectProperties(obj);
 
                 if (dict != null)
                 {
@@ -215,7 +248,7 @@ namespace ClassicUO.Game.UI.Gumps
                     {
                         writer.Write("###################################################");
                         writer.Write($"CUO version: {CUOEnviroment.Version}");
-                        writer.Write($"OBJECT TYPE: {_obj.GetType()}");
+                        writer.Write($"OBJECT TYPE: {obj.GetType()}");
 
                         foreach (KeyValuePair<string, string> item in dict.OrderBy(s => s.Key))
                         {

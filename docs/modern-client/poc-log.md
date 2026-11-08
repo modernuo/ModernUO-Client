@@ -5455,3 +5455,47 @@ Branch `bg/flaky-decode-tests`, base poc/modern-client 8b1f355cd. Tests only; no
   - animation picks through a flat table: skipped. The only flat key is the pack frame index (~1M frames in anim.bin), so the table would cost up to ~12 MB per client, and picking would see frames uploaded under another body that shares them. Not small or clean.
 - Tests: unit tests 3,091 passed, 6 skipped with dev tools (one `FirstSightDecoderTests` case timed out under machine load and passed alone; the first run had 4 such load timeouts); release variant 3,087 passed, 6 skipped. Client builds clean in both variants. No new unit test: the slots' answers are `WornView`'s, which `WorldStateEquipmentReaderTests.ViewEqualsReads` already checks against `FindItemByLayer` on every layer after every change; the paperdoll cannot be built in tests (GumpPic needs the game).
 - Jobs (`cuo-poc-state/measure/perf-12-ui/`): `job-uistate.sh` (Gpu uistate + w5items + corpses, every checker plus the slots and container checkers), `job-counts.sh` (find_by_layer / worn_checks per frame, idle vs paperdoll open, base vs new). Timing parked: `job-timing-PARKED.sh`.
+
+### Gump handles: UI holders of world objects resolve by serial (gump-handles, 2026-11-07)
+
+Base poc/modern-client 8b1f355cd. Branch `bg/gump-handles`. This is wave 1D of the ECS roadmap. In the T9 end state an Item or Mobile handle can die and be re-created, so no UI code may hold the object across frames. Scripts and the binary are in `cuo-poc-state/measure/gump-handles/`.
+
+**Survey.**
+- Scope: every field, property and stored closure outside the world code (`Game/GameObjects`, `Game/Ecs`, `Game/Map`) typed `Item`, `Mobile`, `Entity`, `GameObject`, `PlayerMobile` or `BaseGameObject`, plus a sweep of every lambda that is stored past its call.
+- These already keep a serial, or an `EntityRef` where they read per frame: health bars, name overheads, paperdoll, containers, trading, shop, party, status, world map, mini map, quest arrow, counters, spellbook, split menu, buffs, skills, journal, macros, `DelayedObjectClickManager`, `UseItemQueue`, and tooltips (`Control.SetTooltip(uint)`).
+- Four long-lived holders remained. All four are converted:
+
+| Holder | Held | Now |
+|---|---|---|
+| `GridLootGump._corpse` | the corpse `Item`, for the gump's life | an `EntityRef`, resolved at each use (`Corpse()`) |
+| `GridLootGump.GridLootItem` click closure | the cell's `Item` (used only as its serial) | `LocalSerial` |
+| `InspectorGump._obj` | the inspected `GameObject` | a world entity: its serial plus an `EntityRef`, looked up at Dump. Land, statics and detached previews: still held, with the incarnation check |
+| `TargetManager`'s criminal-action `QuestionGump` closure | the targeted `Mobile`, until answered | the serial plus the graphic and position at question time; the live values if World still has the mobile |
+
+**Left, with reasons.**
+- `SelectedObject` fields: all are compared by reference in render code (ItemView, ItemSpriteExtract, MobileAnimationSystem), so a stale one only fails to highlight.
+  - `Object` and `LastLeftDownObject` also hold land and statics. Each pick or click resets them, and their readers already check `IsDestroyed` or `InRecycler`.
+  - `HealthbarObject` and `SelectedContainer` are cleared every frame (GameController).
+  - `CorpseObject` lasts only while the mouse is over a GridLootGump: it is cleared on mouse exit and on Dispose. Dispose now compares by serial.
+- `TargetManager._targetCallback`: its only user is `ColorPickerGump`'s method group, which captures `this` and receives the object when the target resolves.
+- Detached previews, objects World does not hold: `CharCreationGump`, `CreateCharAppearanceGump`, `CreateCharTradeGump`, `RaceChangeGump` and its `CustomPaperDollGump`, `PaperDollInteractable.Preview`, `GameScene._multi`.
+- Short-lived or session-long holders:
+  - `WalkerManager._player`: the session's player.
+  - `MessageEventArgs.Parent` and `TextObject.Owner`: world text, transient.
+  - `DevBench._pickObject`: a dev tool, one pick measurement.
+  - `Pathfinder` nodes: one search.
+  - Render lists and caches: per frame, or invalidated by the world.
+
+**Behaviour.** A removed corpse still closes the grid loot gump: the lookup returns the destroyed object, then null. Three deliberate differences:
+- A corpse removed and re-sent under the same serial between two gump updates keeps the gump open, showing the new object. Before, the gump closed.
+- The inspector's Dump on a removed entity prints "The inspected object is gone". Before, it dumped the dead object's last values.
+- If a mobile moves and is then removed while the criminal-action question is open, the target sends its position at question time. Before, it sent the position at removal.
+
+**Tests.**
+- `EntityRefTests`: `Entity()` returns `World.Get`'s answer for mobiles and items, and returns the new object after a remove and re-create.
+- The gumps need `Client.Game`, so the uistate gate checks them:
+  - New driver commands: `gridloot <0-2>` and `inspect self|near <g>|log|dump`.
+  - `uistate_handles.txt` is uistate plus grid loot type 2, an inspector on self (live) and an inspector on the corpse.
+  - `handles-check.sh`: after the corpse is removed, no GridLootGump is open, and the inspector reads gone and prints it.
+- Gate job: bench-000330 (w5items, corpses, uistate_handles; every checker). Result pending.
+- Perf and memory: no change. No per-frame path changed.

@@ -10,7 +10,7 @@ namespace ClassicUO.Game.UI
     /// the one asked for, it is not destroyed (objects are pooled and reused for other serials), and no mirror record was
     /// deleted since (WorldMirror.Epoch). Otherwise the lookup runs again and its result, also null or a destroyed object
     /// still in the table, is what the caller gets, as before. A null result is not cached (an add moves no epoch). One
-    /// reference holds one kind: use either <see cref="Mobile"/> or <see cref="Item"/>.
+    /// reference holds one kind: use one of <see cref="Mobile"/>, <see cref="Item"/> or <see cref="Entity"/>.
     /// </summary>
     internal struct EntityRef
     {
@@ -56,6 +56,20 @@ namespace ClassicUO.Game.UI
             Store(world, it);
 
             return it;
+        }
+
+        /// <summary>What <c>world.Get(serial)</c> returns (gump-handles: holders that show a mobile or an item).</summary>
+        public Entity Entity(World world, uint serial)
+        {
+            if (TryGet(world, serial, out Entity e))
+            {
+                return e;
+            }
+
+            Entity found = world.Get(serial);
+            Store(world, found);
+
+            return found;
         }
     }
 }

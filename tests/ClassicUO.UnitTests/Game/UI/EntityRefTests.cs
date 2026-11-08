@@ -115,5 +115,47 @@ namespace ClassicUO.UnitTests.Game.UI
             r.Item(world, ITEM).Should().BeSameAs(world.Items.Get(ITEM));
             (r.Item(world, ITEM) == null || r.Item(world, ITEM).IsDestroyed).Should().BeTrue();
         }
+
+        // gump-handles: GridLootGump and InspectorGump hold their corpse or entity by serial; Entity() is World.Get's answer
+        [Fact]
+        public void Entity_Returns_What_World_Get_Returns_For_Mobiles_And_Items()
+        {
+            var world = new World();
+            Mobile m = world.GetOrCreateMobile(MOB);
+            Item it = world.Writer.UpsertWorldItem(ITEM, 0x2006, 0, 1, 1000, 1000, 0, Direction.North, 0, Flags.None, 0, out _,
+                out var placement);
+            world.Writer.PlaceWorldItem(placement);
+            var rm = new EntityRef();
+            var ri = new EntityRef();
+
+            rm.Entity(world, MOB).Should().BeSameAs(m);
+            ri.Entity(world, ITEM).Should().BeSameAs(it);
+            ri.Entity(world, ITEM2).Should().BeNull();
+        }
+
+        [Fact]
+        public void Entity_Of_A_Removed_And_Recreated_Item_Is_The_New_Object()
+        {
+            var world = new World();
+            Item old = world.Writer.UpsertWorldItem(ITEM, 0x2006, 0, 1, 1000, 1000, 0, Direction.North, 0, Flags.None, 0, out _,
+                out var placement);
+            world.Writer.PlaceWorldItem(placement);
+            var r = new EntityRef();
+            r.Entity(world, ITEM).Should().BeSameAs(old);
+
+            world.Writer.RemoveWorldItem(old, out _);
+
+            Entity gone = r.Entity(world, ITEM);
+            gone.Should().BeSameAs(world.Get(ITEM));
+            (gone == null || gone.IsDestroyed).Should().BeTrue("a holder resolving at use sees the removal");
+
+            world.DropDestroyedItems();
+            Item next = world.Writer.UpsertWorldItem(ITEM, 0x2006, 0, 1, 1000, 1000, 0, Direction.North, 0, Flags.None, 0, out _,
+                out var placement2);
+            world.Writer.PlaceWorldItem(placement2);
+
+            next.Should().NotBeSameAs(old);
+            r.Entity(world, ITEM).Should().BeSameAs(next, "the handle was re-created under the same serial");
+        }
     }
 }
