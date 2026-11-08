@@ -747,6 +747,12 @@ namespace ClassicUO.Game
                 EffectSystem.OnRecordRemoving(_world, record);
             }
 
+            // ecs_boat_steps: a boat's pending steps outlive its record until the next frame (BoatStepSystem.Park)
+            if (entity is Item && Mirror.TryGetEntity(entity.Serial, out EcsEntity boat) && boat.TryGetComponent(out BoatSteps steps))
+            {
+                _world.BoatMovingManager.Steps.Park(entity.Serial, in steps);
+            }
+
             Mirror.Remove(entity.Serial);
 
             // Codex audit P2 (#3): a book's spell entries go with its record

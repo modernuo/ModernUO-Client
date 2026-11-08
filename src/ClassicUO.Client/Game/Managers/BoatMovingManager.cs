@@ -156,6 +156,25 @@ namespace ClassicUO.Game.Managers
                     _world.Writer.DropBoatSteps(boat, steps: true);
                 }
             }
+            else if (_system.TakeParked(serial, out BoatSteps parked))
+            {
+                // the boat's record was removed with steps queued and the new one has none yet (a multi reloaded as it is
+                // recreated): the old dictionaries still held the queue and passengers under the serial
+                if (boat != null)
+                {
+                    _world.Writer.ResetBoatOffset(boat);
+                }
+
+                for (int i = 0; i < parked.PassengerCount; i++)
+                {
+                    Entity ent = _world.Get(parked.Passengers[i].Serial);
+
+                    if (ent != null)
+                    {
+                        _world.Writer.ResetBoatOffset(ent);
+                    }
+                }
+            }
 
             if (BoatStepSystem.Check)
             {
@@ -211,12 +230,17 @@ namespace ClassicUO.Game.Managers
 
             if (On)
             {
-                if (boat == null || !BoatStepSystem.TryBoatSteps(boat, out EcsEntity e) || e.GetComponent<BoatSteps>().Count == 0)
+                BoatSteps s;
+
+                if (boat != null && BoatStepSystem.TryBoatSteps(boat, out EcsEntity e) && e.GetComponent<BoatSteps>().Count != 0)
+                {
+                    s = e.GetComponent<BoatSteps>();
+                }
+                else if (!_system.TryParked(serial, out s))
                 {
                     return null;
                 }
 
-                BoatSteps s = e.GetComponent<BoatSteps>();
                 steps = s.Count;
 
                 for (int i = 0; i < s.PassengerCount; i++)
@@ -264,9 +288,16 @@ namespace ClassicUO.Game.Managers
                 _items.Remove(serial);
             }
 
-            if (On && _world.Items.Get(serial) is { } boat)
+            if (On)
             {
-                _world.Writer.DropBoatSteps(boat, steps: false);
+                if (_world.Items.Get(serial) is { } boat)
+                {
+                    _world.Writer.DropBoatSteps(boat, steps: false);
+                }
+                else
+                {
+                    _system.DropParkedPassengers(serial);
+                }
             }
         }
 

@@ -2352,7 +2352,9 @@ namespace ClassicUO.Game
         /// <c>BoatSteps</c> (added at the first): the queue is trimmed to 5, a first step starts the step clock (as
         /// <see cref="SetBoatStepTime"/>), the step takes the speed's time (a first step, or no move request or step before:
         /// <paramref name="timePacket"/> 0) or the time since the last packet, and the passenger list is dropped (the packet's
-        /// list follows: <see cref="SetBoatPassenger"/>). Nothing with the switch off or without a record. Rejections as
+        /// list follows: <see cref="SetBoatPassenger"/>). The boat joins the step order first, and a boat recreated under its serial
+        /// takes over the state its removed record left (<c>BoatStepSystem.Restore</c>; also in the two operations below).
+        /// Nothing with the switch off or without a record. Rejections as
         /// <see cref="CompleteBoatStep"/>.
         /// </summary>
         public void QueueBoatStep(Item boat, byte speed, Direction movingDir, ushort x, ushort y, sbyte z, uint timePacket)
@@ -2377,6 +2379,9 @@ namespace ClassicUO.Game
 
             using (Open(boat, null))
             {
+                // a boat recreated under its serial queues onto the steps its removed record left (BoatStepSystem.Park)
+                _world.BoatMovingManager.Steps.Restore(boat, e);
+
                 if (!e.HasComponent<ClassicUO.Ecs.BoatSteps>())
                 {
                     e.AddComponent(new ClassicUO.Ecs.BoatSteps());
@@ -2434,6 +2439,8 @@ namespace ClassicUO.Game
 
             using (Open(boat, null))
             {
+                _world.BoatMovingManager.Steps.Restore(boat, e);
+
                 if (!e.HasComponent<ClassicUO.Ecs.BoatSteps>())
                 {
                     e.AddComponent(new ClassicUO.Ecs.BoatSteps());
@@ -2456,13 +2463,15 @@ namespace ClassicUO.Game
                 return;
             }
 
-            if (!_world.BoatStepsOn || !BoatStepSystem.TryBoatSteps(boat, out EcsEntity e))
+            if (!_world.BoatStepsOn || !boat.TryScalarEntity(out EcsEntity e) ||
+                (!e.HasComponent<ClassicUO.Ecs.BoatSteps>() && !_world.BoatMovingManager.Steps.TryParked(boat.Serial, out _)))
             {
                 return;
             }
 
             using (Open(boat, null))
             {
+                _world.BoatMovingManager.Steps.Restore(boat, e);
                 ref ClassicUO.Ecs.BoatSteps s = ref e.GetComponent<ClassicUO.Ecs.BoatSteps>();
                 s.PassengerCount = 0;
 

@@ -446,9 +446,10 @@ namespace ClassicUO.UnitTests.Ecs
         // order shows when one boat carries another: a boat whose completion moves a passenger boat onto that boat's queued
         // destination makes the passenger's step a turn in place in the same frame only if it runs first.
 
-        private const uint CARRIER_A = 0x4000_7410, CARRIED_B = 0x4000_7411, GONE_X1 = 0x4000_7412, GONE_X2 = 0x4000_7413, CARRIER_Z = 0x4000_7414;
+        private const uint CARRIER_A = 0x4000_7410, CARRIED_B = 0x4000_7411, GONE_X1 = 0x4000_7412, GONE_X2 = 0x4000_7413, CARRIER_Z = 0x4000_7414,
+            GONE_W = 0x4000_7415;
 
-        private static readonly uint[] OrderSerials = { CARRIER_A, CARRIED_B, GONE_X1, GONE_X2, CARRIER_Z };
+        private static readonly uint[] OrderSerials = { CARRIER_A, CARRIED_B, GONE_X1, GONE_X2, CARRIER_Z, GONE_W };
 
         private static void AddBoat(World w, uint serial, ushort x)
         {
@@ -464,9 +465,11 @@ namespace ClassicUO.UnitTests.Ecs
         {
             Action<World> frame = null;
 
-            // three boats queue (slots X1, B, X2); X1 and X2 are removed under way, so the frame frees X1's slot, then X2's
-            yield return (100, "X1, B, X2 queue", w =>
+            // four boats queue (slots W, X1, B, X2); X1 and X2 are removed under way, so the frame frees X1's slot, then X2's.
+            // W is removed with nothing queued: the old manager kept its slot for good
+            yield return (100, "W, X1, B, X2 queue", w =>
             {
+                w.BoatMovingManager.AddStep(GONE_W, 3, Direction.East, Direction.East, 1071, 1000, 0);
                 w.BoatMovingManager.AddStep(GONE_X1, 3, Direction.East, Direction.East, 1041, 1000, 0);
                 w.BoatMovingManager.AddStep(CARRIED_B, 3, Direction.East, Direction.East, 1021, 1000, 0);
                 w.BoatMovingManager.AddStep(GONE_X2, 3, Direction.East, Direction.East, 1051, 1000, 0);
@@ -478,6 +481,7 @@ namespace ClassicUO.UnitTests.Ecs
             });
             yield return (200, "frame (X1, X2 dropped)", frame);
             yield return (600, "frame (B done)", frame);
+            yield return (650, "W removed, nothing queued", w => w.Writer.RemoveWorldItem(w.Items.Get(GONE_W), out _));
 
             // A takes the last freed slot (X2's, after B): B runs first, so A's completion leaves B's step queued
             yield return (700, "A queues, carrying B", w =>
@@ -499,7 +503,7 @@ namespace ClassicUO.UnitTests.Ecs
             yield return (1900, "frame (Z done, B mid-step)", frame);
             yield return (2000, "frame", frame);
 
-            // X1 comes back under its serial and queues: no slot is free, so it goes last
+            // X1 comes back under its serial and queues: no slot is free (W's is still held), so it goes last
             yield return (2100, "X1 back, carrying B", w =>
             {
                 AddBoat(w, GONE_X1, 1040);
@@ -527,6 +531,7 @@ namespace ClassicUO.UnitTests.Ecs
 
                 foreach (World w in new[] { reference, world })
                 {
+                    AddBoat(w, GONE_W, 1070);
                     AddBoat(w, GONE_X1, 1040);
                     AddBoat(w, CARRIED_B, 1020);
                     AddBoat(w, GONE_X2, 1050);
@@ -551,6 +556,120 @@ namespace ClassicUO.UnitTests.Ecs
                 }
 
                 world.Items.Get(CARRIED_B).X.Should().Be(1024, "every step of B was taken");
+                world.Writer.Violations.Should().Be(0);
+                (BoatStepSystem.DecisionDiffs, BoatStepSystem.StateDiffs).Should().Be((0L, 0L));
+            }
+            finally
+            {
+                BoatStepSystem.CheckOverride = null;
+                BoatStepSystem.ResetCounters();
+            }
+        }
+
+        // ---- the Codex audit of ecs_boat_steps (P2 2): a boat removed and recreated under its serial before the next frame
+        // keeps its pending steps and passengers (the old manager's dictionaries were keyed by serial and dropped a removed
+        // boat only at the next Update): the recreated multi's reload (LoadMulti -> ClearSteps) resets the passengers'
+        // offsets; a recreated plain item steps the old queue; a packet appends to it. A boat that is not back by the next
+        // frame loses them there.
+
+        [Theory]
+        [InlineData("multi", false)]
+        [InlineData("multi", true)]
+        [InlineData("item, then a frame", false)]
+        [InlineData("item, then a frame", true)]
+        [InlineData("item, then a packet", false)]
+        [InlineData("item, then a packet", true)]
+        [InlineData("item, list cleared while gone", false)]
+        [InlineData("item, list cleared while gone", true)]
+        [InlineData("back after a frame", false)]
+        [InlineData("back after a frame", true)]
+        public void A_Boat_Recreated_Before_The_Next_Frame_Keeps_Its_Pending_Steps(string how, bool check)
+        {
+            BoatStepSystem.CheckOverride = check;
+            BoatStepSystem.ResetCounters();
+
+            try
+            {
+                World reference = BuildTwoBoats(false, false), world = BuildTwoBoats(true, false);
+                byte type = how == "multi" ? (byte)2 : (byte)0;
+
+                IEnumerable<(uint ticks, string what, Action<World> act)> Script()
+                {
+                    Action<World> frame = null;
+
+                    yield return (100, "boat 2 steps", w =>
+                    {
+                        w.BoatMovingManager.AddStep(BOAT2, 3, Direction.North, Direction.North, 1010, 999, 0);
+                        w.BoatMovingManager.PushItemToList(BOAT2, OTHER, 20, 9, 0);
+                    });
+                    yield return (140, "a second step queued", w =>
+                    {
+                        w.BoatMovingManager.AddStep(BOAT2, 3, Direction.North, Direction.North, 1010, 998, 0);
+                        w.BoatMovingManager.PushItemToList(BOAT2, OTHER, 20, 9, 0);
+                    });
+                    yield return (300, "frame (mid-step)", frame);
+                    yield return (310, "boat 2 removed", w => w.Writer.RemoveWorldItem(w.Items.Get(BOAT2), out _));
+
+                    if (how == "item, list cleared while gone")
+                    {
+                        yield return (315, "ClearEntities without the Item", w => w.BoatMovingManager.ClearEntities(BOAT2));
+                    }
+
+                    if (how == "back after a frame")
+                    {
+                        yield return (320, "frame (boat 2 gone)", frame);
+                    }
+
+                    yield return (330, "boat 2 recreated", w =>
+                    {
+                        Item boat = w.Writer.UpsertWorldItem(BOAT2, 0x3E4E, 0, 1, 1010, 1000, 0, Direction.North, 0, 0, type, out bool created, out WorldWriter.Placement placement);
+                        created.Should().BeTrue();
+                        w.Writer.PlaceWorldItem(placement);
+                    });
+
+                    if (how == "item, then a packet")
+                    {
+                        yield return (400, "a packet for the recreated boat", w =>
+                        {
+                            w.BoatMovingManager.AddStep(BOAT2, 3, Direction.North, Direction.North, 1010, 997, 0);
+                            w.BoatMovingManager.PushItemToList(BOAT2, OTHER, 20, 10, 0);
+                        });
+                    }
+
+                    yield return (450, "frame", frame);
+                    yield return (700, "frame", frame);
+                    yield return (1000, "frame", frame);
+                    yield return (1500, "frame", frame);
+                }
+
+                foreach ((uint ticks, string what, Action<World> act) in Script())
+                {
+                    Time.Ticks = NOW + ticks;
+                    Pair(() => (act ?? (w => w.BoatMovingManager.Update()))(reference), () => (act ?? (w => w.BoatMovingManager.Update()))(world));
+                    Time.Ticks = NOW;
+
+                    AssertSameWorld(reference, world);
+
+                    foreach (uint serial in BoatSerials)
+                    {
+                        BoatState(world, serial).Should().Be(BoatState(reference, serial), $"0x{serial:X8} after '{what}' at {ticks} ({how})");
+                    }
+
+                    if (what == "boat 2 removed")
+                    {
+                        world.BoatMovingManager.Steps.ParkedCount.Should().Be(1, "the queue waits for the next frame under the serial");
+                    }
+
+                    world.Writer.InScope.Should().BeFalse();
+                }
+
+                if (how == "multi")
+                {
+                    world.Get(OTHER).Offset.Should().Be(Vector3.Zero, "the recreated multi's reload reset the passenger");
+                }
+
+                world.BoatMovingManager.Steps.ParkedCount.Should().Be(0, "nothing waits once a frame ran");
+
                 world.Writer.Violations.Should().Be(0);
                 (BoatStepSystem.DecisionDiffs, BoatStepSystem.StateDiffs).Should().Be((0L, 0L));
             }

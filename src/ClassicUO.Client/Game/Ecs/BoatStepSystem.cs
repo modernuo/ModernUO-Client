@@ -2,6 +2,8 @@
 
 using System;
 using System.Collections.Generic;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using ClassicUO.Ecs;
 using ClassicUO.Game.Data;
 using ClassicUO.Game.GameObjects;
@@ -192,7 +194,14 @@ namespace ClassicUO.Game
         // step and removed when a frame finds the boat's Item gone. One boat's step can move another (a boat listed as a
         // passenger), so the order is part of the result. The same Dictionary with the same adds and removals enumerates in
         // the same order: insertion order, a freed slot reused by the next add (the last freed first).
-        private readonly Dictionary<uint, bool> _order = new Dictionary<uint, bool>();
+        // The value is a boat's pending state while it has no record (Codex audit P2): the old dictionaries were keyed by
+        // serial, so a boat removed with steps queued kept its queue, passengers and clock until the next frame dropped them,
+        // and a boat recreated under the serial before that frame took them over (its multi reload's ClearSteps reset the
+        // passengers' offsets from them). The record's BoatSteps is parked here when the record is removed (Park) and goes
+        // to the new record at its next touch (Restore), is consumed by ClearSteps (TakeParked), or is dropped with the key
+        // by the next frame that finds no Item under the serial: at most one frame for a boat that does not come back.
+        // A boat removed with nothing queued parks nothing; its key stays, as the old _steps key did.
+        private readonly Dictionary<uint, BoatSteps> _order = new Dictionary<uint, BoatSteps>();
         private readonly List<uint> _due = new List<uint>(), _stepped = new List<uint>(), _gone = new List<uint>();
 
         public BoatStepSystem(World world)
@@ -205,7 +214,98 @@ namespace ClassicUO.Game
 
         /// <summary>A step is queued on <paramref name="serial"/> (<c>WorldWriter.QueueBoatStep</c>): the boat joins the
         /// stepping order unless it is in it (the old <c>AddStep</c>'s <c>_steps[serial]</c>).</summary>
-        internal void Track(uint serial) => _order.TryAdd(serial, false);
+        internal void Track(uint serial) => _order.TryAdd(serial, default);
+
+        /// <summary>Tests: the boats whose pending state waits without a record.</summary>
+        internal int ParkedCount
+        {
+            get
+            {
+                int n = 0;
+
+                foreach (BoatSteps s in _order.Values)
+                {
+                    n += s.Count != 0 ? 1 : 0;
+                }
+
+                return n;
+            }
+        }
+
+        /// <summary>The boat's record is being removed (<c>WorldEcs.OnDestroyed</c>): its queued steps, passengers and clock
+        /// wait under its serial (see <see cref="_order"/>).</summary>
+        internal void Park(uint serial, in BoatSteps steps)
+        {
+            ref BoatSteps slot = ref CollectionsMarshal.GetValueRefOrNullRef(_order, serial);
+
+            if (steps.Count != 0 && !Unsafe.IsNullRef(ref slot))
+            {
+                slot = steps;
+            }
+        }
+
+        /// <summary>A boat recreated under a parked serial (its record <paramref name="e"/>) takes the parked state over, with
+        /// the new Item's step clock (the old Update read the Item's <c>LastStepTime</c>). Called by the boat operations and
+        /// the frame before they read the component.</summary>
+        internal void Restore(Item boat, EcsEntity e)
+        {
+            ref BoatSteps slot = ref CollectionsMarshal.GetValueRefOrNullRef(_order, boat.Serial);
+
+            if (Unsafe.IsNullRef(ref slot) || slot.Count == 0)
+            {
+                return;
+            }
+
+            BoatSteps s = slot;
+            slot = default;
+            s.LastStepTime = boat.LastStepTime;
+
+            if (e.HasComponent<BoatSteps>())
+            {
+                e.GetComponent<BoatSteps>() = s;
+            }
+            else
+            {
+                e.AddComponent(s);
+            }
+        }
+
+        /// <summary><c>ClearSteps</c> for a boat without a record: the parked state, taken out (the key stays).</summary>
+        internal bool TakeParked(uint serial, out BoatSteps steps)
+        {
+            ref BoatSteps slot = ref CollectionsMarshal.GetValueRefOrNullRef(_order, serial);
+
+            if (Unsafe.IsNullRef(ref slot) || slot.Count == 0)
+            {
+                steps = default;
+
+                return false;
+            }
+
+            steps = slot;
+            slot = default;
+
+            return true;
+        }
+
+        /// <summary>The parked state, read only (the dev trace).</summary>
+        internal bool TryParked(uint serial, out BoatSteps steps)
+        {
+            steps = _order.TryGetValue(serial, out BoatSteps s) ? s : default;
+
+            return steps.Count != 0;
+        }
+
+        /// <summary><c>ClearEntities</c> for a boat without an Item: the parked passengers dropped (the old <c>_items.Remove</c>).</summary>
+        internal void DropParkedPassengers(uint serial)
+        {
+            ref BoatSteps slot = ref CollectionsMarshal.GetValueRefOrNullRef(_order, serial);
+
+            if (!Unsafe.IsNullRef(ref slot))
+            {
+                slot.PassengerCount = 0;
+            }
+        }
 
         /// <summary>One frame of every boat with a queued step, in the old manager's order; <paramref name="shadow"/> (the
         /// checker) follows each step.</summary>
@@ -228,12 +328,21 @@ namespace ClassicUO.Game
 
                 if (item == null || item.IsDestroyed)
                 {
-                    _gone.Add(serial);
+                    // the old Update dropped a gone boat only with steps queued (its record's, parked at the removal)
+                    if (TryParked(serial, out _))
+                    {
+                        _gone.Add(serial);
+                    }
 
                     continue;
                 }
 
-                if (!TryBoatSteps(item, out EcsEntity e) || e.GetComponent<BoatSteps>().Count == 0)
+                if (item.TryScalarEntity(out EcsEntity e))
+                {
+                    Restore(item, e);
+                }
+
+                if (!TryBoatSteps(item, out e) || e.GetComponent<BoatSteps>().Count == 0)
                 {
                     continue;
                 }
