@@ -1160,6 +1160,9 @@ namespace ClassicUO.Game.UI.Gumps
                                     continue;
                                 }
 
+                                // once per region: this runs on the loading task, and the race may change while it does
+                                bool gargoyle = GameObject.PlayerIsGargoyle(World);
+
                                 for (int lx = 0; lx < region.BlocksW; ++lx)
                                 {
                                     bx = rx * regionBlocks + lx;
@@ -1193,7 +1196,7 @@ namespace ClassicUO.Game.UI.Gumps
 
                                         foreach (ref readonly var sb in mapBlock.Statics)
                                         {
-                                            if (GameObject.CanBeDrawn(World, sb.Graphic))
+                                            if (GameObject.CanBeDrawn(sb.Graphic, gargoyle))
                                             {
                                                 int block = (mapY + sb.Y + OFFSET_PIX_HALF) * (realWidth + OFFSET_PIX) + mapX + sb.X + OFFSET_PIX_HALF;
 

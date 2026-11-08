@@ -41,7 +41,12 @@ namespace ClassicUO.Game.GameObjects
         public static long TotalNew;
 
         /// <summary>A new Static, or <paramref name="reuse"/> (a retired Static from MapObjectRecycler) put back to a new one's state.</summary>
-        public static Static Create(World world, ushort graphic, ushort hue, int index, Static reuse = null)
+        public static Static Create(World world, ushort graphic, ushort hue, int index, Static reuse = null) =>
+            Create(world, graphic, hue, index, GameObject.PlayerIsGargoyle(world), reuse);
+
+        /// <summary><see cref="Create(World, ushort, ushort, int, Static)"/> with the player's race read once by the caller
+        /// (Chunk.Load creates a whole block's statics in one pass).</summary>
+        public static Static Create(World world, ushort graphic, ushort hue, int index, bool playerIsGargoyle, Static reuse = null)
         {
             Static s;
 
@@ -58,7 +63,7 @@ namespace ClassicUO.Game.GameObjects
 
             s.Graphic = s.OriginalGraphic = graphic;
             s.Hue = hue;
-            s.UpdateGraphicBySeason();
+            s.UpdateGraphicBySeason(playerIsGargoyle);
             s.Index = index;
 
             if (s.ItemData.Height > 5 || s.ItemData.Height == 0)
@@ -91,10 +96,12 @@ namespace ClassicUO.Game.GameObjects
             Graphic = OriginalGraphic;
         }
 
-        public override void UpdateGraphicBySeason()
+        public override void UpdateGraphicBySeason() => UpdateGraphicBySeason(PlayerIsGargoyle(World));
+
+        private void UpdateGraphicBySeason(bool playerIsGargoyle)
         {
             SetGraphic(SeasonManager.GetSeasonGraphic(World.Season, OriginalGraphic));
-            AllowedToDraw = CanBeDrawn(World, Graphic);
+            AllowedToDraw = CanBeDrawn(Graphic, playerIsGargoyle);
             IsVegetation = StaticFilters.IsVegetation(Graphic);
         }
 

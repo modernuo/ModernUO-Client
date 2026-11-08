@@ -252,6 +252,7 @@ namespace ClassicUO.Game.UI.Gumps
             }
 
             int maxBlockIndex = World.Map.BlocksCount;
+            bool gargoyle = GameObject.PlayerIsGargoyle(World);
             int mapBlockHeight = Client.Game.UO.FileManager.Maps.MapBlocksSize[World.MapIndex, 1];
             int index = _useLargeMap ? 1 : 0;
 
@@ -296,7 +297,7 @@ namespace ClassicUO.Game.UI.Gumps
 
                     foreach (ref readonly var stblock in mapBlock.Statics)
                     {
-                        if (GameObject.CanBeDrawn(World, stblock.Graphic))
+                        if (GameObject.CanBeDrawn(stblock.Graphic, gargoyle))
                         {
                             ref var st = ref staticsZ[stblock.Y * 8 + stblock.X];
                             if (st.Z < stblock.Z)
