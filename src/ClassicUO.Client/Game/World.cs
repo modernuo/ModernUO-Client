@@ -860,11 +860,11 @@ namespace ClassicUO.Game
         {
             if (ActiveItemsSourceOn)
             {
-                ActiveStore.Add(item, ActiveItemsSystemOn);
+                ActiveStore.Add(item, true);
             }
             else
             {
-                _activeItems.Add(item, ActiveItemsSystemOn);
+                _activeItems.Add(item, true);
             }
 
             if (ActiveItemsSourceCheckOn)
@@ -880,13 +880,13 @@ namespace ClassicUO.Game
 
             if (_activeItems.Count != 0)
             {
-                _activeItems.Clear(!source && ActiveItemsSystemOn);
+                _activeItems.Clear(!source);
             }
 
             // whatever its count: the item table may still name items whose entries were deleted outside the store
             if (_activeStore != null)
             {
-                _activeStore.Clear(source && ActiveItemsSystemOn);
+                _activeStore.Clear(source);
             }
         }
 
@@ -941,7 +941,7 @@ namespace ClassicUO.Game
                 }
             }
 
-            bool source = ActiveItemsSourceOn, sourceCheck = ActiveItemsSourceCheckOn, tag = ActiveItemsSystemOn;
+            bool source = ActiveItemsSourceOn, sourceCheck = ActiveItemsSourceCheckOn;
 
             if (source || sourceCheck)
             {
@@ -964,11 +964,11 @@ namespace ClassicUO.Game
                 {
                     if (source)
                     {
-                        _activeStore.SwapRemoveAt(i, tag);
+                        _activeStore.SwapRemoveAt(i, true);
                     }
                     else
                     {
-                        _activeItems.SwapRemoveAt(i, tag);
+                        _activeItems.SwapRemoveAt(i, true);
                     }
 
                     if (sourceCheck)

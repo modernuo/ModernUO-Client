@@ -196,12 +196,6 @@ namespace ClassicUO.Configuration
         // merged order with the list. Read once at startup (dev builds: CUO_WORLD_TILE_INDEX=1|0 overrides). Default off.
         [JsonPropertyName("world_tile_index")] public bool WorldTileIndex { get; set; }
 
-        // T5d (ecs-transition-plan.md): the per-frame item update list is owned by the ECS side: membership is the ItemActive tag,
-        // the visiting order is the system's list (same add and swap-remove rules as before). CUO_ACTIVE_ITEMS_CHECK=1 compares
-        // tags and list every frame. Read once at startup (CUO_WORLD_ACTIVE_ITEMS_SYSTEM=1|0 overrides it in developer builds).
-        // Default on since 2026-11-02 (owner, after the quiet-machine per-switch timing bench-000206/207/208: timing-neutral on both renderers); the off path and the checker stay for one phase.
-        [JsonPropertyName("world_active_items_system")] public bool WorldActiveItemsSystem { get; set; } = true;
-
         // T9 (ecs-transition-plan.md §T5d): the ECS is the source of the per-frame item update list: one ActiveItemEntry entity per
         // listed item holds the item and its visiting slot (append, swap-remove), and the active item stage visits the order
         // rebuilt from those entities each frame. Off: World's ActiveItemList holds membership and order. CUO_ACTIVE_ITEMS_SOURCE_CHECK=1

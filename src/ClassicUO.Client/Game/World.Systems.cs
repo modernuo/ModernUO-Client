@@ -28,37 +28,23 @@ namespace ClassicUO.Game
     }
 
     // T5d (ecs-transition-plan.md): the stage runner of World.Update (a refactor: same behaviour with every switch) and the
-    // active item system (world_active_items_system, default on). The system keeps the update list's rules (append when queued,
-    // swap-remove when the item no longer needs a frame or left Items) and adds the ItemActive tag on the item's mirror
-    // entity as the ECS-side membership. CUO_ACTIVE_ITEMS_CHECK=1 compares tags and list every frame.
+    // active item system. The system keeps the update list's rules (append when queued, swap-remove when the item no longer
+    // needs a frame or left Items) and adds the ItemActive tag on the item's mirror entity as the ECS-side membership.
+    // CUO_ACTIVE_ITEMS_CHECK=1 compares tags and list every frame. T9 deleted world_active_items_system (the list without tags).
     internal sealed partial class World
     {
         /// <summary>Tests: sees each stage as it begins (null in the client).</summary>
         internal Action<WorldStage> StageObserver;
 
-        /// <summary>Tests: the switch for this World (null: the setting, read once at startup).</summary>
-        internal bool? ActiveItemsSystemOverride;
-
         /// <summary>Tests: the checker for this World (null: <c>CUO_ACTIVE_ITEMS_CHECK=1</c>).</summary>
         internal bool? ActiveItemsCheckOverride;
 
 #if CUO_DEVTOOLS
-        // CLEANUP(release): the gate's override of the setting (CUO_WORLD_ACTIVE_ITEMS_SYSTEM=1|0) and the checker
-        private static readonly bool s_activeItemsSystem = Environment.GetEnvironmentVariable("CUO_WORLD_ACTIVE_ITEMS_SYSTEM") switch
-        {
-            "1" => true,
-            "0" => false,
-            _ => Configuration.Settings.GlobalSettings.WorldActiveItemsSystem
-        };
-
+        // CLEANUP(release): the checker
         private static readonly bool s_activeItemsCheck = Environment.GetEnvironmentVariable("CUO_ACTIVE_ITEMS_CHECK") == "1";
 #else
-        private static readonly bool s_activeItemsSystem = Configuration.Settings.GlobalSettings.WorldActiveItemsSystem;
         private const bool s_activeItemsCheck = false;
 #endif
-
-        /// <summary>T5d (<c>world_active_items_system</c>, default on): the update list's membership is the <see cref="ItemActive"/> tag too.</summary>
-        public bool ActiveItemsSystemOn => ActiveItemsSystemOverride ?? s_activeItemsSystem;
 
         // T5b-items (world_item_anim_system) ---------------------------------------------------------------------------------
 #if CUO_DEVTOOLS
@@ -146,14 +132,12 @@ namespace ClassicUO.Game
         private uint _activeCheckNextLog;
 
         /// <summary>
-        /// Called at the start of the active item stage: the list against the tags. With the system on every listed item with a
-        /// mirror entity carries the tag and every tagged entity is a listed item; with it off no entity carries it. In both
-        /// cases each listed item has its flag, appears once and is not destroyed.
+        /// Called at the start of the active item stage: the list against the tags. Every listed item with a mirror entity
+        /// carries the tag and every tagged entity is a listed item; each listed item has its flag and appears once.
         /// </summary>
         private void CheckActiveItemsSystem()
         {
             ActiveItemsChecks++;
-            bool on = ActiveItemsSystemOn;
             _activeSeen.Clear();
             int withEntity = 0;
 
@@ -182,9 +166,9 @@ namespace ClassicUO.Game
                 {
                     withEntity++;
 
-                    if (on != e.Tags.Has<ItemActive>())
+                    if (!e.Tags.Has<ItemActive>())
                     {
-                        ActiveMismatch($"item 0x{item.Serial:X8} listed, tag {(on ? "missing" : "present")}");
+                        ActiveMismatch($"item 0x{item.Serial:X8} listed, tag missing");
                     }
                 }
             }
@@ -195,15 +179,15 @@ namespace ClassicUO.Game
             _activeTagQuery ??= Ecs.Mirror.Store.Query().AllTags(Tags.Get<ItemActive>());
             int tagged = _activeTagQuery.Count;
 
-            if (tagged != (on ? withEntity : 0))
+            if (tagged != withEntity)
             {
-                ActiveMismatch($"{tagged} tagged entities, expected {(on ? withEntity : 0)} (list {count})");
+                ActiveMismatch($"{tagged} tagged entities, expected {withEntity} (list {count})");
             }
 
             if (Time.Ticks >= _activeCheckNextLog)
             {
                 _activeCheckNextLog = Time.Ticks + 5000;
-                Log.Info($"[active-items-check] {ActiveItemsChecks} checks, {ActiveItemsMismatches} mismatches; list {count}, tagged {tagged} | world_active_items_system={(on ? "on" : "off")}");
+                Log.Info($"[active-items-check] {ActiveItemsChecks} checks, {ActiveItemsMismatches} mismatches; list {count}, tagged {tagged}");
             }
         }
 
@@ -259,7 +243,7 @@ namespace ClassicUO.Game
         /// with the switch on, the checker's shadow with it off).</summary>
         private void RebuildActiveOrder()
         {
-            if (!ActiveStore.Rebuild(ActiveItemsSourceOn && ActiveItemsSystemOn, out string error))
+            if (!ActiveStore.Rebuild(ActiveItemsSourceOn, out string error))
             {
                 ActiveSourceMismatch($"entry slots broken: {error}");
             }

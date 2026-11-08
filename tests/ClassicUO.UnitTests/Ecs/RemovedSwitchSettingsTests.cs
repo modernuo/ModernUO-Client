@@ -14,7 +14,8 @@ namespace ClassicUO.UnitTests.Ecs
         // world_update_active_items, mobile_push_inputs and others the same way)
         private static readonly string[] s_removedKeys =
         {
-            "world_sweep_system"
+            "world_sweep_system",
+            "world_active_items_system"
         };
 
         [Fact]
