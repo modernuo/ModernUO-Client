@@ -420,7 +420,7 @@ namespace ClassicUO.UnitTests.Ecs
             AddMobile(s, 0x2005, 1005, 1000, NotorietyFlag.Enemy);             // not in the party
             Mobile dead = AddMobile(s, 0x2006, 1006, 1000, NotorietyFlag.Ally);
             dead.Destroy();
-            AddMobile(s, 0x2007, 1007, 1000, NotorietyFlag.Ally).Hits = 5;
+            OldScalarWrites.Hits(AddMobile(s, 0x2007, 1007, 1000, NotorietyFlag.Ally), 5);
 
             if (party)
             {

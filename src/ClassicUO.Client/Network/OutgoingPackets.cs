@@ -303,6 +303,7 @@ namespace ClassicUO.Network
         (
             this NetClient socket,
             PlayerMobile character,
+            string name,
             PlayerState stats,
             int cityIndex,
             uint clientIP,
@@ -336,7 +337,7 @@ namespace ClassicUO.Network
             writer.WriteUInt32BE(0xEDEDEDED);
             writer.WriteUInt32BE(0xFFFF_FFFF);
             writer.WriteUInt8(0x00);
-            writer.WriteASCII(character.Name, 30);
+            writer.WriteASCII(name, 30);
             writer.WriteZero(2);
 
             writer.WriteUInt32BE((uint) Client.Game.UO.Protocol);

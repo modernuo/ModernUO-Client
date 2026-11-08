@@ -15,8 +15,6 @@ src/ClassicUO.Client/Game/GameObjects/Entity.cs|Hue|1
 src/ClassicUO.Client/Game/GameObjects/Entity.cs|LastAnimationChangeTime|1
 src/ClassicUO.Client/Game/GameObjects/Entity.cs|Serial|1
 src/ClassicUO.Client/Game/GameObjects/Entity.cs|_direction|1
-src/ClassicUO.Client/Game/GameObjects/Entity.cs|_hits|1
-src/ClassicUO.Client/Game/GameObjects/Entity.cs|_hitsMax|1
 src/ClassicUO.Client/Game/GameObjects/FixedEffect.cs|Offset|1
 src/ClassicUO.Client/Game/GameObjects/GameEffect.cs|Graphic|1
 src/ClassicUO.Client/Game/GameObjects/GameEffect.cs|Hue|1
@@ -75,7 +73,6 @@ src/ClassicUO.Client/Game/UI/Gumps/CharCreation/CreateCharAppearanceGump.cs|Grap
 src/ClassicUO.Client/Game/UI/Gumps/CharCreation/CreateCharAppearanceGump.cs|Hue|4
 src/ClassicUO.Client/Game/UI/Gumps/CharCreation/CreateCharAppearanceGump.cs|IsFemale|1
 src/ClassicUO.Client/Game/UI/Gumps/CharCreation/CreateCharAppearanceGump.cs|Layer|1
-src/ClassicUO.Client/Game/UI/Gumps/CharCreation/CreateCharAppearanceGump.cs|Name|1
 src/ClassicUO.Client/Game/UI/Gumps/CharCreation/CreateCharAppearanceGump.cs|Race|1
 src/ClassicUO.Client/Game/UI/Gumps/RaceChangeGump.cs|Flags|2
 src/ClassicUO.Client/Game/UI/Gumps/RaceChangeGump.cs|Graphic|5

@@ -289,7 +289,6 @@ namespace ClassicUO.Game.GameObjects
 
         private RaceType _race;
         private CharacterSpeedType _speedMode = CharacterSpeedType.Normal;
-        private ushort _stamina, _staminaMax, _mana, _manaMax;
         private int _stepSoundOffset;
         public RaceType Race { get => _race; set { FunnelCheck.Write(this, FunnelField.Race); _race = value; } }
         public CharacterSpeedType SpeedMode { get => _speedMode; set { FunnelCheck.Write(this, FunnelField.SpeedMode); _speedMode = value; } }
@@ -299,12 +298,9 @@ namespace ClassicUO.Game.GameObjects
             {
                 ScalarReads.Count(ScalarField.Stamina);
 
-                return EcsScalars.Owns && TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Stamina(e) : _stamina;
+                return TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Stamina(e) : (ushort)0;
             }
-            set { FunnelCheck.Write(this, FunnelField.Stamina); _stamina = value; }
         }
-
-        internal ushort CachedStamina => _stamina;
 
         public ushort StaminaMax
         {
@@ -312,12 +308,9 @@ namespace ClassicUO.Game.GameObjects
             {
                 ScalarReads.Count(ScalarField.StaminaMax);
 
-                return EcsScalars.Owns && TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.StaminaMax(e) : _staminaMax;
+                return TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.StaminaMax(e) : (ushort)0;
             }
-            set { FunnelCheck.Write(this, FunnelField.StaminaMax); _staminaMax = value; }
         }
-
-        internal ushort CachedStaminaMax => _staminaMax;
 
         public ushort Mana
         {
@@ -325,12 +318,9 @@ namespace ClassicUO.Game.GameObjects
             {
                 ScalarReads.Count(ScalarField.Mana);
 
-                return EcsScalars.Owns && TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Mana(e) : _mana;
+                return TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.Mana(e) : (ushort)0;
             }
-            set { FunnelCheck.Write(this, FunnelField.Mana); _mana = value; }
         }
-
-        internal ushort CachedMana => _mana;
 
         public ushort ManaMax
         {
@@ -338,12 +328,9 @@ namespace ClassicUO.Game.GameObjects
             {
                 ScalarReads.Count(ScalarField.ManaMax);
 
-                return EcsScalars.Owns && TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.ManaMax(e) : _manaMax;
+                return TryScalarEntity(out Friflo.Engine.ECS.Entity e) ? EcsScalars.ManaMax(e) : (ushort)0;
             }
-            set { FunnelCheck.Write(this, FunnelField.ManaMax); _manaMax = value; }
         }
-
-        internal ushort CachedManaMax => _manaMax;
 
         public int StepSoundOffset { get => _stepSoundOffset; set { FunnelCheck.Write(this, FunnelField.StepSoundOffset); _stepSoundOffset = value; } }
         public string Title = string.Empty;

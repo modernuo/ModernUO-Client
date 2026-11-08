@@ -126,17 +126,14 @@ namespace ClassicUO.UnitTests.Ecs
             Check(world).Should().BeEmpty();
         }
 
-        public enum Divergence { ItemName, MobileName, ItemHits, MobileHitsMax, Notoriety, ItemLayer, WornLayer, Price }
+        public enum Divergence { ItemPercentage, MobilePercentage, Notoriety, ItemLayer, WornLayer }
 
         [Theory]
-        [InlineData(Divergence.ItemName, "item 0x40007902 v2")]
-        [InlineData(Divergence.MobileName, "mobile 0x00003900 v2")]
-        [InlineData(Divergence.ItemHits, "item 0x40007903 v2")]
-        [InlineData(Divergence.MobileHitsMax, "mobile 0x00003900 v2")]
+        [InlineData(Divergence.ItemPercentage, "item 0x40007903 v2")]
+        [InlineData(Divergence.MobilePercentage, "mobile 0x00003900 v2")]
         [InlineData(Divergence.Notoriety, "mobile 0x00003901 v2")]
         [InlineData(Divergence.ItemLayer, "item 0x40007901 v2")]
         [InlineData(Divergence.WornLayer, "item 0x40007905")]
-        [InlineData(Divergence.Price, "item 0x40007903 v2")]
         public void A_Deliberate_Mismatch_Is_Reported(Divergence d, string expected)
         {
             World world = BuildFunnelWorld();
@@ -145,14 +142,12 @@ namespace ClassicUO.UnitTests.Ecs
             // each a write that bypasses the funnel (or a mirror write World never made)
             switch (d)
             {
-                case Divergence.ItemName: world.Items.Get(B).Name = "a stone"; break;
-                case Divergence.MobileName: world.Mobiles.Get(MOB).Name = null; break;
-                case Divergence.ItemHits: world.Items.Get(C).Hits = 3; break;
-                case Divergence.MobileHitsMax: world.Mobiles.Get(MOB).HitsMax = 61; break;
+                // T9: the percentage the hits operations set, changed without a hits write
+                case Divergence.ItemPercentage: world.Items.Get(C).UpdateHits(3); break;
+                case Divergence.MobilePercentage: world.Mobiles.Get(MOB).UpdateHits(61); break;
                 case Divergence.Notoriety: world.Mobiles.Get(VENDOR).NotorietyFlag = NotorietyFlag.Innocent; break;
                 case Divergence.ItemLayer: world.Items.Get(A).Layer = Layer.Talisman; break;
                 case Divergence.WornLayer: world.Items.Get(HELM).Layer = Layer.Earrings; break;
-                case Divergence.Price: world.Ecs.Mirror.SetPrice(C, 99); break;
             }
 
             List<string> reported = Check(world);
