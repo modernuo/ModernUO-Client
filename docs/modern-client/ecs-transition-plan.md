@@ -429,7 +429,7 @@ Candidates as of 2026-10-31: E4's legacy mobile loop and its shadow dictionary (
 
 
 - `WorldEcs.Sync`, `PushInputs` and `PushClock` as separate entry points (they become funnel internals), and the mirror-direction `-ecscheck` (replaced by the cache check, then removed with the caches).
-- The cold A fields' caches on `Entity`/`Item`/`Mobile`/`PlayerMobile` (T4). The hot caches only after T7b.
+- The cold A fields' caches on `Entity`/`Item`/`Mobile`/`PlayerMobile` (T4). The hot caches only after T7b. **Done (2026-11-07, `bg/cold-caches`):** Name, Hits, HitsMax, the pools and Price are record-only, `ecs_owns_scalars` is gone, the funnel's hits operations set `HitsPercentage`, and a record replaced by the other kind under one serial starts without them (owner decision; poc-log "T9: the cold scalar caches deleted").
 - The `LinkedObject` child lists for containers (T2) and equipment (T3). `Entity.Items` becomes an ECS enumeration.
 - `TNext`/`TPrevious`/`TileChunk` for dynamic objects (T6). They stay for land and statics.
 - `World.Items`/`World.Mobiles` dictionaries become the mirror's serial index plus E10's ordered table, which update order needs.
