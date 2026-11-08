@@ -303,6 +303,7 @@ namespace ClassicUO.Network
         (
             this NetClient socket,
             PlayerMobile character,
+            PlayerState stats,
             int cityIndex,
             uint clientIP,
             int serverIndex,
@@ -363,11 +364,11 @@ namespace ClassicUO.Network
             }
 
             writer.WriteUInt8(val);
-            writer.WriteUInt8((byte) character.Strength);
-            writer.WriteUInt8((byte) character.Dexterity);
-            writer.WriteUInt8((byte) character.Intelligence);
+            writer.WriteUInt8((byte) stats.Strength);
+            writer.WriteUInt8((byte) stats.Dexterity);
+            writer.WriteUInt8((byte) stats.Intelligence);
 
-            List<Skill> skills = character.Skills.OrderByDescending(o => o.Value).Take(skillcount).ToList();
+            List<Skill> skills = stats.Skills.OrderByDescending(o => o.Value).Take(skillcount).ToList();
 
             foreach (Skill skill in skills)
             {

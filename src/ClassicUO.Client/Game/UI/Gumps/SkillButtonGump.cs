@@ -118,9 +118,9 @@ namespace ClassicUO.Game.UI.Gumps
             base.Restore(xml);
             int index = int.Parse(xml.GetAttribute("id"));
 
-            if (index >= 0 && index < World.Player.Skills.Length)
+            if (index >= 0 && index < World.PlayerState.Skills.Length)
             {
-                _skill = World.Player.Skills[index];
+                _skill = World.PlayerState.Skills[index];
                 BuildGump();
             }
             else

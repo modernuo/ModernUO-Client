@@ -127,8 +127,8 @@ namespace ClassicUO.Game.UI.Gumps
                     {
                         if(_primAbility == null)
                         {
-                            byte bab1 = (byte)(((byte)World.Player.PrimaryAbility & 0x7F) - 1);
-                            _primAbility = new GumpPic(215, 105, (ushort)(0x5200 + bab1), (ushort)(((byte)World.Player.PrimaryAbility & 0x80) != 0 ? 38 : 0));
+                            byte bab1 = (byte)(((byte)World.PlayerState.PrimaryAbility & 0x7F) - 1);
+                            _primAbility = new GumpPic(215, 105, (ushort)(0x5200 + bab1), (ushort)(((byte)World.PlayerState.PrimaryAbility & 0x80) != 0 ? 38 : 0));
                             _primAbility.SetTooltip(Client.Game.UO.FileManager.Clilocs.GetString(1028838 + bab1));
                             _primAbility.DragBegin += OnGumpicDragBeginPrimary;
                             _primAbility.MouseDoubleClick += PrimaryAbilityMouseDoubleClick;
@@ -149,8 +149,8 @@ namespace ClassicUO.Game.UI.Gumps
 
                         if (_secAbility == null)
                         {
-                            byte bab2 = (byte)(((byte)World.Player.SecondaryAbility & 0x7F) - 1);
-                            _secAbility = new GumpPic(215, 150, (ushort)(0x5200 + bab2), (ushort)(((byte)World.Player.SecondaryAbility & 0x80) != 0 ? 38 : 0));
+                            byte bab2 = (byte)(((byte)World.PlayerState.SecondaryAbility & 0x7F) - 1);
+                            _secAbility = new GumpPic(215, 150, (ushort)(0x5200 + bab2), (ushort)(((byte)World.PlayerState.SecondaryAbility & 0x80) != 0 ? 38 : 0));
                             _secAbility.SetTooltip(Client.Game.UO.FileManager.Clilocs.GetString(1028838 + bab2));
                             _secAbility.DragBegin += OnGumpicDragBeginSecondary;
                             _secAbility.MouseDoubleClick += SecondaryAbilityMouseDoubleClick;
@@ -305,7 +305,7 @@ namespace ClassicUO.Game.UI.Gumps
                 return;
             }
 
-            ref readonly AbilityDefinition def = ref AbilityData.Abilities[((byte) World.Player.PrimaryAbility & 0x7F) - 1];
+            ref readonly AbilityDefinition def = ref AbilityData.Abilities[((byte) World.PlayerState.PrimaryAbility & 0x7F) - 1];
 
             GetSpellFloatingButton(def.Index)?.Dispose();
 
@@ -326,7 +326,7 @@ namespace ClassicUO.Game.UI.Gumps
                 return;
             }
 
-            ref readonly AbilityDefinition def = ref AbilityData.Abilities[((byte) World.Player.SecondaryAbility & 0x7F) - 1];
+            ref readonly AbilityDefinition def = ref AbilityData.Abilities[((byte) World.PlayerState.SecondaryAbility & 0x7F) - 1];
 
             GetSpellFloatingButton(def.Index)?.Dispose();
 
@@ -363,7 +363,7 @@ namespace ClassicUO.Game.UI.Gumps
             }
 
 
-            byte index = (byte)World.Player.Abilities[0];
+            byte index = (byte)World.PlayerState.Abilities[0];
             ref readonly AbilityDefinition def = ref AbilityData.Abilities[(index & 0x7F) - 1];
 
             if ((index & 0x80) != 0)
@@ -380,7 +380,7 @@ namespace ClassicUO.Game.UI.Gumps
                 _primAbility.Graphic = def.Icon;
             }
 
-            index = (byte)World.Player.Abilities[1];
+            index = (byte)World.PlayerState.Abilities[1];
             def = ref AbilityData.Abilities[(index & 0x7F) - 1];
 
             if ((index & 0x80) != 0)

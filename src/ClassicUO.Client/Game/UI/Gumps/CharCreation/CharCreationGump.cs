@@ -15,6 +15,8 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
     internal class CharCreationGump : Gump
     {
         private PlayerMobile _character;
+        // the new character's stats and skills (the PlayerMobile constructor made them before PlayerState moved to the World)
+        private PlayerState _characterState;
         private int _cityIndex;
         private CharCreationStep _currentStep;
         private LoadingGump _loadingGump;
@@ -33,6 +35,11 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
 
         public void SetCharacter(PlayerMobile character)
         {
+            if (!ReferenceEquals(_character, character))
+            {
+                _characterState = new PlayerState(Client.Game.UO.FileManager.Skills.Skills);
+            }
+
             _character = character;
             SetStep(CharCreationStep.ChooseProfession);
         }
@@ -53,7 +60,7 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
             {
                 int skillIndex = info.SkillDefVal[i, 0];
 
-                if (skillIndex >= _character.Skills.Length)
+                if (skillIndex >= _characterState.Skills.Length)
                 {
                     continue;
                 }
@@ -63,7 +70,7 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
                     // reset skills if needed
                     for (int k = 0; k < i; k++)
                     {
-                        Skill skill = _character.Skills[info.SkillDefVal[k, 0]];
+                        Skill skill = _characterState.Skills[info.SkillDefVal[k, 0]];
                         skill.ValueFixed = 0;
                         skill.BaseFixed = 0;
                         skill.CapFixed = 0;
@@ -90,7 +97,7 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
                     return;
                 }
 
-                Skill skill2 = _character.Skills[skillIndex];
+                Skill skill2 = _characterState.Skills[skillIndex];
                 skill2.ValueFixed = (ushort) info.SkillDefVal[i, 1];
                 skill2.BaseFixed = 0;
                 skill2.CapFixed = 0;
@@ -98,9 +105,9 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
             }
 
             _selectedProfession = info;
-            _character.Strength = (ushort) _selectedProfession.StatsVal[0];
-            _character.Intelligence = (ushort) _selectedProfession.StatsVal[1];
-            _character.Dexterity = (ushort) _selectedProfession.StatsVal[2];
+            _characterState.Strength = (ushort) _selectedProfession.StatsVal[0];
+            _characterState.Intelligence = (ushort) _selectedProfession.StatsVal[1];
+            _characterState.Dexterity = (ushort) _selectedProfession.StatsVal[2];
 
             SetAttributes();
 
@@ -109,7 +116,7 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
 
         public void CreateCharacter(byte profession)
         {
-            _loginScene.CreateCharacter(_character, _cityIndex, profession);
+            _loginScene.CreateCharacter(_character, _characterState, _cityIndex, profession);
         }
 
         public void StepBack(int steps = 1)
@@ -171,7 +178,7 @@ namespace ClassicUO.Game.UI.Gumps.CharCreation
                         Remove(existing);
                     }
 
-                    Add(new CreateCharTradeGump(World, _character, _selectedProfession), 3);
+                    Add(new CreateCharTradeGump(World, _character, _characterState, _selectedProfession), 3);
                     ChangePage(3);
 
                     break;

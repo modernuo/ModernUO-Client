@@ -764,13 +764,13 @@ namespace ClassicUO.Game
 
         public static void UsePrimaryAbility(World world)
         {
-            ref var ability = ref world.Player.Abilities[0];
+            ref var ability = ref world.PlayerState.Abilities[0];
 
             if (((byte) ability & 0x80) == 0)
             {
                 for (int i = 0; i < 2; i++)
                 {
-                    world.Player.Abilities[i] &= (Ability) 0x7F;
+                    world.PlayerState.Abilities[i] &= (Ability) 0x7F;
                 }
 
                 SendAbility(world, (byte)ability, true);
@@ -785,13 +785,13 @@ namespace ClassicUO.Game
 
         public static void UseSecondaryAbility(World world)
         {
-            ref Ability ability = ref world.Player.Abilities[1];
+            ref Ability ability = ref world.PlayerState.Abilities[1];
 
             if (((byte) ability & 0x80) == 0)
             {
                 for (int i = 0; i < 2; i++)
                 {
-                    world.Player.Abilities[i] &= (Ability) 0x7F;
+                    world.PlayerState.Abilities[i] &= (Ability) 0x7F;
                 }
 
                 SendAbility(world, (byte)ability, false);

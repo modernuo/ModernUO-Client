@@ -242,49 +242,49 @@ namespace ClassicUO.Game.UI.Gumps
 
                 case InfoBarVars.Stamina: return $"{_gump.World.Player.Stamina}/{_gump.World.Player.StaminaMax}";
 
-                case InfoBarVars.Weight: return $"{_gump.World.Player.Weight}/{_gump.World.Player.WeightMax}";
+                case InfoBarVars.Weight: return $"{_gump.World.PlayerState.Weight}/{_gump.World.PlayerState.WeightMax}";
 
-                case InfoBarVars.Followers: return $"{_gump.World.Player.Followers}/{_gump.World.Player.FollowersMax}";
+                case InfoBarVars.Followers: return $"{_gump.World.PlayerState.Followers}/{_gump.World.PlayerState.FollowersMax}";
 
-                case InfoBarVars.Gold: return _gump.World.Player.Gold.ToString();
+                case InfoBarVars.Gold: return _gump.World.PlayerState.Gold.ToString();
 
-                case InfoBarVars.Damage: return $"{_gump.World.Player.DamageMin}-{_gump.World.Player.DamageMax}";
+                case InfoBarVars.Damage: return $"{_gump.World.PlayerState.DamageMin}-{_gump.World.PlayerState.DamageMax}";
 
-                case InfoBarVars.Armor: return _gump.World.Player.PhysicalResistance.ToString();
+                case InfoBarVars.Armor: return _gump.World.PlayerState.PhysicalResistance.ToString();
 
-                case InfoBarVars.Luck: return _gump.World.Player.Luck.ToString();
+                case InfoBarVars.Luck: return _gump.World.PlayerState.Luck.ToString();
 
-                case InfoBarVars.FireResist: return _gump.World.Player.FireResistance.ToString();
+                case InfoBarVars.FireResist: return _gump.World.PlayerState.FireResistance.ToString();
 
-                case InfoBarVars.ColdResist: return _gump.World.Player.ColdResistance.ToString();
+                case InfoBarVars.ColdResist: return _gump.World.PlayerState.ColdResistance.ToString();
 
-                case InfoBarVars.PoisonResist: return _gump.World.Player.PoisonResistance.ToString();
+                case InfoBarVars.PoisonResist: return _gump.World.PlayerState.PoisonResistance.ToString();
 
-                case InfoBarVars.EnergyResist: return _gump.World.Player.EnergyResistance.ToString();
+                case InfoBarVars.EnergyResist: return _gump.World.PlayerState.EnergyResistance.ToString();
 
-                case InfoBarVars.LowerReagentCost: return _gump.World.Player.LowerReagentCost.ToString();
+                case InfoBarVars.LowerReagentCost: return _gump.World.PlayerState.LowerReagentCost.ToString();
 
-                case InfoBarVars.SpellDamageInc: return _gump.World.Player.SpellDamageIncrease.ToString();
+                case InfoBarVars.SpellDamageInc: return _gump.World.PlayerState.SpellDamageIncrease.ToString();
 
-                case InfoBarVars.FasterCasting: return _gump.World.Player.FasterCasting.ToString();
+                case InfoBarVars.FasterCasting: return _gump.World.PlayerState.FasterCasting.ToString();
 
-                case InfoBarVars.FasterCastRecovery: return _gump.World.Player.FasterCastRecovery.ToString();
+                case InfoBarVars.FasterCastRecovery: return _gump.World.PlayerState.FasterCastRecovery.ToString();
 
-                case InfoBarVars.HitChanceInc: return _gump.World.Player.HitChanceIncrease.ToString();
+                case InfoBarVars.HitChanceInc: return _gump.World.PlayerState.HitChanceIncrease.ToString();
 
-                case InfoBarVars.DefenseChanceInc: return _gump.World.Player.DefenseChanceIncrease.ToString();
+                case InfoBarVars.DefenseChanceInc: return _gump.World.PlayerState.DefenseChanceIncrease.ToString();
 
-                case InfoBarVars.LowerManaCost: return _gump.World.Player.LowerManaCost.ToString();
+                case InfoBarVars.LowerManaCost: return _gump.World.PlayerState.LowerManaCost.ToString();
 
-                case InfoBarVars.DamageChanceInc: return _gump.World.Player.DamageIncrease.ToString();
+                case InfoBarVars.DamageChanceInc: return _gump.World.PlayerState.DamageIncrease.ToString();
 
-                case InfoBarVars.SwingSpeedInc: return _gump.World.Player.SwingSpeedIncrease.ToString();
+                case InfoBarVars.SwingSpeedInc: return _gump.World.PlayerState.SwingSpeedIncrease.ToString();
 
-                case InfoBarVars.StatsCap: return _gump.World.Player.StatsCap.ToString();
+                case InfoBarVars.StatsCap: return _gump.World.PlayerState.StatsCap.ToString();
 
                 case InfoBarVars.NameNotoriety: return _gump.World.Player.Name;
 
-                case InfoBarVars.TithingPoints: return _gump.World.Player.TithingPoints.ToString();
+                case InfoBarVars.TithingPoints: return _gump.World.PlayerState.TithingPoints.ToString();
 
                 default: return "";
             }
@@ -357,7 +357,7 @@ namespace ClassicUO.Game.UI.Gumps
                     }
 
                 case InfoBarVars.Weight:
-                    percent = _gump.World.Player.Weight / (float)_gump.World.Player.WeightMax;
+                    percent = _gump.World.PlayerState.Weight / (float)_gump.World.PlayerState.WeightMax;
 
                     if (percent >= 1)
                     {
