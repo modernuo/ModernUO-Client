@@ -4909,6 +4909,39 @@ namespace ClassicUO.Network
             }
         }
 
+        // Reused by MegaCliloc (main thread, not re-entrant): property lists for every new object in a crowded area
+        // arrive at hundreds per second, and a new list per packet was one of the larger allocation sites there.
+        private static readonly List<(int, string, int)> _megaClilocLines = new List<(int, string, int)>();
+
+        // Same result as argument.Split('#', RemoveEmptyEntries) giving exactly two parts and parsing the second,
+        // without the separator and result arrays.
+        internal static int ParseArgCliloc(string argument)
+        {
+            ReadOnlySpan<char> rest = argument.AsSpan();
+            ReadOnlySpan<char> second = default;
+            int parts = 0;
+
+            while (true)
+            {
+                int i = rest.IndexOf('#');
+                ReadOnlySpan<char> part = i < 0 ? rest : rest.Slice(0, i);
+
+                if (!part.IsEmpty && ++parts == 2)
+                {
+                    second = part;
+                }
+
+                if (i < 0)
+                {
+                    break;
+                }
+
+                rest = rest.Slice(i + 1);
+            }
+
+            return parts == 2 && int.TryParse(second, out int value) ? value : 0;
+        }
+
         private static void MegaCliloc(World world, ref StackDataReader p)
         {
             if (!world.InGame)
@@ -4941,7 +4974,8 @@ namespace ClassicUO.Network
                 entity = world.Items.Get(serial);
             }
 
-            List<(int, string, int)> list = new List<(int, string, int)>();
+            List<(int, string, int)> list = _megaClilocLines;
+            list.Clear();
             int totalLength = 0;
 
             while (p.Position < p.Length)
@@ -4969,17 +5003,7 @@ namespace ClassicUO.Network
                     continue;
                 }
 
-                int argcliloc = 0;
-
-                string[] argcheck = argument.Split(
-                    new[] { '#' },
-                    StringSplitOptions.RemoveEmptyEntries
-                );
-
-                if (argcheck.Length == 2)
-                {
-                    int.TryParse(argcheck[1], out argcliloc);
-                }
+                int argcliloc = ParseArgCliloc(argument);
 
                 // hardcoded colors lol
                 switch (cliloc)
@@ -5090,6 +5114,8 @@ namespace ClassicUO.Network
                     clilocs[i] = list[i].Item1;
                 }
             }
+
+            list.Clear();
 
             world.OPL.Add(serial, revision, name, data, namecliloc, clilocs);
 
