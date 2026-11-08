@@ -5348,3 +5348,18 @@ Paired NativeAOT builds (`CuoDevTools=true`, checkers off), all on the quiet mac
   Item Gather over the old field reads: 30–40 → 16–22 ns per item. The "25 ns per `GetComponent`" in owner question 2 was measured inside a larger record read; a single read in a tight loop is 6–9 ns.
 - Friflo main (13 commits past preview.2) reverts preview.2's SoA storage: `StructHeap<T>` is sealed again, with no virtual call. A stable release may make the helper mostly unnecessary. See [ecs-friflo.md](../dev/ecs-friflo.md).
 - Gates: Gpu bench-000307, Legacy bench-000308 (branch); tip gates bench-000309/310 on 02c0ef387 (first NativeAOT run of the fallback) PASS. Timing parked (`measure/ecs-read-helper/job-timing-PARKED.sh`, build the base first).
+
+### perf-12-ui: UI backlog batch (agent, 2026-11-07)
+
+- Branch `bg/perf-12-ui` from poc/modern-client f2955b82a. Two code commits, always on (better by construction):
+  - d6d2cd5a6: `Texmap` no longer fills a `PixelPicker`. Nothing called `Get` on it (land picking does not use texmap pixels), so every texmap load paid a run scan of its pixels and the picker held a 256 KB+ array for nothing.
+  - 8ff0760e8: the paperdoll reads its slot mobile once and every slot's worn item through one `WorldState.WornView` before its children update (was 14 `EntityRef` reads and 14 `FindItemByLayer` WornCache validations per frame per open paperdoll). A slot updated outside the gump's update falls back to its own lookup. `UpdateContents`' two slot loops share one view. Checker `CUO_PAPERDOLL_SLOTS_CHECK=1` compares every prepared answer with the slot's own lookup; the driver's `ui worn` logs its counts.
+- The other backlog items in the brief were already done or were skipped:
+  - container content changes rebuilding the window: perf-8 reuses the item controls (1,679 → 103 created over 17 updates, bench-000277). What is left is the 2–3 frame controls per update; a per-item delta would change child (draw and hit) order handling and the press-dropping rebuild, so it is not "better by construction";
+  - `Control.Parent` scan on re-add: perf-9 a43f3619d (`OutOfParentList`); other re-parents scan only the old parent once;
+  - `Gump.AwaitBatch` spin: perf-9 ffc8fcf8e (`WaitPublishedSince`);
+  - `GetGump` draining the ready queue and `Prefetch` uploading unrelated decodes: perf-7 a640f8aa9 and perf-8;
+  - missing-art placeholder: perf-5 (per-id bitset, logs once);
+  - animation picks through a flat table: skipped. The only flat key is the pack frame index (~1M frames in anim.bin), so the table would cost up to ~12 MB per client, and picking would see frames uploaded under another body that shares them. Not small or clean.
+- Tests: unit tests 3,091 passed, 6 skipped with dev tools (one `FirstSightDecoderTests` case timed out under machine load and passed alone; the first run had 4 such load timeouts); release variant 3,087 passed, 6 skipped. Client builds clean in both variants. No new unit test: the slots' answers are `WornView`'s, which `WorldStateEquipmentReaderTests.ViewEqualsReads` already checks against `FindItemByLayer` on every layer after every change; the paperdoll cannot be built in tests (GumpPic needs the game).
+- Jobs (`cuo-poc-state/measure/perf-12-ui/`): `job-uistate.sh` (Gpu uistate + w5items + corpses, every checker plus the slots and container checkers), `job-counts.sh` (find_by_layer / worn_checks per frame, idle vs paperdoll open, base vs new). Timing parked: `job-timing-PARKED.sh`.
