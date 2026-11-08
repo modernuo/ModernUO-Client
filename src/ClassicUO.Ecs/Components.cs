@@ -153,6 +153,43 @@ namespace ClassicUO.Ecs
         public uint Value;
     }
 
+    // ecs_small_fields (wave 1C): an item's small cold fields. LightID (the light source's id: 0x1A/0xF3's direction byte) and
+    // the bits (Damageable: 0xF3's type 3; UsedLayer: a corpse's running death bit). Added on the first non-default write
+    // (absent = 0, none: the Item default). IsMulti is the record's MultiTag.
+    [Flags]
+    public enum ItemTraitBits : byte
+    {
+        None = 0,
+        Damageable = 1,
+        UsedLayer = 2
+    }
+
+    public struct ItemTraits : IComponent
+    {
+        public byte LightId;
+        public ItemTraitBits Bits;
+    }
+
+    // ecs_small_fields (wave 1C): a mobile's small cold fields. Race (RaceType; 0 = unset), SpeedMode (CharacterSpeedType,
+    // 0xBF.26) and the bits (Female, Renamable; WarMode: the player's own 0x72 war mode, PlayerMobile.InWarMode; any other
+    // mobile's war mode is its WarMode flag). Added on the first non-default write (absent = the Mobile defaults). Carried
+    // by the death re-key.
+    [Flags]
+    public enum MobileTraitBits : byte
+    {
+        None = 0,
+        Female = 1,
+        Renamable = 2,
+        WarMode = 4
+    }
+
+    public struct MobileTraits : IComponent
+    {
+        public byte Race;
+        public byte SpeedMode;
+        public MobileTraitBits Bits;
+    }
+
     // T2: the spells a spellbook's 0xBF.1B content lists (bit i = spell i + 1). ClassicUO keeps them as detached entries at
     // the front of the book's child list (not world objects, so no records); the mirror keeps the set. Added on the first
     // non-empty content (absent = none).
@@ -696,6 +733,10 @@ namespace ClassicUO.Ecs
             Component<Vitals>(aot);
             Component<MobileNotoriety>(aot);
             Component<ItemPrice>(aot);
+
+            // ecs_small_fields (wave 1C)
+            Component<ItemTraits>(aot);
+            Component<MobileTraits>(aot);
 
             // T2: container contents
             Component<SpellbookContent>(aot);

@@ -23,9 +23,10 @@ namespace ClassicUO.Game.GameObjects
 
         private bool _inWarMode;
 
+        // ecs_small_fields: the record's MobileTraits WarMode bit with the switch on (SmallFields; CUO_SMALL_FIELDS_CHECK compares)
         public override bool InWarMode
         {
-            get => _inWarMode;
+            get => SmallFields.Routed(World) ? SmallFields.MobileBit(this, SmallField.InWarMode, ClassicUO.Ecs.MobileTraitBits.WarMode, _inWarMode) : _inWarMode;
             set
             {
                 FunnelCheck.Write(this, FunnelField.InWarMode);
@@ -33,6 +34,8 @@ namespace ClassicUO.Game.GameObjects
                 PushInputs();
             }
         }
+        internal override bool CachedWarMode => _inWarMode;
+
         protected override bool IsWalking => LastStepTime > Time.Ticks - Constants.PLAYER_WALKING_DELAY;
 
         internal WalkerManager Walker { get; }

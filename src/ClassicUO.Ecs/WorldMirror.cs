@@ -35,6 +35,10 @@ namespace ClassicUO.Ecs
         public byte Notoriety, ItemLayer;
         public uint Price;
 
+        /// <summary>ecs_small_fields: the small cold fields (default when the record has none).</summary>
+        public ItemTraits ItemTraits;
+        public MobileTraits MobileTraits;
+
         /// <summary>The child-order stamp (0: not attached, in no parent's child list).</summary>
         public ulong ChildStamp;
     }
@@ -631,6 +635,146 @@ namespace ClassicUO.Ecs
             return true;
         }
 
+        // ecs_small_fields (wave 1C): the small cold fields. Each writer changes one field of its component, which is added on
+        // the first non-default value (absent = all default); false when the serial has no record.
+
+        public bool SetLightId(uint serial, byte value)
+        {
+            if (!_bySerial.TryGetValue(serial, out Entity e))
+            {
+                return false;
+            }
+
+            if (e.HasComponent<ItemTraits>())
+            {
+                e.GetComponent<ItemTraits>().LightId = value;
+            }
+            else if (value != 0)
+            {
+                e.AddComponent(new ItemTraits { LightId = value });
+            }
+
+            return true;
+        }
+
+        public bool SetItemBit(uint serial, ItemTraitBits bit, bool on)
+        {
+            if (!_bySerial.TryGetValue(serial, out Entity e))
+            {
+                return false;
+            }
+
+            if (e.HasComponent<ItemTraits>())
+            {
+                ref ItemTraits t = ref e.GetComponent<ItemTraits>();
+                t.Bits = on ? t.Bits | bit : t.Bits & ~bit;
+            }
+            else if (on)
+            {
+                e.AddComponent(new ItemTraits { Bits = bit });
+            }
+
+            return true;
+        }
+
+        public bool SetRace(uint serial, byte value)
+        {
+            if (!_bySerial.TryGetValue(serial, out Entity e))
+            {
+                return false;
+            }
+
+            if (e.HasComponent<MobileTraits>())
+            {
+                e.GetComponent<MobileTraits>().Race = value;
+            }
+            else if (value != 0)
+            {
+                e.AddComponent(new MobileTraits { Race = value });
+            }
+
+            return true;
+        }
+
+        public bool SetSpeedMode(uint serial, byte value)
+        {
+            if (!_bySerial.TryGetValue(serial, out Entity e))
+            {
+                return false;
+            }
+
+            if (e.HasComponent<MobileTraits>())
+            {
+                e.GetComponent<MobileTraits>().SpeedMode = value;
+            }
+            else if (value != 0)
+            {
+                e.AddComponent(new MobileTraits { SpeedMode = value });
+            }
+
+            return true;
+        }
+
+        public bool SetMobileBit(uint serial, MobileTraitBits bit, bool on)
+        {
+            if (!_bySerial.TryGetValue(serial, out Entity e))
+            {
+                return false;
+            }
+
+            if (e.HasComponent<MobileTraits>())
+            {
+                ref MobileTraits t = ref e.GetComponent<MobileTraits>();
+                t.Bits = on ? t.Bits | bit : t.Bits & ~bit;
+            }
+            else if (on)
+            {
+                e.AddComponent(new MobileTraits { Bits = bit });
+            }
+
+            return true;
+        }
+
+        /// <summary>The whole item component (a seeded record); an all-default value adds nothing.</summary>
+        public bool SetItemTraits(uint serial, in ItemTraits traits)
+        {
+            if (!_bySerial.TryGetValue(serial, out Entity e))
+            {
+                return false;
+            }
+
+            if (e.HasComponent<ItemTraits>())
+            {
+                e.GetComponent<ItemTraits>() = traits;
+            }
+            else if (traits.LightId != 0 || traits.Bits != 0)
+            {
+                e.AddComponent(traits);
+            }
+
+            return true;
+        }
+
+        /// <summary>The whole mobile component (the re-key's carry, a seeded record); an all-default value adds nothing.</summary>
+        public bool SetMobileTraits(uint serial, in MobileTraits traits)
+        {
+            if (!_bySerial.TryGetValue(serial, out Entity e))
+            {
+                return false;
+            }
+
+            if (e.HasComponent<MobileTraits>())
+            {
+                e.GetComponent<MobileTraits>() = traits;
+            }
+            else if (traits.Race != 0 || traits.SpeedMode != 0 || traits.Bits != 0)
+            {
+                e.AddComponent(traits);
+            }
+
+            return true;
+        }
+
         /// <summary>-ecscheck v2: the cold fields of a record; false when the serial has no record.</summary>
         public bool TryGetExtras(uint serial, out MirrorExtras x)
         {
@@ -666,6 +810,9 @@ namespace ClassicUO.Ecs
                 x.Price = price.Value;
             }
 
+            e.TryGetComponent(out x.ItemTraits);
+            e.TryGetComponent(out x.MobileTraits);
+
             if (e.TryGetComponent(out ItemData slot))
             {
                 x.ItemLayer = slot.Layer;
@@ -687,6 +834,7 @@ namespace ClassicUO.Ecs
             SetStamina(serial, x.StaminaMax, x.Stamina);
             SetMana(serial, x.ManaMax, x.Mana);
             SetNotoriety(serial, x.Notoriety);
+            SetMobileTraits(serial, in x.MobileTraits); // ecs_small_fields
         }
 
         public bool TryGet(uint serial, out MirrorRecord r)

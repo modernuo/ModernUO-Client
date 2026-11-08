@@ -226,6 +226,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void The_Ecs_Advance_Equals_The_Legacy_Update(T5bStart start, T5bData data)
         {
             World oldWorld = BuildT5b(start, out uint serial), newWorld = BuildT5b(start, out _);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             newWorld.Writer.ThrowOnViolation = true;
             Mobile a = oldWorld.Mobiles.Get(serial), b = newWorld.Mobiles.Get(serial);
             FakeAdvanceSource src = T5bDataOf(data);
@@ -285,6 +286,7 @@ namespace ClassicUO.UnitTests.Ecs
             // three mobiles share the generator: each frame both paths update them in table order, and every draw (idle delays,
             // idle pairs, the LowGroupExtended roll of server action 5) must come in the same sequence
             World oldWorld = BuildT5b(T5bStart.ServerFive, out _), newWorld = BuildT5b(T5bStart.ServerFive, out _);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             FakeAdvanceSource src = T5bDataOf(T5bData.LowExtended);
             uint rolls = AnimationGroupRules.RandomRolls;
 

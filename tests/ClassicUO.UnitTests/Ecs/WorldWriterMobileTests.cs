@@ -367,6 +367,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void UpsertMobile_Equals_The_Old_Path(Start start, int packet)
         {
             World oldWorld = Build(start), newWorld = Build(start);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             MobPacket p = Packets[packet];
 
             Mobile a = null, b = null;
@@ -399,6 +400,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void UpsertMobile_The_Callback_Sees_The_Same_Mobile_As_Before_T1(Start start)
         {
             World oldWorld = Build(start), newWorld = Build(start);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             string seenOld = null, seenNew = null;
             MobPacket p = Packets[2];
 
@@ -502,6 +504,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void The_Body_Notoriety_And_Move_Operations_Equal_The_Old_Path(BodyPacket kind, Start start)
         {
             World oldWorld = Build(start), newWorld = Build(start);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             Mobile a = oldWorld.Mobiles.Get(MOB), b = newWorld.Mobiles.Get(MOB);
 
             var bodies = new (ushort Graphic, ushort Hue, Flags Flags, Direction Dir, ushort X, ushort Y, sbyte Z)[]
@@ -626,6 +629,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void UpdateCharacter_Keeps_The_Handlers_Lookups_For_A_Rekeyed_Mobile()
         {
             World oldWorld = BuildDead(), newWorld = BuildDead();
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             var p = new MobPacket { Serial = DEAD, Graphic = 0x192, X = 1001, Y = 1001, Z = 0, Direction = Direction.East, Hue = 0x21 };
 
             Pair(() => OldUpdateCharacter(oldWorld, p, NotorietyFlag.Murderer), () => NewUpdateCharacter(newWorld, p, NotorietyFlag.Murderer));
@@ -927,6 +931,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void RemoveMobile_Equals_The_Old_Path(Start start)
         {
             World oldWorld = BuildRemove(start, out _), newWorld = BuildRemove(start, out _);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
 
             Pair(() => oldWorld.RemoveMobile(MOB, true), () => newWorld.Writer.RemoveMobile((Mobile)newWorld.Get(MOB)));
 
@@ -1093,6 +1098,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void A_Walk_From_The_Players_Position_Callback_Is_Published_As_Before_T1(PlayerPlacement kind)
         {
             World oldWorld = BuildPlayer(out TestPlayer a), newWorld = BuildPlayer(out TestPlayer b);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             b.Funnel = true; // the new World's callbacks walk through the converted Walk path
             newWorld.Writer.ThrowOnViolation = true;
             Time.Ticks = NOW + 2000;
@@ -1155,6 +1161,7 @@ namespace ClassicUO.UnitTests.Ecs
         public void The_Detached_World_Player_Is_Written_As_Before_T1(bool throws)
         {
             World oldWorld = BuildPlayer(out TestPlayer a), newWorld = BuildPlayer(out TestPlayer b);
+            oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
             b.Funnel = true; // the new World's callbacks walk through the converted Walk path
             newWorld.Writer.ThrowOnViolation = throws;
 
@@ -1214,7 +1221,8 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void BodyState_Equals_The_Old_CheckGraphicChange()
         {
-            var world = new World();
+            // the oracle and the fixture write only the caches: read them whatever CUO_ECS_SMALL_FIELDS says (Codex audit P2)
+            var world = new World { SmallFieldsOverride = false };
 
             for (int g = 0; g <= 0x500; g++)
             {
@@ -1244,6 +1252,7 @@ namespace ClassicUO.UnitTests.Ecs
             foreach (bool walkingNow in new[] { false, true })
             {
                 World oldWorld = Build(start), newWorld = Build(start);
+                oldWorld.SmallFieldsOverride = false; // ecs_small_fields: the old path writes the GameObject only
                 Mobile a = oldWorld.Mobiles.Get(MOB), b = newWorld.Mobiles.Get(MOB);
 
                 if (walkingNow)
@@ -1265,6 +1274,9 @@ namespace ClassicUO.UnitTests.Ecs
 
         private static void AssertSameWorld(World a, World b, uint mob = MOB)
         {
+            // ecs_small_fields: the old path writes the GameObject only, so its World reads its fields (the new World reads
+            // the record with the switch on: the record must hold what the old path wrote)
+            a.SmallFieldsOverride = false;
             b.Items.Count.Should().Be(a.Items.Count);
             b.Mobiles.Count.Should().Be(a.Mobiles.Count);
             b.ActiveItems.Select(i => i.Serial).Should().Equal(a.ActiveItems.Select(i => i.Serial));
