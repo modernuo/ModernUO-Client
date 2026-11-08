@@ -27,12 +27,6 @@ namespace ClassicUO.UnitTests.Ecs
     public partial class WorldWriterMobileTests
     {
         [Fact]
-        public void The_WorldAnimSystem_Setting_Defaults_On()
-        {
-            new ClassicUO.Configuration.Settings().WorldAnimSystem.Should().BeTrue();
-        }
-
-        [Fact]
         public void The_WorldStepSystem_Setting_Defaults_On()
         {
             new ClassicUO.Configuration.Settings().WorldStepSystem.Should().BeTrue();

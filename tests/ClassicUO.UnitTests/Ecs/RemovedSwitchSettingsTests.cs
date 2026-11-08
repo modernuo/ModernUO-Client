@@ -16,7 +16,8 @@ namespace ClassicUO.UnitTests.Ecs
         {
             "world_sweep_system",
             "world_active_items_system",
-            "world_item_anim_system"
+            "world_item_anim_system",
+            "world_anim_system"
         };
 
         [Fact]

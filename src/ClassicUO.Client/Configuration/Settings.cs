@@ -136,13 +136,6 @@ namespace ClassicUO.Configuration
         // batcher calls with the sink's. Read every frame (dev builds: CUO_LEGACY_ECS_SPRITES=1|0 overrides). Default off.
         [JsonPropertyName("legacy_ecs_sprites")] public bool LegacyEcsSprites { get; set; }
 
-        // T5b: a due mobile without queued steps or a handles opening has its idle animation
-        // and frame advance computed in the ECS (MobileAnimationAdvanceSystem over AnimationTimer, MobileInputs and
-        // EquipmentSlots) instead of Mobile.Update; mobiles with steps or handles still run Mobile.Update until T6. Read once
-        // at startup (CUO_WORLD_ANIM_SYSTEM=1|0 overrides it in developer builds). CUO_ANIM_ADVANCE_CHECK=1 compares every
-        // advance with the legacy one. Default on since 2026-11-02 (owner, after the quiet-machine per-switch timing bench-000206/207/208: timing-neutral on both renderers); the off path and the checker stay for one phase.
-        [JsonPropertyName("world_anim_system")] public bool WorldAnimSystem { get; set; } = true;
-
         // T6c: a due mobile's step processing (Mobile.ProcessSteps: the walk offset, the
         // step completion through the funnel, the player's walker bookkeeping) runs as StepSystem over its Steps component.
         // Read once at startup (CUO_WORLD_STEP_SYSTEM=1|0 overrides it in developer builds). CUO_STEP_CHECK=1 compares the

@@ -524,31 +524,7 @@ namespace ClassicUO.Game
             }
         }
 
-        // T5b (world_anim_system) -------------------------------------------------------------------------------------------
-#if CUO_DEVTOOLS
-        // CLEANUP(release): the gate's override of the setting (CUO_WORLD_ANIM_SYSTEM=1|0)
-        private static readonly bool? _envAnimSystem = System.Environment.GetEnvironmentVariable("CUO_WORLD_ANIM_SYSTEM") switch
-        {
-            "1" => true,
-            "0" => false,
-            _ => null
-        };
-#else
-        private static readonly bool? _envAnimSystem = null;
-#endif
-
-        // read once, at the first world update (the settings are loaded by then)
-        private static class AnimSystemSwitch
-        {
-            public static readonly bool On = _envAnimSystem ?? Settings.GlobalSettings.WorldAnimSystem;
-        }
-
-        /// <summary>Tests: the switch for this World (null: the setting).</summary>
-        internal bool? AnimSystemOverride;
-
-        /// <summary>T5b: due mobiles without steps advance in the ECS (<see cref="MobileAnimationAdvanceSystem"/>).</summary>
-        internal bool AnimSystem => AnimSystemOverride ?? AnimSystemSwitch.On;
-
+        // T5b: due mobiles without steps advance in the ECS (T9 deleted world_anim_system's off path)
         private readonly MobileAnimationAdvanceSystem _animAdvance = new MobileAnimationAdvanceSystem();
 
         // T6c (world_step_system) -------------------------------------------------------------------------------------------
@@ -697,12 +673,11 @@ namespace ClassicUO.Game
         private void UpdateMobilesByClock(bool do_delete, bool wmap)
         {
             Ecs.ClockEnabled = true;
-            bool animSystem = AnimSystem;
 
-            if (animSystem != Ecs.AnimTimerEnabled)
+            if (!Ecs.AnimTimerEnabled)
             {
-                // T5b: the timers are written with the clocks from now on (or no longer): rebuild them all
-                Ecs.AnimTimerEnabled = animSystem;
+                // T5b: the timers are written with the clocks from the first update on: build them all
+                Ecs.AnimTimerEnabled = true;
                 _mobileClocksSynced = false;
             }
 
@@ -774,9 +749,9 @@ namespace ClassicUO.Game
                 mob.UpdateStamp = _mobileUpdateStamp;
 #endif
 
-                // T5b: a mobile without steps or a handles opening advances in the ECS; the others (and every mobile with the
-                // switch off) run Mobile.Update, in the same table order, so the random draws keep their sequence
-                if (!animSystem || !_animAdvance.TryRun(this, mob))
+                // T5b: a mobile without steps or a handles opening advances in the ECS; the others run Mobile.Update, in the
+                // same table order, so the random draws keep their sequence
+                if (!_animAdvance.TryRun(this, mob))
                 {
                     mob.Update();
                 }
