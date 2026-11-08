@@ -560,6 +560,27 @@ namespace ClassicUO.Ecs
     public struct ItemActive : ITag { }
 
     /// <summary>
+    /// T9 (<c>ecs_active_items_source</c>): one entity per item in the world's per-frame update list, the source of its
+    /// membership and visiting order. Not the item's mirror record: a listed item stays listed after its record is removed
+    /// (destroyed, or its serial replaced) until the active item stage drops it, exactly as the list did, so removing it early
+    /// would change the order of the others. <see cref="Slot"/> is the item's position in the visiting order: an added item takes
+    /// the next slot, and a removal moves the last slot's item into the freed one (the list's swap-remove). The entity has no
+    /// serial and is not in the mirror's serial index.
+    /// </summary>
+    public struct ActiveItemEntry : IComponent
+    {
+        /// <summary>
+        /// The item's index in the store's item table (ClassicUO.Ecs does not know the client's types). Not an object reference:
+        /// Friflo's DeleteEntity moves the last entity's components into the freed slot and leaves the vacated tail uncleared,
+        /// so a reference here would keep destroyed items reachable.
+        /// </summary>
+        public int Handle;
+
+        public uint Serial;
+        public int Slot;
+    }
+
+    /// <summary>
     /// T8: a graphic effect (fixed, moving, drag, lightning) of <c>EffectManager</c>, while <c>ecs_effects</c> is on. It owns the
     /// animation and lifetime state (frame, next change time, duration) that <c>EffectSystem</c> advances; position, offset,
     /// angle and target are published by the effect's own update (the kinds' motion rules stay on the object). The entity has no
@@ -661,6 +682,7 @@ namespace ClassicUO.Ecs
             Component<EquipmentSlots>(aot);
             Tag<EquipmentDirty>(aot);
             Tag<ItemActive>(aot); // T5d
+            Component<ActiveItemEntry>(aot); // T9 ecs_active_items_source
             Component<EffectState>(aot); // T8
             Component<MobileInputs>(aot);
             Component<MobileClock>(aot);

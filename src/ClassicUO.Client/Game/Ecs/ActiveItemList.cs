@@ -11,6 +11,8 @@ namespace ClassicUO.Game
     /// order. Membership is <see cref="Item.InUpdateList"/> (the O(1) test) and, with <c>mirror</c> on
     /// (<c>world_active_items_system</c>), the <see cref="ItemActive"/> tag on the item's mirror entity; the order is the
     /// list's: items are appended, and a removal swaps the last item into the freed slot (the order every caller relied on).
+    /// T9: with <c>ecs_active_items_source</c> on, <see cref="ActiveItemStore"/> is the source and this list is only
+    /// CUO_ACTIVE_ITEMS_SOURCE_CHECK's shadow.
     /// </summary>
     internal sealed class ActiveItemList
     {
@@ -70,7 +72,7 @@ namespace ClassicUO.Game
             _items.Clear();
         }
 
-        private static void SetTag(Item item, bool on)
+        internal static void SetTag(Item item, bool on)
         {
             if (item.TryScalarEntity(out Friflo.Engine.ECS.Entity e))
             {

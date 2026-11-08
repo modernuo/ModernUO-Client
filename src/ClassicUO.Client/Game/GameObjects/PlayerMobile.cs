@@ -296,11 +296,11 @@ namespace ClassicUO.Game.GameObjects
 
             if (World.ActiveItemsListed)
             {
-                IReadOnlyList<Item> active = World.ActiveItems;
+                int count = World.ActiveItemCount;
 
-                for (int i = 0; i < active.Count; i++)
+                for (int i = 0; i < count; i++)
                 {
-                    Item item = active[i];
+                    Item item = World.ActiveItemAt(i);
 
                     if (ShouldAutoOpen(item, range) && ReferenceEquals(World.Items.Get(item.Serial), item))
                     {
