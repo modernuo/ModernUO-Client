@@ -34,6 +34,9 @@ namespace ClassicUO.Game.UI.Gumps
         private readonly List<EquipmentSlot> _slots = new List<EquipmentSlot>();
         // perf-8: the mobile every slot's per-frame update looks at, one lookup while it stays valid
         private EntityRef _slotMobile;
+        // perf-12: set by PrepareSlots for the children's Update of this gump update only (see there)
+        private bool _slotsPrepared;
+        private Mobile _preparedSlotMobile;
         private Label _titleLabel;
         private GumpPic _virtueMenuPic;
         private Button _warModeBtn;
@@ -404,7 +407,17 @@ namespace ClassicUO.Game.UI.Gumps
                 _warModeBtn.ButtonGraphicOver = btngumps[2];
             }
 
-            base.Update();
+            PrepareSlots();
+
+            try
+            {
+                base.Update();
+            }
+            finally
+            {
+                _slotsPrepared = false;
+                _preparedSlotMobile = null;
+            }
 
             if (_paperDollInteractable != null && (CanLift || LocalSerial == World.Player.Serial))
             {
@@ -562,11 +575,12 @@ namespace ClassicUO.Game.UI.Gumps
 
             if (mobile != null)
             {
+                // perf-12: one worn view for both loops (FindItemByLayer validated the WornCache per slot per loop)
+                WornItems worn = World.State.WornView(mobile);
+
                 for (int i = 0; i < _slots.Count; i++)
                 {
-                    int idx = (int)_slots[i].Layer;
-
-                    _slots[i].LocalSerial = mobile.FindItemByLayer((Layer)idx)?.Serial ?? 0;
+                    _slots[i].LocalSerial = worn[_slots[i].Layer]?.Serial ?? 0;
                 }
 
                 // art_container_prefetch: the slots' item art decoded on the workers before their controls look it up
@@ -577,7 +591,7 @@ namespace ClassicUO.Game.UI.Gumps
 
                     for (int i = 0; i < _slots.Count && n < graphics.Length; i++)
                     {
-                        Item item = mobile.FindItemByLayer(_slots[i].Layer);
+                        Item item = worn[_slots[i].Layer];
 
                         if (item != null)
                         {
@@ -723,6 +737,60 @@ namespace ClassicUO.Game.UI.Gumps
 
         private Mobile SlotMobile() => _slotMobile.Mobile(World, LocalSerial);
 
+        /// <summary>
+        /// perf-12: the slot mobile and every slot's worn item, read before the children update through one worn view
+        /// (WorldState.WornView: the mobile's WornCache validated once, not once per slot by FindItemByLayer). Valid only
+        /// during this gump's base.Update: gumps and controls do not write world state in Update (the funnel's survey: the
+        /// only gump-side write is ContainerGump's clamp, from 0x25's handler), so the answers are what each slot's own
+        /// lookup would read.
+        /// </summary>
+        private void PrepareSlots()
+        {
+            Mobile mobile = SlotMobile();
+            _preparedSlotMobile = mobile;
+            _slotsPrepared = true;
+
+            if (mobile != null)
+            {
+                WornItems worn = World.State.WornView(mobile);
+
+                for (int i = 0; i < _slots.Count; i++)
+                {
+                    _slots[i].SetWorn(worn[_slots[i].Layer]);
+                }
+            }
+        }
+
+#if CUO_DEVTOOLS
+        // CLEANUP(release): CUO_PAPERDOLL_SLOTS_CHECK=1 compares every slot's prepared worn item with its own FindItemByLayer
+        public static readonly bool SlotsCheckOn = Environment.GetEnvironmentVariable("CUO_PAPERDOLL_SLOTS_CHECK") == "1";
+        public static long SlotsChecked, SlotsMismatched;
+
+        private static void CheckSlot(Mobile mobile, Layer layer, Item prepared)
+        {
+            Item own = mobile.FindItemByLayer(layer);
+            SlotsChecked++;
+
+            if (!ReferenceEquals(own, prepared))
+            {
+                SlotsMismatched++;
+
+                if (SlotsMismatched <= 20)
+                {
+                    ClassicUO.Utility.Logging.Log.Warn($"[paperdoll-slots-check] 0x{mobile.Serial:X8} {layer}: prepared 0x{prepared?.Serial ?? 0:X8}, lookup 0x{own?.Serial ?? 0:X8}");
+                }
+            }
+        }
+#endif
+
+        /// <summary>The slots' mobile: the one <see cref="PrepareSlots"/> read during this gump's update, else a lookup.</summary>
+        private Mobile UpdatingSlotMobile(out bool prepared)
+        {
+            prepared = _slotsPrepared;
+
+            return prepared ? _preparedSlotMobile : SlotMobile();
+        }
+
         private class EquipmentSlot : Control
         {
             private ItemGumpFixed _itemGump;
@@ -757,6 +825,15 @@ namespace ClassicUO.Game.UI.Gumps
 
             private string _emptySlotTooltip;
             private EntityRef _item;
+            // perf-12: this update's worn item on Layer, from the gump's PrepareSlots
+            private bool _wornSet;
+            private Item _worn;
+
+            internal void SetWorn(Item item)
+            {
+                _worn = item;
+                _wornSet = true;
+            }
 
             public override void Update()
             {
@@ -776,11 +853,21 @@ namespace ClassicUO.Game.UI.Gumps
                     }
                 }
 
-                Mobile mobile = _paperDollGump.SlotMobile();
+                Mobile mobile = _paperDollGump.UpdatingSlotMobile(out bool prepared);
+                bool fromView = prepared && _wornSet;
+                Item worn = _worn;
+                _wornSet = false;
+                _worn = null;
 
                 if (mobile != null)
                 {
-                    Item it_at_layer = mobile.FindItemByLayer(Layer);
+                    Item it_at_layer = fromView ? worn : mobile.FindItemByLayer(Layer);
+#if CUO_DEVTOOLS
+                    if (fromView && SlotsCheckOn)
+                    {
+                        CheckSlot(mobile, Layer, it_at_layer);
+                    }
+#endif
 
                     if ((it_at_layer != null && _itemGump != null && _itemGump.LocalSerial != it_at_layer.Serial) || _itemGump == null)
                     {
