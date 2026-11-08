@@ -5431,3 +5431,24 @@ Base `bg/tile-index-2` b2acab250 (code 672213292, not merged yet). Branch `bg/ti
 - Results are pending; the coordinator reads them.
 
 **Parked (quiet machine).** `job-timing-{g,l}{1,2,3}-PARKED.sh`: arms boff, noff, bon and non, interleaved, with the order alternating per round. Decision pairs: boff:noff (the default path) and bon:non.
+
+## Wave 1B: PlayerState store out of PlayerMobile (2026-11-07, `bg/player-state`)
+
+Base 66cf4b8e7. Plan Q4: the player's session data is a plain typed store owned by the World, not ECS components and not fields of the `PlayerMobile` handle.
+
+**What moved** to `World.PlayerState` (`Game/PlayerState.cs`): the status-packet stats (Str/Dex/Int and their increases, the three stat locks, StatsCap, Luck, Gold, Weight/WeightMax, Followers/FollowersMax, TithingPoints, DeathScreenTimer), the five resistances and their maxima, the AOS/ML bonuses (damage, defence, hit chance, casting, regeneration and so on), `Skills`, the buff icons (`AddBuff`/`RemoveBuff`/`IsBuffIconExists`/`BuffIcons`) and the weapon `Abilities`.
+- Readers and packet writers changed `World.Player.X` to `World.PlayerState.X` mechanically (16 files). No forwarding properties: char creation and the race-change gump make detached `PlayerMobile`s, which would otherwise reach the world's store. Char creation keeps its own `PlayerState` beside its preview mobile and passes it to `Send_CreateCharacter`.
+- `UpdateAbilities` stays on `PlayerMobile` (it reads the equipped weapon) and writes the store.
+- **Left on `PlayerMobile`:** `Walker`, `Pathfinder`, `AutoOpenedCorpses`/`ManualOpenedCorpses`, `_serverDirection*` (walk and corpse-check behaviour, not readers' data) and `InWarMode` (class A, wave 1C).
+- D fields are outside the funnel and the class A write budget, so the writes stay direct; the budget is unchanged.
+
+**Lifetime: unchanged by construction.**
+- 0x1B (`CreatePlayer`, first login and relog): a fresh store, as the new `PlayerMobile`'s fields were fresh.
+- Logout (`World.Clear`): the store is replaced by an empty one, as the destroyed `PlayerMobile` took its fields with it (and `Destroy` zeroed `DeathScreenTimer`). The no-keep branch of `MapChangeRemovals` (never called) does the same.
+- Death and resurrection, a map change (`ClearForMapChange(true)`), 0x20 and 0x78 for the player: the `PlayerMobile` was never re-created, and the store is not touched. No checker is needed.
+
+**Tests.** `PlayerStateTests` (12): relog, logout, map change, death and resurrection, a detached preview `PlayerMobile`; the 0x11 type 6, 0x3A full list and single update, 0xBF 0x19/0x21 and 0xDF removal handlers; handlers before login. `PlayerMobile` no longer reads the UO files in its constructor, so tests can now create a real one through `World.CreatePlayer(serial, skills)`.
+
+**Driver.** `open status|skills|buffs|combatbook` and `playerstate` (CUO_DEVTOOLS) for the gate script `measure/player-state/playerstate.txt`.
+
+**Memory and cost.** One `PlayerState` per login instead of per `PlayerMobile` (the same objects, moved); detached preview `PlayerMobile`s no longer allocate a skills array. One extra property load (`World.PlayerState`) per reader access instead of `World.Player`: not measured (machine busy), negligible.
