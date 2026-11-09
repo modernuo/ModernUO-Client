@@ -24,7 +24,7 @@ namespace ClassicUO.UnitTests.Game.Map
         private const ushort Plain = 1, Tall = 2, Background = 3, MultiMovable = 4, TallBackground = 5;
 
         private readonly StaticTiles[] _savedStaticData;
-        private readonly bool _savedMaintain, _savedEffectsHeld, _savedDropped, _savedShadow;
+        private readonly bool _savedMaintain, _savedDropped, _savedShadow;
 
         public TileHeadTests()
         {
@@ -37,7 +37,6 @@ namespace ClassicUO.UnitTests.Game.Map
             _savedStaticData = Chunk.StaticTileData;
             Chunk.StaticTileData = data;
             _savedMaintain = DynamicTileIndex.Maintain;
-            _savedEffectsHeld = DynamicTileIndex.EffectsHeld;
             _savedDropped = DynamicTileIndex.ListDropped;
             _savedShadow = DynamicTileIndex.Shadow;
         }
@@ -46,7 +45,6 @@ namespace ClassicUO.UnitTests.Game.Map
         {
             Chunk.StaticTileData = _savedStaticData;
             DynamicTileIndex.Maintain = _savedMaintain;
-            DynamicTileIndex.EffectsHeld = _savedEffectsHeld;
             DynamicTileIndex.ListDropped = _savedDropped;
             DynamicTileIndex.Shadow = _savedShadow;
         }
@@ -185,7 +183,6 @@ namespace ClassicUO.UnitTests.Game.Map
             DynamicTileIndex.Maintain = maintain;
             DynamicTileIndex.ListDropped = dropped;
             DynamicTileIndex.Shadow = false;
-            DynamicTileIndex.EffectsHeld = effects;
             s_frontInsertions = s_headRemovals = 0;
 
             var world = new World();
@@ -296,10 +293,10 @@ namespace ClassicUO.UnitTests.Game.Map
         }
 
         [Theory]
-        // switch off, no index (no checker, effects not held)
+        // switch off, no index (a test-only state since T9; with and without effects)
         [InlineData(21, false, false, false)]
         [InlineData(22, false, false, true)]
-        // switch off, index maintained (today's default: ecs_effects holds effects)
+        // switch off, index maintained (the default)
         [InlineData(23, true, false, true)]
         [InlineData(24, true, false, false)]
         // world_tile_index on: the list holds no dynamics

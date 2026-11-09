@@ -25,7 +25,7 @@ namespace ClassicUO.UnitTests.Game.Map
         private const ushort Plain = 1, Tall = 2, Background = 3, MultiMovable = 4, TallBackground = 5, Roof = 6, Chair = 0x0B00;
 
         private readonly StaticTiles[] _savedStaticData;
-        private readonly bool _savedMaintain, _savedEffectsHeld, _savedDropped, _savedShadow;
+        private readonly bool _savedMaintain, _savedDropped, _savedShadow;
         // dev client builds only (the test project doesn't see CUO_DEVTOOLS): the mutable walk switch and the shadow walk
         private static readonly FieldInfo s_walkOn = typeof(DynamicTileIndex).GetField(nameof(DynamicTileIndex.WalkOn));
         private static readonly FieldInfo s_shadowWalk = typeof(DynamicTileIndex).GetField("ShadowWalk");
@@ -44,7 +44,6 @@ namespace ClassicUO.UnitTests.Game.Map
             _savedStaticData = Chunk.StaticTileData;
             Chunk.StaticTileData = data;
             _savedMaintain = DynamicTileIndex.Maintain;
-            _savedEffectsHeld = DynamicTileIndex.EffectsHeld;
             _savedDropped = DynamicTileIndex.ListDropped;
             _savedShadow = DynamicTileIndex.Shadow;
             _savedWalkOn = DynamicTileIndex.WalkOn;
@@ -61,7 +60,6 @@ namespace ClassicUO.UnitTests.Game.Map
         {
             Chunk.StaticTileData = _savedStaticData;
             DynamicTileIndex.Maintain = _savedMaintain;
-            DynamicTileIndex.EffectsHeld = _savedEffectsHeld;
             DynamicTileIndex.ListDropped = _savedDropped;
             DynamicTileIndex.Shadow = _savedShadow;
             if (s_shadowWalk != null)
@@ -375,7 +373,6 @@ namespace ClassicUO.UnitTests.Game.Map
 
         private static void RunRandom(int seed, int steps, bool shadow, bool effects)
         {
-            DynamicTileIndex.EffectsHeld = effects;
             var legacy = new Side(false, false);
             var dropped = new Side(true, shadow);
             var rng = new Random(seed);

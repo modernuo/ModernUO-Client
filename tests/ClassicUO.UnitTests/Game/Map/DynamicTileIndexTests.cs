@@ -24,7 +24,7 @@ namespace ClassicUO.UnitTests.Game.Map
         private readonly World _world = new World();
         private readonly Chunk _a, _b;
         private readonly StaticTiles[] _savedStaticData;
-        private readonly bool _savedMaintain, _savedEffectsHeld, _savedDropped, _savedShadow;
+        private readonly bool _savedMaintain, _savedDropped, _savedShadow;
         private uint _nextSerial = 0x4000_0100, _nextMobile = 0x100;
 
         public DynamicTileIndexTests()
@@ -38,7 +38,6 @@ namespace ClassicUO.UnitTests.Game.Map
             _savedStaticData = Chunk.StaticTileData;
             Chunk.StaticTileData = data;
             _savedMaintain = DynamicTileIndex.Maintain;
-            _savedEffectsHeld = DynamicTileIndex.EffectsHeld;
             _savedDropped = DynamicTileIndex.ListDropped;
             _savedShadow = DynamicTileIndex.Shadow;
             DynamicTileIndex.Maintain = true;
@@ -54,7 +53,6 @@ namespace ClassicUO.UnitTests.Game.Map
         {
             Chunk.StaticTileData = _savedStaticData;
             DynamicTileIndex.Maintain = _savedMaintain;
-            DynamicTileIndex.EffectsHeld = _savedEffectsHeld;
             DynamicTileIndex.ListDropped = _savedDropped;
             DynamicTileIndex.Shadow = _savedShadow;
         }
@@ -339,40 +337,19 @@ namespace ClassicUO.UnitTests.Game.Map
         }
 
         [Fact]
-        public void Effects_Are_Held_Only_With_The_T8_Switch()
+        public void Items_Mobiles_And_Effects_Are_Held_Statics_Are_Not()
         {
-            bool held = DynamicTileIndex.EffectsHeld;
-            try
-            {
-                FixedEffect fx = NewEffect();
-                DynamicTileIndex.EffectsHeld = false;
-                Assert.False(DynamicTileIndex.Holds(fx));
-                DynamicTileIndex.EffectsHeld = true;
-                Assert.True(DynamicTileIndex.Holds(fx));
-                Assert.True(DynamicTileIndex.Holds(NewItem(Plain, 0)));
-                Assert.False(DynamicTileIndex.Holds(NewStatic(Plain, 0)));
-            }
-            finally
-            {
-                DynamicTileIndex.EffectsHeld = held;
-            }
+            Assert.True(DynamicTileIndex.Holds(NewEffect()));
+            Assert.True(DynamicTileIndex.Holds(NewItem(Plain, 0)));
+            Assert.True(DynamicTileIndex.Holds(NewMobile(0)));
+            Assert.False(DynamicTileIndex.Holds(NewStatic(Plain, 0)));
+            Assert.True(DynamicTileIndex.Maintain, "the index is always maintained (effects live in it)");
         }
 
         [Fact]
         public void The_Setting_Defaults_On()
         {
             Assert.True(new ClassicUO.Configuration.Settings().WorldTileIndex);
-        }
-
-        [Theory]
-        [InlineData(false, false, false, false, false)] // everything off: no index
-        [InlineData(true, false, false, false, true)]   // the walk
-        [InlineData(false, true, false, false, true)]   // CUO_WORLD_TILE_INDEX=0
-        [InlineData(false, false, true, false, true)]   // CUO_TILE_ORDER_CHECK
-        [InlineData(false, false, false, true, true)]   // ecs_effects alone (walk off, no overrides): effects still indexed
-        public void The_Index_Is_Maintained_When_Any_Reader_Needs_It(bool walk, bool envOff, bool orderCheck, bool effects, bool expected)
-        {
-            Assert.Equal(expected, DynamicTileIndex.ShouldMaintain(walk, envOff, orderCheck, effects));
         }
 
         [Fact]
@@ -396,7 +373,6 @@ namespace ClassicUO.UnitTests.Game.Map
         [Fact]
         public void Effects_Interleave_With_Items_And_Mobiles_By_The_Plus_Two_Priority_And_Move_Between_Tiles()
         {
-            DynamicTileIndex.EffectsHeld = true;
             Place(_a, NewLand(_world, 0), 2, 2);
             Place(_a, NewStatic(Tall, 0), 2, 2);
             Mobile m = NewMobile(0);
@@ -427,7 +403,6 @@ namespace ClassicUO.UnitTests.Game.Map
         [Fact]
         public void An_Effect_On_A_Landless_Tile_And_A_Parked_Effect_Keep_The_Index_Consistent()
         {
-            DynamicTileIndex.EffectsHeld = true;
             FixedEffect fx = NewEffect();
             Place(_a, fx, 5, 5);
             Assert.Equal(new GameObject[] { fx }, Indexed(_a, 5, 5));
