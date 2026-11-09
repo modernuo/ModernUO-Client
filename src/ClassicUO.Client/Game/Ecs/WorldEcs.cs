@@ -80,7 +80,7 @@ namespace ClassicUO.Game
             else if (entity is Mobile mobile)
             {
                 // T1 (funnel part 4): a mobile operation commits its mobile itself, likewise
-                if (ReferenceEquals(mobile, _fold) || !ReferenceEquals(_world.Mobiles.Get(mobile.Serial), mobile))
+                if (ReferenceEquals(mobile, _fold) || !_world.Holds(mobile))
                 {
                     return;
                 }
@@ -164,7 +164,7 @@ namespace ClassicUO.Game
         /// </summary>
         internal void CommitItem(Item item, in ItemState v, bool attach = false)
         {
-            if (item == null || item.IsDestroyed || !ReferenceEquals(_world.Items.Get(v.Serial), item))
+            if (item == null || item.IsDestroyed || !_world.Holds(item, v.Serial))
             {
                 return;
             }
@@ -201,7 +201,7 @@ namespace ClassicUO.Game
         /// <returns>The mobile's entity, for <see cref="CommitMobileInputs(Mobile, EcsEntity)"/> (a null entity when ignored).</returns>
         internal EcsEntity CommitMobile(Mobile mobile, in MobileState v)
         {
-            if (mobile == null || mobile.IsDestroyed || !ReferenceEquals(_world.Mobiles.Get(v.Serial), mobile))
+            if (mobile == null || mobile.IsDestroyed || !_world.Holds(mobile, v.Serial))
             {
                 return default;
             }
@@ -235,7 +235,7 @@ namespace ClassicUO.Game
         /// </summary>
         internal void CommitMobileInputs(Mobile mobile)
         {
-            if (mobile == null || mobile.IsDestroyed || !ReferenceEquals(_world.Mobiles.Get(mobile.Serial), mobile))
+            if (mobile == null || mobile.IsDestroyed || !_world.Holds(mobile))
             {
                 return;
             }
@@ -254,7 +254,7 @@ namespace ClassicUO.Game
         // item can share a serial; the mirror keeps one record per serial, so a commit must not write the other kind's record)
         private bool HoldsEntity(Entity entity) =>
             entity != null && !entity.IsDestroyed &&
-            (entity is Mobile ? ReferenceEquals(_world.Mobiles.Get(entity.Serial), entity) : ReferenceEquals(_world.Items.Get(entity.Serial), entity)) &&
+            _world.Holds(entity) &&
             Mirror.TryGetEntity(entity.Serial, entity is Mobile, out _);
 
         /// <summary>
@@ -457,7 +457,7 @@ namespace ClassicUO.Game
         private void SyncItem(Item item)
         {
             // Only the instance World currently holds for this serial; stale or detached objects are ignored.
-            if (!ReferenceEquals(_world.Items.Get(item.Serial), item))
+            if (!_world.Holds(item))
             {
                 return;
             }
@@ -497,7 +497,7 @@ namespace ClassicUO.Game
         /// </summary>
         public void PushInputs(Mobile mobile)
         {
-            if (mobile == null || mobile.IsDestroyed || ReferenceEquals(mobile, _fold) || !ReferenceEquals(_world.Mobiles.Get(mobile.Serial), mobile))
+            if (mobile == null || mobile.IsDestroyed || ReferenceEquals(mobile, _fold) || !_world.Holds(mobile))
             {
                 return;
             }
@@ -532,7 +532,7 @@ namespace ClassicUO.Game
         /// </summary>
         public void PushClock(Mobile mobile)
         {
-            if (!ClockEnabled || mobile == null || mobile.IsDestroyed || ReferenceEquals(mobile, _fold) || !ReferenceEquals(_world.Mobiles.Get(mobile.Serial), mobile))
+            if (!ClockEnabled || mobile == null || mobile.IsDestroyed || ReferenceEquals(mobile, _fold) || !_world.Holds(mobile))
             {
                 return;
             }
@@ -550,7 +550,7 @@ namespace ClassicUO.Game
         /// </summary>
         internal void CommitMobileClock(Mobile mobile)
         {
-            if (!ClockEnabled || mobile == null || mobile.IsDestroyed || !ReferenceEquals(_world.Mobiles.Get(mobile.Serial), mobile))
+            if (!ClockEnabled || mobile == null || mobile.IsDestroyed || !_world.Holds(mobile))
             {
                 return;
             }
@@ -645,7 +645,7 @@ namespace ClassicUO.Game
         /// </summary>
         internal void PushSteps(Entity entity)
         {
-            if (!StepsEnabled || !ClockEnabled || !(entity is Mobile mobile) || mobile.IsDestroyed || !ReferenceEquals(_world.Mobiles.Get(mobile.Serial), mobile))
+            if (!StepsEnabled || !ClockEnabled || !(entity is Mobile mobile) || mobile.IsDestroyed || !_world.Holds(mobile))
             {
                 return;
             }
@@ -673,7 +673,7 @@ namespace ClassicUO.Game
         internal void PushItemTimer(Item item)
         {
             if (!ItemAnimTimerEnabled || item == null || item.IsDestroyed || !item.IsCorpse || !Mirror.TryGetEntity(item.Serial, false, out EcsEntity e)
-                || !ReferenceEquals(_world.Items.Get(item.Serial), item))
+                || !_world.Holds(item))
             {
                 return;
             }
@@ -845,7 +845,7 @@ namespace ClassicUO.Game
         /// <returns>The new entity (a null entity when no record was written).</returns>
         internal EcsEntity CommitRekey(Mobile mobile, uint oldSerial, in MobileState v)
         {
-            if (mobile == null || !ReferenceEquals(_world.Mobiles.Get(oldSerial), mobile))
+            if (mobile == null || !_world.Holds(mobile, oldSerial))
             {
                 return default;
             }
