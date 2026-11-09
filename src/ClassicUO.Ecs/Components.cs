@@ -617,7 +617,7 @@ namespace ClassicUO.Ecs
     }
 
     /// <summary>
-    /// T8: a graphic effect (fixed, moving, drag, lightning) of <c>EffectManager</c>, while <c>ecs_effects</c> is on. It owns the
+    /// T8: a graphic effect (fixed, moving, drag, lightning) of <c>EffectManager</c>. It owns the
     /// animation and lifetime state (frame, next change time, duration) that <c>EffectSystem</c> advances; position, offset,
     /// angle and target are published by the effect's own update (the kinds' motion rules stay on the object). The entity has no
     /// serial and is not in the mirror's serial index.

@@ -8,7 +8,7 @@ using Microsoft.Xna.Framework.Graphics;
 namespace ClassicUO.Game.Scenes
 {
     /// <summary>
-    /// T7b part 3 (setting <c>ecs_effect_sprites</c>, needs <c>ecs_effects</c>): graphic effects drawn from the
+    /// T7b part 3 (setting <c>ecs_effect_sprites</c>): graphic effects drawn from the
     /// renderer-neutral <see cref="EffectSpriteExtract"/> over their <see cref="ClassicUO.Ecs.EffectState"/> instead of
     /// GameEffectView.Draw, at the effect's render-list position (painter order unchanged): the Legacy world through
     /// <see cref="DrawLegacy"/> (the view's batcher call and blend state, <see cref="LegacySpriteResolve.ResolveEffect"/>), the
@@ -35,13 +35,13 @@ namespace ClassicUO.Game.Scenes
 
         internal static EffectSpriteExtract Extract => _extract;
 
-        /// <summary>The switch: without ecs_effects there is no state to draw from.</summary>
-        internal static bool Resolve(bool effectsOn, bool? over, bool? env, bool setting) => effectsOn && (over ?? env ?? setting);
+        /// <summary>The switch: the override, else the env override, else the setting.</summary>
+        internal static bool Resolve(bool? over, bool? env, bool setting) => over ?? env ?? setting;
 
         /// <summary>Start of a world draw (both renderers, before the first effect is drawn or captured): reads the switch.</summary>
         public static void BeginFrame()
         {
-            On = Resolve(EffectSystem.GlobalOn, Override, _env, Configuration.Settings.GlobalSettings.EcsEffectSprites);
+            On = Resolve(Override, _env, Configuration.Settings.GlobalSettings.EcsEffectSprites);
 #if CUO_DEVTOOLS
             EffectSpriteCheck.BeginFrame();
 #endif
