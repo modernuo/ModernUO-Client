@@ -551,6 +551,7 @@ Task 1 and Task 2 touch different files and can run in parallel. Task 3 touches 
    *Recommended:* keep the C ABI (packets, player position, `RequestMove`) working through the transition. Make no reflection-compatibility promise for in-process assistants. Remove the loader with the release cleanup, as already decided (no plugin API).
 4. **Player session data** (stats, skills, buffs, abilities, OPL, journal):
    *Recommended:* a plain typed `PlayerState` store, not ECS components. The ECS holds world objects.
+   **OPL decided (owner, 2026-11-08):** OPL stays a serial-keyed store, not an ECS component: tooltips for serials with no entity, no read gain, components can't hold strings, and an OPL change would be an archetype move. A plugin read API over the store (by serial and revision, with a change event) is a possible later item.
 5. **Switch policy:**
    *Recommended:* default a switch on when its checkers are 0 over the standard scripts and a Codex audit is done; delete its off path one phase later. Turn E4 on after E10 merges (Task 3).
 6. **Parity or fixes:** when the transition exposes legacy quirks, should it keep them?
