@@ -51,7 +51,7 @@ namespace ClassicUO.Game.Scenes
 
         public static void BeginFrame()
         {
-            Active = Override ?? (Interval > 0 && ++_frame % Interval == 0);
+            Active = (Override ?? (Interval > 0 && ++_frame % Interval == 0)) && !GoldenCapture.Armed;
 
             if (Active)
             {

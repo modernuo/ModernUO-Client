@@ -780,6 +780,17 @@ namespace ClassicUO.Game.Scenes
                 ref GpuItemCache.Entry first = ref cache.Entries[run.EntryStart];
                 ref GpuItemCache.Entry last = ref cache.Entries[run.EntryEnd - 1];
                 int start = first.InstStart;
+#if CUO_DEVTOOLS
+                if (GoldenCapture.Recording)
+                {
+                    int at = gpu.DynamicInstances.Length;
+
+                    for (int i = run.EntryStart; i < run.EntryEnd; i++)
+                    {
+                        GoldenCapture.Mark(cache.Entries[i].Item, at + cache.Entries[i].InstStart - start);
+                    }
+                }
+#endif
                 gpu.AppendDynamic(new ReadOnlySpan<SpriteInstance>(cache.Instances, start, last.InstStart + last.InstCount - start));
 
                 if (RenderLists.CaptureOrderOn)

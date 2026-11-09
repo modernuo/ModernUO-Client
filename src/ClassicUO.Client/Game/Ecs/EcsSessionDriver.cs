@@ -1157,6 +1157,45 @@ namespace ClassicUO.Game
 
                     return false;
 
+                // golden <name> [frames]: T9 golden capture (GoldenCapture, CUO_GOLDEN_DIR): the equipment reads and contents
+                // now, the world's sprites on the next <frames> frames (1) of the current renderer
+                case "golden" when args.Length > 0:
+                {
+                    int gf = args.Length > 1 && int.TryParse(args[1], out int gn) ? gn : 1;
+
+                    if (!GoldenCapture.Request(world, args[0], gf))
+                    {
+                        Log.Info($"[ECS] driver: golden {arg} skipped (CUO_GOLDEN_DIR is not set)");
+
+                        return false;
+                    }
+
+                    return true;
+                }
+
+                // goldenmobiles on|off: off leaves mobiles out of the world draw (GoldenCapture.HideMobiles), for world shots of
+                // a scene whose NPCs turn on their own
+                case "goldenmobiles" when args.Length > 0:
+                    GoldenCapture.HideMobiles = args[0] == "off";
+                    Log.Info($"[ECS] driver: goldenmobiles {args[0]}");
+
+                    return false;
+
+                // legacysprites on|off|default: legacy_ecs_sprites for this session (LegacySpriteSink.Override): the Legacy
+                // world's mobiles and items from the sink or their views (T9 golden captures of both paths)
+                case "legacysprites" when args.Length > 0:
+                    LegacySpriteSink.Override = args[0] switch { "on" => true, "off" => false, _ => null };
+                    Log.Info($"[ECS] driver: legacy_ecs_sprites override {args[0]}");
+
+                    return false;
+
+                // effectsprites on|off|default: ecs_effect_sprites for this session (EffectSpriteSink.Override)
+                case "effectsprites" when args.Length > 0:
+                    EffectSpriteSink.Override = args[0] switch { "on" => true, "off" => false, _ => null };
+                    Log.Info($"[ECS] driver: ecs_effect_sprites override {args[0]}");
+
+                    return false;
+
                 // ecssprites on|off: gpu_ecs_sprites (mobiles drawn from the ECS extract or captured from their views)
                 case "ecssprites" when args.Length > 0:
                     Settings.GlobalSettings.GpuEcsSprites = args[0] == "on";

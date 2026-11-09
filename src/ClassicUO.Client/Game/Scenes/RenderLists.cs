@@ -354,6 +354,9 @@ namespace ClassicUO.Game.Scenes
             // the same list position (LegacySpriteSink); T7b part 3 (ecs_effect_sprites): effects through EffectSpriteSink
             LegacySpriteSink.BeginFrame();
             EffectSpriteSink.BeginFrame();
+#if CUO_DEVTOOLS
+            GoldenCapture.BeginLegacy(batcher);
+#endif
 
             try
             {
@@ -365,6 +368,12 @@ namespace ClassicUO.Game.Scenes
                 {
                     //batcher.SetStencil(DepthStencilState.DepthRead);
                     result += DrawWorldRenderList(batcher, _transparentObjects, maxGroundZ);
+#if CUO_DEVTOOLS
+                    if (GoldenCapture.Recording)
+                    {
+                        GoldenCapture.MarkLegacy(null);
+                    }
+#endif
                     result += DrawRenderListWithAtlas(batcher, _gumpSprites);
                     result += DrawRenderListNoAtlas(batcher, _gumpTexts);
                     //batcher.SetStencil(null);
@@ -372,6 +381,9 @@ namespace ClassicUO.Game.Scenes
             }
             finally
             {
+#if CUO_DEVTOOLS
+                GoldenCapture.EndLegacy(batcher);
+#endif
                 LegacySpriteSink.EndFrame();
             }
 
@@ -630,6 +642,12 @@ namespace ClassicUO.Game.Scenes
 
             foreach (var obj in renderList)
             {
+#if CUO_DEVTOOLS
+                if (GoldenCapture.Recording)
+                {
+                    GoldenCapture.MarkLegacy(obj);
+                }
+#endif
                 if (obj.Z <= maxGroundZ && EffectSpriteSink.DrawLegacy(batcher, obj, obj.CalculateDepthZ()))
                 {
                     done++;
@@ -642,7 +660,12 @@ namespace ClassicUO.Game.Scenes
         // the Legacy world's lists: DrawRenderList with mobiles and items through LegacySpriteSink while it routes them
         private static int DrawWorldRenderList(UltimaBatcher2D batcher, List<GameObject> renderList, sbyte maxGroundZ)
         {
+#if CUO_DEVTOOLS
+            // T9 golden capture: the same draws (LegacySpriteSink.Draw draws the view while it does not route), each object marked
+            if (!LegacySpriteSink.Routes && !GoldenCapture.Recording)
+#else
             if (!LegacySpriteSink.Routes)
+#endif
             {
                 return DrawRenderList(batcher, renderList, maxGroundZ);
             }
@@ -651,6 +674,12 @@ namespace ClassicUO.Game.Scenes
 
             foreach (var obj in renderList)
             {
+#if CUO_DEVTOOLS
+                if (GoldenCapture.Recording)
+                {
+                    GoldenCapture.MarkLegacy(obj);
+                }
+#endif
                 if (obj.Z <= maxGroundZ && LegacySpriteSink.Draw(batcher, obj, obj.CalculateDepthZ()))
                 {
                     done++;
