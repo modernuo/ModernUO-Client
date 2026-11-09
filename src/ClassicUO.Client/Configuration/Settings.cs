@@ -174,8 +174,10 @@ namespace ClassicUO.Configuration
         // T6b (ecs-transition-plan.md, T6): items and mobiles are also filed per tile in Chunk.Dynamic (DynamicTileIndex, sorted by
         // T6a's key stored at insertion), and the world walks of both renderers (AddTileToRenderList, the Gpu prepare's mobile
         // list, the item cache's served runs) read the tile list's other objects merged with it. CUO_TILE_ORDER_CHECK compares the
-        // merged order with the list. Read once at startup (dev builds: CUO_WORLD_TILE_INDEX=1|0 overrides). Default off.
-        [JsonPropertyName("world_tile_index")] public bool WorldTileIndex { get; set; }
+        // merged order with the list. Read once at startup (dev builds: CUO_WORLD_TILE_INDEX=1|0 overrides). Default on since
+        // 2026-11-08 (owner, after the quiet-machine timing quiet-1108: Gpu neutral, Legacy world_prepare +4-6 % at ls_z1 accepted);
+        // the off path, the shadow list and CUO_TILE_ORDER_CHECK stay for one phase.
+        [JsonPropertyName("world_tile_index")] public bool WorldTileIndex { get; set; } = true;
 
         // T9 (ecs-transition-plan.md §T5d): the ECS is the source of the per-frame item update list: one ActiveItemEntry entity per
         // listed item holds the item and its visiting slot (append, swap-remove), and the active item stage visits the order

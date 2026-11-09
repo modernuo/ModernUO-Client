@@ -24,7 +24,7 @@ namespace ClassicUO.UnitTests.Game.Map
         private readonly World _world = new World();
         private readonly Chunk _a, _b;
         private readonly StaticTiles[] _savedStaticData;
-        private readonly bool _savedMaintain, _savedEffectsHeld;
+        private readonly bool _savedMaintain, _savedEffectsHeld, _savedDropped, _savedShadow;
         private uint _nextSerial = 0x4000_0100, _nextMobile = 0x100;
 
         public DynamicTileIndexTests()
@@ -39,7 +39,13 @@ namespace ClassicUO.UnitTests.Game.Map
             Chunk.StaticTileData = data;
             _savedMaintain = DynamicTileIndex.Maintain;
             _savedEffectsHeld = DynamicTileIndex.EffectsHeld;
+            _savedDropped = DynamicTileIndex.ListDropped;
+            _savedShadow = DynamicTileIndex.Shadow;
             DynamicTileIndex.Maintain = true;
+            // these tests compare the merged order with a list that still holds the dynamics (world_tile_index's list-kept
+            // mode); ListDropTests covers the dropped list, the default since the switch went on
+            DynamicTileIndex.ListDropped = false;
+            DynamicTileIndex.Shadow = false;
             _a = new Chunk(_world) { X = 0, Y = 0 };
             _b = new Chunk(_world) { X = 1, Y = 0 };
         }
@@ -49,6 +55,8 @@ namespace ClassicUO.UnitTests.Game.Map
             Chunk.StaticTileData = _savedStaticData;
             DynamicTileIndex.Maintain = _savedMaintain;
             DynamicTileIndex.EffectsHeld = _savedEffectsHeld;
+            DynamicTileIndex.ListDropped = _savedDropped;
+            DynamicTileIndex.Shadow = _savedShadow;
         }
 
         private static Land NewLand(World world, sbyte z)
@@ -348,6 +356,12 @@ namespace ClassicUO.UnitTests.Game.Map
             {
                 DynamicTileIndex.EffectsHeld = held;
             }
+        }
+
+        [Fact]
+        public void The_Setting_Defaults_On()
+        {
+            Assert.True(new ClassicUO.Configuration.Settings().WorldTileIndex);
         }
 
         [Theory]
