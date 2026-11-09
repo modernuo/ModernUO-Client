@@ -502,7 +502,7 @@ namespace ClassicUO.Game.UI.Gumps
 
             if (!_positionLocked && SerialHelper.IsMobile(LocalSerial))
             {
-                Mobile m = World.Mobiles.Get(LocalSerial);
+                Mobile m = World.FindMobile(LocalSerial);
 
                 if (m == null)
                 {
@@ -597,7 +597,7 @@ namespace ClassicUO.Game.UI.Gumps
 
             if (SerialHelper.IsMobile(LocalSerial))
             {
-                Mobile m = World.Mobiles.Get(LocalSerial);
+                Mobile m = World.FindMobile(LocalSerial);
 
                 if (m == null)
                 {
@@ -646,7 +646,7 @@ namespace ClassicUO.Game.UI.Gumps
             }
             else if (SerialHelper.IsItem(LocalSerial))
             {
-                Item item = World.Items.Get(LocalSerial);
+                Item item = World.FindItem(LocalSerial);
 
                 if (item == null)
                 {

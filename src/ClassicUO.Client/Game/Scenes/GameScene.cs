@@ -1040,7 +1040,7 @@ namespace ClassicUO.Game.Scenes
                 _followingMode && SerialHelper.IsMobile(_followingTarget) && !_world.Player.Pathfinder.AutoWalking
             )
             {
-                Mobile follow = _world.Mobiles.Get(_followingTarget);
+                Mobile follow = _world.FindMobile(_followingTarget);
 
                 if (follow != null)
                 {

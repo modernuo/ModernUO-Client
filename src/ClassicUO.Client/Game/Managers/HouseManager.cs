@@ -67,7 +67,7 @@ namespace ClassicUO.Game.Managers
                 //    currY = World.Player.Y;
                 //}
 
-                Item found = _world.Items.Get(serial);
+                Item found = _world.FindItem(serial);
 
                 if (found == null)
                 {
@@ -86,7 +86,7 @@ namespace ClassicUO.Game.Managers
         {
             if (obj != null && TryGetHouse(house, out _))
             {
-                Item found = _world.Items.Get(house);
+                Item found = _world.FindItem(house);
 
                 if (found == null || !found.MultiInfo.HasValue)
                 {

@@ -41,7 +41,7 @@ namespace ClassicUO.Game.Managers
                 {
                     if (corpse != 0)
                     {
-                        Item item = _world.Items.Get(corpse);
+                        Item item = _world.FindItem(corpse);
 
                         if (item != null)
                         {
@@ -81,7 +81,7 @@ namespace ClassicUO.Game.Managers
 
                 if (c.ObjectSerial == serial)
                 {
-                    return _world.Items.Get(c.CorpseSerial);
+                    return _world.FindItem(c.CorpseSerial);
                 }
             }
 

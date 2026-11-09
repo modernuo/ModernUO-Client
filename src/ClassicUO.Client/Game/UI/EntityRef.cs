@@ -8,8 +8,8 @@ namespace ClassicUO.Game.UI
     /// perf-8: a window's reference to the world object it shows by serial, so a per-frame update repeats the dictionary
     /// lookup only when the object may have changed. MobileEntityLookup's rule: the cached object is used while its serial is
     /// the one asked for, it is not destroyed (objects are pooled and reused for other serials), and no mirror record was
-    /// deleted since (WorldMirror.Epoch). Otherwise the lookup runs again and its result, also null or a destroyed object
-    /// still in the table, is what the caller gets, as before. A null result is not cached (an add moves no epoch). One
+    /// deleted since (WorldMirror.Epoch). Otherwise the lookup runs again and its result, also null or (world_entity_index
+    /// off) a destroyed object still in the table, is what the caller gets, as before. A null result is not cached (an add moves no epoch). One
     /// reference holds one kind: use one of <see cref="Mobile"/>, <see cref="Item"/> or <see cref="Entity"/>.
     /// </summary>
     internal struct EntityRef
@@ -30,7 +30,7 @@ namespace ClassicUO.Game.UI
             _epoch = world.Ecs.Mirror.Epoch;
         }
 
-        /// <summary>What <c>world.Mobiles.Get(serial)</c> returns.</summary>
+        /// <summary>What <c>world.FindMobile(serial)</c> returns.</summary>
         public Mobile Mobile(World world, uint serial)
         {
             if (TryGet(world, serial, out Entity e))
@@ -38,13 +38,13 @@ namespace ClassicUO.Game.UI
                 return (Mobile)e;
             }
 
-            Mobile m = world.Mobiles.Get(serial);
+            Mobile m = world.FindMobile(serial);
             Store(world, m);
 
             return m;
         }
 
-        /// <summary>What <c>world.Items.Get(serial)</c> returns.</summary>
+        /// <summary>What <c>world.FindItem(serial)</c> returns.</summary>
         public Item Item(World world, uint serial)
         {
             if (TryGet(world, serial, out Entity e))
@@ -52,7 +52,7 @@ namespace ClassicUO.Game.UI
                 return (Item)e;
             }
 
-            Item it = world.Items.Get(serial);
+            Item it = world.FindItem(serial);
             Store(world, it);
 
             return it;

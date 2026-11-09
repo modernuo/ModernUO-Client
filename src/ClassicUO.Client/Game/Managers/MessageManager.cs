@@ -120,7 +120,7 @@ namespace ClassicUO.Game.Managers
                             if (member != null)
                                 if (member.Name == name) //Name matches message from server
                                 {
-                                    Mobile m = _world.Mobiles.Get(member.Serial);
+                                    Mobile m = _world.FindMobile(member.Serial);
                                     if (m != null) //Mobile exists
                                     {
                                         parent = m;

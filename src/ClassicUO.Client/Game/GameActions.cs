@@ -263,7 +263,7 @@ namespace ClassicUO.Game
         {
             if (ProfileManager.CurrentProfile.EnabledCriminalActionQuery)
             {
-                Mobile m = world.Mobiles.Get(serial);
+                Mobile m = world.FindMobile(serial);
 
                 if (m != null && (world.Player.NotorietyFlag == NotorietyFlag.Innocent || world.Player.NotorietyFlag == NotorietyFlag.Ally) && m.NotorietyFlag == NotorietyFlag.Innocent && m != world.Player)
                 {
@@ -308,7 +308,7 @@ namespace ClassicUO.Game
                 Socket.Send_DoubleClick(serial);
             }
 
-            if (SerialHelper.IsItem(serial) || (SerialHelper.IsMobile(serial) && (world.Mobiles.Get(serial)?.IsHuman ?? false)))
+            if (SerialHelper.IsItem(serial) || (SerialHelper.IsMobile(serial) && (world.FindMobile(serial)?.IsHuman ?? false)))
             {
                 if (SerialHelper.IsMobile(serial))
                 {

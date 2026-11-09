@@ -82,7 +82,7 @@ namespace ClassicUO.Game.Managers
 
         private void InitializeHouse()
         {
-            Item foundation = _world.Items.Get(Serial);
+            Item foundation = _world.FindItem(Serial);
 
             if (foundation == null)
             {
@@ -126,7 +126,7 @@ namespace ClassicUO.Game.Managers
 
         public void GenerateFloorPlace()
         {
-            Item foundationItem = _world.Items.Get(Serial);
+            Item foundationItem = _world.FindItem(Serial);
 
             if (foundationItem == null || !_world.HouseManager.TryGetHouse(Serial, out House house))
             {
@@ -378,7 +378,7 @@ namespace ClassicUO.Game.Managers
             }
             else if (place.Z >= _world.Player.Z + zOffset && place.Z < _world.Player.Z + 20)
             {
-                Item foundationItem = _world.Items.Get(Serial);
+                Item foundationItem = _world.FindItem(Serial);
 
                 if (foundationItem == null || !_world.HouseManager.TryGetHouse(Serial, out House house))
                 {
@@ -764,7 +764,7 @@ namespace ClassicUO.Game.Managers
                 return false;
             }
 
-            var foundationItem = _world.Items.Get(Serial);
+            var foundationItem = _world.FindItem(Serial);
 
             if (foundationItem == null || !_world.HouseManager.TryGetHouse(foundationItem, out House house))
                 return false;
@@ -1581,7 +1581,7 @@ namespace ClassicUO.Game.Managers
         // Returns true when the design may be sent to the server.
         public bool ValidateHouseForCommit()
         {
-            Item foundationItem = _world.Items.Get(Serial);
+            Item foundationItem = _world.FindItem(Serial);
 
             if (foundationItem == null || !_world.HouseManager.TryGetHouse(Serial, out House house))
             {
