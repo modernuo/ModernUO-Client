@@ -18,6 +18,12 @@ namespace ClassicUO.UnitTests.Ecs
     // or off), and after every call and frame both Worlds must be equal: positions, offsets, step clocks, tiles, records.
     public partial class WorldWriterMobileTests
     {
+        [Fact]
+        public void The_BoatSteps_Setting_Defaults_On()
+        {
+            new ClassicUO.Configuration.Settings().EcsBoatSteps.Should().BeTrue();
+        }
+
         private const uint BOAT2 = 0x4000_7402, DECKCOIN = 0x4000_7403;
 
         private static World BuildTwoBoats(bool boatSteps, bool itemOffset)

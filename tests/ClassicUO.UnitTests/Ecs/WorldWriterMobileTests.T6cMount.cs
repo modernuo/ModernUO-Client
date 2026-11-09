@@ -15,6 +15,12 @@ namespace ClassicUO.UnitTests.Ecs
     // packets' operations (0x2E Equip, 0x1D RemoveWorldItem, 0x25 PlaceInContainer) and 0xBF.26's speed mode.
     public partial class WorldWriterMobileTests
     {
+        [Fact]
+        public void The_StepMountInputs_Setting_Defaults_On()
+        {
+            new ClassicUO.Configuration.Settings().EcsStepMountInputs.Should().BeTrue();
+        }
+
         // an ethereal unicorn: Item.GetGraphicForAnimation maps it without the tiledata, so Mobile.IsMounted works here
         private const uint MOUNT_ITEM = 0x4000_7E01;
         private const ushort ETHEREAL = 0x3E9B, TILLER = 0x3E96;

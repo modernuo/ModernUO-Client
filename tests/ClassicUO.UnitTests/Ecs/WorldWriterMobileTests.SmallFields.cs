@@ -17,6 +17,12 @@ namespace ClassicUO.UnitTests.Ecs
     // record reads its cache); CUO_SMALL_FIELDS_CHECK (here World.SmallFieldsCheckOverride) compares the two at every read.
     public partial class WorldWriterMobileTests
     {
+        [Fact]
+        public void The_SmallFields_Setting_Defaults_On()
+        {
+            new ClassicUO.Configuration.Settings().EcsSmallFields.Should().BeTrue();
+        }
+
         private const uint LAMP = 0x4000_7A01, BARREL = 0x4000_7A02, HOUSE = 0x4000_7A03, BODY = 0x4000_7A04;
 
         private static World BuildSmall(bool on, bool check = true)
