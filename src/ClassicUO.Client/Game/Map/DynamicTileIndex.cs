@@ -36,7 +36,7 @@ namespace ClassicUO.Game.Map
         {
             "1" => true,
             "0" => false,
-            _ => Configuration.Settings.GlobalSettings?.WorldTileIndex ?? false
+            _ => Configuration.Settings.GlobalSettings?.WorldTileIndex ?? true
         };
 
         /// <summary>Placements keep the index (the walk switch, an explicit CUO_WORLD_TILE_INDEX, or CUO_TILE_ORDER_CHECK).
@@ -74,7 +74,7 @@ namespace ClassicUO.Game.Map
         /// <summary>The walks read the index (the merged order), not the list or the shadow list.</summary>
         public static bool IndexWalkOn => (WalkOn || ListDropped) && !ShadowWalk;
 #else
-        public static readonly bool WalkOn = Configuration.Settings.GlobalSettings?.WorldTileIndex ?? false;
+        public static readonly bool WalkOn = Configuration.Settings.GlobalSettings?.WorldTileIndex ?? true;
         public static bool Maintain = ShouldMaintain(WalkOn, false, false, EffectSystem.GlobalOn);
         public static bool IndexWalkOn => WalkOn || ListDropped;
 #endif
@@ -83,7 +83,7 @@ namespace ClassicUO.Game.Map
         /// T6b part 3: with the walk switch on, the tile lists stop holding the dynamics (<see cref="Holds"/>): items, mobiles and
         /// (with ecs_effects) effects live only in the index; the list keeps land, statics and multi components. Read once at
         /// startup like <see cref="Maintain"/> (an object linked under one value and unlinked under the other would corrupt the
-        /// list); tests set it before they build a world. Implies <see cref="Maintain"/>. Off (the default): nothing changes.
+        /// list); tests set it before they build a world. Implies <see cref="Maintain"/>. On by default; off: nothing changes.
         /// </summary>
         public static bool ListDropped = WalkOn;
 
