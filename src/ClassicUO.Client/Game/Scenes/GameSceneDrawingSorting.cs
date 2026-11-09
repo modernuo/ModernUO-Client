@@ -773,6 +773,12 @@ namespace ClassicUO.Game.Scenes
             bool allowSelection
         )
         {
+#if CUO_DEVTOOLS
+            if (GoldenCapture.HideMobiles && obj is Mobile)
+            {
+                return;
+            }
+#endif
             if (obj.AlphaHue == 0)
             {
                 return;

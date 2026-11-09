@@ -1173,6 +1173,14 @@ namespace ClassicUO.Game
                     return true;
                 }
 
+                // goldenmobiles on|off: off leaves mobiles out of the world draw (GoldenCapture.HideMobiles), for world shots of
+                // a scene whose NPCs turn on their own
+                case "goldenmobiles" when args.Length > 0:
+                    GoldenCapture.HideMobiles = args[0] == "off";
+                    Log.Info($"[ECS] driver: goldenmobiles {args[0]}");
+
+                    return false;
+
                 // legacysprites on|off|default: legacy_ecs_sprites for this session (LegacySpriteSink.Override): the Legacy
                 // world's mobiles and items from the sink or their views (T9 golden captures of both paths)
                 case "legacysprites" when args.Length > 0:

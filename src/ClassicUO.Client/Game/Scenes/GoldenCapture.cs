@@ -58,6 +58,13 @@ namespace ClassicUO.Game.Scenes
         /// <summary>Inside an armed frame's world draw: the hooks mark objects.</summary>
         public static bool Recording { get; private set; }
 
+        /// <summary>
+        /// Driver <c>goldenmobiles off</c>: mobiles stay out of the render queue (GameScene.PushToRenderQueue) on both
+        /// renderers. The large scene's NPCs turn on their own (ModernUO's AI sets Direction on frozen NPCs too) and cover its
+        /// whole viewport, so its world shots are taken without them; their sprites are compared through the text captures.
+        /// </summary>
+        public static bool HideMobiles;
+
         private struct LegacyCall
         {
             public uint Ref;
@@ -234,7 +241,8 @@ namespace ClassicUO.Game.Scenes
             w.Write($"golden {FORMAT}\n");
             w.Write($"name {_name} frame {_frameIndex} renderer {renderer}\n");
             w.Write($"paths gpu_ecs_sprites={(s.GpuEcsSprites ? 1 : 0)} legacy_ecs_sprites={(LegacySpriteSink.On ? 1 : 0)} " +
-                    $"ecs_effect_sprites={(EffectSpriteSink.On ? 1 : 0)} gpu_prepare_item_cache={(s.GpuPrepareItemCache ? 1 : 0)}\n");
+                    $"ecs_effect_sprites={(EffectSpriteSink.On ? 1 : 0)} gpu_prepare_item_cache={(s.GpuPrepareItemCache ? 1 : 0)} " +
+                    $"hide_mobiles={(HideMobiles ? 1 : 0)}\n");
 
             if (_world?.Player is { } p)
             {
