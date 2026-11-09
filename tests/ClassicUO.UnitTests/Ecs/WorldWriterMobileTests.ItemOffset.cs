@@ -16,6 +16,12 @@ namespace ClassicUO.UnitTests.Ecs
     // under way (mid-step), stop (a step completes), a turn (ClearSteps' reset), a passenger leaving the list, the boat removed.
     public partial class WorldWriterMobileTests
     {
+        [Fact]
+        public void The_ItemOffset_Setting_Defaults_On()
+        {
+            new ClassicUO.Configuration.Settings().EcsItemOffset.Should().BeTrue();
+        }
+
         private static World BuildOffsetBoat(bool on)
         {
             World world = BuildBoat(Start.Standing);

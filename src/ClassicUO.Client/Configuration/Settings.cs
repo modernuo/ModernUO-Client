@@ -147,8 +147,9 @@ namespace ClassicUO.Configuration
         // operations of WorldWriter write the ItemOffset component with the GameObject's Offset, and the item extract's
         // Gather and the item pick read the component. Read once at startup (CUO_ECS_ITEM_OFFSET=1|0 overrides it in
         // developer builds). CUO_ITEM_OFFSET_CHECK=1 compares the component with the Item's Offset at every read. Off = the
-        // component is not written and the readers read the Item. Default off.
-        [JsonPropertyName("ecs_item_offset")] public bool EcsItemOffset { get; set; }
+        // component is not written and the readers read the Item. Default on since 2026-11-08 (ecs-flip-8; owner: T9 path, one full timing pass at the end of T9); the off path and the
+        // checker stay for one phase.
+        [JsonPropertyName("ecs_item_offset")] public bool EcsItemOffset { get; set; } = true;
 
         // A boat's motion state (its queued smooth-movement steps, the step clock, the objects 0xF6 listed on its deck) is the
         // ECS BoatSteps component on the boat's record instead of BoatMovingManager's dictionaries: WorldWriter's boat
