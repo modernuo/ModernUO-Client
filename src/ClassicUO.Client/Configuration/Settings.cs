@@ -156,8 +156,9 @@ namespace ClassicUO.Configuration
         // operations fill it from 0xF6, and BoatStepSystem advances the boats each frame through the same boat operations.
         // Read once at startup (CUO_ECS_BOAT_STEPS=1|0 overrides it in developer builds). CUO_BOAT_CHECK=1 keeps the old
         // dictionaries in shadow and compares their decisions, queues and passengers with the component's every frame.
-        // Off = BoatMovingManager's dictionaries. Default off.
-        [JsonPropertyName("ecs_boat_steps")] public bool EcsBoatSteps { get; set; }
+        // Off = BoatMovingManager's dictionaries. Default on since 2026-11-08 (ecs-flip-8; owner: T9 path, one full timing pass at the end of T9); the off path and the
+        // checker stay for one phase.
+        [JsonPropertyName("ecs_boat_steps")] public bool EcsBoatSteps { get; set; } = true;
 
         // Wave 1C: the small cold fields (Item LightID, IsDamageable, UsedLayer; Mobile Race, SpeedMode, IsFemale, IsRenamable;
         // the player's InWarMode) are read from the ECS record (ItemTraits, MobileTraits), which WorldWriter's operations write
