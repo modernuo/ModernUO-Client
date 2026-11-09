@@ -205,6 +205,22 @@ namespace ClassicUO.Game
             }
         }
 
+        /// <summary>
+        /// <see cref="Resolve"/> + <see cref="Draw"/> of an art record from its fields (ItemSpriteExtract.SelectDraw, the
+        /// Legacy sink's item draw): the record's position (<paramref name="missing"/>: less the placeholder's draw offset),
+        /// the atlas rect, no flip. Nothing without a texture.
+        /// </summary>
+        public static void DrawArt(UltimaBatcher2D batcher, in SpriteInfo art, int x, int y, bool missing, Vector3 hue, float depth)
+        {
+            if (art.Texture == null)
+            {
+                return;
+            }
+
+            Vector2 position = missing ? new Vector2(x - ArtOffsetX(art.UV), y - ArtOffsetY(art.UV)) : new Vector2(x, y);
+            batcher.Draw(art.Texture, position, art.UV, hue, 0f, Vector2.Zero, 1f, SpriteEffects.None, depth);
+        }
+
         /// <summary>Resolves and draws every record of <paramref name="sprites"/> in order; the number drawn.</summary>
         public static int DrawAll(UltimaBatcher2D batcher, ILegacySpriteSource src, ReadOnlySpan<DynamicSprite> sprites)
         {

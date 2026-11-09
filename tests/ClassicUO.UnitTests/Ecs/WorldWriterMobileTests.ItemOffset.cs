@@ -60,6 +60,12 @@ namespace ClassicUO.UnitTests.Ecs
                 }
 
                 ItemOffsets.Read(it).Should().Be(it.Offset, $"0x{serial:X8} read ({because})");
+
+                if (on)
+                {
+                    // the item extract's Gather: the component from the row ReadRecord holds
+                    ItemOffsets.ReadRow(it, true, EcsRead.Row(e)).Should().Be(it.Offset, $"0x{serial:X8} row read ({because})");
+                }
             }
 
             // a mobile passenger's offset is its Steps component (T6c), never an ItemOffset
@@ -241,6 +247,8 @@ namespace ClassicUO.UnitTests.Ecs
                 preview.Offset = new Vector3(4, 0, 0);
                 ItemOffsets.Read(preview).Should().Be(new Vector3(4, 0, 0));
                 (ItemOffsets.Reads, ItemOffsets.Fallbacks, ItemOffsets.Diffs).Should().Be((0L, 1L, 0L));
+                ItemOffsets.ReadRow(preview, false, default).Should().Be(new Vector3(4, 0, 0));
+                (ItemOffsets.Reads, ItemOffsets.Fallbacks, ItemOffsets.Diffs).Should().Be((0L, 2L, 0L));
 
                 ItemOffsets.Push(world, preview, new Vector3(1, 1, 1));
                 ItemOffsets.Writes.Should().Be(0, "no record to write");
