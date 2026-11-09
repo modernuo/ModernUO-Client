@@ -164,8 +164,9 @@ namespace ClassicUO.Configuration
         // the player's InWarMode) are read from the ECS record (ItemTraits, MobileTraits), which WorldWriter's operations write
         // whatever the switch. Read once at startup (CUO_ECS_SMALL_FIELDS=1|0 overrides it in developer builds).
         // CUO_SMALL_FIELDS_CHECK=1 compares the record with the GameObject's field at every read. Off = the GameObject's
-        // fields. Default off.
-        [JsonPropertyName("ecs_small_fields")] public bool EcsSmallFields { get; set; }
+        // fields. Default on since 2026-11-08 (ecs-flip-8; owner: T9 path, one full timing pass at the end of T9); the off path and the
+        // checker stay for one phase.
+        [JsonPropertyName("ecs_small_fields")] public bool EcsSmallFields { get; set; } = true;
 
         // perf-4: the static art of a container's contents and of the paperdoll's equipment slots decodes on the art workers
         // before the gump builds its item controls (ContentsArt: a request when an item goes into an open container, a
