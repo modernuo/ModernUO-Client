@@ -98,7 +98,8 @@ namespace ClassicUO.Game
                     mobile.Z,
                     (byte)mobile.Direction,
                     (byte)mobile.Flags,
-                    ReferenceEquals(mobile, _world.Player)
+                    ReferenceEquals(mobile, _world.Player),
+                    mobile
                 );
                 RestoreScalars(mobile, epochBefore, countBefore);
 
@@ -172,7 +173,7 @@ namespace ClassicUO.Game
             ItemMirrorWrites++;
             uint epochBefore = Mirror.Epoch;
             int countBefore = Mirror.Count;
-            Mirror.UpsertItem(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.Amount, v.Container, (byte)v.Layer, v.IsMulti, attach);
+            Mirror.UpsertItem(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.Amount, v.Container, (byte)v.Layer, v.IsMulti, attach, item);
             RestoreScalars(item, epochBefore, countBefore);
 
             // W5: corpses animate in World.Update (SyncItem does the same)
@@ -209,7 +210,7 @@ namespace ClassicUO.Game
             MobileMirrorWrites++;
             uint epochBefore = Mirror.Epoch;
             int countBefore = Mirror.Count;
-            EcsEntity e = Mirror.UpsertMobile(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.IsPlayer);
+            EcsEntity e = Mirror.UpsertMobile(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.IsPlayer, mobile);
             RestoreScalars(mobile, epochBefore, countBefore);
 
             return e;
@@ -477,7 +478,8 @@ namespace ClassicUO.Game
                 item.Amount,
                 item.Container,
                 (byte)item.Layer,
-                item.IsMulti
+                item.IsMulti,
+                handle: item
             );
             RestoreScalars(item, epochBefore, countBefore);
 
@@ -896,7 +898,7 @@ namespace ClassicUO.Game
 
             MobileCommitObserver?.Invoke(mobile, v);
             MobileMirrorWrites++;
-            EcsEntity e = Mirror.UpsertMobile(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.IsPlayer);
+            EcsEntity e = Mirror.UpsertMobile(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.IsPlayer, mobile);
             Mirror.CarryMobileExtras(in extras, v.Serial);
 
             if (effects)

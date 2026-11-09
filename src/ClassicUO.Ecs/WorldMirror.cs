@@ -81,6 +81,49 @@ namespace ClassicUO.Ecs
 
         public bool TryGetEntity(uint serial, out Entity entity) => _bySerial.TryGetValue(serial, out entity);
 
+        // T9 (world_entity_index): the client object each record stands for, by entity id (ClassicUO.Ecs does not know the
+        // client's types). Not a component: Friflo's DeleteEntity leaves the vacated tail uncleared, so a reference there would
+        // keep removed objects reachable, and an extra component on every record costs archetype churn (T3a).
+        private object[] _handles = new object[4096];
+
+        /// <summary>
+        /// T9 (<c>world_entity_index</c>): the client object last upserted under <paramref name="serial"/>'s record (null: no
+        /// record, or one written without a handle).
+        /// </summary>
+        public object GetHandle(uint serial)
+        {
+            if (!_bySerial.TryGetValue(serial, out Entity e))
+            {
+                return null;
+            }
+
+            int id = e.Id;
+
+            return (uint)id < (uint)_handles.Length ? _handles[id] : null;
+        }
+
+        private void SetHandle(Entity e, object handle)
+        {
+            int id = e.Id;
+
+            if (id >= _handles.Length)
+            {
+                Array.Resize(ref _handles, Math.Max(id + 1, _handles.Length * 2));
+            }
+
+            _handles[id] = handle;
+        }
+
+        private void ClearHandle(Entity e)
+        {
+            int id = e.Id;
+
+            if ((uint)id < (uint)_handles.Length)
+            {
+                _handles[id] = null;
+            }
+        }
+
         /// <summary>
         /// T4: the record under the serial when it is of the asked kind. A death-rekeyed mobile and a corpse item can share
         /// a serial, and the mirror keeps one record per serial, so a lookup by serial may find the other kind's record.
@@ -89,7 +132,7 @@ namespace ClassicUO.Ecs
             _bySerial.TryGetValue(serial, out entity) && entity.Tags.Has<MobileTag>() == mobile;
 
         /// <summary>Creates or updates a mobile's entity and returns it (the caller pushes <see cref="MobileInputs"/>).</summary>
-        public Entity UpsertMobile(uint serial, ushort graphic, ushort hue, ushort x, ushort y, sbyte z, byte facing, byte flags, bool isPlayer)
+        public Entity UpsertMobile(uint serial, ushort graphic, ushort hue, ushort x, ushort y, sbyte z, byte facing, byte flags, bool isPlayer, object handle = null)
         {
             if (!_bySerial.TryGetValue(serial, out Entity e) || !e.Tags.Has<MobileTag>())
             {
@@ -116,6 +159,11 @@ namespace ClassicUO.Ecs
                 _bySerial[serial] = e;
                 MobileCount++;
 
+                if (handle != null)
+                {
+                    SetHandle(e, handle);
+                }
+
                 // T3a: children attached under this serial before this record existed (a record replaced while its children
                 // stayed attached) are worn on it; normally none (one index lookup)
                 if (GetEquipment(serial).Count != 0)
@@ -133,6 +181,11 @@ namespace ClassicUO.Ecs
             }
 
             WriteCommon(e, graphic, hue, x, y, z, facing, flags);
+
+            if (handle != null)
+            {
+                SetHandle(e, handle);
+            }
 
             if (e.Tags.Has<PlayerTag>() != isPlayer)
             {
@@ -163,7 +216,8 @@ namespace ClassicUO.Ecs
             uint container,
             byte layer,
             bool isMulti,
-            bool attach = false
+            bool attach = false,
+            object handle = null
         )
         {
             uint oldWearer = 0;
@@ -221,6 +275,11 @@ namespace ClassicUO.Ecs
             else
             {
                 WriteCommon(e, graphic, hue, x, y, z, facing, flags);
+            }
+
+            if (handle != null)
+            {
+                SetHandle(e, handle);
             }
 
             bool moved = SetParent(e, container, layer);
@@ -352,6 +411,7 @@ namespace ClassicUO.Ecs
             }
 
             Epoch++;
+            ClearHandle(e);
             e.DeleteEntity();
 
             return true;
@@ -411,6 +471,7 @@ namespace ClassicUO.Ecs
 
             _scratch.Clear();
             _bySerial.Clear();
+            Array.Clear(_handles);
             MobileCount = 0;
             _mobileEpoch++;
             _batchWearer = 0;
