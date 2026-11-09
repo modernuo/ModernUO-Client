@@ -513,7 +513,7 @@ namespace ClassicUO.Game
                 return;
             }
 
-            if (item.IsDestroyed || !ReferenceEquals(_world.Items.Get(item.Serial), item) || !item.OnGround)
+            if (item.IsDestroyed || !_world.Holds(item) || !item.OnGround)
             {
                 return;
             }
@@ -551,7 +551,7 @@ namespace ClassicUO.Game
 
             // the instance this World holds (a destroyed one World still holds goes through, as DeleteObject's did before T1:
             // the house and parent cleanup run, World.RemoveItem then finds it destroyed and does nothing)
-            if (item.World != _world || !ReferenceEquals(_world.Items.Get(item.Serial), item))
+            if (item.World != _world || !_world.Holds(item))
             {
                 Reject(Violation.NotHeld, $"WorldWriter.RemoveWorldItem: 0x{item.Serial:X8} is not the item this World holds for its serial");
 
@@ -580,7 +580,7 @@ namespace ClassicUO.Game
                 }
 
                 // by instance: if something replaced the item under its serial meanwhile, the replacement stays
-                if (ReferenceEquals(_world.Items.Get(serial), item))
+                if (_world.Holds(item, serial))
                 {
                     _world.RemoveItem(serial, true);
                 }
@@ -1521,7 +1521,7 @@ namespace ClassicUO.Game
                 return;
             }
 
-            if (mobile.IsDestroyed || !ReferenceEquals(_world.Mobiles.Get(mobile.Serial), mobile))
+            if (mobile.IsDestroyed || !_world.Holds(mobile))
             {
                 return;
             }
@@ -3723,9 +3723,7 @@ namespace ClassicUO.Game
                 return false;
             }
 
-            return entity is Mobile mobile
-                ? ReferenceEquals(_world.Mobiles.Get(mobile.Serial), mobile)
-                : entity is Item item && ReferenceEquals(_world.Items.Get(item.Serial), item);
+            return _world.Holds(entity);
         }
 
         // T9 child-list slice B2 (Codex audit of slice B, P1): the mirror keeps one record per serial, so the parent graph the

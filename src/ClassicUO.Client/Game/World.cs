@@ -758,7 +758,7 @@ namespace ClassicUO.Game
                 Mobile dead = _destroyedMobiles[i];
 
                 // a newer mobile may hold the serial by now
-                if (ReferenceEquals(Mobiles.Get(dead.Serial), dead))
+                if (Holds(dead))
                 {
                     Mobiles.Remove(dead.Serial);
                 }
@@ -905,7 +905,7 @@ namespace ClassicUO.Game
 
                 UpdateActiveItem(item);
 
-                if (!item.NeedsFrameUpdate || !ReferenceEquals(Items.Get(item.Serial), item))
+                if (!item.NeedsFrameUpdate || !Holds(item))
                 {
                     if (source)
                     {
@@ -988,7 +988,7 @@ namespace ClassicUO.Game
             {
                 Item item = _destroyedItems[i];
 
-                if (item.IsDestroyed && Items.TryGetValue(item.Serial, out Item current) && ReferenceEquals(current, item))
+                if (item.IsDestroyed && Holds(item))
                 {
                     _toRemove.Add(item.Serial);
                 }
@@ -1123,15 +1123,9 @@ namespace ClassicUO.Game
             }
         }
 
-        public bool Contains(uint serial)
-        {
-            if (SerialHelper.IsItem(serial))
-            {
-                return Items.Contains(serial);
-            }
-
-            return SerialHelper.IsMobile(serial) && Mobiles.Contains(serial);
-        }
+        /// <summary>Whether a live object is under <paramref name="serial"/>: <see cref="Get"/>'s answer, so a destroyed object
+        /// not yet swept does not count (T9, owner decision 2026-11-08; it used to). Follows <c>world_entity_index</c>.</summary>
+        public bool Contains(uint serial) => Get(serial) != null;
 
         public Entity Get(uint serial)
         {

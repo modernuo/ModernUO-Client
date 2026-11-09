@@ -100,8 +100,7 @@ namespace ClassicUO.Game
         }
 
         // the instance World holds for the entity's serial (the one the ECS's record under that serial stands for)
-        private bool IsCurrent(Entity e) =>
-            e is Mobile ? ReferenceEquals(_world.Mobiles.Get(e.Serial), e) : ReferenceEquals(_world.Items.Get(e.Serial), e);
+        private bool IsCurrent(Entity e) => _world.Holds(e);
 
         /// <summary>T2: <c>!parent.IsEmpty</c>, from the ECS.</summary>
         public bool HasChildren(Entity parent) => !Children(parent).IsEmpty;

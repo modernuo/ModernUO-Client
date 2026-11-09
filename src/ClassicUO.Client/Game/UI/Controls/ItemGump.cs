@@ -337,7 +337,7 @@ namespace ClassicUO.Game.UI.Controls
                 return false;
             }
 
-            Item item = _gump.World.Items.Get(LocalSerial);
+            Item item = _gump.World.GetItem(LocalSerial);
             Item container;
 
             if (

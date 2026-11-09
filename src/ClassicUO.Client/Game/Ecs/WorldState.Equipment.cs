@@ -175,7 +175,7 @@ namespace ClassicUO.Game
 #if CUO_DEVTOOLS
                 FrameStats.Inc(FrameCounter.ChildLayerGets);
 #endif
-                Item it = _world.Items.Get(serial);
+                Item it = _world.GetItem(serial);
 
                 // never the parent itself (an item under a mobile's serial, worn by it: see Children)
                 if (it != null && !it.IsDestroyed && it.Layer == layer && !ReferenceEquals(it, parent))
@@ -261,7 +261,7 @@ namespace ClassicUO.Game
 #if CUO_DEVTOOLS
                 FrameStats.Inc(FrameCounter.ChildLayerGets);
 #endif
-                Item it = _world.Items.Get(serial);
+                Item it = _world.GetItem(serial);
 
                 if (it != null && !it.IsDestroyed && !ReferenceEquals(it, parent))
                 {
@@ -324,7 +324,7 @@ namespace ClassicUO.Game
                 c.Version = 0;
                 c.Entity = default;
 
-                if (!ReferenceEquals(_world.Mobiles.Get(mobile.Serial), mobile))
+                if (!_world.Holds(mobile))
                 {
                     c.Held = WornHeld.NotHeld;
                     c.Items = null;

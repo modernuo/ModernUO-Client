@@ -327,7 +327,7 @@ namespace ClassicUO.Game
             for (int i = 0; i < _due.Count; i++)
             {
                 uint serial = _due[i];
-                Item item = _world.Items.Get(serial);
+                Item item = _world.GetItem(serial);
 
                 if (item == null || item.IsDestroyed)
                 {

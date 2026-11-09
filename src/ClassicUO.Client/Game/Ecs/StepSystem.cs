@@ -277,7 +277,7 @@ namespace ClassicUO.Game
         {
             dir = 0;
 
-            if (!world.Ecs.StepsEnabled || mob.IsDestroyed || !ReferenceEquals(world.Mobiles.Get(mob.Serial), mob) ||
+            if (!world.Ecs.StepsEnabled || mob.IsDestroyed || !world.Holds(mob) ||
                 !world.Ecs.Mirror.TryGetEntity(mob.Serial, out EcsEntity e))
             {
                 Declined++;

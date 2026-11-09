@@ -66,9 +66,7 @@ namespace ClassicUO.Game.GameObjects
                 return false;
             }
 
-            Entity held = this is Mobile ? World.Mobiles.Get(_serial) : World.Items.Get(_serial);
-
-            if (!ReferenceEquals(held, this) || !World.Ecs.Mirror.TryGetEntity(_serial, this is Mobile, out e))
+            if (!World.Holds(this, _serial) || !World.Ecs.Mirror.TryGetEntity(_serial, this is Mobile, out e))
             {
                 return false;
             }

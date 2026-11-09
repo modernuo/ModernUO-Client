@@ -298,7 +298,7 @@ namespace ClassicUO.Game.Managers
                                         {
                                             if (s)
                                             {
-                                                if (_world.Mobiles.Get(serial) is { IsDestroyed: false } live)
+                                                if (_world.GetMobile(serial) is { } live)
                                                 {
                                                     graphic = live.Graphic;
                                                     x = live.X;

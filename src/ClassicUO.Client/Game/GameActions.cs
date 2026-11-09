@@ -217,7 +217,7 @@ namespace ClassicUO.Game
                 return false;
             }
 
-            Item item = world.Items.Get(serial);
+            Item item = world.GetItem(serial);
 
             if (item == null || !item.IsCorpse || item.IsDestroyed)
             {
@@ -452,7 +452,7 @@ namespace ClassicUO.Game
                 return false;
             }
 
-            Item item = world.Items.Get(serial);
+            Item item = world.GetItem(serial);
 
             if (item == null || item.IsDestroyed || item.IsMulti || item.OnGround && (item.IsLocked || item.Distance > Constants.DRAG_ITEMS_DISTANCE))
             {
