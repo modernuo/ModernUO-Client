@@ -19,6 +19,7 @@ namespace ClassicUO.UnitTests.Ecs
         {
             public World World;
             public readonly List<string> Mismatches = new List<string>();
+            public readonly List<string> HoldsDiffs = new List<string>();
         }
 
         private static Scene Build(bool index, bool check = true)
@@ -28,6 +29,7 @@ namespace ClassicUO.UnitTests.Ecs
             world.EntityIndexOverride = index;
             world.EntityIndexCheckOverride = check;
             world.EntityIndexObserver = s.Mismatches.Add;
+            world.EntityIndexHoldsObserver = s.HoldsDiffs.Add;
 
             return s;
         }
@@ -83,12 +85,25 @@ namespace ClassicUO.UnitTests.Ecs
                     }
 
                     s.World.GetIndexed(serial).Should().BeSameAs(e, $"0x{serial:X8} {because}");
+
+                    // slice 2: the kind-checked lookups and the live Contains agree with Get
+                    s.World.GetItem(serial).Should().BeSameAs(e as Item, $"0x{serial:X8} {because}");
+                    s.World.GetMobile(serial).Should().BeSameAs(e as Mobile, $"0x{serial:X8} {because}");
+                    s.World.GetIndexedItem(serial).Should().BeSameAs(e as Item, $"0x{serial:X8} {because}");
+                    s.World.GetIndexedMobile(serial).Should().BeSameAs(e as Mobile, $"0x{serial:X8} {because}");
+                    s.World.Contains(serial).Should().Be(e != null, $"0x{serial:X8} {because}");
+
+                    if (e != null)
+                    {
+                        s.World.Holds(e).Should().BeTrue(because);
+                    }
                 }
             }
 
             foreach (Scene s in scenes)
             {
                 s.Mismatches.Should().BeEmpty(because);
+                s.HoldsDiffs.Should().BeEmpty(because);
             }
         }
 
@@ -237,7 +252,115 @@ namespace ClassicUO.UnitTests.Ecs
                 s.World.Mobiles.Get(MOB).Should().BeSameAs(m);
                 s.World.Get(MOB).Should().BeSameAs(index ? shared : m);
                 s.Mismatches.Should().ContainSingle().Which.Should().Contain("tables mobile 0x00000200, index item 0x00000200");
+
+                // owner decision 2026-11-08: the serial resolves to the object holding the record. The item lookup agrees;
+                // the mobile lookup finds no mobile in the index, and the mobile's Holds guard (still the tables) differs
+                s.World.GetItem(MOB).Should().BeSameAs(shared);
+                s.World.GetMobile(MOB).Should().BeSameAs(index ? null : m);
+                s.Mismatches.Should().HaveCount(2).And.Contain(t => t.Contains("mobile: tables mobile 0x00000200, index none"));
+
+                s.HoldsDiffs.Clear();
+                s.World.Holds(m).Should().BeTrue("Holds stays on the tables");
+                s.World.Holds(shared).Should().BeTrue();
+                s.HoldsDiffs.Should().ContainSingle().Which.Should().Contain("holds mobile 0x00000200: tables yes, index item 0x00000200");
             }
+        }
+
+        [Fact]
+        public void The_Kind_Checked_Lookups_Find_Only_Their_Kind_In_Both_Switch_States()
+        {
+            foreach (bool index in new[] { false, true })
+            {
+                Scene s = Build(index);
+                Mobile m = AddMobile(s.World, MOB);
+                Item bag = AddItem(s.World, BAG);
+                long before = s.World.EntityIndexChecks;
+
+                s.World.GetMobile(MOB).Should().BeSameAs(m);
+                s.World.GetItem(MOB).Should().BeNull();
+                s.World.GetItem(BAG).Should().BeSameAs(bag);
+                s.World.GetMobile(BAG).Should().BeNull();
+                s.World.GetItem(NONE).Should().BeNull();
+                s.World.GetMobile(0).Should().BeNull();
+                s.Mismatches.Should().BeEmpty();
+                s.World.EntityIndexChecks.Should().Be(before + 6);
+            }
+        }
+
+        // owner decision 2026-11-08: World.Contains (Entity.Exists) is live, as World.Get: a destroyed object not yet swept does
+        // not exist. Holds still answers the tables, which keep it until the sweep (T9 slice 3 moves that window)
+        [Fact]
+        public void A_Destroyed_Object_Before_The_Sweep_Is_Absent_But_Still_Held()
+        {
+            foreach (bool index in new[] { false, true })
+            {
+                Scene s = Build(index);
+                Item rock = AddItem(s.World, ROCK);
+                Mobile mob = AddMobile(s.World, MOB2);
+                rock.Exists.Should().BeTrue();
+
+                s.World.RemoveItem(ROCK);
+                s.World.RemoveMobile(MOB2);
+
+                s.World.Items.Get(ROCK).Should().BeSameAs(rock, "the tables keep it until the sweep");
+                s.World.GetItem(ROCK).Should().BeNull();
+                s.World.GetMobile(MOB2).Should().BeNull();
+                s.World.Contains(ROCK).Should().BeFalse();
+                rock.Exists.Should().BeFalse();
+                s.World.Holds(rock).Should().BeTrue();
+                s.World.Holds(mob).Should().BeTrue();
+                s.Mismatches.Should().BeEmpty();
+                s.HoldsDiffs.Should().BeEmpty("the checker compares Holds for live objects only");
+            }
+        }
+
+        [Fact]
+        public void Holds_Is_By_Instance()
+        {
+            Scene s = Build(true);
+            Item old = AddItem(s.World, ROCK);
+            s.World.RemoveItem(ROCK, true);
+            Item fresh = AddItem(s.World, ROCK);
+
+            s.World.Holds(fresh).Should().BeTrue();
+            s.World.Holds(old).Should().BeFalse("replaced under its serial");
+            s.World.Holds(null).Should().BeFalse();
+            s.World.Holds(fresh, BAG).Should().BeFalse("not under another serial");
+            s.World.Holds(s.World.Player).Should().BeTrue();
+            s.HoldsDiffs.Should().BeEmpty();
+            s.World.EntityIndexHoldsChecks.Should().BeGreaterThan(0);
+        }
+
+        [Fact]
+        public void The_Checker_Reports_A_Kind_Checked_Lookup_In_The_Creation_Window_And_Counts_The_Uncommitted_Guard()
+        {
+            foreach (bool index in new[] { false, true })
+            {
+                Scene s = Build(index);
+                Item item = s.World.GetOrCreateItem(NONE, out bool isNew);
+                isNew.Should().BeTrue();
+
+                s.World.GetItem(NONE).Should().BeSameAs(index ? null : item);
+                s.Mismatches.Should().ContainSingle().Which.Should().Contain("item: tables item 0x40007777, index none");
+
+                long uncommitted = s.World.EntityIndexHoldsUncommitted;
+                s.World.Holds(item).Should().BeTrue();
+                s.World.EntityIndexHoldsUncommitted.Should().Be(uncommitted + 1);
+                s.HoldsDiffs.Should().BeEmpty("an uncommitted object is counted, not reported");
+            }
+        }
+
+        [Fact]
+        public void Without_The_Checker_The_Kind_Checked_Lookups_And_Holds_Compare_Nothing()
+        {
+            Scene s = Build(true, check: false);
+            Item item = s.World.GetOrCreateItem(NONE, out _);
+
+            s.World.GetItem(NONE).Should().BeNull();
+            s.World.GetMobile(PLAYER).Should().BeSameAs(s.World.Player);
+            s.World.Holds(item).Should().BeTrue();
+            s.World.EntityIndexChecks.Should().Be(0);
+            s.World.EntityIndexHoldsChecks.Should().Be(0);
         }
 
         [Fact]
