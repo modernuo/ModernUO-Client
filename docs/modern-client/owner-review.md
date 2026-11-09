@@ -178,9 +178,9 @@ All merged and pushed, and each audited by Codex until clean or down to document
     - serial-scheme flexibility (a proposal only);
     - ServUO damageable items (item serials, hits via 0x11/0xA1; our client already accepts them);
     - the remaining ECS roadmap (waves 1–3).
-  - **Accepted by me; please confirm:**
-    1. The shared-serial loss rule now also covers an item's boat `ItemOffset`: it reads zero until the next boat write (b412884bd).
-    2. Effects:
+  - **Accepted by me; please confirm:** *(items 1 and 2 confirmed 2026-11-09, see your answers below)*
+    1. The shared-serial loss rule now also covers an item's boat `ItemOffset`: it reads zero until the next boat write (b412884bd). **Confirmed 2026-11-09.**
+    2. **Confirmed 2026-11-09.** Effects:
        - On a double death under one serial, the displaced mobile's effects end; the old path kept following its object. The mirror record is updated in place, for parity.
        - Friflo's 16-bit handle revision wrap is documented as a bound (it needs 65,536 deletes of one id between two effect updates) instead of a per-record generation token.
     3. Gump-handles behaviour changes:
@@ -208,6 +208,11 @@ All merged and pushed, and each audited by Codex until clean or down to document
     - **The quiet window (2026-11-08):** you made the machine quiet for one timing pass (series quiet-1108 and two bisect passes, bench-000416..429; poc-log "quiet-1108"). Result: the tip is equal to or better than before the 2026-11-07 run, and the cost against the start of the ECS read conversion is a **gradual dual-path cost** with no single culprit (Gpu large scene about +0.07–0.14 ms frame, mostly world_prepare; Legacy world_prepare +0.05–0.27 ms with the frame equal or better). Wave 0: `world_tile_index` may go on by default with its Legacy world_prepare cost recorded; `legacy_ecs_sprites` stays off until its draw path is fixed (+20–23 % Legacy large-scene frame when on).
     - **Note, no answer needed (perf-alloc-5):** plugin movement calls (`RequestMove`, `WalkTo`) are main-thread only; a plugin calling them from its own thread races the pathfinder's buffers and `Player.Walk`'s world writes, as it already did before perf-alloc-5 reused the buffers. Marshalling plugin entry points onto the game thread is a possible later item.
     - **You agreed:** the gradual ECS cost is in accepted-costs.md as "re-measure after T9"; T9 and the known fixes run concurrently now, with no per-fix quiet timing; one full timing pass at the end of T9 with the switches settled.
+    - **T9 world index (2026-11-08), both as recommended:**
+      - **Shared serial in the entity index: accepted.** An item and a mobile under one serial resolve to whichever object holds the record (written last); a re-key replaces the handle. Only a misbehaving server sends an item under a mobile's serial (servers-not-hostile rule); pinned by a test and reported by `CUO_ENTITY_INDEX_CHECK`.
+      - **`World.Contains`/`Entity.Exists` are "live":** a destroyed object not yet swept does not exist, matching `World.Get`. Done in slice 2 (ffb1728b9); its only caller, `Item.GetTotalAmount`, sees no change.
+  - **Your answers (2026-11-09):**
+    - **The 2026-11-07 "please confirm" items 1 and 2: accepted.** The boat `ItemOffset` reads zero after a shared-serial re-creation until the next boat write; on a double death the displaced mobile's effects end, and Friflo's 16-bit revision wrap stays a documented bound. The `ecs_item_offset`, `ecs_effect_endpoints` and `ecs_effect_motion` flips stand (ecs-flip-8, merged ca89426bc). Items 3 and 4 have no answer yet.
 
 - **Autonomous run of 2026-11-02** (you away; the machine is busy, so timing is parked). For you when you're back:
   - **Parked timing** (resubmit when quiet; list in `cuo-poc-state/handoffs/parked-timing.txt`): fix A off/on, which decides whether `world_tile_index` goes on by default; the picker flat table; the pick-bounds follow-ups; T7b part 1.
