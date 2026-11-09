@@ -217,8 +217,9 @@ namespace ClassicUO.Configuration
         // render-list position, instead of GameEffectView.Draw; lightning stays on its view. Its own switch, not
         // legacy_ecs_sprites/gpu_ecs_sprites: it needs ecs_effects (the state) and flips with the effect work. CUO_EFFECT_SPRITE_CHECK=1
         // compares the view's draw with the extract's for every effect, every frame. Read every frame (dev builds:
-        // CUO_ECS_EFFECT_SPRITES=1|0, DevBench effectsprites:on|off). Default off.
-        [JsonPropertyName("ecs_effect_sprites")] public bool EcsEffectSprites { get; set; }
+        // CUO_ECS_EFFECT_SPRITES=1|0, DevBench effectsprites:on|off). Default on since 2026-11-08 (ecs-flip-8; owner: T9 path, one full timing pass at the end of T9); the off path and the
+        // checker stay for one phase.
+        [JsonPropertyName("ecs_effect_sprites")] public bool EcsEffectSprites { get; set; } = true;
 
         // W5: the per-frame overhead text pass skips the text layout of mobiles and corpses whose texts have all expired
         // (expired texts stay in the entity's container; the layout would place nothing). Off = laid out every frame.

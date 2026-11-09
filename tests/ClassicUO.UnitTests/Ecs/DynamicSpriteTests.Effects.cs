@@ -408,7 +408,7 @@ namespace ClassicUO.UnitTests.Ecs
             Assert.False(EffectSpriteSink.Resolve(true, null, false, true));
             Assert.True(EffectSpriteSink.Resolve(true, true, false, false));
             Assert.False(EffectSpriteSink.Resolve(true, false, true, true));
-            Assert.False(new ClassicUO.Configuration.Settings().EcsEffectSprites);
+            Assert.True(new ClassicUO.Configuration.Settings().EcsEffectSprites);
         }
 
         [Fact]
