@@ -61,7 +61,7 @@ namespace ClassicUO.Game.Managers
             sbyte z
         )
         {
-            Item item = _world.Items.Get(serial);
+            Item item = _world.GetItem(serial);
 
             if (item == null || item.IsDestroyed)
             {
@@ -370,7 +370,7 @@ namespace ClassicUO.Game.Managers
                 {
                     ref BoatStep step = ref deques.Front();
 
-                    Item item = _world.Items.Get(step.Serial);
+                    Item item = _world.GetItem(step.Serial);
 
                     if (item == null || item.IsDestroyed)
                     {
@@ -521,7 +521,7 @@ namespace ClassicUO.Game.Managers
 
             foreach (uint serial in _steps.Keys)
             {
-                Item item = _world.Items.Get(serial);
+                Item item = _world.GetItem(serial);
 
                 if (item == null || item.IsDestroyed)
                 {
@@ -544,7 +544,7 @@ namespace ClassicUO.Game.Managers
 
         private void CompareBoat(uint serial)
         {
-            Item item = _world.Items.Get(serial);
+            Item item = _world.GetItem(serial);
 
             if (item == null || item.IsDestroyed)
             {

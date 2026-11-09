@@ -470,7 +470,7 @@ namespace ClassicUO.Game.UI.Gumps
                 return;
             }
 
-            Item item = World.Items.Get(LocalSerial);
+            Item item = World.GetItem(LocalSerial);
 
             if (item == null || item.IsDestroyed)
             {

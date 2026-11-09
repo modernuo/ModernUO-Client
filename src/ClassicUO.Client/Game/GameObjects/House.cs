@@ -142,7 +142,7 @@ namespace ClassicUO.Game.GameObjects
 
         public void ClearComponents(bool removeCustomOnly = false)
         {
-            Item item = _world.Items.Get(Serial);
+            Item item = _world.GetItem(Serial);
 
             if (item != null && !item.IsDestroyed)
             {

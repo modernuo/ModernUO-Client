@@ -219,15 +219,7 @@ namespace ClassicUO.Game
         }
 
         // only the instance World holds for its serial is world state (WorldEcs.Sync ignores every other one)
-        private static bool IsHeld(World world, Entity e, uint serial)
-        {
-            if (e is Item)
-            {
-                return ReferenceEquals(world.Items.Get(serial), e);
-            }
-
-            return ReferenceEquals(world.Mobiles.Get(serial), e);
-        }
+        private static bool IsHeld(World world, Entity e, uint serial) => world.Holds(e, serial);
 
         // the first frame that is not a property setter, this class or the funnel itself
         private static string Caller()

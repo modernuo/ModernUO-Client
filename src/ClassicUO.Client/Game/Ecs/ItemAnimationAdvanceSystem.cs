@@ -126,7 +126,7 @@ namespace ClassicUO.Game
             // one record read for the eligibility, the reads and the write-back (nothing below changes the archetype)
             EcsRow row = EcsRead.Row(e);
 
-            if (row.IsNull || !row.Has<AnimationTimer>() || !row.Has<ItemData>() || !ReferenceEquals(world.Items.Get(item.Serial), item))
+            if (row.IsNull || !row.Has<AnimationTimer>() || !row.Has<ItemData>() || !world.Holds(item))
             {
                 Declined++;
 

@@ -401,7 +401,7 @@ namespace ClassicUO.Configuration
 
                     if (gump.LocalSerial != 0)
                     {
-                        Item item = world.Items.Get(gump.LocalSerial);
+                        Item item = world.GetItem(gump.LocalSerial);
 
                         if (item != null && !item.IsDestroyed && item.Opened)
                         {

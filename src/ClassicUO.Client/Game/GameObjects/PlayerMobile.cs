@@ -302,7 +302,7 @@ namespace ClassicUO.Game.GameObjects
                 {
                     Item item = World.ActiveItemAt(i);
 
-                    if (ShouldAutoOpen(item, range) && ReferenceEquals(World.Items.Get(item.Serial), item))
+                    if (ShouldAutoOpen(item, range) && World.Holds(item))
                     {
                         single = item;
 
@@ -409,7 +409,7 @@ namespace ClassicUO.Game.GameObjects
                  obj != null;
                  obj = reader.Next())
             {
-                if (obj is Item item && IsDoorAt(item, x, y, z, data) && ReferenceEquals(world.Items.Get(item.Serial), item))
+                if (obj is Item item && IsDoorAt(item, x, y, z, data) && world.Holds(item))
                 {
                     return true;
                 }
