@@ -122,7 +122,7 @@ namespace ClassicUO.Game
     }
 
     /// <summary>
-    /// T6c (<c>world_step_system</c>): <c>Mobile.ProcessSteps(evaluate: true)</c> as a system over the mobile's
+    /// T6c: <c>Mobile.ProcessSteps(evaluate: true)</c> as a system over the mobile's
     /// <see cref="StepsComponent"/> and its <see cref="Position"/>/<see cref="Facing"/> record. Runs per due mobile in the
     /// Mobiles stage, in table order, at the point <c>Mobile.Update</c> ran ProcessSteps, so footstep sounds, the frame
     /// advance and the random draws keep their order. The results go through the funnel: <c>WorldWriter.InterpolateStep</c>

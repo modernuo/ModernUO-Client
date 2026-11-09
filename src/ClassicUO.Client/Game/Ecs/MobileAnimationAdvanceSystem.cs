@@ -342,7 +342,7 @@ namespace ClassicUO.Game
     }
 
     /// <summary>
-    /// T5b (<c>world_anim_system</c>): runs a due mobile's <c>Mobile.Update</c> in the ECS when it has no queued steps and no
+    /// T5b: runs a due mobile's <c>Mobile.Update</c> in the ECS when it has no queued steps and no
     /// handles opening (its <see cref="MobileClock"/> flags are clear): <see cref="AnimationAdvanceRules.Step{TAnims}"/> over
     /// its <see cref="AnimationTimer"/>, then the results through the funnel (<c>WorldWriter.AdvanceAnimationFromEcs</c>:
     /// the Mobile's cached fields, a dying mobile's removal). The caller runs the due mobiles in table order and calls
@@ -351,14 +351,15 @@ namespace ClassicUO.Game
     internal sealed class MobileAnimationAdvanceSystem
     {
 #if CUO_DEVTOOLS
-        // CLEANUP(release): CUO_ANIM_ADVANCE_CHECK=1: each advance is compared with the legacy one on a shadow timer (see Check)
+        // CLEANUP(release): CUO_ANIM_ADVANCE_CHECK=1: the component must equal the Mobile's timer before each advance (see
+        // Check). T9 deleted world_anim_system's off path and with it the comparison with a shadow of the legacy advance.
         public static readonly bool AdvanceCheck = Environment.GetEnvironmentVariable("CUO_ANIM_ADVANCE_CHECK") == "1";
 #else
         public const bool AdvanceCheck = false;
 #endif
 
         public static long Ran, Declined;
-        public static long Checks, Diffs, SyncChecks, SyncDiffs, RandomDiffs;
+        public static long SyncChecks, SyncDiffs;
         private static int _logged;
 
         /// <summary>
@@ -409,7 +410,7 @@ namespace ClassicUO.Game
 #if CUO_DEVTOOLS
             if (check)
             {
-                Check(mob, in t, in inp, in eq, in source);
+                Check(mob, in t);
             }
 #endif
 
@@ -422,15 +423,8 @@ namespace ClassicUO.Game
         // ---- the checker -------------------------------------------------------------------------------------------------
 
 #if CUO_DEVTOOLS
-        /// <summary>
-        /// CUO_ANIM_ADVANCE_CHECK: the component must equal the Mobile's fields (a missed push otherwise); the legacy advance
-        /// (the legacy idle planner and inputs read from the Mobile, the legacy selection input, the Mobile's direction, the
-        /// old operation's step) runs on a shadow copy of the timer from the same random state as the ECS one, and the two
-        /// timers, the removal and the random state after them must be equal. The ECS run that follows starts from the same
-        /// state, so the client's draws are unchanged.
-        /// </summary>
-        private static void Check<TAnims>(Mobile mob, in AnimationTimer component, in MobileInputs inp, in EquipmentSlots eq, in TAnims source)
-            where TAnims : struct, IAnimationAdvanceSource
+        /// <summary>CUO_ANIM_ADVANCE_CHECK: the component must equal the Mobile's fields (a missed push otherwise).</summary>
+        private static void Check(Mobile mob, in AnimationTimer component)
         {
             AnimationTimer legacy = mob.FullAnimationTimer;
             SyncChecks++;
@@ -440,148 +434,6 @@ namespace ClassicUO.Game
                 SyncDiffs++;
                 Log1($"component of 0x{mob.Serial:X8} differs from the Mobile: ecs {Describe(in component)} | mobile {Describe(in legacy)}");
             }
-
-            RandomHelper.State start = RandomHelper.Save();
-            AnimationTimer shadow = legacy;
-            AnimAdvanceOutcome legacyOutcome = LegacyShadowStep(mob, ref shadow, out int legacyFrame, out long legacyDue);
-            RandomHelper.State afterLegacy = RandomHelper.Save();
-            RandomHelper.Restore(in start);
-
-            AnimationTimer ecs = component;
-            AnimAdvanceOutcome ecsOutcome = AnimationAdvanceRules.Step(ref ecs, in inp, in eq, mob.Serial, in source, out int ecsFrame, out long ecsDue);
-            RandomHelper.State afterEcs = RandomHelper.Save();
-            RandomHelper.Restore(in start);
-
-            Checks++;
-
-            if (!afterLegacy.Equals(afterEcs))
-            {
-                RandomDiffs++;
-                Log1($"0x{mob.Serial:X8} g=0x{mob.Graphic:X4}: the ECS advance drew a different random sequence than the legacy one");
-            }
-
-            bool removeSame = legacyOutcome == ecsOutcome && (ecsOutcome != AnimAdvanceOutcome.Remove || (legacyFrame == ecsFrame && legacyDue == ecsDue));
-
-            if (!removeSame || !Same(in ecs, in shadow))
-            {
-                Diffs++;
-                Log1($"advance of 0x{mob.Serial:X8} g=0x{mob.Graphic:X4} body=0x{inp.Body:X4} (tick {Time.Ticks}): ecs {ecsOutcome} {Describe(in ecs)} | legacy {legacyOutcome} {Describe(in shadow)}");
-            }
-        }
-
-        /// <summary>
-        /// The legacy <c>Mobile.Update</c> of a mobile without steps on a shadow timer: <c>Mobile.PlanIdleAnimation</c> (the
-        /// Mobile's own inputs and group; its timer equals the shadow when this starts) and <c>ApplyIdle</c>, then
-        /// <c>AdvanceFrame</c> with the Mobile's inputs (<c>GetAnimGroupInput</c> with the shadow's group, <c>Direction</c>,
-        /// <c>LastStepTime</c>, the step queue) and the <c>AdvanceAnimation</c> operation's step. The writes are transcribed
-        /// from the base revision's Mobile and WorldWriter onto the shadow; nothing on the Mobile changes.
-        /// </summary>
-        private static AnimAdvanceOutcome LegacyShadowStep(Mobile m, ref AnimationTimer t, out int frame, out long due)
-        {
-            frame = -1;
-            due = 0;
-
-            if (t.IdleDue < Time.Ticks)
-            {
-                m.PlanIdleAnimationLive(out Mobile.IdlePlan plan);
-                t.IdleDue = plan.IdleDue;
-
-                if (plan.Resets)
-                {
-                    t.Frame = 0;
-                    t.FrameCount = 0;
-                    t.Interval = 1;
-                    t.RepeatMode = 1;
-                    t.RepeatModeCount = 1;
-                    t.Forward = true;
-                    t.Repeat = false;
-                    t.FromServer = true;
-
-                    if (plan.Group == Mobile.IdleGroup.Set)
-                    {
-                        t.Group = plan.Value;
-                    }
-                    else if (plan.Group == Mobile.IdleGroup.SetAnimation)
-                    {
-                        ShadowSetAnimation(ref t, plan.Value);
-                    }
-                }
-            }
-
-            if (t.AnimDue >= Time.Ticks || !t.ExecuteAnimation || (m.LastStepTime > Time.Ticks - Constants.WALKING_DELAY && m.Steps.Count == 0))
-            {
-                return AnimAdvanceOutcome.NotAdvanced;
-            }
-
-            Animations animations = Client.Game.UO.Animations;
-            ushort id = m.GetGraphicForAnimation();
-            AnimGroupInput input = m.GetAnimGroupInput();
-            input.ServerGroup = t.Group;
-            input.FromServer = t.FromServer;
-            byte action = AnimationGroupRules.Select(in input, id, true, animations);
-
-            byte dir = (byte)((byte)m.Direction & 7);
-            bool mirror = false;
-            animations.GetAnimDirection(ref dir, ref mirror);
-            int frameCount = 0;
-
-            if (id < animations.MaxAnimationCount && dir < 5)
-            {
-                frameCount = animations.GetAnimationFrames(id, action, dir, out _, out _).Length;
-            }
-
-            bool dead = (m.Serial & 0x8000_0000) != 0;
-            int delay = Constants.CHARACTER_ANIMATION_DELAY;
-            bool remove = dead;
-
-            if (frameCount > 0)
-            {
-                AnimationTimer timer = t;
-                delay = AnimationTiming.Advance(ref timer, frameCount, out AnimationAdvance advance);
-                remove = dead && advance == AnimationAdvance.Wrapped;
-                frame = timer.Frame;
-                t.FrameCount = timer.FrameCount;
-                t.RepeatMode = timer.RepeatMode;
-                t.RepeatModeCount = timer.RepeatModeCount;
-                t.Repeat = timer.Repeat;
-
-                if (advance == AnimationAdvance.Finished)
-                {
-                    ShadowSetAnimation(ref t, 0xFF);
-                }
-            }
-
-            due = Time.Ticks + delay;
-
-            if (remove)
-            {
-                return AnimAdvanceOutcome.Remove;
-            }
-
-            if (frame >= 0)
-            {
-                t.Frame = (byte)frame;
-            }
-
-            t.AnimDue = due;
-
-            return AnimAdvanceOutcome.Advanced;
-        }
-
-        // the base revision's Mobile.SetAnimation(id) with its defaults, on the shadow
-        private static void ShadowSetAnimation(ref AnimationTimer t, byte id)
-        {
-            t.Group = id;
-            t.Frame = 0;
-            t.Interval = 0;
-            t.FrameCount = 0;
-            t.RepeatMode = 0;
-            t.RepeatModeCount = 0;
-            t.Repeat = false;
-            t.Forward = false;
-            t.FromServer = false;
-            t.AnimDue = Time.Ticks;
-            t.IdleDue = Time.Ticks + (30000 + RandomHelper.GetValue(0, 30000));
         }
 #endif
 
@@ -603,6 +455,6 @@ namespace ClassicUO.Game
 
         /// <summary>The checker and system counters for the periodic log line.</summary>
         internal static string Summary() =>
-            $"[anim-advance-check] ecs advances {Ran}, declined to Mobile.Update {Declined}; checked {Checks}, {Diffs} different, {RandomDiffs} random sequences different; component syncs checked {SyncChecks}, {SyncDiffs} different";
+            $"[anim-advance-check] ecs advances {Ran}, declined to Mobile.Update {Declined}; component syncs checked {SyncChecks}, {SyncDiffs} different";
     }
 }

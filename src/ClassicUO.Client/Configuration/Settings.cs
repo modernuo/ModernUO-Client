@@ -136,26 +136,7 @@ namespace ClassicUO.Configuration
         // batcher calls with the sink's. Read every frame (dev builds: CUO_LEGACY_ECS_SPRITES=1|0 overrides). Default off.
         [JsonPropertyName("legacy_ecs_sprites")] public bool LegacyEcsSprites { get; set; }
 
-        // T5b: a due mobile without queued steps or a handles opening has its idle animation
-        // and frame advance computed in the ECS (MobileAnimationAdvanceSystem over AnimationTimer, MobileInputs and
-        // EquipmentSlots) instead of Mobile.Update; mobiles with steps or handles still run Mobile.Update until T6. Read once
-        // at startup (CUO_WORLD_ANIM_SYSTEM=1|0 overrides it in developer builds). CUO_ANIM_ADVANCE_CHECK=1 compares every
-        // advance with the legacy one. Default on since 2026-11-02 (owner, after the quiet-machine per-switch timing bench-000206/207/208: timing-neutral on both renderers); the off path and the checker stay for one phase.
-        [JsonPropertyName("world_anim_system")] public bool WorldAnimSystem { get; set; } = true;
-
-        // T5b-items: a due corpse's frame advance (Item.ProcessAnimation) is computed in the
-        // ECS (ItemAnimationAdvanceSystem over AnimationTimer and ItemData). Separate from world_anim_system so the two halves
-        // are gated and rolled back apart. Read once at startup (CUO_WORLD_ITEM_ANIM_SYSTEM=1|0 overrides it in developer
-        // builds). CUO_ANIM_ADVANCE_CHECK=1 compares every advance with the legacy one. Default on since 2026-11-02 (owner, after the quiet-machine per-switch timing bench-000206/207/208: timing-neutral on both renderers); the off path and the checker stay for one phase.
-        [JsonPropertyName("world_item_anim_system")] public bool WorldItemAnimSystem { get; set; } = true;
-
-        // T6c: a due mobile's step processing (Mobile.ProcessSteps: the walk offset, the
-        // step completion through the funnel, the player's walker bookkeeping) runs as StepSystem over its Steps component.
-        // Read once at startup (CUO_WORLD_STEP_SYSTEM=1|0 overrides it in developer builds). CUO_STEP_CHECK=1 compares the
-        // component and the decision with the Mobile's. Default on since 2026-11-02 (owner, after the quiet-machine per-switch timing bench-000206/207/208: timing-neutral on both renderers); the off path and the checker stay for one phase.
-        [JsonPropertyName("world_step_system")] public bool WorldStepSystem { get; set; } = true;
-
-        // T6c follow-up (with world_step_system): the step system's mounted pace (Mobile.IsMounted, the fast-unmount speed
+        // T6c follow-up: the step system's mounted pace (Mobile.IsMounted, the fast-unmount speed
         // modes, IsFlying) is read from the ECS (EquipmentSlots.Mounted, rebuilt when dirty; MobileInputs.SpeedMode and its
         // Flying bit, pushed by their operations) instead of from the Mobile. Read once at startup
         // (CUO_ECS_STEP_MOUNT_INPUTS=1|0 overrides it in developer builds). CUO_STEP_MOUNT_CHECK=1 compares the two at every
@@ -190,23 +171,11 @@ namespace ClassicUO.Configuration
         // Read at every use (CUO_ART_CONTAINER_PREFETCH=1|0 overrides it in developer builds). Default off.
         [JsonPropertyName("art_container_prefetch")] public bool ArtContainerPrefetch { get; set; }
 
-        // T5c (ecs-transition-plan.md): the 50 ms range sweep and the world-map pass run as a system over the ECS (Position, with
-        // the last step's tile for stepping mobiles; MobileInputs.Notoriety plus the party list), removing through the funnel in
-        // table order, instead of the loops' own distance tests. CUO_SWEEP_CHECK=1 compares the two. Read once at startup.
-        // Default on since 2026-11-02 (owner, after the quiet-machine per-switch timing bench-000206/207/208: timing-neutral on both renderers); the off path and the checker stay for one phase.
-        [JsonPropertyName("world_sweep_system")] public bool WorldSweepSystem { get; set; } = true;
-
         // T6b (ecs-transition-plan.md, T6): items and mobiles are also filed per tile in Chunk.Dynamic (DynamicTileIndex, sorted by
         // T6a's key stored at insertion), and the world walks of both renderers (AddTileToRenderList, the Gpu prepare's mobile
         // list, the item cache's served runs) read the tile list's other objects merged with it. CUO_TILE_ORDER_CHECK compares the
         // merged order with the list. Read once at startup (dev builds: CUO_WORLD_TILE_INDEX=1|0 overrides). Default off.
         [JsonPropertyName("world_tile_index")] public bool WorldTileIndex { get; set; }
-
-        // T5d (ecs-transition-plan.md): the per-frame item update list is owned by the ECS side: membership is the ItemActive tag,
-        // the visiting order is the system's list (same add and swap-remove rules as before). CUO_ACTIVE_ITEMS_CHECK=1 compares
-        // tags and list every frame. Read once at startup (CUO_WORLD_ACTIVE_ITEMS_SYSTEM=1|0 overrides it in developer builds).
-        // Default on since 2026-11-02 (owner, after the quiet-machine per-switch timing bench-000206/207/208: timing-neutral on both renderers); the off path and the checker stay for one phase.
-        [JsonPropertyName("world_active_items_system")] public bool WorldActiveItemsSystem { get; set; } = true;
 
         // T9 (ecs-transition-plan.md §T5d): the ECS is the source of the per-frame item update list: one ActiveItemEntry entity per
         // listed item holds the item and its visiting slot (append, swap-remove), and the active item stage visits the order

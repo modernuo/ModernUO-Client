@@ -76,14 +76,6 @@ namespace ClassicUO.UnitTests.Ecs
             return true;
         }
 
-        private static bool LegacyDue(Item corpse, FakeCorpseSource src, out int frame, out long due)
-        {
-            frame = -1;
-            due = 0;
-
-            return corpse.LastAnimationChangeTime < Time.Ticks && LegacyCorpse(corpse, src, out frame, out due);
-        }
-
         private static World BuildT5bItem(int layer, bool usedLayer, ushort body, byte start = 99)
         {
             World world = BuildCorpse(Start.Standing);
@@ -117,7 +109,7 @@ namespace ClassicUO.UnitTests.Ecs
             }
         }
 
-        // the checker's counters are static (shared with other tests): compare before and after
+        // the counters are static (shared with other tests): compare before and after
         [Theory]
         [MemberData(nameof(T5bItemCases))]
         public void The_Ecs_Corpse_Advance_Equals_The_Legacy_ProcessAnimation(int layer, bool usedLayer, ushort body, byte start)
@@ -128,15 +120,14 @@ namespace ClassicUO.UnitTests.Ecs
             Item a = oldWorld.Items.Get(CORPSE), b = newWorld.Items.Get(CORPSE);
             var src = new FakeCorpseSource { Max = 1000 };
             var system = new ItemAnimationAdvanceSystem();
-            long diffs = ItemAnimationAdvanceSystem.Diffs, syncs = ItemAnimationAdvanceSystem.SyncDiffs, rnd = ItemAnimationAdvanceSystem.RandomDiffs;
-            long checks = ItemAnimationAdvanceSystem.Checks, ran = ItemAnimationAdvanceSystem.Ran;
+            long syncs = ItemAnimationAdvanceSystem.SyncDiffs, syncChecks = ItemAnimationAdvanceSystem.SyncChecks, ran = ItemAnimationAdvanceSystem.Ran;
             int advanced = 0;
 
             for (int i = 1; i <= 60; i++)
             {
                 Time.Ticks = NOW + (uint)(i * 40);
                 bool oldAdvanced = false;
-                Pair(() => oldAdvanced = OldProcess(a, src), () => system.TryRun(newWorld, b, src, true, (Item it, out int f, out long d) => LegacyDue(it, src, out f, out d)).Should().BeTrue());
+                Pair(() => oldAdvanced = OldProcess(a, src), () => system.TryRun(newWorld, b, src, true).Should().BeTrue());
                 AssertSameWorld(oldWorld, newWorld);
                 (b.AnimIndex, b.LastAnimationChangeTime).Should().Be((a.AnimIndex, a.LastAnimationChangeTime), $"tick {i}");
                 newWorld.Ecs.Mirror.TryGetEntity(CORPSE, false, out EcsEntity e).Should().BeTrue();
@@ -147,10 +138,8 @@ namespace ClassicUO.UnitTests.Ecs
             Time.Ticks = NOW;
             advanced.Should().BeGreaterThan(5);
             (ItemAnimationAdvanceSystem.Ran - ran).Should().Be(advanced);
-            (ItemAnimationAdvanceSystem.Checks - checks).Should().Be(60);
-            (ItemAnimationAdvanceSystem.Diffs - diffs).Should().Be(0);
+            (ItemAnimationAdvanceSystem.SyncChecks - syncChecks).Should().Be(60);
             (ItemAnimationAdvanceSystem.SyncDiffs - syncs).Should().Be(0);
-            (ItemAnimationAdvanceSystem.RandomDiffs - rnd).Should().Be(0);
             newWorld.Writer.Violations.Should().Be(0);
             newWorld.Writer.InScope.Should().BeFalse();
         }
@@ -166,7 +155,7 @@ namespace ClassicUO.UnitTests.Ecs
             for (int i = 1; i <= 40; i++)
             {
                 Time.Ticks = NOW + (uint)(i * 100);
-                system.TryRun(world, corpse, src, false, null).Should().BeTrue();
+                system.TryRun(world, corpse, src, false).Should().BeTrue();
             }
 
             Time.Ticks = NOW;
@@ -185,24 +174,24 @@ namespace ClassicUO.UnitTests.Ecs
             Time.Ticks = NOW + 500;
 
             // not a corpse, or without the timer (the switch was off when its record was written)
-            system.TryRun(world, loot, src, false, null).Should().BeFalse();
+            system.TryRun(world, loot, src, false).Should().BeFalse();
 
             // handles that just opened are Entity.Update's work
             corpse.ObjectHandlesStatus = ObjectHandlesStatus.OPEN;
-            system.TryRun(world, corpse, src, false, null).Should().BeFalse();
+            system.TryRun(world, corpse, src, false).Should().BeFalse();
             corpse.ObjectHandlesStatus = ObjectHandlesStatus.NONE;
             long due = corpse.LastAnimationChangeTime;
-            system.TryRun(world, corpse, src, false, null).Should().BeTrue();
+            system.TryRun(world, corpse, src, false).Should().BeTrue();
             corpse.LastAnimationChangeTime.Should().BeGreaterThan(due);
 
             // a world whose switch never ran has no component on its corpse
             World off = BuildCorpse(Start.Standing);
             Item plain = off.Items.Get(CORPSE);
-            system.TryRun(off, plain, src, false, null).Should().BeFalse();
+            system.TryRun(off, plain, src, false).Should().BeFalse();
 
             // destroyed
             corpse.Destroy();
-            system.TryRun(world, corpse, src, false, null).Should().BeFalse();
+            system.TryRun(world, corpse, src, false).Should().BeFalse();
             Time.Ticks = NOW;
         }
 
@@ -214,7 +203,7 @@ namespace ClassicUO.UnitTests.Ecs
             World world = BuildT5bItem(3, false, 400);
             Item first = world.Items.Get(CORPSE);
             Time.Ticks = NOW + 500;
-            system.TryRun(world, first, src, false, null).Should().BeTrue();
+            system.TryRun(world, first, src, false).Should().BeTrue();
             byte firstFrame = first.AnimIndex;
 
             first.Destroy();
@@ -230,11 +219,11 @@ namespace ClassicUO.UnitTests.Ecs
             world.Ecs.Sync(second);
 
             // the stale instance never reaches the new record; the new one runs from its own fields
-            system.TryRun(world, first, src, false, null).Should().BeFalse();
+            system.TryRun(world, first, src, false).Should().BeFalse();
             first.AnimIndex.Should().Be(0);
             world.Ecs.Mirror.TryGetEntity(CORPSE, false, out EcsEntity e).Should().BeTrue();
             ItemAnimationAdvanceSystem.Same(e.GetComponent<AnimationTimer>(), second.CorpseTimer).Should().BeTrue();
-            system.TryRun(world, second, src, false, null).Should().BeTrue();
+            system.TryRun(world, second, src, false).Should().BeTrue();
             second.AnimIndex.Should().NotBe(99);
             second.AnimIndex.Should().BeLessThan(7);
             firstFrame.Should().BeLessThan(7);
@@ -268,7 +257,7 @@ namespace ClassicUO.UnitTests.Ecs
             ItemAnimationAdvanceSystem.Same(e.GetComponent<AnimationTimer>(), before).Should().BeTrue("a stale instance's push is ignored");
 
             Time.Ticks = NOW + 500;
-            system.TryRun(world, stale, src, false, null).Should().BeFalse();
+            system.TryRun(world, stale, src, false).Should().BeFalse();
             Time.Ticks = NOW;
         }
 
@@ -287,7 +276,7 @@ namespace ClassicUO.UnitTests.Ecs
             Time.Ticks = NOW + 500;
             int mobileFrame = m.AnimIndex;
 
-            system.TryRun(world, corpse, src, false, null).Should().BeTrue();
+            system.TryRun(world, corpse, src, false).Should().BeTrue();
             m.AnimIndex.Should().Be((byte)mobileFrame);
             corpse.AnimIndex.Should().NotBe(99);
             world.Ecs.Mirror.TryGetEntity(CORPSE, false, out EcsEntity e).Should().BeTrue();
@@ -338,16 +327,14 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Fact]
-        public void The_Item_Anim_Switch_Is_On_By_Default_And_Builds_The_Timers_On_The_Stage()
+        public void A_Corpse_Has_No_Timer_Before_The_First_Active_Item_Stage()
         {
-            ClassicUO.Configuration.Settings.GlobalSettings.WorldItemAnimSystem.Should().BeTrue();
-
             World world = BuildCorpse(Start.Standing);
             Item corpse = world.Items.Get(CORPSE);
             corpse.LastAnimationChangeTime = long.MaxValue / 2; // not due: the live animation data is not needed
             world.Ecs.Mirror.TryGetEntity(CORPSE, false, out EcsEntity e).Should().BeTrue();
             e.HasComponent<AnimationTimer>().Should().BeFalse();
-            world.ItemAnimSystem.Should().BeTrue();
+            world.Ecs.ItemAnimTimerEnabled.Should().BeFalse();
         }
     }
 }

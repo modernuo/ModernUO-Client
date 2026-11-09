@@ -277,7 +277,7 @@ namespace ClassicUO.Game
 
             // T5d: a listed item's tag follows its list membership whenever its record is written (a replaced record starts
             // without the tag, and ActiveItemList.Add returns early for an item already listed)
-            if (entity is Item listed && _world.IsItemListed(listed) && _world.ActiveItemsSystemOn
+            if (entity is Item listed && _world.IsItemListed(listed)
                 && Mirror.TryGetEntity(listed.Serial, false, out EcsEntity tagged) && !tagged.Tags.Has<ItemActive>())
             {
                 tagged.AddTag<ItemActive>();
@@ -615,8 +615,8 @@ namespace ClassicUO.Game
         }
 
         /// <summary>
-        /// T6c: the <see cref="Steps"/> component is kept with the clock (World.Update sets this each frame from
-        /// <c>world_step_system</c>; turning it on goes through <see cref="ResyncClocks"/>, which writes every queue).
+        /// T6c: the <see cref="Steps"/> component is kept with the clock (World.Update sets this at its first mobile update;
+        /// turning it on goes through <see cref="ResyncClocks"/>, which writes every queue).
         /// </summary>
         public bool StepsEnabled;
 
@@ -947,9 +947,6 @@ namespace ClassicUO.Game
             // CUO_LAYER_CACHE_CHECK's 5 s summary
             Data.LayerCacheCheck.LogSummary();
 #endif
-
-            // T5c: CUO_SWEEP_CHECK's 5 s summary
-            _world.LogSweepSummary();
 
             // T4: CUO_SCALAR_READS's per-frame read counts (5 s summary)
             ScalarReads.EndFrame();

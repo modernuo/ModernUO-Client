@@ -15,7 +15,7 @@ using StepsComponent = ClassicUO.Ecs.Steps;
 namespace ClassicUO.UnitTests.Ecs
 {
     // T6c (ecs-transition-plan.md): Mobile.ProcessSteps(evaluate: true) as StepSystem over the Steps component. Two Worlds from
-    // identical starts: the legacy ProcessSteps on one, StepSystem.TryRun on the other (world_step_system's component kept),
+    // identical starts: the legacy ProcessSteps on one, StepSystem.TryRun on the other (the Steps component kept),
     // frame by frame with the same tick, frame delay and random state; the Worlds, the direction out, the player's walker and
     // the component (against the Mobile, never re-pushed by the test) are compared after every frame.
     public partial class WorldWriterMobileTests
@@ -138,7 +138,6 @@ namespace ClassicUO.UnitTests.Ecs
 
             if (system)
             {
-                world.StepSystemOverride = true;
                 world.Ecs.StepsEnabled = true;
                 world.Ecs.ResyncClocks();
             }
@@ -297,7 +296,6 @@ namespace ClassicUO.UnitTests.Ecs
 
             if (system)
             {
-                world.StepSystemOverride = true;
                 world.Ecs.StepsEnabled = true;
                 world.Ecs.ResyncClocks();
             }

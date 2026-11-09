@@ -26,18 +26,6 @@ namespace ClassicUO.UnitTests.Ecs
     [Collection(nameof(FunnelCheckCollection))] // Time.Ticks and the shared RNG are process-wide: never in parallel with other tests
     public partial class WorldWriterMobileTests
     {
-        [Fact]
-        public void The_WorldAnimSystem_Setting_Defaults_On()
-        {
-            new ClassicUO.Configuration.Settings().WorldAnimSystem.Should().BeTrue();
-        }
-
-        [Fact]
-        public void The_WorldStepSystem_Setting_Defaults_On()
-        {
-            new ClassicUO.Configuration.Settings().WorldStepSystem.Should().BeTrue();
-        }
-
         internal const uint DEAD = 0x8000_3000;
         private const uint MOB = 0x0000_3000, OTHER = 0x0000_3001, NEWMOB = 0x0000_3002, BAG = 0x4000_7000, ITEM = 0x4000_7001;
 
