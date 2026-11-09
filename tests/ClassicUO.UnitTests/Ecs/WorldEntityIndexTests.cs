@@ -350,6 +350,30 @@ namespace ClassicUO.UnitTests.Ecs
             }
         }
 
+        // Codex audit of slice 2 (P3): past the 20 logged reports, a persistent difference is counted but no message is built
+        [Fact]
+        public void A_Persistent_Difference_Stops_Formatting_After_Twenty_Reports()
+        {
+            Scene s = Build(true);
+            s.World.EntityIndexObserver = null;
+            s.World.EntityIndexHoldsObserver = null;
+            Mobile m = AddMobile(s.World, MOB);
+            AddItem(s.World, MOB);
+            long mismatchesBefore = s.World.EntityIndexMismatches;
+            long holdsBefore = s.World.EntityIndexHoldsDiffs;
+            long formattedBefore = s.World.EntityIndexReportsFormatted;
+
+            for (int i = 0; i < 50; i++)
+            {
+                s.World.GetMobile(MOB);
+                s.World.Holds(m);
+            }
+
+            (s.World.EntityIndexMismatches - mismatchesBefore).Should().Be(50);
+            (s.World.EntityIndexHoldsDiffs - holdsBefore).Should().Be(50);
+            s.World.EntityIndexReportsFormatted.Should().Be(formattedBefore + Math.Max(0, 20 - mismatchesBefore) + Math.Max(0, 20 - holdsBefore));
+        }
+
         [Fact]
         public void Without_The_Checker_The_Kind_Checked_Lookups_And_Holds_Compare_Nothing()
         {

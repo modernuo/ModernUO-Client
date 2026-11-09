@@ -148,7 +148,11 @@ namespace ClassicUO.Game
             if (!ReferenceEquals(held, indexed))
             {
                 EntityIndexMismatches++;
-                ReportEntityIndex(serial, $"{what}: tables {Describe(held)}, index {Describe(indexed)}", EntityIndexMismatches, EntityIndexObserver, "entity-index-check");
+
+                if (WillReport(EntityIndexMismatches, EntityIndexObserver))
+                {
+                    ReportEntityIndex(serial, $"{what}: tables {Describe(held)}, index {Describe(indexed)}", EntityIndexMismatches, EntityIndexObserver, "entity-index-check");
+                }
             }
 
             LogEntityIndexSummary();
@@ -169,7 +173,11 @@ namespace ClassicUO.Game
                 else
                 {
                     EntityIndexHoldsDiffs++;
-                    ReportEntityIndex(serial, $"holds {Describe(e)}: tables {(held ? "yes" : "no")}, index {Describe(handle as Entity)}", EntityIndexHoldsDiffs, EntityIndexHoldsObserver, "entity-index-holds");
+
+                    if (WillReport(EntityIndexHoldsDiffs, EntityIndexHoldsObserver))
+                    {
+                        ReportEntityIndex(serial, $"holds {Describe(e)}: tables {(held ? "yes" : "no")}, index {Describe(handle as Entity)}", EntityIndexHoldsDiffs, EntityIndexHoldsObserver, "entity-index-holds");
+                    }
                 }
             }
 
@@ -185,12 +193,16 @@ namespace ClassicUO.Game
             }
         }
 
+        /// <summary>Tests: messages formatted (the first 20 per kind, or every one with an observer).</summary>
+        internal long EntityIndexReportsFormatted;
+
+        // checked before any string is built: a persistent difference must not allocate every frame once logging stops
+        // (Codex audit of slice 2, P3)
+        private static bool WillReport(long count, Action<string> observer) => count <= 20 || observer != null;
+
         private void ReportEntityIndex(uint serial, string what, long count, Action<string> observer, string tag)
         {
-            if (count > 20 && observer == null)
-            {
-                return;
-            }
+            EntityIndexReportsFormatted++;
 
             // the caller tells which funnel window (or reader) saw the difference; only on a mismatch. Frames: this,
             // CountCheck/CheckHolds, Checked*/Holds(e, serial), Get*/Holds(e), then the caller (best effort: a direct
