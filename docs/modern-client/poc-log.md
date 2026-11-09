@@ -6118,7 +6118,7 @@ Base `poc/modern-client` e079d5368. Owner rule 2026-11-08: no per-change timing;
 
 ### ecs-flip-8-sprites: `ecs_effect_sprites` on by default (2026-11-09, `bg/ecs-flip-8-sprites`)
 
-One commit, bc60ed53d, on top of ecs-flip-8: `ecs_effect_sprites` defaults to true, its default test turned from off to on. Held back from ecs-flip-8 until its own sprite gate, bench-000470: BOTH WORLDS PASS (above). Merged 14efa571a; one test conflict with t9-delete-2 (kept its 3-argument `EffectSpriteSink.Resolve`, the default now true). `GameEffectView`'s draw remains for Legacy while `legacy_ecs_sprites` is off. Timing: the `spr` arm of `measure/ecs-flip-8/job-timing-*-PARKED.sh`. Costs: none measured; with the switch on both renderers draw effects from the extract over `EffectState` (T7b part 3's entry).
+One commit, bc60ed53d, on top of ecs-flip-8: `ecs_effect_sprites` defaults to true, its default test turned from off to on. Held back from ecs-flip-8 until its own sprite gate, bench-000470: BOTH WORLDS PASS (above). Merged 14efa571a; one test conflict with t9-delete-2 (kept its 3-argument `EffectSpriteSink.Resolve`, the default now true). `GameEffectView`'s draw stays for the off path, lightning and art the pack lacks. Timing: the `spr` arm of `measure/ecs-flip-8/job-timing-*-PARKED.sh`. Costs: none measured; with the switch on both renderers draw effects from the extract over `EffectState` (T7b part 3's entry).
 
 ## T9: World.Get from the mirror's serial index (2026-11-08, `bg/t9-world-index`)
 
