@@ -68,8 +68,8 @@ namespace ClassicUO.Game
 
         public float SourceDepth;
 
-        /// <summary>The effect's state and the scene into <paramref name="i"/>. False: the effect has no state (ecs_effects
-        /// off, or destroyed): the caller draws its view.</summary>
+        /// <summary>The effect's state and the scene into <paramref name="i"/>. False: the effect has no state (not yet
+        /// registered, or destroyed): the caller draws its view.</summary>
         public static bool Gather(GameEffect e, out EffectSpriteInput i)
         {
             i = default;

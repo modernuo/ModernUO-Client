@@ -63,6 +63,7 @@ namespace ClassicUO.Game.Scenes
             _scene = _route ? Client.Game.GetScene<GameScene>() : null;
             // the pack's animation tables are loaded once at startup: read per frame, not per item
             _hasAnims = _route && HasPackAnims(Client.Game.UO.FileManager.Animations);
+            ItemSpriteInput.BeginFrame();
             SpritePickTable.BeginDraw();
         }
 
@@ -154,9 +155,8 @@ namespace ClassicUO.Game.Scenes
 
             mobile.DrawAura(batcher, posX, posY, depth);
             MobileSpriteExtract extract = ecs.MobileExtract;
-            extract.BeginSelect(ClientLegacySpriteSource.Instance);
-            extract.Select(e, data, posX, posY, depth);
-            LegacySpriteResolve.DrawAll(batcher, ClientLegacySpriteSource.Instance, extract.Selected);
+            // the select and resolve, or their calls replayed from the mobile's MobileFrameCache (as the Gpu path's Emit)
+            extract.DrawLegacy(batcher, ClientLegacySpriteSource.Instance, e, data, in state, in render, posX, posY, depth, mobile.FrameCache);
             bool mirror = (state.Flags & AnimStateFlags.Mirror) != 0;
 
             if (_on)
@@ -197,7 +197,10 @@ namespace ClassicUO.Game.Scenes
         private static bool DrawItem(UltimaBatcher2D batcher, Item item, float depth, bool effects)
         {
             ItemSpriteInput.Gather(item, out ItemSpriteInput input);
-            bool drawn = _items.Select(in input, _hasAnims, item.RealScreenPosition.X, item.RealScreenPosition.Y, depth);
+            // the records are drawn as the select makes them (the batcher calls of a select + DrawAll); the side effects below
+            // do not touch the batcher
+            bool drawn = _items.SelectDraw(batcher, ClientLegacySpriteSource.Instance, in input, _hasAnims, item.RealScreenPosition.X,
+                item.RealScreenPosition.Y, depth);
 
             if (_on)
             {
@@ -216,8 +219,6 @@ namespace ClassicUO.Game.Scenes
                     _scene?.AddLight(item, item, _items.LightX, _items.LightY);
                 }
             }
-
-            LegacySpriteResolve.DrawAll(batcher, ClientLegacySpriteSource.Instance, _items.Selected);
 
             return drawn;
         }

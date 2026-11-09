@@ -81,6 +81,54 @@ namespace ClassicUO.Game
             }
         }
 
+        /// <summary>What <see cref="Gather"/> reads from the profile, the player and the world: the same for every item of a
+        /// frame, so read once per frame (as MobileAnimationSystem's TakeHueFrame) instead of per drawn item.</summary>
+        private struct GatherFrame
+        {
+            public uint Frame, Ticks;
+            public World World;
+            public Profile Profile;
+            public StaticTiles[] StaticData;
+            public bool HasPlayer, PlayerDeadGray, Highlight, NoColorOutOfRange, GridLoot, FieldsReplaced, ItemOffsetOn;
+            public int RangeX, RangeY, ViewRange;
+        }
+
+        private static GatherFrame _frame;
+
+        /// <summary>Start of a world draw (both renderers): the next <see cref="Gather"/> reads the frame's constants again, so
+        /// the draw sees the state after the frame's packets and input whatever gathered earlier in the frame.</summary>
+        internal static void BeginFrame() => _frame.World = null;
+
+        private static ref readonly GatherFrame TakeFrame(World world, Profile profile)
+        {
+            ref GatherFrame f = ref _frame;
+
+            if (f.Frame == Time.Frame && f.Ticks == Time.Ticks && ReferenceEquals(f.World, world) && ReferenceEquals(f.Profile, profile))
+            {
+                return ref f;
+            }
+
+            f.Frame = Time.Frame;
+            f.Ticks = Time.Ticks;
+            f.World = world;
+            f.Profile = profile;
+            f.StaticData = Client.Game.UO.FileManager.TileData.StaticData;
+            PlayerMobile player = world.Player;
+            f.HasPlayer = player != null;
+            f.RangeX = world.RangeSize.X;
+            f.RangeY = world.RangeSize.Y;
+            f.ViewRange = world.ClientViewRange;
+            f.Highlight = profile.HighlightGameObjects;
+            f.NoColorOutOfRange = profile.NoColorObjectsOutOfRange;
+            // the old per-item read threw without a player; a world draw always has one
+            f.PlayerDeadGray = player != null && player.IsDead && profile.EnableBlackWhiteEffect;
+            f.GridLoot = profile.GridLootType > 0;
+            f.FieldsReplaced = profile.FieldsType == 2;
+            f.ItemOffsetOn = world.ItemOffsetOn;
+
+            return ref f;
+        }
+
         /// <summary>The input for <paramref name="item"/>: its mirror record when it has one (every server item; not the
         /// house placement preview), else the GameObject's cached fields.</summary>
         public static void Gather(Item item, out ItemSpriteInput i)
@@ -94,7 +142,8 @@ namespace ClassicUO.Game
             }
 
             World world = item.World;
-            ReadRecord(item, Client.Game.UO.FileManager.TileData.StaticData, ref i, out ushort y);
+            ref readonly GatherFrame f = ref TakeFrame(world, ProfileManager.CurrentProfile);
+            bool record = ReadRecord(item, f.StaticData, ref i, out ushort y, out ClassicUO.Ecs.EcsRow data);
 
             i.AllowedToDraw = item.AllowedToDraw;
 
@@ -104,30 +153,30 @@ namespace ClassicUO.Game
             }
 
             i.AlphaHue = item.AlphaHue;
-            i.Offset = ItemOffsets.Read(item); // ecs_item_offset: the ItemOffset component
+            // ecs_item_offset: the ItemOffset component, from the row ReadRecord already holds
+            i.Offset = f.ItemOffsetOn ? ItemOffsets.ReadRow(item, record, in data) : item.Offset;
             i.AnimIndex = item.AnimIndex;
             i.UsedLayer = item.UsedLayer;
             i.Flipped = item.ViewFlipped;
 
             // GameObject.Distance for an item
-            int distance = world.Player == null ? ushort.MaxValue : Math.Max(Math.Abs(i.X - world.RangeSize.X), Math.Abs(y - world.RangeSize.Y));
-            Profile profile = ProfileManager.CurrentProfile;
+            int distance = !f.HasPlayer ? ushort.MaxValue : Math.Max(Math.Abs(i.X - f.RangeX), Math.Abs(y - f.RangeY));
             i.Selected = ReferenceEquals(SelectedObject.Object, item);
-            i.HighlightSelected = profile.HighlightGameObjects && i.Selected;
-            i.OutOfRange = profile.NoColorObjectsOutOfRange && distance > world.ClientViewRange;
-            i.PlayerDeadGray = world.Player.IsDead && profile.EnableBlackWhiteEffect;
+            i.HighlightSelected = f.Highlight && i.Selected;
+            i.OutOfRange = f.NoColorOutOfRange && distance > f.ViewRange;
+            i.PlayerDeadGray = f.PlayerDeadGray;
 
             if (i.IsCorpse)
             {
                 i.CorpseHidden = world.CorpseManager.Exists(i.Serial, 0);
-                i.CorpseLootSelected = profile.GridLootType > 0 && SelectedObject.CorpseObject == item;
+                i.CorpseLootSelected = f.GridLoot && SelectedObject.CorpseObject == item;
                 i.AnimGraphic = item.GetGraphicForAnimation();
                 i.CorpseSource = item;
 
                 return;
             }
 
-            i.ReplaceFields = i.TileAnimated && profile.FieldsType == 2;
+            i.ReplaceFields = i.TileAnimated && f.FieldsReplaced;
             i.SelectedContainer = i.TileContainer && SelectedObject.SelectedContainer == item;
             i.PlacementPreview = !SerialHelper.IsValid(i.Serial) && i.Multi && world.TargetManager.TargetingState == CursorTarget.MultiPlacement;
         }
@@ -140,10 +189,15 @@ namespace ClassicUO.Game
         /// under it), and ItemData (Amount, Layer) is read only for coins, corpses and stackable art, the only items whose
         /// sprites depend on it; Amount and Layer stay 0 for the others. GatherCostBench measures it against the field reads.
         /// </remarks>
-        internal static void ReadRecord(Item item, StaticTiles[] staticData, ref ItemSpriteInput i, out ushort y)
+        internal static void ReadRecord(Item item, StaticTiles[] staticData, ref ItemSpriteInput i, out ushort y) =>
+            ReadRecord(item, staticData, ref i, out y, out _);
+
+        /// <summary><see cref="ReadRecord(Item, StaticTiles[], ref ItemSpriteInput, out ushort)"/>, also giving the record's row
+        /// (default without a record) for the reads that follow it (the ItemOffset component). True: the item has a record.</summary>
+        internal static bool ReadRecord(Item item, StaticTiles[] staticData, ref ItemSpriteInput i, out ushort y, out ClassicUO.Ecs.EcsRow data)
         {
             bool record = item.TryScalarEntity(out EcsEntity e);
-            ClassicUO.Ecs.EcsRow data = default;
+            data = default;
 
             if (record)
             {
@@ -191,6 +245,8 @@ namespace ClassicUO.Game
                 i.Amount = d.Amount;
                 i.Layer = d.Layer;
             }
+
+            return record;
         }
     }
 
@@ -216,6 +272,8 @@ namespace ClassicUO.Game
         private DynamicSprite[] _sel = new DynamicSprite[8];
         private int _selCount;
         private bool _selectOnly;
+        private UltimaBatcher2D _batcher;
+        private ILegacySpriteSource _legacySrc;
         private GpuSpriteTables _tables;
         private int _offsetX, _offsetY;
 
@@ -289,8 +347,31 @@ namespace ClassicUO.Game
         public bool Select(in ItemSpriteInput item, bool hasAnims, int posX, int posY, float depth)
         {
             _selCount = 0;
+            _batcher = null;
 
             return Run(in item, hasAnims, 0, 0, posX, posY, depth, true);
+        }
+
+        /// <summary>
+        /// legacy_ecs_sprites: <see cref="Select"/> with each record drawn on <paramref name="batcher"/> as it is made, in the
+        /// order <see cref="LegacySpriteResolve.DrawAll"/> would draw <see cref="Selected"/> (the same batcher calls), with the
+        /// same side effects. An art record is drawn straight from its fields, without building a <see cref="DynamicSprite"/>
+        /// or a <see cref="LegacyDraw"/>; <see cref="Selected"/> stays empty.
+        /// </summary>
+        public bool SelectDraw(UltimaBatcher2D batcher, ILegacySpriteSource src, in ItemSpriteInput item, bool hasAnims, int posX, int posY, float depth)
+        {
+            _selCount = 0;
+            _batcher = batcher;
+            _legacySrc = src;
+
+            try
+            {
+                return Run(in item, hasAnims, 0, 0, posX, posY, depth, true);
+            }
+            finally
+            {
+                _batcher = null;
+            }
         }
 
         private bool Run(in ItemSpriteInput item, bool hasAnims, int offsetX, int offsetY, int posX, int posY, float depth, bool selectOnly)
@@ -371,6 +452,16 @@ namespace ClassicUO.Game
 
         private void Add(in DynamicSprite sprite)
         {
+            if (_batcher != null)
+            {
+                if (LegacySpriteResolve.Resolve(_legacySrc, in sprite, out LegacyDraw d))
+                {
+                    LegacySpriteResolve.Draw(_batcher, in d);
+                }
+
+                return;
+            }
+
             if (_selectOnly)
             {
                 if (_selCount >= _sel.Length)
@@ -652,6 +743,22 @@ namespace ClassicUO.Game
             }
         }
 
+        // SelectDraw's art draw (LegacySpriteResolve.Resolve + Draw of the art record): the client's source is called
+        // through its sealed type, so the per-item draw makes no interface call
+        private void DrawArt(ushort graphic, int x, int y, bool missing, Vector3 hue, float depth)
+        {
+            ILegacySpriteSource src = _legacySrc;
+
+            if (src is ClientLegacySpriteSource client)
+            {
+                LegacySpriteResolve.DrawArt(_batcher, in client.Art(graphic), x, y, missing, hue, depth);
+            }
+            else
+            {
+                LegacySpriteResolve.DrawArt(_batcher, in src.Art(graphic), x, y, missing, hue, depth);
+            }
+        }
+
         // View.DrawStaticAnimated (no shadow, not wet): the art graphic's record at (x, y) less the art entry's draw offset
         private void Art(ushort graphic, int x, int y, Vector3 hue, float depth, int objX)
         {
@@ -673,7 +780,11 @@ namespace ClassicUO.Game
                 // Legacy: the view draws Arts.GetArt's placeholder for art the pack lacks, offset by the placeholder's size
                 // (the resolve does that). Its art entry write is discarded (GetEntry of missing art is a scratch entry), so
                 // picking keeps 0, 0 and nothing is stored here. The Gpu path draws nothing.
-                if (_selectOnly)
+                if (_batcher != null)
+                {
+                    DrawArt(graphic, x, y, true, hue, depth + 0.5f);
+                }
+                else if (_selectOnly)
                 {
                     var missing = new DynamicSprite
                     {
@@ -702,6 +813,13 @@ namespace ClassicUO.Game
             ArtPickGraphic = graphic;
             ArtPickW = index.Width;
             ArtPickH = index.Height;
+
+            if (_batcher != null)
+            {
+                DrawArt(graphic, x - index.Width, y - index.Height, false, hue, depth + 0.5f);
+
+                return;
+            }
 
             var sprite = new DynamicSprite
             {

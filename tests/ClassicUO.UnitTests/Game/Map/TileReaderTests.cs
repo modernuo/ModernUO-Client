@@ -23,7 +23,7 @@ namespace ClassicUO.UnitTests.Game.Map
         private readonly World _world = new World();
         private readonly Chunk _a;
         private readonly StaticTiles[] _savedStaticData;
-        private readonly bool _savedMaintain;
+        private readonly bool _savedMaintain, _savedDropped, _savedShadow;
         private uint _nextSerial = 0x4000_0100, _nextMobile = 0x100;
 
         public TileReaderTests()
@@ -34,7 +34,12 @@ namespace ClassicUO.UnitTests.Game.Map
             _savedStaticData = Chunk.StaticTileData;
             Chunk.StaticTileData = data;
             _savedMaintain = DynamicTileIndex.Maintain;
+            _savedDropped = DynamicTileIndex.ListDropped;
+            _savedShadow = DynamicTileIndex.Shadow;
             DynamicTileIndex.Maintain = true;
+            // the list and the merged walk are compared, so the list keeps the dynamics (world_tile_index's list-kept mode)
+            DynamicTileIndex.ListDropped = false;
+            DynamicTileIndex.Shadow = false;
             _a = new Chunk(_world) { X = 0, Y = 0 };
             ChairTable.Table[Chair] = new AnimationsLoader.SittingInfoData(Chair, 1, 2, 3, 4, 5, 6, false);
             ChairTable.Table[Chair + 1] = new AnimationsLoader.SittingInfoData(Chair + 1, 1, 2, 3, 4, 5, 6, false);
@@ -44,6 +49,8 @@ namespace ClassicUO.UnitTests.Game.Map
         {
             Chunk.StaticTileData = _savedStaticData;
             DynamicTileIndex.Maintain = _savedMaintain;
+            DynamicTileIndex.ListDropped = _savedDropped;
+            DynamicTileIndex.Shadow = _savedShadow;
             ChairTable.Table.Remove(Chair);
             ChairTable.Table.Remove((ushort)(Chair + 1));
         }
@@ -404,6 +411,47 @@ namespace ClassicUO.UnitTests.Game.Map
             }
 
             Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);
+        }
+
+        // perf-alloc-5: a walk into a wall runs CanWalk every frame; CalculateNewZ and CalculateMinMaxZ reuse their tile lists
+        // and PathObject is a struct, so a call allocates nothing (before: two lists per call and an object per tile entry)
+        [Fact]
+        public void Pathfinder_CanWalk_Reuses_Its_Tile_Lists()
+        {
+            Assert.False(TileOrder.Check);
+            Assert.True(typeof(Pathfinder).GetNestedType("PathObject", BindingFlags.NonPublic)!.IsValueType);
+            World world = ClassicUO.UnitTests.Ecs.WorldWriterMobileTests.BuildPlayer(out _);
+            typeof(World).GetProperty(nameof(World.Map))!.SetValue(world, new ClassicUO.Game.Map.Map(world, 0, 1));
+            // the GM body: CalculateNewZ takes the dead-or-GM step state without the race test (Client.Game is not set up here)
+            world.Player.Graphic = 0x03DB;
+            var pathfinder = new Pathfinder(world);
+
+            // far from the player at 1000,1000: no chunk is loaded, so both lists stay empty and every walk is refused (a straight
+            // step runs CalculateNewZ once, a refused diagonal three times); no Assert inside the loop, xUnit's comparers allocate
+            int Run()
+            {
+                int walked = 0;
+
+                for (int i = 0; i < 200; i++)
+                {
+                    Direction dir = Direction.East;
+                    int x = 5, y = 5;
+                    sbyte z = 0;
+                    walked += pathfinder.CanWalk(ref dir, ref x, ref y, ref z) ? 1 : 0;
+                    dir = Direction.Down;
+                    walked += pathfinder.CanWalk(ref dir, ref x, ref y, ref z) ? 1 : 0;
+                    walked += x != 5 || y != 5 ? 1 : 0;
+                }
+
+                return walked;
+            }
+
+            Assert.Equal(0, Run());
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            int walked = Run();
+            long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            Assert.Equal(0, walked);
+            Assert.Equal(0, allocated);
         }
 
         // a delegate over the private CreateItemList(List<PathObject>, x, y, step), with one list reused

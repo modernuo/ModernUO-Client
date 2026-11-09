@@ -24,7 +24,7 @@ namespace ClassicUO.UnitTests.Ecs
             public readonly List<WorldStage> Stages = new List<WorldStage>();
         }
 
-        private static Scene Build(bool system)
+        private static Scene Build()
         {
             World world = WorldWriterMobileTests.BuildPlayer(out WorldWriterMobileTests.TestPlayer player, PLAYER);
 
@@ -37,7 +37,6 @@ namespace ClassicUO.UnitTests.Ecs
             var scene = new Scene { World = world };
             world.RangeSize.X = 1000;
             world.RangeSize.Y = 1000;
-            world.ActiveItemsSystemOverride = system;
             world.ActiveItemsCheckOverride = true;
             world.ActiveItemsObserver = scene.Mismatches.Add;
             world.StageObserver = scene.Stages.Add;
@@ -63,9 +62,8 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void The_Stages_Run_In_The_Order_The_Body_Had()
         {
-            foreach (bool system in new[] { false, true })
             {
-                Scene s = Build(system);
+                Scene s = Build();
                 s.World.Update();
 
                 s.Stages.Should().Equal(
@@ -90,20 +88,15 @@ namespace ClassicUO.UnitTests.Ecs
             stages.Should().BeEmpty();
         }
 
-        [Fact]
-        public void The_Setting_Is_On_By_Default()
-        {
-            ClassicUO.Configuration.Settings.GlobalSettings.WorldActiveItemsSystem.Should().BeTrue();
-        }
-
         // corpses (items whose handles just opened open a gump, which needs the client: the in-client checker covers them), destroy, a re-synced record: the list order and the survivors are
-        // those of the legacy list with the system off, and the tags equal the list with it on
+        // those of the legacy list (append, swap-remove; T9 deleted world_active_items_system, the list without tags, so the
+        // expected orders are written out), and the tags equal the list
         [Fact]
         public void Membership_And_Order_Match_The_Legacy_List()
         {
-            Scene off = Build(false), on = Build(true);
+            Scene on = Build();
 
-            foreach (Scene s in new[] { off, on })
+            foreach (Scene s in new[] { on })
             {
                 Item c1 = AddItem(s, 0x4000_0001, 0x2006);
                 Item plain = AddItem(s, 0x4000_0002, 0x0EED);
@@ -121,14 +114,24 @@ namespace ClassicUO.UnitTests.Ecs
                 s.World.QueueItemUpdate(plain); // queued but needs nothing: leaves on the first update
             }
 
-            Active(on.World).Should().Equal(Active(off.World));
             Active(on.World).Should().Equal(0x4000_0001u, 0x4000_0003u, 0x4000_0004u, 0x4000_0005u, 0x4000_0002u); // corpses queue themselves in creation order
             Tagged(on.World).Should().Be(5);
-            Tagged(off.World).Should().Be(0);
+
+            // after each frame: the plain item leaves from the tail; 3 stops being a corpse and the tail (5) takes its slot; 1 is
+            // destroyed and the tail (4) takes its slot; 3 is queued again at the end
+            uint[][] expected =
+            {
+                new uint[] { 0x4000_0001, 0x4000_0003, 0x4000_0004, 0x4000_0005 },
+                new uint[] { 0x4000_0001, 0x4000_0005, 0x4000_0004 },
+                new uint[] { 0x4000_0001, 0x4000_0005, 0x4000_0004 },
+                new uint[] { 0x4000_0004, 0x4000_0005 },
+                new uint[] { 0x4000_0004, 0x4000_0005, 0x4000_0003 },
+                new uint[] { 0x4000_0004, 0x4000_0005, 0x4000_0003 }
+            };
 
             for (int frame = 0; frame < 6; frame++)
             {
-                foreach (Scene s in new[] { off, on })
+                foreach (Scene s in new[] { on })
                 {
                     switch (frame)
                     {
@@ -153,14 +156,11 @@ namespace ClassicUO.UnitTests.Ecs
                     s.World.Update();
                 }
 
-                Active(on.World).Should().Equal(Active(off.World), $"frame {frame}");
-                on.World.Items.Keys.OrderBy(x => x).Should().Equal(off.World.Items.Keys.OrderBy(x => x), $"frame {frame}");
+                Active(on.World).Should().Equal(expected[frame], $"frame {frame}");
                 Tagged(on.World).Should().Be(on.World.ActiveItemCount, $"frame {frame}");
-                Tagged(off.World).Should().Be(0);
             }
 
             on.Mismatches.Should().BeEmpty();
-            off.Mismatches.Should().BeEmpty();
             on.World.ActiveItemsMismatches.Should().Be(0);
             on.World.ActiveItemsChecks.Should().BeGreaterThan(0);
             on.World.Items.ContainsKey(0x4000_0001).Should().BeFalse("destroyed items leave Items");
@@ -170,7 +170,7 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void The_Checker_Reports_A_Stray_Tag_And_A_Missing_Tag()
         {
-            Scene s = Build(true);
+            Scene s = Build();
             Item c = AddItem(s, 0x4000_0001, 0x2006);
             Item other = AddItem(s, 0x4000_0002, 0x0EED);
             s.World.QueueItemUpdate(c);
@@ -195,7 +195,6 @@ namespace ClassicUO.UnitTests.Ecs
         public void A_Replaced_Record_Of_A_Listed_Item_Keeps_Its_Tag()
         {
             World world = WorldWriterMobileTests.BuildDead();
-            world.ActiveItemsSystemOverride = true;
             Item corpse = world.Items.Get(WorldWriterMobileTests.DEAD);
             Mobile m = world.Mobiles.Get(WorldWriterMobileTests.DEAD);
             world.Ecs.Sync(corpse);
@@ -216,7 +215,7 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void The_Checker_Tells_Two_Items_Of_One_Serial_Apart()
         {
-            Scene s = Build(true);
+            Scene s = Build();
             Item first = AddItem(s, 0x4000_0001, 0x2006);
             s.World.QueueItemUpdate(first);
             first.Destroy();

@@ -281,6 +281,7 @@ namespace ClassicUO.Game.Scenes
 #if CUO_DEVTOOLS
             GoldenCapture.BeginGpu();
 #endif
+            ItemSpriteInput.BeginFrame();
             SpritePickTable.BeginDraw();
             _ecsMobiles = Configuration.Settings.GlobalSettings.GpuEcsSprites && _pack != null && _pack.HasAnims;
             _scene = Client.Game.GetScene<GameScene>();

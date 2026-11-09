@@ -34,12 +34,24 @@ namespace ClassicUO.UnitTests.Game.Map
             data[Roof].Flags = TileFlag.Roof;
             _savedStaticData = Chunk.StaticTileData;
             Chunk.StaticTileData = data;
+            // T6a's list rules: the list keeps the dynamics (world_tile_index's list-kept mode; ListDropTests covers the
+            // dropped list, the default since the switch went on)
+            _savedDropped = DynamicTileIndex.ListDropped;
+            _savedShadow = DynamicTileIndex.Shadow;
+            DynamicTileIndex.ListDropped = false;
+            DynamicTileIndex.Shadow = false;
             _chunk = new Chunk(_world);
         }
 
         private readonly StaticTiles[] _savedStaticData;
+        private readonly bool _savedDropped, _savedShadow;
 
-        public void Dispose() => Chunk.StaticTileData = _savedStaticData;
+        public void Dispose()
+        {
+            Chunk.StaticTileData = _savedStaticData;
+            DynamicTileIndex.ListDropped = _savedDropped;
+            DynamicTileIndex.Shadow = _savedShadow;
+        }
 
         private static Land NewLand(World world, sbyte z)
         {

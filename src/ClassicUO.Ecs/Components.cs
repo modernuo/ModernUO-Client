@@ -469,7 +469,7 @@ namespace ClassicUO.Ecs
     }
 
     /// <summary>
-    /// T6c (world_step_system): a mobile's walk queue and the step state <c>StepSystem</c> reads: a fixed ring of up to
+    /// T6c: a mobile's walk queue and the step state <c>StepSystem</c> reads: a fixed ring of up to
     /// <see cref="CAPACITY"/> steps (<c>Constants.MAX_STEP_COUNT</c> - 1 + 3; the front step is <c>Ring[Head]</c>), the time the
     /// current step started (<c>Mobile.LastStepTime</c>) and the interpolated walk offset (<c>Mobile.Offset</c>). While the
     /// system runs, the clock push writes it from the Mobile after every queue change and step completion (the same push
@@ -592,8 +592,7 @@ namespace ClassicUO.Ecs
     // Equipment (or the body graphic or sex) changed: EquipmentSystem rebuilds EquipmentSlots before the next extract.
     public struct EquipmentDirty : ITag { }
 
-    // T5d: the item is in the world's per-frame update list (corpses, items whose object handles just opened); present only
-    // while world_active_items_system is on. The list order is the visiting order; the tag is the ECS-side membership.
+    // T5d: the item is in the world's per-frame update list (corpses, items whose object handles just opened); the list order is the visiting order; the tag is the ECS-side membership.
     public struct ItemActive : ITag { }
 
     /// <summary>
@@ -618,7 +617,7 @@ namespace ClassicUO.Ecs
     }
 
     /// <summary>
-    /// T8: a graphic effect (fixed, moving, drag, lightning) of <c>EffectManager</c>, while <c>ecs_effects</c> is on. It owns the
+    /// T8: a graphic effect (fixed, moving, drag, lightning) of <c>EffectManager</c>. It owns the
     /// animation and lifetime state (frame, next change time, duration) that <c>EffectSystem</c> advances; position, offset,
     /// angle and target are published by the effect's own update (the kinds' motion rules stay on the object). The entity has no
     /// serial and is not in the mirror's serial index.

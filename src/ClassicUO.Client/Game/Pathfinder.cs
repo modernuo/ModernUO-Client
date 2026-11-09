@@ -38,6 +38,14 @@ namespace ClassicUO.Game
         };
         private Point _startPoint, _endPoint;
 
+        // perf-alloc-5: the tile lists CalculateMinMaxZ and CalculateNewZ fill on every call. A walk into a wall (the player
+        // holding a direction, or the scripted driver) runs CanWalk every frame, which allocated two lists and a PathObject
+        // per tile object each time. Main thread only; CalculateNewZ calls CalculateMinMaxZ, so each has its own.
+        private readonly List<PathObject> _minMaxList = new List<PathObject>();
+        private readonly List<PathObject> _newZList = new List<PathObject>();
+        // List<T>.Sort() without a comparison wraps the default comparer in a new delegate per call under NativeAOT
+        private static readonly Comparison<PathObject> _compare = static (a, b) => a.CompareTo(b);
+
         private readonly World _world;
 
         public Pathfinder(World world)
@@ -338,7 +346,8 @@ namespace ClassicUO.Game
             int direction = newDirection ^ 4;
             newX += _offsetX[direction];
             newY += _offsetY[direction];
-            List<PathObject> list = new List<PathObject>();
+            List<PathObject> list = _minMaxList;
+            list.Clear();
 
             if (!CreateItemList(list, newX, newY, stepState) || list.Count == 0)
             {
@@ -433,7 +442,8 @@ namespace ClassicUO.Game
                 stepState
             );
 
-            List<PathObject> list = new List<PathObject>();
+            List<PathObject> list = _newZList;
+            list.Clear();
 
             if (_world.CustomHouseManager != null)
             {
@@ -450,7 +460,7 @@ namespace ClassicUO.Game
                 return false;
             }
 
-            list.Sort();
+            list.Sort(_compare);
 
             list.Add
             (
@@ -1080,7 +1090,8 @@ namespace ClassicUO.Game
             POF_NO_DIAGONAL = 0x00000008
         }
 
-        private class PathObject : IComparable<PathObject>
+        // a struct (perf-alloc-5): the lists hold the values, so filling them allocates nothing once their arrays have grown
+        private readonly struct PathObject : IComparable<PathObject>
         {
             public PathObject(uint flags, int z, int avgZ, int h, GameObject obj)
             {

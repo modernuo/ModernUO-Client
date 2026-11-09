@@ -47,7 +47,6 @@ namespace ClassicUO.Game.Managers
 
         public void Update()
         {
-            bool system = _world.EffectsSystemOn;
             _playerResolved = false;
 
             for (GameEffect f = Items; f != null;)
@@ -57,7 +56,7 @@ namespace ClassicUO.Game.Managers
                 f.Update();
 
                 // with ecs_effect_motion the step wrote the state itself (and resolved the endpoints once)
-                if (system && !f.IsDestroyed && !f.UsesMotion)
+                if (!f.IsDestroyed && !f.UsesMotion)
                 {
                     EffectSystem.Publish(f);
                 }
@@ -70,30 +69,26 @@ namespace ClassicUO.Game.Managers
                 f = next;
             }
 
-            if (system && _world.EffectsCheckOn)
+            if (_world.EffectsCheckOn)
             {
                 EffectSystem.Check(_world, this);
             }
 
-            if (system && _world.EffectEndpointsCheckOn)
+            if (_world.EffectEndpointsCheckOn)
             {
                 EffectSystem.CheckEndpoints(this);
             }
 
-            if (system && _world.EffectMotionCheckOn)
+            if (_world.EffectMotionCheckOn)
             {
                 EffectSystem.LogMotionCheck();
             }
         }
 
-        /// <summary>Appends <paramref name="effect"/> to the list; with <c>ecs_effects</c> on it gets its entity first.</summary>
+        /// <summary>Appends <paramref name="effect"/> to the list; it gets its entity first (T8).</summary>
         public void Add(GameEffect effect)
         {
-            if (_world.EffectsSystemOn)
-            {
-                EffectSystem.Register(effect);
-            }
-
+            EffectSystem.Register(effect);
             PushToBack(effect);
         }
 

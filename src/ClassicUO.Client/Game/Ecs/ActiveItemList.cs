@@ -8,8 +8,8 @@ namespace ClassicUO.Game
 {
     /// <summary>
     /// W5/T5d: the items whose <c>Update</c> does something this frame (corpses, items whose handles just opened), in visiting
-    /// order. Membership is <see cref="Item.InUpdateList"/> (the O(1) test) and, with <c>mirror</c> on
-    /// (<c>world_active_items_system</c>), the <see cref="ItemActive"/> tag on the item's mirror entity; the order is the
+    /// order. Membership is <see cref="Item.InUpdateList"/> (the O(1) test) and, with <c>mirror</c> on (false only for
+    /// CUO_ACTIVE_ITEMS_SOURCE_CHECK's shadow), the <see cref="ItemActive"/> tag on the item's mirror entity; the order is the
     /// list's: items are appended, and a removal swaps the last item into the freed slot (the order every caller relied on).
     /// T9: with <c>ecs_active_items_source</c> on, <see cref="ActiveItemStore"/> is the source and this list is only
     /// CUO_ACTIVE_ITEMS_SOURCE_CHECK's shadow.

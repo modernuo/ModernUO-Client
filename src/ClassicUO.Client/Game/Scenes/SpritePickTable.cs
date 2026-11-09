@@ -46,16 +46,21 @@ namespace ClassicUO.Game.Scenes
 
         private static Entry[] _write = new Entry[256], _read = new Entry[256];
         private static int _writeCount, _readCount;
+
+        // the write buffer's entries [0, _writeHigh) may still hold object references from an earlier draw: a draw overwrites
+        // its own count of them and Commit clears the rest, so a buffer never keeps objects beyond its count once committed
+        private static int _writeHigh;
         private static uint _writeStamp, _readStamp;
         private static bool _open;
 
         /// <summary>DevBench (pickscan's pick_records mode) and tests: false = picking ignores the records.</summary>
         internal static bool? ReadOverride;
 
-        /// <summary>Start of a world draw: the write buffer is emptied.</summary>
+        /// <summary>Start of a world draw: the write buffer is emptied (its entries are overwritten by the draw; the stale
+        /// tail is cleared at <see cref="Commit"/>).</summary>
         public static void BeginDraw()
         {
-            Array.Clear(_write, 0, _writeCount);
+            _writeHigh = Math.Max(_writeHigh, _writeCount);
             _writeCount = 0;
 
             // stamp 0 is "never recorded" (a new or reused object)
@@ -76,12 +81,20 @@ namespace ClassicUO.Game.Scenes
             }
 
             _open = false;
+
+            // the entries this draw didn't overwrite hold objects of an earlier draw
+            if (_writeHigh > _writeCount)
+            {
+                Array.Clear(_write, _writeCount, _writeHigh - _writeCount);
+            }
+
             int stale = _readCount;
             (_read, _write) = (_write, _read);
             _readCount = _writeCount;
             _readStamp = _writeStamp;
-            // the old read buffer's entries are cleared at the next BeginDraw (they hold object references)
-            _writeCount = stale;
+            // the old read buffer's entries are overwritten by the next draw, its tail cleared at the next Commit
+            _writeHigh = stale;
+            _writeCount = 0;
 
 #if CUO_DEVTOOLS
             CheckBeat();
@@ -93,7 +106,7 @@ namespace ClassicUO.Game.Scenes
         {
             Array.Clear(_write);
             Array.Clear(_read);
-            _writeCount = _readCount = 0;
+            _writeCount = _readCount = _writeHigh = 0;
             _writeStamp = _readStamp = 0;
             _open = false;
             ReadOverride = null;
@@ -115,7 +128,8 @@ namespace ClassicUO.Game.Scenes
             obj.PickStamp = _writeStamp;
             obj.PickSlot = _writeCount;
             ref Entry e = ref _write[_writeCount++];
-            e = default;
+            // not zeroed: RecordMobile and RecordItem write every field their kind's reads use (Find matches the kind; a
+            // mobile's art fields and an item's Frame are never read)
             e.Obj = obj;
             e.Incarnation = obj.Incarnation;
 

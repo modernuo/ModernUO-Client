@@ -42,7 +42,7 @@ namespace ClassicUO.Game.UI.Gumps
     [JsonSerializable(typeof(List<int>), GenerationMode = JsonSourceGenerationMode.Metadata)]
     sealed partial class ZonesJsonContext : JsonSerializerContext { }
 
-    internal class WorldMapGump : ResizableGump
+    internal class WorldMapGump : ResizableGump, IGumpDeferredDraw
     {
         public const string USER_MARKERS_FILE = "userMarkers";
 
@@ -62,6 +62,8 @@ namespace ClassicUO.Game.UI.Gumps
 
         private Point _center, _lastScroll, _mouseCenter, _scroll;
         private Point? _lastMousePosition = null;
+        private readonly WorldMapCoordinateText _playerCoordsText = new WorldMapCoordinateText();
+        private readonly WorldMapCoordinateText _mouseCoordsText = new WorldMapCoordinateText();
         private bool _flipMap = true;
         private bool _freeView;
         private List<string> _hiddenMarkerFiles;
@@ -1660,22 +1662,6 @@ namespace ClassicUO.Game.UI.Gumps
                 }
             }
 
-            public IEnumerable<Zone> GetZonesForMapIndex(int mapIndex)
-            {
-                foreach (KeyValuePair<string, ZoneSet> entry in ZoneSetDict)
-                {
-                    if (entry.Value.MapIndex != mapIndex)
-                        continue;
-                    else if (entry.Value.Hidden)
-                        continue;
-
-                    foreach (Zone zone in entry.Value.Zones)
-                    {
-                        yield return zone;
-                    }
-                }
-            }
-
             public void Clear()
             {
                 ZoneSetDict.Clear();
@@ -2090,8 +2076,23 @@ namespace ClassicUO.Game.UI.Gumps
                 _center.Y = World.Player.Y;
             }
 
-            float layerDepth = layerDepthRef;
+            // A deferred command, not a closure: the closure and its delegate were allocated every frame.
+            renderLists.AddGumpNoAtlas(GumpCommand.Deferred(this, x, y, layerDepthRef));
 
+            //foreach (House house in World.HouseManager.Houses)
+            //{
+            //    foreach (Multi multi in house.Components)
+            //    {
+            //        batcher.Draw2D(Textures.GetTexture())
+            //    }
+            //}
+
+
+            return base.AddToRenderLists(renderLists, x, y, ref layerDepthRef);
+        }
+
+        bool IGumpDeferredDraw.DrawDeferred(UltimaBatcher2D batcher, int x, int y, float layerDepth, int arg)
+        {
             int gX = x + 4;
             int gY = y + 4;
             int gWidth = Width - 8;
@@ -2110,115 +2111,113 @@ namespace ClassicUO.Game.UI.Gumps
 
             Vector3 hueVector = ShaderHueTranslator.GetHueVector(0);
 
-            renderLists.AddGumpNoAtlas(batcher =>
-            {
-                batcher.Draw
+            batcher.Draw
+            (
+                SolidColorTextureCache.GetTexture(Color.Black),
+                new Rectangle
                 (
-                    SolidColorTextureCache.GetTexture(Color.Black),
-                    new Rectangle
+                    gX,
+                    gY,
+                    gWidth,
+                    gHeight
+                ),
+                hueVector,
+                layerDepth
+            );
+
+            if (_mapLoading == 1)
+            {
+                if (batcher.ClipBegin(gX, gY, gWidth, gHeight))
+                {
+                    var str = "Please wait, I'm making the map file...".AsSpan();
+                    //str = str[..(str.Length - (int)_mapLoadingTime % 3)];
+
+                    //if (Time.Ticks > _mapLoadingTime)
+                    //    _mapLoadingTime = Time.Ticks + 1000;
+
+                    var strSize = Fonts.Bold.MeasureString(str);
+                    var pos = strSize * -0.5f;
+                    pos.X += gX + halfWidth;
+                    pos.Y += gY + halfHeight;
+                    batcher.DrawString(Fonts.Bold, str, pos, new Vector3(38, 1, 1), layerDepth);
+
+                    batcher.ClipEnd();
+                }
+            }
+            else if (_mapTexture != null && !_mapTexture.IsDisposed)
+            {
+                if (batcher.ClipBegin(gX, gY, gWidth, gHeight))
+                {
+                    var destRect = new Rectangle
                     (
+                        gX + halfWidth,
+                        gY + halfHeight,
+                        size,
+                        size
+                    );
+
+                    var srcRect = new Rectangle
+                    (
+                        centerX - size_zoom_half,
+                        centerY - size_zoom_half,
+                        size_zoom,
+                        size_zoom
+                    );
+
+                    var origin = new Vector2
+                    (
+                        srcRect.Width / 2f,
+                        srcRect.Height / 2f
+                    );
+
+                    batcher.Draw
+                    (
+                        _mapTexture,
+                        destRect,
+                        srcRect,
+                        hueVector,
+                        _flipMap ? Microsoft.Xna.Framework.MathHelper.ToRadians(45) : 0,
+                        origin,
+                        SpriteEffects.None,
+                        layerDepth
+                    );
+
+                    DrawAll
+                    (
+                        batcher,
+                        srcRect,
                         gX,
                         gY,
-                        gWidth,
-                        gHeight
-                    ),
-                    hueVector,
-                    layerDepth
-                );
+                        halfWidth,
+                        halfHeight,
+                        layerDepth
+                    );
 
-                if (_mapLoading == 1)
-                {
-                    if (batcher.ClipBegin(gX, gY, gWidth, gHeight))
-                    {
-                        var str = "Please wait, I'm making the map file...".AsSpan();
-                        //str = str[..(str.Length - (int)_mapLoadingTime % 3)];
-
-                        //if (Time.Ticks > _mapLoadingTime)
-                        //    _mapLoadingTime = Time.Ticks + 1000;
-
-                        var strSize = Fonts.Bold.MeasureString(str);
-                        var pos = strSize * -0.5f;
-                        pos.X += gX + halfWidth;
-                        pos.Y += gY + halfHeight;
-                        batcher.DrawString(Fonts.Bold, str, pos, new Vector3(38, 1, 1), layerDepth);
-
-                        batcher.ClipEnd();
-                    }
+                    batcher.ClipEnd();
                 }
-                else if (_mapTexture != null && !_mapTexture.IsDisposed)
-                {
-                    if (batcher.ClipBegin(gX, gY, gWidth, gHeight))
-                    {
-                        var destRect = new Rectangle
-                        (
-                            gX + halfWidth,
-                            gY + halfHeight,
-                            size,
-                            size
-                        );
+            }
 
-                        var srcRect = new Rectangle
-                        (
-                            centerX - size_zoom_half,
-                            centerY - size_zoom_half,
-                            size_zoom,
-                            size_zoom
-                        );
-
-                        var origin = new Vector2
-                        (
-                            srcRect.Width / 2f,
-                            srcRect.Height / 2f
-                        );
-
-                        batcher.Draw
-                        (
-                            _mapTexture,
-                            destRect,
-                            srcRect,
-                            hueVector,
-                            _flipMap ? Microsoft.Xna.Framework.MathHelper.ToRadians(45) : 0,
-                            origin,
-                            SpriteEffects.None,
-                            layerDepth
-                        );
-
-                        DrawAll
-                        (
-                            batcher,
-                            srcRect,
-                            gX,
-                            gY,
-                            halfWidth,
-                            halfHeight,
-                            layerDepth
-                        );
-
-                        batcher.ClipEnd();
-                    }
-                }
-                return true;
-            });
-
-            //foreach (House house in World.HouseManager.Houses)
-            //{
-            //    foreach (Multi multi in house.Components)
-            //    {
-            //        batcher.Draw2D(Textures.GetTexture())
-            //    }
-            //}
-
-
-            return base.AddToRenderLists(renderLists, x, y, ref layerDepthRef);
+            return true;
         }
 
         private void DrawAll(UltimaBatcher2D batcher, Rectangle srcRect, int gX, int gY, int halfWidth, int halfHeight, float layerDepth)
         {
-            foreach (Zone zone in _zoneSets.GetZonesForMapIndex(_map.Index))
+            // Walks the zone sets directly: an iterator over them was allocated every frame.
+            foreach (KeyValuePair<string, ZoneSet> entry in _zoneSets.ZoneSetDict)
             {
-                if (zone.BoundingRectangle.Intersects(srcRect))
+                ZoneSet zoneSet = entry.Value;
+
+                if (zoneSet.MapIndex != _map.Index || zoneSet.Hidden)
                 {
-                    DrawZone(batcher, zone, gX, gY, halfWidth, halfHeight, Zoom, layerDepth);
+                    continue;
+                }
+
+                foreach (Zone zone in zoneSet.Zones)
+                {
+                    if (zone.BoundingRectangle.Intersects(srcRect))
+                    {
+                        DrawZone(batcher, zone, gX, gY, halfWidth, halfHeight, Zoom, layerDepth);
+                    }
                 }
             }
 
@@ -2480,10 +2479,7 @@ namespace ClassicUO.Game.UI.Gumps
 
             if (_showCoordinates)
             {
-                string text = $"{World.Player.X}, {World.Player.Y} ({World.Player.Z}) [{_zoomIndex}]";
-
-                if (_showSextantCoordinates && Sextant.FormatString(new Point(World.Player.X, World.Player.Y), _map.Index, out var sextantCoords))
-                    text += "\n" + sextantCoords;
+                string text = _playerCoordsText.Player(World.Player.X, World.Player.Y, World.Player.Z, _zoomIndex, _map.Index, _showSextantCoordinates);
 
                 Vector3 hueVector = new(0f, 1f, 1f);
 
@@ -2496,10 +2492,7 @@ namespace ClassicUO.Game.UI.Gumps
             {
                 CanvasToWorld(_lastMousePosition.Value.X, _lastMousePosition.Value.Y, out int mouseWorldX, out int mouseWorldY);
 
-                string mouseCoordinateString = $"{mouseWorldX} {mouseWorldY}";
-
-                if (_showSextantCoordinates && Sextant.FormatString(new Point(mouseWorldX, mouseWorldY), _map.Index, out var sextantCoords))
-                    mouseCoordinateString += "\n" + sextantCoords;
+                string mouseCoordinateString = _mouseCoordsText.Mouse(mouseWorldX, mouseWorldY, _map.Index, _showSextantCoordinates);
 
                 Vector2 size = Fonts.Regular.MeasureString(mouseCoordinateString);
                 int mx = gX + 5;

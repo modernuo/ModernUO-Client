@@ -353,6 +353,11 @@ namespace ClassicUO
                 return; // a backbuffer reset stalls on the lost device
             }
 
+            if (width <= 0 || height <= 0)
+            {
+                return; // FNA throws on a zero backbuffer; see WindowOnClientSizeChanged
+            }
+
             GraphicManager.PreferredBackBufferWidth = width;
             GraphicManager.PreferredBackBufferHeight = height;
             GraphicManager.ApplyChanges();
@@ -787,6 +792,15 @@ namespace ClassicUO
 
         private void WindowOnClientSizeChanged(int width, int height)
         {
+            // A display being removed or turned off can report a zero client size (seen with a display-scale change
+            // while the monitor went away); FNA rejects a zero backbuffer, so keep the current one until a real size arrives.
+            if (width <= 0 || height <= 0)
+            {
+                Log.Warn($"Ignoring window client size {width}x{height}");
+
+                return;
+            }
+
             if (!IsWindowMaximized() && Window.AllowUserResizing)
             {
                 if (ProfileManager.CurrentProfile != null)

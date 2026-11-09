@@ -82,7 +82,7 @@ namespace ClassicUO.Game
     }
 
     /// <summary>
-    /// T5b-items (<c>world_item_anim_system</c>): runs a corpse's <c>Item.Update</c> in the ECS when it is in the active item
+    /// T5b-items: runs a corpse's <c>Item.Update</c> in the ECS when it is in the active item
     /// list: <see cref="CorpseAnimationRules.Advance{TSource}"/> over its <see cref="AnimationTimer"/> and <see cref="ItemData"/>,
     /// the results through the funnel (<c>WorldWriter.AdvanceCorpseFrame</c>, the same write sites as the legacy path). The
     /// active item stage visits items in the list's order and calls <c>Item.Update</c> for any this declines (handles that
@@ -91,8 +91,9 @@ namespace ClassicUO.Game
     /// </summary>
     internal sealed class ItemAnimationAdvanceSystem
     {
-        // CUO_ANIM_ADVANCE_CHECK=1: each advance is compared with the legacy one on a shadow (see Check); the unit tests pass
-        // the check flag themselves, so Check stays compiled in release
+        // CUO_ANIM_ADVANCE_CHECK=1: the component must equal the Item's fields before each advance (see Check); the unit tests
+        // pass the check flag themselves, so Check stays compiled in release. T9 deleted world_item_anim_system's off path and
+        // with it the comparison with the legacy Item.ProcessAnimation computation.
 #if CUO_DEVTOOLS
         public static readonly bool AdvanceCheck = MobileAnimationAdvanceSystem.AdvanceCheck;
 #else
@@ -100,19 +101,18 @@ namespace ClassicUO.Game
 #endif
 
         public static long Ran, Declined, NotDue;
-        public static long Checks, Diffs, SyncChecks, SyncDiffs, RandomDiffs;
+        public static long SyncChecks, SyncDiffs;
         private static int _logged;
 
         public bool TryRun(World world, Item item) =>
-            TryRun(world, item, new LiveCorpseSource(), AdvanceCheck, null);
+            TryRun(world, item, new LiveCorpseSource(), AdvanceCheck);
 
         /// <summary>
         /// Advances <paramref name="item"/> in the ECS; false (nothing changed) when it is not eligible: destroyed, not a
         /// corpse, a handles opening (Entity.Update's work), not mirrored or without the components. The caller then runs
-        /// <c>Item.Update</c>. <paramref name="legacy"/> (the checker's shadow) is the legacy computation, null in the client:
-        /// it reads the client's animation data.
+        /// <c>Item.Update</c>.
         /// </summary>
-        internal bool TryRun<TSource>(World world, Item item, in TSource source, bool check, LegacyShadow legacy)
+        internal bool TryRun<TSource>(World world, Item item, in TSource source, bool check)
             where TSource : struct, ICorpseAnimationSource
         {
             if (item.IsDestroyed || !item.IsCorpse || item.ObjectHandlesStatus == ObjectHandlesStatus.OPEN ||
@@ -138,7 +138,7 @@ namespace ClassicUO.Game
 
             if (check)
             {
-                Check(item, in t, in data, in source, legacy ?? LiveLegacy);
+                Check(item, in t, in data);
             }
 
             if (!CorpseAnimationRules.Advance(ref t, in data, in source, out int frame, out long due))
@@ -155,50 +155,11 @@ namespace ClassicUO.Game
             return true;
         }
 
-        /// <summary>The legacy computation on a shadow: the frame and due time <c>Item.ProcessAnimation</c> would write from the
-        /// Item's own fields (false: not due).</summary>
-        internal delegate bool LegacyShadow(Item item, out int frame, out long due);
-
-        private static readonly LegacyShadow LiveLegacy = LegacyAdvance;
-
-        // Item.ProcessAnimation's computation from the Item's fields, writing nothing
-        private static bool LegacyAdvance(Item item, out int frame, out long due)
-        {
-            frame = -1;
-            due = 0;
-
-            if (!(item.LastAnimationChangeTime < Time.Ticks))
-            {
-                return false;
-            }
-
-            byte dir = (byte)item.Layer;
-            byte frameIndex = (byte)(item.AnimIndex + (item.ExecuteAnimation ? 1 : 0));
-            ushort id = item.GetGraphicForAnimation();
-            bool mirror = false;
-            var animations = Client.Game.UO.Animations;
-            animations.GetAnimDirection(ref dir, ref mirror);
-
-            if (id < animations.MaxAnimationCount && dir < 5 &&
-                Client.Game.UO.FileManager.Animations.TryCorpseFrame(id, item.UsedLayer, dir, frameIndex, out byte f))
-            {
-                frame = f;
-            }
-
-            due = Time.Ticks + Constants.CHARACTER_ANIMATION_DELAY;
-
-            return true;
-        }
-
         // ---- the checker -------------------------------------------------------------------------------------------------
 
-        /// <summary>
-        /// CUO_ANIM_ADVANCE_CHECK: the timer component and the ItemData must equal the Item's fields (a missed push otherwise);
-        /// the legacy computation from the Item and the ECS rules from the component must give the same frame, due time and
-        /// not-due answer, and neither may draw a random number (the state is compared around the ECS step).
-        /// </summary>
-        private static void Check<TSource>(Item item, in AnimationTimer component, in ItemData data, in TSource source, LegacyShadow legacy)
-            where TSource : struct, ICorpseAnimationSource
+        /// <summary>CUO_ANIM_ADVANCE_CHECK: the timer component and the ItemData must equal the Item's fields (a missed push
+        /// otherwise).</summary>
+        private static void Check(Item item, in AnimationTimer component, in ItemData data)
         {
             AnimationTimer held = item.CorpseTimer;
             SyncChecks++;
@@ -207,26 +168,6 @@ namespace ClassicUO.Game
             {
                 SyncDiffs++;
                 Log1($"component of 0x{item.Serial:X8} differs from the Item: ecs {Describe(in component)} amount {data.Amount} layer {data.Layer} | item {Describe(in held)} amount {item.Amount} layer {(byte)item.Layer}");
-            }
-
-            RandomHelper.State start = RandomHelper.Save();
-            bool legacyDue = legacy(item, out int legacyFrame, out long legacyTime);
-            AnimationTimer ecs = component;
-            bool ecsDue = CorpseAnimationRules.Advance(ref ecs, in data, in source, out int ecsFrame, out long ecsTime);
-            RandomHelper.State after = RandomHelper.Save();
-            Checks++;
-
-            if (!after.Equals(start))
-            {
-                RandomDiffs++;
-                Log1($"0x{item.Serial:X8}: a corpse advance drew a random number");
-                RandomHelper.Restore(in start);
-            }
-
-            if (legacyDue != ecsDue || (ecsDue && (legacyFrame != ecsFrame || legacyTime != ecsTime)))
-            {
-                Diffs++;
-                Log1($"advance of 0x{item.Serial:X8} (tick {Time.Ticks}): ecs due {ecsDue} frame {ecsFrame} next {ecsTime} | legacy due {legacyDue} frame {legacyFrame} next {legacyTime}");
             }
         }
 
@@ -245,6 +186,6 @@ namespace ClassicUO.Game
         }
 
         internal static string Summary() =>
-            $"[anim-advance-check] items: ecs advances {Ran}, not due {NotDue}, declined to Item.Update {Declined}; checked {Checks}, {Diffs} different, {RandomDiffs} random draws; component syncs checked {SyncChecks}, {SyncDiffs} different";
+            $"[anim-advance-check] items: ecs advances {Ran}, not due {NotDue}, declined to Item.Update {Declined}; component syncs checked {SyncChecks}, {SyncDiffs} different";
     }
 }
