@@ -42,18 +42,20 @@ namespace ClassicUO.UnitTests.Game
             Assert.True(item.NeedsFrameUpdate);
         }
 
-        [Fact]
-        public void QueueItemUpdate_Lists_An_Item_Once()
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)] // ecs_active_items_source (default on): membership is the item's ActiveItemEntry
+        public void QueueItemUpdate_Lists_An_Item_Once(bool source)
         {
-            var world = new World();
+            var world = new World { ActiveItemsSourceOverride = source };
             Item a = world.GetOrCreateItem(0x40000002);
             Item b = world.GetOrCreateItem(0x40000003);
 
             world.QueueItemUpdate(a);
             world.QueueItemUpdate(a);
             world.QueueItemUpdate(b);
-            Assert.True(a.InUpdateList);
-            Assert.True(b.InUpdateList);
+            Assert.True(world.IsItemListed(a));
+            Assert.True(world.IsItemListed(b));
             Assert.Equal(2, world.ActiveItemCount);
         }
 
