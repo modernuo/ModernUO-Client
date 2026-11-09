@@ -406,6 +406,47 @@ namespace ClassicUO.UnitTests.Game.Map
             Assert.Equal(0, GC.GetAllocatedBytesForCurrentThread() - before);
         }
 
+        // perf-alloc-5: a walk into a wall runs CanWalk every frame; CalculateNewZ and CalculateMinMaxZ reuse their tile lists
+        // and PathObject is a struct, so a call allocates nothing (before: two lists per call and an object per tile entry)
+        [Fact]
+        public void Pathfinder_CanWalk_Reuses_Its_Tile_Lists()
+        {
+            Assert.False(TileOrder.Check);
+            Assert.True(typeof(Pathfinder).GetNestedType("PathObject", BindingFlags.NonPublic)!.IsValueType);
+            World world = ClassicUO.UnitTests.Ecs.WorldWriterMobileTests.BuildPlayer(out _);
+            typeof(World).GetProperty(nameof(World.Map))!.SetValue(world, new ClassicUO.Game.Map.Map(world, 0, 1));
+            // the GM body: CalculateNewZ takes the dead-or-GM step state without the race test (Client.Game is not set up here)
+            world.Player.Graphic = 0x03DB;
+            var pathfinder = new Pathfinder(world);
+
+            // far from the player at 1000,1000: no chunk is loaded, so both lists stay empty and every walk is refused (a straight
+            // step runs CalculateNewZ once, a refused diagonal three times); no Assert inside the loop, xUnit's comparers allocate
+            int Run()
+            {
+                int walked = 0;
+
+                for (int i = 0; i < 200; i++)
+                {
+                    Direction dir = Direction.East;
+                    int x = 5, y = 5;
+                    sbyte z = 0;
+                    walked += pathfinder.CanWalk(ref dir, ref x, ref y, ref z) ? 1 : 0;
+                    dir = Direction.Down;
+                    walked += pathfinder.CanWalk(ref dir, ref x, ref y, ref z) ? 1 : 0;
+                    walked += x != 5 || y != 5 ? 1 : 0;
+                }
+
+                return walked;
+            }
+
+            Assert.Equal(0, Run());
+            long before = GC.GetAllocatedBytesForCurrentThread();
+            int walked = Run();
+            long allocated = GC.GetAllocatedBytesForCurrentThread() - before;
+            Assert.Equal(0, walked);
+            Assert.Equal(0, allocated);
+        }
+
         // a delegate over the private CreateItemList(List<PathObject>, x, y, step), with one list reused
         private static Func<Pathfinder, int, bool> MakeCreateItemListCaller<T>()
         {
