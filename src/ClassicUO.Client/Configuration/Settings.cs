@@ -198,8 +198,10 @@ namespace ClassicUO.Configuration
         // T8 ownership (ecs-transition-plan.md): with ecs_effects on, an effect references its source and target by mirror record
         // and serial (not by GameObject) and reads their position and offset from the ECS each update; the death re-key moves the
         // reference, a removed record leaves the last position. CUO_EFFECT_ENDPOINT_CHECK=1 compares every read with the old
-        // object reference. Read once at startup (CUO_ECS_EFFECT_ENDPOINTS=1|0 overrides it in developer builds). Default off.
-        [JsonPropertyName("ecs_effect_endpoints")] public bool EcsEffectEndpoints { get; set; }
+        // object reference. Read once at startup (CUO_ECS_EFFECT_ENDPOINTS=1|0 overrides it in developer builds).
+        // Default on since 2026-11-08 (ecs-flip-8; owner: T9 path, one full timing pass at the end of T9); the off path and the
+        // checker stay for one phase.
+        [JsonPropertyName("ecs_effect_endpoints")] public bool EcsEffectEndpoints { get; set; } = true;
 
         // T8 ownership phase 2 (ecs-transition-plan.md): with ecs_effects and ecs_effect_endpoints on, the kinds' motion (a moving
         // effect's path and explosion, a fixed effect following its source and the source's offset, the drag offset, lightning

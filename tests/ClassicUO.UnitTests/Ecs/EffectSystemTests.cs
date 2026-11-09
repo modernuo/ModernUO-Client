@@ -777,9 +777,9 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Fact]
-        public void The_Endpoint_Setting_Defaults_Off()
+        public void The_Endpoint_Setting_Defaults_On()
         {
-            new ClassicUO.Configuration.Settings().EcsEffectEndpoints.Should().BeFalse();
+            new ClassicUO.Configuration.Settings().EcsEffectEndpoints.Should().BeTrue();
         }
 
         // ---- T8 ownership phase 2 (ecs_effect_motion): every scenario above also runs in _mot and _bare
