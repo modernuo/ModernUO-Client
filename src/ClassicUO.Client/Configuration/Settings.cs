@@ -140,8 +140,9 @@ namespace ClassicUO.Configuration
         // modes, IsFlying) is read from the ECS (EquipmentSlots.Mounted, rebuilt when dirty; MobileInputs.SpeedMode and its
         // Flying bit, pushed by their operations) instead of from the Mobile. Read once at startup
         // (CUO_ECS_STEP_MOUNT_INPUTS=1|0 overrides it in developer builds). CUO_STEP_MOUNT_CHECK=1 compares the two at every
-        // step decision. Off = from the Mobile.
-        [JsonPropertyName("ecs_step_mount_inputs")] public bool EcsStepMountInputs { get; set; } = false;
+        // step decision. Off = from the Mobile. Default on since 2026-11-08 (ecs-flip-8; owner: T9 path, one full timing pass at the end of T9); the off path and the
+        // checker stay for one phase.
+        [JsonPropertyName("ecs_step_mount_inputs")] public bool EcsStepMountInputs { get; set; } = true;
 
         // An item's sub-tile draw offset while a boat carries it (the boat and the items on its deck) is ECS-owned: the boat
         // operations of WorldWriter write the ItemOffset component with the GameObject's Offset, and the item extract's
