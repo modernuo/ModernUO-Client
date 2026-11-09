@@ -1135,6 +1135,34 @@ namespace ClassicUO.Game
 
         public Entity Get(uint serial)
         {
+            if (EntityIndexCheckOn)
+            {
+                return CheckedGet(serial);
+            }
+
+            return EntityIndexOn ? GetIndexed(serial) : GetHeld(serial);
+        }
+
+        /// <summary>T9 (<c>world_entity_index</c>): the live object under <paramref name="serial"/> from the mirror's serial index
+        /// (the handle its record was last written with); null when there is no record or its object is destroyed.</summary>
+        internal Entity GetIndexed(uint serial)
+        {
+            object handle = Ecs.Mirror.GetHandle(serial);
+
+            if (handle == null)
+            {
+                return null;
+            }
+
+            // WorldEcs writes only Item and Mobile handles
+            Entity ent = System.Runtime.CompilerServices.Unsafe.As<Entity>(handle);
+
+            return ent.IsDestroyed ? null : ent;
+        }
+
+        /// <summary>The live object under <paramref name="serial"/> from the Items and Mobiles tables (the serial's kind first).</summary>
+        internal Entity GetHeld(uint serial)
+        {
             Entity ent;
 
             if (SerialHelper.IsMobile(serial))

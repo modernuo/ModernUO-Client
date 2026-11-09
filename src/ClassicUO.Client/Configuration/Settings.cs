@@ -184,6 +184,12 @@ namespace ClassicUO.Configuration
         // (CUO_ECS_ACTIVE_ITEMS_SOURCE=1|0 overrides it in developer builds). Default off.
         [JsonPropertyName("ecs_active_items_source")] public bool EcsActiveItemsSource { get; set; }
 
+        // T9 (ecs-transition-plan.md §T9): World.Get answers from the mirror's serial index (each record keeps the Item or Mobile
+        // it was last written for), not from World.Items/World.Mobiles, which stay maintained. CUO_ENTITY_INDEX_CHECK=1 runs both
+        // lookups at every World.Get and logs mismatches. Read once at startup (CUO_ECS_WORLD_ENTITY_INDEX=1|0 overrides it in
+        // developer builds). Default off.
+        [JsonPropertyName("world_entity_index")] public bool WorldEntityIndex { get; set; }
+
         // T8 (ecs-transition-plan.md): graphic effects (0x70, 0xC0, 0xC7) are ECS entities (EffectState): the frame and lifetime
         // advance is EffectSystem's, and effects are placed through DynamicTileIndex (priority +2). CUO_EFFECT_CHECK=1 compares
         // each effect with a shadow of the legacy rules every frame. Read once at startup (CUO_ECS_EFFECTS=1|0 overrides it in
