@@ -65,7 +65,7 @@ namespace ClassicUO.Game.UI.Controls
                 return;
             }
 
-            Mobile mobile = Preview ?? _paperDollGump.World.Mobiles.Get(LocalSerial);
+            Mobile mobile = Preview ?? _paperDollGump.World.GetMobile(LocalSerial);
 
             if (mobile == null || mobile.IsDestroyed)
             {

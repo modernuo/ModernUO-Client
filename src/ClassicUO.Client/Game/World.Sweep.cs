@@ -48,7 +48,7 @@ namespace ClassicUO.Game
 
             for (int i = 0; i < _sweepBeyond.Count; i++)
             {
-                Mobile m = Mobiles.Get(_sweepBeyond[i]);
+                Mobile m = GetMobile(_sweepBeyond[i]);
 
                 if (m != null && !m.IsDestroyed && !ReferenceEquals(m, player))
                 {
@@ -58,7 +58,7 @@ namespace ClassicUO.Game
 
             for (int i = 0; i < _sweepStepping.Count; i++)
             {
-                Mobile m = Mobiles.Get(_sweepStepping[i]);
+                Mobile m = GetMobile(_sweepStepping[i]);
 
                 if (m == null || m.IsDestroyed || ReferenceEquals(m, player))
                 {
@@ -157,7 +157,7 @@ namespace ClassicUO.Game
 
             for (int i = 0; i < _allies.Count; i++)
             {
-                Mobile mob = Mobiles.Get(_allies[i]);
+                Mobile mob = GetMobile(_allies[i]);
 
                 if (mob != null && !mob.IsDestroyed && _allySet.Add(mob.Serial))
                 {
@@ -178,7 +178,7 @@ namespace ClassicUO.Game
                         continue;
                     }
 
-                    Mobile mob = Mobiles.Get(member.Serial);
+                    Mobile mob = GetMobile(member.Serial);
 
                     if (mob != null && !mob.IsDestroyed)
                     {
