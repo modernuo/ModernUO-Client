@@ -221,6 +221,25 @@ namespace ClassicUO.UnitTests.Ecs
             }
         }
 
+        // the one known difference (WorldWriterTests' "a mobile's serial" equip/wear cases and EffectSystemTests' shared serial
+        // fail with the switch on for this reason): an item created under a mobile's serial replaces the mobile's record, so
+        // the index answers the item while the tables answer the mobile. No sane server sends that; the checker reports it.
+        [Fact]
+        public void An_Item_Under_A_Mobile_Serial_Is_The_Known_Difference_And_The_Checker_Reports_It()
+        {
+            foreach (bool index in new[] { false, true })
+            {
+                Scene s = Build(index);
+                Mobile m = AddMobile(s.World, MOB);
+                Item shared = AddItem(s.World, MOB);
+
+                s.World.Items.Get(MOB).Should().BeSameAs(shared);
+                s.World.Mobiles.Get(MOB).Should().BeSameAs(m);
+                s.World.Get(MOB).Should().BeSameAs(index ? shared : m);
+                s.Mismatches.Should().ContainSingle().Which.Should().Contain("tables mobile 0x00000200, index item 0x00000200");
+            }
+        }
+
         [Fact]
         public void Without_The_Checker_Only_The_Switchs_Lookup_Runs()
         {

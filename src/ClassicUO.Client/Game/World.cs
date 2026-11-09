@@ -1144,7 +1144,10 @@ namespace ClassicUO.Game
         }
 
         /// <summary>T9 (<c>world_entity_index</c>): the live object under <paramref name="serial"/> from the mirror's serial index
-        /// (the handle its record was last written with); null when there is no record or its object is destroyed.</summary>
+        /// (the handle its record was last written with); null when there is no record or its object is destroyed.
+        /// Differs from <see cref="GetHeld"/> only where the tables hold an item and a mobile under one serial (an item sent
+        /// with a mobile-range serial, which no sane server does): the mirror keeps one record per serial, so this returns
+        /// the kind written last, the tables the serial's own kind. CUO_ENTITY_INDEX_CHECK reports it.</summary>
         internal Entity GetIndexed(uint serial)
         {
             object handle = Ecs.Mirror.GetHandle(serial);
