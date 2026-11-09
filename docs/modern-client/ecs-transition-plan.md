@@ -437,6 +437,7 @@ Candidates as of 2026-10-31: E4's legacy mobile loop and its shadow dictionary (
 - The `LinkedObject` child lists for containers (T2) and equipment (T3). `Entity.Items` becomes an ECS enumeration.
 - `TNext`/`TPrevious`/`TileChunk` for dynamic objects (T6). They stay for land and statics.
 - `World.Items`/`World.Mobiles` dictionaries become the mirror's serial index plus E10's ordered table, which update order needs.
+  - **Slice 1 (2026-11-08, `bg/t9-world-index`, poc-log "T9: World.Get from the mirror's serial index"): built, default off.** The mirror keeps each record's Item or Mobile (a side table by entity id); `world_entity_index` makes `World.Get` answer from it, `CUO_ENTITY_INDEX_CHECK=1` compares it with the tables at every call. The survey (`cuo-poc-state/surveys/t9-world-index-2026-11-08.md`) lists the next slices: live `Items.Get`/`Mobiles.Get` readers to kind-checked index lookups, the tables' identity guards to an explicit `Holds`, the destroyed-but-unswept window, an ordered table for items (insertion order with slot reuse, as `MobileTable`), then deletion.
 - The legacy mobile loop, `UpdateAllItems`, E4's shadow dictionary, and the off paths of:
   - `world_update_active_items`, `mobile_push_inputs`, `world_update_mobile_system`, `gpu_mobile_frame_cache` (if still kept as a switch);
   - the `gpu_ecs_sprites` capture path for dynamics;
