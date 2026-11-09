@@ -3,7 +3,9 @@
 using System;
 using ClassicUO.Ecs;
 using ClassicUO.Game.Map;
+using ClassicUO.Renderer;
 using Microsoft.Xna.Framework;
+using Microsoft.Xna.Framework.Graphics;
 using Uo.Pack;
 using Uo.Render;
 
@@ -81,6 +83,47 @@ namespace ClassicUO.Game
         public MobileSpriteExtract.LightRequest[] Lights = new MobileSpriteExtract.LightRequest[2];
         public int LightCount;
 
+        /// <summary>
+        /// legacy_ecs_sprites (LegacySpriteSink): the Legacy batcher calls the last select resolved to, relative to the draw
+        /// origin (position + walking offset), with the recipe of their depth, plus FrameInfo and the lights. Recorded only
+        /// when the selection is cacheable, the mobile is not seated and every layer and record had its atlas texture (the
+        /// atlas only gains textures, so a recorded texture and rect stay valid). Replayed while the selection
+        /// (<see cref="SelectGen"/>), alpha, override hue, body hue and the sprite source are the same.
+        /// </summary>
+        public bool LegacyValid;
+        public uint LegacySelectGen;
+        public byte LegacyAlpha;
+        public ushort LegacyOverrideHue, LegacyBodyHue;
+        public ILegacySpriteSource LegacySource;
+        public LegacyEntry[] LegacyEntries = Array.Empty<LegacyEntry>();
+        public int LegacyCount;
+        public Rectangle LegacyFrameInfo;
+        public MobileSpriteExtract.LightRequest[] LegacyLights = Array.Empty<MobileSpriteExtract.LightRequest>();
+        public int LegacyLightCount;
+
+        /// <summary>One Legacy batcher call (a shadow or strip draw: seated mobiles are not recorded), about 56 bytes; at
+        /// replay its position is (origin + X, origin + Y) and its depth MobileSpriteExtract.DepthOf(baseDepth, Kind, Add).</summary>
+        public struct LegacyEntry
+        {
+            public Texture2D Texture;
+            public Rectangle Source;
+            public Vector3 Hue;
+            public int X, Y;
+            public float Add;
+            public byte Kind;
+            public bool Flip;
+            public SpriteCaptureMode Mode;
+        }
+
+        // sized to the record count (rounded up to 4): one array per drawn mobile, grown only when its layers grow
+        public void EnsureLegacyCapacity(int n)
+        {
+            if (LegacyEntries.Length < n)
+            {
+                Array.Resize(ref LegacyEntries, (n + 3) & ~3);
+            }
+        }
+
         public void EnsureCapacity(int n)
         {
             if (Entries.Length < n)
@@ -94,9 +137,10 @@ namespace ClassicUO.Game
             SelectValid = false;
             EmitValid = false;
             AbsValid = false;
+            LegacyValid = false;
         }
 
         // hit counters for FrameStats / the check log
-        public static long SelectHits, SelectMisses, EmitHits, EmitMisses;
+        public static long SelectHits, SelectMisses, EmitHits, EmitMisses, LegacyHits, LegacyMisses;
     }
 }
