@@ -111,6 +111,34 @@ namespace ClassicUO.Game
             return v;
         }
 
+        /// <summary>
+        /// <see cref="Read"/> with the switch on, for a reader that already holds the item's record row (the item extract's
+        /// Gather): the component from <paramref name="row"/> instead of a second TryScalarEntity and node lookup.
+        /// <paramref name="record"/>: false = no record (the placement preview), read the Item's.
+        /// </summary>
+        internal static Vector3 ReadRow(Item item, bool record, in ClassicUO.Ecs.EcsRow row)
+        {
+            Vector3 v;
+
+            if (record)
+            {
+                v = row.TryGet(out ClassicUO.Ecs.ItemOffset c) ? new Vector3(c.X, c.Y, c.Z) : Vector3.Zero;
+                Reads++;
+            }
+            else
+            {
+                v = item.Offset;
+                Fallbacks++;
+            }
+
+            if (Check)
+            {
+                Compare(item, v);
+            }
+
+            return v;
+        }
+
         private static void Compare(Item item, Vector3 ecs)
         {
             Checks++;

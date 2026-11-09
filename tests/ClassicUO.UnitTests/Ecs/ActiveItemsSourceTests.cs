@@ -92,9 +92,9 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Fact]
-        public void The_Setting_Is_Off_By_Default()
+        public void The_Setting_Is_On_By_Default()
         {
-            ClassicUO.Configuration.Settings.GlobalSettings.EcsActiveItemsSource.Should().BeFalse();
+            new ClassicUO.Configuration.Settings().EcsActiveItemsSource.Should().BeTrue();
         }
 
         [Fact]

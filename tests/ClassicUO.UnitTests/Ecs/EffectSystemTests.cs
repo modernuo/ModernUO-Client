@@ -11,40 +11,38 @@ using Xunit;
 
 namespace ClassicUO.UnitTests.Ecs
 {
-    // T8: graphic effects as ECS entities (ecs_effects). The same scripted effects run in an old world (the legacy update) and a
-    // new one (EffectSystem: the entity owns frame and lifetime) and are compared after every frame; the new world also runs
-    // the checker (CUO_EFFECT_CHECK), whose shadow replays the legacy animation rules beside each system step.
+    // T8: graphic effects as ECS entities (EffectSystem: the entity owns frame and lifetime). The same scripted effects run in
+    // a world with the state published from the objects (_new, with the checker CUO_EFFECT_CHECK), one with endpoints by record
+    // (_own) and two with the motion step (_mot with every checker, _bare without), compared after every frame. Since T9
+    // deleted ecs_effects' off path, _new's frame steps are also compared with a copy of the legacy rules kept here
+    // (LegacyFrame, formerly the checker's shadow).
     [Collection("ChunkStaticTileDataCollection")] // Time.Ticks / Time.Delta and EffectSystem's counters are process-wide
     public sealed class EffectSystemTests : IDisposable
     {
         private const uint PLAYER = 0x0000_0100, TARGET = 0x0000_0200, CASTER = 0x0000_0300;
         private const uint T0 = 1_000_000;
 
-        private readonly World _old, _new, _own, _mot, _bare;
+        private readonly World _new, _own, _mot, _bare;
         private readonly List<string> _mismatches = new List<string>();
         private readonly Action<string> _savedObserver;
-        private readonly long _comparedBefore, _shadowBefore, _endpointReadsBefore, _motionComparedBefore, _motionStepsBefore;
+        private readonly long _comparedBefore, _endpointReadsBefore, _motionComparedBefore, _motionStepsBefore;
 
         public EffectSystemTests()
         {
-            _old = WorldWriterMobileTests.BuildPlayer(out _, PLAYER);
             _new = WorldWriterMobileTests.BuildPlayer(out _, PLAYER);
             _own = WorldWriterMobileTests.BuildPlayer(out _, PLAYER);
             _mot = WorldWriterMobileTests.BuildPlayer(out _, PLAYER);
             _bare = WorldWriterMobileTests.BuildPlayer(out _, PLAYER);
-            foreach (World w in new[] { _old, _new, _own, _mot, _bare })
+            foreach (World w in new[] { _new, _own, _mot, _bare })
             {
                 w.RangeSize.X = 1000; // Distance is measured from the range centre
                 w.RangeSize.Y = 1000;
             }
 
-            _old.EffectsSystemOverride = false;
-            _new.EffectsSystemOverride = true;
             _new.EffectsCheckOverride = true;
             _new.EffectEndpointsOverride = false;
 
             // T8 ownership: the third world references sources and targets by record (ecs_effect_endpoints) with the checker
-            _own.EffectsSystemOverride = true;
             _own.EffectsCheckOverride = true;
             _own.EffectEndpointsOverride = true;
             _own.EffectEndpointsCheckOverride = true;
@@ -52,14 +50,12 @@ namespace ClassicUO.UnitTests.Ecs
 
             // T8 ownership phase 2: the motion step (ecs_effect_motion) with every checker and item offsets from the ECS, and
             // without any checker (the effects hold no objects; item offsets from the objects)
-            _mot.EffectsSystemOverride = true;
             _mot.EffectsCheckOverride = true;
             _mot.EffectEndpointsOverride = true;
             _mot.EffectEndpointsCheckOverride = true;
             _mot.EffectMotionOverride = true;
             _mot.EffectMotionCheckOverride = true;
             _mot.ItemOffsetOverride = true;
-            _bare.EffectsSystemOverride = true;
             _bare.EffectsCheckOverride = false;
             _bare.EffectEndpointsOverride = true;
             _bare.EffectEndpointsCheckOverride = false;
@@ -69,7 +65,6 @@ namespace ClassicUO.UnitTests.Ecs
             _savedObserver = EffectSystem.Observer;
             EffectSystem.Observer = _mismatches.Add;
             _comparedBefore = EffectSystem.Compared;
-            _shadowBefore = EffectSystem.ShadowSteps;
             _endpointReadsBefore = EffectSystem.EndpointReads;
             _motionComparedBefore = EffectSystem.MotionCompared;
             _motionStepsBefore = EffectSystem.MotionSteps;
@@ -79,7 +74,7 @@ namespace ClassicUO.UnitTests.Ecs
 
         public void Dispose() => EffectSystem.Observer = _savedObserver;
 
-        private IEnumerable<World> Worlds => new[] { _old, _new, _own, _mot, _bare };
+        private IEnumerable<World> Worlds => new[] { _new, _own, _mot, _bare };
 
         // the worlds whose effects reference their endpoints by record
         private bool ByRecord(World w) => ReferenceEquals(w, _own) || ReferenceEquals(w, _mot) || ReferenceEquals(w, _bare);
@@ -156,23 +151,22 @@ namespace ClassicUO.UnitTests.Ecs
                     }
                 }
 
-                _old.Effects.Update();
+                LegacyBefore();
                 _new.Effects.Update();
                 _own.Effects.Update();
                 _mot.Effects.Update();
                 _bare.Effects.Update();
-                string old = Snap(_old);
-                Snap(_new).Should().Be(old, $"after frame {i}");
-                Snap(_own).Should().Be(old, $"endpoints from the ECS, after frame {i}");
-                Snap(_mot).Should().Be(old, $"motion from the ECS, after frame {i}");
-                Snap(_bare).Should().Be(old, $"motion from the ECS without checkers, after frame {i}");
+                LegacyAfter(i);
+                string reference = Snap(_new);
+                Snap(_own).Should().Be(reference, $"endpoints from the ECS, after frame {i}");
+                Snap(_mot).Should().Be(reference, $"motion from the ECS, after frame {i}");
+                Snap(_bare).Should().Be(reference, $"motion from the ECS without checkers, after frame {i}");
 
                 foreach (World w in new[] { _new, _own, _mot, _bare })
                 {
                     CountEntities(w).Should().Be(Snap(w).Count(c => c == '\n'), $"entities equal the live effects after frame {i}");
                 }
 
-                CountEntities(_old).Should().Be(0, "the old world has no effect entities");
                 StateEqualsObjects(_mot, i);
                 StateEqualsObjects(_bare, i);
             }
@@ -184,6 +178,7 @@ namespace ClassicUO.UnitTests.Ecs
 
             _mismatches.Should().BeEmpty();
             (EffectSystem.Compared - _comparedBefore).Should().BeGreaterThan(0, "the checker ran");
+            _legacyCompared.Should().BeGreaterThan(0, "frame steps were compared with the legacy rules");
             (EffectSystem.MotionSteps - _motionStepsBefore).Should().BeGreaterThan(0, "the motion step ran");
             (EffectSystem.MotionCompared - _motionComparedBefore).Should().BeGreaterThan(0, "the motion checker compared");
         }
@@ -207,6 +202,125 @@ namespace ClassicUO.UnitTests.Ecs
             }
         }
 
+        // ---- the legacy frame and lifetime rules (GameEffect.Update and LightningEffect.Update before T8, verbatim on a copy of
+        // the three fields they write): each of _new's live effects is stepped on its copy before every update in which its kind
+        // steps the frame (a drag effect only on its move time) and compared with the object after it. An effect created during
+        // the walk (an explosion) is first compared on the frame after.
+
+        private sealed class LegacyFrame
+        {
+            public byte AnimIndex;
+            public ushort AnimGraphic;
+            public long Next;
+            public bool Destroys;
+        }
+
+        private readonly Dictionary<GameEffect, LegacyFrame> _legacy = new Dictionary<GameEffect, LegacyFrame>(ReferenceEqualityComparer.Instance);
+        private readonly List<GameEffect> _stepped = new List<GameEffect>();
+        private int _legacyCompared;
+
+        private void LegacyBefore()
+        {
+            _stepped.Clear();
+
+            for (GameEffect f = (GameEffect)_new.Effects.Items; f != null; f = (GameEffect)f.Next)
+            {
+                if (f.IsDestroyed)
+                {
+                    continue;
+                }
+
+                if (!_legacy.TryGetValue(f, out LegacyFrame r))
+                {
+                    r = new LegacyFrame { AnimIndex = f.AnimIndex, AnimGraphic = f.AnimationGraphic, Next = f.NextChangeFrameTime };
+                    _legacy.Add(f, r);
+                }
+
+                if (f is DragEffect d && d.LastMoveTime > Time.Ticks)
+                {
+                    continue;
+                }
+
+                r.Destroys = f is LightningEffect ? LegacyLightning(f, r) : LegacyBase(f, r);
+                _stepped.Add(f);
+            }
+        }
+
+        private void LegacyAfter(int frame)
+        {
+            foreach (GameEffect f in _stepped)
+            {
+                // destroyed: by the rules, or its source died or it left the view range first
+                if (f.IsDestroyed)
+                {
+                    continue;
+                }
+
+                LegacyFrame r = _legacy[f];
+                r.Destroys.Should().BeFalse($"the legacy rules end 0x{f.Graphic:X4} on frame {frame}");
+                (f.AnimIndex, f.AnimationGraphic, f.NextChangeFrameTime).Should().Be((r.AnimIndex, r.AnimGraphic, r.Next),
+                    $"0x{f.Graphic:X4}'s frame after frame {frame} follows the legacy rules");
+                _legacyCompared++;
+            }
+        }
+
+        // GameEffect.Update's block before T8; true when it would destroy the effect
+        private static unsafe bool LegacyBase(GameEffect e, LegacyFrame r)
+        {
+            if (e.IsEnabled)
+            {
+                if (e.Duration < Time.Ticks && e.Duration >= 0)
+                {
+                    return true;
+                }
+
+                if (r.Next < Time.Ticks)
+                {
+                    if (e.AnimDataFrame.FrameCount != 0)
+                    {
+                        r.AnimGraphic = (ushort)(e.Graphic + e.AnimDataFrame.FrameData[r.AnimIndex]);
+                        r.AnimIndex++;
+
+                        if (r.AnimIndex >= e.AnimDataFrame.FrameCount)
+                        {
+                            r.AnimIndex = 0;
+                        }
+                    }
+                    else
+                    {
+                        r.AnimGraphic = e.Graphic;
+                    }
+
+                    r.Next = (long)Time.Ticks + e.IntervalInMs;
+                }
+            }
+            else
+            {
+                r.AnimGraphic = e.Graphic;
+            }
+
+            return false;
+        }
+
+        // LightningEffect.Update's frame block before T8
+        private static bool LegacyLightning(GameEffect e, LegacyFrame r)
+        {
+            if (r.AnimIndex >= 10 || (e.Duration < Time.Ticks && e.Duration >= 0))
+            {
+                return true;
+            }
+
+            r.AnimGraphic = (ushort)(e.Graphic + r.AnimIndex);
+
+            if (r.Next < Time.Ticks)
+            {
+                r.AnimIndex++;
+                r.Next = (long)Time.Ticks + e.IntervalInMs;
+            }
+
+            return false;
+        }
+
         private static int CountEntities(World w) => w.Ecs.Mirror.Store.Query<EffectState>().Count;
 
         [Fact]
@@ -220,7 +334,7 @@ namespace ClassicUO.UnitTests.Ecs
             }
 
             Run(40);
-            Snap(_old).Should().Contain("FixedEffect", "the no-duration effect is still running");
+            Snap(_new).Should().Contain("FixedEffect", "the no-duration effect is still running");
         }
 
         [Fact]
@@ -355,10 +469,8 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Fact]
-        public void The_System_Off_Creates_No_Entities()
+        public void Every_Effect_Gets_An_Entity_And_Clearing_Destroys_Them()
         {
-            Create(_old, GraphicEffectType.FixedXYZ, 0, 0, 0x3779, 1001, 1001, 0, 0, duration: 10);
-            CountEntities(_old).Should().Be(0);
             Create(_new, GraphicEffectType.FixedXYZ, 0, 0, 0x3779, 1001, 1001, 0, 0, duration: 10);
             CountEntities(_new).Should().Be(1);
             _new.Effects.Clear();
@@ -366,7 +478,7 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Fact]
-        public void The_Checker_Replays_The_Legacy_Rules_And_Flags_A_Bad_State()
+        public void The_Checker_Flags_A_Bad_State()
         {
             foreach (World w in Worlds)
             {
@@ -374,7 +486,6 @@ namespace ClassicUO.UnitTests.Ecs
             }
 
             Run(5);
-            (EffectSystem.ShadowSteps - _shadowBefore).Should().BeGreaterThan(0);
 
             // a state that drifted from the object (a missed publish) and a missing entity are both reported
             var fx = (GameEffect)_new.Effects.Items;
@@ -777,9 +888,9 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Fact]
-        public void The_Endpoint_Setting_Defaults_Off()
+        public void The_Endpoint_Setting_Defaults_On()
         {
-            new ClassicUO.Configuration.Settings().EcsEffectEndpoints.Should().BeFalse();
+            new ClassicUO.Configuration.Settings().EcsEffectEndpoints.Should().BeTrue();
         }
 
         // ---- T8 ownership phase 2 (ecs_effect_motion): every scenario above also runs in _mot and _bare
@@ -940,9 +1051,9 @@ namespace ClassicUO.UnitTests.Ecs
             fx.Target.Should().BeNull();
 
             // the player's object moved outside the funnel: the path still uses the record's position
-            AddMobile(_old, CASTER, 1003, 1003);
-            AddMobile(_old, TARGET, 1012, 1008);
-            Create(_old, GraphicEffectType.Moving, CASTER, TARGET, 0x36D4, 0, 0, 0, 0, speed: 1, duration: 0);
+            AddMobile(_new, CASTER, 1003, 1003);
+            AddMobile(_new, TARGET, 1012, 1008);
+            Create(_new, GraphicEffectType.Moving, CASTER, TARGET, 0x36D4, 0, 0, 0, 0, speed: 1, duration: 0);
             // (beyond the target, so the screen offsets change sign and the tile truncation differs)
             _bare.Player.X = 1020;
             _bare.Player.Y = 1015;
@@ -951,22 +1062,19 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 Time.Ticks = T0 + (uint)(i * 25);
                 _bare.Effects.Update();
-                _old.Effects.Update();
-                Snap(_bare).Should().Be(Snap(_old), $"the record still holds the player at 1000,1000 (frame {i})");
+                _new.Effects.Update();
+                Snap(_bare).Should().Be(Snap(_new), $"the record still holds the player at 1000,1000 (frame {i})");
             }
         }
 
         [Fact]
         public void The_Motion_Switch_Needs_The_Endpoints()
         {
-            _new.EffectMotionOverride = true; // ecs_effects on, endpoints off
+            _new.EffectMotionOverride = true; // endpoints off
             _new.EffectMotionOn.Should().BeFalse();
             Create(_new, GraphicEffectType.FixedXYZ, 0, 0, 0x3779, 1001, 1001, 0, 0, duration: 10);
             ((GameEffect)_new.Effects.Items).UsesMotion.Should().BeFalse();
 
-            _old.EffectEndpointsOverride = true;
-            _old.EffectMotionOverride = true; // ecs_effects off
-            _old.EffectMotionOn.Should().BeFalse();
             _own.EffectMotionOn.Should().BeFalse();
             _mot.EffectMotionOn.Should().BeTrue();
             Create(_own, GraphicEffectType.FixedXYZ, 0, 0, 0x3779, 1001, 1001, 0, 0, duration: 10);
@@ -1022,7 +1130,7 @@ namespace ClassicUO.UnitTests.Ecs
                 {
                     w.Mobiles.Get(CASTER).Destroy();
                 }
-                else if (ReferenceEquals(w, _old))
+                else if (ReferenceEquals(w, _new))
                 {
                     exploded |= Snap(w).Contains("|g36CB");
                 }
@@ -1044,15 +1152,9 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Fact]
-        public void The_Motion_Setting_Defaults_Off()
+        public void The_Motion_Setting_Defaults_On()
         {
-            new ClassicUO.Configuration.Settings().EcsEffectMotion.Should().BeFalse();
-        }
-
-        [Fact]
-        public void The_Setting_Defaults_On()
-        {
-            new ClassicUO.Configuration.Settings().EcsEffects.Should().BeTrue();
+            new ClassicUO.Configuration.Settings().EcsEffectMotion.Should().BeTrue();
         }
     }
 }

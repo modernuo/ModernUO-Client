@@ -400,15 +400,13 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void Effect_Sprites_Switch()
         {
-            // without ecs_effects there is no state to draw from
-            Assert.False(EffectSpriteSink.Resolve(false, true, true, true));
-            Assert.False(EffectSpriteSink.Resolve(true, null, null, false));
-            Assert.True(EffectSpriteSink.Resolve(true, null, null, true));
-            Assert.True(EffectSpriteSink.Resolve(true, null, true, false));
-            Assert.False(EffectSpriteSink.Resolve(true, null, false, true));
-            Assert.True(EffectSpriteSink.Resolve(true, true, false, false));
-            Assert.False(EffectSpriteSink.Resolve(true, false, true, true));
-            Assert.False(new ClassicUO.Configuration.Settings().EcsEffectSprites);
+            Assert.False(EffectSpriteSink.Resolve(null, null, false));
+            Assert.True(EffectSpriteSink.Resolve(null, null, true));
+            Assert.True(EffectSpriteSink.Resolve(null, true, false));
+            Assert.False(EffectSpriteSink.Resolve(null, false, true));
+            Assert.True(EffectSpriteSink.Resolve(true, false, false));
+            Assert.False(EffectSpriteSink.Resolve(false, true, true));
+            Assert.True(new ClassicUO.Configuration.Settings().EcsEffectSprites);
         }
 
         [Fact]

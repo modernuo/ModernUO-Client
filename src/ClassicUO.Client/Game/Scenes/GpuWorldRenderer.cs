@@ -278,6 +278,7 @@ namespace ClassicUO.Game.Scenes
             CaptureFallbacks = 0;
             UpdateWaterWobble();
             EcsParity.BeginFrame();
+            ItemSpriteInput.BeginFrame();
             SpritePickTable.BeginDraw();
             _ecsMobiles = Configuration.Settings.GlobalSettings.GpuEcsSprites && _pack != null && _pack.HasAnims;
             _scene = Client.Game.GetScene<GameScene>();
