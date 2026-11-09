@@ -490,7 +490,7 @@ namespace ClassicUO.Game.GameObjects
             // T1 (funnel part 7): ProcessAnimation split. The step processing runs first and on its own (its step completion is
             // the CompleteStep operation), then the frame advance (AdvanceAnimation) and, for a finished corpse animation, the
             // removal (RemoveDeadMobile): each its own operation, none nested in another
-            // T6c (world_step_system): the step processing as a system over the Steps component, at the same point
+            // T6c: the step processing as a system over the Steps component, at the same point
             byte dir;
 
             if (!World.Ecs.StepsEnabled || !World.StepSystem.TryRun(World, this, Time.Ticks, StepFrameDelay, out dir))
@@ -718,13 +718,6 @@ namespace ClassicUO.Game.GameObjects
             PlanIdleAnimation(new LiveIdleAnimationData(Client.Game.UO.Animations), out IdlePlan plan);
             World.Writer.IdleAnimation(this, in plan);
         }
-
-#if CUO_DEVTOOLS
-        // CLEANUP(release): only CUO_ANIM_ADVANCE_CHECK's shadow step calls it
-        /// <summary>T5b checker: <see cref="PlanIdleAnimation"/> over the client's animation data (draws, writes nothing).</summary>
-        internal void PlanIdleAnimationLive(out IdlePlan plan) =>
-            PlanIdleAnimation(new LiveIdleAnimationData(Client.Game.UO.Animations), out plan);
-#endif
 
         /// <summary>T1 (funnel part 8): the animation data <see cref="PlanIdleAnimation"/> reads (tests pass their own).</summary>
         internal interface IIdleAnimationData

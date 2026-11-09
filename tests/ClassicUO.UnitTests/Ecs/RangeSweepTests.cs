@@ -13,8 +13,9 @@ using Flags = ClassicUO.Game.Data.Flags;
 
 namespace ClassicUO.UnitTests.Ecs
 {
-    // T5c (world_sweep_system): the range sweep and the world-map pass as a system over Position / MobileInputs, against the
-    // legacy loops over the same constructed worlds. The checker (CUO_SWEEP_CHECK) is on in every world and must stay silent.
+    // T5c: the range sweep and the world-map pass as a system over Position / MobileInputs, against the legacy loops (copied
+    // below as the reference since T9 deleted world_sweep_system's off path and CUO_SWEEP_CHECK) over the same constructed
+    // worlds.
     public class RangeSweepTests
     {
         private const uint PLAYER = 0x0000_0100;
@@ -24,23 +25,19 @@ namespace ClassicUO.UnitTests.Ecs
         {
             public World World;
             public WorldWriterMobileTests.TestPlayer Player;
-            public readonly List<string> Mismatches = new List<string>();
             public readonly List<string> MapCalls = new List<string>();
             public readonly Dictionary<uint, Mobile> Mobs = new Dictionary<uint, Mobile>();
             public readonly Dictionary<uint, Item> Items = new Dictionary<uint, Item>();
         }
 
         // the player stands at 1000,1000 with the range centre on it
-        private static Scene Build(bool system, int centerX = 1000, int centerY = 1000)
+        private static Scene Build(int centerX = 1000, int centerY = 1000)
         {
             World world = WorldWriterMobileTests.BuildPlayer(out WorldWriterMobileTests.TestPlayer player, PLAYER);
             var scene = new Scene { World = world, Player = player };
             world.Ecs.ClockEnabled = true;
             world.RangeSize.X = centerX;
             world.RangeSize.Y = centerY;
-            world.SweepSystemOverride = system;
-            world.SweepCheckOverride = true;
-            world.SweepObserver = scene.Mismatches.Add;
             world.MapCallObserver = scene.MapCalls.Add;
 
             return scene;
@@ -125,20 +122,63 @@ namespace ClassicUO.UnitTests.Ecs
         private static List<uint> LegacyMobileSet(World w) =>
             w.Mobiles.Values.Where(m => !m.IsDestroyed && m.Distance > w.ClientViewRange).Select(m => m.Serial).ToList();
 
-        [Fact]
-        public void The_Switch_Is_On_By_Default_And_Overridable()
+        // the legacy loops before T5c (world_sweep_system off), the reference the system is compared with
+        private static void LegacyMobileSweep(World w)
         {
-            Configuration.Settings.GlobalSettings.WorldSweepSystem.Should().BeTrue();
-            var w = new World();
-            w.SweepSystemOn.Should().BeTrue();
-            w.SweepSystemOverride = false;
-            w.SweepSystemOn.Should().BeFalse();
+            foreach (Mobile mob in w.Mobiles.Values.ToList())
+            {
+                if (mob.Distance > w.ClientViewRange)
+                {
+                    w.Writer.SweepMobile(mob);
+                }
+            }
         }
+
+        private static void LegacyItemLoop(World w)
+        {
+            foreach (Item item in w.Items.Values.ToList())
+            {
+                if (item.OnGround && item.Distance > w.ClientViewRange)
+                {
+                    if (!item.IsMulti || w.HouseManager.TryToRemove(item, w.ClientViewRange))
+                    {
+                        w.Writer.SweepItem(item);
+                    }
+                }
+            }
+        }
+
+        private static List<string> LegacyMapCalls(World w)
+        {
+            var calls = new List<string>();
+
+            foreach (Mobile mob in w.Mobiles.Values)
+            {
+                if (mob.IsDestroyed)
+                {
+                    continue;
+                }
+
+                if (mob.NotorietyFlag == NotorietyFlag.Ally)
+                {
+                    calls.Add(Call(w, mob, true));
+                }
+                else if (w.Party.Leader != 0 && w.Party.Contains(mob))
+                {
+                    calls.Add(Call(w, mob, false));
+                }
+            }
+
+            return calls;
+        }
+
+        private static string Call(World w, Mobile mob, bool guild) =>
+            $"{mob.Serial:X8} {mob.X},{mob.Y} hp {ClassicUO.Utility.MathHelper.PercetangeOf(mob.Hits, mob.HitsMax)} map {w.MapIndex} guild {guild} name {mob.Name}";
 
         [Fact]
         public void The_Selection_Equals_The_Legacy_Set_In_Table_Order()
         {
-            Scene s = Build(true);
+            Scene s = Build();
             FillMobiles(s);
 
             List<uint> system = s.World.SelectSweptMobiles().Select(m => m.Serial).ToList();
@@ -152,7 +192,7 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void The_Selection_Order_Follows_The_Table_After_Removals_Reuse_Slots()
         {
-            Scene s = Build(true);
+            Scene s = Build();
             FillMobiles(s);
             s.World.Mobiles.Remove(0x1002).Should().BeTrue();
             AddMobile(s, 0x1020, 1000 + 40, 1000); // takes the freed slot
@@ -163,7 +203,7 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void The_Player_Is_Never_Swept_Even_Beyond_A_Moved_Centre()
         {
-            Scene s = Build(true, 1200, 1200);
+            Scene s = Build(1200, 1200);
             AddMobile(s, 0x1001, 1200, 1200);
 
             s.World.SelectSweptMobiles().Select(m => m.Serial).Should().Equal(LegacyMobileSet(s.World));
@@ -173,20 +213,16 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void The_Sweep_Removes_The_Same_Mobiles_With_The_System_On_And_Off()
         {
-            Scene on = Build(true), off = Build(false);
+            Scene on = Build(), off = Build();
             FillMobiles(on);
             FillMobiles(off);
 
             on.World.SweepMobiles();
-            off.World.SweepMobiles();
+            LegacyMobileSweep(off.World);
 
             Held(on.World).Should().Equal(Held(off.World));
             Held(on.World).Should().Contain(new uint[] { PLAYER, 0x1001, 0x1004, 0x1007, 0x1011 });
             Held(on.World).Should().NotContain(new uint[] { 0x1002, 0x1003, 0x1005, 0x1006, 0x1008, 0x1009, 0x1010, 0x1012 });
-            on.Mismatches.Should().BeEmpty();
-            off.Mismatches.Should().BeEmpty();
-            on.World.SweepRemovedMobiles.Should().Be(8).And.Be(off.World.SweepRemovedMobiles);
-            on.World.SweepChecks.Should().BeGreaterThan(0);
 
             // the ECS agrees: the removed mobiles' entities are gone, the kept ones remain
             on.World.Ecs.Mirror.TryGetEntity(0x1002, out EcsEntity _).Should().BeFalse();
@@ -196,29 +232,13 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void The_Sweep_Of_A_Second_Frame_Removes_Nothing_More()
         {
-            Scene s = Build(true);
+            Scene s = Build();
             FillMobiles(s);
             s.World.SweepMobiles();
-            long removed = s.World.SweepRemovedMobiles;
+            List<uint> held = Held(s.World);
             s.World.SweepMobiles();
 
-            s.World.SweepRemovedMobiles.Should().Be(removed);
-            s.Mismatches.Should().BeEmpty();
-        }
-
-        [Fact]
-        public void The_Checker_Reports_A_Mobile_The_System_Misses()
-        {
-            // a mobile whose ECS position was moved without the funnel (a missed push) is selected differently
-            Scene s = Build(true);
-            AddMobile(s, 0x1002, 1000 + RANGE + 1, 1000);
-            s.World.Ecs.Mirror.TryGetEntity(0x1002, out EcsEntity e).Should().BeTrue();
-            e.GetComponent<Position>().X = 1000;
-
-            s.World.SweepMobiles();
-
-            s.Mismatches.Should().NotBeEmpty();
-            s.Mismatches[0].Should().StartWith("[sweep] mismatch (mobiles selected)").And.Contain("00001002");
+            Held(s.World).Should().Equal(held);
         }
 
         // ---- items
@@ -271,21 +291,18 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void The_Item_Sweep_Removes_The_Same_Items_With_The_System_On_And_Off()
         {
-            Scene on = Build(true), off = Build(false);
+            Scene on = Build(), off = Build();
             FillItems(on);
             FillItems(off);
 
             SweepItemLoop(on.World);
-            SweepItemLoop(off.World);
+            LegacyItemLoop(off.World);
 
             List<uint> Left(World w) => w.Items.Values.Where(i => !i.IsDestroyed).Select(i => i.Serial).OrderBy(x => x).ToList();
 
             Left(on.World).Should().Equal(Left(off.World));
             Left(on.World).Should().Contain(new uint[] { 0x4000_0001, 0x4000_0004, 0x4000_0005, 0x4000_0007, 0x4000_0010, 0x4000_0011 });
             Left(on.World).Should().NotContain(new uint[] { 0x4000_0002, 0x4000_0003, 0x4000_0006, 0x4000_0008 });
-            on.Mismatches.Should().BeEmpty();
-            off.Mismatches.Should().BeEmpty();
-            on.World.SweepRemovedItems.Should().Be(4).And.Be(off.World.SweepRemovedItems);
 
             // the removed house is forgotten, the one in range is kept
             on.World.HouseManager.TryGetHouse(0x4000_0008, out _).Should().BeFalse();
@@ -321,27 +338,25 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void A_Dying_Mobiles_Equipment_Is_Swept_Like_The_Legacy_Rule_Does()
         {
-            Scene on = Build(true), off = Build(false);
+            Scene on = Build(), off = Build();
             FillDyingEquipment(on);
             FillDyingEquipment(off);
             on.Items[0x4000_0022].OnGround.Should().BeTrue("the dying-mobile key is not a valid container serial");
 
             SweepItemLoop(on.World);
-            SweepItemLoop(off.World);
+            LegacyItemLoop(off.World);
 
             off.Items[0x4000_0022].IsDestroyed.Should().BeTrue();
             on.Items[0x4000_0022].IsDestroyed.Should().BeTrue();
             on.Items[0x4000_0023].IsDestroyed.Should().BeFalse();
-            on.Mismatches.Should().BeEmpty();
-            off.Mismatches.Should().BeEmpty();
-            on.World.SweepRemovedItems.Should().Be(off.World.SweepRemovedItems).And.Be(1);
+            off.Items[0x4000_0023].IsDestroyed.Should().BeFalse();
         }
 
         // Codex P2 #2: a multi that was destroyed but is still held has no ECS entity; the legacy loop still runs the house check
         [Fact]
         public void A_Destroyed_Held_Multi_Still_Gets_Its_House_Cleanup()
         {
-            Scene on = Build(true), off = Build(false);
+            Scene on = Build(), off = Build();
 
             foreach (Scene s in new[] { on, off })
             {
@@ -353,33 +368,16 @@ namespace ClassicUO.UnitTests.Ecs
             }
 
             SweepItemLoop(on.World);
-            SweepItemLoop(off.World);
+            LegacyItemLoop(off.World);
 
             off.World.HouseManager.TryGetHouse(0x4000_0030, out _).Should().BeFalse("the legacy loop cleans the house up");
             on.World.HouseManager.TryGetHouse(0x4000_0030, out _).Should().BeFalse("and so does the system path");
-            on.Mismatches.Should().BeEmpty();
-            off.Mismatches.Should().BeEmpty();
-        }
-
-        [Fact]
-        public void The_Checker_Reports_A_Missed_House_Cleanup()
-        {
-            Scene s = Build(true);
-            Item multi = AddGround(s, 0x4000_0031, 1000 + 60, 1000, multi: true);
-            s.World.HouseManager.Add(multi.Serial, new House(s.World, multi.Serial, 1, false));
-            multi.Destroy();
-
-            // the loop skips the item: the legacy rule would have run the house check
-            s.World.PrepareItemSweep();
-            s.World.FinishItemSweep();
-
-            s.Mismatches.Should().Contain(m => m.StartsWith("[sweep] mismatch (house cleanup)"));
         }
 
         [Fact]
         public void The_Item_Sweep_Runs_In_Table_Order()
         {
-            Scene s = Build(true);
+            Scene s = Build();
             FillItems(s);
             var order = new List<uint>();
             s.World.PrepareItemSweep();
@@ -394,19 +392,6 @@ namespace ClassicUO.UnitTests.Ecs
 
             order.Should().Equal(s.World.Items.Values.Where(i => !i.IsDestroyed && i.OnGround && i.Distance > RANGE).Select(i => i.Serial));
             s.World.FinishItemSweep();
-        }
-
-        [Fact]
-        public void The_Checker_Reports_An_Item_The_System_Misses()
-        {
-            Scene s = Build(true);
-            AddGround(s, 0x4000_0002, 1000 + RANGE + 1, 1000);
-            s.World.Ecs.Mirror.TryGetEntity(0x4000_0002, out EcsEntity e).Should().BeTrue();
-            e.GetComponent<Position>().X = 1000;
-
-            SweepItemLoop(s.World);
-
-            s.Mismatches.Should().Contain(m => m.StartsWith("[sweep] mismatch (items selected)"));
         }
 
         // ---- the world-map pass
@@ -434,18 +419,14 @@ namespace ClassicUO.UnitTests.Ecs
         [Theory]
         [InlineData(false)]
         [InlineData(true)]
-        public void The_World_Map_Calls_Are_Equal_With_The_System_On_And_Off(bool party)
+        public void The_World_Map_Calls_Equal_The_Legacy_Pass(bool party)
         {
-            Scene on = Build(true), off = Build(false);
+            Scene on = Build();
             FillMap(on, party);
-            FillMap(off, party);
 
             on.World.WorldMapPass();
-            off.World.WorldMapPass();
 
-            on.MapCalls.Should().Equal(off.MapCalls);
-            on.Mismatches.Should().BeEmpty();
-            off.Mismatches.Should().BeEmpty();
+            on.MapCalls.Should().Equal(LegacyMapCalls(on.World));
             on.MapCalls.Should().HaveCount(party ? 4 : 3);
             on.MapCalls.Should().Contain(c => c.StartsWith("00002004") && c.Contains("guild True"));
 
@@ -462,42 +443,12 @@ namespace ClassicUO.UnitTests.Ecs
                 "the calls follow the table order");
         }
 
-        [Theory]
-        [InlineData(false)]
-        [InlineData(true)]
-        public void A_Closed_Map_Makes_No_Calls_But_The_Checker_Still_Compares(bool system)
-        {
-            Scene s = Build(system);
-            FillMap(s, true);
-            s.World.Ecs.Mirror.TryGetEntity(0x2001, out EcsEntity e).Should().BeTrue();
-            e.GetComponent<MobileInputs>().Notoriety = (byte)NotorietyFlag.Innocent;
-
-            s.World.WorldMapPass(false);
-
-            s.MapCalls.Should().BeEmpty();
-            s.World.SweepChecks.Should().Be(1);
-            s.Mismatches.Should().ContainSingle("the stale push shows even while nothing is called");
-        }
-
-        [Fact]
-        public void The_Checker_Reports_A_Stale_Notoriety_Push()
-        {
-            Scene s = Build(true);
-            AddMobile(s, 0x2001, 1001, 1000, NotorietyFlag.Ally);
-            s.World.Ecs.Mirror.TryGetEntity(0x2001, out EcsEntity e).Should().BeTrue();
-            e.GetComponent<MobileInputs>().Notoriety = (byte)NotorietyFlag.Innocent;
-
-            s.World.WorldMapPass();
-
-            s.Mismatches.Should().ContainSingle().Which.Should().StartWith("[sweep] mismatch (world map calls)");
-        }
-
         // ---- the system decides from the ECS, not from the legacy objects
 
         [Fact]
-        public void With_The_System_On_The_Ecs_Position_Decides_And_The_Checker_Notices()
+        public void The_Ecs_Position_Decides()
         {
-            Scene s = Build(true);
+            Scene s = Build();
             Mobile m = AddMobile(s, 0x1001, 1001, 1000);
             Item i = AddGround(s, 0x4000_0001, 1001, 1000);
             s.World.Ecs.Mirror.TryGetEntity(m.Serial, out EcsEntity me).Should().BeTrue();
@@ -510,32 +461,12 @@ namespace ClassicUO.UnitTests.Ecs
 
             m.IsDestroyed.Should().BeTrue("the system removed it on the ECS position");
             i.IsDestroyed.Should().BeTrue();
-            s.Mismatches.Should().HaveCount(4, "selected and removed differ from the legacy rule, for both kinds");
-        }
-
-        [Fact]
-        public void With_The_System_Off_The_Legacy_Rule_Decides()
-        {
-            Scene s = Build(false);
-            Mobile m = AddMobile(s, 0x1001, 1001, 1000);
-            Item i = AddGround(s, 0x4000_0001, 1001, 1000);
-            s.World.Ecs.Mirror.TryGetEntity(m.Serial, out EcsEntity me).Should().BeTrue();
-            s.World.Ecs.Mirror.TryGetEntity(i.Serial, out EcsEntity ie).Should().BeTrue();
-            me.GetComponent<Position>().X = 1200;
-            ie.GetComponent<Position>().X = 1200;
-
-            s.World.SweepMobiles();
-            SweepItemLoop(s.World);
-
-            m.IsDestroyed.Should().BeFalse();
-            i.IsDestroyed.Should().BeFalse();
-            s.Mismatches.Should().HaveCount(2, "the shadow selection differs from the legacy rule; the removals (legacy) do not");
         }
 
         [Fact]
         public void The_Map_Pass_Takes_Allies_From_The_Pushed_Notoriety()
         {
-            Scene s = Build(true);
+            Scene s = Build();
             AddMobile(s, 0x2001, 1001, 1000);
             s.World.Ecs.Mirror.TryGetEntity(0x2001, out EcsEntity e).Should().BeTrue();
             e.GetComponent<MobileInputs>().Notoriety = (byte)NotorietyFlag.Ally;

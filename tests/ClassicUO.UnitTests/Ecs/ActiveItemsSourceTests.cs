@@ -29,7 +29,7 @@ namespace ClassicUO.UnitTests.Ecs
             public Random VisitRandom;
         }
 
-        private static Scene Build(bool source, bool check = true, bool tags = true)
+        private static Scene Build(bool source, bool check = true)
         {
             World world = WorldWriterMobileTests.BuildPlayer(out WorldWriterMobileTests.TestPlayer _, PLAYER);
 
@@ -44,7 +44,6 @@ namespace ClassicUO.UnitTests.Ecs
             world.RangeSize.Y = 1000;
             world.ActiveItemsSourceOverride = source;
             world.ActiveItemsSourceCheckOverride = check;
-            world.ActiveItemsSystemOverride = tags;
             world.ActiveItemsCheckOverride = true;
             world.ActiveSourceObserver = scene.Mismatches.Add;
             world.ActiveItemsObserver = scene.Mismatches.Add;
@@ -121,7 +120,7 @@ namespace ClassicUO.UnitTests.Ecs
         [Fact]
         public void Membership_And_Order_Match_The_List_In_The_Scripted_Scenario()
         {
-            Scene[] scenes = { Build(false), Build(true), Build(true, check: false), Build(false, check: false), Build(true, tags: false) };
+            Scene[] scenes = { Build(false), Build(true), Build(true, check: false), Build(false, check: false) };
 
             foreach (Scene s in scenes)
             {
@@ -287,7 +286,7 @@ namespace ClassicUO.UnitTests.Ecs
         [InlineData(8)]
         public void Random_Operations_Keep_Membership_And_Order(int seed)
         {
-            Scene[] scenes = { Build(false), Build(true), Build(true, check: false), Build(false, tags: false), Build(true, tags: false) };
+            Scene[] scenes = { Build(false), Build(true), Build(true, check: false) };
             var rnd = new Random(seed);
             const int SERIALS = 40;
 
