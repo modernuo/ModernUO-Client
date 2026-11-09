@@ -33,7 +33,7 @@ namespace ClassicUO.Game
         {
             "1" => true,
             "0" => false,
-            _ => Configuration.Settings.GlobalSettings?.EcsEffectEndpoints ?? false
+            _ => Configuration.Settings.GlobalSettings?.EcsEffectEndpoints ?? true
         };
 
         public static readonly bool GlobalEndpointCheck = Environment.GetEnvironmentVariable("CUO_EFFECT_ENDPOINT_CHECK") == "1";
@@ -43,15 +43,15 @@ namespace ClassicUO.Game
         {
             "1" => true,
             "0" => false,
-            _ => Configuration.Settings.GlobalSettings?.EcsEffectMotion ?? false
+            _ => Configuration.Settings.GlobalSettings?.EcsEffectMotion ?? true
         };
 
         public static readonly bool GlobalMotionCheck = Environment.GetEnvironmentVariable("CUO_EFFECT_MOTION_CHECK") == "1";
 #else
         public const bool GlobalCheck = false;
-        public static readonly bool GlobalEndpoints = Configuration.Settings.GlobalSettings?.EcsEffectEndpoints ?? false;
+        public static readonly bool GlobalEndpoints = Configuration.Settings.GlobalSettings?.EcsEffectEndpoints ?? true;
         public const bool GlobalEndpointCheck = false;
-        public static readonly bool GlobalMotion = Configuration.Settings.GlobalSettings?.EcsEffectMotion ?? false;
+        public static readonly bool GlobalMotion = Configuration.Settings.GlobalSettings?.EcsEffectMotion ?? true;
         public const bool GlobalMotionCheck = false;
 #endif
 
