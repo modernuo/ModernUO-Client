@@ -2206,6 +2206,21 @@ namespace ClassicUO.UnitTests.Ecs
             world.GetMobile(MOB).Should().BeNull("the index has no mobile under the serial");
             int refusals = world.Writer.CycleRefusals;
 
+            // the expected survivors, before the operation: the serial's opened containers and backpacks (the crowded wearer's
+            // WORN_AFTER and PACK); every other child but the shared item goes with the clear
+            var kept = new List<Item>();
+            var cleared = new List<Item>();
+
+            foreach (Item it in world.State.Children(mobile))
+            {
+                if (ReferenceEquals(it, shared))
+                {
+                    continue;
+                }
+
+                (it.Opened || it.Layer == Layer.Backpack ? kept : cleared).Add(it);
+            }
+
             NewWear(world, MOB, entries);
 
             world.Writer.CycleRefusals.Should().Be(refusals + 1, "the entry naming the owner item itself");
@@ -2215,11 +2230,23 @@ namespace ClassicUO.UnitTests.Ecs
             world.Mobiles.Get(MOB).Should().BeSameAs(mobile);
             shared.Container.Should().Be(MOB, "the mobile still wears the item from the first packet");
 
-            // the clear took every unopened non-backpack child of the serial; the kept ones (the crowded wearer's opened
-            // container and backpack) and the shared item stay on the mobile, and the item reads the merged contents but itself
-            uint[] kept = Array.FindAll(new[] { WORN_AFTER, PACK }, s => world.Items.Get(s)?.Container == MOB);
-            ChildSerials(mobile).Should().Equal(kept.Append(MOB));
-            ChildSerials(shared).Should().Equal(kept, "an item is never its own child");
+            // the kept children stay live and attached, the shared item stays on the mobile, and the item reads the merged
+            // contents but itself
+            foreach (Item it in kept)
+            {
+                it.IsDestroyed.Should().BeFalse($"0x{it.Serial:X8} is kept");
+                world.Items.Get(it.Serial).Should().BeSameAs(it);
+                it.Container.Should().Be(MOB);
+            }
+
+            foreach (Item it in cleared)
+            {
+                it.IsDestroyed.Should().BeTrue($"0x{it.Serial:X8} is cleared");
+            }
+
+            uint[] keptSerials = kept.Select(it => it.Serial).ToArray();
+            ChildSerials(mobile).Should().Equal(keptSerials.Append(MOB));
+            ChildSerials(shared).Should().Equal(keptSerials, "an item is never its own child");
         }
 
         // MOB rekeyed as DisplayDeath (0xAF) does for a dying mobile: its serial gets the high bit, its children follow
