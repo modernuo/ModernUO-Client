@@ -315,7 +315,7 @@ namespace ClassicUO.Game
         /// <summary>Tests: wins over the env override and the setting.</summary>
         internal static bool? Override;
 
-        public static bool On => Override ?? _env ?? Configuration.Settings.GlobalSettings?.EcsItemDrawRow ?? false;
+        public static bool On => Override ?? _env ?? Configuration.Settings.GlobalSettings?.EcsItemDrawRow ?? true;
 
         public static long Checks, Diffs;
         private static int _logged;

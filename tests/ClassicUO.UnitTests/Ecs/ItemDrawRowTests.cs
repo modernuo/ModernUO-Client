@@ -100,9 +100,9 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Fact]
-        public void Switch_Is_Off_By_Default_And_The_Override_Wins()
+        public void Switch_Is_On_By_Default_And_The_Override_Wins()
         {
-            Assert.False(new ClassicUO.Configuration.Settings().EcsItemDrawRow);
+            Assert.True(new ClassicUO.Configuration.Settings().EcsItemDrawRow);
             ItemDrawRows.Override = false;
             Assert.False(ItemDrawRows.On);
             ItemDrawRows.Override = true;
