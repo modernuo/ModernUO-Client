@@ -2,6 +2,10 @@
 
 Visual or behavioural defects found in the PoC client that aren't fixed yet. Add new ones here; move them to the poc-log when fixed.
 
+## Flaky unit test seen on 2026-11-08 (open)
+
+- **`PlayerStepOpenTests.Corpses_Check_Allocates_Nothing_When_Nothing_Opens(source: False)`:** failed once under load in the ecs-flip-8 runs (6,512 B allocated) and passed alone. Probably load-sensitive allocation sampling, like `ChunkLoadingTests.Drain_Does_Not_Allocate_Per_Frame` below. If it fails again, isolate it the way the 2026-11-01 flakes were isolated.
+
 ## Flaky unit tests seen on 2026-11-02 (open)
 
 - **`ChunkLoadingTests.Drain_Does_Not_Allocate_Per_Frame`:** failed once in a full-suite run on `bg/t9-slice3` while the machine was loaded, and passes when run alone (9/9). It is probably load-sensitive allocation sampling. If it fails again, isolate it the way the 2026-11-01 flakes were isolated.

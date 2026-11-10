@@ -65,3 +65,12 @@ ecs-flip-8 (ca89426bc) and ecs-flip-8-sprites (14efa571a) turned eight switches 
 | `ecs_effect_motion` on (d43602c52) | +8 B per live effect; one player record read per effects pass (fewer ECS reads than endpoints alone) | effect motion as `EffectSystem` steps | — |
 | `ecs_effect_sprites` on (bc60ed53d) | per drawn effect: one `EffectState` get, a tiledata read and the source lookup the view also does, instead of the view's draw (estimated); one `EffectSpriteExtract` and a 16-entry checker buffer per client | both renderers draw effects from the extract over `EffectState` | delete `GameEffectView`'s draw once `legacy_ecs_sprites` is on |
 | t9-world-index slice 1 (a2ad0b43b; `world_entity_index`, default off) | the mirror's handle table, 8 B per entity id, always maintained (32 KB initial, ~0.1–0.4 MB at a large scene's peak id); one array store per mirror upsert in both switch states | `World.Get`/`GetItem`/`GetMobile` from the ECS serial index; the step towards deleting the `Items`/`Mobiles` tables | weigh against the `Items`/`Mobiles` tables' memory once they are deleted (later slices) |
+
+## 2026-11-09 and 2026-11-10
+
+| Change | Cost | Buys | Revisit |
+|---|---|---|---|
+| perf-cpu-1109 (456bb0606; `ItemTable` held flag, no switch) | three fields per `Item` (a reference, a uint, a bool): ~16 B per item with padding, ~0.3 MB per client at 20k items; `Items.Add`/`Remove` write two fields more; `Clear` walks the items once (logout only) | `World.Holds` for an item is a field compare, not a dictionary lookup, in the active item loop and the destroyed-item sweep | goes with the item dictionary in world index slice 5 |
+| t9-world-index slice 3 part 2 (19e61bf18; `world_entity_index`, default off) | `Mobile.TableKey`: 4 B per mobile (< 0.02 MB at 2k mobiles); one reusable `List<Item>` in `WorldWriter` for re-keys; with the switch off each converted reader and `Holds` pay one or two flag tests | `World.Holds` from the tables' marks, no dictionary lookup per identity guard | goes with the dictionaries in slice 5 |
+| t9-world-index slice 4 (2cfd8b244; `world_entity_index`, default off) | the ordered item table: ~12 B per slot (8 B `Item[]` + 4 B key array, grown by doubling, never shrunk until `Clear`) beside the dictionary, plus `Item.Ordinal` 4 B per item: ~0.5 MB at 25k items; a few more stores per Add/Remove | the update order carried by slots, so the item dictionary can go | slice 5: delete the dictionary walk, or keep the dictionary only as World's serial key |
+
