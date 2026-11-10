@@ -34,7 +34,7 @@ namespace ClassicUO.Game
         /// <summary>Tests: the checker for this World (null: <c>CUO_ENTITY_INDEX_CHECK=1</c>).</summary>
         internal bool? EntityIndexCheckOverride;
 
-        /// <summary>T9 (<c>world_entity_index</c>, default off): <see cref="Get"/>, <see cref="GetItem"/> and
+        /// <summary>T9 (<c>world_entity_index</c>, default on since slice 5): <see cref="Get"/>, <see cref="GetItem"/> and
         /// <see cref="GetMobile"/> answer from the mirror's serial index, not from the Items and Mobiles tables.</summary>
         public bool EntityIndexOn => EntityIndexOverride ?? s_entityIndex;
 
@@ -137,26 +137,34 @@ namespace ClassicUO.Game
         }
 
         /// <summary>
-        /// T9 slice 3 part 2 (<c>WorldEcs.OnDestroyed</c>): a live object of <paramref name="e"/>'s kind, other than
-        /// <paramref name="e"/>, under its serial (a newer object owns the serial: its record must stay); null when none.
-        /// Switch off: the table of e's kind; <c>world_entity_index</c> on: the index's handle, kind-checked (a newer object
-        /// not yet committed has no handle, but then e's record is gone already). CUO_ENTITY_INDEX_CHECK compares both.
+        /// T9 slice 3 part 2 (<c>WorldEcs.OnDestroyed</c>): a live object other than <paramref name="e"/> that owns the record
+        /// under its serial (it must stay); null when none. Switch off: the table of e's kind, else the other kind's object
+        /// when it holds the record (a shared serial); <c>world_entity_index</c> on: the index's handle of either kind (a newer
+        /// object not yet committed has no handle, but then e's record is gone already). Any kind: destroying the mobile that
+        /// lost a shared serial to an item must not remove the item's record (Codex audit t9-world-index-5 P2).
+        /// CUO_ENTITY_INDEX_CHECK compares both.
         /// </summary>
         internal Entity NewerOwner(Entity e)
         {
             bool on = EntityIndexOn, check = EntityIndexCheckOn;
             Entity tables = null, indexed = null;
+            object h = Ecs.Mirror.GetHandle(e.Serial);
 
             if (!on || check)
             {
                 Entity c = e is Item ? Items.Get(e.Serial) : Mobiles.Get(e.Serial);
                 tables = c != null && !ReferenceEquals(c, e) && !c.IsDestroyed ? c : null;
+
+                if (tables == null)
+                {
+                    Entity other = e is Item ? Mobiles.Get(e.Serial) : Items.Get(e.Serial);
+                    tables = other != null && ReferenceEquals(other, h) && !other.IsDestroyed ? other : null;
+                }
             }
 
             if (on || check)
             {
-                object h = Ecs.Mirror.GetHandle(e.Serial);
-                Entity c = e is Item ? h as Item : h as Mobile;
+                Entity c = h as Entity;
                 indexed = c != null && !ReferenceEquals(c, e) && !c.IsDestroyed ? c : null;
             }
 
