@@ -765,7 +765,9 @@ namespace ClassicUO.Game
         private void Art(ushort graphic, int x, int y, Vector3 hue, float depth, int objX)
         {
             ArtLoader arts = Arts;
-            graphic = (ushort)(graphic + arts.GetEntry(graphic + 0x4000).AnimOffset);
+            ref ArtEntry first = ref arts.GetEntry(graphic + 0x4000);
+            int animOffset = first.AnimOffset;
+            graphic = (ushort)(graphic + animOffset);
             uint idx = (uint)graphic + 0x4000;
             SpriteEntry[] sprites = arts.PackSpriteEntries;
 
@@ -808,7 +810,8 @@ namespace ClassicUO.Game
             }
 
             // the draw offset the view stores on the art entry; item picking reads it
-            ref ArtEntry index = ref arts.GetEntry(graphic + 0x4000);
+            // the same entry as the first lookup unless the graphic is animated
+            ref ArtEntry index = ref animOffset == 0 ? ref first : ref arts.GetEntry(graphic + 0x4000);
             index.Width = (short)((ow >> 1) - 22);
             index.Height = (short)(oh - 44);
             HasArtPick = true;
