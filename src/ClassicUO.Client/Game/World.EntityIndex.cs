@@ -9,7 +9,8 @@ namespace ClassicUO.Game
     // T9 (ecs-transition-plan.md §T9, survey t9-world-index-2026-11-08): World.Get, GetItem, GetMobile, FindItem and
     // FindMobile from the mirror's serial index; Holds (the identity guards) from the tables' marks on the object. With the
     // switch on, the tables' dictionaries are read only by World's own table bookkeeping (GetOrCreate*, the sweeps), the
-    // switch's off paths, the checker and EcsInspector
+    // switch's off paths, the checker and EcsInspector. Slice 4: Items.Values walks the item table's slots (the dictionary's
+    // order, kept without it) with the switch on; the checker compares both tables' slot order with their dictionaries'
     internal sealed partial class World
     {
 #if CUO_DEVTOOLS
@@ -270,6 +271,40 @@ namespace ClassicUO.Game
             return EntityIndexOn ? marked : held;
         }
 
+        /// <summary>CUO_ENTITY_INDEX_CHECK counts (T9 slice 4): world updates whose tables' slot order was compared with their
+        /// dictionaries' order (<see cref="ItemTable.Values"/> walks the slots with the switch on), and differences (logged).</summary>
+        public long EntityIndexOrderChecks, EntityIndexOrderDiffs;
+
+        /// <summary>
+        /// CUO_ENTITY_INDEX_CHECK, once per world update (T9 slice 4): the items' and mobiles' slot order against the order of
+        /// their key dictionaries (the old enumeration order). Both walks are struct enumerators: no allocation.
+        /// </summary>
+        internal void CheckTableOrder()
+        {
+            EntityIndexOrderChecks++;
+            bool items = Items.OrderMatches(out int itemAt);
+            bool mobiles = Mobiles.OrderMatches(out int mobileAt);
+
+            if (!items || !mobiles)
+            {
+                EntityIndexOrderDiffs++;
+
+                if (WillReport(EntityIndexOrderDiffs, EntityIndexObserver))
+                {
+                    string text = $"table order: items {(items ? "same" : $"differ at {itemAt}")}, mobiles {(mobiles ? "same" : $"differ at {mobileAt}")} (items {Items.Count}, mobiles {Mobiles.Count})";
+
+                    if (EntityIndexOrderDiffs <= 20)
+                    {
+                        Log.Warn($"[entity-index-order] {text}");
+                    }
+
+                    EntityIndexObserver?.Invoke(text);
+                }
+            }
+
+            LogEntityIndexSummary();
+        }
+
         // CUO_ENTITY_INDEX_CHECK: both lookups at every call, the switch's answer returned
         private Entity CheckedGet(uint serial)
         {
@@ -395,7 +430,7 @@ namespace ClassicUO.Game
             if (Time.Ticks >= _entityIndexNextLog)
             {
                 _entityIndexNextLog = Time.Ticks + 5000;
-                Log.Info($"[entity-index-check] {EntityIndexChecks} checks, {EntityIndexMismatches} mismatches; unswept {EntityIndexUnswept}; holds {EntityIndexHoldsChecks} checks, {EntityIndexHoldsUncommitted} uncommitted, {EntityIndexHoldsDiffs} different; marks {EntityIndexMarkChecks} checks, {EntityIndexMarkDiffs} different; items {Items.Count}, mobiles {Mobiles.Count}, records {Ecs.Mirror.Count} | world_entity_index={(EntityIndexOn ? "on" : "off")}");
+                Log.Info($"[entity-index-check] {EntityIndexChecks} checks, {EntityIndexMismatches} mismatches; unswept {EntityIndexUnswept}; holds {EntityIndexHoldsChecks} checks, {EntityIndexHoldsUncommitted} uncommitted, {EntityIndexHoldsDiffs} different; marks {EntityIndexMarkChecks} checks, {EntityIndexMarkDiffs} different; order {EntityIndexOrderChecks} checks, {EntityIndexOrderDiffs} different; items {Items.Count}, mobiles {Mobiles.Count}, records {Ecs.Mirror.Count} | world_entity_index={(EntityIndexOn ? "on" : "off")}");
             }
         }
 
