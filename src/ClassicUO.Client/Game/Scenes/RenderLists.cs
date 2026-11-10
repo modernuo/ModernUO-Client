@@ -671,9 +671,18 @@ namespace ClassicUO.Game.Scenes
             }
 
             int done = 0;
+            // the draws don't change the list (the List enumerator this loop used would have thrown)
+            ReadOnlySpan<GameObject> list = CollectionsMarshal.AsSpan(renderList);
+            bool prefetch = LegacySpriteSink.On;
 
-            foreach (var obj in renderList)
+            for (int i = 0; i < list.Length; i++)
             {
+                GameObject obj = list[i];
+
+                if (prefetch)
+                {
+                    LegacySpriteSink.Prefetch(list, i);
+                }
 #if CUO_DEVTOOLS
                 if (GoldenCapture.Recording)
                 {

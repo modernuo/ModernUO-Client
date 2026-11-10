@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
 using System;
+using System.Runtime.CompilerServices;
 using ClassicUO.Assets;
 using ClassicUO.Ecs;
 using ClassicUO.Game.GameObjects;
@@ -31,7 +32,7 @@ namespace ClassicUO.Game.Scenes
         /// <summary>DevBench (pickscan's legacy_ecs_sprites mode) and tests: wins over the env override and the setting.</summary>
         internal static bool? Override;
 
-        private static bool _on, _route, _hasAnims;
+        private static bool _on, _route, _hasAnims, _drawRow;
         private static GameScene _scene;
         private static readonly ItemSpriteExtract _items = new ItemSpriteExtract();
 
@@ -63,6 +64,7 @@ namespace ClassicUO.Game.Scenes
             _scene = _route ? Client.Game.GetScene<GameScene>() : null;
             // the pack's animation tables are loaded once at startup: read per frame, not per item
             _hasAnims = _route && HasPackAnims(Client.Game.UO.FileManager.Animations);
+            _drawRow = ItemDrawRows.On;
             ItemSpriteInput.BeginFrame();
             SpritePickTable.BeginDraw();
         }
@@ -82,7 +84,10 @@ namespace ClassicUO.Game.Scenes
         /// checker) is on, the view otherwise.</summary>
         public static bool Draw(UltimaBatcher2D batcher, GameObject obj, float depth)
         {
-            if (!_route || obj is not (Mobile or Item))
+            // items first: most of the list, and Item is sealed (one type compare)
+            bool item = obj is Item;
+
+            if (!_route || !item && obj is not Mobile)
             {
                 return obj.Draw(batcher, obj.RealScreenPosition.X, obj.RealScreenPosition.Y, depth);
             }
@@ -94,7 +99,121 @@ namespace ClassicUO.Game.Scenes
             }
 #endif
 
-            return DrawEcs(batcher, obj, depth, true, out _);
+            return item ? DrawItem(batcher, Unsafe.As<Item>(obj), depth, true) : DrawMobileOrView(batcher, Unsafe.As<Mobile>(obj), depth, true, out _);
+        }
+
+        // how many render-list entries ahead DrawWorldRenderList prefetches an object's own memory, then an item's mirror node,
+        // then its record
+        private const int OBJECT_AHEAD = 16, NODE_AHEAD = 8, ROW_AHEAD = 4;
+
+#if CUO_DEVTOOLS
+        // CLEANUP(release): CUO_LEGACY_PREFETCH=obj,node,row overrides the three distances for timing arms (0 = stage off)
+        private static readonly (int Obj, int Node, int Row) _ahead = ParsePrefetch(Environment.GetEnvironmentVariable("CUO_LEGACY_PREFETCH"));
+#else
+        private static readonly (int Obj, int Node, int Row) _ahead = (OBJECT_AHEAD, NODE_AHEAD, ROW_AHEAD);
+#endif
+
+        /// <summary>The prefetch distances (object, node, row) of <c>CUO_LEGACY_PREFETCH=obj,node,row</c>; the defaults when
+        /// it is unset or malformed. 0 turns a stage off.</summary>
+        internal static (int Obj, int Node, int Row) ParsePrefetch(string value)
+        {
+            if (!string.IsNullOrEmpty(value))
+            {
+                string[] parts = value.Split(',');
+
+                if (parts.Length == 3 && int.TryParse(parts[0], out int obj) && int.TryParse(parts[1], out int node) &&
+                    int.TryParse(parts[2], out int row) && obj >= 0 && node >= 0 && row >= 0 && obj <= 64 && node <= 64 && row <= 64)
+                {
+                    return (obj, node, row);
+                }
+            }
+
+            return (OBJECT_AHEAD, NODE_AHEAD, ROW_AHEAD);
+        }
+
+        internal static (int Obj, int Node, int Row) PrefetchDistances => _ahead;
+
+        // the byte offset of Entity.EcsEntity from an object's first field (the line the node stage reads); -1 until measured
+        private static nint _handleOffset = -1;
+
+        /// <summary>
+        /// legacy-sprites-fix: called by the routed render-list loop (switch on) before it draws entry <paramref name="i"/>.
+        /// Three prefetch stages, each reading only what the stage before fetched: the object <see cref="OBJECT_AHEAD"/>
+        /// entries ahead (its header and its mirror handle, from the list's reference alone), the mirror node of the item
+        /// <see cref="NODE_AHEAD"/> ahead, and the record components
+        /// <see cref="ItemSpriteInput.ReadRecord(Item, Assets.StaticTiles[], ref ItemSpriteInput, out ushort)"/> reads of the
+        /// item <see cref="ROW_AHEAD"/> ahead. The record is in the ECS's per-component arrays, one cache line each, which the
+        /// item draw otherwise waits on (the large scene's ~25k items per frame). Prefetches only: a stale handle costs a
+        /// wasted fetch, never a wrong read. (A tiledata stage was tried and cost more than it saved: bench-000527.)
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static void Prefetch(ReadOnlySpan<GameObject> list, int i) => Prefetch(list, i, _ahead, _drawRow);
+
+        /// <summary><see cref="Prefetch(ReadOnlySpan{GameObject}, int)"/> with explicit distances and row state (tests).</summary>
+        internal static void Prefetch(ReadOnlySpan<GameObject> list, int i, (int Obj, int Node, int Row) ahead, bool drawRow)
+        {
+            (int obj, int node, int row) = ahead;
+            int j = i + obj;
+
+            if (obj != 0 && (uint)j < (uint)list.Length)
+            {
+                PrefetchObject(list[j]);
+            }
+
+            j = i + node;
+
+            if (node != 0 && (uint)j < (uint)list.Length && list[j] is Item far && far.EcsEntityHeld)
+            {
+                EcsRead.PrefetchNode(far.EcsEntity);
+            }
+
+            j = i + row;
+
+            if (row != 0 && (uint)j < (uint)list.Length && list[j] is Item near && near.EcsEntityHeld)
+            {
+                if (drawRow)
+                {
+                    // ecs_item_draw_row: the one packed row Gather reads
+                    EcsRead.PrefetchRow<ClassicUO.Ecs.ItemDrawRow>(near.EcsEntity);
+                }
+                else
+                {
+                    EcsRead.PrefetchRow<ClassicUO.Ecs.Graphic, ClassicUO.Ecs.Hue, ClassicUO.Ecs.Position, ClassicUO.Ecs.Flags>(near.EcsEntity);
+                }
+            }
+        }
+
+        // the object's header line (its type, which the node stage tests) and the line of its mirror handle, without reading
+        // the object
+        private static unsafe void PrefetchObject(GameObject obj)
+        {
+            if (!System.Runtime.Intrinsics.X86.Sse.IsSupported || obj == null)
+            {
+                return;
+            }
+
+            nint offset = _handleOffset;
+
+            if (offset < 0 && obj is Entity entity)
+            {
+                offset = _handleOffset = HandleOffset(entity);
+            }
+
+            byte* p = (byte*)Unsafe.As<GameObject, nint>(ref obj);
+            System.Runtime.Intrinsics.X86.Sse.Prefetch0(p);
+
+            if (offset >= 0)
+            {
+                System.Runtime.Intrinsics.X86.Sse.Prefetch0(p + sizeof(nint) + offset);
+            }
+        }
+
+        internal static nint HandleOffset(Entity entity) =>
+            Unsafe.ByteOffset(ref Unsafe.As<RawObject>(entity).Data, ref Unsafe.As<Friflo.Engine.ECS.Entity, byte>(ref entity.EcsEntity));
+
+        private sealed class RawObject
+        {
+            public byte Data;
         }
 
         /// <summary>
@@ -104,26 +223,33 @@ namespace ClassicUO.Game.Scenes
         /// </summary>
         internal static bool DrawEcs(UltimaBatcher2D batcher, GameObject obj, float depth, bool effects, out bool ecs)
         {
-            ecs = true;
-
-            if (obj is Mobile mobile)
+            if (obj is Item item)
             {
-                if (!TryMobileEntity(mobile, out Friflo.Engine.ECS.Entity e))
-                {
-                    ecs = false;
+                ecs = true;
 
-                    if (mobile.IsDestroyed || !mobile.AllowedToDraw)
-                    {
-                        return false;
-                    }
-
-                    return mobile.Draw(batcher, mobile.RealScreenPosition.X, mobile.RealScreenPosition.Y, depth);
-                }
-
-                return DrawMobile(batcher, mobile, e, depth, effects);
+                return DrawItem(batcher, item, depth, effects);
             }
 
-            return DrawItem(batcher, (Item)obj, depth, effects);
+            return DrawMobileOrView(batcher, (Mobile)obj, depth, effects, out ecs);
+        }
+
+        private static bool DrawMobileOrView(UltimaBatcher2D batcher, Mobile mobile, float depth, bool effects, out bool ecs)
+        {
+            ecs = true;
+
+            if (!TryMobileEntity(mobile, out Friflo.Engine.ECS.Entity e))
+            {
+                ecs = false;
+
+                if (mobile.IsDestroyed || !mobile.AllowedToDraw)
+                {
+                    return false;
+                }
+
+                return mobile.Draw(batcher, mobile.RealScreenPosition.X, mobile.RealScreenPosition.Y, depth);
+            }
+
+            return DrawMobile(batcher, mobile, e, depth, effects);
         }
 
         // E5 (shared with GpuWorldRenderer.TryDrawMobileEcs): false = not mirrored with an AnimationState, or not drawn
@@ -145,10 +271,16 @@ namespace ClassicUO.Game.Scenes
             WorldEcs ecs = world.Ecs;
             int posX = mobile.RealScreenPosition.X, posY = mobile.RealScreenPosition.Y;
 
-            // as GpuWorldRenderer.TryDrawMobileEcs: TakeDirty first (removing the tag moves the entity)
-            bool dirty = MobileAnimationSystem.TakeDirty(e);
-            // one record read for both components (as ItemSpriteInput.ReadRecord)
+            // one record read for both components (as ItemSpriteInput.ReadRecord); the dirty tag is read from it, and removing
+            // the tag moves the entity, so the row is read again then
             EcsRow data = EcsRead.Row(e);
+            bool dirty = MobileAnimationSystem.TakeDirty(e, in data);
+
+            if (dirty)
+            {
+                data = EcsRead.Row(e);
+            }
+
             ref AnimationState state = ref data.Get<AnimationState>();
             ref MobileRenderState render = ref data.Get<MobileRenderState>();
             ecs.Animation.UpdateInPlace(world, mobile, e, data, dirty, ref state, ref render);

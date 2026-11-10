@@ -133,6 +133,118 @@ namespace ClassicUO.Ecs
             return new EcsRow(e.Id, archetype, Layout.HeapMap(archetype), Layout.NodeCompIndex(ref node));
         }
 
+        /// <summary>
+        /// Software prefetch of <paramref name="e"/>'s node, the first read of <see cref="Row"/>: the first stage of a
+        /// prefetch for a loop that reads the entity's row a few iterations later (<see cref="PrefetchRow{T1, T2, T3, T4}"/>
+        /// is the second). Reads nothing but the store's node array; no effect without SSE or for an id out of range.
+        /// </summary>
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public static unsafe void PrefetchNode(Entity e)
+        {
+            EntityStore store = Layout.Store(e);
+
+            if (!System.Runtime.Intrinsics.X86.Sse.IsSupported || store == null)
+            {
+                return;
+            }
+
+            EntityNode[] nodes = Layout.Nodes(store);
+
+            if ((uint)e.Id < (uint)nodes.Length)
+            {
+                System.Runtime.Intrinsics.X86.Sse.Prefetch0(Unsafe.AsPointer(ref nodes[e.Id]));
+            }
+        }
+
+        /// <summary>
+        /// The second prefetch stage: reads <paramref name="e"/>'s node (prefetched by <see cref="PrefetchNode"/>) and
+        /// prefetches the row's <typeparamref name="T1"/>..<typeparamref name="T4"/> (types Friflo keeps in a plain array
+        /// and already read once; others are skipped). A stale or deleted entity prefetches nothing or a wrong slot, which is
+        /// harmless: nothing is read through the prefetched address.
+        /// </summary>
+        public static void PrefetchRow<T1, T2, T3, T4>(Entity e)
+            where T1 : struct, IComponent where T2 : struct, IComponent where T3 : struct, IComponent where T4 : struct, IComponent
+        {
+            if (!PrefetchHeap(e, out object[] heapMap, out int compIndex))
+            {
+                return;
+            }
+
+            Prefetch<T1>(heapMap, compIndex);
+            Prefetch<T2>(heapMap, compIndex);
+            Prefetch<T3>(heapMap, compIndex);
+            Prefetch<T4>(heapMap, compIndex);
+        }
+
+        /// <summary><see cref="PrefetchRow{T1, T2, T3, T4}"/> of one component.</summary>
+        public static void PrefetchRow<T>(Entity e) where T : struct, IComponent
+        {
+            if (PrefetchHeap(e, out object[] heapMap, out int compIndex))
+            {
+                Prefetch<T>(heapMap, compIndex);
+            }
+        }
+
+        // the entity's heap map and component index from its node, for the prefetch stages (false: not supported, out of
+        // range, deleted)
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool PrefetchHeap(Entity e, out object[] heapMap, out int compIndex)
+        {
+            heapMap = null;
+            compIndex = 0;
+            EntityStore store = Layout.Store(e);
+
+            if (!System.Runtime.Intrinsics.X86.Sse.IsSupported || store == null || Layout.HeapMapOffset.Value <= 0)
+            {
+                return false;
+            }
+
+            EntityNode[] nodes = Layout.Nodes(store);
+
+            if ((uint)e.Id >= (uint)nodes.Length)
+            {
+                return false;
+            }
+
+            ref EntityNode node = ref nodes[e.Id];
+            Archetype archetype = Layout.NodeArchetype(ref node);
+
+            if (archetype == null)
+            {
+                return false;
+            }
+
+            heapMap = Layout.HeapMap(archetype);
+            compIndex = Layout.NodeCompIndex(ref node);
+
+            return true;
+        }
+
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static unsafe void Prefetch<T>(object[] heapMap, int compIndex) where T : struct, IComponent
+        {
+            int slot = Slot<T>.Value;
+
+            if (slot <= 0 || slot > heapMap.Length)
+            {
+                return;
+            }
+
+            object heap = heapMap[slot - 1];
+
+            if (heap == null)
+            {
+                return;
+            }
+
+            T[] components = Access<T>.Components(heap);
+
+            if ((uint)compIndex < (uint)components.Length)
+            {
+                System.Runtime.Intrinsics.X86.Sse.Prefetch0(Unsafe.AsPointer(ref components[compIndex]));
+            }
+        }
+
         /// <summary>The Friflo internals read here are what this code expects (false: every read throws).</summary>
         public static bool Supported => Layout.Supported;
 
@@ -283,7 +395,7 @@ namespace ClassicUO.Ecs
             public static readonly bool Supported = Probe();
 
             [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "nodes")]
-            private static extern ref EntityNode[] Nodes(EntityStore store);
+            public static extern ref EntityNode[] Nodes(EntityStore store);
 
             [UnsafeAccessor(UnsafeAccessorKind.Field, Name = "archetype")]
             public static extern ref Archetype NodeArchetype(ref EntityNode node);
