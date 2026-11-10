@@ -81,6 +81,10 @@ namespace ClassicUO.Game.GameObjects
         internal uint HeldKey;
         internal bool HeldShared;
 
+        /// <summary>T9 slice 4: the slot <see cref="HeldBy"/> keeps this item in (its place in the table's enumeration order);
+        /// meaningless while not held or once <see cref="HeldShared"/>.</summary>
+        internal int Ordinal;
+
         /// <summary>
         /// W5: whether <see cref="Update"/> does anything this frame. Item.Update is a no-op unless the item is a corpse
         /// (ProcessAnimation) or its object handles just opened (Entity.Update); the hits percentage follows the setters.
