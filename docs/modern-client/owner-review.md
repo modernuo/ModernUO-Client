@@ -267,6 +267,7 @@ All merged and pushed, and each audited by Codex until clean or down to document
 
 ## Follow-ups noted (not started)
 
+- **ECS wave 1E (HouseManager as a `House` component): your call.** Wave 1 of the ECS roadmap is done except 1E, which the roadmap marks optional and low value. The coordinator recommends skipping it unless you want it (2026-11-08).
 - **Clean up `poc/modern-client` after this milestone (your instruction, 2026-10-31).** The branch has 570 commits past `main` (451 not counting merges), too many to review. Plan:
   1. Split the docs commits (poc-log, owner-review, surveys, plans) from the code changes.
   2. Categorise the code changes: pack/converter, renderer, ECS, audio, perf, tests, tooling.
