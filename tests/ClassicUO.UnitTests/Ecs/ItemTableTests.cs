@@ -313,6 +313,113 @@ namespace ClassicUO.UnitTests.Ecs
             }
         }
 
+        private static string Outcome(System.Func<object> f)
+        {
+            try
+            {
+                object o = f();
+
+                return o is Item i ? $"item 0x{i.Serial:X}" : o?.ToString() ?? "null";
+            }
+            catch (System.Exception e)
+            {
+                return "throws " + e.GetType().Name;
+            }
+        }
+
+        // Codex audit of slice 4 (P3): the enumerator's contract, step by step, against Dictionary<uint, Item>.ValueCollection's
+        // enumerator in both modes: the non-generic Current before the start, on an item, past the end and after Reset; Reset
+        // after an insert, a removal and a Clear; MoveNext after a Clear during the walk
+        [Theory]
+        [InlineData(false)]
+        [InlineData(true)]
+        public void The_Enumerator_Contract_Matches_The_Dictionary(bool ordered)
+        {
+            var world = new World();
+
+            foreach (string scenario in new[] { "current", "insert-reset", "remove-reset", "clear-walk", "clear-reset" })
+            {
+                var t = new ItemTable { OrderedWithoutOwner = ordered };
+                var d = new Dictionary<uint, Item>();
+
+                for (uint s = 1; s <= 4; s++)
+                {
+                    Item it = Item.Create(world, 0x4000_0000 | s);
+                    t.Add(it);
+                    d.Add(it.Serial, it);
+                }
+
+                System.Collections.IEnumerator te = ((System.Collections.IEnumerable)t.Values).GetEnumerator();
+                System.Collections.IEnumerator de = ((System.Collections.IEnumerable)d.Values).GetEnumerator();
+                var got = new List<string>();
+                var want = new List<string>();
+
+                void Step(System.Func<System.Collections.IEnumerator, object> f)
+                {
+                    got.Add(Outcome(() => f(te)));
+                    want.Add(Outcome(() => f(de)));
+                }
+
+                void Both(System.Action<ItemTable> onTable, System.Action<Dictionary<uint, Item>> onDict)
+                {
+                    onTable(t);
+                    onDict(d);
+                }
+
+                Step(e => e.Current);
+
+                switch (scenario)
+                {
+                    case "current":
+                        for (int i = 0; i < 6; i++)
+                        {
+                            Step(e => e.MoveNext());
+                            Step(e => e.Current);
+                        }
+
+                        Step(e => { e.Reset(); return "reset"; });
+                        Step(e => e.Current);
+                        Step(e => e.MoveNext());
+                        Step(e => e.Current);
+
+                        break;
+                    case "insert-reset":
+                        Step(e => e.MoveNext());
+                        Both(x => x.Add(Item.Create(world, 0x4000_0099)), x => x.Add(0x4000_0099, Item.Create(world, 0x4000_0099)));
+                        Step(e => { e.Reset(); return "reset"; });
+                        Step(e => e.MoveNext());
+
+                        break;
+                    case "remove-reset":
+                        Step(e => e.MoveNext());
+                        Both(x => x.Remove(0x4000_0002), x => x.Remove(0x4000_0002));
+                        Step(e => { e.Reset(); return "reset"; });
+                        Step(e => e.MoveNext());
+                        Step(e => e.Current);
+                        Step(e => e.MoveNext());
+                        Step(e => e.Current);
+
+                        break;
+                    case "clear-walk":
+                        Step(e => e.MoveNext());
+                        Both(x => x.Clear(), x => x.Clear());
+                        Step(e => e.MoveNext());
+                        Step(e => e.Current);
+
+                        break;
+                    default:
+                        Step(e => e.MoveNext());
+                        Both(x => x.Clear(), x => x.Clear());
+                        Step(e => { e.Reset(); return "reset"; });
+                        Step(e => e.MoveNext());
+
+                        break;
+                }
+
+                got.Should().Equal(want, $"{scenario}, ordered {ordered}");
+            }
+        }
+
         [Fact]
         public void An_Insert_During_An_Ordered_Walk_Throws_Like_The_Dictionary_And_A_Refused_Add_Does_Not()
         {

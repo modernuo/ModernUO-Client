@@ -243,6 +243,7 @@ namespace ClassicUO.Game.GameObjects
             private Dictionary<uint, Item>.Enumerator _dict;
             private int _index;
             private Item _current;
+            private int _state; // 0 before the first MoveNext (or after Reset), 1 on an item, 2 past the end
 
             internal Enumerator(ItemTable table, bool ordered)
             {
@@ -252,11 +253,25 @@ namespace ClassicUO.Game.GameObjects
                 _dict = ordered ? default : table._byKey.GetEnumerator();
                 _index = 0;
                 _current = null;
+                _state = 0;
             }
 
             public Item Current => _current;
 
-            object IEnumerator.Current => _current;
+            // as the dictionary's enumerators (Codex audit of slice 4, P3): the non-generic Current throws before the first
+            // MoveNext, past the end and after Reset
+            object IEnumerator.Current
+            {
+                get
+                {
+                    if (_state != 1)
+                    {
+                        throw new InvalidOperationException("the enumeration has not started or has ended");
+                    }
+
+                    return _current;
+                }
+            }
 
             public bool MoveNext()
             {
@@ -265,11 +280,13 @@ namespace ClassicUO.Game.GameObjects
                     if (_dict.MoveNext())
                     {
                         _current = _dict.Current.Value;
+                        _state = 1;
 
                         return true;
                     }
 
                     _current = null;
+                    _state = 2;
 
                     return false;
                 }
@@ -288,30 +305,36 @@ namespace ClassicUO.Game.GameObjects
                     if (item != null)
                     {
                         _current = item;
+                        _state = 1;
 
                         return true;
                     }
                 }
 
                 _current = null;
+                _state = 2;
 
                 return false;
             }
 
             public void Reset()
             {
+                // both modes (Codex audit of slice 4, P3): an insert since the enumerator was made invalidates it, as it did the
+                // dictionary's; the table's version counts the same inserts that bump the dictionary's
+                if (_version != _table._version)
+                {
+                    throw new InvalidOperationException("the table was modified during enumeration");
+                }
+
                 if (!_ordered)
                 {
                     _dict.Dispose();
                     _dict = _table._byKey.GetEnumerator();
                 }
-                else if (_version != _table._version)
-                {
-                    throw new InvalidOperationException("the table was modified during enumeration");
-                }
 
                 _index = 0;
                 _current = null;
+                _state = 0;
             }
 
             public void Dispose()
