@@ -134,6 +134,8 @@ Classes:
 
 ### 2.5 `PlayerMobile`
 
+*Update 2026-11-10 (not a regeneration of the census tool output):* since player-state (2026-11-07) and player-state-2 (2026-11-08) the status-packet stats, resistances, AOS/ML bonuses, `Skills`, the buff icons, `Abilities` and the `AutoOpenedCorpses`/`ManualOpenedCorpses` sets live in `World.PlayerState`, not on `PlayerMobile` (poc-log "Wave 1B" and "player-state-2"). The rows below still list them under `PlayerMobile` as the census snapshot saw them; they stay class D. The counts in the other sections were not redone.
+
 | Member | Class | Notes |
 |---|---|---|
 | `Strength`, `Dexterity`, `Intelligence`, `StrengthIncrease`, `DexterityIncrease`, `IntelligenceIncrease`, `StrLock`, `DexLock`, `IntLock`, `StatsCap`, `Luck`, `Gold`, `Weight`, `WeightMax`, `Followers`, `FollowersMax`, `TithingPoints`, `DeathScreenTimer` | D | status packet data |
