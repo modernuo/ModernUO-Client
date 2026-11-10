@@ -767,9 +767,25 @@ namespace ClassicUO.Game
                 _selCount = 0;
 
 
+                MobileFrameCache.LegacyEntry[] entries = cache.LegacyEntries;
+
                 for (int i = 0; i < cache.LegacyCount; i++)
                 {
-                    LegacySpriteResolve.Draw(batcher, LegacyReplayed(cache, i, baseX, baseY, depth));
+                    // LegacySpriteResolve.Draw of LegacyReplayed's call, from the entry's fields (recorded entries are
+                    // normal or shadow draws, never seated or rotated)
+                    ref readonly MobileFrameCache.LegacyEntry entry = ref entries[i];
+                    var position = new Vector2(baseX + entry.X, baseY + entry.Y);
+                    float d = DepthOf(depth, entry.Kind, entry.Add);
+
+                    if (entry.Mode == SpriteCaptureMode.Shadow)
+                    {
+                        batcher.DrawShadow(entry.Texture, position, entry.Source, entry.Flip, d);
+                    }
+                    else
+                    {
+                        batcher.Draw(entry.Texture, position, entry.Source, entry.Hue, 0f, Vector2.Zero, 1f,
+                            entry.Flip ? Microsoft.Xna.Framework.Graphics.SpriteEffects.FlipHorizontally : Microsoft.Xna.Framework.Graphics.SpriteEffects.None, d);
+                    }
                 }
 
                 ApplyLegacyEffects(cache, baseX, baseY);

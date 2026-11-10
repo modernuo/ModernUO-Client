@@ -110,6 +110,19 @@ namespace ClassicUO.Ecs
         public byte Layer;
     }
 
+    // legacy-sprites-fix (ecs_item_draw_row): the item record values the sprite extract reads every frame for every drawn item
+    // (Graphic, Hue, Position, Flags, Amount, Layer, the OnGround and Multi tags), packed in one 14-byte row so the draw reads
+    // one cache line instead of one per component. Every item has it from its creation; WorldMirror.UpsertItem, the one
+    // writer of those values, writes it from the same values (CUO_ITEM_DRAW_ROW_CHECK compares it with the components).
+    public struct ItemDrawRow : IComponent
+    {
+        public const byte ON_GROUND = 1, MULTI = 2;
+
+        public ushort Graphic, Hue, X, Y, Amount;
+        public sbyte Z;
+        public byte Flags, Layer, Bits;
+    }
+
     // Links are keyed by the parent's serial, not by Entity: ClassicUO accepts children before their
     // parent arrives, and a serial survives the parent being destroyed and recreated.
     public struct EquippedOn : IIndexedComponent<uint>
@@ -704,6 +717,7 @@ namespace ClassicUO.Ecs
             Component<Facing>(aot);
             Component<Flags>(aot);
             Component<ItemData>(aot);
+            Component<ItemDrawRow>(aot);
             aot.RegisterIndexedComponentStruct<EquippedOn, uint>();
             _registered.Add(typeof(EquippedOn));
             aot.RegisterIndexedComponentStruct<ContainedIn, uint>();
