@@ -178,16 +178,16 @@ All merged and pushed, and each audited by Codex until clean or down to document
     - serial-scheme flexibility (a proposal only);
     - ServUO damageable items (item serials, hits via 0x11/0xA1; our client already accepts them);
     - the remaining ECS roadmap (waves 1–3).
-  - **Accepted by me; please confirm:** *(items 1 and 2 confirmed 2026-11-09, see your answers below)*
+  - **Accepted by me; please confirm:** *(all four confirmed 2026-11-09, see your answers below)*
     1. The shared-serial loss rule now also covers an item's boat `ItemOffset`: it reads zero until the next boat write (b412884bd). **Confirmed 2026-11-09.**
     2. **Confirmed 2026-11-09.** Effects:
        - On a double death under one serial, the displaced mobile's effects end; the old path kept following its object. The mirror record is updated in place, for parity.
        - Friflo's 16-bit handle revision wrap is documented as a bound (it needs 65,536 deletes of one id between two effect updates) instead of a per-record generation token.
-    3. Gump-handles behaviour changes:
+    3. **Accepted 2026-11-09, no fix needed.** Gump-handles behaviour changes:
        - grid loot stays open when its corpse is re-sent under the same serial;
        - the inspector's Dump on a removed entity says "gone";
        - the criminal-question target sends the mobile's position at question time if the mobile was removed.
-    4. Player state:
+    4. **Accepted 2026-11-09, no fix needed.** Player state:
        - logout still empties the store;
        - the auto/manual opened-corpse sets move to `PlayerState` later.
   - **Questions for you:**
@@ -212,7 +212,8 @@ All merged and pushed, and each audited by Codex until clean or down to document
       - **Shared serial in the entity index: accepted.** An item and a mobile under one serial resolve to whichever object holds the record (written last); a re-key replaces the handle. Only a misbehaving server sends an item under a mobile's serial (servers-not-hostile rule); pinned by a test and reported by `CUO_ENTITY_INDEX_CHECK`.
       - **`World.Contains`/`Entity.Exists` are "live":** a destroyed object not yet swept does not exist, matching `World.Get`. Done in slice 2 (ffb1728b9); its only caller, `Item.GetTotalAmount`, sees no change.
   - **Your answers (2026-11-09):**
-    - **The 2026-11-07 "please confirm" items 1 and 2: accepted.** The boat `ItemOffset` reads zero after a shared-serial re-creation until the next boat write; on a double death the displaced mobile's effects end, and Friflo's 16-bit revision wrap stays a documented bound. The `ecs_item_offset`, `ecs_effect_endpoints` and `ecs_effect_motion` flips stand (ecs-flip-8, merged ca89426bc). Items 3 and 4 have no answer yet.
+    - **The 2026-11-07 "please confirm" items 1 and 2: accepted.** The boat `ItemOffset` reads zero after a shared-serial re-creation until the next boat write; on a double death the displaced mobile's effects end, and Friflo's 16-bit revision wrap stays a documented bound. The `ecs_item_offset`, `ecs_effect_endpoints` and `ecs_effect_motion` flips stand (ecs-flip-8, merged ca89426bc).
+    - **Items 3 and 4: accepted, no fix needed.** The gump-handles behaviour changes (grid loot stays open when its corpse is re-sent under the same serial, the inspector's Dump says "gone" for a removed entity, the criminal-question target sends the mobile's position at question time) and the player state items (logout empties the store; the opened-corpse sets move to `PlayerState`) stand as written.
 
 - **Autonomous run of 2026-11-02** (you away; the machine is busy, so timing is parked). For you when you're back:
   - **Parked timing** (resubmit when quiet; list in `cuo-poc-state/handoffs/parked-timing.txt`): fix A off/on, which decides whether `world_tile_index` goes on by default; the picker flat table; the pick-bounds follow-ups; T7b part 1.
