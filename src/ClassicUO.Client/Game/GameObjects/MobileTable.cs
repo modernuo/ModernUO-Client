@@ -63,6 +63,7 @@ namespace ClassicUO.Game.GameObjects
                     // the dictionary overwrites the value in place: the slot stays
                     value.Ordinal = old.Ordinal;
                     value.OwnerTable = this;
+                    value.TableKey = serial;
                     old.OwnerTable = null;
                     _slots[value.Ordinal] = value;
                     _byKey[serial] = value;
@@ -120,6 +121,10 @@ namespace ClassicUO.Game.GameObjects
             _free.Clear();
         }
 
+        /// <summary>T9 slice 3: whether this table holds <paramref name="mobile"/> itself under <paramref name="serial"/> (the
+        /// same answer as <c>ReferenceEquals(Get(serial), mobile)</c>), from the mobile's own table marks: no lookup.</summary>
+        public bool Holds(Mobile mobile, uint serial) => ReferenceEquals(mobile.OwnerTable, this) && mobile.TableKey == serial;
+
         // Ordinal is the mobile's storage address, so a mobile may sit in one table under one key only: a second key or a
         // second table would let one removal free the slot the other still points at. Checked before any change.
         private static void CheckUnowned(Mobile mobile)
@@ -151,6 +156,7 @@ namespace ClassicUO.Game.GameObjects
             }
 
             mobile.Ordinal = slot;
+            mobile.TableKey = serial;
             _slots[slot] = mobile;
             _byKey[serial] = mobile;
         }

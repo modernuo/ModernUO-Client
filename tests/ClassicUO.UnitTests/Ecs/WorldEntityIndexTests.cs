@@ -513,6 +513,128 @@ namespace ClassicUO.UnitTests.Ecs
             }
         }
 
+        // slice 3 part 2: with the switch on, Holds answers from the tables' marks on the object (no lookup); the answer is the
+        // lookup's for live, destroyed-unswept, swept, replaced, force-removed, uncommitted, re-keyed and shared-serial objects,
+        // and the checker compares the two at every call
+        [Fact]
+        public void Holds_From_The_Table_Marks_Answers_What_The_Lookup_Answers()
+        {
+            foreach (bool check in new[] { true, false })
+            {
+                foreach (bool index in new[] { false, true })
+                {
+                    Scene s = Build(index, check);
+                    World w = s.World;
+                    Mobile mob = AddMobile(w, MOB);
+                    Mobile gone = AddMobile(w, MOB2);
+                    Item old = AddItem(w, ROCK);
+                    w.RemoveItem(ROCK, true);
+                    Item fresh = AddItem(w, ROCK);
+                    Item swept = AddItem(w, BAG);
+                    w.RemoveItem(BAG);
+                    w.DropDestroyedItems();
+                    Item unswept = AddItem(w, COIN);
+                    w.RemoveItem(COIN);
+                    w.RemoveMobile(MOB2);
+                    Item uncommitted = w.GetOrCreateItem(NONE, out _);
+                    Item shared = AddItem(w, MOB);
+
+                    string because = $"index {index}, check {check}";
+                    w.Holds(mob).Should().BeTrue(because);
+                    w.Holds(fresh).Should().BeTrue(because);
+                    w.Holds(old).Should().BeFalse("replaced; " + because);
+                    w.Holds(unswept).Should().BeTrue("destroyed, not yet swept; " + because);
+                    w.Holds(gone).Should().BeTrue("destroyed, not yet swept; " + because);
+                    w.Holds(swept).Should().BeFalse("swept; " + because);
+                    w.Holds(uncommitted).Should().BeTrue("created in the funnel's window; " + because);
+                    w.Holds(shared).Should().BeTrue("the item under a mobile's serial; " + because);
+                    w.Holds(mob).Should().BeTrue("the mobile under the shared serial; " + because);
+                    w.Holds(fresh, COIN).Should().BeFalse("not under another serial; " + because);
+                    w.Holds(w.Player).Should().BeTrue(because);
+
+                    uint dead = w.Writer.RekeyDeadMobile(mob);
+                    w.Holds(mob, dead).Should().BeTrue("re-keyed; " + because);
+                    w.Holds(mob, MOB).Should().BeFalse("no longer under the old serial; " + because);
+
+                    w.EntityIndexMarkDiffs.Should().Be(0, because);
+
+                    if (check)
+                    {
+                        w.EntityIndexMarkChecks.Should().BeGreaterThan(10, because);
+                    }
+                    else
+                    {
+                        w.EntityIndexMarkChecks.Should().Be(0, because);
+                    }
+                }
+            }
+        }
+
+        [Fact]
+        public void The_Checker_Reports_A_Mark_That_Differs_From_The_Lookup_And_The_Switch_Picks_The_Answer()
+        {
+            foreach (bool index in new[] { false, true })
+            {
+                Scene s = Build(index);
+                Mobile mob = AddMobile(s.World, MOB);
+
+                // a stale mark: the mobile says it is held under another key (no client path does this)
+                mob.TableKey = MOB2;
+
+                s.World.Holds(mob).Should().Be(!index);
+                s.World.EntityIndexMarkDiffs.Should().Be(1);
+                s.HoldsDiffs.Should().Contain(t => t.Contains("holds mark mobile 0x00000200: tables yes, marks no"));
+                mob.TableKey = MOB;
+            }
+        }
+
+        // WorldEcs.OnDestroyed keeps a record a newer live object owns: the index's handle with the switch on, the table off
+        [Fact]
+        public void The_Newer_Owner_Is_The_Same_In_Both_Switch_States()
+        {
+            foreach (bool check in new[] { true, false })
+            {
+                foreach (bool index in new[] { false, true })
+                {
+                    Scene s = Build(index, check);
+                    Item old = AddItem(s.World, ROCK);
+                    s.World.RemoveItem(ROCK, true);
+                    Item fresh = AddItem(s.World, ROCK);
+                    Item lone = AddItem(s.World, COIN);
+                    Mobile mob = AddMobile(s.World, MOB);
+
+                    s.World.NewerOwner(old).Should().BeSameAs(fresh);
+                    s.World.NewerOwner(fresh).Should().BeNull();
+                    s.World.NewerOwner(lone).Should().BeNull();
+                    s.World.NewerOwner(mob).Should().BeNull();
+
+                    // the old instance destroyed again: the fresh record stays
+                    s.World.Ecs.OnDestroyed(old);
+                    s.World.Get(ROCK).Should().BeSameAs(fresh);
+                    s.World.Ecs.Mirror.GetHandle(ROCK).Should().BeSameAs(fresh);
+                    s.Mismatches.Should().BeEmpty();
+                }
+            }
+        }
+
+        // HouseManager.IsHouseInRange: the caller's multi with the switch on, the table's item under its serial off; the range
+        // sweep passes a destroyed multi the table still holds, so both answer it
+        [Fact]
+        public void The_House_Range_Multi_Is_The_Held_Item_In_Both_Switch_States()
+        {
+            foreach (bool index in new[] { false, true })
+            {
+                Scene s = Build(index);
+                Item multi = AddItem(s.World, ROCK);
+
+                s.World.HouseMulti(multi).Should().BeSameAs(multi);
+                s.World.RemoveItem(ROCK);
+                multi.IsDestroyed.Should().BeTrue();
+                s.World.HouseMulti(multi).Should().BeSameAs(multi, "destroyed, still held until the sweep");
+                s.Mismatches.Should().BeEmpty();
+            }
+        }
+
         [Fact]
         public void Without_The_Checker_Only_The_Switchs_Lookup_Runs()
         {

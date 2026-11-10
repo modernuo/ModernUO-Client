@@ -7,7 +7,9 @@ using ClassicUO.Utility.Logging;
 namespace ClassicUO.Game
 {
     // T9 (ecs-transition-plan.md §T9, survey t9-world-index-2026-11-08): World.Get, GetItem, GetMobile, FindItem and
-    // FindMobile from the mirror's serial index; Holds (the identity guards) stays on the tables until the deferred sweep goes
+    // FindMobile from the mirror's serial index; Holds (the identity guards) from the tables' marks on the object. With the
+    // switch on, the tables' dictionaries are read only by World's own table bookkeeping (GetOrCreate*, the sweeps), the
+    // switch's off paths, the checker and EcsInspector
     internal sealed partial class World
     {
 #if CUO_DEVTOOLS
@@ -133,6 +135,63 @@ namespace ClassicUO.Game
             return EntityIndexOn ? Ecs.Mirror.TryGetEntityOf(serial, e, out record) : held;
         }
 
+        /// <summary>
+        /// T9 slice 3 part 2 (<c>WorldEcs.OnDestroyed</c>): a live object of <paramref name="e"/>'s kind, other than
+        /// <paramref name="e"/>, under its serial (a newer object owns the serial: its record must stay); null when none.
+        /// Switch off: the table of e's kind; <c>world_entity_index</c> on: the index's handle, kind-checked (a newer object
+        /// not yet committed has no handle, but then e's record is gone already). CUO_ENTITY_INDEX_CHECK compares both.
+        /// </summary>
+        internal Entity NewerOwner(Entity e)
+        {
+            bool on = EntityIndexOn, check = EntityIndexCheckOn;
+            Entity tables = null, indexed = null;
+
+            if (!on || check)
+            {
+                Entity c = e is Item ? Items.Get(e.Serial) : Mobiles.Get(e.Serial);
+                tables = c != null && !ReferenceEquals(c, e) && !c.IsDestroyed ? c : null;
+            }
+
+            if (on || check)
+            {
+                object h = Ecs.Mirror.GetHandle(e.Serial);
+                Entity c = e is Item ? h as Item : h as Mobile;
+                indexed = c != null && !ReferenceEquals(c, e) && !c.IsDestroyed ? c : null;
+            }
+
+            if (check)
+            {
+                CountCheck(e.Serial, tables, indexed, "newer owner");
+            }
+
+            return on ? indexed : tables;
+        }
+
+        /// <summary>
+        /// T9 slice 3 part 2 (<c>HouseManager.IsHouseInRange</c>): the multi whose range decides its house. Switch off: the item
+        /// the table holds under <paramref name="multi"/>'s serial (a destroyed multi not yet swept included: the range sweep
+        /// asks for one); <c>world_entity_index</c> on: <paramref name="multi"/> itself (every caller passes the item it
+        /// holds: the sweep's item from <c>Items.Values</c>, an item checking its own graphic). Compared by the checker.
+        /// </summary>
+        internal Item HouseMulti(Item multi)
+        {
+            bool on = EntityIndexOn, check = EntityIndexCheckOn;
+
+            if (on && !check)
+            {
+                return multi;
+            }
+
+            Item held = Items.Get(multi.Serial);
+
+            if (check)
+            {
+                CountCheck(multi.Serial, held, multi, "house multi");
+            }
+
+            return on ? multi : held;
+        }
+
         internal Item GetIndexedItem(uint serial) => Ecs.Mirror.GetHandle(serial) is Item it && !it.IsDestroyed ? it : null;
 
         internal Mobile GetIndexedMobile(uint serial) => Ecs.Mirror.GetHandle(serial) is Mobile m && !m.IsDestroyed ? m : null;
@@ -153,22 +212,62 @@ namespace ClassicUO.Game
 
         /// <summary>
         /// Whether the Items or Mobiles table (by the object's kind) holds this very instance under its serial: the identity
-        /// guard of the funnel and the ECS writes. Destroyed objects not yet swept are still held. Stays on the tables until
-        /// the deferred sweep goes (T9 slice 3); CUO_ENTITY_INDEX_CHECK compares it with the index for live objects.
+        /// guard of the funnel and the ECS writes. Destroyed objects not yet swept are still held: the tables keep them until
+        /// <see cref="Update"/> drops them, since loops over <c>Values</c> destroy objects as they go (the sweep window).
+        /// T9 slice 3 part 2: with <c>world_entity_index</c> on, answered from the tables' marks on the object
+        /// (<see cref="ItemTable.Holds(Item, uint)"/>, <see cref="MobileTable.Holds"/>) instead of a serial lookup, so no guard
+        /// reads the tables' dictionaries; the marks are table membership, which the ordered tables of slice 4 keep.
+        /// CUO_ENTITY_INDEX_CHECK compares the marks with the lookup at every call (destroyed objects included), and the
+        /// lookup with the index for live objects.
         /// </summary>
         public bool Holds(Entity e) => e != null && Holds(e, e.Serial);
 
         /// <summary><see cref="Holds(Entity)"/> under <paramref name="serial"/> (a serial the object had or is about to have).</summary>
         public bool Holds(Entity e, uint serial)
         {
-            bool held = e is Mobile ? ReferenceEquals(Mobiles.Get(serial), e) : e != null && ReferenceEquals(Items.Get(serial), e);
+            if (e == null)
+            {
+                return false;
+            }
 
-            if (EntityIndexCheckOn && e != null && !e.IsDestroyed)
+            if (EntityIndexCheckOn)
+            {
+                return CheckedHolds(e, serial);
+            }
+
+            return EntityIndexOn ? HoldsMarked(e, serial) : HoldsLookup(e, serial);
+        }
+
+        private bool HoldsLookup(Entity e, uint serial) => e is Mobile ? ReferenceEquals(Mobiles.Get(serial), e) : ReferenceEquals(Items.Get(serial), e);
+
+        private bool HoldsMarked(Entity e, uint serial) => e is Mobile m ? Mobiles.Holds(m, serial) : e is Item it && Items.Holds(it, serial);
+
+        /// <summary>CUO_ENTITY_INDEX_CHECK counts for <see cref="Holds(Entity, uint)"/>'s marks (the switch-on answer) against
+        /// the tables' lookup, for every object (destroyed ones included): guards compared, differences (logged).</summary>
+        public long EntityIndexMarkChecks, EntityIndexMarkDiffs;
+
+        private bool CheckedHolds(Entity e, uint serial)
+        {
+            bool held = HoldsLookup(e, serial);
+            bool marked = HoldsMarked(e, serial);
+            EntityIndexMarkChecks++;
+
+            if (held != marked)
+            {
+                EntityIndexMarkDiffs++;
+
+                if (WillReport(EntityIndexMarkDiffs, EntityIndexHoldsObserver))
+                {
+                    ReportEntityIndex(serial, $"holds mark {Describe(e)}{(e.IsDestroyed ? " (destroyed)" : "")}: tables {(held ? "yes" : "no")}, marks {(marked ? "yes" : "no")}", EntityIndexMarkDiffs, EntityIndexHoldsObserver, "entity-index-holds");
+                }
+            }
+
+            if (!e.IsDestroyed)
             {
                 CheckHolds(e, serial, held);
             }
 
-            return held;
+            return EntityIndexOn ? marked : held;
         }
 
         // CUO_ENTITY_INDEX_CHECK: both lookups at every call, the switch's answer returned
@@ -296,7 +395,7 @@ namespace ClassicUO.Game
             if (Time.Ticks >= _entityIndexNextLog)
             {
                 _entityIndexNextLog = Time.Ticks + 5000;
-                Log.Info($"[entity-index-check] {EntityIndexChecks} checks, {EntityIndexMismatches} mismatches; unswept {EntityIndexUnswept}; holds {EntityIndexHoldsChecks} checks, {EntityIndexHoldsUncommitted} uncommitted, {EntityIndexHoldsDiffs} different; items {Items.Count}, mobiles {Mobiles.Count}, records {Ecs.Mirror.Count} | world_entity_index={(EntityIndexOn ? "on" : "off")}");
+                Log.Info($"[entity-index-check] {EntityIndexChecks} checks, {EntityIndexMismatches} mismatches; unswept {EntityIndexUnswept}; holds {EntityIndexHoldsChecks} checks, {EntityIndexHoldsUncommitted} uncommitted, {EntityIndexHoldsDiffs} different; marks {EntityIndexMarkChecks} checks, {EntityIndexMarkDiffs} different; items {Items.Count}, mobiles {Mobiles.Count}, records {Ecs.Mirror.Count} | world_entity_index={(EntityIndexOn ? "on" : "off")}");
             }
         }
 
