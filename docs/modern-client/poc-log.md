@@ -6230,3 +6230,20 @@ On `poc/modern-client` 19e61bf18. `legacy_ecs_sprites` stays default off. Script
   - bench-000534 pair3: off, on, new3on, new4on (row on), new4off; 3 rounds.
   - bench-000535 and bench-000536: gate4 Legacy and Gpu, with the row on and its checker (pass line "LSF4 PASS").
   - bench-000537 sample4: profiles of off, on and new4on.
+
+## legacy-sprites-fix-2: prefetch distances and the per-item draw cache (2026-11-10, `bg/legacy-sprites-fix-2`)
+
+On `bg/legacy-sprites-fix` b7ed4f80d. Every switch stays default off. Scripts: `cuo-poc-state/measure/legacy-sprites-fix-2/`.
+
+- **Prefetch override (55eb855ce).** In dev builds, `CUO_LEGACY_PREFETCH=obj,node,row` sets the Legacy sink's three prefetch distances (default 16, 8, 4; 0 turns a stage off). One binary can then time several distances. Release builds keep the constants.
+- **`legacy_item_draw_cache` (d73755ab8, tests ffd6a9ef1; default off).** `CUO_LEGACY_ITEM_DRAW_CACHE=1|0` overrides it in dev builds. The checker `CUO_ITEM_DRAW_CACHE_CHECK=1` compares every replay with a fresh Gather + select and its resolve, and logs `[item-draw-cache-check] … hits, misses, checked, different` every 5 s.
+  - `ItemDrawRow` gets a `uint Version`. `WorldMirror.UpsertItem` takes it from a per-mirror counter only when a row value changes.
+  - Each drawn art item keeps an `ItemDrawCache`: its one or two batcher calls (texture, rect, hue vector and position relative to the screen position), its art pick record and its light flag.
+  - A hit needs all of these to match: the row version, AllowedToDraw, the alpha, the render offset, the multi graphic, and the per-frame scene bits (selected, highlight, out of range, dead gray, selected container, field replacement). For tiledata-animated art the art frame offset must match too. A hit replays the calls and skips the tiledata read, the hue choice and the art lookups.
+  - Corpses and the placement preview are not cached. A call made without its atlas texture is not recorded (the atlas only gains textures).
+  - Memory: about 100 B per drawn item (an object of about 90 B plus an 8 B reference on every Item), about 2.5 MB at 25k drawn items. The version adds 6 B to every item row (14 → 20 B), about 0.15 MB at 25k. Allocation: one cache object per item at its first cached draw, not per frame.
+- **Pending** (the next agent fills in the numbers):
+  - bench-000547: Legacy gate with row + cache and both checkers. Pass line "LSF5 PASS".
+  - bench-000548 prefetch: off, plus 16/8/4, 16/0/4, 0/0/0, 8/4/2 and 24/12/6 with row on. `robust.txt` and `pick.txt`. It writes `best-prefetch.txt`.
+  - bench-000549 robust2: off, on, pnr, pr, prc, headoff, using the best distances. `robust.txt`.
+  - bench-000550 alloc2: base/baseon vs new/newon (newon = sprites + row + cache). `table.txt`.
