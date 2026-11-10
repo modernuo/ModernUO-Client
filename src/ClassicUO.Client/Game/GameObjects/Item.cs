@@ -74,6 +74,13 @@ namespace ClassicUO.Game.GameObjects
         /// through <c>World.IsItemListed</c>.</summary>
         internal int ActiveEntryId;
 
+        /// <summary><see cref="ItemTable"/>'s held state: the table holding this item (null: none) and its key there, kept by the
+        /// table's Add/Remove/Clear. <see cref="HeldShared"/>: once held under a second key or by a second table, ItemTable.Holds
+        /// looks up instead. Read through <c>ItemTable.Holds</c>.</summary>
+        internal ItemTable HeldBy;
+        internal uint HeldKey;
+        internal bool HeldShared;
+
         /// <summary>
         /// W5: whether <see cref="Update"/> does anything this frame. Item.Update is a no-op unless the item is a corpse
         /// (ProcessAnimation) or its object handles just opened (Entity.Update); the hits percentage follows the setters.
