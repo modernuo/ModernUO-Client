@@ -747,7 +747,9 @@ namespace ClassicUO.Game
                 return;
             }
 
-            Entity container = itemOnly ? _world.FindItem(containerSerial) : _world.Get(containerSerial);
+            // stays on the table (T9 slice 3): 0x24 clears the item under a mobile's serial too, which the index (one record per
+            // serial) may not answer
+            Entity container = itemOnly ? _world.Items.Get(containerSerial) : _world.Get(containerSerial);
 
             // T9 child-list slice A: the children are the ECS's (WorldState.Children: the spell entries, then the contents, in
             // child order)

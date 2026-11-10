@@ -1322,9 +1322,11 @@ namespace ClassicUO.Game
 
         private bool RemoveItem(uint serial, bool forceRemove, uint root, uint keep, int depth)
         {
-            Item item = GetItem(serial);
+            // the table's own bookkeeping (T9 slice 3): the cascade removes the item a mobile wears under its own serial,
+            // which the index (one record per serial) may answer as the mobile
+            Item item = Items.Get(serial);
 
-            if (item == null)
+            if (item == null || item.IsDestroyed)
             {
                 return false;
             }
@@ -1385,9 +1387,10 @@ namespace ClassicUO.Game
 
         public bool RemoveMobile(uint serial, bool forceRemove = false)
         {
-            Mobile mobile = GetMobile(serial);
+            // the table's own bookkeeping, as RemoveItem
+            Mobile mobile = Mobiles.Get(serial);
 
-            if (mobile == null)
+            if (mobile == null || mobile.IsDestroyed)
             {
                 return false;
             }
