@@ -541,13 +541,13 @@ namespace ClassicUO.UnitTests.Ecs
         }
 
         [Fact]
-        public void Legacy_Switch_Env_Parse_And_Default_Off()
+        public void Legacy_Switch_Env_Parse_And_Default_On()
         {
             Assert.True(LegacySpriteSink.ParseSwitch("1"));
             Assert.False(LegacySpriteSink.ParseSwitch("0"));
             Assert.Null(LegacySpriteSink.ParseSwitch(null));
             Assert.Null(LegacySpriteSink.ParseSwitch("yes"));
-            Assert.False(new ClassicUO.Configuration.Settings().LegacyEcsSprites);
+            Assert.True(new ClassicUO.Configuration.Settings().LegacyEcsSprites);
         }
 
         // perf-7: DrawItem's hasAnims is read once per frame (BeginFrame) instead of per item; the pack's animation tables are
