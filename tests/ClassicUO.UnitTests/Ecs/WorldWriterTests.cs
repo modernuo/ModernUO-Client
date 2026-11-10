@@ -1840,7 +1840,7 @@ namespace ClassicUO.UnitTests.Ecs
             {
                 // the behaviour fix (Codex audit P2 #2, WorldWriter.Equip): the kept link leaves the old parent's list; the
                 // handler before it left a backpack that was its old parent's first child as that parent's list head
-                world.Get(item.Container)?.Remove(item);
+                world.GetHeld(item.Container)?.Remove(item);
             }
 
             shown = item.Container;
@@ -1851,7 +1851,9 @@ namespace ClassicUO.UnitTests.Ecs
             item.FixHue(e.Hue);
             item.Amount = 1;
 
-            entity = world.Get(item.Container);
+            // the old handler's lookup was the tables' (GetHeld): with world_entity_index on, World.Get after the Sync above would
+            // find this item when it was created under the wearer's mobile serial, and push it into itself
+            entity = world.GetHeld(item.Container);
             entity?.PushToBack(item);
             world.Ecs.Sync(item);
 
@@ -1997,7 +1999,8 @@ namespace ClassicUO.UnitTests.Ecs
         // UpdateObject's equipment part before T1: the clear of the unopened non-backpack children, then each entry
         internal static void OldWear(World world, uint serial, (uint Serial, ushort Graphic, Layer Layer, ushort Hue)[] entries)
         {
-            Entity obj = world.Get(serial);
+            // the tables' lookup, as the old handler's World.Get (world_entity_index off)
+            Entity obj = world.GetHeld(serial);
 
             if (obj == null)
             {
@@ -2144,10 +2147,106 @@ namespace ClassicUO.UnitTests.Ecs
             newWorld.Ecs.IsFolding.Should().BeFalse();
             AssertSameWorld(oldWorld, newWorld);
 
+            if (newWorld.EntityIndexOn && owner == MOB && Array.Exists(entries, e => e.Serial == MOB))
+            {
+                SecondWearUnderTheSharedSerial(newWorld, entries);
+
+                return;
+            }
+
             // the same packet again
             OldWear(oldWorld, owner, entries);
             NewWear(newWorld, owner, entries);
             AssertSameWorld(oldWorld, newWorld);
+        }
+
+        [Fact]
+        public void A_Second_Wear_Under_A_Shared_Serial_Follows_The_Switch()
+        {
+            // the theory above runs in the process's switch state; this pins both: off, the handler's World.Get still finds
+            // the mobile (the tables) and the second packet re-wears the item; on, it finds the item and refuses the self entry
+            var entries = WearLists[5];
+
+            foreach (bool index in new[] { false, true })
+            {
+                World oldWorld = BuildWear(Start.Worn, crowded: true), newWorld = BuildWear(Start.Worn, crowded: true);
+                oldWorld.EntityIndexOverride = index;
+                newWorld.EntityIndexOverride = index;
+                oldWorld.SmallFieldsOverride = false;
+
+                OldWear(oldWorld, MOB, entries);
+                NewWear(newWorld, MOB, entries);
+                AssertSameWorld(oldWorld, newWorld);
+
+                if (index)
+                {
+                    SecondWearUnderTheSharedSerial(newWorld, entries);
+                }
+                else
+                {
+                    newWorld.Get(MOB).Should().BeSameAs(newWorld.Mobiles.Get(MOB));
+                    OldWear(oldWorld, MOB, entries);
+                    NewWear(newWorld, MOB, entries);
+                    newWorld.Writer.CycleRefusals.Should().Be(0);
+                    AssertSameWorld(oldWorld, newWorld);
+                }
+            }
+        }
+
+        // world_entity_index on, after an entry created an item under the owner's mobile serial: the item's record replaced
+        // the mobile's, so the handler's World.Get now finds the item (owner decision 2026-11-08: a shared serial resolves to
+        // the object holding the record). The old path (the tables) still finds the mobile, so the worlds no longer compare
+        // equal. As the DEAD owner's second packet with the switch off: the item is the captured owner, its clear clears the
+        // serial's merged contents (T9 child-list slice B), and the entry naming the item itself is refused (slice B2)
+        private static void SecondWearUnderTheSharedSerial(World world, (uint Serial, ushort Graphic, Layer Layer, ushort Hue)[] entries)
+        {
+            Item shared = world.Items.Get(MOB);
+            Mobile mobile = world.Mobiles.Get(MOB);
+            world.Get(MOB).Should().BeSameAs(shared, "the item holds the serial's record");
+            world.GetMobile(MOB).Should().BeNull("the index has no mobile under the serial");
+            int refusals = world.Writer.CycleRefusals;
+
+            // the expected survivors, before the operation: the serial's opened containers and backpacks (the crowded wearer's
+            // WORN_AFTER and PACK); every other child but the shared item goes with the clear
+            var kept = new List<Item>();
+            var cleared = new List<Item>();
+
+            foreach (Item it in world.State.Children(mobile))
+            {
+                if (ReferenceEquals(it, shared))
+                {
+                    continue;
+                }
+
+                (it.Opened || it.Layer == Layer.Backpack ? kept : cleared).Add(it);
+            }
+
+            NewWear(world, MOB, entries);
+
+            world.Writer.CycleRefusals.Should().Be(refusals + 1, "the entry naming the owner item itself");
+            world.Writer.InScope.Should().BeFalse();
+            world.Ecs.IsFolding.Should().BeFalse();
+            world.Items.Get(MOB).Should().BeSameAs(shared);
+            world.Mobiles.Get(MOB).Should().BeSameAs(mobile);
+            shared.Container.Should().Be(MOB, "the mobile still wears the item from the first packet");
+
+            // the kept children stay live and attached, the shared item stays on the mobile, and the item reads the merged
+            // contents but itself
+            foreach (Item it in kept)
+            {
+                it.IsDestroyed.Should().BeFalse($"0x{it.Serial:X8} is kept");
+                world.Items.Get(it.Serial).Should().BeSameAs(it);
+                it.Container.Should().Be(MOB);
+            }
+
+            foreach (Item it in cleared)
+            {
+                it.IsDestroyed.Should().BeTrue($"0x{it.Serial:X8} is cleared");
+            }
+
+            uint[] keptSerials = kept.Select(it => it.Serial).ToArray();
+            ChildSerials(mobile).Should().Equal(keptSerials.Append(MOB));
+            ChildSerials(shared).Should().Equal(keptSerials, "an item is never its own child");
         }
 
         // MOB rekeyed as DisplayDeath (0xAF) does for a dying mobile: its serial gets the high bit, its children follow

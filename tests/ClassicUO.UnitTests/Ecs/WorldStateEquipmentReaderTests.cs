@@ -407,7 +407,7 @@ namespace ClassicUO.UnitTests.Ecs
             world.State.HasWornItems(m).Should().BeFalse();
             uint epoch = world.Ecs.Mirror.Epoch;
 
-            world.Ecs.Mirror.UpsertMobile(MOB, m.Graphic, 0, m.X, m.Y, m.Z, 0, 0, false);
+            world.Ecs.Mirror.UpsertMobile(MOB, m.Graphic, 0, m.X, m.Y, m.Z, 0, 0, false, m);
             world.Ecs.Mirror.Epoch.Should().Be(epoch, "a creation moves no epoch");
             m.FindItemByLayer(Layer.Helmet).Should().BeSameAs(world.Items.Get(HELM));
             world.State.HasWornItems(m).Should().BeTrue();
@@ -423,7 +423,9 @@ namespace ClassicUO.UnitTests.Ecs
             world.Ecs.Mirror.Remove(LATE);
             late.FindItemByLayer(Layer.Shirt).Should().BeNull();
 
-            world.Ecs.Mirror.UpsertMobile(LATE, late.Graphic, 0, late.X, late.Y, late.Z, 0, 0, false);
+            // with its handle, as WorldEcs creates every record: world_entity_index resolves the wearer from it (a record
+            // without one is no object to the index, so the equip would make an orphan)
+            world.Ecs.Mirror.UpsertMobile(LATE, late.Graphic, 0, late.X, late.Y, late.Z, 0, 0, false, late);
             world.Writer.Equip(NEWSHIRT, 0x1517, Layer.Shirt, LATE, 0, out _, out _);
             late.FindItemByLayer(Layer.Shirt).Should().BeSameAs(world.Items.Get(NEWSHIRT));
             AllReadersEqual(world);
