@@ -6204,3 +6204,29 @@ Slice 3, part 2 of the T9 world index (handoff `cuo-poc-state/handoffs/t9-world-
 - **Tests.** `WorldEntityIndexTests` +4 (21): `Holds` from the marks equals the lookup for live, replaced, unswept, swept, uncommitted, shared-serial and re-keyed objects in every switch and checker state; a stale mark is reported and the switch picks the answer; `NewerOwner` and `OnDestroyed` of a replaced instance; `HouseMulti` for a live and a destroyed held multi. `ActiveItemsSourceTests`/`ActiveItemsSystemTests` drop the mobile records with the mobiles they remove (the due-mobile lookup goes through the index with the switch on).
 - **Verification.** Dev suite 3465 pass, 6 skipped; `-p:CuoDevTools=false` client build OK. Switch-on suite (`CUO_ECS_WORLD_ENTITY_INDEX=1`): 48 failures, the known slice-2 shared-serial set (45 `WorldWriterTests`, `EffectSystemTests.An_Unbound_Endpoint...`, `WorldStateEquipmentReaderTests.A_Bare_Record...`, `RangeSweepTests.The_Selection_Order_Follows_The_Table...`), nothing new (the first switch-on run of 4ce9c2ea9 had 86: the shared-serial removals and the active-item test harness, fixed in 1151df159). Jobs (`cuo-poc-state/measure/t9-world-index-3b/`, dev JIT build of 1151df159; part 1's gate plus `marks N checks, 0 different` in `eicheck`): bench-000512 Gpu switch on, 513 Legacy switch on, 514 Gpu switch off (+ perf-15 part 2), 515 Legacy switch off (+ part 2), pass `T9WI3B PASS`; pickscans with the switch on and the checker (`job-pick.sh`, pass `GATE PASS`) and allocations base 456bb0606 / new / newon (NativeAOT dev, `job-alloc-{g,l}.sh`): ids in the handoff. Results to follow.
 - **Costs.** Memory: `Mobile.TableKey`, 4 B per mobile (inside existing padding or 8 B: under 0.02 MB at 2k mobiles); WorldWriter's re-key list (a few slots). CPU, switch off: each converted reader and `Holds` pay one or two flag tests more; switch on: `Holds` is two field compares instead of a dictionary lookup (cheaper), the readers one mirror lookup, an array load and a type test. No per-frame allocation.
+
+## legacy-sprites-fix: why `legacy_ecs_sprites` costs Legacy, and the fixes (2026-11-09, `bg/legacy-sprites-fix`)
+
+On `poc/modern-client` 19e61bf18. `legacy_ecs_sprites` stays default off. Scripts, sampler (with an approximate inclusive view) and analysis tools: `cuo-poc-state/measure/legacy-sprites-fix/`.
+
+- **Profile (bench-000519).** NativeAOT dev build of the base, Legacy, switch off vs on, 2 interleaved rounds, sampled. Large scene at zoom 2.5: world_draw 4.60 → 5.21 ms (+13 %), frame +8 %. Zoom 1: world_draw +16 %, frame +9 %. Britain: noise. The extra cost is all in **items**: +8.5 % of large-scene samples. The largest part is `ItemSpriteInput.ReadRecord` at 6.9 %: the mirror node plus Graphic, Hue, Position and Flags, one cache line each per item, about 25k items per frame. Four runtime type checks per item add 1.5 %, `Gather` 1.9 % and the pick table about 1 %. **Mobiles** are about 4.5 % *cheaper* with the switch on: the replay beats `MobileView.Draw`. In dev builds the over-8 ms slow-frame log line writes more on the switch-on arm, about 0.25 % of samples; that is not a release cost.
+- **Attempt 1.**
+  - 37237a511: items are dispatched first, and `Item` is now sealed (one type compare). The mobile's dirty tag is read from the row. `AnimIndex` and `UsedLayer` are read for corpses only.
+  - e2a05329c: prefetch of each item's node and components, plus a tiledata stage.
+  - bench-000527, world_draw in ms (median of 2 runs):
+
+    | | off | on | midon (37237a511) | newon (node and component prefetch) | new2on (+ tiledata stage, sampled arm) |
+    |---|---|---|---|---|---|
+    | ls_z1 | 2.558 | 3.028 | 2.813 | 2.743 | 3.024 |
+    | ls_z25 | 3.726 | 4.412 | 4.369 | 3.967 | 4.494 |
+
+    The tiledata stage cost more than it saved: its own `Prefetch` was 7 % of samples, stalled on the objects it tested. new2off was +2.6–3.6 % over off, though the Legacy off path's code is unchanged. Gates bench-000528 (Legacy) and bench-000529 (Gpu): LSF PASS. Allocations bench-000530: p50 0 B/frame in every window, both renderers and both switch states. Two windows had a one-frame ~1 MB spike: base Legacy gumps and new Gpu effects.
+- **Attempt 2.**
+  - e59a76142: the tiledata stage is gone. A first stage prefetches each render-list object 16 entries ahead (its header and the line of its mirror handle), so the node stage 8 ahead reads lines already cached.
+  - 31889013e: the mobile replay draws from the cached entries without building a `LegacyDraw`. `ItemSpriteExtract.Art` looks the art entry up once (twice only for animated art).
+- **Structural (owner direction): `ecs_item_draw_row` (afd117ae0, default off).** Every item record also carries `ItemDrawRow`, 14 B: graphic, hue, position, flags, amount, layer, and the OnGround and Multi tags. `WorldMirror.UpsertItem`, the one writer of those values, writes it from the same values. With the switch on, `ReadRecord` reads that one row, and the Legacy sink prefetches it. `CUO_ITEM_DRAW_ROW_CHECK=1` compares every row read with the components; `CUO_ECS_ITEM_DRAW_ROW` overrides the switch in dev builds. Memory: 14 B per item record, about 0.35 MB at 25k items (plus Friflo's per-archetype array slack). Write cost: one row write per `UpsertItem`, on packets only. Rejected option: Legacy reusing the Gpu chunk item cache. That cache validates each item with a signature built from the GameObject's cached fields, which T9 deletes; with ECS reads instead, the signature costs what the row read costs.
+- **Pending** (results go in the follow-up entry):
+  - bench-000532 pair2: off, on, new2on, new3on, new3off; 3 rounds, no sampled arm.
+  - bench-000534 pair3: off, on, new3on, new4on (row on), new4off; 3 rounds.
+  - bench-000535 and bench-000536: gate4 Legacy and Gpu, with the row on and its checker (pass line "LSF4 PASS").
+  - bench-000537 sample4: profiles of off, on and new4on.
