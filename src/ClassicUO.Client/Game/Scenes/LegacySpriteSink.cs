@@ -146,9 +146,13 @@ namespace ClassicUO.Game.Scenes
         /// item draw otherwise waits on (the large scene's ~25k items per frame). Prefetches only: a stale handle costs a
         /// wasted fetch, never a wrong read. (A tiledata stage was tried and cost more than it saved: bench-000527.)
         /// </summary>
-        internal static void Prefetch(ReadOnlySpan<GameObject> list, int i)
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        internal static void Prefetch(ReadOnlySpan<GameObject> list, int i) => Prefetch(list, i, _ahead, _drawRow);
+
+        /// <summary><see cref="Prefetch(ReadOnlySpan{GameObject}, int)"/> with explicit distances and row state (tests).</summary>
+        internal static void Prefetch(ReadOnlySpan<GameObject> list, int i, (int Obj, int Node, int Row) ahead, bool drawRow)
         {
-            (int obj, int node, int row) = _ahead;
+            (int obj, int node, int row) = ahead;
             int j = i + obj;
 
             if (obj != 0 && (uint)j < (uint)list.Length)
@@ -167,7 +171,7 @@ namespace ClassicUO.Game.Scenes
 
             if (row != 0 && (uint)j < (uint)list.Length && list[j] is Item near && near.EcsEntityHeld)
             {
-                if (_drawRow)
+                if (drawRow)
                 {
                     // ecs_item_draw_row: the one packed row Gather reads
                     EcsRead.PrefetchRow<ClassicUO.Ecs.ItemDrawRow>(near.EcsEntity);
