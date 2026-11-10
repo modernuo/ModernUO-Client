@@ -282,6 +282,54 @@ namespace ClassicUO.UnitTests.Ecs
             }
         }
 
+        // Codex audit (t9-world-index-5) P2: an item equipped under a mobile's serial takes the serial's record; destroying the
+        // mobile that lost it must leave the live item's record (WorldEcs.OnDestroyed asks World.NewerOwner, which used to
+        // accept only an owner of the destroyed object's kind, so the item's record went and GetItem missed a live item)
+        [Fact]
+        public void Removing_The_Mobile_That_Lost_A_Shared_Serial_Keeps_The_Items_Record_In_Both_Switch_States()
+        {
+            foreach (bool index in new[] { false, true })
+            {
+                Scene s = Build(index);
+                World w = s.World;
+                Mobile loser = AddMobile(w, MOB);
+                Mobile wearer = AddMobile(w, MOB2);
+
+                Item shared = w.Writer.Equip(MOB, 0x1515, ClassicUO.Game.Data.Layer.Shirt, MOB2, 0, out Entity at, out _);
+                shared.Should().NotBeNull();
+                at.Should().BeSameAs(wearer);
+                w.Ecs.Mirror.GetHandle(MOB).Should().BeSameAs(shared, "the item's commit took the serial's record");
+
+                w.RemoveMobile(MOB).Should().BeTrue();
+                loser.IsDestroyed.Should().BeTrue();
+
+                shared.IsDestroyed.Should().BeFalse();
+                w.Ecs.Mirror.TryGetEntity(MOB, out _).Should().BeTrue("the live item keeps its record");
+                w.Ecs.Mirror.GetHandle(MOB).Should().BeSameAs(shared);
+                w.GetItem(MOB).Should().BeSameAs(shared);
+                w.FindItem(MOB).Should().BeSameAs(shared);
+                w.Get(MOB).Should().BeSameAs(index ? shared : null, "off: the tables answer the serial's kind, the destroyed mobile");
+                w.Holds(shared).Should().BeTrue();
+                shared.Container.Should().Be(MOB2);
+                bool attached = false;
+
+                foreach (Item it in w.State.Children(wearer))
+                {
+                    attached |= ReferenceEquals(it, shared);
+                }
+
+                attached.Should().BeTrue("still attached to its wearer");
+
+                // and the other way: the item removed while the mobile's record is the item's, nothing of the mobile's to keep
+                w.RemoveItem(MOB, true);
+                w.Ecs.Mirror.TryGetEntity(MOB, out _).Should().BeFalse();
+                w.GetItem(MOB).Should().BeNull();
+                // the checker reports only the known shared-serial differences (the pinned test above)
+                s.HoldsDiffs.Should().OnlyContain(t => t.StartsWith("0x00000200 "));
+                s.Mismatches.Should().OnlyContain(t => t.Contains("0x00000200"));
+            }
+        }
+
         [Fact]
         public void The_Kind_Checked_Lookups_Find_Only_Their_Kind_In_Both_Switch_States()
         {
