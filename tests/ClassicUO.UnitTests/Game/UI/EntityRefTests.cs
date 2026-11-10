@@ -35,7 +35,7 @@ namespace ClassicUO.UnitTests.Game.UI
 
             world.Writer.RemoveMobile(old);
 
-            r.Mobile(world, MOB).Should().BeSameAs(world.Mobiles.Get(MOB));
+            r.Mobile(world, MOB).Should().BeSameAs(world.FindMobile(MOB));
             (r.Mobile(world, MOB) == null || r.Mobile(world, MOB).IsDestroyed).Should().BeTrue();
 
             Mobile next = world.GetOrCreateMobile(MOB);
@@ -54,7 +54,7 @@ namespace ClassicUO.UnitTests.Game.UI
             // destroyed (pooled for reuse) while still in the table and with no mirror deletion: the lookup decides
             m.Destroy();
 
-            r.Mobile(world, MOB).Should().BeSameAs(world.Mobiles.Get(MOB));
+            r.Mobile(world, MOB).Should().BeSameAs(world.FindMobile(MOB));
         }
 
         [Fact]
@@ -112,7 +112,7 @@ namespace ClassicUO.UnitTests.Game.UI
 
             world.Writer.RemoveWorldItem(it, out _);
 
-            r.Item(world, ITEM).Should().BeSameAs(world.Items.Get(ITEM));
+            r.Item(world, ITEM).Should().BeSameAs(world.FindItem(ITEM));
             (r.Item(world, ITEM) == null || r.Item(world, ITEM).IsDestroyed).Should().BeTrue();
         }
 

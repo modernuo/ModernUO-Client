@@ -66,7 +66,7 @@ namespace ClassicUO.Game.GameObjects
                 return false;
             }
 
-            if (!World.Holds(this, _serial) || !World.Ecs.Mirror.TryGetEntity(_serial, this is Mobile, out e))
+            if (!World.TryGetLiveRecord(this, _serial, out e))
             {
                 return false;
             }

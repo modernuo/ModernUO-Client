@@ -102,6 +102,22 @@ namespace ClassicUO.Ecs
             return (uint)id < (uint)_handles.Length ? _handles[id] : null;
         }
 
+        /// <summary>
+        /// T9 (<c>world_entity_index</c>): the record under <paramref name="serial"/> when it was last upserted with
+        /// <paramref name="handle"/> (one lookup; the handle's kind is the record's, so no tag test is needed).
+        /// </summary>
+        public bool TryGetEntityOf(uint serial, object handle, out Entity entity)
+        {
+            if (!_bySerial.TryGetValue(serial, out entity))
+            {
+                return false;
+            }
+
+            int id = entity.Id;
+
+            return (uint)id < (uint)_handles.Length && handle != null && ReferenceEquals(_handles[id], handle);
+        }
+
         private void SetHandle(Entity e, object handle)
         {
             int id = e.Id;

@@ -318,14 +318,14 @@ namespace ClassicUO.Game
                     int pickAmount = (args[0] == "pack" || args[0] == "bank") && args.Length > 2 ? int.Parse(args[2]) : 0;
 
                     // an explicit amount skips the split-stack gump
-                    if (serial != 0 && GameActions.PickUp(world, serial, 0, 0, pickAmount > 0 ? pickAmount : Math.Max(1, (int)(world.Items.Get(serial)?.Amount ?? 1))))
+                    if (serial != 0 && GameActions.PickUp(world, serial, 0, 0, pickAmount > 0 ? pickAmount : Math.Max(1, (int)(world.FindItem(serial)?.Amount ?? 1))))
                     {
                         _held = serial;
                         Log.Info($"[ECS] driver: picked up 0x{serial:X8}");
                     }
                     else
                     {
-                        Item it = world.Items.Get(serial);
+                        Item it = world.FindItem(serial);
                         Log.Warn($"[ECS] driver: can't pick ({arg}) 0x{serial:X8}: exists={it != null} onGround={it?.OnGround} dist={it?.Distance} holding={Client.Game.UO.GameCursor.ItemHold.Enabled}");
                     }
 
@@ -472,7 +472,7 @@ namespace ClassicUO.Game
                             break;
 
                         // item <hex serial>: a known item, e.g. one in the backpack (cleanup with [remove)
-                        case "item" when args.Length > 1 && world.Items.Get(Convert.ToUInt32(args[1], 16)) is { } known:
+                        case "item" when args.Length > 1 && world.FindItem(Convert.ToUInt32(args[1], 16)) is { } known:
                             world.TargetManager.Target(known.Serial);
 
                             break;
@@ -494,8 +494,8 @@ namespace ClassicUO.Game
                     {
                         "backpack" => backpack,
                         "bank" => player.FindItemByLayer(Layer.Bank),
-                        "near" when args.Length > 1 => world.Items.Get(FindNear(world, player, Convert.ToUInt16(args[1], 16))),
-                        "held" => world.Items.Get(_held),
+                        "near" when args.Length > 1 => world.FindItem(FindNear(world, player, Convert.ToUInt16(args[1], 16))),
+                        "held" => world.FindItem(_held),
                         _ => null
                     };
 
@@ -562,7 +562,7 @@ namespace ClassicUO.Game
                     foreach (Item bi in world.Items.Values)
                     {
                         if (bi.Price > 0 && !bi.IsDestroyed && bi.Name != null && bi.Name.IndexOf(args[0].Replace('_', ' '), StringComparison.OrdinalIgnoreCase) >= 0 &&
-                            world.Items.Get(bi.Container) is { } buyBox && (buyBox.Layer == Layer.ShopBuy || buyBox.Layer == Layer.ShopBuyRestock))
+                            world.FindItem(bi.Container) is { } buyBox && (buyBox.Layer == Layer.ShopBuy || buyBox.Layer == Layer.ShopBuyRestock))
                         {
                             Log.Info($"[ECS] ui buy '{bi.Name}' 0x{bi.Serial:X8} price {bi.Price} x{args[1]} from vendor 0x{buyBox.Container:X8}");
                             NetClient.Socket.Send_BuyRequest(buyBox.Container, new[] { Tuple.Create(bi.Serial, ushort.Parse(args[1])) });

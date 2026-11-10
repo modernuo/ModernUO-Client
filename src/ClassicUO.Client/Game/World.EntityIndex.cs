@@ -6,8 +6,8 @@ using ClassicUO.Utility.Logging;
 
 namespace ClassicUO.Game
 {
-    // T9 (ecs-transition-plan.md §T9, survey t9-world-index-2026-11-08): World.Get, GetItem and GetMobile from the mirror's
-    // serial index; Holds (the identity guards) stays on the tables until the deferred sweep goes (slice 3)
+    // T9 (ecs-transition-plan.md §T9, survey t9-world-index-2026-11-08): World.Get, GetItem, GetMobile, FindItem and
+    // FindMobile from the mirror's serial index; Holds (the identity guards) stays on the tables until the deferred sweep goes
     internal sealed partial class World
     {
 #if CUO_DEVTOOLS
@@ -40,13 +40,18 @@ namespace ClassicUO.Game
         /// <summary>CUO_ENTITY_INDEX_CHECK counts: lookups compared, mismatches found.</summary>
         public long EntityIndexChecks, EntityIndexMismatches;
 
+        /// <summary>CUO_ENTITY_INDEX_CHECK: <see cref="FindItem"/>/<see cref="FindMobile"/> calls where the table answered a
+        /// destroyed object not yet swept (the index answers no object, or the live one now under the serial). The expected
+        /// difference of the switch (owner decision 2026-11-08), logged as <c>[entity-index-unswept]</c> with the caller.</summary>
+        public long EntityIndexUnswept;
+
         /// <summary>CUO_ENTITY_INDEX_CHECK counts for <see cref="Holds(Entity)"/> (still the tables) against the index, for a
         /// live object: guards compared, guards where the tables hold an object the mirror has no record for yet (an object
         /// created inside a funnel operation, before its commit), and other differences (logged).</summary>
         public long EntityIndexHoldsChecks, EntityIndexHoldsUncommitted, EntityIndexHoldsDiffs;
 
-        /// <summary>Tests: sees each mismatch report (lookups), and each Holds difference.</summary>
-        internal Action<string> EntityIndexObserver, EntityIndexHoldsObserver;
+        /// <summary>Tests: sees each mismatch report (lookups), each Holds difference, and each unswept find.</summary>
+        internal Action<string> EntityIndexObserver, EntityIndexHoldsObserver, EntityIndexUnsweptObserver;
 
         private uint _entityIndexNextLog;
 
@@ -73,6 +78,59 @@ namespace ClassicUO.Game
             }
 
             return EntityIndexOn ? GetIndexedMobile(serial) : GetHeldMobile(serial);
+        }
+
+        /// <summary>
+        /// T9 slice 3: the reader form of <c>Items.Get(serial)</c> for callers that did not reject destroyed objects. Switch off:
+        /// the table's answer, a destroyed object not yet swept included (unchanged). <c>world_entity_index</c> on:
+        /// <see cref="GetItem"/>'s live answer, so a destroyed object not yet swept does not exist (owner decision
+        /// 2026-11-08). Becomes <see cref="GetItem"/> when the switch's off path is deleted.
+        /// </summary>
+        public Item FindItem(uint serial)
+        {
+            if (EntityIndexCheckOn)
+            {
+                return CheckedFindItem(serial);
+            }
+
+            return EntityIndexOn ? GetIndexedItem(serial) : Items.Get(serial);
+        }
+
+        /// <summary>The reader form of <c>Mobiles.Get(serial)</c>; see <see cref="FindItem"/>.</summary>
+        public Mobile FindMobile(uint serial)
+        {
+            if (EntityIndexCheckOn)
+            {
+                return CheckedFindMobile(serial);
+            }
+
+            return EntityIndexOn ? GetIndexedMobile(serial) : Mobiles.Get(serial);
+        }
+
+        /// <summary>
+        /// T9 slice 3 (WorldEcs' commit guard, <c>Entity.FindScalarEntity</c>): the record under <paramref name="serial"/> when
+        /// it stands for this live instance. Switch off: World holds the instance under the serial
+        /// (<see cref="Holds(Entity, uint)"/>) and the record is of its kind (two lookups). <c>world_entity_index</c> on: the
+        /// record's handle is the instance (one lookup). They differ only where <see cref="Holds(Entity, uint)"/> differs from
+        /// the index, which CUO_ENTITY_INDEX_CHECK reports (with the checker on, the off path runs as well).
+        /// </summary>
+        internal bool TryGetLiveRecord(Entity e, uint serial, out Friflo.Engine.ECS.Entity record)
+        {
+            if (e.IsDestroyed)
+            {
+                record = default;
+
+                return false;
+            }
+
+            if (EntityIndexOn && !EntityIndexCheckOn)
+            {
+                return Ecs.Mirror.TryGetEntityOf(serial, e, out record);
+            }
+
+            bool held = Holds(e, serial) & Ecs.Mirror.TryGetEntity(serial, e is Mobile, out record);
+
+            return EntityIndexOn ? Ecs.Mirror.TryGetEntityOf(serial, e, out record) : held;
         }
 
         internal Item GetIndexedItem(uint serial) => Ecs.Mirror.GetHandle(serial) is Item it && !it.IsDestroyed ? it : null;
@@ -141,6 +199,55 @@ namespace ClassicUO.Game
             return EntityIndexOn ? indexed : held;
         }
 
+        private Item CheckedFindItem(uint serial)
+        {
+            Item held = Items.Get(serial);
+            Item indexed = GetIndexedItem(serial);
+            CountFind(serial, held, indexed, "find item");
+
+            return EntityIndexOn ? indexed : held;
+        }
+
+        private Mobile CheckedFindMobile(uint serial)
+        {
+            Mobile held = Mobiles.Get(serial);
+            Mobile indexed = GetIndexedMobile(serial);
+            CountFind(serial, held, indexed, "find mobile");
+
+            return EntityIndexOn ? indexed : held;
+        }
+
+        // a destroyed object the table still holds is the switch's expected difference (counted as unswept, logged at Info);
+        // any other difference is a mismatch, as for the Get* lookups
+        private void CountFind(uint serial, Entity held, Entity indexed, string what)
+        {
+            EntityIndexChecks++;
+
+            if (!ReferenceEquals(held, indexed))
+            {
+                if (held != null && held.IsDestroyed)
+                {
+                    EntityIndexUnswept++;
+
+                    if (WillReport(EntityIndexUnswept, EntityIndexUnsweptObserver))
+                    {
+                        ReportEntityIndex(serial, $"{what}: tables {Describe(held)} (destroyed), index {Describe(indexed)}", EntityIndexUnswept, EntityIndexUnsweptObserver, "entity-index-unswept", false);
+                    }
+                }
+                else
+                {
+                    EntityIndexMismatches++;
+
+                    if (WillReport(EntityIndexMismatches, EntityIndexObserver))
+                    {
+                        ReportEntityIndex(serial, $"{what}: tables {Describe(held)}, index {Describe(indexed)}", EntityIndexMismatches, EntityIndexObserver, "entity-index-check", true);
+                    }
+                }
+            }
+
+            LogEntityIndexSummary();
+        }
+
         private void CountCheck(uint serial, Entity held, Entity indexed, string what)
         {
             EntityIndexChecks++;
@@ -189,7 +296,7 @@ namespace ClassicUO.Game
             if (Time.Ticks >= _entityIndexNextLog)
             {
                 _entityIndexNextLog = Time.Ticks + 5000;
-                Log.Info($"[entity-index-check] {EntityIndexChecks} checks, {EntityIndexMismatches} mismatches; holds {EntityIndexHoldsChecks} checks, {EntityIndexHoldsUncommitted} uncommitted, {EntityIndexHoldsDiffs} different; items {Items.Count}, mobiles {Mobiles.Count}, records {Ecs.Mirror.Count} | world_entity_index={(EntityIndexOn ? "on" : "off")}");
+                Log.Info($"[entity-index-check] {EntityIndexChecks} checks, {EntityIndexMismatches} mismatches; unswept {EntityIndexUnswept}; holds {EntityIndexHoldsChecks} checks, {EntityIndexHoldsUncommitted} uncommitted, {EntityIndexHoldsDiffs} different; items {Items.Count}, mobiles {Mobiles.Count}, records {Ecs.Mirror.Count} | world_entity_index={(EntityIndexOn ? "on" : "off")}");
             }
         }
 
@@ -200,19 +307,28 @@ namespace ClassicUO.Game
         // (Codex audit of slice 2, P3)
         private static bool WillReport(long count, Action<string> observer) => count <= 20 || observer != null;
 
-        private void ReportEntityIndex(uint serial, string what, long count, Action<string> observer, string tag)
+        private void ReportEntityIndex(uint serial, string what, long count, Action<string> observer, string tag, bool warn = true)
         {
             EntityIndexReportsFormatted++;
 
             // the caller tells which funnel window (or reader) saw the difference; only on a mismatch. Frames: this,
-            // CountCheck/CheckHolds, Checked*/Holds(e, serial), Get*/Holds(e), then the caller (best effort: a direct
-            // Holds(e, serial) call names its caller's caller)
-            string caller = new System.Diagnostics.StackTrace(4, false).GetFrame(0)?.GetMethod()?.Name ?? "?";
+            // CountCheck/CountFind/CheckHolds, Checked*/Holds(e, serial), Get*/Find*/Holds(e), then the caller (best effort: a
+            // direct Holds(e, serial) call names its caller's caller; slice 3 adds the type, since readers share method names)
+            System.Reflection.MethodBase m = new System.Diagnostics.StackTrace(4, false).GetFrame(0)?.GetMethod();
+            string caller = m == null ? "?" : $"{m.DeclaringType?.Name}.{m.Name}";
             string text = $"0x{serial:X8} {what}, record {(Ecs.Mirror.TryGetEntity(serial, out _) ? "yes" : "no")}, caller {caller}";
 
             if (count <= 20)
             {
-                Log.Warn($"[{tag}] {text}");
+                if (warn)
+                {
+                    Log.Warn($"[{tag}] {text}");
+                }
+                else
+                {
+                    // the switch's expected difference: Info, so a gate's warning scan does not count it
+                    Log.Info($"[{tag}] {text}");
+                }
             }
 
             observer?.Invoke(text);

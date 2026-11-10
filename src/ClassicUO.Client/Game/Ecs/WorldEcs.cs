@@ -252,10 +252,8 @@ namespace ClassicUO.Game
 
         // T4: World holds this instance AND the record under its serial is of its kind (a death-rekeyed mobile and a corpse
         // item can share a serial; the mirror keeps one record per serial, so a commit must not write the other kind's record)
-        private bool HoldsEntity(Entity entity) =>
-            entity != null && !entity.IsDestroyed &&
-            _world.Holds(entity) &&
-            Mirror.TryGetEntity(entity.Serial, entity is Mobile, out _);
+        // (T9 slice 3: with world_entity_index on, one lookup: the record's handle is the instance)
+        private bool HoldsEntity(Entity entity) => entity != null && _world.TryGetLiveRecord(entity, entity.Serial, out _);
 
         /// <summary>
         /// After every record upsert: the corpse timer push and the ItemActive tag follow the record; when the upsert replaced a

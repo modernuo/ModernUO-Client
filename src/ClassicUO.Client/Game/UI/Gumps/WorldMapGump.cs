@@ -2225,7 +2225,7 @@ namespace ClassicUO.Game.UI.Gumps
             {
                 foreach (House house in World.HouseManager.Houses)
                 {
-                    Item item = World.Items.Get(house.Serial);
+                    Item item = World.FindItem(house.Serial);
 
                     if (item != null)
                     {
@@ -2402,7 +2402,7 @@ namespace ClassicUO.Game.UI.Gumps
 
                     if (partyMember != null && SerialHelper.IsValid(partyMember.Serial))
                     {
-                        Mobile mob = World.Mobiles.Get(partyMember.Serial);
+                        Mobile mob = World.FindMobile(partyMember.Serial);
 
                         if (mob != null && mob.Distance <= World.ClientViewRange)
                         {

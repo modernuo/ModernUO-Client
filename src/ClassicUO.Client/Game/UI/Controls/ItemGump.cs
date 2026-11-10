@@ -23,7 +23,7 @@ namespace ClassicUO.Game.UI.Controls
         // when the item may have changed
         private EntityRef _item;
 
-        /// <summary>What <c>World.Items.Get(LocalSerial)</c> returns.</summary>
+        /// <summary>What <c>World.FindItem(LocalSerial)</c> returns.</summary>
         internal Item ShownItem() => _item.Item(_gump.World, LocalSerial);
 
         public ItemGump(Gump gump, uint serial, ushort graphic, ushort hue, int x, int y, bool is_gump = false)
@@ -347,7 +347,7 @@ namespace ClassicUO.Game.UI.Controls
                 && !item.IsDestroyed
                 && !item.ItemData.IsContainer
                 && !_gump.World.State.HasChildren(item)
-                && (container = _gump.World.Items.Get(item.RootContainer)) != null
+                && (container = _gump.World.FindItem(item.RootContainer)) != null
                 && container != _gump.World.Player.FindItemByLayer(Layer.Backpack)
             )
             {

@@ -36,6 +36,7 @@ namespace ClassicUO.Game.UI.Gumps
         private EntityRef _slotMobile;
         // perf-12: set by PrepareSlots for the children's Update of this gump update only (see there)
         private bool _slotsPrepared;
+        private bool _hadMobile;
         private Mobile _preparedSlotMobile;
         private Label _titleLabel;
         private GumpPic _virtueMenuPic;
@@ -202,7 +203,7 @@ namespace ClassicUO.Game.UI.Gumps
                 );
 
                 // TOGGLE PEACE/WAR BUTTON
-                Mobile mobile = World.Mobiles.Get(LocalSerial);
+                Mobile mobile = World.FindMobile(LocalSerial);
 
                 _isWarMode = mobile?.InWarMode ?? false;
                 ushort[] btngumps = _isWarMode ? WarModeBtnGumps : PeaceModeBtnGumps;
@@ -388,14 +389,19 @@ namespace ClassicUO.Game.UI.Gumps
                 return;
             }
 
-            Mobile mobile = World.Mobiles.Get(LocalSerial);
+            Mobile mobile = World.FindMobile(LocalSerial);
 
-            if (mobile != null && mobile.IsDestroyed)
+            // the paperdoll closes when its mobile is destroyed (Mobile.Destroy closes it for every mobile but the player).
+            // T9 slice 3: with world_entity_index on, a destroyed mobile not yet swept is not found, so "the mobile shown
+            // before is gone" stands for it
+            if (mobile != null ? mobile.IsDestroyed : _hadMobile && World.EntityIndexOn)
             {
                 Dispose();
 
                 return;
             }
+
+            _hadMobile = mobile != null;
 
             // This is to update the state of the war mode button.
             if (mobile != null && _isWarMode != mobile.InWarMode && LocalSerial == World.Player)
@@ -464,7 +470,7 @@ namespace ClassicUO.Game.UI.Gumps
         {
             if (button == MouseButtonType.Left && World.InGame)
             {
-                Mobile container = World.Mobiles.Get(LocalSerial);
+                Mobile container = World.FindMobile(LocalSerial);
 
                 if (Client.Game.UO.GameCursor.ItemHold.Enabled)
                 {
@@ -564,7 +570,7 @@ namespace ClassicUO.Game.UI.Gumps
 
         protected override void UpdateContents()
         {
-            Mobile mobile = World.Mobiles.Get(LocalSerial);
+            Mobile mobile = World.FindMobile(LocalSerial);
 
             if (mobile != null && mobile.Title != _titleLabel.Text)
             {

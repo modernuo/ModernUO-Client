@@ -113,7 +113,7 @@ namespace ClassicUO.Game
                     return new Vector3(st.OffsetX, st.OffsetY, st.OffsetZ);
                 }
 
-                return e.World.Mobiles.Get(s.SourceSerial)?.Offset ?? default;
+                return e.World.FindMobile(s.SourceSerial)?.Offset ?? default;
             }
 
             if (e.World.ItemOffsetOn)
@@ -121,7 +121,7 @@ namespace ClassicUO.Game
                 return row.TryGet(out ItemOffset io) ? new Vector3(io.X, io.Y, io.Z) : Vector3.Zero;
             }
 
-            return e.World.Items.Get(s.SourceSerial)?.Offset ?? default;
+            return e.World.FindItem(s.SourceSerial)?.Offset ?? default;
         }
 
         private static (ushort x, ushort y, sbyte z) ResolveTarget(GameEffect e, ref EffectState s, out bool gone)

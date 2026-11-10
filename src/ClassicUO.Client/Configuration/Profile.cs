@@ -408,7 +408,7 @@ namespace ClassicUO.Configuration
                             // T9 child-list slice B2: bounded (a loop in the Container chain has no top)
                             int up = 0;
 
-                            while (SerialHelper.IsItem(item.Container) && up++ < Game.WorldState.MaxNestingDepth && world.Items.Get(item.Container) is Item parent)
+                            while (SerialHelper.IsItem(item.Container) && up++ < Game.WorldState.MaxNestingDepth && world.FindItem(item.Container) is Item parent)
                             {
                                 item = parent;
                             }

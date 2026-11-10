@@ -20,6 +20,7 @@ namespace ClassicUO.UnitTests.Ecs
             public World World;
             public readonly List<string> Mismatches = new List<string>();
             public readonly List<string> HoldsDiffs = new List<string>();
+            public readonly List<string> Unswept = new List<string>();
         }
 
         private static Scene Build(bool index, bool check = true)
@@ -30,6 +31,7 @@ namespace ClassicUO.UnitTests.Ecs
             world.EntityIndexCheckOverride = check;
             world.EntityIndexObserver = s.Mismatches.Add;
             world.EntityIndexHoldsObserver = s.HoldsDiffs.Add;
+            world.EntityIndexUnsweptObserver = s.Unswept.Add;
 
             return s;
         }
@@ -93,9 +95,16 @@ namespace ClassicUO.UnitTests.Ecs
                     s.World.GetIndexedMobile(serial).Should().BeSameAs(e as Mobile, $"0x{serial:X8} {because}");
                     s.World.Contains(serial).Should().Be(e != null, $"0x{serial:X8} {because}");
 
+                    // slice 3: the reader forms answer the tables (destroyed included) with the switch off, Get's kind on
+                    bool on = s.World.EntityIndexOn;
+                    s.World.FindItem(serial).Should().BeSameAs(on ? e as Item : s.World.Items.Get(serial), $"0x{serial:X8} {because}");
+                    s.World.FindMobile(serial).Should().BeSameAs(on ? e as Mobile : s.World.Mobiles.Get(serial), $"0x{serial:X8} {because}");
+
                     if (e != null)
                     {
                         s.World.Holds(e).Should().BeTrue(because);
+                        s.World.TryGetLiveRecord(e, serial, out Friflo.Engine.ECS.Entity record).Should().BeTrue(because);
+                        record.IsNull.Should().BeFalse(because);
                     }
                 }
             }
@@ -385,6 +394,123 @@ namespace ClassicUO.UnitTests.Ecs
             s.World.Holds(item).Should().BeTrue();
             s.World.EntityIndexChecks.Should().Be(0);
             s.World.EntityIndexHoldsChecks.Should().Be(0);
+        }
+
+        // slice 3 (owner decision 2026-11-08): the readers that took the tables' answer (FindItem/FindMobile) see a destroyed
+        // object not yet swept with the switch off, as before, and no object with it on; the checker counts that as the
+        // switch's expected difference (unswept, logged at Info with the caller), not as a mismatch
+        [Fact]
+        public void The_Reader_Lookups_See_The_Unswept_Object_Only_With_The_Switch_Off()
+        {
+            foreach (bool index in new[] { false, true })
+            {
+                Scene s = Build(index);
+                Item rock = AddItem(s.World, ROCK);
+                Mobile mob = AddMobile(s.World, MOB2);
+
+                s.World.FindItem(ROCK).Should().BeSameAs(rock);
+                s.World.FindMobile(MOB2).Should().BeSameAs(mob);
+                s.World.FindItem(MOB2).Should().BeNull("kind-checked");
+                s.World.FindMobile(ROCK).Should().BeNull("kind-checked");
+                s.Unswept.Should().BeEmpty();
+
+                s.World.RemoveItem(ROCK);
+                s.World.RemoveMobile(MOB2);
+
+                s.World.FindItem(ROCK).Should().BeSameAs(index ? null : rock);
+                s.World.FindMobile(MOB2).Should().BeSameAs(index ? null : mob);
+                s.Unswept.Should().HaveCount(2);
+                s.Unswept[0].Should().Contain("0x40001002 find item: tables item 0x40001002 (destroyed), index none");
+                s.Unswept[1].Should().Contain("find mobile: tables mobile 0x00000201 (destroyed), index none");
+                s.World.EntityIndexUnswept.Should().Be(2);
+                s.Mismatches.Should().BeEmpty("the unswept window is the switch's expected difference");
+
+                // re-created under the serial before the sweep: both answer the new object
+                Item fresh = AddItem(s.World, ROCK);
+                s.World.FindItem(ROCK).Should().BeSameAs(fresh);
+
+                // after the sweep neither answers a destroyed item
+                AddItem(s.World, COIN);
+                s.World.RemoveItem(COIN);
+                s.World.DropDestroyedItems();
+                s.World.FindItem(COIN).Should().BeNull();
+                s.World.EntityIndexUnswept.Should().Be(2);
+                s.Mismatches.Should().BeEmpty();
+            }
+        }
+
+        [Fact]
+        public void The_Unswept_Reports_Stop_Formatting_After_Twenty()
+        {
+            Scene s = Build(false);
+            s.World.EntityIndexUnsweptObserver = null;
+            AddItem(s.World, ROCK);
+            s.World.RemoveItem(ROCK);
+            long formatted = s.World.EntityIndexReportsFormatted;
+
+            for (int i = 0; i < 50; i++)
+            {
+                s.World.FindItem(ROCK).Should().NotBeNull();
+            }
+
+            s.World.EntityIndexUnswept.Should().Be(50);
+            s.World.EntityIndexReportsFormatted.Should().Be(formatted + 20);
+        }
+
+        // the commit guard and the scalar lookup: the handle test with the switch on answers what Holds + the kind test answer
+        // with it off, for live, destroyed, replaced and uncommitted objects; they differ only for a record written without a
+        // handle (a mirror-only writer: tests), where the switch on finds no live record
+        [Fact]
+        public void The_Live_Record_Guard_Agrees_In_Both_Switch_States()
+        {
+            foreach (bool check in new[] { true, false })
+            {
+                foreach (bool index in new[] { false, true })
+                {
+                    Scene s = Build(index, check);
+                    Mobile mob = AddMobile(s.World, MOB);
+                    Item old = AddItem(s.World, ROCK);
+                    s.World.RemoveItem(ROCK, true);
+                    Item fresh = AddItem(s.World, ROCK);
+                    Item gone = AddItem(s.World, COIN);
+                    s.World.RemoveItem(COIN);
+                    Item uncommitted = s.World.GetOrCreateItem(NONE, out _);
+
+                    s.World.TryGetLiveRecord(mob, MOB, out Friflo.Engine.ECS.Entity r).Should().BeTrue();
+                    s.World.Ecs.Mirror.TryGetEntity(MOB, out Friflo.Engine.ECS.Entity expected).Should().BeTrue();
+                    r.Should().Be(expected);
+                    s.World.TryGetLiveRecord(fresh, ROCK, out _).Should().BeTrue();
+                    s.World.TryGetLiveRecord(old, ROCK, out _).Should().BeFalse("replaced");
+                    s.World.TryGetLiveRecord(gone, COIN, out _).Should().BeFalse("destroyed, not yet swept");
+                    s.World.TryGetLiveRecord(uncommitted, NONE, out _).Should().BeFalse("no record yet");
+                    s.World.TryGetLiveRecord(mob, BAG, out _).Should().BeFalse("another serial");
+                    s.World.TryGetLiveRecord(s.World.Player, PLAYER, out _).Should().BeTrue();
+                    mob.TryScalarEntity(out _).Should().BeTrue();
+                    s.HoldsDiffs.Should().BeEmpty();
+
+                    // a record written without a handle under a held item's serial
+                    Item bare = AddItem(s.World, BAG);
+                    s.World.Ecs.Mirror.Remove(BAG);
+                    s.World.Ecs.Mirror.UpsertItem(BAG, 1, 0, 1000, 1000, 0, 0, 0, 1, 0xFFFF_FFFF, 0, false);
+                    s.World.TryGetLiveRecord(bare, BAG, out _).Should().Be(!index, "the switch on wants the record's handle");
+                }
+            }
+        }
+
+        [Fact]
+        public void Without_The_Checker_The_Reader_Lookups_Compare_Nothing()
+        {
+            foreach (bool index in new[] { false, true })
+            {
+                Scene s = Build(index, check: false);
+                Item rock = AddItem(s.World, ROCK);
+                s.World.RemoveItem(ROCK);
+
+                s.World.FindItem(ROCK).Should().BeSameAs(index ? null : rock);
+                s.World.EntityIndexChecks.Should().Be(0);
+                s.World.EntityIndexUnswept.Should().Be(0);
+                s.Unswept.Should().BeEmpty();
+            }
         }
 
         [Fact]

@@ -484,7 +484,7 @@ namespace ClassicUO.Game
 
             if (Live(ref s, EffectState.END_SOURCE, EffectState.END_SOURCE_GONE, s.SourceEntity))
             {
-                obj = (s.Ends & EffectState.END_SOURCE_MOBILE) != 0 ? e.World.Mobiles.Get(s.SourceSerial) : e.World.Items.Get(s.SourceSerial);
+                obj = (s.Ends & EffectState.END_SOURCE_MOBILE) != 0 ? e.World.FindMobile(s.SourceSerial) : e.World.FindItem(s.SourceSerial);
             }
 
             if (e.EndpointCheck)

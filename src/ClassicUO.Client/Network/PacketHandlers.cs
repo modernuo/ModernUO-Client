@@ -827,7 +827,7 @@ namespace ClassicUO.Network
                 return;
             }
 
-            Mobile mobile = world.Mobiles.Get(p.ReadUInt32BE());
+            Mobile mobile = world.FindMobile(p.ReadUInt32BE());
 
             if (mobile == null)
             {
@@ -1349,7 +1349,7 @@ namespace ClassicUO.Network
                 graphic = 0x0EF2;
             }
 
-            Mobile entity = world.Mobiles.Get(source);
+            Mobile entity = world.FindMobile(source);
 
             if (entity == null)
             {
@@ -1362,7 +1362,7 @@ namespace ClassicUO.Network
                 sourceZ = entity.Z;
             }
 
-            Mobile destEntity = world.Mobiles.Get(dest);
+            Mobile destEntity = world.FindMobile(dest);
 
             if (destEntity == null)
             {
@@ -1419,7 +1419,7 @@ namespace ClassicUO.Network
 
             if (graphic == 0xFFFF)
             {
-                Item spellBookItem = world.Items.Get(serial);
+                Item spellBookItem = world.FindItem(serial);
 
                 if (spellBookItem == null)
                 {
@@ -1442,7 +1442,7 @@ namespace ClassicUO.Network
             }
             else if (graphic == 0x0030)
             {
-                Mobile vendor = world.Mobiles.Get(serial);
+                Mobile vendor = world.FindMobile(serial);
 
                 if (vendor == null)
                 {
@@ -1464,7 +1464,7 @@ namespace ClassicUO.Network
 
                     for (int k = 0; k < shopContents.Length; k++)
                     {
-                        Item it = world.Items.Get(shopContents[backwards ? shopContents.Length - 1 - k : k]);
+                        Item it = world.FindItem(shopContents[backwards ? shopContents.Length - 1 - k : k]);
 
                         if (it != null)
                         {
@@ -1475,7 +1475,7 @@ namespace ClassicUO.Network
             }
             else
             {
-                Item item = world.Items.Get(serial);
+                Item item = world.FindItem(serial);
 
                 if (item != null)
                 {
@@ -1620,7 +1620,7 @@ namespace ClassicUO.Network
 
             if (graphic != 0x0030)
             {
-                Item it = world.Items.Get(serial);
+                Item it = world.FindItem(serial);
 
                 if (it != null)
                 {
@@ -1665,7 +1665,7 @@ namespace ClassicUO.Network
                 return;
             }
 
-            Item firstItem = world.Items.Get(Client.Game.UO.GameCursor.ItemHold.Serial);
+            Item firstItem = world.FindItem(Client.Game.UO.GameCursor.ItemHold.Serial);
 
             if (
                 Client.Game.UO.GameCursor.ItemHold.Enabled
@@ -1954,7 +1954,7 @@ namespace ClassicUO.Network
                 && world.Player.Steps.Count == 0
             )
             {
-                Mobile enemy = world.Mobiles.Get(defenders);
+                Mobile enemy = world.FindMobile(defenders);
 
                 if (enemy != null)
                 {
@@ -2471,7 +2471,7 @@ namespace ClassicUO.Network
 
         private static void CharacterAnimation(World world, ref StackDataReader p)
         {
-            Mobile mobile = world.Mobiles.Get(p.ReadUInt32BE());
+            Mobile mobile = world.FindMobile(p.ReadUInt32BE());
 
             if (mobile == null)
             {
@@ -2598,7 +2598,7 @@ namespace ClassicUO.Network
 
                     {
                         uint serial = p.ReadUInt32BE();
-                        Item item = world.Items.Get(serial);
+                        Item item = world.FindItem(serial);
 
                         if (item != null)
                         {
@@ -2747,14 +2747,14 @@ namespace ClassicUO.Network
                 return;
             }
 
-            Item container = world.Items.Get(p.ReadUInt32BE());
+            Item container = world.FindItem(p.ReadUInt32BE());
 
             if (container == null)
             {
                 return;
             }
 
-            Mobile vendor = world.Mobiles.Get(container.Container);
+            Mobile vendor = world.FindMobile(container.Container);
 
             if (vendor == null)
             {
@@ -2807,7 +2807,7 @@ namespace ClassicUO.Network
                 {
                     Item it;
 
-                    if (at < 0 || at >= shopContents.Length || (it = world.Items.Get(shopContents[at])) == null)
+                    if (at < 0 || at >= shopContents.Length || (it = world.FindItem(shopContents[at])) == null)
                     {
                         break;
                     }
@@ -2853,7 +2853,7 @@ namespace ClassicUO.Network
             }
 
             uint serial = p.ReadUInt32BE();
-            Mobile mobile = world.Mobiles.Get(serial);
+            Mobile mobile = world.FindMobile(serial);
 
             if (mobile == null)
             {
@@ -3105,7 +3105,7 @@ namespace ClassicUO.Network
 
         private static void OpenPaperdoll(World world, ref StackDataReader p)
         {
-            Mobile mobile = world.Mobiles.Get(p.ReadUInt32BE());
+            Mobile mobile = world.FindMobile(p.ReadUInt32BE());
 
             if (mobile == null)
             {
@@ -3219,7 +3219,7 @@ namespace ClassicUO.Network
 
             UIManager.Add(gump);
 
-            Item it = world.Items.Get(serial);
+            Item it = world.FindItem(serial);
 
             if (it != null)
             {
@@ -3389,7 +3389,7 @@ namespace ClassicUO.Network
                 return;
             }
 
-            Mobile vendor = world.Mobiles.Get(p.ReadUInt32BE());
+            Mobile vendor = world.FindMobile(p.ReadUInt32BE());
 
             if (vendor == null)
             {
@@ -3464,7 +3464,7 @@ namespace ClassicUO.Network
 
         private static void UpdateMana(World world, ref StackDataReader p)
         {
-            Mobile mobile = world.Mobiles.Get(p.ReadUInt32BE());
+            Mobile mobile = world.FindMobile(p.ReadUInt32BE());
 
             if (mobile == null)
             {
@@ -3482,7 +3482,7 @@ namespace ClassicUO.Network
 
         private static void UpdateStamina(World world, ref StackDataReader p)
         {
-            Mobile mobile = world.Mobiles.Get(p.ReadUInt32BE());
+            Mobile mobile = world.FindMobile(p.ReadUInt32BE());
 
             if (mobile == null)
             {
@@ -3741,7 +3741,7 @@ namespace ClassicUO.Network
             uint corpseSerial = p.ReadUInt32BE();
             uint running = p.ReadUInt32BE();
 
-            Mobile owner = world.Mobiles.Get(serial);
+            Mobile owner = world.FindMobile(serial);
 
             if (owner == null || serial == world.Player)
             {
@@ -4230,7 +4230,7 @@ namespace ClassicUO.Network
                 //===========================================================================================
                 //===========================================================================================
                 case 0x10: // display equip info
-                    Item item = world.Items.Get(p.ReadUInt32BE());
+                    Item item = world.FindItem(p.ReadUInt32BE());
 
                     if (item == null)
                     {
@@ -4456,7 +4456,7 @@ namespace ClassicUO.Network
                     switch (version)
                     {
                         case 0:
-                            Mobile bonded = world.Mobiles.Get(serial);
+                            Mobile bonded = world.FindMobile(serial);
 
                             if (bonded == null)
                             {
@@ -4502,7 +4502,7 @@ namespace ClassicUO.Network
                                     goto case 0;
                                 }
 
-                                Mobile mobile = world.Mobiles.Get(serial);
+                                Mobile mobile = world.FindMobile(serial);
 
                                 if (mobile != null)
                                 {
@@ -4563,7 +4563,7 @@ namespace ClassicUO.Network
                     serial = p.ReadUInt32BE();
                     uint revision = p.ReadUInt32BE();
 
-                    Item multi = world.Items.Get(serial);
+                    Item multi = world.FindItem(serial);
 
                     if (multi == null)
                     {
@@ -4960,7 +4960,7 @@ namespace ClassicUO.Network
 
             uint revision = p.ReadUInt32BE();
 
-            Entity entity = world.Mobiles.Get(serial);
+            Entity entity = world.FindMobile(serial);
 
             if (entity == null)
             {
@@ -4969,7 +4969,7 @@ namespace ClassicUO.Network
                     Log.Warn("Searching a mobile into World.Items from MegaCliloc packet");
                 }
 
-                entity = world.Items.Get(serial);
+                entity = world.FindItem(serial);
             }
 
             List<(int, string, int)> list = _megaClilocLines;
@@ -5045,7 +5045,7 @@ namespace ClassicUO.Network
 
             if (entity is Item it && SerialHelper.IsValid(it.Container))
             {
-                container = world.Items.Get(it.Container);
+                container = world.FindItem(it.Container);
             }
 
             bool inBuyList = false;
@@ -5297,7 +5297,7 @@ namespace ClassicUO.Network
             bool compressed = p.ReadUInt8() == 0x03;
             bool enableReponse = p.ReadBool();
             uint serial = p.ReadUInt32BE();
-            Item foundation = world.Items.Get(serial);
+            Item foundation = world.FindItem(serial);
             uint revision = p.ReadUInt32BE();
 
             if (foundation == null)
@@ -5629,7 +5629,7 @@ namespace ClassicUO.Network
                 return;
             }
 
-            Mobile mobile = world.Mobiles.Get(p.ReadUInt32BE());
+            Mobile mobile = world.FindMobile(p.ReadUInt32BE());
 
             if (mobile == null)
             {
@@ -5807,7 +5807,7 @@ namespace ClassicUO.Network
             ushort y = p.ReadUInt16BE();
             ushort z = p.ReadUInt16BE();
 
-            Item multi = world.Items.Get(serial);
+            Item multi = world.FindItem(serial);
 
             if (multi == null)
             {
@@ -6112,7 +6112,7 @@ namespace ClassicUO.Network
 
             if (SerialHelper.IsMobile(containerSerial))
             {
-                Mobile m = world.Mobiles.Get(containerSerial);
+                Mobile m = world.FindMobile(containerSerial);
                 Item secureBox = m?.GetSecureTradeBox();
         
                 if (secureBox != null)
