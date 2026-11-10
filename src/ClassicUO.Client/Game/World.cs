@@ -124,7 +124,7 @@ namespace ClassicUO.Game
 
         public InfoBarManager InfoBars { get; }
 
-        public Dictionary<uint, Item> Items { get; } = new Dictionary<uint, Item>();
+        public ItemTable Items { get; } = new ItemTable();
 
         public MobileTable Mobiles { get; } = new MobileTable();
 
@@ -905,7 +905,7 @@ namespace ClassicUO.Game
 
                 UpdateActiveItem(item);
 
-                if (!item.NeedsFrameUpdate || !Holds(item))
+                if (!item.NeedsFrameUpdate || !HeldItem(item))
                 {
                     if (source)
                     {
@@ -981,6 +981,20 @@ namespace ClassicUO.Game
             }
         }
 
+        // Holds(item) for the per-frame item loops from the table's held state (no lookup); CUO_ACTIVE_ITEMS_CHECK compares
+        // it with Holds at every use
+        private bool HeldItem(Item item)
+        {
+            bool held = Items.Holds(item);
+
+            if (ActiveItemsCheckOn && held != Holds(item))
+            {
+                ActiveMismatch($"item 0x{item.Serial:X8}: held flag {held}, table lookup {!held}");
+            }
+
+            return held;
+        }
+
         // the destroyed items World still holds (not a newer object with the same serial) go to _toRemove
         private void QueueDestroyedForRemoval()
         {
@@ -988,7 +1002,7 @@ namespace ClassicUO.Game
             {
                 Item item = _destroyedItems[i];
 
-                if (item.IsDestroyed && Holds(item))
+                if (item.IsDestroyed && HeldItem(item))
                 {
                     _toRemove.Add(item.Serial);
                 }
