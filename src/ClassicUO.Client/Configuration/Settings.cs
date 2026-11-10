@@ -206,8 +206,9 @@ namespace ClassicUO.Configuration
         // T9 (ecs-transition-plan.md §T9): World.Get answers from the mirror's serial index (each record keeps the Item or Mobile
         // it was last written for), not from World.Items/World.Mobiles, which stay maintained. CUO_ENTITY_INDEX_CHECK=1 runs both
         // lookups at every World.Get and logs mismatches. Read once at startup (CUO_ECS_WORLD_ENTITY_INDEX=1|0 overrides it in
-        // developer builds). Default off.
-        [JsonPropertyName("world_entity_index")] public bool WorldEntityIndex { get; set; }
+        // developer builds). Default on since 2026-11-09 (T9 slice 5); the off path, the tables' dictionaries for World's own
+        // bookkeeping and the checker stay for one phase.
+        [JsonPropertyName("world_entity_index")] public bool WorldEntityIndex { get; set; } = true;
 
         // T8 ownership (ecs-transition-plan.md): an effect (an ECS entity since T8) references its source and target by mirror record
         // and serial (not by GameObject) and reads their position and offset from the ECS each update; the death re-key moves the

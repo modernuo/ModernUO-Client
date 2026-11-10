@@ -31,6 +31,7 @@ namespace ClassicUO.Game
 
         public World()
         {
+            Items = new ItemTable(this);
             WMapManager = new WorldMapEntityManager(this);
             CorpseManager = new CorpseManager(this);
             Party = new PartyManager(this);
@@ -124,7 +125,7 @@ namespace ClassicUO.Game
 
         public InfoBarManager InfoBars { get; }
 
-        public ItemTable Items { get; } = new ItemTable();
+        public ItemTable Items { get; }
 
         public MobileTable Mobiles { get; } = new MobileTable();
 
@@ -501,6 +502,12 @@ namespace ClassicUO.Game
         {
             FrameStats.Begin(FramePhase.WorldEcs);
             Ecs.Update();
+
+            if (EntityIndexCheckOn)
+            {
+                CheckTableOrder();
+            }
+
             FrameStats.End(FramePhase.WorldEcs);
             FrameStats.Set(FrameCounter.Mobiles, Mobiles.Count);
             FrameStats.Set(FrameCounter.Items, Items.Count);
@@ -1551,7 +1558,13 @@ namespace ClassicUO.Game
                 // W5: the same order as Items.Values / .Reverse(), without LINQ's per-call copy and the boxed enumerator
                 List<Item> items = _scanItems;
                 items.Clear();
-                items.AddRange(Items.Values);
+                items.EnsureCapacity(Items.Count);
+
+                // a loop, not AddRange: the table's ValueCollection is a struct, which AddRange would box with its enumerator
+                foreach (Item item in Items.Values)
+                {
+                    items.Add(item);
+                }
 
                 if (reverse)
                 {

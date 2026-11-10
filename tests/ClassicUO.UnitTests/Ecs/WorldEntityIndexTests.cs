@@ -65,6 +65,12 @@ namespace ClassicUO.UnitTests.Ecs
             return i;
         }
 
+        [Fact]
+        public void The_Setting_Defaults_On()
+        {
+            new ClassicUO.Configuration.Settings().WorldEntityIndex.Should().BeTrue();
+        }
+
         private static readonly uint[] Probe = { PLAYER, MOB, MOB2, BAG, COIN, ROCK, NONE, 0, 0x8000_0200 };
 
         private static void Same(Scene[] scenes, string because)
@@ -245,9 +251,10 @@ namespace ClassicUO.UnitTests.Ecs
             }
         }
 
-        // the one known difference (WorldWriterTests' "a mobile's serial" equip/wear cases and EffectSystemTests' shared serial
-        // fail with the switch on for this reason): an item created under a mobile's serial replaces the mobile's record, so
-        // the index answers the item while the tables answer the mobile. No sane server sends that; the checker reports it.
+        // the one known difference (WorldWriterTests' second wear under a shared serial and EffectSystemTests' unbound endpoints
+        // state their expectations per switch state for this reason): an item created under a mobile's serial replaces the
+        // mobile's record, so the index answers the item while the tables answer the mobile. No sane server sends that; the
+        // checker reports it.
         [Fact]
         public void An_Item_Under_A_Mobile_Serial_Is_The_Known_Difference_And_The_Checker_Reports_It()
         {
@@ -272,6 +279,87 @@ namespace ClassicUO.UnitTests.Ecs
                 s.World.Holds(m).Should().BeTrue("Holds stays on the tables");
                 s.World.Holds(shared).Should().BeTrue();
                 s.HoldsDiffs.Should().ContainSingle().Which.Should().Contain("holds mobile 0x00000200: tables yes, index item 0x00000200");
+            }
+        }
+
+        // Codex audit (t9-world-index-5) P2: an item equipped under a mobile's serial takes the serial's record; destroying the
+        // mobile that lost it must leave the live item's record (WorldEcs.OnDestroyed asks World.NewerOwner, which used to
+        // accept only an owner of the destroyed object's kind, so the item's record went and GetItem missed a live item)
+        [Fact]
+        public void Removing_The_Mobile_That_Lost_A_Shared_Serial_Keeps_The_Items_Record_In_Both_Switch_States()
+        {
+            foreach (bool index in new[] { false, true })
+            {
+                Scene s = Build(index);
+                World w = s.World;
+                Mobile loser = AddMobile(w, MOB);
+                Mobile wearer = AddMobile(w, MOB2);
+
+                Item shared = w.Writer.Equip(MOB, 0x1515, ClassicUO.Game.Data.Layer.Shirt, MOB2, 0, out Entity at, out _);
+                shared.Should().NotBeNull();
+                at.Should().BeSameAs(wearer);
+                w.Ecs.Mirror.GetHandle(MOB).Should().BeSameAs(shared, "the item's commit took the serial's record");
+
+                w.RemoveMobile(MOB).Should().BeTrue();
+                loser.IsDestroyed.Should().BeTrue();
+
+                shared.IsDestroyed.Should().BeFalse();
+                w.Ecs.Mirror.TryGetEntity(MOB, out _).Should().BeTrue("the live item keeps its record");
+                w.Ecs.Mirror.GetHandle(MOB).Should().BeSameAs(shared);
+                w.GetItem(MOB).Should().BeSameAs(shared);
+                w.FindItem(MOB).Should().BeSameAs(shared);
+                w.Get(MOB).Should().BeSameAs(index ? shared : null, "off: the tables answer the serial's kind, the destroyed mobile");
+                w.Holds(shared).Should().BeTrue();
+                shared.Container.Should().Be(MOB2);
+                bool attached = false;
+
+                foreach (Item it in w.State.Children(wearer))
+                {
+                    attached |= ReferenceEquals(it, shared);
+                }
+
+                attached.Should().BeTrue("still attached to its wearer");
+
+                // and the other way: the item removed while the mobile's record is the item's, nothing of the mobile's to keep
+                w.RemoveItem(MOB, true);
+                w.Ecs.Mirror.TryGetEntity(MOB, out _).Should().BeFalse();
+                w.GetItem(MOB).Should().BeNull();
+                // the checker reports only the known shared-serial differences (the pinned test above)
+                s.HoldsDiffs.Should().NotContain(t => !t.StartsWith("0x00000200 "));
+                s.Mismatches.Should().NotContain(t => !t.Contains("0x00000200"));
+            }
+        }
+
+        // the same for the death re-key (WorldEcs.CommitRekey): the dying mobile moves to its dead serial; a live item that took
+        // the old serial's record keeps it
+        [Fact]
+        public void Rekeying_The_Mobile_That_Lost_A_Shared_Serial_Keeps_The_Items_Record_In_Both_Switch_States()
+        {
+            const uint DEAD = MOB | 0x8000_0000;
+
+            foreach (bool index in new[] { false, true })
+            {
+                Scene s = Build(index);
+                World w = s.World;
+                Mobile dying = AddMobile(w, MOB);
+                Mobile wearer = AddMobile(w, MOB2);
+
+                Item shared = w.Writer.Equip(MOB, 0x1515, ClassicUO.Game.Data.Layer.Shirt, MOB2, 0, out _, out _);
+                w.Ecs.Mirror.GetHandle(MOB).Should().BeSameAs(shared);
+
+                w.Writer.RekeyDeadMobile(dying).Should().Be(DEAD);
+
+                dying.Serial.Should().Be(DEAD);
+                w.Ecs.Mirror.GetHandle(DEAD).Should().BeSameAs(dying, "the re-keyed mobile's record under its dead serial");
+                w.GetMobile(DEAD).Should().BeSameAs(dying);
+                shared.IsDestroyed.Should().BeFalse();
+                w.Ecs.Mirror.TryGetEntity(MOB, out _).Should().BeTrue("the live item keeps its record");
+                w.Ecs.Mirror.GetHandle(MOB).Should().BeSameAs(shared);
+                w.GetItem(MOB).Should().BeSameAs(shared);
+                w.FindItem(MOB).Should().BeSameAs(shared);
+                shared.Container.Should().Be(MOB2);
+                s.HoldsDiffs.Should().NotContain(t => !t.StartsWith("0x00000200 "));
+                s.Mismatches.Should().NotContain(t => !t.Contains("0x00000200"));
             }
         }
 

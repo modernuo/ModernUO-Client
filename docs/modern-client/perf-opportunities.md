@@ -310,3 +310,20 @@ Today the client parses incoming packets in place (`StackDataReader` over fixed 
 - **`HealthLinesManager` walks every `Mobiles.Values` entry each frame** (HealthLinesManager.cs:43), ~2,000 mobiles at the large scene, most out of view: walk the range sweep's in-range set instead. Source: t9-world-index (survey). Taken up by perf-cpu-1109.
 - **`World.Holds` per `NeedsFrameUpdate` item per frame** in the active item stage (World.cs:908): a dictionary lookup per listed item; a "held" flag set and cleared by World's own bookkeeping would make it a field read. Source: t9-world-index-2. Taken up by perf-cpu-1109 (World held flag).
 - **`Entity.FindScalarEntity` and `WorldEcs.HoldsEntity` look the serial up twice** (Entity.cs:60, WorldEcs.cs:255): `World.Holds` (a table lookup) and then `Mirror.TryGetEntity` (the mirror's lookup). After world index slice 3, `Mirror.GetHandle(serial) == this` answers both in one lookup. Source: t9-world-index-2.
+
+## Found on 2026-11-09 and 2026-11-10
+
+- **`World.Holds` item branch via `Items.Holds`**: after world index slice 3 the item identity guard can use the held flag instead of the lookup (check what slice 3b left on the lookup). Source: perf-cpu-1109.
+- **`HealthLinesManager` with `ShowMobilesHP` on still walks every mobile**; hoist the `HitsTexture` and `CurrentProfile` reads out of the per-mobile loop. Source: perf-cpu-1109.
+- **`Item.RootContainer` does a lookup per level.** Source: t9-world-index-3.
+- **`HouseManager` looks the house up twice.** Source: t9-world-index-3.
+- **Due mobiles from the clock's handles** instead of a serial lookup per due mobile (World.cs:709). Source: t9-world-index-3b.
+- **`WorldState` children enumeration through a handle snapshot** (WorldState.cs:338). Source: t9-world-index-3b.
+- **Tab scan copies all items** (`World.FindNextCore`): a Tab keypress, not per frame. Source: t9-world-index-4.
+- **The ordered item table's free list as a `Stack<int>`** (it is a hand-rolled LIFO today). Source: t9-world-index-4.
+- **`ItemOffsets.ReadEcs` runs for every item every frame** (2.5-3.1 % of the large scene): a "has offset" flag on the item would skip the read for the ~all items that never rode a boat. Source: legacy-sprites-fix (2026-11-10).
+- **`GpuWorldRenderer.TryDrawMobileEcs` finds the dirty flag through a second lookup** (GpuWorldRenderer.cs:729): the same fix as 37237a511. Source: legacy-sprites-fix.
+- **The mobile replay builds a ~80 B draw struct per entry** (MobileSpriteExtract.cs:770): 2.2 % of the profile. Source: legacy-sprites-fix.
+- **The FrameStats 8 ms slow-frame log line skews benches that sit near 8 ms** (FrameStats.cs:666): raise or disable it under bench. Source: legacy-sprites-fix.
+- **Profile shares still open from the same list:** `SpritePickTable` ~1 %, `ItemSpriteExtract.Art` double `GetEntry` ~0.5 %, `MobileAnimationSystem.UpdateInPlace` 1.5 % (the backlog items above are confirmed). Source: legacy-sprites-fix.
+

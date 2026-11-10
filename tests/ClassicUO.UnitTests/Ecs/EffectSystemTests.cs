@@ -612,13 +612,17 @@ namespace ClassicUO.UnitTests.Ecs
         // Codex audit (ecs-effects-own) P2: a mobile and an item share a serial and the mirror holds the item's record, so the
         // mobile World resolves cannot be bound. Such an endpoint is a ground point at the object's position when the effect
         // registered, not (0,0,0): a moving effect still heads for it, a fixed effect stays where its source was.
+        // world_entity_index on (owner decision 2026-11-08): World resolves the serial to the object holding the record, the
+        // item, so both endpoints bind to the items' records and nothing is unbound
         [Fact]
         public void An_Unbound_Endpoint_Is_A_Ground_Point_At_The_Objects_Position()
         {
             long unbound = EffectSystem.EndpointsUnbound;
+            bool index = _new.EntityIndexOn;
 
             foreach (World w in Worlds)
             {
+                w.EntityIndexOn.Should().Be(index);
                 AddMobile(w, TARGET, 1012, 1009);
                 AddMobile(w, CASTER, 1004, 1006);
                 AddItem(w, TARGET, 1002, 1003); // the item's record replaces the mobile's under the shared serial
@@ -627,8 +631,50 @@ namespace ClassicUO.UnitTests.Ecs
                 Create(w, GraphicEffectType.FixedFrom, CASTER, 0, 0x3709, 0, 0, 0, 0, duration: 400);
             }
 
+            if (index)
+            {
+                foreach (World w in Worlds)
+                {
+                    if (!ByRecord(w))
+                    {
+                        continue;
+                    }
+
+                    int bound = 0;
+
+                    for (GameEffect f = (GameEffect)w.Effects.Items; f != null; f = (GameEffect)f.Next)
+                    {
+                        ref EffectState st = ref State(f);
+
+                        if ((st.Ends & EffectState.END_TARGET) != 0)
+                        {
+                            (st.Ends & EffectState.END_TARGET_MOBILE).Should().Be(0, "the target is the item holding the record");
+                            (st.TargetSerial, st.TargetX, st.TargetY).Should().Be((TARGET, (ushort)1002, (ushort)1003));
+                            bound++;
+                        }
+
+                        if ((st.Ends & EffectState.END_SOURCE) != 0)
+                        {
+                            (st.Ends & EffectState.END_SOURCE_MOBILE).Should().Be(0, "the source is the item holding the record");
+                            (st.SourceSerial, st.SourceX, st.SourceY).Should().Be((CASTER, (ushort)1003, (ushort)1002));
+                            bound++;
+                        }
+                    }
+
+                    bound.Should().Be(2, "both endpoints are bound");
+                }
+            }
+
             Run(60);
-            EffectSystem.EndpointsUnbound.Should().BeGreaterThan(unbound, "the endpoints could not be bound");
+
+            if (index)
+            {
+                EffectSystem.EndpointsUnbound.Should().Be(unbound, "World resolves both serials to the items, whose records bind");
+            }
+            else
+            {
+                EffectSystem.EndpointsUnbound.Should().BeGreaterThan(unbound, "the endpoints could not be bound");
+            }
         }
 
         private const uint OTHER = 0x0000_0400;
