@@ -106,6 +106,33 @@ namespace ClassicUO.Game.Scenes
         // then its record
         private const int OBJECT_AHEAD = 16, NODE_AHEAD = 8, ROW_AHEAD = 4;
 
+#if CUO_DEVTOOLS
+        // CLEANUP(release): CUO_LEGACY_PREFETCH=obj,node,row overrides the three distances for timing arms (0 = stage off)
+        private static readonly (int Obj, int Node, int Row) _ahead = ParsePrefetch(Environment.GetEnvironmentVariable("CUO_LEGACY_PREFETCH"));
+#else
+        private static readonly (int Obj, int Node, int Row) _ahead = (OBJECT_AHEAD, NODE_AHEAD, ROW_AHEAD);
+#endif
+
+        /// <summary>The prefetch distances (object, node, row) of <c>CUO_LEGACY_PREFETCH=obj,node,row</c>; the defaults when
+        /// it is unset or malformed. 0 turns a stage off.</summary>
+        internal static (int Obj, int Node, int Row) ParsePrefetch(string value)
+        {
+            if (!string.IsNullOrEmpty(value))
+            {
+                string[] parts = value.Split(',');
+
+                if (parts.Length == 3 && int.TryParse(parts[0], out int obj) && int.TryParse(parts[1], out int node) &&
+                    int.TryParse(parts[2], out int row) && obj >= 0 && node >= 0 && row >= 0 && obj <= 64 && node <= 64 && row <= 64)
+                {
+                    return (obj, node, row);
+                }
+            }
+
+            return (OBJECT_AHEAD, NODE_AHEAD, ROW_AHEAD);
+        }
+
+        internal static (int Obj, int Node, int Row) PrefetchDistances => _ahead;
+
         // the byte offset of Entity.EcsEntity from an object's first field (the line the node stage reads); -1 until measured
         private static nint _handleOffset = -1;
 
@@ -121,23 +148,24 @@ namespace ClassicUO.Game.Scenes
         /// </summary>
         internal static void Prefetch(ReadOnlySpan<GameObject> list, int i)
         {
-            int j = i + OBJECT_AHEAD;
+            (int obj, int node, int row) = _ahead;
+            int j = i + obj;
 
-            if ((uint)j < (uint)list.Length)
+            if (obj != 0 && (uint)j < (uint)list.Length)
             {
                 PrefetchObject(list[j]);
             }
 
-            j = i + NODE_AHEAD;
+            j = i + node;
 
-            if ((uint)j < (uint)list.Length && list[j] is Item far && far.EcsEntityHeld)
+            if (node != 0 && (uint)j < (uint)list.Length && list[j] is Item far && far.EcsEntityHeld)
             {
                 EcsRead.PrefetchNode(far.EcsEntity);
             }
 
-            j = i + ROW_AHEAD;
+            j = i + row;
 
-            if ((uint)j < (uint)list.Length && list[j] is Item near && near.EcsEntityHeld)
+            if (row != 0 && (uint)j < (uint)list.Length && list[j] is Item near && near.EcsEntityHeld)
             {
                 if (_drawRow)
                 {

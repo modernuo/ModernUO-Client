@@ -100,6 +100,21 @@ namespace ClassicUO.UnitTests.Ecs
             Assert.Equal(a, LegacySpriteSink.HandleOffset(world.GetOrCreateItem(ITEM0 + 1)));
         }
 
+        // legacy-sprites-fix-2: CUO_LEGACY_PREFETCH=obj,node,row (dev builds) sets the distances of the timing arms; 0 turns a
+        // stage off; anything malformed keeps the defaults
+        [Fact]
+        public void Prefetch_Override_Parses_Three_Distances()
+        {
+            var defaults = LegacySpriteSink.ParsePrefetch(null);
+            Assert.Equal((16, 8, 4), defaults);
+            Assert.Equal((12, 0, 3), LegacySpriteSink.ParsePrefetch("12,0,3"));
+            Assert.Equal((0, 0, 0), LegacySpriteSink.ParsePrefetch("0,0,0"));
+            Assert.Equal(defaults, LegacySpriteSink.ParsePrefetch("12,4"));
+            Assert.Equal(defaults, LegacySpriteSink.ParsePrefetch("a,4,2"));
+            Assert.Equal(defaults, LegacySpriteSink.ParsePrefetch("-1,4,2"));
+            Assert.Equal(defaults, LegacySpriteSink.ParsePrefetch("100,4,2"));
+        }
+
         [Fact]
         public void Prefetch_At_The_Ends_Of_A_Short_List()
         {
