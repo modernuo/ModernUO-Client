@@ -121,6 +121,9 @@ namespace ClassicUO.Game.GameObjects
 
         public ushort MultiGraphic { get; private set; }
 
+        /// <summary>legacy_item_draw_cache: the Legacy sink's last draw of this item (made at its first draw with the switch on).</summary>
+        internal ItemDrawCache DrawCache;
+
         public bool IsMulti
         {
             get => _isMulti;

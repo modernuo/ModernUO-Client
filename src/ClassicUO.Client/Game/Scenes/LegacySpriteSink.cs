@@ -32,7 +32,7 @@ namespace ClassicUO.Game.Scenes
         /// <summary>DevBench (pickscan's legacy_ecs_sprites mode) and tests: wins over the env override and the setting.</summary>
         internal static bool? Override;
 
-        private static bool _on, _route, _hasAnims, _drawRow;
+        private static bool _on, _route, _hasAnims, _drawRow, _cache;
         private static GameScene _scene;
         private static readonly ItemSpriteExtract _items = new ItemSpriteExtract();
 
@@ -65,6 +65,7 @@ namespace ClassicUO.Game.Scenes
             // the pack's animation tables are loaded once at startup: read per frame, not per item
             _hasAnims = _route && HasPackAnims(Client.Game.UO.FileManager.Animations);
             _drawRow = ItemDrawRows.On;
+            _cache = _route && ItemDrawCache.On;
             ItemSpriteInput.BeginFrame();
             SpritePickTable.BeginDraw();
         }
@@ -167,9 +168,9 @@ namespace ClassicUO.Game.Scenes
 
             if (row != 0 && (uint)j < (uint)list.Length && list[j] is Item near && near.EcsEntityHeld)
             {
-                if (_drawRow)
+                if (_drawRow || _cache)
                 {
-                    // ecs_item_draw_row: the one packed row Gather reads
+                    // ecs_item_draw_row: the one packed row Gather reads; legacy_item_draw_cache: the row's version
                     EcsRead.PrefetchRow<ClassicUO.Ecs.ItemDrawRow>(near.EcsEntity);
                 }
                 else
@@ -324,11 +325,44 @@ namespace ClassicUO.Game.Scenes
 
         private static bool DrawItem(UltimaBatcher2D batcher, Item item, float depth, bool effects)
         {
+            ItemDrawCache cache = null;
+
+            if (_cache)
+            {
+                cache = item.DrawCache;
+
+                if (cache != null && ItemSpriteInput.CacheHit(item, cache, _items.ArtsLoader))
+                {
+                    ReplayItem(batcher, item, cache, depth, effects);
+
+                    return true;
+                }
+
+                ItemDrawCache.Misses++;
+            }
+
             ItemSpriteInput.Gather(item, out ItemSpriteInput input);
-            // the records are drawn as the select makes them (the batcher calls of a select + DrawAll); the side effects below
-            // do not touch the batcher
-            bool drawn = _items.SelectDraw(batcher, ClientLegacySpriteSource.Instance, in input, _hasAnims, item.RealScreenPosition.X,
-                item.RealScreenPosition.Y, depth);
+            int posX = item.RealScreenPosition.X, posY = item.RealScreenPosition.Y;
+            bool drawn;
+
+            if (_cache && !input.IsCorpse && !input.PlacementPreview && !input.Destroyed && input.AllowedToDraw &&
+                ItemSpriteInput.DrawVersion(item) is var version and not 0)
+            {
+                // legacy_item_draw_cache: the same calls, recorded for the next frames (one cache per item, made once)
+                cache ??= item.DrawCache = new ItemDrawCache();
+                drawn = _items.SelectDraw(batcher, ClientLegacySpriteSource.Instance, in input, _hasAnims, posX, posY, depth, cache, version);
+            }
+            else
+            {
+                if (cache != null)
+                {
+                    cache.Valid = false;
+                }
+
+                // the records are drawn as the select makes them (the batcher calls of a select + DrawAll); the side effects
+                // below do not touch the batcher
+                drawn = _items.SelectDraw(batcher, ClientLegacySpriteSource.Instance, in input, _hasAnims, posX, posY, depth);
+            }
 
             if (_on)
             {
@@ -349,6 +383,88 @@ namespace ClassicUO.Game.Scenes
             }
 
             return drawn;
+        }
+
+        // legacy_item_draw_cache hit: DrawItem's batcher calls and side effects from the cache (an art item: no mirror bit)
+        private static void ReplayItem(UltimaBatcher2D batcher, Item item, ItemDrawCache cache, float depth, bool effects)
+        {
+            ItemDrawCache.Hits++;
+            int posX = item.RealScreenPosition.X, posY = item.RealScreenPosition.Y;
+            cache.Replay(batcher, posX, posY, depth);
+
+            if (_on && cache.HasArtPick)
+            {
+                SpritePickTable.RecordItem(item, false, false, true, cache.PickGraphic, cache.PickW, cache.PickH);
+            }
+
+            if (effects && cache.Light)
+            {
+                _scene?.AddLight(item, item, posX + 22, posY + 22);
+            }
+
+            if (ItemDrawCache.Check)
+            {
+                CheckReplay(item, cache, posX, posY, depth);
+            }
+        }
+
+        // CUO_ITEM_DRAW_CACHE_CHECK=1: a fresh Gather + select of the replayed item, resolved, against the replayed calls and
+        // side outputs
+        private static void CheckReplay(Item item, ItemDrawCache cache, int posX, int posY, float depth)
+        {
+            ItemDrawCache.Checks++;
+            ItemSpriteInput.Gather(item, out ItemSpriteInput input);
+            _items.Select(in input, _hasAnims, posX, posY, depth);
+            string problem = null;
+
+            if (_items.Light != cache.Light || _items.Light && (_items.LightX != posX + 22 || _items.LightY != posY + 22))
+            {
+                problem = $" light {cache.Light} vs {_items.Light}";
+            }
+
+            if (_items.HasArtPick != cache.HasArtPick || cache.HasArtPick &&
+                (_items.ArtPickGraphic != cache.PickGraphic || _items.ArtPickW != cache.PickW || _items.ArtPickH != cache.PickH))
+            {
+                problem += $" pick {cache.HasArtPick} 0x{cache.PickGraphic:X4} {cache.PickW},{cache.PickH} vs {_items.HasArtPick} 0x{_items.ArtPickGraphic:X4} {_items.ArtPickW},{_items.ArtPickH}";
+            }
+
+            if (_items.SetsFlipped)
+            {
+                problem += " fresh select sets the mirror bit";
+            }
+
+            ReadOnlySpan<DynamicSprite> fresh = _items.Selected;
+            int k = 0;
+
+            for (int i = 0; i < fresh.Length; i++)
+            {
+                if (!LegacySpriteResolve.Resolve(ClientLegacySpriteSource.Instance, in fresh[i], out LegacyDraw d))
+                {
+                    continue;
+                }
+
+                if (k < cache.Calls && problem == null)
+                {
+                    LegacyDraw replayed = cache.Call(k, posX, posY, depth);
+
+                    if (!replayed.Same(in d))
+                    {
+                        problem = $" call {k}: replayed {replayed} | fresh {d}";
+                    }
+                }
+
+                k++;
+            }
+
+            if (k != cache.Calls)
+            {
+                problem += $" calls {cache.Calls} vs {k}";
+            }
+
+            if (problem != null)
+            {
+                ItemDrawCache.Report(item, problem);
+            }
         }
 
         internal static ItemSpriteExtract ItemExtract => _items;

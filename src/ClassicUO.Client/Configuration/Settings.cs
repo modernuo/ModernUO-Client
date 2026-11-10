@@ -142,6 +142,12 @@ namespace ClassicUO.Configuration
         // with the components at every read. Off = the components.
         [JsonPropertyName("ecs_item_draw_row")] public bool EcsItemDrawRow { get; set; }
 
+        // legacy-sprites-fix-2: with legacy_ecs_sprites, the sink replays an art item's last batcher calls (ItemDrawCache)
+        // while its ItemDrawRow version and per-frame inputs are the same, instead of Gather + select. Corpses and the
+        // placement preview are not cached. CUO_LEGACY_ITEM_DRAW_CACHE=1|0 overrides it in developer builds;
+        // CUO_ITEM_DRAW_CACHE_CHECK=1 compares every replay with a fresh select. Off = Gather + select for every item.
+        [JsonPropertyName("legacy_item_draw_cache")] public bool LegacyItemDrawCache { get; set; }
+
         // T6c follow-up: the step system's mounted pace (Mobile.IsMounted, the fast-unmount speed
         // modes, IsFlying) is read from the ECS (EquipmentSlots.Mounted, rebuilt when dirty; MobileInputs.SpeedMode and its
         // Flying bit, pushed by their operations) instead of from the Mobile. Read once at startup

@@ -102,6 +102,7 @@ namespace ClassicUO.Game
         {
             _frame.World = null;
             ItemDrawRows.LogSummary();
+            ItemDrawCache.LogSummary();
         }
 
         private static ref readonly GatherFrame TakeFrame(World world, Profile profile)
@@ -280,6 +281,64 @@ namespace ClassicUO.Game
             }
 
             return record;
+        }
+
+        /// <summary>legacy_item_draw_cache: the scene inputs of a non-corpse item's draw as <see cref="ItemDrawCache"/> bits.</summary>
+        internal static byte SceneBits(in ItemSpriteInput i) =>
+            SceneBits(i.Selected, i.HighlightSelected, i.OutOfRange, i.PlayerDeadGray, i.SelectedContainer, i.ReplaceFields);
+
+        internal static byte SceneBits(bool selected, bool highlight, bool outOfRange, bool deadGray, bool selectedContainer, bool replaceFields) =>
+            (byte)((selected ? ItemDrawCache.SELECTED : 0) | (highlight ? ItemDrawCache.HIGHLIGHT : 0) | (outOfRange ? ItemDrawCache.OUT_OF_RANGE : 0) |
+                   (deadGray ? ItemDrawCache.DEAD_GRAY : 0) | (selectedContainer ? ItemDrawCache.SELECTED_CONTAINER : 0) |
+                   (replaceFields ? ItemDrawCache.REPLACE_FIELDS : 0));
+
+        /// <summary>
+        /// legacy_item_draw_cache: whether <paramref name="c"/> still holds what <see cref="Gather"/> + the select would draw
+        /// for <paramref name="item"/> this frame. Reads what Gather reads except the tiledata row (the cache keeps the two
+        /// flags it needs) and compares the key: the record's ItemDrawRow version, then Gather's own reads in its order.
+        /// </summary>
+        internal static bool CacheHit(Item item, ItemDrawCache c, ArtLoader arts)
+        {
+            if (!c.Valid || item.IsDestroyed || !item.TryScalarEntity(out EcsEntity e))
+            {
+                return false;
+            }
+
+            ClassicUO.Ecs.EcsRow data = ClassicUO.Ecs.EcsRead.Row(e);
+
+            if (!data.Has<ClassicUO.Ecs.ItemDrawRow>())
+            {
+                return false;
+            }
+
+            ref readonly ClassicUO.Ecs.ItemDrawRow r = ref data.Get<ClassicUO.Ecs.ItemDrawRow>();
+
+            if (r.Version != c.Version || !item.AllowedToDraw || item.AlphaHue != c.Alpha)
+            {
+                return false;
+            }
+
+            ref readonly GatherFrame f = ref TakeFrame(item.World, ProfileManager.CurrentProfile);
+            Vector3 offset = f.ItemOffsetOn ? ItemOffsets.ReadRow(item, true, in data) : item.Offset;
+            int distance = !f.HasPlayer ? ushort.MaxValue : Math.Max(Math.Abs(r.X - f.RangeX), Math.Abs(r.Y - f.RangeY));
+            bool selected = ReferenceEquals(SelectedObject.Object, item);
+            byte scene = SceneBits(selected, f.Highlight && selected, f.NoColorOutOfRange && distance > f.ViewRange, f.PlayerDeadGray,
+                c.TileContainer && SelectedObject.SelectedContainer == item, c.TileAnimated && f.FieldsReplaced);
+
+            return c.Matches(in offset, item.MultiGraphic, scene) && (!c.AnimCheck || arts.GetEntry(c.ArtGraphic + 0x4000).AnimOffset == c.AnimOffset);
+        }
+
+        /// <summary>legacy_item_draw_cache: the record's ItemDrawRow version (0: no record or no row; never cached).</summary>
+        internal static uint DrawVersion(Item item)
+        {
+            if (!item.TryScalarEntity(out EcsEntity e))
+            {
+                return 0;
+            }
+
+            ClassicUO.Ecs.EcsRow data = ClassicUO.Ecs.EcsRead.Row(e);
+
+            return data.Has<ClassicUO.Ecs.ItemDrawRow>() ? data.Get<ClassicUO.Ecs.ItemDrawRow>().Version : 0;
         }
 
         // the tiledata row of the item's graphic (the multi's graphic for a multi)
@@ -466,21 +525,90 @@ namespace ClassicUO.Game
         /// same side effects. An art record is drawn straight from its fields, without building a <see cref="DynamicSprite"/>
         /// or a <see cref="LegacyDraw"/>; <see cref="Selected"/> stays empty.
         /// </summary>
-        public bool SelectDraw(UltimaBatcher2D batcher, ILegacySpriteSource src, in ItemSpriteInput item, bool hasAnims, int posX, int posY, float depth)
+        public bool SelectDraw(UltimaBatcher2D batcher, ILegacySpriteSource src, in ItemSpriteInput item, bool hasAnims, int posX, int posY, float depth) =>
+            SelectDraw(batcher, src, in item, hasAnims, posX, posY, depth, null, 0);
+
+        /// <summary>
+        /// legacy_item_draw_cache: <see cref="SelectDraw(UltimaBatcher2D, ILegacySpriteSource, in ItemSpriteInput, bool, int, int, float)"/>
+        /// that also records the calls and side outputs into <paramref name="record"/> under the record's
+        /// <paramref name="version"/> (<see cref="ItemDrawCache.Valid"/> false when the draw can't be replayed: a corpse, the
+        /// placement preview, nothing drawn or a call without its texture). The batcher calls are the same either way.
+        /// </summary>
+        public bool SelectDraw(UltimaBatcher2D batcher, ILegacySpriteSource src, in ItemSpriteInput item, bool hasAnims, int posX, int posY, float depth,
+            ItemDrawCache record, uint version)
         {
             _selCount = 0;
             _batcher = batcher;
             _legacySrc = src;
+            _rec = record;
+            _recCalls = 0;
+            _recTextureMiss = false;
 
             try
             {
-                return Run(in item, hasAnims, 0, 0, posX, posY, depth, true);
+                bool drawn = Run(in item, hasAnims, 0, 0, posX, posY, depth, true);
+
+                if (record != null)
+                {
+                    FinishRecord(record, in item, version, drawn, posX, posY);
+                }
+
+                return drawn;
             }
             finally
             {
                 _batcher = null;
+                _rec = null;
             }
         }
+
+        // legacy_item_draw_cache: what SelectDraw's art draws recorded (absolute positions)
+        private ItemDrawCache _rec;
+        private int _recCalls;
+        private bool _recTextureMiss, _recAnimCheck;
+        private ushort _recArtGraphic;
+        private short _recAnimOffset;
+        private Microsoft.Xna.Framework.Graphics.Texture2D _recTexture;
+        private Rectangle _recSource;
+        private Vector3 _recHue;
+        private int _recX, _recY, _recFirstX, _recFirstY;
+
+        private void FinishRecord(ItemDrawCache c, in ItemSpriteInput item, uint version, bool drawn, int posX, int posY)
+        {
+            c.Valid = false;
+
+            if (!drawn || version == 0 || item.IsCorpse || item.PlacementPreview || _recTextureMiss || _recCalls == 0 || _recCalls > 2 ||
+                _recCalls == 2 && (_recFirstX != _recX - 5 || _recFirstY != _recY - 5))
+            {
+                return;
+            }
+
+            c.Version = version;
+            c.Offset = item.Offset;
+            c.MultiGraphic = item.MultiGraphic;
+            c.Alpha = item.AlphaHue;
+            c.Scene = ItemSpriteInput.SceneBits(in item);
+            c.TileContainer = item.TileContainer;
+            c.TileAnimated = item.TileAnimated;
+            c.AnimCheck = _recAnimCheck;
+            c.ArtGraphic = _recArtGraphic;
+            c.AnimOffset = _recAnimOffset;
+            c.Two = _recCalls == 2;
+            c.Texture = _recTexture;
+            c.Source = _recSource;
+            c.Hue = _recHue;
+            c.X = _recX - posX;
+            c.Y = _recY - posY;
+            c.Light = Light;
+            c.HasArtPick = HasArtPick;
+            c.PickGraphic = ArtPickGraphic;
+            c.PickW = ArtPickW;
+            c.PickH = ArtPickH;
+            c.Valid = true;
+        }
+
+        /// <summary>The art loader the select reads (the tests' override, else the client's).</summary>
+        internal ArtLoader ArtsLoader => Arts;
 
         private bool Run(in ItemSpriteInput item, bool hasAnims, int offsetX, int offsetY, int posX, int posY, float depth, bool selectOnly)
         {
@@ -856,15 +984,56 @@ namespace ClassicUO.Game
         private void DrawArt(ushort graphic, int x, int y, bool missing, Vector3 hue, float depth)
         {
             ILegacySpriteSource src = _legacySrc;
+            ref readonly SpriteInfo art = ref src is ClientLegacySpriteSource client ? ref client.Art(graphic) : ref src.Art(graphic);
+            LegacySpriteResolve.DrawArt(_batcher, in art, x, y, missing, hue, depth);
 
-            if (src is ClientLegacySpriteSource client)
+            if (_rec != null)
             {
-                LegacySpriteResolve.DrawArt(_batcher, in client.Art(graphic), x, y, missing, hue, depth);
+                RecordArt(in art, x, y, missing, hue);
             }
-            else
+        }
+
+        // legacy_item_draw_cache: the call LegacySpriteResolve.DrawArt just made (none without a texture: not recordable)
+        private void RecordArt(in SpriteInfo art, int x, int y, bool missing, Vector3 hue)
+        {
+            if (art.Texture == null)
             {
-                LegacySpriteResolve.DrawArt(_batcher, in src.Art(graphic), x, y, missing, hue, depth);
+                _recTextureMiss = true;
+
+                return;
             }
+
+            if (missing)
+            {
+                x -= LegacySpriteResolve.ArtOffsetX(art.UV);
+                y -= LegacySpriteResolve.ArtOffsetY(art.UV);
+            }
+
+            if (_recCalls == 0)
+            {
+                _recFirstX = x;
+                _recFirstY = y;
+            }
+            else if (!ReferenceEquals(_recTexture, art.Texture) || _recSource != art.UV || _recHue != hue)
+            {
+                // a stack's two copies are the same art and hue; anything else is not replayed
+                _recTextureMiss = true;
+            }
+
+            _recCalls++;
+            _recTexture = art.Texture;
+            _recSource = art.UV;
+            _recHue = hue;
+            _recX = x;
+            _recY = y;
+        }
+
+        // the tiledata animated flag of an art graphic; true when the client's tiledata is not loaded (tests)
+        private static bool IsAnimatedArt(ushort graphic)
+        {
+            StaticTiles[] tiles = Client.Game?.UO?.FileManager?.TileData?.StaticData;
+
+            return tiles == null || graphic >= tiles.Length || tiles[graphic].IsAnimated;
         }
 
         // View.DrawStaticAnimated (no shadow, not wet): the art graphic's record at (x, y) less the art entry's draw offset
@@ -873,6 +1042,15 @@ namespace ClassicUO.Game
             ArtLoader arts = Arts;
             ref ArtEntry first = ref arts.GetEntry(graphic + 0x4000);
             int animOffset = first.AnimOffset;
+
+            if (_rec != null)
+            {
+                // the cache's frame check: AnimatedStaticsManager moves the offset of tiledata-animated art only
+                _recArtGraphic = graphic;
+                _recAnimOffset = (short)animOffset;
+                _recAnimCheck = animOffset != 0 || IsAnimatedArt(graphic);
+            }
+
             graphic = (ushort)(graphic + animOffset);
             uint idx = (uint)graphic + 0x4000;
             SpriteEntry[] sprites = arts.PackSpriteEntries;
