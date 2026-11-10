@@ -245,9 +245,10 @@ namespace ClassicUO.UnitTests.Ecs
             }
         }
 
-        // the one known difference (WorldWriterTests' "a mobile's serial" equip/wear cases and EffectSystemTests' shared serial
-        // fail with the switch on for this reason): an item created under a mobile's serial replaces the mobile's record, so
-        // the index answers the item while the tables answer the mobile. No sane server sends that; the checker reports it.
+        // the one known difference (WorldWriterTests' second wear under a shared serial and EffectSystemTests' unbound endpoints
+        // state their expectations per switch state for this reason): an item created under a mobile's serial replaces the
+        // mobile's record, so the index answers the item while the tables answer the mobile. No sane server sends that; the
+        // checker reports it.
         [Fact]
         public void An_Item_Under_A_Mobile_Serial_Is_The_Known_Difference_And_The_Checker_Reports_It()
         {
