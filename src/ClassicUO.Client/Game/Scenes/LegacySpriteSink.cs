@@ -64,7 +64,6 @@ namespace ClassicUO.Game.Scenes
             _scene = _route ? Client.Game.GetScene<GameScene>() : null;
             // the pack's animation tables are loaded once at startup: read per frame, not per item
             _hasAnims = _route && HasPackAnims(Client.Game.UO.FileManager.Animations);
-            _staticData = _route ? Client.Game.UO.FileManager.TileData.StaticData : null;
             ItemSpriteInput.BeginFrame();
             SpritePickTable.BeginDraw();
         }
@@ -77,7 +76,6 @@ namespace ClassicUO.Game.Scenes
         {
             _route = false;
             _scene = null;
-            _staticData = null;
             SpritePickTable.Commit();
         }
 
@@ -103,23 +101,33 @@ namespace ClassicUO.Game.Scenes
             return item ? DrawItem(batcher, Unsafe.As<Item>(obj), depth, true) : DrawMobileOrView(batcher, Unsafe.As<Mobile>(obj), depth, true, out _);
         }
 
-        // how many render-list entries ahead DrawWorldRenderList prefetches an item's mirror node, then its record
-        private const int NODE_AHEAD = 8, ROW_AHEAD = 4, TILE_AHEAD = 2;
+        // how many render-list entries ahead DrawWorldRenderList prefetches an object's own memory, then an item's mirror node,
+        // then its record
+        private const int OBJECT_AHEAD = 16, NODE_AHEAD = 8, ROW_AHEAD = 4;
 
-        // the tiledata the routed frame's prefetch reads (set while the frame routes)
-        private static StaticTiles[] _staticData;
+        // the byte offset of Entity.EcsEntity from an object's first field (the line the node stage reads); -1 until measured
+        private static nint _handleOffset = -1;
 
         /// <summary>
         /// legacy-sprites-fix: called by the routed render-list loop (switch on) before it draws entry <paramref name="i"/>.
-        /// Prefetches the node of the item <see cref="NODE_AHEAD"/> entries ahead and the record components
-        /// <see cref="ItemSpriteInput.ReadRecord(Item, Assets.StaticTiles[], ref ItemSpriteInput, out ushort)"/> reads of
-        /// the item <see cref="ROW_AHEAD"/> ahead: the record is in the ECS's per-component arrays, one cache line each,
-        /// which the item draw otherwise waits on (the large scene's ~25k items per frame). Prefetches only: a stale
-        /// handle costs a wasted fetch, never a wrong read.
+        /// Three prefetch stages, each reading only what the stage before fetched: the object <see cref="OBJECT_AHEAD"/>
+        /// entries ahead (its header and its mirror handle, from the list's reference alone), the mirror node of the item
+        /// <see cref="NODE_AHEAD"/> ahead, and the record components
+        /// <see cref="ItemSpriteInput.ReadRecord(Item, Assets.StaticTiles[], ref ItemSpriteInput, out ushort)"/> reads of the
+        /// item <see cref="ROW_AHEAD"/> ahead. The record is in the ECS's per-component arrays, one cache line each, which the
+        /// item draw otherwise waits on (the large scene's ~25k items per frame). Prefetches only: a stale handle costs a
+        /// wasted fetch, never a wrong read. (A tiledata stage was tried and cost more than it saved: bench-000527.)
         /// </summary>
         internal static void Prefetch(ReadOnlySpan<GameObject> list, int i)
         {
-            int j = i + NODE_AHEAD;
+            int j = i + OBJECT_AHEAD;
+
+            if ((uint)j < (uint)list.Length)
+            {
+                PrefetchObject(list[j]);
+            }
+
+            j = i + NODE_AHEAD;
 
             if ((uint)j < (uint)list.Length && list[j] is Item far && far.EcsEntityHeld)
             {
@@ -132,28 +140,39 @@ namespace ClassicUO.Game.Scenes
             {
                 EcsRead.PrefetchRow<ClassicUO.Ecs.Graphic, ClassicUO.Ecs.Hue, ClassicUO.Ecs.Position, ClassicUO.Ecs.Flags>(near.EcsEntity);
             }
+        }
 
-            // the third stage: the tiledata row of the graphic (read from the record prefetched above), which ReadRecord reads
-            // next; multis read their multi graphic's row and are skipped
-            j = i + TILE_AHEAD;
-
-            if ((uint)j < (uint)list.Length && list[j] is Item tile && _staticData != null && tile.TryScalarEntity(out Friflo.Engine.ECS.Entity e))
+        // the object's header line (its type, which the node stage tests) and the line of its mirror handle, without reading
+        // the object
+        private static unsafe void PrefetchObject(GameObject obj)
+        {
+            if (!System.Runtime.Intrinsics.X86.Sse.IsSupported || obj == null)
             {
-                EcsRow row = EcsRead.Row(e);
+                return;
+            }
 
-                if (!row.IsNull && !row.Tags.Has<ClassicUO.Ecs.MultiTag>())
-                {
-                    PrefetchTile(_staticData, row.Get<ClassicUO.Ecs.Graphic>().Value);
-                }
+            nint offset = _handleOffset;
+
+            if (offset < 0 && obj is Entity entity)
+            {
+                offset = _handleOffset = HandleOffset(entity);
+            }
+
+            byte* p = (byte*)Unsafe.As<GameObject, nint>(ref obj);
+            System.Runtime.Intrinsics.X86.Sse.Prefetch0(p);
+
+            if (offset >= 0)
+            {
+                System.Runtime.Intrinsics.X86.Sse.Prefetch0(p + sizeof(nint) + offset);
             }
         }
 
-        private static unsafe void PrefetchTile(StaticTiles[] data, ushort graphic)
+        internal static nint HandleOffset(Entity entity) =>
+            Unsafe.ByteOffset(ref Unsafe.As<RawObject>(entity).Data, ref Unsafe.As<Friflo.Engine.ECS.Entity, byte>(ref entity.EcsEntity));
+
+        private sealed class RawObject
         {
-            if (System.Runtime.Intrinsics.X86.Sse.IsSupported && graphic < data.Length)
-            {
-                System.Runtime.Intrinsics.X86.Sse.Prefetch0(Unsafe.AsPointer(ref data[graphic]));
-            }
+            public byte Data;
         }
 
         /// <summary>

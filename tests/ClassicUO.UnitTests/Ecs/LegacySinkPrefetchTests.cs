@@ -85,6 +85,21 @@ namespace ClassicUO.UnitTests.Ecs
             }
         }
 
+        // the object stage prefetches the line of Entity.EcsEntity: one offset for every Entity subclass (the field is
+        // Entity's), past the object's first fields and the same however often it is measured
+        [Fact]
+        public void Handle_Offset_Is_Entitys_Field_For_Items_And_Mobiles()
+        {
+            var world = new World();
+            Item item = world.GetOrCreateItem(ITEM0);
+            Mobile mobile = world.GetOrCreateMobile(0x0000_1000);
+
+            nint a = LegacySpriteSink.HandleOffset(item), b = LegacySpriteSink.HandleOffset(mobile);
+            Assert.Equal(a, b);
+            Assert.True(a > 0);
+            Assert.Equal(a, LegacySpriteSink.HandleOffset(world.GetOrCreateItem(ITEM0 + 1)));
+        }
+
         [Fact]
         public void Prefetch_At_The_Ends_Of_A_Short_List()
         {
