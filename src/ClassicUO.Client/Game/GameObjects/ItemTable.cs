@@ -88,14 +88,17 @@ namespace ClassicUO.Game.GameObjects
 
         /// <summary>Whether this table holds <paramref name="item"/> itself under <c>item.Serial</c> (same answer as
         /// <c>ReferenceEquals(Get(item.Serial), item)</c>).</summary>
-        public bool Holds(Item item)
+        public bool Holds(Item item) => Holds(item, item.Serial);
+
+        /// <summary><see cref="Holds(Item)"/> under <paramref name="serial"/>.</summary>
+        public bool Holds(Item item, uint serial)
         {
             if (item.HeldShared)
             {
-                return ReferenceEquals(Get(item.Serial), item);
+                return ReferenceEquals(Get(serial), item);
             }
 
-            return ReferenceEquals(item.HeldBy, this) && item.HeldKey == item.Serial;
+            return ReferenceEquals(item.HeldBy, this) && item.HeldKey == serial;
         }
     }
 }

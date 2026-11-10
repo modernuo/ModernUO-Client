@@ -423,7 +423,7 @@ namespace ClassicUO.Game
         {
             if (SerialHelper.IsValid(ObjectToRemove))
             {
-                Item rem = Items.Get(ObjectToRemove);
+                Item rem = FindItem(ObjectToRemove);
                 ObjectToRemove = 0;
 
                 if (rem != null)
@@ -706,7 +706,7 @@ namespace ClassicUO.Game
 
             for (int i = 0; i < _dueMobiles.Count; i++)
             {
-                Mobile due = Mobiles.Get(_dueMobiles[i]);
+                Mobile due = FindMobile(_dueMobiles[i]);
 
                 if (due != null)
                 {
@@ -1218,6 +1218,9 @@ namespace ClassicUO.Game
         /// <summary>T1: <see cref="GetOrCreateItem(uint)"/> without the ECS write; the funnel commits the new item itself.</summary>
         internal Item GetOrCreateItem(uint serial, out bool isNew)
         {
+            // the table's own bookkeeping (T9 slice 3): a destroyed item not yet swept, or one created earlier in this
+            // operation and not committed, is found here and nowhere else (the index has no live record for either); goes
+            // with the dictionaries (slices 4-5)
             Item item = Items.Get(serial);
 
             if (item != null && item.IsDestroyed)
@@ -1239,6 +1242,7 @@ namespace ClassicUO.Game
 
         public Mobile GetOrCreateMobile(uint serial)
         {
+            // the table's own bookkeeping, as GetOrCreateItem
             Mobile mob = Mobiles.Get(serial);
 
             if (mob != null && mob.IsDestroyed)
@@ -1259,7 +1263,7 @@ namespace ClassicUO.Game
 
         public void RemoveItemFromContainer(uint serial)
         {
-            Item it = Items.Get(serial);
+            Item it = FindItem(serial);
 
             if (it != null)
             {
@@ -1318,6 +1322,8 @@ namespace ClassicUO.Game
 
         private bool RemoveItem(uint serial, bool forceRemove, uint root, uint keep, int depth)
         {
+            // the table's own bookkeeping (T9 slice 3): the cascade removes the item a mobile wears under its own serial,
+            // which the index (one record per serial) may answer as the mobile
             Item item = Items.Get(serial);
 
             if (item == null || item.IsDestroyed)
@@ -1381,6 +1387,7 @@ namespace ClassicUO.Game
 
         public bool RemoveMobile(uint serial, bool forceRemove = false)
         {
+            // the table's own bookkeeping, as RemoveItem
             Mobile mobile = Mobiles.Get(serial);
 
             if (mobile == null || mobile.IsDestroyed)

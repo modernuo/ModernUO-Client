@@ -335,7 +335,7 @@ namespace ClassicUO.Game
 
                 while (_index - _spells.Length < _contents.Length)
                 {
-                    Item it = _world.Items.Get(_contents[_index++ - _spells.Length]);
+                    Item it = _world.FindItem(_contents[_index++ - _spells.Length]);
 
                     if (it != null && !ReferenceEquals(it, _self))
                     {

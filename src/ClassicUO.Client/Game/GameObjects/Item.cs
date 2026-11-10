@@ -443,7 +443,7 @@ namespace ClassicUO.Game.GameObjects
 
                 if (
                     MultiDistanceBonus == 0
-                    || World.HouseManager.IsHouseInRange(Serial, World.ClientViewRange)
+                    || World.HouseManager.IsHouseInRange(this, World.ClientViewRange)
                 )
                 {
                     LoadMulti();

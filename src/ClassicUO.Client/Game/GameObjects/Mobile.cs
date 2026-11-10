@@ -127,6 +127,10 @@ namespace ClassicUO.Game.GameObjects
 
         /// <summary>E10: the table this mobile sits in (at most one, under one key); <see cref="Ordinal"/> is its storage address there.</summary>
         internal MobileTable OwnerTable;
+
+        /// <summary>T9 slice 3: the key <see cref="OwnerTable"/> holds this mobile under (its serial, or the old one during a
+        /// death re-key), kept by the table, so <c>MobileTable.Holds</c> answers without a lookup.</summary>
+        internal uint TableKey;
         private bool _isAnimationForwardDirection;
         private byte _animationGroup = 0xFF;
         private byte _animationInterval;
