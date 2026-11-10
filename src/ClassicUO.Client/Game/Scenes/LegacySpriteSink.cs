@@ -185,7 +185,7 @@ namespace ClassicUO.Game.Scenes
 
             foreach (ref readonly MobileSpriteExtract.LightRequest light in extract.Lights)
             {
-                Item item = mobile.World.Items.Get(light.Item);
+                Item item = mobile.World.FindItem(light.Item);
 
                 if (item != null)
                 {

@@ -227,7 +227,7 @@ namespace ClassicUO.Game.Managers
                     {
                         if (e != null && SerialHelper.IsValid(e.Serial))
                         {
-                            Mobile mob = _world.Mobiles.Get(e.Serial);
+                            Mobile mob = _world.FindMobile(e.Serial);
 
                             if (mob == null || mob.Distance > _world.ClientViewRange)
                             {

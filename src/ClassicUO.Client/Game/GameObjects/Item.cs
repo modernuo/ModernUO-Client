@@ -145,7 +145,7 @@ namespace ClassicUO.Game.GameObjects
 
                 while (SerialHelper.IsItem(item.Container))
                 {
-                    item = World.Items.Get(item.Container);
+                    item = World.FindItem(item.Container);
 
                     // T9 child-list slice B2: a chain longer than any nesting (a loop: WorldWriter refuses one) has no root
                     if (item == null || ++depth > WorldState.MaxNestingDepth)

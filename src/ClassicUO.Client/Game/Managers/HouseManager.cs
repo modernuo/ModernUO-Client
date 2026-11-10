@@ -67,6 +67,8 @@ namespace ClassicUO.Game.Managers
                 //    currY = World.Player.Y;
                 //}
 
+                // stays on the table (T9 slice 3): the range sweep asks this for a destroyed multi the table still holds
+                // (World.DestroyedHeldMultiBeyond), and a live lookup would answer "in range" and keep its house
                 Item found = _world.Items.Get(serial);
 
                 if (found == null)
@@ -86,7 +88,7 @@ namespace ClassicUO.Game.Managers
         {
             if (obj != null && TryGetHouse(house, out _))
             {
-                Item found = _world.Items.Get(house);
+                Item found = _world.FindItem(house);
 
                 if (found == null || !found.MultiInfo.HasValue)
                 {

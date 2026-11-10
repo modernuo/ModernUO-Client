@@ -170,7 +170,7 @@ namespace ClassicUO.Game.Managers
 
         private void SetPositionNearGameObject(ushort g, uint serial, int width, int height)
         {
-            Item item = _world.Items.Get(serial);
+            Item item = _world.FindItem(serial);
 
             if (item == null)
             {
@@ -196,7 +196,7 @@ namespace ClassicUO.Game.Managers
             else if (SerialHelper.IsMobile(item.Container))
             {
                 // pack animal, snooped player, npc vendor
-                Mobile mobile = _world.Mobiles.Get(item.Container);
+                Mobile mobile = _world.FindMobile(item.Container);
 
                 if (mobile != null)
                 {

@@ -422,7 +422,7 @@ namespace ClassicUO.Game.UI.Gumps
                 _gump = gump;
                 LocalSerial = serial;
 
-                Item item = _gump.World.Items.Get(serial);
+                Item item = _gump.World.FindItem(serial);
 
                 if (item == null)
                 {
@@ -486,7 +486,7 @@ namespace ClassicUO.Game.UI.Gumps
                 base.AddToRenderLists(renderLists, x, y, ref layerDepthRef);
                 float layerDepth = layerDepthRef;
 
-                Item item = _gump.World.Items.Get(LocalSerial);
+                Item item = _gump.World.FindItem(LocalSerial);
 
                 Vector3 hueVector;
 

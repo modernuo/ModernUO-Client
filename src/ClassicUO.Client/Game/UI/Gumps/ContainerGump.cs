@@ -32,7 +32,7 @@ namespace ClassicUO.Game.UI.Gumps
 
         public ContainerGump(World world, uint serial, ushort gumpid, bool playsound) : base(world, serial, 0)
         {
-            Item item = world.Items.Get(serial);
+            Item item = world.FindItem(serial);
 
             if (item == null)
             {
@@ -152,7 +152,7 @@ namespace ClassicUO.Game.UI.Gumps
             CanCloseWithRightClick = true;
             WantUpdateSize = false;
 
-            Item item = World.Items.Get(LocalSerial);
+            Item item = World.FindItem(LocalSerial);
 
             if (item == null)
             {
@@ -255,7 +255,7 @@ namespace ClassicUO.Game.UI.Gumps
             }
             else
             {
-                Entity thisCont = World.Items.Get(dropcontainer);
+                Entity thisCont = World.FindItem(dropcontainer);
 
                 if (thisCont == null)
                 {
@@ -282,7 +282,7 @@ namespace ClassicUO.Game.UI.Gumps
                     {
                         candrop = true;
 
-                        Item target = World.Items.Get(serial);
+                        Item target = World.FindItem(serial);
 
                         if (target != null)
                         {
@@ -655,7 +655,7 @@ namespace ClassicUO.Game.UI.Gumps
 
         public override void Dispose()
         {
-            Item item = World.Items.Get(LocalSerial);
+            Item item = World.FindItem(LocalSerial);
 
             if (item != null)
             {

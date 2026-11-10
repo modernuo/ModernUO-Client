@@ -51,7 +51,7 @@ namespace ClassicUO.Game.UI.Gumps
 
         public override void Dispose()
         {
-            Item it = World.Items.Get(LocalSerial);
+            Item it = World.FindItem(LocalSerial);
 
             if (it != null && it.Opened)
             {
