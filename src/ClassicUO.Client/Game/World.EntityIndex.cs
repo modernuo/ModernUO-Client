@@ -34,7 +34,7 @@ namespace ClassicUO.Game
         /// <summary>Tests: the checker for this World (null: <c>CUO_ENTITY_INDEX_CHECK=1</c>).</summary>
         internal bool? EntityIndexCheckOverride;
 
-        /// <summary>T9 (<c>world_entity_index</c>, default off): <see cref="Get"/>, <see cref="GetItem"/> and
+        /// <summary>T9 (<c>world_entity_index</c>, default on since slice 5): <see cref="Get"/>, <see cref="GetItem"/> and
         /// <see cref="GetMobile"/> answer from the mirror's serial index, not from the Items and Mobiles tables.</summary>
         public bool EntityIndexOn => EntityIndexOverride ?? s_entityIndex;
 

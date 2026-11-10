@@ -65,6 +65,12 @@ namespace ClassicUO.UnitTests.Ecs
             return i;
         }
 
+        [Fact]
+        public void The_Setting_Defaults_On()
+        {
+            new ClassicUO.Configuration.Settings().WorldEntityIndex.Should().BeTrue();
+        }
+
         private static readonly uint[] Probe = { PLAYER, MOB, MOB2, BAG, COIN, ROCK, NONE, 0, 0x8000_0200 };
 
         private static void Same(Scene[] scenes, string because)
