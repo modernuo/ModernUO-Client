@@ -114,13 +114,10 @@ namespace ClassicUO.Ecs
     // (Graphic, Hue, Position, Flags, Amount, Layer, the OnGround and Multi tags), packed in one 14-byte row so the draw reads
     // one cache line instead of one per component. Every item has it from its creation; WorldMirror.UpsertItem, the one
     // writer of those values, writes it from the same values (CUO_ITEM_DRAW_ROW_CHECK compares it with the components).
-    // legacy-sprites-fix-2 (legacy_item_draw_cache): Version changes whenever UpsertItem changes the row (a per-mirror
-    // counter, never 0 for a written row), so the Legacy sink's per-item draw cache knows the row it recorded under is current.
     public struct ItemDrawRow : IComponent
     {
         public const byte ON_GROUND = 1, MULTI = 2;
 
-        public uint Version;
         public ushort Graphic, Hue, X, Y, Amount;
         public sbyte Z;
         public byte Flags, Layer, Bits;

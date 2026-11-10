@@ -380,15 +380,6 @@ namespace ClassicUO.Ecs
             // legacy-sprites-fix: the packed draw row, from the values just written (after the tag changes, which move the
             // entity)
             ref ItemDrawRow row = ref e.GetComponent<ItemDrawRow>();
-            byte bits = (byte)((e.Tags.Has<OnGround>() ? ItemDrawRow.ON_GROUND : 0) | (isMulti ? ItemDrawRow.MULTI : 0));
-
-            // the version moves only when the row does (a re-sync with the same values keeps the draw cache's hits)
-            if (row.Version == 0 || row.Graphic != graphic || row.Hue != hue || row.X != x || row.Y != y || row.Z != z || row.Flags != flags ||
-                row.Amount != amount || row.Layer != layer || row.Bits != bits)
-            {
-                row.Version = NextDrawVersion();
-            }
-
             row.Graphic = graphic;
             row.Hue = hue;
             row.X = x;
@@ -397,20 +388,7 @@ namespace ClassicUO.Ecs
             row.Flags = flags;
             row.Amount = amount;
             row.Layer = layer;
-            row.Bits = bits;
-        }
-
-        // ItemDrawRow.Version: unique per mirror (a recreated record never repeats an old one), 0 skipped
-        private uint _drawVersion;
-
-        private uint NextDrawVersion()
-        {
-            if (++_drawVersion == 0)
-            {
-                _drawVersion = 1;
-            }
-
-            return _drawVersion;
+            row.Bits = (byte)((e.Tags.Has<OnGround>() ? ItemDrawRow.ON_GROUND : 0) | (isMulti ? ItemDrawRow.MULTI : 0));
         }
 
         public bool Remove(uint serial)
