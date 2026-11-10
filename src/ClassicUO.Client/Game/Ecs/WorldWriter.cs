@@ -613,8 +613,9 @@ namespace ClassicUO.Game
                 return null;
             }
 
-            Item item = _world.Items.Get(serial);
-            Mobile asItem = SerialHelper.IsMobile(serial) ? _world.Mobiles.Get(serial) : null;
+            // T9 slice 3: live lookups (both uses below reject a destroyed object)
+            Item item = _world.GetItem(serial);
+            Mobile asItem = SerialHelper.IsMobile(serial) ? _world.GetMobile(serial) : null;
             bool removeMobile = asItem != null && !asItem.IsDestroyed;
 
             // destroy-vs-reuse: another container's item is destroyed (contents too) and recreated below, unless it is an
@@ -746,6 +747,8 @@ namespace ClassicUO.Game
                 return;
             }
 
+            // stays on the table (T9 slice 3): 0x24 clears the item under a mobile's serial too, which the index (one record per
+            // serial) may not answer
             Entity container = itemOnly ? _world.Items.Get(containerSerial) : _world.Get(containerSerial);
 
             // T9 child-list slice A: the children are the ECS's (WorldState.Children: the spell entries, then the contents, in
@@ -794,7 +797,7 @@ namespace ClassicUO.Game
                 // ECS contents leaves them out
                 foreach (uint serial in children.Serials)
                 {
-                    Item it = _world.Items.Get(serial);
+                    Item it = _world.FindItem(serial);
 
                     if (it != null && !(keepEquipped && it.Layer != 0))
                     {
@@ -1135,7 +1138,7 @@ namespace ClassicUO.Game
                 {
                     foreach (uint serial in children.Serials)
                     {
-                        Item it = _world.Items.Get(serial);
+                        Item it = _world.FindItem(serial);
 
                         if (it != null && !it.Opened && it.Layer != Layer.Backpack)
                         {
@@ -2651,7 +2654,7 @@ namespace ClassicUO.Game
                 {
                     foreach (uint child in children.Serials)
                     {
-                        if (_world.Items.Get(child) is Item held)
+                        if (_world.FindItem(child) is Item held)
                         {
                             _world.Ecs.CommitDetach(held);
                         }
@@ -2988,7 +2991,7 @@ namespace ClassicUO.Game
                 // T9 child-list slice A: the dying mobile's children from the ECS, copied before anything changes (the
                 // re-key and the re-attach move them to the new serial)
                 using ContentsSnapshot children = _world.State.SnapshotChildren(mobile);
-                Mobile displaced = _world.Mobiles.Get(serial);
+                Mobile displaced = _world.FindMobile(serial);
 
                 if (displaced != null && !ReferenceEquals(displaced, mobile))
                 {
@@ -2996,7 +2999,7 @@ namespace ClassicUO.Game
                     {
                         foreach (uint s in gone.Serials)
                         {
-                            if (_world.Items.Get(s) is Item it)
+                            if (_world.FindItem(s) is Item it)
                             {
                                 _world.Ecs.CommitDetach(it);
                             }
@@ -3019,12 +3022,25 @@ namespace ClassicUO.Game
                     }
                 }
 
+                // T9 slice 3: the children's items, resolved before the re-key. The mirror keeps one record per serial, so
+                // once CommitRekey writes the mobile's record under the new serial a live lookup of an item worn under that
+                // serial (the shared case) answers none until the item is committed again; the tables answered the item
+                // throughout (operations do not nest: one list serves every re-key)
+                _rekeyChildren.Clear();
+
+                foreach (uint s in children.Serials)
+                {
+                    _rekeyChildren.Add(_world.FindItem(s));
+                }
+
                 EcsEntity e = _world.Ecs.CommitRekey(mobile, oldSerial, in v);
 
                 // (the children keep their order under the new parent: each is re-stamped in it, attached)
-                foreach (uint s in children.Serials)
+                for (int ci = 0; ci < _rekeyChildren.Count; ci++)
                 {
-                    if (_world.Items.Get(s) is Item child)
+                    uint s = children.Serials[ci];
+
+                    if (_rekeyChildren[ci] is Item child)
                     {
                         ItemState c = CurrentState(child);
                         c.Container = serial;
@@ -3043,13 +3059,15 @@ namespace ClassicUO.Game
                 // then the cache, in the old order
                 _world.Mobiles.Remove(oldSerial);
 
-                foreach (uint s in children.Serials)
+                for (int ci = 0; ci < _rekeyChildren.Count; ci++)
                 {
-                    if (_world.Items.Get(s) is Item child)
+                    if (_rekeyChildren[ci] is Item child)
                     {
                         child.Container = serial;
                     }
                 }
+
+                _rekeyChildren.Clear();
 
                 _world.Mobiles[serial] = mobile;
                 mobile.Serial = serial;
@@ -3060,6 +3078,9 @@ namespace ClassicUO.Game
 
             return serial;
         }
+
+        // RekeyDeadMobile: the dying mobile's children, resolved before the re-key
+        private readonly List<Item> _rekeyChildren = new List<Item>();
 
         /// <summary>An item's current values: the starting point of an operation that changes only some of them.</summary>
         private static ItemState CurrentState(Item item)
@@ -3864,7 +3885,7 @@ namespace ClassicUO.Game
         // still counts, so 0x2E of that serial onto itself leaves an unattached item whose Container is its own serial.
         // Walks stay bounded. Refusing it here would also refuse ReturnHeldItem's terrain branch. Only a misconfigured server
         // sends this; if an item under a mobile-range serial shows up stuck or invisible, look here.
-        private bool SelfParentIsMobile(uint serial) => SerialHelper.IsMobile(serial) && _world.Mobiles.Get(serial) != null;
+        private bool SelfParentIsMobile(uint serial) => SerialHelper.IsMobile(serial) && _world.FindMobile(serial) != null;
 
         // a refused attach: the operation writes nothing (the item keeps its values and its place, is not created, and
         // nothing is removed). Normal server traffic never gets here: ModernUO and OSI keep mobiles below ItemOffset and items
@@ -4022,7 +4043,7 @@ namespace ClassicUO.Game
         private void RemovePreT1(uint serial, out Entity parent)
         {
             parent = null;
-            Item item = _world.Items.Get(serial);
+            Item item = _world.FindItem(serial);
 
             if (item == null)
             {

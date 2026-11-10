@@ -833,7 +833,7 @@ namespace ClassicUO.Game
                 bag = ProfileManager.CurrentProfile.GrabBagSerial == 0 ? backpack.Serial : ProfileManager.CurrentProfile.GrabBagSerial;
             }
 
-            if (!world.Items.Contains(bag))
+            if (world.FindItem(bag) == null)
             {
                 Print(world, ResGeneral.GrabBagNotFound);
                 ProfileManager.CurrentProfile.GrabBagSerial = 0;

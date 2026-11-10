@@ -803,10 +803,8 @@ namespace ClassicUO.Game
 
         public void OnDestroyed(Entity entity)
         {
-            Entity current = entity is Item ? _world.Items.Get(entity.Serial) : _world.Mobiles.Get(entity.Serial);
-
-            // a newer live object already owns this serial
-            if (current != null && !ReferenceEquals(current, entity) && !current.IsDestroyed)
+            // a newer live object already owns this serial (T9 slice 3: World.NewerOwner follows world_entity_index)
+            if (_world.NewerOwner(entity) != null)
             {
                 return;
             }

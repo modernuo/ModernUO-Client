@@ -361,7 +361,7 @@ namespace ClassicUO.Game
 
                         for (int i = 0; i < serials.Length; i++)
                         {
-                            items[i] = serials[i] == 0 ? null : _world.Items.Get(serials[i]);
+                            items[i] = serials[i] == 0 ? null : _world.FindItem(serials[i]);
                         }
                     }
                 }
