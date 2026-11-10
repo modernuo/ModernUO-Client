@@ -30,9 +30,11 @@ namespace ClassicUO.Game.Managers
             return _houses.TryGetValue(serial, out house);
         }
 
-        public bool TryToRemove(uint serial, int distance)
+        public bool TryToRemove(Item multi, int distance)
         {
-            if (!IsHouseInRange(serial, distance))
+            uint serial = multi.Serial;
+
+            if (!IsHouseInRange(multi, distance))
             {
                 if (_houses.TryGetValue(serial, out House house))
                 {
@@ -47,9 +49,9 @@ namespace ClassicUO.Game.Managers
             return false;
         }
 
-        public bool IsHouseInRange(uint serial, int distance)
+        public bool IsHouseInRange(Item multi, int distance)
         {
-            if (TryGetHouse(serial, out _))
+            if (TryGetHouse(multi.Serial, out _))
             {
                 int currX = _world.RangeSize.X;
                 int currY = _world.RangeSize.Y;
@@ -67,9 +69,10 @@ namespace ClassicUO.Game.Managers
                 //    currY = World.Player.Y;
                 //}
 
-                // stays on the table (T9 slice 3): the range sweep asks this for a destroyed multi the table still holds
-                // (World.DestroyedHeldMultiBeyond), and a live lookup would answer "in range" and keep its house
-                Item found = _world.Items.Get(serial);
+                // T9 slice 3: the range sweep asks this for a destroyed multi the table still holds
+                // (World.DestroyedHeldMultiBeyond), and a live lookup would answer "in range" and keep its house: the caller
+                // passes the multi (world_entity_index on; off: the table's item under its serial)
+                Item found = _world.HouseMulti(multi);
 
                 if (found == null)
                 {

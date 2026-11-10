@@ -155,7 +155,7 @@ namespace ClassicUO.Game.Managers
 
         private int AddTarget(uint serial, int count)
         {
-            Mobile m = _world.Mobiles.Get(serial);
+            Mobile m = _world.FindMobile(serial);
 
             if (m == null)
             {

@@ -108,7 +108,7 @@ namespace ClassicUO.Game
 
             for (int i = 0; i < _sweepBeyond.Count; i++)
             {
-                if (Items.TryGetValue(_sweepBeyond[i], out Item item))
+                if (FindItem(_sweepBeyond[i]) is Item item)
                 {
                     _sweepItemSet.Add(item);
                 }

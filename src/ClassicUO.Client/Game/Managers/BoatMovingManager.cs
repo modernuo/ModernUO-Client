@@ -127,7 +127,7 @@ namespace ClassicUO.Game.Managers
                 return;
             }
 
-            Item boat = _world.Items.Get(serial);
+            Item boat = _world.FindItem(serial);
 
             if (boat != null && BoatStepSystem.TryBoatSteps(boat, out EcsEntity e))
             {
@@ -185,7 +185,7 @@ namespace ClassicUO.Game.Managers
         {
             if (_steps.TryGetValue(serial, out Deque<BoatStep> deque) && deque.Count != 0)
             {
-                Item multiItem = _world.Items.Get(serial);
+                Item multiItem = _world.FindItem(serial);
 
                 if (multiItem != null && write)
                 {
@@ -224,7 +224,7 @@ namespace ClassicUO.Game.Managers
         /// </summary>
         internal string DescribeQueuedSteps(uint serial)
         {
-            Item boat = _world.Items.Get(serial);
+            Item boat = _world.FindItem(serial);
             int steps, passengers = 0, moved = 0;
 
             if (On)
@@ -289,7 +289,7 @@ namespace ClassicUO.Game.Managers
 
             if (On)
             {
-                if (_world.Items.Get(serial) is { } boat)
+                if (_world.FindItem(serial) is { } boat)
                 {
                     _world.Writer.DropBoatSteps(boat, steps: false);
                 }
@@ -303,7 +303,7 @@ namespace ClassicUO.Game.Managers
 
         public void PushItemToList(uint serial, uint objSerial, int x, int y, int z)
         {
-            if (On && _world.Items.Get(serial) is { } boat)
+            if (On && _world.FindItem(serial) is { } boat)
             {
                 _world.Writer.SetBoatPassenger(boat, objSerial, x, y, z);
             }
@@ -440,7 +440,7 @@ namespace ClassicUO.Game.Managers
         {
             if (_items.TryGetValue(serial, out var list))
             {
-                Item item = _world.Items.Get(serial);
+                Item item = _world.FindItem(serial);
 
                 var span = CollectionsMarshal.AsSpan(list);
                 for (int i = 0; i < span.Length; i++)
