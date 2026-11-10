@@ -10,7 +10,8 @@ using System;
 
 namespace ClassicUO.Game.GameObjects
 {
-    internal partial class Item : Entity
+    // sealed: "is Item" is one type compare, not a walk up the class chain (the Legacy sink tests every drawn object)
+    internal sealed partial class Item : Entity
     {
         //private static readonly QueuedPool<Item> _pool = new QueuedPool<Item>(
         //    Constants.PREDICTABLE_CHUNKS * 3,

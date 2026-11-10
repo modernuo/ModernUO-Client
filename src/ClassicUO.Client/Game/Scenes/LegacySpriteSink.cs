@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: BSD-2-Clause
 
 using System;
+using System.Runtime.CompilerServices;
 using ClassicUO.Assets;
 using ClassicUO.Ecs;
 using ClassicUO.Game.GameObjects;
@@ -82,7 +83,10 @@ namespace ClassicUO.Game.Scenes
         /// checker) is on, the view otherwise.</summary>
         public static bool Draw(UltimaBatcher2D batcher, GameObject obj, float depth)
         {
-            if (!_route || obj is not (Mobile or Item))
+            // items first: most of the list, and Item is sealed (one type compare)
+            bool item = obj is Item;
+
+            if (!_route || !item && obj is not Mobile)
             {
                 return obj.Draw(batcher, obj.RealScreenPosition.X, obj.RealScreenPosition.Y, depth);
             }
@@ -94,7 +98,7 @@ namespace ClassicUO.Game.Scenes
             }
 #endif
 
-            return DrawEcs(batcher, obj, depth, true, out _);
+            return item ? DrawItem(batcher, Unsafe.As<Item>(obj), depth, true) : DrawMobileOrView(batcher, Unsafe.As<Mobile>(obj), depth, true, out _);
         }
 
         /// <summary>
@@ -104,26 +108,33 @@ namespace ClassicUO.Game.Scenes
         /// </summary>
         internal static bool DrawEcs(UltimaBatcher2D batcher, GameObject obj, float depth, bool effects, out bool ecs)
         {
-            ecs = true;
-
-            if (obj is Mobile mobile)
+            if (obj is Item item)
             {
-                if (!TryMobileEntity(mobile, out Friflo.Engine.ECS.Entity e))
-                {
-                    ecs = false;
+                ecs = true;
 
-                    if (mobile.IsDestroyed || !mobile.AllowedToDraw)
-                    {
-                        return false;
-                    }
-
-                    return mobile.Draw(batcher, mobile.RealScreenPosition.X, mobile.RealScreenPosition.Y, depth);
-                }
-
-                return DrawMobile(batcher, mobile, e, depth, effects);
+                return DrawItem(batcher, item, depth, effects);
             }
 
-            return DrawItem(batcher, (Item)obj, depth, effects);
+            return DrawMobileOrView(batcher, (Mobile)obj, depth, effects, out ecs);
+        }
+
+        private static bool DrawMobileOrView(UltimaBatcher2D batcher, Mobile mobile, float depth, bool effects, out bool ecs)
+        {
+            ecs = true;
+
+            if (!TryMobileEntity(mobile, out Friflo.Engine.ECS.Entity e))
+            {
+                ecs = false;
+
+                if (mobile.IsDestroyed || !mobile.AllowedToDraw)
+                {
+                    return false;
+                }
+
+                return mobile.Draw(batcher, mobile.RealScreenPosition.X, mobile.RealScreenPosition.Y, depth);
+            }
+
+            return DrawMobile(batcher, mobile, e, depth, effects);
         }
 
         // E5 (shared with GpuWorldRenderer.TryDrawMobileEcs): false = not mirrored with an AnimationState, or not drawn
@@ -145,10 +156,16 @@ namespace ClassicUO.Game.Scenes
             WorldEcs ecs = world.Ecs;
             int posX = mobile.RealScreenPosition.X, posY = mobile.RealScreenPosition.Y;
 
-            // as GpuWorldRenderer.TryDrawMobileEcs: TakeDirty first (removing the tag moves the entity)
-            bool dirty = MobileAnimationSystem.TakeDirty(e);
-            // one record read for both components (as ItemSpriteInput.ReadRecord)
+            // one record read for both components (as ItemSpriteInput.ReadRecord); the dirty tag is read from it, and removing
+            // the tag moves the entity, so the row is read again then
             EcsRow data = EcsRead.Row(e);
+            bool dirty = MobileAnimationSystem.TakeDirty(e, in data);
+
+            if (dirty)
+            {
+                data = EcsRead.Row(e);
+            }
+
             ref AnimationState state = ref data.Get<AnimationState>();
             ref MobileRenderState render = ref data.Get<MobileRenderState>();
             ecs.Animation.UpdateInPlace(world, mobile, e, data, dirty, ref state, ref render);

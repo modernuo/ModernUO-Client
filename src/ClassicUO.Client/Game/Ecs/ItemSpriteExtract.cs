@@ -32,7 +32,8 @@ namespace ClassicUO.Game
         public bool TileLight, TilePartialHue, TileAnimated, TileContainer, TileStackable, TileHeavy;
 
         // still only on the GameObject (T7b part 2): drawability, the render list's alpha, the render offset (the ItemOffset
-        // component with ecs_item_offset), the multi's graphic, the corpse animation (frame, second death, the mirror history) and the destroyed state
+        // component with ecs_item_offset), the multi's graphic, the corpse animation (frame, second death, the mirror history) and the destroyed state;
+        // AnimIndex and UsedLayer are read for corpses only
         public bool Destroyed, AllowedToDraw, UsedLayer, Flipped;
         public byte AlphaHue, AnimIndex;
         public Vector3 Offset;
@@ -155,8 +156,6 @@ namespace ClassicUO.Game
             i.AlphaHue = item.AlphaHue;
             // ecs_item_offset: the ItemOffset component, from the row ReadRecord already holds
             i.Offset = f.ItemOffsetOn ? ItemOffsets.ReadRow(item, record, in data) : item.Offset;
-            i.AnimIndex = item.AnimIndex;
-            i.UsedLayer = item.UsedLayer;
             i.Flipped = item.ViewFlipped;
 
             // GameObject.Distance for an item
@@ -168,6 +167,9 @@ namespace ClassicUO.Game
 
             if (i.IsCorpse)
             {
+                // only the corpse draw reads these (UsedLayer is a small-field ECS read with ecs_small_fields on)
+                i.AnimIndex = item.AnimIndex;
+                i.UsedLayer = item.UsedLayer;
                 i.CorpseHidden = world.CorpseManager.Exists(i.Serial, 0);
                 i.CorpseLootSelected = f.GridLoot && SelectedObject.CorpseObject == item;
                 i.AnimGraphic = item.GetGraphicForAnimation();
