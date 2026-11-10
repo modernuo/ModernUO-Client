@@ -261,6 +261,48 @@ namespace ClassicUO.UnitTests.Ecs
             AssertSame(eb);
         }
 
+        // legacy-sprites-fix: the prefetch stages read only the node and the archetype, change nothing, and take any handle
+        // (live, missing a component, deleted, reused id, default, another store, a type never read and so without a slot)
+        [Fact]
+        public void Prefetch_Changes_Nothing_And_Takes_Any_Handle()
+        {
+            var store = new EntityStore();
+            var other = new EntityStore();
+            var list = new List<Entity>();
+
+            for (uint i = 1; i <= 50; i++)
+            {
+                list.Add(Make(store, i, i % 2 == 0));
+            }
+
+            Entity gone = list[5];
+            gone.DeleteEntity();
+            list.RemoveAt(5);
+            Entity reuse = Make(store, 777, true);
+            list.Add(reuse);
+            Entity foreign = Make(other, 3, true);
+            list.Add(foreign);
+
+            var handles = new List<Entity>(list) { gone, default };
+
+            foreach (Entity e in handles)
+            {
+                EcsRead.PrefetchNode(e);
+                EcsRead.PrefetchRow<Graphic, Hue, Position, Serial>(e);
+                EcsRead.PrefetchRow<Spare, Graphic, Graphic, Graphic>(e);
+            }
+
+            Assert.True(EcsRead.Row(gone).IsNull);
+
+            foreach (Entity e in list)
+            {
+                AssertSame(e);
+                uint serial = e.GetComponent<Serial>().Value;
+                Assert.Equal((ushort)(serial * 7), EcsRead.Get<Graphic>(e).Value);
+                Assert.Equal((ushort)serial, EcsRead.Get<Position>(e).X);
+            }
+        }
+
         [Fact]
         public void A_Test_Component_Reads_Directly()
         {
