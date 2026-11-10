@@ -325,8 +325,41 @@ namespace ClassicUO.UnitTests.Ecs
                 w.Ecs.Mirror.TryGetEntity(MOB, out _).Should().BeFalse();
                 w.GetItem(MOB).Should().BeNull();
                 // the checker reports only the known shared-serial differences (the pinned test above)
-                s.HoldsDiffs.Should().OnlyContain(t => t.StartsWith("0x00000200 "));
-                s.Mismatches.Should().OnlyContain(t => t.Contains("0x00000200"));
+                s.HoldsDiffs.Should().NotContain(t => !t.StartsWith("0x00000200 "));
+                s.Mismatches.Should().NotContain(t => !t.Contains("0x00000200"));
+            }
+        }
+
+        // the same for the death re-key (WorldEcs.CommitRekey): the dying mobile moves to its dead serial; a live item that took
+        // the old serial's record keeps it
+        [Fact]
+        public void Rekeying_The_Mobile_That_Lost_A_Shared_Serial_Keeps_The_Items_Record_In_Both_Switch_States()
+        {
+            const uint DEAD = MOB | 0x8000_0000;
+
+            foreach (bool index in new[] { false, true })
+            {
+                Scene s = Build(index);
+                World w = s.World;
+                Mobile dying = AddMobile(w, MOB);
+                Mobile wearer = AddMobile(w, MOB2);
+
+                Item shared = w.Writer.Equip(MOB, 0x1515, ClassicUO.Game.Data.Layer.Shirt, MOB2, 0, out _, out _);
+                w.Ecs.Mirror.GetHandle(MOB).Should().BeSameAs(shared);
+
+                w.Writer.RekeyDeadMobile(dying).Should().Be(DEAD);
+
+                dying.Serial.Should().Be(DEAD);
+                w.Ecs.Mirror.GetHandle(DEAD).Should().BeSameAs(dying, "the re-keyed mobile's record under its dead serial");
+                w.GetMobile(DEAD).Should().BeSameAs(dying);
+                shared.IsDestroyed.Should().BeFalse();
+                w.Ecs.Mirror.TryGetEntity(MOB, out _).Should().BeTrue("the live item keeps its record");
+                w.Ecs.Mirror.GetHandle(MOB).Should().BeSameAs(shared);
+                w.GetItem(MOB).Should().BeSameAs(shared);
+                w.FindItem(MOB).Should().BeSameAs(shared);
+                shared.Container.Should().Be(MOB2);
+                s.HoldsDiffs.Should().NotContain(t => !t.StartsWith("0x00000200 "));
+                s.Mismatches.Should().NotContain(t => !t.Contains("0x00000200"));
             }
         }
 

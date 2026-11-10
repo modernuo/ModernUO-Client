@@ -846,32 +846,45 @@ namespace ClassicUO.Game
                 return default;
             }
 
+            // Codex audit (t9-world-index-5): a live object other than this mobile that holds the old serial's record (a
+            // shared serial: an item committed under it last) keeps it; nothing of it goes with the mobile (its mirror bit,
+            // cold fields and effects are the item's), as World.NewerOwner keeps it on a destroy
+            bool foreign = Mirror.GetHandle(oldSerial) is Entity owner && !ReferenceEquals(owner, mobile) && !owner.IsDestroyed;
             AnimStateFlags keep = 0;
+            EcsEntity old = default;
 
-            if (Mirror.TryGetEntity(oldSerial, out EcsEntity old) && old.HasComponent<AnimationState>())
+            if (!foreign && Mirror.TryGetEntity(oldSerial, out old) && old.HasComponent<AnimationState>())
             {
                 keep = old.GetComponent<AnimationState>().Flags & AnimStateFlags.Mirror;
             }
 
             // the cold fields (part 9) go with the mobile, as its mirror bit does
-            Mirror.TryGetExtras(oldSerial, out MirrorExtras extras);
+            MirrorExtras extras = default;
+
+            if (!foreign)
+            {
+                Mirror.TryGetExtras(oldSerial, out extras);
+            }
 
             // Codex audit (ecs-wave1c) P2: with no mobile record under the old serial (none, or a shared-serial item's) the
             // traits come from the caches, which WorldWriter keeps paired with the record (ecs_small_fields)
-            if (!Mirror.TryGetEntity(oldSerial, true, out _))
+            if (foreign || !Mirror.TryGetEntity(oldSerial, true, out _))
             {
                 extras.MobileTraits = mobile.CachedTraits;
             }
 
             // T8 ownership: effects on the old record are gone with it, then follow the mobile to the new record
-            bool effects = _world.Effects?.Items != null && Mirror.TryGetEntity(oldSerial, out old);
+            bool effects = !foreign && _world.Effects?.Items != null && Mirror.TryGetEntity(oldSerial, out old);
 
             if (effects)
             {
                 EffectSystem.OnRecordRemoving(_world, old, rekey: true);
             }
 
-            Mirror.Remove(oldSerial);
+            if (!foreign)
+            {
+                Mirror.Remove(oldSerial);
+            }
 
             if (mobile.IsDestroyed)
             {
