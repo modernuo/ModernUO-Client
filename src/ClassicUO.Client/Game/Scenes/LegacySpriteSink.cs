@@ -32,7 +32,7 @@ namespace ClassicUO.Game.Scenes
         /// <summary>DevBench (pickscan's legacy_ecs_sprites mode) and tests: wins over the env override and the setting.</summary>
         internal static bool? Override;
 
-        private static bool _on, _route, _hasAnims;
+        private static bool _on, _route, _hasAnims, _drawRow;
         private static GameScene _scene;
         private static readonly ItemSpriteExtract _items = new ItemSpriteExtract();
 
@@ -64,6 +64,7 @@ namespace ClassicUO.Game.Scenes
             _scene = _route ? Client.Game.GetScene<GameScene>() : null;
             // the pack's animation tables are loaded once at startup: read per frame, not per item
             _hasAnims = _route && HasPackAnims(Client.Game.UO.FileManager.Animations);
+            _drawRow = ItemDrawRows.On;
             ItemSpriteInput.BeginFrame();
             SpritePickTable.BeginDraw();
         }
@@ -138,7 +139,15 @@ namespace ClassicUO.Game.Scenes
 
             if ((uint)j < (uint)list.Length && list[j] is Item near && near.EcsEntityHeld)
             {
-                EcsRead.PrefetchRow<ClassicUO.Ecs.Graphic, ClassicUO.Ecs.Hue, ClassicUO.Ecs.Position, ClassicUO.Ecs.Flags>(near.EcsEntity);
+                if (_drawRow)
+                {
+                    // ecs_item_draw_row: the one packed row Gather reads
+                    EcsRead.PrefetchRow<ClassicUO.Ecs.ItemDrawRow>(near.EcsEntity);
+                }
+                else
+                {
+                    EcsRead.PrefetchRow<ClassicUO.Ecs.Graphic, ClassicUO.Ecs.Hue, ClassicUO.Ecs.Position, ClassicUO.Ecs.Flags>(near.EcsEntity);
+                }
             }
         }
 

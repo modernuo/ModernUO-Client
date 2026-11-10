@@ -282,6 +282,7 @@ namespace ClassicUO.Ecs
                     new Facing { Value = facing },
                     new Flags { Value = flags },
                     new ItemData { Amount = amount, Layer = layer, Stamp = attach ? ++_childStamp : 0 },
+                    new ItemDrawRow(),
                     Tags.Get<ItemTag>()
                 );
 
@@ -375,6 +376,19 @@ namespace ClassicUO.Ecs
                     e.RemoveTag<MultiTag>();
                 }
             }
+
+            // legacy-sprites-fix: the packed draw row, from the values just written (after the tag changes, which move the
+            // entity)
+            ref ItemDrawRow row = ref e.GetComponent<ItemDrawRow>();
+            row.Graphic = graphic;
+            row.Hue = hue;
+            row.X = x;
+            row.Y = y;
+            row.Z = z;
+            row.Flags = flags;
+            row.Amount = amount;
+            row.Layer = layer;
+            row.Bits = (byte)((e.Tags.Has<OnGround>() ? ItemDrawRow.ON_GROUND : 0) | (isMulti ? ItemDrawRow.MULTI : 0));
         }
 
         public bool Remove(uint serial)

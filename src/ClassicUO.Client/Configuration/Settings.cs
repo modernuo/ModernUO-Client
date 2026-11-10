@@ -136,6 +136,12 @@ namespace ClassicUO.Configuration
         // batcher calls with the sink's. Read every frame (dev builds: CUO_LEGACY_ECS_SPRITES=1|0 overrides). Default off.
         [JsonPropertyName("legacy_ecs_sprites")] public bool LegacyEcsSprites { get; set; }
 
+        // legacy-sprites-fix: the item sprite extract's Gather reads the item's packed ItemDrawRow component (one row,
+        // written by WorldMirror.UpsertItem with the record) instead of the Graphic, Hue, Position, Flags and ItemData
+        // components. CUO_ECS_ITEM_DRAW_ROW=1|0 overrides it in developer builds; CUO_ITEM_DRAW_ROW_CHECK=1 compares the row
+        // with the components at every read. Off = the components.
+        [JsonPropertyName("ecs_item_draw_row")] public bool EcsItemDrawRow { get; set; }
+
         // T6c follow-up: the step system's mounted pace (Mobile.IsMounted, the fast-unmount speed
         // modes, IsFlying) is read from the ECS (EquipmentSlots.Mounted, rebuilt when dirty; MobileInputs.SpeedMode and its
         // Flying bit, pushed by their operations) instead of from the Mobile. Read once at startup

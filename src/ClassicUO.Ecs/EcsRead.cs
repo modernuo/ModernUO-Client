@@ -165,18 +165,45 @@ namespace ClassicUO.Ecs
         public static void PrefetchRow<T1, T2, T3, T4>(Entity e)
             where T1 : struct, IComponent where T2 : struct, IComponent where T3 : struct, IComponent where T4 : struct, IComponent
         {
+            if (!PrefetchHeap(e, out object[] heapMap, out int compIndex))
+            {
+                return;
+            }
+
+            Prefetch<T1>(heapMap, compIndex);
+            Prefetch<T2>(heapMap, compIndex);
+            Prefetch<T3>(heapMap, compIndex);
+            Prefetch<T4>(heapMap, compIndex);
+        }
+
+        /// <summary><see cref="PrefetchRow{T1, T2, T3, T4}"/> of one component.</summary>
+        public static void PrefetchRow<T>(Entity e) where T : struct, IComponent
+        {
+            if (PrefetchHeap(e, out object[] heapMap, out int compIndex))
+            {
+                Prefetch<T>(heapMap, compIndex);
+            }
+        }
+
+        // the entity's heap map and component index from its node, for the prefetch stages (false: not supported, out of
+        // range, deleted)
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        private static bool PrefetchHeap(Entity e, out object[] heapMap, out int compIndex)
+        {
+            heapMap = null;
+            compIndex = 0;
             EntityStore store = Layout.Store(e);
 
             if (!System.Runtime.Intrinsics.X86.Sse.IsSupported || store == null || Layout.HeapMapOffset.Value <= 0)
             {
-                return;
+                return false;
             }
 
             EntityNode[] nodes = Layout.Nodes(store);
 
             if ((uint)e.Id >= (uint)nodes.Length)
             {
-                return;
+                return false;
             }
 
             ref EntityNode node = ref nodes[e.Id];
@@ -184,15 +211,13 @@ namespace ClassicUO.Ecs
 
             if (archetype == null)
             {
-                return;
+                return false;
             }
 
-            object[] heapMap = Layout.HeapMap(archetype);
-            int compIndex = Layout.NodeCompIndex(ref node);
-            Prefetch<T1>(heapMap, compIndex);
-            Prefetch<T2>(heapMap, compIndex);
-            Prefetch<T3>(heapMap, compIndex);
-            Prefetch<T4>(heapMap, compIndex);
+            heapMap = Layout.HeapMap(archetype);
+            compIndex = Layout.NodeCompIndex(ref node);
+
+            return true;
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
