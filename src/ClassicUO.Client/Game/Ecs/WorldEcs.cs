@@ -923,6 +923,92 @@ namespace ClassicUO.Game
             return e;
         }
 
+        // T9 S4: the detached preview objects' records (see Previews); created at the first preview write
+        private WorldMirror _previews;
+
+        /// <summary>
+        /// T9 S4: the records of the detached preview objects (the character-creation and race-change gumps' Mobile and the
+        /// Items they wear), written only by <see cref="WorldWriter"/>'s preview operations. A mirror of its own, not
+        /// <see cref="Mirror"/>: no system, extract, sweep or index walks it, so a preview never draws, updates or answers a
+        /// world lookup, and its serials (1 or 0, 0x4000_0000 + layer) cannot clash with a world record. Keyed by serial
+        /// with the instance as the handle (<see cref="TryGetPreviewRecord"/> checks it). Null until the first preview write.
+        /// </summary>
+        public WorldMirror Previews => _previews;
+
+        /// <summary>
+        /// T9 S4: the preview record of <paramref name="entity"/> (a detached instance last committed by a preview operation).
+        /// False for every other instance, and for a preview whose record was released or taken by another instance under
+        /// the same serial (two race-change gumps at once: the newer one's objects own the serials).
+        /// </summary>
+        internal bool TryGetPreviewRecord(Entity entity, out EcsEntity e)
+        {
+            e = default;
+
+            return _previews != null && entity != null && _previews.TryGetEntityOf(entity.Serial, entity, out e);
+        }
+
+        /// <summary>T9 S4: a preview mobile's record from the operation's values (body, hue, flags, and the traits).</summary>
+        internal void CommitPreviewMobile(object owner, Mobile mobile, in MobileState v, in MobileTraits traits)
+        {
+            WorldMirror previews = PreviewsFor(owner, mobile);
+            previews.UpsertMobile(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.IsPlayer, mobile);
+            previews.SetMobileTraits(v.Serial, in traits);
+        }
+
+        // a preview gump holds one mobile and a few dozen items at most
+        private const int PREVIEW_CAPACITY = 32;
+
+        // T9 S4 (Codex audit P2): the instances each owner (a preview gump) committed, so closing one gump releases only its
+        // own records; another open gump's, or a newer gump's under the same serials, stay. By reference: Entity's Equals
+        // compares serials, and a gump's replaced item has its predecessor's serial
+        private Dictionary<object, HashSet<Entity>> _previewOwners;
+
+        private WorldMirror PreviewsFor(object owner, Entity entity)
+        {
+            _previews ??= new WorldMirror(PREVIEW_CAPACITY);
+            _previewOwners ??= new Dictionary<object, HashSet<Entity>>(ReferenceEqualityComparer.Instance);
+
+            if (!_previewOwners.TryGetValue(owner, out HashSet<Entity> owned))
+            {
+                owned = new HashSet<Entity>(ReferenceEqualityComparer.Instance);
+                _previewOwners.Add(owner, owned);
+            }
+
+            owned.Add(entity);
+
+            return _previews;
+        }
+
+        /// <summary>
+        /// T9 S4: a preview item's record from the operation's values. Never attached (no child-order stamp): the gumps keep
+        /// the worn table themselves (<see cref="Mobile.Preview"/>, the race-change gump's hair and beard fields).
+        /// </summary>
+        internal void CommitPreviewItem(object owner, Item item, in ItemState v)
+        {
+            PreviewsFor(owner, item).UpsertItem(v.Serial, v.Graphic, v.Hue, v.X, v.Y, v.Z, (byte)v.Direction, (byte)v.Flags, v.Amount, v.Container, (byte)v.Layer, v.IsMulti, attach: false, handle: item);
+        }
+
+        /// <summary>
+        /// T9 S4: drops the records of the instances <paramref name="owner"/> (a preview gump that closed) committed, so its
+        /// objects stay reachable no longer. A record a newer instance took over (the same serial, another gump) stays, and
+        /// a second call for the same owner finds nothing.
+        /// </summary>
+        internal void ReleasePreviews(object owner)
+        {
+            if (_previews == null || owner == null || !_previewOwners.Remove(owner, out HashSet<Entity> owned))
+            {
+                return;
+            }
+
+            foreach (Entity entity in owned)
+            {
+                if (_previews.TryGetEntityOf(entity.Serial, entity, out _))
+                {
+                    _previews.Remove(entity.Serial);
+                }
+            }
+        }
+
         public void OnWorldCleared()
         {
             _world.State.OnWorldCleared();
