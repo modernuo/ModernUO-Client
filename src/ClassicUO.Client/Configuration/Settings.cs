@@ -131,6 +131,11 @@ namespace ClassicUO.Configuration
         // Default on (owner decision): a minimized window shows nothing, and several clients run at once.
         [JsonPropertyName("skip_draw_when_minimized")] public bool SkipDrawWhenMinimized { get; set; } = true;
 
+        // An inactive (ReduceFPSWhenInactive) or minimized client sleeps 12 ms instead of 1 ms on frames that skip draw, so its
+        // Update, input poll and packet drain run about 80 times a second instead of up to 1,000. A packet waits at most one
+        // sleep. Not measured yet, so default off.
+        [JsonPropertyName("throttle_update_when_inactive")] public bool ThrottleUpdateWhenInactive { get; set; }
+
         // perf-4: the static art of a container's contents and of the paperdoll's equipment slots decodes on the art workers
         // before the gump builds its item controls (ContentsArt: a request when an item goes into an open container, a
         // bounded batch wait in ContainerGump/PaperDollGump.UpdateContents) instead of one main-thread decode per sprite.

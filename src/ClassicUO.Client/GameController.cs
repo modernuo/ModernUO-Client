@@ -571,17 +571,19 @@ namespace ClassicUO
                 _currentFpsTime = 0;
             }
 
-            double x = _intervalFixedUpdate[
-                !IsActive
+            bool inactive = !IsActive
                 && !DevBench.FrameStats
                 && ProfileManager.CurrentProfile != null
-                && ProfileManager.CurrentProfile.ReduceFPSWhenInactive
-                    ? 1
-                    : 0
-            ];
+                && ProfileManager.CurrentProfile.ReduceFPSWhenInactive;
+            double x = _intervalFixedUpdate[inactive ? 1 : 0];
             _suppressedDraw = false;
+            bool minimized = IsMinimizedForDrawSkip();
 
-            if (IsMinimizedForDrawSkip())
+            // throttle_update_when_inactive: an inactive or minimized client's frames that skip draw sleep longer, so Update (and
+            // the packet drain at its start) runs every ~12 ms instead of every ~1 ms; a packet waits at most one such sleep
+            int idleSleepMs = (inactive || minimized) && Settings.GlobalSettings.ThrottleUpdateWhenInactive ? 12 : 1;
+
+            if (minimized)
             {
                 // skip_draw_when_minimized: nothing to show, so no world prepare, draw or present; packets, update and audio above
                 // and below keep running. The first frame after a restore draws in full (the world target preserves its contents).
@@ -592,7 +594,7 @@ namespace ClassicUO
 
                 if (!gameTime.IsRunningSlowly)
                 {
-                    Thread.Sleep(1);
+                    Thread.Sleep(idleSleepMs);
                 }
             }
             else if (x <= 0)
@@ -610,7 +612,7 @@ namespace ClassicUO
 
                 if (!gameTime.IsRunningSlowly)
                 {
-                    Thread.Sleep(1);
+                    Thread.Sleep(idleSleepMs);
                 }
             }
 
