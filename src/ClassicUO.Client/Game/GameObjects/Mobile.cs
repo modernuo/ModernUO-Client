@@ -1256,26 +1256,16 @@ namespace ClassicUO.Game.GameObjects
             return TryGetSittingInfoIf(human && !mounted && !flying && !TestStepNoChangeDirection(this, group), out data);
         }
 
-        // the first chair-like object (item, static, multi) within 1 Z of this mobile on its tile, in tile order
+        // the first chair-like object (item, static, multi) within 1 Z of this mobile on its tile, in tile order; none when
+        // the mobile is not on a tile
         internal bool FindChair(out AnimationsLoader.SittingInfoData data)
         {
+            Chunk chunk = TileChunk;
             TileReader reader = default;
-            GameObject start = this;
 
-            if (TileChunk != null)
-            {
-                start = TileReader.Open(TileChunk, TileCell, null, out reader);
-            }
-            else
-            {
-                // not on a tile: the list walk from this object (it has no neighbours)
-                while (start?.TPrevious != null)
-                {
-                    start = start.TPrevious;
-                }
-            }
-
-            for (; start != null; start = TileChunk != null ? reader.Next() : (GameObject)start.TNext)
+            for (GameObject start = chunk == null ? null : TileReader.Open(chunk, TileCell, null, out reader);
+                 start != null;
+                 start = reader.Next())
             {
                 if ((start is Item || start is Static || start is Multi) && Math.Abs(Z - start.Z) <= 1)
                 {

@@ -8,7 +8,7 @@ using System.Runtime.CompilerServices;
 
 namespace ClassicUO.Game.GameObjects
 {
-    internal sealed partial class Static : GameObject
+    internal sealed partial class Static : TileListObject
     {
         //private static readonly QueuedPool<Static> _pool = new QueuedPool<Static>
         //(

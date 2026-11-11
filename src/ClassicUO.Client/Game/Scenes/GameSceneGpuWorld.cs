@@ -152,7 +152,7 @@ namespace ClassicUO.Game.Scenes
         }
 
         // After the fill walked a tile: baked land and statics it skipped are hidden where the world pass would draw them.
-        private void CollectGpuHidden(GameObject obj, bool skipBaked)
+        private void CollectGpuHidden(TileListObject obj, bool skipBaked)
         {
             // tiles far beside the view: nothing of theirs reaches it (and the fill never touched them)
             int sx = (obj.X - obj.Y) * 22 - _offset.X - 22;

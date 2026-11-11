@@ -32,7 +32,7 @@ namespace ClassicUO.UnitTests.Game.Map
         {
             var all = new List<GameObject>();
 
-            for (GameObject o = chunk.HeadAt(cell); o != null; o = o.TNext)
+            for (TileListObject o = chunk.HeadAt(cell); o != null; o = o.TNext)
             {
                 all.Add(o);
             }

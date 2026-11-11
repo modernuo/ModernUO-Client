@@ -24,12 +24,12 @@ namespace ClassicUO.Game.Map
         /// <summary>The World this chunk was built for; only that World's <see cref="ChunkPool"/> keeps or hands it out.</summary>
         public World Owner => _world;
 
-        public GameObject[,] Tiles { get; } = new GameObject[8, 8];
+        public TileListObject[,] Tiles { get; } = new TileListObject[8, 8];
 
         // tile-head: the first object of each cell's list (index x * 8 + y), kept by AddGameObject, ReleaseAnchor and the
         // teardowns, so the whole-tile walks start without following TPrevious from the anchor. CUO_TILE_ORDER_CHECK compares
         // it with the head found by TPrevious (TileOrder.CheckTile, HeadWrong).
-        private readonly GameObject[] _heads = new GameObject[64];
+        private readonly TileListObject[] _heads = new TileListObject[64];
         public bool IsDestroyed;
 
         /// <summary>Held by its World's <see cref="ChunkPool"/> (set and cleared by the pool): a second Destroy while pooled is a no-op,
@@ -241,11 +241,11 @@ namespace ClassicUO.Game.Map
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public GameObject GetHeadObject(int x, int y) => _heads[(x << 3) | y];
+        public TileListObject GetHeadObject(int x, int y) => _heads[(x << 3) | y];
 
         /// <summary><see cref="GetHeadObject"/> by cell (x * 8 + y).</summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        public GameObject HeadAt(int cell) => _heads[cell];
+        public TileListObject HeadAt(int cell) => _heads[cell];
 
         /// <summary>The static tiledata AddGameObject's priority reads: the loaded array (Client's FileManager setup assigns
         /// it once after TileDataLoader.Load, which is the only place that array is replaced); unit tests set their own.</summary>
@@ -368,11 +368,9 @@ namespace ClassicUO.Game.Map
 
             // T6b part 3: the dynamics live only in the index, filed by the key just stamped; the list (and its anchor) keeps
             // land, statics and multis
-            if (DynamicTileIndex.Holds(obj))
+            if (obj is not TileListObject node)
             {
                 (Dynamic ??= new DynamicTileIndex()).Add(obj, obj.TileCell);
-                obj.TPrevious = null;
-                obj.TNext = null;
 
                 return;
             }
@@ -381,10 +379,10 @@ namespace ClassicUO.Game.Map
 
             if (Tiles[x, y] == null)
             {
-                Tiles[x, y] = obj;
-                _heads[cell] = obj;
-                obj.TPrevious = null;
-                obj.TNext = null;
+                Tiles[x, y] = node;
+                _heads[cell] = node;
+                node.TPrevious = null;
+                node.TNext = null;
 
                 return;
             }
@@ -393,9 +391,9 @@ namespace ClassicUO.Game.Map
             // Tiles[x, y] is never obj here: RemoveFromTile above moved the anchor off it (ReleaseAnchor). The old code had an
             // "o == obj" branch for a stale anchor that followed the LinkedObject container links (Previous/Next), which on a
             // landless tile could put obj into another tile's list (T6a audit).
-            GameObject o = _heads[cell];
-            GameObject found = null;
-            GameObject start = o;
+            TileListObject o = _heads[cell];
+            TileListObject found = null;
+            TileListObject start = o;
 
             while (o != null)
             {
@@ -412,22 +410,22 @@ namespace ClassicUO.Game.Map
 
             if (found != null)
             {
-                obj.TPrevious = found;
-                GameObject next = found.TNext;
-                obj.TNext = next;
-                found.TNext = obj;
+                node.TPrevious = found;
+                TileListObject next = found.TNext;
+                node.TNext = next;
+                found.TNext = node;
 
                 if (next != null)
                 {
-                    next.TPrevious = obj;
+                    next.TPrevious = node;
                 }
             }
             else if (start != null)
             {
-                obj.TNext = start;
-                start.TPrevious = obj;
-                obj.TPrevious = null;
-                _heads[cell] = obj;
+                node.TNext = start;
+                start.TPrevious = node;
+                node.TPrevious = null;
+                _heads[cell] = node;
             }
         }
 
@@ -437,9 +435,9 @@ namespace ClassicUO.Game.Map
         /// alone. Normally the anchor is the land, which never leaves; on a landless tile (a block without map data) the
         /// first object placed used to stay the anchor after leaving, which hid the rest of the list.
         /// </summary>
-        public void ReleaseAnchor(GameObject obj)
+        public void ReleaseAnchor(TileListObject obj)
         {
-            ref GameObject anchor = ref Tiles[obj.TileCell >> 3, obj.TileCell & 7];
+            ref TileListObject anchor = ref Tiles[obj.TileCell >> 3, obj.TileCell & 7];
 
             if (ReferenceEquals(anchor, obj))
             {
@@ -447,7 +445,7 @@ namespace ClassicUO.Game.Map
             }
 
             // the head leaves: its successor becomes the head (null when it was alone); RemoveFromTile unlinks it next
-            ref GameObject head = ref _heads[obj.TileCell];
+            ref TileListObject head = ref _heads[obj.TileCell];
 
             if (ReferenceEquals(head, obj))
             {
@@ -477,18 +475,18 @@ namespace ClassicUO.Game.Map
             {
                 for (int j = 0; j < 8; j++)
                 {
-                    GameObject obj = Tiles[i, j];
+                    TileListObject obj = Tiles[i, j];
 
                     if (obj == null)
                     {
                         continue;
                     }
 
-                    GameObject first = GetHeadObject(i, j);
+                    TileListObject first = GetHeadObject(i, j);
 
                     while (first != null)
                     {
-                        GameObject next = first.TNext;
+                        TileListObject next = first.TNext;
                         // map land and statics live only in tile lists (Chunk.Load): once destroyed and unlinked here they go
                         // to the recycler, which hands them out again after its quarantine (MapObjectRecycler invariants)
                         bool recycle = (first is Land || first is Static) && !first.IsDestroyed;
@@ -607,8 +605,12 @@ namespace ClassicUO.Game.Map
                             o.Destroy();
                         }
 
-                        o.TPrevious = null;
-                        o.TNext = null;
+                        if (o is TileListObject node)
+                        {
+                            node.TPrevious = null;
+                            node.TNext = null;
+                        }
+
                         o.TileChunk = null;
 
                         if (recycle)
@@ -652,11 +654,11 @@ namespace ClassicUO.Game.Map
             {
                 for (int j = 0; j < 8; j++)
                 {
-                    GameObject first = GetHeadObject(i, j);
+                    TileListObject first = GetHeadObject(i, j);
 
                     while (first != null)
                     {
-                        GameObject next = first.TNext;
+                        TileListObject next = first.TNext;
 
                         if (!ReferenceEquals(first, _world.Player))
                         {
@@ -692,7 +694,7 @@ namespace ClassicUO.Game.Map
             {
                 for (int j = 0; j < 8; j++)
                 {
-                    for (GameObject obj = GetHeadObject(i, j); obj != null; obj = obj.TNext)
+                    for (TileListObject obj = GetHeadObject(i, j); obj != null; obj = obj.TNext)
                     {
                         if (!(obj is Land) && !(obj is Static) /*&& !(obj is Multi)*/)
                         {
