@@ -94,6 +94,99 @@ namespace ClassicUO.UnitTests.Network
             OplDebounceCheck.UnrequestedAnswers.Should().Be(2);
         }
 
+        // an arrival: 3000 objects announced by 0xDC, the mobiles' unchanged revisions repeated every 5 frames (ModernUO's
+        // Mobile.ProcessDelta on each step), answers 400 ms after the request; both paths request each serial once
+        [Theory]
+        [InlineData(0)]
+        [InlineData(600)]
+        [InlineData(2000)]
+        public void An_Arrival_With_Repeated_Notices_Requests_Each_Serial_Once(int budget)
+        {
+            var list = new OplRequestList();
+            var queue = new OplRequestQueue { DistanceOf = s => (int) (s % 20) };
+            var held = new Dictionary<uint, uint>();
+            var answers = new Queue<(uint Tick, uint Serial)>();
+            uint now = 0;
+            OplBatchSink sink = serials =>
+            {
+                foreach (uint s in serials)
+                {
+                    OplDebounceCheck.Sent(s, now);
+                    answers.Enqueue((now + 400, s));
+                }
+            };
+
+            static uint Revision(uint serial) => 0x40000000u | (serial * 7 & 0x3FFFFFF);
+            uint Serial(int i) => i % 3 == 0 ? (uint) (i + 1) : 0x40000000u + (uint) i;
+
+            void Notice(uint serial)
+            {
+                uint rev = Revision(serial);
+                bool isHeld = held.TryGetValue(serial, out uint h) && h == (rev & ~0x40000000u);
+                OplDebounceCheck.Notice(serial, rev, isHeld);
+
+                if (!isHeld)
+                {
+                    if (budget > 0)
+                    {
+                        queue.Request(serial, OplRequestKind.Revision, rev, now);
+                    }
+                    else
+                    {
+                        list.Request(serial, OplRequestKind.Revision, rev, now);
+                    }
+                }
+            }
+
+            uint[] batch = new uint[OplRequestQueue.MaxPerPacket];
+
+            for (int frame = 0; frame < 6000; frame++)
+            {
+                now += 16;
+
+                if (frame < 30)
+                {
+                    for (int i = frame * 100; i < frame * 100 + 100; i++)
+                    {
+                        Notice(Serial(i));
+                    }
+                }
+
+                if (frame % 5 == 0)
+                {
+                    for (int i = 0; i < Math.Min(3000, frame * 100); i += 3)
+                    {
+                        Notice(Serial(i));
+                    }
+                }
+
+                while (answers.Count != 0 && answers.Peek().Tick <= now)
+                {
+                    uint s = answers.Dequeue().Serial;
+                    OplDebounceCheck.Answered(s);
+                    held[s] = Revision(s) & ~0x40000000u;
+                    list.Answered(s, held[s]);
+                    queue.Answered(s, held[s]);
+                }
+
+                if (budget > 0)
+                {
+                    queue.Drain(now, budget, sink, out _);
+                }
+                else
+                {
+                    int n = list.Take(batch, now);
+                    sink(new ReadOnlySpan<uint>(batch, 0, n));
+                }
+            }
+
+            OplDebounceCheck.Repeats.Should().Be(0);
+            OplDebounceCheck.Requests.Should().Be(3000);
+            OplDebounceCheck.Answers.Should().Be(3000);
+            OplDebounceCheck.NoticeRepeats.Should().BeGreaterThan(1000);
+            _repeats.Should().BeEmpty();
+        }
+
         [Fact]
         public void The_Summary_Logs_Once_At_Exit()
         {

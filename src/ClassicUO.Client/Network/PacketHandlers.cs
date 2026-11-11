@@ -41,7 +41,7 @@ namespace ClassicUO.Network
             new[] { '@', '@' }
         );
 
-        private List<uint> _clilocRequests = new List<uint>();
+        private readonly OplRequestList _oplList = new OplRequestList();
         private OplRequestQueue _oplQueue;
         private static readonly OplBatchSink s_oplSink = SendOplBatch;
         private static int s_oplFramePackets, s_oplFrameSerials;
@@ -430,54 +430,22 @@ namespace ClassicUO.Network
                 {
                     Handler._oplQueue?.Drain(Time.Ticks, budget, s_oplSink, out _);
                 }
-                else if (Handler._clilocRequests.Count != 0)
+                else if (Handler._oplList.PendingCount != 0)
                 {
-                    if (Client.Game.UO.Version >= Utility.ClientVersion.CV_5090)
+                    Span<uint> batch = stackalloc uint[OplRequestQueue.MaxPerPacket];
+                    int n;
+
+                    // 15 serials per 0xD6 each frame; before 5.0.9 every pending serial, one 0xBF.10 each (SendOplBatch)
+                    do
                     {
-                        int n = Math.Min(OplRequestQueue.MaxPerPacket, Handler._clilocRequests.Count);
-#if CUO_DEVTOOLS
-                        if (OplSpreadCheck.On)
-                        {
-                            for (int i = 0; i < n; i++)
-                            {
-                                OplSpreadCheck.Sent(Handler._clilocRequests[i], Time.Ticks);
-                            }
-                        }
+                        n = Handler._oplList.Take(batch, Time.Ticks);
 
-                        if (OplDebounceCheck.On)
+                        if (n != 0)
                         {
-                            for (int i = 0; i < n; i++)
-                            {
-                                OplDebounceCheck.Sent(Handler._clilocRequests[i], Time.Ticks);
-                            }
+                            SendOplBatch(batch.Slice(0, n));
                         }
-#endif
-                        s_oplFrameSerials += n;
-                        s_oplFramePackets++;
-                        NetClient.Socket.Send_MegaClilocRequest(Handler._clilocRequests);
                     }
-                    else
-                    {
-                        foreach (uint serial in Handler._clilocRequests)
-                        {
-#if CUO_DEVTOOLS
-                            if (OplSpreadCheck.On)
-                            {
-                                OplSpreadCheck.Sent(serial, Time.Ticks);
-                            }
-
-                            if (OplDebounceCheck.On)
-                            {
-                                OplDebounceCheck.Sent(serial, Time.Ticks);
-                            }
-#endif
-                            NetClient.Socket.Send_MegaClilocRequest_Old(serial);
-                        }
-
-                        s_oplFrameSerials += Handler._clilocRequests.Count;
-                        s_oplFramePackets += Handler._clilocRequests.Count;
-                        Handler._clilocRequests.Clear();
-                    }
+                    while (n != 0 && Client.Game.UO.Version < Utility.ClientVersion.CV_5090);
                 }
             }
 
@@ -544,12 +512,12 @@ namespace ClassicUO.Network
         internal static OplRequestQueue OplQueue => Handler._oplQueue;
 
         /// <summary>Tests: the old path's request list (switch off).</summary>
-        internal static IReadOnlyList<uint> OldClilocRequests => Handler._clilocRequests;
+        internal static OplRequestList OldRequests => Handler._oplList;
 
         /// <summary>Tests: empties both request paths.</summary>
         internal static void ResetMegaClilocRequestsForTests()
         {
-            Handler._clilocRequests.Clear();
+            Handler._oplList.Clear();
             Handler._oplQueue = null;
         }
 
@@ -573,21 +541,14 @@ namespace ClassicUO.Network
                 return;
             }
 
-            foreach (uint s in Handler._clilocRequests)
-            {
-                if (s == serial)
-                {
-                    return;
-                }
-            }
-
-            Handler._clilocRequests.Add(serial);
+            Handler._oplList.Request(serial, kind, revision, Time.Ticks);
         }
 
         /// <summary>World removed the object (deleted, out of range): its queued request is dropped (opl_request_budget).</summary>
         public static void OnOplRemoved(uint serial)
         {
             Handler._oplQueue?.Remove(serial);
+            Handler._oplList.Remove(serial);
 #if CUO_DEVTOOLS
             if (OplSpreadCheck.On)
             {
@@ -605,6 +566,7 @@ namespace ClassicUO.Network
         public static void OnOplCleared()
         {
             Handler._oplQueue?.Clear();
+            Handler._oplList.Clear();
 #if CUO_DEVTOOLS
             if (OplSpreadCheck.On)
             {
@@ -5138,6 +5100,7 @@ namespace ClassicUO.Network
             uint revision = p.ReadUInt32BE();
 
             Handler._oplQueue?.Answered(serial, revision);
+            Handler._oplList.Answered(serial, revision);
 #if CUO_DEVTOOLS
             if (OplSpreadCheck.On)
             {
