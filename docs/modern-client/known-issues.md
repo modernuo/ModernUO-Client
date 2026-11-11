@@ -1,144 +1,43 @@
-# Known Issues
+# Known issues
 
-Visual or behavioural defects found in the PoC client that aren't fixed yet. Add new ones here; move them to the poc-log when fixed.
+Open defects only, one entry each: severity, symptom, location, status. Fixed ones are removed (the poc-log has the history); a short Resolved list at the bottom keeps commit ids worth finding.
 
-## Flaky unit test seen on 2026-11-08 (open)
+## Bugs
 
-- **`PlayerStepOpenTests.Corpses_Check_Allocates_Nothing_When_Nothing_Opens(source: False)`:** failed once under load in the ecs-flip-8 runs (6,512 B allocated) and passed alone. Probably load-sensitive allocation sampling, like `ChunkLoadingTests.Drain_Does_Not_Allocate_Per_Frame` below. If it fails again, isolate it the way the 2026-11-01 flakes were isolated.
+- **Low. `SeasonManager.CreateDefaultSeasonsFile` does not create `Data/Client`** (`SeasonManager.cs:178-185`; called from the static constructor, line 47). On a fresh install without that folder the static constructor throws `DirectoryNotFoundException`; the unit tests hide it with a module initializer (`tests/ClassicUO.UnitTests/TestEnvironment.cs:18`). Fix: one `Directory.CreateDirectory` before the `StreamWriter`. Not done (upstream code).
+- **Low-medium. Empty tiledata entries still occlude roofs and lights.** A component whose tiledata entry is empty (no art, zero flags) counts in two decisions: roof cut-off (`MaxDrawZState.cs` ~120: zero flags satisfy the predicate, so e.g. a server-sent house component with padded graphic 0x5000 at Z 20 lowers `MaxZ` and hides everything above) and light occlusion (`GameScene.cs:~459`: zero flags mean not transparent, so such a component south-east of a light suppresses it; `AddLight` never checks for art). Not a regression: modern packs behave the same, and legacy packs used to throw instead. Proposed fix: skip components without drawable art in both decisions, after a Legacy/Gpu parity check on a modern and a padded legacy pack. Owner decision pending (owner-review.md).
+- **Medium. Ghost mobiles and items at the update-range edge** (predates the PoC). Rarely a mobile or item the server stopped tracking stays idle forever, or an edge mobile disappears although it should stay; more likely with large viewports, older RunUO servers, houses and boats (a house can arrive without its door). Cause is either the server's create/remove messages at the edge or the client's ordering and out-of-range cleanup. Not reproduced. Status: deferred; first step of range-based streaming (perf-opportunities.md, "Server update range").
+- **Low. Paperdoll layer bleed:** with a robe on, the black halo around armour arm pieces disappears (ClassicUO does not do the original client's graphic bleed). The halo may hide another layering oddity, so removing it could expose that. Not started.
+- **Low. Gpu shoreline ticks at zoom 2:** a few short dark ticks where shore statics (not 44x44) meet open water; they take the generic trilinear alpha-test path. Stand at Britain 1495 1629, Gpu, zoom 2: east about x 1519-1523, y 1598-1619 and west about x 1456-1458, y 1631-1640 (+-1-2 tiles). Legacy shows none. Waiting for the owner's manual check before anyone fixes it.
+- **Low. Gpu pop-in leftovers after the world-settle hold:** (a) walking never holds, so a dynamic sprite whose art page is not resident is presented for about 10 ms (5-20 frames per 10 s walk); fix on the streaming side by prefetching item and mobile art pages. (b) A held frame shows the old place while UI, overhead text and picking already follow the new position (3-5 frames at 60 fps after a teleport). (c) The hold does not detect stale override state (suspected `gpu_prepare_skip_baked` flicker after a recreation). (d) No live facet-change test (unit-tested; `reinit` exercises the same path). (e) A body seen for the first time draws nothing until its first direction uploads, so new equipment on a visible human can appear a frame or two late (`CUO_ANIM_SYNC=1` compares); nobody checked by eye.
+- **Low. A chunk on a new glide column can appear a few frames late** (art latency; walking-unsettled frames 198 to 338 over three glide runs). Fix if it matters: request art for a ring beyond the draw range.
+- **Low. Legacy `MeshLayer` arrays keep growing in reused chunks** (0.3-1 MB per 5 s while teleporting; login warm-up audit, not re-checked since the chunk pool became per World).
+- **Low. Legacy fallback paths (D3D11, OpenGL):** nothing broken, observations for the deferred Legacy project. OpenGL lands on the Intel UHD 770, not the RTX (needs adapter selection). D3D11 spends 2.5x longer in Present than SDL_GPU on the same GPU (suspect `FNA3D_D3D11_FORCE_BITBLT=1` in `Main.cs`, untested; measure with the display on). FNA3D does not fall through a forced driver: if MojoShader's d3dcompiler is missing, the client cannot start (very unlikely on Windows 10/11). Britain fps: SDL_GPU Legacy 869, D3D11 407, OpenGL (UHD) 258.
+- **Low. GPU engine resets take down every client on the GPU** (a page fault in one process causes an NVIDIA reset; the others exit 0xDEAD). Our own faults are gone with the SDL fork's dedicated large-image allocations (sdl-fork.md); a build with an upstream SDL3.dll still faults at about 3 % of logins. When attributing an Aftermath dump, match its PID to the run; keep deliberate repros few.
+- **Low. Pickscan:** about 250 "chunks missing near view" unsettled frames per entry (base too). The skip checker reports land at the top edge "drawn differently" during zoom 2.5 walks (199 on base, 632 on E7's build in one run; look at W1's edge band).
+- **Low. Stock ClassicUO minimap crash:** opening the minimap gump after `UIManager.Update` throws in `CreateMiniMapTexture` (`MiniMapGump.cs:79`; it draws before its first Update). Probably unreachable through the normal path; worked around in DevBench only.
+- **Low. Plugin threads calling `RequestMove`/`WalkTo`** race the pathfinder's reused buffers and `Player.Walk`'s world writes (main-thread only today; perf-alloc-5 Codex P2). Possible later item: marshal plugin entry points onto the game thread.
+- **Low. Item 0x3996 near 5138,2157 (z 8) changes position between scans in base too** (moving fire field); it shows up as a pick-scan difference. `DevBench.Describe` prints the graphic, not the serial, which makes moving-NPC and moving-item differences hard to tell apart.
+- **Low, unverified. WorldMapGump P3:** `Log.Info` at `WorldMapGump.cs:~1565` sits before ownership transfer of the new texture, so a throwing logger would leak it until finalization; move it inside the cleanup `try` at the next touch.
+- **Low. Unexplained single-frame spikes** (16-50 ms `update_other`, 95 ms at a facet switch) seen during verification, never compared with base.
 
-## Flaky unit tests seen on 2026-11-02 (open)
+## Tests and gates
 
-- **`ChunkLoadingTests.Drain_Does_Not_Allocate_Per_Frame`:** failed once in a full-suite run on `bg/t9-slice3` while the machine was loaded, and passes when run alone (9/9). It is probably load-sensitive allocation sampling. If it fails again, isolate it the way the 2026-11-01 flakes were isolated.
-- **One unnamed failure** after the tile-index fix A merge (2ee3cd208). It passed on rerun, and the test name wasn't captured.
+- **Flaky: `PlayerStepOpenTests.Corpses_Check_Allocates_Nothing_When_Nothing_Opens(source: False)`** failed once under load (6,512 B), passes alone. **`ChunkLoadingTests.Drain_Does_Not_Allocate_Per_Frame`** failed once in a loaded full-suite run (per-thread allocation delta must be 0), passes alone. Both look like load-sensitive allocation sampling; if one recurs, isolate it as the 2026-11-01 flakes were (non-parallel collection), or warm the loop twice before measuring. One unnamed failure after tile-index fix A (2ee3cd208) passed on rerun.
+- **Possible hang:** a full-suite stall after the `MountHeightTests` skips (seen twice with another dotnet process active) was not reproduced. If it recurs, rerun with `--blame-hang-timeout 120s`. Tests outside the non-parallel collections that mutate `Time.Ticks` or the shared RNG can still overlap each other.
+- **Gate flake: disconnect right after login** (bench-000292: "Disconnected from the game server: Success" 2 s after entering the world, 15 s after the previous session of the same account quit). Rerun clean. If it recurs, check the server log for the previous session still logging out.
+- **Gate flake: uistate vendor buy.** `buy a_horse 1` sometimes finds no buy-list entry and the rename/pet steps fail (bench-000130, 000177). Fix: wait for the buy list and restock or pick another item.
+- **Gate rules to refresh before reuse:** ecs-flip-8 `gate-body.sh` still expects `ecs_effect_sprites` off and a "shadow steps" effect-check line (both gone); `measure/t9-delete-1/common9.sh` regex was fixed. The textflood Gpu read rule was relaxed. Fix `iocheck` to skip scenes with no dynamic item draws.
 
-## Gate flakes seen on 2026-11-02 (open)
+## Resolved (commit worth keeping)
 
-- **Disconnected right after login in a shots run:** bench-000292's Gpu "new" session logged "Disconnected from the game server: Success" 2 s after entering the world, 15 s after the previous session (same account) quit, so none of its teleports ran. The rerun bench-000293 is clean. If it recurs, check the server log for the account's previous session still logging out.
-
-## Gate flakes seen on 2026-11-01 (open)
-
-- **uistate vendor buy:** the script's `buy a_horse 1` sometimes finds no buy-list entry (vendor stock after repeated runs, or the list not loaded yet), and the following rename/pet steps fail (bench-000130, bench-000177; reruns pass). Fix idea: wait for the buy list, and restock or pick another vendor item in the script.
-- **`RemovalSitesFunnelCheckTests.A_Direct_Removal_Names_The_Caller_Past_The_Removal_Plumbing`** (fixed on `bg/removal-flake`): failed in most full dev runs, passed alone. Not a shared-state race: the assertion text was `World.RemoveItem (World.cs:1246) via RemovalSitesFunnelCheckTests.RemoveDirectly`. After enough calls in a full run the JIT tiers up `World.RemoveItem` and inlines `Destroy` into it, so the writing frame is already removal plumbing and the next frame (the caller) was taken as the non-plumbing `via`, which returns without the ` from <caller>` part. Alone, the method stays at tier 0 and `Destroy` keeps its own frame. `FunnelCheck.Caller` now skips the plumbing from the writer frame too (code commit on the branch).
-
-## Flaky unit tests in full-suite runs: fixed by isolation on `bg/flaky-tests` (recorded 2026-11-01)
-
-Seen in full-suite runs, passing alone and on rerun: `WorldWriterMobileTests.The_Ecs_Advance_Equals_The_Legacy_Update` (several cases), `WorldWriterMobileTests.The_Boat_Steps_Equal_The_Old_Path`, `Mp3DecoderTests.Dispose_IsIdempotentAndFreesOnce`, `AudioPackTests.A_Track_From_The_Pack_Loops_Gaplessly_Through_MusicStream`, `TileDataAuditTests.A_Multi_Component_Takes_The_Draw_Flags_Of_Its_Season_Graphic`.
-
-Root causes and fixes (tests only, no production change):
-- **`WorldWriterMobileTests` (T5b advance and boat steps)**: the class had no `[Collection]`, so it ran in parallel with other test classes while it advances the static `Time.Ticks` and compares the shared RNG draw sequence. It now joins the non-parallel `FunnelCheckCollection` like the other funnel-check classes in that file family.
-- **MP3 tests**: `Mp3Decoder.LiveInputAllocations` is a process-wide count and `OpenMemoryOverride` a static hook; `Mp3DecoderTests` asserts exact before/after counts while `AudioPackTests` (MusicStream) opened decoders in parallel. Both classes now share the non-parallel collection `Mp3DecoderGlobals`.
-- **`seasons.txt`**: `SeasonManager`'s static constructor reads or writes `<cwd>/Data/Client/seasons.txt` but never creates the folder, which existed in the bin folder only as a side effect of other tests. A module initializer in `tests/ClassicUO.UnitTests/TestEnvironment.cs` creates it.
-- Also: the join of the disposer thread in `Dispose_RacingRead_IsSafe` is now bounded (30 s).
-
-Verification on the fixed branch: dev variant 5 of 5 full-suite runs passed (2612 passed, 6 skipped each); `-p:CuoDevTools=false` 1 of 2 passed. The failing false-variant run hit a different test, `ChunkLoadingTests.Drain_Does_Not_Allocate_Per_Frame` (a per-thread `GC.GetAllocatedBytesForCurrentThread` delta that must be 0; it passed alone and in the next run). Not investigated: likely a one-off allocation on the test thread (tiered JIT or a delegate stub) under load; if it recurs, warm the loop twice before measuring.
-
-
-
-Remains: the full-suite stall after the `MountHeightTests` skips (seen twice by t5c-sweep with another dotnet process active) was not reproduced and no deadlock was found by reading the code. The only unbounded waits in the suite were `Barrier.SignalAndWait` and a thread join in `Dispose_RacingRead_IsSafe` (a busy spin loop of three threads over 200 iterations, which crawls on a loaded machine); the join is bounded now. If it stalls again, rerun with `--blame-hang-timeout 120s` to get the stuck test's dump. Tests outside the non-parallel collections that also mutate `Time.Ticks` or the shared RNG would still be exposed; they cannot overlap the exclusive collections, only each other.
-
-## Empty tiledata entries still occlude roofs and lights (recorded 2026-10-31, deferred)
-
-Found by the Codex audit of `poc/tiledata-pad` (finding 2). A component whose tiledata entry is empty (no art, zero flags) still counts in two decisions:
-
-- **Roof cut-off** (`MaxDrawZState.cs:120`): zero flags satisfy the predicate, so such a component above the player (e.g. a server-sent house component with padded graphic 0x5000 at Z 20) lowers `MaxZ` to its Z and hides everything above it.
-- **Light occlusion** (`GameScene.cs:456`): zero flags mean `IsTransparent == false` and zero `PackFlags` allow drawing, so such a component south-east of a light suppresses that light. `AddLight` never checks that the component has art.
-
-This is not a regression of the standardized tiledata counts: modern packs' empty entries behave the same way, and on a legacy pack those ids used to throw instead. Padding only makes the case reachable on legacy packs. **Proposed fix:** skip components without drawable art in both decisions. Needs a parity check (Legacy and Gpu, modern and padded legacy pack) before changing, since it changes what the roof and light decisions see.
-
-## Paperdoll layer bleed: a robe removes the black halo around armour arm pieces (known before the PoC; recorded 2026-10-31)
-
-Reported by the owner. ClassicUO does not draw paperdoll graphic "bleed" the way the original client does. With a robe on, the black halo around armour arm pieces disappears. The halo was probably made to hide another layering oddity, so removing it may expose that. Needs its own investigation (layer order, which gumps carry the halo, how the original client composites them). Not started.
-
-## Ghost mobiles and items at the update-range edge (known before the PoC; recorded 2026-10-25)
-
-Rarely, a mobile or item the server has stopped tracking stays in the client and stands idle forever ("ghosting"), or a mobile at the edge of the update range disappears although it should stay. It is more likely with large viewports, older RunUO-based servers, and houses and boats (they use a larger update range, so a house can arrive without its door). The cause is either the server's create/remove messages around the range edge, or the client's handling of their order and its own out-of-range cleanup. Not reproduced yet. Fixing it is the first part of range-based viewport streaming (perf-opportunities.md, "Server update range vs. large viewports"): repro, audit ModernUO's edge handling, then clean up the client. Deferred. Related: equipment updates for a mobile the client no longer holds, and gump tooltips for items the client never saw (both in that perf-opportunities section).
-
-## Legacy on FNA3D D3D11 and OpenGL: observations for the deferred Legacy project (2026-10-25)
-
-Auto's fallback (no usable SDL_GPU/Vulkan) runs Legacy on FNA3D's D3D11 driver, or OpenGL. Neither had been run for a while. Tested with `CUO_RENDERER_PROBE_FAIL=device` (plus `CUO_RENDERER_LEGACY_DRIVER=OpenGL`), Release JIT, 1280×720, display off, other agents' clients running. Nothing below blocks a session; none of it was fixed.
-
-- **Nothing broken.** On both drivers: login, world shots (Britain, bank, house), gumps and UI shots, a walk, and `CUO_BENCH_PICK` (static, land, item and player selected; both clicks reached the server). The house spot is 1.83% (D3D11) and 1.84% (OpenGL) near-black, the same as Legacy on SDL_GPU (1.83–1.84%). Shots differ from Legacy on the SDL_GPU device in 0.3–1.7% of pixels: moving NPCs and journal text. No errors or FNA warnings in the logs. Looked at.
-- **OpenGL lands on the Intel UHD 770, not the RTX 3090 Ti** (`OpenGL Renderer: Intel(R) UHD Graphics 770`). D3D11 and SDL_GPU both pick the RTX. So the OpenGL numbers are integrated-GPU numbers. A Legacy project that keeps OpenGL needs adapter selection there (or must accept the OS's choice).
-- **Speed (Britain, ms per frame, means):**
-
-  | Device | fps | Draw | batcher FNA calls | Present | Frame |
-  |---|---|---|---|---|---|
-  | Legacy on SDL_GPU (RTX) | 869 | 0.32 | 0.12 | 0.80 | 1.15 |
-  | Legacy on D3D11 (RTX) | 407 | 0.37 | 0.04 | 2.01 | 2.46 |
-  | Legacy on OpenGL (UHD 770) | 258 | 0.98 | 0.55 | 2.79 | 3.87 |
-  | Gpu on SDL_GPU (UHD 770, `FNA3D_PREFER_LOW_POWER=1`) | 262 | 0.36 | | 3.39 | 3.82 |
-
-  - On the same GPU, D3D11 spends 2.5× longer in Present than SDL_GPU. One suspect, not tested: `Main.cs` sets `FNA3D_D3D11_FORCE_BITBLT=1` (a Windows 11 scaling workaround), which uses the BitBlt presentation model. Present times with the display off aren't reliable, so measure with the display on before acting on this.
-  - D3D11's CPU side is the cheapest of the three (0.04 ms in FNA calls).
-- **FNA3D doesn't fall through a forced driver.** Auto forces `FNA3D_FORCE_DRIVER=D3D11` when a hardware D3D11 device (feature level 10.0+) can be created, the same check FNA3D's D3D11 driver makes. FNA3D also needs MojoShader's D3D11 shader compiler (d3dcompiler). If that's missing, FNA3D fails instead of trying OpenGL, and the client can't start. Very unlikely on Windows 10/11; a fallback-profile project should handle it.
-- **Gpu mode on the Intel UHD 770 works** (optional check): `[renderer] auto: Gpu (SDL_GPU vulkan, Intel(R) UHD Graphics 770)`, 0 parity mismatches over 15,795 frames (Britain, bank, walk, house), correct shots, 250–300 fps, bound by Present. So on this iGPU the Gpu path is at least as fast as Legacy.
-
-## Gpu world renderer: grid lines between land tiles when zoomed out (2026-10-24) — fixed 2026-10-25, leftover below
-
-- **Fixed** (seams agent, commit 115e93c71; poc-log "Land seams when zoomed out"): baked land, stretched land and 44×44 floor and water statics draw seam-free at zoom 1.5, 2 and 2.5 (`SampleTile` in sprite.hlsl).
-- **Confirmed by the owner (2026-10-25):** no grid marks fully zoomed out in any of the day's runs, including the FPS test at 3840x2054.
-- **Left over:** a few short dark ticks where shore statics meet open water at zoom 2. They were there before the fix too. They come from statics that don't fill 44×44 (shore pieces), which still take the generic trilinear alpha-test path.
-- **Where to look (for the owner's manual check, end of milestone):** stand at Britain 1495 1629, Gpu mode, zoom 2. Ticks were found in the seams agent's shots (Gpu darker than Legacy over water) along two shorelines: **east, about x 1519–1523, y 1598–1619**, and **west, about x 1456–1458, y 1631–1640** (Trammel/Felucca coordinates; ±1–2 tiles, converted from screen position without the water/player height difference). Legacy shows none there.
-
-## GPU engine resets take down every client on the GPU (2026-10-24)
-
-- **What happens:** a page fault in one process causes an NVIDIA engine reset (nvlddmkm 153). Other clients running on the GPU at the time also get `VK_ERROR_DEVICE_LOST` and exit with 0xDEAD; the W1 agent's clients died at 22:34 and 23:18 from resets caused by repro runs.
-- **What to do:** when attributing an Aftermath dump, match the dump's PID to the run. Keep deliberate repro runs to a minimum while other agents or the owner use the GPU.
-- **Update 2026-10-25:** the page faults our client caused came from SDL defragmenting Uo.Render's page atlas. Since the SDL fork's dedicated large-image allocations ([sdl-fork.md](sdl-fork.md)), the atlas is never moved. A build without that DLL (an upstream SDL3.dll, or a branch from before the fork) still faults at about 3% of logins, or more with other clients on the GPU.
-
-## FNA "scissor rectangle is invalid" on the login gump right after a GPU reset (2026-10-24) — fixed 2026-10-25, not reproduced
-
-- **Fixed** (seams agent, commit b59735443; poc-log "Scissor exception"): `ScissorStack` clips every pushed rect to the bound render target or back buffer. FNA only rejects negative x, y, width or height, and only the root rect of a clip stack was unclipped, so the cause was a control partly off the top or left edge. `GameController.Draw` also skips the UI when there's no UI target or the back buffer is 0 wide or high. 11 unit tests.
-- **Not reproduced:** a tiny saved `window_size`, and minimise, restore and 120×90 `SetWindowPos` cycles on the login screen, didn't throw with the old build. If it shows up again, look for another caller that sets FNA's `ScissorRectangle` directly.
-
-## Gpu world renderer: raw pop-in on world entry and teleports (2026-10-24) — fixed 2026-10-25, leftovers below
-
-- **Fixed (world-settle agent; poc-log "World settle"):**
-  - The Legacy fallback is gone.
-  - After a login, a teleport (more than 8 tiles in one frame), a facet change, a world-pass recreation or a switch back from Legacy, the last world frame is held while the GPU world streams, until its view is ready (`WorldRenderer.VisibleReady`) or 1.5 s pass. With no frame to hold, the world area is black and then fades in.
-  - Measured: 0 unsettled frames presented with hold on, against 6–19 per teleport or recreation before. No Legacy frames.
-  - Test procedure: [testing/world-settle.md](testing/world-settle.md).
-- **Left over:**
-  - **Walking:** a dynamic sprite whose art page isn't resident yet is still presented for about 10 ms (one page, 5–20 frames per 10 s walk at ~1000 fps). Walking deliberately never holds; fix it on the streaming side by prefetching item and mobile art pages.
-  - **What a held frame shows:** the old place, while the UI, overhead text, health bars and the mouse picking already follow the new position. That lasts 3–5 frames at 60 fps after a teleport.
-  - **Not detected by the hold:** stale override state. W1's suspected `gpu_prepare_skip_baked` flicker after a recreation would draw wrong tiles while `VisibleReady` is true. The hold only covers missing chunks and pages.
-  - **No live facet-change test:** only unit-tested, and `reinit` exercises the same recreation path.
-  - **Prefetch on the teleport packet:** not done. The packet is applied in the same frame that draws, so there is no gap to use.
-- **Related, from the pack-loading merge (df2fbf8c8):** a body seen for the first time decodes on a worker and draws nothing until its first direction is uploaded. A new equipment item on a human who is already visible can appear a frame or two after the body. Nobody has checked this by eye yet. `CUO_ANIM_SYNC=1` restores synchronous loading for comparison.
-
-## Single frames with no baked land and statics, or scattered missing and wrong tiles, in a reinit stress run (2026-10-25)
-
-- **Seen by:** the owner on the KamDos client, which ran the page-fault agent's mitigation build `pf/aot-sabc3` (uncommitted Tier 0 work). Recording: `Desktop\Recording 2026-10-25 000245.mp4`.
-- **What happens:** the character stands still in a fully loaded house. In 5 of 234 recorded frames, either nearly all baked land and statics are black (dynamic items, mobiles and the UI still draw), or scattered tiles are missing or show the wrong texture.
-- **Not seen** on the Kbatfour client (the pack-loading build): there, black appears only during teleports, which is the pop-in issue above.
-- **Update (page-fault agent, 2026-10-25):** that recording was a stress run with `CUO_GPU_REINIT=1500`, which drops and recreates the GPU world pass and world RT every 1.5 s. The 5 bad frames match the 5 recreations, so the cause is very likely the test hook, not mitigations A/B/C. Not proven yet: compare normal runs (no reinit) of the mitigation and base builds for unsettled frames. Even so, a recreation should hold the last frame instead of showing a half-built world (see the pop-in entry above).
-- **Update (world-settle agent, 2026-10-25):** recreations now hold the last frame (DevBench `reinit`: 0 unsettled frames presented, against 13–19 before). `CUO_GPU_REINIT` also drops the world RT, so there's nothing to hold: expect black and a 250 ms fade-in per recreation (like DevBench `reinitrt`), not a half-built world.
-- **Resolved (page-fault agent, 2026-10-25):**
-  - The scattered missing and wrong tiles in the later normal (no reinit) runs were **Legacy frames**, broken by B1. See the FNA3D index-buffer entry below, worked around on `poc/modern-client` and since fixed in our FNA3D fork.
-  - World-RT shots of the Gpu pass were clean: 150 or more shots from 1 to 1024 frames after each switch, with A/B/C on and off. So were the Legacy frames once the B1 fix was in.
-  - The black frames in the reinit run are the stress hook, by design.
-
-## FNA3D: a disposed render target can stay the pending render-pass target (2026-10-25) — fixed 2026-10-25 in our FNA3D fork
-
-- **What:** FNA3D's `SDLGPU_INTERNAL_FreeTextureHandle` (`FNA3D_Driver_SDL.c` ~2568) clears `boundRenderTargets`, but not `nextRenderPassColorAttachments` or `nextRenderPassDepthStencilAttachment`. `SDLGPU_INTERNAL_BeginRenderPass` (~823) later dereferences them.
-- **Risk:** a render target disposed while it is the pending target of a deferred render pass (for example a clear that hasn't started its pass yet) would be used after its SDL texture was released. That is a use-after-free that could fault on the GPU without any defragmentation.
-- **Status:** no ClassicUO path that does this was found. `RenderTargets.EnsureSize` disposes at the start of Draw, while the pending target is the backbuffer. The page faults are explained by atlas defragmentation (device-lost-leak.md part B). Lower likelihood; noted by an independent audit.
-- **Fixed (2026-10-25)** in github.com/modernuo/FNA3D `modernuo/26.10-patched` (19e5188): a freed pending color target sends the pass back to the backbuffer, a freed pending depth target is dropped. See [fna-fork.md](fna-fork.md). Not reproducible in the client, so the evidence is the code change plus the usual regression checks.
-
-## FNA3D: a cycled index buffer isn't rebound (2026-10-25) — fixed 2026-10-25 in our FNA3D fork
-
-- **What:** `SetIndexBufferData` with Discard cycles the SDL buffer, but `SDLGPU_INTERNAL_BindDeferredState` skips `SDL_BindGPUIndexBuffer` when the handle is unchanged, so the open render pass keeps the old buffer and later draws read old indices. This was the cause of the B1 Legacy corruption (missing and wrong land and static tiles).
-- **Was worked around** in the batcher (b62406b8e: `Batcher2D.IndexDataChanged` forced an effect re-apply after each mesh-layer index upload).
-- **Fixed** in github.com/modernuo/FNA3D `modernuo/26.10-patched` (e3bd4f2): a cycling upload of the bound index buffer clears the binding, so the next draw rebinds it. The batcher workaround is removed. See [fna-fork.md](fna-fork.md).
-
-## Gpu world renderer: the roof over the player is sometimes drawn (2026-10-31, fixed on `poc/roof-race`, confirmed by bench-000056)
-
-- **What:** standing inside the house at 1427,1691 (Z 0), the Gpu renderer usually hides the roof, the chimneys of the building at bottom left, and a tree, as Legacy does. In one run of the f27759989 binary (bench-000045, base arm), it drew all three for the whole 5 s window. That run's counters were also different: foliage 1, cap_statics 2, pick_tests 36, override_calls 28, against 0, 0, 24 and 14.
-- **Not caused by tiledata-single:** the same binary on the same pack hid them in 6 of 6 shots in bench-000046 (3 runs, shots at about 8 s and 14 s after arrival). In those runs, base-vs-base differences were as large as old-vs-new.
-- **Seen again on the milestone tip** (bench-000054, NativeAOT 5c90523ca, classic-1.2): the same three objects were drawn, with identical counters (foliage 1, cap_statics 2, pick_tests 36.7, override_calls 28). That's 2 of 15 Gpu house shots so far; Legacy hid them every time.
-- **Cause (found 2026-10-31, `poc/roof-race`):** not Gpu-specific. `GameScene.UpdateMaxDrawZ` (shared by both renderers) recomputed max Z and the roof decision only when the player's position changed. After a teleport, the first frame's decision can run before incremental chunk loading has loaded the player's chunk (it waits for the region decode and the first-sight art workers); it then saw no roof, decided max Z 127, and kept that until the player moved.
-- **Status: fixed on `poc/roof-race` (7289d751f, after a Codex audit of the first fix ff2628c74), confirmed by bench-000056.** The decision is kept only while its inputs are unchanged: the player's x/y/z, DrawRoofs, the map, and the contents of every chunk it read (including the recursive roof search's and the ones it found not loaded); object, chunk and season changes in that reach mark it dirty and it is recomputed once before the next draw (`MaxDrawZState`, `Map.DecisionDirty`, 8 decision-level unit tests). Each recovery from an incomplete decision logs a `[maxz]` trace line. The audit's other findings (facet change, placed or removed roofs, season, the roof macro, south map-edge aliasing in `Map.GetChunk2`) are fixed too.
-- **bench-000055** (first fix): base 10/10 and new 10/10 hidden at the house arrivals, but its `[maxz]` lines show the race on every session start: the login decision at the house (the character logs in where the last session ended) ran before the chunks loaded (new: `127 -> 20` two frames later). Base kept the roof drawn there until the first teleport moved the player, which the plan never measured; at the later house arrivals the chunks were still loaded. bench-000056 measures the login spot (`house0`).
-- **bench-000056** (7289d751f): base drew the roof at the login spot in 5 of 5 sessions (the bad shots' counters: foliage 1, cap_statics 2, pick_tests 36-38, override_calls 28), so the race was deterministic at login; base hid it after teleports (10/10). new2 hid it in all 15 Gpu house windows and the 3 Legacy ones; 0 errors. A second Codex round's four findings (off-screen dependency eviction cycle, parked cleanup cancelling a dependency, sync mode, in-place graphic change) are fixed on the branch too.
-- Details in the poc-log entry "Roof over the player after a teleport" (section "Codex audit and dispositions").
-- **Evidence:** `~/.claude/rf-agent/jobs/bench/done/bench-000045/` (`base-gpu/house_gpu.png`, `diff-gpu/house_gpu.png`) and `bench-000046/`. The poc-log tiledata-single entry has the parity tables.
+- Roof over the player drawn after login/teleport: 7289d751f (`MaxDrawZState`, `Map.DecisionDirty`).
+- Legacy tile corruption (B1): b62406b8e workaround, then FNA3D fork e3bd4f2 (cycled index buffer rebind); freed pending render target: FNA3D 19e5188.
+- Scissor exception: b59735443. Zoomed-out land seams: 115e93c71. GPU page fault: SDL fork patch (08b952f3a, now `modernuo/3.4.18-patched`).
+- Raw pop-in on teleports/world entry: a6110f967 (world settle).
+- `WorldMapGump` texture race and off-thread `Print`: 398510734, 5dbb5665d (texture handed over, created in Update; verified the load completion no longer prints from the task at `WorldMapGump.cs:545-547`).
+- Zero-size backbuffer from `WindowOnClientSizeChanged`: 957237f06.
+- Login disconnect flake (auth id starting 0xEF read as the seed): ModernUO#2744.
+- Flaky tests isolated on `bg/flaky-tests` and `bg/removal-flake`; `ChunkLoadingTests` prefetch timing: c6bd97205.
+- Static chunk pool not per World, double `Chunk.Destroy`: 6c7f60f43. E4 `Dictionary` version counter: fdd40344a (owned `MobileTable`). `-ecsdriver` reachable without devtools: now compiled only with `CUO_DEVTOOLS` (`EcsSessionDriver.cs`).
+- Main-thread ground-item/multi art decode on first sight: 697e4c668 (the earlier "item checker compares different frames" E6 audit note was not rechecked).
